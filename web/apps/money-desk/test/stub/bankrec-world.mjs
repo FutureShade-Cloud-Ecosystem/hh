@@ -35,7 +35,8 @@ export const IDS = {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const pad = (n, w = 2) => String(n).padStart(w, "0");
 // The core's dollars (bankrec dollars()): "$1,234.50", "-$45.00".
-const usd = (cents) => `${cents < 0 ? "-" : ""}$${Math.floor(Math.abs(cents) / 100).toLocaleString("en-US")}.${pad(Math.abs(cents) % 100)}`;
+const usd = (cents) =>
+  `${cents < 0 ? "-" : ""}$${String(Math.floor(Math.abs(cents) / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${pad(Math.abs(cents) % 100)}`;
 const uuid = (kind, n) => `${kind.padEnd(8, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 /** The month before today, from the host's own clock: the month the statement covers (the desk opens the same one). */
@@ -352,6 +353,12 @@ export function createBankrecWorld() {
     const made = [];
     let unmatched = 0;
     for (const line of lines) {
+      const year = Number(line.txn_date.slice(0, 4));
+      const month = Number(line.txn_date.slice(5, 7));
+      if (world.recons.some((r) => r.bank_account_id === line.bank_account_id && r.year === year && r.month === month && r.status === "COMPLETED")) {
+        unmatched += 1;
+        continue;
+      }
       let found = null;
       for (const rule of rules) {
         const kind = rule.spec.kind;
@@ -533,7 +540,9 @@ export function createBankrecWorld() {
     const account = world.accounts.find((a) => a.id === input.bank_account_id);
     if (account === undefined) return clientError(404, "not found");
     // The core stores the month's line net when the typed balance is zero: its placeholder default.
-    const statement = input.statement_balance_cents ? input.statement_balance_cents : monthNet(account.id, input.year, input.month);
+    const netNow = monthNet(account.id, input.year, input.month);
+    const derived = !input.statement_balance_cents;
+    const statement = derived ? netNow : input.statement_balance_cents;
     // Only the operating account has a ledger balance in this world; the cards are tracking only.
     const gl = account.gl_account_code === "1000" ? world.glCents : 0;
     const existing = world.recons.find((r) => r.bank_account_id === account.id && r.year === input.year && r.month === input.month);
@@ -541,6 +550,9 @@ export function createBankrecWorld() {
       return clientError(409, `reconciliation for ${input.year}-${pad(input.month)} is already COMPLETED`);
     }
     const target = existing ?? { id: uuid("b5", world.nextRecon++), bank_account_id: account.id, year: input.year, month: input.month, status: "OPEN" };
+    target.statement_balance_derived =
+      derived ||
+      Boolean(existing?.statement_balance_derived && statement === existing.statement_balance_cents && statement !== netNow);
     target.statement_balance_cents = statement;
     target.gl_balance_cents = gl;
     target.variance_cents = statement - gl;
@@ -559,15 +571,17 @@ export function createBankrecWorld() {
     ).length;
     if (unmatched > 0) return clientError(422, `cannot complete, ${unmatched} UNMATCHED line(s) remain for ${rec.year}-${pad(rec.month)}`);
     if (rec.variance_cents !== 0) return clientError(422, `cannot complete, variance is ${rec.variance_cents} cents (must be zero)`);
-    // SF-2s: the core recomputes the ledger at completion; a ledger that moved since the month was opened refuses it.
-    {
-      const account = world.accounts.find((a) => a.id === rec.bank_account_id);
-      const ledger = account !== undefined && account.gl_account_code === "1000" ? world.glCents : 0;
-      if (rec.statement_balance_cents - ledger !== 0) {
-        const apart = Math.abs(rec.statement_balance_cents - ledger);
-        return clientError(422, `cannot complete, the statement reads ${usd(rec.statement_balance_cents)} and the ledger reads ${usd(ledger)} (${usd(apart)} apart); they must agree, refresh the figures and match what is open`);
-      }
+    // SF-2s: the core recomputes the ledger (and a derived statement balance from the lines) at completion.
+    const stmt = rec.statement_balance_derived ? monthNet(rec.bank_account_id, rec.year, rec.month) : rec.statement_balance_cents;
+    const account = world.accounts.find((a) => a.id === rec.bank_account_id);
+    const ledger = account !== undefined && account.gl_account_code === "1000" ? world.glCents : 0;
+    if (stmt - ledger !== 0) {
+      const apart = Math.abs(stmt - ledger);
+      return clientError(422, `cannot complete, the statement reads ${usd(stmt)} and the ledger reads ${usd(ledger)} (${usd(apart)} apart); they must agree, refresh the figures and match what is open`);
     }
+    rec.statement_balance_cents = stmt;
+    rec.gl_balance_cents = ledger;
+    rec.variance_cents = stmt - ledger;
     rec.status = "COMPLETED";
     rec.completed_at = stamp();
     return { status: 200, body: reconView(rec) };

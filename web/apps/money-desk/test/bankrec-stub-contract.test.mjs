@@ -475,13 +475,13 @@ test("a derived month in the stub recomputes its statement balance from the line
   );
 
   // A completed month is skipped by autoMatch.
-  const cardRec = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.fuelCard, year: 2031, month: 6, statement_balance_cents: 0 })).json;
+  const cardRec = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.fuelCard, year: Y, month: M, statement_balance_cents: 0 })).json;
   assert.equal((await ctl("POST", `/api/v1/bankrec/reconciliations/${cardRec.id}/complete`)).status, 200);
   await ctl("POST", "/api/v1/bankrec/imports", {
     bank_account_id: IDS.fuelCard,
     profile_code: "rbc-default",
     filename: "closed-month.csv",
-    content: "Date,Description,Amount,Reference\n2031-06-05,CLOSED MONTH LODGEMENT,2450.50,LODGE-310\n",
+    content: `Date,Description,Amount,Reference\n${period}-05,CLOSED MONTH LODGEMENT,2450.50,LODGE-310\n`,
   });
   const autoClosed = await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.fuelCard });
   assert.equal(autoClosed.status, 200);

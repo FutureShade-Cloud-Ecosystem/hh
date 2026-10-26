@@ -387,12 +387,12 @@ func dollars(cents int64) string {
 }
 
 // ledgerBalance reads the bank account's GL balance for a month through the GLBalanceReader seam (no GL table read
-// here), for CompleteReconciliation to take inside its transaction after the month's lock. An unwired reader reads
-// as zero, the same as OpenReconciliation stores.
+// here), for CompleteReconciliation to take inside its transaction after the month's lock. An unwired reader refuses
+// completion in plain words.
 func (s *Service) ledgerBalance(glCode string) func(ctx context.Context, year, month int) (int64, error) {
 	return func(ctx context.Context, year, month int) (int64, error) {
 		if s.balances == nil {
-			return 0, nil
+			return 0, unprocessable("bankrec: cannot complete, the ledger balance cannot be read")
 		}
 		return s.balances.GLBalanceCents(ctx, glCode, year, month, "")
 	}

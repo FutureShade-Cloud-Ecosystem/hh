@@ -1024,13 +1024,12 @@ func (r *Repository) CompleteReconciliation(ctx context.Context, id, glAccountCo
 			return Reconciliation{}, fmt.Errorf("bankrec: recompute the statement balance: %w", err)
 		}
 	}
-	var gl int64
-	if ledger != nil {
-		g, lerr := ledger(ctx, year, month)
-		if lerr != nil {
-			return Reconciliation{}, lerr
-		}
-		gl = g
+	if ledger == nil {
+		return Reconciliation{}, unprocessable("bankrec: cannot complete, the ledger balance cannot be read")
+	}
+	gl, lerr := ledger(ctx, year, month)
+	if lerr != nil {
+		return Reconciliation{}, lerr
 	}
 	if variance := stmt - gl; variance != 0 {
 		return Reconciliation{}, unprocessable("bankrec: cannot complete, the statement reads %s and the ledger reads %s (%s apart); they must agree, refresh the figures and match what is open",
