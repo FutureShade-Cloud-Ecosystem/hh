@@ -103,13 +103,20 @@ func (r *Repository) DetailLines(ctx context.Context, invoiceID string) ([]Detai
 
 // AppliedCents is the sum of what has actually been APPLIED to this document, the stored
 // payment_allocations aggregate. See the Totals doc comment for why this is not total − balance.
+//
+// A reversal writes a contra allocation on its reversing row, a positive amount that undoes the original's, so the
+// reversing rows count NEGATIVE: a payment and its reversal net to zero (SF-2r; summed plainly they read twice the
+// payment). Money a reversal's held balance was re-applied to this invoice is not an allocation and is added by the
+// register service from the payments module's read.
 func (r *Repository) AppliedCents(ctx context.Context, invoiceID string) (int64, error) {
 	if r.pool == nil {
 		return 0, errNoDB
 	}
 	var sum int64
 	if err := r.pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(amount_cents),0) FROM payment_allocations WHERE invoice_id = $1::uuid`,
+		`SELECT COALESCE(SUM(CASE WHEN p.reverses_payment_id IS NOT NULL THEN -pa.amount_cents ELSE pa.amount_cents END), 0)
+		   FROM payment_allocations pa JOIN payments p ON p.id = pa.payment_id
+		  WHERE pa.invoice_id = $1::uuid`,
 		invoiceID).Scan(&sum); err != nil {
 		return 0, fmt.Errorf("billing: applied cents: %w", err)
 	}
@@ -296,8 +303,13 @@ func (r *Repository) ActivityFor(ctx context.Context, invoiceID, orderID string,
 		     WHERE d.invoice_id = $1::uuid AND d.opened_at IS NOT NULL
 		    UNION ALL
 		    -- money applied
-		    SELECT 'PAYMENT', pa.created_at, p.payment_no::text || ' · ' || p.method,
-		           pa.amount_cents, COALESCE(u.display_name,'')
+		    -- a reversing row's contra allocation is the payment taken back: its own act, the amount negative
+		    SELECT 'PAYMENT', pa.created_at,
+		           CASE WHEN p.reverses_payment_id IS NOT NULL
+		                THEN 'reversed ' || (SELECT o.payment_no::text FROM payments o WHERE o.id = p.reverses_payment_id) || ' · ' || p.method
+		                ELSE p.payment_no::text || ' · ' || p.method END,
+		           CASE WHEN p.reverses_payment_id IS NOT NULL THEN -pa.amount_cents ELSE pa.amount_cents END,
+		           COALESCE(u.display_name,'')
 		      FROM payment_allocations pa
 		      JOIN payments p ON p.id = pa.payment_id
 		      LEFT JOIN users u ON u.id = COALESCE(pa.allocated_by, p.received_by)
