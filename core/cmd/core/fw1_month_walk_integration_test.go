@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -745,7 +746,8 @@ func (w *fw1Walk) assertARAgingTies(t *testing.T) {
 	}
 }
 
-// 2. Each customer's statement balance equals their aging and their subledger.
+// 2. Each customer's statement balance equals their aging, their customer_transactions
+// subledger, and their independent documents and receipts in the walk.
 func (w *fw1Walk) createStatementTies(t *testing.T) {
 	ctx := context.Background()
 	sctx := staffctx.ContextWithStaff(ctx, staffctx.StaffContext{
@@ -762,32 +764,82 @@ func (w *fw1Walk) createStatementTies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the statement run: %v", err)
 	}
+	agingByCust := map[string]int64{}
+	custSet := map[string]bool{}
+	for _, r := range rows {
+		agingByCust[r.CustomerID] = r.TotalCents
+		custSet[r.CustomerID] = true
+	}
 	stmtByCust := map[string]int64{}
 	for _, s := range stmts {
 		stmtByCust[s.CustomerID] = s.ClosingCents
+		custSet[s.CustomerID] = true
 	}
-	for _, r := range rows {
-		var sub int64
-		if err := w.pool.QueryRow(ctx, `
-			SELECT COALESCE(SUM(balance_cents),0) FROM invoices
-			 WHERE customer_id = $1 AND status IN ('FINALIZED','PARTIALLY_PAID')`, r.CustomerID).Scan(&sub); err != nil {
-			t.Fatalf("the subledger read for %s: %v", r.AccountNo, err)
+	unionRows, err := w.pool.Query(ctx, `
+		SELECT DISTINCT customer_id::text FROM customer_transactions
+		UNION
+		SELECT DISTINCT customer_id::text FROM invoices WHERE status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents != 0`)
+	if err != nil {
+		t.Fatalf("the customer union read: %v", err)
+	}
+	for unionRows.Next() {
+		var cid string
+		if err := unionRows.Scan(&cid); err != nil {
+			t.Fatal(err)
 		}
-		// The statement's own line walk: the last line's running balance is the balance the
-		// statement's reader sees under the total, and it must be the same figure.
-		lines, err := billing.NewRepository(w.pool).StatementLines(ctx, r.CustomerID, w.monthEnd, billing.AllBranches)
+		custSet[cid] = true
+	}
+	unionRows.Close()
+
+	type custEntry struct {
+		id     string
+		acctNo string
+	}
+	var custs []custEntry
+	for cid := range custSet {
+		var acctNo string
+		if err := w.pool.QueryRow(ctx, `SELECT account_no FROM customers WHERE id = $1`, cid).Scan(&acctNo); err != nil {
+			t.Fatalf("customer account_no for %s: %v", cid, err)
+		}
+		custs = append(custs, custEntry{id: cid, acctNo: acctNo})
+	}
+	sort.Slice(custs, func(i, j int) bool { return custs[i].acctNo < custs[j].acctNo })
+
+	for _, c := range custs {
+		var subledger int64
+		if err := w.pool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(amount_cents), 0)
+			  FROM customer_transactions
+			 WHERE customer_id = $1 AND occurred_at <= $2`, c.id, w.monthEnd).Scan(&subledger); err != nil {
+			t.Fatalf("the customer_transactions subledger read for %s: %v", c.acctNo, err)
+		}
+		// Independent net receivable from the customer's documents (invoices and credit memos)
+		// and receipts (including bounced cheque NSF fee charges) in the walk.
+		var docsAndReceipts int64
+		if err := w.pool.QueryRow(ctx, `
+			SELECT COALESCE((
+			    SELECT SUM(balance_cents) FROM invoices
+			     WHERE customer_id = $1 AND status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
+			), 0) + COALESCE((
+			    SELECT count(*) * 4500 FROM payments
+			     WHERE customer_id = $1 AND status = 'BOUNCED'
+			), 0)`, c.id).Scan(&docsAndReceipts); err != nil {
+			t.Fatalf("the independent documents and receipts read for %s: %v", c.acctNo, err)
+		}
+		lines, err := billing.NewRepository(w.pool).StatementLines(ctx, c.id, w.monthEnd, billing.AllBranches)
 		if err != nil {
-			t.Fatalf("the statement lines for %s: %v", r.AccountNo, err)
+			t.Fatalf("the statement lines for %s: %v", c.acctNo, err)
 		}
 		var walked int64
 		if len(lines) > 0 {
 			walked = lines[len(lines)-1].BalanceRun
 		}
-		stmt := stmtByCust[r.CustomerID]
-		if stmt != r.TotalCents || r.TotalCents != sub || (sub != 0 && walked != sub) {
-			t.Errorf("%s: statement %s, aging %s, subledger %s, statement line walk %s do not tie (the statement is %s the aging; the aging is %s the subledger; the line walk is %s the subledger)",
-				r.AccountNo, fw1Dollars(stmt), fw1Dollars(r.TotalCents), fw1Dollars(sub), fw1Dollars(walked),
-				byDollars(stmt-r.TotalCents), byDollars(r.TotalCents-sub), byDollars(walked-sub))
+		stmt := stmtByCust[c.id]
+		aging := agingByCust[c.id]
+		if stmt != docsAndReceipts || walked != docsAndReceipts || aging != docsAndReceipts || subledger != docsAndReceipts {
+			t.Errorf("%s: statement closing %s, printed line walk %s, aging %s, customer_transactions subledger %s do not tie to independent documents and receipts %s (aging vs subledger %s; statement closing vs printed walk %s; subledger vs documents %s)",
+				c.acctNo, fw1Dollars(stmt), fw1Dollars(walked), fw1Dollars(aging), fw1Dollars(subledger), fw1Dollars(docsAndReceipts),
+				byDollars(aging-subledger), byDollars(stmt-walked), byDollars(subledger-docsAndReceipts))
 		}
 	}
 }
