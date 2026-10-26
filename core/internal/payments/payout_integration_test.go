@@ -13,10 +13,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
@@ -377,5 +381,106 @@ func TestIntegration_Payout_AnUnnamedDrawerIsTheBranchsOneOpenDrawer(t *testing.
 	// Naming one of the open drawers settles it.
 	if _, err := w.payOut(repo, p.ID, payments.PayoutDrawer, 1_000, func(in *payments.PayoutInput) { in.TillSessionID = first }); err != nil {
 		t.Errorf("a named drawer was refused: %v", err)
+	}
+}
+
+// (7) Two write offs of one session cannot together exceed its shortage (PR 606 round 2, S3's P1). The first write off
+// is parked right after its sum and before its insert; the second runs beside it on another payment of the same
+// session. The second must queue on the session row and re-read what the first already took, so the pair can never
+// write one shortage off twice and book a gain that never happened.
+func TestIntegration_Payout_TwoWriteOffsOfOneSessionNeverExceedTheShortage(t *testing.T) {
+	w := newReversalGLWorld(t)
+	w.cleanupPayouts()
+	session := w.openSession()
+	// Two cash receipts of the session, each on its own invoice tag (the rig keys invoices by tag).
+	cashIn := func(tag string, cents int64) string {
+		inv := w.r.invoice("W2"+tag, 1_000_000)
+		if _, err := w.r.register().RecordPayment(context.Background(), billing.ReceiptInput{
+			InvoiceID: inv, Method: "CASH", AmountCents: cents, Reference: "walk",
+			IdempotencyKey: fmt.Sprintf("w2-%s-%d", tag, time.Now().UnixNano()),
+		}); err != nil {
+			t.Fatalf("%s register receipt: %v", tag, err)
+		}
+		var id string
+		if err := w.r.obs.QueryRow(context.Background(),
+			`SELECT p.id::text FROM payments p JOIN payment_allocations a ON a.payment_id = p.id
+			  WHERE a.invoice_id = $1::uuid AND p.reverses_payment_id IS NULL`, inv).Scan(&id); err != nil {
+			t.Fatalf("find the %s receipt: %v", tag, err)
+		}
+		return id
+	}
+	first := cashIn("A", 6_000)
+	second := cashIn("B", 6_000)
+	w.inSession(session, first)
+	w.inSession(session, second)
+	w.drain()
+	w.reverse(first)
+	w.reverse(second)
+	w.closeSession(session, 2_000) // expected 12,000, counted 2,000: the shortage is 10,000
+
+	park := testkit.NewInsertPark(t, w.r.pool, "payment_payouts", 55020004)
+	writeOff := func(pool *pgxpool.Pool, payment, key string) error {
+		repo := payments.NewRepository(pool).WithTill(till.NewService(till.NewRepository(pool)))
+		_, err := payments.NewReverseService(repo).PayOut(w.r.staffCtx(), payments.PayoutInput{
+			PaymentID: payment, Kind: payments.PayoutWriteOff, AmountCents: 6_000, Reason: "the cash left the drawer",
+			ActorID: w.r.userID, IdempotencyKey: key + w.r.suffix, IsManager: true,
+		})
+		return err
+	}
+	parked := make(chan error, 1)
+	go func() { parked <- writeOff(park.Pool, first, "wo-race-parked-") }()
+	park.WaitParked("the first write off after its sum, before its insert")
+
+	var besideDone atomic.Bool
+	var besideErr error
+	beside := make(chan error, 1)
+	go func() {
+		defer besideDone.Store(true)
+		besideErr = writeOff(w.r.pool, second, "wo-race-beside-")
+		beside <- besideErr
+	}()
+	// With the fix the second queues on the session row the first holds; without it, it commits beside the parked first.
+	park.WaitBlockedOr("the second write off queues on the session, or has already committed", besideDone.Load)
+
+	park.AnswersAllowing(map[string]chan error{"the parked write off": parked, "the second write off": beside},
+		map[string]string{"the second write off": "the count's shortage still to be covered"})
+	var total int64
+	_ = w.r.obs.QueryRow(context.Background(),
+		`SELECT COALESCE(SUM(po.amount_cents), 0) FROM payment_payouts po JOIN payments p ON p.id = po.payment_id
+		  WHERE po.kind = 'WRITE_OFF' AND p.till_session_id = $1::uuid`, session).Scan(&total)
+	t.Logf("the session's write offs total %d against its 10,000 shortage (the second answered %v)", total, besideErr)
+	if total > 10_000 {
+		t.Errorf("two write offs of one session took %d cents against its 10,000 shortage: the shortage was written off twice", total)
+	}
+	if besideErr == nil || !strings.Contains(besideErr.Error(), "the count's shortage still to be covered") {
+		t.Errorf("the second write off answered %v, want it refused on the shortage the first already took", besideErr)
+	}
+}
+
+// (8) A write off is cash only (PR 606 round 2, S3's P2). The shortage the close posts is counted cash less expected
+// cash, so a reversed CHEQUE or CARD payment rung through a short session cannot be written off against that shortage:
+// its money was never in the drawer. A cash payment of the same session still can.
+func TestIntegration_Payout_AWriteOffIsCashOnly(t *testing.T) {
+	w := newReversalGLWorld(t)
+	w.cleanupPayouts()
+	session := w.openSession()
+	cheque := w.registerReceipt("CHEQUE", 8_000)
+	cash := w.registerReceipt("CASH", 2_000)
+	w.inSession(session, cheque)
+	w.inSession(session, cash)
+	w.drain()
+	w.reverse(cheque)
+	w.reverse(cash)
+	w.closeSession(session, 0) // expected cash 2,000, counted 0: the shortage is 2,000
+	repo := w.payoutRepo()
+	before := w.payoutState(cheque)
+	if _, err := w.payOut(repo, cheque, payments.PayoutWriteOff, 1_500, nil); err == nil || !strings.Contains(err.Error(), "cash") {
+		t.Errorf("a write off of a cheque payment answered %v, want it refused in words about cash", err)
+	}
+	if after := w.payoutState(cheque); after != before {
+		t.Errorf("the refused write off wrote: before %+v after %+v", before, after)
+	}
+	if _, err := w.payOut(repo, cash, payments.PayoutWriteOff, 1_500, nil); err != nil {
+		t.Errorf("the cash write off of the same short session was refused: %v", err)
 	}
 }
