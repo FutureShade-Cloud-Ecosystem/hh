@@ -656,7 +656,14 @@ func (r *Repository) ApproveJournal(ctx context.Context, id, approverID string) 
 	if r.pool == nil {
 		return Journal{}, errNoDB
 	}
-	tag, err := r.pool.Exec(ctx,
+	// One transaction so the closed month guard's refusal rolls the post back with it (FW1-09b):
+	// the guarded UPDATE and the guard read share the tx, a refusal leaves the journal parked.
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Journal{}, fmt.Errorf("gl: begin approve: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx,
 		`UPDATE gl_journals SET status = 'POSTED', approved_by = $2, posted_at = now(), updated_at = now()
 		 WHERE id = $1 AND status = 'DRAFT'`, id, nullStr(approverID))
 	if err != nil {
@@ -668,7 +675,34 @@ func (r *Repository) ApproveJournal(ctx context.Context, id, approverID string) 
 	if tag.RowsAffected() == 0 {
 		return Journal{}, clientErr(409, "gl: journal is not in DRAFT state")
 	}
+	if err := r.approveClosedMonthGuardTx(ctx, tx, id); err != nil {
+		return Journal{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Journal{}, fmt.Errorf("gl: commit approve: %w", err)
+	}
 	return r.GetJournal(ctx, id)
+}
+
+// approveClosedMonthGuardTx is the closed month guard both approve paths run after their guarded
+// UPDATE posts (FW1-09b, the GL-02 / SECURITY-SOD blocker): a MANUAL journal whose own month closed
+// while it sat parked is refused in plain words and the caller's transaction rolls the post back. A
+// manual journal into a closed month is refused (ruling 82.2); the guard is what makes the refusal
+// hold for a month that closed UNDER an approved-while-open journal.
+func (r *Repository) approveClosedMonthGuardTx(ctx context.Context, tx pgx.Tx, id string) error {
+	var source, pstatus string
+	err := tx.QueryRow(ctx,
+		`SELECT j.source, p.status FROM gl_journals j JOIN fiscal_periods p ON p.id = j.period_id WHERE j.id = $1`, id).Scan(&source, &pstatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return clientErr(404, "gl: journal not found")
+	}
+	if err != nil {
+		return fmt.Errorf("gl: approve closed month guard: %w", err)
+	}
+	if source == SourceManual && pstatus == "CLOSED" {
+		return clientErr(409, "gl: the month this journal was parked in has since closed; a manual journal into a closed month is refused, void the journal or ask for the month to be reopened")
+	}
+	return nil
 }
 
 // ApproveJournalTx posts a parked DRAFT journal WITHIN the caller's transaction (approvals-rail atomic
@@ -688,7 +722,7 @@ func (r *Repository) ApproveJournalTx(ctx context.Context, tx pgx.Tx, id, approv
 		return fmt.Errorf("gl: approve journal (tx): %w", err)
 	}
 	if tag.RowsAffected() == 1 {
-		return nil
+		return r.approveClosedMonthGuardTx(ctx, tx, id)
 	}
 	// 0 rows, the guard rejected it. Diagnose (same tx) for a precise status.
 	var status string
@@ -1109,6 +1143,35 @@ func (r *Repository) PLBalances(ctx context.Context, year int) ([]TrialBalanceRo
 			return nil, fmt.Errorf("gl: scan pl row: %w", err)
 		}
 		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// PLBalancesByBranch answers the year's P&L balances per account PER BRANCH (empty string = the
+// company level rows with no branch stamp), the basis FW1-09b's year end closes each branch's
+// results with its own entry. The consolidated PLBalances above is the sum over these.
+func (r *Repository) PLBalancesByBranch(ctx context.Context, year int) ([]PLBranchRow, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT account_code::text, account_name, account_type, normal_balance,
+		        COALESCE(branch_id::text,''), COALESCE(SUM(net_debit_cents),0)
+		 FROM v_gl_account_balances
+		 WHERE fiscal_year = $1 AND account_type IN ('REVENUE','EXPENSE')
+		 GROUP BY account_code, account_name, account_type, normal_balance, COALESCE(branch_id::text,'')
+		 ORDER BY COALESCE(branch_id::text,''), account_code`, year)
+	if err != nil {
+		return nil, fmt.Errorf("gl: pl balances by branch: %w", err)
+	}
+	defer rows.Close()
+	var out []PLBranchRow
+	for rows.Next() {
+		var r PLBranchRow
+		if err := rows.Scan(&r.AccountCode, &r.AccountName, &r.AccountType, &r.NormalBalance, &r.BranchID, &r.NetDebitCents); err != nil {
+			return nil, fmt.Errorf("gl: scan pl branch row: %w", err)
+		}
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }
