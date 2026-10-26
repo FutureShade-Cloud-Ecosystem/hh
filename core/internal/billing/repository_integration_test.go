@@ -414,9 +414,31 @@ func TestIntegration_Billing_ARBalanceCents_ScopesAndTiesToAgingView(t *testing.
 	seedInvoice(t, pool, cust, n, invSpec{no: "AR-T1", status: "FINALIZED", branch: trentonBranch, total: 12000, balance: 12000, finalized: true})
 	// Kingston: 3000 open.
 	seedInvoice(t, pool, cust, n, invSpec{no: "AR-K1", status: "FINALIZED", branch: kingstonBranch, total: 3000, balance: 3000, finalized: true})
-	// Excluded by status / balance: a DRAFT and a zero-balance FINALIZED contribute nothing.
+	// Excluded by status / balance: a DRAFT contributes nothing, and the zero-balance FINALIZED
+	// carries the dated allocation that settled it inside the window, so it too nets to zero at the
+	// as-of date (the as-of balance rebuilds from dated acts, FW1-06b; a settlement with no dated
+	// act behind it would read as still owed at the date).
 	seedInvoice(t, pool, cust, n, invSpec{no: "AR-T2", status: "DRAFT", branch: trentonBranch, total: 999, balance: 999})
-	seedInvoice(t, pool, cust, n, invSpec{no: "AR-T3", status: "FINALIZED", branch: trentonBranch, total: 4000, balance: 0, finalized: true})
+	t3 := seedInvoice(t, pool, cust, n, invSpec{no: "AR-T3", status: "FINALIZED", branch: trentonBranch, total: 4000, balance: 0, finalized: true})
+	var t3Pay string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, branch_id)
+		 VALUES (nextval('payment_no_seq')::text, $1::uuid, 'CHEQUE', 4000, 'RECEIVED', $2::uuid)
+		 RETURNING id::text`, cust, trentonBranch).Scan(&t3Pay); err != nil {
+		t.Fatalf("seed AR-T3's settling payment: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents, created_at)
+		 VALUES ($1::uuid, $2::uuid, 4000, $3)`, t3Pay, t3, time.Date(1990, 5, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("seed AR-T3's dated allocation: %v", err)
+	}
+	// This test's payment rows are its own; they go before the customer cleanup runs.
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE payment_id IN
+			(SELECT id FROM payments WHERE customer_id = $1::uuid)`, cust)
+		_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, cust)
+	})
 	// Excluded by as-of: issued AFTER the window.
 	seedInvoice(t, pool, cust, n, invSpec{no: "AR-T4", status: "FINALIZED", branch: trentonBranch, issue: "1991-01-01", total: 7777, balance: 7777, finalized: true})
 

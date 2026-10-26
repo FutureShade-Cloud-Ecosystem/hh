@@ -88,35 +88,63 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 // auto-hold rule read this same query, so the number an operator argues about is the number the
 // machine used.
 //
-// It reads open invoice balances only (FINALIZED / PARTIALLY_PAID). Non-invoice AR movements (NSF
-// fees, adjustments) are deliberately excluded from the BUCKETS because they have no due date to age
-// from; they are still visible in the tie-out via ARBalanceCents, which is the figure that has to
-// reconcile to the GL.
+// It reads invoices on the books (FINALIZED / PARTIALLY_PAID, plus PAID only for what it still owed
+// at the as-of date). Non-invoice AR movements (NSF fees, adjustments) are deliberately excluded from
+// the BUCKETS because they have no due date to age from; they are still visible in the tie-out via
+// ARBalanceCents, which is the figure that has to reconcile to the GL.
 //
 // The five C8 bucket columns (Current, Days30, Days60, Days60To90, Days90Plus) are mutually
 // exclusive at every day boundary, by construction: the upper bound of one band is exactly one
 // less than the lower bound of the next. The same projection feeds both the auto-hold rule and the
 // operator's aging summary, so a band total of 30 in the screen matches 30 in the rule and 30 in
 // the register's per-row bucket_label derivation, all from one expression.
+//
+// The balance each document carries is the one it carried AT the as-of instant ($5, the instant the
+// handler resolved), not today's: a document is on the books from its issue day ($1, the house day
+// of the as-of), and what came off it afterwards does not come off its as-of figure. The as-of
+// balance rebuilds from the dated acts that moved it: every real allocation dated by the instant is
+// a payment received by then, a reversing payment's contra allocation gives its share back, a
+// re-application dated by the instant is money applied by then, and the dated ledger rows tagged to
+// the document itself (a credit offset, a deposit close, a write off) move it by their signed
+// amounts. An invoice paid after the as-of date therefore still ages here at its full total, and an
+// invoice issued after the date is not on the books at it. What was settled by the instant nets to
+// zero, so only a document open at the date survives the HAVING, whatever its status is today. One
+// honesty note: a bounce deletes its payment's allocation rows, so a cheque that was good at the
+// as-of date and bounced afterwards shows as owed at that date; the payment's per-invoice split is
+// unrecoverable once those rows are gone.
 const agingSelect = `
 	SELECT c.id::text, c.name, c.account_no::text, COALESCE(c.home_branch_id::text,''),
 	       c.payment_terms_days, c.credit_limit_cents,
-	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date <= i.due_date), 0),
-	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date >  i.due_date AND $1::date <= i.due_date + 30), 0),
-	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date >  i.due_date + 30 AND $1::date <= i.due_date + 60), 0),
-	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date >  i.due_date + 60 AND $1::date <= i.due_date + 90), 0),
-	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date >  i.due_date + 90), 0),
-	       COALESCE(SUM(i.balance_cents), 0),
-	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date > i.due_date + $2::int), 0),
+	       COALESCE(SUM(b.bal) FILTER (WHERE $1::date <= i.due_date), 0),
+	       COALESCE(SUM(b.bal) FILTER (WHERE $1::date >  i.due_date AND $1::date <= i.due_date + 30), 0),
+	       COALESCE(SUM(b.bal) FILTER (WHERE $1::date >  i.due_date + 30 AND $1::date <= i.due_date + 60), 0),
+	       COALESCE(SUM(b.bal) FILTER (WHERE $1::date >  i.due_date + 60 AND $1::date <= i.due_date + 90), 0),
+	       COALESCE(SUM(b.bal) FILTER (WHERE $1::date >  i.due_date + 90), 0),
+	       COALESCE(SUM(b.bal), 0),
+	       COALESCE(SUM(b.bal) FILTER (WHERE $1::date > i.due_date + $2::int), 0),
 	       EXISTS (SELECT 1 FROM credit_holds h WHERE h.customer_id = c.id AND h.status = 'ACTIVE'),
 	       COALESCE((SELECT h.hold_kind FROM credit_holds h WHERE h.customer_id = c.id AND h.status = 'ACTIVE' LIMIT 1), '')
 	  FROM customers c
-	  JOIN invoices i ON i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')
+	  JOIN invoices i ON i.customer_id = c.id
+	                  AND i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
+	                  AND i.issue_date <= $1::date
+	  JOIN LATERAL (
+	       SELECT i.total_cents
+	            + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
+		                 WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
+		                   AND t.txn_type <> 'INVOICE' AND t.created_at <= $5::timestamptz), 0)
+	            - COALESCE((SELECT SUM(CASE WHEN p.reverses_payment_id IS NULL THEN a.amount_cents ELSE -a.amount_cents END)
+		                 FROM payment_allocations a JOIN payments p ON p.id = a.payment_id
+		                 WHERE a.invoice_id = i.id AND a.created_at <= $5::timestamptz), 0)
+	            - COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra
+		                 WHERE ra.invoice_id = i.id AND ra.created_at <= $5::timestamptz), 0)
+	       AS bal
+	  ) b ON TRUE
 	 WHERE ($3 = '' OR i.branch_id = $3::uuid)
 	   AND ($4::uuid[] IS NULL OR i.branch_id = ANY($4::uuid[]))
 	 GROUP BY c.id, c.name, c.account_no, c.home_branch_id, c.payment_terms_days, c.credit_limit_cents
-	HAVING COALESCE(SUM(i.balance_cents), 0) <> 0
-	 ORDER BY COALESCE(SUM(i.balance_cents), 0) DESC`
+	HAVING COALESCE(SUM(b.bal), 0) <> 0
+	 ORDER BY COALESCE(SUM(b.bal), 0) DESC`
 
 // AgingRows returns one row per account carrying an open balance, across every branch: the sweep's
 // and the statement run's read. A request's read goes through AgingRowsIn with the caller's reach.
@@ -137,7 +165,7 @@ func (r *Repository) AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.pool.Query(ctx, agingSelect, day, bucketDays, branchID, reach.SQLArg())
+	rows, err := r.pool.Query(ctx, agingSelect, day, bucketDays, branchID, reach.SQLArg(), asOf)
 	if err != nil {
 		return nil, fmt.Errorf("billing: aging rows: %w", err)
 	}

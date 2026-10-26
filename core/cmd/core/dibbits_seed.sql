@@ -295,6 +295,15 @@ INSERT INTO invoice_lines (invoice_id, line_no, product_id, description, qty_ent
  ('19000000-0000-4000-9000-000000000001',2,'a7000000-0000-4000-9000-000000000023','Gator polymeric sand',5,'BAG',5,2500,'BAG',12500),
  ('19000000-0000-4000-9000-000000000002',1,'a7000000-0000-4000-9000-000000000010','Magnumstone wall',1500,'SF',1548.45,600,'SF',900000)
 ON CONFLICT DO NOTHING;
+-- The receipt that settled INV-2026-0001, dated after its issue: a PAID invoice with no dated act
+-- behind it reads as still owed at an as-of date (FW1-06b rebuilds a document's as-of balance from
+-- the dated acts that moved it).
+INSERT INTO payments (id, payment_no, customer_id, method, amount_cents, status, branch_id, received_at)
+VALUES ('1a000000-0000-4000-9000-000000000001','PAY-2026-0001','c7000000-0000-4000-9000-000000000002','CHEQUE',353125,'RECEIVED','5d1b3f6e-0000-4000-9000-000000000001', CURRENT_DATE - 20)
+ON CONFLICT (payment_no) DO NOTHING;
+INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents, created_at)
+VALUES ('1a000000-0000-4000-9000-000000000001','19000000-0000-4000-9000-000000000001',353125, CURRENT_DATE - 20)
+ON CONFLICT DO NOTHING;
 -- One open purchase order to a real vendor
 INSERT INTO purchase_orders (id, po_no, vendor_id, branch_id, status, expected_at, freight_cents, created_by)
   SELECT '20000000-0000-4000-9000-000000000001','PO-2026-0001', v.id, '5d1b3f6e-0000-4000-9000-000000000001','SUBMITTED', CURRENT_DATE + 14, 25000,'d7000000-0000-4000-9000-000000000001'
