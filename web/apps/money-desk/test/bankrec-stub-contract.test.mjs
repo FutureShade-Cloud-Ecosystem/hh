@@ -384,6 +384,12 @@ test("a month signs off only with no unmatched line and a zero variance, in the 
   assert.match(snapshot.json.error, /^cannot complete, variance is \d+ cents \(must be zero\)$/);
   const refreshed = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING })).json;
   assert.equal(refreshed.variance_cents, 0);
+  // The ledger moves after the refresh (a posting to the bank account): the core recomputes at completion and refuses.
+  await fetch(`${base}/_stub/post-to-bank`, { method: "POST", body: JSON.stringify({ cents: -10_000 }) });
+  const moved = await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`);
+  refused(moved, 422, "the statement reads");
+  assert.match(moved.json.error, /^cannot complete, the statement reads \$[\d,]+\.\d{2} and the ledger reads \$[\d,]+\.\d{2} \(\$100\.00 apart\); they must agree/);
+  await fetch(`${base}/_stub/post-to-bank`, { method: "POST", body: JSON.stringify({ cents: 10_000 }) });
   const signed = await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`);
   assert.equal(signed.status, 200);
   holds("BankRecReconciliation", signed.json);

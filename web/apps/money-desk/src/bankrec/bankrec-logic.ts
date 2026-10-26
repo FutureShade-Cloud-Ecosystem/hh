@@ -170,6 +170,10 @@ export function refusalWords(action: string, message: string, status: number): s
     const period = periodWords(Number(remain[2]), Number(remain[3]));
     return `Not signed off: ${plural(n, "statement line is", "statement lines are")} still unmatched for ${period}. ${n === 1 ? "Match it" : "Match them"}, or refresh the figures if you just did.`;
   }
+  const moved = /cannot complete, the statement reads (-?\$[\d,]+\.\d{2}) and the ledger reads (-?\$[\d,]+\.\d{2}) \((-?\$[\d,]+\.\d{2}) apart\)/i.exec(message);
+  if (moved !== null) {
+    return `Not signed off: the statement reads ${moved[1]} and the ledger reads ${moved[2]}, ${moved[3]} apart, and they must agree. Something was posted or imported since the month was opened: refresh the figures, then match what is open.`;
+  }
   const apart = /cannot complete, variance is (-?\d+) cents/i.exec(message);
   if (apart !== null) {
     return `Not signed off: the statement and the ledger are ${formatMoney(Math.abs(Number(apart[1])))} apart, and they must agree. Match the open lines, then refresh the figures.`;

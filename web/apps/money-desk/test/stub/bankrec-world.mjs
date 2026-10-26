@@ -34,6 +34,8 @@ export const IDS = {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const pad = (n, w = 2) => String(n).padStart(w, "0");
+// The core's dollars (bankrec dollars()): "$1,234.50", "-$45.00".
+const usd = (cents) => `${cents < 0 ? "-" : ""}$${Math.floor(Math.abs(cents) / 100).toLocaleString("en-US")}.${pad(Math.abs(cents) % 100)}`;
 const uuid = (kind, n) => `${kind.padEnd(8, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 /** The month before today, from the host's own clock: the month the statement covers (the desk opens the same one). */
@@ -480,7 +482,7 @@ export function createBankrecWorld() {
     // A deposit whose payment was reversed cannot be unmatched, except a reversed CARD (SF-2d round 7): a card is
     // claimable again, while a reversed cheque, cash, EFT or other payment can never be matched again.
     if (match.target_type === "PAYMENT" && world.payments.some((p) => p.id === match.target_ref_id && p.reversed && p.method !== "CARD")) {
-      return clientError(409, "bankrec: this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again");
+      return clientError(409, "this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again");
     }
     match.unmatched_at = stamp();
     const line = world.lines.find((l) => l.id === match.statement_line_id);
@@ -557,6 +559,15 @@ export function createBankrecWorld() {
     ).length;
     if (unmatched > 0) return clientError(422, `cannot complete, ${unmatched} UNMATCHED line(s) remain for ${rec.year}-${pad(rec.month)}`);
     if (rec.variance_cents !== 0) return clientError(422, `cannot complete, variance is ${rec.variance_cents} cents (must be zero)`);
+    // SF-2s: the core recomputes the ledger at completion; a ledger that moved since the month was opened refuses it.
+    {
+      const account = world.accounts.find((a) => a.id === rec.bank_account_id);
+      const ledger = account !== undefined && account.gl_account_code === "1000" ? world.glCents : 0;
+      if (rec.statement_balance_cents - ledger !== 0) {
+        const apart = Math.abs(rec.statement_balance_cents - ledger);
+        return clientError(422, `cannot complete, the statement reads ${usd(rec.statement_balance_cents)} and the ledger reads ${usd(ledger)} (${usd(apart)} apart); they must agree, refresh the figures and match what is open`);
+      }
+    }
     rec.status = "COMPLETED";
     rec.completed_at = stamp();
     return { status: 200, body: reconView(rec) };
@@ -574,6 +585,11 @@ export function createBankrecWorld() {
       return { status: 200, body: { ok: true } };
     }
     // A control the contract test uses to reverse a payment the way the payments module would (reversed_at set).
+    // A control the contract test uses to post to the operating account's ledger after a month was opened (SF-2s).
+    if (method === "POST" && path === "/_stub/post-to-bank") {
+      world.glCents += JSON.parse(bodyText || "{}").cents ?? 0;
+      return { status: 200, body: { ok: true } };
+    }
     if (method === "POST" && path === "/_stub/reverse-payment") {
       const input = JSON.parse(bodyText || "{}");
       if (input.all === true) {
