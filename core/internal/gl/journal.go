@@ -42,7 +42,9 @@ func (s *Service) CreateAccount(ctx context.Context, in CreateAccountInput) (Acc
 
 // DeactivateAccount flips an account inactive, but refuses (409) when a DRAFT journal still references it -
 // deactivating out from under an unposted entry would strand it. POSTED history is unaffected (the account
-// keeps its ledger rows; it just cannot be used on new entries).
+// keeps its ledger rows; it just cannot be used on new entries). It also refuses (FW1-09a) when an active
+// posting rule points at the account: every automated posting the rule carries would be refused as
+// "inactive" and dead letter, so the refusal names the rules and their topics instead.
 func (s *Service) DeactivateAccount(ctx context.Context, code string) (Account, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
@@ -59,6 +61,19 @@ func (s *Service) DeactivateAccount(ctx context.Context, code string) (Account, 
 	}
 	if n > 0 {
 		return Account{}, errAccountInUse
+	}
+	rules, err := s.store.ListActiveRules(ctx)
+	if err != nil {
+		return Account{}, err
+	}
+	var need []string
+	for _, rr := range rules {
+		if strings.EqualFold(rr.AccountCode, code) {
+			need = append(need, fmt.Sprintf("%s (%s)", rr.EventType, rr.LineRole))
+		}
+	}
+	if len(need) > 0 {
+		return Account{}, clientErr(409, "gl: account %s cannot be deactivated: the posting rules %s need it; deactivating it would stop those postings", code, strings.Join(need, ", "))
 	}
 	return s.store.SetAccountActive(ctx, code, false)
 }
