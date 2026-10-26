@@ -277,7 +277,9 @@ func (s *Service) VoidJournal(ctx context.Context, id string) (Journal, error) {
 
 // ReverseJournal posts a one-click net-zero reversing JE for a POSTED journal: every leg's debit/credit is
 // swapped, so the original + reversal sum to zero on every account. The reversal links back via
-// reverses_journal_id; the original stays POSTED (audit trail intact).
+// reverses_journal_id; the original stays POSTED (audit trail intact). Two guards (FW1-09a): a journal is
+// reversed once, and a journal a module posted is not reversed from the ledger (its document's own
+// correction is the path, so the subledgers stay tied to the GL).
 func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
@@ -289,6 +291,21 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 	}
 	if orig.Status != StatusPosted {
 		return Journal{}, clientErr(409, "gl: only a POSTED journal can be reversed (status=%s)", orig.Status)
+	}
+	if orig.Source != SourceManual {
+		if orig.ReversesJournalID != "" {
+			return Journal{}, clientErr(409, "gl: entry #%d is itself a reversal; a reversal cannot be reversed", orig.EntryNo)
+		}
+		if owner := systemJournalOwner(orig); owner != "" {
+			return Journal{}, clientErr(409, "gl: entry #%d was posted by %s, not by a person in the ledger; it cannot be reversed from here", orig.EntryNo, owner)
+		}
+	}
+	reversed, err := s.store.JournalIsReversed(ctx, id)
+	if err != nil {
+		return Journal{}, err
+	}
+	if reversed {
+		return Journal{}, clientErr(409, "gl: entry #%d was already reversed; a journal can be reversed once", orig.EntryNo)
 	}
 	lines := make([]draftLine, 0, len(orig.Lines))
 	for _, l := range orig.Lines {
@@ -314,6 +331,36 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 		return Journal{}, err
 	}
 	return s.GetJournal(ctx, newID)
+}
+
+// systemJournalOwner names the module behind a journal the ledger did not post, for the reverse route's
+// refusal. It is only called for non MANUAL sources. ADJUSTMENT covers several writers, so the
+// idempotency key's prefix names the writer when the source alone cannot (bankrec's clearing journals,
+// the landed cost paths and the holdback release all file under ADJUSTMENT); a key the map does not
+// know still refuses, as "another module". FW1-09a.
+func systemJournalOwner(j Journal) string {
+	switch j.Source {
+	case SourceInvoice:
+		return "the invoicing module"
+	case SourcePayment:
+		return "the payments module"
+	case SourceFulfillment:
+		return "the fulfilment module"
+	case SourcePOReceipt:
+		return "the purchasing module"
+	case SourceClosing:
+		return "the year end close"
+	}
+	for prefix, owner := range map[string]string{
+		"bankrec:":          "the bank reconciliation module",
+		"landedcost.":       "the landed cost module",
+		"holdback-release:": "the holdback module",
+	} {
+		if strings.HasPrefix(j.IdempotencyKey, prefix) {
+			return owner
+		}
+	}
+	return "another module"
 }
 
 // - recurring -
