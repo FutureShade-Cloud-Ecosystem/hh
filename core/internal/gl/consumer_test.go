@@ -314,6 +314,52 @@ func TestAC14_TillOverShort(t *testing.T) {
 	}
 }
 
+// FW1-13, the till movement journals: a paid out debits the expense account the till rules hold and
+// credits the drawer; a paid in is the mirror; a drop and a lodgement book nothing at record time (a
+// lodgement's DR 1000 / CR 1020 is the bank match's journal).
+func TestTillMovementPostedLegs(t *testing.T) {
+	ctx := context.Background()
+
+	// Paid out $12.34 → DR 6350 / CR 1020.
+	fOut := newFakeStore()
+	outSvc := newTestService(fOut)
+	if err := outSvc.consume(ctx, ev("till.movement.posted", map[string]any{
+		"movement_id": "m1", "session_id": "s1", "branch_id": "b1",
+		"movement_type": "PAID_OUT", "method": "CASH", "amount_cents": 1234,
+	})); err != nil {
+		t.Fatalf("paid out consume: %v", err)
+	}
+	dOut := fOut.lastInserted()
+	wantLeg(t, dOut, "6350", 1234, 0)
+	wantLeg(t, dOut, "1020", 0, 1234)
+
+	// Paid in $45.67 → DR 1020 / CR 6350.
+	fIn := newFakeStore()
+	inSvc := newTestService(fIn)
+	if err := inSvc.consume(ctx, ev("till.movement.posted", map[string]any{
+		"movement_id": "m2", "session_id": "s1", "branch_id": "b1",
+		"movement_type": "PAID_IN", "method": "CASH", "amount_cents": 4567,
+	})); err != nil {
+		t.Fatalf("paid in consume: %v", err)
+	}
+	dIn := fIn.lastInserted()
+	wantLeg(t, dIn, "1020", 4567, 0)
+	wantLeg(t, dIn, "6350", 0, 4567)
+
+	// A lodgement row that reaches the topic anyway books nothing.
+	fL := newFakeStore()
+	lSvc := newTestService(fL)
+	if err := lSvc.consume(ctx, ev("till.movement.posted", map[string]any{
+		"movement_id": "m3", "session_id": "s1", "branch_id": "b1",
+		"movement_type": "LODGEMENT", "method": "CASH", "amount_cents": 2000,
+	})); err != nil {
+		t.Fatalf("lodgement consume: %v", err)
+	}
+	if len(fL.journals) != 0 {
+		t.Fatalf("a lodgement must not book at record time, got %d journals", len(fL.journals))
+	}
+}
+
 // SF-2d round 4 (ruled): every payment.reversed is Dr AR / Cr 2310 refund_payable, the full amount, whatever the
 // tender, the session, the register or the deposit status; one journal however often the event is delivered; and the
 // account never depends on a status the payload or the payment reader carries.

@@ -55,6 +55,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildDepositCancelled(ctx, e.Payload)
 	case "till.session.completed":
 		draft, post, err = s.buildTillSessionCompleted(ctx, e.Payload)
+	case "till.movement.posted":
+		draft, post, err = s.buildTillMovementPosted(ctx, e.Payload)
 	case "pos.return.committed":
 		draft, post, err = s.buildPosReturnCommitted(ctx, e.Payload)
 	case "order.returned":
@@ -1078,6 +1080,67 @@ func (s *Service) buildTillSessionCompleted(ctx context.Context, payload []byte)
 		SourceRefID:    p.SessionID,
 		IdempotencyKey: "till.session.completed:" + p.SessionID,
 		Memo:           "Till over/short",
+		BranchID:       p.BranchID,
+		OccurredAt:     s.clock(),
+		Lines:          lines,
+	}, true, nil
+}
+
+type tillMovementPayload struct {
+	MovementID   string `json:"movement_id"`
+	SessionID    string `json:"session_id"`
+	BranchID     string `json:"branch_id"`
+	MovementType string `json:"movement_type"`
+	Method       string `json:"method"`
+	AmountCents  int64  `json:"amount_cents"`
+}
+
+// buildTillMovementPosted posts a paid in or a paid out movement's journal (FW1-13). The accounts
+// are the till family's own rules (till.session.completed, 0032): undeposited holds the drawer and
+// over_short is the expense account the rules hold, so a paid out debits the expense and credits
+// the drawer, and a paid in is the mirror. The movement names no counter account of its own (the
+// input carries none), so the rules' expense account is the default until a rules row says
+// otherwise. A DROP and a LODGEMENT never reach the outbox from the till: a drop's cash is still
+// undeposited company cash, and a lodgement's DR 1000 / CR 1020 is the bank match's journal
+// (matcher.go), which a record-time twin would double. The defensive post=false for those two
+// keeps a hand-planted outbox row a no-op instead of a wrong book.
+func (s *Service) buildTillMovementPosted(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p tillMovementPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: till.movement.posted payload: %w", err)
+	}
+	if p.MovementID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: till.movement.posted missing movement_id")
+	}
+	if p.MovementType != "PAID_IN" && p.MovementType != "PAID_OUT" {
+		return journalDraft{}, false, nil
+	}
+	et := "till.session.completed" // the till family's rules; the movement posts to the same two accounts
+	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	undCode, err := pick(rules, et, "undeposited")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	expenseCode, err := pick(rules, et, "over_short")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	amt := p.AmountCents
+	var lines []draftLine
+	memo := p.MovementType + " " + p.Method + " on session " + p.SessionID
+	if p.MovementType == "PAID_OUT" {
+		lines = []draftLine{dr(expenseCode, amt, memo), cr(undCode, amt, "drawer paid out")}
+	} else {
+		lines = []draftLine{dr(undCode, amt, memo), cr(expenseCode, amt, "drawer paid in")}
+	}
+	return journalDraft{
+		Source:         SourceAdjustment,
+		SourceRefID:    p.MovementID,
+		IdempotencyKey: "till.movement.posted:" + p.MovementID,
+		Memo:           "Till movement " + p.MovementType,
 		BranchID:       p.BranchID,
 		OccurredAt:     s.clock(),
 		Lines:          lines,

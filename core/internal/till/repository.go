@@ -323,8 +323,8 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 		return fmt.Errorf("till: begin movement: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var status string
-	if err := tx.QueryRow(ctx, `SELECT status FROM till_sessions WHERE id = $1 FOR NO KEY UPDATE`, m.TillSessionID).Scan(&status); err != nil {
+	var status, branchID string
+	if err := tx.QueryRow(ctx, `SELECT status, branch_id::text FROM till_sessions WHERE id = $1 FOR NO KEY UPDATE`, m.TillSessionID).Scan(&status, &branchID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errNotFound
 		}
@@ -333,13 +333,40 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 	if status != StatusOpen {
 		return clientErr(409, "till: movements require an OPEN session")
 	}
-	if _, err := tx.Exec(ctx, insertMovementSQL,
-		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy)); err != nil {
+	var movementID string
+	if err := tx.QueryRow(ctx, insertMovementSQL+` RETURNING id`,
+		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy)).Scan(&movementID); err != nil {
 		return fmt.Errorf("till: insert movement: %w", err)
+	}
+	// Transactional outbox, the session close's own rail (till.session.completed, 0032): a paid in or
+	// a paid out carries its GL facts in the SAME tx as the row, so the journal posts exactly once.
+	// A DROP and a LODGEMENT deliberately emit nothing: a drop's cash is still the dealer's
+	// undeposited cash, only out of the drawer, and a lodgement's DR 1000 / CR 1020 is the bank
+	// match's journal (posting it here too would count every matched deposit twice).
+	if m.MovementType == MovementPaidIn || m.MovementType == MovementPaidOut {
+		payload, err := json.Marshal(map[string]any{
+			"movement_id":   movementID,
+			"session_id":    m.TillSessionID,
+			"branch_id":     branchID,
+			"movement_type": m.MovementType,
+			"method":        m.Method,
+			"amount_cents":  m.AmountCents,
+		})
+		if err != nil {
+			return fmt.Errorf("till: marshal movement posted: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO events_outbox (topic, payload) VALUES ('till.movement.posted', $1)`, payload); err != nil {
+			return fmt.Errorf("till: emit movement posted: %w", err)
+		}
 	}
 	return tx.Commit(ctx)
 }
 
+// insertMovementSQL is the movement INSERT. The pool path (InsertMovement) appends RETURNING id for
+// the outbox payload's own key; the in-caller-tx path (InsertMovementTx, the POS return's drawer
+// movement) shares the statement without it and never emits: the return event's journal already
+// carries the drawer credit.
 const insertMovementSQL = `INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reference, created_by)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`
 
