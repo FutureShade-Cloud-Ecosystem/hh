@@ -3,6 +3,7 @@ package tax
 import (
 	"encoding/json"
 	"errors"
+	auth "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"net/http"
@@ -211,7 +212,15 @@ func (h *Handler) recon(w http.ResponseWriter, r *http.Request, caller guards.St
 		httpx.Error(w, http.StatusBadRequest, "year required")
 		return
 	}
-	out, err := h.svc.ReconcileReport(r.Context(), year, month, q.Get("branch_id"))
+	// FW1-10: the reconcile is fenced to the caller's branch reach, the rule the fenced GL reads
+	// carry (ListJournals, DIB-392). A named branch must be reachable, and the consolidated figure
+	// (no branch named) is the whole company's books, a dealer wide caller's read.
+	branchID := q.Get("branch_id")
+	if (branchID == "" && caller.Scope != auth.ScopeGlobal) || (branchID != "" && !caller.CanAccessBranch(branchID)) {
+		httpx.Error(w, http.StatusForbidden, "tax: caller cannot access this branch")
+		return
+	}
+	out, err := h.svc.ReconcileReport(r.Context(), year, month, branchID)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
