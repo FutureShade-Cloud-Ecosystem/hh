@@ -118,9 +118,9 @@ func fw1PlantDeposit(t *testing.T, pool *pgxpool.Pool, docAt time.Time) string {
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, due_date,
 		                       subtotal_cents, tax_cents, total_cents, balance_cents, source_kind, finalized_at)
-		 VALUES ($1, $2, $3, $4, 'FINALIZED', CURRENT_DATE, 4000, 0, 4000, 4000, 'SUPPLIER_DEPOSIT', $5)
+		 VALUES ($1, $2, $3, $4, 'FINALIZED', $5::date, 4000, 0, 4000, 4000, 'SUPPLIER_DEPOSIT', $6)
 		 RETURNING id::text`,
-		fmt.Sprintf("INV-F1-%d", suffix), cust, ord, branch, docAt).Scan(&inv); err != nil {
+		fmt.Sprintf("INV-F1-%d", suffix), cust, ord, branch, docAt, docAt).Scan(&inv); err != nil {
 		t.Fatalf("plant the deposit document: %v", err)
 	}
 	t.Cleanup(func() {
