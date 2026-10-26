@@ -97,6 +97,7 @@ type fw1Walk struct {
 	bankAccountID          string
 
 	nullBranchLines int // snapshot taken before the year end close posts its own lines
+	seededInvoiceID []string
 	stepErrs        []string
 }
 
@@ -314,44 +315,50 @@ func TestFW1MonthWalk(t *testing.T) {
 	}
 
 	// -- opening balances -------------------------------------------------------------
-	// The seed plants an open account invoice (INV-2026-0002) with no journal, and opening stock
-	// with no 1200 balance. The walk brings both onto the ledger the real way: the invoice
-	// through its own ar.invoice.finalized event and the real consumer, the opening stock
-	// through the GL's own external post (the opening trial balance entry), valued with the
-	// same read assertion 3 uses.
-	// Every open seeded invoice (the Dibbits open account and the landed cost demo's), by branch.
+	// The seed plants open account invoices with no journal, and opening stock with no 1200
+	// balance. Both are loaded as opening trial balance entries against 3000 (opening equity),
+	// never into the walk month's 4000 revenue or 2200 HST payable.
+	seedInvRows, err := w.pool.Query(ctx, `SELECT id::text FROM invoices`)
+	if err != nil {
+		t.Fatalf("reading seeded invoices: %v", err)
+	}
+	for seedInvRows.Next() {
+		var id string
+		if err := seedInvRows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		w.seededInvoiceID = append(w.seededInvoiceID, id)
+	}
+	seedInvRows.Close()
+
 	openRows, err := w.pool.Query(ctx, `
-		SELECT branch_id::text, COALESCE(SUM(balance_cents),0), COALESCE(SUM(subtotal_cents * balance_cents / NULLIF(total_cents,0)),0), COALESCE(SUM(tax_cents * balance_cents / NULLIF(total_cents,0)),0)
+		SELECT branch_id::text, COALESCE(SUM(balance_cents),0)
 		  FROM invoices WHERE status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents > 0 GROUP BY branch_id`)
 	if err != nil {
 		t.Fatalf("the opening AR read: %v", err)
 	}
 	type openAR struct {
-		branch         string
-		bal, sub, taxC int64
+		branch string
+		bal    int64
 	}
 	var opens []openAR
 	for openRows.Next() {
 		var o openAR
-		if err := openRows.Scan(&o.branch, &o.bal, &o.sub, &o.taxC); err != nil {
+		if err := openRows.Scan(&o.branch, &o.bal); err != nil {
 			t.Fatal(err)
 		}
 		opens = append(opens, o)
 	}
 	openRows.Close()
 	for i, o := range opens {
-		lines := []gl.ExternalLine{
-			{AccountCode: "1100", DebitCents: o.bal, Memo: "opening AR"},
-			{AccountCode: "4000", CreditCents: o.sub, Memo: "opening revenue"},
-		}
-		if o.taxC != 0 { // a zero leg would break the lines' amount check
-			lines = append(lines, gl.ExternalLine{AccountCode: "2200", CreditCents: o.taxC, Memo: "opening HST"})
-		}
 		if _, err := w.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
-			Source: gl.SourceInvoice, SourceRefID: "88a20000-0000-4000-8000-0000000000a2",
+			Source: "MANUAL", SourceRefID: "88a20000-0000-4000-8000-0000000000a2",
 			IdempotencyKey: fmt.Sprintf("fw1:opening:ar:%d", i),
 			Memo:           "opening accounts receivable, the seeded open invoices", BranchID: o.branch,
-			Lines: lines,
+			Lines: []gl.ExternalLine{
+				{AccountCode: "1100", DebitCents: o.bal, Memo: "opening AR"},
+				{AccountCode: "3000", CreditCents: o.bal, Memo: "opening equity"},
+			},
 		}); err != nil {
 			t.Fatalf("the opening AR journal for %s: %v", o.branch, err)
 		}
@@ -807,8 +814,39 @@ func (w *fw1Walk) assertStockTies(t *testing.T) {
 
 // 4. The HST reconcile ties.
 func (w *fw1Walk) assertHSTTies(t *testing.T) {
+	ctx := context.Background()
+	var gl2200Move, docSalesHST, billITC int64
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(COALESCE(l.credit_cents, 0) - COALESCE(l.debit_cents, 0)), 0)
+		  FROM gl_journal_lines l
+		  JOIN gl_journals j ON j.id = l.journal_id
+		  JOIN gl_accounts a ON a.id = l.account_id
+		  JOIN fiscal_periods fp ON fp.id = j.period_id
+		 WHERE a.code = '2200' AND j.status = 'POSTED' AND fp.year = $1 AND fp.month = $2`,
+		w.year, w.month).Scan(&gl2200Move); err != nil {
+		t.Fatalf("the GL 2200 month movement read: %v", err)
+	}
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(tax_cents), 0)
+		  FROM invoices
+		 WHERE status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
+		   AND NOT (id::text = ANY($1))`, w.seededInvoiceID).Scan(&docSalesHST); err != nil {
+		t.Fatalf("the month documents HST read: %v", err)
+	}
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(tax_cents), 0)
+		  FROM purchasing_bills
+		 WHERE status = 'POSTED'`).Scan(&billITC); err != nil {
+		t.Fatalf("the vendor bill ITC read: %v", err)
+	}
+	netDocHST := docSalesHST - billITC
+	if gl2200Move != netDocHST {
+		t.Errorf("GL 2200 month movement %s does not tie to the month's documents HST %s (sales and credit memos HST %s less vendor bill ITC %s): GL 2200 is %s by %s",
+			fw1Dollars(gl2200Move), fw1Dollars(netDocHST), fw1Dollars(docSalesHST), fw1Dollars(billITC),
+			shorter(gl2200Move, netDocHST), byDollars(gl2200Move-netDocHST))
+	}
 	svc := tax.NewService(tax.NewRepository(w.pool)).WithGLBalances(glBalanceAdapter{svc: w.money.glSvc})
-	rep, err := svc.ReconcileReport(context.Background(), w.year, w.month, "")
+	rep, err := svc.ReconcileReport(ctx, w.year, w.month, "")
 	if err != nil {
 		t.Fatalf("the HST reconcile: %v", err)
 	}
