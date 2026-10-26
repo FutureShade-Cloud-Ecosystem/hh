@@ -209,22 +209,6 @@ func (s *Service) OrderActivityFor(ctx context.Context, orderID string, withPaym
 		}
 	}
 
-	// 2b. Money a reversal held and a manager applied to the order's invoices (SF-2r round 2): re-application writes no
-	// allocation, so the payment rows above omit it. Part of the payment trail, absent for a caller who does not hold it.
-	if withPayments && s.reapplied != nil {
-		slices, rerr := s.reapplied.ReappliedToOrder(ctx, orderID)
-		if rerr != nil {
-			return OrderActivity{}, rerr
-		}
-		for _, sl := range slices {
-			out.Rows = append(out.Rows, ActivityRow{
-				ID: "reapplied:" + sl.ID, Kind: "event", OccurredAt: sl.AppliedAt, ActorID: sl.ActorID, ActorName: sl.ActorName,
-				Summary: fmt.Sprintf("applied a %s payment (%s) to invoice %s, re applied from a reversed payment %s",
-					moneyStr(sl.AmountCents), humanCode(sl.Method), sl.InvoiceNo, sl.PaymentNo),
-			})
-		}
-	}
-
 	// 3. Human notes (DIB-493) interleave on the same clock.
 	if ns, ok := s.store.(activityNoteStore); ok {
 		notes, nerr := ns.ListOrderNotes(ctx, orderID)

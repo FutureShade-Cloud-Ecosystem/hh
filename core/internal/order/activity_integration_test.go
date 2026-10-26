@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 )
 
 // activityFixture seeds a customer + order (+ one staff user for attribution) in the Trenton branch
@@ -45,11 +44,6 @@ func activityFixture(t *testing.T) (ctx context.Context, repo *Repository, svc *
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM order_notes WHERE order_id = $1`, ord)
 		_, _ = pool.Exec(ctx, `DELETE FROM audit_log WHERE entity_id = $1`, ord)
-		_, _ = pool.Exec(ctx, `DELETE FROM payment_reapplications WHERE customer_id = $1`, cust)
-		_, _ = pool.Exec(ctx, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, cust)
-		_, _ = pool.Exec(ctx, `DELETE FROM customer_transactions WHERE customer_id = $1`, cust)
-		_, _ = pool.Exec(ctx, `UPDATE payments SET reversed_by_payment_id = NULL WHERE customer_id = $1`, cust)
-		_, _ = pool.Exec(ctx, `DELETE FROM payment_allocations WHERE payment_id IN (SELECT id FROM payments WHERE customer_id = $1)`, cust)
 		_, _ = pool.Exec(ctx, `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE order_id = $1)`, ord)
 		_, _ = pool.Exec(ctx, `DELETE FROM payments WHERE customer_id = $1`, cust)
 		_, _ = pool.Exec(ctx, `DELETE FROM invoices WHERE order_id = $1`, ord)
@@ -259,115 +253,4 @@ func findPrefix(rows []ActivityRow, prefix string) *ActivityRow {
 		}
 	}
 	return nil
-}
-
-// SF-2r round 2: a slice of a reversed payment's held money applied to an invoice of the order shows in the order's
-// activity beside the allocation rows, with its date, amount, tender, the reversed payment it came from and who applied
-// it, and only to a caller who holds the payment trail.
-func TestIntegration_OrderActivity_AReappliedSliceShows(t *testing.T) {
-	ctx, _, svc, cust, ord, staffID := activityFixture(t)
-	pool := intPool(t)
-	readCtx := ctxWith(ctx, globalStaff(staffID))
-	var inv string
-	if err := pool.QueryRow(ctx,
-		`INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, due_date, subtotal_cents, tax_cents,
-		                       total_cents, balance_cents, finalized_at, created_by)
-		 VALUES ($1, $2, $3, $4, 'FINALIZED', CURRENT_DATE + 30, 125000, 0, 125000, 125000, now(), $5) RETURNING id::text`,
-		fmt.Sprintf("INV-RA-%d", time.Now().UnixNano()), cust, ord, trentonBranch, staffID).Scan(&inv); err != nil {
-		t.Fatal(err)
-	}
-	repo := payments.NewRepository(pool)
-	p, err := repo.Pay(ctx, cust, "CARD", fmt.Sprintf("gw-ra-%d", time.Now().UnixNano()), []payments.Allocation{{InvoiceID: inv, AmountCents: 10_000}})
-	if err != nil {
-		t.Fatalf("take the payment: %v", err)
-	}
-	money := payments.NewReverseService(repo)
-	if _, err := money.Reverse(ctx, payments.ReverseInput{PaymentID: p.ID, Reason: "wrong account", ActorID: staffID, IsManager: true}); err != nil {
-		t.Fatalf("reverse: %v", err)
-	}
-	if _, err := money.Reapply(ctx, payments.ReapplyInput{PaymentID: p.ID, Reason: "rung on the wrong account", ActorID: staffID, IdempotencyKey: "ra-order-" + inv,
-		Allocations: []payments.Allocation{{InvoiceID: inv, AmountCents: 10_000}}, IsManager: true}); err != nil {
-		t.Fatalf("re-apply: %v", err)
-	}
-	svc = svc.WithReapplied(NewPaymentsReappliedReader(repo))
-	slice := func(withPayments bool) []ActivityRow {
-		out, err := svc.OrderActivityFor(readCtx, ord, withPayments)
-		if err != nil {
-			t.Fatalf("OrderActivityFor: %v", err)
-		}
-		var rows []ActivityRow
-		for _, r := range out.Rows {
-			if strings.Contains(r.Summary, "re applied from a reversed payment") {
-				rows = append(rows, r)
-			}
-		}
-		return rows
-	}
-	got := slice(true)
-	if len(got) != 1 {
-		t.Fatalf("the order's activity carries %d re applied rows, want 1", len(got))
-	}
-	r := got[0]
-	if !strings.Contains(r.Summary, "$100.00") || !strings.Contains(r.Summary, "(card)") || !strings.Contains(r.Summary, "INV-RA-") || !strings.Contains(r.Summary, p.PaymentNo) {
-		t.Errorf("the row reads %q, want the amount, tender, invoice and the reversed payment's number", r.Summary)
-	}
-	if r.ActorName != "Tanya Ho" || r.OccurredAt.Before(time.Now().Add(-time.Minute)) {
-		t.Errorf("the row is by %q at %v, want the applier's name and now", r.ActorName, r.OccurredAt)
-	}
-	if without := slice(false); len(without) != 0 {
-		t.Errorf("a caller without the payment trail reads %d re applied rows, want none", len(without))
-	}
-}
-
-// PR 602 round 2: a payment, its reversal and the re-application read in the order's activity as one applied line, one
-// reversed line and one re applied line, nothing doubled. A reversal's contra row used to read as a second
-// "applied a $100.00 payment".
-func TestIntegration_OrderActivity_AReversalReadsAsItsOwnAct(t *testing.T) {
-	ctx, _, svc, cust, ord, staffID := activityFixture(t)
-	pool := intPool(t)
-	readCtx := ctxWith(ctx, globalStaff(staffID))
-	var inv string
-	if err := pool.QueryRow(ctx,
-		`INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, due_date, subtotal_cents, tax_cents,
-		                       total_cents, balance_cents, finalized_at, created_by)
-		 VALUES ($1, $2, $3, $4, 'FINALIZED', CURRENT_DATE + 30, 125000, 0, 125000, 125000, now(), $5) RETURNING id::text`,
-		fmt.Sprintf("INV-RV-%d", time.Now().UnixNano()), cust, ord, trentonBranch, staffID).Scan(&inv); err != nil {
-		t.Fatal(err)
-	}
-	repo := payments.NewRepository(pool)
-	p, err := repo.Pay(ctx, cust, "CARD", fmt.Sprintf("gw-rv-%d", time.Now().UnixNano()), []payments.Allocation{{InvoiceID: inv, AmountCents: 10_000}})
-	if err != nil {
-		t.Fatalf("take the payment: %v", err)
-	}
-	money := payments.NewReverseService(repo)
-	if _, err := money.Reverse(ctx, payments.ReverseInput{PaymentID: p.ID, Reason: "wrong account", ActorID: staffID, IsManager: true}); err != nil {
-		t.Fatalf("reverse: %v", err)
-	}
-	if _, err := money.Reapply(ctx, payments.ReapplyInput{PaymentID: p.ID, Reason: "rung on the wrong account", ActorID: staffID, IdempotencyKey: "rv-order-" + inv,
-		Allocations: []payments.Allocation{{InvoiceID: inv, AmountCents: 10_000}}, IsManager: true}); err != nil {
-		t.Fatalf("re-apply: %v", err)
-	}
-	svc = svc.WithReapplied(NewPaymentsReappliedReader(repo))
-	out, err := svc.OrderActivityFor(readCtx, ord, true)
-	if err != nil {
-		t.Fatalf("OrderActivityFor: %v", err)
-	}
-	var applied, reversed, reapplied []string
-	for _, r := range out.Rows {
-		switch {
-		case strings.Contains(r.Summary, "re applied from a reversed payment"):
-			reapplied = append(reapplied, r.Summary)
-		case strings.HasPrefix(r.Summary, "reversed a "):
-			reversed = append(reversed, r.Summary)
-		case strings.HasPrefix(r.Summary, "applied a "):
-			applied = append(applied, r.Summary)
-		}
-	}
-	t.Logf("applied %v | reversed %v | re applied %v", applied, reversed, reapplied)
-	if len(applied) != 1 || len(reversed) != 1 || len(reapplied) != 1 {
-		t.Errorf("the order's activity carries %d applied, %d reversed and %d re applied lines, want one of each", len(applied), len(reversed), len(reapplied))
-	}
-	if len(reversed) == 1 && (!strings.Contains(reversed[0], "$100.00") || !strings.Contains(reversed[0], "(card)") || !strings.Contains(reversed[0], "INV-RV-")) {
-		t.Errorf("the reversed line reads %q, want the amount, tender and invoice", reversed[0])
-	}
 }

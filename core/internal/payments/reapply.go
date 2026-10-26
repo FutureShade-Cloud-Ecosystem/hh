@@ -224,29 +224,3 @@ func (s *ReverseService) Held(ctx context.Context, paymentID string, isManager b
 	}
 	return s.reapply.HeldFor(ctx, paymentID, canAccessBranch)
 }
-
-// InvoiceReapplication is one slice of a reversed payment's held money applied to an invoice, as the register reads it
-// (SF-2r): the invoice's own applied entry for it.
-type InvoiceReapplication struct {
-	ID          string    `json:"id"`
-	PaymentID   string    `json:"payment_id"`
-	PaymentNo   string    `json:"payment_no"`
-	Method      string    `json:"method"`
-	AmountCents int64     `json:"amount_cents"`
-	AppliedAt   time.Time `json:"applied_at"`
-	AppliedBy   string    `json:"applied_by"` // users.id, "" when none
-	AppliedName string    `json:"applied_name"`
-}
-
-// OrderReapplication is one slice applied to an invoice of an order, as the order's activity reads it (SF-2r round 2).
-type OrderReapplication struct {
-	ID          string    `json:"id"`
-	PaymentID   string    `json:"payment_id"`
-	PaymentNo   string    `json:"payment_no"`
-	Method      string    `json:"method"`
-	InvoiceNo   string    `json:"invoice_no"`
-	AmountCents int64     `json:"amount_cents"`
-	AppliedAt   time.Time `json:"applied_at"`
-	AppliedBy   string    `json:"applied_by"`
-	AppliedName string    `json:"applied_name"`
-}

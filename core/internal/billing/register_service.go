@@ -206,7 +206,6 @@ type Sender interface {
 type RegisterService struct {
 	store      registerStore
 	money      receiptWriter
-	reapplied  reappliedReader
 	sender     Sender
 	statements statementRunner
 	clock      func() time.Time
@@ -231,29 +230,6 @@ func NewRegisterService(store registerStore) *RegisterService {
 // half-working: a receivables screen that took a payment and did not post it is worse than one that
 // says it cannot take payments today.
 func (s *RegisterService) WithMoney(w receiptWriter) *RegisterService { s.money = w; return s }
-
-// ReappliedSlice is one slice of a reversed payment's held money applied to an invoice (SF-2r): what the invoice's
-// Applied figure and its timeline add to the allocations the settle wrote.
-type ReappliedSlice struct {
-	PaymentNo   string
-	Method      string
-	AmountCents int64
-	AppliedAt   time.Time
-	AppliedBy   string // users.id, "" when none
-	AppliedName string // the applier's display name, "" when none
-}
-
-// reappliedReader is the payments module's read of re-applied slices, reached through an interface (the module owns
-// the table; the census refuses a direct read).
-type reappliedReader interface {
-	ReappliedToInvoice(ctx context.Context, invoiceID string) ([]ReappliedSlice, error)
-}
-
-// WithReapplied binds the re-applied slices read. Nil leaves the register reading allocations alone.
-func (s *RegisterService) WithReapplied(r reappliedReader) *RegisterService {
-	s.reapplied = r
-	return s
-}
 
 // WithSender binds the delivery port.
 func (s *RegisterService) WithSender(n Sender) *RegisterService { s.sender = n; return s }
@@ -367,17 +343,6 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 	if err != nil {
 		return InvoiceDetail{}, err
 	}
-	// Re-application writes no allocation, so the payments module's own read adds the slices of a reversed payment's
-	// held money applied to this invoice: the Applied figure and the timeline both carry them (SF-2r).
-	var slices []ReappliedSlice
-	if s.reapplied != nil {
-		if slices, err = s.reapplied.ReappliedToInvoice(ctx, invoiceID); err != nil {
-			return InvoiceDetail{}, err
-		}
-		for _, sl := range slices {
-			applied += sl.AmountCents
-		}
-	}
 	block, onHold, accountDisputed, err := s.store.CustomerBlockFor(ctx, h.CustomerID)
 	if err != nil {
 		return InvoiceDetail{}, err
@@ -393,9 +358,6 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 	activity, err := s.store.ActivityFor(ctx, invoiceID, h.OrderID, withPayments)
 	if err != nil {
 		return InvoiceDetail{}, err
-	}
-	if withPayments {
-		activity = withReappliedEntries(activity, slices)
 	}
 	lastContact, err := s.store.LastContactFor(ctx, h.CustomerID)
 	if err != nil {
@@ -934,24 +896,4 @@ func (s *RegisterService) StatementsForSelection(ctx context.Context, invoiceIDs
 		out.RunIDs = []string{}
 	}
 	return out, nil
-}
-
-// reappliedDetail is the words of a re-applied slice's timeline entry: the reversed payment it came from and how.
-const reappliedDetail = "re applied from a reversed payment"
-
-// withReappliedEntries adds one PAYMENT entry per re-applied slice to the timeline and keeps it newest first and at
-// the same forty rows the read is bounded to, so a slice is as visible as any applied entry beside it.
-func withReappliedEntries(activity []ActivityEntry, slices []ReappliedSlice) []ActivityEntry {
-	if len(slices) == 0 {
-		return activity
-	}
-	out := append([]ActivityEntry(nil), activity...)
-	for _, sl := range slices {
-		out = append(out, ActivityEntry{Kind: "PAYMENT", At: sl.AppliedAt, Detail: sl.PaymentNo + " · " + sl.Method + " · " + reappliedDetail, AmountCents: sl.AmountCents, Actor: sl.AppliedName})
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
-	if len(out) > 40 {
-		out = out[:40]
-	}
-	return out
 }

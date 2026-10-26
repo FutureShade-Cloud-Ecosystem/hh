@@ -152,10 +152,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithReorderPricing(pricingSvc).
-		WithReorderInventory(inventorySvc).
-		// The money a reversal held and a manager applied to the order's invoices, read through the payments module's
-		// own seam for the activity stream (SF-2r round 2).
-		WithReapplied(order.NewPaymentsReappliedReader(payments.NewRepository(pool)))
+		WithReorderInventory(inventorySvc)
 	// The payment trail reader is bound once the role gate's reader exists (bindPaymentTrail); until
 	// then the order activity and the register withhold the payments from every caller.
 	paymentTrail := &billing.LatePaymentTrail{}
