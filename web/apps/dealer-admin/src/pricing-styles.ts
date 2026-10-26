@@ -164,31 +164,4 @@ export const pricingStyles = css`
   .pr-tabs-hidden {
     display: none !important;
   }
-  .badge-always {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: var(--hh-radius-pill);
-    font-size: 11px;
-    font-weight: 700;
-    background: color-mix(in srgb, var(--hh-accent-text) 15%, transparent);
-    color: var(--hh-accent-text);
-  }
-  .badge-not-default {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: var(--hh-radius-pill);
-    font-size: 11px;
-    font-weight: 700;
-    background: var(--hh-row-alt);
-    color: var(--hh-text-dim);
-  }
-  .badge-cod {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: var(--hh-radius-pill);
-    font-size: 11px;
-    font-weight: 700;
-    background: color-mix(in srgb, var(--hh-danger) 15%, transparent);
-    color: var(--hh-danger);
-  }
 `;
