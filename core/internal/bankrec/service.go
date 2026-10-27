@@ -825,8 +825,15 @@ func (s *Service) ApproveRule(ctx context.Context, in RuleInput, approvedBy stri
 	if len(in.Spec) == 0 {
 		return MatchRule{}, badRequest("bankrec: rule spec is required")
 	}
-	if kind := specStr(in.Spec, "kind"); kind != KindGatewayRefExact && kind != KindLodgementRefExact && kind != KindDescriptorFuzzy {
+	kind := specStr(in.Spec, "kind")
+	if kind != KindGatewayRefExact && kind != KindLodgementRefExact && kind != KindDescriptorFuzzy {
 		return MatchRule{}, unprocessable("bankrec: spec.kind must be one of gateway_ref_exact, lodgement_ref_exact, descriptor_fuzzy")
+	}
+	// FW1-05 item 6: a lodgement reference rule matches exactly (zero tolerance, AC3); a cent of drift on a
+	// cash or cheque deposit is matched by hand, never auto booked. Only the card settlement rules may carry
+	// a tolerance, and their remainder goes to the fee account so the journal still balances.
+	if kind == KindLodgementRefExact && specInt(in.Spec, "tolerance_cents") != 0 {
+		return MatchRule{}, unprocessable("bankrec: a lodgement reference rule must carry tolerance_cents 0; a cent of drift is matched by hand")
 	}
 	rule, err := s.repo.ApproveNewRuleVersion(ctx, in, approvedBy)
 	if err != nil {

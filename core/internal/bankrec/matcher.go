@@ -40,7 +40,9 @@ func matchLine(line StatementLine, rules []MatchRule, pmts []CandidatePayment, l
 		switch rule.Kind {
 		case KindGatewayRefExact:
 			if p, ok := matchGatewayExact(line, rule, pmts); ok {
-				return buildPaymentProposal(line, rule, p, 0), true
+				// The tolerance's remainder is a processor fee: it books to the fee account so the journal
+				// balances (FW1-05 item 6); matchGatewayExact guarantees it is never negative.
+				return buildPaymentProposal(line, rule, p, p.AmountCents-line.AmountCents), true
 			}
 		case KindLodgementRefExact:
 			if l, ok := matchLodgementExact(line, rule, lodg); ok {
@@ -56,7 +58,9 @@ func matchLine(line StatementLine, rules []MatchRule, pmts []CandidatePayment, l
 }
 
 // matchGatewayExact pairs a card-settlement line to the payment whose gateway_ref equals the line reference,
-// with the amount inside tolerance (0 cents for the seeded rule).
+// with the payment's gross at or above the line and the remainder inside tolerance (0 cents for the seeded
+// rule). A deposit larger than the payment is not a settlement of it: a negative remainder cannot book as a
+// fee, so it refuses (FW1-05 item 6).
 func matchGatewayExact(line StatementLine, rule MatchRule, pmts []CandidatePayment) (CandidatePayment, bool) {
 	ref := normalizeRef(line.Reference)
 	if ref == "" {
@@ -66,7 +70,7 @@ func matchGatewayExact(line StatementLine, rule MatchRule, pmts []CandidatePayme
 		if normalizeRef(p.GatewayRef) != ref {
 			continue
 		}
-		if abs64(p.AmountCents-line.AmountCents) <= rule.ToleranceCents {
+		if p.AmountCents >= line.AmountCents && p.AmountCents-line.AmountCents <= rule.ToleranceCents {
 			return p, true
 		}
 	}
