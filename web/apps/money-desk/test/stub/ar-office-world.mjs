@@ -292,14 +292,15 @@ export function createOfficeWorld(ctx) {
   /** What the payment holds: amount less what was re-applied, for a reversed original; zero otherwise. */
   function heldOf(p) {
     const applied = p.reapplied_cents ?? 0;
-    return { applied, held: p.reversed === true && p.reverses === undefined ? p.amount_cents - applied : 0 };
+    const paidOut = p.paid_out_cents ?? 0;
+    return { applied, paidOut, held: p.reversed === true && p.reverses === undefined ? p.amount_cents - applied - paidOut : 0 };
   }
 
   function heldFor(id) {
     const p = ctx.world().payments.find((x) => x.id === id);
     if (p === undefined) return refuse(404, "payment not found");
-    const { applied, held } = heldOf(p);
-    return ok({ payment_id: p.id, payment_no: p.no, amount_cents: p.amount_cents, reversed: p.reversed === true, applied_cents: applied, held_cents: held });
+    const { applied, paidOut, held } = heldOf(p);
+    return ok({ payment_id: p.id, payment_no: p.no, amount_cents: p.amount_cents, reversed: p.reversed === true, applied_cents: applied, paid_out_cents: paidOut, held_cents: held });
   }
 
   function reapplyHeld(id, body) {
@@ -358,6 +359,44 @@ export function createOfficeWorld(ctx) {
     p.reapplied_cents = (p.reapplied_cents ?? 0) + total;
     world.reapplyKeys.set(key, { payment: id, batch, lines: lines.map((l) => ({ invoice_id: l.invoice_id, invoice_no: l.invoice_no, applied_cents: l.applied_cents })) });
     return ok({ payment_id: id, batch_id: batch, applied_cents: total, held_before_cents: held, held_after_cents: held - total, lines, replayed: false }, 201);
+  }
+
+  /**
+   * SF-2m and SF-2n (core/internal/payments payout.go, reversal.go PayOutHeld), in the core's order: the service's checks,
+   * then the store's. The stub's payments carry no till session, so a write off is refused as the core refuses a payment
+   * rung through no session, and the branch has one open drawer a cash pay out lands on.
+   */
+  function payOutHeld(id, body) {
+    if (body === null) return refuse(400, "invalid JSON body");
+    const world = ctx.world();
+    world.payoutKeys ??= new Map();
+    const reason = String(body.reason ?? "").trim();
+    if (reason === "") return refuse(400, "payments: a reason is required");
+    const key = String(body.idempotency_key ?? "").trim();
+    if (key === "") return refuse(400, "paying out held money needs an idempotency key");
+    const kind = String(body.kind ?? "");
+    if (!["DRAWER", "BANK", "WRITE_OFF"].includes(kind)) return refuse(400, "the kind must be DRAWER, BANK or WRITE_OFF");
+    if (!Number.isInteger(body.amount_cents) || body.amount_cents <= 0) return refuse(400, "the amount must be greater than zero");
+    const reference = String(body.reference ?? "").trim();
+    if (kind === "BANK" && reference === "") return refuse(400, "a bank pay out needs the cheque number or transfer reference");
+    if (!UUID_RE.test(id)) return refuse(400, "payment id must be a uuid");
+    const p = world.payments.find((x) => x.id === id);
+    if (p === undefined) return refuse(404, "payment not found");
+    const { held } = heldOf(p);
+    const spent = world.payoutKeys.get(key);
+    if (spent !== undefined) {
+      if (spent.payment !== id || spent.kind !== kind || spent.amount_cents !== body.amount_cents) return refuse(409, "that idempotency key already paid out held money differently; use a new key");
+      return ok({ payment_id: id, payout_id: spent.payout, kind, amount_cents: spent.amount_cents, held_before_cents: held + spent.amount_cents, held_after_cents: held, replayed: true });
+    }
+    if (p.reverses !== undefined) return refuse(409, "payments: no money is held for this payment: it is itself a reversing entry, the money is held for the payment it reversed");
+    if (p.reversed !== true) return refuse(409, "payments: no money is held for this payment: it has not been reversed");
+    if (body.amount_cents > held) return refuse(409, `payments: that is more than the payment still holds (${held} cents held, ${body.amount_cents} asked for)`);
+    if (kind === "WRITE_OFF") return refuse(409, "payments: that cannot be done with the money held for this payment: this payment was not rung through a till session, so there is no count to cover a write off");
+    world.counter += 1;
+    const payout = ctx.uuid("f", 800 + world.counter);
+    p.paid_out_cents = (p.paid_out_cents ?? 0) + body.amount_cents;
+    world.payoutKeys.set(key, { payment: id, kind, amount_cents: body.amount_cents, payout });
+    return ok({ payment_id: id, payout_id: payout, kind, amount_cents: body.amount_cents, held_before_cents: held, held_after_cents: held - body.amount_cents, replayed: false }, 201);
   }
 
   // ---- settings: the register, the returned payment fee, automatic holds ----------------------------------------------------
@@ -493,6 +532,8 @@ export function createOfficeWorld(ctx) {
     if (m && method === "POST") return voidPayment(m[1], body);
     m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/reapply$/);
     if (m && method === "POST") return reapplyHeld(m[1], body);
+    m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/payout$/);
+    if (m && method === "POST") return payOutHeld(m[1], body);
     m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/held$/);
     if (m && method === "GET") return heldFor(m[1]);
     if (method === "POST" && path === "/api/v1/ar/reminders") {

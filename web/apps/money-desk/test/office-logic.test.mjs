@@ -125,7 +125,7 @@ test("a moment reads as the days since it, from elapsed time and never a guessed
 
 // ---- an invoice: send, dispute, a payment reversal -----------------------------------------------------------------
 
-import { disputeCheck, disputeOutcomeWord, disputeReasonWord, reapplyCheck, reapplyWords, reversalCheck, reversalWords, sendInvoiceWords } from "../src/ar/office-logic.ts";
+import { disputeCheck, disputeOutcomeWord, disputeReasonWord, payoutCheck, payoutWords, reapplyCheck, reapplyWords, reversalCheck, reversalWords, sendInvoiceWords } from "../src/ar/office-logic.ts";
 
 test("a dispute is checked before it is sent: a reason, an amount in dollars, never above the balance", () => {
   assert.deepEqual(disputeCheck({ reason: "DAMAGED", amountText: "100.00", note: " Cracked pallets ", balanceCents: 96_000 }), { ok: true, reason: "DAMAGED", amountCents: 10_000, note: "Cracked pallets" });
@@ -167,6 +167,27 @@ test("a re-application says what moved and what is still held, in the dollars th
   const done = { payment_id: "p", batch_id: "b", applied_cents: 1000, held_before_cents: 2500, held_after_cents: 1500, replayed: false, lines: [{ invoice_id: "i", invoice_no: "INV-1001", applied_cents: 1000, outcome: "PART", balance_after_cents: 5000 }] };
   assert.equal(reapplyWords(done, "PAY-0101"), "$10.00 of payment PAY-0101 is applied to invoice INV-1001. $15.00 is still held for this payment.");
   assert.equal(reapplyWords({ ...done, applied_cents: 2500, held_after_cents: 0 }, "PAY-0101"), "$25.00 of payment PAY-0101 is applied to invoice INV-1001. Nothing is held for this payment now.");
+});
+
+test("a pay out is checked before it is sent: how it leaves, an amount in dollars within what is held, a reference for a cheque, a reason", () => {
+  const ok = { kind: "BANK", amountText: "10.00", reason: " Customer asked for it back ", reference: " CHQ 100245 ", heldCents: 2500 };
+  assert.deepEqual(payoutCheck(ok), { ok: true, kind: "BANK", amountCents: 1000, reason: "Customer asked for it back", reference: "CHQ 100245" });
+  assert.deepEqual(payoutCheck({ ...ok, kind: "DRAWER", reference: "ignored" }), { ok: true, kind: "DRAWER", amountCents: 1000, reason: "Customer asked for it back", reference: "" });
+  assert.match(payoutCheck({ ...ok, kind: "" }).words, /Choose how the money leaves/);
+  assert.match(payoutCheck({ ...ok, amountText: " " }).words, /Enter the amount, such as 100.00/);
+  assert.match(payoutCheck({ ...ok, amountText: "1.001" }).words, /dollars and cents/);
+  assert.match(payoutCheck({ ...ok, amountText: "0" }).words, /more than zero/);
+  assert.equal(payoutCheck({ ...ok, amountText: "25.01" }).words, "That is more than the $25.00 still held for this payment.");
+  assert.match(payoutCheck({ ...ok, reference: " " }).words, /Enter the cheque number or transfer reference/);
+  assert.equal(payoutCheck({ ...ok, kind: "WRITE_OFF", reference: "" }).ok, true, "a write off needs no reference");
+  assert.match(payoutCheck({ ...ok, reason: "  " }).words, /Enter why the money is leaving/);
+});
+
+test("a pay out says what left and what is still held, in the dollars the server named", () => {
+  const done = { payment_id: "p", payout_id: "o", kind: "DRAWER", amount_cents: 1000, held_before_cents: 2500, held_after_cents: 1500, replayed: false };
+  assert.equal(payoutWords(done, "PAY-0101"), "$10.00 of payment PAY-0101 is handed back from the drawer. $15.00 is still held for this payment.");
+  assert.equal(payoutWords({ ...done, kind: "BANK", amount_cents: 2500, held_after_cents: 0 }, "PAY-0101"), "$25.00 of payment PAY-0101 is paid by cheque or transfer. Nothing is held for this payment now.");
+  assert.equal(payoutWords({ ...done, kind: "WRITE_OFF" }, "PAY-0101"), "$10.00 of payment PAY-0101 is written off against the count's shortage. $15.00 is still held for this payment.");
 });
 
 test("a sent invoice says it went through the messaging sink, and a replay says nothing new went", () => {

@@ -6,7 +6,7 @@
 // The limits and sentences follow the core (core/internal/billing: ar_reminders.go, ar_landing.go,
 // register_service.go; core/internal/till; core/internal/payments) so a refusal the browser makes is the one the
 // server would have made.
-import type { BillingAPContact, BillingAPContactRead, BillingLandingPolicy, BillingReminderSend, PaymentsReapplication } from "@hardscapehouse/api-client";
+import type { BillingAPContact, BillingAPContactRead, BillingLandingPolicy, BillingReminderSend, PaymentsPayout, PaymentsReapplication } from "@hardscapehouse/api-client";
 import { refusalWords } from "./ar-logic.js";
 
 // ---- who may, in words, for the walls this slice meets ------------------------------------------------------------
@@ -338,6 +338,39 @@ export function reapplyWords(result: PaymentsReapplication, paymentNo: string): 
   const where = result.lines.map((l) => l.invoice_no).join(" and ");
   const left = result.held_after_cents === 0 ? "Nothing is held for this payment now." : `${formatMoney(result.held_after_cents)} is still held for this payment.`;
   return `${formatMoney(result.applied_cents)} of payment ${paymentNo} is applied to invoice ${where}. ${left}`;
+}
+
+export type PayoutKind = "DRAWER" | "BANK" | "WRITE_OFF";
+
+/** The dealer's words for each way held money leaves, as the picker and the notice say them. */
+export const PAYOUT_KIND_WORDS: Record<PayoutKind, { pick: string; done: string; button: string }> = {
+  DRAWER: { pick: "Cash from the drawer", done: "is handed back from the drawer", button: "Hand it back" },
+  BANK: { pick: "Cheque or transfer", done: "is paid by cheque or transfer", button: "Pay it out" },
+  WRITE_OFF: { pick: "Write off after the count", done: "is written off against the count's shortage", button: "Write it off" },
+};
+
+export type PayoutCheck = { ok: true; kind: PayoutKind; amountCents: number; reason: string; reference: string } | { ok: false; words: string };
+
+/** The core's pay out checks, said before the request is sent; the amount is parsed through the decimal string. */
+export function payoutCheck(input: { kind: string; amountText: string; reason: string; reference: string; heldCents: number }): PayoutCheck {
+  if (input.kind !== "DRAWER" && input.kind !== "BANK" && input.kind !== "WRITE_OFF") return { ok: false, words: "Choose how the money leaves." };
+  if (input.amountText.trim() === "") return { ok: false, words: "Enter the amount, such as 100.00." };
+  const cents = parseAmountToCents(input.amountText);
+  if (cents === null) return { ok: false, words: "Enter the amount as dollars and cents, such as 100.00." };
+  if (cents === 0) return { ok: false, words: "The amount must be more than zero." };
+  if (cents > input.heldCents) return { ok: false, words: `That is more than the ${formatMoney(input.heldCents)} still held for this payment.` };
+  const reference = input.reference.trim();
+  if (input.kind === "BANK" && reference === "") return { ok: false, words: "Enter the cheque number or transfer reference." };
+  const reason = input.reason.trim();
+  if (reason === "") return { ok: false, words: "Enter why the money is leaving, such as the customer asked for it back." };
+  return { ok: true, kind: input.kind, amountCents: cents, reason, reference: input.kind === "BANK" ? reference : "" };
+}
+
+/** What a pay out did, from the server's own answer: the money that left and what is still held. */
+export function payoutWords(result: PaymentsPayout, paymentNo: string): string {
+  const how = PAYOUT_KIND_WORDS[result.kind as PayoutKind]?.done ?? "has left";
+  const left = result.held_after_cents === 0 ? "Nothing is held for this payment now." : `${formatMoney(result.held_after_cents)} is still held for this payment.`;
+  return `${formatMoney(result.amount_cents)} of payment ${paymentNo} ${how}. ${left}`;
 }
 
 // ---- settings: the receivables rules, the register, the returned payment fee, automatic holds ----------------------------

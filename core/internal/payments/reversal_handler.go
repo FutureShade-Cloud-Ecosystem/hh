@@ -53,6 +53,61 @@ func (h *ReversalHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// SF-2l: the money a reversal holds in 2310, applied to invoices of the same customer.
 	r.Handle("POST /api/v1/ar/payments/{id}/reapply", g.RequireManager(h.staff(h.reapply)))
 	r.Handle("GET /api/v1/ar/payments/{id}/held", g.RequireManager(h.staff(h.held)))
+	// SF-2m and SF-2n: the other acts that take held money out of 2310.
+	r.Handle("POST /api/v1/ar/payments/{id}/payout", g.RequireManager(h.staff(h.payout)))
+}
+
+func (h *ReversalHandler) payout(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var req struct {
+		Kind           string `json:"kind"`
+		AmountCents    int64  `json:"amount_cents"`
+		Reason         string `json:"reason"`
+		Reference      string `json:"reference"`
+		TillSessionID  string `json:"till_session_id"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	sc, _ := identity.StaffContextFromContext(r.Context())
+	res, err := h.svc.PayOut(r.Context(), PayoutInput{
+		PaymentID:       r.PathValue("id"),
+		Kind:            req.Kind,
+		AmountCents:     req.AmountCents,
+		Reason:          req.Reason,
+		Reference:       req.Reference,
+		TillSessionID:   req.TillSessionID,
+		ActorID:         sc.UserID,
+		IdempotencyKey:  req.IdempotencyKey,
+		IsManager:       sc.IsManager(),
+		CanAccessBranch: sc.CanAccessBranch,
+	})
+	if err != nil {
+		var replay ReplayConflictError
+		var refused PayoutRefusedError
+		var bad httpx.BadRequestError
+		switch {
+		case errors.Is(err, ErrNotFound):
+			httpx.Error(w, http.StatusNotFound, "payment not found")
+		case errors.As(err, &refused):
+			httpx.Error(w, refused.Status, refused.Msg)
+		case errors.As(err, &replay), errors.Is(err, ErrNotReapplicable), errors.Is(err, ErrReapplyOverHeld), errors.Is(err, ErrPayoutNotAllowed):
+			httpx.Error(w, http.StatusConflict, err.Error())
+		case errors.Is(err, ErrPayoutReasonRequired), errors.As(err, &bad):
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+		default:
+			h.log.Warn("payment pay out failed", "payment_id", r.PathValue("id"), "err", err)
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+		}
+		return
+	}
+	status := http.StatusCreated
+	if res.Replayed {
+		status = http.StatusOK
+	}
+	httpx.WriteJSON(w, status, res)
 }
 
 func (h *ReversalHandler) voidPayment(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {

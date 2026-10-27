@@ -29,6 +29,8 @@ import {
   officeRefusal,
   outcomeUnknown,
   paperResolveCheck,
+  payoutCheck,
+  payoutWords,
   reapplyCheck,
   reapplyWords,
   reminderResultWords,
@@ -73,6 +75,10 @@ export interface OfficeHost {
 /** The reversed payment whose held money is being put on an invoice, and the figure the core reads for it. */
 export interface ReapplyView {
   readonly paymentId: string;
+  /** What the form does with the held money: put it on an invoice, or pay it out or write it off (SF-2m). */
+  readonly mode: "apply" | "payout";
+  /** The way the money leaves, once picked (payout mode). */
+  readonly kind: string;
   readonly held: PaymentsHeld | "loading" | "error";
   /** The invoice picked to take the money, with its open balance as the screen drew it ("" and null until one is picked). */
   readonly invoiceId: string;
@@ -622,17 +628,49 @@ export class OfficeDesk {
   }
 
   /** Opens the form for a reversed payment: the core is asked what it still holds, and the form waits on that figure. */
-  async #startReapply(paymentId: string, invoiceId: string, balanceCents: number | null): Promise<void> {
-    this.#reapplying = { paymentId, held: "loading", invoiceId, balanceCents };
+  async #startReapply(paymentId: string, invoiceId: string, balanceCents: number | null, mode: "apply" | "payout"): Promise<void> {
+    this.#reapplying = { paymentId, mode, kind: "", held: "loading", invoiceId, balanceCents };
     this.#host.repaint();
     const got = await this.#api.heldFor(paymentId);
     if (this.#reapplying === null || this.#reapplying.paymentId !== paymentId) return;
     if (!got.ok) {
-      this.#reapplying = { paymentId, held: "error", invoiceId, balanceCents };
+      this.#reapplying = { paymentId, mode, kind: "", held: "error", invoiceId, balanceCents };
       this.#fail("reapply", got);
     } else {
-      this.#reapplying = { paymentId, held: got.value, invoiceId, balanceCents };
+      this.#reapplying = { paymentId, mode, kind: "", held: got.value, invoiceId, balanceCents };
     }
+    this.#host.repaint();
+  }
+
+  /** Takes held money out of 2310 by the act that moves it: one key per attempt, the same key again on a lost answer. */
+  async #payOut(paymentId: string, paymentNo: string): Promise<void> {
+    if (this.#busy) return;
+    const view = this.#reapplying;
+    if (view === null || view.paymentId !== paymentId || view.mode !== "payout" || typeof view.held === "string") return;
+    const check = payoutCheck({
+      kind: view.kind,
+      amountText: this.#host.field("payout-amount"),
+      reason: this.#host.field("payout-reason"),
+      reference: this.#host.field("payout-reference"),
+      heldCents: view.held.held_cents,
+    });
+    if (!check.ok) return this.#stop(check.words);
+    const attempt = `payout:${paymentId}:${check.kind}:${check.amountCents}`;
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.payOutHeld(paymentId, { kind: check.kind, amountCents: check.amountCents, reason: check.reason, reference: check.reference, key: this.#keys.keyFor(attempt) });
+    this.#busy = false;
+    if (!outcomeUnknown(result.ok ? 200 : result.status)) this.#keys.settle(attempt);
+    if (!result.ok) {
+      this.#fail("payout", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    this.#reapplying = null;
+    this.#host.notice(payoutWords(result.value, paymentNo));
+    this.#host.reveal("[data-notice]");
+    await Promise.all([this.#host.reloadAccount(), this.#host.reloadBook()]);
     this.#host.repaint();
   }
 
@@ -784,7 +822,19 @@ export class OfficeDesk {
         void this.#voidPayment(attr("data-payment-id"), attr("data-payment-no"));
         return true;
       case "reapply-start":
-        void this.#startReapply(attr("data-payment-id"), attr("data-invoice-id"), attr("data-balance-cents") === "" ? null : Number(attr("data-balance-cents")));
+        void this.#startReapply(attr("data-payment-id"), attr("data-invoice-id"), attr("data-balance-cents") === "" ? null : Number(attr("data-balance-cents")), "apply");
+        return true;
+      case "payout-start":
+        void this.#startReapply(attr("data-payment-id"), "", null, "payout");
+        return true;
+      case "payout-kind":
+        if (this.#reapplying !== null) {
+          this.#reapplying = { ...this.#reapplying, kind: attr("data-kind") };
+          this.#host.repaint();
+        }
+        return true;
+      case "payout-confirm":
+        void this.#payOut(attr("data-payment-id"), attr("data-payment-no"));
         return true;
       case "reapply-pick":
         if (this.#reapplying !== null) {

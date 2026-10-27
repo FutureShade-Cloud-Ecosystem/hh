@@ -1782,6 +1782,53 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/ar/payments/{id}/payout:
+    post:
+      operationId: paymentsPayOutHeld
+      tags: [staff-payments]
+      summary: Take the money a reversed payment holds out of 2310 by paying it out or writing it off
+      description: >-
+        The act that moves the money, one kind per request. DRAWER: cash handed back from the till, Dr 2310 / Cr 1020, with
+        a PAID_OUT movement on the named OPEN till session of the payment's branch (the drawer's expected cash falls with
+        it). BANK: a cheque or transfer written to the customer, Dr 2310 / Cr 1000, with its reference required.
+        WRITE_OFF: the cash left the drawer unrecorded and the count has posted the shortage, Dr 2310 / Cr 6350; refused
+        until the payment's till session is closed with a shortage that covers it, and never more than the shortage the
+        session's other write offs have not covered. Every kind is a manager act with a reason, refused above what the
+        payment still holds, for a payment that was never reversed, and (as missing, 404) for a payment outside the
+        caller's branch reach, with nothing written. The request carries an idempotency key: the same key and body
+        answers the first result (200), a spent key with anything else is refused 409.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentsPayoutRequest"
+      responses:
+        "200":
+          description: A replay of an act already done, the first result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentsPayout"
+        "201":
+          description: The held money paid out or written off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentsPayout"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   # --- payment: the two manager routes over the card charge attempts (the
   # card charge design's section 4). Both are RequireManager and are
   # registered by the payment handler's RegisterRoutes beside the config
@@ -3543,14 +3590,44 @@ components:
 
     PaymentsHeld:
       type: object
-      required: [payment_id, payment_no, amount_cents, reversed, applied_cents, held_cents]
+      required: [payment_id, payment_no, amount_cents, reversed, applied_cents, paid_out_cents, held_cents]
       properties:
         payment_id: { type: string, format: uuid }
         payment_no: { type: string }
         amount_cents: { type: integer, format: int64 }
         reversed: { type: boolean }
         applied_cents: { type: integer, format: int64, description: What re-application has already taken out of 2310 }
-        held_cents: { type: integer, format: int64, description: Amount less applied for a reversed payment with an account, else zero }
+        paid_out_cents: { type: integer, format: int64, description: What a pay out or a write off has already taken out of 2310 }
+        held_cents: { type: integer, format: int64, description: Amount less applied and paid out for a reversed payment with an account, else zero }
+
+    PaymentsPayoutRequest:
+      type: object
+      required: [kind, amount_cents, reason, idempotency_key]
+      properties:
+        kind: { type: string, enum: [DRAWER, BANK, WRITE_OFF] }
+        amount_cents: { type: integer, format: int64 }
+        reason:
+          type: string
+          description: Mandatory
+        reference:
+          type: string
+          description: BANK, the cheque number or transfer reference, required for that kind
+        till_session_id:
+          type: string
+          description: DRAWER, the OPEN till session of the payment's branch the cash leaves, required for that kind
+        idempotency_key: { type: string }
+
+    PaymentsPayout:
+      type: object
+      required: [payment_id, payout_id, kind, amount_cents, held_before_cents, held_after_cents, replayed]
+      properties:
+        payment_id: { type: string, format: uuid }
+        payout_id: { type: string, format: uuid }
+        kind: { type: string, enum: [DRAWER, BANK, WRITE_OFF] }
+        amount_cents: { type: integer, format: int64 }
+        held_before_cents: { type: integer, format: int64 }
+        held_after_cents: { type: integer, format: int64 }
+        replayed: { type: boolean }
 
     PaymentsReapplyRequest:
       type: object
