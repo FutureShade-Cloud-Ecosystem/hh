@@ -109,7 +109,7 @@ func TestIntegration_FW1_01R2_DepositReleaseDatedByTheDelivery(t *testing.T) {
 	fw1EnsureHouseYear(t, pool, 2026)
 	loc := houseday.DefaultZone().Location()
 	clockAt := time.Date(2026, 7, 1, 12, 0, 0, 0, loc)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt).
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt).
 		WithInvoiceReader(seedInvoiceReader{pool: pool}).
 		WithDeliveryReader(order.NewRepository(pool))
 	dep := fw1PlantDeposit(t, pool, time.Date(2026, 2, 10, 12, 0, 0, 0, loc))
@@ -148,12 +148,15 @@ func TestIntegration_FW1_01R2_RollForwardIsANoOpAndTheControllerOpensOneMore(t *
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
-	fw1EnsureHouseYear(t, pool, 2026)
-	fw1ScrubYear(t, pool, 2027, 2028, 2029)
-	t.Cleanup(func() { fw1ScrubYear(t, pool, 2027, 2028, 2029) })
-	fw1PlantFuturePeriod(t, pool, 2109)
-	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location())
-	worker := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt)
+	// The band is the database's own frontier: the house year IS the latest year that exists, so the
+	// roll forward's target and the Controller's one-beyond are the two years after it, whichever
+	// numbers they are (the legs must not assume 2026; other suites hold far future bands here).
+	house := fw1NextYear(t, pool) - 1
+	target, beyond := house+1, house+2
+	fw1ScrubYear(t, pool, target, beyond)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, target, beyond) })
+	clockAt := time.Date(house, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location())
+	worker := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt)
 	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, clockAt)
 
 	months := func(year int) int {
@@ -167,34 +170,34 @@ func TestIntegration_FW1_01R2_RollForwardIsANoOpAndTheControllerOpensOneMore(t *
 
 	if res, err := worker.EnsureNextFiscalYear(ctx); err != nil {
 		t.Fatalf("the roll forward: %v", err)
-	} else if res.FiscalYear != 2027 {
-		t.Fatalf("the roll forward answers %d, want 2027 (the year after the house year)", res.FiscalYear)
+	} else if res.FiscalYear != target {
+		t.Fatalf("the roll forward answers %d, want %d (the year after the house year)", res.FiscalYear, target)
 	}
-	if months(2027) != 12 {
-		t.Fatalf("2027 holds %d periods, want 12", months(2027))
+	if months(target) != 12 {
+		t.Fatalf("%d holds %d periods, want 12", target, months(target))
 	}
 	if _, err := worker.EnsureNextFiscalYear(ctx); err != nil {
 		t.Fatalf("the repeat roll forward: %v", err)
 	}
-	if months(2028) != 0 {
-		t.Fatalf("a repeat roll forward created 2028; a repeat is a no op")
+	if months(beyond) != 0 {
+		t.Fatalf("a repeat roll forward created %d; a repeat is a no op", beyond)
 	}
 
 	res, err := controller.OpenNextFiscalYear(ctx, "FW1-01 round 2 early open")
 	if err != nil {
 		t.Fatalf("the controller open: %v", err)
 	}
-	if res.FiscalYear != 2028 {
-		t.Fatalf("the controller open answers %d, want 2028 (one year beyond the roll forward's target)", res.FiscalYear)
+	if res.FiscalYear != beyond {
+		t.Fatalf("the controller open answers %d, want %d (one year beyond the roll forward's target)", res.FiscalYear, beyond)
 	}
-	if months(2028) != 12 {
-		t.Fatalf("2028 holds %d periods, want 12", months(2028))
+	if months(beyond) != 12 {
+		t.Fatalf("%d holds %d periods, want 12", beyond, months(beyond))
 	}
 	if _, err := controller.OpenNextFiscalYear(ctx, "FW1-01 round 2 repeat"); err == nil || !strings.Contains(err.Error(), "2028 is already open") {
 		t.Fatalf("the repeat controller open at the cap answered %v, want refusal '2028 is already open'", err)
 	}
-	if months(2029) != 0 {
-		t.Fatalf("a repeat controller open created 2029; at most one year beyond the roll forward's target")
+	if months(beyond+1) != 0 {
+		t.Fatalf("a repeat controller open created %d; at most one year beyond the roll forward's target", beyond+1)
 	}
 
 	// The guards carried from round 1: a manager is refused, a blank reason is refused.
@@ -220,7 +223,7 @@ func TestIntegration_FW1_01R2_NeverCreatesAPastYear(t *testing.T) {
 	t.Cleanup(func() { fw1ScrubYear(t, pool, 2025) })
 	loc := houseday.DefaultZone().Location()
 	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, loc)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt)
 
 	id, _, err := svc.store.InsertJournal(ctx, journalDraft{
 		Source:     SourceAdjustment,
@@ -274,7 +277,7 @@ func TestIntegration_FW1_01R2_AsOfReadsUseTheFiledPeriod(t *testing.T) {
 	user := aUser(t, pool)
 	ensurePeriods(t, pool, 2085)
 	loc := houseday.DefaultZone().Location()
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, time.Date(2085, 7, 1, 12, 0, 0, 0, loc))
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, time.Date(2085, 7, 1, 12, 0, 0, 0, loc))
 	if _, err := svc.ClosePeriod(ctx, periodID(t, pool, 2085, 5), "round 2 closed May"); err != nil {
 		t.Fatalf("close May 2085: %v", err)
 	}
@@ -330,11 +333,11 @@ func TestIntegration_FW1_01R2_OpenYearAuditInTheYearsTransaction(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
-	fw1EnsureHouseYear(t, pool, 2026)
-	fw1ScrubYear(t, pool, 2027, 2028)
-	t.Cleanup(func() { fw1ScrubYear(t, pool, 2027, 2028) })
-	fw1PlantFuturePeriod(t, pool, 2109)
-	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2026, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location()))
+	house := fw1NextYear(t, pool) - 1
+	target, beyond := house+1, house+2
+	fw1ScrubYear(t, pool, target, beyond)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, target, beyond) })
+	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(house, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location()))
 
 	years := func(year int) int {
 		t.Helper()
@@ -350,8 +353,8 @@ func TestIntegration_FW1_01R2_OpenYearAuditInTheYearsTransaction(t *testing.T) {
 	if _, err := bad.OpenNextFiscalYear(ctx, "FW1-01 round 2 audit proof"); err == nil {
 		t.Fatalf("the open succeeded with the audit write refused; the audit must hold the year")
 	}
-	if years(2027) != 0 || years(2028) != 0 {
-		t.Fatalf("the refused audit left years behind (%d, %d); the years roll back with their audit", years(2027), years(2028))
+	if years(target) != 0 || years(beyond) != 0 {
+		t.Fatalf("the refused audit left years behind (%d, %d); the years roll back with their audit", years(target), years(beyond))
 	}
 
 	good := &fw1AuditTx{}
@@ -359,8 +362,8 @@ func TestIntegration_FW1_01R2_OpenYearAuditInTheYearsTransaction(t *testing.T) {
 	if _, err := ok.OpenNextFiscalYear(ctx, "FW1-01 round 2 audit proof"); err != nil {
 		t.Fatalf("the open with a working audit: %v", err)
 	}
-	if years(2027) != 12 || years(2028) != 12 {
-		t.Fatalf("the open's years hold (%d, %d) periods, want 12 and 12", years(2027), years(2028))
+	if years(target) != 12 || years(beyond) != 12 {
+		t.Fatalf("the open's years hold (%d, %d) periods, want 12 and 12", years(target), years(beyond))
 	}
 	if len(good.recorded) != 1 {
 		t.Fatalf("%d audit rows recorded, want 1", len(good.recorded))
@@ -368,14 +371,14 @@ func TestIntegration_FW1_01R2_OpenYearAuditInTheYearsTransaction(t *testing.T) {
 	// Round 4 (S2's round 3 P1): audit_log.entity_id is a uuid column, so the row names the opened
 	// year's January period and the year itself rides Extra.
 	var januaryID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year = 2028 AND month = 1`).Scan(&januaryID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year = $1 AND month = 1`, beyond).Scan(&januaryID); err != nil {
 		t.Fatal(err)
 	}
 	if good.recorded[0].EntityID != januaryID {
 		t.Fatalf("the audit names %q, want the opened year's January period id %q (audit_log.entity_id is a uuid column)", good.recorded[0].EntityID, januaryID)
 	}
-	if good.recorded[0].Extra["fiscal_year"] != 2028 {
-		t.Fatalf("the audit's Extra carries fiscal_year %v, want 2028", good.recorded[0].Extra["fiscal_year"])
+	if good.recorded[0].Extra["fiscal_year"] != beyond {
+		t.Fatalf("the audit's Extra carries fiscal_year %v, want %d", good.recorded[0].Extra["fiscal_year"], beyond)
 	}
 }
 

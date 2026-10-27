@@ -1084,6 +1084,21 @@ type PaymentsReversalResult struct {
 	ReopenedInvoices  []string `json:"reopened_invoices"`
 }
 
+type PaymentsVoidRequest struct {
+	Reason string `json:"reason"`
+}
+
+type PaymentsVoidResult struct {
+	Label            string    `json:"label"`
+	PaymentId        string    `json:"payment_id"`
+	PaymentNo        string    `json:"payment_no"`
+	AmountCents      int64     `json:"amount_cents"`
+	Reason           string    `json:"reason"`
+	VoidedAt         time.Time `json:"voided_at"`
+	ReopenedInvoices []string  `json:"reopened_invoices"`
+	HeldCents        int64     `json:"held_cents"`
+}
+
 type PaymentsHeld struct {
 	PaymentId    string `json:"payment_id"`
 	PaymentNo    string `json:"payment_no"`
@@ -3254,15 +3269,38 @@ type FinStmtSchedulePage struct {
 }
 
 type BankRecAccount struct {
-	Id             string `json:"id"`
-	Name           string `json:"name"`
-	AccountType    string `json:"account_type"`
-	GlAccountCode  string `json:"gl_account_code"`
-	Institution    string `json:"institution"`
-	Last4          string `json:"last4"`
-	IsActive       bool   `json:"is_active"`
-	TrackingOnly   bool   `json:"tracking_only"`
-	UnmatchedLines int32  `json:"unmatched_lines"`
+	Id                           string    `json:"id"`
+	Name                         string    `json:"name"`
+	AccountType                  string    `json:"account_type"`
+	GlAccountCode                string    `json:"gl_account_code"`
+	Institution                  string    `json:"institution"`
+	Last4                        string    `json:"last4"`
+	IsActive                     bool      `json:"is_active"`
+	TrackingOnly                 bool      `json:"tracking_only"`
+	UnmatchedLines               int32     `json:"unmatched_lines"`
+	CutoverDate                  *string   `json:"cutover_date,omitempty"`
+	CutoverStatementBalanceCents *int64    `json:"cutover_statement_balance_cents,omitempty"`
+	CutoverOutstandingJournalIds *[]string `json:"cutover_outstanding_journal_ids,omitempty"`
+}
+
+type BankRecCutoverInput struct {
+	CutoverDate                  string    `json:"cutover_date"`
+	OpeningStatementBalanceCents int64     `json:"opening_statement_balance_cents"`
+	OutstandingJournalIds        *[]string `json:"outstanding_journal_ids,omitempty"`
+}
+
+type BankRecCutoverPreview struct {
+	BookBalanceCents int64                         `json:"book_balance_cents"`
+	Entries          *[]BankRecCutoverPreviewEntry `json:"entries,omitempty"`
+	DifferenceCents  *int64                        `json:"difference_cents,omitempty"`
+	Reconciles       *bool                         `json:"reconciles,omitempty"`
+}
+
+type BankRecCutoverPreviewEntry struct {
+	JournalId   string    `json:"journal_id"`
+	PostedAt    time.Time `json:"posted_at"`
+	Memo        string    `json:"memo"`
+	AmountCents int64     `json:"amount_cents"`
 }
 
 type BankRecAccountList []BankRecAccount
@@ -3373,16 +3411,31 @@ type BankRecRuleInput struct {
 
 type BankRecMatchRuleList []BankRecMatchRule
 
+type BankRecOutstandingItem struct {
+	JournalId   string    `json:"journal_id"`
+	PostedAt    time.Time `json:"posted_at"`
+	Memo        string    `json:"memo"`
+	AmountCents int64     `json:"amount_cents"`
+}
+
 type BankRecReconciliation struct {
-	Id                    string     `json:"id"`
-	BankAccountId         string     `json:"bank_account_id"`
-	Year                  int32      `json:"year"`
-	Month                 int32      `json:"month"`
-	StatementBalanceCents int64      `json:"statement_balance_cents"`
-	GlBalanceCents        int64      `json:"gl_balance_cents"`
-	VarianceCents         int64      `json:"variance_cents"`
-	Status                string     `json:"status"`
-	CompletedAt           *time.Time `json:"completed_at,omitempty"`
+	Id                       string                    `json:"id"`
+	BankAccountId            string                    `json:"bank_account_id"`
+	Year                     int32                     `json:"year"`
+	Month                    int32                     `json:"month"`
+	OpeningBalanceCents      *int64                    `json:"opening_balance_cents,omitempty"`
+	StatementBalanceCents    int64                     `json:"statement_balance_cents"`
+	DepositsInTransitCents   *int64                    `json:"deposits_in_transit_cents,omitempty"`
+	OutstandingChequesCents  *int64                    `json:"outstanding_cheques_cents,omitempty"`
+	AdjustedBankBalanceCents *int64                    `json:"adjusted_bank_balance_cents,omitempty"`
+	GlBalanceCents           int64                     `json:"gl_balance_cents"`
+	VarianceCents            int64                     `json:"variance_cents"`
+	MatchedLinesCount        *int32                    `json:"matched_lines_count,omitempty"`
+	DepositsInTransit        *[]BankRecOutstandingItem `json:"deposits_in_transit,omitempty"`
+	OutstandingCheques       *[]BankRecOutstandingItem `json:"outstanding_cheques,omitempty"`
+	Status                   string                    `json:"status"`
+	CompletedBy              *string                   `json:"completed_by,omitempty"`
+	CompletedAt              *time.Time                `json:"completed_at,omitempty"`
 }
 
 type BankRecReconInput struct {
@@ -4046,6 +4099,18 @@ type InventoryOnHandList struct {
 
 type InventoryMoveList struct {
 	Moves []InventoryStockMove `json:"moves"`
+}
+
+type InventoryPreReceiptException struct {
+	MoveId                   string  `json:"move_id"`
+	OrderId                  string  `json:"order_id"`
+	ProductId                string  `json:"product_id"`
+	BranchId                 string  `json:"branch_id"`
+	QtyBase                  float64 `json:"qty_base"`
+	ProvisionalUnitCostCents int64   `json:"provisional_unit_cost_cents"`
+	ProvisionalValueCents    int64   `json:"provisional_value_cents"`
+	FallbackSource           string  `json:"fallback_source"`
+	OccurredAt               string  `json:"occurred_at"`
 }
 
 type InventoryPendingFulfilmentList struct {
@@ -6443,8 +6508,17 @@ type TillDenominationCount struct {
 
 type TillSessionDetail struct {
 	TillSession
-	Tenders   []TillTenderTotal `json:"tenders"`
-	Movements []TillMovement    `json:"movements"`
+	Tenders        []TillTenderTotal   `json:"tenders"`
+	Movements      []TillMovement      `json:"movements"`
+	SlipCandidates []TillSlipCandidate `json:"slip_candidates"`
+}
+
+type TillSlipCandidate struct {
+	PaymentId   string `json:"payment_id"`
+	PaymentNo   string `json:"payment_no"`
+	AmountCents int64  `json:"amount_cents"`
+	Method      string `json:"method"`
+	Reference   string `json:"reference"`
 }
 
 type TillPolicy struct {
@@ -6462,10 +6536,20 @@ type TillCashSummary struct {
 }
 
 type TillZReport struct {
-	SessionId         string            `json:"session_id"`
-	PerTender         []TillTenderTotal `json:"per_tender"`
-	Cash              TillCashSummary   `json:"cash"`
-	ClosingFloatCents int64             `json:"closing_float_cents"`
+	SessionId         string                `json:"session_id"`
+	PerTender         []TillTenderTotal     `json:"per_tender"`
+	Cash              TillCashSummary       `json:"cash"`
+	ClosingFloatCents int64                 `json:"closing_float_cents"`
+	Movements         []TillZReportMovement `json:"movements"`
+}
+
+type TillZReportMovement struct {
+	MovementType string `json:"movement_type"`
+	Method       string `json:"method"`
+	AmountCents  int64  `json:"amount_cents"`
+	Reason       string `json:"reason"`
+	Reference    string `json:"reference"`
+	BranchId     string `json:"branch_id"`
 }
 
 type TillOpenInput struct {

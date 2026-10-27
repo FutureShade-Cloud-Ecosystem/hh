@@ -323,8 +323,8 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 		return fmt.Errorf("till: begin movement: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var status string
-	if err := tx.QueryRow(ctx, `SELECT status FROM till_sessions WHERE id = $1 FOR NO KEY UPDATE`, m.TillSessionID).Scan(&status); err != nil {
+	var status, branchID string
+	if err := tx.QueryRow(ctx, `SELECT status, branch_id::text FROM till_sessions WHERE id = $1 FOR NO KEY UPDATE`, m.TillSessionID).Scan(&status, &branchID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errNotFound
 		}
@@ -333,15 +333,131 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 	if status != StatusOpen {
 		return clientErr(409, "till: movements require an OPEN session")
 	}
-	if _, err := tx.Exec(ctx, insertMovementSQL,
-		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy)); err != nil {
+	var movementID string
+	var movementAt time.Time
+	if err := tx.QueryRow(ctx, insertMovementSQL+` RETURNING id, created_at`,
+		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy)).Scan(&movementID, &movementAt); err != nil {
 		return fmt.Errorf("till: insert movement: %w", err)
+	}
+	// The deposit slip's rows and the DEPOSITED marks ride THIS transaction (FROM-PRINCIPAL 120): the
+	// link rows first, then the payment rows locked ascending (the one money lock order; the session
+	// row this movement already holds is not in it), then the marks. A payment the marks could not
+	// move fails the movement, so the slip and the books move together. The service has validated the
+	// slip; the locked UPDATE re-checks the status under the row locks, which is how a concurrent
+	// bounce or reversal is seen.
+	if len(m.PaymentIDs) > 0 {
+		for _, pid := range m.PaymentIDs {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO till_lodgement_payments (till_movement_id, payment_id) VALUES ($1::uuid, $2::uuid)`,
+				movementID, pid); err != nil {
+				return fmt.Errorf("till: insert lodgement slip row: %w", err)
+			}
+		}
+		if err := payments.LockPaymentRowsTx(ctx, tx, m.PaymentIDs); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE payments SET status = 'DEPOSITED', updated_at = now()
+			  WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND reversed_at IS NULL`,
+			m.PaymentIDs)
+		if err != nil {
+			return fmt.Errorf("till: mark the slip's payments deposited: %w", err)
+		}
+		if tag.RowsAffected() != int64(len(m.PaymentIDs)) {
+			return clientErr(409, "till: the slip's money moved while it was recorded; record the slip again")
+		}
+	}
+	// Transactional outbox, the session close's own rail (till.session.completed, 0032): a paid in, a
+	// paid out or a lodgement carries its GL facts in the SAME tx as the row, so the journal posts
+	// exactly once. The lodgement's journal is the ruled one (FROM-PRINCIPAL 117): DR 1000 / CR 1020 at
+	// lodgement, and the bank match of a lodgement that carries it posts nothing, so the pair never
+	// books twice. A DROP deliberately emits nothing: the cash is still the dealer's undeposited cash,
+	// only out of the drawer. The payload carries the drawer's own reason words, because every line of
+	// the journal must carry them (FROM-PRINCIPAL 132).
+	if m.MovementType == MovementPaidIn || m.MovementType == MovementPaidOut || m.MovementType == MovementLodgement {
+		payload, err := json.Marshal(map[string]any{
+			"movement_id":   movementID,
+			"session_id":    m.TillSessionID,
+			"branch_id":     branchID,
+			"movement_type": m.MovementType,
+			"method":        m.Method,
+			"amount_cents":  m.AmountCents,
+			"occurred_at":   movementAt,
+			"reason":        m.Reason,
+		})
+		if err != nil {
+			return fmt.Errorf("till: marshal movement posted: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO events_outbox (topic, payload) VALUES ('till.movement.posted', $1)`, payload); err != nil {
+			return fmt.Errorf("till: emit movement posted: %w", err)
+		}
 	}
 	return tx.Commit(ctx)
 }
 
+// insertMovementSQL is the movement INSERT. The pool path (InsertMovement) appends RETURNING id for
+// the outbox payload's own key; the in-caller-tx path (InsertMovementTx, the POS return's drawer
+// movement) shares the statement without it and never emits: the return event's journal already
+// carries the drawer credit.
 const insertMovementSQL = `INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reference, created_by)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`
+
+// PaymentsForSlip reads the named payments for a lodgement's deposit slip validation. The read is
+// fenced to the session and the method: a name that is not on this drawer as this method reads as
+// absent, and the service refuses the slip for it.
+func (r *Repository) PaymentsForSlip(ctx context.Context, sessionID, method string, ids []string) ([]SlipPayment, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT id::text, amount_cents, status, reversed_at IS NOT NULL
+		   FROM payments
+		  WHERE till_session_id = $1::uuid AND method = $2 AND id = ANY($3::uuid[])`, sessionID, method, ids)
+	if err != nil {
+		return nil, fmt.Errorf("till: slip payments: %w", err)
+	}
+	defer rows.Close()
+	var out []SlipPayment
+	for rows.Next() {
+		var p SlipPayment
+		if err := rows.Scan(&p.ID, &p.AmountCents, &p.Status, &p.Reversed); err != nil {
+			return nil, fmt.Errorf("till: scan slip payment: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// SlipCandidates reads the drawer's unlodged payments of a method: the RECEIVED, unreversed payments on
+// this session that no lodgement has named yet (0441's link rows), so the drawer can tick the ones the
+// lodgement carries. The order is the drawer's own: the oldest first.
+func (r *Repository) SlipCandidates(ctx context.Context, sessionID, method string) ([]SlipCandidate, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT p.id::text, p.payment_no::text, p.amount_cents, p.method,
+		        COALESCE(NULLIF(p.gateway_ref, ''), p.payment_no::text)
+		   FROM payments p
+		  WHERE p.till_session_id = $1::uuid AND p.method = $2
+		    AND p.status = 'RECEIVED' AND p.reversed_at IS NULL
+		    AND NOT EXISTS (SELECT 1 FROM till_lodgement_payments lp WHERE lp.payment_id = p.id)
+		  ORDER BY p.received_at, p.id`, sessionID, method)
+	if err != nil {
+		return nil, fmt.Errorf("till: slip candidates: %w", err)
+	}
+	defer rows.Close()
+	var out []SlipCandidate
+	for rows.Next() {
+		var c SlipCandidate
+		if err := rows.Scan(&c.PaymentID, &c.PaymentNo, &c.AmountCents, &c.Method, &c.Reference); err != nil {
+			return nil, fmt.Errorf("till: scan slip candidate: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
 
 // InsertMovementTx is InsertMovement inside the CALLER'S tx (the POS return path, the PAID_OUT
 // cash-refund movement must commit or roll back with the return it belongs to).
@@ -354,13 +470,24 @@ func (r *Repository) InsertMovementTx(ctx context.Context, tx pgx.Tx, m Movement
 	return nil
 }
 
+// ExpectedTenders reads the drawer's received money per tender method: the RECEIVED payments, plus the
+// payments a lodgement's deposit slip carried.
+//
+// A slip-lodgement's payments are DEPOSITED now (the bank's fact: they are in the deposit, and a bounce
+// of one credits 1000). But the DRAWER received them and the lodgement is the drawer's own statement that
+// it banked them, so they stay in the drawer's in-term and the lodgement takes them out of it, ONCE.
+// Leaving them out of the in-term (the DEPOSITED status alone) takes the same money out twice - the
+// slip's mark and the lodgement - and the drawer reads short by the whole slip.
 func (r *Repository) ExpectedTenders(ctx context.Context, sessionID string) (map[string]int64, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT method, COALESCE(SUM(amount_cents), 0) FROM payments
-		 WHERE till_session_id = $1 AND status = 'RECEIVED' GROUP BY method`, sessionID)
+		 WHERE till_session_id = $1
+		   AND (status = 'RECEIVED' OR EXISTS (
+		         SELECT 1 FROM till_lodgement_payments lp WHERE lp.payment_id = payments.id))
+		 GROUP BY method`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("till: expected tenders: %w", err)
 	}
@@ -641,6 +768,11 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	// that committed first is seen and one that has not yet taken the row waits behind this transaction.
 	if reversed {
 		return nsfReverseResult{}, errPaymentReversed
+	}
+	// A bounce undoes a live receipt: a reversing entry, a voided desk receipt (FW1-06b) or a refund row has
+	// nothing to give back, and reinstating its invoices would post money that never arrived.
+	if status != "RECEIVED" && status != "DEPOSITED" {
+		return nsfReverseResult{}, errPaymentNotBounceable
 	}
 	// Capture whether the receipt had already settled to the bank (DEPOSITED) BEFORE we flip it to BOUNCED.
 	// The GL payment.bounced consumer needs this to reverse the right leg: DEPOSITED → bank 1000, else the
@@ -992,4 +1124,20 @@ func (r *Repository) RecordPaymentAttempt(ctx context.Context, in PaymentAttempt
 		return fmt.Errorf("till: record payment attempt: %w", err)
 	}
 	return nil
+}
+
+// OpenSessionsBetween answers how many till sessions stand OPEN with opened_at
+// in [from, to): the GL close pre flight's "no open till drawer in that month"
+// check (FW1-09b). A nil pool answers zero (scaffold/offline mode).
+func (r *Repository) OpenSessionsBetween(ctx context.Context, from, to time.Time) (int, error) {
+	if r == nil || r.pool == nil {
+		return 0, nil
+	}
+	var n int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT count(*) FROM till_sessions WHERE status = 'OPEN' AND opened_at >= $1 AND opened_at < $2`,
+		from, to).Scan(&n); err != nil {
+		return 0, fmt.Errorf("till: open sessions between: %w", err)
+	}
+	return n, nil
 }

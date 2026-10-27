@@ -46,6 +46,10 @@ func (s *Service) CreateAccount(ctx context.Context, in CreateAccountInput) (Acc
 // posting rule points at the account: every automated posting the rule carries would be refused as
 // "inactive" and dead letter, so the refusal names the rules and their topics instead.
 func (s *Service) DeactivateAccount(ctx context.Context, code string) (Account, error) {
+	// Round 3: the chart of accounts is dealer wide.
+	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
+		return Account{}, err
+	}
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return Account{}, badReq("gl: account code is required")
@@ -142,6 +146,11 @@ func (s *Service) GetJournal(ctx context.Context, id string) (Journal, error) {
 func (s *Service) CreateJournal(ctx context.Context, in CreateJournalInput) (Journal, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
+		return Journal{}, err
+	}
+	// Round 3: the write fence, before anything lands. A no branch journal is
+	// the consolidated books, a dealer wide write.
+	if err := s.authorizeBranchWrite(ctx, in.BranchID); err != nil {
 		return Journal{}, err
 	}
 	if len(in.Lines) < 2 {
@@ -251,6 +260,10 @@ func (s *Service) ApproveJournal(ctx context.Context, id string) (Journal, error
 	if j.Status != StatusDraft {
 		return Journal{}, clientErr(409, "gl: journal is %s, not DRAFT, cannot approve", j.Status)
 	}
+	// Round 3: approving posts the park's books, so the fence reads the park.
+	if err := s.authorizeBranchWrite(ctx, j.BranchID); err != nil {
+		return Journal{}, err
+	}
 	if j.CreatedBy != "" && j.CreatedBy == caller.UserID {
 		return Journal{}, errFourEyes
 	}
@@ -343,6 +356,10 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 	}
 	orig, err := s.store.GetJournal(ctx, id)
 	if err != nil {
+		return Journal{}, err
+	}
+	// Round 3: the reversal lands in the original journal's books.
+	if err := s.authorizeBranchWrite(ctx, orig.BranchID); err != nil {
 		return Journal{}, err
 	}
 	if orig.Status != StatusPosted {
@@ -449,6 +466,11 @@ func (s *Service) ListRecurring(ctx context.Context) ([]RecurringTemplate, error
 func (s *Service) RunRecurring(ctx context.Context, id string) (Journal, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
+		return Journal{}, err
+	}
+	// Round 4 (the lead's add): the run's own create is a write like the others, and the recurring
+	// journal carries no branch, the consolidated books, so it needs a dealer wide caller.
+	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
 		return Journal{}, err
 	}
 	tpl, err := s.store.GetRecurring(ctx, id)

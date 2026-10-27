@@ -142,6 +142,15 @@ func (s *Service) BalanceSheetReportFor(ctx context.Context, year int, branchID 
 	if err != nil {
 		return BalanceSheetReport{}, err
 	}
+	// Round 4 (S3's P2): retained earnings to date, the P&L of every earlier year not yet closed into
+	// 3900, as a computed equity line, so the next year balances after an unclosed one.
+	reToDate, err := s.repo.UnclosedPriorEarnings(ctx, year, branchID)
+	if err != nil {
+		return BalanceSheetReport{}, err
+	}
+	if reToDate != 0 {
+		rows = append(rows, StatementRow{AccountCode: "3901", AccountName: "Retained earnings to date (unclosed years)", AccountType: "EQUITY", AmountCents: reToDate})
+	}
 	return composeBalance(year, branchID, rows, ni), nil
 }
 

@@ -9,6 +9,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // RequeueDead resets DEAD events_outbox rows for the given topics to PENDING (attempts 0, error cleared) and
@@ -25,4 +26,22 @@ func (s *PgOutboxStore) RequeueDead(ctx context.Context, topics []string) (int, 
 		return 0, fmt.Errorf("notify: requeue dead: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// UnpostedForWindow answers how many outbox rows for the named topics stand
+// PENDING or DEAD with occurred_at in [from, to): the GL close pre flight's
+// "nothing waiting or dead lettered for that month" check (FW1-09b). A nil
+// pool answers zero (scaffold/offline mode).
+func (s *PgOutboxStore) UnpostedForWindow(ctx context.Context, topics []string, from, to time.Time) (int, error) {
+	if s.pool == nil || len(topics) == 0 {
+		return 0, nil
+	}
+	var n int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM events_outbox
+		  WHERE topic = ANY($1) AND status IN ('PENDING','DEAD') AND occurred_at >= $2 AND occurred_at < $3`,
+		topics, from, to).Scan(&n); err != nil {
+		return 0, fmt.Errorf("notify: unposted for window: %w", err)
+	}
+	return n, nil
 }

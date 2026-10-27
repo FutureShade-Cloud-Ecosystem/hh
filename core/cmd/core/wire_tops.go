@@ -435,7 +435,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithARSubledger(billingRepo).
 		WithTaxSplitReader(posRepo).
 		WithPaymentReader(ops.tillRepo).
-		WithDeliveryReader(orderRepo)
+		WithDeliveryReader(orderRepo).
+		WithStockReader(glStockValueAdapter{svc: spine.inventorySvc}).
+		WithDrawerReader(tillDrawerAdapter{repo: ops.tillRepo}).
+		WithQueueReader(spine.outboxStore)
 
 	// A-04 finstmt: read-only statements over the 0034 views. The DIB-510
 	// receivables register mounts from here (billing's register handler,
@@ -539,7 +542,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// public confirm consults), read inside the confirm's own
 	// transaction, with the boot fail-fast beside it.
 	pickupsSync := dispatch.NewPickupsSyncStore(
-		pool, dispatchTenantOrders{repo: orderRepo}, dispatchSignatureAdapter{svc: posSvc}, dispatchPickHoldAdapter{repo: billingRepo}, linkedUserID(pool))
+		pool, dispatchTenantOrders{repo: orderRepo}, dispatchSignatureAdapter{svc: posSvc}, dispatchPickHoldAdapter{repo: billingRepo}, linkedUserID(pool)).
+		WithOrderFulfiller(dispatchFulfilAdapter{svc: orderSvc})
 	if !pickupsSync.PickHoldGateWired() {
 		panic("dispatch: pickups sync store pick hold gate not wired - a pay before release order's pickup could be confirmed offline unpaid")
 	}

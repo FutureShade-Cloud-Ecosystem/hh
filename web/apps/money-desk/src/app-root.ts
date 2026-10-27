@@ -215,6 +215,8 @@ export class MoneyDeskApp extends HHElement {
         } else if (el.value !== value) el.value = value;
       },
       reveal: (selector) => this.renderRoot.querySelector(selector)?.scrollIntoView({ block: "start", behavior: "smooth" }),
+      userId: () => this.#sessions.current?.user.userId ?? "",
+      userName: () => this.#userName,
     });
   }
 

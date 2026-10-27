@@ -32,11 +32,10 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	// 684: the base's 681, main's FW1-01 glOpenYear, and this lane's two
-	// credit memo doors (the issue route and the quote route). Both sides'
-	// routes are kept.
-	if staff != 684 {
-		t.Fatalf("census staff operations: %d, want the document's 684 (the base's 681, main's glOpenYear and this lane's two credit memo doors)", staff)
+	// 688: main's 684, plus FW1-04's bankrecRecordCutover and bankrecCutoverPreview, plus FW1-07's controllerExceptions,
+	// plus this branch's paymentsVoidPayment.
+	if staff != 688 {
+		t.Fatalf("census staff operations: %d, want the document's 688", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }

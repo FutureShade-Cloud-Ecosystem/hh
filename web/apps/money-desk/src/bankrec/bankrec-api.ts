@@ -18,6 +18,7 @@ import {
   staffGl,
   type ApiClient,
   type BankRecAccount,
+  type BankRecCutoverPreview,
   type BankRecImportResult,
   type BankRecMatch,
   type BankRecMatchRule,
@@ -119,6 +120,31 @@ export class BankrecApi {
 
   completeReconciliation(id: string): Promise<Result<BankRecReconciliation>> {
     return staffBankrec.bankrecCompleteReconciliation(this.#client, id);
+  }
+
+  /**
+   * Records the account's reconciliation starting point (cut over): the Controller's door, added in round 3.
+   * The core keeps its Financial Controller check and refuses once a later month has signed off.
+   */
+  recordCutover(accountId: string, date: string, balanceCents: number, outstandingJournalIds: string[]): Promise<Result<BankRecAccount>> {
+    return staffBankrec.bankrecRecordCutover(this.#client, accountId, {
+      cutover_date: date,
+      opening_statement_balance_cents: balanceCents,
+      ...(outstandingJournalIds.length === 0 ? {} : { outstanding_journal_ids: outstandingJournalIds }),
+    });
+  }
+
+  /**
+   * The starting point form's read: the ledger's entries on or before the cut over date and the book balance
+   * they make, answered by the core so the desk formats figures and never computes them. With the typed
+   * statement balance and the ticked ids, the answer also carries the difference and whether it reconciles.
+   */
+  cutoverPreview(accountId: string, date: string, statementCents: number | null, ticked: string[]): Promise<Result<BankRecCutoverPreview>> {
+    return staffBankrec.bankrecCutoverPreview(this.#client, accountId, {
+      date,
+      ...(statementCents === null ? {} : { statement_cents: statementCents }),
+      ...(ticked.length === 0 ? {} : { ticked: ticked.join(",") }),
+    });
   }
 
   /** The posted journals a statement line can be paired to; the ledger's own register, read only. */

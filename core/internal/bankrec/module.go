@@ -13,17 +13,19 @@ package bankrec
 import (
 	"context"
 	"errors"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
-	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"io"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	identityPkg "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // errNotImplemented marks a scaffold stub the A-02 worker fills.
@@ -57,19 +59,33 @@ type LodgementFact struct {
 	AmountCents        int64
 	PaymentIDs         []string
 	PaymentsUnresolved bool
+	// CarriesJournal says the lodgement carries its own journal, so its bank match only confirms
+	// the line and posts nothing (FROM-PRINCIPAL 117 and 120). An older lodgement keeps today's
+	// match, which posts the clearing journal.
+	CarriesJournal bool
 }
 
 // JournalSource reads one journal for a manual JOURNAL match (SF-2j): the GL module's seam, satisfied by
 // *gl.Service. bankrec never reads gl_journals itself.
-// JournalMatchFact is one live JOURNAL match of a month, for CompleteReconciliation's recheck.
+// JournalMatchFact is one live match of a month that references a journal (either TargetJournal via JournalID or a
+// clearing journal via ClearingJournalID), for CompleteReconciliation's recheck.
 type JournalMatchFact struct {
-	JournalID       string
-	LineDescription string
-	LineAmountCents int64
+	TargetType        string
+	JournalID         string
+	ClearingJournalID string
+	LineDescription   string
+	LineAmountCents   int64
 }
 
 type JournalSource interface {
 	JournalForBank(ctx context.Context, journalID, glAccountCode string) (gl.BankJournalFacts, bool, error)
+}
+
+// JournalKeyReader answers which of the given idempotency keys already name a journal. Satisfied by
+// *gl.Service.JournalKeysExist (the GL's own keyed existence read). bankrec never reads gl_journals
+// itself: it asks the GL, which owns the table.
+type JournalKeyReader interface {
+	JournalKeysExist(ctx context.Context, keys []string) ([]string, error)
 }
 
 // JournalPoster posts a clearing journal through the GL provider. Satisfied by a main.go adapter over
@@ -110,6 +126,11 @@ type Lodgement struct {
 	OccurredAt         time.Time
 	PaymentIDs         []string
 	PaymentsUnresolved bool
+	// CarriesJournal says the lodgement carries its own journal: the till posted DR 1000 / CR 1020
+	// AT LODGEMENT (FROM-PRINCIPAL 117). Its bank match then only confirms the line and posts
+	// nothing, so the deposit is never booked twice. A lodgement from before this change has no
+	// lodgement journal and keeps today's match, which posts the clearing journal.
+	CarriesJournal bool
 }
 
 // ImportProfile is the column-mapping profile a StatementSource parses under (0033 bank_import_profiles).
@@ -144,15 +165,18 @@ func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: po
 
 // Service is the bankrec domain seam. Sibling seams are injected via the With* builder options.
 type Service struct {
-	repo       *Repository
-	payments   PaymentSource
-	lodgements LodgementSource
-	journals   JournalSource
-	poster     JournalPoster
-	balances   GLBalanceReader
-	source     StatementSource
-	audit      audit.Recorder
-	log        *slog.Logger
+	repo        *Repository
+	payments    PaymentSource
+	lodgements  LodgementSource
+	journals    JournalSource
+	journalKeys JournalKeyReader
+	poster      JournalPoster
+	balances    GLBalanceReader
+	source      StatementSource
+	audit       audit.Recorder
+	zone        houseday.Source
+	now         func() time.Time
+	log         *slog.Logger
 }
 
 // NewService wires the repository. Optional deps are injected via the With* methods.
@@ -160,11 +184,21 @@ func NewService(repo *Repository) *Service {
 	return &Service{repo: repo, log: slog.Default()}
 }
 
+// WithZone injects the dealer's business day zone source (FW1-04). Nil uses the Ontario dealer's default zone.
+func (s *Service) WithZone(src houseday.Source) *Service { s.zone = src; return s }
+
+// WithClock injects a deterministic clock (tests). Nil uses time.Now.
+func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
+
 // WithPayments injects the till unreconciled-card-payment seam (+ MarkDeposited).
 func (s *Service) WithPayments(p PaymentSource) *Service { s.payments = p; return s }
 
 // WithJournals injects the GL journal seam a manual JOURNAL match reads (SF-2j). Unwired, a JOURNAL target is refused.
 func (s *Service) WithJournals(j JournalSource) *Service { s.journals = j; return s }
+
+// WithJournalKeys injects the GL's keyed journal existence read, which names the lodgement's own journal
+// (FROM-PRINCIPAL 117 and 120). Unwired, the match falls back to the till's own facts.
+func (s *Service) WithJournalKeys(j JournalKeyReader) *Service { s.journalKeys = j; return s }
 
 // WithLodgements injects the till open-lodgement seam.
 func (s *Service) WithLodgements(l LodgementSource) *Service { s.lodgements = l; return s }
@@ -199,18 +233,29 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 	return &Handler{svc: svc, log: log}
 }
 
-// RegisterRoutes self-registers the bankrec routes. reads are RequireStaff; import/match are RequireManager;
-// rule approval + reconciliation completion are RequireAdmin. Signature is FROZEN across the W5 handlers.
+// requireMoneyDeskWork guards the five bankrec reads (FROM-PRINCIPAL 111): only global
+// Money Desk roles at work or above (payables_receivables, general_manager, financial_controller,
+// and platform roles) pass; counter and branch-scoped staff and HR are refused.
+func (h *Handler) requireMoneyDeskWork(g *guards.Guards, next guards.StaffHandler) http.Handler {
+	return g.RequireStaffPredicate(func(a identityPkg.StaffAuthority) bool {
+		return a.IsManager() && a.Scope == identityPkg.ScopeGlobal && a.RoleID != "hr"
+	}, next)
+}
+
+// RegisterRoutes self-registers the bankrec routes. reads are Money Desk work or above; import/match are RequireManager;
+// rule approval, reconciliation completion and the cut over are RequireAdmin. Signature is FROZEN across the W5 handlers.
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/v1/bankrec/accounts", g.RequireStaff(h.staff(h.accounts)))
+	r.Handle("GET /api/v1/bankrec/accounts", h.requireMoneyDeskWork(g, h.staff(h.accounts)))
+	r.Handle("GET /api/v1/bankrec/accounts/{id}/cutover", h.requireMoneyDeskWork(g, h.staff(h.cutoverPreview)))
+	r.Handle("POST /api/v1/bankrec/accounts/{id}/cutover", g.RequireAdmin(h.staff(h.recordCutover)))
 	r.Handle("POST /api/v1/bankrec/imports", g.RequireManager(h.staff(h.createImport)))
-	r.Handle("GET /api/v1/bankrec/lines", g.RequireStaff(h.staff(h.lines)))
-	r.Handle("GET /api/v1/bankrec/matches", g.RequireStaff(h.staff(h.matchHistory)))
+	r.Handle("GET /api/v1/bankrec/lines", h.requireMoneyDeskWork(g, h.staff(h.lines)))
+	r.Handle("GET /api/v1/bankrec/matches", h.requireMoneyDeskWork(g, h.staff(h.matchHistory)))
 	r.Handle("POST /api/v1/bankrec/match", g.RequireManager(h.staff(h.match)))
 	r.Handle("POST /api/v1/bankrec/unmatch", g.RequireManager(h.staff(h.unmatch)))
-	r.Handle("GET /api/v1/bankrec/rules", g.RequireStaff(h.staff(h.rules)))
+	r.Handle("GET /api/v1/bankrec/rules", h.requireMoneyDeskWork(g, h.staff(h.rules)))
 	r.Handle("POST /api/v1/bankrec/rules", g.RequireAdmin(h.staff(h.createRule)))
-	r.Handle("GET /api/v1/bankrec/reconciliations", g.RequireStaff(h.staff(h.reconciliations)))
+	r.Handle("GET /api/v1/bankrec/reconciliations", h.requireMoneyDeskWork(g, h.staff(h.reconciliations)))
 	r.Handle("POST /api/v1/bankrec/reconciliations", g.RequireManager(h.staff(h.openReconciliation)))
 	r.Handle("POST /api/v1/bankrec/reconciliations/{id}/complete", g.RequireAdmin(h.staff(h.completeReconciliation)))
 }

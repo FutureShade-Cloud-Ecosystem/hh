@@ -134,7 +134,7 @@ type TrialBalanceRow struct {
 }
 
 // PLBranchRow is one account's P&L net for a fiscal year under one branch stamp ("" = company level),
-// the year end's per branch input (FW1-08b).
+// the year end's per branch input (FW1-08b's stamps; FW1-09b's per branch close).
 type PLBranchRow struct {
 	AccountCode   string
 	AccountName   string
@@ -281,6 +281,17 @@ func (d journalDraft) creditTotal() int64 {
 }
 
 func (d journalDraft) balanced() bool { return d.debitTotal() == d.creditTotal() }
+
+// BankBookEntry is one POSTED, unreversed book journal touching a bank GL account on or before a cut-off
+// instant (excluding bankrec's own clearing/unmatch postings), used by bankrec to identify deposits in
+// transit and outstanding cheques at month end (FW1-04).
+type BankBookEntry struct {
+	JournalID   string
+	SourceRefID string
+	PostedAt    time.Time
+	Memo        string
+	NetCents    int64 // debits minus credits on the named bank GL account
+}
 
 // - error taxonomy (mirrors internal/till) -
 

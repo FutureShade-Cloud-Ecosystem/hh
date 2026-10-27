@@ -56,7 +56,7 @@ func TestIntegration_DIB418_ConcurrentPostsMintDistinctEntryNos(t *testing.T) {
 	dib418Cleanup(t, pool, dib418Year)
 
 	at := time.Date(dib418Year, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at)
 
 	const n = 50
 	run := time.Now().UnixNano()
@@ -167,7 +167,7 @@ func TestIntegration_DIB418_HealsAfterADirectEntryNoWrite(t *testing.T) {
 	dib418Cleanup(t, pool, dib418Year)
 
 	at := time.Date(dib418Year, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at)
 
 	// One normal post, so the counter row exists and is in step.
 	if _, err := svc.PostExternal(ctx, ExternalJournal{
@@ -224,7 +224,7 @@ func TestIntegration_DIB418_RolledBackMintReturnsTheNumber(t *testing.T) {
 	dib418Cleanup(t, pool, dib418Year)
 
 	at := time.Date(dib418Year, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at)
 
 	// Mint inside a transaction and abandon it, exactly what InsertJournal does when its header insert or
 	// its deferred balance check fails.

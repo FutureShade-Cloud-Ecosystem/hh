@@ -241,6 +241,23 @@ func (s *Svc) sneakUnrecordedOutboxLiteral() {
 			t.Fatalf("RED dodge probe failed: unrecorded events_outbox literal was not flagged (errors: %v)", probeErrs)
 		}
 	})
+
+	t.Run("dodge_unrecorded_outbox_read", func(t *testing.T) {
+		tmpRoot := fw1WriteProbeFile(t, `package probe
+
+func (s *Svc) sneakUnrecordedOutboxRead() {
+	rows, _ := s.pool.Query(nil, "SELECT payload FROM events_outbox WHERE topic = 'till.movement.posted'")
+	_ = rows
+}
+`)
+		probeErrs, err := fw1VerifyNonGLSites(tmpRoot, nil)
+		if err != nil {
+			t.Fatalf("scan probe: %v", err)
+		}
+		if !fw1HasErrorContaining(probeErrs, "UNLISTED outbox read") {
+			t.Fatalf("RED dodge probe failed: an unrecorded outbox read was not flagged (errors: %v)", probeErrs)
+		}
+	})
 }
 
 func fw1WriteProbeFile(t *testing.T, src string) string {
@@ -489,6 +506,9 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 			"postExternal":        true,
 			"postExternalTx":      true,
 			"insertJournalIn":     true,
+			// The year end's dedicated store insert (FW1-09b round 5): CloseYear
+			// reaches the journal insert path through it in the merged tree.
+			"InsertClosingJournalTx": true,
 		}
 		glDispatcherMethods := map[string]bool{
 			"consume":                 true,
@@ -579,6 +599,15 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 	}
 
 	var discovered []fw1FoundSite
+	// The listed sites, so a read of the outbox that the table records is known
+	// to be on the record (and its SQL literal is a recorded literal).
+	listedSites := make(map[string]bool, len(table))
+	for _, entry := range table {
+		listedSites[entry.File+"|"+entry.Func+"|"+entry.Kind] = true
+	}
+	// The outbox reads, counted apart from the writers: a read is not a writer,
+	// so it must not make a listed writer look duplicated.
+	readCounts := map[string]int{}
 	for _, pf := range files {
 		if pf.rel == "core/internal/gl" || strings.HasPrefix(pf.rel, "core/internal/gl/") {
 			continue
@@ -660,6 +689,32 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 							}
 						}
 					}
+					// A READ of the outbox is a site the census holds on the record
+					// too: it writes no journal, but a writer's sibling that the
+					// table must name with its true reason. The outbox's own
+					// store (notify) is not a writer site and is left alone.
+					if name == "Exec" || name == "Query" || name == "QueryRow" {
+						for _, arg := range call.Args {
+							sqlStr, ok := resolveString(pf, arg)
+							if !ok {
+								continue
+							}
+							lower := strings.ToLower(sqlStr)
+							if !strings.Contains(lower, "events_outbox") ||
+								strings.Contains(lower, "insert into events_outbox") ||
+								!strings.Contains(lower, "select") {
+								continue
+							}
+							if pf.rel == "core/internal/notify/store.go" || pf.rel == "core/internal/notify/requeue.go" {
+								continue
+							}
+							key := pf.rel + "|" + fnName + "|" + fw1OutboxReadKind
+							readCounts[key]++
+							if listedSites[key] {
+								markExprLits(pf, arg)
+							}
+						}
+					}
 				case *ast.Ident:
 					if fun.Name == "emitOutbox" {
 						recordOutboxCall("emitOutbox", fun.Pos(), call.Args)
@@ -722,9 +777,29 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 	}
 
 	for key, entry := range tableByKey {
-		if foundCounts[key] == 0 {
+		if foundCounts[key] == 0 && readCounts[key] == 0 {
 			errs = append(errs, fmt.Sprintf("STALE entry in fw1NonGLJournalWriterCallSites not found in source tree: file=%s func=%s kind=%s",
 				entry.File, entry.Func, entry.Kind))
+		}
+	}
+
+	// An outbox read that the table does not name is a site the census must
+	// catch: the read is not a writer, so it needs its true reason on the
+	// record (a writer's sibling that reads the outbox).
+	readKeys := make([]string, 0, len(readCounts))
+	for key := range readCounts {
+		readKeys = append(readKeys, key)
+	}
+	sort.Strings(readKeys)
+	for _, key := range readKeys {
+		if !listedSites[key] {
+			parts := strings.SplitN(key, "|", 3)
+			file, fn, kind := "", "", key
+			if len(parts) == 3 {
+				file, fn, kind = parts[0], parts[1], parts[2]
+			}
+			errs = append(errs, fmt.Sprintf("UNLISTED outbox read at %s: func=%s kind=%s (add to fw1NonGLJournalWriterCallSites with its true reason: it reads the outbox, it writes no journal)",
+				file, fn, kind))
 		}
 	}
 	return errs, nil

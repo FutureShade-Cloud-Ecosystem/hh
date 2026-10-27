@@ -77,8 +77,13 @@ export class ArApi {
     return staffBilling.billingGetARWorklist(this.#client, opts);
   }
 
-  aging(): Promise<Result<BillingAgingPage>> {
-    return staffBilling.billingGetAging(this.#client);
+  /**
+   * The aging, today's books when no day is named. A named day reads the books AS OF that day
+   * (FW1-06b): what each account owed at it, from invoices issued by it less what had come in by
+   * it, not today's balances back dated.
+   */
+  aging(opts: { as_of?: string } = {}): Promise<Result<BillingAgingPage>> {
+    return staffBilling.billingGetAging(this.#client, opts);
   }
 
   /** Every invoice of an account, the unpaid ones first and the paid ones after: the core's read with no chip. */

@@ -26,7 +26,11 @@ func reversalGuardService(t *testing.T, pool *pgxpool.Pool, year int) *Service {
 	ensurePeriods(t, pool, year)
 	user := aUser(t, pool)
 	at := time.Date(year, 5, 11, 12, 0, 0, 0, time.UTC)
-	return svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership}, at)
+	// FW1-09b round 3's write fence (SECURITY-SOD gap 19): a consolidated write, a journal with no
+	// branch, needs a dealer wide sign in, and the empty scope of a plain controller is not one. The
+	// legs below write unbranched journals, so the controller signs in GLOBAL, the same shape 613's
+	// own tests use; the fence is then not what these legs are about (the reversal guard is).
+	return svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, at)
 }
 
 // A posted manual journal is refused a second reversal: the first reversal stands, and the second
