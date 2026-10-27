@@ -3065,9 +3065,10 @@ type GlPeriod struct {
 }
 
 type GlPeriodPage struct {
-	Items      []GlPeriod `json:"items"`
-	NextCursor *string    `json:"next_cursor,omitempty"`
-	Limit      *int32     `json:"limit,omitempty"`
+	Items            []GlPeriod `json:"items"`
+	NextOpenableYear *int32     `json:"next_openable_year,omitempty"`
+	NextCursor       *string    `json:"next_cursor,omitempty"`
+	Limit            *int32     `json:"limit,omitempty"`
 }
 
 type GlPostingQueueEvent struct {
@@ -3094,6 +3095,7 @@ type GlReasonBody struct {
 }
 
 type GlPeriodReopenBody struct {
+	Year   *int32 `json:"year,omitempty"`
 	Reason string `json:"reason"`
 }
 
