@@ -429,5 +429,14 @@ func TestIntegration_CreditMemoRound_ABranchLeftOnAnotherOrgStillParks(t *testin
 
 	// On the unfixed plant the stamp skips Trenton (its org is not NULL), so the caller's org and
 	// the branch's disagree and the fence refuses the park here.
-	cmRoundParkCredit(t, pool, svc, world.requester, world.cust, world.inv, "cm-rail-left-org")
+	res := cmRoundParkCredit(t, pool, svc, world.requester, world.cust, world.inv, "cm-rail-left-org")
+	// The park is never decided, so its journal leaves as it stands: a parked DRAFT with a 1100
+	// line. The round takes that journal back (the lines cascade with it), because a DRAFT journal
+	// line on 1100 left on the shared gate database is exactly what gl's FW1-09a deactivation leg
+	// reads later in the suite's go list order, and with the round's planted users gone the
+	// journal's approval request is gone with them, so nothing could ever decide it.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM gl_journals WHERE idempotency_key = $1`,
+			billing.CreditMemoJournalKeyPrefix+res.CreditMemoID)
+	})
 }
