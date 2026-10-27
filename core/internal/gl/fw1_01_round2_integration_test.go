@@ -365,8 +365,17 @@ func TestIntegration_FW1_01R2_OpenYearAuditInTheYearsTransaction(t *testing.T) {
 	if len(good.recorded) != 1 {
 		t.Fatalf("%d audit rows recorded, want 1", len(good.recorded))
 	}
-	if good.recorded[0].EntityID != "fiscal_year:2028" {
-		t.Fatalf("the audit names %q, want fiscal_year:2028 (the open's target, one beyond the roll forward's)", good.recorded[0].EntityID)
+	// Round 4 (S2's round 3 P1): audit_log.entity_id is a uuid column, so the row names the opened
+	// year's January period and the year itself rides Extra.
+	var januaryID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year = 2028 AND month = 1`).Scan(&januaryID); err != nil {
+		t.Fatal(err)
+	}
+	if good.recorded[0].EntityID != januaryID {
+		t.Fatalf("the audit names %q, want the opened year's January period id %q (audit_log.entity_id is a uuid column)", good.recorded[0].EntityID, januaryID)
+	}
+	if good.recorded[0].Extra["fiscal_year"] != 2028 {
+		t.Fatalf("the audit's Extra carries fiscal_year %v, want 2028", good.recorded[0].Extra["fiscal_year"])
 	}
 }
 

@@ -55,6 +55,10 @@ type glStore interface {
 	// - periods -
 	ListPeriods(ctx context.Context) ([]Period, error)
 	GetPeriod(ctx context.Context, id string) (Period, error)
+	// FiscalPeriodIDTx answers one period's id read on the caller's transaction, the seam the open
+	// year's audit takes to name the opened year's January period (round 4, S2's P1: the audit row
+	// must carry a uuid; the year itself rides Extra).
+	FiscalPeriodIDTx(ctx context.Context, tx pgx.Tx, year, month int) (string, error)
 	ClosePeriod(ctx context.Context, id, actorID, reason string) (Period, error)
 	ReopenPeriod(ctx context.Context, id, actorID, reason string) (Period, error)
 	ClosePeriodsForYear(ctx context.Context, year int, actorID, reason string) error

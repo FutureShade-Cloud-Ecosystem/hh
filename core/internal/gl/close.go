@@ -204,17 +204,25 @@ func (s *Service) OpenFiscalYear(ctx context.Context, requestedYear int, reason 
 	}
 	// Round 2 (S2 P2-4): the audit row is recorded INSIDE the year's transaction, so it commits or
 	// rolls back with the year it opens; a failed audit leaves no year behind. Unwired, nothing is
-	// recorded (the guards above still hold).
+	// recorded (the guards above still hold). Round 4 (S2's round 3 P1): audit_log.entity_id is a
+	// uuid column (0013), so the row is keyed to the opened year's January period, read on this
+	// same transaction, and the year itself rides Extra; the old "fiscal_year:<n>" entity failed
+	// every real insert with SQLSTATE 22P02 and rolled the whole open back.
 	year, err := s.store.OpenNextFiscalYear(ctx, s.clock(), requestedYear, func(ctx context.Context, tx pgx.Tx, year int) error {
 		if s.auditTx == nil {
 			return nil
 		}
+		periodID, perr := s.store.FiscalPeriodIDTx(ctx, tx, year, 1)
+		if perr != nil {
+			return perr
+		}
 		return s.auditTx.RecordTx(ctx, tx, audit.SensitiveAccess{
 			Action:     actGLFiscalYearOpen,
 			EntityType: "gl.period",
-			EntityID:   fmt.Sprintf("fiscal_year:%d", year),
+			EntityID:   periodID,
 			ActorID:    caller.UserID,
 			Reason:     reason,
+			Extra:      map[string]any{"fiscal_year": year},
 		})
 	})
 	if err != nil {

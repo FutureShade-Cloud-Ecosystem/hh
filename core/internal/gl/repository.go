@@ -899,6 +899,18 @@ func (r *Repository) ensureFiscalYearTx(ctx context.Context, tx pgx.Tx, year int
 	return nil
 }
 
+// FiscalPeriodIDTx answers one period's id read on the caller's transaction (the open year's audit
+// reads the opened year's January period id on the year's own transaction, so the id it names is
+// the one this transaction just made sure of).
+func (r *Repository) FiscalPeriodIDTx(ctx context.Context, tx pgx.Tx, year, month int) (string, error) {
+	var id string
+	if err := tx.QueryRow(ctx,
+		`SELECT id::text FROM fiscal_periods WHERE year = $1 AND month = $2`, year, month).Scan(&id); err != nil {
+		return "", fmt.Errorf("gl: read period %d-%02d: %w", year, month, err)
+	}
+	return id, nil
+}
+
 // earliestOpenPeriodTx answers the earliest OPEN fiscal period AT OR AFTER the document's (year, month)
 // on tx (round 1b, FROM-PRINCIPAL 96: a stray earlier open month, one a controller left open behind a
 // closed month, never catches the late journal), creating the next fiscal year first when no open month

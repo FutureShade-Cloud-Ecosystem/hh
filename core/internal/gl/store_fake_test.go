@@ -280,6 +280,12 @@ func (f *fakeStore) ListPeriods(_ context.Context) ([]Period, error) { return ni
 func (f *fakeStore) GetPeriod(_ context.Context, _ string) (Period, error) {
 	return Period{}, errNotFound
 }
+
+// FiscalPeriodIDTx answers a fixed uuid-shaped id: the shape the open year's audit entity must
+// carry (audit_log.entity_id is a uuid column), never the year itself.
+func (f *fakeStore) FiscalPeriodIDTx(_ context.Context, _ pgx.Tx, year, month int) (string, error) {
+	return fmt.Sprintf("00000000-0000-4000-8000-%04d%02d000000", year%10000, month), nil
+}
 func (f *fakeStore) ClosePeriod(_ context.Context, id, _, _ string) (Period, error) {
 	return Period{ID: id, Status: "CLOSED"}, nil
 }
