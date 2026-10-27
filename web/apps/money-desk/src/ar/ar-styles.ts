@@ -273,6 +273,12 @@ const receivablesStyles = css`
     table.inv tbody td:nth-child(7) { grid-area: pick; }
     table.inv tbody td:nth-child(8) { grid-area: applied; text-align: start; }
     table.inv tbody td.applied-cell:empty { display: none; }
+    /* The invoice row's credit form is one cell that must span the whole row grid: in the inv column
+       it read 24 px narrower than the rows above it. Its own single track replaces the row's three
+       column areas, and its 8 px of side padding keeps the input's 4 px focus ring whole inside
+       .scroll's clip, which the padding: 0 rows sit right on. */
+    table.inv tr.credit-form-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "form"; }
+    table.inv tr.credit-form-row > td { grid-area: form; padding: 0 var(--hh-s-8); }
     table.stmt tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "acct bal" "last last" "act act"; }
     table.stmt tbody td:nth-child(1) { grid-area: acct; }
     table.stmt tbody td:nth-child(2) { grid-area: bal; }
