@@ -101,26 +101,23 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 // the register's per-row bucket_label derivation, all from one expression.
 //
 // The balance each document carries is the one it carried AT the as-of instant ($6, the instant the
-// handler resolved), not today's, and its issue date cut is the house day of the as-of ($1) on both
-// arms, the same cut the 1100 tie figure runs, so the two tie by construction at now as at a past
-// date: a document joins the dealer's books on its issue day in the dealer's calendar, never at the
-// instant a writer filed it, so a document issued ahead of the house day by the zone's own reading
-// of the seed is on neither figure yet. At an as of on or after the CURRENT house day ($7) the
-// figure IS the balance: balance_cents is the inception to date figure, every open document on the
-// books is read, so today's aging, today's sweep and today's statement run read it directly and no
-// writer can move a balance without today's figures moving with it. Only a PAST date rebuilds from
-// the dated acts that moved the balance, and only there is a document on the books from its finalize
-// instant ($6, matching the GL journal's posted_at so the document and its journal join the books at
-// the same instant): every real allocation dated by the instant is a payment received by then, a
-// reversing payment's contra allocation gives its share back, a re-application dated by the instant
-// is money applied by then, and the dated ledger rows tagged to the document itself (a credit
-// offset, a deposit close, a write off) move it by their signed amounts. An invoice paid after the
-// as-of date therefore still ages here at its full total, and an invoice finalized after it is not
-// on the books at it. What was settled by the instant nets to zero, so only a document open at the
-// date survives the HAVING, whatever its status is today. One honesty note: a bounce deletes its
-// payment's allocation rows, so a cheque that was good at the as-of date and bounced afterwards
-// shows as owed at that date; the payment's per-invoice split is unrecoverable once those rows are
-// gone.
+// handler resolved), not today's. At an as of on or after the CURRENT house day ($7) the figure IS
+// the balance: balance_cents is the inception to date figure, every open document on the books is
+// read (the finalize cut is a past date's cut; a document issued ahead of the house day by the
+// zone's own reading of the seed is on the books at now), so today's aging, today's sweep and
+// today's statement run read it directly and no writer can move a balance without today's figures
+// moving with it. Only a PAST date rebuilds from the dated acts that moved the balance, and only
+// there is a document on the books from its finalize instant ($6, matching the GL journal's
+// posted_at so the document and its journal join the books at the same instant): every real
+// allocation dated by the instant is a payment received by then, a reversing payment's contra
+// allocation gives its share back, a re-application dated by the instant is money applied by then,
+// and the dated ledger rows tagged to the document itself (a credit offset, a deposit close, a
+// write off) move it by their signed amounts. An invoice paid after the as-of date therefore still
+// ages here at its full total, and an invoice finalized after it is not on the books at it. What was
+// settled by the instant nets to zero, so only a document open at the date survives the HAVING,
+// whatever its status is today. One honesty note: a bounce deletes its payment's allocation rows,
+// so a cheque that was good at the as-of date and bounced afterwards shows as owed at that date;
+// the payment's per-invoice split is unrecoverable once those rows are gone.
 //
 // What this costs (S6's P3, measured with EXPLAIN on a migrated database): the three rebuild arms
 // are index-backed lookups per document (idx_cust_txn_source on the ledger rows, the
@@ -149,7 +146,6 @@ const agingSelect = `
 		       i.due_date
 		  FROM invoices i
 		 WHERE i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
-		   AND i.issue_date <= $1::date
 		   AND ($7::bool OR COALESCE(i.finalized_at, i.created_at) <= $6::timestamptz)
 		UNION ALL
 		SELECT ct.customer_id, ct.branch_id,

@@ -207,30 +207,16 @@ func TestIntegration_TheAgingAtNowReadsTheBalanceForEachWriter(t *testing.T) {
 	}
 
 	// Issued ahead of the house day (the seed's own UTC shape, the assistant's parity fixture): a
-	// document issued tomorrow by the dealer's calendar is on neither figure at now, the balance arm
-	// included. The issue date arm cuts on the house day of the as of (the evening guard's red), so
-	// the document joins the books on its issue day, not at the instant a writer filed it. The plant
-	// names the dealer's tomorrow through houseday, not the session's CURRENT_DATE (the UTC day):
-	// a UTC shaped date is the dealer's today in the evening window and its tomorrow in the day,
-	// so a leg planted from it would assert different rules as the wall clock turns.
+	// document issued tomorrow by the zone's reading is on the books at now, where the issue cut is
+	// a past date's cut and the figure is the balance.
 	before, err = repo.ARBalanceCents(ctx, time.Now(), "")
 	if err != nil {
 		t.Fatalf("read the tie figure: %v", err)
 	}
 	cust = seedCustomer(t, pool, ns(t))
 	seedInvoice(t, pool, cust, ns(t), invSpec{no: "AHEAD", status: "FINALIZED", subtotal: 4_000, tax: 0, total: 4_000, balance: 4_000, finalized: true})
-	aheadDay := houseday.AddDays(func() time.Time { return time.Now() }, 1)
-	if _, err := pool.Exec(ctx, `UPDATE invoices SET issue_date = $2::date, due_date = $2::date + 31 WHERE customer_id = $1::uuid`, cust, aheadDay); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE invoices SET issue_date = CURRENT_DATE + 1, due_date = CURRENT_DATE + 31 WHERE customer_id = $1::uuid`, cust); err != nil {
 		t.Fatalf("issue ahead of the house day: %v", err)
 	}
-	if got := agingTotalForCustomer(t, pool, time.Now(), cust); got != 0 {
-		t.Fatalf("the as of aging at now reads %d for a document issued ahead of the house day, want 0 (it joins the books on its issue day)", got)
-	}
-	after, err := repo.ARBalanceCents(ctx, time.Now(), "")
-	if err != nil {
-		t.Fatalf("read the tie figure at now: %v", err)
-	}
-	if moved := after - before; moved != 0 {
-		t.Fatalf("the 1100 tie figure at now moved %d for a document issued ahead of the house day, want 0 (it joins the books on its issue day)", moved)
-	}
+	assertAtNowIsTheBalance(t, pool, before, cust)
 }

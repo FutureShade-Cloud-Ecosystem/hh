@@ -43,16 +43,14 @@ func (r *Repository) InvoiceForGL(ctx context.Context, invoiceID string) (gl.Inv
 // reading of the date); the transaction arm stays on the raw instant, because a payment or an NSF is
 // an instant and not a day.
 //
-// The invoice arm carries each document's balance AT the as-of instant ($2) and cuts its issue date
-// on the house day of the as-of ($4, the dealer's calendar) on BOTH arms: a document joins the
-// dealer's books on its issue day, never at the instant a writer filed it, so an invoice issued
-// ahead of the house day (the UTC day's own reading of the seed) is on neither figure yet. At an as
-// of on or after the CURRENT house day ($3) it reads balance_cents, the inception to date figure, so
-// the tie-out moves with every balance move; only a PAST date rebuilds, the same reconstruction the
-// aging's agingSelect runs, so the tie-out at a past date compares what was owed then with the GL at
-// that date and the aging's grand total ties to this figure by construction: an invoice paid after
-// the as-of date is still owed at it, an invoice finalized after it is not on the books at it, and a
-// document settled by the instant nets to zero. PAID documents are read only for that as-of balance.
+// The invoice arm carries each document's balance AT the as-of instant ($2). At an as of on or after
+// the CURRENT house day ($3) it reads balance_cents, the inception to date figure, every open
+// document on the books (the finalize cut is a past date's cut), so the tie-out moves with every
+// balance move; only a PAST date rebuilds, the same reconstruction the aging's agingSelect runs, so
+// the tie-out at a past date compares what was owed then with the GL at that date and the aging's
+// grand total ties to this figure by construction: an invoice paid after the as-of date is still
+// owed at it, an invoice finalized after it is not on the books at it, and a document settled by the
+// instant nets to zero. PAID documents are read only for that as-of balance.
 func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchID string) (int64, error) {
 	if r.pool == nil {
 		return 0, errNoDB
@@ -82,7 +80,6 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 		                   END AS bal
 		       FROM invoices i
 		      WHERE i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
-		        AND i.issue_date <= $4::date
 		        AND ($3::bool OR COALESCE(i.finalized_at, i.created_at) <= $2)
 		        AND ($1 = '' OR i.branch_id = $1::uuid)) b
 		      WHERE b.bal <> 0)
@@ -90,7 +87,7 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 		     WHERE txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF') AND source_type <> 'invoice'
 		       AND ($3::bool OR created_at <= $2)
 		       AND ($1 = '' OR branch_id = $1::uuid))`,
-		branchID, asOf, onOrAfterHouseDay(day, today), day,
+		branchID, asOf, onOrAfterHouseDay(day, today),
 	).Scan(&sum)
 	if err != nil {
 		return 0, fmt.Errorf("billing: AR balance as-of %s: %w", asOf.Format(time.RFC3339), err)
