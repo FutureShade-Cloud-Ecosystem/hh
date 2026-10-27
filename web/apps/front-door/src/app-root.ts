@@ -69,12 +69,32 @@ import {
   type FrontDoorSession,
 } from "./session.js";
 import { countMarginApprovals } from "./approvals-count.js";
-import { createAppwriteAccountSurface } from "@hardscapehouse/auth/appwrite-adapter";
-import { loadRuntimeConfig, type RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
+import { createAppwriteAccountSurface, type PasswordRecoverySurface } from "@hardscapehouse/auth/appwrite-adapter";
+import {
+  loadRuntimeConfig,
+  type DealerBrand,
+  type RuntimeConfig,
+  type RuntimeConfigFailure,
+} from "@hardscapehouse/auth/runtime-config";
 import { ALL_BRANCHES_OPTION, ConsoleSession, coreBaseFor, type GrantedBranch } from "./console.js";
 import { consoleStyles } from "./console-styles.js";
-import { bootScreen, configErrorScreen, dealerLockup, personaCards, roleEntryScreen, signInScreen } from "./console-views.js";
+import {
+  bootScreen,
+  configErrorScreen,
+  dealerLockup,
+  personaCards,
+  roleEntryScreen,
+  setPasswordScreen,
+  signInScreen,
+} from "./console-views.js";
 import { landingFor } from "./signin.js";
+import {
+  SetPasswordPage,
+  isSetPasswordPath,
+  readRecoveryLink,
+  scrubRecoveryQuery,
+  type RecoveryLink,
+} from "./set-password.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 
 const DEMO_ORG = "hh-demo";
@@ -83,10 +103,11 @@ type Screen = { kind: "picker" } | { kind: "home" } | { kind: "coming-soon"; mod
 
 /**
  * How this copy signs people in, from the served config.json: `boot` until it
- * is read, `demo` (tap a role), `console` (the real sign in), or
- * `config-error` (no usable mode: an honest error page, never the demo cards).
+ * is read, `demo` (tap a role), `console` (the real sign in), `set-password`
+ * (the page the console's recovery link points at: no sign in, one password),
+ * or `config-error` (no usable mode: an honest error page, never the demo cards).
  */
-type Mode = "boot" | "demo" | "console" | "config-error";
+type Mode = "boot" | "demo" | "console" | "set-password" | "config-error";
 
 /** The tile's one line of what the module is, keyed by the module's name. */
 const TILE_BLURBS: Record<string, string> = {
@@ -663,6 +684,10 @@ export class FrontDoorApp extends HHElement {
   #watch: ReturnType<typeof setInterval> | null = null;
   /** Count of pending margin approvals for the manager, fetched on session adopt. */
   #approvalCount = 0;
+  /** The set password page's own state; null on every other screen. */
+  #recoveryPage: SetPasswordPage | null = null;
+  /** The dealer the set password page draws its lockup from. */
+  #recoveryDealer: DealerBrand | null = null;
 
   constructor() {
     super();
@@ -761,12 +786,24 @@ export class FrontDoorApp extends HHElement {
 
   /** Read the served config.json, then become the demo picker, the console sign in, or the error page. */
   async #boot(): Promise<void> {
+    // The set password page is its own screen: the console's recovery link
+    // points at it. The link is read and the query taken straight back out of
+    // the address bar, before anything is awaited, so the secret never rests
+    // in the browser's history or in a referrer the page hands on.
+    const setPassword = isSetPasswordPath(window.location.pathname);
+    const link: RecoveryLink | null = setPassword ? readRecoveryLink(window.location.search) : null;
+    if (setPassword) scrubRecoveryQuery(window);
     const loaded = await loadRuntimeConfig();
     if (!this.isConnected) return;
     if (!loaded.ok) {
       this.#configFailure = loaded.reason;
       this.#mode = "config-error";
       this.requestUpdate();
+      return;
+    }
+    // The set password page comes before anything that would sign anybody in.
+    if (setPassword) {
+      this.#bootSetPassword(loaded.config, link);
       return;
     }
     if (loaded.config.mode === "demo") {
@@ -841,6 +878,42 @@ export class FrontDoorApp extends HHElement {
     }
   }
 
+  /**
+   * The set password page's own boot: the console's recovery route and the
+   * link out of the address bar. No session is opened here: a person who has
+   * not signed in yet is exactly who this page is for.
+   */
+  #bootSetPassword(config: RuntimeConfig, link: RecoveryLink | null): void {
+    if (config.mode !== "console") {
+      // A demo box has no console and so no recovery link: an honest error page.
+      this.#configFailure = "no_mode";
+      this.#mode = "config-error";
+      this.requestUpdate();
+      return;
+    }
+    let recovery: PasswordRecoverySurface;
+    try {
+      recovery = createAppwriteAccountSurface({
+        endpoint: config.consoleEndpoint,
+        projectId: config.consoleProjectId,
+        coreBaseUrl: config.coreBaseUrl === "" ? window.location.origin : config.coreBaseUrl,
+      });
+    } catch {
+      this.#configFailure = "incomplete";
+      this.#mode = "config-error";
+      this.requestUpdate();
+      return;
+    }
+    this.#recoveryDealer = config.dealer;
+    this.#recoveryPage = new SetPasswordPage({
+      recovery,
+      link,
+      onChange: () => this.requestUpdate(),
+    });
+    this.#mode = "set-password";
+    this.requestUpdate();
+  }
+
   /** Adopt the dealer's business zone from the public tenant config so the picker greets in houseZone. */
   async #loadTenantZone(): Promise<void> {
     const answered = await tenantAuth.tenantGetConfig(this.#feedbackClient);
@@ -882,13 +955,21 @@ export class FrontDoorApp extends HHElement {
 
   readonly #onSubmit = (event: Event): void => {
     const form = event.target;
-    if (!(form instanceof HTMLFormElement) || form.getAttribute("data-form") !== "signin") return;
-    // Never a navigation: the password must not travel in an address or a reload.
-    event.preventDefault();
+    if (!(form instanceof HTMLFormElement)) return;
+    const kind = form.getAttribute("data-form");
     const field = (name: string): string => {
       const control = form.elements.namedItem(name);
       return control instanceof HTMLInputElement ? control.value : "";
     };
+    if (kind === "set-password") {
+      // Never a navigation: the password must not travel in an address or a reload.
+      event.preventDefault();
+      void this.#recoveryPage?.submit(field("password"), field("confirm"));
+      return;
+    }
+    if (kind !== "signin") return;
+    // Never a navigation: the password must not travel in an address or a reload.
+    event.preventDefault();
     // A new sign in is a possible change of person: nothing the last person chose carries over.
     clearSessionBranchIds();
     void this.#console?.submit(field("email"), field("password")).then(() => {
@@ -1167,6 +1248,12 @@ export class FrontDoorApp extends HHElement {
   #body(): TemplateResult | typeof nothing {
     if (this.#mode === "boot") return bootScreen();
     if (this.#mode === "config-error") return configErrorScreen(this.#configFailure);
+    if (this.#mode === "set-password") {
+      const recovery = this.#recoveryPage;
+      const dealer = this.#recoveryDealer;
+      if (recovery === null || dealer === null) return bootScreen();
+      return setPasswordScreen(recovery, dealer, this.#quietSignInControls());
+    }
     const consoleSession = this.#console;
     if (this.#mode === "console" && consoleSession !== null) {
       if (consoleSession.phase === "starting") return bootScreen();
@@ -1377,6 +1464,9 @@ export class FrontDoorApp extends HHElement {
 
   #header(): TemplateResult | typeof nothing {
     if (this.#mode === "boot" || this.#mode === "config-error") return this.#plainHeader();
+    // The set password page is the sign in card without the header band, the
+    // same way the console's own signed out screen has no band.
+    if (this.#mode === "set-password") return nothing;
     if (this.#mode === "console" && this.#console !== null) {
       if (this.#console.phase !== "signed-in" || !this.#console.landed) return nothing;
       return this.#consoleHeader(this.#console);
