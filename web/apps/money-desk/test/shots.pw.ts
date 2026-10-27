@@ -69,6 +69,9 @@ for (const size of SIZES) {
       await expect(page.locator("[data-credit-target]")).toContainText("Against invoice");
       await page.locator("[data-field='credit-amount']").fill("100.00");
       await page.locator("[data-field='credit-reason']").fill("The goods came back");
+      // The shot waits for the core's quote: the cap and what the credit comes to are the core's
+      // figures, and a shot taken before they land shows a form with no cap at all.
+      await expect(page.locator("[data-credit-amount-words]")).toContainText("with tax");
       await take("account-open-invoices", "issue-credit-invoice");
 
       await page.getByRole("button", { name: "Statement", exact: true }).click();

@@ -58,6 +58,28 @@ export interface CreditForm {
   readonly amountText: string;
   /** The branch's approval threshold in cents, or null when the desk could not read it. */
   readonly thresholdCents: number | null;
+  /**
+   * What the core says this credit would come to, and how much room the invoice has left. The
+   * figures are the core's: the desk never works out a tax and never guesses a cap. Null until the
+   * core answers.
+   */
+  readonly quote: CreditQuote | null;
+  /** The core's own words when the amount does not fit the room; empty when there is nothing to say. */
+  readonly quoteError: string;
+}
+
+/**
+ * What the core says a credit against an invoice comes to, and how much room that invoice has left
+ * to credit. The room is the cap the core holds the amount to: what is left BEFORE tax, and the same
+ * room WITH tax. A paid invoice still has a room: what has been paid is not what has been credited.
+ */
+export interface CreditQuote {
+  /** What the invoice has left to credit, before tax. */
+  readonly remainingSubtotalCents: number;
+  /** What the invoice has left to credit, with tax. */
+  readonly remainingTotalCents: number;
+  /** The core's own words about the amount typed: what the credit comes to, tax included. */
+  readonly message: string;
 }
 
 export interface AccountModel {
@@ -751,17 +773,22 @@ export function renderHolds(model: DeskModel): TemplateResult {
 function creditForm(model: DeskModel, account: AccountModel): TemplateResult {
   const form = model.credit;
   const invoice = form === null || form.invoiceId === null ? null : account.invoices.find((r) => r.id === form.invoiceId) ?? null;
-  const target = creditTargetWords(invoice === null ? null : { invoice_no: invoice.invoice_no, balance_cents: invoice.balance_cents });
+  const quote = form?.quote ?? null;
+  const target = creditTargetWords(invoice === null ? null : { invoice_no: invoice.invoice_no }, quote);
   const approval = creditApprovalWords(form?.thresholdCents ?? null, form === null ? null : parseAmountToCents(form.amountText));
-  const cap = invoice === null ? null : invoice.balance_cents;
+  // The cap is the core's room: what the invoice has LEFT to credit, before tax. The balance with tax
+  // is a different number, and it was the wrong one on a paid invoice.
+  const cap = quote === null ? null : quote.remainingSubtotalCents;
   return html`
     <form class="credit-form" data-credit-form aria-label="Issue a credit">
       <p class="callout" data-credit-target>${target}</p>
       ${approval === "" ? nothing : html`<p class="note" data-credit-approval>${approval}</p>`}
       <label>
-        <span data-credit-amount-label>Amount to credit${cap === null ? nothing : html` <span class="dim small">(up to ${formatMoney(cap)})</span>`}</span>
+        <span data-credit-amount-label>Amount to credit${cap === null ? nothing : html` <span class="dim small">(up to ${formatMoney(cap)} before tax)</span>`}</span>
         <input type="text" inputmode="decimal" data-field="credit-amount" placeholder="Such as 100.00" autocomplete="off" />
       </label>
+      ${quote === null || form?.quoteError ? nothing : html`<p class="note" data-credit-amount-words>${quote.message}</p>`}
+      ${form?.quoteError ? html`<p class="note" data-credit-quote-error>${form.quoteError}</p>` : nothing}
       <label>
         <span data-credit-reason-label>Why the customer is credited (required)</span>
         <input type="text" data-field="credit-reason" placeholder="Such as the goods came back" autocomplete="off" />
@@ -821,7 +848,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
               const applied = split.get(r.id);
               return html`
                 <tr data-invoice-row class="${paidRow ? "dimrow" : ""}" aria-current="${account.selectedInvoiceId === r.id ? "true" : "false"}">
-                  <td><button type="button" class="link-row" data-action="open-invoice" data-invoice-id="${r.id}"><span class="who">${r.invoice_no}</span></button><span class="dim small">${r.order_no ?? ""}</span>${paidRow ? nothing : html`<button type="button" class="link small" data-action="credit-start" data-invoice-id="${r.id}">Credit</button>`}</td>
+                  <td><button type="button" class="link-row" data-action="open-invoice" data-invoice-id="${r.id}"><span class="who">${r.invoice_no}</span></button><span class="dim small">${r.order_no ?? ""}</span><button type="button" class="link small" data-action="credit-start" data-invoice-id="${r.id}">Credit</button></td>
                   <td class="nowrap">${relativeDay(r.issue_date, model.asOf)}</td>
                   <td class="nowrap ${r.days_overdue > 0 && !paidRow ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
                   <td><span class="marks">${rowMarks(r).map(markPill)}</span></td>

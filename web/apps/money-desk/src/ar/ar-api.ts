@@ -25,6 +25,7 @@ import {
   type BillingCreateHoldRequest,
   type BillingCreditHold,
   type BillingCreditMemoInput,
+  type BillingCreditMemoQuote,
   type BillingCreditMemoResult,
   type BillingCreditHoldPage,
   type BillingCustomerWorkspace,
@@ -244,6 +245,29 @@ export class ArApi {
   // whether the credit parks for a second pair of eyes.
   issueCreditMemo(input: BillingCreditMemoInput): Promise<Result<BillingCreditMemoResult>> {
     return staffBilling.billingIssueCreditMemo(this.#client, input);
+  }
+
+  /**
+   * What a credit against one invoice would come to, and how much room that invoice has left
+   * (FW1-12 r3): the room before tax and with it, and the credit's own subtotal, tax and total.
+   *
+   * The figures are the SERVER's. The desk never works out a tax and never guesses a cap: the
+   * balance it used to show is what is owed, not what may be credited, and a paid invoice still has
+   * a room. The amount is a positive magnitude before tax, exactly as the credit takes it; zero
+   * prices the whole of what is left.
+   */
+  quoteCreditMemo(input: {
+    customerId: string;
+    branchId: string;
+    invoiceId: string;
+    amountCents: number;
+  }): Promise<Result<BillingCreditMemoQuote>> {
+    return staffBilling.billingQuoteCreditMemo(this.#client, {
+      customer_id: input.customerId,
+      branch_id: input.branchId,
+      invoice_id: input.invoiceId,
+      amount_cents: input.amountCents,
+    });
   }
 
   /**

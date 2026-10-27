@@ -545,6 +545,22 @@ export type BillingCreditMemoInput = {
   gl_account?: string;
   idempotency_key?: string;
 };
+export type BillingCreditMemoQuoteInput = {
+  customer_id: string;
+  branch_id: string;
+  invoice_id: string;
+  amount_cents?: number;
+};
+export type BillingCreditMemoQuote = {
+  invoice_id: string;
+  remaining_subtotal_cents: number;
+  remaining_tax_cents: number;
+  remaining_total_cents: number;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  message: string;
+};
 export type BillingCreditMemoResult = {
   status: "ISSUED" | "AWAITING_APPROVAL";
   credit_memo_id: string;

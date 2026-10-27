@@ -268,6 +268,12 @@ type creditPlan struct {
 	tax      int64
 	lines    []OrderInvoiceLine // positive magnitudes; negated at insert
 	origNo   string
+	// THE ROOM: what the invoice has left to credit, before tax and with it (SF-2e). A credit
+	// against an invoice is capped at the room, so the room is the figure a person needs to see
+	// before typing an amount; the quote door answers it, and the desk shows it. Zero for a
+	// standalone credit, which has no invoice to have a room.
+	roomSubtotal int64
+	roomTax      int64
 }
 
 // planCreditMemo resolves REVERSAL or ACCOMMODATION into one shape.
@@ -369,6 +375,9 @@ SELECT COALESCE(-SUM(subtotal_cents), 0), COALESCE(-SUM(tax_cents), 0)
 	if remSub <= 0 {
 		return creditPlan{}, httpx.BadRequestf("invoice %s has nothing left to credit: it has already been credited in full", p.origNo)
 	}
+	// THE ROOM, held for whoever asks what is left: the cap the amount is held to, before tax and
+	// with it. A paid invoice still has a room: what has been paid is not what has been credited.
+	p.roomSubtotal, p.roomTax = remSub, remTax
 	if in.AmountCents > remSub {
 		return creditPlan{}, httpx.BadRequestf("a credit memo cannot be more than invoice %s has left to credit: %s before tax (%s with tax) is left",
 			p.origNo, money(remSub), money(remSub+remTax))

@@ -253,12 +253,23 @@ export function creditWords(result: { status: string; credit_memo_no: string; to
  * credit against one invoice lowers what is owed on that invoice, up to what that invoice has left.
  * The two are different credits, and the person pressing the button has to be able to see which one
  * they are about to give.
+ *
+ * The cap is the core's ROOM: what the invoice has left to credit, BEFORE tax, and the same room with
+ * tax. The balance with tax is a different number (what is owed, not what may be credited) and it was
+ * the wrong one on a paid invoice, which has no balance and still has room. Null means the core has
+ * not answered yet, and the desk then says no figure rather than guess one.
  */
-export function creditTargetWords(invoice: { invoice_no: string; balance_cents: number } | null): string {
+export function creditTargetWords(
+  invoice: { invoice_no: string } | null,
+  quote: { remainingSubtotalCents: number; remainingTotalCents: number } | null,
+): string {
   if (invoice === null) {
     return "On the account: this credit lowers what this customer owes on their account. It does not change any open invoice.";
   }
-  return `Against invoice ${invoice.invoice_no}: this credit lowers what is owed on that invoice, up to ${formatMoney(invoice.balance_cents)}.`;
+  if (quote === null) {
+    return `Against invoice ${invoice.invoice_no}: this credit lowers what is owed on that invoice.`;
+  }
+  return `Against invoice ${invoice.invoice_no}: this credit lowers what is owed on that invoice, up to ${formatMoney(quote.remainingSubtotalCents)} before tax (${formatMoney(quote.remainingTotalCents)} with tax).`;
 }
 
 /**

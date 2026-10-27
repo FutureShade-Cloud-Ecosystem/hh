@@ -340,15 +340,19 @@ export class ArDesk {
         // The credit is against one invoice, or against the account itself when the press named none.
         const invoiceId = attr("data-invoice-id");
         const id = invoiceId === "" ? null : invoiceId;
-        this.#credit = { invoiceId: id, amountText: "", thresholdCents: null };
+        this.#credit = { invoiceId: id, amountText: "", thresholdCents: null, quote: null, quoteError: "" };
         this.#clearMessages();
         this.#host.repaint();
         // The form says what the approval rail will do, so it needs the branch's own threshold.
         void this.#readCreditThreshold(id);
+        // The form says what the credit comes to and how much room the invoice has left, so it asks
+        // the core for the quote: the cap is the core's, never a number typed into the desk.
+        this.#scheduleCreditQuote(0);
         return true;
       }
       case "credit-cancel":
         this.#credit = null;
+        this.#creditQuoteGeneration += 1;
         this.#clearMessages();
         this.#host.repaint();
         return true;
@@ -580,8 +584,11 @@ export class ArDesk {
     }
     if (this.#credit !== null && control.getAttribute("data-field") === "credit-amount") {
       // The form says what the credit will do as it is typed: an amount at or over the threshold
-      // waits for a second pair of eyes, and the manager reads that before the press.
+      // waits for a second pair of eyes, and the manager reads that before the press. It also says
+      // what the credit COMES TO, tax included, which is the core's own arithmetic: the desk asks
+      // the core and shows what it says.
       this.#credit = { ...this.#credit, amountText: (control as HTMLInputElement).value };
+      this.#scheduleCreditQuote();
       this.#host.repaint();
       return;
     }
@@ -941,6 +948,61 @@ export class ArDesk {
     this.#notice = creditWords(result.value);
     this.#host.reveal("[data-notice]");
     await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
+    this.#host.repaint();
+  }
+
+  /**
+   * What the credit comes to, and how much room the invoice has left, asked of the core.
+   *
+   * The cap the core holds the amount to is the invoice's REMAINING SUBTOTAL, before tax: the
+   * balance with tax that the desk used to show was a different number, and a confident one. So the
+   * desk asks the core and shows what the core says, and it asks again as the amount is typed,
+   * because the tax is pro-rated from what is left and only the core does that arithmetic.
+   *
+   * A read that fails leaves the quote unknown and the desk says nothing about the amount rather
+   * than guess; the server still decides the credit.
+   */
+  #creditQuoteTimer: ReturnType<typeof setTimeout> | undefined;
+  #creditQuoteGeneration = 0;
+
+  #scheduleCreditQuote(delayMs = 300): void {
+    if (this.#creditQuoteTimer !== undefined) clearTimeout(this.#creditQuoteTimer);
+    this.#creditQuoteTimer = setTimeout(() => void this.#askCreditQuote(), delayMs);
+  }
+
+  async #askCreditQuote(): Promise<void> {
+    const form = this.#credit;
+    const account = this.#account;
+    if (form === null || account === null || form.invoiceId === null) return;
+    const branchId = this.#creditBranch(form.invoiceId);
+    if (branchId === "") return;
+    const cents = parseAmountToCents(form.amountText);
+    const amountCents = cents === null ? 0 : cents;
+    const generation = ++this.#creditQuoteGeneration;
+    const answer = await this.#api.quoteCreditMemo({
+      customerId: account.customerId,
+      branchId,
+      invoiceId: form.invoiceId,
+      amountCents,
+    });
+    // The form may have closed, or moved to another credit, or the amount moved on, while the read
+    // was in flight: a stale answer never overwrites a newer one.
+    const now = this.#credit;
+    if (generation !== this.#creditQuoteGeneration || now === null || now.invoiceId !== form.invoiceId) return;
+    if (!answer.ok) {
+      this.#credit = { ...now, quote: now.quote, quoteError: refusalWords("credit", answer.error, answer.status) };
+      this.#host.repaint();
+      return;
+    }
+    this.#credit = {
+      ...now,
+      quote: {
+        remainingSubtotalCents: answer.value.remaining_subtotal_cents,
+        remainingTotalCents: answer.value.remaining_total_cents,
+        message: answer.value.message,
+      },
+      quoteError: "",
+    };
     this.#host.repaint();
   }
 

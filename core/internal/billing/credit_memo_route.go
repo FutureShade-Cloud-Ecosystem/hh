@@ -59,6 +59,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -104,6 +105,10 @@ type CreditMemoBranchOrg interface {
 // CreditMemoCustomerHome is the customer module's own read: the account's home branch, and whether
 // the account exists. The org the account belongs to is its home branch's, through the branches read
 // above; no billing SQL names the customers table.
+//
+// The read is asked for the account's home branch only, and the caller holds it to their own reach
+// (THE CUSTOMER WALL, below). The account itself is read by the customer module's own by-id read, the
+// one the pos and AR doors use.
 type CreditMemoCustomerHome interface {
 	CustomerHomeBranch(ctx context.Context, customerID string) (string, bool, error)
 }
@@ -284,6 +289,180 @@ func (c CreditMemoCaller) reaches(branchID string) bool {
 	return c.Branches[branchID]
 }
 
+// creditFence is what the fence resolved: the account to credit, and the branch to file at.
+type creditFence struct {
+	customerID string
+	branchID   string
+}
+
+// fence holds a credit to the caller's org, to the caller's reach, and to the account the caller may
+// credit. It is THE FENCE for both credit doors, the quote and the issue, in the same order, so a
+// quote and the credit that follows it are fenced alike and neither is an existence oracle.
+//
+// The order of the checks is the order a reader should expect: the account, the branch, the amount,
+// the org, the reach, and only then the money.
+func (s *CreditMemoService) fence(ctx context.Context, req CreditMemoRouteRequest, caller CreditMemoCaller) (creditFence, error) {
+	if s.w == nil || s.w.pool == nil {
+		return creditFence{}, errNoDB
+	}
+	customerID := strings.TrimSpace(req.CustomerID)
+	if customerID == "" {
+		return creditFence{}, httpx.BadRequestf("a credit needs a customer")
+	}
+	branchID := strings.TrimSpace(req.BranchID)
+	if branchID == "" {
+		return creditFence{}, httpx.BadRequestf("a credit needs a branch")
+	}
+	if req.AmountCents < 0 {
+		return creditFence{}, httpx.BadRequestf("a credit amount is a positive magnitude; the sign is billing's")
+	}
+	// THE FENCE. A credit is filed at a branch the caller reaches, in the org the caller is signed
+	// into; a GLOBAL caller is bounded to its org (UX-81). Fail closed on a caller with no org at all,
+	// and on a seam that is not wired: the fence never guesses an org.
+	if caller.OrgID == "" {
+		return creditFence{}, httpx.BadRequestf("the caller's organization is missing, so no credit can be issued")
+	}
+	if s.branchOrgs == nil || s.customerHoms == nil {
+		return creditFence{}, httpx.BadRequestf("the credit's organization fence is not wired, so no credit can be issued")
+	}
+	if !caller.reaches(branchID) {
+		return creditFence{}, httpx.BadRequestf("that branch is not yours to credit")
+	}
+	// Against an invoice, the invoice names the facts (billing's own table): a body branch that
+	// differs from the invoice's is refused, and an invoice at a branch the caller does not reach, or
+	// of another org, answers exactly as a missing invoice answers, so a caller cannot read a ledger's
+	// shape out of the refusals. A missing row falls through to the plan, which refuses in the same
+	// words.
+	if invoiceID := strings.TrimSpace(req.InvoiceID); invoiceID != "" {
+		var invBranch, invOrg *string
+		if err := s.w.pool.QueryRow(ctx,
+			`SELECT branch_id::text, org_id::text FROM invoices WHERE id = $1::uuid AND doc_type = 'INVOICE'`,
+			invoiceID).Scan(&invBranch, &invOrg); err == nil {
+			if invOrg == nil || *invOrg != caller.OrgID || !caller.reaches(*invBranch) {
+				return creditFence{}, httpx.BadRequestf("no such invoice to reverse")
+			}
+			if branchID != *invBranch {
+				return creditFence{}, httpx.BadRequestf("a credit against an invoice is filed at the invoice's branch")
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return creditFence{}, err
+		}
+	}
+	// The branch and the customer are held to the caller's org through the owning modules' own reads:
+	// the branches module answers whether the filing branch is the org's, and the customer module
+	// answers the account's home branch, whose org is the account's.
+	inOrg, err := s.branchOrgs.BranchInOrg(ctx, caller.OrgID, branchID)
+	if err != nil {
+		return creditFence{}, err
+	}
+	if !inOrg {
+		return creditFence{}, httpx.BadRequestf("that branch is not in your organization")
+	}
+	// THE CUSTOMER WALL (UX-89). The account is read through the customer module's own seam and held
+	// to the caller's reach the way every other customer door holds it: the account's home branch
+	// must be a branch the caller reaches, not only a branch of the caller's org. An account homed
+	// outside the caller's reach, an account of another org, and an id that is no account answer
+	// EXACTLY alike, 404 "customer not found", so this door is no existence oracle for another
+	// branch's accounts. The words are the house's: the answer never says which of the three it was.
+	//
+	// The id is parsed BEFORE the seam reads it: a malformed id can never be an account, so it
+	// answers as one that is not there instead of reaching the database as a cast error.
+	if _, perr := uuid.Parse(customerID); perr != nil {
+		return creditFence{}, errCreditMemoCustomerNotFound
+	}
+	home, found, err := s.customerHoms.CustomerHomeBranch(ctx, customerID)
+	if err != nil {
+		return creditFence{}, err
+	}
+	if !found {
+		return creditFence{}, errCreditMemoCustomerNotFound
+	}
+	if home == "" {
+		// Fail closed, in words: an account with no home branch has no org to be checked against, and
+		// a credit with no fence is not a credit. (Such accounts are cutover loads; they cannot be
+		// credited until they carry a home branch.)
+		return creditFence{}, httpx.BadRequestf("that customer has no home branch, so its organization cannot be checked")
+	}
+	if !caller.reaches(home) {
+		return creditFence{}, errCreditMemoCustomerNotFound
+	}
+	custInOrg, err := s.branchOrgs.BranchInOrg(ctx, caller.OrgID, home)
+	if err != nil {
+		return creditFence{}, err
+	}
+	if !custInOrg {
+		return creditFence{}, errCreditMemoCustomerNotFound
+	}
+	return creditFence{customerID: customerID, branchID: branchID}, nil
+}
+
+// CreditMemoQuoteResult is what a credit against an invoice would come to, and how much room that
+// invoice has left to credit. The figures are the core's: the desk asks, the core answers, and the
+// desk never works out a tax.
+//
+// The room is the cap the core holds the amount to (SF-2e): what the invoice has left to credit
+// BEFORE tax, and the same room WITH tax. The credit is what the amount comes to: before tax, the
+// tax that is pro-rated from the room, and the total the customer is credited. A paid invoice still
+// has a room: what has been paid is not what has been credited.
+type CreditMemoQuoteResult struct {
+	InvoiceID              string `json:"invoice_id"`
+	RemainingSubtotalCents int64  `json:"remaining_subtotal_cents"`
+	RemainingTaxCents      int64  `json:"remaining_tax_cents"`
+	RemainingTotalCents    int64  `json:"remaining_total_cents"`
+	SubtotalCents          int64  `json:"subtotal_cents"`
+	TaxCents               int64  `json:"tax_cents"`
+	TotalCents             int64  `json:"total_cents"`
+	Message                string `json:"message"`
+}
+
+// Quote answers what a credit against an invoice would come to, and how much room that invoice has
+// left, WITHOUT raising anything: no document, no journal, no audit row, no approval.
+//
+// It is the same fence and the same plan the issue door uses, so a quote and the credit that follows
+// it are the same credit. The amount over the room is refused in the plan's own words, which name
+// both figures ("$X before tax ($Y with tax) is left"), so the reader learns the cap from the core
+// and not from a second rule somewhere else.
+func (s *CreditMemoService) Quote(ctx context.Context, req CreditMemoRouteRequest, caller CreditMemoCaller) (CreditMemoQuoteResult, error) {
+	if s.w == nil || s.w.pool == nil {
+		return CreditMemoQuoteResult{}, errNoDB
+	}
+	f, err := s.fence(ctx, req, caller)
+	if err != nil {
+		return CreditMemoQuoteResult{}, err
+	}
+	invoiceID := strings.TrimSpace(req.InvoiceID)
+	if invoiceID == "" {
+		// A quote is about a room, and a standalone credit has no room: its tax is re-assessed, not
+		// pro-rated from what an invoice has left.
+		return CreditMemoQuoteResult{}, httpx.BadRequestf("a quote is against one invoice: name the invoice")
+	}
+	plan, err := s.w.planCreditMemo(ctx, s.w.pool, CreditMemoInput{
+		CustomerID:        f.customerID,
+		BranchID:          f.branchID,
+		ReversesInvoiceID: invoiceID,
+		AmountCents:       req.AmountCents,
+	})
+	if err != nil {
+		return CreditMemoQuoteResult{}, err
+	}
+	return CreditMemoQuoteResult{
+		InvoiceID:              invoiceID,
+		RemainingSubtotalCents: plan.roomSubtotal,
+		RemainingTaxCents:      plan.roomTax,
+		RemainingTotalCents:    plan.roomSubtotal + plan.roomTax,
+		SubtotalCents:          plan.subtotal,
+		TaxCents:               plan.tax,
+		TotalCents:             plan.subtotal + plan.tax,
+		Message:                creditQuoteWords(plan.subtotal, plan.tax),
+	}, nil
+}
+
+// creditQuoteWords is what a person reads under the amount they are typing: what the credit comes
+// to, tax included.
+func creditQuoteWords(subtotal, tax int64) string {
+	return "This credit of " + Money(subtotal) + " comes to " + Money(subtotal+tax) + " with tax."
+}
+
 // Issue raises a credit memo: standalone against the account, or against one invoice, capped at what
 // that invoice has left (the SF-2e cap the writer enforces).
 //
@@ -299,76 +478,11 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 	if reason == "" {
 		return CreditMemoRouteResult{}, httpx.BadRequestf("a credit needs a reason")
 	}
-	customerID := strings.TrimSpace(req.CustomerID)
-	if customerID == "" {
-		return CreditMemoRouteResult{}, httpx.BadRequestf("a credit needs a customer")
-	}
-	branchID := strings.TrimSpace(req.BranchID)
-	if branchID == "" {
-		return CreditMemoRouteResult{}, httpx.BadRequestf("a credit needs a branch")
-	}
-	if req.AmountCents < 0 {
-		return CreditMemoRouteResult{}, httpx.BadRequestf("a credit amount is a positive magnitude; the sign is billing's")
-	}
-	// THE FENCE. A credit is filed at a branch the caller reaches, in the org the caller is signed
-	// into; a GLOBAL caller is bounded to its org (UX-81). Fail closed on a caller with no org at all,
-	// and on a seam that is not wired: the fence never guesses an org.
-	if caller.OrgID == "" {
-		return CreditMemoRouteResult{}, httpx.BadRequestf("the caller's organization is missing, so no credit can be issued")
-	}
-	if s.branchOrgs == nil || s.customerHoms == nil {
-		return CreditMemoRouteResult{}, httpx.BadRequestf("the credit's organization fence is not wired, so no credit can be issued")
-	}
-	if !caller.reaches(branchID) {
-		return CreditMemoRouteResult{}, httpx.BadRequestf("that branch is not yours to credit")
-	}
-	// Against an invoice, the invoice names the facts (billing's own table): a body branch that
-	// differs from the invoice's is refused, and an invoice at a branch the caller does not reach, or
-	// of another org, answers exactly as a missing invoice answers, so a caller cannot read a ledger's
-	// shape out of the refusals. A missing row falls through to the plan, which refuses in the same
-	// words.
-	if invoiceID := strings.TrimSpace(req.InvoiceID); invoiceID != "" {
-		var invBranch, invOrg *string
-		if err := s.w.pool.QueryRow(ctx,
-			`SELECT branch_id::text, org_id::text FROM invoices WHERE id = $1::uuid AND doc_type = 'INVOICE'`,
-			invoiceID).Scan(&invBranch, &invOrg); err == nil {
-			if invOrg == nil || *invOrg != caller.OrgID || !caller.reaches(*invBranch) {
-				return CreditMemoRouteResult{}, httpx.BadRequestf("no such invoice to reverse")
-			}
-			if branchID != *invBranch {
-				return CreditMemoRouteResult{}, httpx.BadRequestf("a credit against an invoice is filed at the invoice's branch")
-			}
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return CreditMemoRouteResult{}, err
-		}
-	}
-	// The branch and the customer are held to the caller's org through the owning modules' own reads:
-	// the branches module answers whether the filing branch is the org's, and the customer module
-	// answers the account's home branch, whose org is the account's.
-	inOrg, err := s.branchOrgs.BranchInOrg(ctx, caller.OrgID, branchID)
+	f, err := s.fence(ctx, req, caller)
 	if err != nil {
 		return CreditMemoRouteResult{}, err
 	}
-	if !inOrg {
-		return CreditMemoRouteResult{}, httpx.BadRequestf("that branch is not in your organization")
-	}
-	home, found, err := s.customerHoms.CustomerHomeBranch(ctx, customerID)
-	if err != nil {
-		return CreditMemoRouteResult{}, err
-	}
-	if !found {
-		return CreditMemoRouteResult{}, httpx.BadRequestf("no such customer to credit")
-	}
-	if home == "" {
-		return CreditMemoRouteResult{}, httpx.BadRequestf("that customer has no home branch, so its organization cannot be checked")
-	}
-	custInOrg, err := s.branchOrgs.BranchInOrg(ctx, caller.OrgID, home)
-	if err != nil {
-		return CreditMemoRouteResult{}, err
-	}
-	if !custInOrg {
-		return CreditMemoRouteResult{}, httpx.BadRequestf("that customer is not in your organization")
-	}
+	customerID, branchID := f.customerID, f.branchID
 	if s.rules == nil {
 		return CreditMemoRouteResult{}, httpx.BadRequestf("the posting rules are not wired; no credit can be booked")
 	}
@@ -543,6 +657,17 @@ type creditMemoKeyConflict struct{ msg string }
 
 func (e *creditMemoKeyConflict) Error() string { return e.msg }
 
+// errCreditMemoCustomerNotFound is THE CUSTOMER ANSWER (UX-89): 404 "customer not found". An account
+// the caller cannot reach, an account of another org, and an id that is no account answer exactly
+// alike, so the door never says which of the three it was and is no existence oracle for another
+// branch's accounts. The words are the house's, the same body the pos and AR doors write.
+var errCreditMemoCustomerNotFound = &creditMemoCustomerNotFound{}
+
+// creditMemoCustomerNotFound carries the one customer answer to the door.
+type creditMemoCustomerNotFound struct{}
+
+func (e *creditMemoCustomerNotFound) Error() string { return "customer not found" }
+
 // creditMemoByKey finds the credit an idempotency key already raised, bounded to one org: a key from
 // another org's memo answers as not found, so a key discloses nothing across orgs.
 func (w *InvoiceWriter) creditMemoByKey(ctx context.Context, key, orgID string) (InvoiceDoc, bool, error) {
@@ -687,6 +812,7 @@ func (h *CreditMemoRouteHandler) WithUserLinker(link identity.UserIDLinker) *Cre
 // nobody else. A counter clerk cannot credit an account, and a Controller can.
 func (h *CreditMemoRouteHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/ar/credit-memos", g.RequireManager(h.staff(h.issue)))
+	r.Handle("POST /api/v1/ar/credit-memos/quote", g.RequireManager(h.staff(h.quote)))
 }
 
 // staff stamps the bridged staff context onto the request, the same bridge every other billing
@@ -724,14 +850,42 @@ func (h *CreditMemoRouteHandler) issue(w http.ResponseWriter, r *http.Request, c
 	httpx.WriteJSON(w, http.StatusCreated, res)
 }
 
+// quote is the quote door's body: what the credit would come to, and what the invoice has left.
+func (h *CreditMemoRouteHandler) quote(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var body CreditMemoRouteRequest
+	if err := decode(r, &body); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	branches := make(map[string]bool, len(caller.Branches))
+	for _, b := range caller.Branches {
+		branches[b] = true
+	}
+	res, err := h.svc.Quote(r.Context(), body, CreditMemoCaller{
+		OrgID:    caller.OrgID,
+		Scope:    identity.ScopeFromCanonical(caller.Scope),
+		Branches: branches,
+	})
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
 // writeErr maps a refusal to its status, the same taxonomy the register's door uses.
 func (h *CreditMemoRouteHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var bad httpx.BadRequestError
 	var sd *SupplierDepositNotCreditable
 	var kc *creditMemoKeyConflict
+	var cnf *creditMemoCustomerNotFound
 	switch {
 	case errors.As(err, &bad):
 		httpx.Error(w, http.StatusBadRequest, bad.Error())
+	case errors.As(err, &cnf):
+		// THE CUSTOMER ANSWER: 404 "customer not found", the house's body, byte for byte the one the
+		// pos and AR doors write for an account the caller cannot reach.
+		httpx.Error(w, http.StatusNotFound, cnf.Error())
 	case errors.As(err, &sd):
 		httpx.ErrorWith(w, http.StatusConflict, SupplierDepositNotCreditableWords,
 			map[string]any{"code": SupplierDepositNotCreditableCode})

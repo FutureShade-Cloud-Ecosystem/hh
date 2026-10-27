@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingARWorklistResponse, BillingAccountPaymentPolicy, BillingAccountPaymentPolicyInput, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingPage, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreateHoldRequest, BillingCreditHold, BillingCreditHoldPage, BillingCreditMemoInput, BillingCreditMemoResult, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromisePage, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderEnrolInput, BillingReminderEnrolResult, BillingReminderExemptInput, BillingReminderInput, BillingReminderResult, BillingReminderRulePage, BillingReminderSend, BillingReminderSendPage, BillingSendPaylinkRequest, BillingSendPaylinkResult, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementPreview, BillingStatementRunRequest, BillingStatementRunResult, PaymentCardAttemptSummary } from "./types.js";
+import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingARWorklistResponse, BillingAccountPaymentPolicy, BillingAccountPaymentPolicyInput, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingPage, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreateHoldRequest, BillingCreditHold, BillingCreditHoldPage, BillingCreditMemoInput, BillingCreditMemoQuote, BillingCreditMemoQuoteInput, BillingCreditMemoResult, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromisePage, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderEnrolInput, BillingReminderEnrolResult, BillingReminderExemptInput, BillingReminderInput, BillingReminderResult, BillingReminderRulePage, BillingReminderSend, BillingReminderSendPage, BillingSendPaylinkRequest, BillingSendPaylinkResult, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementPreview, BillingStatementRunRequest, BillingStatementRunResult, PaymentCardAttemptSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -66,6 +66,21 @@ export async function billingIssueCreditMemo(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "billingIssueCreditMemo",
+  });
+}
+
+export async function billingQuoteCreditMemo(
+  client: ApiClient,
+  body: BillingCreditMemoQuoteInput,
+  call?: ApiCallOptions
+): Promise<Result<BillingCreditMemoQuote>> {
+  return client.request<BillingCreditMemoQuote>({
+    method: "POST",
+    path: "/api/v1/ar/credit-memos/quote",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingQuoteCreditMemo",
   });
 }
 
