@@ -45,11 +45,9 @@ var fw1BranchCensusWriters = []string{
 }
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
-// item (the two bankrec paths left are FW1-05's).
-var fw1BranchCensusRed = map[string]string{
-	"bankrec_manual_match_payment": "FW1-05",
-	"bankrec_unmatch_reversal":     "FW1-05",
-}
+// item. FW1-05's hand match and unmatch reversal stamp their branches (PR 632,
+// taken onto main), so no writer is red here any more.
+var fw1BranchCensusRed = map[string]string{}
 
 // fw1NonGLWriterSite identifies a non-GL journal writer call site or outbox
 // emitter whose payload carries a branch, together with where its branch_id
