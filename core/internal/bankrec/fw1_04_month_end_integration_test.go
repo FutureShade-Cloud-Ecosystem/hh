@@ -505,7 +505,11 @@ func TestIntegration_FW1_04_MatchInClosedGLMonthLandsInEarliestOpenPeriodMarkedL
 	if err != nil {
 		t.Fatalf("match on statement line in closed GL month was refused: %v", err)
 	}
-	j, err := glSvc.GetJournal(ctx, m.JournalID)
+	// The GL's reads are fenced (FW1-10, on main since this branch's merge), so the journal read names a
+	// global staff caller; the match itself runs on the service seam, which needs no caller.
+	j, err := glSvc.GetJournal(identity.ContextWithStaff(ctx, identity.StaffContext{
+		UserID: "d7000000-0000-4000-9000-000000000006", Scope: identity.ScopeGlobal, Status: identity.StatusActive,
+	}), m.JournalID)
 	if err != nil {
 		t.Fatalf("get clearing journal: %v", err)
 	}
