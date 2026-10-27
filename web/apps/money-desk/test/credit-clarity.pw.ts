@@ -135,3 +135,32 @@ test("the invoice row's Credit link is a target a counter can press", async ({ p
   const phone = await credit.boundingBox();
   expect(phone?.height ?? 0).toBeGreaterThanOrEqual(44);
 });
+
+test("on a phone the invoice row's credit form is as wide as its row, and its focus ring shows whole", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping");
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.locator("[data-invoice-row] button[data-action='credit-start']").first().click();
+  const form = page.locator("[data-credit-form]");
+  await expect(form).toBeVisible();
+
+  // The form's cell is as wide as the invoice rows above it: parked in the row grid's first column,
+  // its single cell gave the two empty side tracks and their gaps to nothing.
+  const formBox = await page.locator("tr.credit-form-row > td").boundingBox();
+  const rowBox = await page.locator("[data-invoice-row]").first().boundingBox();
+  expect(formBox).not.toBeNull();
+  expect(rowBox).not.toBeNull();
+  expect(Math.abs((formBox?.width ?? 0) - (rowBox?.width ?? 0))).toBeLessThan(1);
+
+  // The focused input's ring shows whole: two solid pixels at two pixels offset reach four pixels
+  // left of the input, and the scroll clip must not take them.
+  const reason = form.locator("input[data-field='credit-reason']");
+  await reason.click();
+  const inputBox = await reason.boundingBox();
+  const scroll = page.locator("div.scroll").filter({ has: page.locator("tr.credit-form-row") });
+  const scrollBox = await scroll.boundingBox();
+  expect(inputBox).not.toBeNull();
+  expect(scrollBox).not.toBeNull();
+  expect((inputBox?.x ?? 0) - 4).toBeGreaterThanOrEqual(Math.ceil(scrollBox?.x ?? 0));
+});
