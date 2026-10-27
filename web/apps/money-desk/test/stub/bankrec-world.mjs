@@ -611,8 +611,33 @@ export function createBankrecWorld() {
     return { status: 201, body: reconView(target) };
   }
 
-  function completeReconciliation(id, caller) {
-    if (!id) return clientError(400, "reconciliation id is required");
+  // The Controller's door to the cut over (round 3): the recorded point lands on the account, refused with the
+  // core's conflict once the cut over month or any later month on the account has signed off.
+  function recordCutover(accountId, input) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(input.cutover_date ?? ""))) {
+      return clientError(400, `bankrec: cutover_date must be YYYY-MM-DD, got ${JSON.stringify(input.cutover_date ?? "")}`);
+    }
+    const ids = Array.isArray(input.outstanding_journal_ids) ? input.outstanding_journal_ids : [];
+    for (const id of ids) {
+      if (!UUID.test(String(id))) return clientError(400, `bankrec: invalid outstanding journal id ${JSON.stringify(String(id))}`);
+    }
+    const account = world.accounts.find((a) => a.id === accountId);
+    if (account === undefined) return clientError(404, "not found");
+    const year = Number(input.cutover_date.slice(0, 4));
+    const month = Number(input.cutover_date.slice(5, 7));
+    const done = world.recons
+      .filter((r) => r.bank_account_id === account.id && r.status === "COMPLETED" && (r.year > year || (r.year === year && r.month >= month)))
+      .sort((a, b) => a.year - b.year || a.month - b.month)[0];
+    if (done !== undefined) {
+      return clientError(409, `bankrec: cannot record cut-over at ${input.cutover_date} because month ${done.year}-${pad(done.month)} is already completed`);
+    }
+    account.cutover_date = input.cutover_date;
+    account.cutover_statement_balance_cents = Number(input.opening_statement_balance_cents) || 0;
+    account.cutover_outstanding_journal_ids = ids.map(String);
+    return { status: 200, body: accountView(account) };
+  }
+
+  function completeReconciliation(id, caller) {    if (!id) return clientError(400, "reconciliation id is required");
     if (!UUID.test(id)) return clientError(404, "not found");
     const rec = world.recons.find((r) => r.id === id);
     if (rec === undefined) return clientError(404, "not found");
@@ -691,10 +716,15 @@ export function createBankrecWorld() {
     }
     if (!path.startsWith("/api/v1/bankrec/")) return null;
     const caller = callerOf(req);
-    const route = `${method} ${path.replace(/\/[0-9a-f-]{36}\/complete$/i, "/{id}/complete")}`;
+    const route = `${method} ${path
+      .replace(/\/[0-9a-f-]{36}\/complete$/i, "/{id}/complete")
+      .replace(/\/[0-9a-f-]{36}\/cutover$/i, "/{id}/cutover")}`;
     // The guards, per route: reads require Money Desk work or above (controller or Payables and Receivables, FROM-PRINCIPAL 111),
-    // writes a manager (tier 1 or 2), rules and sign off an administrator.
-    const admin = route === "POST /api/v1/bankrec/rules" || route === "POST /api/v1/bankrec/reconciliations/{id}/complete";
+    // writes a manager (tier 1 or 2), rules, sign off and the cut over an administrator.
+    const admin =
+      route === "POST /api/v1/bankrec/rules" ||
+      route === "POST /api/v1/bankrec/reconciliations/{id}/complete" ||
+      route === "POST /api/v1/bankrec/accounts/{id}/cutover";
     const manager = admin || ["POST /api/v1/bankrec/imports", "POST /api/v1/bankrec/match", "POST /api/v1/bankrec/unmatch", "POST /api/v1/bankrec/reconciliations"].includes(route);
     const readWork = method === "GET";
     if (admin && caller.tier !== 1) return forbidden();
@@ -711,6 +741,10 @@ export function createBankrecWorld() {
     switch (route) {
       case "GET /api/v1/bankrec/accounts":
         return { status: 200, body: world.accounts.map(accountView) };
+      case "POST /api/v1/bankrec/accounts/{id}/cutover": {
+        const accountId = path.split("/")[5] ?? "";
+        return recordCutover(accountId, input);
+      }
       case "POST /api/v1/bankrec/imports":
         return importStatement(input, caller);
       case "GET /api/v1/bankrec/lines":

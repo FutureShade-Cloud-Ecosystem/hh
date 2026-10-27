@@ -718,7 +718,9 @@ test("set the starting point lists the ledger's bank entries to tick, shows the 
   await expect(recorded).toContainText("$25,000.00");
   await expect(recorded).toContainText("Till over/short");
   // The form stays, filled with what is recorded: the core takes a correction until a month signs off.
-  await expect(panel.locator("[data-cutover-form]")).toContainText("Set the starting point");
+  await expect(panel.locator("[data-cutover-form]")).toBeVisible();
+  await expect(page.locator("[data-field='br-cutover-date']")).toHaveValue(cutoverDay().iso);
+  await expect(page.locator("[data-field='br-cutover-balance']")).toHaveValue("25,000.00");
 });
 
 test("once a month has signed off the recorded starting point is shown and cannot change", async ({ page, request }) => {

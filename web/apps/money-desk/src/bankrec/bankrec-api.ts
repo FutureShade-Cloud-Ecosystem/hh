@@ -121,6 +121,18 @@ export class BankrecApi {
     return staffBankrec.bankrecCompleteReconciliation(this.#client, id);
   }
 
+  /**
+   * Records the account's reconciliation starting point (cut over): the Controller's door, added in round 3.
+   * The core keeps its Financial Controller check and refuses once a later month has signed off.
+   */
+  recordCutover(accountId: string, date: string, balanceCents: number, outstandingJournalIds: string[]): Promise<Result<BankRecAccount>> {
+    return staffBankrec.bankrecRecordCutover(this.#client, accountId, {
+      cutover_date: date,
+      opening_statement_balance_cents: balanceCents,
+      ...(outstandingJournalIds.length === 0 ? {} : { outstanding_journal_ids: outstandingJournalIds }),
+    });
+  }
+
   /** The posted journals a statement line can be paired to; the ledger's own register, read only. */
   async postedJournals(): Promise<Result<GlJournal[]>> {
     const answer = await staffGl.glListJournals(this.#client, { limit: 100 });

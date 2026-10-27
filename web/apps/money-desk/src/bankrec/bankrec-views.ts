@@ -64,6 +64,20 @@ export interface BankrecModel {
   readonly notice: string;
   readonly userId?: string;
   readonly userName?: string;
+  // The starting point form (the Controller's cut over door, round 3): what is typed, what is ticked,
+  // and whether the ledger read for the entry list has come back.
+  readonly cutoverDateText: string;
+  readonly cutoverBalanceText: string;
+  readonly cutoverTicked: Readonly<Record<string, boolean>>;
+  readonly journalsLoaded: boolean;
+}
+
+/** One ledger entry the starting point form lists: a posted journal line on the account's GL code. */
+export interface CutoverEntry {
+  readonly journalId: string;
+  readonly day: string;
+  readonly memo: string;
+  readonly cents: number;
 }
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -93,6 +107,154 @@ function later(word: string): TemplateResult {
 
 function accountOf(model: BankrecModel): BankRecAccount | undefined {
   return model.accounts.find((a) => a.id === model.accountId);
+}
+
+// ---- the starting point (the Controller's cut over door, round 3) ---------------------------------------
+
+/**
+ * The recorded starting point of the chosen account, or null when none is recorded. Read from the account
+ * itself, so it is never a second copy of the core's fact.
+ */
+function recordedOf(account: BankRecAccount | undefined): { date: string; balanceCents: number; journalIds: readonly string[] } | null {
+  if (account === undefined || account.cutover_date === undefined || account.cutover_date === null || account.cutover_date === "") return null;
+  return {
+    date: account.cutover_date,
+    balanceCents: account.cutover_statement_balance_cents ?? 0,
+    journalIds: account.cutover_outstanding_journal_ids ?? [],
+  };
+}
+
+/**
+ * The starting point can no longer change: the core refuses a re-record once the cut over month or any later
+ * month has signed off, so the screen holds back the form exactly when the server would refuse the write.
+ */
+function lockedOf(account: BankRecAccount | undefined, recons: readonly BankRecReconciliation[]): boolean {
+  const recorded = recordedOf(account);
+  if (recorded === null) return false;
+  const year = Number(recorded.date.slice(0, 4));
+  const month = Number(recorded.date.slice(5, 7));
+  return recons.some((r) => r.status === "COMPLETED" && (r.year > year || (r.year === year && r.month >= month)));
+}
+
+/** The posted ledger entries on the account's GL code on or before the typed cut over date, oldest first. */
+function cutoverEntries(model: BankrecModel, account: BankRecAccount): CutoverEntry[] {
+  const day = model.cutoverDateText;
+  if (day === "") return [];
+  return model.journals
+    .flatMap((j) =>
+      j.lines
+        .filter((l) => l.account_code === account.gl_account_code)
+        .map((l) => ({ journalId: j.id, day: (j.posted_at ?? "").slice(0, 10), memo: j.memo, cents: l.debit_cents - l.credit_cents })),
+    )
+    .filter((e) => e.day !== "" && e.day <= day)
+    .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+}
+
+function cutoverRecordedView(model: BankrecModel): TemplateResult {
+  const account = accountOf(model);
+  const recorded = recordedOf(account);
+  if (recorded === null) return html`${nothing}`;
+  const named = model.journals.filter((j) => recorded.journalIds.includes(j.id));
+  return html`
+    <div class="br-card" data-cutover-recorded>
+      <div class="br-card-top"><strong>Starting point</strong>${pill("good", "Recorded")}</div>
+      <dl class="br-facts">
+        <dt>Cut over date</dt><dd data-cutover-recorded-date>${dayWords(recorded.date)}</dd>
+        <dt>Statement balance that day</dt><dd data-cutover-recorded-balance>${formatMoney(recorded.balanceCents)}</dd>
+        <dt>Still outstanding at cut over</dt><dd data-cutover-recorded-count>${recorded.journalIds.length === 0 ? "None" : `${recorded.journalIds.length} ${recorded.journalIds.length === 1 ? "entry" : "entries"}`}</dd>
+      </dl>
+      ${named.length > 0
+        ? html`<ul class="br-history" aria-label="Entries still outstanding at cut over" data-cutover-recorded-list>
+            ${named.map((j) => html`<li>${j.memo}</li>`)}
+          </ul>`
+        : nothing}
+      <p class="br-note">The months after this point reconcile from here. A month has signed off, so this starting point no longer changes.</p>
+    </div>
+  `;
+}
+
+function cutoverPanel(model: BankrecModel): TemplateResult {
+  const account = accountOf(model);
+  if (account === undefined) return html`${nothing}`;
+  const locked = lockedOf(account, model.recons);
+  const recorded = recordedOf(account);
+  return html`
+    <section class="br-panel" aria-label="Set the starting point" data-cutover>
+      <div class="br-panel-head"><h3>Set the starting point</h3></div>
+      ${recorded === null
+        ? html`<p class="br-dim">The point reconciliation starts from: the day the dealer's books moved onto this ledger, and the statement balance on that day. Entries on or before it are not outstanding items unless they are ticked.</p>`
+        : nothing}
+      ${cutoverRecordedView(model)}
+      ${locked
+        ? nothing
+        : html`
+            <div class="br-form" role="group" aria-label="Set the starting point" data-cutover-form>
+              <label class="br-field">Cut over date
+                <input type="date" data-field="br-cutover-date" autocomplete="off" aria-label="Cut over date" />
+              </label>
+              <label class="br-field">Statement balance on that date
+                <input type="text" inputmode="decimal" data-field="br-cutover-balance" autocomplete="off" placeholder="Such as 25,255.75" aria-label="Statement balance on the cut over date" />
+                <span class="br-hint">Dollars and cents, from the statement of the day the books moved onto this ledger.</span>
+              </label>
+            </div>
+            ${model.cutoverDateText === ""
+              ? html`<p class="br-hint" data-cutover-await-date>Type the cut over date to list the ledger's entries on or before it.</p>`
+              : model.journalsLoaded
+                ? cutoverEntriesList(model, account)
+                : html`<p class="br-dim" role="status" data-loading-cutover-entries>Reading the ledger's entries.</p>`}
+            ${cutoverResultView(model, account)}
+            <div class="br-actions">
+              <button type="button" class="btn btn-primary" data-action="br-cutover-save" ?disabled=${model.busy}>Save the starting point</button>
+            </div>
+            <p class="br-note">Saving records the starting point for this account. Only the Financial Controller can record it, and once a month has signed off it can no longer change.</p>
+          `}
+    </section>
+  `;
+}
+
+function cutoverEntriesList(model: BankrecModel, account: BankRecAccount): TemplateResult {
+  const entries = cutoverEntries(model, account);
+  if (entries.length === 0) {
+    return html`<p class="br-dim" data-cutover-no-entries>No ledger entries on or before that date.</p>`;
+  }
+  return html`
+    <ul class="br-history" aria-label="The ledger's entries on or before the cut over date" data-cutover-entries>
+      ${entries.map(
+        (e) => html`<li>
+          <label>
+            <input type="checkbox" data-field="br-cutover-tick" data-id=${e.journalId} data-cutover-tick ?checked=${model.cutoverTicked[e.journalId] === true} />
+            <span>${dayWords(e.day)} · ${e.memo}</span>
+          </label>
+          <span class="br-card-amount">${formatMoney(e.cents)}</span>
+        </li>`,
+      )}
+    </ul>
+    <p class="br-hint">Tick an entry only if it was still outstanding at cut over: unticked entries on or before this date are never listed as outstanding items later.</p>
+  `;
+}
+
+function cutoverResultView(model: BankrecModel, account: BankRecAccount): TemplateResult {
+  if (model.cutoverDateText === "") return html`${nothing}`;
+  const entries = cutoverEntries(model, account);
+  const book = entries.reduce((s, e) => s + e.cents, 0);
+  const typed = model.cutoverBalanceText.trim();
+  const statement = typed === "" ? null : parseBalanceToCents(typed);
+  const ticked = entries.filter((e) => model.cutoverTicked[e.journalId] === true);
+  return html`
+    <div class="br-card" data-cutover-result>
+      <div class="br-card-top"><strong>What saving records</strong></div>
+      <dl class="br-facts">
+        <dt>Book balance at cut over</dt><dd data-cutover-book>${formatMoney(book)}</dd>
+        <dt>Statement balance that day</dt>
+        <dd data-cutover-statement>${statement === null ? "Type the statement balance." : formatMoney(statement)}</dd>
+      </dl>
+      ${ticked.length === 0
+        ? html`<p class="br-hint" data-cutover-none>Nothing is ticked as still outstanding.</p>`
+        : html`<ul class="br-history" aria-label="Entries ticked as still outstanding" data-cutover-ticked>
+            ${ticked.map((e) => html`<li>${e.memo} · ${formatMoney(e.cents)}</li>`)}
+          </ul>`}
+    </div>
+  `;
 }
 
 function messages(model: BankrecModel): TemplateResult {
@@ -317,6 +479,7 @@ function accountsView(model: BankrecModel): TemplateResult {
             `}
       </section>
     </div>
+    ${cutoverPanel(model)}
   `;
 }
 
