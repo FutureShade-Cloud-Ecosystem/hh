@@ -1119,10 +1119,7 @@ func applyAllocations(ctx context.Context, tx pgx.Tx, p *Payment, customerID, me
 		+ (SELECT COALESCE(SUM(GREATEST(`+openNSFFeeRemainingExpr+`, 0)), 0)
 		     FROM payment_nsf n
 		     JOIN payments bp ON bp.id = n.payment_id
-		    WHERE COALESCE(n.customer_id, bp.customer_id) = $1::uuid)
-		+ (SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
-		    WHERE customer_id = $1::uuid AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')
-		      AND source_type NOT IN ('invoice', 'payment_nsf'))`,
+		    WHERE COALESCE(n.customer_id, bp.customer_id) = $1::uuid)`,
 		customerID).Scan(&runningAR); err != nil {
 		return fmt.Errorf("pay: read AR balance: %w", err)
 	}
