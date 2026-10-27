@@ -184,6 +184,11 @@ export class SetPasswordPage {
    * asked to refuse what the page can see by itself.
    */
   async submit(password: string, confirm: string): Promise<void> {
+    // The state is the guard, not the button's next render: a press while the
+    // page is saving or after it has saved returns at once, so a second submit
+    // can never overwrite a finished or in flight recovery with a later
+    // answer.
+    if (this.#phase === "saving" || this.#phase === "saved") return;
     if (this.#link === null) {
       this.#refuse("no_link", null, null);
       return;
