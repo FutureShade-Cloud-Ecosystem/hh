@@ -28,6 +28,7 @@ import (
 	assistadapt "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/assist/adapters"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bistrack"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/compliance"
@@ -446,8 +447,12 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// M5 tax engine, then the W6 scaffold-owner rewire: the POS Sale leaves
 	// its stubs for the real engines (tax, stock, restock, the card
 	// refunder).
+	// FW1-11: the reconcile's document sides read the owning modules' seams (billing's invoices,
+	// purchasing's posted bills), the same rule the GL side follows (never the views directly).
 	taxSvc := newTaxEngine(pool).
 		WithGLBalances(glBalanceAdapter{svc: spine.glSvc}).
+		WithSalesHSTs(billing.NewRepository(pool)).
+		WithBillITCs(purchasing.NewRepository(pool)).
 		WithAudit(auditSvc)
 	tax.NewHandler(taxSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	posSvc.WithTaxAssessor(posTaxAdapter{svc: taxSvc}).

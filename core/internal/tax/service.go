@@ -2,6 +2,7 @@ package tax
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -555,16 +556,35 @@ func reconstructBase(src Snapshot) int64 {
 
 // -- HST → GL reconciliation -----------------------------------------------------
 
-// reconcile ties the collected HST (Σ net_collected on the tax-decision side) to the GL 2200 liability for a
-// period, reading the GL balances through the frozen GLBalanceReader (never the views directly). Variance 0 =
-// tied out. The 2201/2202 federal/Ontario split balances are surfaced for the report.
+// reconcile ties the period's DOCUMENT tax to the GL 2200 movement for the same period (FW1-11): the
+// sales HST on the invoices less the credit memos (the collected side, the return's line 101), the
+// input tax credits on the posted vendor bills shown apart (line 108), the two netted against 2200's
+// month movement, which carries both. The document sides read through the billing and purchasing
+// seams, the GL side through the frozen GLBalanceReader; the relief snapshots never stand in for
+// collected tax again (the audit's LEDGER-TIEOUT finding). Variance 0 = tied out. The 2201/2202
+// federal/Ontario split balances are surfaced for the report, unmoved: no posting rule writes them.
+//
+// Until 612's late posted filing rule is on this base, both sides read the period by its own grain:
+// the documents by their dates, the GL by the journal's fiscal period. The rebase after 612 merges
+// moves the as-of reads to the filed period (FROM-PRINCIPAL 105 P2-3).
 func (s *Service) reconcile(ctx context.Context, year, month int, branchID string) (ReconReport, error) {
 	rep := ReconReport{Year: year, Month: month, BranchID: branchID}
-	collected, err := s.repo.CollectedHSTCents(ctx, year, month)
+	if s.salesHST == nil {
+		return rep, fmt.Errorf("tax: the sales document HST seam is not wired; the reconcile cannot be computed")
+	}
+	sales, err := s.salesHST.DocumentSalesHSTCents(ctx, year, month, branchID)
 	if err != nil {
 		return rep, err
 	}
-	rep.CollectedCents = collected
+	rep.CollectedCents = sales
+	if s.billITCs == nil {
+		return rep, fmt.Errorf("tax: the vendor bill input tax seam is not wired; the reconcile cannot be computed")
+	}
+	itcs, err := s.billITCs.VendorBillITCCents(ctx, year, month, branchID)
+	if err != nil {
+		return rep, err
+	}
+	rep.InputTaxCreditsCents = itcs
 	if s.glBalance != nil {
 		if v, err := s.glBalance.GLBalanceCents(ctx, acctHSTPayable, year, month, branchID); err == nil {
 			rep.GLPayableCents = v
@@ -578,7 +598,7 @@ func (s *Service) reconcile(ctx context.Context, year, month int, branchID strin
 			rep.GLOntarioCents = v
 		}
 	}
-	rep.VarianceCents = rep.GLPayableCents - rep.CollectedCents
+	rep.VarianceCents = rep.GLPayableCents - (rep.CollectedCents - rep.InputTaxCreditsCents)
 	rep.TiedOut = rep.VarianceCents == 0
 	return rep, nil
 }

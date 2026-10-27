@@ -22,8 +22,19 @@ type fakeStore struct {
 	config    map[string]Config
 	w4        []Snapshot
 	inserted  []Snapshot
-	collected int64
+	salesHST  int64 // the period's document tax, what the reconcile reads as collected
+	billITCs  int64 // the period's posted vendor bill tax, shown apart
 	evSeq     int
+}
+
+// DocumentSalesHSTCents and VendorBillITCCents stand in for the billing and purchasing seams
+// (FW1-11): the reconcile reads the period's documents through them, never snapshots.
+func (f *fakeStore) DocumentSalesHSTCents(context.Context, int, int, string) (int64, error) {
+	return f.salesHST, nil
+}
+
+func (f *fakeStore) VendorBillITCCents(context.Context, int, int, string) (int64, error) {
+	return f.billITCs, nil
 }
 
 func newFakeStore() *fakeStore {
@@ -147,9 +158,7 @@ func (f *fakeStore) InsertSnapshot(_ context.Context, s Snapshot) (string, error
 	f.inserted = append(f.inserted, s)
 	return s.ID, nil
 }
-func (f *fakeStore) CollectedHSTCents(context.Context, int, int) (int64, error) {
-	return f.collected, nil
-}
+
 
 type fakeRecorder struct{ calls []audit.SensitiveAccess }
 
@@ -444,16 +453,23 @@ func TestValidateReliefEvidence_ExpiredTCRDBlocks(t *testing.T) {
 
 // -- HST recon ties to GL -----------------------------------------------------------
 
-func TestReconcile_TiesCollectedToGL(t *testing.T) {
+// FW1-11: the reconcile reads the period's documents, both sides shown apart, and nets them against
+// 2200's month movement. An unwired document seam refuses; it never stands in snapshots or zeros.
+func TestReconcile_TiesTheMonthsDocumentsToGL(t *testing.T) {
 	f := newFakeStore()
-	f.collected = 26_000
+	f.salesHST = 26_000
+	f.billITCs = 6_000
 	svc, _ := newSvc(f)
-	svc.glBalance = fakeGL{balances: map[string]int64{acctHSTPayable: 26_000, acctHSTFederal: 10_000, acctHSTOntario: 16_000}}
+	svc.glBalance = fakeGL{balances: map[string]int64{acctHSTPayable: 20_000, acctHSTFederal: 10_000, acctHSTOntario: 16_000}}
 
 	rep, err := svc.ReconcileReport(context.Background(), 2026, 7, "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if rep.CollectedCents != 26_000 || rep.InputTaxCreditsCents != 6_000 {
+		t.Fatalf("the document sides must ride apart, got collected=%d itcs=%d", rep.CollectedCents, rep.InputTaxCreditsCents)
+	}
+	// 2200's movement (20000) against the documents net (26000 − 6000): tied.
 	if !rep.TiedOut || rep.VarianceCents != 0 {
 		t.Fatalf("expected tie-out, got variance=%d tied=%v", rep.VarianceCents, rep.TiedOut)
 	}
@@ -461,11 +477,29 @@ func TestReconcile_TiesCollectedToGL(t *testing.T) {
 		t.Errorf("split mismatch: fed=%d on=%d", rep.GLFederalCents, rep.GLOntarioCents)
 	}
 
-	// A drift surfaces as a non-zero variance.
-	f.collected = 25_000
+	// A drift on either side surfaces as a non-zero variance.
+	f.salesHST = 25_000
 	rep2, _ := svc.ReconcileReport(context.Background(), 2026, 7, "")
 	if rep2.TiedOut || rep2.VarianceCents != 1_000 {
 		t.Fatalf("expected variance 1000, got %d tied=%v", rep2.VarianceCents, rep2.TiedOut)
+	}
+	f.billITCs = 5_000
+	rep3, _ := svc.ReconcileReport(context.Background(), 2026, 7, "")
+	if rep3.TiedOut || rep3.VarianceCents != -4_000 {
+		t.Fatalf("expected variance -4000 after the ITC moves, got %d tied=%v", rep3.VarianceCents, rep3.TiedOut)
+	}
+}
+
+// An unwired document seam refuses the reconcile (fail closed); it never computes on zeros.
+func TestReconcile_UnwiredSeamsRefuse(t *testing.T) {
+	f := newFakeStore()
+	svc, _ := newSvc(f)
+	if _, err := svc.ReconcileReport(context.Background(), 2026, 7, ""); err == nil || !strings.Contains(err.Error(), "sales document HST seam") {
+		t.Fatalf("an unwired sales seam must refuse, got %v", err)
+	}
+	svc.salesHST = f
+	if _, err := svc.ReconcileReport(context.Background(), 2026, 7, ""); err == nil || !strings.Contains(err.Error(), "vendor bill input tax seam") {
+		t.Fatalf("an unwired ITC seam must refuse, got %v", err)
 	}
 }
 

@@ -112,6 +112,8 @@ func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: po
 type Service struct {
 	repo      taxStore
 	glBalance GLBalanceReader
+	salesHST  SalesHSTReader // the collected side of the HST reconcile (billing's documents)
+	billITCs  BillITCReader  // the input tax credits side (purchasing's posted bills)
 	audit     audit.Recorder
 	log       *slog.Logger
 	now       func() time.Time // injectable clock (tests); nil → time.Now
@@ -126,6 +128,13 @@ func NewService(repo *Repository) *Service {
 
 // WithGLBalances injects the GL balance seam (the HST→GL reconciliation tie-out).
 func (s *Service) WithGLBalances(r GLBalanceReader) *Service { s.glBalance = r; return s }
+
+// WithSalesHSTs injects the collected-side seam: the tax on the period's sales documents (billing).
+func (s *Service) WithSalesHSTs(r SalesHSTReader) *Service { s.salesHST = r; return s }
+
+// WithBillITCs injects the input-tax-credits seam: the tax on the period's posted vendor bills
+// (purchasing).
+func (s *Service) WithBillITCs(r BillITCReader) *Service { s.billITCs = r; return s }
 
 // WithDealerRegion injects the dealer's jurisdiction source. Without it the engine is the Ontario
 // engine it always was.
