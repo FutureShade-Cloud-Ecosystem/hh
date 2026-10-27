@@ -535,6 +535,7 @@ function reconResult(r: TaxReconReport | null): TemplateResult {
         <div class="tx-stat"><span class="tx-stat-label">The ledger's month movement on sales tax payable</span><span class="tx-stat-figure" data-ledger>${formatMoney(r.gl_payable_cents)}</span></div>
         <div class="tx-stat"><span class="tx-stat-label">Difference</span><span class="tx-stat-figure">${pill(v.tone, v.word)}</span></div>
       </div>
+      <p class="tx-dim" data-opening-balances>Opening balances, not this period's: ${r.opening_balance_count} ${r.opening_balance_count === 1 ? "document" : "documents"} carrying ${formatMoney(r.opening_balance_hst_cents)} of sales tax, kept out of every figure above.</p>
       <p class="tx-alert ${v.tone === "good" ? "tx-alert-ok" : "tx-alert-error"}" role="status" data-recon-words>${periodWords(r.year, r.month)}: ${v.detail}</p>
       ${r.gl_federal_cents === 0 && r.gl_ontario_cents === 0
         ? nothing

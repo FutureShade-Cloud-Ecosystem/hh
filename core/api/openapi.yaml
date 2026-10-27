@@ -39987,13 +39987,15 @@ components:
           format: int32
     TaxReconReport:
       type: object
-      description: "The HST reconciliation (FW1-11): the month's documents on each line, sales HST collected, tax refunded on POS returns, and vendor bill input tax credits shown apart, netted against the GL 2200 movement for the same period."
+      description: "The HST reconciliation (FW1-11): the month's documents on each line, sales HST collected, tax refunded on POS returns, and vendor bill input tax credits shown apart, netted against the GL 2200 movement for the same period. Documents carrying the opening balance marker sit outside collected and are named on their own line."
       required:
         - year
         - month
         - collected_cents
         - return_tax_cents
         - input_tax_cents
+        - opening_balance_count
+        - opening_balance_hst_cents
         - gl_payable_cents
         - gl_federal_cents
         - gl_ontario_cents
@@ -40011,7 +40013,7 @@ components:
         collected_cents:
           type: integer
           format: int64
-          description: Sales tax on the period's documents (invoices less credit memos)
+          description: Sales tax on the period's documents (invoices less credit memos), opening balances excluded
         return_tax_cents:
           type: integer
           format: int64
@@ -40020,6 +40022,14 @@ components:
           type: integer
           format: int64
           description: Input tax credits on the period's posted vendor bills
+        opening_balance_count:
+          type: integer
+          format: int32
+          description: The period's documents carrying the opening balance marker, excluded from collected
+        opening_balance_hst_cents:
+          type: integer
+          format: int64
+          description: Their HST, named here so nothing leaves the report silently
         gl_payable_cents:
           type: integer
           format: int64

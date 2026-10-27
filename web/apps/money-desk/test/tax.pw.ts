@@ -403,6 +403,8 @@ test("the reconciliation ties out one month, is off in another in words, and hol
   await expect(result.locator("[data-return-tax]")).toHaveText("$120.00");
   await expect(result.locator("[data-input-tax]")).toHaveText("$873.00");
   await expect(result.locator("[data-ledger]")).toHaveText("$3,830.75");
+  // PART 3: the marked opening balances are named on their own line, outside every figure above.
+  await expect(page.locator("[data-opening-balances]")).toHaveText("Opening balances, not this period's: 1 document carrying $180.00 of sales tax, kept out of every figure above.");
   await expect(result).toContainText("Tied out");
   await expect(page.locator("[data-recon-words]")).toContainText(`${prior.words}: The ledger's month movement equals the month's documents: sales tax collected less the tax on vendor bills.`);
   // The month before that is off, and the direction is in words.
@@ -413,6 +415,7 @@ test("the reconciliation ties out one month, is off in another in words, and hol
   await expect(result.locator("[data-return-tax]")).toHaveText("$50.00");
   await expect(result.locator("[data-input-tax]")).toHaveText("$815.00");
   await expect(result.locator("[data-ledger]")).toHaveText("$3,899.00");
+  await expect(page.locator("[data-opening-balances]")).toHaveText("Opening balances, not this period's: 0 documents carrying $0.00 of sales tax, kept out of every figure above.");
   await expect(result).toContainText("Off by $851.50");
   await expect(page.locator("[data-recon-words]")).toContainText(`${older.words}: The ledger's month movement holds more tax than the month's documents booked: sales tax collected less the tax on vendor bills.`);
   // A whole year with nothing in it is tied out at zero, not a blank.
