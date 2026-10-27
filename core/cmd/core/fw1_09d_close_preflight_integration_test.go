@@ -137,11 +137,10 @@ func TestFW109DClosePreflightPassesOnTheProductionWiring(t *testing.T) {
 		 GROUP BY i.branch_id ORDER BY i.branch_id`)
 	stockValue := fw109dBranchAmounts(t, ctx, pool, `
 		SELECT sb.branch_id::text,
-		       COALESCE(ROUND(SUM(sb.on_hand_base * c.avg_unit_cost_cents))::bigint, 0)
+		       COALESCE(SUM(TRUNC(sb.on_hand_base * COALESCE(c.avg_unit_cost_cents, 0)))::bigint, 0)
 		  FROM stock_balances sb
-		  JOIN product_branch_costs c
+		  LEFT JOIN product_branch_costs c
 		    ON c.product_id = sb.product_id AND c.branch_id = sb.branch_id
-		 WHERE sb.on_hand_base != 0
 		 GROUP BY sb.branch_id ORDER BY sb.branch_id`)
 	if len(stockValue) == 0 {
 		t.Fatal("the seeded world carries no stock on hand, so the close pre flight's stock tie has nothing to read")
