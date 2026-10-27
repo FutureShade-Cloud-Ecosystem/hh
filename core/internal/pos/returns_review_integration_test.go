@@ -72,9 +72,6 @@ func TestIntegration_Review_SwapAccountLeftoverSubledgerTies(t *testing.T) {
 		}
 		if !first {
 			want := prev + amt
-			if typ == "PAYMENT" {
-				want = prev - amt
-			}
 			if bal != want {
 				t.Fatalf("%s row of %d leaves %d, the chain says %d (the subledger does not tie)", typ, amt, bal, want)
 			}

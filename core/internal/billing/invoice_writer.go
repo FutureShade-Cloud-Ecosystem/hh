@@ -138,9 +138,10 @@ func (w *InvoiceWriter) clearDepositDocument(ctx context.Context, tx pgx.Tx, inv
 	return nil
 }
 
-// defaultTermsDays is the fallback payment terms when the caller resolves none. It matches the
-// customer module's own default; a wrong due date on an invoice is a collections problem, so this is
-// deliberately the SHORT end rather than a generous guess.
+// defaultTermsDays is the fallback payment terms when the caller resolves none (a negative terms).
+// It matches the customer module's own default; a wrong due date on an invoice is a collections
+// problem, so this is deliberately the SHORT end rather than a generous guess. Terms 0 is never
+// "none": it is Cash On Demand, the customer's own answer, and stays 0.
 const defaultTermsDays = 30
 
 var (
@@ -218,7 +219,9 @@ type OrderInvoiceFacts struct {
 	CustomerID string
 	BranchID   string
 	// TermsDays is the customer's payment terms, resolved by the caller (the credit fact belongs to
-	// the customer module; see Service.AvailableCreditCents for the same ownership rule).
+	// the customer module; see Service.AvailableCreditCents for the same ownership rule). 0 is the
+	// customer's own answer, Cash On Demand; a NEGATIVE value is the caller's "none resolved" and
+	// takes the writer's default.
 	TermsDays int
 	// TaxReasonCode is the order's tax treatment; "" ⇒ TaxStdON13.
 	TaxReasonCode string
@@ -557,8 +560,12 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 	}
 	perLineTax := moneyutil.AllocateLargestRemainder(quote.TaxCents, weights)
 
+	// Terms 0 is the CUSTOMER'S OWN answer, Cash On Demand: pay before release, the invoice due on
+	// issue with its number while unpaid. Only a negative terms, the caller's "none resolved", falls
+	// back to the default; coercing 0 to 30 here is what dated Cash On Demand and walk-in order
+	// invoices a month out (AR-09).
 	terms := f.TermsDays
-	if terms <= 0 {
+	if terms < 0 {
 		terms = defaultTermsDays
 	}
 	// The document's days are the dealer's, decided here on the writer's clock and bound: between

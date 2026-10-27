@@ -84,4 +84,5 @@ type Allocation struct {
 	AllocatedByName string    `json:"allocated_by_name,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	Status          string    `json:"-"`
+	IsNSFFee        bool      `json:"-"`
 }

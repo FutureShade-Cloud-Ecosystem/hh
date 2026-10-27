@@ -240,6 +240,9 @@ export function refusalWords(action: string, message: string, status: number): s
       return `This account carries automated postings (${rules[1]}). Deactivating it would stop those postings, so nothing was changed.`;
     }
   }
+  if (status === 403 && lower.includes("cannot access this branch")) {
+    return "You cannot read the books of that branch. Choose a branch you hold.";
+  }
   if (status === 403) {
     return "That is for the Financial Controller or the General Manager.";
   }

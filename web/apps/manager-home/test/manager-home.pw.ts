@@ -61,13 +61,13 @@ test("the pick queue board draws a labelled bar per status, the count at the rig
   await expect(first.locator(".value")).toHaveText("8");
 });
 
-test("a card links to the live app that owns it, and only a source with no app says it is not here", async ({ page }) => {
+test("a card links to the live app that owns it, and a source with no app names the missing trend", async ({ page }) => {
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   const hero = page.locator("[data-widget='hero.deliveries']");
-  await expect(hero.locator(".tile-foot")).toHaveText("Not available yet");
+  await expect(hero.locator(".tile-foot")).toHaveText("No trend yet");
   await expect(hero.locator(".tile-foot")).toBeVisible();
-  await expect(page.locator("[data-widget='orders.open'] .tile-foot")).toHaveText("Not available yet");
+  await expect(page.locator("[data-widget='orders.open'] .tile-foot")).toHaveText("No trend yet");
   // Pick queue and Queue depth are the yard's (Yard Pick); Open claims is this app's Warranty view.
   const footLinks = page.locator(".tile-foot button");
   await expect(footLinks).toHaveCount(3);
@@ -98,6 +98,74 @@ test("the needs-you footer opens the queue, and the view links sit as small chip
   for (const label of ["Shortages · open", "Receiving · short", "Approvals", "Drivers", "Reporting", "Warranty", "Quick actions"]) {
     await expect(links.filter({ hasText: label })).toContainText("›");
   }
+});
+
+test("the TODAY money cards carry the core's figures, and a measure with no core says so in words", async ({ page }) => {
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  const kpis = page.locator("[data-test='c10-today-kpis']");
+  await expect(kpis).toBeVisible();
+  // P2-2: the strip mixes a today figure, an all time rate and a standing balance,
+  // so its heading says what the strip is, and the page keeps one Today heading.
+  await expect(kpis.locator("h2")).toHaveText("At a glance");
+
+  // The stub's viz answer: sales 123456 cents today, margin 3180 bps all time,
+  // AR 9624000 cents open of which 3494000 is past its due day. Every figure
+  // the card draws came back on the wire; none is a constant the app holds.
+  const sales = kpis.locator(".kpi-card", { hasText: "Sales today" });
+  await expect(sales.locator(".kpi-value")).toHaveText("$1,234.56");
+  await expect(sales.locator(".kpi-compare")).toHaveText("Counter sales committed today, including tax");
+  const margin = kpis.locator(".kpi-card", { hasText: "Gross margin" });
+  await expect(margin.locator(".kpi-value")).toHaveText("31.8%");
+  const pastDue = kpis.locator(".kpi-card", { hasText: "Receivables past due" });
+  await expect(pastDue.locator(".kpi-value")).toHaveText("$34,940.00");
+
+  // Cash collected today has no core measure: the words, never a figure.
+  const cash = kpis.locator(".kpi-card", { hasText: "Cash collected today" });
+  await expect(cash).toContainText("Not connected yet");
+  await expect(cash).not.toContainText("$");
+
+  // Branch beside branch draws the branches the core named, never a hardcoded pair.
+  await kpis.locator(".toggle-pill", { hasText: "Branch beside branch" }).click();
+  await expect(sales.locator(".kpi-branch-label").first()).toHaveText("Trenton");
+  await expect(sales.locator(".kpi-branch-value").first()).toHaveText("$1,234.56");
+});
+
+test("the stops card counts the dispatch board's own stops under its own words, beside the hero's remaining count", async ({ page }) => {
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  // FROM-PRINCIPAL 127: the hero's deliveries.today measure counts the day's stops still to do
+  // (DELIVERED and CANCELLED excluded); the C10 card counts the day's whole book of stops off the
+  // dispatch board. Different measures must not share one heading: the card says Stops today.
+  const stops = page.locator("[data-test='c10-deliveries-today']");
+  await expect(stops).toBeVisible();
+  await expect(stops.locator("h2")).toHaveText("Stops today");
+  await expect(stops).not.toContainText("Deliveries today");
+  await expect(stops.locator(".deliveries-count")).toHaveText(/^\d+$/);
+  await expect(stops.locator(".deliveries-summary")).toContainText(/done, \d+ on the road/);
+  const firstRun = stops.locator(".run").first();
+  await expect(firstRun.locator(".run-id")).not.toHaveText("");
+
+  // The hero beside it keeps its own measure and its own words, and the two numbers are free to
+  // differ: 14 remaining against the stub board's 8, same seed, both the core's own answers.
+  const hero = page.locator("[data-widget='hero.deliveries']");
+  await expect(hero.locator(".figure")).toHaveText("14");
+  await expect(hero.locator(".card-title")).toHaveText("Deliveries today");
+  const stopsCount = Number(await stops.locator(".deliveries-count").textContent());
+  expect(stopsCount).not.toBe(Number(await hero.locator(".figure").textContent()));
+
+  const needs = page.locator("[data-test='c10-needs-stake']");
+  await expect(needs).toBeVisible();
+  const amounts = needs.locator(".need-amount");
+  const count = await amounts.count();
+  for (let i = 1; i < count; i += 1) {
+    const before = (await amounts.nth(i - 1).textContent()) ?? "";
+    const after = (await amounts.nth(i).textContent()) ?? "";
+    if (before !== "not priced" && after !== "not priced") {
+      expect(Number(before.replace(/[^0-9.]/g, ""))).toBeGreaterThanOrEqual(Number(after.replace(/[^0-9.]/g, "")));
+    }
+  }
+  await expect(needs.locator(".need-action").first()).toHaveText("Open the request");
 });
 
 test("the hero carries the day's count and its window word", async ({ page }) => {

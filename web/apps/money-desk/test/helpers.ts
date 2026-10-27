@@ -44,11 +44,17 @@ export async function openDesk(page: Page, request: APIRequestContext, who?: "co
   await expect(page.locator("[data-card]")).toHaveCount(4);
 }
 
-/** A date this many days from today, in the dealer's zone, built from the host's own clock. */
+/**
+ * A date this many days from today, in the dealer's zone, built from the host's own clock. The
+ * offset counts the zone's own calendar days: adding UTC days and reading the zone's calendar
+ * drifts by one across the zone's DST change, which is how the register's nine day term rendered
+ * "in 8 days" on the evening run (test/house-day.mjs holds the same rule for the stub's copies).
+ */
 export function dayFromToday(days: number): string {
-  const at = new Date();
-  at.setUTCDate(at.getUTCDate() + days);
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  const zoneDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" });
+  const [y, m, d] = zoneDay.format(new Date()).split("-").map(Number);
+  // Noon UTC reads as the same calendar day in the zone on both sides of a DST change.
+  return zoneDay.format(new Date(Date.UTC(y, m - 1, d + days, 12)));
 }
 
 export const test = base;

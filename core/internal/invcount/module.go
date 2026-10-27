@@ -132,8 +132,13 @@ func (s *Service) PostSheet(ctx context.Context, sheetID string) error {
 }
 
 // ReconcileMonth runs the lazy inventory→GL recon (run-once per period+branch) and returns the tie delta
-// (subledger − GL 1200). A second call for the same period returns the same run unchanged. FROZEN signature.
+// (subledger − GL 1200). A second call for the same period returns the same run unchanged. Fenced to the
+// caller's branch reach (FW1-10, the DIB-390 rule every count-sheet transition already carries): the
+// recon takes a REQUIRED branch, which the caller must reach. FROZEN signature.
 func (s *Service) ReconcileMonth(ctx context.Context, year, month int, branchID string) (int64, error) {
+	if err := s.authorizeBranch(ctx, branchID); err != nil {
+		return 0, err
+	}
 	runBy := identity.StaffUserIDFromContext(ctx)
 	run, err := reconcileMonth(ctx, s.store(), s.stock, s.glBal, runBy, year, month, branchID)
 	if err != nil {

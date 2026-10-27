@@ -133,12 +133,14 @@ func (r *Repository) ReversePayment(ctx context.Context, in ReverseInput, now ti
 		receivedAt                           time.Time
 		alreadyReversed                      bool
 		isItselfAReversal                    bool
+		nsfAllocJSON                         []byte
 	)
 	err = tx.QueryRow(ctx,
 		`SELECT COALESCE(customer_id::text,''), method, branch_id::text, status, amount_cents, received_at,
-		        reversed_at IS NOT NULL, reverses_payment_id IS NOT NULL
+		        reversed_at IS NOT NULL, reverses_payment_id IS NOT NULL,
+		        COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb)
 		   FROM payments WHERE id = $1::uuid FOR UPDATE`, in.PaymentID).
-		Scan(&customerID, &method, &branchID, &status, &amount, &receivedAt, &alreadyReversed, &isItselfAReversal)
+		Scan(&customerID, &method, &branchID, &status, &amount, &receivedAt, &alreadyReversed, &isItselfAReversal, &nsfAllocJSON)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Reversal{}, ErrNotFound
@@ -251,15 +253,31 @@ INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, bra
 		}
 	}
 
-	// 3 + 4. Re-open each invoice and mirror the subledger.
+	nsfAllocs := map[string]int64{}
+	_ = json.Unmarshal(nsfAllocJSON, &nsfAllocs)
+	nsfIDs := make([]string, 0, len(nsfAllocs))
+	for id, amt := range nsfAllocs {
+		if amt > 0 {
+			nsfIDs = append(nsfIDs, id)
+		}
+	}
+	slices.Sort(nsfIDs)
+	for _, id := range nsfIDs {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM payment_nsf WHERE id = $1::uuid FOR NO KEY UPDATE`, id); err != nil {
+			return Reversal{}, fmt.Errorf("reverse: lock nsf fee %s: %w", id, err)
+		}
+	}
+
+	// 3 + 4. Re-open each invoice (and any NSF fee this payment settled) and mirror the subledger.
 	var runningAR int64
 	if err := tx.QueryRow(ctx,
 		`SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
-		  WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`, customerID).Scan(&runningAR); err != nil {
+		  WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`,
+		customerID).Scan(&runningAR); err != nil {
 		return Reversal{}, fmt.Errorf("reverse: read AR balance: %w", err)
 	}
 
-	reopened := make([]string, 0, len(allocs))
+	reopened := make([]string, 0, len(allocs)+len(nsfIDs))
 	for _, a := range allocs {
 		// A reversal is a contra ALLOCATION too, so the payment_allocations sum for the invoice still
 		// reconciles against what the invoice believes it has been paid.
@@ -294,6 +312,18 @@ UPDATE invoices
 			return Reversal{}, fmt.Errorf("reverse: insert contra subledger txn: %w", err)
 		}
 		reopened = append(reopened, a.invoiceID)
+	}
+	for _, nsfID := range nsfIDs {
+		feeAmt := nsfAllocs[nsfID]
+		runningAR += feeAmt
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO customer_transactions
+			   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+			 VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'payment_nsf', $4::uuid, $5::uuid, $6)`,
+			customerID, feeAmt, runningAR, nsfID, branchID, "reversal: "+in.Reason); err != nil {
+			return Reversal{}, fmt.Errorf("reverse: insert nsf fee contra subledger txn: %w", err)
+		}
+		reopened = append(reopened, nsfID)
 	}
 
 	// 5. Transactional outbox, in the SAME transaction as the reversal, so the GL books the reversing

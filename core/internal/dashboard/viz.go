@@ -161,7 +161,7 @@ var MetricCatalog = []MetricMeta{
 		// the book. $2 in the bucket query is the AGING PIVOT, not a window, narrowing it would move where the bands fall, not which invoices count
 		Ranges: []string{RangeOpen},
 		Unit:   "finance", Screen: "ar",
-		Lead: "Outstanding receivables, by age or by branch.",
+		Lead: "Open receivables by age; past due by branch.",
 	},
 	{
 		ID: MetricWarrantyOpen, Label: "Open claims", Module: "warranty", Kind: KindCount,

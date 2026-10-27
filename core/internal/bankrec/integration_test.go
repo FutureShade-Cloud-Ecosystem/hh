@@ -216,7 +216,8 @@ type fakeLodgements struct{ open []Lodgement }
 func (f *fakeLodgements) LodgementFacts(_ context.Context, id string) (LodgementFact, bool, error) {
 	for _, l := range f.open {
 		if l.MovementID == id {
-			return LodgementFact{BranchID: l.BranchID, AmountCents: l.AmountCents}, true, nil
+			return LodgementFact{BranchID: l.BranchID, AmountCents: l.AmountCents,
+				PaymentIDs: l.PaymentIDs, PaymentsUnresolved: l.PaymentsUnresolved}, true, nil
 		}
 	}
 	return LodgementFact{}, false, nil

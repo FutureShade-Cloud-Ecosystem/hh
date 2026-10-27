@@ -366,6 +366,17 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 	if err != nil {
 		return StatementRun{}, out, nil
 	}
+	if mode == RunModeInterim {
+		byID := make(map[string]string, len(out))
+		for _, st := range out {
+			byID[st.ID] = st.HTML
+		}
+		for i := range statements {
+			if statements[i].HTML == "" {
+				statements[i].HTML = byID[statements[i].ID]
+			}
+		}
+	}
 	return run, statements, nil
 }
 

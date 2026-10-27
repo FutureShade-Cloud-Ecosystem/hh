@@ -273,11 +273,18 @@ func (s *Service) buildPaymentReceived(ctx context.Context, payload []byte) (jou
 }
 
 type taxReliefPayload struct {
-	OrderID string `json:"order_id"`
+	OrderID  string `json:"order_id"`
+	BranchID string `json:"branch_id"`
 	// OccurredAt is the relief's own assessment instant, carried by the POS that
 	// assessed it (FW1-01b). Zero means the emitter carried none, and the journal
 	// falls back to the clock.
 	OccurredAt time.Time `json:"occurred_at"`
+}
+
+// TaxSplitBranchReader resolves the order's branch when a replayed or legacy
+// tax.relief.assessed payload carries no branch_id (FW1-08b). Satisfied by *order.Repository.OrderBranch.
+type TaxSplitBranchReader interface {
+	OrderBranch(ctx context.Context, orderID string) (string, error)
 }
 
 func (s *Service) buildTaxRelief(ctx context.Context, payload []byte) (journalDraft, bool, error) {
@@ -303,8 +310,31 @@ func (s *Service) buildTaxRelief(ctx context.Context, payload []byte) (journalDr
 	if !found || onCredit == 0 {
 		return journalDraft{}, false, nil
 	}
+	branchID := p.BranchID
+	if branchID == "" {
+		if br, ok := s.delivery.(TaxSplitBranchReader); ok {
+			b, berr := br.OrderBranch(ctx, p.OrderID)
+			if berr != nil {
+				return journalDraft{}, false, berr
+			}
+			branchID = b
+		} else if br, ok := s.taxSplits.(TaxSplitBranchReader); ok {
+			b, berr := br.OrderBranch(ctx, p.OrderID)
+			if berr != nil {
+				return journalDraft{}, false, berr
+			}
+			branchID = b
+		}
+	}
+	if branchID == "" {
+		ho, herr := s.store.HeadOfficeBranchID(ctx)
+		if herr != nil {
+			return journalDraft{}, false, herr
+		}
+		branchID = ho
+	}
 	et := "tax.relief.assessed"
-	rules, err := s.store.PostingAccounts(ctx, et, "")
+	rules, err := s.store.PostingAccounts(ctx, et, branchID)
 	if err != nil {
 		return journalDraft{}, false, err
 	}
@@ -326,6 +356,7 @@ func (s *Service) buildTaxRelief(ctx context.Context, payload []byte) (journalDr
 		SourceRefID:    p.OrderID,
 		IdempotencyKey: "tax.relief.assessed:" + p.OrderID,
 		Memo:           memo,
+		BranchID:       branchID,
 		// FW1-01b: the relief's own assessment instant, not the processing day.
 		OccurredAt: p.OccurredAt,
 		Lines:      lines,
@@ -375,8 +406,14 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 	branch := p.BranchID
 	amount := p.AmountCents
 	method := p.Method
-	// Fall back to the PaymentReader facts for amount/branch/method when the emitter omitted them.
-	if (amount == 0 || branch == "" || method == "") && s.payments != nil {
+	cleared := p.Cleared
+	// Fall back to the PaymentReader facts for amount/branch/method when an older payload omitted them.
+	// Note on cleared (SF-2d round 2): MarkNSF captures p.Cleared under the payment row lock before
+	// flipping payments.status to BOUNCED, so a live bounce always carries p.Cleared on the payload;
+	// the f.Status == "DEPOSITED" check below is a one-way fallback (false -> true only, never
+	// overwriting p.Cleared = true) for synthetic or pre-Cleared events where the row was not yet
+	// flipped to BOUNCED.
+	if (amount == 0 || branch == "" || method == "" || !cleared) && s.payments != nil {
 		if f, err := s.payments.PaymentForGL(ctx, p.PaymentID); err == nil {
 			if amount == 0 {
 				amount = f.AmountCents
@@ -386,6 +423,9 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 			}
 			if method == "" {
 				method = f.Method
+			}
+			if f.Status == "DEPOSITED" {
+				cleared = true
 			}
 		}
 	}
@@ -402,12 +442,12 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 		return journalDraft{}, false, err
 	}
 	// The reversal-credit leg mirrors the account the ORIGINAL receipt debited, keyed off method AND status:
-	//   DEPOSITED (Cleared) → 1000 bank (the receipt had settled) ; else CARD → 1010 card clearing (where a card
-	//   receipt lands first) ; else cash/cheque/EFT → 1020 undeposited funds. A card receipt that bounced before
+	//   DEPOSITED (Cleared) -> 1000 bank (the receipt had settled) ; else CARD -> 1010 card clearing (where a card
+	//   receipt lands first) ; else cash/cheque/EFT -> 1020 undeposited funds. A card receipt that bounced before
 	//   settlement must reverse 1010, NOT 1020 (that was the A-05 defect).
 	bankRole := "undeposited" // reverse the still-undeposited cash/cheque receipt (1020)
 	switch {
-	case p.Cleared:
+	case cleared:
 		bankRole = "bank" // reverse the settled bank credit (1000)
 	case method == "CARD":
 		bankRole = "card_clearing" // reverse the still-clearing card receipt (1010)
