@@ -142,3 +142,84 @@ func TestIntegration_FW1_05_R4_UnmatchMirrorsTheMatchsOwnJournal(t *testing.T) {
 		})
 	})
 }
+
+// P2-2 (the ruling on S4's round 3 P2-2): an EFT receipt stays on 1020 at receipt (gl/posting.go books
+// every non card receipt to 1020) and becomes a PAYMENT match target booking DR 1000 / CR 1020, the same
+// arm as office cash and cheques, so 1000 holds only money the bank has confirmed. Manual match only; the
+// auto path stays card only (the candidate seam reads method CARD). The leg: an office EFT receipt matched
+// by hand to its bank line moves 1020 to 1000, and the unmatch moves it back.
+func TestIntegration_FW1_05_R4_AnEFTReceiptMatchesByHandAndUnmatches(t *testing.T) {
+	pool := intPool(t)
+	cleanTables(t, pool)
+	acct := rbcAccountID(t, pool)
+	branch := aBranch(t, pool)
+	ctx := context.Background()
+
+	const year = 2023
+	const amount = int64(6100) // $61.00
+	jun03 := time.Date(year, 6, 3, 0, 0, 0, 0, time.UTC)
+	fw104CleanYear(t, pool, acct, year)
+	fw104EnsurePeriods(t, pool, year, jun03)
+	t.Cleanup(func() { fw104CleanYear(t, pool, acct, year) })
+
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	svc := NewService(NewRepository(pool)).
+		WithJournals(glSvc).
+		WithJournalPoster(fw104GLPoster{svc: glSvc, clock: func() time.Time { return jun03 }}).
+		WithGLBalances(glSvc)
+
+	const payID = "87057706-0000-4000-8000-000000000001"
+	insertPayment(t, pool, payID, branch, "EFT", "", amount)
+	lineID := fw104InsertLineAt(t, pool, acct, jun03, "EFT DEPOSIT R4", "DEP-R4-EFT", amount)
+
+	m, err := svc.ManualMatch(ctx, MatchInput{
+		Mode: "manual", StatementLineID: lineID, TargetType: TargetPayment, TargetRefID: payID,
+		AmountCents: amount, CanAccessBranch: AllBranches,
+	}, "")
+	if err != nil {
+		t.Fatalf("P2-2: an EFT receipt was refused a hand match to its bank line: %v", err)
+	}
+	// The match books the office arm: DR 1000 / CR 1020 (the account the receipt debited).
+	assertJournalLegs(t, pool, m.JournalID, map[string][2]int64{
+		AcctBank:        {amount, 0},
+		AcctUndeposited: {0, amount},
+	})
+
+	if err := svc.UnmatchReach(ctx, m.ID, "", AllBranches); err != nil {
+		t.Fatalf("P2-2: unmatch: %v", err)
+	}
+	var reversalID string
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM gl_journals WHERE idempotency_key = $1`, unmatchKey(m.ID)).Scan(&reversalID); err != nil {
+		t.Fatalf("P2-2: reversal journal lookup: %v", err)
+	}
+	assertJournalLegs(t, pool, reversalID, map[string][2]int64{
+		AcctUndeposited: {amount, 0},
+		AcctBank:        {0, amount},
+	})
+
+	// The pair nets zero: the unmatch moves 1020 back.
+	var wrong []string
+	for _, code := range []string{AcctBank, AcctCardClearing, AcctUndeposited} {
+		var net int64
+		if err := pool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(l.debit_cents),0) - COALESCE(SUM(l.credit_cents),0)
+			FROM gl_journal_lines l
+			JOIN gl_accounts a ON a.id = l.account_id
+			JOIN gl_journals j ON j.id = l.journal_id
+			WHERE j.idempotency_key IN ($1, $2) AND a.code = $3`,
+			clearingKey(m.ID), unmatchKey(m.ID), code).Scan(&net); err != nil {
+			t.Fatalf("P2-2: net for %s: %v", code, err)
+		}
+		if net != 0 {
+			wrong = append(wrong, fmt.Sprintf("account %s legs = (net %d), want 0", code, net))
+		}
+	}
+	if len(wrong) > 0 {
+		t.Fatalf("P2-2: the unmatch did not move 1020 back: %v", wrong)
+	}
+	assertLineStatus(t, pool, lineID, LineUnmatched)
+	if st := paymentStatus(t, pool, payID); st != "RECEIVED" {
+		t.Fatalf("P2-2: payment status = %s, want RECEIVED", st)
+	}
+}
