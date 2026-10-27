@@ -11,7 +11,7 @@
 // classes in Node imports this module BEFORE importing from ../src/.
 
 import './dom.mjs';
-import '@lit-labs/ssr/lib/install-global-dom-shim.js';
+import '@hardscapehouse/design-system/src/lit-dom-fetch-guard.js';
 import { render } from '@lit-labs/ssr';
 import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';
 

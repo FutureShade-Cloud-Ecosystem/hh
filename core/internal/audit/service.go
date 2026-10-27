@@ -641,6 +641,17 @@ var allowedExtraKeys = map[string]bool{
 	"load_updated":   true, // the batch's updated count
 	"load_unchanged": true, // the batch's unchanged count
 	"load_refused":   true, // the batch's refused count
+	// The gl open year row (GL_FISCAL_YEAR_OPEN): the year the Controller's open made sure of.
+	// audit_log.entity_id is a uuid column, so the row is keyed to the opened year's January period
+	// and the year itself rides here, an int like the counts above, never an identifier.
+	"fiscal_year": true,
+	// The finstmt export row (FINSTMT_EXPORT): which statement was taken and in what shape. report
+	// is the module's own CHECK vocabulary (INCOME_STATEMENT, BALANCE_SHEET, TRIAL_BALANCE,
+	// GL_DETAIL, AR_AGING) and format is csv or xlsx, both code words, never identifiers. The row
+	// carries no entity_id: a report name is not a uuid, and an empty entity id is what lands NULL
+	// in the column (round 4, S2's P1).
+	"report": true,
+	"format": true,
 }
 
 // redactCleartext returns the value with cleartext-looking identifiers stripped. A value is treated as

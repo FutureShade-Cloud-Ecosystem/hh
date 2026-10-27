@@ -100,6 +100,13 @@ func (s *Service) withCaller(f func(context.Context) (identity.StaffContext, boo
 	return s
 }
 
+// withLogger swaps the logger (tests only), so a leg can capture what a failed
+// export audit actually logged.
+func (s *Service) withLogger(l *slog.Logger) *Service {
+	s.log = l
+	return s
+}
+
 // caller resolves the trusted, server-stamped acting staff member (never a spoofable header).
 func (s *Service) caller(ctx context.Context) (identity.StaffContext, error) {
 	if s.callerFrom == nil {
