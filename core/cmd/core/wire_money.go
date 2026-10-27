@@ -118,6 +118,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithStandardRate(newTaxEngine(pool)). // the NSF fee backout reads the dealer's standard rate
 		WithTaxLabel(newTaxWords(pool)).      // the tax legs' memos name the dealer's tax
 		WithDeadRequeuer(outboxStore).
+		WithPostingQueue(outboxStore).
 		WithAudit(auditSvc).
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
 		WithApprovalStateChecker(jeStateAdapter{svc: approvals})

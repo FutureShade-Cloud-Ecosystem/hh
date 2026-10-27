@@ -16,6 +16,10 @@ drops:
     reason: "Not a route: a comment line in order/activity.go:27 quoting an API framing the surface exists to hide. The literal grep cannot tell comments from registrations."
 
 additions:
+  - route: "GET /api/v1/gl/posting-queue"
+    reason: "FW1-02: the Financial Controller's read of GL events waiting or dead lettered (topic, document, last error, attempts); the ERP posted journals inline and had no outbox to watch."
+  - route: "GET /api/v1/gl/posting-queue/count"
+    reason: "FW1-02: the waiting and dead lettered counts the Money Desk's banner reads; the ERP posted journals inline and had no outbox to watch."
   - route: "POST /api/v1/quotes/{id}/mark-sent"
     reason: "UX-48 I sent it myself: the dealer's word that a copied link went out; the ERP marked a quote sent at link mint and had no such door."
   - route: "GET /.well-known/jwks.json"

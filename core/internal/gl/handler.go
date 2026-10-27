@@ -454,6 +454,31 @@ func (h *Handler) legacyImportEnabled(w http.ResponseWriter, r *http.Request) bo
 
 // - periods -
 
+// listPostingQueue answers the Financial Controller's read of every GL event
+// waiting or dead lettered, with its topic, its document, its last error and
+// its attempts.
+func (h *Handler) listPostingQueue(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	rows, err := h.svc.PostingQueue(r.Context())
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if rows == nil {
+		rows = []PostingQueueRow{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": rows})
+}
+
+// postingQueueCounts answers the two counts the Money Desk's banner reads.
+func (h *Handler) postingQueueCounts(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	counts, err := h.svc.PostingQueueCounts(r.Context())
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, counts)
+}
+
 func (h *Handler) listPeriods(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
 	ps, err := h.svc.ListPeriods(r.Context())
 	if err != nil {

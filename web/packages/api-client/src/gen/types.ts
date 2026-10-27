@@ -2533,6 +2533,22 @@ export type GlPeriodPage = {
   next_cursor?: string | null;
   limit?: number;
 };
+export type GlPostingQueueEvent = {
+  event_id: string;
+  topic: string;
+  document: string;
+  status: "PENDING" | "DEAD";
+  attempts: number;
+  last_error: string;
+  occurred_at: string;
+};
+export type GlPostingQueuePage = {
+  items: GlPostingQueueEvent[];
+};
+export type GlPostingQueueCounts = {
+  waiting: number;
+  dead: number;
+};
 export type GlReasonBody = {
   reason?: string;
 };

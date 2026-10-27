@@ -3003,6 +3003,25 @@ type GlPeriodPage struct {
 	Limit      *int32     `json:"limit,omitempty"`
 }
 
+type GlPostingQueueEvent struct {
+	EventId    string    `json:"event_id"`
+	Topic      string    `json:"topic"`
+	Document   string    `json:"document"`
+	Status     string    `json:"status"`
+	Attempts   int32     `json:"attempts"`
+	LastError  string    `json:"last_error"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+type GlPostingQueuePage struct {
+	Items []GlPostingQueueEvent `json:"items"`
+}
+
+type GlPostingQueueCounts struct {
+	Waiting int32 `json:"waiting"`
+	Dead    int32 `json:"dead"`
+}
+
 type GlReasonBody struct {
 	Reason *string `json:"reason,omitempty"`
 }
