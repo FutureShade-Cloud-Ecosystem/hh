@@ -25,7 +25,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
@@ -244,7 +244,9 @@ for (const [name, source, expectedPosition, fixtureFile] of LIST_REFUSAL_FIXTURE
 const LIST_ALLOWED_FIXTURES = [
   ["the src folder's imports, at the package root", 'src/fixture.ts',
    [
-     "import '@lit-labs/ssr/lib/install-global-dom-shim.js';",
+     "import './lit-dom-fetch-guard.js';",
+     "import '@lit-labs/ssr-dom-shim/register-css-hook.js';",
+     "import { installWindowOnGlobal } from '@lit-labs/ssr/lib/dom-shim.js';",
      "import { render } from '@lit-labs/ssr';",
      "import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';",
      "import { CSSResult, type CSSResultGroup, type TemplateResult as Template } from 'lit';",
@@ -821,4 +823,45 @@ test('the gate files are excluded from the raw-text walks by name, and by no oth
   for (const mustScan of ['test/kits.test.mjs', 'test/_lib/render.mjs', 'src/primitives.ts']) {
     assert.ok(scanned.includes(mustScan), `${mustScan} must stay in the walk`);
   }
+});
+
+
+// ── the shim install inventory: the guard is the one installer ────────────────
+//
+// The Lit server shim's window carries node-fetch as fetch and lands on the
+// global, so in the shared root bun run the first install decides the fetch
+// of every suite after it. The workspace therefore installs the shim only
+// through src/lit-dom-fetch-guard, which captures the process's fetch,
+// installs, and restores, in one synchronous body. This test walks the
+// workspace's packages and apps and refuses any file outside the known list
+// that brings the installer module in, by import, re-export, dynamic import
+// or require, so a site the guard does not cover cannot appear unseen. The
+// list is empty today: a file with a reason to install directly lands here,
+// with the reason, beside the guard in the same review.
+
+const KNOWN_SHIM_INSTALL_SOURCES = new Set([]);
+
+test('only the fetch guard installs the Lit shim, everywhere in the workspace', () => {
+  const webRoot = join(PKG, '..', '..');
+  const walked = [];
+  const visit = (dir, rel) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name.startsWith('.')) continue;
+      const abs = join(dir, entry.name);
+      const relPath = rel === '' ? entry.name : `${rel}/${entry.name}`;
+      if (entry.isDirectory()) visit(abs, relPath);
+      else if (/\.(mjs|cjs|js|jsx|ts|tsx|mts|cts)$/.test(entry.name)) walked.push({ rel: relPath, abs });
+    }
+  };
+  for (const group of ['packages', 'apps']) visit(join(webRoot, group), group);
+  const offences = [];
+  for (const { rel, abs } of walked) {
+    const text = readFileSync(abs, 'utf8');
+    for (const { spec } of importedSpecifiers(text, rel)) {
+      if (spec.includes('install-global-dom-shim') && !KNOWN_SHIM_INSTALL_SOURCES.has(rel)) {
+        offences.push(`${rel}: ${spec}`);
+      }
+    }
+  }
+  assert.deepEqual(offences, []);
 });

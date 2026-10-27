@@ -564,9 +564,10 @@ export const extractTemplates = (source) => {
 export const IMPORT_ALLOW_LIST = {
   src: {
     '@lit-labs/ssr': ['render'],
-    '@lit-labs/ssr/lib/install-global-dom-shim.js': [],
+    '@lit-labs/ssr-dom-shim/register-css-hook.js': [],
+    '@lit-labs/ssr/lib/dom-shim.js': ['installWindowOnGlobal'],
     '@lit-labs/ssr/lib/render-result.js': ['collectResultSync'],
-    './lit-dom-fetch-guard.js': ['restoreLitShimFetch'],
+    './lit-dom-fetch-guard.js': [],
     lit: ['CSSResult', 'CSSResultGroup', 'LitElement', 'PropertyValues', 'TemplateResult', 'css', 'html', 'svg', 'nothing'],
     'node:fs': ['readFileSync'],
     'node:module': ['register'],
@@ -594,7 +595,6 @@ export const IMPORT_ALLOW_LIST = {
   },
   test: {
     '@lit-labs/ssr': ['render'],
-    '@lit-labs/ssr/lib/install-global-dom-shim.js': [],
     '@lit-labs/ssr/lib/render-result.js': ['collectResultSync'],
     lit: ['html', 'svg'],
     'node:assert/strict': ['default'],
@@ -608,8 +608,8 @@ export const IMPORT_ALLOW_LIST = {
     'node:timers/promises': ['setTimeout'],
     'node:url': ['fileURLToPath'],
     typescript: ['default'],
-    '../../src/lit-dom-fetch-guard.js': ['restoreLitShimFetch'],
-    '../src/lit-dom-fetch-guard.js': ['restoreLitShimFetch'],
+    '../../src/lit-dom-fetch-guard.js': [],
+    '../src/lit-dom-fetch-guard.js': [],
     './_lib/cdp.mjs': ['findBrowserBinary', 'launchBrowser'],
     './_lib/color.mjs': ['hexToOklch', 'oklchToHex', 'parseOklch', 'relativeLuminance'],
     './_lib/positions.mjs': ['ADDRESS_HELPER', 'ALLOWED_PROPERTY_OR_EVENT', 'GATE_FILES', 'IMPORT_ALLOW_LIST', 'auditImports', 'auditSource', 'auditTagUsages', 'dependentPackages', 'everyPackageSource', 'extractTemplates', 'importedSpecifiers', 'refusedBy', 'thisPackageSources'],

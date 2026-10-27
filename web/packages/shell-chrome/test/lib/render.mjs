@@ -10,17 +10,10 @@
 // another file's stub window made the shim a no-op), so anything that renders element
 // classes in Node imports this module BEFORE importing from ../src/.
 
-import { restoreLitShimFetch } from '@hardscapehouse/design-system/src/lit-dom-fetch-guard.js';
 import './dom.mjs';
-import '@lit-labs/ssr/lib/install-global-dom-shim.js';
+import '@hardscapehouse/design-system/src/lit-dom-fetch-guard.js';
 import { render } from '@lit-labs/ssr';
 import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';
-
-// The shim's window carries node-fetch as fetch; the guard held the
-// process's own fetch before the installer ran and the restore puts it back,
-// so the suites after this file in the shared runner process keep the fetch
-// they started with.
-restoreLitShimFetch();
 
 /** Renders an element in the given props to the markup string the browser
  * would commit. Throws synchronously on a refused value. */
