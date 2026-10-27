@@ -14,9 +14,10 @@
 # basic auth gate, the box's own FB Console sign in is the door. The
 # entrypoint (deploy/finance/entrypoint.sh) is the only place the boot order
 # lives: the variable checks, the one database name held in both spellings,
-# migrate then finance-seed on an empty database, the box kind check then
-# migrate on a non empty one, then core serve, core worker and Caddy under
-# the supervisor.
+# migrate then finance-seed on an empty database, migrate then finance-seed
+# again on a database that holds the migrations but no seed (an interrupted
+# first boot), the box kind check then migrate on the finance box's own
+# world, then core serve, core worker and Caddy under the supervisor.
 
 FROM golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS core-build
 WORKDIR /src/core
@@ -25,7 +26,7 @@ RUN go mod download
 COPY core/ ./
 RUN CGO_ENABLED=0 go build -trimpath -o /out/core ./cmd/core
 
-FROM node:22-alpine AS web-build
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS web-build
 # The whole workspace is copied before the install: npm resolves the
 # workspaces from the packages' directories on disk, so a manifest-only
 # copy installs nothing but the root. The drive app's offline data layer
@@ -49,13 +50,14 @@ RUN npx vite build --mode console --base=/money-desk/ --outDir /out/money-desk -
 WORKDIR /src/web/apps/manager-home
 RUN npx vite build --mode console --base=/home/ --outDir /out/home --emptyOutDir
 
-FROM caddy:2.10.2 AS caddy
+FROM caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb AS caddy
 
-FROM alpine:3.20
+FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 # ca-certificates: outbound TLS the core's standard library expects.
-# postgresql16-client: the entrypoint's database probes, which read the
-# database's shape before anything runs. Nothing else in the image talks to
-# the database except the core itself.
+# postgresql16-client: the entrypoint's connection probe, which reads the
+# connection from a libpq service file on the shared memory tmpfs rather
+# than from a command line. Nothing else in the image talks to the database
+# except the core itself.
 RUN apk add --no-cache ca-certificates postgresql16-client
 COPY --from=core-build /out/core /usr/local/bin/core
 COPY --from=caddy /usr/bin/caddy /usr/local/bin/caddy
@@ -67,7 +69,14 @@ COPY core/db/migrations /srv/core/db/migrations
 COPY deploy/finance/Caddyfile.template /srv/templates/Caddyfile.template
 COPY deploy/finance/entrypoint.sh /usr/local/bin/entrypoint
 COPY deploy/finance/write-web-config.sh /usr/local/bin/write-web-config.sh
+# The sign in allow list the entrypoint sources: it derives the box's sign
+# in allow list from HH_FINANCE_USERS, so it has to be in the image beside
+# the entrypoint that sources it.
 COPY deploy/finance/signin-allow-list.sh /usr/local/bin/signin-allow-list.sh
+# The URL parser the entrypoint sources: it turns the database URL into the
+# libpq service file the probe reads, so the URL never sits on a command
+# line.
+COPY deploy/finance/database-url.sh /usr/local/bin/database-url.sh
 RUN chmod 0755 /usr/local/bin/entrypoint
 
 # The migrate role reads db/migrations relative to the working directory

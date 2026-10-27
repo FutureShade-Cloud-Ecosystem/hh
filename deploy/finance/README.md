@@ -52,14 +52,25 @@ through Caddy (it pings the database, 503 when the database is down).
    copy. The key's bytes are never printed.
 5. `/srv/app/config.json` is written from the `HH_WEB_*` names (console
    mode), validated with the same rules as the browser's parser.
-6. The database is classified. An EMPTY database: `core migrate`, then
-   `core finance-seed` (applies the Dibbits seed, records
-   `box_kind=finance` in `system_settings` through the settings module,
-   and leaves the seed's users with no usable password). A NON EMPTY
-   database: `core finance-box-check` (refuses a database the box did not
-   seed, before anything writes), then `core migrate`, forward only. Every
-   redeploy keeps the data; nothing on the boot path drops, truncates or
-   reseeds.
+6. The database is classified, by the core itself (`core finance-box-state`,
+   the one definition of the shape that the boot guard reads too, so the two
+   can never answer "empty" differently). An EMPTY database (no migration
+   bookkeeping and no table at all): `core migrate`, then `core finance-seed`
+   (applies the Dibbits seed, records `box_kind=finance` in `system_settings`
+   through the settings module, and leaves the seed's users with no usable
+   password). An UNSEEDED database (the box's own bookkeeping is there, the
+   seed is not and nothing is marked, which is what a crash between migrate
+   and seed leaves behind): `core migrate`, then `core finance-seed` again,
+   whose own guards decide whether the seed may run, so an interrupted first
+   boot heals at the next boot. The finance box's own world: `core
+   finance-box-check` (refuses a database the box did not seed, before anything
+   writes), then `core migrate`, forward only. Anything else is refused by the
+   box kind check. Every redeploy keeps the data; nothing on the boot path
+   drops, truncates or reseeds.
+   The wait for the database comes before this step, and the database URL
+   never sits on a command line: `psql` reads the connection from a libpq
+   service file on the shared memory tmpfs, which the probe alone reads and
+   which is removed as soon as the probe is done.
 7. The box's finance users are applied from the list:
    `core finance-user --apply-from-env` provisions every entry and revokes
    every finance person the list left out, in one transaction. The apply is
@@ -164,8 +175,13 @@ guard refuses a live rail on a finance box), `CORE_SIGNIN_EMAIL_DOMAINS`.
 - `entrypoint-supervisor-test.sh` - the supervisor: stand-in children on
   the PATH record their invocations and exit; the entrypoint exits non
   zero as soon as any one of them exits, on both the empty database path
-  (migrate then finance-seed) and the non empty one (box kind check then
-  migrate).
+  (migrate then finance-seed) and the finance box's own world (box kind
+  check then migrate).
+- `entrypoint-boot-test.sh` - the boot's own legs: the database URL is
+  parsed into a libpq service file and never sits on a command line, the
+  ports written into the Caddy template are digits or the boot refuses, and
+  the database's shape (empty, unseeded, the finance box's own world, and
+  anything else) decides what the entrypoint runs.
 
 Run each from a checkout:
 
@@ -173,4 +189,5 @@ Run each from a checkout:
 sh deploy/finance/entrypoint-vars-test.sh
 sh deploy/finance/entrypoint-finance-users-test.sh
 sh deploy/finance/entrypoint-supervisor-test.sh
+sh deploy/finance/entrypoint-boot-test.sh
 ```

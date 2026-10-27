@@ -136,6 +136,21 @@ func MigrationsAppliedCount(ctx context.Context, pool *pgxpool.Pool) (int, bool,
 	return count, true, nil
 }
 
+// PublicTableCount counts the tables in the public schema. It is the shape
+// read beside the bookkeeping read, and it lives here for the same reason:
+// the database's own shape is read in one place, so the finance box's boot
+// guard and the finance box's entrypoint (which asks the core for the
+// shape) can never answer "empty" differently. A database is empty only
+// when it holds neither the bookkeeping table nor any table at all.
+func PublicTableCount(ctx context.Context, pool *pgxpool.Pool) (int, error) {
+	var count int
+	err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'`).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // seedRole folds the pin's cmd/seed behaviour: the representative demo
 // world from the embedded SQL file, prod-guarded and idempotent.
 func seedRole(getenv func(string) string) error {
