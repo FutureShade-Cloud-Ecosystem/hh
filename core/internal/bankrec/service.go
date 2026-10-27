@@ -291,6 +291,18 @@ func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to
 	if err != nil {
 		return MatchSummary{}, err
 	}
+	// FW1-05b (S4's P2): the auto candidates pair only on the BANK account the lodgement journals into
+	// (1000); a CREDIT_CARD account's lines are left unmatched for a hand JOURNAL match, and the run
+	// writes nothing.
+	if len(lines) > 0 {
+		acct, aerr := s.repo.GetAccount(ctx, accountID)
+		if aerr != nil {
+			return MatchSummary{}, aerr
+		}
+		if acct.AccountType != AccountBank || acct.GLAccountCode != AcctBank {
+			return MatchSummary{Unmatched: len(lines)}, nil
+		}
+	}
 	rules, err := s.repo.ApprovedRules(ctx)
 	if err != nil {
 		return MatchSummary{}, err
@@ -354,6 +366,52 @@ func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to
 	return summary, nil
 }
 
+// persistAndJournal claims a match and, when the poster can post on the caller's transaction (JournalPosterTx),
+// posts its clearing journal inside the SAME transaction, so the match and its journal commit or roll back
+// together (FW1-05): a refused journal leaves the line UNMATCHED and the payment RECEIVED, and a refused
+// match posts nothing. The journal is built by journalFn AFTER the claim, so a hand match can check the
+// claimed payment's facts (amount, method) under the same lock and book its clearing journal by tender. A
+// poster without the transaction arm fails the match closed (FROM-PRINCIPAL 232): refused in words, nothing
+// written, so a refused journal can never leave an orphan match.
+func (s *Service) persistAndJournal(ctx context.Context, m Match, claim []string, reach func(string) bool, journalFn func(claimed []MatchPaymentFact) (gl.ExternalJournal, bool, error)) (Match, error) {
+	tx, err := s.repo.Begin(ctx)
+	if err != nil {
+		return Match{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	id, claimed, err := s.repo.PersistMatchReachTx(ctx, tx, m, claim, reach)
+	if err != nil {
+		return Match{}, err
+	}
+	m.ID = id
+	journal, post, jerr := journalFn(claimed)
+	if jerr != nil {
+		return Match{}, jerr
+	}
+	if post && s.poster != nil {
+		journal.IdempotencyKey = clearingKey(id)
+		if pt, ok := s.poster.(JournalPosterTx); ok {
+			journalID, perr := pt.PostJournalTx(ctx, tx, journal)
+			if perr != nil {
+				return Match{}, perr
+			}
+			m.JournalID = journalID
+			if err := s.repo.SetMatchJournalTx(ctx, tx, id, journalID); err != nil {
+				return Match{}, err
+			}
+		} else {
+			// FW1-05b (FROM-PRINCIPAL 232): no production path posts in two steps. A poster without the
+			// transaction arm fails the match closed, refused in words, nothing written, so a refused
+			// journal can never leave an orphan MATCHED line and a claimed payment behind.
+			return Match{}, unprocessable("bankrec: the journal poster cannot post inside the match's transaction, so the match is refused and nothing is written")
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Match{}, err
+	}
+	return m, nil
+}
+
 // lodgementJournalKey is the idempotency key the till's movement journal carries, so the GL's keyed
 // existence read can name the lodgement's own journal (core/internal/gl/posting.go, the builder's key).
 const lodgementJournalKey = "till.movement.posted:"
@@ -413,7 +471,8 @@ func (s *Service) markLodgementsWithJournals(ctx context.Context, lodg []Lodgeme
 // clearing journal and writes its id back. Ordering is deliberate: PersistMatch's guards (line still
 // UNMATCHED, payment still RECEIVED, no live match on the target) run BEFORE any journal is posted, so a
 // duplicate/racing match is rejected with NO second clearing journal. The journal is keyed on the match id so
-// a corrective re-match posts fresh legs.
+// a corrective re-match posts fresh legs. Since FW1-05 the claim and the post share one transaction whenever
+// the poster can post on the caller's transaction.
 func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy string, reach func(string) bool) (Match, error) {
 	m := Match{
 		StatementLineID: prop.Line.ID,
@@ -434,25 +493,11 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 			return Match{}, errNotFound
 		}
 	}
-	id, err := s.repo.PersistMatchReach(ctx, m, prop.PaymentIDs, reach)
-	if err != nil {
-		return Match{}, err
-	}
-	m.ID = id
-	// A lodgement that carries its OWN journal is only confirmed: the match posts no clearing journal
-	// (FROM-PRINCIPAL 117 and 120), so the deposit is booked once, at lodgement.
-	if s.poster != nil && !prop.ConfirmsOnly {
-		prop.Journal.IdempotencyKey = clearingKey(id)
-		journalID, perr := s.poster.PostJournal(ctx, prop.Journal)
-		if perr != nil {
-			return Match{}, perr
-		}
-		m.JournalID = journalID
-		if err := s.repo.SetMatchJournal(ctx, id, journalID); err != nil {
-			return Match{}, err
-		}
-	}
-	return m, nil
+	return s.persistAndJournal(ctx, m, prop.PaymentIDs, reach, func([]MatchPaymentFact) (gl.ExternalJournal, bool, error) {
+		// A lodgement that carries its OWN journal is only confirmed: the match posts no clearing journal
+		// (FROM-PRINCIPAL 117 and 120), so the deposit is booked once, at lodgement.
+		return prop.Journal, !prop.ConfirmsOnly, nil
+	})
 }
 
 // ManualMatch pairs a statement line to a target by hand (method MANUAL), posting the matching clearing
@@ -480,6 +525,29 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	if amount == 0 {
 		amount = line.AmountCents
 	}
+	// FW1-05 item 1: a match by hand states what it pairs. A caller supplied amount that disagrees with the
+	// statement line is refused (the journal posts the line's amount, never the caller's), and only a
+	// positive (deposit) line can be matched to a payment: a withdrawal line explains no receipt.
+	if in.AmountCents != 0 && in.AmountCents != line.AmountCents {
+		return Match{}, unprocessable("bankrec: the match is for %d cents and the statement line is for %d cents, so it does not explain the line", in.AmountCents, line.AmountCents)
+	}
+	if in.TargetType == TargetPayment && line.AmountCents <= 0 {
+		return Match{}, unprocessable("bankrec: only a deposit (a positive line) can be matched to a payment; this line reads %d cents", line.AmountCents)
+	}
+	// FW1-05b (S4's P2): a LODGEMENT or PAYMENT target matches only a BANK account whose GL code is the
+	// lodgement journal's debit account (1000): the till journals DR 1000 / CR 1020 at lodgement, so only
+	// that account's lines explain a payment or a lodgement. A CREDIT_CARD line (2110 to 2115) matched to
+	// one would debit the card account and credit 1020 a second time while 1000 keeps the deposit: refused
+	// in words, nothing written. JOURNAL and GROUP targets keep their own rules.
+	if in.TargetType == TargetPayment || in.TargetType == TargetLodgement {
+		acct, aerr := s.repo.GetAccount(ctx, line.BankAccountID)
+		if aerr != nil {
+			return Match{}, aerr
+		}
+		if acct.AccountType != AccountBank || acct.GLAccountCode != AcctBank {
+			return Match{}, unprocessable("bankrec: a payment or a lodgement matches only a line on the bank account the lodgement journals into (%s); this line sits on %s (%s)", AcctBank, acct.GLAccountCode, acct.AccountType)
+		}
+	}
 	m := Match{
 		StatementLineID: line.ID,
 		TargetType:      in.TargetType,
@@ -490,13 +558,13 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	}
 	// A PAYMENT or LODGEMENT target claims its RECEIVED payment(s) in the same tx (RECEIVED to DEPOSITED).
 	var claim []string
-	var journalBranchID string
 	if in.TargetType == TargetPayment && in.TargetRefID != "" {
 		claim = []string{in.TargetRefID}
 	}
 	// carriesJournal says the lodgement target posted its own journal at lodgement, so the match only confirms
 	// the line and posts nothing (FROM-PRINCIPAL 117 and 120).
 	carriesJournal := false
+	var lodgBranch string
 	switch in.TargetType {
 	case TargetGroup:
 		// GROUP is a "manual grouping header" (migration 0033, matcher.go) with no member set: nothing resolves
@@ -517,7 +585,7 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 		if facts.AmountCents != line.AmountCents {
 			return Match{}, unprocessable("bankrec: that lodgement is for %d cents and the line is %d cents, so it does not explain the line", facts.AmountCents, line.AmountCents)
 		}
-		journalBranchID = facts.BranchID
+		lodgBranch = facts.BranchID
 		if carriesJournal, err = s.carriesOwnJournal(ctx, in.TargetRefID, facts.CarriesJournal); err != nil {
 			return Match{}, err
 		}
@@ -531,25 +599,41 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 			return Match{}, jerr
 		}
 	}
-	id, err := s.repo.PersistMatchReach(ctx, m, claim, in.CanAccessBranch)
+	// FW1-05 item 1: the journal is built after the claim, from the claimed payment's own facts read under
+	// its row lock: a hand match checks the payment's amount against the line, and books the clearing
+	// account its tender names (1010 card, 1020 cash and cheque).
+	journalFn := func(claimed []MatchPaymentFact) (gl.ExternalJournal, bool, error) {
+		if in.TargetType != TargetPayment {
+			j, ok := manualJournal(line, in.TargetType, "", lodgBranch, carriesJournal)
+			return j, ok, nil
+		}
+		if len(claimed) != 1 {
+			return gl.ExternalJournal{}, false, conflict("bankrec: payment already claimed, reversed or not RECEIVED (claimed %d of %d)", len(claimed), len(claim))
+		}
+		f := claimed[0]
+		if f.AmountCents != line.AmountCents {
+			return gl.ExternalJournal{}, false, unprocessable("bankrec: that payment is for %d cents and the line is %d cents, so it does not explain the line", f.AmountCents, line.AmountCents)
+		}
+		// FW1-05b (S4's P1): a CASH payment taken in a till session reaches the bank only by its lodgement
+		// (the lodgement journal debited 1000 at lodgement), so it is never a PAYMENT target; a slipless
+		// cash lodgement leaves its payments RECEIVED and matching one alone would hold the cash in 1000
+		// twice. Refused in words; the claim rolls back, so nothing is written. An office receipt (no till
+		// session) stays matchable.
+		if f.InTillSession && f.Method == "CASH" {
+			return gl.ExternalJournal{}, false, unprocessable("bankrec: that payment was taken in a till session, so it reaches the bank only by its lodgement; match the lodgement's deposit line, not the payment")
+		}
+		j, ok := manualJournal(line, in.TargetType, f.Method, f.BranchID, false)
+		if !ok {
+			return gl.ExternalJournal{}, false, unprocessable("bankrec: a %s payment cannot be matched by hand; match a card, a cash, a cheque or an EFT deposit", f.Method)
+		}
+		return j, true, nil
+	}
+	mOut, err := s.persistAndJournal(ctx, m, claim, in.CanAccessBranch, journalFn)
 	if err != nil {
 		return Match{}, err
 	}
-	m.ID = id
-	// Post the clearing journal AFTER the match is claimed (a rejected duplicate posts none), keyed on match id.
-	if journal, post := manualJournal(line, in.TargetType, journalBranchID, carriesJournal); post && s.poster != nil {
-		journal.IdempotencyKey = clearingKey(id)
-		journalID, perr := s.poster.PostJournal(ctx, journal)
-		if perr != nil {
-			return Match{}, perr
-		}
-		m.JournalID = journalID
-		if err := s.repo.SetMatchJournal(ctx, id, journalID); err != nil {
-			return Match{}, err
-		}
-	}
 	s.recordAudit(ctx, "BANKREC_MANUAL_MATCH", "bankrec.statement_line", line.ID, matchedBy, "manual match", "")
-	return m, nil
+	return mOut, nil
 }
 
 // lodgementReachable says whether a lodgement exists and sits in a branch the caller reaches, through the till's
@@ -643,10 +727,6 @@ func (s *Service) clock() time.Time {
 	return s.now()
 }
 
-type lodgementJournalReader interface {
-	LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error)
-}
-
 // reconFigures holds the output of the single shared reconciliation computation (FW1-04) used by
 // OpenReconciliation, RefreshReconciliation, CompleteReconciliation, and Reconciliations.
 type reconFigures struct {
@@ -730,6 +810,13 @@ func (s *Service) computeReconFigures(
 				return reconFigures{}, err
 			}
 		}
+	}
+	if acct.AccountType == AccountCreditCard {
+		// A credit card's book balance is credit normal, and the GL seam answers a credit normal account
+		// credit positive (what the dealer owes), while the card statement's signed balance is debit
+		// positive (a purchase reads negative). Negate the ledger read so the variance compares one signed
+		// space and a tracked card reconciles at zero (FW1-05 item 7).
+		glBal = -glBal
 	}
 
 	var dit []OutstandingItem
@@ -840,9 +927,9 @@ func (s *Service) recheckJournalMatches(glCode string) func(ctx context.Context,
 // releases any claimed payment back to RECEIVED (all in one tx), and posts a REVERSING clearing journal under
 // a NEW idempotency key (unmatchKey) that cancels the original legs, so the GL no longer carries a phantom
 // clearing entry and a corrective re-match books its own fresh journal (never reusing the stale line key).
-// NOTE: the reversal mirrors the target-type clearing legs by amount (PAYMENT: DR1010/CR1000; LODGEMENT:
-// DR1020/CR1000), which is exact for gateway/lodgement matches; a fuzzy fee-split match leaves its 6300 fee
-// residue for a controller adjustment (documented, fee is not carried on the match row).
+// The reversal mirrors the original clearing journal's legs, the fee leg included (FW1-05 item 3): the
+// unmatch reads the claimed payment's gross and the match rule's fee account under the same lock and swaps
+// every leg back, so a fuzzy fee-split match un books its 6300 fee instead of leaving a residue.
 //
 // It is fenced to the caller's branch reach (SF-2g round 2). A match whose target is a payment or a
 // lodgement outside the reach answers exactly as a match that is not live, with nothing written. A nil reach REFUSES
@@ -868,33 +955,70 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 		}
 	}
 	lineDate, hasLineDate, _ := s.repo.MatchLineDate(ctx, matchID)
-	targetType, targetRef, amount, err := s.repo.UnmatchReach(ctx, matchID, userID, reach)
+	// A lodgement that carries its OWN journal was only confirmed by its match (FROM-PRINCIPAL 117 and 120),
+	// so its undo reverses nothing. A match that posted its own clearing journal (an older lodgement's match)
+	// still reverses it: the gate rides the match's own recorded journal id, not the lodgement's fact alone.
+	carriesJournal := false
+	var lodgBranch string
+	if liveMatch, gerr := s.repo.GetLiveMatch(ctx, matchID); gerr == nil && liveMatch.TargetType == TargetLodgement {
+		// The reversal carries the lodgement's branch (FW1-05 item 4); the facts are append only.
+		if f, found, ferr := s.lodgementFacts(ctx, liveMatch.TargetRefID); ferr == nil && found {
+			lodgBranch = f.BranchID
+			if hasJ, jerr := s.carriesOwnJournal(ctx, liveMatch.TargetRefID, f.CarriesJournal); jerr != nil {
+				return jerr
+			} else if hasJ && liveMatch.JournalID == "" {
+				carriesJournal = true
+			}
+		}
+	}
+	// The unmatch and its reversing journal share one transaction (FW1-05): the body runs on the caller's
+	// tx, and when the poster can post on it the reversal posts before the single commit.
+	tx, err := s.repo.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	// A lodgement that carries its OWN journal posted no clearing journal when it was matched
-	// (FROM-PRINCIPAL 117 and 120), so its undo reverses nothing either.
-	carriesJournal := false
-	if targetType == TargetLodgement {
-		facts, found, ferr := s.lodgementFacts(ctx, targetRef)
-		if ferr != nil {
-			return ferr
+	defer func() { _ = tx.Rollback(ctx) }()
+	facts, err := s.repo.UnmatchReachTx(ctx, tx, matchID, userID, reach)
+	if err != nil {
+		return err
+	}
+	// PR 632 round 4 (S4's P2-1): the reversal mirrors the clearing journal the MATCH posted, by its own
+	// journal_id, read through the GL seam (bankrec never reads gl_journals itself). A match made while an
+	// older arm stood booked its credit on the arm's account, so the undo must reverse that account, not
+	// today's rule's; the payment's method (facts.ClearingAccount) stays the fallback for a match that
+	// posted no journal.
+	if facts.TargetType == TargetPayment && facts.JournalID != "" && s.journals != nil {
+		clearing, found, jerr := s.journals.JournalClearingAccount(ctx, facts.JournalID)
+		if jerr != nil {
+			return jerr
 		}
 		if found {
-			if carriesJournal, ferr = s.carriesOwnJournal(ctx, targetRef, facts.CarriesJournal); ferr != nil {
-				return ferr
-			}
+			facts.ClearingAccount = clearing
 		}
 	}
-	if s.poster != nil && amount > 0 {
-		if rev, ok := reversalJournal(matchID, targetType, amount, carriesJournal); ok {
+	if s.poster != nil && facts.AmountCents > 0 {
+		revBranch := facts.BranchID
+		if revBranch == "" {
+			revBranch = lodgBranch
+		}
+		if rev, ok := reversalJournal(matchID, facts.TargetType, revBranch, facts.ClearingAccount, facts.AmountCents, facts.FeeCents, facts.FeeAccountCode, carriesJournal); ok {
 			if hasLineDate {
 				rev.DocumentDate = statementDocDate(lineDate)
 			}
-			if _, perr := s.poster.PostJournal(ctx, rev); perr != nil {
-				return perr
+			if pt, ok := s.poster.(JournalPosterTx); ok {
+				if _, perr := pt.PostJournalTx(ctx, tx, rev); perr != nil {
+					return perr
+				}
+			} else {
+				// FW1-05b (FROM-PRINCIPAL 232): the unmatch fails closed on a poster without the
+				// transaction arm: a reversal posted after the commit would free the payment while the
+				// original clearing journal stands.
+				return unprocessable("bankrec: the journal poster cannot post inside the unmatch's transaction, so the unmatch is refused and nothing is written")
 			}
 		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
 	}
 	s.recordAudit(ctx, "BANKREC_UNMATCH", "bankrec.match", matchID, userID, "manual unmatch", "")
 	return nil
@@ -927,8 +1051,15 @@ func (s *Service) ApproveRule(ctx context.Context, in RuleInput, approvedBy stri
 	if len(in.Spec) == 0 {
 		return MatchRule{}, badRequest("bankrec: rule spec is required")
 	}
-	if kind := specStr(in.Spec, "kind"); kind != KindGatewayRefExact && kind != KindLodgementRefExact && kind != KindDescriptorFuzzy {
+	kind := specStr(in.Spec, "kind")
+	if kind != KindGatewayRefExact && kind != KindLodgementRefExact && kind != KindDescriptorFuzzy {
 		return MatchRule{}, unprocessable("bankrec: spec.kind must be one of gateway_ref_exact, lodgement_ref_exact, descriptor_fuzzy")
+	}
+	// FW1-05 item 6: a lodgement reference rule matches exactly (zero tolerance, AC3); a cent of drift on a
+	// cash or cheque deposit is matched by hand, never auto booked. Only the card settlement rules may carry
+	// a tolerance, and their remainder goes to the fee account so the journal still balances.
+	if kind == KindLodgementRefExact && specInt(in.Spec, "tolerance_cents") != 0 {
+		return MatchRule{}, unprocessable("bankrec: a lodgement reference rule must carry tolerance_cents 0; a cent of drift is matched by hand")
 	}
 	rule, err := s.repo.ApproveNewRuleVersion(ctx, in, approvedBy)
 	if err != nil {

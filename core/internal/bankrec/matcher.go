@@ -47,15 +47,17 @@ func matchLine(line StatementLine, rules []MatchRule, pmts []CandidatePayment, l
 		switch rule.Kind {
 		case KindGatewayRefExact:
 			if p, ok := matchGatewayExact(line, rule, pmts); ok {
-				return buildPaymentProposal(line, rule, p, 0), true
+				e, _ := settleCardPayment(line, p, rule.ToleranceCents)
+				return buildPaymentProposal(line, rule, e), true
 			}
 		case KindLodgementRefExact:
 			if l, ok := matchLodgementExact(line, rule, lodg); ok {
 				return buildLodgementProposal(line, rule, l), true
 			}
 		case KindDescriptorFuzzy:
-			if p, fee, ok := matchDescriptorFuzzy(line, rule, pmts); ok {
-				return buildPaymentProposal(line, rule, p, fee), true
+			if p, ok := matchDescriptorFuzzy(line, rule, pmts); ok {
+				e, _ := settleCardPayment(line, p, rule.ToleranceCents)
+				return buildPaymentProposal(line, rule, e), true
 			}
 		}
 	}
@@ -63,7 +65,9 @@ func matchLine(line StatementLine, rules []MatchRule, pmts []CandidatePayment, l
 }
 
 // matchGatewayExact pairs a card-settlement line to the payment whose gateway_ref equals the line reference,
-// with the amount inside tolerance (0 cents for the seeded rule).
+// with the payment's gross at or above the line and the remainder inside tolerance (0 cents for the seeded
+// rule). A deposit larger than the payment is not a settlement of it: a negative remainder cannot book as a
+// fee, so it refuses (FW1-05 item 6).
 func matchGatewayExact(line StatementLine, rule MatchRule, pmts []CandidatePayment) (CandidatePayment, bool) {
 	ref := normalizeRef(line.Reference)
 	if ref == "" {
@@ -73,7 +77,7 @@ func matchGatewayExact(line StatementLine, rule MatchRule, pmts []CandidatePayme
 		if normalizeRef(p.GatewayRef) != ref {
 			continue
 		}
-		if abs64(p.AmountCents-line.AmountCents) <= rule.ToleranceCents {
+		if p.AmountCents >= line.AmountCents && p.AmountCents-line.AmountCents <= rule.ToleranceCents {
 			return p, true
 		}
 	}
@@ -98,13 +102,44 @@ func matchLodgementExact(line StatementLine, rule MatchRule, lodg []Lodgement) (
 	return Lodgement{}, false
 }
 
+// settlementExplanation is the named component list a card settlement is booked from (FROM-PRINCIPAL 84):
+// the payments claimed, the processor fee, and a reserved slot for recorded refunds. Wave 1 leaves the
+// refund slot empty (the later card refund arm fills it without reworking this); only the fee absorbs a
+// remainder, and only within the rule's tolerance.
+type settlementExplanation struct {
+	PaymentIDs    []string
+	BranchID      string
+	ClaimedCents  int64 // the payments claimed
+	RefundedCents int64 // recorded refunds the processor netted (reserved, wave 1: always 0)
+	NetCents      int64 // what the statement paid in
+	FeeCents      int64 // the processor fee, the ONLY component allowed to absorb a remainder
+}
+
+// settleCardPayment explains a settlement line of NetCents from one claimed payment: the fee takes the
+// remainder (claimed less refunds less net), and only within toleranceCents. A remainder the tolerance
+// cannot absorb refuses the settlement, so a whole shortfall is never booked as a fee (FROM-PRINCIPAL 84).
+func settleCardPayment(line StatementLine, p CandidatePayment, toleranceCents int64) (settlementExplanation, bool) {
+	fee := p.AmountCents - line.AmountCents - 0 // less the refund slot, empty in wave 1
+	if fee < 0 || fee > toleranceCents {
+		return settlementExplanation{}, false
+	}
+	return settlementExplanation{
+		PaymentIDs:    []string{p.PaymentID},
+		BranchID:      p.BranchID,
+		ClaimedCents:  p.AmountCents,
+		RefundedCents: 0,
+		NetCents:      line.AmountCents,
+		FeeCents:      fee,
+	}, true
+}
+
 // matchDescriptorFuzzy pairs a RUN-batch settlement line to a payment by descriptor ILIKE + a ± date window,
-// allowing the bank net = payment gross − processor fee. Returns the fee (gross − net) to split to 6300. The
-// payment chosen is the one within the window whose gross ≥ net and gives the smallest non-negative fee
-// (deterministic), so a re-run picks the same payment (idempotent, AC4).
-func matchDescriptorFuzzy(line StatementLine, rule MatchRule, pmts []CandidatePayment) (CandidatePayment, int64, bool) {
+// allowing the bank net = payment gross − processor fee. The payment chosen is the one within the window
+// whose gross ≥ net, whose remainder the rule's tolerance can absorb (FROM-PRINCIPAL 84), and that gives the
+// smallest non-negative fee (deterministic), so a re-run picks the same payment (idempotent, AC4).
+func matchDescriptorFuzzy(line StatementLine, rule MatchRule, pmts []CandidatePayment) (CandidatePayment, bool) {
 	if !descriptorMatches(line.Description, rule.DescriptorILike) {
-		return CandidatePayment{}, 0, false
+		return CandidatePayment{}, false
 	}
 	var best CandidatePayment
 	var bestFee int64 = -1
@@ -119,46 +154,49 @@ func matchDescriptorFuzzy(line StatementLine, rule MatchRule, pmts []CandidatePa
 		if !rule.AllowFeeSplit && fee != 0 {
 			continue // this rule does not permit a fee split
 		}
+		if fee > rule.ToleranceCents {
+			continue // only the fee absorbs a remainder, and only within the tolerance (FROM-PRINCIPAL 84)
+		}
 		if bestFee == -1 || fee < bestFee {
 			best = p
 			bestFee = fee
 		}
 	}
 	if bestFee < 0 {
-		return CandidatePayment{}, 0, false
+		return CandidatePayment{}, false
 	}
-	return best, bestFee, true
+	return best, true
 }
 
-// buildPaymentProposal builds a card-settlement clearing journal: DR 1000 (net to bank) [+ DR 6300 (fee)]
-// / CR 1010 (gross out of card clearing). With no fee this is the plain DR 1000 / CR 1010 (AC2).
-func buildPaymentProposal(line StatementLine, rule MatchRule, p CandidatePayment, feeCents int64) proposal {
-	net := line.AmountCents
-	gross := p.AmountCents
+// buildPaymentProposal builds a card-settlement clearing journal from the settlement's named components
+// (FROM-PRINCIPAL 84): DR 1000 (the net paid in) [+ DR feeAcct (the fee)] / CR 1010 (the claimed payments'
+// gross). With no fee this is the plain DR 1000 / CR 1010 (AC2). The recorded refunds slot stays empty in
+// wave 1; the card refund arm nets it into the fee's place without reworking this builder.
+func buildPaymentProposal(line StatementLine, rule MatchRule, e settlementExplanation) proposal {
 	feeAcct := rule.FeeAccountCode
 	if feeAcct == "" {
 		feeAcct = "6300"
 	}
 	lines := []gl.ExternalLine{
-		{AccountCode: AcctBank, DebitCents: net, Memo: "bank deposit (card settlement)"},
+		{AccountCode: AcctBank, DebitCents: e.NetCents, Memo: "bank deposit (card settlement)"},
 	}
-	if feeCents > 0 {
-		lines = append(lines, gl.ExternalLine{AccountCode: feeAcct, DebitCents: feeCents, Memo: "card processing fee"})
+	if e.FeeCents > 0 {
+		lines = append(lines, gl.ExternalLine{AccountCode: feeAcct, DebitCents: e.FeeCents, Memo: "card processing fee"})
 	}
-	lines = append(lines, gl.ExternalLine{AccountCode: AcctCardClearing, CreditCents: gross, Memo: "clear card settlement"})
+	lines = append(lines, gl.ExternalLine{AccountCode: AcctCardClearing, CreditCents: e.ClaimedCents, Memo: "clear card settlement"})
 	return proposal{
 		Line:       line,
 		TargetType: TargetPayment,
-		TargetRef:  p.PaymentID,
+		TargetRef:  e.PaymentIDs[0],
 		Rule:       rule,
-		PaymentIDs: []string{p.PaymentID},
-		FeeCents:   feeCents,
+		PaymentIDs: e.PaymentIDs,
+		FeeCents:   e.FeeCents,
 		Journal: gl.ExternalJournal{
 			Source:         "ADJUSTMENT",
 			SourceRefID:    line.ID,
 			IdempotencyKey: journalKey(line.ID),
 			Memo:           "bankrec card settlement " + line.Reference,
-			BranchID:       p.BranchID,
+			BranchID:       e.BranchID,
 			DocumentDate:   statementDocDate(line.TxnDate),
 			Lines:          lines,
 		},
@@ -200,20 +238,32 @@ func buildLodgementProposal(line StatementLine, rule MatchRule, l Lodgement) pro
 	return p
 }
 
-// manualJournal builds the clearing journal for a MANUAL pairing by target type (mirrors the auto legs). A
-// GROUP or JOURNAL target posts no new journal (the journal already exists / is a manual grouping header).
-// A lodgement that carries its OWN journal posts no new journal either (FROM-PRINCIPAL 117 and 120): the
-// match only confirms the line, and the lodgement journaled at lodgement.
-func manualJournal(line StatementLine, targetType, branchID string, carriesJournal bool) (gl.ExternalJournal, bool) {
+// manualJournal builds the clearing journal for a MANUAL pairing by target type and, for a payment, by its
+// tender method (FW1-05 item 1): a card settlement clears 1010 (card processor clearing), a cash or cheque
+// deposit clears 1020 (undeposited funds); any other tender refuses. A GROUP or JOURNAL target posts no new
+// journal (the journal already exists / is a manual grouping header). A lodgement that carries its OWN
+// journal posts no new journal either (FROM-PRINCIPAL 117 and 120): the match only confirms the line, and
+// the lodgement journaled at lodgement.
+func manualJournal(line StatementLine, targetType, method, branchID string, carriesJournal bool) (gl.ExternalJournal, bool) {
 	switch targetType {
 	case TargetPayment:
+		clearing, ok := clearingAccountForMethod(method)
+		if !ok {
+			return gl.ExternalJournal{}, false
+		}
+		depositMemo := "bank deposit (card settlement)"
+		clearMemo := "clear card settlement"
+		if clearing == AcctUndeposited {
+			depositMemo = "bank deposit (cash or cheque)"
+			clearMemo = "clear undeposited funds"
+		}
 		return gl.ExternalJournal{
 			Source: "ADJUSTMENT", SourceRefID: line.ID, IdempotencyKey: journalKey(line.ID),
-			Memo: "bankrec manual card settlement " + line.Reference, BranchID: branchID,
+			Memo: "bankrec manual deposit " + line.Reference, BranchID: branchID,
 			DocumentDate: statementDocDate(line.TxnDate),
 			Lines: []gl.ExternalLine{
-				{AccountCode: AcctBank, DebitCents: line.AmountCents, Memo: "bank deposit (card settlement)"},
-				{AccountCode: AcctCardClearing, CreditCents: line.AmountCents, Memo: "clear card settlement"},
+				{AccountCode: AcctBank, DebitCents: line.AmountCents, Memo: depositMemo},
+				{AccountCode: clearing, CreditCents: line.AmountCents, Memo: clearMemo},
 			},
 		}, true
 	case TargetLodgement:
@@ -235,6 +285,20 @@ func manualJournal(line StatementLine, targetType, branchID string, carriesJourn
 	}
 }
 
+// clearingAccountForMethod names the clearing account a deposit of this tender clears through (FW1-05
+// item 1): a card settlement clears through 1010, cash, a cheque and an EFT through 1020 (the round 3
+// P2-2 ruling: an EFT receipt sits on 1020 like office cash and cheques, so its match books the same
+// office arm). Every other tender answers false: a hand match of it is refused in words.
+func clearingAccountForMethod(method string) (string, bool) {
+	switch method {
+	case "CARD":
+		return AcctCardClearing, true
+	case "CASH", "CHEQUE", "EFT":
+		return AcctUndeposited, true
+	}
+	return "", false
+}
+
 // statementDocDate converts a statement line's calendar date (stored as UTC midnight in bank_statement_lines)
 // to 12:00 UTC on that calendar day so the journal lands on the same calendar day in every Canadian time zone
 // (FW1-04).
@@ -245,18 +309,38 @@ func statementDocDate(txnDate time.Time) time.Time {
 	return txnDate.UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
 }
 
-// reversalJournal builds the offsetting clearing journal an unmatch posts: it swaps the original DR/CR legs by
-// target type so the net GL effect of the match returns to zero. Keyed on unmatchKey(matchID) (distinct from
-// the clearing key). GROUP/JOURNAL targets posted no clearing journal, so they have nothing to reverse.
-// A lodgement that carries its OWN journal posted no clearing journal either (FROM-PRINCIPAL 117 and 120),
-// so its undo reverses nothing.
-func reversalJournal(matchID, targetType string, amount int64, carriesJournal bool) (gl.ExternalJournal, bool) {
+// reversalJournal builds the offsetting clearing journal an unmatch posts: it mirrors the ORIGINAL clearing
+// journal's legs, swapped, so the net GL effect of the match returns to zero (FW1-05 item 3). A payment
+// settlement's original was DR 1000 net [+ DR fee fee] / CR clearing gross, where clearing is the account the
+// match's own journal credited (read by the match's journal_id through the GL seam, PR 632 round 4), or the
+// tender's account when it posted none (1010 card, 1020 cash and cheque; 1010 when the facts name none, the
+// historical card shape), so the reversal is DR clearing gross / CR 1000 net [+ CR fee fee]; a lodgement's
+// original was DR 1000 / CR 1020, so its reversal is DR 1020 / CR 1000. It carries the target's branch, so
+// every line of the reversal is stamped like the original's (FW1-05 item 4). Keyed on unmatchKey(matchID)
+// (distinct from the clearing key). GROUP/JOURNAL targets posted no clearing journal, so they have nothing to
+// reverse. A lodgement that carries its OWN journal posted no clearing journal either (FROM-PRINCIPAL 117 and
+// 120), so its undo reverses nothing.
+func reversalJournal(matchID, targetType, branchID, clearing string, amount, feeCents int64, feeAccount string, carriesJournal bool) (gl.ExternalJournal, bool) {
 	var lines []gl.ExternalLine
 	switch targetType {
-	case TargetPayment: // original DR1000/CR1010 → reverse DR1010/CR1000
+	case TargetPayment:
+		if clearing == "" {
+			clearing = AcctCardClearing
+		}
+		clearMemo := "reverse card settlement (unmatch)"
+		if clearing == AcctUndeposited {
+			clearMemo = "reverse undeposited clear (unmatch)"
+		}
+		gross := amount + feeCents
 		lines = []gl.ExternalLine{
-			{AccountCode: AcctCardClearing, DebitCents: amount, Memo: "reverse card settlement (unmatch)"},
+			{AccountCode: clearing, DebitCents: gross, Memo: clearMemo},
 			{AccountCode: AcctBank, CreditCents: amount, Memo: "reverse bank deposit (unmatch)"},
+		}
+		if feeCents > 0 {
+			if feeAccount == "" {
+				feeAccount = "6300"
+			}
+			lines = append(lines, gl.ExternalLine{AccountCode: feeAccount, CreditCents: feeCents, Memo: "reverse card processing fee (unmatch)"})
 		}
 	case TargetLodgement: // original DR1000/CR1020 → reverse DR1020/CR1000
 		if carriesJournal {
@@ -273,6 +357,7 @@ func reversalJournal(matchID, targetType string, amount int64, carriesJournal bo
 		Source:         "ADJUSTMENT",
 		IdempotencyKey: unmatchKey(matchID),
 		Memo:           "bankrec unmatch reversal",
+		BranchID:       branchID,
 		Lines:          lines,
 	}, true
 }

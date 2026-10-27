@@ -26,6 +26,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/logging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -39,6 +40,15 @@ func (p fw104GLPoster) PostJournal(ctx context.Context, ext gl.ExternalJournal) 
 		ext.DocumentDate = p.clock()
 	}
 	return p.svc.PostExternal(ctx, ext)
+}
+
+// PostJournalTx is the transaction arm (FW1-05): the same journal through the caller's transaction, so a
+// bankrec match and its clearing journal commit or roll back together.
+func (p fw104GLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, ext gl.ExternalJournal) (string, error) {
+	if ext.DocumentDate.IsZero() && p.clock != nil {
+		ext.DocumentDate = p.clock()
+	}
+	return p.svc.PostExternalTx(ctx, tx, ext)
 }
 
 func fw104EnsurePeriods(t *testing.T, pool *pgxpool.Pool, year int, at time.Time) {

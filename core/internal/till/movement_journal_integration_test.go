@@ -31,6 +31,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -40,6 +41,12 @@ type glPosterOver struct{ svc *gl.Service }
 
 func (a glPosterOver) PostJournal(ctx context.Context, in gl.ExternalJournal) (string, error) {
 	return a.svc.PostExternal(ctx, in)
+}
+
+// PostJournalTx is the transaction arm (FROM-PRINCIPAL 232): every poster bankrec is served gains it, so
+// the match and its clearing journal share the caller's transaction and no leg posts in two steps.
+func (a glPosterOver) PostJournalTx(ctx context.Context, tx pgx.Tx, in gl.ExternalJournal) (string, error) {
+	return a.svc.PostExternalTx(ctx, tx, in)
 }
 
 func mjPool(t *testing.T) *pgxpool.Pool {
