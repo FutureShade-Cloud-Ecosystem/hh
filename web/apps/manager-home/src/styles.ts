@@ -202,7 +202,8 @@ export const homeStyles = css`
     }
     .cell.tall {
       grid-row: auto;
-    }  }
+    }
+  }
 
   .strip {
     display: flex;
@@ -1145,7 +1146,6 @@ export const homeStyles = css`
     .queue-link {
       min-height: 44px;
     }
-
   }
   .run {
     display: flex;
