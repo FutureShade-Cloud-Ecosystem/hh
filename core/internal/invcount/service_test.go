@@ -186,6 +186,10 @@ func (b fakeGLBal) GLBalanceCents(_ context.Context, _ string, _, _ int, _ strin
 	return b.bal, nil
 }
 
+func (b fakeGLBal) GLBalanceThroughCents(_ context.Context, _ string, _, _ int, _ string) (int64, error) {
+	return b.bal, nil
+}
+
 // - tests -
 
 func TestValueVariance(t *testing.T) {

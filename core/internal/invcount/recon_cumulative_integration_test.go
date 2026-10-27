@@ -76,18 +76,20 @@ func fw11PlantReceipt(t *testing.T, pool *pgxpool.Pool, cents int64) {
 }
 
 // mutableStock is the fake stock seam with values the test can move between two runs. It embeds the
-// file's fakeStockSeam for the transactional and posting halves it never exercises.
+// file's fakeStockSeam for the transactional and posting halves it never exercises. value is the
+// subledger figure the recon's stock arm reads; the seeded books carry 1200 negative until FW1-07
+// posts the missing cost of goods sold, so the legs value the shelves at the real baseline plus
+// their own receipts and assert the two arms meet.
 type mutableStock struct {
 	fakeStockSeam
-	cost   int64
-	onHand float64
+	value int64
 }
 
 func (s *mutableStock) SnapshotOnHand(_ context.Context, _ string) ([]Snapshot, error) {
-	return []Snapshot{{ProductID: prodP1, LocationID: branchTRT, OnHandBase: s.onHand, AvgCostCents: s.cost}}, nil
+	return []Snapshot{{ProductID: prodP1, LocationID: branchTRT, OnHandBase: 1, AvgCostCents: s.value}}, nil
 }
 func (s *mutableStock) WeightedAvgCostCents(_ context.Context, _, _ string) (int64, error) {
-	return s.cost, nil
+	return s.value, nil
 }
 
 // fw11GLBal mimics today's real GL balance adapter: one month's movement on the account, natural
@@ -103,6 +105,18 @@ func (b fw11GLBal) GLBalanceCents(_ context.Context, code string, year, month in
 	return netDebit, err
 }
 
+// GLBalanceThroughCents is the read the rebuilt tie-out takes: every period up to and including the
+// asked one, cumulative.
+func (b fw11GLBal) GLBalanceThroughCents(_ context.Context, code string, year, month int, branchID string) (int64, error) {
+	var netDebit int64
+	err := b.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(SUM(net_debit_cents),0) FROM v_gl_account_balances
+		 WHERE account_code = $1
+		   AND (fiscal_year < $2 OR (fiscal_year = $2 AND month <= $3))
+		   AND ($4 = '' OR branch_id = $4::uuid)`, code, year, month, branchID).Scan(&netDebit)
+	return netDebit, err
+}
+
 // The red leg: after a month with a receipt (and no 1200 movement in the reconciled month itself), the
 // tie-out reports one month's movement (0) against the whole stock value, a false out of tie.
 func TestIntegration_FW1_11_ReconReads1200ThroughThePeriod(t *testing.T) {
@@ -110,10 +124,19 @@ func TestIntegration_FW1_11_ReconReads1200ThroughThePeriod(t *testing.T) {
 	fw11Ensure2091(t, pool)
 	fw11PlantReceipt(t, pool, 100000)
 
-	stock := &mutableStock{cost: 1000, onHand: 100} // valued 100000
+	// The seeded years' 1200 rows are part of the real balance, so the legs are self relative: the
+	// baseline is the through-period balance before this test's receipt, and every expectation adds
+	// this test's own postings to it.
+	gb := fw11GLBal{pool: pool}
+	baseline, err := gb.GLBalanceThroughCents(context.Background(), "1200", 2091, 3, branchTRT)
+	if err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
+
+	stock := &mutableStock{value: baseline + 100000}
 	svc := NewService(NewRepository(pool)).
 		WithStockCounter(stock).
-		WithGLBalanceReader(fw11GLBal{pool: pool})
+		WithGLBalanceReader(gb)
 	caller := ctxAsAt(userMaker, branchTRT)
 
 	if _, err := svc.ReconcileMonth(caller, 2091, 5, branchTRT); err != nil {
@@ -123,10 +146,10 @@ func TestIntegration_FW1_11_ReconReads1200ThroughThePeriod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recon run: %v", err)
 	}
-	// FW1-11 red: the GL side is the month's movement (nothing in month 5), not the balance through
-	// the period (100000): the tie reads 100000 out, wrongly.
-	if runRow.GL1200Cents != 100000 || runRow.DeltaCents != 0 {
-		t.Errorf("FW1-11 red: GL 1200 reads %d for 2091-05 with a 2091-04 receipt of 100000, delta %d, want the balance through the period (100000, delta 0)", runRow.GL1200Cents, runRow.DeltaCents)
+	// FW1-11: the GL side is the balance THROUGH the period (baseline plus this test's 100000
+	// receipt, nothing posted in month 5 itself), so the tie reads zero against the same valuation.
+	if runRow.GL1200Cents != baseline+100000 || runRow.DeltaCents != 0 {
+		t.Errorf("FW1-11: GL 1200 reads %d for 2091-05, want the balance through the period (baseline %d plus the 100000 receipt), delta %d, want 0", runRow.GL1200Cents, baseline, runRow.DeltaCents)
 	}
 }
 
@@ -136,17 +159,22 @@ func TestIntegration_FW1_11_ReconReRunsAPeriod(t *testing.T) {
 	fw11Ensure2091(t, pool)
 	fw11PlantReceipt(t, pool, 100000)
 
-	stock := &mutableStock{cost: 1000, onHand: 100}
+	gb := fw11GLBal{pool: pool}
+	baseline, err := gb.GLBalanceThroughCents(context.Background(), "1200", 2091, 3, branchTRT)
+	if err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
+	stock := &mutableStock{value: baseline + 100000}
 	svc := NewService(NewRepository(pool)).
 		WithStockCounter(stock).
-		WithGLBalanceReader(fw11GLBal{pool: pool})
+		WithGLBalanceReader(gb)
 	caller := ctxAsAt(userMaker, branchTRT)
 
 	if _, err := svc.ReconcileMonth(caller, 2091, 5, branchTRT); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
 	// A correction lands mid month: stock is recounted (and the GL posts another 5000 of receipts).
-	stock.onHand = 105
+	stock.value = baseline + 105000
 	fw11PlantReceipt(t, pool, 5000)
 
 	if _, err := svc.ReconcileMonth(caller, 2091, 5, branchTRT); err != nil {
@@ -156,8 +184,9 @@ func TestIntegration_FW1_11_ReconReRunsAPeriod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recon run: %v", err)
 	}
-	// FW1-11 red: the second run still answers the first row (subledger 100000, GL 0).
-	if runRow.SubledgerCents != 105000 || runRow.GL1200Cents != 105000 {
-		t.Errorf("FW1-11 red: the re-run answers the frozen first row (subledger %d, GL %d), want the corrected figures (subledger 105000, GL 105000)", runRow.SubledgerCents, runRow.GL1200Cents)
+	// FW1-11: the re-run answers the corrected figures, the shelves and the ledger both moved by this
+	// test's second receipt, never the first row's frozen ones.
+	if runRow.SubledgerCents != baseline+105000 || runRow.GL1200Cents != baseline+105000 || runRow.DeltaCents != 0 {
+		t.Errorf("FW1-11: the re-run answers subledger %d, GL %d, delta %d, want both arms at the corrected figures (baseline %d plus this test's 105000 of receipts), delta 0", runRow.SubledgerCents, runRow.GL1200Cents, runRow.DeltaCents, baseline)
 	}
 }

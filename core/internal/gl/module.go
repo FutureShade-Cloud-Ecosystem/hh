@@ -385,6 +385,22 @@ func (s *Service) GLBalanceCents(ctx context.Context, accountCode string, year, 
 	return s.glBalanceCents(ctx, accountCode, year, month, branchID)
 }
 
+// GLBalanceThroughCents returns an account's balance THROUGH a period (every period up to and
+// including year/month, cumulative), natural orientation. Additive provider read (FW1-11): the
+// inventory tie-out reads 1200's balance as of a period end, where the frozen GLBalanceCents keeps
+// answering one period's movement. The same view, so a late posted journal's filed period decides
+// where it lands (the FW1-01 rule, 612).
+func (s *Service) GLBalanceThroughCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	netDebit, normal, err := s.store.AccountBalanceThrough(ctx, accountCode, year, month, branchID)
+	if err != nil {
+		return 0, err
+	}
+	if normal == NormalCredit {
+		return -netDebit, nil
+	}
+	return netDebit, nil
+}
+
 // RegisterPostingHandlers wires the outbox consumer for all eight posted topics onto the dispatcher. Each
 // handler resolves posting rules (via the two-name mapping above), builds the journal, and posts it
 // idempotently. FROZEN topic set. This runs once at boot (main.go), so it is also the natural home of the

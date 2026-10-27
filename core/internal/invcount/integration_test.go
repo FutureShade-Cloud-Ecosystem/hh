@@ -77,6 +77,10 @@ func (a glRuleAdapter) ResolveRule(ctx context.Context, e, r, b string) (string,
 
 type glBalAdapter struct{ svc *gl.Service }
 
+func (a glBalAdapter) GLBalanceThroughCents(ctx context.Context, code string, y, m int, b string) (int64, error) {
+	return a.svc.GLBalanceThroughCents(ctx, code, y, m, b)
+}
+
 func (a glBalAdapter) GLBalanceCents(ctx context.Context, code string, y, m int, b string) (int64, error) {
 	return a.svc.GLBalanceCents(ctx, code, y, m, b)
 }
