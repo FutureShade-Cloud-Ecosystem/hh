@@ -101,7 +101,7 @@ func TestIntegration_AC2_PostExternalReplayAndBalance(t *testing.T) {
 	user := aUser(t, pool)
 	ensurePeriods(t, pool, 2098)
 	at := time.Date(2098, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at)
 
 	key := fmt.Sprintf("itest-%d", time.Now().UnixNano())
 	in := ExternalJournal{
@@ -160,7 +160,7 @@ func TestIntegration_AC1_ClosedPeriodBlocked(t *testing.T) {
 		t.Fatalf("close period: %v", err)
 	}
 	at := time.Date(2097, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at)
 	// FW1-01, ruling 82.2: a SYSTEM journal (PostExternal) is never refused for a closed month any
 	// more, it posts into the earliest open month late posted (the FW1-01 legs cover that); the
 	// refusal that survives is the MANUAL journal into the closed month, which this leg now proves.
@@ -185,7 +185,7 @@ func TestIntegration_AC5_ControllerReopenWithAudit(t *testing.T) {
 	pid := periodID(t, pool, 2096, 3)
 
 	// Close it first (as a manager).
-	mgr := identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}
+	mgr := identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 	if _, err := svcAt(pool, mgr, time.Now()).ClosePeriod(ctx, pid, ""); err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestIntegration_AC9_GPParityExport(t *testing.T) {
 	user := aUser(t, pool)
 	ensurePeriods(t, pool, 2094)
 	at := time.Date(2094, 5, 10, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at)
 	if _, err := svc.PostExternal(ctx, ExternalJournal{
 		Source: SourceAdjustment, IdempotencyKey: fmt.Sprintf("exp-%d", time.Now().UnixNano()), Memo: "export-src",
 		Lines: []ExternalLine{{AccountCode: "1000", DebitCents: 12345}, {AccountCode: "4000", CreditCents: 12345}},
@@ -414,7 +414,7 @@ func TestIntegration_AC12_RecurringRun(t *testing.T) {
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM gl_recurring_templates WHERE id=$1`, tplID) })
 
 	at := time.Date(2093, 4, 1, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at)
 	j, err := svc.RunRecurring(ctx, tplID)
 	if err != nil {
 		t.Fatalf("run recurring: %v", err)
@@ -451,7 +451,9 @@ func TestIntegration_AC13_YearEndCloseTo3900(t *testing.T) {
 		t.Fatalf("post expense: %v", err)
 	}
 
-	res, err := svc.CloseYear(ctx, 2092, "year-end")
+	// FW1-09b: the close runs after the year has ended; the fixture's clock stands in 2093 for it.
+	closer := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2093, 1, 5, 12, 0, 0, 0, time.UTC))
+	res, err := closer.CloseYear(ctx, 2092, "year-end")
 	if err != nil {
 		t.Fatalf("close year: %v", err)
 	}
@@ -584,7 +586,7 @@ func TestIntegration_A01_ChartOfAccountsCRUD(t *testing.T) {
 
 	repo := NewRepository(pool)
 	at := time.Date(2091, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at)
 
 	// Create the test account and confirm it lands in ListAccounts with the values we set.
 	acct, err := svc.CreateAccount(ctx, CreateAccountInput{Code: code, Name: "A01 Test Expense", AccountType: "EXPENSE", NormalBalance: NormalDebit})

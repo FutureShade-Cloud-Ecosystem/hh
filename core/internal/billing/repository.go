@@ -49,6 +49,16 @@ func (r *Repository) clockAt(ctx context.Context, at time.Time) (time.Time, erro
 	return houseClockIn(z, at), nil
 }
 
+// onOrAfterHouseDay says whether the as of calendar day (day) is on or after the current house
+// day (today), both houseClock readings in the dealer's zone: an as of on or after today reads the
+// books' own balances, only a past date rebuilds them from history.
+func onOrAfterHouseDay(day, today time.Time) bool {
+	if day.Year() != today.Year() {
+		return day.Year() > today.Year()
+	}
+	return day.YearDay() >= today.YearDay()
+}
+
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
 
 func scanInvoice(row pgx.Row) (Invoice, error) {

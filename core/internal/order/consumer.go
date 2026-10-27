@@ -88,6 +88,11 @@ func (c *LifecycleConsumer) RegisterHandlers(d observerRegistrar) {
 func (c *LifecycleConsumer) onFulfilled(ctx context.Context, e notify.Event) error {
 	var p struct {
 		OrderID string `json:"order_id"`
+		GroupID string `json:"group_id"`
+		Lines   []struct {
+			ProductID string  `json:"product_id"`
+			QtyBase   float64 `json:"qty_base"`
+		} `json:"lines"`
 	}
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		c.warn("order.fulfilled: bad payload", e, err)
@@ -97,7 +102,39 @@ func (c *LifecycleConsumer) onFulfilled(ctx context.Context, e notify.Event) err
 		return nil
 	}
 	// The ring's fulfilment is a fact of delivery: the explicit road, which releases the deposits.
-	return c.settle(e, p.OrderID, "FULFILLED", c.svc.AdvanceFromDelivery(ctx, p.OrderID, e.EventID))
+	err := c.settle(e, p.OrderID, "FULFILLED", c.svc.AdvanceFromDelivery(ctx, p.OrderID, e.EventID))
+	if err != nil {
+		return err
+	}
+	// Round 2: the base advance for the ring's sale, owned HERE (the order module's own consumer)
+	// so that no other module writes order_lines.
+	//
+	// THE RING MOVED THE STOCK WITHOUT THE ORDER MODULE'S HELP, so the base the order's own
+	// claim would have advanced never advanced: a ring sale's order sat FULFILLED with its lines
+	// still reading unfulfilled. The event is the ring's own fact, and the order module owns the
+	// table, so the order module reads the event and advances its own counts.
+	//
+	// A GROUP'S event is not this path: the group's completion advanced its own share inside the
+	// group's own transaction, behind the group's real move, and advancing it again here would
+	// count the group's quantity twice.
+	if p.GroupID != "" {
+		return nil
+	}
+	qtys := make(map[string]float64, len(p.Lines))
+	for _, ln := range p.Lines {
+		if ln.ProductID == "" || ln.QtyBase <= 0 {
+			continue
+		}
+		qtys[ln.ProductID] += ln.QtyBase
+	}
+	if len(qtys) == 0 {
+		return nil
+	}
+	if err := c.svc.AdvanceFulfilledFromEvent(ctx, p.OrderID, qtys); err != nil {
+		c.warn("order.fulfilled: advance the line base", e, err)
+		return err // retryable: the advance is idempotent, so a redelivery finishes the job
+	}
+	return nil
 }
 
 // onInvoiceFinalized advances the order to INVOICED when its invoice finalizes (ar.invoice.finalized).

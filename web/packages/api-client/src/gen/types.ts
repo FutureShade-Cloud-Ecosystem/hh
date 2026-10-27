@@ -942,6 +942,19 @@ export type PaymentsReversalResult = {
   same_day: boolean;
   reopened_invoices: string[];
 };
+export type PaymentsVoidRequest = {
+  reason: string;
+};
+export type PaymentsVoidResult = {
+  label: "VOID";
+  payment_id: string;
+  payment_no: string;
+  amount_cents: number;
+  reason: string;
+  voided_at: string;
+  reopened_invoices: string[];
+  held_cents: number;
+};
 export type PaymentsHeld = {
   payment_id: string;
   payment_no: string;
@@ -2761,6 +2774,26 @@ export type BankRecAccount = {
   is_active: boolean;
   tracking_only: boolean;
   unmatched_lines: number;
+  cutover_date?: string | null;
+  cutover_statement_balance_cents?: number | null;
+  cutover_outstanding_journal_ids?: string[];
+};
+export type BankRecCutoverInput = {
+  cutover_date: string;
+  opening_statement_balance_cents: number;
+  outstanding_journal_ids?: string[];
+};
+export type BankRecCutoverPreview = {
+  book_balance_cents: number;
+  entries?: BankRecCutoverPreviewEntry[];
+  difference_cents?: number;
+  reconciles?: boolean;
+};
+export type BankRecCutoverPreviewEntry = {
+  journal_id: string;
+  posted_at: string;
+  memo: string;
+  amount_cents: number;
 };
 export type BankRecAccountList = BankRecAccount[];
 export type BankRecStatementLine = {
@@ -2854,15 +2887,29 @@ export type BankRecRuleInput = {
   priority: number;
 };
 export type BankRecMatchRuleList = BankRecMatchRule[];
+export type BankRecOutstandingItem = {
+  journal_id: string;
+  posted_at: string;
+  memo: string;
+  amount_cents: number;
+};
 export type BankRecReconciliation = {
   id: string;
   bank_account_id: string;
   year: number;
   month: number;
+  opening_balance_cents?: number | null;
   statement_balance_cents: number;
+  deposits_in_transit_cents?: number;
+  outstanding_cheques_cents?: number;
+  adjusted_bank_balance_cents?: number;
   gl_balance_cents: number;
   variance_cents: number;
+  matched_lines_count?: number;
+  deposits_in_transit?: BankRecOutstandingItem[];
+  outstanding_cheques?: BankRecOutstandingItem[];
   status: "OPEN" | "COMPLETED";
+  completed_by?: string | null;
   completed_at?: string | null;
 };
 export type BankRecReconInput = {
@@ -3114,6 +3161,10 @@ export type TaxReconReport = {
   month: number;
   branch_id?: string;
   collected_cents: number;
+  return_tax_cents: number;
+  input_tax_cents: number;
+  opening_balance_count: number;
+  opening_balance_hst_cents: number;
   gl_payable_cents: number;
   gl_federal_cents: number;
   gl_ontario_cents: number;
@@ -3430,6 +3481,17 @@ export type InventoryOnHandList = {
 };
 export type InventoryMoveList = {
   moves: InventoryStockMove[];
+};
+export type InventoryPreReceiptException = {
+  move_id: string;
+  order_id: string;
+  product_id: string;
+  branch_id: string;
+  qty_base: number;
+  provisional_unit_cost_cents: number;
+  provisional_value_cents: number;
+  fallback_source: string;
+  occurred_at: string;
 };
 export type InventoryPendingFulfilmentList = {
   pending: InventoryPendingFulfilment[];
@@ -5537,7 +5599,14 @@ export type TillDenominationCount = {
   denomination_cents: number;
   quantity: number;
 };
-export type TillSessionDetail = TillSession & { tenders: TillTenderTotal[]; movements: TillMovement[] };
+export type TillSessionDetail = TillSession & { tenders: TillTenderTotal[]; movements: TillMovement[]; slip_candidates: TillSlipCandidate[] };
+export type TillSlipCandidate = {
+  payment_id: string;
+  payment_no: string;
+  amount_cents: number;
+  method: "CASH" | "CHEQUE" | "CARD" | "EFT" | "OTHER";
+  reference: string;
+};
 export type TillPolicy = {
   branch_id: string;
   variance_threshold_cents: number;
@@ -5555,6 +5624,15 @@ export type TillZReport = {
   per_tender: TillTenderTotal[];
   cash: TillCashSummary;
   closing_float_cents: number;
+  movements: TillZReportMovement[];
+};
+export type TillZReportMovement = {
+  movement_type: "PAID_IN" | "PAID_OUT" | "DROP" | "LODGEMENT";
+  method: "CASH" | "CHEQUE" | "CARD" | "EFT" | "OTHER";
+  amount_cents: number;
+  reason: string;
+  reference: string;
+  branch_id: string;
 };
 export type TillOpenInput = {
   branch_id: string;

@@ -352,6 +352,26 @@ export function pastDueLine(
   return { kind: "figures", pastDueCount: pastDue.length, totalCount: open.length, pastDueCents: cents };
 }
 
+/** The C8 register filter chips, in the order the register reads them. */
+export const REGISTER_CHIPS = ["all", "past_due", "current", "on_hold"] as const;
+export type RegisterChip = (typeof REGISTER_CHIPS)[number];
+
+/**
+ * The chips the register's filter may offer, from the rows the core sent. The core sends an allowed
+ * caller every row's day count and a refused caller none, so a row without one is the refused
+ * signature. That caller's chips are the stored set only (UX-97 item 220): the current chip is the
+ * past due predicate told backwards, ALL less CURRENT lists the overdue accounts by subtraction, so
+ * it is withheld the same as the past due chips the server already refuses in words. The past due
+ * chip stays offered; pressed, it answers in words (pastDueLine). This desk offers no due soon chip
+ * at all, and the server refuses it for that caller besides.
+ */
+export function offeredChips(
+  rows: ReadonlyArray<{ days_overdue?: number | undefined; stored_status: string; doc_type?: string | undefined }>,
+): readonly RegisterChip[] {
+  if (rows.some((r) => r.days_overdue === undefined)) return REGISTER_CHIPS.filter((c) => c !== "current");
+  return [...REGISTER_CHIPS];
+}
+
 export function relativeDay(date: string, asOf: string): string {
   const gap = dayNumber(asOf) - dayNumber(date);
   if (gap === 0) return "today";
@@ -443,6 +463,12 @@ export function holdMarks(hold: { auto_placed: boolean; override_until?: string 
 /** Roles that may lift or override a hold (the matrix: Money Desk at Administer and Manage, row 345). */
 export function canLiftHolds(roleCode: string): boolean {
   return roleCode === "financial_controller" || roleCode === "general_manager";
+}
+
+/** The true void of a mis-keyed receipt is a manager act, the same pair the lift hold gate trusts (FW1-06b). The
+ * server re-refuses: this only hides the button from roles the route would turn away. */
+export function canVoidReceipt(roleCode: string): boolean {
+  return canLiftHolds(roleCode);
 }
 
 export function paymentReferenceRequired(method: string): boolean {

@@ -132,11 +132,11 @@ test("the round modes and the evidence banners read in our words", () => {
 });
 
 test("the variance is said in words, with its direction", () => {
-  assert.deepEqual(varianceWords(0), { word: "Tied out", tone: "good", detail: "The ledger holds the tax the sales collected." });
+  assert.deepEqual(varianceWords(0), { word: "Tied out", tone: "good", detail: "The ledger's month movement equals the month's documents: sales tax collected less the tax on vendor bills." });
   assert.equal(varianceWords(-1350).word, "Off by $13.50");
   assert.equal(varianceWords(-1350).tone, "stop");
-  assert.equal(varianceWords(-1350).detail, "The ledger holds less tax than the sales collected.");
-  assert.equal(varianceWords(250).detail, "The ledger holds more tax than the sales collected.");
+  assert.equal(varianceWords(-1350).detail, "The ledger's month movement holds less tax than the month's documents booked: sales tax collected less the tax on vendor bills.");
+  assert.equal(varianceWords(250).detail, "The ledger's month movement holds more tax than the month's documents booked: sales tax collected less the tax on vendor bills.");
 });
 
 test("dates read from their digits and a real day is the only day accepted", () => {

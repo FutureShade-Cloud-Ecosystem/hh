@@ -7,6 +7,7 @@ package gl
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
@@ -312,6 +313,105 @@ func TestAC14_TillOverShort(t *testing.T) {
 	}
 	if len(fZero.journals) != 0 {
 		t.Fatalf("a balanced drawer must book nothing, got %d journals", len(fZero.journals))
+	}
+}
+
+// wantMemo says one leg carries the words the memo must carry.
+func wantMemo(t *testing.T, d *journalDraft, code, want string) {
+	t.Helper()
+	l, ok := leg(d, code)
+	if !ok {
+		t.Fatalf("expected a leg on account %s; lines=%v", code, d.Lines)
+	}
+	if !strings.Contains(l.Memo, want) {
+		t.Fatalf("the %s leg memo %q does not carry %q", code, l.Memo, want)
+	}
+}
+
+// noLeg says no leg sits on an account at all (the account the leg must not touch).
+func noLeg(t *testing.T, d *journalDraft, code string) {
+	t.Helper()
+	if l, ok := leg(d, code); ok {
+		t.Fatalf("account %s must carry no leg, got dr=%d cr=%d", code, l.DebitCents, l.CreditCents)
+	}
+}
+
+// FW1-13, the till movement journals (FROM-PRINCIPAL 132): a paid out is DR 9999 Suspense / CR 1020
+// Undeposited Funds and a paid in is the mirror, because neither is cash over or short; 6350 is for
+// the counted over or short alone. Every line carries the drawer's own reason words and the branch.
+// A lodgement posts DR 1000 Bank / CR 1020 Undeposited Funds AT LODGEMENT (FROM-PRINCIPAL 117; the
+// bank match of a lodgement that carries its journal posts nothing, so the pair never books twice).
+// A drop books nothing.
+func TestTillMovementPostedLegs(t *testing.T) {
+	ctx := context.Background()
+
+	// Paid out $12.34 → DR 9999 / CR 1020.
+	fOut := newFakeStore()
+	outSvc := newTestService(fOut)
+	if err := outSvc.consume(ctx, ev("till.movement.posted", map[string]any{
+		"movement_id": "m1", "session_id": "s1", "branch_id": "b1",
+		"movement_type": "PAID_OUT", "method": "CASH", "amount_cents": 1234,
+		"reason": "petty cash for the courier",
+	})); err != nil {
+		t.Fatalf("paid out consume: %v", err)
+	}
+	dOut := fOut.lastInserted()
+	wantLeg(t, dOut, "9999", 1234, 0)
+	wantLeg(t, dOut, "1020", 0, 1234)
+	noLeg(t, dOut, "6350")
+	wantMemo(t, dOut, "9999", "petty cash for the courier")
+	wantMemo(t, dOut, "1020", "petty cash for the courier")
+	if dOut.BranchID != "b1" {
+		t.Fatalf("the movement journal must carry the branch, got %q", dOut.BranchID)
+	}
+
+	// Paid in $45.67 → DR 1020 / CR 9999.
+	fIn := newFakeStore()
+	inSvc := newTestService(fIn)
+	if err := inSvc.consume(ctx, ev("till.movement.posted", map[string]any{
+		"movement_id": "m2", "session_id": "s1", "branch_id": "b1",
+		"movement_type": "PAID_IN", "method": "CASH", "amount_cents": 4567,
+		"reason": "change from the safe",
+	})); err != nil {
+		t.Fatalf("paid in consume: %v", err)
+	}
+	dIn := fIn.lastInserted()
+	wantLeg(t, dIn, "1020", 4567, 0)
+	wantLeg(t, dIn, "9999", 0, 4567)
+	noLeg(t, dIn, "6350")
+	wantMemo(t, dIn, "1020", "change from the safe")
+	wantMemo(t, dIn, "9999", "change from the safe")
+	if dIn.BranchID != "b1" {
+		t.Fatalf("the movement journal must carry the branch, got %q", dIn.BranchID)
+	}
+
+	// Lodgement $20 → DR 1000 / CR 1020 at lodgement.
+	fL := newFakeStore()
+	lSvc := newTestService(fL)
+	if err := lSvc.consume(ctx, ev("till.movement.posted", map[string]any{
+		"movement_id": "m3", "session_id": "s1", "branch_id": "b1",
+		"movement_type": "LODGEMENT", "method": "CASH", "amount_cents": 2000,
+	})); err != nil {
+		t.Fatalf("lodgement consume: %v", err)
+	}
+	dL := fL.lastInserted()
+	if dL == nil {
+		t.Fatalf("a lodgement posts no journal at lodgement")
+	}
+	wantLeg(t, dL, "1000", 2000, 0)
+	wantLeg(t, dL, "1020", 0, 2000)
+
+	// A drop row that reaches the topic anyway books nothing.
+	fD := newFakeStore()
+	dSvc := newTestService(fD)
+	if err := dSvc.consume(ctx, ev("till.movement.posted", map[string]any{
+		"movement_id": "m4", "session_id": "s1", "branch_id": "b1",
+		"movement_type": "DROP", "method": "CASH", "amount_cents": 2000,
+	})); err != nil {
+		t.Fatalf("drop consume: %v", err)
+	}
+	if len(fD.journals) != 0 {
+		t.Fatalf("a drop must not book a journal, got %d", len(fD.journals))
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -63,6 +65,26 @@ type glStore interface {
 	// at start on every box; the posting path covers the boundary itself; the Controller's early open
 	// is OpenNextFiscalYear below, at most one year beyond.
 	EnsureNextFiscalYear(ctx context.Context, now time.Time) (int, error)
+	// HouseYearEnded answers whether the year's last day has passed in the dealer's zone: the year end
+	// close is refused until it has (FW1-09b, the lead's Ask 2).
+	HouseYearEnded(ctx context.Context, year int, now time.Time) (bool, error)
+	// BeginTx opens the year end's one transaction (round 5, S3's P1); the fake ignores it.
+	BeginTx(ctx context.Context) (pgx.Tx, error)
+	// ClosingJournalsForYearTx is the once only check read under the year end's lock.
+	ClosingJournalsForYearTx(ctx context.Context, tx pgx.Tx, year int) ([]string, int64, error)
+	// InsertClosingJournalTx posts a closing journal inside the year end's transaction.
+	InsertClosingJournalTx(ctx context.Context, tx pgx.Tx, d journalDraft, year int) (string, error)
+	// ClosePeriodsForYearTx seals the year's periods inside the year end's transaction.
+	ClosePeriodsForYearTx(ctx context.Context, tx pgx.Tx, year int, actorID, reason string) error
+	// ClosingJournalsForYear answers a year's CLOSING journals (ids in entry order, the net income they
+	// carried to 3900): the year end's once only rule answers the first run with these (round 4).
+	ClosingJournalsForYear(ctx context.Context, year int) ([]string, int64, error)
+	// InsertClosingJournal is the year end's dedicated insert: the closing journal posts into the closed
+	// year's December whatever its status, resolved explicitly, never by the posting date (round 4).
+	InsertClosingJournal(ctx context.Context, d journalDraft, year int) (string, error)
+	// BusinessZone answers the dealer's business zone: the pre flight reads its instants in it, the same
+	// zone the posting path files months by (round 4, S3's P2).
+	BusinessZone(ctx context.Context) (houseday.Zone, error)
 	// OpenNextFiscalYear is the Controller's early open: at most one year beyond the roll forward's
 	// target, the record callback run INSIDE the year's transaction so the audit row commits or rolls
 	// back with the year it opens (round 2, S2 P2-4).
@@ -77,10 +99,20 @@ type glStore interface {
 
 	// - balances (0034 views) -
 	AccountBalance(ctx context.Context, code string, year, month int, branchID string) (netDebit int64, normalBalance string, err error)
+	// AccountBalanceThrough is the cumulative through-period read the inventory tie-out's GL side
+	// takes (FW1-11); the fake answers it from the same rows.
+	AccountBalanceThrough(ctx context.Context, code string, year, month int, branchID string) (netDebit int64, normalBalance string, err error)
 	// AccountBalanceAsOf is the INCEPTION-TO-DATE net-debit of an account across ALL fiscal years, bounded by
 	// posted date <= asOf (the point-in-time basis the AR↔GL tie-out needs so a year-boundary carry-forward
 	// does not read as a spurious discrepancy). branchID "" is consolidated.
 	AccountBalanceAsOf(ctx context.Context, code string, asOf time.Time, branchID string) (netDebit int64, normalBalance string, err error)
+	// BankAccountEntriesAsOf returns every POSTED, unreversed book journal touching code through asOf
+	// (excluding bankrec's own clearing/unmatch postings), so bankrec can compute deposits in transit and
+	// outstanding cheques at month end (FW1-04).
+	BankAccountEntriesAsOf(ctx context.Context, code string, asOf time.Time) ([]BankBookEntry, error)
+	// LodgementJournalForBank answers whether a till lodgement movement already has a POSTED, unreversed book
+	// journal touching glAccountCode (FROM-PRINCIPAL 117).
+	LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error)
 	// TrialBalanceAsOf is the INCEPTION-TO-DATE closing trial balance (one row per account with POSTED activity
 	// through asOf, across ALL fiscal years), the whole-chart analog of AccountBalanceAsOf and the basis the
 	// BisTrack CLOSING-balance tie-out reconciles against. TrialBalance below is per-period MOVEMENT and must

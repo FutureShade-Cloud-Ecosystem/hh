@@ -51,6 +51,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/procurement"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quoteassist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/reporting"
@@ -434,7 +435,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithARSubledger(billingRepo).
 		WithTaxSplitReader(posRepo).
 		WithPaymentReader(ops.tillRepo).
-		WithDeliveryReader(orderRepo)
+		WithDeliveryReader(orderRepo).
+		WithStockReader(glStockValueAdapter{svc: spine.inventorySvc}).
+		WithDrawerReader(tillDrawerAdapter{repo: ops.tillRepo}).
+		WithQueueReader(spine.outboxStore)
 
 	// A-04 finstmt: read-only statements over the 0034 views. The DIB-510
 	// receivables register mounts from here (billing's register handler,
@@ -449,8 +453,14 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// M5 tax engine, then the W6 scaffold-owner rewire: the POS Sale leaves
 	// its stubs for the real engines (tax, stock, restock, the card
 	// refunder).
+	// FW1-11: the reconcile's document sides read the owning modules' seams (billing's invoices,
+	// pos's committed returns, purchasing's posted bills), the same rule the GL side follows
+	// (never the views directly).
 	taxSvc := newTaxEngine(pool).
 		WithGLBalances(glBalanceAdapter{svc: spine.glSvc}).
+		WithSalesHSTs(billing.NewRepository(pool)).
+		WithReturnHSTs(posRepo).
+		WithBillITCs(purchasing.NewRepository(pool)).
 		WithAudit(auditSvc)
 	tax.NewHandler(taxSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	posSvc.WithTaxAssessor(posTaxAdapter{svc: taxSvc}).
@@ -536,7 +546,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// public confirm consults), read inside the confirm's own
 	// transaction, with the boot fail-fast beside it.
 	pickupsSync := dispatch.NewPickupsSyncStore(
-		pool, dispatchTenantOrders{repo: orderRepo}, dispatchSignatureAdapter{svc: posSvc}, dispatchPickHoldAdapter{repo: billingRepo}, linkedUserID(pool))
+		pool, dispatchTenantOrders{repo: orderRepo}, dispatchSignatureAdapter{svc: posSvc}, dispatchPickHoldAdapter{repo: billingRepo}, linkedUserID(pool)).
+		WithOrderFulfiller(dispatchFulfilAdapter{svc: orderSvc})
 	if !pickupsSync.PickHoldGateWired() {
 		panic("dispatch: pickups sync store pick hold gate not wired - a pay before release order's pickup could be confirmed offline unpaid")
 	}

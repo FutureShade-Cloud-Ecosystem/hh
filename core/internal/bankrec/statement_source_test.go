@@ -162,3 +162,56 @@ func TestParseCents_CurrencyMarks(t *testing.T) {
 		}
 	}
 }
+
+// FW1-04 item 6: Canadian bank CSV profile (RBC native CAD export with Transaction Date, Description 1,
+// Description 2, Cheque Number, and CAD$).
+func TestCSVParse_RBCNativeExport(t *testing.T) {
+	raw, err := os.ReadFile("testdata/rbc_export_sample.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, prof := range []ImportProfile{DefaultRBCProfile(), rbcProfile()} {
+		lines, err := CSVStatementSource{}.Parse(context.Background(), prof, strings.NewReader(string(raw)))
+		if err != nil {
+			t.Fatalf("parse native RBC export under %s: %v", prof.Code, err)
+		}
+		if len(lines) != 4 {
+			t.Fatalf("%s: expected 4 lines, got %d", prof.Code, len(lines))
+		}
+		wantAmounts := []int64{150000, -42000, 98050, -2500}
+		for i, w := range wantAmounts {
+			if lines[i].AmountCents != w {
+				t.Errorf("%s line %d amount = %d, want %d", prof.Code, i, lines[i].AmountCents, w)
+			}
+		}
+		if lines[0].Description != "E-TRANSFER DEPOSIT HARDWOOD DEPOT INC" || lines[0].Reference != "HARDWOOD DEPOT INC" {
+			t.Errorf("%s line 0 desc=%q ref=%q", prof.Code, lines[0].Description, lines[0].Reference)
+		}
+		if lines[1].Reference != "1042" {
+			t.Errorf("%s line 1 cheque ref = %q, want 1042", prof.Code, lines[1].Reference)
+		}
+	}
+}
+
+// FW1-04 round 2 (item 2.3): an RBC row whose CAD$ amount is empty and carries a figure under USD$, or whose
+// amount column is empty, must be refused in words rather than parsed as a 0-cent CAD line.
+func TestCSVParse_RBCRefusesUSDAndEmptyAmountRows(t *testing.T) {
+	usdCSV := "Account Type,Account Number,Transaction Date,Cheque Number,Description 1,Description 2,CAD$,USD$\n" +
+		"Chequing,00123-1234567,6/10/2023,,USD WIRE PAYMENT,US VENDOR,,250.00\n"
+	emptyNativeCSV := "Account Type,Account Number,Transaction Date,Cheque Number,Description 1,Description 2,CAD$,USD$\n" +
+		"Chequing,00123-1234567,6/10/2023,,EMPTY ROW,MEMO,,\n"
+	emptyStandardCSV := "Date,Description,Amount,Reference\n2023-06-10,EMPTY AMOUNT,,REF-1\n"
+
+	src := CSVStatementSource{}
+	for _, prof := range []ImportProfile{DefaultRBCProfile(), rbcProfile()} {
+		if lines, err := src.Parse(context.Background(), prof, strings.NewReader(usdCSV)); err == nil || !strings.Contains(err.Error(), "USD") {
+			t.Errorf("%s: expected USD row refusal mentioning USD, got lines=%+v err=%v", prof.Code, lines, err)
+		}
+		if lines, err := src.Parse(context.Background(), prof, strings.NewReader(emptyNativeCSV)); err == nil || !strings.Contains(err.Error(), "missing amount") {
+			t.Errorf("%s: expected empty native amount row refusal mentioning missing amount, got lines=%+v err=%v", prof.Code, lines, err)
+		}
+	}
+	if lines, err := src.Parse(context.Background(), rbcProfile(), strings.NewReader(emptyStandardCSV)); err == nil || !strings.Contains(err.Error(), "missing amount") {
+		t.Errorf("standard profile: expected empty amount row refusal mentioning missing amount, got lines=%+v err=%v", lines, err)
+	}
+}

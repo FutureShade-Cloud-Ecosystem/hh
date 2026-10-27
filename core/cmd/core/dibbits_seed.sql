@@ -286,14 +286,33 @@ ON CONFLICT DO NOTHING;
 -- Two invoices (one paid, one open) + lines
 -- org_id is the branch location's (SF-2p): NULL on a box whose locations carry no org yet (this seed runs before the
 -- populate that provisions the org), which 0432 allows there, and the branch's org on a box that has one.
-INSERT INTO invoices (id, invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, created_by, org_id) VALUES
- ('19000000-0000-4000-9000-000000000001','INV-2026-0001','c7000000-0000-4000-9000-000000000002','5d1b3f6e-0000-4000-9000-000000000001','PAID', CURRENT_DATE - 30, CURRENT_DATE, 312500, 40625, 353125, 0,'d7000000-0000-4000-9000-000000000001', (SELECT org_id FROM locations WHERE id = '5d1b3f6e-0000-4000-9000-000000000001')),
- ('19000000-0000-4000-9000-000000000002','INV-2026-0002','c7000000-0000-4000-9000-000000000005','5d1b3f6e-0000-4000-9000-000000000002','FINALIZED', CURRENT_DATE - 10, CURRENT_DATE + 35, 900000, 117000, 1017000, 1017000,'d7000000-0000-4000-9000-000000000001', (SELECT org_id FROM locations WHERE id = '5d1b3f6e-0000-4000-9000-000000000002'))
+-- THE OPENING BALANCE MARKER (FROM-PRINCIPAL 180, ruled again in round 4): EVERY document this seed
+-- plants WITHOUT a journal of its own carries the marker, PAID OR OPEN. They are all history from
+-- before HH: the seed runs after the migrations, so 0222's repair (which queues an ar.invoice.finalized
+-- event for every invoice with no journal behind it) never saw these rows and no journal of their own
+-- will ever post behind them. An opening balance's HST is not a period's collection, so the tax
+-- reconcile keeps every one of them out of collected and names them on the opening balances line.
+-- INV-2026-0001 is PAID and dated CURRENT_DATE - 30, which lands in the walk month on the 31st of a
+-- 31-day month: marked, it is still an opening balance and the reconcile still ties that month.
+-- The demo pair INV-DEMO-CP03-Q and INV-DEMO-CP03-X (0055) are NOT planted by this seed and carry
+-- real finalize journals of their own, so they stay unmarked.
+INSERT INTO invoices (id, invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, created_by, org_id, metadata) VALUES
+ ('19000000-0000-4000-9000-000000000001','INV-2026-0001','c7000000-0000-4000-9000-000000000002','5d1b3f6e-0000-4000-9000-000000000001','PAID', CURRENT_DATE - 30, CURRENT_DATE, 312500, 40625, 353125, 0,'d7000000-0000-4000-9000-000000000001', (SELECT org_id FROM locations WHERE id = '5d1b3f6e-0000-4000-9000-000000000001'), '{"opening_balance": true}'::jsonb),
+ ('19000000-0000-4000-9000-000000000002','INV-2026-0002','c7000000-0000-4000-9000-000000000005','5d1b3f6e-0000-4000-9000-000000000002','FINALIZED', CURRENT_DATE - 10, CURRENT_DATE + 35, 900000, 117000, 1017000, 1017000,'d7000000-0000-4000-9000-000000000001', (SELECT org_id FROM locations WHERE id = '5d1b3f6e-0000-4000-9000-000000000002'), '{"opening_balance": true}'::jsonb)
 ON CONFLICT (invoice_no) DO NOTHING;
 INSERT INTO invoice_lines (invoice_id, line_no, product_id, description, qty_entered, uom_entered, qty_base, unit_price_cents, price_uom, line_total_cents) VALUES
  ('19000000-0000-4000-9000-000000000001',1,'a7000000-0000-4000-9000-000000000005','Brussels Block paver',1000,'SF',4100,300,'SF',300000),
  ('19000000-0000-4000-9000-000000000001',2,'a7000000-0000-4000-9000-000000000023','Gator polymeric sand',5,'BAG',5,2500,'BAG',12500),
  ('19000000-0000-4000-9000-000000000002',1,'a7000000-0000-4000-9000-000000000010','Magnumstone wall',1500,'SF',1548.45,600,'SF',900000)
+ON CONFLICT DO NOTHING;
+-- The receipt that settled INV-2026-0001, dated after its issue: a PAID invoice with no dated act
+-- behind it reads as still owed at an as-of date (FW1-06b rebuilds a document's as-of balance from
+-- the dated acts that moved it).
+INSERT INTO payments (id, payment_no, customer_id, method, amount_cents, status, branch_id, received_at)
+VALUES ('1a000000-0000-4000-9000-000000000001','PAY-2026-0001','c7000000-0000-4000-9000-000000000002','CHEQUE',353125,'RECEIVED','5d1b3f6e-0000-4000-9000-000000000001', CURRENT_DATE - 20)
+ON CONFLICT (payment_no) DO NOTHING;
+INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents, created_at)
+VALUES ('1a000000-0000-4000-9000-000000000001','19000000-0000-4000-9000-000000000001',353125, CURRENT_DATE - 20)
 ON CONFLICT DO NOTHING;
 -- One open purchase order to a real vendor
 INSERT INTO purchase_orders (id, po_no, vendor_id, branch_id, status, expected_at, freight_cents, created_by)

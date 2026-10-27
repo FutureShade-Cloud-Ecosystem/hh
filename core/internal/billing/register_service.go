@@ -147,6 +147,7 @@ type registerStore interface {
 	DisputeFor(ctx context.Context, invoiceID string) (DisputeView, bool, error)
 	LastContactFor(ctx context.Context, customerID string) (*time.Time, error)
 	RecordSend(ctx context.Context, d SendRow) (string, bool, error)
+	SendByKey(ctx context.Context, key string) (string, bool, error)
 	MarkOpened(ctx context.Context, deliveryID string, at time.Time) (bool, error)
 	LatestSendID(ctx context.Context, invoiceID string) (string, bool, error)
 	AddPromise(ctx context.Context, p PromiseWrite) (PromiseView, bool, bool, error)
@@ -194,10 +195,12 @@ type ReceiptWrite struct {
 	ReceivedBy     string
 }
 
-// Sender delivers a message. Bound to the shipped notify port at wiring time; nil leaves the register
-// RECORDING sends without delivering them, which is the DIB-166 statement-notice posture: the ledger
-// row is the durable fact and the transport is a separate concern that can be wired later. A nil
-// sender is reported in the outcome rather than pretended away.
+// Sender delivers a message. Bound to the shipped notify port at wiring time; a nil sender leaves
+// the register DELIVERING nothing, and that is what it says: no delivery row is written and no send
+// is counted, because there is no queue behind the desk that would ever carry a recorded row to the
+// customer (FW1-06b round 2, S6's P2-1 and P2-2). The ledger row is the fact that the message went
+// out, so it is written only when the transport accepted the message. A nil sender is reported in
+// the outcome rather than pretended away.
 type Sender interface {
 	SendInvoiceMessage(ctx context.Context, to, subject, body string) error
 }
@@ -291,13 +294,19 @@ func (s *RegisterService) Register(ctx context.Context, f RegisterFilter) (Regis
 	}
 	allowed := accountAllowed(ctx, s.callerFrom, pol.AccountPositionVisibility)
 	if !allowed {
-		// The overdue and past due chips ask for the withheld predicate AS A LIST, so a refused
-		// caller would otherwise read the overdue accounts straight off the filter (row 3172, no
-		// past due flag on any route). Refused in words, the policy-is-the-authority posture, before
-		// the store is asked for anything. The remaining chips filter on stored facts a refused
-		// caller still receives, so they keep answering.
-		if chip := strings.ToUpper(strings.TrimSpace(f.Chip)); chip == StatusOverdue || chip == "PAST_DUE" {
+		// The derived chips ask for a predicate a refused caller may not have AS A LIST, so each
+		// refuses in words before the store is asked for anything (row 3172, the policy-is-the-
+		// authority posture). Overdue and past due are the withheld predicate itself. CURRENT is
+		// that predicate told backwards: ALL less CURRENT lists the overdue accounts by
+		// subtraction (item 220), so it refuses with the same words. DUE_SOON is the one derived
+		// state left, and refuses under its own words. The remaining chips filter on stored facts
+		// a refused caller still receives, so they keep answering: the refused status filter
+		// offers stored statuses only.
+		switch strings.ToUpper(strings.TrimSpace(f.Chip)) {
+		case StatusOverdue, "PAST_DUE", "CURRENT":
 			return RegisterPage{}, httpx.BadRequestf("the past due view is not shown for your role")
+		case StatusDueSoon:
+			return RegisterPage{}, httpx.BadRequestf("the due soon view is not shown for your role")
 		}
 	}
 	rows, total, err := s.store.RegisterRows(ctx, asOf, pol.DueSoonDays, f)
@@ -618,26 +627,42 @@ func (s *RegisterService) SendReminder(ctx context.Context, in ReminderInput) (R
 			out.Skipped[h.InvoiceNo] = "no contact email on the account"
 			continue
 		}
-		_, replayed, err := s.store.RecordSend(ctx, SendRow{
-			InvoiceID: h.ID, CustomerID: h.CustomerID, InvoiceNo: h.InvoiceNo,
-			Kind: "REMINDER", Tone: tone, Channel: "EMAIL", ToAddress: block.ContactEmail,
-			BalanceCents: h.BalanceCents, IdempotencyKey: in.IdempotencyKey + ":" + h.ID,
-			SentBy: caller.UserID,
-		})
-		if err != nil {
-			return ReminderResult{}, err
+		if s.sender == nil {
+			// No transport is wired on this deployment: nothing left the building, so no delivery is
+			// recorded and nothing counts as sent (FW1-06b). A reminder the operator believes went out
+			// is the worst thing this path could say.
+			out.Skipped[h.InvoiceNo] = "no email transport is wired on this deployment, nothing was sent"
+			continue
 		}
-		if replayed {
+		key := in.IdempotencyKey + ":" + h.ID
+		// The key is checked BEFORE the transport, so a replay of the same request never delivers a
+		// second message: a customer chased twice is the relationship cost the cadence exists to
+		// avoid, and the desk retries the same key when an answer was lost.
+		if _, seen, err := s.store.SendByKey(ctx, key); err != nil {
+			return ReminderResult{}, err
+		} else if seen {
 			out.Replayed++
 			continue
 		}
-		if s.sender != nil {
-			// A transport failure does NOT unwrite the ledger row: we decided to chase and recorded the
-			// decision, and the queue is what retries. Reported, never swallowed.
-			if err := s.sender.SendInvoiceMessage(ctx, block.ContactEmail,
-				reminderSubject(tone, h.InvoiceNo), reminderBody(tone, block.Name, h.InvoiceNo, h.BalanceCents, h.DueDate)); err != nil {
-				out.Skipped[h.InvoiceNo] = "recorded, but delivery failed: " + err.Error()
-			}
+		// A failed delivery records nothing: there is no queue behind the desk, so a row that says we
+		// chased when nothing left the building is a lie the activity trail would repeat (FW1-06b
+		// round 2, S6's P2-2). The delivery row is written when the transport accepts, and a retry
+		// with the same key re-attempts a send that never landed.
+		if err := s.sender.SendInvoiceMessage(ctx, block.ContactEmail,
+			reminderSubject(tone, h.InvoiceNo), reminderBody(tone, block.Name, h.InvoiceNo, h.BalanceCents, h.DueDate)); err != nil {
+			out.Skipped[h.InvoiceNo] = "delivery failed, nothing went out; send it again from the desk: " + err.Error()
+			continue
+		}
+		// The row's own replay flag can only fire here in a narrow race (another request with this
+		// key recorded it while this one was delivering). The message went out, so it counts as sent:
+		// the operator must be told a message went, not that nothing did.
+		if _, _, err := s.store.RecordSend(ctx, SendRow{
+			InvoiceID: h.ID, CustomerID: h.CustomerID, InvoiceNo: h.InvoiceNo,
+			Kind: "REMINDER", Tone: tone, Channel: "EMAIL", ToAddress: block.ContactEmail,
+			BalanceCents: h.BalanceCents, IdempotencyKey: key,
+			SentBy: caller.UserID,
+		}); err != nil {
+			return ReminderResult{}, err
 		}
 		out.Sent++
 	}
@@ -663,28 +688,37 @@ func (s *RegisterService) SendInvoice(ctx context.Context, invoiceID, key string
 	if block.ContactEmail == "" {
 		return ReminderResult{}, httpx.BadRequestf("%s has no contact email on the account", block.Name)
 	}
+	if s.sender == nil {
+		// No transport is wired on this deployment: nothing left the building, so no delivery is
+		// recorded and nothing counts as sent (FW1-06b round 2, S6's P2-1), the Remind run's rule.
+		return ReminderResult{Skipped: map[string]string{h.InvoiceNo: "no email transport is wired on this deployment, nothing was sent"}}, nil
+	}
+	// The key is checked BEFORE the transport, so a replay of the same request never delivers a
+	// second message to the customer (FW1-06b round 2). The desk retries the same key when an
+	// answer was lost, and a second email is not the answer it wanted.
+	if _, seen, err := s.store.SendByKey(ctx, key); err != nil {
+		return ReminderResult{}, err
+	} else if seen {
+		return ReminderResult{Replayed: 1}, nil
+	}
+	if err := s.sender.SendInvoiceMessage(ctx, block.ContactEmail,
+		"Invoice "+h.InvoiceNo, invoiceBody(block.Name, h.InvoiceNo, h.BalanceCents, h.DueDate)); err != nil {
+		// A failed delivery records nothing: there is no queue behind the desk, and the activity
+		// trail reads the delivery rows, so a row for a send that never left would repeat the lie.
+		return ReminderResult{Skipped: map[string]string{h.InvoiceNo: "delivery failed, nothing went out; send it again from the desk: " + err.Error()}}, nil
+	}
 	caller, _ := s.callerFrom(ctx)
-	_, replayed, err := s.store.RecordSend(ctx, SendRow{
+	// The row's own replay flag can only fire here in a narrow race (another request with this key
+	// recorded it while this one was delivering). The message went out, so it counts as sent: the
+	// operator must be told a message went, not that nothing did.
+	if _, _, err := s.store.RecordSend(ctx, SendRow{
 		InvoiceID: h.ID, CustomerID: h.CustomerID, InvoiceNo: h.InvoiceNo,
 		Kind: "INVOICE", Channel: "EMAIL", ToAddress: block.ContactEmail,
 		BalanceCents: h.BalanceCents, IdempotencyKey: key, SentBy: caller.UserID,
-	})
-	if err != nil {
+	}); err != nil {
 		return ReminderResult{}, err
 	}
-	res := ReminderResult{}
-	if replayed {
-		res.Replayed = 1
-		return res, nil
-	}
-	if s.sender != nil {
-		if err := s.sender.SendInvoiceMessage(ctx, block.ContactEmail,
-			"Invoice "+h.InvoiceNo, invoiceBody(block.Name, h.InvoiceNo, h.BalanceCents, h.DueDate)); err != nil {
-			res.Skipped = map[string]string{h.InvoiceNo: "recorded, but delivery failed: " + err.Error()}
-		}
-	}
-	res.Sent = 1
-	return res, nil
+	return ReminderResult{Sent: 1}, nil
 }
 
 // MarkOpened records that the customer opened the document we sent them.

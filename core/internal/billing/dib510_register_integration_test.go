@@ -456,9 +456,51 @@ func TestRegister_ARefusedCallerCarriesTheStoredStatusAndNoPastDueFlags(t *testi
 	}
 }
 
+// TestRegister_AnAsOfFigureIsByteAbsentForARefusedCaller pins the two features meeting in one read:
+// the register's rows age their documents at the service's as of clock (the true views work), and
+// the account position withholding drops exactly those as of derived fields for a caller the policy
+// refuses. The proof has both halves: the ALLOWED manager's row at the same pinned clock carries
+// the as of figure (days_overdue 68, the 61 to 90 bucket, the account position), so the figure was
+// computed and then withheld, and the refused caller's bytes carry none of it, absent and never 0,
+// while the invoice's own document figures and stored status stay.
+func TestRegister_AnAsOfFigureIsByteAbsentForARefusedCaller(t *testing.T) {
+	f := newD510Fixture(t)
+	ctx := context.Background()
+	// 68 days past due at d510Now: deep in the 61 to 90 bucket at the pinned as of instant.
+	f.invoice(t, "AGED", "FINALIZED", -68, 90000, 90000, "INVOICE")
+
+	mgr, err := f.service(d510Manager()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Limit: 50})
+	if err != nil {
+		t.Fatalf("manager register: %v", err)
+	}
+	mgrJSON, _ := json.Marshal(mgr)
+	for _, want := range []string{`"days_overdue":68`, `"bucket_key":"61_90"`, `"bucket_label":"61 to 90"`, `"account":{`} {
+		if !strings.Contains(string(mgrJSON), want) {
+			t.Errorf("the manager's as of row must carry %s: %s", want, mgrJSON)
+		}
+	}
+
+	front, err := f.service(d510Frontline()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Limit: 50})
+	if err != nil {
+		t.Fatalf("frontline register: %v", err)
+	}
+	frontJSON, _ := json.Marshal(front)
+	for _, gated := range []string{"days_overdue", "bucket_label", "bucket_key", `"account":{`} {
+		if strings.Contains(string(frontJSON), gated) {
+			t.Errorf("a refused caller's register bytes must not carry the as of figure %s: %s", gated, frontJSON)
+		}
+	}
+	for _, keep := range []string{`"balance_cents":90000`, `"stored_status":"FINALIZED"`, `"as_of":`} {
+		if !strings.Contains(string(frontJSON), keep) {
+			t.Errorf("the refused page keeps %s: %s", keep, frontJSON)
+		}
+	}
+}
+
 // TestRegister_ThePastDueChipsRefuseACallerTheGateRefuses pins the filter half of round 6: the
 // overdue and past due chips ask for the withheld predicate AS A LIST, so the service refuses them
-// in words for a caller the account position policy refuses, while every other chip still answers.
+// in words for a caller the account position policy refuses, while the chips that name no derived
+// predicate still answer.
 func TestRegister_ThePastDueChipsRefuseACallerTheGateRefuses(t *testing.T) {
 	f := newD510Fixture(t)
 	f.invoice(t, "LATE", "FINALIZED", -12, 70000, 70000, "INVOICE")
@@ -481,6 +523,35 @@ func TestRegister_ThePastDueChipsRefuseACallerTheGateRefuses(t *testing.T) {
 	// And a manager filters by the same chips still.
 	if _, err := f.service(d510Manager()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Chip: StatusOverdue, Limit: 50}); err != nil {
 		t.Fatalf("the overdue chip still answers an allowed manager: %v", err)
+	}
+}
+
+// TestRegister_TheCurrentAndDueSoonChipsRefuseACallerTheGateRefuses pins item 220 (S5 R6 P3): the
+// current chip is the complement of the past due predicate, so ALL less CURRENT lists the overdue
+// accounts by subtraction, and due soon is the one derived predicate left as a server list. A
+// caller the account position policy refuses hears the refusal in words and receives no rows for
+// either, so the refused status filter offers stored statuses only. The manager keeps every chip.
+func TestRegister_TheCurrentAndDueSoonChipsRefuseACallerTheGateRefuses(t *testing.T) {
+	f := newD510Fixture(t)
+	ctx := context.Background()
+	f.invoice(t, "LATE", "FINALIZED", -12, 70000, 70000, "INVOICE") // overdue
+	f.invoice(t, "SOON", "FINALIZED", 3, 50000, 50000, "INVOICE")   // due soon
+
+	for _, chip := range []string{"CURRENT", ChipCurrent, StatusDueSoon, "due_soon"} {
+		_, err := f.service(d510Frontline()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Chip: chip, Limit: 50})
+		if err == nil {
+			t.Fatalf("chip %s must refuse a caller the account position policy refuses", chip)
+		}
+	}
+	// The manager still gets both, one row each.
+	for _, chip := range []string{"CURRENT", StatusDueSoon} {
+		page, err := f.service(d510Manager()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Chip: chip, Limit: 50})
+		if err != nil {
+			t.Fatalf("chip %s must still answer an allowed manager: %v", chip, err)
+		}
+		if page.Total != 1 {
+			t.Fatalf("chip %s reads its one row, got total %d", chip, page.Total)
+		}
 	}
 }
 

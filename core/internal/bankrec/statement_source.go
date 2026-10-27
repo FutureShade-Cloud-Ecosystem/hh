@@ -21,13 +21,35 @@ type CSVStatementSource struct{}
 const (
 	mapDateCol   = "date_col"
 	mapDescCol   = "description_col"
+	mapDesc2Col  = "description2_col"
 	mapAmountCol = "amount_col"
 	mapRefCol    = "reference_col"
+	mapChequeCol = "cheque_col"
 	mapDateFmt   = "date_format"
 	// mapDebitCol / mapCreditCol support statements that split debit and credit into separate columns.
 	mapDebitCol  = "debit_col"
 	mapCreditCol = "credit_col"
 )
+
+// DefaultRBCProfile returns the Canadian RBC Online Banking CAD statement export profile (FW1-04):
+// "Account Type,Account Number,Transaction Date,Cheque Number,Description 1,Description 2,CAD$,USD$".
+// In addition to explicit profile use, CSVStatementSource.Parse under "rbc-default" auto-detects these
+// native RBC export headers alongside the canonical 4-column Date/Description/Amount/Reference layout.
+func DefaultRBCProfile() ImportProfile {
+	return ImportProfile{
+		Code:   "rbc-cad",
+		Format: "CSV",
+		Mapping: map[string]any{
+			mapDateCol:   "Transaction Date",
+			mapDescCol:   "Description 1",
+			mapDesc2Col:  "Description 2",
+			mapAmountCol: "CAD$",
+			mapRefCol:    "Description 2",
+			mapChequeCol: "Cheque Number",
+			mapDateFmt:   "1/2/2006",
+		},
+	}
+}
 
 // Parse reads the CSV, resolves each column by header name from the profile mapping, normalizes the signed
 // amount (+credit/−debit), and stamps a deterministic DedupeHash so a re-import is idempotent. A malformed
@@ -36,8 +58,10 @@ func (CSVStatementSource) Parse(_ context.Context, profile ImportProfile, r io.R
 	m := profile.Mapping
 	dateCol := mapStr(m, mapDateCol)
 	descCol := mapStr(m, mapDescCol)
+	desc2Col := mapStr(m, mapDesc2Col)
 	amtCol := mapStr(m, mapAmountCol)
 	refCol := mapStr(m, mapRefCol)
+	chequeCol := mapStr(m, mapChequeCol)
 	debitCol := mapStr(m, mapDebitCol)
 	creditCol := mapStr(m, mapCreditCol)
 	dateFmt := mapStr(m, mapDateFmt)
@@ -64,6 +88,22 @@ func (CSVStatementSource) Parse(_ context.Context, profile ImportProfile, r io.R
 	for i, h := range header {
 		idx[strings.TrimSpace(h)] = i
 	}
+	// FW1-04: when parsing under the seeded "rbc-default" profile and the file carries native Canadian RBC
+	// export headers ("Transaction Date", "Description 1", "CAD$"), map those columns directly.
+	if profile.Code == "rbc-default" {
+		if _, hasDate := idx[dateCol]; !hasDate {
+			if _, hasRBCDate := idx["Transaction Date"]; hasRBCDate {
+				if _, hasRBCAmt := idx["CAD$"]; hasRBCAmt {
+					dateCol = "Transaction Date"
+					descCol = "Description 1"
+					desc2Col = "Description 2"
+					amtCol = "CAD$"
+					refCol = "Description 2"
+					chequeCol = "Cheque Number"
+				}
+			}
+		}
+	}
 	need := func(col string) (int, error) {
 		i, ok := idx[col]
 		if !ok {
@@ -76,7 +116,10 @@ func (CSVStatementSource) Parse(_ context.Context, profile ImportProfile, r io.R
 		return nil, err
 	}
 	descI := optIdx(idx, descCol)
+	desc2I := optIdx(idx, desc2Col)
 	refI := optIdx(idx, refCol)
+	chequeI := optIdx(idx, chequeCol)
+	usdI := optIdx(idx, "USD$")
 
 	var amtI, debitI, creditI int
 	if hasSingleAmount {
@@ -120,24 +163,36 @@ func (CSVStatementSource) Parse(_ context.Context, profile ImportProfile, r io.R
 			}
 			return strings.TrimSpace(rec[i])
 		}
-		txnDate, perr := time.Parse(dateFmt, field(dateI))
+		txnDate, perr := parseStatementDate(dateFmt, field(dateI))
 		if perr != nil {
 			return nil, fmt.Errorf("bankrec: csv row %d: bad date %q (want %q): %w", rowNo-1, field(dateI), dateFmt, perr)
 		}
 		var amountCents int64
 		if hasSingleAmount {
-			amountCents, perr = parseCents(field(amtI))
+			if usdI >= 0 && field(usdI) != "" {
+				return nil, fmt.Errorf("bankrec: csv row %d: USD amount %q is not supported on a CAD statement import", rowNo-1, field(usdI))
+			}
+			rawAmt := field(amtI)
+			if rawAmt == "" {
+				return nil, fmt.Errorf("bankrec: csv row %d: missing amount", rowNo-1)
+			}
+			amountCents, perr = parseCents(rawAmt)
 			if perr != nil {
-				return nil, fmt.Errorf("bankrec: csv row %d: bad amount %q: %w", rowNo-1, field(amtI), perr)
+				return nil, fmt.Errorf("bankrec: csv row %d: bad amount %q: %w", rowNo-1, rawAmt, perr)
 			}
 		} else {
 			var debit, credit int64
-			if debitI >= 0 && field(debitI) != "" {
+			hasDebit := debitI >= 0 && field(debitI) != ""
+			hasCredit := creditI >= 0 && field(creditI) != ""
+			if !hasDebit && !hasCredit {
+				return nil, fmt.Errorf("bankrec: csv row %d: missing amount", rowNo-1)
+			}
+			if hasDebit {
 				if debit, perr = parseCents(field(debitI)); perr != nil {
 					return nil, fmt.Errorf("bankrec: csv row %d: bad debit %q: %w", rowNo-1, field(debitI), perr)
 				}
 			}
-			if creditI >= 0 && field(creditI) != "" {
+			if hasCredit {
 				if credit, perr = parseCents(field(creditI)); perr != nil {
 					return nil, fmt.Errorf("bankrec: csv row %d: bad credit %q: %w", rowNo-1, field(creditI), perr)
 				}
@@ -145,7 +200,17 @@ func (CSVStatementSource) Parse(_ context.Context, profile ImportProfile, r io.R
 			amountCents = abs64(credit) - abs64(debit) // credit positive, debit negative
 		}
 		desc := field(descI)
+		if d2 := field(desc2I); d2 != "" {
+			if desc != "" {
+				desc = desc + " " + d2
+			} else {
+				desc = d2
+			}
+		}
 		ref := field(refI)
+		if chq := field(chequeI); chq != "" {
+			ref = chq
+		}
 		out = append(out, RawStatementLine{
 			TxnDate:     txnDate,
 			Description: desc,
@@ -155,6 +220,23 @@ func (CSVStatementSource) Parse(_ context.Context, profile ImportProfile, r io.R
 		})
 	}
 	return out, nil
+}
+
+// parseStatementDate parses raw under the profile's dateFmt first, then accepts the standard Canadian bank
+// export date layouts (YYYY-MM-DD, M/D/YYYY, MM/DD/YYYY, YYYY/MM/DD) used by RBC exports (FW1-04).
+func parseStatementDate(dateFmt, raw string) (time.Time, error) {
+	if t, err := time.Parse(dateFmt, raw); err == nil {
+		return t, nil
+	}
+	for _, alt := range []string{"2006-01-02", "1/2/2006", "01/02/2006", "2006/01/02"} {
+		if alt == dateFmt {
+			continue
+		}
+		if t, err := time.Parse(alt, raw); err == nil {
+			return t, nil
+		}
+	}
+	return time.Parse(dateFmt, raw)
 }
 
 // DedupeHash is the deterministic idempotency key over (date, signed amount, description, reference). A

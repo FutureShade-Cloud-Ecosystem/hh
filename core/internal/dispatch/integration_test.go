@@ -181,6 +181,16 @@ func (f *recordingFulfiller) MarkFulfilled(_ context.Context, orderID, _ string)
 	return nil
 }
 
+// MarkFulfilledTx is the tx-scoped door (round 2, S3's P2): the offline pickup's confirm runs the
+// order's fulfilment inside the confirm's own transaction.
+func (f *recordingFulfiller) MarkFulfilledTx(_ context.Context, _ pgx.Tx, orderID, _ string) error {
+	if f.fail != nil {
+		return f.fail
+	}
+	f.orders = append(f.orders, orderID)
+	return nil
+}
+
 // realPrinter wires the ACTUAL W1a print queue. The point of the manifest ticket is that DELIVERY_DOC
 // rides the shipped substrate; a fake queue would assert nothing about 0088's CHECK.
 type realPrinter struct{ q *printing.QueueService }
