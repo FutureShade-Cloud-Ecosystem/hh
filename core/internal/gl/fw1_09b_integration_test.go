@@ -392,6 +392,32 @@ func TestIntegration_FW1_09b_TheStatementsSurviveTheClose(t *testing.T) {
 	pool := intPool(t)
 	user := aUser(t, pool)
 	ensurePeriods(t, pool, 2092)
+	// The balance sheet is cumulative (0439's view reads inception to date), so
+	// on the shared gate database the second year's row holds every earlier
+	// package's history too, not only this leg's 60000. The proof is this leg's
+	// own deltas over a baseline read before the leg posts anything, and the
+	// report year's periods exist BEFORE that baseline so both reads stand on
+	// the same view rows (the round 5 AC2 pattern).
+	ensurePeriods(t, pool, 2093)
+	bs := func(year int) map[string]int64 {
+		t.Helper()
+		rows, err := pool.Query(ctx, `SELECT account_code, COALESCE(SUM(amount_cents),0) FROM v_balance_sheet WHERE fiscal_year=$1 GROUP BY account_code`, year)
+		if err != nil {
+			t.Fatalf("read the balance sheet: %v", err)
+		}
+		defer rows.Close()
+		out := map[string]int64{}
+		for rows.Next() {
+			var code string
+			var amt int64
+			if err := rows.Scan(&code, &amt); err != nil {
+				t.Fatal(err)
+			}
+			out[code] = amt
+		}
+		return out
+	}
+	baseline := bs(2093)
 	fw1SeedPnL(t, pool, 2092)
 	closer := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2093, 1, 5, 12, 0, 0, 0, time.UTC))
 	if _, err := closer.CloseYear(ctx, 2092, "FW1-09b statements proof"); err != nil {
@@ -421,30 +447,11 @@ func TestIntegration_FW1_09b_TheStatementsSurviveTheClose(t *testing.T) {
 		t.Fatalf("the closed year's income statement reads %v, want revenue 4000 at 100000 and expense 6100 at 40000 (the closing entry stays out of the P&L)", survived)
 	}
 
-	ensurePeriods(t, pool, 2093)
-	bs := func(year int) map[string]int64 {
-		t.Helper()
-		rows, err := pool.Query(ctx, `SELECT account_code, COALESCE(SUM(amount_cents),0) FROM v_balance_sheet WHERE fiscal_year=$1 GROUP BY account_code`, year)
-		if err != nil {
-			t.Fatalf("read the balance sheet: %v", err)
-		}
-		defer rows.Close()
-		out := map[string]int64{}
-		for rows.Next() {
-			var code string
-			var amt int64
-			if err := rows.Scan(&code, &amt); err != nil {
-				t.Fatal(err)
-			}
-			out[code] = amt
-		}
-		return out
-	}
 	carried := bs(2093)
-	if carried["1000"] != 60000 {
-		t.Fatalf("the second year's balance sheet reads %v, want 1000 at 60000 carried forward (5000 of it never existed: the year's own 60000 cash)", carried)
+	if carried["1000"]-baseline["1000"] != 60000 {
+		t.Fatalf("the second year's balance sheet moved 1000 by %d (baseline %d, now %d), want the year's own 60000 cash carried forward (5000 of it never existed: the year's own 60000)", carried["1000"]-baseline["1000"], baseline["1000"], carried["1000"])
 	}
-	if carried["3900"] != 60000 {
-		t.Fatalf("retained earnings reads %v at 2093, want the 60000 the close carried into equity", carried)
+	if carried["3900"]-baseline["3900"] != 60000 {
+		t.Fatalf("retained earnings moved by %d (baseline %d, now %d) at 2093, want the 60000 the close carried into equity", carried["3900"]-baseline["3900"], baseline["3900"], carried["3900"])
 	}
 }
