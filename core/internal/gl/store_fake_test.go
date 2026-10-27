@@ -12,6 +12,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func defaultRules() map[string]map[string]string {
@@ -279,7 +280,18 @@ func (f *fakeStore) HouseYearEnded(_ context.Context, _ int, _ time.Time) (bool,
 	return true, nil
 }
 
-func (f *fakeStore) BeginTx(context.Context) (pgx.Tx, error) { return nil, nil }
+// fakeTx is the year end's no-op transaction: every Tx keyed method on the fake
+// ignores the transaction, and CloseYear's own touches on it (the advisory lock
+// exec, the commit and the deferred rollback) answer the empty result.
+type fakeTx struct{ pgx.Tx }
+
+func (fakeTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+func (fakeTx) Commit(context.Context) error   { return nil }
+func (fakeTx) Rollback(context.Context) error { return nil }
+
+func (f *fakeStore) BeginTx(context.Context) (pgx.Tx, error) { return fakeTx{}, nil }
 
 func (f *fakeStore) ClosingJournalsForYearTx(ctx context.Context, _ pgx.Tx, year int) ([]string, int64, error) {
 	return f.ClosingJournalsForYear(ctx, year)
@@ -297,8 +309,9 @@ func (f *fakeStore) ClosingJournalsForYear(_ context.Context, _ int) ([]string, 
 	return f.closingIDs, 0, nil
 }
 
-func (f *fakeStore) InsertClosingJournal(_ context.Context, _ journalDraft, _ int) (string, error) {
+func (f *fakeStore) InsertClosingJournal(_ context.Context, d journalDraft, _ int) (string, error) {
 	f.closingIDs = append(f.closingIDs, "closing-1")
+	f.inserted = append(f.inserted, d)
 	return "closing-1", nil
 }
 
