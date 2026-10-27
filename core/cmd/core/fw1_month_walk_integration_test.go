@@ -46,6 +46,8 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
@@ -1033,7 +1035,14 @@ func (w *fw1Walk) assertHSTTies(t fw1TB) {
 			fw1Dollars(gl2200Move), fw1Dollars(netDocHST), fw1Dollars(docSalesHST), fw1Dollars(billITC),
 			shorter(gl2200Move, netDocHST), byDollars(gl2200Move-netDocHST))
 	}
-	svc := tax.NewService(tax.NewRepository(w.pool)).WithGLBalances(glBalanceAdapter{svc: w.money.glSvc})
+	// The reconcile reads its document sides through the owning modules' seams, wired here over the
+	// real repositories exactly as wire_tops wires them; an unwired seam refuses the reconcile
+	// rather than answering a silent zero.
+	svc := tax.NewService(tax.NewRepository(w.pool)).
+		WithSalesHSTs(billing.NewRepository(w.pool)).
+		WithReturnHSTs(pos.NewRepository(w.pool)).
+		WithBillITCs(purchasing.NewRepository(w.pool)).
+		WithGLBalances(glBalanceAdapter{svc: w.money.glSvc})
 	rep, err := svc.ReconcileReport(ctx, w.year, w.month, "")
 	if err != nil {
 		t.Fatalf("the HST reconcile: %v", err)
