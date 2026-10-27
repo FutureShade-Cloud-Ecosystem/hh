@@ -428,6 +428,7 @@ var PostedTopics = []string{
 	"payment.bounced",
 	"payment.reversed",
 	"payment.reapplied",
+	"payment.paid_out",
 	"order.fulfilled",
 	"bank.recon.completed",
 	"till.session.completed",

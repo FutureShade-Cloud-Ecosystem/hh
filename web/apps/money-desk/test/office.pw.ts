@@ -385,6 +385,52 @@ test("a reversed payment's held money is put on an invoice, never more than is h
   await expect(page.locator("[data-held]")).toHaveText("Nothing is held for this payment now.");
 });
 
+test("a reversed payment's held money is paid out by cheque, then cash, and never more than is held", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openAccountToPay(page, "Riverstone Paving (demo)");
+  await page.locator("[data-field='receive-amount']").fill("250.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 7782");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 applied");
+  await page.locator("[data-invoice-row]", { hasText: "INV-1005" }).getByRole("button", { name: "INV-1005" }).click();
+  const row = page.locator("[data-payment-row]", { hasText: "PAY-0101" });
+  // A payment that was never reversed holds nothing, so it offers neither way out.
+  await expect(row.getByRole("button", { name: "Pay it out" })).toHaveCount(0);
+  await page.locator("[data-payment-row]").getByRole("button", { name: "Reverse" }).click();
+  await page.locator("[data-field='reverse-reason']").fill("Keyed on the wrong account");
+  await page.getByRole("button", { name: "Confirm reversed" }).click();
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$887.50");
+
+  await row.getByRole("button", { name: "Pay it out" }).click();
+  await expect(page.locator("[data-held]")).toContainText("$250.00 is held for this customer.");
+  await noSidewaysScroll(page);
+  // Checked before anything is sent.
+  await expect(page.getByRole("button", { name: "Pay it out" }).last()).toBeDisabled();
+  await page.locator("[data-payout-kinds]").getByRole("button", { name: "Cheque or transfer" }).click();
+  await page.getByRole("button", { name: "Pay it out" }).last().click();
+  await expect(page.locator("[data-error]")).toHaveText("Enter the amount, such as 100.00.");
+  await page.locator("[data-field='payout-amount']").fill("250.01");
+  await page.locator("[data-field='payout-reason']").fill("The customer asked for it back");
+  await page.getByRole("button", { name: "Pay it out" }).last().click();
+  await expect(page.locator("[data-error]")).toHaveText("That is more than the $250.00 still held for this payment.");
+  await page.locator("[data-field='payout-amount']").fill("100.00");
+  await page.getByRole("button", { name: "Pay it out" }).last().click();
+  await expect(page.locator("[data-error]")).toHaveText("Enter the cheque number or transfer reference.");
+  await page.locator("[data-field='payout-reference']").fill("CHQ 100245");
+  await page.getByRole("button", { name: "Pay it out" }).last().click();
+  await expect(page.locator("[data-notice]")).toHaveText("$100.00 of payment PAY-0101 is paid by cheque or transfer. $150.00 is still held for this payment.");
+  // The rest in cash, and then nothing is held. The money did not go on an invoice: the balance stays what the reversal made it.
+  await row.getByRole("button", { name: "Pay it out" }).click();
+  await page.locator("[data-payout-kinds]").getByRole("button", { name: "Cash from the drawer" }).click();
+  await page.locator("[data-field='payout-amount']").fill("150.00");
+  await page.locator("[data-field='payout-reason']").fill("Cash back at the counter");
+  await page.getByRole("button", { name: "Hand it back" }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("$150.00 of payment PAY-0101 is handed back from the drawer. Nothing is held for this payment now.");
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$887.50");
+  await row.getByRole("button", { name: "Pay it out" }).click();
+  await expect(page.locator("[data-held]")).toHaveText("Nothing is held for this payment now.");
+});
+
 test("on a phone the invoice's dispute form and the reversal fit the screen", async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openDesk(page, request);
