@@ -406,11 +406,18 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 			applied += sl.AmountCents
 		}
 	}
+	// The account's open credits are an ACCOUNT level figure, so they are read only for a caller the
+	// account position policy allows (633's rule, S6 P1-1): a refused caller receives no open_credits
+	// at all, not an empty list. The document's own credit_applications are this invoice's own acts
+	// and stay for every caller who may read the document.
+	accountOK := accountAllowed(ctx, s.callerFrom, pol.AccountPositionVisibility)
 	var openCredits []OpenCreditSummary
 	var creditApps []CreditApplicationView
 	if cs, ok := s.store.(invoiceCreditsStore); ok {
-		if openCredits, err = cs.OpenCreditsFor(ctx, h.CustomerID, h.BranchID); err != nil {
-			return InvoiceDetail{}, err
+		if accountOK {
+			if openCredits, err = cs.OpenCreditsFor(ctx, h.CustomerID, h.BranchID); err != nil {
+				return InvoiceDetail{}, err
+			}
 		}
 		if creditApps, err = cs.CreditApplicationsFor(ctx, invoiceID); err != nil {
 			return InvoiceDetail{}, err
@@ -466,7 +473,7 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 	}, asOf, pol.DueSoonDays)
 
 	block.AccountStatus = accountStatusFor(onHold, accountDisputed, h.BalanceCents)
-	if accountAllowed(ctx, s.callerFrom, pol.AccountPositionVisibility) {
+	if accountOK {
 		pos, err := s.store.AccountPositionFor(ctx, asOf, h.CustomerID)
 		if err != nil {
 			return InvoiceDetail{}, err
