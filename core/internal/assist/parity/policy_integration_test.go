@@ -87,6 +87,11 @@ func staffClaim(branches []string, global bool) readtx.Claims {
 
 // The order_lines policy carries its own branch predicate: a staff claim with no grant, a claim for a
 // branch that holds nothing, and a claim for the other branch each read exactly their branch's lines.
+// The world check is the direct one: each branch's claim also reads ZERO lines from outside its own
+// branch, with the orders policy switched off so the order_lines predicate alone answers for the
+// hiding. The old whole-database equality total == linesA + linesB was an assumption about CI's
+// shared database, not part of that proof: a fixture another package runs leaves order lines at a
+// planted third branch, and the assumption failed while the row policies stayed correct.
 func TestPolicy_OrderLinesRowsFollowTheClaimsBranches(t *testing.T) {
 	env := testsupport.Open(t)
 	plantSecondBranch(t, env)
@@ -97,8 +102,8 @@ func TestPolicy_OrderLinesRowsFollowTheClaimsBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 	linesA, linesB := linesAt(t, env, a), linesAt(t, env, b)
-	if linesA == 0 || linesB == 0 || total != linesA+linesB {
-		t.Fatalf("the policy world is wrong: lines at a=%d b=%d total=%d", linesA, linesB, total)
+	if linesA == 0 || linesB == 0 {
+		t.Fatalf("the policy world is wrong: lines at a=%d b=%d", linesA, linesB)
 	}
 	const lines = "public.order_lines"
 	if got := countAsViewOwner(t, env, staffClaim(nil, true), lines); got != total {
@@ -116,6 +121,57 @@ func TestPolicy_OrderLinesRowsFollowTheClaimsBranches(t *testing.T) {
 	if got := countAsViewOwner(t, env, staffClaim([]string{"99999999-9999-9999-9999-999999999999"}, false), lines); got != 0 {
 		t.Errorf("a claim for another branch reads %d lines from public.order_lines, want 0", got)
 	}
+	// The direct world check: under each branch's claim the lines sitting at ANY other branch (the
+	// seeded second one, and any third one a foreign fixture left in the shared database) number zero.
+	for _, tc := range []struct{ name, branch string }{{"a", a}, {"b", b}} {
+		if got := outsideLinesAsViewOwner(t, env, staffClaim([]string{tc.branch}, false), tc.branch); got != 0 {
+			t.Errorf("branch %s's claim reads %d lines from outside its branch, want 0", tc.name, got)
+		}
+	}
+}
+
+// outsideLinesAsViewOwner counts, under the claim, the order lines whose order sits outside branch.
+// It is countAsViewOwnerWith with the count's own predicate: the orders policy is switched off for the
+// length of the transaction, so the join sees every order and the order_lines policy's own branch
+// predicate alone answers for the hiding.
+func outsideLinesAsViewOwner(t *testing.T, env *testsupport.Env, c readtx.Claims, branch string) int {
+	t.Helper()
+	ctx := testsupport.Ctx(t)
+	signer, err := readtx.NewSigner(redact.NewSecret(env.Key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := env.Admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	vo := pgx.Identifier{env.Roles.ViewOwner}.Sanitize()
+	if _, err := tx.Exec(ctx, `GRANT EXECUTE ON FUNCTION ai.claims() TO `+vo); err != nil {
+		t.Fatal(err)
+	}
+	var pid int
+	if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	tok, err := signer.Sign(c, pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('ai.claims', $1, true)`, tok.Reveal()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `ALTER TABLE orders DISABLE ROW LEVEL SECURITY`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SET LOCAL ROLE `+vo); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM order_lines ol JOIN orders o ON o.id = ol.order_id WHERE o.branch_id <> $1::uuid`, branch).Scan(&n); err != nil {
+		t.Fatalf("view owner reads the outside lines: %v", err)
+	}
+	return n
 }
 
 // The orders policy checks the claim's audience: a contractor (pro) claim reads nothing from orders or
