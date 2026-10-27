@@ -244,3 +244,125 @@ func TestIntegration_ReconVariance_NilLedgerReaderOrCallbackRefusesCompletion(t 
 		t.Errorf("dollars(-123456) = %q, want -$1,234.56", got)
 	}
 }
+
+// Probe A (S3 PR 607 round 2 review): a month opened with 0 ($500.00 of lines, $500.00 ledger), then refreshed before
+// any late import (as a reloaded desk does), then a late $12.34 line is imported and matched while the ledger stays
+// $500.00. The refresh must keep statement_balance_derived TRUE, and completion must re-derive $512.34 and refuse.
+func TestIntegration_ReconVariance_ProbeA_ARefreshBeforeLateImportKeepsDerivedFlag(t *testing.T) {
+	w := newReachWorld(t)
+	ctx := context.Background()
+	line := w.line(t, "SF2S PROBE A OPEN", 50000)
+	if code, body := w.post(w.callerAB, w.manualOf(line, "JOURNAL", w.plantJournal(t, "sf2s-pa-o-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 50000, 0}, {"4950", 0, 50000}}), 50000)); code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", code, body)
+	}
+	y, m := w.monthOf(t, line)
+	bal := &movingBalance{val: 50000}
+	svc := NewService(NewRepository(w.pool)).WithJournals(w.journals).WithGLBalances(bal)
+	rec, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m}) // zero: derived
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = w.pool.Exec(context.Background(), `DELETE FROM bank_reconciliations WHERE id = $1::uuid`, rec.ID)
+	})
+	// Refresh before the late import: the lines are unchanged ($500.00), and the derived flag must stay TRUE.
+	refreshed, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m, StatementBalanceCents: rec.StatementBalanceCents})
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if !refreshed.StatementBalanceDerived {
+		t.Errorf("Probe A: a refresh before the late import flipped StatementBalanceDerived to false")
+	}
+	time.Sleep(20 * time.Millisecond)
+	late := w.line(t, "SF2S PROBE A LATE", 1234)
+	if code, body := w.post(w.callerAB, w.manualOf(late, "JOURNAL", w.plantJournal(t, "sf2s-pa-l-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 1234, 0}, {"4950", 0, 1234}}), 1234)); code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", code, body)
+	}
+	_, err = svc.CompleteReconciliation(ctx, refreshed.ID, "")
+	t.Logf("Probe A complete after refresh then late import: %v", err)
+	if err == nil {
+		t.Fatalf("Probe A: a derived month refreshed before a late import was signed off at $500.00 against $512.34 of lines")
+	}
+	if !strings.Contains(err.Error(), "$512.34") || !strings.Contains(err.Error(), "$500.00") {
+		t.Errorf("Probe A: the refusal %q does not name the statement $512.34 and the ledger $500.00", err.Error())
+	}
+}
+
+// Probe B (S3 PR 607 round 2 review): a derived month at $500.00 gets a late $12.34 line, and then the person opens
+// the month again and types the bank statement's own closing balance, $500.00. Because it is an open with a typed
+// figure, statement_balance_derived must be set FALSE, and completion must refuse against a $512.34 ledger.
+func TestIntegration_ReconVariance_ProbeB_ATypedBalanceEqualToStoredDerivedIsNotOverridden(t *testing.T) {
+	w := newReachWorld(t)
+	ctx := context.Background()
+	line := w.line(t, "SF2S PROBE B OPEN", 50000)
+	if code, body := w.post(w.callerAB, w.manualOf(line, "JOURNAL", w.plantJournal(t, "sf2s-pb-o-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 50000, 0}, {"4950", 0, 50000}}), 50000)); code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", code, body)
+	}
+	y, m := w.monthOf(t, line)
+	bal := &movingBalance{val: 50000}
+	svc := NewService(NewRepository(w.pool)).WithJournals(w.journals).WithGLBalances(bal)
+	rec, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m}) // zero: derived
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = w.pool.Exec(context.Background(), `DELETE FROM bank_reconciliations WHERE id = $1::uuid`, rec.ID)
+	})
+	time.Sleep(20 * time.Millisecond)
+	late := w.line(t, "SF2S PROBE B LATE", 1234)
+	if code, body := w.post(w.callerAB, w.manualOf(late, "JOURNAL", w.plantJournal(t, "sf2s-pb-l-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 1234, 0}, {"4950", 0, 1234}}), 1234)); code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", code, body)
+	}
+	// Open again with a typed closing balance of $500.00: must set StatementBalanceDerived FALSE.
+	typed, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m, StatementBalanceCents: 50000})
+	if err != nil {
+		t.Fatalf("re-open with typed 50000: %v", err)
+	}
+	if typed.StatementBalanceDerived {
+		t.Errorf("Probe B: opening with a typed $500.00 balance left StatementBalanceDerived true")
+	}
+	bal.val = 51234
+	_, err = svc.CompleteReconciliation(ctx, typed.ID, "")
+	t.Logf("Probe B complete typed $500.00 against $512.34 ledger: %v", err)
+	if err == nil {
+		t.Fatalf("Probe B: a month opened with a typed $500.00 statement balance was signed off at $512.34")
+	}
+	if !strings.Contains(err.Error(), "$500.00") || !strings.Contains(err.Error(), "$512.34") {
+		t.Errorf("Probe B: the refusal %q does not name the stated $500.00 and the ledger $512.34", err.Error())
+	}
+}
+
+// P3-3 (S3 PR 607 review): completion must not refuse on a stale non-zero variance stored at the open when the
+// recomputed variance at completion is zero.
+func TestIntegration_ReconVariance_P3_3_StaleStoredVarianceDoesNotRefuseWhenRecomputedVarianceIsZero(t *testing.T) {
+	w := newReachWorld(t)
+	ctx := context.Background()
+	line := w.line(t, "SF2S P33 DEPOSIT", 70000)
+	if code, body := w.post(w.callerAB, w.manualOf(line, "JOURNAL", w.plantJournal(t, "sf2s-p33-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 70000, 0}, {"4950", 0, 70000}}), 70000)); code != http.StatusCreated {
+		t.Fatalf("setup: %d %s", code, body)
+	}
+	y, m := w.monthOf(t, line)
+	// At the open the ledger is 60,000, so the stored variance on the row is 10,000.
+	bal := &movingBalance{val: 60000}
+	svc := NewService(NewRepository(w.pool)).WithJournals(w.journals).WithGLBalances(bal)
+	rec, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m, StatementBalanceCents: 70000})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = w.pool.Exec(context.Background(), `DELETE FROM bank_reconciliations WHERE id = $1::uuid`, rec.ID)
+	})
+	if rec.VarianceCents != 10000 {
+		t.Fatalf("setup: stored variance %d, want 10000", rec.VarianceCents)
+	}
+	// The ledger catches up to 70,000 before sign-off; the recomputed variance is now zero.
+	bal.val = 70000
+	done, err := svc.CompleteReconciliation(ctx, rec.ID, "")
+	t.Logf("P3-3 complete after ledger caught up: %v", err)
+	if err != nil {
+		t.Fatalf("P3-3: completion refused on stale stored variance when recomputed variance was zero: %v", err)
+	}
+	if done.Status != ReconCompleted || done.GLBalanceCents != 70000 || done.VarianceCents != 0 {
+		t.Errorf("P3-3: completed row = %+v, want COMPLETED with GL 70000 and variance 0", done)
+	}
+}
