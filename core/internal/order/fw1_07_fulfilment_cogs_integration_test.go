@@ -110,12 +110,8 @@ func TestFW1_07_FulfilmentRelievesStockAndPostsCOGS(t *testing.T) {
 	orderSvc := NewService(NewRepository(pool)).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
-		WithDepositReleaser(billing.NewInvoiceWriter(pool))
-	if withFulfiller, ok := any(orderSvc).(interface {
-		WithStockFulfiller(*inventory.Service) *Service
-	}); ok {
-		orderSvc = withFulfiller.WithStockFulfiller(invSvc)
-	}
+		WithDepositReleaser(billing.NewInvoiceWriter(pool)).
+		WithStockFulfiller(invSvc)
 
 	billingRepo := billing.NewRepository(pool)
 	glSvc := gl.NewService(gl.NewRepository(pool)).

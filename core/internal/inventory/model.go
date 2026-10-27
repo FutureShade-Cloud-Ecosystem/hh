@@ -137,6 +137,7 @@ type store interface {
 
 	// ledger + read-model maintenance (inside the caller's tx)
 	InsertMove(ctx context.Context, tx pgx.Tx, m moveParams) (string, error)
+	HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error)
 	OnHandQtyBranch(ctx context.Context, tx pgx.Tx, productID, branchID string) (float64, error)
 	UpsertBalanceDelta(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, delta float64) error
 	LockBranchCost(ctx context.Context, tx pgx.Tx, productID, branchID string) error

@@ -107,6 +107,16 @@ type StockReserver interface {
 // WithStockReserver injects the reservation port (main.go wires the *inventory.Service adapter).
 func (s *Service) WithStockReserver(r StockReserver) *Service { s.stock = r; return s }
 
+// StockFulfiller relieves on-hand stock and emits order.fulfilled when an order is fulfilled.
+// *inventory.Service satisfies this interface directly.
+type StockFulfiller interface {
+	FulfilOrderLinesTx(ctx context.Context, tx pgx.Tx, orderID, branchID string, productIDs []string, qtys []float64) error
+	ReleaseBySourceTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID, status string) (int, error)
+}
+
+// WithStockFulfiller injects the order fulfilment stock-relief port (*inventory.Service).
+func (s *Service) WithStockFulfiller(f StockFulfiller) *Service { s.stockFulfiller = f; return s }
+
 // StockSeamWired reports whether the reservation port is bound. main.go asserts it at boot and the
 // surface renders the reservation panel off it, so an unwired deploy says so out loud rather than
 // silently confirming orders that hold nothing.

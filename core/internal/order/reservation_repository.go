@@ -156,6 +156,63 @@ func (r *Repository) ReservableLinesTx(ctx context.Context, tx pgx.Tx, orderID s
 	return out, rows.Err()
 }
 
+// ClaimUnfulfilledLinesTx locks the order's lines, advances fulfilled_base by
+// each line's remaining unfulfilled quantity (qty_base - fulfilled_base - released_base),
+// and returns the stocked (product_id, qty_base) pairs for this order.
+func (r *Repository) ClaimUnfulfilledLinesTx(ctx context.Context, tx pgx.Tx, orderID string) ([]string, []float64, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id::text, COALESCE(product_id::text, ''),
+		       (qty_base - fulfilled_base - released_base)::float8,
+		       (qty_base - released_base)::float8
+		  FROM order_lines
+		 WHERE order_id = $1
+		 ORDER BY line_no
+		   FOR UPDATE`, orderID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("claim unfulfilled lines: %w", err)
+	}
+	type lineClaim struct {
+		lineID    string
+		productID string
+		rem       float64
+		totalOpen float64
+	}
+	var claims []lineClaim
+	for rows.Next() {
+		var c lineClaim
+		if err := rows.Scan(&c.lineID, &c.productID, &c.rem, &c.totalOpen); err != nil {
+			rows.Close()
+			return nil, nil, fmt.Errorf("scan unfulfilled line: %w", err)
+		}
+		claims = append(claims, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	var productIDs []string
+	var qtys []float64
+	for _, c := range claims {
+		if c.rem > 0.00005 {
+			if _, err := tx.Exec(ctx, `
+				UPDATE order_lines
+				   SET fulfilled_base = fulfilled_base + $2,
+				       updated_at = now()
+				 WHERE id = $1`, c.lineID, c.rem); err != nil {
+				return nil, nil, fmt.Errorf("update line fulfilled_base: %w", err)
+			}
+			if c.productID != "" {
+				productIDs = append(productIDs, c.productID)
+				qtys = append(qtys, c.rem)
+			}
+		} else if c.productID != "" && c.totalOpen > 0.00005 {
+			productIDs = append(productIDs, c.productID)
+			qtys = append(qtys, c.totalOpen)
+		}
+	}
+	return productIDs, qtys, nil
+}
+
 // OrderHolds reads this order's ACTIVE stock reservations for the surface.
 //
 // It SELECTs stock_reservations, which is inventory's table, and that is a deliberate, narrow

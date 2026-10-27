@@ -128,6 +128,8 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	inventorySvc.WithGLPoster(invGLPoster{svc: glSvc}).WithRuleResolver(glRuleAdapter{svc: glSvc})
+	glSvc.WithCostBasis(inventorySvc)
+	orderSvc.WithStockFulfiller(inventorySvc)
 	pricingSvc.WithCandidateSource(pricingFloorCandidates{products: productSvc, inventory: inventorySvc})
 	productSvc.WithStock(productStockReader{svc: inventorySvc}).WithBranchStock(inventorySvc).WithListPrices(pricingSvc)
 	// X3, the yard fence: the stock reads' cost legs (on hand, branch

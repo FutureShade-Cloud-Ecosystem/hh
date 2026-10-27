@@ -442,9 +442,15 @@ func (s *Service) TransitionGroup(ctx context.Context, groupID, target string) (
 		orderID := g.OrderID
 		pre = func(ctx context.Context) error { return s.refuseHeldFromPicking(ctx, orderID) }
 	}
+	orderID := g.OrderID
 	g, err = ss.TransitionShipmentGroup(ctx, groupID, target, allowed, pre)
 	if err != nil {
 		return ShipmentGroup{}, err
+	}
+	if target == GroupComplete {
+		if err := s.fulfilOrderOnDelivery(ctx, orderID); err != nil {
+			return ShipmentGroup{}, err
+		}
 	}
 	g.LegalActions = groupLegalActions(g.Status)
 	return g, nil

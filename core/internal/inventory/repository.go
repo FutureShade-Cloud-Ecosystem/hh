@@ -132,6 +132,17 @@ func (r *Repository) InsertMove(ctx context.Context, tx pgx.Tx, m moveParams) (s
 	return id, err
 }
 
+func (r *Repository) HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error) {
+	var exists bool
+	err := r.q(tx).QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM stock_moves
+			 WHERE move_type = 'SHIP'
+			   AND source_ref_id = $1::uuid
+		)`, orderID).Scan(&exists)
+	return exists, err
+}
+
 func (r *Repository) OnHandQtyBranch(ctx context.Context, tx pgx.Tx, productID, branchID string) (float64, error) {
 	var qty float64
 	err := r.q(tx).QueryRow(ctx, `

@@ -138,7 +138,8 @@ type Service struct {
 	// consume on fulfil, release on cancel, every one of them inside the status transaction. nil
 	// until main.go injects it via WithStockReserver, and a nil seam turns the whole reservation lane
 	// OFF (fail-open, loudly: main.go asserts the binding at boot and StockSeamWired reports it).
-	stock StockReserver
+	stock          StockReserver
+	stockFulfiller StockFulfiller
 	// SCOPE:F10 change-order seams (change.go): picks reports whether the tasks substrate has a
 	// started pick for an order (that is what makes a change POST-pick); finance narrows who may sign
 	// a material delta through the DIB-360 approvals substrate. Both nil until main.go injects them.
@@ -331,6 +332,11 @@ func (s *Service) SetStatus(ctx context.Context, tenant, actor, orderID, newStat
 			if err != nil {
 				return err
 			}
+			if newStatus == "FULFILLED" {
+				if err := s.fulfilOrderOnDelivery(ctx, orderID); err != nil {
+					return err
+				}
+			}
 			s.recordStatusChange(ctx, actor, orderID, oldStatus, newStatus, reason)
 			return nil
 		}
@@ -343,6 +349,11 @@ func (s *Service) SetStatus(ctx context.Context, tenant, actor, orderID, newStat
 		// ErrNoTransition (target == current) is benign, surface it so a caller can ignore
 		// it, but emit no history row.
 		return err
+	}
+	if newStatus == "FULFILLED" {
+		if err := s.fulfilOrderOnDelivery(ctx, orderID); err != nil {
+			return err
+		}
 	}
 	s.recordStatusChange(ctx, actor, orderID, oldStatus, newStatus, reason)
 	return nil
@@ -827,6 +838,11 @@ func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatu
 			}
 		}
 		return err // ErrNotFound / ErrIllegalTransition / ErrNoTransition / ErrCancelBlocked / ErrCancelUnverifiable
+	}
+	if newStatus == "FULFILLED" {
+		if err := s.fulfilOrderOnDelivery(ctx, orderID); err != nil {
+			return err
+		}
 	}
 	s.recordStatusChange(ctx, actor, orderID, oldStatus, newStatus, reason)
 	return nil

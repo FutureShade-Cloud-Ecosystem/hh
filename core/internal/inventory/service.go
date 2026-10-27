@@ -224,35 +224,87 @@ func (s *Service) receive(ctx context.Context, in ReceiveRequest) (ReceiptResult
 // - POS stock decrement (DX-01 boundary) -
 
 // decrementForSale writes SHIP moves for a COLLECT_NOW sale (stock drops, may go negative by design).
-// DELIVERED / COLLECT_LATER record ZERO moves and surface on pending-fulfilment, the PARTIAL closure.
+// DELIVERED / COLLECT_LATER record ZERO moves at ring time and relieve stock at fulfilment via FulfilOrderLinesTx.
 func (s *Service) decrementForSale(ctx context.Context, tx pgx.Tx, in DecrementInput) error {
 	if in.SaleType != SaleCollectNow {
-		return nil // boundary: deferred fulfilment books no move at W6
+		return nil // boundary: deferred fulfilment relieves stock at fulfilment
 	}
 	for _, ln := range in.Lines {
 		if ln.QtyBase <= 0 {
 			continue
 		}
-		avg, _, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, in.BranchID)
-		if err != nil {
-			return err
-		}
-		value, err := qtyTimesCents(ln.QtyBase, avg)
-		if err != nil {
-			return err
-		}
-		if _, err := s.db().InsertMove(ctx, tx, moveParams{
-			ProductID: ln.ProductID, BranchID: in.BranchID, FromLocation: in.BranchID,
-			MoveType: MoveShip, QtyBase: ln.QtyBase, UnitCostCents: avg, ValueCents: value,
-			SourceType: "pos_sale", SourceRefID: in.OrderID, Reason: "POS COLLECT_NOW sale",
-		}); err != nil {
-			return err
-		}
-		if err := s.db().UpsertBalanceDelta(ctx, tx, ln.ProductID, in.BranchID, in.BranchID, -ln.QtyBase); err != nil {
+		if err := s.decrementOneShipLine(ctx, tx, in.OrderID, in.BranchID, "pos_sale", "POS COLLECT_NOW sale", ln); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, branchID, sourceType, reason string, ln SaleLine) error {
+	avg, _, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, branchID)
+	if err != nil {
+		return err
+	}
+	value, err := qtyTimesCents(ln.QtyBase, avg)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db().InsertMove(ctx, tx, moveParams{
+		ProductID: ln.ProductID, BranchID: branchID, FromLocation: branchID,
+		MoveType: MoveShip, QtyBase: ln.QtyBase, UnitCostCents: avg, ValueCents: value,
+		SourceType: sourceType, SourceRefID: orderID, Reason: reason,
+	}); err != nil {
+		return err
+	}
+	return s.db().UpsertBalanceDelta(ctx, tx, ln.ProductID, branchID, branchID, -ln.QtyBase)
+}
+
+// FulfilOrderLinesTx relieves on-hand stock for fulfilled order lines and emits
+// order.fulfilled to events_outbox in the same transaction. If the order was
+// already relieved (either at POS ring time for a COLLECT_NOW sale or by an
+// earlier fulfilment call), HasShipMovesForOrderTx returns true and this is a
+// no-op so stock and COGS are never double-posted.
+func (s *Service) FulfilOrderLinesTx(ctx context.Context, tx pgx.Tx, orderID, branchID string, productIDs []string, qtys []float64) error {
+	if orderID == "" || branchID == "" || len(productIDs) == 0 || len(productIDs) != len(qtys) {
+		return nil
+	}
+	alreadyShipped, err := s.db().HasShipMovesForOrderTx(ctx, tx, orderID)
+	if err != nil {
+		return fmt.Errorf("inventory: check order ship moves: %w", err)
+	}
+	if alreadyShipped {
+		return nil
+	}
+	type outboxLine struct {
+		ProductID string  `json:"product_id"`
+		QtyBase   float64 `json:"qty_base"`
+	}
+	outLines := make([]outboxLine, 0, len(productIDs))
+	for i := range productIDs {
+		pid := productIDs[i]
+		qty := qtys[i]
+		if pid == "" || qty <= 0 {
+			continue
+		}
+		if err := s.decrementOneShipLine(ctx, tx, orderID, branchID, "order", "order_fulfilled", SaleLine{
+			ProductID: pid,
+			QtyBase:   qty,
+		}); err != nil {
+			return err
+		}
+		outLines = append(outLines, outboxLine{
+			ProductID: pid,
+			QtyBase:   qty,
+		})
+	}
+	if len(outLines) == 0 {
+		return nil
+	}
+	return s.db().EmitEvent(ctx, tx, "order.fulfilled", map[string]any{
+		"order_id":  orderID,
+		"branch_id": branchID,
+		"lines":     outLines,
+	})
 }
 
 // LockStockTx takes the branch's balance rows of these products, sorted, before a move over several

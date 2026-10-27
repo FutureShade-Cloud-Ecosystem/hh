@@ -81,6 +81,14 @@ func (f *fakeStore) InsertMove(_ context.Context, _ pgx.Tx, m moveParams) (strin
 	f.moves = append(f.moves, m)
 	return "move-" + itoa(len(f.moves)), nil
 }
+func (f *fakeStore) HasShipMovesForOrderTx(_ context.Context, _ pgx.Tx, orderID string) (bool, error) {
+	for _, m := range f.moves {
+		if m.MoveType == MoveShip && m.SourceRefID == orderID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 func (f *fakeStore) OnHandQtyBranch(_ context.Context, _ pgx.Tx, productID, branchID string) (float64, error) {
 	return f.onhand[key(productID, branchID)], nil
 }

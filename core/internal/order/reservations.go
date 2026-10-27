@@ -117,6 +117,9 @@ type reservationStore interface {
 	// ReservableLinesTx reads the (product, qty_base) projection of an order's lines on the caller's
 	// transaction, so a confirm reserves exactly the lines it is confirming.
 	ReservableLinesTx(ctx context.Context, tx pgx.Tx, orderID string) ([]reservableLine, error)
+	// ClaimUnfulfilledLinesTx locks the order's lines, advances fulfilled_base by each line's remaining
+	// unfulfilled quantity, and returns the stocked (product_id, qty_base) pairs for this order.
+	ClaimUnfulfilledLinesTx(ctx context.Context, tx pgx.Tx, orderID string) ([]string, []float64, error)
 	// LockOrderTx runs fn inside a transaction holding the order row's write lock, WITHOUT changing
 	// the status. It is the seam for the two writes that touch holds but are not transitions: the
 	// operator resync and the change-order apply. Separate from UpdateStatusFromTx rather than
@@ -167,12 +170,58 @@ func (s *Service) applyReservationsTx(effect reservationEffect, orderID, actor s
 			_, err = s.reserveOrderLinesTx(ctx, tx, orderID, branchID, actor, lines)
 			return err
 		case effectConsume, effectRelease:
-			_, err := s.stock.ReleaseBySourceTx(ctx, tx, ResSourceOrder, orderID, terminalStatusFor(effect))
-			return err
+			if _, err := s.stock.ReleaseBySourceTx(ctx, tx, ResSourceOrder, orderID, terminalStatusFor(effect)); err != nil {
+				return err
+			}
+			if effect == effectConsume && s.stockFulfiller != nil {
+				return s.fulfilOrderLinesInTx(ctx, tx, orderID, branchID)
+			}
+			return nil
 		default:
 			return nil
 		}
 	}
+}
+
+// fulfilOrderLinesInTx claims unfulfilled order lines, releases any active order
+// reservations as CONSUMED, relieves stock, and emits order.fulfilled inside tx.
+func (s *Service) fulfilOrderLinesInTx(ctx context.Context, tx pgx.Tx, orderID, branchID string) error {
+	if s.stock != nil {
+		if _, err := s.stock.ReleaseBySourceTx(ctx, tx, ResSourceOrder, orderID, ResConsumed); err != nil {
+			return err
+		}
+	} else if s.stockFulfiller != nil {
+		if _, err := s.stockFulfiller.ReleaseBySourceTx(ctx, tx, ResSourceOrder, orderID, ResConsumed); err != nil {
+			return err
+		}
+	}
+	if s.stockFulfiller == nil {
+		return nil
+	}
+	rs, ok := s.store.(reservationStore)
+	if !ok {
+		return nil
+	}
+	productIDs, qtys, err := rs.ClaimUnfulfilledLinesTx(ctx, tx, orderID)
+	if err != nil {
+		return err
+	}
+	return s.stockFulfiller.FulfilOrderLinesTx(ctx, tx, orderID, branchID, productIDs, qtys)
+}
+
+// fulfilOrderOnDelivery runs fulfilOrderLinesInTx under the order row lock when
+// stockFulfiller (or stock reserver) is wired.
+func (s *Service) fulfilOrderOnDelivery(ctx context.Context, orderID string) error {
+	if s.stockFulfiller == nil && s.stock == nil {
+		return nil
+	}
+	rs, ok := s.store.(reservationStore)
+	if !ok {
+		return nil
+	}
+	return rs.LockOrderTx(ctx, orderID, func(ctx context.Context, tx pgx.Tx, _, branchID string) error {
+		return s.fulfilOrderLinesInTx(ctx, tx, orderID, branchID)
+	})
 }
 
 // reservationLaneLines reads the reservable projection on the transaction.

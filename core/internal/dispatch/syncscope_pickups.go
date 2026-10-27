@@ -64,11 +64,20 @@ type TenantOrderReader interface {
 
 // PickupsSyncStore is the pickups Store over will_call_pickups.
 type PickupsSyncStore struct {
-	pool     *pgxpool.Pool
-	orders   TenantOrderReader
-	sig      SignatureCapturer
-	pickHold PickHoldGate
-	link     pickupsLinker
+	pool           *pgxpool.Pool
+	orders         TenantOrderReader
+	sig            SignatureCapturer
+	pickHold       PickHoldGate
+	link           pickupsLinker
+	orderFulfiller OrderFulfiller
+}
+
+// WithOrderFulfiller binds the order fulfilment hook so an offline pickup
+// confirmation advances the order, relieves stock, and posts COGS identically
+// to the online ConfirmByToken path.
+func (s *PickupsSyncStore) WithOrderFulfiller(f OrderFulfiller) *PickupsSyncStore {
+	s.orderFulfiller = f
+	return s
 }
 
 // NewPickupsSyncStore wires the adapter: the tenant order seam, the
@@ -461,6 +470,9 @@ func (s *PickupsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, ke
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return sync.RowState{}, fmt.Errorf("dispatch: commit pickups write: %w", err)
+	}
+	if s.orderFulfiller != nil && r.pickup.OrderID != "" {
+		_ = s.orderFulfiller.AdvanceFromDelivery(ctx, r.pickup.OrderID, "willcall:"+id)
 	}
 	return pickupRowStateOf(r)
 }
