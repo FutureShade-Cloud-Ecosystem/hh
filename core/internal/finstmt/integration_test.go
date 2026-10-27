@@ -207,6 +207,17 @@ func TestIntegration_AC2_BalanceSheetInvariant(t *testing.T) {
 	const yr = 2102
 	resetYear(t, pool, yr)
 
+	// 0439: the balance sheet carries history forward, so the year's totals stand on every year behind
+	// it, the seeded books included. The baseline is read BEFORE the fixture, and the proof is the
+	// DELTA the fixture's own movements make, on a database whose carried history may hold a seeded
+	// year nobody closed (its net income sits in its own P&L, so the absolute report need not
+	// balance; the fixture's movements must, and do).
+	base, err := svc.BalanceSheetReportFor(ctx, yr, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseLiab := func(code string) int64 { return amount(base.Liabilities, code) }
+
 	// A balanced set of POSTED journals touching assets, three loan/lease liabilities, equity, rev, exp.
 	seedJournal(t, pool, yr, 1, 1, "POSTED", trenton, []jline{{code: "1000", debit: 1_000_000}, {code: "3000", credit: 1_000_000}})
 	seedJournal(t, pool, yr, 1, 2, "POSTED", trenton, []jline{{code: "1000", debit: 200_000}, {code: "2500", credit: 200_000}})
@@ -219,16 +230,20 @@ func TestIntegration_AC2_BalanceSheetInvariant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !rep.Balanced {
-		t.Fatalf("not balanced: A=%d L=%d E=%d NI=%d",
-			rep.TotalAssetsCents, rep.TotalLiabilitiesCents, rep.TotalEquityCents, rep.NetIncomeCents)
+	dA := rep.TotalAssetsCents - base.TotalAssetsCents
+	dL := rep.TotalLiabilitiesCents - base.TotalLiabilitiesCents
+	dE := rep.TotalEquityCents - base.TotalEquityCents
+	dNI := rep.NetIncomeCents - base.NetIncomeCents
+	if dA != dL+dE+dNI {
+		t.Fatalf("not balanced over the fixture: dA=%d dL=%d dE=%d dNI=%d", dA, dL, dE, dNI)
 	}
-	if rep.TotalAssetsCents != 1_650_000 || rep.TotalLiabilitiesCents != 450_000 ||
-		rep.TotalEquityCents != 1_000_000 || rep.NetIncomeCents != 200_000 {
-		t.Fatalf("unexpected totals: %+v", rep)
+	if dA != 1_650_000 || dL != 450_000 || dE != 1_000_000 || dNI != 200_000 {
+		t.Fatalf("unexpected deltas over the baseline: base=%+v rep=%+v", base, rep)
 	}
 	// the loan/lease liabilities must be present and carry their balances
-	if amount(rep.Liabilities, "2500") != 200_000 || amount(rep.Liabilities, "2510") != 150_000 || amount(rep.Liabilities, "2520") != 100_000 {
+	if amount(rep.Liabilities, "2500")-baseLiab("2500") != 200_000 ||
+		amount(rep.Liabilities, "2510")-baseLiab("2510") != 150_000 ||
+		amount(rep.Liabilities, "2520")-baseLiab("2520") != 100_000 {
 		t.Fatalf("loan/lease liabilities wrong: %+v", rep.Liabilities)
 	}
 }

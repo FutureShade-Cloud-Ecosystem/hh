@@ -259,6 +259,10 @@ func (f *fakeStore) OpenNextFiscalYear(_ context.Context, _ time.Time, _ func(ct
 	return 2027, nil
 }
 
+func (f *fakeStore) HouseYearEnded(_ context.Context, _ int, _ time.Time) (bool, error) {
+	return true, nil
+}
+
 func (f *fakeStore) ListPeriods(_ context.Context) ([]Period, error) { return nil, nil }
 func (f *fakeStore) GetPeriod(_ context.Context, _ string) (Period, error) {
 	return Period{}, errNotFound

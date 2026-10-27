@@ -1011,6 +1011,24 @@ func (r *Repository) EnsureNextFiscalYear(ctx context.Context, now time.Time) (i
 	return target, nil
 }
 
+// HouseYearEnded answers whether the year's last day has passed in the dealer's zone: the first
+// instant of the next year, read in the zone the dealer's own midnight closes its months by.
+func (r *Repository) HouseYearEnded(ctx context.Context, year int, now time.Time) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("gl: begin house year read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	zone, err := r.journalZone(ctx, tx)
+	if err != nil {
+		return false, err
+	}
+	return !now.Before(time.Date(year+1, time.January, 1, 0, 0, 0, 0, zone.Location())), nil
+}
+
 // OpenNextFiscalYear is the Controller's early open: at most one year beyond the roll forward's
 // target (house year + 2), a repeat a no op, and the record callback runs INSIDE the year's
 // transaction so the audit row commits or rolls back with the year it opens (round 2, S2 P2-4).

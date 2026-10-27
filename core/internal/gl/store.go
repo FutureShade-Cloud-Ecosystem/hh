@@ -59,6 +59,9 @@ type glStore interface {
 	// at start on every box; the posting path covers the boundary itself; the Controller's early open
 	// is OpenNextFiscalYear below, at most one year beyond.
 	EnsureNextFiscalYear(ctx context.Context, now time.Time) (int, error)
+	// HouseYearEnded answers whether the year's last day has passed in the dealer's zone: the year end
+	// close is refused until it has (FW1-09b, the lead's Ask 2).
+	HouseYearEnded(ctx context.Context, year int, now time.Time) (bool, error)
 	// OpenNextFiscalYear is the Controller's early open: at most one year beyond the roll forward's
 	// target, the record callback run INSIDE the year's transaction so the audit row commits or rolls
 	// back with the year it opens (round 2, S2 P2-4).

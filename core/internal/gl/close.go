@@ -235,6 +235,15 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	// year start is stored policy no period math follows, the FW1-01 report's finding). The group
 	// with no branch stamp closes consolidated exactly as before, so a book with no branch stamps
 	// still gets the one closing journal it always did.
+	// FW1-09b, the lead's Ask 2: the close is refused until the year's last day has passed in the
+	// dealer's zone (a mid year press sealed the months still ahead and stopped all posting).
+	ended, err := s.store.HouseYearEnded(ctx, year, s.now())
+	if err != nil {
+		return YearCloseResult{}, err
+	}
+	if !ended {
+		return YearCloseResult{}, clientErr(409, "gl: fiscal year %d has not ended; the year end close is refused until the year's last day has passed in the dealer's zone", year)
+	}
 	pls, err := s.store.PLBalancesByBranch(ctx, year)
 	if err != nil {
 		return YearCloseResult{}, err

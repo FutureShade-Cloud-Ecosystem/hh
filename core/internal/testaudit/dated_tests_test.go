@@ -113,6 +113,8 @@ var allowlisted = map[string]exemption{
 		"fiscal year 2099 sentinel period; time.Now().UnixNano() only mints the idempotency key. The assertions are about the source_ref_id filter gate, not about any date."},
 	"internal/gl/fw1_01_integration_test.go": {[]string{"time.Now()"},
 		"fiscal years 2081 to 2096 and the roll forward leg's MAX(year)+1 are far-future sentinel bands the package's other files use; every date asserted is the test's own pinned service clock, never the real one. time.Now().UnixNano() only mints unique customer/order/invoice row tags, and the planted documents' due date is the planted document date, not CURRENT_DATE."},
+	"internal/gl/fw1_09b_integration_test.go": {[]string{"time.Now()"},
+		"fiscal years 2081 to 2096 are far-future sentinel bands, the package's pattern; every date asserted or closed is the test's own pinned service clock, and the year end refusal reads the pinned clock against a fixed year boundary. time.Now().UnixNano() only mints unique P&L seed journal keys, never a date."},
 	"internal/gl/list_journals_source_ref_integration_test.go": {[]string{"time.Now()"},
 		"fiscal year 2097 sentinel period; time.Now().UnixNano() only mints unique idempotency keys. The assertions are about source_ref_id filtering, not about any date."},
 	"internal/order/cursor_test.go": {[]string{"time.Now()"},
