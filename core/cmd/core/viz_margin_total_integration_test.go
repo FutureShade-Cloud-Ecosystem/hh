@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -130,9 +131,83 @@ func TestIntegration_VizMarginTotal_IsTheWeightedRatio(t *testing.T) {
 	if tt.Total == nil {
 		t.Fatalf("the margin tile carries no total at all: %+v", tt)
 	}
-	// The weighted ratio: 25000 margin cents on 110000 sales cents, x10000, floor -> 2272.
-	// The sum (7000) and the mean (3500) are both wrong and both different.
-	if *tt.Total != 2272 {
-		t.Fatalf("the all branches gross margin is the weighted ratio 2272 bps, got %d (points %+v)", *tt.Total, tt.Points)
+	// The weighted ratio: 25000 margin cents on 110000 sales cents, x10000 -> 2272.727, rounded
+	// to 2273 by the same float division the per branch arms run. The sum (7000) and the mean
+	// (3500) are both wrong and both different.
+	want := int64(math.Round(25000 * 10000.0 / 110000))
+	if *tt.Total != want {
+		t.Fatalf("the all branches gross margin is the weighted ratio %d bps, got %d (points %+v)", want, *tt.Total, tt.Points)
+	}
+	if *tt.Total == 7000 || *tt.Total == 3500 {
+		t.Fatalf("the total must never be the sum or the mean of the branch rates: %d", *tt.Total)
+	}
+}
+
+// TestIntegration_VizARAgingBranch_IsPastDue pins the receivables card's branch rows: the ar.aging
+// branch arm is PAST DUE per branch, the same cut the bucket arm's non-Current bands make, so the
+// rows tie with the card's own headline arithmetic (every bucket but Current).
+func TestIntegration_VizARAgingBranch_IsPastDue(t *testing.T) {
+	ctx := context.Background()
+	pool := vizIntPool(t)
+
+	big, small := "b5e10000-0000-4000-8000-0000000000b1", "b5e10000-0000-4000-8000-0000000000b2"
+	for i, b := range []struct{ id, code string }{{big, "R5C"}, {small, "R5D"}} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO locations (id, branch_id, parent_id, loc_type, code, name)
+			 VALUES ($1::uuid, $1::uuid, NULL, 'BRANCH', $2, $3)`,
+			b.id, b.code, fmt.Sprintf("Round 5 aging branch %d", i+1)); err != nil {
+			t.Fatalf("seed branch %s: %v", b.code, err)
+		}
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM locations WHERE id IN ($1::uuid, $2::uuid)`, big, small)
+	})
+	var customer string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM customers ORDER BY id LIMIT 1`).Scan(&customer); err != nil {
+		t.Fatalf("pick a seeded customer: %v", err)
+	}
+	stamp := time.Now().UnixNano()
+	seed := func(branch, due string, cents int64) string {
+		t.Helper()
+		var inv string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+			                       subtotal_cents, tax_cents, total_cents, balance_cents, source_kind)
+			 VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE, $4::date, $5, 0, $5, $5, 'ORDER')
+			 RETURNING id::text`,
+			fmt.Sprintf("R5AG-%d-%s", stamp, branch), customer, branch, due, cents).Scan(&inv); err != nil {
+			t.Fatalf("seed invoice %s: %v", due, err)
+		}
+		return inv
+	}
+	a := seed(big, "2020-01-01", 30000)  // long past due
+	b := seed(small, "2099-01-01", 40000) // current, excluded
+	t.Cleanup(func() {
+		c := context.Background()
+		for _, inv := range []string{a, b} {
+			_, _ = pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id = $1::uuid`, inv)
+			_, _ = pool.Exec(c, `DELETE FROM invoices WHERE id = $1::uuid`, inv)
+		}
+	})
+
+	svc := dashboard.NewService(dashboard.NewRepository(pool), nil)
+	if err := svc.RegisterSeries(dashboard.MetricARBalance, vizARAging(pool)); err != nil {
+		t.Fatalf("register the aging series: %v", err)
+	}
+	tiles := svc.ResolveViz(ctx, dashboard.Scope{BranchIDs: []string{big, small}},
+		[]string{"viz.ar.aging-branch-split"})
+	if len(tiles) != 1 || tiles[0].State != dashboard.StateOK {
+		t.Fatalf("the aging branch tile did not measure: %+v", tiles)
+	}
+	got := map[string]int64{}
+	for _, p := range tiles[0].Points {
+		got[p.Label] = p.Number
+	}
+	if got["R5C"] != 30000 {
+		t.Fatalf("branch R5C past due is 30000, got %+v", got)
+	}
+	if v, ok := got["R5D"]; ok && v != 0 {
+		t.Fatalf("branch R5D holds only a current invoice and must show 0 past due, got %d", v)
 	}
 }
