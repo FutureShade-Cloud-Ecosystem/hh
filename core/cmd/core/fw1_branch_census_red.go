@@ -2,7 +2,9 @@ package main
 
 // fw1_branch_census_red.go records the gl_journal_lines writers that still
 // leave branch_id NULL on main, together with the wave 1 item that owns
-// stamping each path (FW1-05 for bankrec paths, FW1-08b for the others).
+// stamping each path (FW1-05 for the bankrec paths; FW1-08b's own paths, the
+// Go writers and the 0056/0221 setup entries, are stamped and gone from the
+// map).
 //
 // Each owner item deletes its own entries from fw1BranchCensusRed in the PR
 // that stamps those writers. TestFW1JournalLinesCarryBranch runs every writer
@@ -39,20 +41,15 @@ var fw1BranchCensusWriters = []string{
 	"external_credit_memo_poster",
 	"external_post_external_tx",
 	"year_end_close",
+	"parked_credit_memo_journal",
 }
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
-// item ("FW1-05" for bankrec paths, "FW1-08b" for the others).
+// item (the three bankrec paths left are FW1-05's).
 var fw1BranchCensusRed = map[string]string{
-	"bankrec_manual_match_payment":      "FW1-05",
-	"bankrec_manual_match_lodgement":    "FW1-05",
-	"bankrec_unmatch_reversal":          "FW1-05",
-	"migration_0056_0221_setup_entries": "FW1-08b",
-	"manual_journal_without_branch":     "FW1-08b",
-	"reverse_journal_without_branch":    "FW1-08b",
-	"recurring_journal_run":             "FW1-08b",
-	"outbox_tax_relief_assessed":        "FW1-08b",
-	"year_end_close":                    "FW1-08b",
+	"bankrec_manual_match_payment":   "FW1-05",
+	"bankrec_manual_match_lodgement": "FW1-05",
+	"bankrec_unmatch_reversal":       "FW1-05",
 }
 
 // fw1NonGLWriterSite identifies a non-GL journal writer call site or outbox
@@ -79,6 +76,12 @@ const fw1OutboxReadKind = "read:events_outbox"
 // carries a branch, and every dynamic-topic outbox helper outside
 // core/internal/gl. Guarded by TestFW1NonGLJournalWriterCallSitesComplete.
 var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
+	{
+		File:         "core/cmd/core/credit_memo_wire.go",
+		Func:         "(creditMemoParkerAdapter).ParkCreditMemo",
+		Kind:         "ParkExternalJournalTx",
+		BranchSource: "journal.BranchID from billing's parked credit memo journal, the branch the credit was filed at",
+	},
 	{
 		File:         "core/cmd/core/order_events.go",
 		Func:         "(orderChangeEvents).EnqueueTx",
@@ -275,19 +278,19 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		File:         "core/internal/pos/returns.go",
 		Func:         "(*Service).commitReturnTx",
 		Kind:         "emit:order.returned",
-		BranchSource: "oc.BranchID from original order (orders.branch_id, NOT NULL) in order.returned outbox payload today; changes in FW1-08b (FROM-PRINCIPAL 137: return posts to pos_returns.branch_id where rung)",
+		BranchSource: "retRow.BranchID from pos_returns.branch_id (branch where return is rung, FROM-PRINCIPAL 137) in order.returned outbox payload",
 	},
 	{
 		File:         "core/internal/pos/returns.go",
 		Func:         "(*Service).commitReturnTx",
 		Kind:         "emit:pos.return.written_off",
-		BranchSource: "oc.BranchID from original order (orders.branch_id, NOT NULL) in pos.return.written_off outbox payload today; changes in FW1-08b (FROM-PRINCIPAL 137: return posts to pos_returns.branch_id where rung)",
+		BranchSource: "retRow.BranchID from pos_returns.branch_id (branch where return is rung, FROM-PRINCIPAL 137) in pos.return.written_off outbox payload",
 	},
 	{
 		File:         "core/internal/pos/returns.go",
 		Func:         "(*Service).commitReturnTx",
 		Kind:         "emit:pos.return.committed",
-		BranchSource: "oc.BranchID from original order (orders.branch_id, NOT NULL) in pos.return.committed outbox payload today; changes in FW1-08b (FROM-PRINCIPAL 137: return posts to pos_returns.branch_id where rung)",
+		BranchSource: "retRow.BranchID from pos_returns.branch_id (branch where return is rung, FROM-PRINCIPAL 137) in pos.return.committed outbox payload",
 	},
 	{
 		File:         "core/internal/pos/service.go",
@@ -299,7 +302,7 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		File:         "core/internal/pos/service.go",
 		Func:         "(*Service).saleInTx",
 		Kind:         "emit:tax.relief.assessed",
-		BranchSource: "no branch in payload today (pos/service.go:1446 emits order_id, reason_code, automated only; buildTaxRelief in gl/posting.go:248-297 sets no BranchID; RED, owned by FW1-08b)",
+		BranchSource: "in.BranchID (sale input branch, also written to orders.branch_id in the same tx) in tax.relief.assessed outbox payload (FW1-08b)",
 	},
 	{
 		File:         "core/internal/purchasing/service.go",
