@@ -432,6 +432,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithARSubledger(billingRepo).
 		WithTaxSplitReader(posRepo).
 		WithPaymentReader(ops.tillRepo).
+		WithDeliveryReader(orderRepo).
 		WithStockReader(glStockValueAdapter{svc: spine.inventorySvc}).
 		WithDrawerReader(tillDrawerAdapter{repo: ops.tillRepo}).
 		WithQueueReader(spine.outboxStore)

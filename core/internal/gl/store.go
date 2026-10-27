@@ -54,10 +54,18 @@ type glStore interface {
 	ClosePeriod(ctx context.Context, id, actorID, reason string) (Period, error)
 	ReopenPeriod(ctx context.Context, id, actorID, reason string) (Period, error)
 	ClosePeriodsForYear(ctx context.Context, year int, actorID, reason string) error
-	// EnsureNextFiscalYear idempotently creates the fiscal year after the latest that exists and answers
-	// the year it made sure of (FW1-01's roll forward: the worker calls it at start on every box, the
-	// posting path covers the boundary itself, and the Controller action opens a year early).
-	EnsureNextFiscalYear(ctx context.Context) (int, error)
+	// EnsureNextFiscalYear idempotently makes sure the year AFTER THE CURRENT HOUSE YEAR exists (round 2,
+	// S2 P2-1: a repeat is a no op, the roll forward never creeps) and answers it. The worker calls it
+	// at start on every box; the posting path covers the boundary itself; the Controller's early open
+	// is OpenNextFiscalYear below, at most one year beyond.
+	EnsureNextFiscalYear(ctx context.Context, now time.Time) (int, error)
+	// HouseYearEnded answers whether the year's last day has passed in the dealer's zone: the year end
+	// close is refused until it has (FW1-09b, the lead's Ask 2).
+	HouseYearEnded(ctx context.Context, year int, now time.Time) (bool, error)
+	// OpenNextFiscalYear is the Controller's early open: at most one year beyond the roll forward's
+	// target, the record callback run INSIDE the year's transaction so the audit row commits or rolls
+	// back with the year it opens (round 2, S2 P2-4).
+	OpenNextFiscalYear(ctx context.Context, now time.Time, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error)
 
 	// - balances (0034 views) -
 	AccountBalance(ctx context.Context, code string, year, month int, branchID string) (netDebit int64, normalBalance string, err error)

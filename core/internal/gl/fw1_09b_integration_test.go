@@ -288,7 +288,9 @@ func TestIntegration_FW1_09b_YearEndClosesEachBranchsResults(t *testing.T) {
 	sell(branchA, 10000, 1)
 	sell(branchB, 5000, 2)
 
-	res, err := svc.CloseYear(ctx, 2082, "FW1-09b branch close")
+	// The close runs after 2082 has ended (the FW1-09b year end refusal).
+	closer := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2083, 1, 5, 12, 0, 0, 0, time.UTC))
+	res, err := closer.CloseYear(ctx, 2082, "FW1-09b branch close")
 	if err != nil {
 		t.Fatalf("close year 2082: %v", err)
 	}
@@ -317,5 +319,132 @@ func TestIntegration_FW1_09b_YearEndClosesEachBranchsResults(t *testing.T) {
 	}
 	if len(res.ClosingJournalIDs) != len(closings) {
 		t.Fatalf("the result names %d closing journals, want %d", len(res.ClosingJournalIDs), len(closings))
+	}
+}
+
+// fw1SeedPnL posts one revenue and one expense so a year has a P&L to close
+// (100000 revenue, 40000 expense, net income 60000, unbranched like AC13).
+func fw1SeedPnL(t *testing.T, pool *pgxpool.Pool, year int) {
+	t.Helper()
+	ctx := context.Background()
+	at := time.Date(year, 6, 15, 12, 0, 0, 0, time.UTC)
+	svc := svcAt(pool, identity.StaffContext{UserID: aUser(t, pool), RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at)
+	if _, err := svc.PostExternal(ctx, ExternalJournal{
+		Source: SourceAdjustment, IdempotencyKey: fmt.Sprintf("pnl-rev-%d-%d", year, time.Now().UnixNano()),
+		Lines: []ExternalLine{{AccountCode: "1000", DebitCents: 100000}, {AccountCode: "4000", CreditCents: 100000}},
+	}); err != nil {
+		t.Fatalf("post revenue: %v", err)
+	}
+	if _, err := svc.PostExternal(ctx, ExternalJournal{
+		Source: SourceAdjustment, IdempotencyKey: fmt.Sprintf("pnl-exp-%d-%d", year, time.Now().UnixNano()),
+		Lines: []ExternalLine{{AccountCode: "6100", DebitCents: 40000}, {AccountCode: "1000", CreditCents: 40000}},
+	}); err != nil {
+		t.Fatalf("post expense: %v", err)
+	}
+}
+
+// TestIntegration_FW1_09b_YearEndRefusedBeforeTheYearEnds is the lead's Ask 2
+// red: the year end close pressed mid year (the clock stands in June of the
+// year being closed) succeeds today, sealing the months still ahead and
+// stopping all posting. After the fix it is refused in plain words until the
+// year's last day has passed in the dealer's zone; from the next year on it
+// closes.
+func TestIntegration_FW1_09b_YearEndRefusedBeforeTheYearEnds(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	user := aUser(t, pool)
+	ensurePeriods(t, pool, 2092)
+	fw1SeedPnL(t, pool, 2092)
+	mid := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2092, 6, 20, 12, 0, 0, 0, time.UTC))
+	if _, err := mid.CloseYear(ctx, 2092, "FW1-09b mid year press"); err == nil {
+		t.Fatalf("the year end close ran mid year; it must be refused until the year has ended")
+	} else if got := err.Error(); !strings.Contains(got, "has not ended") {
+		t.Fatalf("the refusal = %q, want plain words naming the year not ended", got)
+	}
+	// The books are untouched: the periods stand, the P&L is unclosed.
+	var open int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year=2092 AND status='OPEN'`).Scan(&open); err != nil {
+		t.Fatal(err)
+	}
+	if open != 12 {
+		t.Fatalf("%d periods of 2092 stand OPEN after the refusal, want 12", open)
+	}
+
+	// From the year's end on, the close runs: the clock stands in 2093.
+	after := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2093, 1, 5, 12, 0, 0, 0, time.UTC))
+	res, err := after.CloseYear(ctx, 2092, "FW1-09b after the year's end")
+	if err != nil {
+		t.Fatalf("the close after the year's end: %v", err)
+	}
+	if res.NetIncomeCents != 60000 || !res.PeriodsClosed {
+		t.Fatalf("the close after the year's end = %+v, want the 60000 net income and the periods sealed", res)
+	}
+}
+
+// TestIntegration_FW1_09b_TheStatementsSurviveTheClose is migration 0439's red
+// (the lead's answer to Ask 1): after the year end close the closed year's
+// income statement still reads its true figures (today the CLOSING journals'
+// reversing legs sit inside the P&L and read it to zero), and the balance
+// sheet carries forward (today the views are per year movement, so a second
+// year starts every account at nothing).
+func TestIntegration_FW1_09b_TheStatementsSurviveTheClose(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	user := aUser(t, pool)
+	ensurePeriods(t, pool, 2092)
+	fw1SeedPnL(t, pool, 2092)
+	closer := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2093, 1, 5, 12, 0, 0, 0, time.UTC))
+	if _, err := closer.CloseYear(ctx, 2092, "FW1-09b statements proof"); err != nil {
+		t.Fatalf("the close: %v", err)
+	}
+
+	is := func(year int) map[string]int64 {
+		t.Helper()
+		rows, err := pool.Query(ctx, `SELECT account_code, COALESCE(SUM(amount_cents),0) FROM v_income_statement WHERE fiscal_year=$1 GROUP BY account_code`, year)
+		if err != nil {
+			t.Fatalf("read the income statement: %v", err)
+		}
+		defer rows.Close()
+		out := map[string]int64{}
+		for rows.Next() {
+			var code string
+			var amt int64
+			if err := rows.Scan(&code, &amt); err != nil {
+				t.Fatal(err)
+			}
+			out[code] = amt
+		}
+		return out
+	}
+	survived := is(2092)
+	if survived["4000"] != 100000 || survived["6100"] != 40000 {
+		t.Fatalf("the closed year's income statement reads %v, want revenue 4000 at 100000 and expense 6100 at 40000 (the closing entry stays out of the P&L)", survived)
+	}
+
+	ensurePeriods(t, pool, 2093)
+	bs := func(year int) map[string]int64 {
+		t.Helper()
+		rows, err := pool.Query(ctx, `SELECT account_code, COALESCE(SUM(amount_cents),0) FROM v_balance_sheet WHERE fiscal_year=$1 GROUP BY account_code`, year)
+		if err != nil {
+			t.Fatalf("read the balance sheet: %v", err)
+		}
+		defer rows.Close()
+		out := map[string]int64{}
+		for rows.Next() {
+			var code string
+			var amt int64
+			if err := rows.Scan(&code, &amt); err != nil {
+				t.Fatal(err)
+			}
+			out[code] = amt
+		}
+		return out
+	}
+	carried := bs(2093)
+	if carried["1000"] != 60000 {
+		t.Fatalf("the second year's balance sheet reads %v, want 1000 at 60000 carried forward (5000 of it never existed: the year's own 60000 cash)", carried)
+	}
+	if carried["3900"] != 60000 {
+		t.Fatalf("retained earnings reads %v at 2093, want the 60000 the close carried into equity", carried)
 	}
 }

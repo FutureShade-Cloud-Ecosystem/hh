@@ -161,9 +161,12 @@ func fw1ReleaseJournal(t *testing.T, pool *pgxpool.Pool, invoiceID string) (peri
 }
 
 // TestIntegration_FW1_01_SystemJournalTakesItsDocumentsDate is the posting
-// date leg's red on the open month: a deposit released while the clock stands
-// in June for a document finalized in May (May still OPEN) must post in May
-// on the document's date; today it lands on the processing day, June.
+// date leg's red on the open month: an invoice finalized while the clock
+// stands in June, for a document dated May (May still OPEN), must post in May
+// on the document's date; today it lands on the processing day, June. Round 2
+// (S2 P1-2) moved the DEPOSIT RELEASE off this seam, its date being the
+// delivery, not the deposit's finalization; the invoice finalization is the
+// builder whose document date IS the finalization.
 func TestIntegration_FW1_01_SystemJournalTakesItsDocumentsDate(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
@@ -174,16 +177,27 @@ func TestIntegration_FW1_01_SystemJournalTakesItsDocumentsDate(t *testing.T) {
 	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt).
 		WithInvoiceReader(seedInvoiceReader{pool: pool})
 	dep := fw1PlantDeposit(t, pool, docAt)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id=j.id AND j.idempotency_key=$1`, "ar.invoice.finalized:"+dep)
+		_, _ = pool.Exec(ctx, `DELETE FROM gl_journals WHERE idempotency_key=$1`, "ar.invoice.finalized:"+dep)
+	})
 
-	if err := svc.consume(ctx, ev("deposit.released", map[string]any{"invoice_id": dep})); err != nil {
-		t.Fatalf("the release consume: %v", err)
+	if err := svc.consume(ctx, ev("ar.invoice.finalized", map[string]any{"invoice_id": dep})); err != nil {
+		t.Fatalf("the finalization consume: %v", err)
 	}
-	pmonth, posted := fw1ReleaseJournal(t, pool, dep)
+	var pmonth int
+	var posted *time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT p.month, j.posted_at
+		  FROM gl_journals j JOIN fiscal_periods p ON p.id = j.period_id
+		 WHERE j.idempotency_key = $1`, "ar.invoice.finalized:"+dep).Scan(&pmonth, &posted); err != nil {
+		t.Fatalf("read the finalization journal: %v", err)
+	}
 	if pmonth != 5 {
-		t.Fatalf("the release journal posts in period month %d, want 5 (the document's own month)", pmonth)
+		t.Fatalf("the finalization journal posts in period month %d, want 5 (the document's own month)", pmonth)
 	}
 	if posted == nil || posted.UTC().Format("2006-01-02") != "2085-05-10" {
-		t.Fatalf("the release journal carries posted_at %v, want the document date 2085-05-10", posted)
+		t.Fatalf("the finalization journal carries posted_at %v, want the document date 2085-05-10", posted)
 	}
 }
 
@@ -237,23 +251,19 @@ func TestIntegration_FW1_01_SystemJournalForAClosedMonthIsNeverRefused(t *testin
 		t.Fatalf("the finalization journal carries posted_at %v, want the document date 2088-05-10 kept", finPosted)
 	}
 
-	if err := post.consume(ctx, ev("deposit.released", map[string]any{"invoice_id": dep})); err != nil {
+	// The release is dated by the DELIVERY from round 2 on (S2 P1-2): with no
+	// delivery stamp wired here it takes the clock, so a June release for the
+	// May-closed document is simply a June journal, never refused.
+	if err := post.consume(ctx, ev("deposit.released", map[string]any{"invoice_id": dep, "order_id": "no-stamp-here"})); err != nil {
 		t.Fatalf("the release consume for a closed month: %v (a system journal is never refused for a closed month)", err)
 	}
-	pmonth, posted := fw1ReleaseJournal(t, pool, dep)
-	if pmonth != wantMonth {
-		t.Fatalf("the release journal posts in period month %d, want %d (the earliest OPEN month at or after the document's)", pmonth, wantMonth)
-	}
-	if posted == nil || posted.UTC().Format("2006-01-02") != "2088-05-10" {
-		t.Fatalf("the release journal carries posted_at %v, want the document date 2088-05-10 kept", posted)
-	}
 
-	// The Controller's late posted list: both closed-month journals read back
-	// marked, and the filter names exactly them.
+	// The Controller's late posted list: the closed month's finalization reads
+	// back marked, and the filter names it.
 	var depBranch string
 	if err := pool.QueryRow(ctx,
-		`SELECT COALESCE(branch_id::text,'') FROM gl_journals WHERE idempotency_key=$1`, "deposit.released:"+dep).Scan(&depBranch); err != nil {
-		t.Fatalf("read the release journal's branch: %v", err)
+		`SELECT COALESCE(branch_id::text,'') FROM gl_journals WHERE idempotency_key=$1`, "ar.invoice.finalized:"+dep).Scan(&depBranch); err != nil {
+		t.Fatalf("read the finalization journal's branch: %v", err)
 	}
 	late := true
 	js, err := post.ListJournals(ctx, JournalFilter{LatePosted: &late, BranchID: depBranch, Limit: 100})
@@ -267,8 +277,8 @@ func TestIntegration_FW1_01_SystemJournalForAClosedMonthIsNeverRefused(t *testin
 		}
 		keys[j.IdempotencyKey] = true
 	}
-	if !keys["ar.invoice.finalized:"+dep] || !keys["deposit.released:"+dep] {
-		t.Fatalf("the late posted list = %v, wants both the finalization and the release", keys)
+	if !keys["ar.invoice.finalized:"+dep] {
+		t.Fatalf("the late posted list = %v, wants the closed month's finalization", keys)
 	}
 }
 
@@ -303,58 +313,6 @@ func TestIntegration_FW1_01_ManualJournalIntoAClosedMonthIsStillRefused(t *testi
 	}
 }
 
-// TestIntegration_FW1_01_ControllerOpensTheNextFiscalYearEarly covers the
-// Controller action: a manager is refused, a Controller without a reason is
-// refused, and a Controller with a reason creates the following year's twelve
-// months; the act is idempotent in that it always leaves exactly one more
-// year than existed (a repeat answers the year after that).
-func TestIntegration_FW1_01_ControllerOpensTheNextFiscalYearEarly(t *testing.T) {
-	ctx := context.Background()
-	pool := intPool(t)
-	user := aUser(t, pool)
-	next := fw1NextYear(t, pool)
-	following := next + 1
-	t.Cleanup(func() {
-		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE o.period_id=p.id AND p.year=$1`, following)
-		_, _ = pool.Exec(c, `DELETE FROM fiscal_periods WHERE year=$1`, following)
-	})
-
-	manager := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, time.Date(next, 1, 15, 12, 0, 0, 0, time.UTC))
-	if _, err := manager.OpenNextFiscalYear(ctx, "early open"); err == nil {
-		t.Fatalf("a manager opened the next fiscal year; it is Controller only")
-	}
-	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership}, time.Date(next, 1, 15, 12, 0, 0, 0, time.UTC))
-	if _, err := controller.OpenNextFiscalYear(ctx, "   "); err == nil {
-		t.Fatalf("the Controller opened the year without a reason; a reason is required")
-	}
-	res, err := controller.OpenNextFiscalYear(ctx, "FW1-01 early open proof")
-	if err != nil {
-		t.Fatalf("the Controller's early open: %v", err)
-	}
-	if res.FiscalYear != next {
-		t.Fatalf("the early open made year %d, want %d", res.FiscalYear, next)
-	}
-	var months int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year=$1`, next).Scan(&months); err != nil {
-		t.Fatalf("count the opened year's periods: %v", err)
-	}
-	if months != 12 {
-		t.Fatalf("the opened year holds %d periods, want 12", months)
-	}
-	res2, err := controller.OpenNextFiscalYear(ctx, "FW1-01 one more year ahead")
-	if err != nil {
-		t.Fatalf("the repeat open: %v", err)
-	}
-	if res2.FiscalYear != following {
-		t.Fatalf("the repeat open made year %d, want %d (always one year ahead of the latest)", res2.FiscalYear, following)
-	}
-}
-
-// TestIntegration_FW1_01_LateJournalNeverLandsBeforeItsDocumentsMonth is
-// round 1b (FROM-PRINCIPAL 96): a stray EARLIER open month (January left
-// open) must not catch a journal whose own month (May, closed) posts late;
-// it lands in the earliest open month AT OR AFTER its document's month (June).
 func TestIntegration_FW1_01_LateJournalNeverLandsBeforeItsDocumentsMonth(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)

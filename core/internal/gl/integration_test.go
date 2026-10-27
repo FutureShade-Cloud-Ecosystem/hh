@@ -447,7 +447,9 @@ func TestIntegration_AC13_YearEndCloseTo3900(t *testing.T) {
 		t.Fatalf("post expense: %v", err)
 	}
 
-	res, err := svc.CloseYear(ctx, 2092, "year-end")
+	// FW1-09b: the close runs after the year has ended; the fixture's clock stands in 2093 for it.
+	closer := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2093, 1, 5, 12, 0, 0, 0, time.UTC))
+	res, err := closer.CloseYear(ctx, 2092, "year-end")
 	if err != nil {
 		t.Fatalf("close year: %v", err)
 	}
