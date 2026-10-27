@@ -488,6 +488,155 @@ func TestIntegration_FW1_12b_ASpentCreditOutOfReachAnswersNotFound(t *testing.T)
 	}
 }
 
+// TestIntegration_FW1_12b_TwoAppliesNamingDifferentRowsOfOneGroupCannotBothPass pins S6's P2-1:
+// an ACCOUNT credit is named by one row id, and after a first application the group also holds the
+// positive offsetting row. Two requests naming two different rows of the same group must queue on
+// the SAME lock and re-read the group's sum after the first commits, so exactly one can take the
+// group's open figure and the group can never turn positive (a debit the customer never owed).
+//
+// The race is made deterministic the deposit cancel race's own way: the test's own transaction
+// holds BOTH rows of the group, both applies are launched and poll parked on their anchor reads,
+// and only then does the test commit, so both read the group's sum from the same pre commit state.
+func TestIntegration_FW1_12b_TwoAppliesNamingDifferentRowsOfOneGroupCannotBothPass(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	applySvc := NewCreditApplyService(repo)
+	ctx := context.Background()
+	n := ns(t)
+
+	custID := seedCustomer(t, pool, n+"-RACE")
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+	})
+
+	issue := time.Now().UTC().AddDate(0, 0, -3).Format("2006-01-02")
+	due := time.Now().UTC().AddDate(0, 0, 27).Format("2006-01-02")
+	var creditID, groupRef, inv1, inv2 string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO customer_transactions
+		  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+		VALUES ($1::uuid, 'ADJUSTMENT', -10000, 25000, 'order_deposit_cancel', gen_random_uuid(), $2::uuid, 'deposit credit')
+		RETURNING id::text, COALESCE(source_ref_id, id)::text`,
+		custID, trentonBranch).Scan(&creditID, &groupRef); err != nil {
+		t.Fatalf("seed account credit: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $5::date, 10000, 0, 10000, 10000, now(), 'INVOICE')
+		RETURNING id::text`,
+		n+"-INV1", custID, trentonBranch, issue, due).Scan(&inv1); err != nil {
+		t.Fatalf("seed invoice 1: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $5::date, 10000, 0, 10000, 10000, now(), 'INVOICE')
+		RETURNING id::text`,
+		n+"-INV2", custID, trentonBranch, issue, due).Scan(&inv2); err != nil {
+		t.Fatalf("seed invoice 2: %v", err)
+	}
+
+	// A first application of 4000 names the group's original row and leaves the offsetting row
+	// (+4000) inside the group; 6000 stays open.
+	if _, err := applySvc.Apply(ctx, ApplyCreditInput{
+		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: inv1,
+		AmountCents: 4000, Reason: "first slice", IdempotencyKey: n + "-k-first",
+	}, true); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	var offsetID string
+	if err := pool.QueryRow(ctx, `
+		SELECT id::text FROM customer_transactions
+		 WHERE customer_id = $1::uuid AND amount_cents > 0 AND COALESCE(source_type, '') = 'order_deposit_cancel'
+		 ORDER BY id LIMIT 1`, custID).Scan(&offsetID); err != nil {
+		t.Fatalf("read the offsetting row: %v", err)
+	}
+
+	// Hold BOTH rows of the group, then launch the two racing applies.
+	held, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Rollback(ctx) }()
+	if _, err := held.Exec(ctx, `
+		SELECT 1 FROM customer_transactions WHERE id = ANY($1::uuid[]) FOR UPDATE`,
+		[]string{creditID, offsetID}); err != nil {
+		t.Fatalf("hold the group's rows: %v", err)
+	}
+
+	type outcome struct {
+		app CreditApplication
+		err error
+	}
+	done := make(chan outcome, 2)
+	race := func(namedRow, invoice, key string) {
+		app, err := applySvc.Apply(ctx, ApplyCreditInput{
+			CustomerID: custID, CreditKind: CreditKindAccount, CreditID: namedRow, InvoiceID: invoice,
+			AmountCents: 6000, Reason: "the rest of the credit", IdempotencyKey: key,
+		}, true)
+		done <- outcome{app, err}
+	}
+	go race(creditID, inv1, n+"-k-a")
+	go race(offsetID, inv2, n+"-k-b")
+
+	// Both must park on their anchor reads before the test lets go: both then read the group's sum
+	// from the same pre commit state, whatever the machine's load.
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		var waiting int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity
+			 WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting >= 2 {
+			break
+		}
+		select {
+		case <-done:
+			t.Fatal("an apply answered without parking on the held group rows; the race was not staged")
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the two applies never both reached a lock wait")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := held.Commit(ctx); err != nil {
+		t.Fatalf("release the group's rows: %v", err)
+	}
+
+	a, b := <-done, <-done
+	successes := 0
+	for name, o := range map[string]outcome{"naming the original row": a, "naming the offsetting row": b} {
+		if o.err == nil {
+			successes++
+			continue
+		}
+		t.Logf("%s refused: %v", name, o.err)
+	}
+	if successes != 1 {
+		t.Fatalf("two applies naming two different rows of one group: %d succeeded (a err = %v, b err = %v), want exactly one", successes, a.err, b.err)
+	}
+	var groupSum int64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
+		 WHERE customer_id = $1::uuid
+		   AND COALESCE(source_type, '') = 'order_deposit_cancel'
+		   AND COALESCE(source_ref_id, id) = $2::uuid
+		   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')`,
+		custID, groupRef).Scan(&groupSum); err != nil {
+		t.Fatalf("read the group's sum: %v", err)
+	}
+	if groupSum > 0 {
+		t.Fatalf("the credit's group ends at %d cents, a debit the customer never owed; want it at 0 or below", groupSum)
+	}
+}
+
 // TestIntegration_FW1_12b_HandlerAndDetailRoundTrip verifies CreditApplyHandler
 // over HTTP and RegisterService.Detail surfacing open_credits and credit_applications.
 func TestIntegration_FW1_12b_HandlerAndDetailRoundTrip(t *testing.T) {
