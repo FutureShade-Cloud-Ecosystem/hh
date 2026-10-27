@@ -2761,6 +2761,26 @@ export type BankRecAccount = {
   is_active: boolean;
   tracking_only: boolean;
   unmatched_lines: number;
+  cutover_date?: string | null;
+  cutover_statement_balance_cents?: number | null;
+  cutover_outstanding_journal_ids?: string[];
+};
+export type BankRecCutoverInput = {
+  cutover_date: string;
+  opening_statement_balance_cents: number;
+  outstanding_journal_ids?: string[];
+};
+export type BankRecCutoverPreview = {
+  book_balance_cents: number;
+  entries?: BankRecCutoverPreviewEntry[];
+  difference_cents?: number;
+  reconciles?: boolean;
+};
+export type BankRecCutoverPreviewEntry = {
+  journal_id: string;
+  posted_at: string;
+  memo: string;
+  amount_cents: number;
 };
 export type BankRecAccountList = BankRecAccount[];
 export type BankRecStatementLine = {
@@ -2854,15 +2874,29 @@ export type BankRecRuleInput = {
   priority: number;
 };
 export type BankRecMatchRuleList = BankRecMatchRule[];
+export type BankRecOutstandingItem = {
+  journal_id: string;
+  posted_at: string;
+  memo: string;
+  amount_cents: number;
+};
 export type BankRecReconciliation = {
   id: string;
   bank_account_id: string;
   year: number;
   month: number;
+  opening_balance_cents?: number | null;
   statement_balance_cents: number;
+  deposits_in_transit_cents?: number;
+  outstanding_cheques_cents?: number;
+  adjusted_bank_balance_cents?: number;
   gl_balance_cents: number;
   variance_cents: number;
+  matched_lines_count?: number;
+  deposits_in_transit?: BankRecOutstandingItem[];
+  outstanding_cheques?: BankRecOutstandingItem[];
   status: "OPEN" | "COMPLETED";
+  completed_by?: string | null;
   completed_at?: string | null;
 };
 export type BankRecReconInput = {

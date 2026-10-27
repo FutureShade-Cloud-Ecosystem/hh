@@ -66,6 +66,11 @@ type BankAccount struct {
 	IsActive       bool   `json:"is_active"`
 	TrackingOnly   bool   `json:"tracking_only"` // true for CREDIT_CARD at W5
 	UnmatchedLines int    `json:"unmatched_lines"`
+	// The recorded reconciliation starting point (cut over, FW1-04): nil/empty until the Financial
+	// Controller records it through the cutover route.
+	CutoverDate                  *string  `json:"cutover_date,omitempty"`
+	CutoverStatementBalanceCents *int64   `json:"cutover_statement_balance_cents,omitempty"`
+	CutoverOutstandingJournalIDs []string `json:"cutover_outstanding_journal_ids,omitempty"`
 }
 
 // StatementLine is one parsed bank line (0033 bank_statement_lines). AmountCents is signed (+credit/−debit).
@@ -136,18 +141,37 @@ type Match struct {
 	PaymentsUnresolved bool `json:"payments_unresolved"`
 }
 
-// Reconciliation is one monthly per-account reconciliation (0033 bank_reconciliations).
+// OutstandingItem is one book entry in the bank GL account posted on or before month end that has not
+// cleared a statement line on or before month end (a deposit in transit when AmountCents > 0, or an
+// outstanding cheque/withdrawal when AmountCents > 0 in OutstandingCheques, FW1-04).
+type OutstandingItem struct {
+	JournalID   string    `json:"journal_id"`
+	PostedAt    time.Time `json:"posted_at"`
+	Memo        string    `json:"memo"`
+	AmountCents int64     `json:"amount_cents"`
+}
+
+// Reconciliation is one monthly per-account reconciliation (0033 bank_reconciliations) and its
+// month-end reconciliation report (FW1-04).
 type Reconciliation struct {
-	ID                      string     `json:"id"`
-	BankAccountID           string     `json:"bank_account_id"`
-	Year                    int        `json:"year"`
-	Month                   int        `json:"month"`
-	StatementBalanceCents   int64      `json:"statement_balance_cents"`
-	StatementBalanceDerived bool       `json:"-"`
-	GLBalanceCents          int64      `json:"gl_balance_cents"`
-	VarianceCents           int64      `json:"variance_cents"`
-	Status                  string     `json:"status"`
-	CompletedAt             *time.Time `json:"completed_at,omitempty"`
+	ID                       string            `json:"id"`
+	BankAccountID            string            `json:"bank_account_id"`
+	Year                     int               `json:"year"`
+	Month                    int               `json:"month"`
+	OpeningBalanceCents      *int64            `json:"opening_balance_cents,omitempty"`
+	StatementBalanceCents    int64             `json:"statement_balance_cents"`
+	StatementBalanceDerived  bool              `json:"-"`
+	DepositsInTransitCents   int64             `json:"deposits_in_transit_cents"`
+	OutstandingChequesCents  int64             `json:"outstanding_cheques_cents"`
+	AdjustedBankBalanceCents int64             `json:"adjusted_bank_balance_cents"`
+	GLBalanceCents           int64             `json:"gl_balance_cents"`
+	VarianceCents            int64             `json:"variance_cents"`
+	MatchedLinesCount        int               `json:"matched_lines_count"`
+	DepositsInTransit        []OutstandingItem `json:"deposits_in_transit,omitempty"`
+	OutstandingCheques       []OutstandingItem `json:"outstanding_cheques,omitempty"`
+	Status                   string            `json:"status"`
+	CompletedBy              *string           `json:"completed_by,omitempty"`
+	CompletedAt              *time.Time        `json:"completed_at,omitempty"`
 }
 
 // - inputs (request bodies) -
@@ -201,6 +225,36 @@ type ReconInput struct {
 	Refresh               bool   `json:"refresh,omitempty"`
 }
 
+// CutoverInput records a bank account's reconciliation starting point (cut-over, FW1-04 round 2):
+// the cut-over date and opening statement balance accepted as reconciled to the book, plus an optional
+// confirmed list of ledger entry journal IDs on or before that date that remain outstanding at cut-over.
+type CutoverInput struct {
+	BankAccountID                string   `json:"bank_account_id"`
+	CutoverDate                  string   `json:"cutover_date"`
+	OpeningStatementBalanceCents int64    `json:"opening_statement_balance_cents"`
+	OutstandingJournalIDs        []string `json:"outstanding_journal_ids,omitempty"`
+}
+
+// CutoverPreview is the starting point form's read (FW1-04 round 3): the ledger's entries on the account's GL
+// code on or before a cut over date, and the book balance their net makes. The desk formats these; the core
+// computes them, the same read the reconciliation's outstanding lists draw from.
+type CutoverPreview struct {
+	BookBalanceCents int64                 `json:"book_balance_cents"`
+	Entries          []CutoverPreviewEntry `json:"entries,omitempty"`
+	// Present only when the read carried a statement balance (round 4): the difference between the typed
+	// statement balance and the balance the book makes with the ticked entries, zero when it reconciles.
+	DifferenceCents *int64 `json:"difference_cents,omitempty"`
+	Reconciles      *bool  `json:"reconciles,omitempty"`
+}
+
+// CutoverPreviewEntry is one posted ledger entry on the bank's GL code, at its signed net on that code.
+type CutoverPreviewEntry struct {
+	JournalID   string    `json:"journal_id"`
+	PostedAt    time.Time `json:"posted_at"`
+	Memo        string    `json:"memo"`
+	AmountCents int64     `json:"amount_cents"`
+}
+
 // - error taxonomy (mirrors internal/till) -
 type clientError struct {
 	status int
@@ -220,6 +274,9 @@ func badRequest(format string, a ...any) error {
 }
 func conflict(format string, a ...any) error {
 	return clientError{status: http.StatusConflict, msg: fmt.Sprintf(format, a...)}
+}
+func forbidden(format string, a ...any) error {
+	return clientError{status: http.StatusForbidden, msg: fmt.Sprintf(format, a...)}
 }
 
 var (

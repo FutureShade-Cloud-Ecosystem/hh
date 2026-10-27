@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/attachments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
@@ -158,6 +159,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// A-02 (W5): bank reconciliation over the till repository's payment
 	// and lodgement reads, posting clearing journals through the GL.
 	bankrecSvc := bankrec.NewService(bankrec.NewRepository(pool)).
+		WithZone(newDealerZone(pool)).
 		WithPayments(tillRepo).
 		WithLodgements(tillRepo).
 		WithJournalPoster(glPosterAdapter{svc: spine.glSvc}).
@@ -829,6 +831,14 @@ type glBalanceAdapter struct{ svc *gl.Service }
 
 func (a glBalanceAdapter) GLBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
 	return a.svc.GLBalanceCents(ctx, accountCode, year, month, branchID)
+}
+
+func (a glBalanceAdapter) GLClosingBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	return a.svc.GLClosingBalanceCents(ctx, accountCode, year, month, branchID)
+}
+
+func (a glBalanceAdapter) GLBalanceAsOfCents(ctx context.Context, accountCode string, asOf time.Time, branchID string) (int64, error) {
+	return a.svc.GLBalanceAsOfCents(ctx, accountCode, asOf, branchID)
 }
 
 // GLBalanceThroughCents is the cumulative through-period read the inventory tie-out's GL side takes

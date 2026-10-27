@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,47 @@ func (h *Handler) accounts(w http.ResponseWriter, r *http.Request, caller guards
 		accts = []BankAccount{}
 	}
 	httpx.WriteJSON(w, http.StatusOK, accts)
+}
+
+// recordCutover is the Controller's door to RecordCutover (FW1-04 round 3): the account id rides the path,
+// the cut over date, the statement balance on that date and the confirmed outstanding list ride the body.
+// The service keeps the Financial Controller check.
+func (h *Handler) recordCutover(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in CutoverInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	in.BankAccountID = r.PathValue("id")
+	acct, err := h.svc.RecordCutover(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, acct)
+}
+
+// cutoverPreview answers the starting point form's read: the ledger's entries on or before the cut over
+// date, and the book balance their net makes. A read, so Money Desk work or above.
+func (h *Handler) cutoverPreview(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var statement *int64
+	if raw := r.URL.Query().Get("statement_cents"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, "bankrec: statement_cents must be a whole number of cents")
+			return
+		}
+		statement = &parsed
+	}
+	var ticked []string
+	if raw := r.URL.Query().Get("ticked"); raw != "" {
+		ticked = strings.Split(raw, ",")
+	}
+	out, err := h.svc.CutoverPreview(r.Context(), r.PathValue("id"), r.URL.Query().Get("date"), statement, ticked)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) createImport(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {

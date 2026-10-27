@@ -106,6 +106,13 @@ type glStore interface {
 	// posted date <= asOf (the point-in-time basis the AR↔GL tie-out needs so a year-boundary carry-forward
 	// does not read as a spurious discrepancy). branchID "" is consolidated.
 	AccountBalanceAsOf(ctx context.Context, code string, asOf time.Time, branchID string) (netDebit int64, normalBalance string, err error)
+	// BankAccountEntriesAsOf returns every POSTED, unreversed book journal touching code through asOf
+	// (excluding bankrec's own clearing/unmatch postings), so bankrec can compute deposits in transit and
+	// outstanding cheques at month end (FW1-04).
+	BankAccountEntriesAsOf(ctx context.Context, code string, asOf time.Time) ([]BankBookEntry, error)
+	// LodgementJournalForBank answers whether a till lodgement movement already has a POSTED, unreversed book
+	// journal touching glAccountCode (FROM-PRINCIPAL 117).
+	LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error)
 	// TrialBalanceAsOf is the INCEPTION-TO-DATE closing trial balance (one row per account with POSTED activity
 	// through asOf, across ALL fiscal years), the whole-chart analog of AccountBalanceAsOf and the basis the
 	// BisTrack CLOSING-balance tie-out reconciles against. TrialBalance below is per-period MOVEMENT and must
