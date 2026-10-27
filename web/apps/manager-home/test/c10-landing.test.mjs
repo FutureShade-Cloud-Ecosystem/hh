@@ -95,9 +95,9 @@ test("a card the core cannot answer says Not connected yet, with no figure", () 
   const kpis = landingKpisFrom(CORE_TILES);
   const cash = kpis[3];
   assert.equal(cash.connected, false);
-  const html = flattenTemplate(renderKpiCard(cash, "combined"));
-  assert.match(html, new RegExp(LANDING_NOT_CONNECTED));
-  assert.doesNotMatch(html, /\$/);
+  const markup = flattenTemplate(renderKpiCard(cash, "combined"));
+  assert.match(markup, new RegExp(LANDING_NOT_CONNECTED));
+  assert.doesNotMatch(markup, /\$/);
 
   // No viz answer at all: every card is honest, none invents a number.
   const empty = landingKpisFrom([]);
@@ -145,11 +145,11 @@ test("the deliveries card counts the dispatch board's own runs and stops", () =>
   assert.match(deliveries.summary, /1 done, 2 on the road, 2 still to leave/);
   assert.equal(deliveries.runs.length, 2);
   assert.match(deliveries.runs[0].stops, /1 of 3 stops done/);
-  const html = flattenTemplate(renderDeliveriesCard(deliveries, "combined"));
-  assert.match(html, />5</);
-  assert.match(html, /TRT-1 Trenton/);
+  const markup = flattenTemplate(renderDeliveriesCard(deliveries, "combined"));
+  assert.match(markup, />5</);
+  assert.match(markup, /TRT-1 Trenton/);
   // No invented run, no borrowed count.
-  assert.doesNotMatch(html, /R1|left 6:40 AM/);
+  assert.doesNotMatch(markup, /R1|left 6:40 AM/);
 
   const none = landingDeliveriesFrom(branches, []);
   assert.equal(none, null);
@@ -182,11 +182,11 @@ test("the needs card ranks the caller's pending approvals by the money at stake"
   assert.equal(needs[0].amountLabel, "$11,350.00");
   assert.equal(needs[2].amountLabel, "not priced");
   assert.equal(needs[0].targetView, "approvals");
-  const html = flattenTemplate(renderNeedsYouCard(needs));
-  assert.match(html, /Q-2041/);
-  assert.match(html, /\$11,350\.00/);
+  const markup = flattenTemplate(renderNeedsYouCard(needs));
+  assert.match(markup, /Q-2041/);
+  assert.match(markup, /\$11,350\.00/);
   // The invented board rows are gone: no Fieldstone, no invented warranty claim.
-  assert.doesNotMatch(html, /Fieldstone|RT-1017/);
+  assert.doesNotMatch(markup, /Fieldstone|RT-1017/);
 
   assert.deepEqual(landingNeedsFrom([]), []);
 });

@@ -143,8 +143,8 @@ test("the deliveries card counts the dispatch board's own runs, and the needs ca
   const amounts = needs.locator(".need-amount");
   const count = await amounts.count();
   for (let i = 1; i < count; i += 1) {
-    const before = await amounts.nth(i - 1).textContent();
-    const after = await amounts.nth(i).textContent();
+    const before = (await amounts.nth(i - 1).textContent()) ?? "";
+    const after = (await amounts.nth(i).textContent()) ?? "";
     if (before !== "not priced" && after !== "not priced") {
       expect(Number(before.replace(/[^0-9.]/g, ""))).toBeGreaterThanOrEqual(Number(after.replace(/[^0-9.]/g, "")));
     }
