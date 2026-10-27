@@ -124,7 +124,7 @@ func cmRoundService(t *testing.T, pool *pgxpool.Pool) (*billing.CreditMemoServic
 	rules := gl.NewRepository(pool)
 	glSvc := gl.NewService(gl.NewRepository(pool))
 	approvals := identity.NewApprovals(identity.NewApprovalRepository(pool)).
-		WithJEDecider(jeDeciderAdapter{svc: glSvc, memos: w})
+		WithJEDecider(jeDeciderAdapter{svc: glSvc, journals: rules, memos: w})
 	svc := billing.NewCreditMemoService(w, slog.Default()).
 		WithPostingRules(creditMemoRulesAdapter{rules: rules}).
 		WithThreshold(creditMemoThresholdAdapter{rules: rules}).

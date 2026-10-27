@@ -28,8 +28,9 @@ func TestIntegration_CreditMemoRound_AWithdrawnParkVoidsTheMemoAndFreesTheRoom(t
 
 	// The requester takes their request back through the rail's own door. The store carries the same
 	// JE bridge the decide path does, as the composition root wires it.
+	glRepo := gl.NewRepository(pool)
 	store := identity.NewApprovalsSyncStore(pool, linkedUserID(pool)).
-		WithJEDecider(jeDeciderAdapter{svc: gl.NewService(gl.NewRepository(pool)), memos: billing.NewInvoiceWriter(pool)})
+		WithJEDecider(jeDeciderAdapter{svc: gl.NewService(glRepo), journals: glRepo, memos: billing.NewInvoiceWriter(pool)})
 	if _, err := store.Delete(context.Background(),
 		sync.ScopeFilter{OrgID: world.org, Actor: world.requesterPlatform}, res.ApprovalID, ""); err != nil {
 		t.Fatalf("withdraw the request: %v", err)

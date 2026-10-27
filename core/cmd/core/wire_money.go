@@ -115,7 +115,8 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// A-01 (W5): GL, with the rail filer bound. The invoice/tax/payment
 	// readers (billing, pos, till) land in B6 and B7; unwired, the posting
 	// legs answer their not-configured errors, never a silent skip.
-	glSvc := gl.NewService(gl.NewRepository(pool).WithZone(newDealerZone(pool))).
+	glRepo := gl.NewRepository(pool).WithZone(newDealerZone(pool))
+	glSvc := gl.NewService(glRepo).
 		WithStandardRate(newTaxEngine(pool)). // the NSF fee backout reads the dealer's standard rate
 		WithTaxLabel(newTaxWords(pool)).      // the tax legs' memos name the dealer's tax
 		WithDeadRequeuer(outboxStore).
@@ -125,7 +126,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
 		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
 	gl.NewHandler(glSvc, log).WithZone(newDealerZone(pool)).WithLegacyImport(settings.NewDealerConfigReader(pool)).WithUserLinker(link).RegisterRoutes(r, g)
-	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc, memos: billing.NewInvoiceWriter(pool)})
+	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc, journals: glRepo, memos: billing.NewInvoiceWriter(pool)})
 
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
@@ -342,6 +343,12 @@ func (a jeStateAdapter) JournalApprovalState(ctx context.Context, journalID stri
 // decider a journal id and nothing else.
 type jeDeciderAdapter struct {
 	svc *gl.Service
+	// journals reads the parked journal through the store seam, gl's own rule for a writer path:
+	// this bridge voids and approves the journal, so it is the ledger's writer half, and the read
+	// only classifies the journal (is it a credit memo's). The fenced read route would refuse the
+	// bridge on the sync door's withdrawal context, which carries the linked actor and no staff
+	// stamp by design.
+	journals *gl.Repository
 	// memos finalizes the parked memo document. Nil means a parked credit memo cannot be approved,
 	// and the approval fails rather than posting a journal for a credit nobody received.
 	memos *billing.InvoiceWriter
@@ -355,7 +362,7 @@ func (a jeDeciderAdapter) RejectJournalTx(ctx context.Context, tx pgx.Tx, journa
 	if a.memos == nil {
 		return nil
 	}
-	j, err := a.svc.GetJournal(ctx, journalID)
+	j, err := a.journals.GetJournal(ctx, journalID)
 	if err != nil {
 		return err
 	}
@@ -370,7 +377,7 @@ func (a jeDeciderAdapter) RejectJournalTx(ctx context.Context, tx pgx.Tx, journa
 
 func (a jeDeciderAdapter) ApproveJournalTx(ctx context.Context, tx pgx.Tx, journalID, deciderID string) error {
 	if a.memos != nil {
-		j, err := a.svc.GetJournal(ctx, journalID)
+		j, err := a.journals.GetJournal(ctx, journalID)
 		if err != nil {
 			return err
 		}
