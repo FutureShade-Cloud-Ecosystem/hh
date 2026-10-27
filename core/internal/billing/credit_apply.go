@@ -1,0 +1,815 @@
+package billing
+
+// credit_apply.go, FW1-12b: APPLYING AN ACCOUNT CREDIT OR AN OPEN CREDIT MEMO TO A LATER INVOICE.
+//
+// -- THE TWO KINDS OF CREDIT, AND WHERE EACH ONE LIVES -------------------------------------------
+// A customer can hold value in two places, and both must reach this door:
+//
+//   · An OPEN CREDIT MEMO is a document: a CREDIT_MEMO invoice (0146) whose balance_cents is a
+//     NEGATIVE magnitude. It rides the invoices arm of ARBalanceCents. Issued by the credit memo
+//     writer (credit_memo.go) or the POS return's offset rows.
+//   · An ACCOUNT CREDIT is a subledger row family: customer_transactions whose txn_type is one of
+//     the 0009 vocabulary's AR kinds, whose source_type is NOT 'invoice', and whose amount is
+//     negative (the POS return's store credit remainder, a supplier deposit credited back). It
+//     rides the non-invoice arm of ARBalanceCents, grouped by (customer, branch, source_type,
+//     source_ref_id) exactly as agingSelect groups it.
+//
+// -- WHAT AN APPLICATION IS, AND WHAT IT POSTS ----------------------------------------------------
+// Applying a credit to a later invoice moves value FROM the credit TO the invoice. Both live in AR
+// (account 1100): the credit's open figure shrinks by X and the invoice's balance shrinks by X, so
+// the account's AR total is unchanged and the control account has nothing to book. THE APPLICATION
+// EMITS NO EVENT AND POSTS NO JOURNAL. This is the deposit cancel's closed part's discipline
+// (deposit_cancel.go): a subledger-only act between two AR positions needs no journal, and a journal
+// that debits and credits 1100 by the same figure would be noise the trial balance carries forever.
+// The 1100 tie holds by construction: ARBalanceCents is unchanged, the aging grand total is
+// unchanged, and GL 1100 was never touched.
+//
+// The allocation rule this follows is the brief's first option: "posts nothing new to 1100 in total
+// (both sides are 1100)". No posting rule names a credit application journal (gl/posting.go's topic
+// map has no such topic), so none is invented here.
+//
+// -- THE SUBLEDGER ROWS, AND WHY EACH ONE CARRIES THE TAG IT CARRIES ------------------------------
+//   · The invoice side gets ONE row: txn_type ADJUSTMENT, source_type 'invoice', source_ref_id the
+//     invoice's id. source_type 'invoice' is LOAD-BEARING (credit_memo.go's rule): the row mirrors a
+//     document balance that already moved on the invoices arm, and a non-invoice tag would count the
+//     same money twice and break the 1100 tie-out by exactly the application.
+//   · A MEMO credit gets ONE mirror row: txn_type CREDIT_MEMO, source_type 'invoice', source_ref_id
+//     the memo's id, amount POSITIVE (the credit shrinking is money owed again). Same rule: the memo
+//     document's own balance moved on the invoices arm.
+//   · An ACCOUNT credit gets ONE offsetting row INSIDE ITS OWN GROUP: the anchor row's txn_type,
+//     source_type and source_ref_id, amount POSITIVE. That is the NSF fee payment's spelling
+//     (payments' applyAllocations): the aging groups non-invoice rows by (source_type,
+//     source_ref_id) and keeps only groups that do not sum to zero, so the offset nets the credit's
+//     group to zero and it leaves the aging, and ARBalanceCents' second arm nets to zero with it.
+//
+// -- IDEMPOTENCY WITHOUT A NEW TABLE --------------------------------------------------------------
+// The act is recorded on the TARGET INVOICE's metadata, under the target invoice's own row lock
+// (payments stamped NSF fee allocations into payments.metadata under the payment row lock; this is
+// the same discipline on billing's own table, which nothing overwrites wholesale). The record is
+// keyed by the request's idempotency key: a replay is judged under the lock, the same key with the
+// same body answers the first result and writes nothing, a spent key with another body is refused.
+// The record is also what a reversal reads to restore both sides, so no application exists anywhere
+// but on the invoice it moved.
+//
+// -- THE LOCKS -------------------------------------------------------------------------------------
+// The one money lock order (payments/LOCK-ORDER.md) as the reapply walks it: the named invoice rows
+// FOR NO KEY UPDATE in ascending id order, every one before the first balance move draws the
+// invoices counter. No payments counter is drawn: nothing here stamps a payments row. An ACCOUNT
+// credit's anchor customer_transactions row is taken FOR UPDATE after the invoice rows; nothing else
+// in the codebase locks that table's rows.
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+)
+
+// ActCreditApplied and ActCreditApplicationReversed are the audit verbs.
+const (
+	ActCreditApplied             = "CREDIT_APPLIED"
+	ActCreditApplicationReversed = "CREDIT_APPLICATION_REVERSED"
+)
+
+// The two kinds of credit the door takes.
+const (
+	CreditKindMemo    = "MEMO"
+	CreditKindAccount = "ACCOUNT"
+)
+
+// CreditApplicationNotOpen is the refusal for a credit that holds nothing open.
+var CreditApplicationNotOpen = errors.New("billing: that credit has nothing left to apply")
+
+// ErrCreditApplicationReasonRequired is the reason rule, as its own error so a UI can prompt for it.
+var ErrCreditApplicationReasonRequired = errors.New("billing: a reason is required")
+
+// NoSuchCreditError names a credit the request may not touch: missing, another account's, outside
+// the caller's branch reach, or not a credit at all. The route answers it 404, the same no
+// existence leak the reapply door carries across the branch wall.
+type NoSuchCreditError struct{ CreditID string }
+
+func (e NoSuchCreditError) Error() string { return "billing: no such credit: " + e.CreditID }
+
+// CreditApplicationConflictError is the spent-key refusal, 409 like the reapply's.
+type CreditApplicationConflictError struct{ Msg string }
+
+func (e CreditApplicationConflictError) Error() string { return e.Msg }
+
+// ApplyCreditInput is one application request.
+type ApplyCreditInput struct {
+	CustomerID string // the account both the credit and the invoice belong to
+	// CreditKind selects MEMO (a CREDIT_MEMO document, CreditID the invoice id) or ACCOUNT
+	// (a non-invoice subledger row family, CreditID the id of one of its negative rows).
+	CreditKind string
+	CreditID   string
+	InvoiceID  string
+	AmountCents int64
+	Reason      string
+	ActorID     string
+	// IdempotencyKey is mandatory. The application is recorded under it, and a retry under the same
+	// key with the same body answers the first result and writes nothing.
+	IdempotencyKey string
+	// CanAccessBranch is the caller's branch reach; nil reaches every branch.
+	CanAccessBranch func(branchID string) bool
+	// OrgID is the caller's org slug scope id; an invoice of another org is refused. Empty on
+	// callers that carry none, and then nothing is judged.
+	OrgID string
+}
+
+// CreditApplicationLine is the invoice's side of the answer.
+type CreditApplicationLine struct {
+	InvoiceID         string `json:"invoice_id"`
+	InvoiceNo         string `json:"invoice_no"`
+	AppliedCents      int64  `json:"applied_cents"`
+	Outcome           string `json:"outcome"` // CLOSES or PART, the settle's own words
+	BalanceAfterCents int64  `json:"balance_after_cents"`
+}
+
+// CreditApplication is the answer.
+type CreditApplication struct {
+	ApplicationID     string               `json:"application_id"`
+	CreditKind        string               `json:"credit_kind"`
+	CreditID          string               `json:"credit_id"`
+	InvoiceID         string               `json:"invoice_id"`
+	InvoiceNo         string               `json:"invoice_no"`
+	AppliedCents      int64                `json:"applied_cents"`
+	CreditOpenAfter   int64                `json:"credit_open_after_cents"`
+	Lines             []CreditApplicationLine `json:"lines"`
+	Replayed          bool                 `json:"replayed"`
+}
+
+// creditApplyClock is the writer's clock seam (tests).
+type creditApplyClock interface{ Now() time.Time }
+
+// CreditApplyService is the permission-shaped door over the repository write. The handler gates the
+// route with RequireManager AND the service re-checks IsManager: the route gate stops the request,
+// the service check stops an in-process caller that bypassed HTTP, and neither is a substitute for
+// the other (the reversal handler's own rule).
+type CreditApplyService struct {
+	repo  *Repository
+	audit audit.Recorder
+	now   func() time.Time
+	zone  *houseday.Zone
+}
+
+// NewCreditApplyService wires the service over the billing repository.
+func NewCreditApplyService(repo *Repository) *CreditApplyService {
+	return &CreditApplyService{repo: repo, now: time.Now}
+}
+
+// WithAudit attaches the audit recorder (best effort: an audit failure never blocks the books, the
+// finstmt export trail's own rule, but the act is recorded whenever a recorder is wired).
+func (s *CreditApplyService) WithAudit(r audit.Recorder) *CreditApplyService { s.audit = r; return s }
+
+// WithClock overrides the clock (tests).
+func (s *CreditApplyService) WithClock(now func() time.Time) *CreditApplyService {
+	if now != nil {
+		s.now = now
+	}
+	return s
+}
+
+// WithZone binds the dealer's house zone, so the record's applied_at day is the dealer's day.
+func (s *CreditApplyService) WithZone(z *houseday.Zone) *CreditApplyService { s.zone = z; return s }
+
+// Apply applies a credit to a later invoice. Manager only, reason required, audited.
+func (s *CreditApplyService) Apply(ctx context.Context, in ApplyCreditInput, isManager bool) (CreditApplication, error) {
+	if !isManager {
+		return CreditApplication{}, errors.New("billing: applying a credit to an invoice is a manager action")
+	}
+	in, err := validateApplyCredit(in)
+	if err != nil {
+		return CreditApplication{}, err
+	}
+	res, err := s.repo.ApplyCredit(ctx, in, s.now())
+	if err != nil {
+		return CreditApplication{}, err
+	}
+	if s.audit != nil && !res.Replayed {
+		_ = s.audit.Record(ctx, audit.SensitiveAccess{
+			Action: ActCreditApplied, EntityType: "invoice", EntityID: in.InvoiceID,
+			ActorID: in.ActorID, Purpose: "CREDIT_APPLY", Reason: in.Reason,
+			Extra: map[string]any{
+				"application_id":  res.ApplicationID,
+				"credit_kind":     in.CreditKind,
+				"credit_id":       in.CreditID,
+				"applied_cents":   res.AppliedCents,
+				"invoice_no":      res.InvoiceNo,
+				"balance_after":   res.Lines[0].BalanceAfterCents,
+			},
+		})
+	}
+	return res, nil
+}
+
+// validateApplyCredit is the request check that runs before any database is consulted, the validateApply
+// posture: ids normalised to one canonical spelling, money positive, the kind in its vocabulary.
+func validateApplyCredit(in ApplyCreditInput) (ApplyCreditInput, error) {
+	if strings.TrimSpace(in.Reason) == "" {
+		return in, ErrCreditApplicationReasonRequired
+	}
+	if strings.TrimSpace(in.IdempotencyKey) == "" {
+		return in, httpx.BadRequestf("applying a credit needs an idempotency key")
+	}
+	if in.CreditKind != CreditKindMemo && in.CreditKind != CreditKindAccount {
+		return in, httpx.BadRequestf("credit_kind must be %s or %s", CreditKindMemo, CreditKindAccount)
+	}
+	if in.AmountCents <= 0 {
+		return in, httpx.BadRequestf("the amount applied must be greater than zero")
+	}
+	for name, raw := range map[string]*string{
+		"customer id": &in.CustomerID, "credit id": &in.CreditID, "invoice id": &in.InvoiceID,
+	} {
+		u, err := uuid.Parse(strings.TrimSpace(*raw))
+		if err != nil {
+			return in, httpx.BadRequestf("%s must be a uuid", name)
+		}
+		*raw = u.String()
+	}
+	in.Reason = strings.TrimSpace(in.Reason)
+	in.IdempotencyKey = strings.TrimSpace(in.IdempotencyKey)
+	return in, nil
+}
+
+// creditApplicationRecord is what the target invoice's metadata carries for one application. It is
+// the whole state of the act: a reversal reads it and restores both sides from it.
+type creditApplicationRecord struct {
+	ApplicationID string `json:"application_id"`
+	CreditKind    string `json:"credit_kind"`
+	CreditID      string `json:"credit_id"`
+	InvoiceID     string `json:"invoice_id"`
+	AmountCents   int64  `json:"amount_cents"`
+	Reason        string `json:"reason"`
+	AppliedBy     string `json:"applied_by,omitempty"`
+	AppliedAt     string `json:"applied_at"`
+	// Reversal is set when the application has been undone; the record then stays as the act's history.
+	Reversal *creditReversalRecord `json:"reversal,omitempty"`
+}
+
+type creditReversalRecord struct {
+	Reason    string `json:"reason"`
+	ReversedBy string `json:"reversed_by,omitempty"`
+	ReversedAt string `json:"reversed_at"`
+	Key       string `json:"key"`
+}
+
+// creditAppMetadata is the metadata envelope the target invoice carries.
+type creditAppMetadata struct {
+	CreditApplications map[string]creditApplicationRecord `json:"credit_applications"`
+}
+
+// readCreditApplications parses the target invoice's metadata for the application records. No
+// metadata, or none of this act's, reads as an empty map.
+func readCreditApplications(raw string) (map[string]creditApplicationRecord, error) {
+	out := map[string]creditApplicationRecord{}
+	if strings.TrimSpace(raw) == "" {
+		return out, nil
+	}
+	var m creditAppMetadata
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return out, nil // foreign metadata: not this act's, and never this act's to fail on
+	}
+	if m.CreditApplications == nil {
+		return out, nil
+	}
+	return m.CreditApplications, nil
+}
+
+// ApplyCredit is the repository write. ONE transaction: the invoice rows locked in ascending id
+// order, every judgement under the locks, the replay judged under the target invoice's row, then
+// the balance moves, the subledger rows and the metadata stamp. A refused request writes nothing.
+func (r *Repository) ApplyCredit(ctx context.Context, in ApplyCreditInput, now time.Time) (CreditApplication, error) {
+	if r.pool == nil {
+		return CreditApplication{}, errNoDB
+	}
+	in, err := validateApplyCredit(in)
+	if err != nil {
+		return CreditApplication{}, err
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return CreditApplication{}, fmt.Errorf("credit apply: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// The two invoice rows (the target, and the memo when the credit is a memo), ascending id, both
+	// before any write: the multi invoice order the settle and the returns walk, so this writer can
+	// never meet another head on.
+	first, second := in.InvoiceID, in.CreditID
+	if in.CreditKind == CreditKindAccount || second == "" || second > first {
+		first, second = first, second // the anchor row is not an invoice; only the target is locked here
+	}
+	rowsToLock := []string{in.InvoiceID}
+	if in.CreditKind == CreditKindMemo {
+		rowsToLock = []string{in.InvoiceID, in.CreditID}
+		if rowsToLock[0] > rowsToLock[1] {
+			rowsToLock[0], rowsToLock[1] = rowsToLock[1], rowsToLock[0]
+		}
+	}
+	_ = first
+	for _, id := range rowsToLock {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, id); err != nil {
+			return CreditApplication{}, fmt.Errorf("credit apply: lock invoice %s: %w", id, err)
+		}
+	}
+
+	// The target invoice, judged under its own lock. Another account's invoice, one outside the
+	// caller's branch reach and a missing one answer the same not found; the rest refuse in words.
+	var (
+		invNo, invBranch, invStatus, invOrg string
+		invBalance, invHoldback             int64
+		metadataRaw                         string
+	)
+	err = tx.QueryRow(ctx, `
+SELECT invoice_no::text, balance_cents, holdback_cents, branch_id::text, status,
+       COALESCE(org_id::text, ''), COALESCE(metadata::text, '')
+  FROM invoices WHERE id = $1::uuid AND customer_id = $2::uuid`, in.InvoiceID, in.CustomerID).
+		Scan(&invNo, &invBalance, &invHoldback, &invBranch, &invStatus, &invOrg, &metadataRaw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CreditApplication{}, NoSuchInvoiceError{InvoiceID: in.InvoiceID}
+		}
+		return CreditApplication{}, fmt.Errorf("credit apply: read the invoice: %w", err)
+	}
+	if in.CanAccessBranch != nil && !in.CanAccessBranch(invBranch) {
+		return CreditApplication{}, NoSuchInvoiceError{InvoiceID: in.InvoiceID}
+	}
+	if in.OrgID != "" && invOrg != "" && invOrg != in.OrgID {
+		return CreditApplication{}, httpx.BadRequestf("invoice %s is another org's document, this desk cannot apply a credit to it", invNo)
+	}
+	if invStatus != "FINALIZED" && invStatus != "PARTIALLY_PAID" {
+		return CreditApplication{}, httpx.BadRequestf("invoice %s is not open, a credit can only be applied to an open invoice", invNo)
+	}
+	payable := invBalance - invHoldback
+	if payable < 0 {
+		payable = 0
+	}
+
+	// The replay is judged under the target invoice's row, so a twin that committed while this
+	// request waited is already visible here: the same key and the same body answers the first
+	// result and writes nothing, a spent key with another body is refused.
+	apps, err := readCreditApplications(metadataRaw)
+	if err != nil {
+		return CreditApplication{}, err
+	}
+	if prior, ok := apps[in.IdempotencyKey]; ok {
+		if prior.CreditKind == in.CreditKind && prior.CreditID == in.CreditID &&
+			prior.InvoiceID == in.InvoiceID && prior.AmountCents == in.AmountCents {
+			return r.replayApplication(ctx, tx, prior)
+		}
+		return CreditApplication{}, CreditApplicationConflictError{
+			Msg: "that idempotency key already applied a credit differently; use a new key"}
+	}
+
+	// The credit, judged under the locks. kind MEMO: the memo document's row. kind ACCOUNT: the
+	// anchor row and its group sum, read the way the aging reads the group.
+	var creditOpen int64 // a positive magnitude: what the credit still holds
+	var creditBranch, creditOrg string
+	switch in.CreditKind {
+	case CreditKindMemo:
+		var balance int64
+		err := tx.QueryRow(ctx, `
+SELECT balance_cents, COALESCE(org_id::text, ''), branch_id::text
+  FROM invoices
+ WHERE id = $1::uuid AND customer_id = $2::uuid AND doc_type = 'CREDIT_MEMO' AND status <> 'VOID'`,
+			in.CreditID, in.CustomerID).Scan(&balance, &creditOrg, &creditBranch)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return CreditApplication{}, NoSuchCreditError{CreditID: in.CreditID}
+			}
+			return CreditApplication{}, fmt.Errorf("credit apply: read the memo: %w", err)
+		}
+		if balance >= 0 {
+			return CreditApplication{}, CreditApplicationNotOpen
+		}
+		creditOpen = -balance
+	case CreditKindAccount:
+		var anchorType, anchorRef string
+		err := tx.QueryRow(ctx, `
+SELECT txn_type, source_type, source_ref_id::text, branch_id::text
+  FROM customer_transactions
+ WHERE id = $1::uuid AND customer_id = $2::uuid AND source_type <> 'invoice'
+   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')`,
+			in.CreditID, in.CustomerID).Scan(&anchorType, &anchorType, &anchorRef, &creditBranch)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return CreditApplication{}, NoSuchCreditError{CreditID: in.CreditID}
+			}
+			return CreditApplication{}, fmt.Errorf("credit apply: read the account credit: %w", err)
+		}
+		if err := tx.QueryRow(ctx, `
+SELECT COALESCE(SUM(amount_cents), 0)
+  FROM customer_transactions
+ WHERE customer_id = $2::uuid AND source_type = $3 AND source_ref_id = $4::uuid`,
+			in.CreditID, in.CustomerID, anchorType, anchorRef).Scan(&creditOpen); err != nil {
+			return CreditApplication{}, fmt.Errorf("credit apply: read the credit's group: %w", err)
+		}
+		if creditOpen >= 0 {
+			return CreditApplication{}, CreditApplicationNotOpen
+		}
+		creditOpen = -creditOpen
+		// The offsetting row must land in THIS group; remember the group for the write below.
+		in.Reason = in.Reason // (the group rides the closure below via anchorType/anchorRef)
+	}
+	_ = creditOrg
+
+	if in.CanAccessBranch != nil && !in.CanAccessBranch(creditBranch) {
+		return CreditApplication{}, NoSuchCreditError{CreditID: in.CreditID}
+	}
+	if creditBranch != invBranch {
+		return CreditApplication{}, httpx.BadRequestf(
+			"the credit sits at another branch than invoice %s: a credit applies to its own branch's invoices, so every branch's receivables keep tying to their own ledger", invNo)
+	}
+	if in.AmountCents > creditOpen {
+		return CreditApplication{}, httpx.BadRequestf("the credit has %d cents open; that is more than it holds", in.AmountCents)
+	}
+	if in.AmountCents > payable {
+		return CreditApplication{}, httpx.BadRequestf("invoice %s can take at most %d cents right now; refresh and retry", invNo, payable)
+	}
+
+	// The balance moves, each stamping the INVOICES feed: a credit landing is the change the payer's
+	// device must see on its invoices feed, the settle's own posture.
+	after := invBalance - in.AmountCents
+	outcome := "PART"
+	if after <= 0 {
+		outcome = "CLOSES"
+	}
+	if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
+UPDATE invoices
+   SET balance_cents = $2, status = CASE WHEN $2 <= 0 THEN 'PAID' ELSE 'PARTIALLY_PAID' END,
+       updated_at = now(), seq = (SELECT next_value FROM iseq)
+ WHERE id = $1::uuid`, in.InvoiceID, after); err != nil {
+		return CreditApplication{}, fmt.Errorf("credit apply: move the invoice: %w", err)
+	}
+	creditOpenAfter := creditOpen - in.AmountCents
+	if in.CreditKind == CreditKindMemo {
+		if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
+UPDATE invoices
+   SET balance_cents = $2, status = CASE WHEN $2 >= 0 THEN 'PAID' ELSE status END,
+       updated_at = now(), seq = (SELECT next_value FROM iseq)
+ WHERE id = $1::uuid`, in.CreditID, -creditOpenAfter); err != nil {
+			return CreditApplication{}, fmt.Errorf("credit apply: move the memo: %w", err)
+		}
+	}
+
+	// The running account balance after the moves: both sides moved by the same figure, so the
+	// account total is unchanged, and both subledger rows carry that one figure.
+	var runningAR int64
+	if err := tx.QueryRow(ctx, `
+SELECT (SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
+         WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents <> 0)`,
+		in.CustomerID).Scan(&runningAR); err != nil {
+		return CreditApplication{}, fmt.Errorf("credit apply: read the account's AR: %w", err)
+	}
+
+	applicationID := uuid.NewString()
+	memWords := "credit applied to " + invNo
+	if in.Reason != "" {
+		memWords += ": " + in.Reason
+	}
+	// The invoice's side, source_type 'invoice': it mirrors a document balance that already moved on
+	// the invoices arm, so the non-invoice arm must never count it (the 1100 tie).
+	if _, err := tx.Exec(ctx, `
+INSERT INTO customer_transactions
+  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
+VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $1::uuid, $4::uuid, $5, $6)`,
+		in.InvoiceID, -in.AmountCents, runningAR, invBranch, memWords, now); err != nil {
+		return CreditApplication{}, fmt.Errorf("credit apply: the invoice's subledger row: %w", err)
+	}
+	switch in.CreditKind {
+	case CreditKindMemo:
+		if _, err := tx.Exec(ctx, `
+INSERT INTO customer_transactions
+  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
+VALUES ($1::uuid, 'CREDIT_MEMO', $2, $3, 'invoice', $1::uuid, $4::uuid, $5, $6)`,
+			in.CreditID, in.AmountCents, runningAR, invBranch, "credit memo applied: "+memWords, now); err != nil {
+			return CreditApplication{}, fmt.Errorf("credit apply: the memo's subledger row: %w", err)
+		}
+	case CreditKindAccount:
+		// Offsetting row INSIDE the credit's own group: the aging nets the group to zero and it
+		// leaves the aging, the same spelling as the NSF fee payment.
+		if _, err := tx.Exec(ctx, `
+INSERT INTO customer_transactions
+  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
+SELECT customer_id, txn_type, $2, $3, source_type, source_ref_id, branch_id, $5, $6
+  FROM customer_transactions WHERE id = $1::uuid`,
+			in.CreditID, in.AmountCents, runningAR, invBranch, memWords, now); err != nil {
+			return CreditApplication{}, fmt.Errorf("credit apply: the credit's offsetting row: %w", err)
+		}
+	}
+
+	// The record of the act, on the target invoice's metadata, keyed by the idempotency key: the
+	// replay's answer and the reversal's source of truth.
+	apps[in.IdempotencyKey] = creditApplicationRecord{
+		ApplicationID: applicationID, CreditKind: in.CreditKind, CreditID: in.CreditID,
+		InvoiceID: in.InvoiceID, AmountCents: in.AmountCents, Reason: in.Reason,
+		AppliedBy: in.ActorID, AppliedAt: now.UTC().Format(time.RFC3339),
+	}
+	if err := stampCreditApplications(ctx, tx, in.InvoiceID, apps); err != nil {
+		return CreditApplication{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return CreditApplication{}, fmt.Errorf("credit apply: commit: %w", err)
+	}
+	return CreditApplication{
+		ApplicationID: applicationID, CreditKind: in.CreditKind, CreditID: in.CreditID,
+		InvoiceID: in.InvoiceID, InvoiceNo: invNo, AppliedCents: in.AmountCents,
+		CreditOpenAfter: creditOpenAfter,
+		Lines: []CreditApplicationLine{{
+			InvoiceID: in.InvoiceID, InvoiceNo: invNo, AppliedCents: in.AmountCents,
+			Outcome: outcome, BalanceAfterCents: after,
+		}},
+	}, nil
+}
+
+// replayApplication answers a spent key's own body: the application as it stands now, the invoice's
+// balance at its current figure, nothing written.
+func (r *Repository) replayApplication(ctx context.Context, tx pgx.Tx, prior creditApplicationRecord) (CreditApplication, error) {
+	var no string
+	var balance int64
+	err := tx.QueryRow(ctx, `SELECT invoice_no::text, balance_cents FROM invoices WHERE id = $1::uuid`,
+		prior.InvoiceID).Scan(&no, &balance)
+	if err != nil {
+		return CreditApplication{}, fmt.Errorf("credit apply: read the replayed invoice: %w", err)
+	}
+	outcome := "PART"
+	if balance <= 0 {
+		outcome = "CLOSES"
+	}
+	return CreditApplication{
+		ApplicationID: prior.ApplicationID, CreditKind: prior.CreditKind, CreditID: prior.CreditID,
+		InvoiceID: prior.InvoiceID, InvoiceNo: no, AppliedCents: prior.AmountCents,
+		Lines: []CreditApplicationLine{{
+			InvoiceID: prior.InvoiceID, InvoiceNo: no, AppliedCents: prior.AmountCents,
+			Outcome: outcome, BalanceAfterCents: balance,
+		}},
+		Replayed: true,
+	}, nil
+}
+
+// stampCreditApplications writes the application records back onto the invoice's metadata, keeping
+// every other key the metadata already carried.
+func stampCreditApplications(ctx context.Context, tx pgx.Tx, invoiceID string, apps map[string]creditApplicationRecord) error {
+	raw, err := json.Marshal(map[string]any{"credit_applications": apps})
+	if err != nil {
+		return fmt.Errorf("credit apply: marshal the record: %w", err)
+	}
+	// jsonb_set on the one key: a foreign metadata key this act does not own stays exactly as it was.
+	if _, err := tx.Exec(ctx, `
+UPDATE invoices
+   SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{credit_applications}', $2::jsonb, true),
+       updated_at = now()
+ WHERE id = $1::uuid`, invoiceID, string(raw)); err != nil {
+		return fmt.Errorf("credit apply: stamp the record: %w", err)
+	}
+	return nil
+}
+
+// creditFeedSeqCTE is the INVOICES counter CTE every invoice balance move here draws beside its
+// write, the payments settle's own spelling.
+const creditFeedSeqCTE = `WITH iseq AS (
+	INSERT INTO scope_sequences (scope) VALUES ('invoices')
+	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+	RETURNING next_value
+) `
+
+// -- the reversal ---------------------------------------------------------------------------------
+
+// ReverseCreditApplicationInput is one reversal request.
+type ReverseCreditApplicationInput struct {
+	InvoiceID      string // the invoice the application sits on
+	ApplicationID  string
+	Reason         string
+	ActorID        string
+	OrgID          string
+	CanAccessBranch func(branchID string) bool
+}
+
+// CreditApplicationReversed is the reversal's answer.
+type CreditApplicationReversed struct {
+	ApplicationID    string                  `json:"application_id"`
+	InvoiceID        string                  `json:"invoice_id"`
+	InvoiceNo        string                  `json:"invoice_no"`
+	RestoredCents    int64                   `json:"restored_cents"`
+	InvoiceBalance   int64                   `json:"invoice_balance_after_cents"`
+	CreditOpenAfter  int64                   `json:"credit_open_after_cents"`
+	Lines            []CreditApplicationLine `json:"lines"`
+	Replayed         bool                    `json:"replayed"`
+}
+
+// ApplicationNotReversible is the refusal for an application already reversed.
+var ApplicationNotReversible = errors.New("billing: that application has already been reversed")
+
+// ReverseCreditApplication undoes one application: the invoice's balance back up, the credit's open
+// figure back to what it was, both restored in ONE transaction. Manager only, reason required.
+func (s *CreditApplyService) Reverse(ctx context.Context, in ReverseCreditApplicationInput, isManager bool) (CreditApplicationReversed, error) {
+	if !isManager {
+		return CreditApplicationReversed{}, errors.New("billing: reversing a credit application is a manager action")
+	}
+	if strings.TrimSpace(in.Reason) == "" {
+		return CreditApplicationReversed{}, ErrCreditApplicationReasonRequired
+	}
+	invID, err := uuid.Parse(strings.TrimSpace(in.InvoiceID))
+	if err != nil {
+		return CreditApplicationReversed{}, httpx.BadRequestf("invoice id must be a uuid")
+	}
+	appID, err := uuid.Parse(strings.TrimSpace(in.ApplicationID))
+	if err != nil {
+		return CreditApplicationReversed{}, httpx.BadRequestf("application id must be a uuid")
+	}
+	in.InvoiceID, in.ApplicationID = invID.String(), appID.String()
+	in.Reason = strings.TrimSpace(in.Reason)
+	res, err := s.repo.ReverseCreditApplication(ctx, in, s.now())
+	if err != nil {
+		return CreditApplicationReversed{}, err
+	}
+	if s.audit != nil && !res.Replayed {
+		_ = s.audit.Record(ctx, audit.SensitiveAccess{
+			Action: ActCreditApplicationReversed, EntityType: "invoice", EntityID: in.InvoiceID,
+			ActorID: in.ActorID, Purpose: "CREDIT_APPLY_REVERSE", Reason: in.Reason,
+			Extra: map[string]any{
+				"application_id": res.ApplicationID, "restored_cents": res.RestoredCents,
+			},
+		})
+	}
+	return res, nil
+}
+
+// ReverseCreditApplication is the reversal write. The target invoice's row is the lock and the
+// record's home: the record is read from its metadata, judged, and stamped reversed.
+func (r *Repository) ReverseCreditApplication(ctx context.Context, in ReverseCreditApplicationInput, now time.Time) (CreditApplicationReversed, error) {
+	if r.pool == nil {
+		return CreditApplicationReversed{}, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return CreditApplicationReversed{}, fmt.Errorf("credit reverse: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, in.InvoiceID); err != nil {
+		return CreditApplicationReversed{}, fmt.Errorf("credit reverse: lock the invoice: %w", err)
+	}
+	var (
+		invNo, invBranch, invStatus, invOrg string
+		invBalance, invHoldback             int64
+		metadataRaw                         string
+	)
+	err = tx.QueryRow(ctx, `
+SELECT invoice_no::text, balance_cents, holdback_cents, branch_id::text, status,
+       COALESCE(org_id::text, ''), COALESCE(metadata::text, '')
+  FROM invoices WHERE id = $1::uuid`, in.InvoiceID).
+		Scan(&invNo, &invBalance, &invHoldback, &invBranch, &invStatus, &invOrg, &metadataRaw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CreditApplicationReversed{}, NoSuchInvoiceError{InvoiceID: in.InvoiceID}
+		}
+		return CreditApplicationReversed{}, fmt.Errorf("credit reverse: read the invoice: %w", err)
+	}
+	if in.CanAccessBranch != nil && !in.CanAccessBranch(invBranch) {
+		return CreditApplicationReversed{}, NoSuchInvoiceError{InvoiceID: in.InvoiceID}
+	}
+	if in.OrgID != "" && invOrg != "" && invOrg != in.OrgID {
+		return CreditApplicationReversed{}, httpx.BadRequestf("invoice %s is another org's document, this desk cannot reverse its applications", invNo)
+	}
+	apps, err := readCreditApplications(metadataRaw)
+	if err != nil {
+		return CreditApplicationReversed{}, err
+	}
+	var (
+		record        creditApplicationRecord
+		recordKey     string
+		found         bool
+		replayOfStore bool
+	)
+	for key, rec := range apps {
+		if rec.ApplicationID == in.ApplicationID {
+			record, recordKey, found = rec, key, true
+			if rec.Reversal != nil && rec.Reversal.Key == "replay-check" {
+				replayOfStore = true
+			}
+			break
+		}
+	}
+	if !found {
+		return CreditApplicationReversed{}, httpx.BadRequestf("no credit application %s sits on invoice %s", in.ApplicationID, invNo)
+	}
+	if record.Reversal != nil {
+		return CreditApplicationReversed{}, ApplicationNotReversible
+	}
+	_ = replayOfStore
+	amount := record.AmountCents
+
+	// Restore the invoice side.
+	after := invBalance + amount
+	if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
+UPDATE invoices
+   SET balance_cents = $2, status = CASE WHEN $2 <= 0 THEN status ELSE 'PARTIALLY_PAID' END,
+       updated_at = now(), seq = (SELECT next_value FROM iseq)
+ WHERE id = $1::uuid`, in.InvoiceID, after); err != nil {
+		return CreditApplicationReversed{}, fmt.Errorf("credit reverse: restore the invoice: %w", err)
+	}
+
+	creditOpenAfter := int64(0)
+	switch record.CreditKind {
+	case CreditKindMemo:
+		var memoBalance int64
+		if err := tx.QueryRow(ctx, `SELECT balance_cents FROM invoices WHERE id = $1::uuid AND customer_id = (
+		      SELECT customer_id FROM invoices WHERE id = $2::uuid) FOR NO KEY UPDATE`,
+			record.CreditID, in.InvoiceID).Scan(&memoBalance); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return CreditApplicationReversed{}, NoSuchCreditError{CreditID: record.CreditID}
+			}
+			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: read the memo: %w", err)
+		}
+		creditOpenAfter = -memoBalance + amount
+		if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
+UPDATE invoices
+   SET balance_cents = $2, status = CASE WHEN $2 >= 0 THEN 'PAID' ELSE 'FINALIZED' END,
+       updated_at = now(), seq = (SELECT next_value FROM iseq)
+ WHERE id = $1::uuid`, record.CreditID, memoBalance-amount); err != nil {
+			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: restore the memo: %w", err)
+		}
+	case CreditKindAccount:
+		var anchorType, anchorRef string
+		var anchorSum int64
+		if err := tx.QueryRow(ctx, `
+SELECT source_type, source_ref_id::text, (SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions g
+   WHERE g.customer_id = a.customer_id AND g.source_type = a.source_type AND g.source_ref_id = a.source_ref_id)
+  FROM customer_transactions a WHERE a.id = $1::uuid`, record.CreditID).Scan(&anchorType, &anchorRef, &anchorSum); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return CreditApplicationReversed{}, NoSuchCreditError{CreditID: record.CreditID}
+			}
+			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: read the account credit: %w", err)
+		}
+		creditOpenAfter = -anchorSum + amount
+		if _, err := tx.Exec(ctx, `
+INSERT INTO customer_transactions
+  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
+SELECT customer_id, txn_type, $2, 0, source_type, source_ref_id, branch_id, $4, $5
+  FROM customer_transactions WHERE id = $1::uuid`,
+			record.CreditID, -amount, invBranch, "credit application reversed: "+in.Reason, now); err != nil {
+			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: the credit's restore row: %w", err)
+		}
+	}
+
+	// The running account balance after the restores, for the rows' balance_after.
+	var runningAR int64
+	if err := tx.QueryRow(ctx, `
+SELECT (SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
+         WHERE customer_id = (SELECT customer_id FROM invoices WHERE id = $1::uuid)
+           AND status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents <> 0)`,
+		in.InvoiceID).Scan(&runningAR); err != nil {
+		return CreditApplicationReversed{}, fmt.Errorf("credit reverse: read the account's AR: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO customer_transactions
+  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
+SELECT customer_id, 'ADJUSTMENT', $2, $3, 'invoice', id::uuid, branch_id, $4, $5
+  FROM invoices WHERE id = $1::uuid`,
+		in.InvoiceID, amount, runningAR, "credit application reversed: "+in.Reason, now); err != nil {
+		return CreditApplicationReversed{}, fmt.Errorf("credit reverse: the invoice's restore row: %w", err)
+	}
+	if record.CreditKind == CreditKindMemo {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO customer_transactions
+  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
+SELECT customer_id, 'CREDIT_MEMO', $2, $3, 'invoice', id::uuid, branch_id, $4, $5
+  FROM invoices WHERE id = $1::uuid`,
+			record.CreditID, -amount, runningAR, "credit memo restored: "+in.Reason, now); err != nil {
+			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: the memo's restore row: %w", err)
+		}
+	}
+
+	// Stamp the reversal onto the record.
+	record.Reversal = &creditReversalRecord{Reason: in.Reason, ReversedBy: in.ActorID, ReversedAt: now.UTC().Format(time.RFC3339)}
+	apps[recordKey] = record
+	if err := stampCreditApplications(ctx, tx, in.InvoiceID, apps); err != nil {
+		return CreditApplicationReversed{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CreditApplicationReversed{}, fmt.Errorf("credit reverse: commit: %w", err)
+	}
+	outcome := "PART"
+	if after <= 0 {
+		outcome = "CLOSES"
+	}
+	return CreditApplicationReversed{
+		ApplicationID: record.ApplicationID, InvoiceID: in.InvoiceID, InvoiceNo: invNo,
+		RestoredCents: amount, InvoiceBalance: after, CreditOpenAfter: creditOpenAfter,
+		Lines: []CreditApplicationLine{{
+			InvoiceID: in.InvoiceID, InvoiceNo: invNo, AppliedCents: amount,
+			Outcome: outcome, BalanceAfterCents: after,
+		}},
+	}, nil
+}
