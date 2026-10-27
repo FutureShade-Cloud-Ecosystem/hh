@@ -128,23 +128,14 @@ func TestIntegrationEveningAge_AnInvoiceFinalizedNowIsOnTheBooksAndTiesToGL1100(
 		return glBal, tie, aging
 	}
 
-	// The outbox starts with nothing PENDING, so the drain below moves the books by this leg's
-	// invoice alone. PUBLISHED rows are the table's history and DEAD rows never post; a row still
-	// PENDING after draining is a failure named here, never a wrong delta further down.
-	for i := 0; i < 300; i++ {
-		if drained := dispatch.DrainOnce(ctx); drained == 0 {
-			break
-		}
-	}
-	var pending int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM events_outbox WHERE status = 'PENDING'`).Scan(&pending); err != nil {
-		t.Fatalf("read the outbox: %v", err)
-	}
-	if pending != 0 {
-		t.Fatalf("%d outbox rows still pending after draining: the leg's deltas would read other writers' postings", pending)
-	}
+	// The drain below must move the books by THIS leg's invoice alone: the shared outbox carries
+	// other tests' leftover rows, and posting their journals here would reach into windows other
+	// legs read (a backdated finalize journal lands inside the June residue probe in gl). So the
+	// leg takes FOR UPDATE locks on every other PENDING row and holds them while it drains: the
+	// claim reads FOR UPDATE SKIP LOCKED, ordered by occurred_at, so the only row the dispatcher
+	// can settle is this leg's own. The lock transaction rolls back and the leftovers stand as
+	// they were found.
 	gl0, tie0, aging0 := figures()
-	baseline := time.Now()
 
 	houseDay := houseday.Today(time.Now)
 	var id string
@@ -167,6 +158,16 @@ func TestIntegrationEveningAge_AnInvoiceFinalizedNowIsOnTheBooksAndTiesToGL1100(
 	if _, err := pool.Exec(ctx, `INSERT INTO events_outbox (topic, payload) VALUES ('ar.invoice.finalized', jsonb_build_object('invoice_id', $1::text))`, id); err != nil {
 		t.Fatalf("emit the finalize event: %v", err)
 	}
+
+	locks, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin the lock transaction: %v", err)
+	}
+	defer func() { _ = locks.Rollback(ctx) }()
+	if _, err := locks.Exec(ctx, `SELECT event_id FROM events_outbox WHERE status = 'PENDING' AND payload->>'invoice_id' IS DISTINCT FROM $1 FOR UPDATE`, id); err != nil {
+		t.Fatalf("lock the other pending rows: %v", err)
+	}
+
 	var posted int
 	for i := 0; i < 300 && posted == 0; i++ {
 		dispatch.DrainOnce(ctx)
@@ -176,13 +177,6 @@ func TestIntegrationEveningAge_AnInvoiceFinalizedNowIsOnTheBooksAndTiesToGL1100(
 	}
 	if posted == 0 {
 		t.Fatalf("the finalize event never posted its journal")
-	}
-	var others int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM gl_journals WHERE idempotency_key <> $1 AND posted_at >= $2`, key, baseline).Scan(&others); err != nil {
-		t.Fatalf("read the journals posted mid leg: %v", err)
-	}
-	if others != 0 {
-		t.Fatalf("%d other journals posted while the leg ran: the deltas would read other writers' postings", others)
 	}
 	var postedAt time.Time
 	if err := pool.QueryRow(ctx, `SELECT posted_at FROM gl_journals WHERE idempotency_key = $1`, key).Scan(&postedAt); err != nil {
