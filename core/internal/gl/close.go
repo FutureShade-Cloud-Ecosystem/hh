@@ -169,6 +169,10 @@ func (s *Service) ClosePeriod(ctx context.Context, id, reason string) (Period, e
 	if fails := s.runClosePreFlight(ctx, p.Year, p.Month); len(fails) > 0 {
 		return Period{}, clientErr(409, "gl: period close pre flight failed: %s", strings.Join(fails, "; "))
 	}
+	// Round 3: a period is company wide, its close a dealer wide act.
+	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
+		return Period{}, err
+	}
 	if reason == "" {
 		reason = "period close"
 	}
@@ -185,6 +189,10 @@ func (s *Service) ReopenPeriod(ctx context.Context, id, reason string) (Period, 
 	}
 	if caller.RoleCode != controllerRole {
 		return Period{}, errNotController
+	}
+	// Round 3: reopen is a dealer wide act on top of the Controller rule.
+	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
+		return Period{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
 		return Period{}, errReasonRequired
@@ -235,6 +243,10 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	// year start is stored policy no period math follows, the FW1-01 report's finding). The group
 	// with no branch stamp closes consolidated exactly as before, so a book with no branch stamps
 	// still gets the one closing journal it always did.
+	// Round 3: the year end close is a dealer wide act.
+	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
+		return YearCloseResult{}, err
+	}
 	// FW1-09b, the lead's Ask 2: the close is refused until the year's last day has passed in the
 	// dealer's zone (a mid year press sealed the months still ahead and stopped all posting).
 	ended, err := s.store.HouseYearEnded(ctx, year, s.now())

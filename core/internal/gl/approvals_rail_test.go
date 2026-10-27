@@ -41,7 +41,7 @@ func (f *fakeApprovalFiler) FileJEApprovalTx(_ context.Context, _ pgx.Tx, journa
 // they can never reach this bridge regardless of amount.)
 func TestCreateJournal_ParkBridge_FiresOnlyOnManualPark(t *testing.T) {
 	ctx := context.Background()
-	maker := identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager}
+	maker := identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeBranch, Branches: map[string]bool{"b1": true}}
 	over := []JournalLineInput{{AccountCode: "1000", DebitCents: 600000}, {AccountCode: "4000", CreditCents: 600000}}
 
 	// (a) manual, over threshold → parks DRAFT → filer fires once with the journal id + debit total.
@@ -121,7 +121,9 @@ func TestCreateJournal_ParkBridge_FiresOnlyOnManualPark(t *testing.T) {
 	f = newFakeStore()
 	f.policy.JEApprovalThresholdCents = 500000
 	filer = &fakeApprovalFiler{}
-	_, err = newTestServiceAs(f, maker).WithApprovalFiler(filer).
+	// Round 3: the no branch journal is the consolidated books, so the maker
+	// here is dealer wide; the fence passes and the park bridge's own words fire.
+	_, err = newTestServiceAs(f, identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}).WithApprovalFiler(filer).
 		CreateJournal(ctx, CreateJournalInput{Source: SourceManual, Lines: over})
 	if !errors.As(err, &bad) || !strings.Contains(err.Error(), "needs a branch") {
 		t.Fatalf("no branch: err %v, want a bad request saying the journal needs a branch", err)

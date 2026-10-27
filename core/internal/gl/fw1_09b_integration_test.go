@@ -101,7 +101,7 @@ func TestIntegration_FW1_09b_ParkedJournalCannotPostIntoAClosedMonth(t *testing.
 		t.Skipf("no seeded branch: %v", err)
 	}
 	at := time.Date(2081, 6, 20, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "SALES_MANAGER", Tier: identity.TierManager}, at)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at)
 
 	// Two June journals parked over the seeded $5,000.00 threshold (bare
 	// DRAFTs, the shipped no-rail posture).

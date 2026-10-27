@@ -342,6 +342,34 @@ func (s *Service) authorizeBranchRead(ctx context.Context, branchID string) erro
 	return nil
 }
 
+// errForbiddenWrite is the write fence's plain words (round 3, SECURITY-SOD
+// gap 19): the refusal names the books the sign in covers, never a bare code.
+var errForbiddenWrite = clientError{status: 403, msg: "gl: this write reaches books your sign in does not cover; a scoped sign in writes only its own branches, and the consolidated books need a dealer wide one"}
+
+// authorizeBranchWrite fences a LEDGER WRITE (round 3) the way
+// authorizeBranchRead fences the reads: a dealer wide (GLOBAL) caller is
+// unrestricted; a scoped caller may write only inside their reach; and a
+// consolidated write (no branch: the consolidated books, period close and
+// reopen, the year end close, the chart of accounts) needs a dealer wide
+// caller. Applied BEFORE the write lands, so a refused write leaves nothing
+// behind and the answer never contradicts a commit.
+func (s *Service) authorizeBranchWrite(ctx context.Context, branchID string) error {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return err
+	}
+	if branchID == "" {
+		if caller.Scope != identity.ScopeGlobal {
+			return errForbiddenWrite
+		}
+		return nil
+	}
+	if !caller.CanAccessBranch(branchID) {
+		return errForbiddenWrite
+	}
+	return nil
+}
+
 // clock returns the service clock (defaults to time.Now).
 func (s *Service) clock() time.Time {
 	if s.now == nil {

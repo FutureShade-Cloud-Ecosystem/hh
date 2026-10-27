@@ -44,6 +44,10 @@ func (s *Service) CreateAccount(ctx context.Context, in CreateAccountInput) (Acc
 // deactivating out from under an unposted entry would strand it. POSTED history is unaffected (the account
 // keeps its ledger rows; it just cannot be used on new entries).
 func (s *Service) DeactivateAccount(ctx context.Context, code string) (Account, error) {
+	// Round 3: the chart of accounts is dealer wide.
+	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
+		return Account{}, err
+	}
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return Account{}, badReq("gl: account code is required")
@@ -94,6 +98,13 @@ func (s *Service) GetJournal(ctx context.Context, id string) (Journal, error) {
 	return j, nil
 }
 
+// readBackJournal is a write's answer read back through the STORE, never the
+// fenced read (round 3, S2's PR 615 P2-2): an answer never contradicts a
+// committed write.
+func (s *Service) readBackJournal(ctx context.Context, id string) (Journal, error) {
+	return s.GetJournal(ctx, id)
+}
+
 // - journal writes (maker-checker) -
 
 // CreateJournal validates a balanced manual entry and either posts it directly (below the gl_policy approval
@@ -101,6 +112,11 @@ func (s *Service) GetJournal(ctx context.Context, id string) (Journal, error) {
 func (s *Service) CreateJournal(ctx context.Context, in CreateJournalInput) (Journal, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
+		return Journal{}, err
+	}
+	// Round 3: the write fence, before anything lands. A no branch journal is
+	// the consolidated books, a dealer wide write.
+	if err := s.authorizeBranchWrite(ctx, in.BranchID); err != nil {
 		return Journal{}, err
 	}
 	if len(in.Lines) < 2 {
@@ -203,6 +219,10 @@ func (s *Service) ApproveJournal(ctx context.Context, id string) (Journal, error
 	if j.Status != StatusDraft {
 		return Journal{}, clientErr(409, "gl: journal is %s, not DRAFT, cannot approve", j.Status)
 	}
+	// Round 3: approving posts the park's books, so the fence reads the park.
+	if err := s.authorizeBranchWrite(ctx, j.BranchID); err != nil {
+		return Journal{}, err
+	}
 	if j.CreatedBy != "" && j.CreatedBy == caller.UserID {
 		return Journal{}, errFourEyes
 	}
@@ -287,6 +307,10 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 	if err != nil {
 		return Journal{}, err
 	}
+	// Round 3: the reversal lands in the original journal's books.
+	if err := s.authorizeBranchWrite(ctx, orig.BranchID); err != nil {
+		return Journal{}, err
+	}
 	if orig.Status != StatusPosted {
 		return Journal{}, clientErr(409, "gl: only a POSTED journal can be reversed (status=%s)", orig.Status)
 	}
@@ -313,7 +337,7 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 	if err != nil {
 		return Journal{}, err
 	}
-	return s.GetJournal(ctx, newID)
+	return s.readBackJournal(ctx, newID)
 }
 
 // - recurring -

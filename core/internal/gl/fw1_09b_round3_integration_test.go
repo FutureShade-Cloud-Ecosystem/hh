@@ -45,6 +45,16 @@ func TestIntegration_FW1_09bR3_JournalWritesHeldToTheCallersBranch(t *testing.T)
 	user := aUser(t, pool)
 	trenton, kingston := fw1TwoBranches(t, pool)
 	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	// The red run of this leg may have committed behind the old open fence;
+	// the memos start clean whatever the database holds.
+	for _, memo := range []string{"R3 out of reach create", "R3 consolidated create", "R3 reversal target", "R3 my own branch create", "R3 out of reach park"} {
+		if _, err := pool.Exec(ctx, `DELETE FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id=j.id AND j.memo=$1`, memo); err != nil {
+			t.Fatalf("scrub %s: %v", memo, err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM gl_journals WHERE memo=$1`, memo); err != nil {
+			t.Fatalf("scrub %s: %v", memo, err)
+		}
+	}
 	scoped := svcAt(pool, fw1Scoped(user, kingston), clockAt)
 	global := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, clockAt)
 
@@ -106,7 +116,7 @@ func TestIntegration_FW1_09bR3_JournalWritesHeldToTheCallersBranch(t *testing.T)
 	}
 
 	// APPROVE a Trenton park: refused, the journal stays parked.
-	maker := svcAt(pool, identity.StaffContext{UserID: user + "-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt)
+	maker := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt)
 	parked, err := maker.CreateJournal(ctx, CreateJournalInput{
 		BranchID: trenton, Memo: "R3 out of reach park",
 		Lines: []JournalLineInput{
@@ -190,28 +200,40 @@ func TestIntegration_FW1_09bR3_PeriodAndAccountWritesNeedDealerWide(t *testing.T
 	if _, err := global.ClosePeriod(ctx, periodID(t, pool, 2094, 6), "R3 global close"); err != nil {
 		t.Fatalf("the dealer wide close: %v", err)
 	}
-	if _, err := global.CloseYear(ctx, 2094, "R3 global year end"); err != nil {
+	// The year end runs after 2094 has ended (the FW1-09b year end refusal).
+	yearEnder := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2095, 1, 5, 12, 0, 0, 0, time.UTC))
+	if _, err := yearEnder.CloseYear(ctx, 2094, "R3 global year end"); err != nil {
 		t.Fatalf("the dealer wide year end: %v", err)
 	}
 	if _, err := scopedController.ReopenPeriod(ctx, periodID(t, pool, 2094, 6), "R3 scoped reopen"); err == nil {
 		t.Fatalf("a branch scoped controller reopened a period; reopen is a dealer wide act")
 	}
 
-	// ACCOUNT deactivate: the chart of accounts is dealer wide.
-	if _, err := scopedManager.DeactivateAccount(ctx, "1000"); err == nil {
+	// ACCOUNT deactivate: the chart of accounts is dealer wide. The leg plants
+	// an account of its own, so no fixture's drafts can stand in the way.
+	code := "9999"
+	if _, err := pool.Exec(ctx, `DELETE FROM gl_accounts WHERE code=$1`, code); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM gl_accounts WHERE code=$1`, code)
+	})
+	if _, err := NewRepository(pool).InsertAccount(ctx, CreateAccountInput{
+		Code: code, Name: "FW1-09b round 3 account", AccountType: "ASSET", NormalBalance: "DEBIT",
+	}); err != nil {
+		t.Fatalf("plant the account: %v", err)
+	}
+	if _, err := scopedManager.DeactivateAccount(ctx, code); err == nil {
 		t.Fatalf("a branch scoped manager deactivated a chart of accounts account; it is a dealer wide act")
 	}
 	var active bool
-	if err := pool.QueryRow(ctx, `SELECT is_active FROM gl_accounts WHERE code='1000'`).Scan(&active); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT is_active FROM gl_accounts WHERE code=$1`, code).Scan(&active); err != nil {
 		t.Fatal(err)
 	}
 	if !active {
-		t.Fatalf("the refused deactivate left 1000 inactive")
+		t.Fatalf("the refused deactivate left %s inactive", code)
 	}
-	if _, err := global.DeactivateAccount(ctx, "1000"); err != nil {
+	if _, err := global.DeactivateAccount(ctx, code); err != nil {
 		t.Fatalf("the dealer wide deactivate: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = NewRepository(pool).SetAccountActive(ctx, "1000", true)
-	})
 }

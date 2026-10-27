@@ -61,7 +61,7 @@ func TestIntegration_FW1_01_YearRollForward_PostsOnTheFirstDayAfterTheSeededYear
 	user := aUser(t, pool)
 	next := fw1NextYear(t, pool)
 	at := time.Date(next, 1, 1, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at)
 
 	id, _, err := svc.store.InsertJournal(ctx, journalDraft{
 		Source:     SourceAdjustment,
@@ -174,7 +174,7 @@ func TestIntegration_FW1_01_SystemJournalTakesItsDocumentsDate(t *testing.T) {
 	ensurePeriods(t, pool, 2085)
 	docAt := time.Date(2085, 5, 10, 12, 0, 0, 0, time.UTC)
 	clockAt := time.Date(2085, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt).
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt).
 		WithInvoiceReader(seedInvoiceReader{pool: pool})
 	dep := fw1PlantDeposit(t, pool, docAt)
 	t.Cleanup(func() {
@@ -211,7 +211,7 @@ func TestIntegration_FW1_01_SystemJournalForAClosedMonthIsNeverRefused(t *testin
 	pool := intPool(t)
 	user := aUser(t, pool)
 	ensurePeriods(t, pool, 2088)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, time.Date(2088, 6, 15, 12, 0, 0, 0, time.UTC))
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, time.Date(2088, 6, 15, 12, 0, 0, 0, time.UTC))
 	if _, err := svc.ClosePeriod(ctx, periodID(t, pool, 2088, 5), "FW1-01 closed month proof"); err != nil {
 		t.Fatalf("close May 2088: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestIntegration_FW1_01_ManualJournalIntoAClosedMonthIsStillRefused(t *testi
 	user := aUser(t, pool)
 	ensurePeriods(t, pool, 2088)
 	clockAt := time.Date(2088, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt)
 	if _, err := svc.ClosePeriod(ctx, periodID(t, pool, 2088, 5), "FW1-01 closed month proof"); err != nil {
 		t.Fatalf("close May 2088: %v", err)
 	}

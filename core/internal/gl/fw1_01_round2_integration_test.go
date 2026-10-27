@@ -84,7 +84,7 @@ func TestIntegration_FW1_01R2_DepositReleaseDatedByTheDelivery(t *testing.T) {
 	pool := intPool(t)
 	user := aUser(t, pool)
 	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt).
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt).
 		WithInvoiceReader(seedInvoiceReader{pool: pool}).
 		WithDeliveryReader(fw1Delivery{at: clockAt})
 	dep := fw1PlantDeposit(t, pool, time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC))
@@ -125,7 +125,7 @@ func TestIntegration_FW1_01R2_RollForwardIsANoOpAndTheControllerOpensOneMore(t *
 	fw1ScrubYear(t, pool, target, beyond)
 	t.Cleanup(func() { fw1ScrubYear(t, pool, target, beyond) })
 	clockAt := time.Date(house, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location())
-	worker := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt)
+	worker := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt)
 	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, clockAt)
 
 	months := func(year int) int {
@@ -190,7 +190,7 @@ func TestIntegration_FW1_01R2_NeverCreatesAPastYear(t *testing.T) {
 	fw1ScrubYear(t, pool, 2025)
 	t.Cleanup(func() { fw1ScrubYear(t, pool, 2025) })
 	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt)
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt)
 
 	id, _, err := svc.store.InsertJournal(ctx, journalDraft{
 		Source:     SourceAdjustment,
@@ -243,7 +243,7 @@ func TestIntegration_FW1_01R2_AsOfReadsUseTheFiledPeriod(t *testing.T) {
 	pool := intPool(t)
 	user := aUser(t, pool)
 	ensurePeriods(t, pool, 2085)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, time.Date(2085, 7, 1, 12, 0, 0, 0, time.UTC))
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, time.Date(2085, 7, 1, 12, 0, 0, 0, time.UTC))
 	if _, err := svc.ClosePeriod(ctx, periodID(t, pool, 2085, 5), "round 2 closed May"); err != nil {
 		t.Fatalf("close May 2085: %v", err)
 	}

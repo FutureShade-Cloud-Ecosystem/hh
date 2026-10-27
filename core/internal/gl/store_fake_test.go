@@ -354,7 +354,9 @@ func (f fakeTaxSplit) TaxSplit(_ context.Context, _ string) (int64, int64, int64
 
 // - test service wiring -
 
-var testCaller = identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeBranch}
+// Round 3 fences the ledger writes to the caller's reach; the unit fixtures'
+// makers are dealer wide, the fence legs prove the scoped refusals.
+var testCaller = identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 
 // fakeHold is the approvals queue seen from the approve route: state is the answer (the zero value means an
 // approved request for the journal's amount), err makes the read fail.
