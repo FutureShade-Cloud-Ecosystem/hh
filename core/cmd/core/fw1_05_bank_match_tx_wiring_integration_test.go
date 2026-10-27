@@ -18,10 +18,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The production poster carries bankrec's transaction arm (P1-A): the compile pin that keeps
-// the one transaction path live in the served core. Without it the leg below still refuses,
-// but on the historical two step order, which commits the match before the journal.
-var _ bankrec.JournalPosterTx = glPosterAdapter{}
+// The production poster's compile pin lives in the UNTAGGED fw1_05_poster_arm_pin.go, so a plain
+// build or vet catches a lost arm (S5's round 2 P3 note, FW1-05b).
 
 func TestIntegration_FW1_05_R2_ARefusedClearingJournalLeavesTheLineUnmatchedThroughTheWiredPoster(t *testing.T) {
 	ctx := context.Background()
