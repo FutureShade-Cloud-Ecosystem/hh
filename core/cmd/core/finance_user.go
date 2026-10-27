@@ -1,16 +1,20 @@
 // finance_user.go carries the finance-user role (W2-2): the one-shot the
-// principal runs once per named tester on the finance box. One person per
-// run, by email, FB Console user id, display name and role, all at run
-// time: the command makes sure the org anchor exists (keeping the name it
-// already has), writes an ACTIVE users row and a global staff grant so the
-// console exchange's gate 6 links the person to their role, and --revoke
-// closes what it opened. The revoke names its subject twice, by email and
-// by platform id, and takes every live grant that subject holds in the
-// org, so the last revocation is the durable one. Every write lands
-// through the identity and audit modules' own seams inside one
-// transaction, no agent ever sets or sees a password, and nothing is ever
-// deleted. The guard refuses anywhere but the finance box, one line naming
-// the check, never a value.
+// principal runs once per named tester on the finance box, and the
+// provision and revoke primitives a boot time reconciler of the finance
+// list runs against. One person per run, by email, FB Console user id,
+// display name and role, all at run time: the command makes sure the org
+// anchor exists (keeping the name it already has), writes an ACTIVE users
+// row and a global staff grant so the console exchange's gate 6 links the
+// person to their role, and --revoke closes what it opened. The revoke
+// names its subject twice, by email and by platform id, and takes every
+// live grant that subject holds in the org, so the last revocation is the
+// durable one; a revoke of a person already revoked is a quiet success, so
+// the reconciler can run it at every boot, and the provision records an
+// audit row only on a run that wrote. Every write lands through the
+// identity and audit modules' own seams inside one transaction, no agent
+// ever sets or sees a password, and nothing is ever deleted. The guard
+// refuses anywhere but the finance box, one line naming the check, never a
+// value.
 
 package main
 
@@ -210,8 +214,11 @@ func financeUserProvision(ctx context.Context, pool *pgxpool.Pool, stdout io.Wri
 // financeUserRevoke deactivates the staff users row and soft deletes every
 // live grant the platform user holds in the org, in one transaction, then
 // the audit row, and prints the users row id and the id of every grant it
-// revoked. Never a delete, never an empty grant id: a revoke with nothing
-// to revoke refuses.
+// revoked. Never a delete, and never an empty grant id. A revoke of a
+// person already revoked and deactivated is a quiet success, rc 0 with
+// nothing printed and no audit row, so the boot time reconciler can run it
+// at every boot; a revoke that still finds a live row with no grants
+// deactivates the row and records that.
 func financeUserRevoke(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer, getenv func(string) string, platformUserID, email string) error {
 	slug := strings.TrimSpace(getenv(envWebOrg))
 	if slug == "" {
@@ -250,16 +257,25 @@ func financeUserRevoke(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer
 	}
 	// Every live grant goes, not only the role the caller names: a grant
 	// left live would come back with the next provision, and the last
-	// revocation has to be the durable one.
+	// revocation has to be the durable one. The deactivation runs even
+	// when no grant was left, so a row another hand left live loses its
+	// sign in here too; both halves are idempotent.
 	grantIDs, revoked, err := identity.RevokeStaffGrants(ctx, tx, orgID, platformUserID)
 	if err != nil {
 		return fmt.Errorf("finance-user: the grant revocation: %w", err)
 	}
-	if !revoked {
-		return errors.New("finance-user: no live staff grant to revoke")
-	}
-	if _, _, err := identity.DeactivateStaffUser(ctx, tx, platformUserID); err != nil {
+	_, deactivated, err := identity.DeactivateStaffUser(ctx, tx, platformUserID)
+	if err != nil {
 		return fmt.Errorf("finance-user: the deactivation: %w", err)
+	}
+	if !revoked && !deactivated {
+		// Already revoked and deactivated: a quiet success, so the boot
+		// time reconciler can run this revoke at every boot. Nothing
+		// moved, so no audit row and nothing printed.
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("finance-user: cannot commit: %w", err)
+		}
+		return nil
 	}
 	svc := audit.NewService(audit.NewRepository(pool), slog.Default())
 	if err := svc.RecordTx(ctx, tx, audit.SensitiveAccess{
@@ -274,6 +290,10 @@ func financeUserRevoke(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("finance-user: cannot commit: %w", err)
+	}
+	if len(grantIDs) == 0 {
+		fmt.Fprintf(stdout, "user_id=%s\n", userID)
+		return nil
 	}
 	for _, grantID := range grantIDs {
 		fmt.Fprintf(stdout, "user_id=%s grant_id=%s\n", userID, grantID)

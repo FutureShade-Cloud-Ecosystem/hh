@@ -753,9 +753,12 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 		// The boot time reconciler runs the revoke at every boot for an
 		// entry that left the list: the second revoke of a revoked person
 		// exits 0, writes nothing, records nothing and prints nothing, or
-		// the second boot would refuse the box.
+		// the second boot would refuse the box. The stderr stream keeps
+		// the command's database target banner, so the print check reads
+		// stdout alone.
 		out.Reset()
-		if err := financeUserRole(revoke, out, out, env(nil)); err != nil {
+		errOut := &bytes.Buffer{}
+		if err := financeUserRole(revoke, out, errOut, env(nil)); err != nil {
 			t.Fatalf("the second revoke must be a quiet success, got %v (out %q)", err, out.String())
 		}
 		if out.String() != "" {
