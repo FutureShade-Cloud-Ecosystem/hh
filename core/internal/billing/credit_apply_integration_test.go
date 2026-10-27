@@ -1267,6 +1267,216 @@ func TestIntegration_FW1_12b_AMemoReversalAndAnApplyOfOneMemoNeverDeadlock(t *te
 	}
 }
 
+// TestIntegration_FW1_12b_AMemoApplyAndItsReversalOfOneInvoiceNeverDeadlockAtBothIdSorts pins
+// the round 6 residual (S6's read of round 5 at f44103cf): the round 5 leg stages its pair on
+// two different invoices, so the one conflict its fix did not close, both doors wanting the
+// SAME invoice row and the memo row in opposite orders, never fired there. With the memo's id
+// forced BELOW the target invoice's (10000000- against f0000000-), S6 measured a reversal and
+// an apply of one invoice and memo deadlocking 10 of 10, because the apply took the memo inside
+// one mixed ascending set with the invoices, while the reversal locks the target invoice first
+// and the memo row after it, so each door held what the other needed (SQLSTATE 40P01); with the
+// ids flipped the same pair completed 10 of 10. The fix this leg holds in place is the file's
+// THE LOCKS order walked the same way by both doors at either id sort: the apply locks its
+// target invoice rows ascending first, then the memo row through lockCreditMemoRow, then the
+// feed counter, never one mixed sorted set.
+//
+// Both id sorts, ten staged pairs each, the pair staged on the target invoice's own row: the
+// test's transaction holds that row, the reversal is launched and parks on it, the apply of
+// the same invoice and memo is launched and parks behind it, and only then is the row let go,
+// so both doors are proven parked before anything is released. Every pair must see both doors
+// complete with no 40P01 and the balances land once: the invoice at exactly 9000 and the memo
+// at exactly -9000 (the first 1000 applied, the 1000 restored, the 1000 applied again, the
+// same figures whichever order the pair runs in).
+func TestIntegration_FW1_12b_AMemoApplyAndItsReversalOfOneInvoiceNeverDeadlockAtBothIdSorts(t *testing.T) {
+	pool := intPool(t)
+	applySvc := NewCreditApplyService(NewRepository(pool))
+	ctx := context.Background()
+	n := ns(t)
+
+	issue := time.Now().UTC().AddDate(0, 0, -3).Format("2006-01-02")
+	due := time.Now().UTC().AddDate(0, 0, 27).Format("2006-01-02")
+
+	for _, sortCase := range []struct {
+		tag        string
+		name       string
+		memoPrefix string
+		invPrefix  string
+		ordered    func(memo, inv string) bool
+	}{
+		{tag: "L", name: "the memo id below the invoice id", memoPrefix: "10000000", invPrefix: "f0000000",
+			ordered: func(memo, inv string) bool { return memo < inv }},
+		{tag: "H", name: "the memo id above the invoice id", memoPrefix: "f1000000", invPrefix: "10000000",
+			ordered: func(memo, inv string) bool { return memo > inv }},
+	} {
+		for iteration := 1; iteration <= 10; iteration++ {
+			func() {
+				tag := fmt.Sprintf("%s-ID%s%d", n, sortCase.tag, iteration)
+				custID := seedCustomer(t, pool, tag)
+				t.Cleanup(func() {
+					c := context.Background()
+					_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
+					_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
+					_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+				})
+
+				// One open credit memo of -10000 and one invoice of 10000, the ids forced
+				// so the pair sits in the sort this case names (S6's probe's own spelling).
+				var memoID string
+				if err := pool.QueryRow(ctx, `
+					INSERT INTO invoices (id, invoice_no, customer_id, branch_id, status, issue_date, due_date,
+					                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+					VALUES (($1 || substr(gen_random_uuid()::text, 9))::uuid, $2, $3::uuid, $4::uuid, 'FINALIZED',
+					        $5::date, $5::date, -10000, 0, -10000, -10000, now(), 'CREDIT_MEMO')
+					RETURNING id::text`,
+					sortCase.memoPrefix, tag+"-CM", custID, trentonBranch, issue).Scan(&memoID); err != nil {
+					t.Fatalf("%s, iteration %d: seed the memo: %v", sortCase.name, iteration, err)
+				}
+				var invID string
+				if err := pool.QueryRow(ctx, `
+					INSERT INTO invoices (id, invoice_no, customer_id, branch_id, status, issue_date, due_date,
+					                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+					VALUES (($1 || substr(gen_random_uuid()::text, 9))::uuid, $2, $3::uuid, $4::uuid, 'FINALIZED',
+					        $5::date, $6::date, 10000, 0, 10000, 10000, now(), 'INVOICE')
+					RETURNING id::text`,
+					sortCase.invPrefix, tag+"-INV", custID, trentonBranch, issue, due).Scan(&invID); err != nil {
+					t.Fatalf("%s, iteration %d: seed the invoice: %v", sortCase.name, iteration, err)
+				}
+				if !sortCase.ordered(memoID, invID) {
+					t.Fatalf("%s, iteration %d: the staging came out the other sort: memo %s, invoice %s", sortCase.name, iteration, memoID, invID)
+				}
+
+				// The application the staged reversal undoes: 1000 of the memo onto the
+				// invoice, which leaves the memo at -9000 with 9000 open.
+				app1, err := applySvc.Apply(ctx, ApplyCreditInput{
+					CustomerID: custID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: invID,
+					AmountCents: 1000, Reason: "first slice", IdempotencyKey: tag + "-k-first",
+				}, true)
+				if err != nil {
+					t.Fatalf("%s, iteration %d: first apply: %v", sortCase.name, iteration, err)
+				}
+
+				// Hold the pair's invoice row, launch the reversal, then the apply of the
+				// same invoice and memo. Both doors' first lock step wants that row, so both
+				// park here whatever the id sort and whatever the code under test does.
+				held, err := pool.Begin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = held.Rollback(ctx) }()
+				if _, err := held.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, invID); err != nil {
+					t.Fatalf("%s, iteration %d: hold the invoice row: %v", sortCase.name, iteration, err)
+				}
+
+				type outcome struct {
+					name string
+					err  error
+				}
+				done := make(chan outcome, 2)
+				go func() {
+					_, e := applySvc.Reverse(ctx, ReverseCreditApplicationInput{
+						InvoiceID: invID, ApplicationID: app1.ApplicationID, Reason: "undo the first slice",
+					}, true)
+					done <- outcome{"the reversal", e}
+				}()
+				deadline := time.Now().Add(15 * time.Second)
+				for {
+					var waiting int
+					if err := pool.QueryRow(ctx, `
+						SELECT count(*) FROM pg_stat_activity
+						 WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`).Scan(&waiting); err != nil {
+						t.Fatal(err)
+					}
+					if waiting >= 1 {
+						break
+					}
+					select {
+					case o := <-done:
+						t.Fatalf("%s, iteration %d: %s answered without parking on the invoice row; the race was not staged (err = %v)", sortCase.name, iteration, o.name, o.err)
+					default:
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("the reversal never reached its lock wait")
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+				go func() {
+					_, e := applySvc.Apply(ctx, ApplyCreditInput{
+						CustomerID: custID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: invID,
+						AmountCents: 1000, Reason: "one more slice", IdempotencyKey: tag + "-k-second",
+					}, true)
+					done <- outcome{"the apply", e}
+				}()
+				deadline = time.Now().Add(15 * time.Second)
+				for {
+					var waiting int
+					if err := pool.QueryRow(ctx, `
+						SELECT count(*) FROM pg_stat_activity
+						 WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`).Scan(&waiting); err != nil {
+						t.Fatal(err)
+					}
+					if waiting >= 2 {
+						break
+					}
+					select {
+					case o := <-done:
+						t.Fatalf("%s, iteration %d: %s answered without parking behind the reversal; the race was not staged (err = %v)", sortCase.name, iteration, o.name, o.err)
+					default:
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("the apply never reached its lock wait")
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+				if err := held.Rollback(ctx); err != nil {
+					t.Fatalf("%s, iteration %d: release the invoice row: %v", sortCase.name, iteration, err)
+				}
+
+				a, b := <-done, <-done
+				for _, o := range []outcome{a, b} {
+					if o.err != nil {
+						t.Fatalf("%s, iteration %d of 10: %s answered %v, want both doors of one invoice and memo to complete with no 40P01", sortCase.name, iteration, o.name, o.err)
+					}
+				}
+
+				// The balances after the pair are what a serial pair gives, whichever order
+				// it ran in: the invoice from the applied 9000, the 1000 restored and the
+				// 1000 applied again, lands at exactly 9000, and the memo at exactly -9000.
+				// A lost or doubled restore or apply sits off those figures.
+				for name, want := range map[string]struct {
+					invoice string
+					balance int64
+				}{
+					"the invoice": {invID, 9000},
+					"the memo":    {memoID, -9000},
+				} {
+					var balance int64
+					if err := pool.QueryRow(ctx, `SELECT balance_cents FROM invoices WHERE id = $1::uuid`, want.invoice).Scan(&balance); err != nil {
+						t.Fatalf("%s, iteration %d: read %s: %v", sortCase.name, iteration, name, err)
+					}
+					if balance != want.balance {
+						t.Fatalf("%s, iteration %d: %s balance after the pair = %d, want %d, what a serial pair gives", sortCase.name, iteration, name, balance, want.balance)
+					}
+				}
+
+				// And each side landed once: exactly one restore row from the reversal and
+				// one mirror row per apply tagged to the memo document.
+				var restored, applied int64
+				if err := pool.QueryRow(ctx, `
+					SELECT count(*) FILTER (WHERE memo LIKE 'credit memo restored%'),
+					       count(*) FILTER (WHERE memo LIKE 'credit memo applied%')
+					  FROM customer_transactions
+					 WHERE customer_id = $1::uuid AND source_type = 'invoice' AND source_ref_id = $2::uuid`,
+					custID, memoID).Scan(&restored, &applied); err != nil {
+					t.Fatalf("%s, iteration %d: read the memo's rows: %v", sortCase.name, iteration, err)
+				}
+				if restored != 1 || applied != 2 {
+					t.Fatalf("%s, iteration %d: the memo carries %d restore rows and %d applied mirror rows (the first apply included), want 1 and 2", sortCase.name, iteration, restored, applied)
+				}
+			}()
+		}
+	}
+}
+
 // TestIntegration_FW1_12b_MemoApplicationSurvivesAPastDateAging pins S6's P1-4: the memo side of an
 // application (and its reversal's restore) is a ledger row tagged to the MEMO document itself, so
 // when 626 (FW1-06b) rebuilds a document's balance at a past date from its history, that row must
