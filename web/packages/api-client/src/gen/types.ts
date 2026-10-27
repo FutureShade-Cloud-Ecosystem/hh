@@ -5166,7 +5166,6 @@ export type PosPolicy = {
   workspace_arrangement: "LOOKUP_LEFT" | "SALE_LEFT";
   lookup_presentation: "CARDS" | "ROWS";
   margin_visibility: "MANAGER_UP" | "ALL_STAFF" | "HIDDEN";
-  balance_visibility: "ALL_STAFF" | "MANAGER_UP" | "HIDDEN";
   supplier_deposit_cancel: "CREDIT_BACK" | "KEPT";
   quick_chip_set?: string[];
 };

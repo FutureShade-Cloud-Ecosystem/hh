@@ -41,7 +41,6 @@ export interface CounterPolicy {
   readonly workspace_arrangement: string;
   readonly lookup_presentation: string;
   readonly margin_visibility: string;
-  readonly balance_visibility: string;
   readonly supplier_deposit_cancel: string;
   readonly quick_chip_set: readonly string[];
 }
@@ -189,7 +188,6 @@ export class SettingsApi {
       workspace_arrangement: policy.workspace_arrangement as never,
       lookup_presentation: policy.lookup_presentation as never,
       margin_visibility: policy.margin_visibility as never,
-      balance_visibility: policy.balance_visibility as never,
       supplier_deposit_cancel: (policy.supplier_deposit_cancel === "KEPT" ? "KEPT" : "CREDIT_BACK") as never,
       quick_chip_set: [...policy.quick_chip_set],
     });
@@ -271,7 +269,6 @@ function toCounterPolicy(raw: unknown): CounterPolicy {
     workspace_arrangement: text(r.workspace_arrangement),
     lookup_presentation: text(r.lookup_presentation),
     margin_visibility: text(r.margin_visibility),
-    balance_visibility: text(r.balance_visibility),
     supplier_deposit_cancel: text(r.supplier_deposit_cancel),
     quick_chip_set: list(r.quick_chip_set).filter((c): c is string => typeof c === "string"),
   };

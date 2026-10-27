@@ -28,6 +28,9 @@ const (
 	qdsrOther2ID  = "5d5a0000-0000-4000-8000-000000000004"
 	qdsrUnhomedID = "5d5a0000-0000-4000-8000-000000000005"
 	qdsrAbsentID  = "5d5a0000-0000-4000-8000-0000000000ff"
+	// qdsrUnhomedPastDueID is unhomed AND behind: the branch rule legs read it, since a held
+	// account answers on_hold for an admitted and a refused caller alike and would prove nothing.
+	qdsrUnhomedPastDueID = "5d5a0000-0000-4000-8000-000000000007"
 )
 
 // qdsrAccount is one planted customer row.

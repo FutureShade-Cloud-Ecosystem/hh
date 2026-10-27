@@ -75,7 +75,7 @@ func seedPolicy(h *harness, branchID string) PosPolicy {
 		LinePresentation: LinePresentationLines, QuickChipsEnabled: true,
 		WorkspaceSplitPct: 40, WorkspaceArrangement: "LOOKUP_LEFT",
 		LookupPresentation: "CARDS", MarginVisibility: "MANAGER_UP",
-		BalanceVisibility: "ALL_STAFF", SupplierDepositCancel: SupplierDepositCancelCreditBack,
+		SupplierDepositCancel: SupplierDepositCancelCreditBack,
 	}
 	h.store.policies[branchID] = p
 	return p
@@ -186,7 +186,7 @@ func TestUpdatePolicy_DealerDefaultIsFiledUnderAReadableScope(t *testing.T) {
 	before := seedPolicy(h, "")
 
 	next := before
-	next.BalanceVisibility = "HIDDEN"
+	next.MarginVisibility = "HIDDEN"
 	if _, err := h.svc.UpdatePolicy(context.Background(), next); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestUpdatePolicy_PreImageFailureDoesNotBlockTheSave(t *testing.T) {
 	saved, err := h.svc.UpdatePolicy(context.Background(), PosPolicy{
 		BranchID: "branch-trt", LinePresentation: LinePresentationCards,
 		WorkspaceSplitPct: 40, WorkspaceArrangement: "LOOKUP_LEFT",
-		LookupPresentation: "CARDS", MarginVisibility: "MANAGER_UP", BalanceVisibility: "ALL_STAFF",
+		LookupPresentation: "CARDS", MarginVisibility: "MANAGER_UP",
 	})
 	if err != nil {
 		t.Fatalf("an unreadable pre-image blocked the save: %v", err)

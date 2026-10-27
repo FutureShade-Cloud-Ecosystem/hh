@@ -216,7 +216,6 @@ const emptySettingsModel = (): SettingsModel => ({
     lookupPresentation: "CARDS",
     arrangement: "LOOKUP_LEFT",
     marginVisibility: "MANAGER_UP",
-    balanceVisibility: "ALL_STAFF",
     supplierDepositCancel: "CREDIT_BACK",
     history: [],
     historyPhase: "loading",
@@ -696,7 +695,6 @@ export class DealerAdminApp extends HHElement {
       "policy-lookup": "lookupPresentation",
       "policy-arrangement": "arrangement",
       "policy-margin": "marginVisibility",
-      "policy-balance": "balanceVisibility",
     };
     const policyKey = policySelects[action];
     if (policyKey !== undefined) {
@@ -963,7 +961,6 @@ export class DealerAdminApp extends HHElement {
       "policy-lookup": s.policy.lookupPresentation,
       "policy-arrangement": s.policy.arrangement,
       "policy-margin": s.policy.marginVisibility,
-      "policy-balance": s.policy.balanceVisibility,
       "tour-chapter": s.tour.editChapter,
       "tour-step": s.tour.editStep,
       "tour-line": s.tour.editLine,
@@ -1534,7 +1531,6 @@ export class DealerAdminApp extends HHElement {
         lookupPresentation: p.lookup_presentation,
         arrangement: p.workspace_arrangement,
         marginVisibility: p.margin_visibility,
-        balanceVisibility: p.balance_visibility,
         supplierDepositCancel: p.supplier_deposit_cancel,
       });
     }
@@ -1614,7 +1610,6 @@ export class DealerAdminApp extends HHElement {
       workspace_arrangement: s.arrangement,
       lookup_presentation: s.lookupPresentation,
       margin_visibility: s.marginVisibility,
-      balance_visibility: s.balanceVisibility,
       supplier_deposit_cancel: s.supplierDepositCancel,
       quick_chip_set: chipsOf(s.chips),
     });
@@ -1644,7 +1639,6 @@ export class DealerAdminApp extends HHElement {
         lookupPresentation: p.lookup_presentation,
         arrangement: p.workspace_arrangement,
         marginVisibility: p.margin_visibility,
-        balanceVisibility: p.balance_visibility,
         supplierDepositCancel: p.supplier_deposit_cancel,
       };
     } else {
