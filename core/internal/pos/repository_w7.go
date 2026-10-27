@@ -767,6 +767,15 @@ func (r *Repository) MarkCardRefundsBooked(ctx context.Context, refundKeys []str
 	return err
 }
 
+// MarkCardRefundsBookedTx is MarkCardRefundsBooked on the booking transaction (UX-102): the attempt
+// flips BOOKED in the same transaction that writes the pos_returns row, so the card cap reads either
+// both or neither. A key with no open attempt row is left alone.
+func (r *Repository) MarkCardRefundsBookedTx(ctx context.Context, tx pgx.Tx, refundKeys []string) error {
+	_, err := tx.Exec(ctx, `UPDATE pos_card_refund_attempts SET status = 'BOOKED', booked_at = now(), updated_at = now()
+ WHERE refund_key = ANY($1::text[]) AND status IN ('IN_FLIGHT', 'UNBOOKED')`, refundKeys)
+	return err
+}
+
 // -- the manager resolution of open attempts (HH-767) ------------------------
 
 // cardRefundAttemptColumns is the attempt row as the manager's list and

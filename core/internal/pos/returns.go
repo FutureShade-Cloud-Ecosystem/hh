@@ -1217,6 +1217,11 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 			return Return{}, clientErr(http.StatusConflict, "%s", err.Error())
 		}
 		refundPaymentID = res.PaymentID
+		// One truth, no gap (UX-102): the attempt closes BOOKED on THIS transaction, beside the
+		// pos_returns row it books, so the cap guard never counts one refund in both sums.
+		if err := s.store.MarkCardRefundsBookedTx(ctx, tx, []string{"refund:" + in.IdempotencyKey}); err != nil {
+			return Return{}, err
+		}
 	case in.RefundMethod == RefundAccountCredit:
 		// The restocking fee reduces what the customer's account is credited (total − fee); the fee
 		// itself books through the GL event's fee_cents, never a subledger row.
