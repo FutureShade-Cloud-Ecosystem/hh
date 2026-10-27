@@ -43,6 +43,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // DepositReleaser is billing's seam: it reads the order's live SUPPLIER_DEPOSIT
@@ -86,6 +88,59 @@ func (s *Service) AdvanceFromDelivery(ctx context.Context, orderID, eventID stri
 		s.recordDeliveryAndRelease(ctx, orderID, eventID)
 	}
 	return err
+}
+
+// AdvanceFromDeliveryTx is the fulfilment roads' door on the CALLER's transaction (round 2,
+// S3's P2). The pickup's offline confirm runs the order's fulfilment inside the confirm's own
+// transaction, so the collection, the order's status, its holds and its stock relief commit or
+// roll back together.
+//
+// WHY IT EXISTS. The pickup's confirm used to commit its own rows and THEN ask the order module to
+// fulfil, discarding the answer. A delivered order could be left with no stock relief and no COGS:
+// no retry, no log, and a pickup that says collected. A fulfilment that rides the confirm's own
+// transaction cannot be half done: the collection and the relief are one fate.
+//
+// WHAT IT DOES NOT DO. The delivery record and the deposit release stay OUTSIDE (see the file
+// header: the release runs beside the status move, never inside it, and the sweep is the healing
+// path). This door is the order's status and its stock, on the caller's transaction.
+func (s *Service) AdvanceFromDeliveryTx(ctx context.Context, tx pgx.Tx, orderID, eventID string) error {
+	rs, ok := s.store.(reservationStore)
+	if !ok {
+		// No transactional lane: the plain door, on its own transaction. The order module's
+		// store always has one in production; the fallback keeps the seam honest.
+		return s.AdvanceFromDelivery(ctx, orderID, eventID)
+	}
+	pre := func(ctx context.Context) error { return s.refuseHeldFromPicking(ctx, orderID) }
+	_, err := rs.UpdateStatusFromTxOn(ctx, tx, orderID, "FULFILLED", eventAllowedFrom("FULFILLED"), pre,
+		s.applyReservationsTx(effectConsume, orderID, ""))
+	switch {
+	case err == nil, errors.Is(err, ErrNoTransition):
+		// The status moved (or was already there). The relief rides the caller's transaction:
+		// the consume effect's hook already closed the holds and relieved the stock, and the
+		// hook is a no-op when the order's SHIP moves already exist.
+		return nil
+	case errors.Is(err, ErrIllegalTransition) && s.orderSitsAtInvoiced(ctx, orderID):
+		// The ring's invoice beat the yard to INVOICED; the goods still left. The relief runs
+		// on the caller's transaction.
+		return s.fulfilOrderLinesOnTx(ctx, tx, orderID)
+	default:
+		return err
+	}
+}
+
+// fulfilOrderLinesOnTx relieves the order's stock on the CALLER's transaction, under the order row
+// lock the caller's transaction already holds (the status write took it with FOR UPDATE).
+func (s *Service) fulfilOrderLinesOnTx(ctx context.Context, tx pgx.Tx, orderID string) error {
+	if s.stockFulfiller == nil && s.stock == nil {
+		return nil
+	}
+	rs, ok := s.store.(reservationStore)
+	if !ok {
+		return nil
+	}
+	return rs.LockOrderOnTx(ctx, tx, orderID, func(ctx context.Context, tx pgx.Tx, _, branchID string) error {
+		return s.fulfilOrderLinesInTx(ctx, tx, orderID, branchID)
+	})
 }
 
 // DeliveredOrderIDs answers which of the orders had a delivery recorded, the

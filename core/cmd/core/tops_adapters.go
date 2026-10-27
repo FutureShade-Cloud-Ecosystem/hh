@@ -493,6 +493,13 @@ func (a posRestockAdapter) ReturnMoveValuesTx(ctx context.Context, tx pgx.Tx, re
 	return a.svc.ReturnMoveValuesTx(ctx, tx, returnID)
 }
 
+// ShippedValueForOrderLineTx answers the original sale's own moved value for one order line
+// (round 2, S3's P1): the write off path's figure, because goods written off have no move of
+// their own.
+func (a posRestockAdapter) ShippedValueForOrderLineTx(ctx context.Context, tx pgx.Tx, orderID, productID string, qtyBase float64) (inventory.ShipLineValue, bool, error) {
+	return a.svc.ShippedValueForOrderLineTx(ctx, tx, orderID, productID, qtyBase)
+}
+
 // posCardRefunderAdapter satisfies pos.CardRefunder over payment.Service.RefundTx, the creds-free
 // reversal rail (the cardChargerAdapter mirror): pos passes the ORIGINAL capture's gateway_ref and gets
 // the reversal's own processor ref back; creds stay inside RUN-PAY. A non-nil tx (a caller inside a
@@ -759,9 +766,10 @@ func (a w5aStockReserver) HasShipMovesForGroupTx(ctx context.Context, tx pgx.Tx,
 	return a.svc.HasShipMovesForGroupTx(ctx, tx, orderID, groupID)
 }
 
-// HasShipMovesForOrder answers whether any ship move exists for the order.
-func (a w5aStockReserver) HasShipMovesForOrder(ctx context.Context, orderID string) (bool, error) {
-	return a.svc.HasShipMovesForOrder(ctx, orderID)
+// HasShipMovesForOrderTx answers whether any ship move exists for the order, read on the caller's
+// transaction (round 2, S3's P1): the INVOICED gate's "the goods have left".
+func (a w5aStockReserver) HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error) {
+	return a.svc.HasShipMovesForOrderTx(ctx, tx, orderID)
 }
 
 // w5aPickState satisfies order.PickStateReader over the W2/W3 tasks substrate.

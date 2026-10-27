@@ -20,6 +20,10 @@ type StockRestocker interface {
 	// ReturnMoveValuesTx answers the return's RETURN moves' per line values (round 2, S3's P1): the
 	// order.returned event carries them, so the COGS reversal posts the value that moved.
 	ReturnMoveValuesTx(ctx context.Context, tx pgx.Tx, returnID string) ([]inventory.ShipLineValue, error)
+	// ShippedValueForOrderLineTx answers the value the ORIGINAL SALE moved for one order line
+	// (round 2, S3's P1): the write off path posts it, because goods that were written off
+	// have no move of their own and their cost is the cost they left the shelf with.
+	ShippedValueForOrderLineTx(ctx context.Context, tx pgx.Tx, orderID, productID string, qtyBase float64) (inventory.ShipLineValue, bool, error)
 }
 
 // RestockInput is the restock request for one committed return.
@@ -40,4 +44,9 @@ func (NoopRestock) RestockForReturnTx(context.Context, pgx.Tx, RestockInput) err
 // ReturnMoveValuesTx answers no values (nothing moved).
 func (NoopRestock) ReturnMoveValuesTx(context.Context, pgx.Tx, string) ([]inventory.ShipLineValue, error) {
 	return nil, nil
+}
+
+// ShippedValueForOrderLineTx answers no value (nothing moved, so nothing to carry).
+func (NoopRestock) ShippedValueForOrderLineTx(context.Context, pgx.Tx, string, string, float64) (inventory.ShipLineValue, bool, error) {
+	return inventory.ShipLineValue{}, false, nil
 }

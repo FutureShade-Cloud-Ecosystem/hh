@@ -388,14 +388,26 @@ func (s *Service) HasShipMovesForGroupTx(ctx context.Context, tx pgx.Tx, orderID
 	return exists, err
 }
 
-// HasShipMovesForOrder answers whether any SHIP move exists for the order (pool read, the INVOICED
-// holds rule's "the goods have left").
-func (s *Service) HasShipMovesForOrder(ctx context.Context, orderID string) (bool, error) {
+// HasShipMovesForOrderTx answers whether any SHIP move exists for the order, READ ON THE CALLER'S
+// TRANSACTION (round 2, S3's P1): the INVOICED holds rule's "the goods have left".
+//
+// TX SCOPED ON PURPOSE. A move the caller's own transaction wrote is uncommitted, and a pool read
+// cannot see it, so the order would be told its goods are still in the yard at the moment they are
+// not. The order module asks this question inside the very transaction that may be moving the
+// stock, and the answer has to be that transaction's.
+func (s *Service) HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error) {
+	if s.repo == nil || s.repo.pool == nil {
+		return false, nil
+	}
 	var exists bool
-	err := s.repo.pool.QueryRow(ctx, `
+	// THE SAME SHAPE AS THE REPOSITORY'S OWN CHECK, AND THAT IS THE POINT: a ring's sale moves the
+	// stock with source_type 'pos_sale' and an order's own relief with source_type 'order', and
+	// both are the goods leaving for THIS order. A filter that named one of them would let the other
+	// relieve the same stock twice.
+	err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM stock_moves
-			 WHERE source_type = 'order' AND source_ref_id = $1::uuid AND move_type = 'SHIP'
+			 WHERE move_type = 'SHIP' AND source_ref_id = $1::uuid
 		)`, orderID).Scan(&exists)
 	return exists, err
 }

@@ -67,6 +67,10 @@ const (
 	effectConsume  reservationEffect = "CONSUME"
 	effectRelease  reservationEffect = "RELEASE"
 	effectNoChange reservationEffect = "NOOP" // an explicit "considered and deliberately nothing"
+	// effectConsumeIfShipped consumes the holds ONLY when the order's goods have left, and then
+	// relieves the stock too (round 2, S3's P1). The question is asked INSIDE the status
+	// transaction, so the answer is that transaction's own.
+	effectConsumeIfShipped reservationEffect = "CONSUME_IF_SHIPPED"
 )
 
 // reservationEffectFor maps a target status to its hold effect. It is a total function over the
@@ -81,8 +85,13 @@ func reservationEffectFor(target string) reservationEffect {
 		return effectConsume
 	case "CANCELLED":
 		return effectRelease
-	case "PARTIALLY_FULFILLED", "PICKING", "READY", "DRAFT", "INVOICED":
+	case "PARTIALLY_FULFILLED", "PICKING", "READY", "DRAFT":
 		return effectNoChange
+	case "INVOICED":
+		// Round 2 (S3's P1): the invoice is not the goods leaving. The holds close at
+		// INVOICED only when the goods have left, and stay when the yard still owes the
+		// customer the goods; the question is asked inside the status transaction.
+		return effectConsumeIfShipped
 	default:
 		return effectNone
 	}
@@ -122,6 +131,24 @@ type reservationStore interface {
 	ReadGroupClaimTx(ctx context.Context, tx pgx.Tx, orderID, groupID string) ([]string, []string, []float64, error)
 	AdvanceGroupClaimTx(ctx context.Context, tx pgx.Tx, lineIDs []string, qtys []float64) error
 	ClaimUnfulfilledLinesTx(ctx context.Context, tx pgx.Tx, orderID string) ([]string, []float64, error)
+	// OrderFulfilmentDebtTx answers whether the order still owes stock to a customer: a DELIVERY
+	// or WILL_CALL order (the two fulfilment modes that defer the stock move to the yard) that
+	// still has open quantity on its stocked lines. It is the order module's OWN tables, read on
+	// the caller's transaction, so the INVOICED gate's answer is the transaction's own.
+	OrderFulfilmentDebtTx(ctx context.Context, tx pgx.Tx, orderID string) (deferred bool, openQty float64, err error)
+	// AdvanceFulfilledByProductTx advances the order's lines' fulfilled_base by the quantities the
+	// order's own event carried, matched by product (round 2: the POS ring's base advance, owned by
+	// the order module's own consumer).
+	AdvanceFulfilledByProductTx(ctx context.Context, tx pgx.Tx, orderID string, qtys map[string]float64) (int, error)
+	// UpdateStatusFromTxOn is UpdateStatusFromTx on the CALLER's transaction, with no commit of its
+	// own (round 2, S3's P2): the pickup's confirm runs the order's fulfilment inside the
+	// confirm's own transaction.
+	UpdateStatusFromTxOn(ctx context.Context, tx pgx.Tx, orderID, newStatus string, allowedFrom []string,
+		precheck func(context.Context) error,
+		onTx func(ctx context.Context, tx pgx.Tx, oldStatus, branchID string) error) (oldStatus string, err error)
+	// LockOrderOnTx is LockOrderTx on the CALLER's transaction, with no commit of its own.
+	LockOrderOnTx(ctx context.Context, tx pgx.Tx, orderID string,
+		fn func(ctx context.Context, tx pgx.Tx, status, branchID string) error) error
 	// LockOrderTx runs fn inside a transaction holding the order row's write lock, WITHOUT changing
 	// the status. It is the seam for the two writes that touch holds but are not transitions: the
 	// operator resync and the change-order apply. Separate from UpdateStatusFromTx rather than
@@ -179,6 +206,19 @@ func (s *Service) applyReservationsTx(effect reservationEffect, orderID, actor s
 				return s.fulfilOrderLinesInTx(ctx, tx, orderID, branchID)
 			}
 			return nil
+		case effectConsumeIfShipped:
+			// Round 2 (S3's P1): the goods have left, or they have not. The question is asked
+			// HERE, inside the status transaction, so the answer is this transaction's own: a
+			// move it wrote a moment ago counts, and a move nobody wrote does not.
+			left, err := s.goodsHaveLeftTx(ctx, tx, orderID)
+			if err != nil {
+				return err
+			}
+			if !left {
+				return nil // the yard still owes the goods: the holds and the stock stay
+			}
+			// The goods left, so the holds close as CONSUMED and the stock that left is relieved.
+			return s.fulfilOrderLinesInTx(ctx, tx, orderID, branchID)
 		default:
 			return nil
 		}
@@ -207,10 +247,12 @@ func (s *Service) fulfilOrderLinesInTx(ctx context.Context, tx pgx.Tx, orderID, 
 	// Round 2 (S3's P3): the base claims only when the relief will really move
 	// stock; an order whose SHIP moves exist (the POS ring relieved it) stops
 	// here, its lines' counts never moving without a move behind them.
-	if f, ok := s.stockFulfiller.(interface {
-		HasShipMovesForOrder(ctx context.Context, orderID string) (bool, error)
-	}); ok {
-		if shipped, err := f.HasShipMovesForOrder(ctx, orderID); err == nil && shipped {
+	//
+	// THE READ IS ON THIS TRANSACTION (round 2, S3's P1). A pool read cannot see
+	// the move this very transaction wrote, so the order would be relieved twice:
+	// once here and once by the move it had just made.
+	if f, ok := s.stockFulfiller.(ShipMoveReaderTx); ok {
+		if shipped, err := f.HasShipMovesForOrderTx(ctx, tx, orderID); err == nil && shipped {
 			return nil
 		}
 	}
@@ -221,16 +263,64 @@ func (s *Service) fulfilOrderLinesInTx(ctx context.Context, tx pgx.Tx, orderID, 
 	return s.stockFulfiller.FulfilOrderLinesTx(ctx, tx, orderID, branchID, productIDs, qtys)
 }
 
-// goodsHaveLeft answers whether any SHIP move exists for the order (the round
-// 2 INVOICED rule's "the goods have left"). An unwired stock seam answers
-// false: an order nobody can relieve keeps its holds.
-func (s *Service) goodsHaveLeft(ctx context.Context, orderID string) (bool, error) {
-	if f, ok := s.stockFulfiller.(interface {
-		HasShipMovesForOrder(ctx context.Context, orderID string) (bool, error)
-	}); ok {
-		return f.HasShipMovesForOrder(ctx, orderID)
+// goodsHaveLeftTx answers, ON THE CALLER'S TRANSACTION, whether the order's goods have left the
+// branch. It is the INVOICED holds rule's own question (round 2, S3's P1).
+//
+// THE ANSWER IS THE ORDER'S OWN FULFILMENT STATE, not a re-read of the stock. An order that still
+// owes stock to a customer is PENDING FULFILMENT, the shape inventory's pending-fulfilment read
+// lists: a DELIVERY or WILL_CALL order (the two modes that defer the stock move to the yard) whose
+// lines are not all fulfilled and whose stock never moved. Such an order keeps its holds and keeps
+// its stock: the goods are still promised to that customer.
+//
+// Every other order has let the goods go. A PICKUP order hands them over at the counter, so the
+// counter's invoice means the customer has them. A DELIVERY order whose lines are all fulfilled put
+// them on the truck. And an order with SHIP moves moved the stock whatever its lines say.
+//
+// THE SHIP MOVE READ IS TX SCOPED, so a move this transaction wrote counts (see the P3 note above).
+// An unwired stock seam cannot see any move, so it falls back to the order's own state.
+func (s *Service) goodsHaveLeftTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error) {
+	if f, ok := s.stockFulfiller.(ShipMoveReaderTx); ok {
+		moved, err := f.HasShipMovesForOrderTx(ctx, tx, orderID)
+		if err != nil {
+			return false, err
+		}
+		if moved {
+			return true, nil
+		}
 	}
-	return false, nil
+	rs, ok := s.store.(reservationStore)
+	if !ok {
+		return false, nil
+	}
+	deferred, open, err := rs.OrderFulfilmentDebtTx(ctx, tx, orderID)
+	if err != nil {
+		return false, err
+	}
+	return !(deferred && open > 0), nil
+}
+
+// fulfilOrderOnInvoiced runs the INVOICED gate under the order row lock: when the order's goods
+// have left, its holds close as CONSUMED and its stock is relieved; when they have not, the order
+// keeps both, because the yard still owes the customer the goods.
+//
+// It is the door the UNGUARDED choke point takes (SetStatus), which writes the status outside the
+// reservation lane. The event driven road (AdvanceFromEvent) asks the same question inside its own
+// status transaction, through the reservation lane's effectConsumeIfShipped.
+func (s *Service) fulfilOrderOnInvoiced(ctx context.Context, orderID string) error {
+	if s.stockFulfiller == nil && s.stock == nil {
+		return nil
+	}
+	rs, ok := s.store.(reservationStore)
+	if !ok {
+		return nil
+	}
+	return rs.LockOrderTx(ctx, orderID, func(ctx context.Context, tx pgx.Tx, _, branchID string) error {
+		left, err := s.goodsHaveLeftTx(ctx, tx, orderID)
+		if err != nil || !left {
+			return err
+		}
+		return s.fulfilOrderLinesInTx(ctx, tx, orderID, branchID)
+	})
 }
 
 // fulfilGroupOnDelivery relieves a SHIP GROUP's own lines under the order row
@@ -241,12 +331,18 @@ func (s *Service) fulfilGroupOnDelivery(ctx context.Context, orderID, groupID st
 	if s.stockFulfiller == nil {
 		return nil
 	}
+	// The group's relief is an OPTIONAL capability of the fulfiller (see stock_seam.go). A
+	// fulfiller without it relieves the order as a whole, the round 1 shape.
+	gf, ok := s.stockFulfiller.(GroupStockFulfiller)
+	if !ok {
+		return nil
+	}
 	rs, ok := s.store.(reservationStore)
 	if !ok {
 		return nil
 	}
 	return rs.LockOrderTx(ctx, orderID, func(ctx context.Context, tx pgx.Tx, _, branchID string) error {
-		shipped, err := s.stockFulfiller.HasShipMovesForGroupTx(ctx, tx, orderID, groupID)
+		shipped, err := gf.HasShipMovesForGroupTx(ctx, tx, orderID, groupID)
 		if err != nil || shipped {
 			return err
 		}
@@ -254,7 +350,7 @@ func (s *Service) fulfilGroupOnDelivery(ctx context.Context, orderID, groupID st
 		if cerr != nil || len(productIDs) == 0 {
 			return cerr
 		}
-		if err := s.stockFulfiller.FulfilGroupLinesTx(ctx, tx, orderID, groupID, branchID, productIDs, qtys); err != nil {
+		if err := gf.FulfilGroupLinesTx(ctx, tx, orderID, groupID, branchID, productIDs, qtys); err != nil {
 			return err
 		}
 		// The base advances only behind the group's real move (the shipped
@@ -285,6 +381,25 @@ func (s *Service) reservationLaneLines(ctx context.Context, tx pgx.Tx, orderID s
 		return nil, nil
 	}
 	return rs.ReservableLinesTx(ctx, tx, orderID)
+}
+
+// AdvanceFulfilledFromEvent advances the order's lines' fulfilled_base by the quantities the
+// order's own fulfilment event carried (round 2: the POS ring's base advance, owned by the order
+// module's own consumer so that no other module writes order_lines).
+//
+// IT RUNS UNDER THE ORDER ROW LOCK, beside the order's other hold-affecting writes, so it cannot
+// race a transition that is claiming the same lines. The advance itself is capped by each line's
+// own room (qty_base - fulfilled_base - released_base) and is idempotent: a redelivered event
+// finds no room and advances nothing.
+func (s *Service) AdvanceFulfilledFromEvent(ctx context.Context, orderID string, qtys map[string]float64) error {
+	rs, ok := s.store.(reservationStore)
+	if !ok {
+		return nil
+	}
+	return rs.LockOrderTx(ctx, orderID, func(ctx context.Context, tx pgx.Tx, _, _ string) error {
+		_, err := rs.AdvanceFulfilledByProductTx(ctx, tx, orderID, qtys)
+		return err
+	})
 }
 
 // OrderReservations returns the ACTIVE holds this order owns. Empty (not an error) when the seam is

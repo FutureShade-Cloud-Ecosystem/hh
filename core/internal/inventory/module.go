@@ -23,6 +23,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"log/slog"
+	"math"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
@@ -283,6 +284,45 @@ func (s *Service) ReturnMoveValuesTx(ctx context.Context, tx pgx.Tx, returnID st
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// ShippedValueForOrderLineTx answers the value the ORIGINAL SALE moved for one order line, the
+// figure the write off path posts (round 2, S3's P1).
+//
+// THE GOODS WERE WRITTEN OFF, NOT MOVED, so there is no move of their own to read. The value they
+// carry now is the value they left the shelf with when they were sold: the sale's own SHIP move
+// value for that line. A re-read average would answer a different question (what the goods cost
+// today) and would answer it differently for every line of one note.
+//
+// THE SHARE, NOT THE WHOLE MOVE. A move of four units for four hundred cents answers two units for
+// two hundred cents, so a partial write off is not booked at the whole line's cost.
+//
+// NOT FOUND IS AN ANSWER, NOT A FAILURE: an order that never moved the line (an old row, or goods
+// that never left the shelf) has no sale value, and the caller falls back to the average.
+func (s *Service) ShippedValueForOrderLineTx(ctx context.Context, tx pgx.Tx, orderID, productID string, qtyBase float64) (ShipLineValue, bool, error) {
+	if s.repo == nil || s.repo.pool == nil || orderID == "" || productID == "" {
+		return ShipLineValue{}, false, nil
+	}
+	var out ShipLineValue
+	var moveQty float64
+	err := tx.QueryRow(ctx, `
+		SELECT product_id::text, qty_base::float8, value_cents
+		  FROM stock_moves
+		 WHERE source_ref_id = $1::uuid AND product_id = $2::uuid AND move_type = 'SHIP'
+		 ORDER BY created_at
+		 LIMIT 1`, orderID, productID).Scan(&out.ProductID, &moveQty, &out.ValueCents)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ShipLineValue{}, false, nil
+		}
+		return ShipLineValue{}, false, err
+	}
+	if moveQty <= 0 {
+		return ShipLineValue{}, false, nil
+	}
+	out.QtyBase = qtyBase
+	out.ValueCents = int64(math.Round(float64(out.ValueCents) * qtyBase / moveQty))
+	return out, true, nil
 }
 
 // - domain surface (errNotImplemented stubs, INV-CORE fills) -

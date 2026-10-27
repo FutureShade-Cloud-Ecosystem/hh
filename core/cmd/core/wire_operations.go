@@ -1230,6 +1230,12 @@ func (a dispatchFulfilAdapter) MarkFulfilled(ctx context.Context, orderID, reaso
 	return a.svc.AdvanceFromDelivery(ctx, orderID, reason)
 }
 
+// MarkFulfilledTx is MarkFulfilled on the caller's transaction (round 2, S3's P2): the offline
+// pickup's confirm runs the order's fulfilment inside the confirm's own transaction.
+func (a dispatchFulfilAdapter) MarkFulfilledTx(ctx context.Context, tx pgx.Tx, orderID, reason string) error {
+	return a.svc.AdvanceFromDeliveryTx(ctx, tx, orderID, reason)
+}
+
 // dispatchPrintAdapter satisfies dispatch.PrintEnqueuer over
 // printing.QueueService.Enqueue (DIB-411).
 type dispatchPrintAdapter struct{ queue *printing.QueueService }

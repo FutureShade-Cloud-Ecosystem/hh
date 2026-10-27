@@ -115,17 +115,36 @@ func (s *Service) WithStockReserver(r StockReserver) *Service {
 
 // StockFulfiller relieves on-hand stock and emits order.fulfilled when an order is fulfilled.
 // *inventory.Service satisfies this interface directly.
+//
+// IT IS NARROW ON PURPOSE, AND THAT IS A ROUND 2 FIX. The ship group's relief and the "the goods
+// have left" read arrived as two NEW capabilities, and widening this port to carry them unwired
+// every adapter that does not implement them: WithStockReserver's type assertion fails, the order
+// keeps a fulfiller that cannot relieve anything, and the delivery relief stops happening with no
+// error anywhere (the PR's own reservation leg, on hand 10 want 6, is what caught it). The two new
+// capabilities are OPTIONAL interfaces of their own below, asserted where they are used, so an
+// adapter that has them uses them and an adapter that does not still relieves the order.
 type StockFulfiller interface {
 	FulfilOrderLinesTx(ctx context.Context, tx pgx.Tx, orderID, branchID string, productIDs []string, qtys []float64) error
-	// FulfilGroupLinesTx relieves a SHIP GROUP's own lines (round 2, S3's P1): the group's id rides
-	// the move metadata and the event, so its idempotency and its relief are the group's own.
-	FulfilGroupLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID, branchID string, productIDs []string, qtys []float64) error
-	// HasShipMovesForGroupTx answers whether the group's own SHIP moves exist.
-	HasShipMovesForGroupTx(ctx context.Context, tx pgx.Tx, orderID, groupID string) (bool, error)
-	// HasShipMovesForOrder answers whether any SHIP move exists for the order (pool read): the
-	// INVOICED holds rule's "the goods have left" (round 2, S3's P1).
-	HasShipMovesForOrder(ctx context.Context, orderID string) (bool, error)
 	ReleaseBySourceTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID, status string) (int, error)
+}
+
+// GroupStockFulfiller is the OPTIONAL ship group half of the relief port (round 2, S3's P1): a
+// group's completion relieves the GROUP's own lines and quantities, behind the GROUP's own
+// idempotency, never the order's. A fulfiller without this capability relieves the order as a
+// whole, the round 1 shape.
+type GroupStockFulfiller interface {
+	FulfilGroupLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID, branchID string, productIDs []string, qtys []float64) error
+	HasShipMovesForGroupTx(ctx context.Context, tx pgx.Tx, orderID, groupID string) (bool, error)
+}
+
+// ShipMoveReaderTx is the OPTIONAL "the goods have left" read (round 2, S3's P1), the INVOICED
+// holds rule's own question.
+//
+// IT IS TX SCOPED ON PURPOSE. A move the caller's own transaction wrote is uncommitted, and a pool
+// read cannot see it: the order would be told its goods are still in the yard at the moment they
+// are not (S3's P3's rule about base counts moving without a move behind them, one level up).
+type ShipMoveReaderTx interface {
+	HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error)
 }
 
 // WithStockFulfiller injects the order fulfilment stock-relief port (*inventory.Service).
