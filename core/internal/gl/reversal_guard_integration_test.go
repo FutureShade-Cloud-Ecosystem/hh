@@ -8,6 +8,7 @@ package gl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -160,5 +162,42 @@ func TestIntegration_FW1_09a_TwoConcurrentReversalsOfOneJournalLandOnlyOne(t *te
 	}
 	if secondErr == nil || !strings.Contains(secondErr.Error(), "already reversed") {
 		t.Fatalf("fw1-09a red: the second reversal answered %v, want it refused in words as already reversed", secondErr)
+	}
+}
+
+// Migration 0440's unique partial index on gl_journals(reverses_journal_id) WHERE reverses_journal_id IS NOT NULL
+// refuses a second reversal row even when the service is bypassed by a direct SQL insert (PR 621 round 2, S5 2.1).
+func TestIntegration_FW1_09a_TheTableRefusesASecondReversalWhoeverWritesIt(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	svc := reversalGuardService(t, pool, 2094)
+
+	orig, err := svc.CreateJournal(ctx, CreateJournalInput{Memo: "fw1-09a direct second reversal", Lines: []JournalLineInput{
+		{AccountCode: "1000", DebitCents: 15000},
+		{AccountCode: "4000", CreditCents: 15000},
+	}})
+	if err != nil {
+		t.Fatalf("create the original: %v", err)
+	}
+	if _, err := svc.ReverseJournal(ctx, orig.ID); err != nil {
+		t.Fatalf("the first reversal: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_, err = tx.Exec(ctx, `INSERT INTO gl_journals
+		(fiscal_year, entry_no, period_id, source, memo, status, posted_at, reverses_journal_id)
+		VALUES ($1, next_entry_no($1), $2::uuid, 'ADJUSTMENT', 'direct second reversal', 'POSTED', now(), $3::uuid)`,
+		2094, orig.PeriodID, orig.ID)
+	if err == nil {
+		t.Fatalf("fw1-09a red: the table accepted a second reversal row for journal %s; 0440's unique index must refuse it", orig.ID)
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("fw1-09a: direct second reversal answered %v, want unique_violation (23505)", err)
 	}
 }
