@@ -97,6 +97,12 @@ type PaymentFacts struct {
 	Method      string
 	Status      string
 	AmountCents int64
+	// ReceivedAt is the payment's own receipt instant (payments.received_at): the receipt
+	// document's date. FW1-01b: the receipt journal takes this date, not the processing day,
+	// so a receipt taken on the last day of a month and consumed after midnight stays in the
+	// month it was taken. Zero means the seam did not resolve one, and the journal falls back
+	// to the clock.
+	ReceivedAt time.Time
 }
 
 // CostBasis returns the unit cost for a fulfilled line (order.fulfilled → COGS). Dormant at W5: NoopCostBasis
