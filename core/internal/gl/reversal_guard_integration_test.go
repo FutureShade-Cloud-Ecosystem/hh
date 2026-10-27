@@ -10,10 +10,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -104,5 +106,59 @@ func TestIntegration_FW1_09a_AnAccountAPostingRuleNeedsCannotBeDeactivated(t *te
 	}
 	if j.Status != StatusPosted {
 		t.Fatalf("fw1-09a: the posting on 1100 should be POSTED, got %s", j.Status)
+	}
+}
+
+// Two concurrent reversals of one posted manual journal must land exactly one reversal row, and the
+// second must be refused in words as already reversed (PR 621 round 2, S5 2.1). The first reversal is
+// parked in a BEFORE INSERT trigger on gl_journals after its pre-insert checks; the second runs beside
+// it on the shared pool.
+func TestIntegration_FW1_09a_TwoConcurrentReversalsOfOneJournalLandOnlyOne(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	svc := reversalGuardService(t, pool, 2094)
+
+	orig, err := svc.CreateJournal(ctx, CreateJournalInput{Memo: "fw1-09a concurrent reversal race", Lines: []JournalLineInput{
+		{AccountCode: "1000", DebitCents: 25000},
+		{AccountCode: "4000", CreditCents: 25000},
+	}})
+	if err != nil {
+		t.Fatalf("create the original: %v", err)
+	}
+
+	park := testkit.NewInsertPark(t, pool, "gl_journals", 55090101)
+	parkSvc := reversalGuardService(t, park.Pool, 2094)
+
+	first := make(chan error, 1)
+	go func() {
+		_, err := parkSvc.ReverseJournal(ctx, orig.ID)
+		first <- err
+	}()
+	park.WaitParked("the first reversal after its check, before its gl_journals insert")
+
+	var secondDone atomic.Bool
+	var secondErr error
+	second := make(chan error, 1)
+	go func() {
+		defer secondDone.Store(true)
+		_, secondErr = svc.ReverseJournal(ctx, orig.ID)
+		second <- secondErr
+	}()
+	park.WaitBlockedOr("the second reversal queues on the original journal row, or has already finished", secondDone.Load)
+
+	park.AnswersAllowing(
+		map[string]chan error{"the parked reversal": first, "the second reversal": second},
+		map[string]string{"the second reversal": "already reversed"},
+	)
+
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM gl_journals WHERE reverses_journal_id = $1::uuid`, orig.ID).Scan(&count); err != nil {
+		t.Fatalf("count reversals: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("fw1-09a red: two concurrent reversals of journal %s landed %d reversal rows, want 1", orig.ID, count)
+	}
+	if secondErr == nil || !strings.Contains(secondErr.Error(), "already reversed") {
+		t.Fatalf("fw1-09a red: the second reversal answered %v, want it refused in words as already reversed", secondErr)
 	}
 }
