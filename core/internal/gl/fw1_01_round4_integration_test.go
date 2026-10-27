@@ -14,6 +14,7 @@ package gl
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -225,14 +226,14 @@ func TestIntegration_FW1_01R4_YearEndLeavesItsOverrideRows(t *testing.T) {
 
 	// Post a revenue and an expense so the year end has a net income to sweep (the AC13 seed).
 	if _, err := controller.PostExternal(ctx, ExternalJournal{
-		Source: SourceAdjustment, IdempotencyKey: fmt.Sprintf("r4-rev-%d", time.Now().UnixNano()),
+		Source: SourceAdjustment, IdempotencyKey: fmt.Sprintf("r4-rev-%d", rand.Uint64()),
 		DocumentDate: time.Date(2091, 6, 10, 12, 0, 0, 0, time.UTC),
 		Lines:        []ExternalLine{{AccountCode: "1000", DebitCents: 100000}, {AccountCode: "4000", CreditCents: 100000}},
 	}); err != nil {
 		t.Fatalf("post revenue: %v", err)
 	}
 	if _, err := controller.PostExternal(ctx, ExternalJournal{
-		Source: SourceAdjustment, IdempotencyKey: fmt.Sprintf("r4-exp-%d", time.Now().UnixNano()),
+		Source: SourceAdjustment, IdempotencyKey: fmt.Sprintf("r4-exp-%d", rand.Uint64()),
 		DocumentDate: time.Date(2091, 6, 20, 12, 0, 0, 0, time.UTC),
 		Lines:        []ExternalLine{{AccountCode: "6100", DebitCents: 40000}, {AccountCode: "1000", CreditCents: 40000}},
 	}); err != nil {
