@@ -835,6 +835,12 @@ func (a glBalanceAdapter) GLBalanceCents(ctx context.Context, accountCode string
 	return a.svc.GLBalanceCents(ctx, accountCode, year, month, branchID)
 }
 
+// GLBalanceThroughCents is the cumulative through-period read the inventory tie-out's GL side takes
+// (FW1-11), answered by the same gl provider.
+func (a glBalanceAdapter) GLBalanceThroughCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	return a.svc.GLBalanceThroughCents(ctx, accountCode, year, month, branchID)
+}
+
 // lienGLPoster satisfies lien.GLPoster over glSvc.PostExternal (the
 // 1150/2350 holdback release journal).
 type lienGLPoster struct{ svc *gl.Service }
@@ -1930,7 +1936,7 @@ func (a w4cGLPoster) PostJournal(ctx context.Context, in purchasing.GLJournal) (
 	}
 	return a.svc.PostExternal(ctx, gl.ExternalJournal{
 		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
-		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines, DocumentDate: in.DocumentDate,
 	})
 }
 
@@ -1942,7 +1948,7 @@ func (a w4cGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in purchasing
 	}
 	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{
 		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
-		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines, DocumentDate: in.DocumentDate,
 	})
 }
 

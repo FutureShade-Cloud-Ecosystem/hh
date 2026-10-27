@@ -29,7 +29,7 @@ const (
 // mountedTaxPost is mountedTax for a POST route.
 func mountedTaxPost(t *testing.T, pool *pgxpool.Pool, caller identity.StaffContext, path string) int {
 	t.Helper()
-	svc := NewService(NewRepository(pool))
+	svc := NewService(NewRepository(pool)).WithSalesHSTs(fenceFigures{}).WithReturnHSTs(fenceFigures{}).WithBillITCs(fenceFigures{})
 	h := NewHandler(svc, slog.New(slog.DiscardHandler))
 
 	sg := testkit.NewStaffGuards(t)
@@ -53,9 +53,23 @@ func mountedTaxPost(t *testing.T, pool *pgxpool.Pool, caller identity.StaffConte
 
 // mountedTax serves path through the real tax route table behind the real guards, with the caller's
 // authority resolved the way the middleware resolves it (the same shape gl's read_guard harness uses).
+// fenceFigures stands in for the billing, pos and purchasing document seams: the fence legs assert on
+// statuses, never on figures.
+type fenceFigures struct{}
+
+func (fenceFigures) DocumentSalesHSTCents(context.Context, int, int, string) (int64, int, int64, error) {
+	return 0, 0, 0, nil
+}
+func (fenceFigures) ReturnHSTCents(context.Context, int, int, string) (int64, error) {
+	return 0, nil
+}
+func (fenceFigures) VendorBillITCCents(context.Context, int, int, string) (int64, error) {
+	return 0, nil
+}
+
 func mountedTax(t *testing.T, pool *pgxpool.Pool, caller identity.StaffContext, path string) int {
 	t.Helper()
-	svc := NewService(NewRepository(pool))
+	svc := NewService(NewRepository(pool)).WithSalesHSTs(fenceFigures{}).WithReturnHSTs(fenceFigures{}).WithBillITCs(fenceFigures{})
 	h := NewHandler(svc, slog.New(slog.DiscardHandler))
 
 	sg := testkit.NewStaffGuards(t)
