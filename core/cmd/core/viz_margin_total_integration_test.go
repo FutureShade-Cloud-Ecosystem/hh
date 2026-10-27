@@ -100,8 +100,8 @@ func TestIntegration_VizMarginTotal_IsTheWeightedRatio(t *testing.T) {
 		}
 		return ord
 	}
-	trt := seed(big, 100, 1000, 800)   // revenue 100000, cost 80000 -> 20.00%
-	kgn := seed(small, 10, 1000, 500)  // revenue  10000, cost  5000 -> 50.00%
+	trt := seed(big, 100, 1000, 800)  // revenue 100000, cost 80000 -> 20.00%
+	kgn := seed(small, 10, 1000, 500) // revenue  10000, cost  5000 -> 50.00%
 	t.Cleanup(func() {
 		c := context.Background()
 		for _, ord := range []string{trt, kgn} {
@@ -181,7 +181,7 @@ func TestIntegration_VizARAgingBranch_IsPastDue(t *testing.T) {
 		}
 		return inv
 	}
-	a := seed(big, "2020-01-01", 30000)  // long past due
+	a := seed(big, "2020-01-01", 30000)   // long past due
 	b := seed(small, "2099-01-01", 40000) // current, excluded
 	t.Cleanup(func() {
 		c := context.Background()
