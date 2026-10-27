@@ -4,7 +4,10 @@
 // adapter for the same fence reason: the module owns task_shortages and
 // tasks, every query below carries the caller's org predicate through the
 // parent task (the shortage table itself carries no org column; its scope
-// IS its task's), and the sync core touches no table.
+// IS its task's), and the sync core touches no table. The reads hold the
+// caller's branch reach the way the writes hold the branch fence (UX-105):
+// a shortage's branch is its task's, read through the parent task, the
+// pick scope's pull rule (567) and the weights scope's (594).
 //
 // The projection is the contract's TaskShortage schema, the same json
 // shape the module's own yard surface serves. The policy is manual (the
@@ -94,27 +97,51 @@ type syncShortageRow struct {
 	deleted  bool
 }
 
+// shortageSyncTargets is the sync projection's 16 scan targets in order,
+// the one list every scanner of the projection builds from, so column
+// meaning cannot drift between them (the guard the column constants carry
+// on the SELECT side). lineNo and resolvedAt arrive as the scan
+// destinations the optional legs land in.
+func shortageSyncTargets(r *syncShortageRow, lineNo **int, resolvedAt **time.Time) []any {
+	return []any{
+		&r.shortage.ID, &r.shortage.TaskID, lineNo, &r.shortage.ProductID,
+		&r.shortage.SKU, &r.shortage.Description, &r.shortage.QtyShort, &r.shortage.UOM, &r.shortage.Note,
+		&r.shortage.ReportedBy, &r.shortage.ReportedAt,
+		resolvedAt, &r.shortage.ResolvedBy, &r.shortage.Resolution,
+		&r.seq, &r.deleted,
+	}
+}
+
 // scanSyncShortage reads the 16-target row (the 14 Shortage targets of
 // scanShortage plus seq and deleted; pgx cannot split one row across
 // scanners).
 func scanSyncShortage(row rowScanner) (syncShortageRow, error) {
-	var s Shortage
+	var r syncShortageRow
 	var lineNo *int
 	var resolvedAt *time.Time
-	var seq int64
-	var deleted bool
-	if err := row.Scan(
-		&s.ID, &s.TaskID, &lineNo, &s.ProductID,
-		&s.SKU, &s.Description, &s.QtyShort, &s.UOM, &s.Note,
-		&s.ReportedBy, &s.ReportedAt,
-		&resolvedAt, &s.ResolvedBy, &s.Resolution,
-		&seq, &deleted,
-	); err != nil {
+	if err := row.Scan(shortageSyncTargets(&r, &lineNo, &resolvedAt)...); err != nil {
 		return syncShortageRow{}, err
 	}
-	s.OrderLineNo = lineNo
-	s.ResolvedAt = resolvedAt
-	return syncShortageRow{shortage: s, seq: seq, deleted: deleted}, nil
+	r.shortage.OrderLineNo = lineNo
+	r.shortage.ResolvedAt = resolvedAt
+	return r, nil
+}
+
+// scanSyncShortageBranch is scanSyncShortage over the 17-target row that
+// also reads the parent task's branch, the caller-reach check's input: the
+// shortage table carries no branch (its scope IS its task's), so the leg
+// rides the row's own query exactly as the write paths' locks read it.
+func scanSyncShortageBranch(row rowScanner) (syncShortageRow, string, error) {
+	var r syncShortageRow
+	var lineNo *int
+	var resolvedAt *time.Time
+	var branch string
+	if err := row.Scan(append(shortageSyncTargets(&r, &lineNo, &resolvedAt), &branch)...); err != nil {
+		return syncShortageRow{}, "", err
+	}
+	r.shortage.OrderLineNo = lineNo
+	r.shortage.ResolvedAt = resolvedAt
+	return r, branch, nil
 }
 
 // shortageData projects one Shortage into the wire shape the contract's
@@ -155,8 +182,9 @@ type ShortageSyncStore struct {
 	link identity.UserIDLinker
 	// noticer posts the counter's chat event for a created shortage, the direct door's twin.
 	noticer ShortageNoticer
-	// staff is the branch fence's authority seam (UX-77): the caller's staff context in the org. Nil leaves
-	// the create unfenced by branch, the unwired posture the composition root asserts against at boot.
+	// staff is the branch fence's authority seam (UX-77): the caller's staff context in the org. The reads'
+	// branch reach holds to it too (UX-105). Nil leaves the door unfenced by branch, the unwired posture the
+	// composition root asserts against at boot.
 	staff identity.SyncStaffResolver
 }
 
@@ -189,17 +217,41 @@ func NewShortageSyncStore(pool *pgxpool.Pool, link identity.UserIDLinker) *Short
 
 // Pull returns the page of shortage changes past since, live rows and
 // tombstones in seq order, at most limit rows total, under the org
-// predicate.
+// predicate and the caller's branch reach.
 func (s *ShortageSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
 	where, args, ok := shortageScopePredicate(f)
 	if !ok {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
 	}
+	// The branch reach clause is the pick scope's pull rule (SyncStore.pullReach), part of the query so the
+	// page fills with the rows the caller reaches and `seq > since` stays exact (UX-105, the weights scope's
+	// shape). The clause rides the parent task: a GLOBAL caller adds none and keeps the org predicate alone,
+	// a shortage whose task has no branch is no branch scoped caller's, and an unwired authority fences
+	// nothing, as the writes' branchFence.
+	reachSQL := ""
+	var branches []string
+	if s.staff != nil {
+		var reach bool
+		var err error
+		branches, reach, err = (&SyncStore{staff: s.staff}).pullReach(ctx, f)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !reach {
+			return []sync.Entity{}, []sync.Tombstone{}, nil
+		}
+		if branches != nil {
+			reachSQL = " AND EXISTS (SELECT 1 FROM tasks rt WHERE rt.id = task_shortages.task_id AND rt.branch_id = ANY($4::uuid[]))"
+		}
+	}
 	q := fmt.Sprintf(`SELECT %s FROM task_shortages
-		WHERE %s AND seq IS NOT NULL AND seq > $2
+		WHERE %s AND seq IS NOT NULL AND seq > $2%s
 		ORDER BY seq ASC
-		LIMIT $3`, shortageSyncColumns, where)
+		LIMIT $3`, shortageSyncColumns, where, reachSQL)
 	args = append(args, since, limit)
+	if branches != nil {
+		args = append(args, branches)
+	}
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("tasks: shortage sync pull: %w", err)
@@ -231,13 +283,17 @@ func (s *ShortageSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since 
 // FindApplied resolves one idempotency key to the shortage row it applied:
 // the row's idempotency_key column (the latest key) or the applied-key
 // history the adapter records in the parent task's task_events log (every
-// key the row ever applied, so multi-operation outboxes replay clean).
+// key the row ever applied, so multi-operation outboxes replay clean). A
+// replay never answers for a shortage the caller cannot pull (UX-105): the
+// key's row out of reach is not "applied" for this caller, the same answer
+// an absent key gets (the pick scope's fence, 567 round 2).
 func (s *ShortageSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
 	where, args, ok := shortageScopePredicate(f)
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
-	q := fmt.Sprintf(`SELECT %s FROM task_shortages
+	q := fmt.Sprintf(`SELECT %s, (SELECT COALESCE(pt.branch_id::text, '') FROM tasks pt WHERE pt.id = task_shortages.task_id)
+		FROM task_shortages
 		WHERE %s
 		  AND (idempotency_key = $2::uuid
 		       OR EXISTS (SELECT 1 FROM task_events e
@@ -245,19 +301,23 @@ func (s *ShortageSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter,
 		                     AND e.note = $3 || task_shortages.id::text || ' ' || $2))
 		LIMIT 1`, shortageSyncColumns, where)
 	args = append(args, key, shortageIdemPrefix)
-	r, err := scanSyncShortage(s.pool.QueryRow(ctx, q, args...))
+	r, branch, err := scanSyncShortageBranch(s.pool.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("tasks: shortage sync find applied: %w", err)
 	}
+	if reach, err := s.callerReaches(ctx, f, branch); err != nil || !reach {
+		return sync.RowState{}, false, err
+	}
 	rs, err := shortageRowState(r)
 	return rs, true, err
 }
 
 // Load reads one shortage row by id under the org predicate; a row outside
-// the caller's org is the same as an absent one (existence never leaks).
+// the caller's org, or on a branch outside the caller's reach (UX-105), is
+// the same as an absent one (existence never leaks).
 func (s *ShortageSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	return s.load(ctx, s.pool, f, id)
 }
@@ -278,15 +338,23 @@ func (s *ShortageSyncStore) load(ctx context.Context, db shortageQuerier, f sync
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
 	}
-	q := fmt.Sprintf(`SELECT %s FROM task_shortages WHERE id = $2::uuid AND %s`,
+	q := fmt.Sprintf(`SELECT %s, (SELECT COALESCE(pt.branch_id::text, '') FROM tasks pt WHERE pt.id = task_shortages.task_id)
+		FROM task_shortages WHERE id = $2::uuid AND %s`,
 		shortageSyncColumns, where)
 	args = append(args, id)
-	r, err := scanSyncShortage(db.QueryRow(ctx, q, args...))
+	r, branch, err := scanSyncShortageBranch(db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("tasks: shortage sync load: %w", err)
+	}
+	// The row is the caller's to see only under the pull's reach (UX-105): the engine puts what Load returns
+	// into a stale write's conflict envelope, so a row the caller cannot pull is answered as absent ("row
+	// not found", existence never leaks) and the envelope can never carry it. The branch rides the parent
+	// task the same leg the write paths' locks read, so a tombstoned row's reach check works too.
+	if reach, err := s.callerReaches(ctx, f, branch); err != nil || !reach {
+		return sync.RowState{}, false, err
 	}
 	rs, err := shortageRowState(r)
 	return rs, true, err
@@ -671,6 +739,15 @@ func optString(fields map[string]any, name string) any {
 	}
 	s, _ := v.(string)
 	return s
+}
+
+// callerReaches is the pick door's rule over the same seam, never a second copy of it (SyncStore.callerReaches):
+// a GLOBAL caller reaches every branch (the org predicate already bounds every row of this scope to the caller's
+// org), a branch scoped caller its granted branches only, an absent or inactive authority nothing, and an
+// unreadable one the plain retryable error. An unwired seam fences nothing, as the writes' branchFence: the
+// posture the composition root refuses to boot a door in (StaffAuthorityWired is the fail fast's leg).
+func (s *ShortageSyncStore) callerReaches(ctx context.Context, f sync.ScopeFilter, branch string) (bool, error) {
+	return (&SyncStore{staff: s.staff}).callerReaches(ctx, f, branch)
 }
 
 // branchFence refuses a write on a task whose branch the caller's staff authority does not reach. An
