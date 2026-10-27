@@ -339,6 +339,34 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy)).Scan(&movementID, &movementAt); err != nil {
 		return fmt.Errorf("till: insert movement: %w", err)
 	}
+	// The deposit slip's rows and the DEPOSITED marks ride THIS transaction (FROM-PRINCIPAL 120): the
+	// link rows first, then the payment rows locked ascending (the one money lock order; the session
+	// row this movement already holds is not in it), then the marks. A payment the marks could not
+	// move fails the movement, so the slip and the books move together. The service has validated the
+	// slip; the locked UPDATE re-checks the status under the row locks, which is how a concurrent
+	// bounce or reversal is seen.
+	if len(m.PaymentIDs) > 0 {
+		for _, pid := range m.PaymentIDs {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO till_lodgement_payments (till_movement_id, payment_id) VALUES ($1::uuid, $2::uuid)`,
+				movementID, pid); err != nil {
+				return fmt.Errorf("till: insert lodgement slip row: %w", err)
+			}
+		}
+		if err := payments.LockPaymentRowsTx(ctx, tx, m.PaymentIDs); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE payments SET status = 'DEPOSITED', updated_at = now()
+			  WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED' AND reversed_at IS NULL`,
+			m.PaymentIDs)
+		if err != nil {
+			return fmt.Errorf("till: mark the slip's payments deposited: %w", err)
+		}
+		if tag.RowsAffected() != int64(len(m.PaymentIDs)) {
+			return clientErr(409, "till: the slip's money moved while it was recorded; record the slip again")
+		}
+	}
 	// Transactional outbox, the session close's own rail (till.session.completed, 0032): a paid in, a
 	// paid out or a lodgement carries its GL facts in the SAME tx as the row, so the journal posts
 	// exactly once. The lodgement's journal is the ruled one (FROM-PRINCIPAL 117): DR 1000 / CR 1020 at
@@ -372,6 +400,32 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 // carries the drawer credit.
 const insertMovementSQL = `INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reference, created_by)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`
+
+// PaymentsForSlip reads the named payments for a lodgement's deposit slip validation. The read is
+// fenced to the session and the method: a name that is not on this drawer as this method reads as
+// absent, and the service refuses the slip for it.
+func (r *Repository) PaymentsForSlip(ctx context.Context, sessionID, method string, ids []string) ([]SlipPayment, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT id::text, amount_cents, status, reversed_at IS NOT NULL
+		   FROM payments
+		  WHERE till_session_id = $1::uuid AND method = $2 AND id = ANY($3::uuid[])`, sessionID, method, ids)
+	if err != nil {
+		return nil, fmt.Errorf("till: slip payments: %w", err)
+	}
+	defer rows.Close()
+	var out []SlipPayment
+	for rows.Next() {
+		var p SlipPayment
+		if err := rows.Scan(&p.ID, &p.AmountCents, &p.Status, &p.Reversed); err != nil {
+			return nil, fmt.Errorf("till: scan slip payment: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
 
 // InsertMovementTx is InsertMovement inside the CALLER'S tx (the POS return path, the PAID_OUT
 // cash-refund movement must commit or roll back with the return it belongs to).

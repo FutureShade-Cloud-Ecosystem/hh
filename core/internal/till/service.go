@@ -51,6 +51,11 @@ type tillStore interface {
 	SetCompleted(ctx context.Context, sessionID, branchID, completedBy string, at time.Time, overShortCents, countedCashCents int64, overrideNotes string) error
 	Policy(ctx context.Context, branchID string) (TillPolicy, error)
 
+	// PaymentsForSlip reads the named payments for a lodgement's deposit slip validation: the id, the
+	// amount, the status and whether a reversal has stamped it, for the ids named, on this session and
+	// this method only.
+	PaymentsForSlip(ctx context.Context, sessionID, method string, ids []string) ([]SlipPayment, error)
+
 	// - W5 A-05: NSF + credit holds + declined-attempt log -
 	// PaymentNSFContext resolves the finance facts of a payment for the NSF decision (non-tx read).
 	PaymentNSFContext(ctx context.Context, paymentID string) (customerID, branchID, status, method string, amountCents int64, reversed, found bool, err error)
@@ -534,6 +539,18 @@ func (s *Service) recordMovement(ctx context.Context, in MovementInput, mt strin
 	if method == "" {
 		method = MethodCash
 	}
+	// The deposit slip (FROM-PRINCIPAL 128): a lodgement may name its payments, and when it does the
+	// slip must add up. Every name is on this drawer, this method, still RECEIVED and not reversed,
+	// no name appears twice, and the names sum to the slip's amount: a partial slip is refused, never
+	// claimed. The names ride the movement row, and the link rows and the DEPOSITED marks commit in
+	// the movement's own transaction (FROM-PRINCIPAL 120).
+	var slip []string
+	if mt == MovementLodgement && len(in.PaymentIDs) > 0 {
+		slip, err = s.validateSlip(ctx, sess, method, in)
+		if err != nil {
+			return err
+		}
+	}
 	return s.store.InsertMovement(ctx, MovementRow{
 		TillSessionID: sess.ID,
 		MovementType:  mt,
@@ -542,7 +559,41 @@ func (s *Service) recordMovement(ctx context.Context, in MovementInput, mt strin
 		Reason:        in.Reason,
 		Reference:     in.Reference,
 		CreatedBy:     caller.UserID,
+		PaymentIDs:    slip,
 	})
+}
+
+// validateSlip checks a lodgement's named payments against the drawer and the slip's amount, and
+// returns the validated ids in the order named.
+func (s *Service) validateSlip(ctx context.Context, sess TillSession, method string, in MovementInput) ([]string, error) {
+	seen := make(map[string]bool, len(in.PaymentIDs))
+	for _, id := range in.PaymentIDs {
+		if seen[id] {
+			return nil, unprocessable("till: the slip names payment %s twice", id)
+		}
+		seen[id] = true
+	}
+	rows, err := s.store.PaymentsForSlip(ctx, sess.ID, method, in.PaymentIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) != len(in.PaymentIDs) {
+		return nil, unprocessable("till: the slip names a payment that is not on this drawer as %s", method)
+	}
+	var sum int64
+	for _, p := range rows {
+		if p.Status != PaymentReceived {
+			return nil, unprocessable("till: the slip names payment %s and it is %s, not RECEIVED", p.ID, p.Status)
+		}
+		if p.Reversed {
+			return nil, unprocessable("till: the slip names payment %s and a reversal has stamped it", p.ID)
+		}
+		sum += p.AmountCents
+	}
+	if sum != in.AmountCents {
+		return nil, unprocessable("till: the slip's payments sum to %d, not the lodgement's %d", sum, in.AmountCents)
+	}
+	return in.PaymentIDs, nil
 }
 
 // CountTill records the BLIND per-tender actuals (+ optional CLOSE denominations) and transitions the

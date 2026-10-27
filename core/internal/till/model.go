@@ -257,14 +257,17 @@ type OpenTillInput struct {
 	OpeningDenominations []DenominationCount `json:"opening_denominations"`
 }
 
-// MovementInput is a paid-in/out/drop/lodgement entry.
+// MovementInput is a paid-in/out/drop/lodgement entry. A lodgement may name its payments, like a
+// deposit slip (FROM-PRINCIPAL 128): the names are optional, and when given they must add up to the
+// slip's amount, every name on this drawer, this method, still RECEIVED and not reversed.
 type MovementInput struct {
-	TillSessionID string `json:"-"`
-	MovementType  string `json:"movement_type"`
-	Method        string `json:"method"`
-	AmountCents   int64  `json:"amount_cents"`
-	Reason        string `json:"reason"`
-	Reference     string `json:"reference"`
+	TillSessionID string   `json:"-"`
+	MovementType  string   `json:"movement_type"`
+	Method        string   `json:"method"`
+	AmountCents   int64    `json:"amount_cents"`
+	Reason        string   `json:"reason"`
+	Reference     string   `json:"reference"`
+	PaymentIDs    []string `json:"payment_ids"`
 }
 
 // CountInput is the blind per-tender actuals (+ optional CLOSE denominations).
@@ -405,7 +408,9 @@ type PaymentRow struct {
 	SignatureRef    string
 }
 
-// MovementRow is one till_movements insert (paid-in/out/drop/lodgement).
+// MovementRow is one till_movements insert (paid-in/out/drop/lodgement). A lodgement carries the
+// deposit slip's named payment ids; the repository writes the slip's link rows and the DEPOSITED
+// marks in the movement's own transaction.
 type MovementRow struct {
 	TillSessionID string
 	MovementType  string
@@ -414,6 +419,15 @@ type MovementRow struct {
 	Reason        string
 	Reference     string
 	CreatedBy     string
+	PaymentIDs    []string
+}
+
+// SlipPayment is one named payment's read for a lodgement's deposit slip validation.
+type SlipPayment struct {
+	ID          string
+	AmountCents int64
+	Status      string
+	Reversed    bool
 }
 
 // MovementTotals are the per-session movement sums of ONE tender method, used in the drawer math
