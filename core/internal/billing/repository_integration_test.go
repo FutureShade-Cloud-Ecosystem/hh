@@ -128,7 +128,11 @@ func seedInvoice(t *testing.T, pool *pgxpool.Pool, customerID, namespace string,
 	}
 	var finalized any
 	if s.finalized {
-		finalized = time.Date(1990, 1, 15, 12, 0, 0, 0, time.UTC)
+		d, err := time.Parse("2006-01-02", issue)
+		if err != nil {
+			t.Fatalf("parse issue day %s: %v", issue, err)
+		}
+		finalized = d.Add(12 * time.Hour)
 	}
 	var id string
 	if err := pool.QueryRow(ctx,

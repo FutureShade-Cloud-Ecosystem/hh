@@ -100,18 +100,19 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 // the register's per-row bucket_label derivation, all from one expression.
 //
 // The balance each document carries is the one it carried AT the as-of instant ($5, the instant the
-// handler resolved), not today's. At an as of on the CURRENT house day ($6) the figure IS the
-// balance: balance_cents is the inception to date figure, every open document on the books is read
-// (the issue cut is a past date's cut; a document issued ahead of the house day by the zone's own
-// reading of the seed is on the books at now), so today's aging, today's sweep and today's
-// statement run read it directly and no writer can move a balance without today's figures moving
-// with it. Only a PAST date rebuilds from the dated acts that moved the balance, and only there is
-// a document on the books from its issue day ($1, the house day of the as-of): every real
+// handler resolved), not today's. At an as of on or after the CURRENT house day ($6) the figure IS
+// the balance: balance_cents is the inception to date figure, every open document on the books is
+// read (the finalize cut is a past date's cut; a document issued ahead of the house day by the
+// zone's own reading of the seed is on the books at now), so today's aging, today's sweep and
+// today's statement run read it directly and no writer can move a balance without today's figures
+// moving with it. Only a PAST date rebuilds from the dated acts that moved the balance, and only
+// there is a document on the books from its finalize instant ($5, matching the GL journal's
+// posted_at so the document and its journal join the books at the same instant): every real
 // allocation dated by the instant is a payment received by then, a reversing payment's contra
 // allocation gives its share back, a re-application dated by the instant is money applied by then,
 // and the dated ledger rows tagged to the document itself (a credit offset, a deposit close, a
 // write off) move it by their signed amounts. An invoice paid after the as-of date therefore still
-// ages here at its full total, and an invoice issued after it is not on the books at it. What was
+// ages here at its full total, and an invoice finalized after it is not on the books at it. What was
 // settled by the instant nets to zero, so only a document open at the date survives the HAVING,
 // whatever its status is today. One honesty note: a bounce deletes its payment's allocation rows,
 // so a cheque that was good at the as-of date and bounced afterwards shows as owed at that date;
@@ -142,7 +143,7 @@ const agingSelect = `
 FROM customers c
   JOIN invoices i ON i.customer_id = c.id
                   AND i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
-                  AND ($6::bool OR i.issue_date <= $1::date)
+                  AND ($6::bool OR COALESCE(i.finalized_at, i.created_at) <= $5::timestamptz)
   JOIN LATERAL (
 	       SELECT CASE WHEN $6::bool THEN i.balance_cents
 	                   ELSE i.total_cents
@@ -185,7 +186,7 @@ func (r *Repository) AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.pool.Query(ctx, agingSelect, day, bucketDays, branchID, reach.SQLArg(), asOf, sameHouseDayAs(day, today))
+	rows, err := r.pool.Query(ctx, agingSelect, day, bucketDays, branchID, reach.SQLArg(), asOf, onOrAfterHouseDay(day, today))
 	if err != nil {
 		return nil, fmt.Errorf("billing: aging rows: %w", err)
 	}
