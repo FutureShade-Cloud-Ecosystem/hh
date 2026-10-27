@@ -144,6 +144,21 @@ type ApprovalStateChecker interface {
 	JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (ApprovalState, error)
 }
 
+// - delivery date seam (round 2, S2 P1-2) -
+
+// DeliveryReader answers the delivery fact MarkDelivered records on an order: when the goods left,
+// found=false when the order carries no stamp. Satisfied by order.Repository, wired in cmd/core.
+type DeliveryReader interface {
+	DeliveredAt(ctx context.Context, orderID string) (time.Time, bool, error)
+}
+
+// AuditTxRecorder is the audit seam the Controller's open year records through, on the caller's
+// transaction (round 2, S2 P2-4): the audit row commits or rolls back WITH the year it opens.
+// Satisfied by audit.Service.RecordTx, wired in cmd/core. Nil (or unwired) records nothing.
+type AuditTxRecorder interface {
+	RecordTx(ctx context.Context, q audit.Execer, a audit.SensitiveAccess) error
+}
+
 // NoopCostBasis is the dormant W5 cost-basis seam: it always reports "no cost basis" (found=false) so the
 // COGS leg of an order.fulfilled posting is skipped until the W6 inventory module supplies a real one. The
 // scaffold wires this into glSvc; W6 swaps in the inventory-backed impl.
@@ -237,6 +252,8 @@ type Service struct {
 	standardRate    StandardRateReader   // the dealer's standard tax rate; nil is the Ontario 13 percent
 	taxWords        taxwords.Source      // the name of the dealer's tax in journal memos; nil is "HST"
 	approvalChecker ApprovalStateChecker // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
+	delivery        DeliveryReader       // round 2: the delivery fact the deposit release's date reads
+	auditTx         AuditTxRecorder      // round 2: the open year's audit, in the year's transaction
 	log             *slog.Logger
 	now             func() time.Time
 	callerFrom      func(context.Context) (identity.StaffContext, bool)
@@ -333,6 +350,12 @@ func (s *Service) taxWord(ctx context.Context) string {
 
 // WithInvoiceReader injects the billing invoice-facts seam.
 func (s *Service) WithInvoiceReader(r InvoiceReader) *Service { s.invoices = r; return s }
+
+// WithDeliveryReader injects the order delivery-fact seam the deposit release's date reads (round 2).
+func (s *Service) WithDeliveryReader(r DeliveryReader) *Service { s.delivery = r; return s }
+
+// WithAuditTxRecorder injects the in-transaction audit seam the Controller's open year records through (round 2).
+func (s *Service) WithAuditTxRecorder(r AuditTxRecorder) *Service { s.auditTx = r; return s }
 
 // WithTaxSplitReader injects the pos tax-split seam.
 func (s *Service) WithTaxSplitReader(r TaxSplitReader) *Service { s.taxSplits = r; return s }
