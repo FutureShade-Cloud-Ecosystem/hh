@@ -2885,6 +2885,7 @@ type GlJournal struct {
 	IdempotencyKey    *string         `json:"idempotency_key,omitempty"`
 	CreatedBy         *string         `json:"created_by,omitempty"`
 	CreatedAt         time.Time       `json:"created_at"`
+	LatePosted        *bool           `json:"late_posted,omitempty"`
 	Lines             []GlJournalLine `json:"lines"`
 }
 
@@ -3033,6 +3034,10 @@ type GlPeriodReopenBody struct {
 type GlCloseYearBody struct {
 	Year   int32  `json:"year"`
 	Reason string `json:"reason"`
+}
+
+type GlYearOpenResult struct {
+	FiscalYear int32 `json:"fiscal_year"`
 }
 
 type GlYearCloseResult struct {
