@@ -1276,3 +1276,85 @@ func TestIntegration_FW1_04_RBCImportRefusesUSDAndEmptyAmount(t *testing.T) {
 		t.Errorf("empty import result = %+v, want FAILED with 0 inserted", resEmpty)
 	}
 }
+
+// Round 3: the starting point form's read. The ledger's entries on the account's GL code on or before the cut
+// over date, with the book balance their net makes, answered by the core so the desk formats and never computes.
+func TestIntegration_FW1_04_CutoverPreviewRouteLegs(t *testing.T) {
+	pool := intPool(t)
+	cleanTables(t, pool)
+	acct := rbcAccountID(t, pool)
+	ctx := context.Background()
+
+	const year = 2022
+	mar31 := time.Date(year, 3, 31, 12, 0, 0, 0, time.UTC)
+
+	fw104CleanYear(t, pool, acct, year)
+	fw104EnsurePeriods(t, pool, year, mar31)
+	t.Cleanup(func() { fw104CleanYear(t, pool, acct, year) })
+
+	var userID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("select user: %v", err)
+	}
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	svc := NewService(NewRepository(pool)).
+		WithJournals(glSvc).
+		WithGLBalances(glSvc)
+	h := NewHandler(svc, slog.Default()).WithUserLinker(func(context.Context, string) (string, bool) { return userID, true })
+	sg := testkit.NewStaffGuards(t)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, sg.Guards)
+	bearer := sg.Bearer(t)
+
+	openJID, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-r3-preview-open",
+		Source:         "ADJUSTMENT",
+		Memo:           "opening balance at go live",
+		DocumentDate:   mar31,
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 500000, Memo: "opening balance"},
+			{AccountCode: "3900", CreditCents: 500000, Memo: "retained earnings"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post opening balance: %v", err)
+	}
+
+	get := func(auth identityPkg.StaffAuthority, query string) (int, string) {
+		t.Helper()
+		sg.SetAuthority(auth)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/bankrec/accounts/"+acct+"/cutover"+query, nil)
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set(authz.HeaderXOrg, testkit.OrgNorthSlug)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	work := identityPkg.StaffAuthority{RoleID: "payables_receivables", Tier: identityPkg.TierManager, Scope: identityPkg.ScopeGlobal}
+	controller := identityPkg.StaffAuthority{RoleID: "financial_controller", Tier: identityPkg.TierLeadership, Scope: identityPkg.ScopeGlobal}
+
+	if code, body := get(work, "?date=not-a-date"); code != http.StatusBadRequest || !strings.Contains(body, "cutover_date must be YYYY-MM-DD") {
+		t.Errorf("preview with a bad date: status = %d body %s, want 400 naming the date", code, body)
+	}
+	if code, body := get(work, ""); code != http.StatusBadRequest {
+		t.Errorf("preview with no date: status = %d body %s, want 400", code, body)
+	}
+	code, body := get(work, "?date=2022-03-31")
+	if code != http.StatusOK {
+		t.Fatalf("preview status = %d body %s, want 200 OK", code, body)
+	}
+	if !strings.Contains(body, `"book_balance_cents":500000`) {
+		t.Errorf("preview book balance missing: %s", body)
+	}
+	if !strings.Contains(body, openJID) || !strings.Contains(body, "opening balance at go live") {
+		t.Errorf("preview does not list the ledger's opening entry: %s", body)
+	}
+	// A date before the entry lists nothing, at zero.
+	code, body = get(controller, "?date=2022-03-30")
+	if code != http.StatusOK {
+		t.Fatalf("preview before any entry: status = %d body %s, want 200 OK", code, body)
+	}
+	if !strings.Contains(body, `"book_balance_cents":0`) || strings.Contains(body, openJID) {
+		t.Errorf("preview at 2022-03-30 must be empty at zero: %s", body)
+	}
+}
