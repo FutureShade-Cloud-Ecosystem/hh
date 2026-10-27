@@ -824,7 +824,9 @@ test("with a month signed off and no starting point recorded, the section says i
   await page.getByRole("button", { name: "Confirm sign off" }).click();
   await expect(page.locator("[data-recon-id]")).toContainText("Signed off");
   const section = page.locator("[data-cutover]");
-  await expect(section.locator("[data-cutover-closed]")).toContainText("can no longer be set");
+  await expect(section.locator("[data-cutover-closed]")).toHaveText(
+    `${priorMonth().words} has signed off, so this account reconciles from its signed off months; a starting point can no longer be set.`,
+  );
   await expect(section.locator("[data-cutover-form]")).toHaveCount(0);
   await expect(section.getByRole("button", { name: "Save the starting point" })).toHaveCount(0);
 });

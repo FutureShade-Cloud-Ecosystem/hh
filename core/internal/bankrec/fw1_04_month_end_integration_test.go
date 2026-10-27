@@ -1152,7 +1152,7 @@ func TestIntegration_FW1_04_CutoverRouteLegs(t *testing.T) {
 	h.RegisterRoutes(mux, sg.Guards)
 	bearer := sg.Bearer(t)
 
-	post := func(auth identityPkg.StaffAuthority, body string) int {
+	postWithBody := func(auth identityPkg.StaffAuthority, body string) (int, string) {
 		t.Helper()
 		sg.SetAuthority(auth)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/bankrec/accounts/"+acct+"/cutover", strings.NewReader(body))
@@ -1161,7 +1161,12 @@ func TestIntegration_FW1_04_CutoverRouteLegs(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
-		return rec.Code
+		return rec.Code, rec.Body.String()
+	}
+	post := func(auth identityPkg.StaffAuthority, body string) int {
+		t.Helper()
+		code, _ := postWithBody(auth, body)
+		return code
 	}
 	gm := identityPkg.StaffAuthority{RoleID: "general_manager", Tier: identityPkg.TierLeadership, Scope: identityPkg.ScopeGlobal}
 	controller := identityPkg.StaffAuthority{RoleID: "financial_controller", Tier: identityPkg.TierLeadership, Scope: identityPkg.ScopeGlobal}
@@ -1245,9 +1250,16 @@ func TestIntegration_FW1_04_CutoverRouteLegs(t *testing.T) {
 	if _, err := svc.CompleteReconciliation(ctx, recApr.ID, userID); err != nil {
 		t.Fatalf("sign off april: %v", err)
 	}
-	// The body reconciles (the book at 2022-03-31 is $5,000.00), so the conflict is what answers.
-	if code := post(controller, `{"cutover_date":"2022-03-31","opening_statement_balance_cents":500000}`); code != http.StatusConflict {
-		t.Errorf("controller POST cutover after a later month signed off status = %d, want 409 Conflict", code)
+	// Once any month (2022-04) has signed off on the account, any cut-over, whether dated before, in, or
+	// after the signed-off month, is refused 409 naming 2022-04 (FROM-PRINCIPAL 183, S5 R3.3).
+	if code, rbody := postWithBody(controller, `{"cutover_date":"2022-03-31","opening_statement_balance_cents":500000}`); code != http.StatusConflict || !strings.Contains(rbody, "month 2022-04 is already completed") {
+		t.Errorf("controller POST cutover at 2022-03-31 after 2022-04 signed off: status = %d body %s, want 409 Conflict naming 2022-04", code, rbody)
+	}
+	if code, rbody := postWithBody(controller, `{"cutover_date":"2022-06-30","opening_statement_balance_cents":510000}`); code != http.StatusConflict || !strings.Contains(rbody, "month 2022-04 is already completed") {
+		t.Errorf("controller POST cutover at later date 2022-06-30 (reconciling) after 2022-04 signed off: status = %d body %s, want 409 Conflict naming 2022-04", code, rbody)
+	}
+	if code, rbody := postWithBody(controller, `{"cutover_date":"2022-06-30","opening_statement_balance_cents":1}`); code != http.StatusConflict || !strings.Contains(rbody, "month 2022-04 is already completed") {
+		t.Errorf("controller POST cutover at later date 2022-06-30 ($0.01) after 2022-04 signed off: status = %d body %s, want 409 Conflict naming 2022-04", code, rbody)
 	}
 }
 
@@ -1475,6 +1487,46 @@ func TestIntegration_FW1_04_CutoverMustReconcile(t *testing.T) {
 	code, body = post(`{"cutover_date":"2022-03-31","opening_statement_balance_cents":480000}`)
 	if code != http.StatusOK {
 		t.Errorf("reconciling cut-over at the bare book: status = %d body %s, want 200 OK", code, body)
+	}
+
+	// FROM-PRINCIPAL 183 (S5 R3.2): the book figure is the LEDGER's own balance at the cut-over date, never
+	// the sum of the preview's uncleared entry list. An older bankrec clearing journal (+$30.00 on 2022-03-15)
+	// sits in GL 1000 (making the ledger balance $4,830.00 at 2022-03-31) while BankAccountEntriesAsOf leaves
+	// it out of the tick list (whose sum remains $4,800.00).
+	resetCutover()
+	if _, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "bankrec:match:fw104-r4-prior-cleared",
+		Source:         "ADJUSTMENT",
+		Memo:           "bankrec clearing journal already cleared on an earlier statement",
+		DocumentDate:   time.Date(year, 3, 15, 12, 0, 0, 0, time.UTC),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 3000, Memo: "bank"},
+			{AccountCode: "1020", CreditCents: 3000, Memo: "undeposited funds"},
+		},
+	}); err != nil {
+		t.Fatalf("post prior bankrec clearing journal: %v", err)
+	}
+	getPreview := func(query string) (int, string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/bankrec/accounts/"+acct+"/cutover"+query, nil)
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set(authz.HeaderXOrg, testkit.OrgNorthSlug)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	if pCode, pBody := getPreview("?date=2022-03-31&statement_cents=503000&ticked=" + chequeJID); pCode != http.StatusOK || !strings.Contains(pBody, `"book_balance_cents":483000`) || !strings.Contains(pBody, `"reconciles":true`) {
+		t.Errorf("preview with bankrec clearing journal in ledger: status = %d body %s, want book_balance_cents 483000 and reconciles true", pCode, pBody)
+	}
+	// A statement of $5,000.00 with the -$200.00 cheque ticked matches only the entry-list sum ($4,800.00 - (-$200.00)),
+	// NOT the ledger's own $4,830.00 balance ($4,830.00 - (-$200.00) = $5,030.00), so RecordCutover refuses it by $30.00.
+	code, body = post(`{"cutover_date":"2022-03-31","opening_statement_balance_cents":500000,"outstanding_journal_ids":["` + chequeJID + `"]}`)
+	if code != http.StatusUnprocessableEntity || !strings.Contains(body, "the statement and the book differ by $30.00") {
+		t.Errorf("cut-over matching entry sum instead of ledger balance: status = %d body %s, want 422 differing by $30.00", code, body)
+	}
+	code, body = post(`{"cutover_date":"2022-03-31","opening_statement_balance_cents":503000,"outstanding_journal_ids":["` + chequeJID + `"]}`)
+	if code != http.StatusOK {
+		t.Errorf("cut-over matching ledger balance ($4,830.00 less -$200.00 cheque = $5,030.00): status = %d body %s, want 200 OK", code, body)
 	}
 	_ = openJID
 }

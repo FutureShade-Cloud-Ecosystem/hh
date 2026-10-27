@@ -508,9 +508,16 @@ test("the cut over door: the controller records the starting point on the accoun
   assert.equal((await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, refresh: true })).status, 201);
   const opened = (await ctl("GET", `/api/v1/bankrec/reconciliations?bank_account_id=${IDS.operating}`)).json.find((r) => r.year === Y && r.month === M);
   assert.equal((await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`)).status, 200);
-  // The bodies reconcile (the book at either date is $25,025.00), so the conflict is what answers.
+  // Once any month on the account has signed off, any cut-over (before, in, or after the signed-off month)
+  // is refused with 409 naming that signed-off month (FROM-PRINCIPAL 183).
   refused(await ctl("POST", cutPath, { cutover_date: `${prior}-28`, opening_statement_balance_cents: 2_502_500 }), 409, "cannot record cut-over at");
   refused(await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 2_502_500 }), 409, "is already completed");
+  const laterReconciling = await ctl("POST", cutPath, { cutover_date: `${Y + 1}-06-30`, opening_statement_balance_cents: 2_502_500 });
+  refused(laterReconciling, 409, "is already completed");
+  assert.match(laterReconciling.json.error, new RegExp(`month ${period} is already completed`));
+  const laterPenny = await ctl("POST", cutPath, { cutover_date: `${Y + 1}-06-30`, opening_statement_balance_cents: 1 });
+  refused(laterPenny, 409, "is already completed");
+  assert.match(laterPenny.json.error, new RegExp(`month ${period} is already completed`));
 });
 
 test("a derived month in the stub recomputes its statement balance from the lines at completion, and autoMatch skips a completed month", async () => {
