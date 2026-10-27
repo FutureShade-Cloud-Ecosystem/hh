@@ -1033,9 +1033,10 @@ func (r *Repository) NextOpenableFiscalYear(ctx context.Context, now time.Time) 
 }
 
 // OpenNextFiscalYear is the Controller's early open: at most one year beyond the roll forward's
-// target (house year + 2), refusing in words when the year is already open or past the cap, and
-// running the record callback INSIDE the year's transaction so the audit row commits or rolls back
-// with the year it opens (round 2 S2 P2-4, S2 round P2-1).
+// target (house year + 2), refusing in words when the year is already open, past the cap, or
+// before the books' first year, and running the record callback INSIDE the year's transaction so
+// the audit row commits or rolls back with the year it opens (round 2 S2 P2-4, S2 round P2-1,
+// round 3 S2 P2-1).
 func (r *Repository) OpenNextFiscalYear(ctx context.Context, now time.Time, requestedYear int, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
 	if r.pool == nil {
 		return 0, errNoDB
@@ -1063,6 +1064,17 @@ func (r *Repository) OpenNextFiscalYear(ctx context.Context, now time.Time, requ
 	checkYear := target
 	if requestedYear > 0 && requestedYear < target {
 		checkYear = requestedYear
+		// Round 3 (S2 P2-1): a named year before the books' first year has no periods of its
+		// own, so the count below reads 0 and the open fell through to a silent 200 with the
+		// cap year, auditing an open that did not happen. Refuse it in words instead, before
+		// any write: the record callback never runs, so no audit row is left behind.
+		var firstYear int
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(MIN(year), 0) FROM fiscal_periods`).Scan(&firstYear); err != nil {
+			return 0, fmt.Errorf("gl: read the books' first year: %w", err)
+		}
+		if firstYear > 0 && checkYear < firstYear {
+			return 0, clientErr(409, "gl: %d is before the books' first year; only the next year can be opened here", checkYear)
+		}
 	}
 	var existing int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year = $1`, checkYear).Scan(&existing); err != nil {

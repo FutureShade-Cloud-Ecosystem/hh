@@ -661,6 +661,14 @@ export function createGlWorld() {
       if (requestedYear > cap) {
         return say(409, `gl: ${requestedYear} is too far ahead; the next year that can open is ${cap}`);
       }
+      // Round 3 (S2 P2-1): the core refuses a named year before the books' first year instead of
+      // answering the cap year with a silent 200, so the stub does too.
+      if (requestedYear > 0 && requestedYear < cap) {
+        const firstYear = world.periods.reduce((low, p) => Math.min(low, p.year), Infinity);
+        if (Number.isFinite(firstYear) && requestedYear < firstYear) {
+          return say(409, `gl: ${requestedYear} is before the books' first year; only the next year can be opened here`);
+        }
+      }
       const checkYear = requestedYear > 0 && requestedYear < cap ? requestedYear : cap;
       if (world.periods.filter((p) => p.year === checkYear).length >= 12) {
         return say(409, `gl: ${checkYear} is already open`);
