@@ -10,10 +10,28 @@ package main
 // step, exactly as worker.go registers it, so every outbox event becomes a journal before the
 // next assertion.
 //
-// The eight assertions (the wave brief section 2, items 1 to 8) are eight named subtests. A
+// The eight assertions (the wave brief section 2, items 1 to 8) are eleven named subtests (the
+// bank story grew into three and the periods roll forward is its own). A
 // subtest whose name is a key of fw1WalkRed (fw1_walk_red.go) skips with "red until FW1-NN";
 // each item deletes its own line when its assertion goes green. A second test guards the map:
 // every key must name a real subtest, so a stale skip line fails.
+//
+// The walk carries two months (the split frame, FROM-PRINCIPAL 169): the TRADING month is the
+// current, still running month in the house zone, and the BANK month is the last ended month,
+// because a bank month signs off only once it has ended (a running month's sign off is refused).
+// AR_aging_ties_to_GL_1100, customer_statement_equals_aging_and_subledger,
+// stock_value_ties_to_GL_1200, HST_reconcile_ties,
+// every_journal_line_carries_a_branch_and_branch_trial_balances_sum and
+// walk_month_and_next_year_periods_open run in the trading month: AR, stock, HST and statements
+// stay where their database stamps and period keys put them, and the trial balance and period
+// reads are keyed to the trading month. till_lodgement_posts_bank_1000_at_lodgement,
+// bank_lodgement_match_posts_no_second_journal and
+// bank_month_signs_off_at_zero_with_outstanding_items run in the bank month: the walk pins the
+// till and payments clocks into it and the statement, the outstanding cheque and the bank charge
+// carry its days, so the reconciliation opens and signs off an ended month rather than a running
+// one. no_journal_waiting_or_dead_lettered is month free (the outbox carries both months'
+// events); year_end_close_opens_next_year_and_keeps_income_statement works the year ends around
+// the frame, refusing the running year's close and closing the year before it.
 //
 //	Run: DATABASE_URL='postgres://colton:fw1@127.0.0.1:57602/postgres?sslmode=disable' \
 //	     go test -tags integration ./cmd/core/ -run FW1MonthWalk -count=1 -v
@@ -53,7 +71,8 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
 
-// The walk's fixed facts: org, branches and the walk month.
+// The walk's fixed facts: org and branches. The walk's two months (the trading month and the
+// bank month, the last ended one) are derived per run in newFW1Walk.
 const (
 	fw1OrgID   = "88a20000-0000-4000-8000-0000000000f1"
 	fw1OrgSlug = "fw1-walk"
