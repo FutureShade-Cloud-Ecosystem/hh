@@ -4,12 +4,14 @@ package inventory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestFW1_07_BranchCostBasisMatchesStockMoveAndJournal(t *testing.T) {
@@ -281,5 +283,124 @@ func TestFW1_07_PreReceiptSaleFallbackExceptionsAndTrueUp(t *testing.T) {
 		if ex.ProductID == prodCatalogue {
 			t.Fatalf("prodCatalogue still listed on ControllerExceptions after first receipt true-up: %+v", ex)
 		}
+	}
+}
+
+type failingGLPoster struct {
+	err error
+}
+
+func (f failingGLPoster) PostJournal(_ context.Context, _ GLJournal) (string, error) {
+	return "", f.err
+}
+
+func (f failingGLPoster) PostJournalTx(_ context.Context, _ pgx.Tx, _ GLJournal) (string, error) {
+	return "", f.err
+}
+
+func TestFW1_07_TransferJournalSameTransactionAsMove(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+
+	prodID := mkProduct(t, pool, "FW107-XFER-ATOMIC")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO stock_balances (product_id, branch_id, location_id, on_hand_base, qty_reserved)
+		VALUES ($1, $2, $2, 10, 0)`, prodID, branch1); err != nil {
+		t.Fatalf("seed stock_balances: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO product_branch_costs (product_id, branch_id, avg_unit_cost_cents)
+		VALUES ($1, $2, 1000)`, prodID, branch1); err != nil {
+		t.Fatalf("seed product_branch_costs: %v", err)
+	}
+
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	failSvc := NewService(NewRepository(pool)).
+		WithGLPoster(failingGLPoster{err: errors.New("simulated GL failure")}).
+		WithRuleResolver(glBackedRules{svc: glSvc})
+
+	tr, err := failSvc.CreateTransfer(ctx, CreateTransferInput{
+		FromBranchID: branch1,
+		ToBranchID:   branch2,
+		Lines:        []CreateTransferLine{{ProductID: prodID, QtyBase: 4}},
+	})
+	if err != nil {
+		t.Fatalf("CreateTransfer: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		for _, ev := range []string{EventTransferShipped, EventTransferReceived} {
+			key := ev + ":" + tr.ID
+			_, _ = pool.Exec(c, `DELETE FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id = j.id AND j.idempotency_key = $1`, key)
+			_, _ = pool.Exec(c, `DELETE FROM gl_journals WHERE idempotency_key = $1`, key)
+		}
+		_, _ = pool.Exec(c, `DELETE FROM stock_transfer_lines WHERE transfer_id = $1`, tr.ID)
+		_, _ = pool.Exec(c, `DELETE FROM stock_moves WHERE source_ref_id = $1::uuid`, tr.ID)
+		_, _ = pool.Exec(c, `DELETE FROM stock_transfers WHERE id = $1`, tr.ID)
+	})
+
+	// 1. Attempt to ship when GL posting fails: because the journal must ride in the SAME transaction
+	// as the stock move, a GL error must roll back the stock move, balance change, and status update.
+	if _, err := failSvc.ShipTransfer(ctx, tr.ID, ""); err == nil {
+		t.Fatalf("expected ShipTransfer to fail when GL poster fails")
+	}
+
+	var onHandAfterFail float64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(on_hand_base), 0)::float8 FROM stock_balances WHERE product_id = $1 AND branch_id = $2`,
+		prodID, branch1).Scan(&onHandAfterFail); err != nil {
+		t.Fatalf("read on_hand after failed ship: %v", err)
+	}
+	var moveCountAfterFail int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM stock_moves WHERE source_ref_id = $1::uuid`, tr.ID).Scan(&moveCountAfterFail); err != nil {
+		t.Fatalf("read move count after failed ship: %v", err)
+	}
+	var statusAfterFail string
+	if err := pool.QueryRow(ctx, `
+		SELECT status FROM stock_transfers WHERE id = $1`, tr.ID).Scan(&statusAfterFail); err != nil {
+		t.Fatalf("read transfer status after failed ship: %v", err)
+	}
+	if onHandAfterFail != 10 || moveCountAfterFail != 0 || statusAfterFail != TransferDraft {
+		t.Fatalf("transfer move committed outside journal transaction on ship failure: on_hand=%.2f (want 10.00), moves=%d (want 0), status=%s (want DRAFT)",
+			onHandAfterFail, moveCountAfterFail, statusAfterFail)
+	}
+
+	// 2. Now ship with real GL poster and then attempt receive with failing GL poster: receive failure must also roll back.
+	realSvc := newIntSvc(pool)
+	if _, err := realSvc.ShipTransfer(ctx, tr.ID, ""); err != nil {
+		t.Fatalf("ShipTransfer with real GL poster: %v", err)
+	}
+	if _, err := failSvc.ReceiveTransfer(ctx, tr.ID, ""); err == nil {
+		t.Fatalf("expected ReceiveTransfer to fail when GL poster fails")
+	}
+	var destOnHandAfterFail float64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(on_hand_base), 0)::float8 FROM stock_balances WHERE product_id = $1 AND branch_id = $2`,
+		prodID, branch2).Scan(&destOnHandAfterFail); err != nil {
+		t.Fatalf("read dest on_hand after failed receive: %v", err)
+	}
+	if destOnHandAfterFail != 0 {
+		t.Fatalf("transfer receive move committed outside journal transaction on receive failure: dest on_hand=%.2f (want 0.00)", destOnHandAfterFail)
+	}
+
+	// 3. Receive with real GL poster: both move and journal commit together.
+	if _, err := realSvc.ReceiveTransfer(ctx, tr.ID, ""); err != nil {
+		t.Fatalf("ReceiveTransfer with real GL poster: %v", err)
+	}
+	var destOnHand float64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(on_hand_base), 0)::float8 FROM stock_balances WHERE product_id = $1 AND branch_id = $2`,
+		prodID, branch2).Scan(&destOnHand); err != nil {
+		t.Fatalf("read dest on_hand after receive: %v", err)
+	}
+	var journalCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM gl_journals WHERE idempotency_key IN ($1, $2)`,
+		EventTransferShipped+":"+tr.ID, EventTransferReceived+":"+tr.ID).Scan(&journalCount); err != nil {
+		t.Fatalf("read transfer journal count: %v", err)
+	}
+	if destOnHand != 4 || journalCount != 2 {
+		t.Fatalf("after receive want dest on_hand=4.00 and 2 journals, got on_hand=%.2f journals=%d", destOnHand, journalCount)
 	}
 }
