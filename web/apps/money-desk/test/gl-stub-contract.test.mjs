@@ -421,6 +421,11 @@ test("the next fiscal year opens for the Controller with a reason and refuses in
   const tooFar = await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { year: 2029, reason: "Too far ahead" });
   refused(tooFar, 409, "is too far ahead; the next year that can open is");
   assert.ok(tooFar.json.error.includes("2029 is too far ahead; the next year that can open is 2028"), tooFar.json.error);
+  // A year before the books' first year is refused in words, with nothing opened and nothing made (round 3, P2-1).
+  const past = await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { year: 2020, reason: "Before the books" });
+  refused(past, 409, "is before the books' first year; only the next year can be opened here");
+  assert.ok(past.json.error.includes("2020 is before the books' first year; only the next year can be opened here"), past.json.error);
+  assert.equal((await call(IDS.controller, "GET", "/api/v1/gl/periods")).json.items.filter((p) => p.year > 2026).length, 0);
   const opened = await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { year: 2028, reason: "The year is set up early" });
   assert.equal(opened.status, 200);
   holds("GlYearOpenResult", opened.json);
