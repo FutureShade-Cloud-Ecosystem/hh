@@ -624,6 +624,52 @@ type BillingReceiptResult struct {
 	Replayed     bool   `json:"replayed"`
 }
 
+type BillingCreditMemoInput struct {
+	CustomerId     string  `json:"customer_id"`
+	BranchId       string  `json:"branch_id"`
+	InvoiceId      *string `json:"invoice_id,omitempty"`
+	AmountCents    int64   `json:"amount_cents"`
+	Reason         string  `json:"reason"`
+	GlAccount      *string `json:"gl_account,omitempty"`
+	IdempotencyKey *string `json:"idempotency_key,omitempty"`
+}
+
+type BillingCreditMemoQuoteInput struct {
+	CustomerId  string `json:"customer_id"`
+	BranchId    string `json:"branch_id"`
+	InvoiceId   string `json:"invoice_id"`
+	AmountCents *int64 `json:"amount_cents,omitempty"`
+}
+
+type BillingCreditMemoQuote struct {
+	InvoiceId              string `json:"invoice_id"`
+	RemainingSubtotalCents int64  `json:"remaining_subtotal_cents"`
+	RemainingTaxCents      int64  `json:"remaining_tax_cents"`
+	RemainingTotalCents    int64  `json:"remaining_total_cents"`
+	SubtotalCents          int64  `json:"subtotal_cents"`
+	TaxCents               int64  `json:"tax_cents"`
+	TotalCents             int64  `json:"total_cents"`
+	Message                string `json:"message"`
+}
+
+type BillingCreditMemoResult struct {
+	Status        string  `json:"status"`
+	CreditMemoId  string  `json:"credit_memo_id"`
+	CreditMemoNo  string  `json:"credit_memo_no"`
+	CustomerId    string  `json:"customer_id"`
+	BranchId      string  `json:"branch_id"`
+	InvoiceId     *string `json:"invoice_id,omitempty"`
+	SubtotalCents int64   `json:"subtotal_cents"`
+	TaxCents      int64   `json:"tax_cents"`
+	TotalCents    int64   `json:"total_cents"`
+	GlAccount     string  `json:"gl_account"`
+	Reason        string  `json:"reason"`
+	ApprovalId    *string `json:"approval_id,omitempty"`
+	GlJournalId   *string `json:"gl_journal_id,omitempty"`
+	Reused        *bool   `json:"reused,omitempty"`
+	Message       string  `json:"message"`
+}
+
 type BillingApplyPaymentInput struct {
 	CustomerId     string   `json:"customer_id"`
 	Method         string   `json:"method"`

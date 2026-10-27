@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
@@ -114,7 +115,8 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// A-01 (W5): GL, with the rail filer bound. The invoice/tax/payment
 	// readers (billing, pos, till) land in B6 and B7; unwired, the posting
 	// legs answer their not-configured errors, never a silent skip.
-	glSvc := gl.NewService(gl.NewRepository(pool).WithZone(newDealerZone(pool))).
+	glRepo := gl.NewRepository(pool).WithZone(newDealerZone(pool))
+	glSvc := gl.NewService(glRepo).
 		WithStandardRate(newTaxEngine(pool)). // the NSF fee backout reads the dealer's standard rate
 		WithTaxLabel(newTaxWords(pool)).      // the tax legs' memos name the dealer's tax
 		WithDeadRequeuer(outboxStore).
@@ -124,7 +126,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
 		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
 	gl.NewHandler(glSvc, log).WithZone(newDealerZone(pool)).WithLegacyImport(settings.NewDealerConfigReader(pool)).WithUserLinker(link).RegisterRoutes(r, g)
-	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
+	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc, journals: glRepo, memos: billing.NewInvoiceWriter(pool)})
 
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
@@ -332,9 +334,59 @@ func (a jeStateAdapter) JournalApprovalState(ctx context.Context, journalID stri
 // ApproveJournalTx: a rail-approve posts the journal inside the decision
 // transaction, translating gl's typed refusals into the rail's client-error
 // taxonomy (carried verbatim from the pin's adapter belt).
-type jeDeciderAdapter struct{ svc *gl.Service }
+//
+// It carries one more job, and it is the credit memo's other half. A parked credit memo's reversing
+// journal and the memo document itself are two halves of one credit, so they are posted together: the
+// memo document is finalized on the decision's own transaction, right before the journal is posted, so
+// the customer is credited and the ledger moves together or not at all. The journal's idempotency key
+// is what says this is a credit memo's journal and not any other journal, because the rail hands the
+// decider a journal id and nothing else.
+type jeDeciderAdapter struct {
+	svc *gl.Service
+	// journals reads the parked journal through the store seam, gl's own rule for a writer path:
+	// this bridge voids and approves the journal, so it is the ledger's writer half, and the read
+	// only classifies the journal (is it a credit memo's). The fenced read route would refuse the
+	// bridge on the sync door's withdrawal context, which carries the linked actor and no staff
+	// stamp by design.
+	journals *gl.Repository
+	// memos finalizes the parked memo document. Nil means a parked credit memo cannot be approved,
+	// and the approval fails rather than posting a journal for a credit nobody received.
+	memos *billing.InvoiceWriter
+}
+
+// RejectJournalTx is the decline arm (FW1-12a's core round): a refused or withdrawn credit memo's
+// park is voided on the decision's own transaction, the memo document and its journal together. The
+// shipped rule stands for every other parked journal: a decline bridges nothing, because voiding a
+// DRAFT journal is the maker's own act, so a journal without the credit memo's key is a no-op.
+func (a jeDeciderAdapter) RejectJournalTx(ctx context.Context, tx pgx.Tx, journalID, _ string) error {
+	if a.memos == nil {
+		return nil
+	}
+	j, err := a.journals.GetJournal(ctx, journalID)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(j.IdempotencyKey, billing.CreditMemoJournalKeyPrefix) {
+		return nil
+	}
+	if err := a.memos.VoidParkedCreditMemoTx(ctx, tx, j.SourceRefID); err != nil {
+		return err
+	}
+	return a.svc.VoidJournalTx(ctx, tx, journalID)
+}
 
 func (a jeDeciderAdapter) ApproveJournalTx(ctx context.Context, tx pgx.Tx, journalID, deciderID string) error {
+	if a.memos != nil {
+		j, err := a.journals.GetJournal(ctx, journalID)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(j.IdempotencyKey, billing.CreditMemoJournalKeyPrefix) {
+			if err := a.memos.FinalizeParkedCreditMemoTx(ctx, tx, j.SourceRefID); err != nil {
+				return err
+			}
+		}
+	}
 	if err := a.svc.ApproveJournalTx(ctx, tx, journalID, deciderID); err != nil {
 		if st, ok := gl.ErrorHTTPStatus(err); ok {
 			return identity.NewClientError(st, err.Error())

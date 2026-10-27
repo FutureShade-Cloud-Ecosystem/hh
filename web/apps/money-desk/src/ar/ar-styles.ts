@@ -47,6 +47,9 @@ const receivablesStyles = css`
   td:nth-child(4) .small { white-space: normal; }
   .link { min-height: 0; background: none; border: 0; padding: 0; color: var(--hh-accent-text); font-weight: 700; font-size: 14px; cursor: pointer; }
   .link:hover { text-decoration: underline; }
+  /* The invoice row's Credit link is a control, not a word in a sentence: it carries the counter's
+     PC target height and sits flush with the cell's text instead of indented by its own padding. */
+  td > .link.small { display: flex; align-items: center; min-height: 24px; padding: 0; width: fit-content; }
   .back { margin-bottom: var(--hh-s-8); }
   .link-row { min-height: 0; background: none; border: 0; padding: 0; text-align: start; cursor: pointer; font: inherit; color: inherit; }
   .link-row:hover .who { text-decoration: underline; }
@@ -165,6 +168,15 @@ const receivablesStyles = css`
   input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
   .two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-12); margin-bottom: var(--hh-s-8); }
   .inline-form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--hh-s-8); align-items: end; }
+  /* The credit memo form (FW1-12): what the credit does, the approval rail's own words, the amount,
+     the reason and the press. It opens in the row or the card it belongs to, so it is a grid of its
+     own: the two sentences on top, then the two fields and the buttons. The buttons are as tall as
+     the fields they sit beside, so the row has no step in it. */
+  .credit-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--hh-s-12); align-items: end; }
+  .credit-form [data-credit-target], .credit-form [data-credit-approval] { grid-column: 1 / -1; margin: 0; }
+  .credit-form .callout, .credit-form .note { margin: 0; }
+  .credit-form .btn { min-height: var(--hh-h-input); }
+  .credit-form .actions { margin-top: 0; }
   .alloc { list-style: none; margin: var(--hh-s-8) 0; padding: 0; }
   .alloc li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--hh-s-8); padding: var(--hh-s-8) 0; border-bottom: 1px solid var(--hh-line); font-variant-numeric: tabular-nums; }
   .applied { font-size: 15px; display: flex; justify-content: space-between; margin: var(--hh-s-8) 0 var(--hh-s-12); padding-top: var(--hh-s-8); border-top: 2px solid var(--hh-text); font-size: 16px; font-variant-numeric: tabular-nums; }
@@ -261,6 +273,12 @@ const receivablesStyles = css`
     table.inv tbody td:nth-child(7) { grid-area: pick; }
     table.inv tbody td:nth-child(8) { grid-area: applied; text-align: start; }
     table.inv tbody td.applied-cell:empty { display: none; }
+    /* The invoice row's credit form is one cell that must span the whole row grid: in the inv column
+       it read 24 px narrower than the rows above it. Its own single track replaces the row's three
+       column areas, and its 8 px of side padding keeps the input's 4 px focus ring whole inside
+       .scroll's clip, which the padding: 0 rows sit right on. */
+    table.inv tr.credit-form-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "form"; }
+    table.inv tr.credit-form-row > td { grid-area: form; padding: 0 var(--hh-s-8); }
     table.stmt tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "acct bal" "last last" "act act"; }
     table.stmt tbody td:nth-child(1) { grid-area: acct; }
     table.stmt tbody td:nth-child(2) { grid-area: bal; }
@@ -270,7 +288,7 @@ const receivablesStyles = css`
     table.holdtbl td.act { text-align: start; }
     .holdbtns { display: flex; }
     .desk { padding: var(--hh-s-16) var(--hh-s-12) var(--hh-s-40); }
-    .two, .inline-form { grid-template-columns: minmax(0, 1fr); }
+    .two, .inline-form, .credit-form { grid-template-columns: minmax(0, 1fr); }
     .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .tile { padding: var(--hh-s-16); }
     .tile-figure { font-size: 24px; }
@@ -279,6 +297,8 @@ const receivablesStyles = css`
   @media (pointer: coarse), (max-width: 520px) {
     .btn, .small-btn, .tab, .seg-item, .link { min-height: 44px; }
     .link { display: inline-flex; align-items: center; padding: 0 var(--hh-s-4); }
+    /* A phone's bar is 44 px, and the invoice row's Credit link keeps the cell's own flush edge. */
+    td > .link.small { min-height: 44px; padding: 0; }
     .areas .gl-tab { min-height: 44px; }
     hos-app-header { --hh-header-control-min: 44px; }
   }

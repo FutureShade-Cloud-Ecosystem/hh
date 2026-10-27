@@ -501,6 +501,15 @@ func (s *Approvals) DecideApproval(ctx context.Context, id string, caller StaffC
 			return err // rollback (deferred) reverts the stamp: request stays PENDING, ledger untouched
 		}
 	}
+	// The JE decline arm (FW1-12a's core round): a refused credit memo's park is voided on this same
+	// transaction, so the stamp and the void commit together and the invoice's room frees with the
+	// refusal. The adapter no-ops for a journal that is not a credit memo's, which keeps the shipped
+	// rule for the ledger's own parked journals (a decline bridges nothing).
+	if req.Policy == PolicyJEThreshold && !approve && s.jeDecider != nil && req.SubjectRef != "" {
+		if err := s.jeDecider.RejectJournalTx(ctx, tx, req.SubjectRef, caller.UserID); err != nil {
+			return err // rollback (deferred) reverts the stamp: request stays PENDING and decidable
+		}
+	}
 	// The freight bridge (0195), and note that BOTH outcomes cross it, unlike the JE bridge above,
 	// where a decline bridges nothing because voiding a DRAFT journal is the maker's own act.
 	//
