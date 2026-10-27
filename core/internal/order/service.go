@@ -10,6 +10,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/jackc/pgx/v5"
 )
 
 // ErrNotFound is returned when an order does not exist for the tenant (a cross-tenant
@@ -353,6 +354,30 @@ func (s *Service) SetStatus(ctx context.Context, tenant, actor, orderID, newStat
 	if newStatus == "FULFILLED" {
 		if err := s.fulfilOrderOnDelivery(ctx, orderID); err != nil {
 			return err
+		}
+	}
+	// Round 2 (S3's P1): an order invoiced after its goods left consumes its holds and relieves what
+	// left (the ring's invoice beat, the fulfilment invoice after dispatch); one still waiting on the
+	// yard keeps both, its relief staying at FULFILLED and CLOSED.
+	if newStatus == "INVOICED" {
+		if left, lerr := s.goodsHaveLeft(ctx, orderID); lerr == nil && left {
+			if rs, ok := s.stock.(interface {
+				ReleaseBySourceTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID, status string) (int, error)
+			}); ok {
+				if _, err := rs.ReleaseBySourceTx(ctx, nil, ResSourceOrder, orderID, "CONSUMED"); err != nil {
+					return err
+				}
+			}
+			if err := s.fulfilOrderOnDelivery(ctx, orderID); err != nil {
+				return err
+			}
+		}
+	}
+	if newStatus == "INVOICED" {
+		if left, lerr := s.goodsHaveLeft(ctx, orderID); lerr == nil && left {
+			if err := s.fulfilOrderOnDelivery(ctx, orderID); err != nil {
+				return err
+			}
 		}
 	}
 	s.recordStatusChange(ctx, actor, orderID, oldStatus, newStatus, reason)
@@ -816,6 +841,13 @@ func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatu
 	// WITH the status. A target with no hold effect, or an unbound seam, takes the pre-existing path
 	// unchanged, the reservation lane is strictly additive and cannot alter a transition's legality.
 	effect := reservationEffectFor(newStatus)
+	// Round 2 (S3's P1): INVOICED consumes the holds only when the goods have left (any SHIP move for
+	// the order); an invoiced order still waiting on the yard keeps both its holds and its stock.
+	if newStatus == "INVOICED" && effect == effectNoChange {
+		if left, lerr := s.goodsHaveLeft(ctx, orderID); lerr == nil && left {
+			effect = effectConsume
+		}
+	}
 	if rs, ok := s.reservationLane(); ok && (effect == effectReserve || effect == effectConsume || effect == effectRelease) {
 		oldStatus, err = rs.UpdateStatusFromTx(ctx, orderID, newStatus, allowedFrom, pre,
 			s.applyReservationsTx(effect, orderID, actor))

@@ -448,7 +448,9 @@ func (s *Service) TransitionGroup(ctx context.Context, groupID, target string) (
 		return ShipmentGroup{}, err
 	}
 	if target == GroupComplete {
-		if err := s.fulfilOrderOnDelivery(ctx, orderID); err != nil {
+		// Round 2 (S3's P1): the group's completion relieves the group's own
+		// lines and quantities, never the whole order's.
+		if err := s.fulfilGroupOnDelivery(ctx, orderID, groupID); err != nil {
 			return ShipmentGroup{}, err
 		}
 	}

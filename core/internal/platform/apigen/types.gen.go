@@ -3985,6 +3985,18 @@ type InventoryMoveList struct {
 	Moves []InventoryStockMove `json:"moves"`
 }
 
+type InventoryPreReceiptException struct {
+	MoveId                   string  `json:"move_id"`
+	OrderId                  string  `json:"order_id"`
+	ProductId                string  `json:"product_id"`
+	BranchId                 string  `json:"branch_id"`
+	QtyBase                  float64 `json:"qty_base"`
+	ProvisionalUnitCostCents int64   `json:"provisional_unit_cost_cents"`
+	ProvisionalValueCents    int64   `json:"provisional_value_cents"`
+	FallbackSource           string  `json:"fallback_source"`
+	OccurredAt               string  `json:"occurred_at"`
+}
+
 type InventoryPendingFulfilmentList struct {
 	Pending []InventoryPendingFulfilment `json:"pending"`
 }

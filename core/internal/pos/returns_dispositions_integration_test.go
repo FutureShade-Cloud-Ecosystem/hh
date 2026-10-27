@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"net/http"
 	"sync"
 	"testing"
@@ -35,6 +36,10 @@ func (r *recordingRestocker) RestockForReturnTx(_ context.Context, _ pgx.Tx, in 
 	defer r.mu.Unlock()
 	r.calls = append(r.calls, in)
 	return nil
+}
+
+func (r *recordingRestocker) ReturnMoveValuesTx(context.Context, pgx.Tx, string) ([]inventory.ShipLineValue, error) {
+	return nil, nil
 }
 
 func (r *recordingRestocker) qtyFor(returnID string) float64 {

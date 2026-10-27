@@ -72,11 +72,17 @@ func (s *Service) AdvanceFromDelivery(ctx context.Context, orderID, eventID stri
 	err := s.AdvanceFromEvent(ctx, orderID, "FULFILLED", eventID)
 	switch {
 	case err == nil || errors.Is(err, ErrNoTransition):
-		_ = s.fulfilOrderOnDelivery(ctx, orderID)
+		// Round 2 (S3's P2): the relief's error returns; a delivered order left
+		// with no stock relief and no COGS is never swallowed again.
+		if ferr := s.fulfilOrderOnDelivery(ctx, orderID); ferr != nil {
+			return ferr
+		}
 		s.recordDeliveryAndRelease(ctx, orderID, eventID) // a redelivery reaches it too, the healing path
 	case errors.Is(err, ErrIllegalTransition) && s.orderSitsAtInvoiced(ctx, orderID):
 		// The ring's invoice beat the yard to INVOICED; the goods still left.
-		_ = s.fulfilOrderOnDelivery(ctx, orderID)
+		if ferr := s.fulfilOrderOnDelivery(ctx, orderID); ferr != nil {
+			return ferr
+		}
 		s.recordDeliveryAndRelease(ctx, orderID, eventID)
 	}
 	return err

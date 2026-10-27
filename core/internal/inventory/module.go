@@ -227,6 +227,22 @@ func (s *Service) BranchUnitCostCents(ctx context.Context, productID, branchID s
 // commits unchanged. W6-INVCORE fills the real SHIP moves for a COLLECT_NOW sale (DELIVERED/COLLECT_LATER →
 // zero moves, listed on pending-fulfilment). FROZEN signature.
 func (s *Service) DecrementForSaleTx(ctx context.Context, tx pgx.Tx, in DecrementInput) error {
+	_, err := s.decrementForSale(ctx, tx, in)
+	return err
+}
+
+// ShipLineValue is one sale line's own move value, the figure the ring's
+// order.fulfilled event carries so the COGS journal posts the value that
+// moved (round 2, S3's P1).
+type ShipLineValue struct {
+	ProductID  string  `json:"product_id"`
+	QtyBase    float64 `json:"qty_base"`
+	ValueCents int64   `json:"value_cents"`
+}
+
+// DecrementForSaleValuesTx is DecrementForSaleTx answering each line's own
+// move value. The ring's emit reads these, never a re-read average.
+func (s *Service) DecrementForSaleValuesTx(ctx context.Context, tx pgx.Tx, in DecrementInput) ([]ShipLineValue, error) {
 	return s.decrementForSale(ctx, tx, in)
 }
 
@@ -236,6 +252,37 @@ func (s *Service) DecrementForSaleTx(ctx context.Context, tx pgx.Tx, in Decremen
 // balance upsert +qty. Inventory stays the sole stock writer.
 func (s *Service) RestockForReturnTx(ctx context.Context, tx pgx.Tx, in RestockInput) error {
 	return s.restockForReturn(ctx, tx, in)
+}
+
+// ReturnMoveValuesTx answers the return's RETURN moves' per line values, the
+// figure the order.returned event carries (round 2, S3's P1).
+func (s *Service) ReturnMoveValuesTx(ctx context.Context, tx pgx.Tx, returnID string) ([]ShipLineValue, error) {
+	querier := interface {
+		Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	}(tx)
+	if querier == nil {
+		if s.repo == nil || s.repo.pool == nil {
+			return nil, nil
+		}
+		querier = s.repo.pool
+	}
+	rows, err := querier.Query(ctx, `
+		SELECT product_id::text, qty_base::float8, value_cents
+		  FROM stock_moves
+		 WHERE source_type = 'pos_return' AND source_ref_id = $1::uuid AND move_type = 'RETURN'`, returnID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]ShipLineValue, 0, 4)
+	for rows.Next() {
+		var v ShipLineValue
+		if err := rows.Scan(&v.ProductID, &v.QtyBase, &v.ValueCents); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // - domain surface (errNotImplemented stubs, INV-CORE fills) -
@@ -338,6 +385,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/inventory/on-hand", g.RequireStaff(h.staff(h.onHand)))
 	r.Handle("GET /api/v1/inventory/moves", g.RequireStaff(h.staff(h.moves)))
 	r.Handle("GET /api/v1/inventory/pending-fulfilment", g.RequireStaff(h.staff(h.pendingFulfilment)))
+	// Round 2 (S3's P2): the Controller's pre receipt exceptions read (ruling 82.4). Manager gated on
+	// top of the branch fence the service applies.
+	r.Handle("GET /api/v1/inventory/controller-exceptions", g.RequireManager(h.staff(h.controllerExceptions)))
 	r.Handle("POST /api/v1/inventory/receive", g.RequireManager(h.staff(h.receive)))
 
 	// - DIB-472 · the transit-days config behind the transfer eta pre-fill -

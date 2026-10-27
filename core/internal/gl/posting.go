@@ -621,8 +621,9 @@ type orderFulfilledPayload struct {
 	OrderID  string `json:"order_id"`
 	BranchID string `json:"branch_id"`
 	Lines    []struct {
-		ProductID string  `json:"product_id"`
-		QtyBase   float64 `json:"qty_base"`
+		ProductID  string  `json:"product_id"`
+		QtyBase    float64 `json:"qty_base"`
+		ValueCents *int64  `json:"value_cents"`
 	} `json:"lines"`
 }
 
@@ -659,9 +660,17 @@ func (s *Service) buildOrderFulfilled(ctx context.Context, payload []byte) (jour
 	}
 	var total int64
 	for _, ln := range p.Lines {
-		cost, found, err := s.resolveLineCost(ctx, ln.ProductID, p.BranchID, ln.QtyBase)
-		if err != nil {
-			return journalDraft{}, false, err
+		// Round 2 (S3's P1): the event's own move value is the journal's figure;
+		// the average only answers an old row with no value.
+		cost, found := int64(0), false
+		if ln.ValueCents != nil {
+			cost, found = *ln.ValueCents, true
+		} else {
+			var rerr error
+			cost, found, rerr = s.resolveLineCost(ctx, ln.ProductID, p.BranchID, ln.QtyBase)
+			if rerr != nil {
+				return journalDraft{}, false, rerr
+			}
 		}
 		if found {
 			total += cost
@@ -1010,8 +1019,9 @@ type orderReturnedPayload struct {
 	ReturnID string `json:"return_id"`
 	BranchID string `json:"branch_id"`
 	Lines    []struct {
-		ProductID string  `json:"product_id"`
-		QtyBase   float64 `json:"qty_base"`
+		ProductID  string  `json:"product_id"`
+		QtyBase    float64 `json:"qty_base"`
+		ValueCents *int64  `json:"value_cents"`
 	} `json:"lines"`
 }
 
@@ -1031,9 +1041,17 @@ func (s *Service) buildOrderReturned(ctx context.Context, payload []byte) (journ
 	}
 	var total int64
 	for _, ln := range p.Lines {
-		cost, found, err := s.resolveLineCost(ctx, ln.ProductID, p.BranchID, ln.QtyBase)
-		if err != nil {
-			return journalDraft{}, false, err
+		// Round 2 (S3's P1): the event's own move value is the journal's figure;
+		// the average only answers an old row with no value.
+		cost, found := int64(0), false
+		if ln.ValueCents != nil {
+			cost, found = *ln.ValueCents, true
+		} else {
+			var rerr error
+			cost, found, rerr = s.resolveLineCost(ctx, ln.ProductID, p.BranchID, ln.QtyBase)
+			if rerr != nil {
+				return journalDraft{}, false, rerr
+			}
 		}
 		if found {
 			total += cost
@@ -1083,9 +1101,17 @@ func (s *Service) buildPosReturnWrittenOff(ctx context.Context, payload []byte) 
 	}
 	var total int64
 	for _, ln := range p.Lines {
-		cost, found, err := s.resolveLineCost(ctx, ln.ProductID, p.BranchID, ln.QtyBase)
-		if err != nil {
-			return journalDraft{}, false, err
+		// Round 2 (S3's P1): the event's own move value is the journal's figure;
+		// the average only answers an old row with no value.
+		cost, found := int64(0), false
+		if ln.ValueCents != nil {
+			cost, found = *ln.ValueCents, true
+		} else {
+			var rerr error
+			cost, found, rerr = s.resolveLineCost(ctx, ln.ProductID, p.BranchID, ln.QtyBase)
+			if rerr != nil {
+				return journalDraft{}, false, rerr
+			}
 		}
 		if found {
 			total += cost

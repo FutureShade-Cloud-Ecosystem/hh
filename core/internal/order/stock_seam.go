@@ -117,6 +117,14 @@ func (s *Service) WithStockReserver(r StockReserver) *Service {
 // *inventory.Service satisfies this interface directly.
 type StockFulfiller interface {
 	FulfilOrderLinesTx(ctx context.Context, tx pgx.Tx, orderID, branchID string, productIDs []string, qtys []float64) error
+	// FulfilGroupLinesTx relieves a SHIP GROUP's own lines (round 2, S3's P1): the group's id rides
+	// the move metadata and the event, so its idempotency and its relief are the group's own.
+	FulfilGroupLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID, branchID string, productIDs []string, qtys []float64) error
+	// HasShipMovesForGroupTx answers whether the group's own SHIP moves exist.
+	HasShipMovesForGroupTx(ctx context.Context, tx pgx.Tx, orderID, groupID string) (bool, error)
+	// HasShipMovesForOrder answers whether any SHIP move exists for the order (pool read): the
+	// INVOICED holds rule's "the goods have left" (round 2, S3's P1).
+	HasShipMovesForOrder(ctx context.Context, orderID string) (bool, error)
 	ReleaseBySourceTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID, status string) (int, error)
 }
 

@@ -453,6 +453,17 @@ func (a posStockAdapter) DecrementForSaleTx(ctx context.Context, tx pgx.Tx, in p
 	})
 }
 
+// DecrementForSaleValuesTx answers each line's own move value (round 2, S3's P1).
+func (a posStockAdapter) DecrementForSaleValuesTx(ctx context.Context, tx pgx.Tx, in pos.StockDecrementInput) ([]inventory.ShipLineValue, error) {
+	lines := make([]inventory.SaleLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = inventory.SaleLine{ProductID: l.ProductID, QtyBase: l.QtyBase}
+	}
+	return a.svc.DecrementForSaleValuesTx(ctx, tx, inventory.DecrementInput{
+		OrderID: in.OrderID, BranchID: in.BranchID, SaleType: in.SaleType, Lines: lines,
+	})
+}
+
 // LockStockTx satisfies pos.StockLocker: the swap takes the branch's balance rows of every product its
 // two halves move, sorted, ahead of both.
 func (a posStockAdapter) LockStockTx(ctx context.Context, tx pgx.Tx, branchID string, productIDs []string) error {
@@ -475,6 +486,11 @@ func (a posRestockAdapter) RestockForReturnTx(ctx context.Context, tx pgx.Tx, in
 		ReturnNo: in.ReturnNo,
 		Lines:    lines,
 	})
+}
+
+// ReturnMoveValuesTx answers the return's RETURN moves' per line values (round 2, S3's P1).
+func (a posRestockAdapter) ReturnMoveValuesTx(ctx context.Context, tx pgx.Tx, returnID string) ([]inventory.ShipLineValue, error) {
+	return a.svc.ReturnMoveValuesTx(ctx, tx, returnID)
 }
 
 // posCardRefunderAdapter satisfies pos.CardRefunder over payment.Service.RefundTx, the creds-free
@@ -731,6 +747,21 @@ func (a w5aStockReserver) LockHardHoldBalancesTx(ctx context.Context, tx pgx.Tx,
 
 func (a w5aStockReserver) FulfilOrderLinesTx(ctx context.Context, tx pgx.Tx, orderID, branchID string, productIDs []string, qtys []float64) error {
 	return a.svc.FulfilOrderLinesTx(ctx, tx, orderID, branchID, productIDs, qtys)
+}
+
+// FulfilGroupLinesTx relieves a ship group's own lines (round 2, S3's P1).
+func (a w5aStockReserver) FulfilGroupLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID, branchID string, productIDs []string, qtys []float64) error {
+	return a.svc.FulfilGroupLinesTx(ctx, tx, orderID, groupID, branchID, productIDs, qtys)
+}
+
+// HasShipMovesForGroupTx answers the group's own ship moves.
+func (a w5aStockReserver) HasShipMovesForGroupTx(ctx context.Context, tx pgx.Tx, orderID, groupID string) (bool, error) {
+	return a.svc.HasShipMovesForGroupTx(ctx, tx, orderID, groupID)
+}
+
+// HasShipMovesForOrder answers whether any ship move exists for the order.
+func (a w5aStockReserver) HasShipMovesForOrder(ctx context.Context, orderID string) (bool, error) {
+	return a.svc.HasShipMovesForOrder(ctx, orderID)
 }
 
 // w5aPickState satisfies order.PickStateReader over the W2/W3 tasks substrate.

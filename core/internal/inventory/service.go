@@ -277,35 +277,51 @@ func (s *Service) receive(ctx context.Context, in ReceiveRequest) (ReceiptResult
 
 // decrementForSale writes SHIP moves for a COLLECT_NOW sale (stock drops, may go negative by design).
 // DELIVERED / COLLECT_LATER record ZERO moves at ring time and relieve stock at fulfilment via FulfilOrderLinesTx.
-func (s *Service) decrementForSale(ctx context.Context, tx pgx.Tx, in DecrementInput) error {
+func (s *Service) decrementForSale(ctx context.Context, tx pgx.Tx, in DecrementInput) ([]ShipLineValue, error) {
 	if in.SaleType != SaleCollectNow {
-		return nil // boundary: deferred fulfilment relieves stock at fulfilment
+		return nil, nil // boundary: deferred fulfilment relieves stock at fulfilment
 	}
+	values := make([]ShipLineValue, 0, len(in.Lines))
 	for _, ln := range in.Lines {
 		if ln.QtyBase <= 0 {
 			continue
 		}
-		if err := s.decrementOneShipLine(ctx, tx, in.OrderID, in.BranchID, "pos_sale", "POS COLLECT_NOW sale", ln); err != nil {
-			return err
+		value, err := s.decrementOneShipLine(ctx, tx, in.OrderID, in.BranchID, "pos_sale", "POS COLLECT_NOW sale", ln)
+		if err != nil {
+			return nil, err
 		}
+		values = append(values, ShipLineValue{ProductID: ln.ProductID, QtyBase: ln.QtyBase, ValueCents: value})
 	}
-	return nil
+	return values, nil
 }
 
-func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, branchID, sourceType, reason string, ln SaleLine) error {
+// decrementOneShipLine writes the SHIP move at the branch average (or the provisional fallback) and
+// answers the move's own value_cents (round 2, S3's P1): the fulfilment event carries it, so the COGS
+// journal posts the value that moved, never a re-read average. A product with no cost at all ships
+// provisionally at $0.00 (round 2, S3's P2): the move is marked, the Controller exceptions list names
+// it, and the first receipt trues it up like any other provisional move.
+func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, branchID, sourceType, reason string, ln SaleLine, extraMeta ...map[string]any) (int64, error) {
 	avg, hadCost, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, branchID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	provMoves, err := s.db().UntruedProvisionalShipMoves(ctx, tx, ln.ProductID, branchID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var moveMeta map[string]any
+	for _, extra := range extraMeta {
+		for k, v := range extra {
+			if moveMeta == nil {
+				moveMeta = map[string]any{}
+			}
+			moveMeta[k] = v
+		}
+	}
 	if !hadCost || avg <= 0 || len(provMoves) > 0 {
 		fallbackCost, source, found, err := s.db().FallbackCost(ctx, tx, ln.ProductID, branchID)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if found && fallbackCost > 0 {
 			avg = fallbackCost
@@ -315,13 +331,21 @@ func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, 
 				"fallback_unit_cost_cents": fallbackCost,
 			}
 			if err := s.db().UpsertBranchCost(ctx, tx, ln.ProductID, branchID, avg); err != nil {
-				return err
+				return 0, err
+			}
+		} else {
+			// No cost at all: provisional at $0.00, marked and listed (round 2, S3's P2), never a
+			// silent skip.
+			moveMeta = map[string]any{
+				"provisional_cost":         true,
+				"fallback_source":          "none",
+				"fallback_unit_cost_cents": int64(0),
 			}
 		}
 	}
 	value, err := qtyTimesCents(ln.QtyBase, avg)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if _, err := s.db().InsertMove(ctx, tx, moveParams{
 		ProductID: ln.ProductID, BranchID: branchID, FromLocation: branchID,
@@ -329,9 +353,9 @@ func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, 
 		SourceType: sourceType, SourceRefID: orderID, Reason: reason,
 		Metadata: moveMeta,
 	}); err != nil {
-		return err
+		return 0, err
 	}
-	return s.db().UpsertBalanceDelta(ctx, tx, ln.ProductID, branchID, branchID, -ln.QtyBase)
+	return value, s.db().UpsertBalanceDelta(ctx, tx, ln.ProductID, branchID, branchID, -ln.QtyBase)
 }
 
 // FulfilOrderLinesTx relieves on-hand stock for fulfilled order lines and emits
@@ -339,20 +363,68 @@ func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, 
 // already relieved (either at POS ring time for a COLLECT_NOW sale or by an
 // earlier fulfilment call), HasShipMovesForOrderTx returns true and this is a
 // no-op so stock and COGS are never double-posted.
+// FulfilOrderLinesTx relieves the ORDER's own lines (the order wide paths: the pickup and the
+// delivery roads). Group scoped relief is FulfilGroupLinesTx (round 2, S3's P1).
 func (s *Service) FulfilOrderLinesTx(ctx context.Context, tx pgx.Tx, orderID, branchID string, productIDs []string, qtys []float64) error {
+	return s.fulfilLinesTx(ctx, tx, orderID, "", branchID, productIDs, qtys)
+}
+
+// FulfilGroupLinesTx relieves a SHIP GROUP's own lines and quantities (round 2, S3's P1): the group's
+// id rides the move metadata and the event, so a group's relief and its idempotency key are the
+// group's own, never the order's.
+func (s *Service) FulfilGroupLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID, branchID string, productIDs []string, qtys []float64) error {
+	return s.fulfilLinesTx(ctx, tx, orderID, groupID, branchID, productIDs, qtys)
+}
+
+// HasShipMovesForGroupTx answers whether the group's own SHIP moves exist (the group's idempotency).
+func (s *Service) HasShipMovesForGroupTx(ctx context.Context, tx pgx.Tx, orderID, groupID string) (bool, error) {
+	var exists bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM stock_moves
+			 WHERE source_type = 'order' AND source_ref_id = $1::uuid
+			   AND move_type = 'SHIP' AND metadata->>'group_id' = $2
+		)`, orderID, groupID).Scan(&exists)
+	return exists, err
+}
+
+// HasShipMovesForOrder answers whether any SHIP move exists for the order (pool read, the INVOICED
+// holds rule's "the goods have left").
+func (s *Service) HasShipMovesForOrder(ctx context.Context, orderID string) (bool, error) {
+	var exists bool
+	err := s.repo.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM stock_moves
+			 WHERE source_type = 'order' AND source_ref_id = $1::uuid AND move_type = 'SHIP'
+		)`, orderID).Scan(&exists)
+	return exists, err
+}
+
+func (s *Service) fulfilLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID, branchID string, productIDs []string, qtys []float64) error {
 	if orderID == "" || branchID == "" || len(productIDs) == 0 || len(productIDs) != len(qtys) {
 		return nil
 	}
-	alreadyShipped, err := s.db().HasShipMovesForOrderTx(ctx, tx, orderID)
-	if err != nil {
-		return fmt.Errorf("inventory: check order ship moves: %w", err)
-	}
-	if alreadyShipped {
-		return nil
+	if groupID == "" {
+		alreadyShipped, err := s.db().HasShipMovesForOrderTx(ctx, tx, orderID)
+		if err != nil {
+			return fmt.Errorf("inventory: check order ship moves: %w", err)
+		}
+		if alreadyShipped {
+			return nil
+		}
+	} else {
+		alreadyShipped, err := s.HasShipMovesForGroupTx(ctx, tx, orderID, groupID)
+		if err != nil {
+			return fmt.Errorf("inventory: check group ship moves: %w", err)
+		}
+		if alreadyShipped {
+			return nil
+		}
 	}
 	type outboxLine struct {
-		ProductID string  `json:"product_id"`
-		QtyBase   float64 `json:"qty_base"`
+		ProductID  string  `json:"product_id"`
+		QtyBase    float64 `json:"qty_base"`
+		ValueCents int64   `json:"value_cents"`
 	}
 	outLines := make([]outboxLine, 0, len(productIDs))
 	for i := range productIDs {
@@ -361,25 +433,35 @@ func (s *Service) FulfilOrderLinesTx(ctx context.Context, tx pgx.Tx, orderID, br
 		if pid == "" || qty <= 0 {
 			continue
 		}
-		if err := s.decrementOneShipLine(ctx, tx, orderID, branchID, "order", "order_fulfilled", SaleLine{
+		meta := map[string]any(nil)
+		if groupID != "" {
+			meta = map[string]any{"group_id": groupID}
+		}
+		value, err := s.decrementOneShipLine(ctx, tx, orderID, branchID, "order", "order_fulfilled", SaleLine{
 			ProductID: pid,
 			QtyBase:   qty,
-		}); err != nil {
+		}, meta)
+		if err != nil {
 			return err
 		}
 		outLines = append(outLines, outboxLine{
-			ProductID: pid,
-			QtyBase:   qty,
+			ProductID:  pid,
+			QtyBase:    qty,
+			ValueCents: value,
 		})
 	}
 	if len(outLines) == 0 {
 		return nil
 	}
-	return s.db().EmitEvent(ctx, tx, "order.fulfilled", map[string]any{
+	event := map[string]any{
 		"order_id":  orderID,
 		"branch_id": branchID,
 		"lines":     outLines,
-	})
+	}
+	if groupID != "" {
+		event["group_id"] = groupID
+	}
+	return s.db().EmitEvent(ctx, tx, "order.fulfilled", event)
 }
 
 // LockStockTx takes the branch's balance rows of these products, sorted, before a move over several

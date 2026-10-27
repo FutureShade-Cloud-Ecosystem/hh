@@ -8,6 +8,7 @@ package pos
 import (
 	"context"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -16,6 +17,9 @@ import (
 // weighted average (the average is unchanged), balance +qty.
 type StockRestocker interface {
 	RestockForReturnTx(ctx context.Context, tx pgx.Tx, in RestockInput) error
+	// ReturnMoveValuesTx answers the return's RETURN moves' per line values (round 2, S3's P1): the
+	// order.returned event carries them, so the COGS reversal posts the value that moved.
+	ReturnMoveValuesTx(ctx context.Context, tx pgx.Tx, returnID string) ([]inventory.ShipLineValue, error)
 }
 
 // RestockInput is the restock request for one committed return.
@@ -32,3 +36,8 @@ type NoopRestock struct{}
 
 // RestockForReturnTx does nothing. FROZEN.
 func (NoopRestock) RestockForReturnTx(context.Context, pgx.Tx, RestockInput) error { return nil }
+
+// ReturnMoveValuesTx answers no values (nothing moved).
+func (NoopRestock) ReturnMoveValuesTx(context.Context, pgx.Tx, string) ([]inventory.ShipLineValue, error) {
+	return nil, nil
+}

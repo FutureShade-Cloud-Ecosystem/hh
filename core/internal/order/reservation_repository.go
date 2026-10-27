@@ -156,6 +156,56 @@ func (r *Repository) ReservableLinesTx(ctx context.Context, tx pgx.Tx, orderID s
 	return out, rows.Err()
 }
 
+// ReadGroupClaimTx reads a SHIP GROUP's own claim: each of the group's lines
+// with the group's share of the quantity, capped at the line's remaining
+// unfulfilled base (round 2, S3's P1). No write: the advance follows the real
+// stock move (the P3, kept).
+func (r *Repository) ReadGroupClaimTx(ctx context.Context, tx pgx.Tx, orderID, groupID string) ([]string, []string, []float64, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT ol.id::text, COALESCE(ol.product_id::text, ''),
+		       LEAST(sgl.qty_base, GREATEST(ol.qty_base - ol.fulfilled_base - ol.released_base, 0))::float8
+		  FROM shipment_group_lines sgl
+		  JOIN order_lines ol ON ol.id = sgl.order_line_id
+		 WHERE sgl.shipment_group_id = $2::uuid AND ol.order_id = $1::uuid
+		 ORDER BY ol.line_no
+		   FOR UPDATE OF ol`, orderID, groupID)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("read group claim: %w", err)
+	}
+	defer rows.Close()
+	var lineIDs, productIDs []string
+	var qtys []float64
+	for rows.Next() {
+		var lineID, productID string
+		var qty float64
+		if err := rows.Scan(&lineID, &productID, &qty); err != nil {
+			return nil, nil, nil, fmt.Errorf("scan group claim: %w", err)
+		}
+		if productID == "" || qty <= 0.00005 {
+			continue
+		}
+		lineIDs = append(lineIDs, lineID)
+		productIDs = append(productIDs, productID)
+		qtys = append(qtys, qty)
+	}
+	return lineIDs, productIDs, qtys, rows.Err()
+}
+
+// AdvanceGroupClaimTx advances fulfilled_base by the group's claimed share,
+// behind the group's own stock move.
+func (r *Repository) AdvanceGroupClaimTx(ctx context.Context, tx pgx.Tx, lineIDs []string, qtys []float64) error {
+	for i, lineID := range lineIDs {
+		if _, err := tx.Exec(ctx, `
+			UPDATE order_lines
+			   SET fulfilled_base = fulfilled_base + $2,
+			       updated_at = now()
+			 WHERE id = $1`, lineID, qtys[i]); err != nil {
+			return fmt.Errorf("advance group claim: %w", err)
+		}
+	}
+	return nil
+}
+
 // ClaimUnfulfilledLinesTx locks the order's lines, advances fulfilled_base by
 // each line's remaining unfulfilled quantity (qty_base - fulfilled_base - released_base),
 // and returns the stocked (product_id, qty_base) pairs for this order.

@@ -10614,6 +10614,47 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/inventory/controller-exceptions:
+    get:
+      operationId: inventoryListControllerExceptions
+      tags:
+        - staff-inventory
+      summary: List pre receipt sales posted at a fallback (or provisional) cost, not yet trued up
+      description: "The Controller's pre receipt exceptions read (ruling 82.4). Manager gated, branch fenced: a scoped caller reads only a branch they reach, and their own scoped reach when they name none."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+          - buying-and-stock
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The exceptions list
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - exceptions
+                properties:
+                  exceptions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InventoryPreReceiptException"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/inventory/pending-fulfilment:
     get:
       operationId: inventoryListPendingFulfilment
@@ -41031,6 +41072,44 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/InventoryStockMove"
+    InventoryPreReceiptException:
+      type: object
+      required:
+        - move_id
+        - order_id
+        - product_id
+        - branch_id
+        - qty_base
+        - provisional_unit_cost_cents
+        - provisional_value_cents
+        - fallback_source
+        - occurred_at
+      properties:
+        move_id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        qty_base:
+          type: number
+          format: double
+        provisional_unit_cost_cents:
+          type: integer
+          format: int64
+        provisional_value_cents:
+          type: integer
+          format: int64
+        fallback_source:
+          type: string
+        occurred_at:
+          type: string
     InventoryPendingFulfilmentList:
       type: object
       description: The core writes this list under the key pending, with no cursor and no limit echo. An empty answer is [], never null.

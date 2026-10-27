@@ -119,6 +119,8 @@ type reservationStore interface {
 	ReservableLinesTx(ctx context.Context, tx pgx.Tx, orderID string) ([]reservableLine, error)
 	// ClaimUnfulfilledLinesTx locks the order's lines, advances fulfilled_base by each line's remaining
 	// unfulfilled quantity, and returns the stocked (product_id, qty_base) pairs for this order.
+	ReadGroupClaimTx(ctx context.Context, tx pgx.Tx, orderID, groupID string) ([]string, []string, []float64, error)
+	AdvanceGroupClaimTx(ctx context.Context, tx pgx.Tx, lineIDs []string, qtys []float64) error
 	ClaimUnfulfilledLinesTx(ctx context.Context, tx pgx.Tx, orderID string) ([]string, []float64, error)
 	// LockOrderTx runs fn inside a transaction holding the order row's write lock, WITHOUT changing
 	// the status. It is the seam for the two writes that touch holds but are not transitions: the
@@ -202,11 +204,63 @@ func (s *Service) fulfilOrderLinesInTx(ctx context.Context, tx pgx.Tx, orderID, 
 	if !ok {
 		return nil
 	}
+	// Round 2 (S3's P3): the base claims only when the relief will really move
+	// stock; an order whose SHIP moves exist (the POS ring relieved it) stops
+	// here, its lines' counts never moving without a move behind them.
+	if f, ok := s.stockFulfiller.(interface {
+		HasShipMovesForOrder(ctx context.Context, orderID string) (bool, error)
+	}); ok {
+		if shipped, err := f.HasShipMovesForOrder(ctx, orderID); err == nil && shipped {
+			return nil
+		}
+	}
 	productIDs, qtys, err := rs.ClaimUnfulfilledLinesTx(ctx, tx, orderID)
 	if err != nil {
 		return err
 	}
 	return s.stockFulfiller.FulfilOrderLinesTx(ctx, tx, orderID, branchID, productIDs, qtys)
+}
+
+// goodsHaveLeft answers whether any SHIP move exists for the order (the round
+// 2 INVOICED rule's "the goods have left"). An unwired stock seam answers
+// false: an order nobody can relieve keeps its holds.
+func (s *Service) goodsHaveLeft(ctx context.Context, orderID string) (bool, error) {
+	if f, ok := s.stockFulfiller.(interface {
+		HasShipMovesForOrder(ctx context.Context, orderID string) (bool, error)
+	}); ok {
+		return f.HasShipMovesForOrder(ctx, orderID)
+	}
+	return false, nil
+}
+
+// fulfilGroupOnDelivery relieves a SHIP GROUP's own lines under the order row
+// lock (round 2, S3's P1): the group's holds are untouched (they consume at
+// INVOICED, FULFILLED and CLOSED), its stock and COGS are the group's own, and
+// its idempotency is the group's, never the order's.
+func (s *Service) fulfilGroupOnDelivery(ctx context.Context, orderID, groupID string) error {
+	if s.stockFulfiller == nil {
+		return nil
+	}
+	rs, ok := s.store.(reservationStore)
+	if !ok {
+		return nil
+	}
+	return rs.LockOrderTx(ctx, orderID, func(ctx context.Context, tx pgx.Tx, _, branchID string) error {
+		shipped, err := s.stockFulfiller.HasShipMovesForGroupTx(ctx, tx, orderID, groupID)
+		if err != nil || shipped {
+			return err
+		}
+		lineIDs, productIDs, qtys, cerr := rs.ReadGroupClaimTx(ctx, tx, orderID, groupID)
+		if cerr != nil || len(productIDs) == 0 {
+			return cerr
+		}
+		if err := s.stockFulfiller.FulfilGroupLinesTx(ctx, tx, orderID, groupID, branchID, productIDs, qtys); err != nil {
+			return err
+		}
+		// The base advances only behind the group's real move (the shipped
+		// check above gated this write; S3's P3 kept).
+		return rs.AdvanceGroupClaimTx(ctx, tx, lineIDs, qtys)
+	})
 }
 
 // fulfilOrderOnDelivery runs fulfilOrderLinesInTx under the order row lock when
