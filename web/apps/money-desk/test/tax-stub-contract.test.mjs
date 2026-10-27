@@ -210,14 +210,22 @@ test("the guards: a read is a manager's, a write an administrator's, a capture a
     assert.ok(moduleSource.includes(line), `the core's guard moved: ${line}`);
   }
   // The recon names Point Loma for the manager leg: it is fenced to the caller's branch reach
-  // (FW1-10), and the unnamed figure is a dealer wide caller's read.
-  const reads = ["/api/v1/tax/rates", "/api/v1/tax/profiles", "/api/v1/tax/review-queue", "/api/v1/tax/config", "/api/v1/tax/evidence", `/api/v1/tax/recon?year=${prior.year}&branch_id=b0000000-0000-4000-8000-000000000001`];
+  // (FW1-10), and the unnamed figure is a dealer wide caller's read. The certificate book and the
+  // review queue are the dealer's whole book (615 round 2, P2-3): dealer wide reads, refused to a
+  // branch manager in the core's own sentence.
+  const reads = ["/api/v1/tax/rates", "/api/v1/tax/profiles", "/api/v1/tax/config", `/api/v1/tax/recon?year=${prior.year}&branch_id=b0000000-0000-4000-8000-000000000001`];
   for (const path of reads) {
     const staff = await call(SALES, "GET", path);
     assert.equal(staff.status, 403, `${path} is not a staff member's`);
     assert.deepEqual(staff.json, { error: "Forbidden" });
     const manager = await call(IDS.manager, "GET", path);
     assert.equal(manager.status, 200, `${path} is a manager's`);
+  }
+  const dealerWide = ["/api/v1/tax/review-queue", "/api/v1/tax/evidence"];
+  for (const path of dealerWide) {
+    const manager = await call(IDS.manager, "GET", path);
+    assert.equal(manager.status, 403, `${path} is the dealer's whole book, not a branch manager's`);
+    refused(manager, 403, "tax: the exemption certificates and the review queue are the dealer's whole book, a dealer wide caller's read");
   }
   const writes = [
     ["/api/v1/tax/rates", { reason_code: "STD_ON_HST_13", rate_bps: 800 }],

@@ -168,6 +168,11 @@ test("a refusal names who may do it and never shows the bare word Forbidden", ()
     refusalWords("recon", "tax: caller cannot access this branch", 403),
     "This reconciliation covers every branch, so it is for someone who holds every branch. Ask the Financial Controller.",
   );
+  // 615 round 2: the certificate book is the whole dealer's, and carries no branch of its own.
+  assert.equal(
+    refusalWords("evidence", "tax: the exemption certificates and the review queue are the dealer's whole book, a dealer wide caller's read", 403),
+    "The certificates are the whole dealer's book, so they are for someone who holds every branch. Ask the Financial Controller.",
+  );
 });
 
 test("the core's sentences are rewritten into what to do next, with none of its old words", () => {

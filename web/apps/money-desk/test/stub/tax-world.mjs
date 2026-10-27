@@ -146,6 +146,8 @@ export function createTaxWorld() {
   };
 
   const forbidden = () => ({ status: 403, body: { error: "Forbidden" } });
+  // The core's own sentence for the dealer wide certificate reads (615 round 2, P2-3).
+  const dealerWideRefusal = () => clientError(403, "tax: the exemption certificates and the review queue are the dealer's whole book, a dealer wide caller's read");
   const listBody = (key, rows) => ({ status: 200, body: { [key]: rows.length === 0 ? null : rows } });
 
   const rateView = (r) => {
@@ -383,20 +385,26 @@ export function createTaxWorld() {
         return upsertProfile(input);
       case "GET /api/v1/tax/review-queue":
         // The queue is the core's own slice, never null (make([]StatusCardProfile, 0)), unlike the other three.
+        // Fenced to a dealer wide caller (615 round 2, P2-3): the profiles name no branch.
+        if (!caller.global) return dealerWideRefusal();
         return { status: 200, body: { pending_profiles: profilesOrdered().filter((p) => p.status === "PENDING").map(profileView) } };
       case "GET /api/v1/tax/config":
         return { status: 200, body: configView(world.config) };
       case "POST /api/v1/tax/config":
         return updateConfig(input);
       case "GET /api/v1/tax/evidence":
+        // The certificate book is the dealer's whole book (615 round 2, P2-3): dealer wide reads.
+        if (!caller.global) return dealerWideRefusal();
         return listEvidence(url);
       case "POST /api/v1/tax/evidence":
         return captureEvidence(input, caller);
       case "GET /api/v1/tax/evidence/{id}": {
+        if (!caller.global) return dealerWideRefusal();
         const ev = world.evidence.find((e) => e.id === path.split("/").at(-1));
         return ev ? { status: 200, body: evidenceView(ev) } : clientError(404, "evidence not found");
       }
       case "POST /api/v1/tax/evidence/{id}/download": {
+        if (!caller.global) return dealerWideRefusal();
         const ev = world.evidence.find((e) => e.id === path.split("/").at(-2));
         return ev ? { status: 200, body: evidenceView(ev) } : clientError(404, "evidence not found");
       }

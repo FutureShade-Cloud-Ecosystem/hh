@@ -221,6 +221,11 @@ function plainCodes(text: string): string {
  */
 export function refusalWords(action: TaxAction, message: string, status: number): string {
   const lower = message.toLowerCase();
+  if (status === 403 && lower.includes("dealer's whole book")) {
+    // The certificate book and the review queue hold no branch of their own: the whole dealer's, so a
+    // branch holder is refused (615 round 2).
+    return "The certificates are the whole dealer's book, so they are for someone who holds every branch. Ask the Financial Controller.";
+  }
   if (status === 403 && lower.includes("cannot access this branch")) {
     // The reconcile covers every branch unless a branch is named, so a branch-scoped caller is
     // refused (FW1-10); the screen itself asks for the whole company, so the way out is the
