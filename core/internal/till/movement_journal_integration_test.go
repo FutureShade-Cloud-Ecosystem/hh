@@ -1010,3 +1010,182 @@ func TestFW113TheTillEmitsTheMovementsOwnInstant(t *testing.T) {
 		t.Fatalf("the emitted instant is %s, want the movement's own %s", p.OccurredAt, createdAt)
 	}
 }
+
+// TestFW113OldNoLinkLodgementNextToNewSlipLodgementInOneStatement proves both lodgement match rules
+// hold together when matched in one bank statement:
+//   - a new cheque lodgement recorded with a deposit slip (link rows in till_lodgement_payments and
+//     its own journal at lodgement) is confirm-only: its match posts no second journal, claims no new
+//     payments, and answers PaymentsUnresolved = false;
+//   - an older cheque lodgement without link rows or a lodgement journal keeps today's match (posting
+//     DR 1000 / CR 1020), and the exact-set rule marks its unique session cheque DEPOSITED when unique
+//     or carries PaymentsUnresolved = true when ambiguous.
+func TestFW113OldNoLinkLodgementNextToNewSlipLodgementInOneStatement(t *testing.T) {
+	w := newMJWorld(t)
+	ctx := context.Background()
+
+	var acct string
+	if err := w.pool.QueryRow(ctx, `SELECT id::text FROM bank_accounts WHERE gl_account_code = '1000'`).Scan(&acct); err != nil {
+		t.Skipf("no seeded bank account: %v", err)
+	}
+
+	// Same session, two $25.00 cheques: one will be named on the new lodgement's slip (turning DEPOSITED
+	// at lodgement), leaving the other as the unique RECEIVED $25.00 cheque for the older no-link lodgement.
+	oldCheque := w.slipPayment("CHEQUE", 25_00)
+	newCheque := w.slipPayment("CHEQUE", 25_00)
+
+	// Two $40.00 cheques on the same session make a $40.00 older no-link lodgement ambiguous.
+	ambigChequeA := w.slipPayment("CHEQUE", 40_00)
+	ambigChequeB := w.slipPayment("CHEQUE", 40_00)
+
+	newRef := fmt.Sprintf("MJ-NEW-SLIP-%d", time.Now().UnixNano())
+	if err := w.svc.Lodge(staffCtx(w.userID, w.branchID), till.MovementInput{
+		TillSessionID: w.sessionID,
+		MovementType:  "LODGEMENT",
+		Method:        "CHEQUE",
+		AmountCents:   25_00,
+		Reason:        "FW1-13 new cheque slip",
+		Reference:     newRef,
+		PaymentIDs:    []string{newCheque},
+	}); err != nil {
+		t.Fatalf("lodge new cheque with slip: %v", err)
+	}
+	var newLodgID string
+	if err := w.pool.QueryRow(ctx,
+		`SELECT id::text FROM till_movements WHERE till_session_id = $1::uuid AND reference = $2`,
+		w.sessionID, newRef).Scan(&newLodgID); err != nil {
+		t.Fatalf("find new slip lodgement: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = w.pool.Exec(context.Background(), `DELETE FROM till_lodgement_payments WHERE till_movement_id = $1::uuid`, newLodgID)
+	})
+	w.drain()
+
+	// Older cheque lodgement with no link rows and no lodgement journal, uniquely matching oldCheque ($25.00).
+	oldRef := fmt.Sprintf("MJ-OLD-NOSLIP-%d", time.Now().UnixNano())
+	var oldLodgID string
+	if err := w.pool.QueryRow(ctx, `
+		INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reference, created_by)
+		VALUES ($1::uuid, 'LODGEMENT', 'CHEQUE', 2500, 'pre-slip cheque deposit', $2, NULL)
+		RETURNING id::text`, w.sessionID, oldRef).Scan(&oldLodgID); err != nil {
+		t.Fatalf("seed older no-link cheque lodgement: %v", err)
+	}
+
+	// Second older cheque lodgement with no link rows whose $40.00 session cheques are ambiguous.
+	unresRef := fmt.Sprintf("MJ-OLD-UNRES-%d", time.Now().UnixNano())
+	var unresLodgID string
+	if err := w.pool.QueryRow(ctx, `
+		INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reference, created_by)
+		VALUES ($1::uuid, 'LODGEMENT', 'CHEQUE', 4000, 'pre-slip ambiguous cheque deposit', $2, NULL)
+		RETURNING id::text`, w.sessionID, unresRef).Scan(&unresLodgID); err != nil {
+		t.Fatalf("seed older ambiguous cheque lodgement: %v", err)
+	}
+
+	day := w.privateDay()
+	seedLine := func(ref string, cents int64) string {
+		var lineID string
+		if err := w.pool.QueryRow(ctx, `
+			INSERT INTO bank_statement_lines (bank_account_id, txn_date, description, reference, amount_cents, dedupe_hash, status)
+			VALUES ($1::uuid, $2, 'FW1-13 STATEMENT DEPOSIT', $3, $4, $5, 'UNMATCHED')
+			RETURNING id::text`,
+			acct, day, ref, cents, bankrec.DedupeHash(day, cents, "FW1-13 STATEMENT DEPOSIT", ref)).Scan(&lineID); err != nil {
+			t.Fatalf("seed statement line %s: %v", ref, err)
+		}
+		t.Cleanup(func() {
+			c := context.Background()
+			_, _ = w.pool.Exec(c, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE source_ref_id = $1::uuid)`, lineID)
+			_, _ = w.pool.Exec(c, `DELETE FROM gl_journals WHERE source_ref_id = $1::uuid`, lineID)
+			_, _ = w.pool.Exec(c, `DELETE FROM bank_matches WHERE statement_line_id = $1::uuid`, lineID)
+			_, _ = w.pool.Exec(c, `DELETE FROM bank_statement_lines WHERE id = $1::uuid`, lineID)
+		})
+		return lineID
+	}
+	oldLine := seedLine(oldRef, 25_00)
+	newLine := seedLine(newRef, 25_00)
+	unresLine := seedLine(unresRef, 40_00)
+
+	glSvc := gl.NewService(gl.NewRepository(w.pool)).WithPaymentReader(till.NewRepository(w.pool))
+	bank := bankrec.NewService(bankrec.NewRepository(w.pool)).
+		WithPayments(till.NewRepository(w.pool)).
+		WithLodgements(till.NewRepository(w.pool)).
+		WithJournalKeys(glSvc).
+		WithJournalPoster(glPosterOver{glSvc})
+
+	from := time.Now().UTC().Add(-24 * time.Hour)
+	to := day.Add(48 * time.Hour)
+	summary, err := bank.AutoMatchReach(ctx, acct, from, to, w.userID, func(b string) bool { return b == w.branchID })
+	if err != nil {
+		t.Fatalf("AutoMatchReach across combined statement: %v", err)
+	}
+	byLine := map[string]bankrec.Match{}
+	for _, m := range summary.Matches {
+		byLine[m.StatementLineID] = m
+	}
+
+	// 1. New slip lodgement: confirm-only, no second journal, no new payment claims, PaymentsUnresolved = false.
+	newMatch, ok := byLine[newLine]
+	if !ok {
+		t.Fatalf("new slip lodgement line %s was not matched in summary: %+v", newLine, summary)
+	}
+	if newMatch.TargetRefID != newLodgID || newMatch.JournalID != "" || newMatch.PaymentsUnresolved {
+		t.Fatalf("new slip lodgement match = %+v; want TargetRefID=%s, empty JournalID, PaymentsUnresolved=false", newMatch, newLodgID)
+	}
+	if legs := w.legs("bankrec:match:" + newMatch.ID); len(legs) != 0 {
+		t.Fatalf("new slip lodgement match posted a second journal: %v", legs)
+	}
+	if bankLeg := w.legs("till.movement.posted:" + newLodgID)["1000"]; bankLeg[0] != 25_00 {
+		t.Fatalf("new slip lodgement did not keep its lodgement-time DR 1000 journal: %v", w.legs("till.movement.posted:"+newLodgID))
+	}
+	var newStatus, newStmtLine string
+	if err := w.pool.QueryRow(ctx,
+		`SELECT status, COALESCE(metadata->>'bank_statement_line_id', '') FROM payments WHERE id = $1::uuid`,
+		newCheque).Scan(&newStatus, &newStmtLine); err != nil {
+		t.Fatalf("read newCheque: %v", err)
+	}
+	if newStatus != "DEPOSITED" || newStmtLine != "" {
+		t.Fatalf("newCheque status=%s bank_statement_line_id=%q; want DEPOSITED at lodgement with no statement claim", newStatus, newStmtLine)
+	}
+
+	// 2. Older no-link lodgement with unique exact set: posts DR 1000 / CR 1020, marks oldCheque DEPOSITED, PaymentsUnresolved = false.
+	oldMatch, ok := byLine[oldLine]
+	if !ok {
+		t.Fatalf("older no-link lodgement line %s was not matched in summary: %+v", oldLine, summary)
+	}
+	if oldMatch.TargetRefID != oldLodgID || oldMatch.JournalID == "" || oldMatch.PaymentsUnresolved {
+		t.Fatalf("older no-link lodgement match = %+v; want TargetRefID=%s, non-empty JournalID, PaymentsUnresolved=false", oldMatch, oldLodgID)
+	}
+	oldLegs := w.legs("bankrec:match:" + oldMatch.ID)
+	if oldLegs["1000"][0] != 25_00 || oldLegs["1020"][1] != 25_00 {
+		t.Fatalf("older no-link lodgement match did not post DR 1000 / CR 1020 for 2500: got %v", oldLegs)
+	}
+	var oldStatus, oldStmtLine string
+	if err := w.pool.QueryRow(ctx,
+		`SELECT status, COALESCE(metadata->>'bank_statement_line_id', '') FROM payments WHERE id = $1::uuid`,
+		oldCheque).Scan(&oldStatus, &oldStmtLine); err != nil {
+		t.Fatalf("read oldCheque: %v", err)
+	}
+	if oldStatus != "DEPOSITED" || oldStmtLine != oldLine {
+		t.Fatalf("oldCheque status=%s bank_statement_line_id=%q; want DEPOSITED claimed by line %s", oldStatus, oldStmtLine, oldLine)
+	}
+
+	// 3. Older no-link lodgement with ambiguous cheques: posts DR 1000 / CR 1020, claims neither cheque, carries PaymentsUnresolved = true.
+	unresMatch, ok := byLine[unresLine]
+	if !ok {
+		t.Fatalf("older ambiguous lodgement line %s was not matched in summary: %+v", unresLine, summary)
+	}
+	if unresMatch.TargetRefID != unresLodgID || unresMatch.JournalID == "" || !unresMatch.PaymentsUnresolved {
+		t.Fatalf("older ambiguous lodgement match = %+v; want TargetRefID=%s, non-empty JournalID, PaymentsUnresolved=true", unresMatch, unresLodgID)
+	}
+	unresLegs := w.legs("bankrec:match:" + unresMatch.ID)
+	if unresLegs["1000"][0] != 40_00 || unresLegs["1020"][1] != 40_00 {
+		t.Fatalf("older ambiguous lodgement match did not post DR 1000 / CR 1020 for 4000: got %v", unresLegs)
+	}
+	var stillReceived int
+	if err := w.pool.QueryRow(ctx,
+		`SELECT count(*) FROM payments WHERE id = ANY($1::uuid[]) AND status = 'RECEIVED'`,
+		[]string{ambigChequeA, ambigChequeB}).Scan(&stillReceived); err != nil {
+		t.Fatalf("read ambiguous cheques: %v", err)
+	}
+	if stillReceived != 2 {
+		t.Fatalf("ambiguous older lodgement claimed %d of 2 cheques; want both still RECEIVED", 2-stillReceived)
+	}
+}
