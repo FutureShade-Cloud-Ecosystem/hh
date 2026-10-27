@@ -92,6 +92,7 @@ func TestIntegration_FW1_06a_LodgedChequeBounceCreditsBank(t *testing.T) {
 				_, _ = pool.Exec(c, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE source_ref_id = $1)`, pid)
 				_, _ = pool.Exec(c, `DELETE FROM gl_journals WHERE source_ref_id = $1`, pid)
 				if sessionID != "" {
+					_, _ = pool.Exec(c, `UPDATE payments SET till_session_id = NULL WHERE till_session_id = $1::uuid`, sessionID)
 					_, _ = pool.Exec(c, `DELETE FROM till_movements WHERE till_session_id = $1::uuid`, sessionID)
 					_, _ = pool.Exec(c, `DELETE FROM till_sessions WHERE id = $1::uuid`, sessionID)
 				}
@@ -113,11 +114,14 @@ func TestIntegration_FW1_06a_LodgedChequeBounceCreditsBank(t *testing.T) {
 			// 1. Post payment.received (Dr 1020 / Cr 1100).
 			deliver(t, "payment.received", []byte(fmt.Sprintf(`{"payment_id":%q}`, pid)))
 
-			// 2. Open a till session at branchID, record the cheque lodgement, and match the bank deposit line.
+			// 2. Open a till session at branchID, associate pid with that session, record the cheque lodgement, and match the bank deposit line.
 			if err := pool.QueryRow(ctx,
 				`INSERT INTO till_sessions (branch_id, station, opened_by) VALUES ($1::uuid, $2, $3::uuid) RETURNING id::text`,
 				branchID, "FW106A-"+mode, userID).Scan(&sessionID); err != nil {
 				t.Fatalf("insert till_session: %v", err)
+			}
+			if _, err := pool.Exec(ctx, `UPDATE payments SET till_session_id = $1::uuid WHERE id = $2::uuid`, sessionID, pid); err != nil {
+				t.Fatalf("associate payment with till_session: %v", err)
 			}
 			ref := fmt.Sprintf("FW106A-LDG-%s-%d", mode, now.UnixNano())
 			if err := pool.QueryRow(ctx,
@@ -337,4 +341,125 @@ func TestIntegration_FW1_06a_BounceOfFeePayingPaymentReopensNSFFee(t *testing.T)
 		t.Fatalf("bounce of fee-paying payment drifted AR: ReversedCents = %d (want 54500), GL 1100 delta = %d, subledger delta = %d (want %d), payment_nsf group sum = %d (want 4500)",
 			nsfRes.ReversedCents, glDelta, subDelta, wantDelta, feeNetAfter)
 	}
+}
+
+// TestIntegration_FW1_06a_LodgementPaymentIDsNeverGuesses pins Ruling 128 (P1-2):
+// lodgementPaymentIDs claims only unreconciled RECEIVED payments from the lodgement's own
+// till_session_id and method, and only when exactly one subset of those candidates sums to
+// the lodgement amount; otherwise it claims nothing and marks PaymentsUnresolved = true.
+func TestIntegration_FW1_06a_LodgementPaymentIDsNeverGuesses(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	branchID, userID := seedBranchUser(t, pool)
+	repo := NewRepository(pool)
+
+	suffix := fmt.Sprintf("fw106a-ldg-guess-%d", time.Now().UnixNano()%1_000_000_000)
+	var custID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
+		VALUES ('FW106A-LG-'||$1, 'FW1-06a Lodgement Guess Co', 'CONTRACTOR', 30, 5000000) RETURNING id::text`,
+		suffix).Scan(&custID); err != nil {
+		t.Fatalf("plant customer: %v", err)
+	}
+	var sessions []string
+	var paymentsPlanted []string
+	t.Cleanup(func() {
+		c := context.Background()
+		for _, pid := range paymentsPlanted {
+			_, _ = pool.Exec(c, `DELETE FROM payments WHERE id = $1::uuid`, pid)
+		}
+		for _, sid := range sessions {
+			_, _ = pool.Exec(c, `DELETE FROM till_movements WHERE till_session_id = $1::uuid`, sid)
+			_, _ = pool.Exec(c, `DELETE FROM till_sessions WHERE id = $1::uuid`, sid)
+		}
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+	})
+
+	newSession := func(t *testing.T, label string) string {
+		t.Helper()
+		var sid string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO till_sessions (branch_id, station, opened_by) VALUES ($1::uuid, $2, $3::uuid) RETURNING id::text`,
+			branchID, label, userID).Scan(&sid); err != nil {
+			t.Fatalf("insert till_session %s: %v", label, err)
+		}
+		sessions = append(sessions, sid)
+		return sid
+	}
+	newPayment := func(t *testing.T, sid, method string, amt int64, tag string) string {
+		t.Helper()
+		var pid string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO payments (payment_no, customer_id, branch_id, till_session_id, method, amount_cents, status)
+			 VALUES ($1, $2::uuid, $3::uuid, $4::uuid, $5, $6, 'RECEIVED') RETURNING id::text`,
+			fmt.Sprintf("PMT-%s-%d", tag, time.Now().UnixNano()%1_000_000), custID, branchID, sid, method, amt).Scan(&pid); err != nil {
+			t.Fatalf("insert payment %s: %v", tag, err)
+		}
+		paymentsPlanted = append(paymentsPlanted, pid)
+		return pid
+	}
+	newLodgement := func(t *testing.T, sid, method string, amt int64, ref string) string {
+		t.Helper()
+		var lid string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reference, created_by)
+			 VALUES ($1::uuid, 'LODGEMENT', $2, $3, 'test lodgement', $4, $5::uuid) RETURNING id::text`,
+			sid, method, amt, ref, userID).Scan(&lid); err != nil {
+			t.Fatalf("insert lodgement %s: %v", ref, err)
+		}
+		return lid
+	}
+
+	// Leg 1: ambiguous subset in the same session and method ([$250, $250] vs [$300, $200] both sum to $500).
+	t.Run("ambiguous_subset_in_same_session_and_method", func(t *testing.T) {
+		sid := newSession(t, "FW106A-AMBIG")
+		_ = newPayment(t, sid, "CHEQUE", 25000, "ambig-250a")
+		_ = newPayment(t, sid, "CHEQUE", 25000, "ambig-250b")
+		_ = newPayment(t, sid, "CHEQUE", 30000, "ambig-300")
+		_ = newPayment(t, sid, "CHEQUE", 20000, "ambig-200")
+		lid := newLodgement(t, sid, "CHEQUE", 50000, "LDG-AMBIG-500")
+
+		fact, found, err := repo.LodgementFacts(ctx, lid)
+		if err != nil || !found {
+			t.Fatalf("LodgementFacts: found=%v err=%v", found, err)
+		}
+		if len(fact.PaymentIDs) != 0 || !fact.PaymentsUnresolved {
+			t.Fatalf("ambiguous same-session/method subset claimed PaymentIDs=%v PaymentsUnresolved=%v; want nil PaymentIDs and PaymentsUnresolved=true",
+				fact.PaymentIDs, fact.PaymentsUnresolved)
+		}
+	})
+
+	// Leg 2: a payment from another session must never be claimed by this session's lodgement.
+	t.Run("payment_from_another_session", func(t *testing.T) {
+		sidA := newSession(t, "FW106A-SESS-A")
+		sidB := newSession(t, "FW106A-SESS-B")
+		_ = newPayment(t, sidB, "CHEQUE", 50000, "other-sess-500")
+		lidA := newLodgement(t, sidA, "CHEQUE", 50000, "LDG-SESS-A-500")
+
+		fact, found, err := repo.LodgementFacts(ctx, lidA)
+		if err != nil || !found {
+			t.Fatalf("LodgementFacts: found=%v err=%v", found, err)
+		}
+		if len(fact.PaymentIDs) != 0 || !fact.PaymentsUnresolved {
+			t.Fatalf("lodgement in session A claimed PaymentIDs=%v (PaymentsUnresolved=%v) from session B; want nil PaymentIDs and PaymentsUnresolved=true",
+				fact.PaymentIDs, fact.PaymentsUnresolved)
+		}
+	})
+
+	// Leg 3: cash under a cheque lodgement (or partial cheque set) must never be claimed.
+	t.Run("cash_under_cheque_lodgement", func(t *testing.T) {
+		sid := newSession(t, "FW106A-CASH-CHQ")
+		_ = newPayment(t, sid, "CHEQUE", 30000, "chq-300")
+		_ = newPayment(t, sid, "CASH", 20000, "cash-200")
+		lid := newLodgement(t, sid, "CHEQUE", 50000, "LDG-CHQ-500")
+
+		fact, found, err := repo.LodgementFacts(ctx, lid)
+		if err != nil || !found {
+			t.Fatalf("LodgementFacts: found=%v err=%v", found, err)
+		}
+		if len(fact.PaymentIDs) != 0 || !fact.PaymentsUnresolved {
+			t.Fatalf("cheque lodgement claimed PaymentIDs=%v (PaymentsUnresolved=%v) using cash/partial set; want nil PaymentIDs and PaymentsUnresolved=true",
+				fact.PaymentIDs, fact.PaymentsUnresolved)
+		}
+	})
 }
