@@ -42,6 +42,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/logging"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 )
 
 // demoseedRole is the demoseed subcommand's entrypoint (the pin's
@@ -51,6 +52,16 @@ func demoseedRole(args []string, out *os.File, getenv func(string) string) error
 }
 
 func run(args []string, out *os.File, getenv func(string) string) error {
+	// The finance box refuses the role before anything else: the demo world
+	// is additive by construction, and the finance box is exactly the world
+	// it must never be added to. First the box statement, before even the
+	// database is resolved; then, once connected, the database's own
+	// box_kind through the settings seam, before the plan reads a branch or
+	// writes a row.
+	if strings.TrimSpace(getenv(envBoxKind)) == boxKindFinance {
+		return fmt.Errorf("demoseed: refusing to run: %s=%s (this command writes a demo world, and the finance box carries no demo world)", envBoxKind, boxKindFinance)
+	}
+
 	fs := flag.NewFlagSet("demoseed", flag.ContinueOnError)
 	doApply := fs.Bool("apply", false, "write the missing rows (without this the command only prints its plan)")
 	// -plan HAD NO FLAG, AND THIS FILE'S OWN HEADER DOCUMENTS IT. `demoseed -plan`, the invocation
@@ -104,6 +115,15 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		return fmt.Errorf("demoseed: cannot connect: %w", err)
 	}
 	defer pool.Close()
+
+	// The database's own answer: a database a finance box seeded is the
+	// finance box's world, and the demo writer touches none of it (the
+	// settings module owns system_settings; this is the only read).
+	if kind, err := settings.ReadBoxKind(ctx, pool); err != nil {
+		return fmt.Errorf("demoseed: %s could not be read: %w", settings.KeyBoxKind, err)
+	} else if kind == boxKindFinance {
+		return fmt.Errorf("demoseed: refusing to run: the database's %s is %s (the finance box's world takes no demo rows)", settings.KeyBoxKind, boxKindFinance)
+	}
 
 	// The salvaged composition root still builds. It is constructed here, and its construction is
 	// the assertion, so this command cannot silently drift away from cmd/server's wiring while
