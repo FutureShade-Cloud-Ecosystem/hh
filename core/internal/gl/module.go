@@ -112,6 +112,13 @@ type CostBasis interface {
 	UnitCostCents(ctx context.Context, productID string, qtyBase float64) (int64, bool, error)
 }
 
+// BranchCostBasis is the branch-scoped cost basis seam: it returns the extended cost
+// for a line at its fulfilling branch so the journal uses the same branch weighted-average
+// cost as the stock move.
+type BranchCostBasis interface {
+	BranchUnitCostCents(ctx context.Context, productID, branchID string, qtyBase float64) (int64, bool, error)
+}
+
 // DeadRequeuer re-queues DEAD outbox rows for the named topics (the boot-time replay of pre-W5 rows that
 // were emitted before a handler existed). Satisfied by *notify.PgOutboxStore (internal/notify/requeue.go).
 type DeadRequeuer interface {

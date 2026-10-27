@@ -16,6 +16,7 @@ import (
 	iauth "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
@@ -1291,6 +1292,14 @@ type fakeRestock struct {
 func (r *fakeRestock) RestockForReturnTx(_ context.Context, _ pgx.Tx, in RestockInput) error {
 	r.calls = append(r.calls, in)
 	return r.err
+}
+
+func (r *fakeRestock) ReturnMoveValuesTx(context.Context, pgx.Tx, string) ([]inventory.ShipLineValue, error) {
+	return nil, nil
+}
+
+func (r *fakeRestock) ShippedValueForOrderLineTx(context.Context, pgx.Tx, string, string, float64) (inventory.ShipLineValue, bool, error) {
+	return inventory.ShipLineValue{}, false, nil
 }
 
 // fakeCardRefunder is RUN-PAY's reversal rail seam. The tx parameter is the

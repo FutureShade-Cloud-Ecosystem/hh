@@ -22,6 +22,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -65,10 +66,25 @@ func (a glBackedPoster) PostJournal(ctx context.Context, in GLJournal) (string, 
 	})
 }
 
+func (a glBackedPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{
+		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+	})
+}
+
 type glBackedRules struct{ svc *gl.Service }
 
 func (a glBackedRules) ResolveRule(ctx context.Context, eventType, lineRole, branchID string) (string, error) {
 	return a.svc.ResolveRule(ctx, eventType, lineRole, branchID)
+}
+
+func (a glBackedRules) ResolveRuleTx(ctx context.Context, tx pgx.Tx, eventType, lineRole, branchID string) (string, error) {
+	return a.svc.ResolveRuleTx(ctx, tx, eventType, lineRole, branchID)
 }
 
 func newIntSvc(pool *pgxpool.Pool) *Service {
