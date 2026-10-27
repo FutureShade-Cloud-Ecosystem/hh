@@ -23,7 +23,9 @@ async function openStep(page: Page, step: "customer" | "items" | "payment" | "su
 
 async function toPayment(page: Page, search: string, name: string): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await // UX-97: the card's credit figures follow the dealer's account position policy (the default
+  // admits managers), so the legs that read them sign in as the manager.
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   await expect(page.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
   await page.getByRole("button", { name: /Select customer/ }).click();
   await page.getByPlaceholder("Search name or account #…").fill(search);

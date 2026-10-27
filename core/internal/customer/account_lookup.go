@@ -118,7 +118,8 @@ func (r *Repository) LookupAccountScoped(ctx context.Context, ref string, reach 
 	const cols = `c.id::text, c.name, c.account_no::text, c.customer_type,
 	              c.payment_terms_days, c.credit_limit_cents,
 	              COALESCE((SELECT t.balance_after FROM customer_transactions t
-	                         WHERE t.customer_id = c.id ORDER BY t.occurred_at DESC LIMIT 1), 0)`
+	                         WHERE t.customer_id = c.id ORDER BY t.occurred_at DESC LIMIT 1), 0),
+	              c.home_branch_id IS NULL`
 	const fence = `c.is_active
 	           AND c.account_no <> 'WALK-IN'
 	           AND c.name NOT ILIKE 'walk-in%'
@@ -128,7 +129,7 @@ func (r *Repository) LookupAccountScoped(ctx context.Context, ref string, reach 
 		var s SearchResult
 		err := r.pool.QueryRow(ctx, sql, pattern, reach.branchFilter()).Scan(
 			&s.ID, &s.Name, &s.AccountNo, &s.CustomerType,
-			&s.PaymentTermsDays, &s.CreditLimitCents, &s.OpenBalanceCents)
+			&s.PaymentTermsDays, &s.CreditLimitCents, &s.OpenBalanceCents, &s.Unhomed)
 		switch {
 		case err == nil:
 			return s, true, nil

@@ -68,8 +68,10 @@ export interface CustomerRef {
   accountNo: string;
   name: string;
   customerType: string;
-  creditLimitCents: number;
-  openBalanceCents: number;
+  /** The account position: null when the dealer's policy withheld it from this caller (UX-97). */
+  creditLimitCents: number | null;
+  openBalanceCents: number | null;
+  availableCreditCents: number | null;
 }
 
 export interface StandingRef {
@@ -343,19 +345,15 @@ export class TillClient {
       const accountNo = stringAt(record, "account_no");
       const name = stringAt(record, "name");
       const customerType = stringAt(record, "customer_type");
+      // The three position figures are absent, not zero, for a caller the dealer's policy refuses:
+      // an absent figure stays null and the row is kept.
       const creditLimitCents = integerAt(record, "credit_limit_cents");
       const openBalanceCents = integerAt(record, "open_balance_cents");
-      if (
-        id === null ||
-        accountNo === null ||
-        name === null ||
-        customerType === null ||
-        creditLimitCents === null ||
-        openBalanceCents === null
-      ) {
+      const availableCreditCents = integerAt(record, "available_credit_cents");
+      if (id === null || accountNo === null || name === null || customerType === null) {
         continue;
       }
-      customers.push({ id, accountNo, name, customerType, creditLimitCents, openBalanceCents });
+      customers.push({ id, accountNo, name, customerType, creditLimitCents, openBalanceCents, availableCreditCents });
     }
     return ok(customers);
   }

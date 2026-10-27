@@ -32,7 +32,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditTargetWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditTargetWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark, pastDueLine } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
@@ -290,7 +290,7 @@ function shownRows(model: DeskModel): BillingRegisterRow[] {
   let rows = model.rows.filter((r) => ids === null || ids.has(r.customer_id));
   switch (model.filter) {
     case "past_due":
-      rows = rows.filter((r) => isOpenRow(r) && r.days_overdue > 0);
+      rows = rows.filter((r) => isOpenRow(r) && (r.days_overdue ?? 0) > 0);
       break;
     case "current":
       rows = rows.filter((r) => isOpenRow(r) && r.days_overdue === 0);
@@ -303,7 +303,7 @@ function shownRows(model: DeskModel): BillingRegisterRow[] {
       break;
     // Legacy chips: keep every old behaviour so a stored URL still works.
     case "overdue":
-      rows = rows.filter((r) => isOpenRow(r) && r.days_overdue > 0);
+      rows = rows.filter((r) => isOpenRow(r) && (r.days_overdue ?? 0) > 0);
       break;
     case "promised":
       rows = rows.filter((r) => isOpenRow(r) && typeof r.promised_date === "string" && r.promised_date !== "");
@@ -315,28 +315,22 @@ function shownRows(model: DeskModel): BillingRegisterRow[] {
       rows = rows.filter((r) => r.status === "PAID");
       break;
   }
-  return rows.sort((a, b) => b.days_overdue - a.days_overdue || a.due_date.localeCompare(b.due_date));
+  return rows.sort((a, b) => (b.days_overdue ?? 0) - (a.days_overdue ?? 0) || a.due_date.localeCompare(b.due_date));
 }
 
-// pastDueSummary returns the "X of Y past due · $Z" line the register header renders when the
-// Past due chip is active. It is computed client-side from the currently loaded rows; a paginated
-// server reads the page from this same expression and the totals must agree. Returns null when the
-// chip is not the one currently active, so the summary does not bleed into other screens.
-function pastDueSummary(model: DeskModel): { pastDueCount: number; totalCount: number; pastDueCents: number } | null {
-  if (model.filter !== "past_due") return null;
-  const open = model.rows.filter(isOpenRow);
-  const pastDue = open.filter((r) => r.days_overdue > 0);
-  let cents = 0;
-  for (const r of pastDue) cents += r.balance_cents;
-  return { pastDueCount: pastDue.length, totalCount: open.length, pastDueCents: cents };
-}
+// pastDueLine is the "X of Y past due · $Z" line the register header renders when the
+// Past due chip is active, computed from the currently loaded rows; a paginated
+// server reads the page from this same expression and the totals must agree. It answers
+// "withheld" when the core sent no day counts (a caller the account position policy refuses),
+// so the header says so in words rather than summing nothing.
 
 export function shownInvoiceIds(model: DeskModel): string[] {
   return shownRows(model).map((r) => r.id);
 }
 
 function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResult {
-  const overdue = r.days_overdue > 0 && r.status !== "PAID";
+  const daysOverdue = r.days_overdue ?? 0;
+  const overdue = daysOverdue > 0 && r.status !== "PAID";
   const acct = model.aging.find((a) => a.customer_id === r.customer_id);
   const terms = acct === undefined ? "" : ` · Net ${acct.payment_terms_days}`;
   // bucket_label is the C8 5-bucket label the server stamped for this row. When it is present
@@ -372,9 +366,10 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
 
 function register(model: DeskModel): TemplateResult {
   const rows = shownRows(model);
-  // The C8 summary line reads "N of M past due · $X" when the Past due chip is active; null when
-  // a different chip is active so the header does not contradict the table below it.
-  const summary = pastDueSummary(model);
+  // The C8 summary line reads "N of M past due · $X" when the Past due chip is active; "off" when
+  // a different chip is active so the header does not contradict the table below it, and the
+  // withheld words when the server sent no day counts for this caller.
+  const summary = pastDueLine(model.filter, model.rows);
   return html`
     <section class="panel" aria-label="AR register">
       <div class="panel-head">
@@ -384,11 +379,13 @@ function register(model: DeskModel): TemplateResult {
           <button type="button" class="btn btn-secondary small-btn" data-action="download-csv">Download CSV</button>
         </div>
       </div>
-      ${summary === null
+      ${summary.kind === "off"
         ? nothing
-        : html`<p class="dim small c8-summary" data-testid="c8-summary">
-            ${summary.pastDueCount} of ${summary.totalCount} past due · ${formatMoney(summary.pastDueCents)}
-          </p>`}
+        : summary.kind === "withheld"
+          ? html`<p class="dim small c8-summary" data-testid="c8-summary" data-past-due-withheld="true">Past due is not shown for your role.</p>`
+          : html`<p class="dim small c8-summary" data-testid="c8-summary">
+              ${summary.pastDueCount} of ${summary.totalCount} past due · ${formatMoney(summary.pastDueCents)}
+            </p>`}
       ${rows.length === 0
         ? html`<div class="empty"><strong>No invoices in this view.</strong><span class="dim">Nothing matches the filter.</span></div>`
         : html`
@@ -813,7 +810,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
   // Drafts and voids are not owed and not settled: they are never listed here, so never picked.
   const paid = account.invoices.filter((r) => r.stored_status === "PAID").sort((x, y) => y.due_date.localeCompare(x.due_date));
   const rows = account.invoices.filter((r) => (account.showAll ? isUnpaidInvoice(r) || r.stored_status === "PAID" : isUnpaidInvoice(r))).concat(account.showAll ? [] : paid.slice(0, 1));
-  rows.sort((x, y) => Number(x.status === "PAID") - Number(y.status === "PAID") || y.days_overdue - x.days_overdue || x.due_date.localeCompare(y.due_date));
+  rows.sort((x, y) => Number(x.status === "PAID") - Number(y.status === "PAID") || (y.days_overdue ?? 0) - (x.days_overdue ?? 0) || x.due_date.localeCompare(y.due_date));
   const split = account.preview === null ? new Map<string, number>() : new Map(account.preview.lines.map((l) => [l.invoice_id, l.applied_cents]));
   const firstId = rows.find((r) => r.status !== "PAID")?.id ?? "";
   if (account.invoicesState !== "ready") {
@@ -850,7 +847,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
                 <tr data-invoice-row class="${paidRow ? "dimrow" : ""}" aria-current="${account.selectedInvoiceId === r.id ? "true" : "false"}">
                   <td><button type="button" class="link-row" data-action="open-invoice" data-invoice-id="${r.id}"><span class="who">${r.invoice_no}</span></button><span class="dim small">${r.order_no ?? ""}</span><button type="button" class="link small" data-action="credit-start" data-invoice-id="${r.id}">Credit</button></td>
                   <td class="nowrap">${relativeDay(r.issue_date, model.asOf)}</td>
-                  <td class="nowrap ${r.days_overdue > 0 && !paidRow ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
+                  <td class="nowrap ${(r.days_overdue ?? 0) > 0 && !paidRow ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
                   <td><span class="marks">${rowMarks(r).map(markPill)}</span></td>
                   <td class="num">${formatMoney(r.total_cents)}</td>
                   <td class="num"><b>${formatMoney(r.balance_cents)}</b></td>
@@ -976,7 +973,7 @@ function invoicePanel(model: DeskModel, account: AccountModel): TemplateResult {
       <dl class="facts">
         <dt>Status</dt><dd><span class="marks">${rowMarks({ status: d.status, days_overdue: d.days_overdue, disputed: d.dispute !== undefined, promised_date: d.promise?.promised_date }).map(markPill)}</span></dd>
         <dt>Issued</dt><dd>${d.issue_date}</dd>
-        <dt>Due</dt><dd>${d.due_date}${d.days_overdue > 0 ? ` (${d.days_overdue} days over)` : ""}</dd>
+        <dt>Due</dt><dd>${d.due_date}${(d.days_overdue ?? 0) > 0 ? ` (${d.days_overdue} days over)` : ""}</dd>
         <dt>Total</dt><dd>${formatMoney(d.totals.total_cents)}</dd>
         <dt>Applied</dt><dd>${formatMoney(d.totals.applied_cents)}</dd>
         <dt>Balance</dt><dd data-invoice-balance>${formatMoney(d.totals.balance_cents)}</dd>
@@ -1033,6 +1030,9 @@ function statementDoc(model: DeskModel, account: AccountModel): TemplateResult {
                   </tbody>
                 </table>
               </div>
+              ${s.closing_balance_cents == null || s.current_cents == null || s.days_30_cents == null || s.days_60_cents == null || s.days_90_plus_cents == null
+                ? html`<p class="dim" data-account-position-withheld="true">Account position: Not shown for your role</p>`
+                : html`
               <dl class="strip">
                 <div><dt>${STATEMENT_STRIP_LABELS[0]}</dt><dd>${formatMoney(s.current_cents)}</dd></div>
                 <div><dt>${STATEMENT_STRIP_LABELS[1]}</dt><dd>${formatMoney(s.days_30_cents)}</dd></div>
@@ -1041,6 +1041,7 @@ function statementDoc(model: DeskModel, account: AccountModel): TemplateResult {
                 <div><dt>${STATEMENT_STRIP_LABELS[4]}</dt><dd data-closing><span class="visually-hidden">Closing balance </span>${formatMoney(s.closing_balance_cents)}</dd></div>
               </dl>
               ${s.days_90_plus_cents > 0 ? html`<p class="overdue-note"><b>${formatMoney(s.days_90_plus_cents)}</b> ${STATEMENT_OVERDUE_NOTE}</p>` : nothing}
+              `}
               <p class="dim small">Statement generated ${relativeDay(s.created_at, model.asOf)}. Please contact the branch with any discrepancy.</p>
             `}
     </section>
@@ -1051,7 +1052,7 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
   const hold = model.holds.find((h) => h.status === "ACTIVE" && h.customer_id === account.customerId);
   const promised = account.invoices.some((r) => typeof r.promised_date === "string" && r.promised_date !== "");
   const disputes = account.invoices.filter((r) => r.disputed).length;
-  const overdueOnAccount = account.invoices.some((r) => r.days_overdue > 0 && isUnpaidInvoice(r));
+  const overdueOnAccount = account.invoices.some((r) => (r.days_overdue ?? 0) > 0 && isUnpaidInvoice(r));
   return html`
     <button type="button" class="link back" data-action="back">‹ Receivables</button>
     <div class="head">

@@ -49,9 +49,9 @@ function houseDay(at: Date = new Date()): string {
   }).format(at);
 }
 
-/** Mint a demo session as Sales and return the bearer header's value. */
-async function salesBearer(page: Page): Promise<string> {
-  const minted = await page.request.post("/api/v1/demo/session", { data: { flow: "sales" } });
+/** Mint a demo session as Sales (or another flow) and return the bearer header's value. */
+async function salesBearer(page: Page, flow = "sales"): Promise<string> {
+  const minted = await page.request.post("/api/v1/demo/session", { data: { flow } });
   expect(minted.ok()).toBe(true);
   const body = (await minted.json()) as { token?: string };
   expect(typeof body.token).toBe("string");
@@ -464,7 +464,7 @@ test("a card sale shows the simulated word on the tender and on the confirmation
 });
 
 test("an account sale for C02 rings on the account, with its facts beside the name", async ({ page }) => {
-  await signIn(page, "Sales");
+  await signIn(page, "Sales manager");
   await pickAccount(page, "C02", "Fenwick Builders Ltd");
   // The account's facts: available headroom from the core's limit and balance,
   // and the past-due fact the standing read answered.
@@ -483,7 +483,8 @@ test("an account sale for C02 rings on the account, with its facts beside the na
   ).toHaveText("$3.60");
 
   // The account's open balance as the core holds it before the ring.
-  const bearerBefore = await salesBearer(page);
+  // The balance read is the manager's: the dealer's account position policy withholds it from Sales.
+  const bearerBefore = await salesBearer(page, "sales-manager");
   const readBalance = async (): Promise<number> => {
     const read = await page.request.get("/api/v1/customers/search?q=C02", {
       headers: { Authorization: `Bearer ${bearerBefore}`, "X-Org": "hh-demo" },
@@ -557,7 +558,7 @@ test("an account on hold is refused in the reviewed words, and nothing commits",
 });
 
 test("an unheld account's check is good standing and names no crew member the till was never given", async ({ page }) => {
-  await signIn(page, "Sales");
+  await signIn(page, "Sales manager");
   // Palmera is unheld on the stub: no hold, so good standing, and no crew member the till was never given.
   await pickAccount(page, "C03", "Palmera Landscapes");
   await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
@@ -619,7 +620,7 @@ test("a terms-0 account's check reads no terms on file, never thirty days", asyn
 });
 
 test("a cash on demand account's check reads cash on demand, not terms or credit", async ({ page }) => {
-  await signIn(page, "Sales");
+  await signIn(page, "Sales manager");
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
   await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "payment");
@@ -684,25 +685,27 @@ test("the read-back states the server's tax and total, and the confirmation read
 // any ring the server refuses). The stub keeps both arms, mirroring the core's answers for
 // any client that rings them.
 
-test("the account's available credit says it is a derived figure, in the picker row and on the card", async ({
+test("the account's available credit is the core's figure, labelled Available, in the picker row and on the card", async ({
   page,
 }) => {
-  await signIn(page, "Sales");
-  // The picker's row figure is the browser's own subtraction (limit less
-  // balance, floored at zero): the counter's customer search row carries
-  // limit and balance only, so the label says the figure is derived.
+  // UX-97: the core sends the available credit (limit less open, floored at zero) under the
+  // dealer's account position policy, so the till shows it and subtracts nothing. The default
+  // policy admits a manager.
+  await signIn(page, "Sales manager");
   await page.getByRole("button", { name: /Select customer/ }).click();
   const searchBox = page.getByPlaceholder("Search name or account #…");
   await searchBox.fill("C02");
   const row = page.locator("button.row").filter({ hasText: "Fenwick Builders Ltd" }).first();
   await expect(row).toBeVisible();
-  await expect(row.locator(".credit")).toContainText("Available (derived)");
-  // The same figure rides the resolved account's card, and the word goes with
-  // it there too. The pick advances the flow to Items, so the customer step
-  // opens again before the card is read.
+  await expect(row.locator(".credit")).toContainText(/Available\s*\$[\d,]+\.\d\d/);
+  await expect(row.locator(".credit")).not.toContainText("derived");
+  // The same figure rides the resolved account's card. The pick advances the flow to Items, so the
+  // customer step opens again before the card is read.
   await row.click();
   await openStep(page, "customer");
-  await expect(page.getByTestId("customer-card")).toContainText("Available (derived)");
+  const card = page.getByTestId("customer-card");
+  await expect(card).toContainText(/Available\s*\$[\d,]+\.\d\d/);
+  await expect(card).not.toContainText("derived");
 });
 
 test("a deposit sale's confirmation labels the balance due a derived figure", async ({ page }) => {

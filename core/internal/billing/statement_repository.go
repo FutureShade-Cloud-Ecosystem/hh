@@ -4,6 +4,7 @@ package billing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -21,6 +22,25 @@ type StatementPreviewLine struct {
 	BalanceCents int64     `json:"balance_cents"`
 	DaysOverdue  int       `json:"days_overdue"`
 	BucketLabel  string    `json:"bucket_label"`
+
+	// PositionWithheld is set by the handler when the dealer's account position policy refuses this
+	// caller. MarshalJSON then leaves days_overdue and bucket_label off the wire.
+	PositionWithheld bool `json:"-"`
+}
+
+// MarshalJSON writes the statement preview line, omitting days_overdue and bucket_label when the
+// caller is refused by the account position policy.
+func (l StatementPreviewLine) MarshalJSON() ([]byte, error) {
+	type plain StatementPreviewLine
+	w := struct {
+		plain
+		DaysOverdue *int    `json:"days_overdue,omitempty"`
+		BucketLabel *string `json:"bucket_label,omitempty"`
+	}{plain: plain(l)}
+	if !l.PositionWithheld {
+		w.DaysOverdue, w.BucketLabel = &l.DaysOverdue, &l.BucketLabel
+	}
+	return json.Marshal(w)
 }
 
 // StatementPreviewAging is the 5-bucket breakdown the C8 S3 statement preview card carries.
@@ -45,6 +65,24 @@ type BillingStatementPreview struct {
 	OpenLines  []StatementPreviewLine `json:"open_lines"`
 	Aging      StatementPreviewAging  `json:"aging"`
 	Reconciled bool                   `json:"reconciled"`
+
+	// PositionWithheld is set by the handler when the dealer's account position policy refuses this
+	// caller. MarshalJSON then omits the aging block from the wire.
+	PositionWithheld bool `json:"-"`
+}
+
+// MarshalJSON writes the statement preview, omitting the aging breakdown when the caller is refused
+// by the account position policy.
+func (p BillingStatementPreview) MarshalJSON() ([]byte, error) {
+	type plain BillingStatementPreview
+	w := struct {
+		plain
+		Aging *StatementPreviewAging `json:"aging,omitempty"`
+	}{plain: plain(p)}
+	if !p.PositionWithheld {
+		w.Aging = &p.Aging
+	}
+	return json.Marshal(w)
 }
 
 // PaylinkDeliveryRow is the row RecordPaylinkDelivery writes to ar_invoice_deliveries. The
@@ -439,10 +477,13 @@ func (r *Repository) PreviewStatement(ctx context.Context, statementID, customer
 	}
 	var s Statement
 	err := r.pool.QueryRow(ctx,
-		`SELECT id::text, run_id::text, customer_id::text, as_of_date, current_cents, days_30_cents,
-		        days_60_cents, days_90_plus_cents, closing_balance_cents, '', delivery_status, created_at
-		   FROM ar_statements WHERE id = $1::uuid AND customer_id = $2::uuid`, statementID, customerID).
-		Scan(&s.ID, &s.RunID, &s.CustomerID, &s.AsOfDate, &s.CurrentCents, &s.Days30Cents,
+		`SELECT st.id::text, st.run_id::text, st.customer_id::text, COALESCE(c.home_branch_id::text, ''),
+		        st.as_of_date, st.current_cents, st.days_30_cents,
+		        st.days_60_cents, st.days_90_plus_cents, st.closing_balance_cents, '', st.delivery_status, st.created_at
+		   FROM ar_statements st
+		   LEFT JOIN customers c ON c.id = st.customer_id
+		  WHERE st.id = $1::uuid AND st.customer_id = $2::uuid`, statementID, customerID).
+		Scan(&s.ID, &s.RunID, &s.CustomerID, &s.HomeBranchID, &s.AsOfDate, &s.CurrentCents, &s.Days30Cents,
 			&s.Days60Cents, &s.Days90PlusCents, &s.ClosingCents, &s.HTML, &s.DeliveryStatus, &s.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
