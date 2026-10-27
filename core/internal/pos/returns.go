@@ -1203,6 +1203,11 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 			TillSessionID: in.TillSessionID, Method: till.MethodCash, AmountCents: railTotal,
 			BranchID: retRow.BranchID, CustomerID: oc.CustomerID, Reference: returnNo,
 			IdempotencyKey: "refund:" + in.IdempotencyKey,
+			// The return's own instant, read once for the whole return (one clock rules the
+			// transaction, FW1-13b): the till's REFUNDED payments row and the drawer movement
+			// beside it carry it, so the drawer's date read and the return's own date read never
+			// name two different days.
+			At: returnAt,
 		})
 		if err != nil {
 			return Return{}, clientErr(http.StatusConflict, "%s", err.Error())
@@ -1249,6 +1254,9 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		res, err := s.tender.RefundTender(ctx, tx, till.RefundInput{
 			Method: till.MethodCard, AmountCents: railTotal, BranchID: retRow.BranchID, CustomerID: oc.CustomerID,
 			GatewayRef: refundRef, Reference: returnNo, IdempotencyKey: "refund:" + in.IdempotencyKey,
+			// The return's own instant, read once for the whole return (one clock rules the
+			// transaction, FW1-13b).
+			At: returnAt,
 		})
 		if err != nil {
 			return Return{}, clientErr(http.StatusConflict, "%s", err.Error())

@@ -16,16 +16,20 @@
 //   dark-tablet-front-door-01..05.png   tablet 768, dark
 //   dark-phone-front-door-01..05.png    phone 390, dark
 //
-//   FD_APP_PORT=4926 node test/acceptance/shots.mjs <out-dir>
+//   FD_APP_PORT=<a free port> node test/acceptance/shots.mjs <out-dir>
 //
-// The harness is up with:
-//   FD_STUB_PORT=4927 node test/stub/demo-stub.mjs &
-//   npx vite --port 4926 --strictPort --host 127.0.0.1 &
+// The harness is up with (each on a port you have checked free):
+//   FD_STUB_PORT=<a free port> node test/stub/demo-stub.mjs
+//   npx vite --port <the app port> --strictPort --host 127.0.0.1
 import { chromium } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-const appPort = process.env.FD_APP_PORT ?? "4926";
+const appPort = Number(process.env.FD_APP_PORT);
+if (!Number.isInteger(appPort) || appPort <= 0) {
+  process.stderr.write("shots: set FD_APP_PORT to the free port the dev server is on\n");
+  process.exit(1);
+}
 const base = `http://127.0.0.1:${appPort}`;
 const outDir = process.argv[2] ?? "/tmp/fd-shots";
 mkdirSync(outDir, { recursive: true });

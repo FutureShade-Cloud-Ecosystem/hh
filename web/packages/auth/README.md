@@ -424,6 +424,23 @@ Nothing else is importable, so no caller deep-imports
 an internal; the test doubles ride the `./testing` subpath and never the
 public entry.
 
+## Password recovery: the one route a page that is not signed in needs
+
+`./appwrite-adapter` carries a second, narrow seam beside the
+`AccountSurface`: `PasswordRecoverySurface`, with one method,
+`completeRecovery(userId, secret, password)`. It is a separate seam on
+purpose: a shell that signs in through its own Rust side has no recovery
+route to offer, and the `AccountSurface` must not grow a method the shell
+cannot keep.
+
+FB Console is Appwrite 2.1.0. The confirmation route is `PUT
+/account/recovery` and it takes exactly three fields, `userId`, `secret` and
+`password`. Nothing else is sent, so nothing else can leak. The call never
+throws: it answers a typed result, `expired` (the console will not accept the
+secret, or the user is gone), `password_refused` (the console's own rule about
+the password, kept beside the refusal so the screen can say the rule in plain
+words), `rate_limited`, `unavailable` or `offline`.
+
 ## Tests, gates, and the fake values
 
     npm test        # from web/packages/auth, on Node 22

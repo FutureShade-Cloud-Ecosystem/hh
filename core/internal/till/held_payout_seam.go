@@ -80,6 +80,14 @@ func (s *Service) PayOutHeldMoney(ctx context.Context, tx pgx.Tx, in payments.Dr
 	if !caller.CanAccessBranch(sess.BranchID) {
 		return "", payments.PayoutRefusedError{Status: 404, Msg: "till: no such till session"}
 	}
+	// One clock rules the transaction (FW1-13b): the pay out's movement row carries the CALLER's own
+	// instant (the payments module reads its clock once for the act that moves the money, and the
+	// payout row and the event it writes carry that same instant), so the drawer and the books name
+	// the same day. The till's own clock rules when the caller names none.
+	at := in.At
+	if at.IsZero() {
+		at = s.now()
+	}
 	if err := s.store.InsertMovementTx(ctx, tx, MovementRow{
 		TillSessionID: sess.ID,
 		MovementType:  MovementPaidOut,
@@ -88,6 +96,7 @@ func (s *Service) PayOutHeldMoney(ctx context.Context, tx pgx.Tx, in payments.Dr
 		Reason:        "HELD PAYOUT " + in.Reason,
 		Reference:     in.Reference,
 		CreatedBy:     caller.UserID,
+		CreatedAt:     at,
 	}); err != nil {
 		return "", err
 	}

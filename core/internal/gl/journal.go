@@ -580,3 +580,33 @@ func (s *Service) JournalForBank(ctx context.Context, journalID, glAccountCode s
 	}
 	return f, true, nil
 }
+
+// JournalClearingAccount answers the one account the journal credits, found false when the id is no journal
+// (or no uuid) or the journal has no single credit account. A bankrec clearing journal is DR 1000 net (plus a
+// fee debit) / CR clearing gross, so its credit account IS the clearing account as booked; an unmatch mirrors
+// the journal that the match actually posted (PR 632 round 4), which an older arm may have booked on another
+// account than today's rule names. bankrec reads a journal through this seam and never from the table.
+func (s *Service) JournalClearingAccount(ctx context.Context, journalID string) (string, bool, error) {
+	if _, err := uuid.Parse(journalID); err != nil {
+		return "", false, nil
+	}
+	j, err := s.store.GetJournal(ctx, journalID)
+	if errors.Is(err, errNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	clearing := ""
+	for _, l := range j.Lines {
+		if l.CreditCents <= 0 {
+			continue
+		}
+		if clearing == "" {
+			clearing = l.AccountCode
+		} else if clearing != l.AccountCode {
+			return "", false, nil
+		}
+	}
+	return clearing, clearing != "", nil
+}

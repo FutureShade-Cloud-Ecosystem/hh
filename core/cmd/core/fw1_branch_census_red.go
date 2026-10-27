@@ -45,16 +45,9 @@ var fw1BranchCensusWriters = []string{
 }
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
-// item (the two bankrec paths left are FW1-05's). Main's map is the base:
-// 629 stamped every FW1-08b writer (the five entries this branch still listed
-// are gone on the merged tree), and year_end_close left the map with the
-// FW1-09b merge: the year end closes each branch's results in its own closing
-// journal, every leg under its branch stamp and the company level lines under
-// the head office branch, so it leaves no NULL branch_id line.
-var fw1BranchCensusRed = map[string]string{
-	"bankrec_manual_match_payment": "FW1-05",
-	"bankrec_unmatch_reversal":     "FW1-05",
-}
+// item. FW1-05's hand match and unmatch reversal stamp their branches (PR 632,
+// taken onto main), so no writer is red here any more.
+var fw1BranchCensusRed = map[string]string{}
 
 // fw1NonGLWriterSite identifies a non-GL journal writer call site or outbox
 // emitter whose payload carries a branch, together with where its branch_id
@@ -124,6 +117,12 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 	},
 	{
 		File:         "core/cmd/core/wire_operations.go",
+		Func:         "(glPosterAdapter).PostJournalTx",
+		Kind:         "PostExternalTx",
+		BranchSource: "in.BranchID from bankrec gl.ExternalJournal.BranchID (FW1-05 round 2 P1-A: the served bank match's one transaction arm)",
+	},
+	{
+		File:         "core/cmd/core/wire_operations.go",
 		Func:         "(lienGLPoster).PostJournal",
 		Kind:         "PostExternal",
 		BranchSource: "in.BranchID from lien.GLJournal.BranchID",
@@ -166,21 +165,15 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 	},
 	{
 		File:         "core/internal/bankrec/service.go",
-		Func:         "(*Service).persistProposal",
-		Kind:         "PostJournal",
-		BranchSource: "prop.Journal.BranchID (CandidatePayment.BranchID for PAYMENT; Lodgement.BranchID for LODGEMENT)",
-	},
-	{
-		File:         "core/internal/bankrec/service.go",
-		Func:         "(*Service).ManualMatch",
-		Kind:         "PostJournal",
-		BranchSource: "manualJournal stamps the LODGEMENT path from the till's lodgement facts (FW1-06a) and passes empty BranchID for PAYMENT today (RED, owned by FW1-05)",
+		Func:         "(*Service).persistAndJournal",
+		Kind:         "PostJournalTx",
+		BranchSource: "the journal journalFn built carries its branch: the claimed payment's (PAYMENT, manualJournal from the payment's facts) or the lodgement's (LODGEMENT and the other paths)",
 	},
 	{
 		File:         "core/internal/bankrec/service.go",
 		Func:         "(*Service).UnmatchReach",
-		Kind:         "PostJournal",
-		BranchSource: "reversalJournal sets no BranchID today (RED, owned by FW1-05)",
+		Kind:         "PostJournalTx",
+		BranchSource: "reversalJournal carries the claimed payment's branch, or the lodgement's from the till's append only facts (FW1-05 item 4)",
 	},
 	{
 		File:         "core/internal/billing/credit_memo.go",

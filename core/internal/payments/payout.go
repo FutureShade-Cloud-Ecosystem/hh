@@ -102,6 +102,11 @@ type DrawerPaidOut struct {
 	AmountCents int64
 	Reason      string
 	Reference   string
+	// At is the CALLER's own instant for the act that moves the money (the pay out's own clock,
+	// read once). One clock rules the transaction (FW1-13b): the payout row, the drawer movement the
+	// till writes beside it and the journal the event posts all carry this one instant. Zero means
+	// the caller named none, and the till's own clock rules the movement.
+	At time.Time
 }
 
 // SessionCount is what the till holds about a counted session, for the write off.

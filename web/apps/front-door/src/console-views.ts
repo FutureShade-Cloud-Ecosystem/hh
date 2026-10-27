@@ -13,6 +13,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import type { DealerBrand, RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
 import type { ConsoleSession } from "./console.js";
 import { CONFIG_ERROR_WORDS, SIGN_IN_WORDS, dealerLine, firstNameOf, pickerGreeting } from "./signin.js";
+import { RECOVERY_DONE_WORDS, RECOVERY_RULE_WORD, type SetPasswordPage } from "./set-password.js";
 import { primaryTileFor, type LiveRole } from "./roles.js";
 
 /** The gable diamond over two bars in a ring: the tenant kit's mark, drawn in the ink the page is on and the house gold. */
@@ -190,6 +191,108 @@ export function signInScreen(
         ${footControls}
       </footer>
       ${personaBlock}
+    </div>
+  `;
+}
+
+/**
+ * The set password screen: the dealer, the two fields, one status line, and
+ * the done state. It is the sign in card exactly: the same card, the same type,
+ * the same spacing and the same themes, with one field more and no sign in.
+ */
+export function setPasswordScreen(
+  page: SetPasswordPage,
+  dealer: DealerBrand,
+  footControls: TemplateResult | typeof nothing = nothing,
+): TemplateResult {
+  const busy = page.busy;
+  const notice = page.notice;
+  const markPassword = page.field === "password";
+  const markConfirm = page.field === "confirm";
+  if (page.saved) {
+    return html`
+      <div class="signin-stage">
+        <section class="signin-card" aria-labelledby="set-password-title" data-testid="set-password-done">
+          ${dealerLockup(dealer)}
+          <h1 class="signin-title" id="set-password-title">${RECOVERY_DONE_WORDS.title}</h1>
+          <p class="signin-lead" data-testid="set-password-dealer-line">${dealerLine(dealer)}</p>
+          <p class="signin-lead" data-testid="set-password-done-body">${RECOVERY_DONE_WORDS.body}</p>
+          <a class="btn btn-primary btn-wide" href="/" data-testid="set-password-signin">${RECOVERY_DONE_WORDS.cta}</a>
+        </section>
+        <footer class="signin-footer" data-testid="set-password-footer">
+          <p class="signin-footer-copy">Powered by HardscapeOS</p>
+          ${footControls}
+        </footer>
+      </div>
+    `;
+  }
+  return html`
+    <div class="signin-stage">
+      <section class="signin-card" aria-labelledby="set-password-title" data-testid="set-password-card">
+        ${dealerLockup(dealer)}
+        <h1 class="signin-title" id="set-password-title">Set your password</h1>
+        <p class="signin-lead" data-testid="set-password-dealer-line">${dealerLine(dealer)}</p>
+        ${page.hasLink
+          ? html`
+              <form
+                class="signin-form"
+                data-form="set-password"
+                method="post"
+                action="#"
+                novalidate
+                aria-describedby="set-password-status"
+              >
+                <div class="field">
+                  <label for="set-password-new">New password</label>
+                  <input
+                    id="set-password-new"
+                    name="password"
+                    class="control"
+                    type="password"
+                    autocomplete="new-password"
+                    minlength="8"
+                    required
+                    aria-invalid=${markPassword ? "true" : "false"}
+                  />
+                </div>
+                <div class="field">
+                  <label for="set-password-confirm">Confirm password</label>
+                  <input
+                    id="set-password-confirm"
+                    name="confirm"
+                    class="control"
+                    type="password"
+                    autocomplete="new-password"
+                    minlength="8"
+                    required
+                    aria-invalid=${markConfirm ? "true" : "false"}
+                  />
+                </div>
+                <p class="signin-hint" data-testid="set-password-rule">${RECOVERY_RULE_WORD}</p>
+                <p
+                  id="set-password-status"
+                  class="status ${notice === "" ? "" : "error"}"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                  data-testid="set-password-status"
+                >${notice}</p>
+                <button type="submit" class="btn btn-primary btn-wide" data-testid="set-password-submit" ?disabled=${busy}>
+                  ${busy ? html`<span class="spinner" aria-hidden="true"></span>Saving` : "Set password"}
+                </button>
+              </form>
+            `
+          : html`
+              <p class="status error" role="status" aria-live="polite" aria-atomic="true" data-testid="set-password-status">
+                ${notice}
+              </p>
+              <a class="btn btn-primary btn-wide" href="/" data-testid="set-password-signin">${RECOVERY_DONE_WORDS.cta}</a>
+            `}
+      </section>
+      <footer class="signin-footer" data-testid="set-password-footer">
+        <p class="signin-footer-copy">Powered by HardscapeOS</p>
+        ${footControls}
+      </footer>
     </div>
   `;
 }

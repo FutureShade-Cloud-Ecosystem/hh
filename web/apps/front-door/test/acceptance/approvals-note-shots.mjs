@@ -1,16 +1,21 @@
 // Shots for the approvals note feature: three states, light and dark variants.
 //
-//   FD_APP_PORT=4926 FD_STUB_PORT=4927 node test/acceptance/approvals-note-shots.mjs <out-dir>
+//   FD_APP_PORT=<a free port> FD_STUB_PORT=<a free port> node test/acceptance/approvals-note-shots.mjs <out-dir>
 //
-// Prerequisites (same harness as the front door's own shot walk):
-//   FD_STUB_PORT=4927 node test/stub/demo-stub.mjs &
-//   npx vite --port 4926 --strictPort --host 127.0.0.1 &
+// Prerequisites (same harness as the front door's own shot walk, each on a
+// port you have checked free):
+//   FD_STUB_PORT=<a free port> node test/stub/demo-stub.mjs
+//   npx vite --port <the app port> --strictPort --host 127.0.0.1
 import { chromium } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-const appPort = process.env.FD_APP_PORT ?? "4926";
-const stubPort = process.env.FD_STUB_PORT ?? "4927";
+const appPort = Number(process.env.FD_APP_PORT);
+const stubPort = Number(process.env.FD_STUB_PORT);
+if (!Number.isInteger(appPort) || appPort <= 0 || !Number.isInteger(stubPort) || stubPort <= 0) {
+  process.stderr.write("approvals-note shots: set FD_APP_PORT and FD_STUB_PORT to free ports\n");
+  process.exit(1);
+}
 const base = `http://127.0.0.1:${appPort}`;
 const stubBase = `http://127.0.0.1:${stubPort}`;
 const outDir = process.argv[2] ?? "/tmp/fd-approvals-shots";
