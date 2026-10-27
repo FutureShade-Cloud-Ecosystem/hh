@@ -96,9 +96,9 @@ func TestIntegration_FinanceSeedAppliesTheWorldAndRefusesASecondRun(t *testing.T
 	}
 
 	// box_kind is recorded through the settings module.
-	kind, err := settings.ReadBoxKind(ctx, pool)
+	kind, err := settings.NewDealerConfigReader(pool).BoxKind(ctx)
 	if err != nil {
-		t.Fatalf("ReadBoxKind: %v", err)
+		t.Fatalf("BoxKind: %v", err)
 	}
 	if kind != "finance" {
 		t.Fatalf("the seed must record box_kind=finance through settings, got %q", kind)

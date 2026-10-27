@@ -86,7 +86,7 @@ func financeBoxDatabaseGuard(ctx context.Context, pool *pgxpool.Pool) error {
 	if empty {
 		return nil
 	}
-	kind, err := settings.ReadBoxKind(ctx, pool)
+	kind, err := settings.NewDealerConfigReader(pool).BoxKind(ctx)
 	if err != nil {
 		return fmt.Errorf("finance box: %s could not be read: %w", settings.KeyBoxKind, err)
 	}

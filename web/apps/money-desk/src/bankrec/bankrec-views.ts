@@ -212,7 +212,9 @@ function cutoverEntriesList(model: BankrecModel): TemplateResult {
       ${entries.map(
         (e) => html`<li>
           <label class="br-tick-row">
-            <input type="checkbox" data-field="br-cutover-tick" data-id=${e.journal_id} data-cutover-tick ?checked=${model.cutoverTicked[e.journal_id] === true} />
+            ${model.cutoverTicked[e.journal_id] === true
+              ? html`<input type="checkbox" data-field="br-cutover-tick" data-id=${e.journal_id} data-cutover-tick checked />`
+              : html`<input type="checkbox" data-field="br-cutover-tick" data-id=${e.journal_id} data-cutover-tick />`}
             <span class="br-tick-date">${dayWords(e.posted_at)}</span>
             <span class="br-tick-memo">${e.memo}</span>
             <span class="br-tick-amount">${formatMoney(e.amount_cents)}</span>

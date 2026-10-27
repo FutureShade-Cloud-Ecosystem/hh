@@ -87,7 +87,7 @@ func financeSeedRole(getenv func(string) string) error {
 	if seeded {
 		return fmt.Errorf("finance-seed: refusing to run: the seed is already applied (its demo world is present), and nothing here reseeds")
 	}
-	kind, err := settings.ReadBoxKind(ctx, pool)
+	kind, err := settings.NewDealerConfigReader(pool).BoxKind(ctx)
 	if err != nil {
 		return fmt.Errorf("finance-seed: %s could not be read: %w", settings.KeyBoxKind, err)
 	}

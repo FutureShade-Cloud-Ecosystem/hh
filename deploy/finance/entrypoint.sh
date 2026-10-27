@@ -44,7 +44,18 @@ FINANCE_ROOT="${FINANCE_ROOT:-/srv}"
 # box statement value that is not the required word refuses naming the word.
 # Nothing below this block runs when any check fails: no child process, no
 # database call, no file write.
+#
+# Step 0a, before the checks: the sign in allow list, derived from the box's
+# finance user list. HH_FINANCE_USERS is the one source of truth for the
+# people on the box, so the allow list is derived from it here instead of
+# being set beside it. A list and an allow list that disagree refuse the
+# boot, naming the two variables and never an address. With no list the
+# allow list is left as it is, and the check below still asks for it.
 # --------------------------------------------------------------------------
+# shellcheck source=signin-allow-list.sh
+. "$(dirname "$0")/signin-allow-list.sh"
+derive_signin_allow_list || exit 1
+
 for name in \
 	DATABASE_URL APP_ENV HH_BOX_KIND CORE_SIGNIN_MODE \
 	CORE_TOKEN_ISSUER CORE_STAFF_AUDIENCE CORE_TENANT_AUDIENCE \
@@ -187,6 +198,20 @@ else
 	log "the database is not empty: the box kind check runs before migrate"
 	core finance-box-check
 	core migrate
+fi
+
+# --------------------------------------------------------------------------
+# Step 5a: the box's finance users, applied from the list the environment
+# carries. Every entry is provisioned and every finance person the list left
+# out is revoked, in one transaction, so the box is the list. The apply is
+# convergent, so a boot with a changed list brings the box to the list and a
+# boot with the same list changes nothing. With no list in the environment
+# there is nobody to apply, and the box's people are the ones the operator
+# linked with core finance-user.
+# --------------------------------------------------------------------------
+if [ -n "${HH_FINANCE_USERS:-}" ]; then
+	log "the box's finance user list is applied"
+	core finance-user --apply-from-env
 fi
 
 # --------------------------------------------------------------------------

@@ -36,18 +36,23 @@ through Caddy (it pings the database, 503 when the database is down).
 
 ## The boot order
 
-1. The variable checks: every name below is required, and
+1. The sign in allow list is derived from the box's finance user list
+   (`HH_FINANCE_USERS`), so the list is the one source of truth for the
+   people on the box and the allow list is not a second one. A list and an
+   allow list that disagree refuse the boot, naming the two variables and
+   never an address.
+2. The variable checks: every name below is required, and
    `HH_BOX_KIND`, `APP_ENV` and `CORE_SIGNIN_MODE` must carry the exact
    words `finance`, `staging` and `console`. One line per missing name,
    never a value.
-2. `CORE_DATABASE_URL` is set from `DATABASE_URL`: one database in both
+3. `CORE_DATABASE_URL` is set from `DATABASE_URL`: one database in both
    spellings.
-3. The session signing key: a mounted key readable by group or other is
+4. The session signing key: a mounted key readable by group or other is
    copied once to a private path under `/run/`; the core is pointed at the
    copy. The key's bytes are never printed.
-4. `/srv/app/config.json` is written from the `HH_WEB_*` names (console
+5. `/srv/app/config.json` is written from the `HH_WEB_*` names (console
    mode), validated with the same rules as the browser's parser.
-5. The database is classified. An EMPTY database: `core migrate`, then
+6. The database is classified. An EMPTY database: `core migrate`, then
    `core finance-seed` (applies the Dibbits seed, records
    `box_kind=finance` in `system_settings` through the settings module,
    and leaves the seed's users with no usable password). A NON EMPTY
@@ -55,6 +60,41 @@ through Caddy (it pings the database, 503 when the database is down).
    seed, before anything writes), then `core migrate`, forward only. Every
    redeploy keeps the data; nothing on the boot path drops, truncates or
    reseeds.
+7. The box's finance users are applied from the list:
+   `core finance-user --apply-from-env` provisions every entry and revokes
+   every finance person the list left out, in one transaction. The apply is
+   convergent, so a boot with a changed list brings the box to the list and
+   a boot with the same list changes nothing. The command prints ids and
+   counts only, never an address.
+
+## The box's finance user list
+
+`HH_FINANCE_USERS` carries the people on the box. The entries are separated
+by `;`, each one `email|platform_user_id|display name|role`:
+
+```
+fin-controller-a@example.invalid|fb-console-user-a|Financial Controller|financial_controller;fin-payables-b@example.invalid|fb-console-user-b|Payables and Receivables|payables_receivables
+```
+
+The rules:
+
+- the role is one of the finance roles (`financial_controller`,
+  `payables_receivables`);
+- a field cannot hold a `;` or a `|`, so a display name is a display name
+  with spaces and no pipes;
+- an entry that is wrong refuses the boot with one line naming the entry by
+  its email alone, never the platform id, the display name or the role;
+- the sign in allow list (`CORE_SIGNIN_EMAIL_ADDRESSES`) is derived from the
+  list at boot. Setting it by hand is allowed only when it agrees with the
+  list; two sources that disagree refuse the boot.
+
+With no list in the environment there is nobody to apply at boot, and the
+box's people are the ones an operator linked by hand:
+
+```
+core finance-user --email <address> --platform-user-id <id> --display-name <name> --role <role>
+core finance-user --revoke --email <address> --platform-user-id <id>
+```
 
 ## Environment variables (names only)
 
@@ -77,7 +117,13 @@ the variable):
 - `CORE_APPWRITE_ENDPOINT`, `CORE_APPWRITE_PROJECT`,
   `CORE_APPWRITE_API_KEY` - FB Console, for the sign in exchange and team
   membership
-- `CORE_SIGNIN_EMAIL_ADDRESSES` - the sign in allow list
+- `CORE_SIGNIN_EMAIL_ADDRESSES` - the sign in allow list. It is derived from
+  `HH_FINANCE_USERS` at boot; set it by hand only when it agrees with that
+  list, and two sources that disagree refuse the boot.
+- `HH_FINANCE_USERS` - the box's finance users (the list of people). See
+  "The box's finance user list" below. Optional: with no list in the
+  environment nobody is applied at boot, and the people on the box are the
+  ones an operator linked by hand.
 - `PAYMENT_VAULT_KEY` - 64 hex characters (32 bytes)
 - `HH_ACCEPTANCE_SIGN_KEY_ID`, `HH_ACCEPTANCE_SIGN_KEY` - the customer
   quote acceptance signing pair (key id and hex key; the spawn refuses
@@ -111,6 +157,10 @@ guard refuses a live rail on a finance box), `CORE_SIGNIN_EMAIL_DOMAINS`.
 
 - `entrypoint-vars-test.sh` - the variable checks refuse, one line naming
   the missing or wrong name, before any child process or database call.
+- `entrypoint-finance-users-test.sh` - the finance user list: the sign in
+  allow list is derived from it, a list and an allow list that disagree
+  refuse naming the variables and never a value, and the entrypoint does not
+  ask for the allow list when the list derives it.
 - `entrypoint-supervisor-test.sh` - the supervisor: stand-in children on
   the PATH record their invocations and exit; the entrypoint exits non
   zero as soon as any one of them exits, on both the empty database path
@@ -121,5 +171,6 @@ Run each from a checkout:
 
 ```
 sh deploy/finance/entrypoint-vars-test.sh
+sh deploy/finance/entrypoint-finance-users-test.sh
 sh deploy/finance/entrypoint-supervisor-test.sh
 ```

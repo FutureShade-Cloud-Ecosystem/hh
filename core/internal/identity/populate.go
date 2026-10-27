@@ -196,6 +196,47 @@ func ProvisionOrgAnchor(ctx context.Context, db DBTX, slug, name string) (orgID 
 	return orgID, inserted, nil
 }
 
+// EnsureOrgAnchor makes sure the org anchor for the slug exists and keeps
+// the name it already carries. It is ProvisionOrgAnchor for a caller that
+// must not rename the box's anchor: the anchor the seed named is the
+// box's anchor, and a provision run that renamed it would rename the org
+// under every id that references it. The name is read first, and the write
+// happens only when the anchor is absent, so a re-run leaves the row it
+// finds as it found it, name and updated_at included. The default name is
+// the name of an anchor this call creates, and nothing else. inserted
+// reports whether this call created the row.
+func EnsureOrgAnchor(ctx context.Context, db DBTX, slug, defaultName string) (orgID string, name string, inserted bool, err error) {
+	if db == nil {
+		return "", "", false, errors.New("identity: an org anchor requires a database handle")
+	}
+	normalized := strings.ToLower(strings.TrimSpace(slug))
+	if !orgSlugPattern.MatchString(normalized) {
+		return "", "", false, ErrOrgSlugShape
+	}
+	if defaultName == "" {
+		return "", "", false, errors.New("identity: an org anchor requires a display name")
+	}
+	err = db.QueryRow(ctx, `SELECT id::text, name FROM org WHERE slug = $1`, normalized).Scan(&orgID, &name)
+	if err == nil {
+		return orgID, name, false, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, fmt.Errorf("identity: org anchor read failed: %w", err)
+	}
+	// The anchor is absent, so this call creates it with the default name.
+	// The conflict leg writes the slug back unchanged and reads the row
+	// back: a writer that won the race keeps the name it wrote, and this
+	// row's updated_at does not move.
+	err = db.QueryRow(ctx, `
+		INSERT INTO org (slug, name) VALUES ($1, $2)
+		ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+		RETURNING id::text, name, (xmax = 0)`, normalized, defaultName).Scan(&orgID, &name, &inserted)
+	if err != nil {
+		return "", "", false, fmt.Errorf("identity: org anchor write failed: %w", err)
+	}
+	return orgID, name, inserted, nil
+}
+
 // StampReport counts the additive backfills (plan steps 2 and 3) by table:
 // rows this run stamped. A re-run stamps zero rows because every statement
 // guards on the column being NULL.
