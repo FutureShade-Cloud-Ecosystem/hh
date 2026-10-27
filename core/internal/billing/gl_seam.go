@@ -43,12 +43,13 @@ func (r *Repository) InvoiceForGL(ctx context.Context, invoiceID string) (gl.Inv
 // reading of the date); the transaction arm stays on the raw instant, because a payment or an NSF is
 // an instant and not a day.
 //
-// The invoice arm carries each document's balance AT the as-of instant ($3), the same reconstruction
-// the aging's agingSelect runs, so the tie-out at a past date compares what was owed then with the
-// GL at that date and the aging's grand total ties to this figure by construction: an invoice paid
-// after the as-of date is still owed at it, an invoice issued after it is not on the books at it,
-// and a document settled by the instant nets to zero. PAID documents are read only for that
-// as-of balance.
+// The invoice arm carries each document's balance AT the as-of instant ($3). At an as of on the
+// CURRENT house day it reads balance_cents, the inception to date figure, so the tie-out moves with
+// every balance move; only a PAST date rebuilds, the same reconstruction the aging's agingSelect
+// runs, so the tie-out at a past date compares what was owed then with the GL at that date and the
+// aging's grand total ties to this figure by construction: an invoice paid after the as-of date is
+// still owed at it, an invoice issued after it is not on the books at it, and a document settled by
+// the instant nets to zero. PAID documents are read only for that as-of balance.
 func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchID string) (int64, error) {
 	if r.pool == nil {
 		return 0, errNoDB
@@ -57,20 +58,25 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 	if err != nil {
 		return 0, err
 	}
+	today, err := r.clockAt(ctx, time.Now())
+	if err != nil {
+		return 0, err
+	}
 	var sum int64
 	err = r.pool.QueryRow(ctx,
 		`SELECT
 		   (SELECT COALESCE(SUM(b.bal), 0) FROM (
-		     SELECT i.total_cents
-		          + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
+		     SELECT CASE WHEN $4::bool THEN i.balance_cents
+		                 ELSE i.total_cents
+		                      + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
 		                      WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
 		                        AND t.txn_type <> i.doc_type AND t.created_at <= $3), 0)
-		          - COALESCE((SELECT SUM(CASE WHEN p.reverses_payment_id IS NULL THEN a.amount_cents ELSE -a.amount_cents END)
+		                      - COALESCE((SELECT SUM(CASE WHEN p.reverses_payment_id IS NULL THEN a.amount_cents ELSE -a.amount_cents END)
 		                      FROM payment_allocations a JOIN payments p ON p.id = a.payment_id
 		                      WHERE a.invoice_id = i.id AND a.created_at <= $3), 0)
-		          - COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra
+		                      - COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra
 		                      WHERE ra.invoice_id = i.id AND ra.created_at <= $3), 0)
-		            AS bal
+		                   END AS bal
 		       FROM invoices i
 		      WHERE i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
 		        AND i.issue_date <= $1
@@ -80,7 +86,7 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 		     WHERE txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF') AND source_type <> 'invoice'
 		       AND created_at <= $3
 		       AND ($2 = '' OR branch_id = $2::uuid))`,
-		day, branchID, asOf,
+		day, branchID, asOf, sameHouseDayAs(day, today),
 	).Scan(&sum)
 	if err != nil {
 		return 0, fmt.Errorf("billing: AR balance as-of %s: %w", asOf.Format(time.RFC3339), err)

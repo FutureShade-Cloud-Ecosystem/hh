@@ -101,17 +101,20 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 //
 // The balance each document carries is the one it carried AT the as-of instant ($5, the instant the
 // handler resolved), not today's: a document is on the books from its issue day ($1, the house day
-// of the as-of), and what came off it afterwards does not come off its as-of figure. The as-of
-// balance rebuilds from the dated acts that moved it: every real allocation dated by the instant is
-// a payment received by then, a reversing payment's contra allocation gives its share back, a
-// re-application dated by the instant is money applied by then, and the dated ledger rows tagged to
-// the document itself (a credit offset, a deposit close, a write off) move it by their signed
-// amounts. An invoice paid after the as-of date therefore still ages here at its full total, and an
-// invoice issued after the date is not on the books at it. What was settled by the instant nets to
-// zero, so only a document open at the date survives the HAVING, whatever its status is today. One
-// honesty note: a bounce deletes its payment's allocation rows, so a cheque that was good at the
-// as-of date and bounced afterwards shows as owed at that date; the payment's per-invoice split is
-// unrecoverable once those rows are gone.
+// of the as-of), and what came off it afterwards does not come off its as-of figure. At an as of on
+// the CURRENT house day ($6) the figure IS the balance: balance_cents is the inception to date
+// figure, so today's aging, today's sweep and today's statement run read it directly and no writer
+// can move a balance without today's figures moving with it. Only a PAST date rebuilds from the
+// dated acts that moved the balance: every real allocation dated by the instant is a payment
+// received by then, a reversing payment's contra allocation gives its share back, a re-application
+// dated by the instant is money applied by then, and the dated ledger rows tagged to the document
+// itself (a credit offset, a deposit close, a write off) move it by their signed amounts. An
+// invoice paid after the as-of date therefore still ages here at its full total, and an invoice
+// issued after it is not on the books at it. What was settled by the instant nets to zero, so only
+// a document open at the date survives the HAVING, whatever its status is today. One honesty note:
+// a bounce deletes its payment's allocation rows, so a cheque that was good at the as-of date and
+// bounced afterwards shows as owed at that date; the payment's per-invoice split is unrecoverable
+// once those rows are gone.
 //
 // What this costs (S6's P3, measured with EXPLAIN on a migrated database): the three rebuild arms
 // are index-backed lookups per document (idx_cust_txn_source on the ledger rows, the
@@ -135,21 +138,22 @@ const agingSelect = `
 	       COALESCE(SUM(b.bal) FILTER (WHERE $1::date > i.due_date + $2::int), 0),
 	       EXISTS (SELECT 1 FROM credit_holds h WHERE h.customer_id = c.id AND h.status = 'ACTIVE'),
 	       COALESCE((SELECT h.hold_kind FROM credit_holds h WHERE h.customer_id = c.id AND h.status = 'ACTIVE' LIMIT 1), '')
-	  FROM customers c
+	FROM customers c
 	  JOIN invoices i ON i.customer_id = c.id
 	                  AND i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
 	                  AND i.issue_date <= $1::date
 	  JOIN LATERAL (
-	       SELECT i.total_cents
-	            + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
-		                 WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
-		                   AND t.txn_type <> i.doc_type AND t.created_at <= $5::timestamptz), 0)
-	            - COALESCE((SELECT SUM(CASE WHEN p.reverses_payment_id IS NULL THEN a.amount_cents ELSE -a.amount_cents END)
-		                 FROM payment_allocations a JOIN payments p ON p.id = a.payment_id
-		                 WHERE a.invoice_id = i.id AND a.created_at <= $5::timestamptz), 0)
-	            - COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra
-		                 WHERE ra.invoice_id = i.id AND ra.created_at <= $5::timestamptz), 0)
-	       AS bal
+	       SELECT CASE WHEN $6::bool THEN i.balance_cents
+	                   ELSE i.total_cents
+	                        + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
+			                 WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
+			                   AND t.txn_type <> i.doc_type AND t.created_at <= $5::timestamptz), 0)
+	                        - COALESCE((SELECT SUM(CASE WHEN p.reverses_payment_id IS NULL THEN a.amount_cents ELSE -a.amount_cents END)
+			                 FROM payment_allocations a JOIN payments p ON p.id = a.payment_id
+			                 WHERE a.invoice_id = i.id AND a.created_at <= $5::timestamptz), 0)
+	                        - COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra
+			                 WHERE ra.invoice_id = i.id AND ra.created_at <= $5::timestamptz), 0)
+	                   END AS bal
 	  ) b ON TRUE
 	 WHERE ($3 = '' OR i.branch_id = $3::uuid)
 	   AND ($4::uuid[] IS NULL OR i.branch_id = ANY($4::uuid[]))
@@ -176,7 +180,11 @@ func (r *Repository) AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.pool.Query(ctx, agingSelect, day, bucketDays, branchID, reach.SQLArg(), asOf)
+	today, err := r.clockAt(ctx, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.pool.Query(ctx, agingSelect, day, bucketDays, branchID, reach.SQLArg(), asOf, sameHouseDayAs(day, today))
 	if err != nil {
 		return nil, fmt.Errorf("billing: aging rows: %w", err)
 	}

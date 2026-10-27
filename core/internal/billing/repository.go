@@ -49,6 +49,13 @@ func (r *Repository) clockAt(ctx context.Context, at time.Time) (time.Time, erro
 	return houseClockIn(z, at), nil
 }
 
+// sameHouseDayAs says whether two instants fall on one calendar day in the dealer's zone (both are
+// houseClock readings): an as of on the current house day reads the books' own balances, only a
+// past date rebuilds them from history.
+func sameHouseDayAs(a, b time.Time) bool {
+	return a.Year() == b.Year() && a.YearDay() == b.YearDay()
+}
+
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
 
 func scanInvoice(row pgx.Row) (Invoice, error) {
