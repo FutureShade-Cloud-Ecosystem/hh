@@ -183,8 +183,17 @@ test("the ledger reads are fenced to the caller's branch reach (FW1-10)", async 
   refused(await call(IDS.manager, "GET", "/api/v1/gl/trial-balance"), 403, "gl: caller cannot access this branch");
   refused(await call(IDS.manager, "GET", `/api/v1/gl/trial-balance?branch_id=${IDS.julian}`), 403, "gl: caller cannot access this branch");
   refused(await call(IDS.manager, "GET", "/api/v1/gl/tie-out"), 403, "gl: caller cannot access this branch");
-  // A journal out of reach answers as missing, never 403: an id is an existence oracle.
-  const missing = await call(IDS.manager, "GET", "/api/v1/gl/journals/7a1e0000-0000-4000-9000-000000000007");
+  // A journal out of reach answers as missing, never 403: an id is an existence oracle. The foreign
+  // journal is planted HERE, through the world's own POST (its own entry sequence), so the seeded
+  // world and its asserted trial balance totals never carry it.
+  const planted = await call(IDS.controller, "POST", "/api/v1/gl/journals", {
+    branch_id: IDS.julian,
+    memo: "FW1-10 out of reach proof",
+    source: "MANUAL",
+    lines: [line("1300", 4000, 0), line("1000", 0, 4000)],
+  });
+  assert.equal(planted.status, 201, JSON.stringify(planted.json));
+  const missing = await call(IDS.manager, "GET", `/api/v1/gl/journals/${planted.json.id}`);
   assert.equal(missing.status, 404);
   assert.deepEqual(missing.json, { error: "not found" });
   // The caller's own branch still serves, and names only its rows.

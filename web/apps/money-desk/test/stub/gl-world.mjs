@@ -191,11 +191,6 @@ function fresh() {
         ["5200", 620000, 0],
         ["1200", 0, 620000],
       ]),
-      // A balance sheet move only, so the asserted net income and the 1100 tie-out figures stand.
-      journal("7a1e0000-0000-4000-9000-000000000007", 7, "MANUAL", "Julian prepaid transfer (demo)", "POSTED", IDS.julian, IDS.controller, 90, [
-        ["1300", 4000, 0, "prepaid"],
-        ["1000", 0, 4000, "cash"],
-      ]),
       journal("7a1e0000-0000-4000-9000-000000000004", 4, "ADJUSTMENT", "Till over/short", "POSTED", IDS.pointLoma, IDS.manager, 200, [
         ["1000", 2500, 0],
         ["5200", 0, 2500],
