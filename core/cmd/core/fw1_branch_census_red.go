@@ -66,11 +66,24 @@ type fw1NonGLWriterSite struct {
 }
 
 // fw1NonGLJournalWriterCallSites lists every non-GL journal writer call site
-// (PostExternal, PostExternalTx, PostJournal, PostJournalTx,
-// PostCreditMemoJournal) and every emitter of an outbox topic whose payload
-// carries a branch outside core/internal/gl. Guarded by
-// TestFW1NonGLJournalWriterCallSitesComplete.
+// or method-value selector (PostExternal, PostExternalTx, PostJournal,
+// PostJournalTx, PostCreditMemoJournal, CreateJournal, ReverseJournal,
+// RunRecurring, CloseYear), every emitter of an outbox topic whose payload
+// carries a branch, and every dynamic-topic outbox helper outside
+// core/internal/gl. Guarded by TestFW1NonGLJournalWriterCallSitesComplete.
 var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
+	{
+		File:         "core/cmd/core/order_events.go",
+		Func:         "(orderChangeEvents).EnqueueTx",
+		Kind:         "dynamic-topic:INSERT INTO events_outbox",
+		BranchSource: "generic outbox SQL helper for order change events; all callers are scanned via EnqueueTx (order.change.applied has no GL journal consumer)",
+	},
+	{
+		File:         "core/cmd/core/tops_adapters.go",
+		Func:         "(w5cStatementQueue).EnqueueTx",
+		Kind:         "dynamic-topic:EnqueueTx",
+		BranchSource: "adapter forwarding billing statement notice outbox (ar.statement.notice) to messagingprovider.Outbox.EnqueueTx; no GL journal consumer",
+	},
 	{
 		File:         "core/cmd/core/tops_adapters.go",
 		Func:         "(w6cCreditMemoPoster).PostCreditMemoJournal",
@@ -159,7 +172,19 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		File:         "core/internal/billing/credit_memo_repost.go",
 		Func:         "(*InvoiceWriter).repostAll",
 		Kind:         "PostCreditMemoJournal",
-		BranchSource: "r.BranchID from invoices.branch_id (NOT NULL)",
+		BranchSource: "m.branchID loaded from invoices.branch_id (NOT NULL) by findCreditMemosWithoutJournals",
+	},
+	{
+		File:         "core/internal/billing/invoice_writer.go",
+		Func:         "emitOutbox",
+		Kind:         "dynamic-topic:INSERT INTO events_outbox",
+		BranchSource: "billing package outbox SQL helper; all callers are scanned via emitOutbox",
+	},
+	{
+		File:         "core/internal/billing/statement_outbox.go",
+		Func:         "(statementNoticeOutbox).EnqueueStatementTx",
+		Kind:         "dynamic-topic:EnqueueTx",
+		BranchSource: "emits o.topic (TopicStatementNotice = ar.statement.notice); notification topic with no GL journal consumer",
 	},
 	{
 		File:         "core/internal/invcount/service.go",
@@ -168,10 +193,16 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		BranchSource: "sheet.BranchID from count_sheets.branch_id (NOT NULL, refused when empty by authorizeBranch)",
 	},
 	{
+		File:         "core/internal/inventory/repository.go",
+		Func:         "(*Repository).EmitEvent",
+		Kind:         "dynamic-topic:INSERT INTO events_outbox",
+		BranchSource: "inventory package outbox SQL helper; all callers are scanned via EmitEvent",
+	},
+	{
 		File:         "core/internal/inventory/service.go",
 		Func:         "(*Service).applyReceipt",
 		Kind:         "emit:po.received",
-		BranchSource: "in.BranchID on po.received outbox payload",
+		BranchSource: "hdr.BranchID from POHeaderForReceipt (purchase_orders.branch_id, NOT NULL) in po.received outbox payload",
 	},
 	{
 		File:         "core/internal/inventory/service.go",
@@ -222,34 +253,46 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		BranchSource: "p.BranchID from payments.branch_id (NOT NULL) in payment.reapplied outbox payload",
 	},
 	{
+		File:         "core/internal/portal/repository.go",
+		Func:         "emitOutbox",
+		Kind:         "dynamic-topic:INSERT INTO events_outbox",
+		BranchSource: "portal package outbox SQL helper; all callers are scanned via emitOutbox",
+	},
+	{
+		File:         "core/internal/pos/repository.go",
+		Func:         "(*Repository).EmitEvent",
+		Kind:         "dynamic-topic:INSERT INTO events_outbox",
+		BranchSource: "pos package outbox SQL helper; all callers are scanned via EmitEvent",
+	},
+	{
 		File:         "core/internal/pos/returns.go",
 		Func:         "(*Service).commitReturnTx",
 		Kind:         "emit:order.returned",
-		BranchSource: "ret.BranchID from pos_returns.branch_id (NOT NULL) in order.returned outbox payload",
+		BranchSource: "oc.BranchID from original order (orders.branch_id, NOT NULL) in order.returned outbox payload today; changes in FW1-08b (FROM-PRINCIPAL 137: return posts to pos_returns.branch_id where rung)",
 	},
 	{
 		File:         "core/internal/pos/returns.go",
 		Func:         "(*Service).commitReturnTx",
 		Kind:         "emit:pos.return.written_off",
-		BranchSource: "ret.BranchID from pos_returns.branch_id (NOT NULL) in pos.return.written_off outbox payload",
+		BranchSource: "oc.BranchID from original order (orders.branch_id, NOT NULL) in pos.return.written_off outbox payload today; changes in FW1-08b (FROM-PRINCIPAL 137: return posts to pos_returns.branch_id where rung)",
 	},
 	{
 		File:         "core/internal/pos/returns.go",
 		Func:         "(*Service).commitReturnTx",
 		Kind:         "emit:pos.return.committed",
-		BranchSource: "ret.BranchID from pos_returns.branch_id (NOT NULL) in pos.return.committed outbox payload",
+		BranchSource: "oc.BranchID from original order (orders.branch_id, NOT NULL) in pos.return.committed outbox payload today; changes in FW1-08b (FROM-PRINCIPAL 137: return posts to pos_returns.branch_id where rung)",
 	},
 	{
 		File:         "core/internal/pos/service.go",
 		Func:         "(*Service).saleInTx",
 		Kind:         "emit:order.fulfilled",
-		BranchSource: "ord.BranchID from orders.branch_id (NOT NULL) in order.fulfilled outbox payload",
+		BranchSource: "in.BranchID (sale input branch, also written to orders.branch_id in the same tx) in order.fulfilled outbox payload",
 	},
 	{
 		File:         "core/internal/pos/service.go",
 		Func:         "(*Service).saleInTx",
 		Kind:         "emit:tax.relief.assessed",
-		BranchSource: "in.BranchID on sale/order (buildTaxRelief in gl/posting.go:248-297 sets no BranchID today; RED, owned by FW1-08b)",
+		BranchSource: "no branch in payload today (pos/service.go:1446 emits order_id, reason_code, automated only; buildTaxRelief in gl/posting.go:248-297 sets no BranchID; RED, owned by FW1-08b)",
 	},
 	{
 		File:         "core/internal/purchasing/service.go",
@@ -261,7 +304,7 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		File:         "core/internal/till/repository.go",
 		Func:         "(*Repository).SetCompleted",
 		Kind:         "emit:till.session.completed",
-		BranchSource: "s.BranchID from till_sessions.branch_id (NOT NULL) in till.session.completed outbox payload",
+		BranchSource: "branchID parameter (passed as sess.BranchID from till_sessions.branch_id by till/service.go:731) in till.session.completed outbox payload",
 	},
 	{
 		File:         "core/internal/till/repository.go",
