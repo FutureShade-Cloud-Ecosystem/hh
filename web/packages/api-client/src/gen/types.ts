@@ -2591,6 +2591,7 @@ export type GlPeriod = {
 };
 export type GlPeriodPage = {
   items: GlPeriod[];
+  next_openable_year?: number;
   next_cursor?: string | null;
   limit?: number;
 };
@@ -2614,6 +2615,7 @@ export type GlReasonBody = {
   reason?: string;
 };
 export type GlPeriodReopenBody = {
+  year?: number;
   reason: string;
 };
 export type GlCloseYearBody = {

@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -24,15 +25,27 @@ import (
 // here instead, before any write.
 var ErrStaffEmailTaken = errors.New("identity: the email already belongs to another platform user")
 
+// ErrStaffEmailBound names the refusal when the platform user already
+// holds a live staff row whose email is another address: the address a
+// live person is known by is a provisioning fact a re-provision may not
+// rewrite, because the person's grants and audit history belong to it and
+// two entries sharing one platform id would flip the row between the two
+// addresses at every run. The address changes through a revoke and a
+// re-provision, which leaves its audit trail; a revoked row is not live
+// and converges as usual.
+var ErrStaffEmailBound = errors.New("identity: the platform user already holds a live staff row with another email")
+
 // EnsureStaffUser inserts, or reactivates, one ACTIVE users row for a
-// platform user, idempotent on platform_user_id: a live row converges its
-// email, display name and org and a tombstoned or non-ACTIVE row is
-// restored to ACTIVE, so a re-run after a revoke simply brings the person
-// back. The email is owned by exactly one platform subject: a row already
-// holding it under another subject (or under none) refuses with
-// ErrStaffEmailTaken. written reports whether this call changed the row.
-// The row carries no password hash: the core has no password route and the
-// sign in is the platform's.
+// platform user, idempotent on platform_user_id: a live row holding the
+// same address converges its display name and org, and a tombstoned or
+// non-ACTIVE row is restored to ACTIVE with the address the call names,
+// so a re-run after a revoke simply brings the person back, a new address
+// included. A live row holding another address refuses with
+// ErrStaffEmailBound instead of being rewritten. The email is owned by
+// exactly one platform subject: a row already holding it under another
+// subject (or under none) refuses with ErrStaffEmailTaken. written
+// reports whether this call changed the row. The row carries no password
+// hash: the core has no password route and the sign in is the platform's.
 func EnsureStaffUser(ctx context.Context, db DBTX, orgID, platformUserID, email, displayName string) (userID string, written bool, err error) {
 	if db == nil {
 		return "", false, errors.New("identity: a staff user requires a database handle")
@@ -53,14 +66,20 @@ func EnsureStaffUser(ctx context.Context, db DBTX, orgID, platformUserID, email,
 		return "", false, fmt.Errorf("identity: staff user email ownership read failed: %w", err)
 	}
 
-	var converged bool
+	var held struct {
+		id        string
+		email     string
+		live      bool
+		converged bool
+	}
 	err = db.QueryRow(ctx, `
-		SELECT id::text, deleted_at IS NULL AND status = 'ACTIVE'
+		SELECT id::text, email::text, deleted_at IS NULL AND status = 'ACTIVE',
+		  deleted_at IS NULL AND status = 'ACTIVE'
 		  AND email IS NOT DISTINCT FROM $3
 		  AND display_name IS NOT DISTINCT FROM $4
 		  AND org_id::text IS NOT DISTINCT FROM $1
 		FROM users WHERE platform_user_id = $2`,
-		orgID, platformUserID, email, displayName).Scan(&userID, &converged)
+		orgID, platformUserID, email, displayName).Scan(&held.id, &held.email, &held.live, &held.converged)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		if err := db.QueryRow(ctx, `
@@ -73,21 +92,26 @@ func EnsureStaffUser(ctx context.Context, db DBTX, orgID, platformUserID, email,
 	case err != nil:
 		return "", false, fmt.Errorf("identity: staff user read failed: %w", err)
 	}
-	if converged {
-		return userID, false, nil
+	// The comparison folds case, because an address is one address however
+	// it is spelled, and users.email is citext for the same reason.
+	if held.live && !strings.EqualFold(strings.TrimSpace(held.email), strings.TrimSpace(email)) {
+		return "", false, ErrStaffEmailBound
+	}
+	if held.converged {
+		return held.id, false, nil
 	}
 	tag, err := db.Exec(ctx, `
 		UPDATE users SET email = $2, display_name = $3, org_id = $4::uuid, status = 'ACTIVE',
 			deleted_at = NULL, updated_at = now()
 		WHERE id = $1::uuid`,
-		userID, email, displayName, orgID)
+		held.id, email, displayName, orgID)
 	if err != nil {
 		return "", false, fmt.Errorf("identity: staff user reactivation failed: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
 		return "", false, errors.New("identity: staff user reactivation changed no row")
 	}
-	return userID, true, nil
+	return held.id, true, nil
 }
 
 // StaffUserByPlatformID reads the users row the platform subject holds: the
@@ -159,6 +183,43 @@ func RevokeStaffGrants(ctx context.Context, db DBTX, orgID, platformUserID strin
 		UPDATE staff_role_grant SET deleted_at = now()
 		WHERE org_id = $1 AND platform_user_id = $2 AND deleted_at IS NULL
 		RETURNING id::text`, orgID, platformUserID)
+	if err != nil {
+		return nil, false, fmt.Errorf("identity: staff grant revocation failed: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var grantID string
+		if err := rows.Scan(&grantID); err != nil {
+			return nil, false, fmt.Errorf("identity: staff grant revocation read failed: %w", err)
+		}
+		grantIDs = append(grantIDs, grantID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("identity: staff grant revocation read failed: %w", err)
+	}
+	return grantIDs, len(grantIDs) > 0, nil
+}
+
+// RevokeStaffGrantsExcept is RevokeStaffGrants with one role kept live:
+// the demote half of a provision. A provision names the one role the
+// person should hold, so the live grants of the roles it does not name go
+// in the same transaction the new grant is written in, and one entry maps
+// to exactly one live role. The kept role is excluded by id, so the grant
+// the same run just ensured is never its own casualty. As with the revoke,
+// the partial unique index keeps the tombstones out of the live set and
+// the history keeps the rows. The ids come back in the order the database
+// hands them out; revoked is false when no other live grant matched.
+func RevokeStaffGrantsExcept(ctx context.Context, db DBTX, orgID, platformUserID, keepRoleID string) (grantIDs []string, revoked bool, err error) {
+	if db == nil {
+		return nil, false, errors.New("identity: a staff grant revocation requires a database handle")
+	}
+	if orgID == "" || platformUserID == "" || keepRoleID == "" {
+		return nil, false, errors.New("identity: a staff grant revocation requires the org, the platform user and the role to keep")
+	}
+	rows, err := db.Query(ctx, `
+		UPDATE staff_role_grant SET deleted_at = now()
+		WHERE org_id = $1 AND platform_user_id = $2 AND deleted_at IS NULL AND role_id <> $3
+		RETURNING id::text`, orgID, platformUserID, keepRoleID)
 	if err != nil {
 		return nil, false, fmt.Errorf("identity: staff grant revocation failed: %w", err)
 	}

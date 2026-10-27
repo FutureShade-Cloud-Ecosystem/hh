@@ -11,6 +11,7 @@ package identity
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -175,6 +176,45 @@ func TestIntegration_StaffUser(t *testing.T) {
 		roles := liveStaffGrantRoles(t, ctx, pool, orgID, platformID)
 		if len(roles) != 1 || roles[0] != "financial_controller" {
 			t.Fatalf("after the re-provision the person holds %v, want financial_controller only", roles)
+		}
+	})
+
+	t.Run("the live row's address is bound", func(t *testing.T) {
+		platformID := "staffuser-bound-" + uuid.NewString()[:8]
+		email := platformID + "@example.invalid"
+		if _, _, err := EnsureStaffUser(ctx, pool, orgID, platformID, email, "Bound"); err != nil {
+			t.Fatal(err)
+		}
+		// A live row keeps the address the box knows the person by: a
+		// second entry with the same platform id and another address
+		// refuses instead of rewriting the row under the caller's address.
+		other := "staffuser-bound-" + uuid.NewString()[:8] + "@example.invalid"
+		if _, _, err := EnsureStaffUser(ctx, pool, orgID, platformID, other, "Bound"); !errors.Is(err, ErrStaffEmailBound) {
+			t.Fatalf("a provision naming a live row's platform id with another email must refuse, got %v", err)
+		}
+		// The same address in another case is the same address.
+		if _, _, err := EnsureStaffUser(ctx, pool, orgID, platformID, strings.ToUpper(email), "Bound"); err != nil {
+			t.Fatalf("the same address in another case must converge: %v", err)
+		}
+		// After a revoke the row is not live, so a re-provision converges
+		// the new address: that is the sanctioned email change, and it
+		// leaves the revoke's audit trail behind it.
+		if _, _, err := DeactivateStaffUser(ctx, pool, platformID); err != nil {
+			t.Fatal(err)
+		}
+		id, written, err := EnsureStaffUser(ctx, pool, orgID, platformID, other, "Bound Again")
+		if err != nil {
+			t.Fatalf("the re-provision with the new address after the revoke: %v", err)
+		}
+		if !written {
+			t.Fatal("the re-provision with the new address must report the row it wrote")
+		}
+		var rowEmail string
+		if err := pool.QueryRow(ctx, `SELECT email::text FROM users WHERE id = $1::uuid`, id).Scan(&rowEmail); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.EqualFold(rowEmail, other) {
+			t.Fatalf("the re-provisioned row reads %q, want the new address", rowEmail)
 		}
 	})
 }

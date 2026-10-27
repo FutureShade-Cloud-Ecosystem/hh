@@ -409,8 +409,13 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 	anchor := finPerson{platformID: "fin-fix-anchor", email: "fin-fix-anchor@example.invalid", name: "Fix Anchor", member: true}
 	general := finPerson{platformID: "fin-fix-general", email: "fin-fix-general@example.invalid", name: "Fix General", member: true}
 	nameless := finPerson{platformID: "fin-fix-nameless", email: "fin-fix-nameless@example.invalid", name: "Fix Nameless", member: true}
-	addresses := []string{victim.email, other.email, multi.email, gone.email, anchor.email, general.email, nameless.email}
-	console := newFinConsole(t, victim, other)
+	demotee := finPerson{platformID: "fin-fix-demotee", email: "fin-fix-demotee@example.invalid", name: "Fix Demotee", member: true}
+	steady := finPerson{platformID: "fin-fix-steady", email: "fin-fix-steady@example.invalid", name: "Fix Steady", member: true}
+	held := finPerson{platformID: "fin-fix-held", email: "fin-fix-held@example.invalid", name: "Fix Held", member: true}
+	held2 := finPerson{platformID: "fin-fix-held2", email: "fin-fix-held2@example.invalid", name: "Fix Held Again", member: true}
+	twicer := finPerson{platformID: "fin-fix-twicer", email: "fin-fix-twicer@example.invalid", name: "Fix Twicer", member: true}
+	addresses := []string{victim.email, other.email, multi.email, gone.email, anchor.email, general.email, nameless.email, demotee.email, steady.email, held.email, held2.email, twicer.email}
+	console := newFinConsole(t, victim, other, demotee)
 	env := func(over map[string]string) func(string) string { return finEnvFor(dsn, addresses, over) }
 
 	// The production exchange wiring, FB Console faked over HTTP only: the
@@ -448,10 +453,12 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildExchange: %v", err)
 	}
-	signIn := func(p finPerson) int {
+	signIn := func(p finPerson) (int, map[string]any) {
 		t.Helper()
 		rec := finSignIn(exch, p, console.jwt(p))
-		return rec.Code
+		var body map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		return rec.Code, body
 	}
 
 	// The org anchor of the box, as the seed would name it, and the id the
@@ -491,7 +498,7 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 		if err == nil {
 			t.Fatalf("a revoke naming another person's email must refuse, got nil (out %q)", out.String())
 		}
-		if code := signIn(victim); code != http.StatusOK {
+		if code, _ := signIn(victim); code != http.StatusOK {
 			t.Fatalf("the victim after the refused revoke: status %d, want 200 (log %s)", code, logBuf.String())
 		}
 		if n := finLiveGrants(t, ctx, pool, orgID, victim.platformID); n != 1 {
@@ -533,10 +540,14 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 
 	t.Run("a revoke takes every live grant", func(t *testing.T) {
 		out := &bytes.Buffer{}
-		for _, role := range []string{"financial_controller", "payables_receivables"} {
-			if err := financeUserRole(provisionArgs(multi, role), out, out, env(nil)); err != nil {
-				t.Fatalf("provisioning %s: %v", role, err)
-			}
+		if err := financeUserRole(provisionArgs(multi, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("provisioning: %v", err)
+		}
+		// A live grant from another hand (the carried catalog, say) is the
+		// revoke's to take too: the provision would have demoted it, so
+		// this leg writes it through identity's seam directly.
+		if _, err := identity.EnsureStaffGrant(ctx, pool, orgID, multi.platformID, "payables_receivables", nil); err != nil {
+			t.Fatalf("the second grant: %v", err)
 		}
 		if n := finLiveGrants(t, ctx, pool, orgID, multi.platformID); n != 2 {
 			t.Fatalf("the person holds %d live grants, want 2", n)
@@ -601,6 +612,171 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 		}
 		if name != "Anchor As Named" {
 			t.Fatalf("the anchor's name = %q, want the name it already had", name)
+		}
+	})
+
+	t.Run("a provision with another role demotes the old grant", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		if err := financeUserRole(provisionArgs(demotee, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("provisioning the controller: %v (out %q)", err, out.String())
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, demotee.platformID); n != 1 {
+			t.Fatalf("after the first provision the person holds %d live grants, want 1", n)
+		}
+		// The edited entry names payables_receivables: the controller grant
+		// must go in the same transaction, or the person keeps the tier 1
+		// role the entry no longer names and an edit can never demote.
+		out.Reset()
+		if err := financeUserRole(provisionArgs(demotee, "payables_receivables"), out, out, env(nil)); err != nil {
+			t.Fatalf("provisioning the payables role: %v (out %q)", err, out.String())
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, demotee.platformID); n != 1 {
+			t.Fatalf("after the edited provision the person holds %d live grants, want 1, the new one", n)
+		}
+		roles := finLiveGrantRoles(t, ctx, pool, orgID, demotee.platformID)
+		if len(roles) != 1 || roles[0] != "payables_receivables" {
+			t.Fatalf("after the edited provision the person holds %v, want payables_receivables only", roles)
+		}
+		// The exchange resolves the role the entry names now.
+		code, body := signIn(demotee)
+		if code != http.StatusOK {
+			t.Fatalf("the demoted person's sign in: status %d, want 200 (log %s)", code, logBuf.String())
+		}
+		user, _ := body["user"].(map[string]any)
+		if user["role_code"] != "payables_receivables" {
+			t.Fatalf("the demoted person's role = %v, want payables_receivables", user["role_code"])
+		}
+	})
+
+	t.Run("a second identical provision writes no audit row", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		if err := financeUserRole(provisionArgs(steady, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("the first provision: %v (out %q)", err, out.String())
+		}
+		var userID string
+		if err := pool.QueryRow(ctx,
+			`SELECT id::text FROM users WHERE platform_user_id = $1`, steady.platformID).Scan(&userID); err != nil {
+			t.Fatal(err)
+		}
+		provisionRows := func() int {
+			t.Helper()
+			var n int
+			if err := pool.QueryRow(ctx,
+				`SELECT count(*) FROM audit_log WHERE action = 'STAFF_PROVISION' AND entity_id = $1`, userID).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			return n
+		}
+		if n := provisionRows(); n != 1 {
+			t.Fatalf("the first provision wrote %d audit rows, want 1", n)
+		}
+		first := out.String()
+		// The boot time reconciler runs the same entry at every boot: a run
+		// where the anchor, the user and the grant all stood still records
+		// nothing, or every boot buries the audit log in noise.
+		out.Reset()
+		if err := financeUserRole(provisionArgs(steady, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("the second provision: %v (out %q)", err, out.String())
+		}
+		if out.String() != first {
+			t.Fatalf("the second provision printed %q, want the first run's %q", out.String(), first)
+		}
+		if n := provisionRows(); n != 1 {
+			t.Fatalf("the second identical provision wrote another audit row: %d rows, want 1", n)
+		}
+	})
+
+	t.Run("a provision naming a held platform id with another email refuses", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		if err := financeUserRole(provisionArgs(held, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("the first provision: %v (out %q)", err, out.String())
+		}
+		// The same platform id with another address would rewrite the row
+		// the id holds, and a second entry sharing the id would flip the
+		// row between the two addresses at every boot. It is refused in
+		// words, as the revoke refuses; a real email change is a revoke and
+		// a re-provision, which leaves its audit trail.
+		out.Reset()
+		err := financeUserRole([]string{"--email", held2.email, "--platform-user-id", held.platformID, "--display-name", held2.name, "--role", "payables_receivables"}, out, out, env(nil))
+		if err == nil {
+			t.Fatalf("a provision naming a held platform id with another email must refuse, got nil (out %q)", out.String())
+		}
+		if !strings.Contains(err.Error(), "another email") {
+			t.Fatalf("the refusal must name the held email, got %v", err)
+		}
+		var email, status string
+		if err := pool.QueryRow(ctx,
+			`SELECT email::text, status FROM users WHERE platform_user_id = $1`, held.platformID).Scan(&email, &status); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.EqualFold(email, held.email) || status != "ACTIVE" {
+			t.Fatalf("the held row now reads %q with status %q, want the first address and ACTIVE", email, status)
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, held.platformID); n != 1 {
+			t.Fatalf("the person holds %d live grants after the refused provision, want 1", n)
+		}
+		// The same address in another case is the same address, and converges.
+		out.Reset()
+		same := []string{"--email", strings.ToUpper(held.email), "--platform-user-id", held.platformID, "--display-name", held.name, "--role", "financial_controller"}
+		if err := financeUserRole(same, out, out, env(nil)); err != nil {
+			t.Fatalf("the same address in another case must converge: %v (out %q)", err, out.String())
+		}
+	})
+
+	t.Run("a second revoke is a quiet success", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		if err := financeUserRole(provisionArgs(twicer, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("the provision: %v (out %q)", err, out.String())
+		}
+		revoke := []string{"--revoke", "--email", twicer.email, "--platform-user-id", twicer.platformID}
+		out.Reset()
+		if err := financeUserRole(revoke, out, out, env(nil)); err != nil {
+			t.Fatalf("the first revoke: %v (out %q)", err, out.String())
+		}
+		revokeRows := func() int {
+			t.Helper()
+			var userID string
+			if err := pool.QueryRow(ctx,
+				`SELECT id::text FROM users WHERE platform_user_id = $1`, twicer.platformID).Scan(&userID); err != nil {
+				t.Fatal(err)
+			}
+			var n int
+			if err := pool.QueryRow(ctx,
+				`SELECT count(*) FROM audit_log WHERE action = 'STAFF_REVOKE' AND entity_id = $1`, userID).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			return n
+		}
+		if n := revokeRows(); n != 1 {
+			t.Fatalf("the first revoke wrote %d audit rows, want 1", n)
+		}
+		// The boot time reconciler runs the revoke at every boot for an
+		// entry that left the list: the second revoke of a revoked person
+		// exits 0, writes nothing, records nothing and prints nothing, or
+		// the second boot would refuse the box. The stderr stream keeps
+		// the command's database target banner, so the print check reads
+		// stdout alone.
+		out.Reset()
+		errOut := &bytes.Buffer{}
+		if err := financeUserRole(revoke, out, errOut, env(nil)); err != nil {
+			t.Fatalf("the second revoke must be a quiet success, got %v (out %q)", err, out.String())
+		}
+		if out.String() != "" {
+			t.Fatalf("the second revoke printed %q, want nothing", out.String())
+		}
+		if n := revokeRows(); n != 1 {
+			t.Fatalf("the second revoke wrote another audit row: %d rows, want 1", n)
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, twicer.platformID); n != 0 {
+			t.Fatalf("the person holds %d live grants after the second revoke, want 0", n)
+		}
+		var status string
+		if err := pool.QueryRow(ctx,
+			`SELECT status FROM users WHERE platform_user_id = $1`, twicer.platformID).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status != "DEACTIVATED" {
+			t.Fatalf("the row's status after the second revoke is %q, want DEACTIVATED", status)
 		}
 	})
 }
