@@ -1091,6 +1091,137 @@ func TestIntegration_FW1_04_CutoverStartingPointAndConfirmedOutstanding(t *testi
 	}
 }
 
+// Round 3 (FROM-PRINCIPAL 169): the Controller's door to the cut over. The route legs walk the real mux:
+// the Controller's POST answers 200 with the recorded point on the account read and one BANKREC_CUTOVER audit
+// row; a General Manager is refused 403 (the service keeps its Controller check behind the admin gate); and
+// once a later month has signed off, recording is refused 409.
+func TestIntegration_FW1_04_CutoverRouteLegs(t *testing.T) {
+	pool := intPool(t)
+	cleanTables(t, pool)
+	acct := rbcAccountID(t, pool)
+	ctx := context.Background()
+
+	const year = 2022
+	apr10 := time.Date(year, 4, 10, 0, 0, 0, 0, time.UTC)
+
+	resetCutover := func() {
+		_, _ = pool.Exec(context.Background(), `
+			UPDATE bank_accounts
+			   SET cutover_date = NULL,
+			       cutover_statement_balance_cents = NULL,
+			       cutover_outstanding_journal_ids = '{}'::uuid[],
+			       cutover_recorded_by = NULL,
+			       cutover_recorded_at = NULL
+			 WHERE id = $1::uuid`, acct)
+	}
+	fw104CleanYear(t, pool, acct, year)
+	fw104EnsurePeriods(t, pool, year, apr10)
+	resetCutover()
+	t.Cleanup(func() {
+		resetCutover()
+		fw104CleanYear(t, pool, acct, year)
+	})
+
+	var userID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("select user: %v", err)
+	}
+
+	auditSvc := audit.NewService(audit.NewRepository(pool), logging.New("test"))
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	svc := NewService(NewRepository(pool)).
+		WithJournals(glSvc).
+		WithJournalPoster(fw104GLPoster{svc: glSvc, clock: func() time.Time { return apr10 }}).
+		WithGLBalances(glSvc).
+		WithAudit(auditSvc)
+	h := NewHandler(svc, slog.Default()).WithUserLinker(func(context.Context, string) (string, bool) { return userID, true })
+	sg := testkit.NewStaffGuards(t)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, sg.Guards)
+	bearer := sg.Bearer(t)
+
+	post := func(auth identityPkg.StaffAuthority, body string) int {
+		t.Helper()
+		sg.SetAuthority(auth)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/bankrec/accounts/"+acct+"/cutover", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set(authz.HeaderXOrg, testkit.OrgNorthSlug)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	gm := identityPkg.StaffAuthority{RoleID: "general_manager", Tier: identityPkg.TierLeadership, Scope: identityPkg.ScopeGlobal}
+	controller := identityPkg.StaffAuthority{RoleID: "financial_controller", Tier: identityPkg.TierLeadership, Scope: identityPkg.ScopeGlobal}
+	payRec := identityPkg.StaffAuthority{RoleID: "payables_receivables", Tier: identityPkg.TierManager, Scope: identityPkg.ScopeGlobal}
+
+	body := `{"cutover_date":"2022-03-31","opening_statement_balance_cents":500000}`
+	// The General Manager and the Money Desk work role are refused at the door.
+	if code := post(gm, body); code != http.StatusForbidden {
+		t.Errorf("general manager POST cutover status = %d, want 403 Forbidden", code)
+	}
+	if code := post(payRec, body); code != http.StatusForbidden {
+		t.Errorf("payables_receivables POST cutover status = %d, want 403 Forbidden", code)
+	}
+
+	// The Controller's POST answers 200 and the account read carries the recorded point.
+	var preAudit int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'BANKREC_CUTOVER' AND entity_id = $1`, acct).Scan(&preAudit); err != nil {
+		t.Fatalf("count pre audit: %v", err)
+	}
+	sg.SetAuthority(controller)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/bankrec/accounts/"+acct+"/cutover", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	req.Header.Set(authz.HeaderXOrg, testkit.OrgNorthSlug)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("financial controller POST cutover status = %d, want 200 OK (body %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"cutover_date":"2022-03-31"`) || !strings.Contains(rec.Body.String(), `"cutover_statement_balance_cents":500000`) {
+		t.Errorf("cutover answer does not carry the recorded point: %s", rec.Body.String())
+	}
+	var postAudit int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'BANKREC_CUTOVER' AND entity_id = $1`, acct).Scan(&postAudit); err != nil {
+		t.Fatalf("count post audit: %v", err)
+	}
+	if postAudit != preAudit+1 {
+		t.Errorf("BANKREC_CUTOVER audit rows = %d, want %d", postAudit, preAudit+1)
+	}
+
+	// Once a later month (2022-04) has signed off, recording through the door is refused 409.
+	depJID, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-r3-route-apr-dep",
+		Source:         "ADJUSTMENT",
+		Memo:           "April customer deposit",
+		DocumentDate:   apr10.Add(12 * time.Hour),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 10000, Memo: "bank"},
+			{AccountCode: "4950", CreditCents: 10000, Memo: "revenue"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post april deposit: %v", err)
+	}
+	aprLine := fw104InsertLineAt(t, pool, acct, apr10, "APRIL CUSTOMER DEPOSIT", "APR-ROUTE-1", 10000)
+	if _, err := svc.ManualMatch(ctx, MatchInput{
+		Mode: "manual", StatementLineID: aprLine, TargetType: TargetJournal, TargetRefID: depJID, AmountCents: 10000, CanAccessBranch: AllBranches,
+	}, userID); err != nil {
+		t.Fatalf("match april deposit: %v", err)
+	}
+	recApr, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: acct, Year: year, Month: 4, StatementBalanceCents: 510000})
+	if err != nil {
+		t.Fatalf("open april: %v", err)
+	}
+	if _, err := svc.CompleteReconciliation(ctx, recApr.ID, userID); err != nil {
+		t.Fatalf("sign off april: %v", err)
+	}
+	if code := post(controller, `{"cutover_date":"2022-03-31","opening_statement_balance_cents":400000}`); code != http.StatusConflict {
+		t.Errorf("controller POST cutover after a later month signed off status = %d, want 409 Conflict", code)
+	}
+}
+
 // Round 2 (item 2.3): importing a native RBC export row with a USD$ amount or an empty amount column is refused in
 // words and records a FAILED import audit with zero lines inserted.
 func TestIntegration_FW1_04_RBCImportRefusesUSDAndEmptyAmount(t *testing.T) {
