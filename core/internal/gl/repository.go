@@ -1550,8 +1550,8 @@ func (r *Repository) SetJEThreshold(ctx context.Context, branchID string, cents 
 		return nil
 	}
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO gl_policy (branch_id, je_approval_threshold_cents)
-		 VALUES ($1::uuid, $2)
+		`INSERT INTO gl_policy (branch_id, je_approval_threshold_cents, head_office_branch_id)
+		 VALUES ($1::uuid, $2, (SELECT head_office_branch_id FROM gl_policy WHERE branch_id IS NULL))
 		 ON CONFLICT (branch_id) DO UPDATE SET je_approval_threshold_cents = EXCLUDED.je_approval_threshold_cents,
 		                                       updated_at = now()`, branchID, cents)
 	if err != nil {
