@@ -47,6 +47,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildPaymentReversed(ctx, e.Payload)
 	case "payment.reapplied":
 		draft, post, err = s.buildPaymentReapplied(ctx, e.Payload)
+	case "payment.paid_out":
+		draft, post, err = s.buildPaymentPaidOut(ctx, e.Payload)
 	case "order.fulfilled":
 		draft, post, err = s.buildOrderFulfilled(ctx, e.Payload)
 	case "deposit.released":
@@ -556,6 +558,65 @@ func (s *Service) buildPaymentReapplied(ctx context.Context, payload []byte) (jo
 	}, true, nil
 }
 
+type paymentPaidOutPayload struct {
+	PayoutID    string `json:"payout_id"`
+	PaymentID   string `json:"payment_id"`
+	AmountCents int64  `json:"amount_cents"`
+	Kind        string `json:"kind"`
+	CreditRole  string `json:"credit_role"`
+	Method      string `json:"method"`
+	BranchID    string `json:"branch_id"`
+}
+
+// paidOutCreditRoles is the closed set of roles a pay out may credit against 2310: the drawer (1020), the bank (1000),
+// the card clearing account (1010) and the shortage expense (6350). A payload naming any other is refused, never posted.
+var paidOutCreditRoles = map[string]bool{"drawer": true, "bank": true, "card_clearing": true, "write_off": true}
+
+// buildPaymentPaidOut books money a reversal holds leaving 2310 by the act that moves it (SF-2m, SF-2n; ruling 52.3):
+// Dr 2310 refund_payable / Cr the account the act moved, named by the payload's credit role: the drawer for cash handed
+// back from the till, the bank for a cheque or transfer, the card clearing account for the processor, and the shortage
+// expense for a write off after the count. One journal per act, keyed on its payout row. The branch is the payment's.
+func (s *Service) buildPaymentPaidOut(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p paymentPaidOutPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.paid_out payload: %w", err)
+	}
+	if p.PayoutID == "" || p.PaymentID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.paid_out missing payout_id or payment_id")
+	}
+	if p.AmountCents <= 0 {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.paid_out has no amount")
+	}
+	if !paidOutCreditRoles[p.CreditRole] {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.paid_out names no credit account (role %q)", p.CreditRole)
+	}
+	et := "payment.paid_out"
+	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	refundCode, err := pick(rules, et, "refund_payable")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	creditCode, err := pick(rules, et, p.CreditRole)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourcePayment,
+		SourceRefID:    p.PaymentID,
+		IdempotencyKey: "payment.paid_out:" + p.PayoutID,
+		Memo:           "Held payment paid out " + p.Kind,
+		BranchID:       p.BranchID,
+		OccurredAt:     s.clock(),
+		Lines: []draftLine{
+			dr(refundCode, p.AmountCents, "held money paid out ("+p.Kind+")"),
+			cr(creditCode, p.AmountCents, "money left ("+p.Kind+")"),
+		},
+	}, true, nil
+}
+
 type orderFulfilledPayload struct {
 	OrderID  string `json:"order_id"`
 	BranchID string `json:"branch_id"`
@@ -681,13 +742,29 @@ func (s *Service) buildDepositReleased(ctx context.Context, payload []byte) (jou
 	if err != nil {
 		return journalDraft{}, false, err
 	}
+	// Round 2 (S2 P1-2): the release's document is the DELIVERY, not the deposit taken months
+	// earlier, so the journal is dated by the delivery fact MarkDelivered records (or the clock when
+	// the stamp is absent or the seam unwired). Dated by the deposit's finalization it moved revenue
+	// into an already reported month with nothing showing it moved. When the delivery's month is
+	// closed the store still files the journal into the earliest open month at or after it, late
+	// posted, never refusing.
+	at := s.clock()
+	if p.OrderID != "" && s.delivery != nil {
+		deliveredAt, found, derr := s.delivery.DeliveredAt(ctx, p.OrderID)
+		if derr != nil {
+			return journalDraft{}, false, fmt.Errorf("gl: read delivery date for order %s: %w", p.OrderID, derr)
+		}
+		if found && !deliveredAt.IsZero() {
+			at = deliveredAt
+		}
+	}
 	return journalDraft{
 		Source:         SourceInvoice,
 		SourceRefID:    p.InvoiceID,
 		IdempotencyKey: "deposit.released:" + p.InvoiceID,
 		Memo:           "Deposit released " + a.InvoiceNo,
 		BranchID:       a.BranchID,
-		OccurredAt:     s.clock(),
+		OccurredAt:     at,
 		Lines: []draftLine{
 			dr(depCode, a.TotalCents, "customer deposit released"),
 			cr(revCode, a.TotalCents, "revenue"),
@@ -1127,6 +1204,12 @@ func (s *Service) externalDraft(in ExternalJournal) (journalDraft, error) {
 	for _, l := range in.Lines {
 		lines = append(lines, draftLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo})
 	}
+	at := s.clock()
+	// FW1-01: a caller-built journal takes its document's date when the caller knows one (bankrec
+	// dates a clearing journal by its statement line); the clock is only the fallback.
+	if !in.DocumentDate.IsZero() {
+		at = in.DocumentDate
+	}
 	draft := journalDraft{
 		Source:         source,
 		SourceRefID:    in.SourceRefID,
@@ -1134,7 +1217,7 @@ func (s *Service) externalDraft(in ExternalJournal) (journalDraft, error) {
 		Memo:           in.Memo,
 		BranchID:       in.BranchID,
 		Status:         StatusPosted,
-		OccurredAt:     s.clock(),
+		OccurredAt:     at,
 		Lines:          lines,
 	}
 	// Reject any leg carrying a negative debit or credit BEFORE the DB does. A negative debit leg (e.g. a
@@ -1192,6 +1275,7 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 		"payment.bounced":        {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
 		"payment.reversed":       {"ar", "refund_payable"},
 		"payment.reapplied":      {"ar", "refund_payable"},
+		"payment.paid_out":       {"refund_payable", "drawer", "bank", "card_clearing", "write_off"},
 		"till.session.completed": {"over_short", "undeposited"},
 		"order.fulfilled":        {"cogs", "inventory"},
 		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},

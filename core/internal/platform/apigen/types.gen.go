@@ -1044,7 +1044,27 @@ type PaymentsHeld struct {
 	AmountCents  int64  `json:"amount_cents"`
 	Reversed     bool   `json:"reversed"`
 	AppliedCents int64  `json:"applied_cents"`
+	PaidOutCents int64  `json:"paid_out_cents"`
 	HeldCents    int64  `json:"held_cents"`
+}
+
+type PaymentsPayoutRequest struct {
+	Kind           string  `json:"kind"`
+	AmountCents    int64   `json:"amount_cents"`
+	Reason         string  `json:"reason"`
+	Reference      *string `json:"reference,omitempty"`
+	TillSessionId  *string `json:"till_session_id,omitempty"`
+	IdempotencyKey string  `json:"idempotency_key"`
+}
+
+type PaymentsPayout struct {
+	PaymentId       string `json:"payment_id"`
+	PayoutId        string `json:"payout_id"`
+	Kind            string `json:"kind"`
+	AmountCents     int64  `json:"amount_cents"`
+	HeldBeforeCents int64  `json:"held_before_cents"`
+	HeldAfterCents  int64  `json:"held_after_cents"`
+	Replayed        bool   `json:"replayed"`
 }
 
 type PaymentsReapplyRequest struct {
@@ -2870,6 +2890,7 @@ type GlJournal struct {
 	IdempotencyKey    *string         `json:"idempotency_key,omitempty"`
 	CreatedBy         *string         `json:"created_by,omitempty"`
 	CreatedAt         time.Time       `json:"created_at"`
+	LatePosted        *bool           `json:"late_posted,omitempty"`
 	Lines             []GlJournalLine `json:"lines"`
 }
 
@@ -3018,6 +3039,10 @@ type GlPeriodReopenBody struct {
 type GlCloseYearBody struct {
 	Year   int32  `json:"year"`
 	Reason string `json:"reason"`
+}
+
+type GlYearOpenResult struct {
+	FiscalYear int32 `json:"fiscal_year"`
 }
 
 type GlYearCloseResult struct {
@@ -3316,7 +3341,8 @@ type BankRecReconInput struct {
 	BankAccountId         string `json:"bank_account_id"`
 	Year                  int32  `json:"year"`
 	Month                 int32  `json:"month"`
-	StatementBalanceCents int64  `json:"statement_balance_cents"`
+	StatementBalanceCents *int64 `json:"statement_balance_cents,omitempty"`
+	Refresh               *bool  `json:"refresh,omitempty"`
 }
 
 type BankRecReconciliationList []BankRecReconciliation

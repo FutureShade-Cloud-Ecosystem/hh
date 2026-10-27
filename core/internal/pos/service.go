@@ -232,6 +232,10 @@ type posStore interface {
 	// rolled back transaction left behind, on the pool and after that transaction ended (D4).
 	RecordUnbookedCardRefunds(ctx context.Context, facts []cardRefundFact, reason string) error
 	MarkCardRefundsBooked(ctx context.Context, refundKeys []string) error
+	// MarkCardRefundsBookedTx closes the same records on the booking transaction itself (UX-102), so a
+	// booked return and its attempt are never both counted by the card cap; the pool call after commit
+	// stays as an idempotent no-op (it only touches IN_FLIGHT or UNBOOKED rows).
+	MarkCardRefundsBookedTx(ctx context.Context, tx pgx.Tx, refundKeys []string) error
 	// StageCardRefundAttemptTx, RecordCardRefundDispatched, FailCardRefundAttempt and
 	// HoldCardRefundAttemptInFlight are the two-transaction card refund's attempt ledger (HH-690):
 	// short tx 1 stages the attempt IN_FLIGHT under the per-sale lock (answering an earlier

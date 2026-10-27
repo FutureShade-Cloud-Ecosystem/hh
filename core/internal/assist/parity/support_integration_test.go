@@ -70,6 +70,46 @@ func plantSecondBranch(t *testing.T, e *testsupport.Env) {
 	})
 }
 
+// plantThirdBranchWithLines makes sure a line sits at a branch of the test's own, so a claim naming
+// two branches can prove it reads none outside them (UX-95d): in a clean world no line sits outside
+// the two, and a both branches leg with nothing to exclude cannot fail. The branch, the order and
+// its lines are removed when the test ends.
+func plantThirdBranchWithLines(t *testing.T, e *testsupport.Env) {
+	t.Helper()
+	ctx := testsupport.Ctx(t)
+	var branch string
+	if err := e.Admin.QueryRow(ctx, `WITH n AS (SELECT gen_random_uuid() AS id)
+		INSERT INTO locations (id, branch_id, loc_type, code, name)
+		SELECT id, id, 'BRANCH', 'UX95D' || $1, 'Third branch leg' FROM n
+		RETURNING id::text`, randomHex(t, 3)).Scan(&branch); err != nil {
+		t.Fatalf("plant the third branch: %v", err)
+	}
+	tag := randomHex(t, 3)
+	var order string
+	if err := e.Admin.QueryRow(ctx, `INSERT INTO orders (order_no, customer_id, branch_id, status, total_cents)
+		SELECT 'SO-UX95D-' || $1, (SELECT customer_id FROM orders LIMIT 1), $2::uuid, 'CONFIRMED', 12345
+		RETURNING id::text`, tag, branch).Scan(&order); err != nil {
+		t.Fatalf("plant the third branch's order: %v", err)
+	}
+	for ln := 1; ln <= 2; ln++ {
+		if _, err := e.Admin.Exec(ctx, `INSERT INTO order_lines (order_id, line_no, description, qty_entered, uom_entered, qty_base, unit_price_cents, price_uom, line_total_cents)
+			SELECT $1::uuid, $2, 'third branch line', 2, uom_entered, 2, 100, price_uom, 200 FROM order_lines LIMIT 1`, order, ln); err != nil {
+			t.Fatalf("plant the third branch's line: %v", err)
+		}
+	}
+	dsn := e.AdminURL
+	t.Cleanup(func() {
+		c, err := pgx.Connect(context.Background(), dsn)
+		if err != nil {
+			return
+		}
+		defer c.Close(context.Background())
+		_, _ = c.Exec(context.Background(), `DELETE FROM order_lines WHERE order_id = $1::uuid`, order)
+		_, _ = c.Exec(context.Background(), `DELETE FROM orders WHERE id = $1::uuid`, order)
+		_, _ = c.Exec(context.Background(), `DELETE FROM locations WHERE id = $1::uuid`, branch)
+	})
+}
+
 // Branches returns the distinct branches that hold orders with lines, in id order. An order with no line (a stray
 // one another package or a test left behind) does not make a branch a branch with orders to compare.
 func branchesWithOrders(t *testing.T, e *testsupport.Env) []string {

@@ -16,6 +16,8 @@ drops:
     reason: "Not a route: a comment line in order/activity.go:27 quoting an API framing the surface exists to hide. The literal grep cannot tell comments from registrations."
 
 additions:
+  - route: "POST /api/v1/gl/periods/open-year"
+    reason: "FW1-01: the Controller's early open of the next fiscal year, audit stamped with a reason; the ERP seeded years by hand and had no route that created one."
   - route: "GET /api/v1/gl/posting-queue"
     reason: "FW1-02: the Financial Controller's read of GL events waiting or dead lettered (topic, document, last error, attempts); the ERP posted journals inline and had no outbox to watch."
   - route: "GET /api/v1/gl/posting-queue/count"
@@ -262,3 +264,5 @@ additions:
     reason: "SF-2l: a manager applies the money a reversed payment holds in 2310 to open invoices of the payment's own customer (Dr 2310 / Cr AR through the settle's slice), capped at the held figure, idempotent by key; the ERP reversal posted no liability and so had nothing to re-apply; no ERP source route."
   - route: "GET /api/v1/ar/payments/{id}/held"
     reason: "SF-2l: what a reversed payment still holds in 2310 (amount less what was re-applied), the figure the desk's re-application form shows; the ERP reversal held nothing and had no such read; no ERP source route."
+  - route: "POST /api/v1/ar/payments/{id}/payout"
+    reason: "SF-2m and SF-2n: a manager takes the money a reversed payment holds out of 2310 by the act that moves it (cash from the drawer, a bank cheque or transfer, or a write off after the count), capped at the held figure, idempotent by key; the ERP reversal held nothing; no ERP source route."

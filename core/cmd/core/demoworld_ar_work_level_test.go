@@ -399,6 +399,7 @@ func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
 	// 4. The reverse stays at manage.
 	forbidden("the persona on payment reverse", payRec.call("POST", "/api/v1/ar/payments/"+paymentID+"/reverse", map[string]any{"reason": "x"}))
 	// SF-2l: applying the money a reversal holds is a manager act too.
+	forbidden("the persona on payment payout", payRec.call("POST", "/api/v1/ar/payments/"+paymentID+"/payout", map[string]any{"kind": "BANK", "amount_cents": 1, "reason": "x", "reference": "r", "idempotency_key": "k"}))
 	forbidden("the persona on payment reapply", payRec.call("POST", "/api/v1/ar/payments/"+paymentID+"/reapply", map[string]any{"reason": "x", "idempotency_key": "k", "allocations": []any{}}))
 
 	// 5. Ruling 81, end to end: the counter's standing is the account's whole position.

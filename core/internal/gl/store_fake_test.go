@@ -21,6 +21,7 @@ func defaultRules() map[string]map[string]string {
 		"payment.bounced":        {"ar": "1100", "bank": "1000", "undeposited": "1020", "card_clearing": "1010", "fee_income": "4200", "hst": "2200"},
 		"payment.reversed":       {"ar": "1100", "refund_payable": "2310"},
 		"payment.reapplied":      {"ar": "1100", "refund_payable": "2310"},
+		"payment.paid_out":       {"refund_payable": "2310", "drawer": "1020", "bank": "1000", "card_clearing": "1010", "write_off": "6350"},
 		"till.session.completed": {"over_short": "6350", "undeposited": "1020"},
 		"order.fulfilled":        {"cogs": "5000", "inventory": "1200"},
 		"deposit.released":       {"customer_deposit": "2300", "revenue": "4000"},
@@ -249,6 +250,14 @@ func (f *fakeStore) VoidJournal(_ context.Context, id string) (Journal, error) {
 	}
 	j.Status = StatusVoid
 	return *j, nil
+}
+
+func (f *fakeStore) EnsureNextFiscalYear(_ context.Context, _ time.Time) (int, error) {
+	return 2027, nil
+}
+
+func (f *fakeStore) OpenNextFiscalYear(_ context.Context, _ time.Time, _ func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
+	return 2027, nil
 }
 
 func (f *fakeStore) ListPeriods(_ context.Context) ([]Period, error) { return nil, nil }

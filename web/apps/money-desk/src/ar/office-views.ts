@@ -11,7 +11,7 @@ import type { BillingInvoiceDetail, BillingReminderRule, BillingStatement } from
 import { formatMoney } from "./ar-money.js";
 import { cardTitle, relativeDay } from "./ar-logic.js";
 import type { Listing, OfficeModel } from "./office-desk.js";
-import { DISPUTE_OUTCOMES, DISPUTE_REASONS, channelWord, contactLine, deliveryWord, disputeOutcomeWord, disputeReasonWord, recipientWords, relativeStamp, reminderPreview, runModeWord, runNoticeWords, sendStatusWord, statementHow, STATEMENT_ROUTE_LINE } from "./office-logic.js";
+import { PAYOUT_KIND_WORDS, DISPUTE_OUTCOMES, DISPUTE_REASONS, channelWord, contactLine, deliveryWord, disputeOutcomeWord, disputeReasonWord, recipientWords, relativeStamp, reminderPreview, runModeWord, runNoticeWords, sendStatusWord, statementHow, STATEMENT_ROUTE_LINE } from "./office-logic.js";
 
 function deliveryPill(statement: BillingStatement): TemplateResult {
   const tone = statement.delivery_status === "FAILED" ? "stop" : statement.delivery_status === "NOT_QUEUED" ? "plain" : "good";
@@ -418,7 +418,7 @@ export function renderReapply(
   if (view === null || view.paymentId !== payment.payment_id) {
     // The invoice the panel is open on is picked to start with, when it is open: the id and balance ride data attributes.
     const current = choices.find((i) => i.id === currentInvoiceId);
-    return html`<button type="button" class="btn btn-secondary small-btn" data-action="reapply-start" data-payment-id="${payment.payment_id}" data-invoice-id="${current?.id ?? ""}" data-balance-cents="${current === undefined ? "" : String(current.balance_cents)}">Apply its money</button>`;
+    return html`<button type="button" class="btn btn-secondary small-btn" data-action="reapply-start" data-payment-id="${payment.payment_id}" data-invoice-id="${current?.id ?? ""}" data-balance-cents="${current === undefined ? "" : String(current.balance_cents)}">Apply its money</button><button type="button" class="btn btn-secondary small-btn" data-action="payout-start" data-payment-id="${payment.payment_id}">Pay it out</button>`;
   }
   if (view.held === "loading") return html`<span class="dim small" role="status">Reading what is held.</span>`;
   if (view.held === "error") return html`<button type="button" class="btn btn-secondary small-btn" data-action="reapply-cancel">Close</button>`;
@@ -426,6 +426,7 @@ export function renderReapply(
   if (held.held_cents <= 0) {
     return html`<span class="dim small" data-held>Nothing is held for this payment now.</span><button type="button" class="btn btn-secondary small-btn" data-action="reapply-cancel">Close</button>`;
   }
+  if (view.mode === "payout") return renderPayout(om, payment, view.kind, held.held_cents);
   return html`
     <form class="held-form" aria-label="Apply held money to an invoice" data-reapply-form>
       <p class="callout" data-held><b>${formatMoney(held.held_cents)} is held for this customer.</b> The reversal put it back on their account as owing and kept the money. Putting it on an invoice settles that balance without taking the payment again.</p>
@@ -445,6 +446,43 @@ export function renderReapply(
       </label>
       <div class="actions">
         <button type="button" class="btn btn-primary small-btn" data-action="reapply-confirm" data-payment-id="${payment.payment_id}" data-payment-no="${payment.payment_no}" ?disabled=${om.busy || choices.length === 0}>Apply to invoice</button>
+        <button type="button" class="btn btn-secondary small-btn" data-action="reapply-cancel">Cancel</button>
+      </div>
+    </form>
+  `;
+}
+
+const PAYOUT_KINDS = ["DRAWER", "BANK", "WRITE_OFF"] as const;
+
+/**
+ * The pay out form for a reversed payment's held money (SF-2m, SF-2n): how it leaves (cash from the drawer, a cheque or
+ * transfer, a write off after the count), how much, a reference for a cheque or transfer, and why. It follows the
+ * "Apply its money" form beside it: the same inline form, the same picker buttons and the same words of consequence.
+ */
+function renderPayout(om: OfficeModel, payment: { payment_id: string; payment_no: string }, kind: string, heldCents: number): TemplateResult {
+  const picked = kind === "DRAWER" || kind === "BANK" || kind === "WRITE_OFF" ? PAYOUT_KIND_WORDS[kind] : null;
+  return html`
+    <form class="held-form" aria-label="Pay out held money" data-payout-form>
+      <p class="callout" data-held><b>${formatMoney(heldCents)} is held for this customer.</b> The money is still the dealer's, held for them. It leaves here only by the act that moves it: cash handed back, a cheque or transfer, or a write off once the till count has shown the shortage.</p>
+      <p class="dim small">How it leaves</p>
+      <div class="row-actions" role="group" aria-label="How the money leaves" data-payout-kinds>
+        ${PAYOUT_KINDS.map(
+          (k) => html`<button type="button" class="btn ${k === kind ? "btn-primary" : "btn-secondary"} small-btn" data-action="payout-kind" data-kind="${k}" aria-pressed="${k === kind ? "true" : "false"}">${PAYOUT_KIND_WORDS[k].pick}</button>`,
+        )}
+      </div>
+      <label>Amount <span class="dim small" data-held-up-to>(up to ${formatMoney(heldCents)})</span>
+        <input type="text" inputmode="decimal" data-field="payout-amount" placeholder="Such as 100.00" autocomplete="off" />
+      </label>
+      ${kind === "BANK"
+        ? html`<label>Cheque number or transfer reference
+            <input type="text" data-field="payout-reference" placeholder="Such as CHQ 100245" autocomplete="off" />
+          </label>`
+        : nothing}
+      <label>Why
+        <input type="text" data-field="payout-reason" placeholder="Such as the customer asked for it back" autocomplete="off" />
+      </label>
+      <div class="actions">
+        <button type="button" class="btn btn-primary small-btn" data-action="payout-confirm" data-payment-id="${payment.payment_id}" data-payment-no="${payment.payment_no}" ?disabled=${om.busy || picked === null}>${picked?.button ?? "Pay it out"}</button>
         <button type="button" class="btn btn-secondary small-btn" data-action="reapply-cancel">Cancel</button>
       </div>
     </form>
