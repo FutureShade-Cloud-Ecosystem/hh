@@ -28,7 +28,10 @@ const fenceKingston = "5d1b3f6e-0000-4000-9000-000000000002"
 func mountedCounts(t *testing.T, pool *pgxpool.Pool, caller identity.StaffContext, path string) int {
 	t.Helper()
 	svc := NewService(NewRepository(pool)).WithStockCounter(&fakeStockSeam{})
-	h := NewHandler(svc, slog.New(slog.DiscardHandler))
+	// The linker the composition root supplies in production: the harness handler stamps the acting
+	// caller's ERP users.id onto the request, the way the real wire does.
+	h := NewHandler(svc, slog.New(slog.DiscardHandler)).
+		WithUserLinker(func(context.Context, string) (string, bool) { return caller.UserID, true })
 
 	sg := testkit.NewStaffGuards(t)
 	roleID, _ := identity.CanonicalForERPCode(caller.RoleCode)
