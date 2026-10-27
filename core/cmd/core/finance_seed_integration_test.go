@@ -141,6 +141,26 @@ func TestIntegration_FinanceSeedAppliesTheWorldAndRefusesASecondRun(t *testing.T
 		t.Fatalf("the seed's demo bcrypt must survive the seed nowhere, found %d rows still holding it", hashes)
 	}
 
+	// EVERY credential the fresh world holds is cleared, not only the seed's
+	// own list: the migrations plant demonstration staff and portal logins of
+	// their own before the seed runs, and the box must end with no usable
+	// password anywhere. Staff hashes read NULL; every portal hash is the
+	// no-password marker.
+	var staffHashes int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE password_hash IS NOT NULL`).Scan(&staffHashes); err != nil {
+		t.Fatalf("staff hash sweep: %v", err)
+	}
+	if staffHashes != 0 {
+		t.Fatalf("the finance world must hold no usable staff password, found %d users still holding a password hash", staffHashes)
+	}
+	var portalHashes int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM portal_users WHERE password_hash <> 'seeded-no-password'`).Scan(&portalHashes); err != nil {
+		t.Fatalf("portal hash sweep: %v", err)
+	}
+	if portalHashes != 0 {
+		t.Fatalf("the finance world must hold no usable portal password, found %d portal users off the no-password marker", portalHashes)
+	}
+
 	// The second run refuses: the seed is applied.
 	err = financeSeedRole(mapGetenv(financeSeedEnv(dsn)))
 	if err == nil || !strings.Contains(err.Error(), "seed") {
