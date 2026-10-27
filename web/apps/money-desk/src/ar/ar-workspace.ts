@@ -339,7 +339,7 @@ export function renderWorkspaceInvoices(workspace: BillingCustomerWorkspace): Te
       <td>${formatWorkspaceDate(inv.due_date)}</td>
       <td class="num">${formatWorkspaceMoney(inv.total_cents)}</td>
       <td class="num">${formatWorkspaceMoney(inv.balance_cents)}</td>
-      <td><span class="bucket-label bucket-${padMsBucketClass(inv.days_overdue_bucket)}">${bucketWord(undefined, inv.days_overdue_bucket)}${inv.days_overdue > 0 ? html` · ${inv.days_overdue}d past due` : nothing}</span></td>
+      <td>${inv.days_overdue_bucket == null ? html`<span class="dim" data-account-position-withheld="true">${ACCOUNT_POSITION_WITHHELD_WORDS}</span>` : html`<span class="bucket-label bucket-${padMsBucketClass(inv.days_overdue_bucket)}">${bucketWord(undefined, inv.days_overdue_bucket)}${(inv.days_overdue ?? 0) > 0 ? html` · ${inv.days_overdue}d past due` : nothing}</span>`}</td>
       <td>${inv.has_open_promise ? html`<span class="badge badge-promise">Promise</span>` : nothing}${inv.is_disputed ? html`<span class="badge badge-dispute">Dispute</span>` : nothing}</td>
     </tr>
   `);
@@ -365,7 +365,7 @@ export function renderWorkspaceInvoices(workspace: BillingCustomerWorkspace): Te
       <td>${formatWorkspaceDate(inv.due_date)}</td>
       <td class="num">${formatWorkspaceMoney(inv.total_cents)}</td>
       <td class="num">${formatWorkspaceMoney(inv.balance_cents)}</td>
-      <td><span class="bucket-label bucket-${padMsBucketClass(inv.days_overdue_bucket)}">${bucketWord(undefined, inv.days_overdue_bucket)}</span></td>
+      <td>${inv.days_overdue_bucket == null ? html`<span class="dim" data-account-position-withheld="true">${ACCOUNT_POSITION_WITHHELD_WORDS}</span>` : html`<span class="bucket-label bucket-${padMsBucketClass(inv.days_overdue_bucket)}">${bucketWord(undefined, inv.days_overdue_bucket)}</span>`}</td>
       <td><span class="badge badge-dispute">Dispute</span></td>
     </tr>
   `);
@@ -492,7 +492,7 @@ export function renderWorkspaceStatements(workspace: BillingCustomerWorkspace): 
       <td>${formatWorkspaceDate(s.as_of_date)}</td>
       <td>${s.mode}</td>
       <td>${s.delivery_status}</td>
-      <td class="num">${formatWorkspaceMoney(s.closing_balance_cents)}</td>
+      <td class="num">${s.closing_balance_cents == null ? html`<span class="dim" data-account-position-withheld="true">${ACCOUNT_POSITION_WITHHELD_WORDS}</span>` : formatWorkspaceMoney(s.closing_balance_cents)}</td>
       <td>${formatWorkspaceDate(s.created_at)}</td>
       <td class="row-actions">
         <button type="button" class="btn btn-secondary small-btn" data-action="statement-preview" data-customer-id="${workspace.header.customer_id}" data-statement-id="${s.id}">Preview</button>

@@ -114,6 +114,10 @@ func qdsrSetPolicy(t *testing.T, pool *pgxpool.Pool, dealerDefault, branch, bran
 			ON CONFLICT (branch_id) DO UPDATE SET account_position_visibility = EXCLUDED.account_position_visibility`, branch, branchValue); err != nil {
 			t.Fatalf("set branch policy: %v", err)
 		}
+	} else {
+		if _, err := pool.Exec(ctx, `DELETE FROM ar_invoice_policy WHERE branch_id IS NOT NULL`); err != nil {
+			t.Fatalf("clear branch policy: %v", err)
+		}
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `UPDATE ar_invoice_policy SET account_position_visibility = 'MANAGER_UP' WHERE branch_id IS NULL`)
@@ -130,8 +134,12 @@ func TestUX97CustomerReadsFollowTheAccountPositionPolicy(t *testing.T) {
 	fx := newXRoleFixture(t)
 	pool := fx.env.fixturePool()
 	t.Cleanup(pool.Close)
-	qdsrPlant(t, pool, qdsrAccount{id: qdsrClearID, accountNo: "UX97-ACCT", name: "Fixture Position Account",
-		branch: qdsrNorthA, limitCents: 500_000, balanceCents: 123_456})
+	qdsrPlant(t, pool,
+		qdsrAccount{id: qdsrClearID, accountNo: "UX97-ACCT", name: "Fixture Position Account",
+			branch: qdsrNorthA, limitCents: 500_000, balanceCents: 123_456},
+		qdsrAccount{id: qdsrUnhomedID, accountNo: "UX97-UNHOMED", name: "Fixture Unhomed Position Account",
+			branch: "", limitCents: 300_000, balanceCents: 50_000},
+	)
 	byID := "/api/v1/customers/" + qdsrClearID
 	search := "/api/v1/customers/search?q=UX97-ACCT&branch_id=" + qdsrNorthA
 	clerk, manager := testkit.SubInsideSales, testkit.SubGeneralMgr
@@ -166,9 +174,28 @@ func TestUX97CustomerReadsFollowTheAccountPositionPolicy(t *testing.T) {
 		}
 	}
 
-	qdsrSetPolicy(t, pool, "MANAGER_UP", "", "")
-	expect("MANAGER_UP clerk", clerk, false)
-	expect("MANAGER_UP manager", manager, true)
+	// Default box first (nothing set by hand, MANAGER_UP as migrated).
+	expect("default MANAGER_UP clerk", clerk, false)
+	expect("default MANAGER_UP manager", manager, true)
+
+	// Unhomed account in search resolves the dealer default (""), matching AccountForWire, even
+	// when the search's branch has a permissive override.
+	qdsrSetPolicy(t, pool, "MANAGER_UP", qdsrNorthA, "ALL_STAFF")
+	code, unhomedGetBody := qdsrGet(t, fx, clerk, "/api/v1/customers/"+qdsrUnhomedID)
+	unhomedGet := qdsrJSON(t, code, unhomedGetBody)
+	code, unhomedSearchBody := qdsrGet(t, fx, clerk, "/api/v1/customers/search?q=UX97-UNHOMED&branch_id="+qdsrNorthA)
+	if code != http.StatusOK {
+		t.Fatalf("unhomed search answered %d %s", code, unhomedSearchBody)
+	}
+	var unhomedRows []map[string]any
+	if err := json.Unmarshal([]byte(unhomedSearchBody), &unhomedRows); err != nil || len(unhomedRows) != 1 {
+		t.Fatalf("unhomed search body %s err %v", unhomedSearchBody, err)
+	}
+	_, getUnhomedLimit := unhomedGet["credit_limit_cents"]
+	_, searchUnhomedLimit := unhomedRows[0]["credit_limit_cents"]
+	if getUnhomedLimit || searchUnhomedLimit {
+		t.Fatalf("unhomed account must resolve dealer default MANAGER_UP on both by-id (%v) and search (%v): %s", getUnhomedLimit, searchUnhomedLimit, unhomedSearchBody)
+	}
 
 	qdsrSetPolicy(t, pool, "ALL_STAFF", "", "")
 	expect("ALL_STAFF clerk", clerk, true)

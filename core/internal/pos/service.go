@@ -359,6 +359,9 @@ type Service struct {
 	// hold, and that the account exists at all. Nil answers the read unavailable, never empty.
 	holds    HoldReader
 	accounts AccountChecker
+	// position is the dealer's account position policy gate (ar_invoice_policy.account_position_visibility,
+	// UX-97). Nil fails closed.
+	position PositionGate
 	tender   TenderTaker
 	credit   CreditGate
 	sig      SignatureProvider
@@ -934,10 +937,16 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	}
 	if onAccount > 0 {
 		if codSale || cust.PaymentTermsDays <= 0 || cust.CreditLimitCents <= 0 {
+			withheld := !s.positionAllowed(ctx, in.BranchID)
+			var limitCents int64
+			if !withheld {
+				limitCents = cust.CreditLimitCents
+			}
 			return nil, nil, ErrAccountShapeNotAvailable{
 				AmountCents:      onAccount,
-				CreditLimitCents: cust.CreditLimitCents,
+				CreditLimitCents: limitCents,
 				ZeroDayTerms:     codSale || cust.PaymentTermsDays <= 0,
+				PositionWithheld: withheld,
 			}
 		}
 	}

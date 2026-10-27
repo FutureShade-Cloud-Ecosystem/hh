@@ -27,7 +27,10 @@ package billing
 //
 // Cost and margin are not on this screen in any form, at any tier, under any policy value.
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // -- policy -------------------------------------------------------------------------------------
 
@@ -135,6 +138,31 @@ type RegisterRow struct {
 	Opened     *bool      `json:"opened,omitempty"`
 	// Account is ABSENT for a caller the policy refuses. Pointer, not zero value.
 	Account *AccountPosition `json:"account,omitempty"`
+
+	// PositionWithheld is set by the service when the dealer's account position policy refuses this
+	// caller. MarshalJSON then leaves days_overdue, bucket_label, bucket_key and account off the wire
+	// while keeping the invoice's own document figures.
+	PositionWithheld bool `json:"-"`
+}
+
+// MarshalJSON writes the register row, omitting the past-due aging and account position fields when
+// the caller is refused by the account position policy.
+func (r RegisterRow) MarshalJSON() ([]byte, error) {
+	type plain RegisterRow
+	w := struct {
+		plain
+		DaysOverdue *int             `json:"days_overdue,omitempty"`
+		BucketLabel string           `json:"bucket_label,omitempty"`
+		BucketKey   string           `json:"bucket_key,omitempty"`
+		Account     *AccountPosition `json:"account,omitempty"`
+	}{plain: plain(r)}
+	if !r.PositionWithheld {
+		w.DaysOverdue = &r.DaysOverdue
+		w.BucketLabel = r.BucketLabel
+		w.BucketKey = r.BucketKey
+		w.Account = r.Account
+	}
+	return json.Marshal(w)
 }
 
 // Derived register statuses (the pill vocabulary).
@@ -399,6 +427,24 @@ type InvoiceDetail struct {
 	// LastContactAt is the most recent send to this ACCOUNT (not this invoice), the cooldown fact.
 	LastContactAt *time.Time `json:"last_contact_at,omitempty"`
 	AsOf          time.Time  `json:"as_of"`
+
+	// PositionWithheld is set by the service when the dealer's account position policy refuses this
+	// caller. MarshalJSON then leaves days_overdue off the wire.
+	PositionWithheld bool `json:"-"`
+}
+
+// MarshalJSON writes the invoice detail, omitting days_overdue when the caller is refused by the
+// account position policy.
+func (d InvoiceDetail) MarshalJSON() ([]byte, error) {
+	type plain InvoiceDetail
+	w := struct {
+		plain
+		DaysOverdue *int `json:"days_overdue,omitempty"`
+	}{plain: plain(d)}
+	if !d.PositionWithheld {
+		w.DaysOverdue = &d.DaysOverdue
+	}
+	return json.Marshal(w)
 }
 
 // -- writes -------------------------------------------------------------------------------------

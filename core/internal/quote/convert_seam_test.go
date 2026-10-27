@@ -83,9 +83,33 @@ func sellerCtx(role string) identity.StaffContext {
 	}
 }
 
+type fakePositionGate struct {
+	vis string
+	svc *StaffService
+}
+
+func (f *fakePositionGate) AccountPositionAllowed(ctx context.Context, _ string) bool {
+	if f == nil || f.svc == nil {
+		return false
+	}
+	caller, ok := f.svc.callerFrom(ctx)
+	if !ok || caller.UserID == "" {
+		return false
+	}
+	switch f.vis {
+	case "ALL_STAFF":
+		return true
+	case "MANAGER_UP":
+		return caller.IsManager()
+	default:
+		return false
+	}
+}
+
 func staffSvcOver(store *seamStore, caller identity.StaffContext) *StaffService {
-	return NewStaffService(store).withCaller(
+	svc := NewStaffService(store).withCaller(
 		func(context.Context) (identity.StaffContext, bool) { return caller, true })
+	return svc.WithPositionGate(&fakePositionGate{vis: "MANAGER_UP", svc: svc})
 }
 
 // - M3-G7: the staff door exists AND reaches the same seam -
@@ -281,13 +305,37 @@ func TestCreditRefusal_CarriesReasonThroughStaffDoor(t *testing.T) {
 		t.Fatalf("the refusal regressed to the generic transition message, the errors.As case has been "+
 			"reordered below the generic errors.Is case. body: %s", body)
 	}
-	for _, want := range []string{"$112,200.00", "$50,000.00", "credit limit"} {
+	// Under the default MANAGER_UP position policy, a frontline seller (INSIDE_SALES) gets the
+	// outcome in words and no credit limit or open balance figure.
+	for _, want := range []string{"this order is over the customer's credit limit", "no order was created"} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("refusal does not carry %q, the reason was dropped. body: %s", want, body)
+			t.Fatalf("refused caller's 409 does not carry %q. body: %s", want, body)
 		}
 	}
-	if !strings.Contains(body, "no order was created") {
-		t.Fatalf("refusal does not say what happened to the order. body: %s", body)
+	for _, leak := range []string{"$50,000.00", "5000000", "6220000", "credit_limit", "open_balance"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("refused caller's 409 leaked %q. body: %s", leak, body)
+		}
+	}
+
+	// A manager caller allowed by the position policy still receives the figures.
+	mgrCaller := sellerCtx("BRANCH_MANAGER")
+	mgrCaller.Tier = identity.TierManager
+	hMgr := NewStaffHandler(staffSvcOver(store, mgrCaller))
+	sgMgr := testkit.NewStaffGuards(t)
+	sgMgr.SetAuthority(auth.StaffAuthority{RoleID: "branch_manager", Tier: 2, Scope: "branch", Branches: []string{qBranch}})
+	muxMgr := http.NewServeMux()
+	hMgr.RegisterStaffRoutes(muxMgr, sgMgr.Guards)
+	rMgr := httptest.NewRequest(http.MethodPost, "/api/v1/quotes/"+qOrg+"/convert", nil)
+	rMgr.Header.Set("Authorization", "Bearer "+sgMgr.Bearer(t))
+	rMgr.Header.Set("X-Org", testkit.OrgNorthSlug)
+	recMgr := httptest.NewRecorder()
+	muxMgr.ServeHTTP(recMgr, rMgr)
+	bodyMgr := recMgr.Body.String()
+	for _, want := range []string{"$112,200.00", "$50,000.00", "credit limit"} {
+		if !strings.Contains(bodyMgr, want) {
+			t.Fatalf("manager refusal does not carry %q. body: %s", want, bodyMgr)
+		}
 	}
 }
 

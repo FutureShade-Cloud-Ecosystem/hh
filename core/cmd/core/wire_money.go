@@ -229,7 +229,8 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithShares(quoteRepo).
 		WithStockReserver(w5aQuoteStockReserver{svc: inventorySvc}).
 		WithAvailability(w5aQuoteAvailability{svc: inventorySvc}).
-		WithSoftHoldExpiry(w6cQuoteSoftHoldExpiry{svc: orderSvc})
+		WithSoftHoldExpiry(w6cQuoteSoftHoldExpiry{svc: orderSvc}).
+		WithPositionGate(billing.NewAccountPositionGate(billing.NewRepository(pool)))
 	// QD-5: the counter's payment door on a converted quote's order. The quote module declares
 	// the two seams; the order and billing and payments modules answer them here and the quote
 	// package never imports any of the three.

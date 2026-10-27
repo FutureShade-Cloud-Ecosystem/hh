@@ -313,6 +313,10 @@ func (s *RegisterService) Register(ctx context.Context, f RegisterFilter) (Regis
 			}
 			rows[i].Account = pos
 		}
+	} else {
+		for i := range rows {
+			rows[i].PositionWithheld = true
+		}
 	}
 	return RegisterPage{Items: rows, Counts: counts, Total: total, AsOf: asOf}, nil
 }
@@ -429,6 +433,8 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 			return InvoiceDetail{}, err
 		}
 		block.Account = &pos
+	} else {
+		d.PositionWithheld = true
 	}
 	d.Customer = block
 

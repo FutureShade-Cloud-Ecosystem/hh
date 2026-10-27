@@ -16,6 +16,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -49,13 +51,37 @@ type fakeAccounts struct {
 
 func (f *fakeAccounts) AccountExists(context.Context, string) (bool, error) { return f.exists, f.err }
 
-// wireStanding wires the three standing seams over a harness: an account that exists, no hold, and
-// the given aging answer.
+type fakePosition struct {
+	vis string
+	svc *Service
+}
+
+func (f *fakePosition) AccountPositionAllowed(ctx context.Context, _ string) bool {
+	if f == nil || f.svc == nil {
+		return false
+	}
+	caller, ok := f.svc.callerFrom(ctx)
+	if !ok || caller.UserID == "" {
+		return false
+	}
+	switch f.vis {
+	case "ALL_STAFF":
+		return true
+	case "MANAGER_UP":
+		return caller.IsManager()
+	default:
+		return false
+	}
+}
+
+// wireStanding wires the standing seams over a harness: an account that exists, no hold, the
+// given aging answer, and the dealer's default MANAGER_UP account position gate.
 func wireStanding(h *harness, due PastDue, err error) (*fakeAging, *fakeHolds, *fakeAccounts) {
 	a := &fakeAging{out: due, err: err}
 	hd := &fakeHolds{}
 	ac := &fakeAccounts{exists: true}
-	h.svc.WithAgingReader(a).WithHoldReader(hd).WithAccountChecker(ac)
+	h.svc.WithAgingReader(a).WithHoldReader(hd).WithAccountChecker(ac).
+		WithPositionGate(&fakePosition{vis: "MANAGER_UP", svc: h.svc})
 	return a, hd, ac
 }
 
@@ -240,26 +266,36 @@ func TestStanding_BranchIsRequiredBecauseThePolICYIsPerBranch(t *testing.T) {
 
 // -- THE GATE: a refusal, at the marshal layer ---------------------------------------------------
 
-func TestStanding_AllStaffIsTheDefaultBecauseTheCOUNTERAsked(t *testing.T) {
-	// The default differs from margin's on purpose: margin is the dealer's own position, a past-due
-	// balance is the customer's own fact and the counter person is the one being asked to raise it.
-	// Shipping this MANAGER_UP would switch the feature off for the only role that asked for it.
+func TestStanding_AllStaffPositionPolicyAdmitsFrontlineClerk(t *testing.T) {
+	// Under ar_invoice_policy.account_position_visibility = ALL_STAFF, a frontline clerk sees the
+	// past-due balance; under the shipped MANAGER_UP default (pinned below) they receive withheld.
 	h, _ := standingHarness(t, behind(), nil)
+	h.svc.WithPositionGate(&fakePosition{vis: "ALL_STAFF", svc: h.svc})
 	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 	if standingOf(t, h, standingCust).PastDueCents == 0 {
-		t.Fatal("a frontline clerk sees the balance under the default policy")
+		t.Fatal("a frontline clerk sees the balance when account_position_visibility is ALL_STAFF")
+	}
+}
+
+func TestStanding_NilPositionGateFailsClosedToWithheld(t *testing.T) {
+	h, _ := standingHarness(t, behind(), nil)
+	h.svc.WithPositionGate(nil)
+	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
+	if err != nil {
+		t.Fatalf("nil position gate answers withheld, not 500: %v", err)
+	}
+	raw, _ := json.Marshal(out)
+	if string(raw) != `{"standing":"withheld"}` {
+		t.Fatalf("nil position gate fails closed to withheld: %s", raw)
 	}
 }
 
 func TestStanding_ManagerUpPolicy_APastDueAccountReadsWithheld(t *testing.T) {
-	// Round 4 (principal item 206): "clear" is a position, so a caller the policy withholds figures
-	// from can never read it. A past due account answers `withheld` for this caller, with no figure
-	// key in the bytes.
+	// Round 4/5 (principal items 206, 208): on a default box (MANAGER_UP position policy,
+	// ALL_STAFF pos balance_visibility), a frontline clerk on a past due account reads `withheld`
+	// with no figure key or past_due word in the bytes.
 	h, _ := standingHarness(t, behind(), nil)
-	p := h.store.policies[""]
-	p.BalanceVisibility = BalanceVisibilityManagerUp
-	h.store.policies[""] = p
 	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
@@ -273,11 +309,9 @@ func TestStanding_ManagerUpPolicy_APastDueAccountReadsWithheld(t *testing.T) {
 }
 
 func TestStanding_ManagerUpPolicy_AClearAccountAlsoReadsWithheld(t *testing.T) {
-	// Clear is a position too: nothing past due and no hold is exactly what the policy withholds.
+	// Clear is a position too: nothing past due and no hold is exactly what the default MANAGER_UP
+	// position policy withholds.
 	h, _ := standingHarness(t, PastDue{}, nil)
-	p := h.store.policies[""]
-	p.BalanceVisibility = BalanceVisibilityManagerUp
-	h.store.policies[""] = p
 	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
@@ -294,9 +328,6 @@ func TestStanding_ManagerUpPolicy_AHoldThroughAgingAloneStillReadsOnHold(t *test
 	// The hold is the same for every caller: the aging-derived hold flag counts for a withheld
 	// caller exactly as it does for an admitted one, and the figure behind it still never leaves.
 	h, _ := standingHarness(t, PastDue{PastDueCents: 148_23, OldestBucket: "60", OnHold: true}, nil)
-	p := h.store.policies[""]
-	p.BalanceVisibility = BalanceVisibilityManagerUp
-	h.store.policies[""] = p
 	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
@@ -314,9 +345,6 @@ func TestStanding_ManagerUpPolicy_AWithheldCallerStillHearsAnActiveHoldRow(t *te
 	// (the aging read drops it) but an active hold row reads on_hold for a withheld caller.
 	h, _ := standingHarness(t, PastDue{}, nil)
 	h.svc.WithHoldReader(&fakeHolds{held: true})
-	p := h.store.policies[""]
-	p.BalanceVisibility = BalanceVisibilityManagerUp
-	h.store.policies[""] = p
 	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
@@ -331,9 +359,6 @@ func TestStanding_ManagerUpPolicy_AWithheldCallerStillHearsAnActiveHoldRow(t *te
 
 func TestStanding_ManagerUpPolicy_ManagerStillSeesIt(t *testing.T) {
 	h, _ := standingHarness(t, behind(), nil) // harness caller is TierManager
-	p := h.store.policies[""]
-	p.BalanceVisibility = BalanceVisibilityManagerUp
-	h.store.policies[""] = p
 	if standingOf(t, h, standingCust).PastDueCents == 0 {
 		t.Fatal("MANAGER_UP still means managers")
 	}
@@ -374,5 +399,50 @@ func TestBalanceVisibility_ValidatesInWordsBeforeTheCHECKCouldFire(t *testing.T)
 		t.Fatal("a bad word is a 422 in words, never a 500 from the CHECK")
 	} else if !strings.Contains(err.Error(), "MANAGER_UP, ALL_STAFF or HIDDEN") {
 		t.Fatalf("the refusal must name the way forward: %v", err)
+	}
+}
+
+func TestOnAccountRefusal_WithholdsCreditLimitForRefusedCaller(t *testing.T) {
+	// Default policy: account_position_visibility is MANAGER_UP.
+	// On a Cash On Demand account (zero-day terms with a $5,000.00 line), a frontline clerk
+	// who rings an ON_ACCOUNT tender gets the 422 refusal in words with no credit_limit_cents.
+	h := depositHarness(0, 500_000)
+	h.svc.WithPositionGate(&fakePosition{vis: "MANAGER_UP", svc: h.svc})
+	h.caller = identity.StaffContext{
+		UserID: "u-clerk", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal,
+	}
+	in := depositSaleInput()
+	in.SaleType = SaleCollectLater
+	in.Tender = TenderAccount
+	_, err := h.svc.Sale(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected on_account_not_available refusal")
+	}
+	hdl := NewHandler(h.svc, nil)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pos/sales", nil)
+	hdl.writeErr(rec, req, err)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "credit_limit_cents") || strings.Contains(body, "500000") || strings.Contains(body, "5,000") {
+		t.Fatalf("refused caller's 422 body must not contain credit_limit_cents or limit figure: %s", body)
+	}
+	if !strings.Contains(body, `"error":"on_account_not_available"`) || !strings.Contains(body, `"message"`) {
+		t.Fatalf("refused caller's 422 body must carry outcome in words: %s", body)
+	}
+
+	// Manager caller under the same default MANAGER_UP policy still receives credit_limit_cents.
+	h.caller = identity.StaffContext{
+		UserID: "u-mgr", RoleCode: "BRANCH_MANAGER",
+		Tier: identity.TierManager, Scope: identity.ScopeGlobal,
+	}
+	_, errMgr := h.svc.Sale(context.Background(), in)
+	recMgr := httptest.NewRecorder()
+	hdl.writeErr(recMgr, req, errMgr)
+	if !strings.Contains(recMgr.Body.String(), `"credit_limit_cents":500000`) {
+		t.Fatalf("manager caller's 422 body must carry credit_limit_cents: %s", recMgr.Body.String())
 	}
 }

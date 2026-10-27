@@ -41,12 +41,14 @@ async function pickAndOpenCard(page: Page, row: ReturnType<Page["locator"]>, nam
     await openStep(page, "customer");
     try {
       await expect(card).toContainText(name, { timeout: 700 });
+      await expect(page.getByTestId("step-head-customer")).toHaveAttribute("aria-expanded", "true", { timeout: 700 });
       return;
     } catch {
       // the advance closed the step again: open it once more
     }
   }
   await expect(card).toContainText(name);
+  await expect(page.getByTestId("step-head-customer")).toHaveAttribute("aria-expanded", "true");
 }
 
 async function theme(page: Page, which: "light" | "charcoal"): Promise<void> {
@@ -238,27 +240,28 @@ if (shots !== "") {
           await signIn(page, role);
           await theme(page, mode);
           const { row } = await search(page, "C0", "Fenwick Builders Ltd");
-          await page.screenshot({ path: `${shots}/picker-${width}-${mode}-${label}.png` });
+          await page.screenshot({ path: `${shots}/picker-${width}-${mode}-${label}.png`, animations: "disabled" });
           await pickAndOpenCard(page, row, "Fenwick Builders Ltd");
           await theme(page, mode);
-          await page.screenshot({ path: `${shots}/card-${width}-${mode}-${label}.png` });
+          await page.screenshot({ path: `${shots}/card-${width}-${mode}-${label}.png`, animations: "disabled" });
           // A held account: the hold beside the figure's place.
           await page.getByTestId("customer-change").click();
           const held = await search(page, "C09", "Harbour Drywall Inc");
           await pickAndOpenCard(page, held.row, "Harbour Drywall Inc");
           await theme(page, mode);
-          await page.screenshot({ path: `${shots}/card-held-${width}-${mode}-${label}.png` });
+          await page.screenshot({ path: `${shots}/card-held-${width}-${mode}-${label}.png`, animations: "disabled" });
         });
       }
     }
   }
 }
 
-// Round 3 shots for the visual read: the full set, retaken after the round 3 fixes. Every shot
-// waits for the account state and the tax quote to settle on rendered elements (never a sleep),
-// and the 390 check shots scroll the mini card's top into view.
-const r3 = process.env.UX97_R3_SHOTS_DIR ?? "";
-if (r3 !== "") {
+// Round 5 shots for the visual read: the full 48-PNG set. Every shot waits for the account state
+// and the payment step's tax total (pos-totals-card / pos-preview-total, never pending) to settle
+// on rendered elements, passes animations: "disabled" to page.screenshot so step chevrons and step
+// transitions are never captured mid-frame, and scrolls the 390 mini card's top into view.
+const r5 = process.env.UX97_R5_SHOTS_DIR ?? process.env.UX97_R3_SHOTS_DIR ?? "";
+if (r5 !== "") {
   const settleCard = async (
     card: ReturnType<Page["getByTestId"]>,
     kind: "ordinary" | "held" | "cod",
@@ -291,7 +294,7 @@ if (r3 !== "") {
           ["C09", "Harbour Drywall Inc", "held"],
           ["C10", "Cash On Demand Landscaping", "cod"],
         ] as const) {
-          test(`r3 shots: ${kind} account, ${who}, ${width}, ${mode}`, async ({ page }) => {
+          test(`r5 shots: ${kind} account, ${who}, ${width}, ${mode}`, async ({ page }) => {
             await page.setViewportSize({ width, height });
             await signIn(page, role);
             await theme(page, mode);
@@ -300,22 +303,34 @@ if (r3 !== "") {
             const card = page.getByTestId("customer-card");
             await settleCard(card, kind, who);
             await theme(page, mode);
-            await page.screenshot({ path: `${r3}/card-${kind}-${who}-${width}-${mode}.png` });
+            await page.screenshot({
+              path: `${r5}/card-${kind}-${who}-${width}-${mode}.png`,
+              animations: "disabled",
+            });
             await openStep(page, "items");
             await page.getByTestId("pos-scan-input").fill("charcoal");
             await page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first().click();
             await openStep(page, "payment");
+            // Wait until the payment step's tax quote has rendered on pos-totals-card (no pending text).
+            const totals = page.getByTestId("pos-totals-card");
+            await expect(totals).toBeVisible();
+            await expect(page.getByTestId("pos-preview-pending")).toHaveCount(0, { timeout: 15_000 });
+            await expect(page.getByTestId("pos-preview-tax")).toBeVisible({ timeout: 15_000 });
+            await expect(page.getByTestId("pos-preview-total")).toBeVisible({ timeout: 15_000 });
+            await expect(totals).not.toContainText(/pending/i, { timeout: 15_000 });
             const charge = page.getByRole("button", { name: "Charge Account" });
             if (await charge.count()) await charge.click();
             const check = page.getByTestId("pos-account-check");
             await expect(check).toBeVisible();
-            // Settled means the tax quote answered: nothing on the check may read pending.
             await expect(check).not.toContainText(/pending/i, { timeout: 15_000 });
             if (width === 390) {
               await page.getByTestId("pay-customer-card").scrollIntoViewIfNeeded();
             }
             await theme(page, mode);
-            await page.screenshot({ path: `${r3}/check-${kind}-${who}-${width}-${mode}.png` });
+            await page.screenshot({
+              path: `${r5}/check-${kind}-${who}-${width}-${mode}.png`,
+              animations: "disabled",
+            });
           });
         }
       }

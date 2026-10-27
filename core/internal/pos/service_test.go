@@ -1435,6 +1435,7 @@ func newHarness() *harness {
 		// or none calls WithRoleConfig after the harness.
 		roles: testRoleConfig(),
 	}
+	h.svc.WithPositionGate(&fakePosition{vis: "MANAGER_UP", svc: h.svc})
 	return h
 }
 

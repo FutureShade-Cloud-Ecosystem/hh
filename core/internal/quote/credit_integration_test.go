@@ -10,6 +10,7 @@ package quote
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -152,5 +153,32 @@ func TestIntegration_ConvertRefusedOverCreditLimit(t *testing.T) {
 	}
 	if n := ordersForQuote(t, pool, quoteID); n != 0 {
 		t.Errorf("a refused conversion wrote %d orders row(s); want 0", n)
+	}
+
+	// On the default box (account_position_visibility = MANAGER_UP), a frontline seller
+	// converting through StaffService gets the outcome in words and no credit limit or open balance figure.
+	svc := shareSvc(t, pool, decisionNow())
+	frontCtx := decisionCaller("INSIDE_SALES", intTrenton)
+	_, frontErr := svc.ConvertQuote(frontCtx, quoteID, ConvertOptions{})
+	var frontBlocked ErrCreditBlocked
+	if !errors.As(frontErr, &frontBlocked) {
+		t.Fatalf("staff convert beyond credit limit must return ErrCreditBlocked; got %v", frontErr)
+	}
+	frontMsg := CreditRefusalMessage(frontBlocked)
+	if !strings.Contains(frontMsg, "this order is over the customer's credit limit") {
+		t.Errorf("refused caller's message must state the outcome in words: %q", frontMsg)
+	}
+	for _, leak := range []string{"$5.00", "500 cents", "1500 cents", "credit_limit", "open_balance"} {
+		if strings.Contains(frontMsg, leak) {
+			t.Errorf("refused caller's message leaked %q: %q", leak, frontMsg)
+		}
+	}
+	if frontBlocked.Blocked != nil {
+		if _, ok := frontBlocked.Blocked.Data["credit_limit"]; ok {
+			t.Errorf("refused caller's block Data must not carry credit_limit: %+v", frontBlocked.Blocked.Data)
+		}
+		if _, ok := frontBlocked.Blocked.Data["open_balance"]; ok {
+			t.Errorf("refused caller's block Data must not carry open_balance: %+v", frontBlocked.Blocked.Data)
+		}
 	}
 }

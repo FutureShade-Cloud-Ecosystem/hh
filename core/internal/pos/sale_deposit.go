@@ -27,14 +27,23 @@ type ErrAccountShapeNotAvailable struct {
 	AmountCents int64
 	// CreditLimitCents is the account's credit line, the fact the refusal
 	// names for the counter (zero day terms with a line reads as the line it
-	// is; terms with no line reads as the empty line it is).
+	// is; terms with no line reads as the empty line it is). Withheld when
+	// the account position policy refuses the caller.
 	CreditLimitCents int64
 	// ZeroDayTerms reports whether the refusal came from the terms (zero day
 	// or a pay before release sale) rather than the line.
 	ZeroDayTerms bool
+	// PositionWithheld is true when the dealer's account position policy
+	// refuses the caller; the handler then omits credit_limit_cents.
+	PositionWithheld bool
 }
 
 func (e ErrAccountShapeNotAvailable) Error() string {
+	if e.PositionWithheld {
+		return fmt.Sprintf(
+			"pos: this account cannot put %d cents on account (zero day terms: %v)",
+			e.AmountCents, e.ZeroDayTerms)
+	}
 	return fmt.Sprintf(
 		"pos: this account cannot put %d cents on account (zero day terms: %v, credit line %d cents)",
 		e.AmountCents, e.ZeroDayTerms, e.CreditLimitCents)

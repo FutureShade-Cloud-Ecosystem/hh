@@ -2172,7 +2172,10 @@ components:
                   credit_limit_cents:
                     type: integer
                     format: int64
-                    description: Present on on_account_not_available, the account's credit line
+                    description: >-
+                      Present on on_account_not_available when the caller holds account
+                      position, the account's credit line; absent when the account
+                      position policy refuses the caller
                   deposit_cents:
                     type: integer
                     format: int64

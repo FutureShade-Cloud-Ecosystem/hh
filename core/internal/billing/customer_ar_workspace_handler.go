@@ -277,6 +277,23 @@ func (h *WorkspaceHandler) workspace(w http.ResponseWriter, r *http.Request, cal
 			out.Activity = acts
 		}
 	}
+	if out.Header.PositionWithheld {
+		for i := range out.InvoicesOpen {
+			out.InvoicesOpen[i].PositionWithheld = true
+		}
+		for i := range out.InvoicesClosed {
+			out.InvoicesClosed[i].PositionWithheld = true
+		}
+		for i := range out.InvoicesDisputed {
+			out.InvoicesDisputed[i].PositionWithheld = true
+		}
+		for i := range out.Statements {
+			out.Statements[i].PositionWithheld = true
+		}
+		for i := range out.Activity {
+			out.Activity[i].BalanceLeft = nil
+		}
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

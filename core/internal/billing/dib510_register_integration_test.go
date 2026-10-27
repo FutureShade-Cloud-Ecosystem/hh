@@ -342,7 +342,7 @@ func TestRegister_NeverSentMeansOpenedIsAbsentNotFalse(t *testing.T) {
 
 func TestRegister_AccountPositionIsByteAbsentForAFrontlineCaller(t *testing.T) {
 	f := newD510Fixture(t)
-	f.invoice(t, "GATED", "FINALIZED", -10, 250000, 250000, "INVOICE")
+	invID := f.invoice(t, "GATED", "FINALIZED", -10, 250000, 250000, "INVOICE")
 	ctx := context.Background()
 
 	mgr, err := f.service(d510Manager()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Limit: 50})
@@ -353,8 +353,10 @@ func TestRegister_AccountPositionIsByteAbsentForAFrontlineCaller(t *testing.T) {
 		t.Fatal("a manager receives the account position")
 	}
 	mgrJSON, _ := json.Marshal(mgr)
-	if !strings.Contains(string(mgrJSON), "credit_limit_cents") {
-		t.Fatal("the manager payload carries the credit limit")
+	for _, want := range []string{"credit_limit_cents", `"days_overdue"`, `"bucket_label"`, `"bucket_key"`} {
+		if !strings.Contains(string(mgrJSON), want) {
+			t.Fatalf("the manager payload carries %s: %s", want, mgrJSON)
+		}
 	}
 
 	front, err := f.service(d510Frontline()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Limit: 50})
@@ -363,14 +365,33 @@ func TestRegister_AccountPositionIsByteAbsentForAFrontlineCaller(t *testing.T) {
 	}
 	frontJSON, _ := json.Marshal(front)
 	// THE ASSERTION THAT MATTERS: the bytes are not there. Not empty, not zero, not hidden, absent.
-	for _, gated := range []string{"credit_limit_cents", "available_credit_cents", "open_balance_cents", `"account"`} {
+	for _, gated := range []string{"credit_limit_cents", "available_credit_cents", "open_balance_cents", `"account"`, `"days_overdue"`, `"bucket_label"`, `"bucket_key"`} {
 		if strings.Contains(string(frontJSON), gated) {
-			t.Fatalf("a refused caller's payload must not contain %q at all: %s", gated, frontJSON)
+			t.Errorf("a refused caller's register payload must not contain %q at all: %s", gated, frontJSON)
 		}
 	}
 	// The invoice's OWN money still reaches them, the customer holds that document.
-	if front.Items[0].BalanceCents != 250000 {
-		t.Fatalf("an invoice's own balance is never gated, got %d", front.Items[0].BalanceCents)
+	for _, keep := range []string{`"invoice_no"`, `"issue_date"`, `"due_date"`, `"total_cents":250000`, `"balance_cents":250000`} {
+		if !strings.Contains(string(frontJSON), keep) {
+			t.Errorf("register row must keep invoice document figure %s: %s", keep, frontJSON)
+		}
+	}
+
+	// Same rule on the invoice detail route (GET /api/v1/ar/register/invoices/{id}).
+	detailFront, err := f.service(d510Frontline()).Detail(ctx, invID, false)
+	if err != nil {
+		t.Fatalf("invoice detail: %v", err)
+	}
+	detailFrontJSON, _ := json.Marshal(detailFront)
+	for _, gated := range []string{"credit_limit_cents", "available_credit_cents", "open_balance_cents", `"account"`, `"days_overdue"`} {
+		if strings.Contains(string(detailFrontJSON), gated) {
+			t.Errorf("a refused caller's invoice detail payload must not contain %q at all: %s", gated, detailFrontJSON)
+		}
+	}
+	for _, keep := range []string{`"invoice_no"`, `"issue_date"`, `"due_date"`, `"total_cents":250000`, `"balance_cents":250000`} {
+		if !strings.Contains(string(detailFrontJSON), keep) {
+			t.Errorf("invoice detail must keep invoice document figure %s: %s", keep, detailFrontJSON)
+		}
 	}
 }
 

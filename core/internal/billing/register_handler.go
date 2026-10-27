@@ -256,11 +256,15 @@ func (h *RegisterHandler) export(w http.ResponseWriter, r *http.Request, caller 
 	var b strings.Builder
 	b.WriteString("Invoice,Customer,Account,Order,Customer PO,Issued,Due,Status,Days overdue,Total,Balance\n")
 	for _, v := range items {
+		daysCell := strconv.Itoa(v.DaysOverdue)
+		if v.PositionWithheld {
+			daysCell = ""
+		}
 		b.WriteString(strings.Join([]string{
 			csvCell(v.InvoiceNo), csvCell(v.CustomerName), csvCell(v.AccountNo),
 			csvCell(v.OrderNo), csvCell(v.CustomerPO),
 			v.IssueDate.Format("2006-01-02"), v.DueDate.Format("2006-01-02"),
-			csvCell(v.Status), strconv.Itoa(v.DaysOverdue),
+			csvCell(v.Status), daysCell,
 			centsCell(v.TotalCents), centsCell(v.BalanceCents),
 		}, ","))
 		b.WriteString("\n")

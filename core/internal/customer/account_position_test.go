@@ -167,3 +167,27 @@ func TestCashOnDemandRidesTheWireWhateverThePolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestAccountPosition_UnhomedSearchRowResolvesDealerDefaultPolicy(t *testing.T) {
+	// Branch b-1 is allowed, while the dealer default ("") is refused. A homed row at b-1 carries
+	// its position; an unhomed row in the same search resolves "", matching AccountForWire.
+	svc := NewService(newFakeStore()).WithPositionGate(&branchGate{allow: map[string]bool{"b-1": true, "": false}})
+	rows := []SearchResult{
+		{ID: "homed", Name: "Homed", AccountNo: "C-1", CustomerType: "CONTRACTOR", PaymentTermsDays: 30, CreditLimitCents: 500_000, OpenBalanceCents: 100_000, Unhomed: false},
+		{ID: "unhomed", Name: "Unhomed", AccountNo: "C-2", CustomerType: "CONTRACTOR", PaymentTermsDays: 30, CreditLimitCents: 300_000, OpenBalanceCents: 50_000, Unhomed: true},
+	}
+	out := svc.SearchForWire(context.Background(), rows, "b-1")
+	if len(out) != 2 {
+		t.Fatalf("len(out) = %d, want 2", len(out))
+	}
+	homedJSON := wireJSON(t, out[0])
+	unhomedJSON := wireJSON(t, out[1])
+	if !strings.Contains(homedJSON, `"credit_limit_cents":500000`) {
+		t.Errorf("homed row at allowed branch b-1 should carry figures: %s", homedJSON)
+	}
+	for _, bad := range []string{"credit_limit_cents", "open_balance_cents", "available_credit_cents", "300000", "50000"} {
+		if strings.Contains(unhomedJSON, bad) {
+			t.Errorf("unhomed row must resolve dealer default (refused) and omit %s: %s", bad, unhomedJSON)
+		}
+	}
+}

@@ -126,24 +126,47 @@ func (s *Service) WithHoldReader(h HoldReader) *Service { s.holds = h; return s 
 // WithAccountChecker wires the account existence check behind the standing read.
 func (s *Service) WithAccountChecker(a AccountChecker) *Service { s.accounts = a; return s }
 
-// balanceGate is what the dealer's balance policy says about THIS caller on THIS branch.
+// PositionGate reports whether the caller on ctx may read the customer's account position figures
+// (credit limit, open balance, available credit, past due totals and aging bucket) at branchID.
+// Satisfied by *billing.AccountPositionGate. A nil gate fails closed.
+type PositionGate interface {
+	AccountPositionAllowed(ctx context.Context, branchID string) bool
+}
+
+// WithPositionGate binds the dealer's account position policy gate. A nil gate fails closed.
+func (s *Service) WithPositionGate(g PositionGate) *Service { s.position = g; return s }
+
+func (s *Service) positionAllowed(ctx context.Context, branchID string) bool {
+	if s == nil || s.position == nil {
+		return false
+	}
+	return s.position.AccountPositionAllowed(ctx, branchID)
+}
+
+// balanceGate is what the dealer's policies say about THIS caller on THIS branch.
 type balanceGate int
 
 const (
-	// balanceOpen: ALL_STAFF, or MANAGER_UP and the caller is a manager. The read answers in full.
+	// balanceOpen: the counter standing surface is enabled and the caller is admitted by the
+	// dealer's account position policy (ar_invoice_policy.account_position_visibility). The read
+	// answers in full.
 	balanceOpen balanceGate = iota
-	// balanceFiguresWithheld: MANAGER_UP and the caller is not a manager. The read answers the hold
-	// state and the clear word, and never puts the overdue figure or its bucket in the bytes.
+	// balanceFiguresWithheld: the counter standing surface is enabled, and the dealer's account
+	// position policy withholds figures from this caller. The read answers the hold state or the
+	// withheld word, and never puts the overdue figure, its bucket, or the clear/past_due word in
+	// the bytes.
 	balanceFiguresWithheld
-	// balanceOff: HIDDEN. The surface is off for everyone, and the answer is a 403.
+	// balanceOff: pos_policy.balance_visibility is HIDDEN. The surface is off for everyone, and
+	// the answer is a 403.
 	balanceOff
 )
 
-// balanceGateFor resolves the dealer's balance policy for THIS caller, behind the same branch wall
-// the glance runs (X2: a branch the caller's resolved authority does not reach is REFUSED with the
-// wall's 403, never answered with an empty card). Same shape as marginAllowed by design, one idea
-// about visibility, applied twice. A caller who cannot be resolved and a policy that cannot be read
-// are errors, not a quiet "no": the read is refused or fails, it is never answered empty.
+// balanceGateFor resolves the counter standing surface switch (pos_policy.balance_visibility =
+// HIDDEN is a 403 for everyone) and the dealer's one account position policy gate
+// (ar_invoice_policy.account_position_visibility, MANAGER_UP by default) behind the branch wall
+// (X2: a branch the caller's resolved authority does not reach is REFUSED with the wall's 403,
+// never answered with an empty card). A caller who cannot be resolved and a policy that cannot be
+// read are errors, not a quiet "no": the read is refused or fails, it is never answered empty.
 func (s *Service) balanceGateFor(ctx context.Context, branchID string) (balanceGate, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
@@ -156,17 +179,13 @@ func (s *Service) balanceGateFor(ctx context.Context, branchID string) (balanceG
 	if err != nil {
 		return balanceOff, errors.Join(ErrStandingUnavailable, err)
 	}
-	switch p.BalanceVisibility {
-	case BalanceVisibilityManagerUp:
-		if caller.IsManager() {
-			return balanceOpen, nil
-		}
-		return balanceFiguresWithheld, nil
-	case BalanceVisibilityHidden:
+	if p.BalanceVisibility == BalanceVisibilityHidden {
 		return balanceOff, nil
-	default: // ALL_STAFF, the column default, and what a pre-0181 fake resolves to
+	}
+	if s.positionAllowed(ctx, branchID) {
 		return balanceOpen, nil
 	}
+	return balanceFiguresWithheld, nil
 }
 
 // AccountStandingInput is GET /api/v1/pos/account-standing.

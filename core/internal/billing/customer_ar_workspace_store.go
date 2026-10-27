@@ -150,6 +150,26 @@ type CustomerWorkspaceInvoice struct {
 	DaysOverdueBucket string    `json:"days_overdue_bucket"`
 	IsDisputed        bool      `json:"is_disputed"`
 	HasOpenPromise    bool      `json:"has_open_promise"`
+
+	// PositionWithheld is set by the handler when the dealer's account position policy refuses this
+	// caller. MarshalJSON then leaves days_overdue and days_overdue_bucket off the wire while keeping
+	// the invoice's own document figures.
+	PositionWithheld bool `json:"-"`
+}
+
+// MarshalJSON writes the workspace invoice row, omitting the past-due aging fields when the
+// caller is refused by the account position policy.
+func (inv CustomerWorkspaceInvoice) MarshalJSON() ([]byte, error) {
+	type plain CustomerWorkspaceInvoice
+	w := struct {
+		plain
+		DaysOverdue       *int    `json:"days_overdue,omitempty"`
+		DaysOverdueBucket *string `json:"days_overdue_bucket,omitempty"`
+	}{plain: plain(inv)}
+	if !inv.PositionWithheld {
+		w.DaysOverdue, w.DaysOverdueBucket = &inv.DaysOverdue, &inv.DaysOverdueBucket
+	}
+	return json.Marshal(w)
 }
 
 // CustomerWorkspacePayment is one payment the Payments & Credits tab carries, with the
@@ -193,6 +213,24 @@ type CustomerWorkspaceStatement struct {
 	ClosingBalanceCents int64     `json:"closing_balance_cents"`
 	DeliveryStatus      string    `json:"delivery_status"` // NOT_QUEUED / QUEUED / SENT / FAILED
 	CreatedAt           time.Time `json:"created_at"`
+
+	// PositionWithheld is set by the handler when the dealer's account position policy refuses this
+	// caller. MarshalJSON then omits closing_balance_cents from the wire.
+	PositionWithheld bool `json:"-"`
+}
+
+// MarshalJSON writes the statement row, omitting closing_balance_cents when the caller is refused
+// by the account position policy.
+func (s CustomerWorkspaceStatement) MarshalJSON() ([]byte, error) {
+	type plain CustomerWorkspaceStatement
+	w := struct {
+		plain
+		ClosingBalanceCents *int64 `json:"closing_balance_cents,omitempty"`
+	}{plain: plain(s)}
+	if !s.PositionWithheld {
+		w.ClosingBalanceCents = &s.ClosingBalanceCents
+	}
+	return json.Marshal(w)
 }
 
 // CustomerWorkspaceNote is one customer_ar_notes row, the Activity tab's note list. The

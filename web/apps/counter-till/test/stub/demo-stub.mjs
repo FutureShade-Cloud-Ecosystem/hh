@@ -2428,7 +2428,7 @@ const server = createServer(async (request, response) => {
   if (request.method === "GET" && path === "/api/v1/pos/account-standing") {
     const customerId = url.searchParams.get("customer_id") ?? "";
     if (customerId === "") {
-      respondJson(response, 200, {});
+      respondJson(response, 200, { standing: "walk_in" });
       return;
     }
     const customer = CUSTOMERS.find((c) => c.id === customerId) ?? null;
@@ -2436,22 +2436,26 @@ const server = createServer(async (request, response) => {
       respondJson(response, 404, { error: "no such customer account" });
       return;
     }
+    const held = customer.on_hold === true;
     if (!accountPositionAllowed(request)) {
-      // Round 4 (principal item 206): the withheld word is a case of its own, never "clear" (clear
-      // is a position too), and the hold is the same for every caller.
-      const held = customer.on_hold === true;
+      // Round 4/5 (principal items 206, 208): the withheld word is a case of its own, never "clear"
+      // (clear is a position too), and the hold is the same for every caller under the one
+      // ar_invoice_policy.account_position_visibility gate.
       respondJson(response, 200, held ? { standing: "on_hold", on_hold: true } : { standing: "withheld" });
       return;
     }
     const isBluffside = customer.id === "c-bluffside" || customer.name === "Bluffside Builders";
     const pastDue = customer.account_no === "C02" ? 41500 : (isBluffside ? 1482000 : 0);
     const bucket = isBluffside ? "61 to 90" : (pastDue > 0 ? "30" : undefined);
-    respondJson(response, 200, {
-      standing: pastDue > 0 ? "past_due" : (customer.on_hold === true ? "on_hold" : "clear"),
-      past_due_cents: pastDue,
-      oldest_bucket: bucket,
-      on_hold: customer.on_hold,
-    });
+    const out = {
+      standing: held ? "on_hold" : (pastDue > 0 ? "past_due" : "clear"),
+    };
+    if (pastDue > 0) {
+      out.past_due_cents = pastDue;
+      if (bucket !== undefined) out.oldest_bucket = bucket;
+    }
+    if (held) out.on_hold = true;
+    respondJson(response, 200, out);
     return;
   }
 

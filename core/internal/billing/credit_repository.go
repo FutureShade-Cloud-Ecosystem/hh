@@ -208,13 +208,13 @@ func (r *Repository) PlaceHold(ctx context.Context, customerID, kind, reason, pl
 }
 
 // holdColumns is the canonical hold SELECT list.
-const holdColumns = `h.id::text, h.customer_id::text, COALESCE(c.name,''), h.status, h.hold_kind,
+const holdColumns = `h.id::text, h.customer_id::text, COALESCE(c.name,''), COALESCE(c.home_branch_id::text,''), h.status, h.hold_kind,
 	h.auto_placed, h.reason, h.override_until, h.override_reason, h.created_at`
 
 func scanHold(row pgx.Row) (CreditHold, error) {
 	var h CreditHold
 	var until *time.Time
-	if err := row.Scan(&h.ID, &h.CustomerID, &h.CustomerName, &h.Status, &h.Kind,
+	if err := row.Scan(&h.ID, &h.CustomerID, &h.CustomerName, &h.HomeBranchID, &h.Status, &h.Kind,
 		&h.AutoPlaced, &h.Reason, &until, &h.OverrideReason, &h.CreatedAt); err != nil {
 		return CreditHold{}, err
 	}

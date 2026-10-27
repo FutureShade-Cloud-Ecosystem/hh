@@ -480,7 +480,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	monthEndHandler.RegisterRoutes(r, g)
 	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc}).
 		WithHoldReader(ops.tillRepo).
-		WithAccountChecker(posAccountAdapter{svc: customerSvc})
+		WithAccountChecker(posAccountAdapter{svc: customerSvc}).
+		WithPositionGate(billing.NewAccountPositionGate(billingRepo))
 
 	arLandingRepo := billing.NewARLandingRepository(pool).WithZone(newDealerZone(pool))
 	arLandingSvc := billing.NewARLandingService(arLandingRepo).

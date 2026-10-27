@@ -85,12 +85,28 @@ func availableCredit(limit, open int64) int64 {
 	return 0
 }
 
-// SearchForWire shapes search rows under the policy. branchID is the branch the request names: the
-// search carries no per account home branch, so the branch the caller acts for decides.
+// SearchForWire shapes search rows under the policy. Homed rows resolve at branchID (the branch
+// the search fenced them to); unhomed (company-wide) rows resolve at "" (the dealer default),
+// matching AccountForWire.
 func (s *Service) SearchForWire(ctx context.Context, rows []SearchResult, branchID string) []SearchResultWire {
-	allowed := s.PositionAllowed(ctx, branchID)
 	out := make([]SearchResultWire, 0, len(rows))
+	var branchAllowed, branchChecked bool
+	var defaultAllowed, defaultChecked bool
 	for _, r := range rows {
+		var allowed bool
+		if r.Unhomed {
+			if !defaultChecked {
+				defaultAllowed = s.PositionAllowed(ctx, "")
+				defaultChecked = true
+			}
+			allowed = defaultAllowed
+		} else {
+			if !branchChecked {
+				branchAllowed = s.PositionAllowed(ctx, branchID)
+				branchChecked = true
+			}
+			allowed = branchAllowed
+		}
 		w := SearchResultWire{ID: r.ID, Name: r.Name, AccountNo: r.AccountNo,
 			CustomerType: r.CustomerType, PaymentTermsDays: r.PaymentTermsDays,
 			CashOnDemand: IsCashOnDemand(r.PaymentTermsDays, r.CreditLimitCents)}

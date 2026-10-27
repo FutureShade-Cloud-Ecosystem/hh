@@ -2048,7 +2048,6 @@ components:
         - balance_cents
         - stored_status
         - status
-        - days_overdue
         - account_status
         - disputed
       properties:
@@ -2435,7 +2434,6 @@ components:
         - doc_type
         - stored_status
         - status
-        - days_overdue
         - issue_date
         - due_date
         - branch_id
@@ -2981,17 +2979,14 @@ components:
       type: object
       description: >-
         One stored statement: the rendered artefact and the aging figures as
-        they stood at as_of_date, never a re-derived query.
+        they stood at as_of_date, never a re-derived query. Aging and closing
+        balance are absent when the dealer's account position policy refuses
+        this caller.
       required:
         - id
         - run_id
         - customer_id
         - as_of_date
-        - current_cents
-        - days_30_cents
-        - days_60_cents
-        - days_90_plus_cents
-        - closing_balance_cents
         - delivery_status
         - created_at
       properties:
@@ -3668,6 +3663,8 @@ components:
       description: >-
         One invoice row the workspace invoices tab carries. Three lists reach this
         shape (open, closed, disputed); the bucket label matches the 5-bucket header.
+        days_overdue and days_overdue_bucket are absent when the dealer's account
+        position policy refuses this caller.
       required:
         - id
         - invoice_no
@@ -3677,8 +3674,6 @@ components:
         - due_date
         - total_cents
         - balance_cents
-        - days_overdue
-        - days_overdue_bucket
         - is_disputed
         - has_open_promise
       properties:
@@ -3747,13 +3742,13 @@ components:
       description: >-
         One statement row from ar_statements the workspace statements tab carries.
         The closing_balance_cents is the figure that went out the door on that date,
-        an immutable artefact per migration 0105.
+        an immutable artefact per migration 0105, and is absent when the dealer's
+        account position policy refuses this caller.
       required:
         - id
         - run_id
         - mode
         - as_of_date
-        - closing_balance_cents
         - delivery_status
         - created_at
       properties:
@@ -3808,7 +3803,9 @@ components:
         balance_after_cents:
           type: integer
           format: int64
-          description: Absent when the caller does not hold the payment trail (ruling 87).
+          description: >-
+            Absent when the caller does not hold the payment trail (ruling 87) or when
+            the dealer's account position policy refuses this caller.
         branch_id: { type: string, format: uuid }
         memo: { type: string }
         occurred_at: { type: string, format: date-time }
@@ -3949,11 +3946,11 @@ components:
         The C8 statement preview: the statement artefact (the figure that went out the door,
         0105) plus the customer's open lines and a 5-bucket aging breakdown. The breakdown
         reconciles to the penny: sum of the five buckets equals openCents; sum of the four
-        late buckets equals overdueCents. Reconciled is true exactly when both hold.
+        late buckets equals overdueCents. Reconciled is true exactly when both hold. Aging is
+        absent when the dealer's account position policy refuses this caller.
       required:
         - statement
         - open_lines
-        - aging
         - reconciled
       properties:
         statement: { $ref: "#/components/schemas/BillingStatement" }
@@ -3967,8 +3964,9 @@ components:
       description: >-
         One open invoice on the statement preview. balance_cents is the figure that has to
         reconcile to the penny; bucket_label is the row's 5-bucket name, derived server-side
-        from days_overdue, never computed in the browser.
-      required: [invoice_id, invoice_no, due_date, balance_cents, days_overdue, bucket_label]
+        from days_overdue, never computed in the browser. days_overdue and bucket_label are
+        absent when the dealer's account position policy refuses this caller.
+      required: [invoice_id, invoice_no, due_date, balance_cents]
       properties:
         invoice_id: { type: string, format: uuid }
         invoice_no: { type: string }

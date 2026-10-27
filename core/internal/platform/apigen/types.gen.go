@@ -348,7 +348,7 @@ type BillingRegisterRow struct {
 	HoldbackCents *int64                  `json:"holdback_cents,omitempty"`
 	StoredStatus  string                  `json:"stored_status"`
 	Status        string                  `json:"status"`
-	DaysOverdue   int32                   `json:"days_overdue"`
+	DaysOverdue   *int32                  `json:"days_overdue,omitempty"`
 	BucketLabel   *string                 `json:"bucket_label,omitempty"`
 	BucketKey     *string                 `json:"bucket_key,omitempty"`
 	AccountStatus string                  `json:"account_status"`
@@ -543,7 +543,7 @@ type BillingInvoiceDetail struct {
 	DocType       string                 `json:"doc_type"`
 	StoredStatus  string                 `json:"stored_status"`
 	Status        string                 `json:"status"`
-	DaysOverdue   int32                  `json:"days_overdue"`
+	DaysOverdue   *int32                 `json:"days_overdue,omitempty"`
 	IssueDate     time.Time              `json:"issue_date"`
 	DueDate       time.Time              `json:"due_date"`
 	BranchId      string                 `json:"branch_id"`
@@ -815,11 +815,11 @@ type BillingStatement struct {
 	CustomerId          string    `json:"customer_id"`
 	CustomerName        *string   `json:"customer_name,omitempty"`
 	AsOfDate            time.Time `json:"as_of_date"`
-	CurrentCents        int64     `json:"current_cents"`
-	Days30Cents         int64     `json:"days_30_cents"`
-	Days60Cents         int64     `json:"days_60_cents"`
-	Days90PlusCents     int64     `json:"days_90_plus_cents"`
-	ClosingBalanceCents int64     `json:"closing_balance_cents"`
+	CurrentCents        *int64    `json:"current_cents,omitempty"`
+	Days30Cents         *int64    `json:"days_30_cents,omitempty"`
+	Days60Cents         *int64    `json:"days_60_cents,omitempty"`
+	Days90PlusCents     *int64    `json:"days_90_plus_cents,omitempty"`
+	ClosingBalanceCents *int64    `json:"closing_balance_cents,omitempty"`
 	Html                *string   `json:"html,omitempty"`
 	DeliveryStatus      string    `json:"delivery_status"`
 	CreatedAt           time.Time `json:"created_at"`
@@ -1126,18 +1126,18 @@ type BillingCustomerWorkspaceAging struct {
 }
 
 type BillingCustomerWorkspaceInvoice struct {
-	Id                string `json:"id"`
-	InvoiceNo         string `json:"invoice_no"`
-	DocType           string `json:"doc_type"`
-	Status            string `json:"status"`
-	IssueDate         string `json:"issue_date"`
-	DueDate           string `json:"due_date"`
-	TotalCents        int64  `json:"total_cents"`
-	BalanceCents      int64  `json:"balance_cents"`
-	DaysOverdue       int    `json:"days_overdue"`
-	DaysOverdueBucket string `json:"days_overdue_bucket"`
-	IsDisputed        bool   `json:"is_disputed"`
-	HasOpenPromise    bool   `json:"has_open_promise"`
+	Id                string  `json:"id"`
+	InvoiceNo         string  `json:"invoice_no"`
+	DocType           string  `json:"doc_type"`
+	Status            string  `json:"status"`
+	IssueDate         string  `json:"issue_date"`
+	DueDate           string  `json:"due_date"`
+	TotalCents        int64   `json:"total_cents"`
+	BalanceCents      int64   `json:"balance_cents"`
+	DaysOverdue       *int    `json:"days_overdue,omitempty"`
+	DaysOverdueBucket *string `json:"days_overdue_bucket,omitempty"`
+	IsDisputed        bool    `json:"is_disputed"`
+	HasOpenPromise    bool    `json:"has_open_promise"`
 }
 
 type BillingCustomerWorkspacePayment struct {
@@ -1164,7 +1164,7 @@ type BillingCustomerWorkspaceStatement struct {
 	RunId               string    `json:"run_id"`
 	Mode                string    `json:"mode"`
 	AsOfDate            string    `json:"as_of_date"`
-	ClosingBalanceCents int64     `json:"closing_balance_cents"`
+	ClosingBalanceCents *int64    `json:"closing_balance_cents,omitempty"`
 	DeliveryStatus      string    `json:"delivery_status"`
 	CreatedAt           time.Time `json:"created_at"`
 }
@@ -1235,17 +1235,17 @@ type BillingSendPaylinkResult struct {
 type BillingStatementPreview struct {
 	Statement  BillingStatement              `json:"statement"`
 	OpenLines  []BillingStatementPreviewLine `json:"open_lines"`
-	Aging      BillingStatementPreviewAging  `json:"aging"`
+	Aging      *BillingStatementPreviewAging `json:"aging,omitempty"`
 	Reconciled bool                          `json:"reconciled"`
 }
 
 type BillingStatementPreviewLine struct {
-	InvoiceId    string `json:"invoice_id"`
-	InvoiceNo    string `json:"invoice_no"`
-	DueDate      string `json:"due_date"`
-	BalanceCents int64  `json:"balance_cents"`
-	DaysOverdue  int32  `json:"days_overdue"`
-	BucketLabel  string `json:"bucket_label"`
+	InvoiceId    string  `json:"invoice_id"`
+	InvoiceNo    string  `json:"invoice_no"`
+	DueDate      string  `json:"due_date"`
+	BalanceCents int64   `json:"balance_cents"`
+	DaysOverdue  *int32  `json:"days_overdue,omitempty"`
+	BucketLabel  *string `json:"bucket_label,omitempty"`
 }
 
 type BillingStatementPreviewAging struct {
