@@ -30,7 +30,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
@@ -172,6 +172,7 @@ func TestIntegration_CreditMemoRoute_TheCreditReachesTheSubledgerTheLedgerAndThe
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
 		total: 113_000, balance: 113_000, finalized: true,
 	})
+	cmStampInvoiceOrg(t, pool, inv)
 
 	poster := &creditMemoLedgerPoster{t: t, pool: pool}
 	w := NewInvoiceWriter(pool).WithCreditMemoPoster(poster)
@@ -292,6 +293,7 @@ func TestIntegration_CreditMemoRoute_OverTheThresholdNothingMoves(t *testing.T) 
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
 		total: 113_000, balance: 113_000, finalized: true,
 	})
+	cmStampInvoiceOrg(t, pool, inv)
 
 	poster := &creditMemoLedgerPoster{t: t, pool: pool}
 	spy := &creditMemoParkSpy{}
@@ -365,6 +367,7 @@ func TestIntegration_CreditMemoRoute_TheSameKeyRaisesOneCredit(t *testing.T) {
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
 		total: 113_000, balance: 113_000, finalized: true,
 	})
+	cmStampInvoiceOrg(t, pool, inv)
 
 	poster := &creditMemoLedgerPoster{t: t, pool: pool}
 	w := NewInvoiceWriter(pool).WithCreditMemoPoster(poster)
@@ -413,6 +416,7 @@ func TestIntegration_CreditMemoRoute_AReasonIsRequired(t *testing.T) {
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
 		total: 113_000, balance: 113_000, finalized: true,
 	})
+	cmStampInvoiceOrg(t, pool, inv)
 
 	w := NewInvoiceWriter(pool)
 	svc := NewCreditMemoService(w, slog.Default()).
@@ -452,6 +456,7 @@ func TestIntegration_CreditMemoRoute_AnAccountThePostingRulesDoNotAllowIsRefused
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
 		total: 113_000, balance: 113_000, finalized: true,
 	})
+	cmStampInvoiceOrg(t, pool, inv)
 
 	w := NewInvoiceWriter(pool)
 	svc := NewCreditMemoService(w, slog.Default()).

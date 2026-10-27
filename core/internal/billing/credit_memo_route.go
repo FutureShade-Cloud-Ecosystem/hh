@@ -281,6 +281,56 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 	if req.AmountCents < 0 {
 		return CreditMemoRouteResult{}, httpx.BadRequestf("a credit amount is a positive magnitude; the sign is billing's")
 	}
+	// THE FENCE. A credit is filed at a branch the caller reaches, in the org the caller is signed
+	// into; a GLOBAL caller is bounded to its org (UX-81). Fail closed on a caller with no org at all.
+	if caller.OrgID == "" {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("the caller's organization is missing, so no credit can be issued")
+	}
+	if !caller.reaches(branchID) {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("that branch is not yours to credit")
+	}
+	// Against an invoice, the invoice names the facts: a body branch that differs from the invoice's
+	// is refused, and an invoice at a branch the caller does not reach, or of another org, answers
+	// exactly as a missing invoice answers, so a caller cannot read a ledger's shape out of the
+	// refusals. A missing row falls through to the plan, which refuses in the same words.
+	if invoiceID := strings.TrimSpace(req.InvoiceID); invoiceID != "" {
+		var invBranch, invOrg *string
+		if err := s.w.pool.QueryRow(ctx,
+			`SELECT branch_id::text, org_id::text FROM invoices WHERE id = $1::uuid AND doc_type = 'INVOICE'`,
+			invoiceID).Scan(&invBranch, &invOrg); err == nil {
+			if invOrg == nil || *invOrg != caller.OrgID || !caller.reaches(*invBranch) {
+				return CreditMemoRouteResult{}, httpx.BadRequestf("no such invoice to reverse")
+			}
+			if branchID != *invBranch {
+				return CreditMemoRouteResult{}, httpx.BadRequestf("a credit against an invoice is filed at the invoice's branch")
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return CreditMemoRouteResult{}, err
+		}
+	}
+	var branchOrg *string
+	if err := s.w.pool.QueryRow(ctx,
+		`SELECT org_id::text FROM locations WHERE id = $1::uuid`, branchID).Scan(&branchOrg); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CreditMemoRouteResult{}, httpx.BadRequestf("no such branch to credit at")
+		}
+		return CreditMemoRouteResult{}, err
+	}
+	if branchOrg == nil || *branchOrg != caller.OrgID {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("that branch is not in your organization")
+	}
+	var custOrg *string
+	if err := s.w.pool.QueryRow(ctx, `
+		SELECT l.org_id::text FROM customers c JOIN locations l ON l.id = c.home_branch_id
+		 WHERE c.id = $1::uuid`, customerID).Scan(&custOrg); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CreditMemoRouteResult{}, httpx.BadRequestf("no such customer to credit")
+		}
+		return CreditMemoRouteResult{}, err
+	}
+	if custOrg == nil || *custOrg != caller.OrgID {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("that customer is not in your organization")
+	}
 	if s.rules == nil {
 		return CreditMemoRouteResult{}, httpx.BadRequestf("the posting rules are not wired; no credit can be booked")
 	}
@@ -309,13 +359,25 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 		SourceKind:        SourceOrder,
 	}
 
-	// THE IDEMPOTENCY KEY, CHECKED FIRST. A retry is answered with the credit the key already named,
-	// before anything else is read, because the plan's own cap would otherwise refuse the retry:
-	// the first attempt already took the room the second was going to plan against. Answering "nothing
-	// left to credit" to a double click would be true about the invoice and wrong about the credit.
-	if existing, found, err := s.w.creditMemoByKey(ctx, in.IdempotencyKey); err != nil {
+	// THE IDEMPOTENCY KEY, CHECKED FIRST AND BOUND TO ITS REQUEST. A retry is answered with the credit
+	// the key already named, before anything else is read, because the plan's own cap would otherwise
+	// refuse the retry: the first attempt already took the room the second was going to plan against.
+	// But the answer comes only when the body is the same credit (the customer, the branch, the
+	// invoice and the amount); a key reused with a different body is a 409 conflict, never somebody
+	// else's credit read back as issued. The lookup is bounded to the caller's org, so a key from
+	// another org's memo discloses nothing. (A zero amount means the whole of what is left, so it is
+	// answered with whatever credit the key named.)
+	existing, found, err := s.w.creditMemoByKey(ctx, in.IdempotencyKey, caller.OrgID)
+	if err != nil {
 		return CreditMemoRouteResult{}, err
-	} else if found {
+	}
+	if found {
+		if existing.CustomerID != customerID ||
+			existing.BranchID != branchID ||
+			existing.ReversesInvoiceID != in.ReversesInvoiceID ||
+			(req.AmountCents != 0 && -existing.SubtotalCents != req.AmountCents) {
+			return CreditMemoRouteResult{}, &creditMemoKeyConflict{msg: "this idempotency key already named a different credit; a key belongs to the credit that first used it"}
+		}
 		return s.reusedResult(existing, revenue, reason), nil
 	}
 
@@ -438,8 +500,14 @@ func (s *CreditMemoService) reusedResult(doc InvoiceDoc, account, reason string)
 	}
 }
 
-// creditMemoByKey finds the credit an idempotency key already raised.
-func (w *InvoiceWriter) creditMemoByKey(ctx context.Context, key string) (InvoiceDoc, bool, error) {
+// creditMemoKeyConflict is the 409 for an idempotency key that already named a different credit.
+type creditMemoKeyConflict struct{ msg string }
+
+func (e *creditMemoKeyConflict) Error() string { return e.msg }
+
+// creditMemoByKey finds the credit an idempotency key already raised, bounded to one org: a key from
+// another org's memo answers as not found, so a key discloses nothing across orgs.
+func (w *InvoiceWriter) creditMemoByKey(ctx context.Context, key, orgID string) (InvoiceDoc, bool, error) {
 	if key == "" {
 		return InvoiceDoc{}, false, nil
 	}
@@ -448,10 +516,10 @@ func (w *InvoiceWriter) creditMemoByKey(ctx context.Context, key string) (Invoic
 		reverses string
 	)
 	err := w.pool.QueryRow(ctx, `
-	SELECT id::text, invoice_no::text, customer_id::text, branch_id::text, status,
-	       subtotal_cents, tax_cents, total_cents, balance_cents,
-	       COALESCE(reverses_invoice_id::text,'')
-	  FROM invoices WHERE idempotency_key = $1 AND doc_type = 'CREDIT_MEMO'`, key).
+		SELECT id::text, invoice_no::text, customer_id::text, branch_id::text, status,
+		       subtotal_cents, tax_cents, total_cents, balance_cents,
+		       COALESCE(reverses_invoice_id::text,'')
+		  FROM invoices WHERE idempotency_key = $1 AND doc_type = 'CREDIT_MEMO' AND org_id = $2::uuid`, key, orgID).
 		Scan(&doc.InvoiceID, &doc.InvoiceNo, &doc.CustomerID, &doc.BranchID, &doc.Status,
 			&doc.SubtotalCents, &doc.TaxCents, &doc.TotalCents, &doc.BalanceCents, &reverses)
 	if err != nil {
@@ -621,12 +689,15 @@ func (h *CreditMemoRouteHandler) issue(w http.ResponseWriter, r *http.Request, c
 func (h *CreditMemoRouteHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var bad httpx.BadRequestError
 	var sd *SupplierDepositNotCreditable
+	var kc *creditMemoKeyConflict
 	switch {
 	case errors.As(err, &bad):
 		httpx.Error(w, http.StatusBadRequest, bad.Error())
 	case errors.As(err, &sd):
 		httpx.ErrorWith(w, http.StatusConflict, SupplierDepositNotCreditableWords,
 			map[string]any{"code": SupplierDepositNotCreditableCode})
+	case errors.As(err, &kc):
+		httpx.Error(w, http.StatusConflict, kc.Error())
 	case errors.Is(err, ErrNothingToInvoice):
 		httpx.Error(w, http.StatusBadRequest, "there is nothing to credit")
 	case errors.Is(err, errNoDB):
@@ -649,13 +720,17 @@ func (h *CreditMemoRouteHandler) writeErr(w http.ResponseWriter, r *http.Request
 // Its balance is zero while it waits, not its negative total: a credit that is not yet a credit has
 // no balance to collect.
 //
-// The plan is resolved HERE, on the caller's transaction, for the same reason the writer resolves it
-// there: the invoice's remainder is read under the transaction's lock, so a credit cannot be planned
-// against an amount another credit has already taken. The reversing journal comes back with the
+// The plan is resolved HERE, on the caller's transaction, under the SF-2e locks the posted writer
+// takes (lockForCreditPlan): the invoice's remainder is read under the reversed invoice's lock, so a
+// parked credit and a posted credit of one invoice cannot together pass the cap, and the parked
+// credit's room is held from the park to the approval. The reversing journal comes back with the
 // document, so the composition root parks both without doing any arithmetic.
 func (w *InvoiceWriter) ParkCreditMemoTx(ctx context.Context, tx pgx.Tx, in CreditMemoInput) (InvoiceDoc, CreditMemoJournal, error) {
 	if tx == nil {
 		return InvoiceDoc{}, CreditMemoJournal{}, errNoDB
+	}
+	if err := lockForCreditPlan(ctx, tx, in); err != nil {
+		return InvoiceDoc{}, CreditMemoJournal{}, err
 	}
 	plan, err := w.planCreditMemo(ctx, tx, in)
 	if err != nil {
@@ -781,26 +856,45 @@ func (w *InvoiceWriter) FinalizeParkedCreditMemoTx(ctx context.Context, tx pgx.T
 	if currentStatus != "DRAFT" {
 		return httpx.BadRequestf("credit memo %s is %s, not a parked credit waiting for approval", no, currentStatus)
 	}
-	// THE CAP, RE-READ AT APPROVAL TIME. A credit that was planned against an invoice's remainder may
-	// find that remainder gone: another credit took it while this one waited for a signature. The
-	// approval then fails, the request stays PENDING, and the approver can refuse it instead of
-	// crediting more than the invoice has left.
+	// THE CAP, RE-READ AT APPROVAL TIME under the reversed invoice's lock, the SF-2e way: the room is
+	// the original's subtotal and tax less every memo that is not VOID, and this memo's own take is
+	// added back, because the draft counts in that sum. A credit whose room another document took
+	// while it waited is refused here, and the approver can decline it instead of crediting past the
+	// invoice. (The old re-check read the original's balance, which a memo never changes: it refused
+	// every over-threshold credit of a paid invoice for good, and caught no over-credit at all.)
 	if reverses != "" {
-		var open int64
+		if _, err := tx.Exec(ctx,
+			`SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, reverses); err != nil {
+			return fmt.Errorf("billing: lock the reversed invoice at the approval: %w", err)
+		}
+		var (
+			origNo           string
+			origSub, origTax int64
+			prevSub, prevTax int64
+		)
 		if err := tx.QueryRow(ctx,
-			`SELECT COALESCE(balance_cents,0) FROM invoices WHERE id = $1`, reverses).Scan(&open); err != nil {
+			`SELECT invoice_no::text, subtotal_cents, tax_cents FROM invoices WHERE id = $1::uuid`, reverses).
+			Scan(&origNo, &origSub, &origTax); err != nil {
 			if err == pgx.ErrNoRows {
 				return httpx.BadRequestf("the invoice this credit was planned against is gone")
 			}
-			return fmt.Errorf("billing: read the reversed invoice's balance: %w", err)
+			return fmt.Errorf("billing: read the reversed invoice at the approval: %w", err)
 		}
-		if total > open {
-			return httpx.BadRequestf("that invoice has %s left and this credit is %s", Money(open), Money(total))
+		if err := tx.QueryRow(ctx, `
+			SELECT COALESCE(-SUM(subtotal_cents), 0), COALESCE(-SUM(tax_cents), 0)
+			  FROM invoices WHERE reverses_invoice_id = $1::uuid AND doc_type = 'CREDIT_MEMO' AND status <> 'VOID'`,
+			reverses).Scan(&prevSub, &prevTax); err != nil {
+			return fmt.Errorf("billing: read what is already credited at the approval: %w", err)
+		}
+		leftSub, leftTax := origSub-prevSub+subtotal, origTax-prevTax+tax
+		if subtotal > leftSub || tax > leftTax {
+			return httpx.BadRequestf("the credits already issued against invoice %s leave %s before tax (%s with tax); this credit is %s, so it cannot be approved",
+				origNo, Money(leftSub-subtotal), Money(leftSub-subtotal+leftTax-tax), Money(total))
 		}
 	}
 	if _, err := tx.Exec(ctx, `
-	UPDATE invoices SET status = 'FINALIZED', balance_cents = -$2, finalized_at = now()
-	 WHERE id = $1 AND status = 'DRAFT'`, memoID, total); err != nil {
+	UPDATE invoices SET status = 'FINALIZED', balance_cents = $2, finalized_at = now()
+	 WHERE id = $1 AND status = 'DRAFT'`, memoID, -total); err != nil {
 		return fmt.Errorf("billing: finalize parked credit memo: %w", err)
 	}
 	var open int64
@@ -818,6 +912,23 @@ func (w *InvoiceWriter) FinalizeParkedCreditMemoTx(ctx context.Context, tx pgx.T
 	VALUES ($1, 'CREDIT_MEMO', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 		customerID, -total, open, memoID, branchID, "Credit memo "+no); err != nil {
 		return fmt.Errorf("billing: insert AR subledger row for the parked credit memo: %w", err)
+	}
+	return nil
+}
+
+// VoidParkedCreditMemoTx voids a parked credit memo's DRAFT document on the CALLER's transaction: the
+// reject and withdraw arms of the approval rail. The SF-2e cap counts every memo that is not VOID, so
+// a refused or withdrawn park would hold the invoice's room for good; the void is what frees it. A
+// memo that is not a DRAFT is left as it stands: already finalized is live money the customer is owed
+// the credit on, already void needs nothing.
+func (w *InvoiceWriter) VoidParkedCreditMemoTx(ctx context.Context, tx pgx.Tx, memoID string) error {
+	if tx == nil {
+		return errNoDB
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE invoices SET status = 'VOID'
+		 WHERE id = $1::uuid AND doc_type = 'CREDIT_MEMO' AND status = 'DRAFT'`, memoID); err != nil {
+		return fmt.Errorf("billing: void the parked credit memo: %w", err)
 	}
 	return nil
 }

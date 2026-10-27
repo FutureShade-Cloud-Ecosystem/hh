@@ -26,7 +26,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
@@ -89,6 +89,17 @@ func seedCustomerAt(t *testing.T, pool *pgxpool.Pool, tag, branchID string) stri
 		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, id)
 	})
 	return id
+}
+
+// cmStampInvoiceOrg gives a seeded invoice its branch's org, as the writer stamps on every real
+// document (SF-2p); the seed helper leaves the column null, and the fence reads it.
+func cmStampInvoiceOrg(t *testing.T, pool *pgxpool.Pool, invoiceID string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE invoices SET org_id = (SELECT l.org_id FROM locations l WHERE l.id = invoices.branch_id)
+		 WHERE id = $1::uuid`, invoiceID); err != nil {
+		t.Fatalf("stamp the invoice's org: %v", err)
+	}
 }
 
 func cmTrentonOnlyCaller() CreditMemoCaller {
@@ -192,6 +203,7 @@ func TestIntegration_CreditMemoRound_AnInvoiceAtAnotherBranchAnswersNotFound(t *
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
 		total: 113_000, balance: 113_000, finalized: true, branch: kingstonBranch,
 	})
+	cmStampInvoiceOrg(t, pool, inv)
 	svc := cmRoundRoute(t, pool, 0)
 
 	_, err := svc.Issue(ctx, CreditMemoRouteRequest{
@@ -222,6 +234,7 @@ func TestIntegration_CreditMemoRound_AnInvoiceAtAnotherOrgAnswersNotFound(t *tes
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
 		total: 113_000, balance: 113_000, finalized: true, branch: cmSouthBranchID,
 	})
+	cmStampInvoiceOrg(t, pool, inv)
 	svc := cmRoundRoute(t, pool, 0)
 
 	_, err := svc.Issue(ctx, CreditMemoRouteRequest{
@@ -304,6 +317,7 @@ func TestIntegration_CreditMemoRound_TheSameKeyOnADifferentBodyConflicts(t *test
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
 		total: 113_000, balance: 113_000, finalized: true,
 	})
+	cmStampInvoiceOrg(t, pool, inv)
 	svc := cmRoundRoute(t, pool, 0)
 
 	if _, err := svc.Issue(ctx, CreditMemoRouteRequest{
