@@ -56,6 +56,7 @@ type WeightRequestInput struct {
 	Note        string
 	RequestedBy string
 	// OrgID is the caller's org (UX-81c): the order is read under it and the stored task carries it.
+	// Empty takes the order branch's org at the insert (UX-95).
 	OrgID string
 	// Reach says whether the caller's branch reach covers a branch, as CreateInput.Reach does for a pick.
 	Reach func(branch string) (bool, error)

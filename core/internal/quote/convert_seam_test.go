@@ -344,12 +344,16 @@ func TestCreditRefusal_StillUnwrapsToInvalidTransition(t *testing.T) {
 // the change until somebody came here and said why, and weakening or deleting it instead would have
 // thrown away the guard for every future edit.
 //
+// It moved a second time for UX-95: org_id (the branch's org, a subselect on locations) joined the pair, spliced
+// before the fulfilment points like the freight pair, in the same commit as the statement.
+//
 // What it still pins, unchanged: the fulfilment splice contributes NOTHING when no fulfilment is
 // chosen, and the column list and the SELECT list pair POSITIONALLY, with the fulfilment splice last
 // in both. The two new columns sit before the splice points for exactly that reason.
 func TestConvert_FulfillmentDefaultIsByteIdentical(t *testing.T) {
-	const want = `INSERT INTO orders (order_no, customer_id, branch_id, quote_id, subtotal_cents, tax_cents, total_cents, freight_cents, quoted_freight_cents)
-		 SELECT next_order_no(branch_id), customer_id, branch_id, id, subtotal_cents, tax_cents, total_cents, delivery_fee_cents, delivery_fee_cents
+	const want = `INSERT INTO orders (order_no, customer_id, branch_id, quote_id, subtotal_cents, tax_cents, total_cents, freight_cents, quoted_freight_cents, org_id)
+		 SELECT next_order_no(branch_id), customer_id, branch_id, id, subtotal_cents, tax_cents, total_cents, delivery_fee_cents, delivery_fee_cents,
+		        (SELECT l.org_id FROM locations l WHERE l.id = quotes.branch_id)
 		 FROM quotes WHERE id=$2 AND customer_id=$1
 		 RETURNING id::text, order_no::text`
 
