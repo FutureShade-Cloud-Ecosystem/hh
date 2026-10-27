@@ -8,6 +8,8 @@
 // the till chrome to a fresh Open Session.
 import { expect, test, type Page } from "@playwright/test";
 
+import { closeAccountMenu, openAccountMenu } from "./account-menu";
+
 /** Sign in through the entry cards and land on the ported terminal. */
 async function signIn(page: Page, role: "Sales" | "Sales manager"): Promise<void> {
   await page.goto("/");

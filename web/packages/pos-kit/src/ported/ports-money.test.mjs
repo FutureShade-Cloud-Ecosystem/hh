@@ -23,6 +23,7 @@ import {
   refundEstimateCents,
   splitDraftRead,
   sumLineSavingCents,
+  sumSlipCents,
 } from './ports.ts';
 
 const TOTAL = 11300; // $113.00, the sale being settled in most cases below
@@ -281,6 +282,12 @@ test('sumLineSavingCents multiplies per line and sums, skipping what the engine 
   assert.equal(sumLineSavingCents([{ saving_cents: 72, qty: 3 }, { saving_cents: 140, qty: 2 }]), 496);
   assert.equal(sumLineSavingCents([{ saving_cents: NaN, qty: 3 }, { saving_cents: 140, qty: 2 }]), 280);
   assert.equal(sumLineSavingCents([]), 0);
+});
+
+test('sumSlipCents adds the ticked cheques and skips nothing into a guess', () => {
+  assert.equal(sumSlipCents([30000, 1250]), 31250);
+  assert.equal(sumSlipCents([]), 0);
+  assert.equal(sumSlipCents([30000, NaN, 1250]), 31250);
 });
 
 test('a fractional quantity leaves integer cents: each line rounds as it sums', () => {

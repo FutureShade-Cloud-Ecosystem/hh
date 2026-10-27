@@ -90,9 +90,31 @@ func newMJWorld(t *testing.T) *mjWorld {
 	w := &mjWorld{t: t, pool: pool, svc: svc, sessionID: id, branchID: branchID, userID: userID}
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE idempotency_key LIKE 'till.movement.posted:%')`)
-		_, _ = pool.Exec(c, `DELETE FROM gl_journals WHERE idempotency_key LIKE 'till.movement.posted:%'`)
-		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE topic = 'till.movement.posted'`)
+		// The cleanup is SCOPED to this leg's own rows: the shared gate database holds other packages'
+		// movements and journals, and a leg that deleted every till.movement.posted row in the
+		// database would take their markers with it (P3).
+		_, _ = pool.Exec(c, `
+			DELETE FROM gl_journal_lines WHERE journal_id IN (
+			  SELECT j.id FROM gl_journals j
+			   WHERE j.idempotency_key IN (
+			     SELECT 'till.movement.posted:' || m.id::text FROM till_movements m
+			      WHERE m.till_session_id = $1::uuid))`, id)
+		_, _ = pool.Exec(c, `
+			DELETE FROM gl_journals WHERE idempotency_key IN (
+			  SELECT 'till.movement.posted:' || m.id::text FROM till_movements m
+			   WHERE m.till_session_id = $1::uuid)`, id)
+		_, _ = pool.Exec(c, `
+			DELETE FROM events_outbox WHERE topic = 'till.movement.posted' AND payload->>'movement_id' IN (
+			  SELECT m.id::text FROM till_movements m WHERE m.till_session_id = $1::uuid)`, id)
+		// The bankrec clearing journals of this leg's own statement lines (their source_ref_id is the
+		// line, and the line carries this process's reference).
+		_, _ = pool.Exec(c, `
+			DELETE FROM gl_journal_lines WHERE journal_id IN (
+			  SELECT j.id FROM gl_journals j
+			   WHERE j.source_ref_id IN (SELECT l.id FROM bank_statement_lines l WHERE l.reference = $2))`, id, "MJ-"+fmt.Sprint(os.Getpid()))
+		_, _ = pool.Exec(c, `
+			DELETE FROM gl_journals WHERE source_ref_id IN (
+			  SELECT l.id FROM bank_statement_lines l WHERE l.reference = $1)`, "MJ-"+fmt.Sprint(os.Getpid()))
 		_, _ = pool.Exec(c, `DELETE FROM till_movements WHERE till_session_id = $1::uuid`, id)
 		_, _ = pool.Exec(c, `DELETE FROM till_sessions WHERE id = $1::uuid`, id)
 	})
@@ -738,5 +760,253 @@ func TestFW113ZReportListsTheDrawerMovements(t *testing.T) {
 	}
 	if out.BranchID != w.branchID {
 		t.Fatalf("the paid out line carries branch %q, want the drawer's branch %q", out.BranchID, w.branchID)
+	}
+}
+
+// TestFW113ChequeLodgementWithoutASlipIsRefused is P1-1 (FROM-PRINCIPAL 166): a CHEQUE lodgement must
+// name its cheques, because a cheque bounces and the deposit has to say which payments it carries, or
+// the bounce credits the wrong account. The refusal speaks to the drawer: the cheques come to one amount
+// and the lodgement says another. A CASH lodgement may go without a slip (cash does not bounce).
+func TestFW113ChequeLodgementWithoutASlipIsRefused(t *testing.T) {
+	w := newMJWorld(t)
+	cheque := w.slipPayment("CHEQUE", 30_00)
+
+	err := w.svc.Lodge(staffCtx(w.userID, w.branchID), till.MovementInput{
+		TillSessionID: w.sessionID, MovementType: "LODGEMENT", Method: "CHEQUE",
+		AmountCents: 30_00, Reason: "FW1-13 bank run",
+	})
+	if err == nil {
+		t.Fatal("a cheque lodgement without its slip must be refused")
+	}
+	if !strings.Contains(err.Error(), "Tick the cheques in this lodgement") {
+		t.Fatalf("the refusal must speak to the drawer, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "$30.00") {
+		t.Fatalf("the refusal must name the lodgement's amount, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "$0.00") {
+		t.Fatalf("the refusal must name what the slip comes to, got %v", err)
+	}
+
+	// Nothing was written: no movement, and the cheque still RECEIVED.
+	var movements int
+	if err := w.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM till_movements WHERE till_session_id = $1::uuid`, w.sessionID).Scan(&movements); err != nil {
+		t.Fatalf("read the movements: %v", err)
+	}
+	if movements != 0 {
+		t.Fatalf("the refused lodgement wrote %d movements", movements)
+	}
+	var status string
+	if err := w.pool.QueryRow(context.Background(), `SELECT status FROM payments WHERE id = $1::uuid`, cheque).Scan(&status); err != nil {
+		t.Fatalf("read the cheque: %v", err)
+	}
+	if status != "RECEIVED" {
+		t.Fatalf("the refused lodgement marked the cheque %s", status)
+	}
+
+	// A cash lodgement may go without a slip: cash does not bounce.
+	if err := w.svc.Lodge(staffCtx(w.userID, w.branchID), till.MovementInput{
+		TillSessionID: w.sessionID, MovementType: "LODGEMENT", Method: "CASH",
+		AmountCents: 30_00, Reason: "FW1-13 bank run",
+	}); err != nil {
+		t.Fatalf("a cash lodgement without a slip must be allowed: %v", err)
+	}
+}
+
+// TestFW113TheCloseListsTheUnlodgedCheques is the screen's list (P1-1): the session detail names the
+// drawer's unlodged cheques, the ones a lodgement's slip can carry, and a cheque that has been lodged
+// leaves the list.
+func TestFW113TheCloseListsTheUnlodgedCheques(t *testing.T) {
+	w := newMJWorld(t)
+	first := w.slipPayment("CHEQUE", 30_00)
+	second := w.slipPayment("CHEQUE", 12_00)
+	_ = w.slipPayment("CASH", 5_00) // cash is never on a cheque slip
+
+	detail, err := w.svc.GetSession(staffCtx(w.userID, w.branchID), w.sessionID)
+	if err != nil {
+		t.Fatalf("the session detail: %v", err)
+	}
+	listed := map[string]int64{}
+	for _, c := range detail.SlipCandidates {
+		listed[c.PaymentID] = c.AmountCents
+	}
+	if len(listed) != 2 {
+		t.Fatalf("the close lists %d unlodged cheques, want 2: %+v", len(listed), detail.SlipCandidates)
+	}
+	if listed[first] != 30_00 || listed[second] != 12_00 {
+		t.Fatalf("the close lists the wrong cheques: %+v", listed)
+	}
+	for _, c := range detail.SlipCandidates {
+		if c.Method != "CHEQUE" {
+			t.Fatalf("the close lists a %s payment as a cheque candidate", c.Method)
+		}
+		if c.PaymentNo == "" {
+			t.Fatalf("the close lists a cheque with no number: %+v", c)
+		}
+	}
+
+	// The lodgement carries one of them, and that one leaves the list.
+	if err := w.svc.Lodge(staffCtx(w.userID, w.branchID), till.MovementInput{
+		TillSessionID: w.sessionID, MovementType: "LODGEMENT", Method: "CHEQUE",
+		AmountCents: 30_00, Reason: "FW1-13 bank run", PaymentIDs: []string{first},
+	}); err != nil {
+		t.Fatalf("the cheque lodgement: %v", err)
+	}
+	detail, err = w.svc.GetSession(staffCtx(w.userID, w.branchID), w.sessionID)
+	if err != nil {
+		t.Fatalf("the session detail after the lodgement: %v", err)
+	}
+	listed = map[string]int64{}
+	for _, c := range detail.SlipCandidates {
+		listed[c.PaymentID] = c.AmountCents
+	}
+	if len(listed) != 1 || listed[second] != 12_00 {
+		t.Fatalf("after the lodgement the close lists %+v, want only the second cheque", listed)
+	}
+}
+
+// TestFW113TheSlipLodgementEmptiesTheDrawerOnce is the drawer's own math after a slip lodgement: the
+// slip's cheques left the drawer ONCE. The slip marked them DEPOSITED (the bank's fact) and the
+// lodgement is the drawer's statement that it banked them, so the expected is the drawer emptying by
+// the slip's sum and NOT by the slip's sum twice. A drawer that read short by the whole slip would
+// post a variance that never happened.
+func TestFW113TheSlipLodgementEmptiesTheDrawerOnce(t *testing.T) {
+	w := newMJWorld(t)
+	ctx := staffCtx(w.userID, w.branchID)
+	cheque := w.slipPayment("CHEQUE", 30_00)
+
+	// The cheque is on the drawer: the expected carries it.
+	z, err := w.svc.ZReportFor(ctx, w.sessionID)
+	if err != nil {
+		t.Fatalf("the z report: %v", err)
+	}
+	if got := tillChequeExpected(z); got != 30_00 {
+		t.Fatalf("the drawer's expected cheque before the lodgement is %d, want the slip's 3000", got)
+	}
+
+	// The lodgement carries the slip.
+	if err := w.svc.Lodge(ctx, till.MovementInput{
+		TillSessionID: w.sessionID, MovementType: "LODGEMENT", Method: "CHEQUE",
+		AmountCents: 30_00, Reason: "FW1-13 bank run", PaymentIDs: []string{cheque},
+	}); err != nil {
+		t.Fatalf("the cheque lodgement: %v", err)
+	}
+
+	// The drawer holds no cheque now: the slip took it out, once.
+	if err := w.svc.CountTill(ctx, till.CountInput{TillSessionID: w.sessionID, Tenders: []till.TenderActual{
+		{Method: "CASH", ActualCents: 100_00}, {Method: "CHEQUE", ActualCents: 0},
+	}}); err != nil {
+		t.Fatalf("the count: %v", err)
+	}
+	z, err = w.svc.ZReportFor(ctx, w.sessionID)
+	if err != nil {
+		t.Fatalf("the z report after the lodgement: %v", err)
+	}
+	for _, tt := range z.PerTender {
+		if tt.Method != "CHEQUE" {
+			continue
+		}
+		if tt.ExpectedCents != 0 {
+			t.Fatalf("the drawer's expected cheque is %d after the slip lodgement, want 0: the slip's cheques left the drawer once, not twice", tt.ExpectedCents)
+		}
+		if tt.VarianceCents != 0 {
+			t.Fatalf("the drawer's cheque variance is %d after the slip lodgement, want 0", tt.VarianceCents)
+		}
+		return
+	}
+	t.Fatalf("the z report has no CHEQUE line: %+v", z.PerTender)
+}
+
+// tillChequeExpected reads the z report's cheque line expected (0 when the report has no cheque line).
+func tillChequeExpected(z till.ZReport) int64 {
+	for _, tt := range z.PerTender {
+		if tt.Method == "CHEQUE" {
+			return tt.ExpectedCents
+		}
+	}
+	return 0
+}
+
+// TestFW113TheMatchDoesNotRestOnTheOutboxRow is P2 (raised from P3): the confirm-only rule must not
+// rest on an outbox row. An outbox row can be archived, and the match would then post the deposit a
+// second time. The lodgement's own journal, which names the movement for good, carries the fact.
+func TestFW113TheMatchDoesNotRestOnTheOutboxRow(t *testing.T) {
+	w := newMJWorld(t)
+	ctx := context.Background()
+
+	// A cash lodgement: no slip, so no link row can carry the fact. Its journal posts.
+	if err := w.svc.Lodge(staffCtx(w.userID, w.branchID), till.MovementInput{
+		TillSessionID: w.sessionID, MovementType: "LODGEMENT", Method: "CASH",
+		AmountCents: 30_00, Reason: "FW1-13 bank run",
+	}); err != nil {
+		t.Fatalf("the lodgement: %v", err)
+	}
+	var movementID string
+	if err := w.pool.QueryRow(ctx,
+		`SELECT id::text FROM till_movements WHERE till_session_id = $1::uuid AND movement_type = 'LODGEMENT'`, w.sessionID).Scan(&movementID); err != nil {
+		t.Fatalf("find the lodgement: %v", err)
+	}
+	w.drain()
+	if bank := w.legs("till.movement.posted:" + movementID)["1000"]; bank[0] != 30_00 {
+		t.Fatalf("the lodgement posted no bank debit at lodgement: got %v", w.legs("till.movement.posted:"+movementID))
+	}
+
+	// The outbox row is archived: the emission is gone, the journal is not.
+	if _, err := w.pool.Exec(ctx, `DELETE FROM events_outbox WHERE topic = 'till.movement.posted' AND payload->>'movement_id' = $1`, movementID); err != nil {
+		t.Fatalf("archive the outbox row: %v", err)
+	}
+
+	// The match still only confirms: the lodgement's own journal carries the fact.
+	line := w.statementLine(30_00)
+	bank := bankrec.NewService(bankrec.NewRepository(w.pool)).
+		WithJournalPoster(glPosterOver{gl.NewService(gl.NewRepository(w.pool)).WithPaymentReader(till.NewRepository(w.pool))}).
+		WithLodgements(till.NewRepository(w.pool)).
+		WithJournalKeys(gl.NewService(gl.NewRepository(w.pool)))
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{
+		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetLodgement,
+		TargetRefID: movementID, AmountCents: 30_00, CanAccessBranch: bankrec.AllBranches,
+	}, w.userID)
+	if err != nil {
+		t.Fatalf("the lodgement's match: %v", err)
+	}
+	if legs := w.legs("bankrec:match:" + m.ID); len(legs) != 0 {
+		t.Fatalf("a lodgement that carries its own journal must be confirmed, not journaled: got %v", legs)
+	}
+}
+
+// TestFW113TheTillEmitsTheMovementsOwnInstant is the emission half of the dating rule (P3): the till
+// writes the movement's own instant into the event payload, so the GL's builder dates the journal by
+// the movement and never by the consumer's clock. The dated leg pins the builder's read; this one pins
+// the till's write.
+func TestFW113TheTillEmitsTheMovementsOwnInstant(t *testing.T) {
+	w := newMJWorld(t)
+	id := w.record("PAID_OUT", 12_34)
+
+	var createdAt time.Time
+	if err := w.pool.QueryRow(context.Background(),
+		`SELECT created_at FROM till_movements WHERE id = $1::uuid`, id).Scan(&createdAt); err != nil {
+		t.Fatalf("read the movement: %v", err)
+	}
+	var payload []byte
+	if err := w.pool.QueryRow(context.Background(),
+		`SELECT payload FROM events_outbox WHERE topic = 'till.movement.posted' AND payload->>'movement_id' = $1`, id).Scan(&payload); err != nil {
+		t.Fatalf("read the emitted payload: %v", err)
+	}
+	var p struct {
+		MovementID string    `json:"movement_id"`
+		OccurredAt time.Time `json:"occurred_at"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		t.Fatalf("decode the emitted payload: %v", err)
+	}
+	if p.MovementID != id {
+		t.Fatalf("the emitted payload names %q, want the movement %q", p.MovementID, id)
+	}
+	if p.OccurredAt.IsZero() {
+		t.Fatalf("the emitted payload carries no instant: %s", payload)
+	}
+	if !p.OccurredAt.Equal(createdAt) {
+		t.Fatalf("the emitted instant is %s, want the movement's own %s", p.OccurredAt, createdAt)
 	}
 }

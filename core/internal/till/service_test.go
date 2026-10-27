@@ -225,6 +225,18 @@ func (f *fakeStore) PaymentsForSlip(_ context.Context, sessionID, method string,
 	return out, nil
 }
 
+// SlipCandidates answers the fake's unlodged payments of a method: the RECEIVED ones on the session.
+func (f *fakeStore) SlipCandidates(_ context.Context, sessionID, method string) ([]SlipCandidate, error) {
+	var out []SlipCandidate
+	for id, p := range f.payments {
+		if p.TillSessionID != sessionID || p.Method != method || p.Status != PaymentReceived {
+			continue
+		}
+		out = append(out, SlipCandidate{PaymentID: id, PaymentNo: id, AmountCents: p.AmountCents, Method: p.Method, Reference: id})
+	}
+	return out, nil
+}
+
 func (f *fakeStore) InsertMovementTx(_ context.Context, _ pgx.Tx, m MovementRow) error {
 	f.movements[m.TillSessionID] = append(f.movements[m.TillSessionID], m)
 	f.txMovements = append(f.txMovements, m)
@@ -1174,8 +1186,10 @@ func TestZReport_ChequeLodgement_InChequeExpected(t *testing.T) {
 	svc := newTestSvc(store, nil)
 	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
 	sid := openSession(t, store, trenton) // float 20000, cash only
-	store.seedPayment(PaymentRow{Method: MethodCheque, AmountCents: 8000, Status: PaymentReceived, TillSessionID: sid})
-	if err := svc.Lodge(ctx, MovementInput{TillSessionID: sid, MovementType: MovementLodgement, Method: MethodCheque, AmountCents: 8000, Reference: "bag-9"}); err != nil {
+	chequeID := store.seedPayment(PaymentRow{Method: MethodCheque, AmountCents: 8000, Status: PaymentReceived, TillSessionID: sid})
+	// A cheque lodgement names its slip (FROM-PRINCIPAL 166 P1-1): the cheque is on the drawer and the
+	// lodgement carries it.
+	if err := svc.Lodge(ctx, MovementInput{TillSessionID: sid, MovementType: MovementLodgement, Method: MethodCheque, AmountCents: 8000, Reference: "bag-9", PaymentIDs: []string{chequeID}}); err != nil {
 		t.Fatalf("cheque lodge: %v", err)
 	}
 	// The drawer counted exactly right: the cash float is there, the cheque is at the bank.
@@ -1278,11 +1292,12 @@ func TestSessionDetail_CountedMethods_AgreeWithZReport(t *testing.T) {
 	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
 	sid := openSession(t, store, trenton) // float 20000
 	store.seedPayment(PaymentRow{Method: MethodCash, AmountCents: 60000, Status: PaymentReceived, TillSessionID: sid})
-	store.seedPayment(PaymentRow{Method: MethodCheque, AmountCents: 8000, Status: PaymentReceived, TillSessionID: sid})
+	chequeID := store.seedPayment(PaymentRow{Method: MethodCheque, AmountCents: 8000, Status: PaymentReceived, TillSessionID: sid})
 	if err := svc.PaidOut(ctx, MovementInput{TillSessionID: sid, MovementType: MovementPaidOut, Method: MethodCash, AmountCents: 5000, Reason: "drop"}); err != nil {
 		t.Fatalf("paid out: %v", err)
 	}
-	if err := svc.Lodge(ctx, MovementInput{TillSessionID: sid, MovementType: MovementLodgement, Method: MethodCheque, AmountCents: 8000, Reference: "bag-5"}); err != nil {
+	// The cheque lodgement names its slip (FROM-PRINCIPAL 166 P1-1).
+	if err := svc.Lodge(ctx, MovementInput{TillSessionID: sid, MovementType: MovementLodgement, Method: MethodCheque, AmountCents: 8000, Reference: "bag-5", PaymentIDs: []string{chequeID}}); err != nil {
 		t.Fatalf("cheque lodge: %v", err)
 	}
 	if err := svc.CountTill(ctx, CountInput{TillSessionID: sid, Tenders: []TenderActual{
