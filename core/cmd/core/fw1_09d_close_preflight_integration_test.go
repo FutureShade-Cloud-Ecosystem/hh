@@ -181,9 +181,13 @@ func fw109dCloseLeg(t *testing.T, suffix string, plant func(*testing.T, context.
 		   AND NOT EXISTS (SELECT 1 FROM gl_journals j
 		                    WHERE j.source = 'INVOICE' AND j.source_ref_id = i.id AND j.status = 'POSTED')
 		 GROUP BY i.branch_id ORDER BY i.branch_id`)
+	// This read is the leg's OWN statement (it never calls the adapter) and it rounds the way the
+	// stock subledger itself values: ROUND per row, half away from zero, the rule inventory's
+	// qtyTimesCents writes and the round 2 adapter computes, so the 1200 opening here and the pre
+	// flight's stock side answer on one basis (per row, so per branch and consolidated agree).
 	stockValue := fw109dBranchAmounts(t, ctx, pool, `
 		SELECT sb.branch_id::text,
-		       COALESCE(SUM(TRUNC(sb.on_hand_base * COALESCE(c.avg_unit_cost_cents, 0)))::bigint, 0)
+		       COALESCE(SUM(ROUND(sb.on_hand_base * COALESCE(c.avg_unit_cost_cents, 0)))::bigint, 0)
 		  FROM stock_balances sb
 		  LEFT JOIN product_branch_costs c
 		    ON c.product_id = sb.product_id AND c.branch_id = sb.branch_id

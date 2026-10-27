@@ -236,8 +236,8 @@ func (f *fakeStore) PendingFulfilments(context.Context, string) ([]PendingFulfil
 func (f *fakeStore) SnapshotOnHand(context.Context, pgx.Tx, string) ([]CountSnapshot, error) {
 	return nil, nil
 }
-func (f *fakeStore) SnapshotOnHandAll(context.Context, pgx.Tx) ([]CountSnapshot, error) {
-	return nil, nil
+func (f *fakeStore) StockValueCents(context.Context, pgx.Tx, string) (int64, error) {
+	return 0, nil
 }
 func (f *fakeStore) ReceivedLinesForPO(context.Context, string) ([]ReceivedLine, error) {
 	return nil, nil

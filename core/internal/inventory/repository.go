@@ -605,36 +605,33 @@ func (r *Repository) SnapshotOnHand(ctx context.Context, tx pgx.Tx, branchID str
 	return out, rows.Err()
 }
 
-// SnapshotOnHandAll is SnapshotOnHand across EVERY branch: the same freeze basis (on hand plus the
-// branch's weighted average cost) read in ONE statement over the whole company, for the caller that
-// needs the consolidated stock value rather than one branch's. The branch-scoped read above answers
-// for the branch it is given, and this one answers for every branch, so a consolidated reader never
-// fans out into a read per branch (and never has to know the branches). A caller holding a transaction
-// passes it so the read rides that connection; nil reads through the pool.
-func (r *Repository) SnapshotOnHandAll(ctx context.Context, tx pgx.Tx) ([]CountSnapshot, error) {
+// StockValueCents is the consolidated (or branch scoped, when the caller names a branch) stock value
+// in ONE statement: every stock_balances row at its branch's weighted average cost, the product taken
+// in exact NUMERIC (a DECIMAL(19,4) quantity times a BIGINT cost carries no rounding of its own), each
+// row rounded half away from zero - SQL ROUND()'s tie rule, the rounding the module's own valuation
+// writes (qtyTimesCents, and the received line's ROUND(received_base * unit_cost_cents) leg below) -
+// and summed, answered as integer cents. The rounding sits on each row, not after the sum, so the
+// value of any group of rows is the sum of its rows' values and a branch scoped read and the
+// consolidated one can never drift a cent apart. Go never multiplies a quantity by a cost on this
+// path: the caller's integer answer cannot inherit a float's last bit (FW1-09d round 2). A caller
+// holding a transaction passes it so the read rides that connection; nil reads through the pool.
+func (r *Repository) StockValueCents(ctx context.Context, tx pgx.Tx, branchID string) (int64, error) {
 	if r.pool == nil {
-		return nil, errNoDB
+		return 0, errNoDB
 	}
-	rows, err := r.q(tx).Query(ctx, `
-		SELECT sb.product_id::text, sb.location_id::text, sb.on_hand_base,
-		       COALESCE(pbc.avg_unit_cost_cents, 0)
+	q := `
+		SELECT COALESCE(SUM(ROUND(sb.on_hand_base * COALESCE(pbc.avg_unit_cost_cents, 0))), 0)::bigint
 		FROM stock_balances sb
 		LEFT JOIN product_branch_costs pbc
-		       ON pbc.product_id = sb.product_id AND pbc.branch_id = sb.branch_id
-		ORDER BY sb.branch_id, sb.product_id`)
-	if err != nil {
-		return nil, err
+		       ON pbc.product_id = sb.product_id AND pbc.branch_id = sb.branch_id`
+	var args []any
+	if branchID != "" {
+		q += ` WHERE sb.branch_id = $1`
+		args = append(args, branchID)
 	}
-	defer rows.Close()
-	var out []CountSnapshot
-	for rows.Next() {
-		var s CountSnapshot
-		if err := rows.Scan(&s.ProductID, &s.LocationID, &s.OnHandBase, &s.AvgCostCents); err != nil {
-			return nil, err
-		}
-		out = append(out, s)
-	}
-	return out, rows.Err()
+	var total int64
+	err := r.q(tx).QueryRow(ctx, q, args...).Scan(&total)
+	return total, err
 }
 
 // ReceivedLinesForPO returns the received lines of a PO for landed-cost allocation (extended CAD value =
