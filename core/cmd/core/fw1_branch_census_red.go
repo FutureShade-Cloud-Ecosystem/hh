@@ -110,6 +110,12 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 	},
 	{
 		File:         "core/cmd/core/wire_operations.go",
+		Func:         "(glPosterAdapter).PostJournalTx",
+		Kind:         "PostExternalTx",
+		BranchSource: "in.BranchID from bankrec gl.ExternalJournal.BranchID (FW1-05 round 2 P1-A: the served bank match's one transaction arm)",
+	},
+	{
+		File:         "core/cmd/core/wire_operations.go",
 		Func:         "(lienGLPoster).PostJournal",
 		Kind:         "PostExternal",
 		BranchSource: "in.BranchID from lien.GLJournal.BranchID",
