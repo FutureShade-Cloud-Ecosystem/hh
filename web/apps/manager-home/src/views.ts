@@ -203,12 +203,15 @@ export function renderKpiCard(kpi: LandingKpi, mode: BranchMode): TemplateResult
   `;
 }
 
+// FROM-PRINCIPAL 127: this card and the hero's deliveries.today tile measure different things
+// (the whole book of the day's stops off the dispatch board, against the stops still to do), so
+// they never share one heading. The card says Stops today; the hero tile keeps its own words.
 export function renderDeliveriesCard(d: LandingDeliveries, mode: BranchMode): TemplateResult {
   void mode;
   return html`
-    <section class="deliveries-card" data-test="c10-deliveries-today" aria-label="Deliveries today">
+    <section class="deliveries-card" data-test="c10-deliveries-today" aria-label="Stops today">
       <div class="deliveries-head">
-        <h2 class="section-eyebrow">Deliveries today</h2>
+        <h2 class="section-eyebrow">Stops today</h2>
         <span class="deliveries-count">${d.count}</span>
       </div>
       <p class="deliveries-summary">${d.summary}</p>

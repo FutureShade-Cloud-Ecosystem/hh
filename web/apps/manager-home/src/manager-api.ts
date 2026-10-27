@@ -690,14 +690,17 @@ export function landingDeliveriesFrom(
   const runs: LandingDeliveries["runs"][number][] = [];
   const byBranch: { label: string; count: number }[] = [];
   for (const board of boards) {
-    for (const stop of board.stops) {
+    // A cancelled stop is not a stop the day holds: the core's own deliveries.today measure
+    // excludes CANCELLED, and the card counts the same board the same way.
+    const stops = board.stops.filter((s) => s.status !== "CANCELLED");
+    for (const stop of stops) {
       if (stop.delivered_at !== null) delivered += 1;
       else if (stop.en_route_at !== null) onRoad += 1;
       else toLeave += 1;
     }
     byBranch.push({
       label: branches.find((b) => b.id === board.branch_id)?.name ?? board.branch_id,
-      count: board.stops.length,
+      count: stops.length,
     });
     for (const run of board.runs) {
       const done = board.stops.filter((s) => s.run_id === run.id && s.delivered_at !== null).length;
