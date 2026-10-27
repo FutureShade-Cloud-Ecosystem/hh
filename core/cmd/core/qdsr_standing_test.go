@@ -3,9 +3,10 @@ package main
 // qdsr_standing_test.go, the account-standing read made answerable (Quote Desk server reads, read
 // one): over the registered surface and real rows, a walk-in, a clear account and a held account
 // answer distinctly in the body; an unknown account is a 404, a malformed id a 400, a caller the
-// dealer's balance policy refuses a 403, a branch the caller does not reach a 403, and a caller
-// without the counter grant the gate's own 403. The old fields stay: a held account still answers
-// on_hold true.
+// dealer's account position policy refuses reads withheld with no money in the bytes, a dealer
+// whose account position policy is HIDDEN turns the read off with a 403 for everyone, a branch the
+// caller does not reach a 403, and a caller without the counter grant the gate's own 403. The old
+// fields stay: a held account still answers on_hold true.
 
 import (
 	"context"
@@ -29,6 +30,7 @@ func TestQDSRAccountStandingAnswersEveryCaseDistinctly(t *testing.T) {
 		qdsrAccount{id: qdsrOtherID, accountNo: "QDSR-ELSE", name: "Fixture Other Branch Held", branch: testkit.BranchNorthBID, held: true},
 		qdsrAccount{id: qdsrOther2ID, accountNo: "QDSR-ELSE2", name: "Fixture Other Branch Clear", branch: testkit.BranchNorthBID},
 		qdsrAccount{id: qdsrUnhomedID, accountNo: "QDSR-UNHOMED", name: "Fixture Unhomed Held", held: true},
+		qdsrAccount{id: qdsrUnhomedPastDueID, accountNo: "QDSR-UNHOMED2", name: "Fixture Unhomed Past Due"},
 	)
 	if _, err := pool.Exec(context.Background(),
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
@@ -38,9 +40,17 @@ func TestQDSRAccountStandingAnswersEveryCaseDistinctly(t *testing.T) {
 		qdsrPastDueID, qdsrNorthA); err != nil {
 		t.Fatalf("plant overdue invoice: %v", err)
 	}
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
+		 VALUES ('INV-QDSR-UNHOMED2', $1::uuid, $2::uuid, 'FINALIZED',
+		         CURRENT_DATE - 75, CURRENT_DATE - 45, 25000, 0, 25000, 25000, now())`,
+		qdsrUnhomedPastDueID, qdsrNorthA); err != nil {
+		t.Fatalf("plant unhomed overdue invoice: %v", err)
+	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), `DELETE FROM invoices WHERE customer_id = $1::uuid`, qdsrPastDueID); err != nil {
-			t.Errorf("cleanup overdue invoice: %v", err)
+		if _, err := pool.Exec(context.Background(), `DELETE FROM invoices WHERE customer_id IN ($1::uuid, $2::uuid)`, qdsrPastDueID, qdsrUnhomedPastDueID); err != nil {
+			t.Errorf("cleanup overdue invoices: %v", err)
 		}
 	})
 
@@ -147,9 +157,10 @@ func TestQDSRAccountStandingAnswersEveryCaseDistinctly(t *testing.T) {
 	}
 
 	// The dealer's account position policy (ar_invoice_policy.account_position_visibility,
-	// MANAGER_UP by default) gates the standing figures and the clear/past_due words; when widened
-	// to ALL_STAFF, the clerk reads them too. The POS balance_visibility HIDDEN value remains the
-	// 403 surface switch that turns the endpoint off for everyone.
+	// MANAGER_UP by default) is the ONE decider of the till's standing (UX-97 item 208): widened
+	// to ALL_STAFF the clerk reads the figures too, and its HIDDEN is the 403 that turns the read
+	// off for everyone, the refusal the retired pos_policy.balance_visibility column used to give.
+	// The retired column keeps its UPDATE (forward-only migrations) and decides nothing.
 	setPositionPolicy := func(v string) {
 		if _, err := pool.Exec(context.Background(),
 			`UPDATE ar_invoice_policy SET account_position_visibility = $1, updated_at = now() WHERE branch_id IS NULL`, v); err != nil {
@@ -162,7 +173,21 @@ func TestQDSRAccountStandingAnswersEveryCaseDistinctly(t *testing.T) {
 			t.Fatalf("set balance_visibility %s: %v", v, err)
 		}
 	}
+	setNorthAPolicy := func(v string) {
+		if v == "" {
+			if _, err := pool.Exec(context.Background(), `DELETE FROM ar_invoice_policy WHERE branch_id = $1::uuid`, qdsrNorthA); err != nil {
+				t.Fatalf("drop the North A policy row: %v", err)
+			}
+			return
+		}
+		if _, err := pool.Exec(context.Background(),
+			`INSERT INTO ar_invoice_policy (branch_id, account_position_visibility) VALUES ($1::uuid, $2)
+			 ON CONFLICT (branch_id) DO UPDATE SET account_position_visibility = $2, updated_at = now()`, qdsrNorthA, v); err != nil {
+			t.Fatalf("set the North A policy row to %s: %v", v, err)
+		}
+	}
 	t.Cleanup(func() {
+		setNorthAPolicy("")
 		setPositionPolicy("MANAGER_UP")
 		setBalanceSurface("ALL_STAFF")
 	})
@@ -171,10 +196,38 @@ func TestQDSRAccountStandingAnswersEveryCaseDistinctly(t *testing.T) {
 	if p := qdsrJSON(t, code, body); p["standing"] != "past_due" || p["past_due_cents"] != float64(25000) {
 		t.Fatalf("a clerk under ALL_STAFF account_position_visibility answers %s, want past_due 25000", body)
 	}
-	setPositionPolicy("MANAGER_UP")
-	setBalanceSurface("HIDDEN")
+	// HIDDEN is the surface switch: the read is off for everyone, the manager and the clerk alike.
+	setPositionPolicy("HIDDEN")
 	code, body = qdsrGet(t, fx, mgr, base+"&customer_id="+qdsrHeldID)
 	if code != http.StatusForbidden {
-		t.Fatalf("a manager under HIDDEN answers %d %s, want 403", code, body)
+		t.Fatalf("a manager under HIDDEN account_position_visibility answers %d %s, want 403", code, body)
+	}
+	code, body = qdsrGet(t, fx, sales, base+"&customer_id="+qdsrClearID)
+	if code != http.StatusForbidden {
+		t.Fatalf("a clerk under HIDDEN account_position_visibility answers %d %s, want 403", code, body)
+	}
+	// The retired pos column decides nothing (UX-97 item 208): a box with the account position
+	// policy widened to ALL_STAFF and the old column HIDDEN answers the till exactly as it answers
+	// every other route.
+	setPositionPolicy("ALL_STAFF")
+	setBalanceSurface("HIDDEN")
+	code, body = qdsrGet(t, fx, sales, base+"&customer_id="+qdsrPastDueID)
+	if p := qdsrJSON(t, code, body); p["standing"] != "past_due" || p["past_due_cents"] != float64(25000) {
+		t.Fatalf("the retired balance_visibility decides nothing: the till answers %d %s, want past_due 25000 like every other route", code, body)
+	}
+	setBalanceSurface("ALL_STAFF")
+
+	// ONE BRANCH RULE (UX-97 item 208): the standing decides at the ACCOUNT's home branch, the
+	// dealer default for an unhomed account, exactly as the customer by-id read decides, so the
+	// till cannot contradict the customer read one screen over. An ALL_STAFF row at the till's
+	// own branch must not admit the clerk to an account whose own policy refuses them.
+	setNorthAPolicy("ALL_STAFF")
+	code, body = qdsrGet(t, fx, sales, base+"&customer_id="+qdsrUnhomedPastDueID)
+	if u := qdsrJSON(t, code, body); u["standing"] != "withheld" || strings.TrimSpace(body) != `{"standing":"withheld"}` {
+		t.Fatalf("an unhomed account decides at the dealer default, not the till's branch row: %d %s, want {\"standing\":\"withheld\"}", code, body)
+	}
+	code, body = qdsrGet(t, fx, mgr, base+"&customer_id="+qdsrUnhomedPastDueID)
+	if m := qdsrJSON(t, code, body); m["standing"] != "past_due" {
+		t.Fatalf("the manager still reads the account the default admits them to: %s", body)
 	}
 }
