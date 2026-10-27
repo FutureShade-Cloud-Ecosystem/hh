@@ -80,13 +80,20 @@ export const RECOVERY_WORDS: Readonly<Record<string, string>> = {
   offline: SIGN_IN_WORDS["offline"],
 };
 
-/** The console's own rules about a password, said in plain words. */
+/**
+ * The console's own rules about a password, said in plain words, keyed on the
+ * strings the pinned console sends (FB Console is Appwrite 2.1.0). Its two
+ * named rules arrive on the wire as password_recently_used and
+ * password_personal_data; every other refusal this route can give about the
+ * password (a length outside 8 to 256, the project's own policy, a breached
+ * password) arrives as one anonymous 400 typed general_argument_invalid,
+ * because a failed validator is not a named refusal and the console does not
+ * separate them, so one neutral sentence answers all three.
+ */
 export const CONSOLE_PASSWORD_WORDS: Readonly<Record<string, string>> = {
-  user_password_mismatch: "The two passwords do not match. Type them again.",
-  user_password_recently_used: "Choose a password you have not used here before.",
-  user_password_personal_data: "Do not use your name, email or user ID in the password.",
-  user_password_pwned: "That password has been used in a known data breach. Choose a different one.",
-  user_password_invalid: "Use at least 8 characters.",
+  password_recently_used: "Choose a password you have not used here before.",
+  password_personal_data: "Do not use your name, email or user ID in the password.",
+  general_argument_invalid: "That password will not do. Choose a different one and try again.",
 };
 
 /**

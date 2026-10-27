@@ -138,12 +138,33 @@ test("a link the console will not take says it has expired", async ({ page, base
   await expect(page.getByTestId("set-password-done")).toHaveCount(0);
 });
 
-test("the console's own rule about the password is said in plain words", async ({ page, baseURL }) => {
-  await serve(page, baseURL!, { recovery: { status: 400, type: "user_password_pwned" } });
+test("the console's recently used rule is said in plain words", async ({ page, baseURL }) => {
+  await serve(page, baseURL!, { recovery: { status: 400, type: "password_recently_used" } });
   await page.goto(LINK);
   await fill(page, PASSWORD, PASSWORD);
   await page.getByTestId("set-password-submit").click();
-  await expect(status(page)).toHaveText("That password has been used in a known data breach. Choose a different one.");
+  await expect(status(page)).toHaveText("Choose a password you have not used here before.");
+  await expect(page.getByTestId("set-password-done")).toHaveCount(0);
+});
+
+test("the console's personal data rule is said in plain words", async ({ page, baseURL }) => {
+  await serve(page, baseURL!, { recovery: { status: 400, type: "password_personal_data" } });
+  await page.goto(LINK);
+  await fill(page, PASSWORD, PASSWORD);
+  await page.getByTestId("set-password-submit").click();
+  await expect(status(page)).toHaveText("Do not use your name, email or user ID in the password.");
+  await expect(page.getByTestId("set-password-done")).toHaveCount(0);
+});
+
+test("the console's anonymous password refusal says to choose another", async ({ page, baseURL }) => {
+  // A length outside 8 to 256, the project's own policy and a breached
+  // password all arrive as this one anonymous 400: the console does not
+  // separate them, so the words name no rule.
+  await serve(page, baseURL!, { recovery: { status: 400, type: "general_argument_invalid" } });
+  await page.goto(LINK);
+  await fill(page, PASSWORD, PASSWORD);
+  await page.getByTestId("set-password-submit").click();
+  await expect(status(page)).toHaveText("That password will not do. Choose a different one and try again.");
   await expect(page.getByTestId("set-password-done")).toHaveCount(0);
 });
 

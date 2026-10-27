@@ -397,9 +397,10 @@ async function handleConsole(request, response, url) {
   }
   // The password recovery confirmation: the console's PUT /account/recovery, the way
   // the real one answers (FB Console is Appwrite 2.1.0): 200 with a token, 401 with
-  // user_invalid_token for a secret the console will not accept, 400 with the rule
-  // it refused. The ledger keeps the field NAMES and the field LENGTHS only: the
-  // secret and the password are never written down, here or anywhere.
+  // user_invalid_token for a secret the console will not accept, 400 with
+  // general_argument_invalid for a password its validators will not take (a failed
+  // validator is not a named refusal). The ledger keeps the field NAMES and the field
+  // LENGTHS only: the secret and the password are never written down, here or anywhere.
   if (sub === "/account/recovery" && request.method === "PUT") {
     const body = await readBody(request);
     const fields = body !== null && typeof body === "object" ? Object.keys(body).sort() : [];
@@ -428,7 +429,7 @@ async function handleConsole(request, response, url) {
       return true;
     }
     if (typeof body?.password !== "string" || body.password.length < 8) {
-      sendJson(response, 400, { message: "Password too short", code: 400, type: "user_password_invalid" });
+      sendJson(response, 400, { message: "Password too short", code: 400, type: "general_argument_invalid" });
       return true;
     }
     sendJson(response, 200, { $id: "token-1", secret: "stub-recovery-token", expire: "stub" });

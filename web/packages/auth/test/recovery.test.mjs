@@ -63,11 +63,32 @@ test("completeRecovery answers expired for the console's invalid token", async (
 });
 
 test("completeRecovery answers password_refused and keeps the console's rule", async () => {
-  const { surface } = consoleAnswer(400, { message: "Password is pwned", code: 400, type: "user_password_pwned" });
+  // The named refusal the pinned console sends for a password carrying the
+  // person's own details (the wire value carries no user_ prefix).
+  const { surface } = consoleAnswer(400, {
+    message: "Password contains personal data",
+    code: 400,
+    type: "password_personal_data",
+  });
   const answer = await surface.completeRecovery("user-42", "secret-abc", "password123");
   assert.equal(answer.ok, false);
   assert.equal(answer.code, "password_refused");
-  assert.equal(answer.consoleType, "user_password_pwned");
+  assert.equal(answer.consoleType, "password_personal_data");
+});
+
+test("completeRecovery answers password_refused for the console's anonymous argument refusal", async () => {
+  // A length outside 8 to 256, the project's own policy and a breached
+  // password all arrive as one anonymous 400: a failed validator is not a
+  // named refusal in the pinned console.
+  const { surface } = consoleAnswer(400, {
+    message: "Invalid password: password must contain a lowercase letter",
+    code: 400,
+    type: "general_argument_invalid",
+  });
+  const answer = await surface.completeRecovery("user-42", "secret-abc", "password123");
+  assert.equal(answer.ok, false);
+  assert.equal(answer.code, "password_refused");
+  assert.equal(answer.consoleType, "general_argument_invalid");
 });
 
 test("completeRecovery answers expired when the link names a user that is gone", async () => {

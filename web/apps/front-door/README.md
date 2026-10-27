@@ -151,10 +151,14 @@ no sign in.
   (FB Console's own minimum) before anything is sent: the console is never
   asked to refuse what the page can see by itself. The field at fault is
   marked.
-- The console's own rule about the password is said in plain words (too close to
-  the last one, too close to the person's own details, a password known to be
-  stolen), and a link the console will not take says it has expired and asks
-  for a new one. The offline words are the sign in screen's own.
+- The console's own rule about the password is said in plain words where the
+  console names one: too close to the last one, or too close to the person's
+  own details. The console's other refusals about the password (a length
+  outside 8 to 256, the project's own policy, a password known to be stolen)
+  arrive as one anonymous answer, because a failed validator is not a named
+  refusal, and the page answers that one with words that name no rule. A link
+  the console will not take says it has expired and asks for a new one. The
+  offline words are the sign in screen's own.
 - On success the page says the password is set and points at the sign in page.
 - It is a console-only screen: a demo box has no console and so no recovery
   link, and shows the configuration error page there.

@@ -83,21 +83,19 @@ test("the two passwords have to match before anything is sent", () => {
 
 test("the console's own rule is said in plain words", () => {
   assert.equal(
-    recoveryNotice("password_refused", "user_password_pwned"),
-    "That password has been used in a known data breach. Choose a different one.",
-  );
-  assert.equal(
-    recoveryNotice("password_refused", "user_password_recently_used"),
+    recoveryNotice("password_refused", "password_recently_used"),
     "Choose a password you have not used here before.",
   );
   assert.equal(
-    recoveryNotice("password_refused", "user_password_personal_data"),
+    recoveryNotice("password_refused", "password_personal_data"),
     "Do not use your name, email or user ID in the password.",
   );
-  assert.equal(recoveryNotice("password_refused", "user_password_mismatch"), RECOVERY_WORDS["mismatch"]);
+  // The console's one anonymous refusal for a length outside 8 to 256, the
+  // project's own policy and a breached password: one neutral sentence, since
+  // the console does not separate them.
   assert.equal(
-    recoveryNotice("password_refused", "user_password_invalid"),
-    "Use at least 8 characters.",
+    recoveryNotice("password_refused", "general_argument_invalid"),
+    "That password will not do. Choose a different one and try again.",
   );
 });
 
@@ -164,7 +162,7 @@ test("a refusal marks the field it is about, the way the sign in screen marks th
     recovery: {
       completeRecovery: async (userId, secret, password) => {
         asked.push({ userId, secret, password });
-        return { ok: false, code: "password_refused", consoleType: "user_password_pwned" };
+        return { ok: false, code: "password_refused", consoleType: "password_personal_data" };
       },
     },
     link: { userId: "user-42", secret: "abc123" },
@@ -186,7 +184,7 @@ test("a refusal marks the field it is about, the way the sign in screen marks th
 
   // The console's own refusal about the password marks the password.
   await page.submit("a good password", "a good password");
-  assert.equal(page.notice, "That password has been used in a known data breach. Choose a different one.");
+  assert.equal(page.notice, "Do not use your name, email or user ID in the password.");
   assert.equal(page.field, "password");
   assert.equal(asked.length, 1, "the console was asked once");
 });
