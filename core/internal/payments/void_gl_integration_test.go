@@ -46,7 +46,7 @@ func TestIntegration_PaymentVoid_TheGLBooksTheUndoOnTheReceiptsOwnLeg(t *testing
 		orig, w.r.custID, w.r.branchID); err != nil {
 		t.Fatalf("seed the void row: %v", err)
 	}
-	keys := []string{"payment.voided:" + orig}
+	keys := []string{"payment.received:" + orig, "payment.voided:" + orig}
 	w.cleanupJournals(keys, nil)
 	w.drain()
 	var rows, dead int

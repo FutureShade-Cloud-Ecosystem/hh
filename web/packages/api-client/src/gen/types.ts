@@ -900,6 +900,19 @@ export type PaymentsReversalResult = {
   same_day: boolean;
   reopened_invoices: string[];
 };
+export type PaymentsVoidRequest = {
+  reason: string;
+};
+export type PaymentsVoidResult = {
+  label: "VOID";
+  payment_id: string;
+  payment_no: string;
+  amount_cents: number;
+  reason: string;
+  voided_at: string;
+  reopened_invoices: string[];
+  held_cents: number;
+};
 export type PaymentsHeld = {
   payment_id: string;
   payment_no: string;

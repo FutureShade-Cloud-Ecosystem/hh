@@ -258,3 +258,5 @@ additions:
     reason: "SF-2l: a manager applies the money a reversed payment holds in 2310 to open invoices of the payment's own customer (Dr 2310 / Cr AR through the settle's slice), capped at the held figure, idempotent by key; the ERP reversal posted no liability and so had nothing to re-apply; no ERP source route."
   - route: "GET /api/v1/ar/payments/{id}/held"
     reason: "SF-2l: what a reversed payment still holds in 2310 (amount less what was re-applied), the figure the desk's re-application form shows; the ERP reversal held nothing and had no such read; no ERP source route."
+  - route: "POST /api/v1/ar/payments/{id}/void"
+    reason: "FW1-06b: a manager voids a mis-keyed desk receipt as never taken, the same dealer day only, RECEIVED only, with no 2310 hold (the void's journal mirrors the receipt's own legs); the ERP had no void and its same day undo was a reversal that booked the money as owed to the customer; no ERP source route."

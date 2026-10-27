@@ -45,6 +45,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildPaymentBounced(ctx, e.Payload)
 	case "payment.reversed":
 		draft, post, err = s.buildPaymentReversed(ctx, e.Payload)
+	case "payment.voided":
+		draft, post, err = s.buildPaymentVoided(ctx, e.Payload)
 	case "payment.reapplied":
 		draft, post, err = s.buildPaymentReapplied(ctx, e.Payload)
 	case "order.fulfilled":
@@ -492,6 +494,81 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 		Lines: []draftLine{
 			dr(arCode, amount, "AR reinstated (payment reversed)"),
 			cr(refundCode, amount, "held for the customer (payment reversed)"),
+		},
+	}, true, nil
+}
+
+// paymentVoidedPayload is what payments/void.go emits in the void's own transaction: the voided
+// receipt's id and the facts read under its row lock, so the journal's branch, method and amount
+// are the receipt's own and never a re-read of the now VOID row.
+type paymentVoidedPayload struct {
+	PaymentID   string `json:"payment_id"`
+	AmountCents int64  `json:"amount_cents"`
+	Method      string `json:"method"`
+	BranchID    string `json:"branch_id"`
+}
+
+// buildPaymentVoided books the undo of a mis-keyed desk receipt (FW1-06b): Dr AR / Cr the account
+// the RECEIPT debited. The void says the receipt never happened, so its journal is the receipt's
+// own posting in mirror image, on the receipt's own routing: the legs are picked from the
+// payment.received rules (cash 1020 undeposited for cash, cheque and EFT, 1010 card clearing for a
+// card), never from the reversal's 2310 rule. A dealer who re-routes where receipts land moves
+// their voids with them, which is the point. 2310 never moves: the money never left the building,
+// so the customer is not owed it. The receipt was RECEIVED (the void's gate refuses anything else),
+// so there is no deposited arm here: a deposited receipt's undo is a reversal, and payment.reversed
+// keeps its own rule.
+func (s *Service) buildPaymentVoided(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p paymentVoidedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.voided payload: %w", err)
+	}
+	if p.PaymentID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.voided missing payment_id")
+	}
+	amount, method, branch := p.AmountCents, p.Method, p.BranchID
+	if (amount == 0 || branch == "" || method == "") && s.payments != nil {
+		if f, err := s.payments.PaymentForGL(ctx, p.PaymentID); err == nil {
+			if amount == 0 {
+				amount = f.AmountCents
+			}
+			if branch == "" {
+				branch = f.BranchID
+			}
+			if method == "" {
+				method = f.Method
+			}
+		}
+	}
+	if amount == 0 {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.voided has no amount")
+	}
+	// The RECEIPT's own rules decide where its void credits back.
+	rules, err := s.store.PostingAccounts(ctx, "payment.received", branch)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	arCode, err := pick(rules, "payment.received", "ar")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	creditRole := "cash" // the receipt debited 1020 undeposited funds
+	if method == "CARD" {
+		creditRole = "card_clearing" // the receipt debited 1010 card settlement clearing
+	}
+	creditCode, err := pick(rules, "payment.received", creditRole)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourcePayment,
+		SourceRefID:    p.PaymentID,
+		IdempotencyKey: "payment.voided:" + p.PaymentID,
+		Memo:           "Receipt voided " + method,
+		BranchID:       branch,
+		OccurredAt:     s.clock(),
+		Lines: []draftLine{
+			dr(arCode, amount, "AR reinstated (receipt voided)"),
+			cr(creditCode, amount, "receipt voided (mis-keyed)"),
 		},
 	}, true, nil
 }

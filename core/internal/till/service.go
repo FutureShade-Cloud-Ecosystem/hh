@@ -851,6 +851,10 @@ func (s *Service) MarkNSF(ctx context.Context, in NSFInput) (NSFResult, error) {
 	if reversed {
 		return NSFResult{}, errPaymentReversed
 	}
+	if status != "RECEIVED" && status != "DEPOSITED" {
+		// A reversing entry, a voided desk receipt or a refund row has nothing to give back.
+		return NSFResult{}, errPaymentNotBounceable
+	}
 	policy, err := s.store.NSFPolicyFor(ctx, branchID)
 	if err != nil {
 		return NSFResult{}, err
