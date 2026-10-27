@@ -42,6 +42,10 @@ func (r *recordingRestocker) ReturnMoveValuesTx(context.Context, pgx.Tx, string)
 	return nil, nil
 }
 
+func (r *recordingRestocker) ShippedValueForOrderLineTx(context.Context, pgx.Tx, string, string, float64) (inventory.ShipLineValue, bool, error) {
+	return inventory.ShipLineValue{}, false, nil
+}
+
 func (r *recordingRestocker) qtyFor(returnID string) float64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()

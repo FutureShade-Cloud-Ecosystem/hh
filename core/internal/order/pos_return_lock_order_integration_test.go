@@ -62,6 +62,10 @@ func (a rloRestocker) ReturnMoveValuesTx(ctx context.Context, tx pgx.Tx, returnI
 	return a.svc.ReturnMoveValuesTx(ctx, tx, returnID)
 }
 
+func (a rloRestocker) ShippedValueForOrderLineTx(ctx context.Context, tx pgx.Tx, orderID, productID string, qtyBase float64) (inventory.ShipLineValue, bool, error) {
+	return a.svc.ShippedValueForOrderLineTx(ctx, tx, orderID, productID, qtyBase)
+}
+
 // rloStockLocks adapts the inventory service to the pos StockLocker seam, the deploy's
 // posStockAdapter shape: the return's stock pre-lock is the same sorted pass the swap already takes.
 type rloStockLocks struct{ svc *inventory.Service }

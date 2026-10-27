@@ -1298,6 +1298,10 @@ func (r *fakeRestock) ReturnMoveValuesTx(context.Context, pgx.Tx, string) ([]inv
 	return nil, nil
 }
 
+func (r *fakeRestock) ShippedValueForOrderLineTx(context.Context, pgx.Tx, string, string, float64) (inventory.ShipLineValue, bool, error) {
+	return inventory.ShipLineValue{}, false, nil
+}
+
 // fakeCardRefunder is RUN-PAY's reversal rail seam. The tx parameter is the
 // CardRefunder seam's discipline: the rail rides the caller's Return
 // transaction, this fake records the call and moves on.
