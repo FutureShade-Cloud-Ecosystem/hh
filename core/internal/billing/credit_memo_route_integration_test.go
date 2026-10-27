@@ -30,6 +30,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
@@ -147,6 +148,12 @@ func (p *creditMemoLedgerPoster) PostCreditMemoJournal(ctx context.Context, in C
 	return journalID, nil
 }
 
+// creditMemoAnyCaller is the caller the route's own legs run under: a GLOBAL caller of the round's
+// north org, the org the legs plant on the seeded branches.
+func creditMemoAnyCaller() CreditMemoCaller {
+	return CreditMemoCaller{OrgID: cmNorthOrgID, Scope: identity.ScopeGlobal, Branches: map[string]bool{}}
+}
+
 // -- the tests ---------------------------------------------------------------------------------------
 
 // TestIntegration_CreditMemoRoute_TheCreditReachesTheSubledgerTheLedgerAndTheFeed is the whole
@@ -158,6 +165,7 @@ func TestIntegration_CreditMemoRoute_TheCreditReachesTheSubledgerTheLedgerAndThe
 	pool := intPool(t)
 	ctx := context.Background()
 	tag := ns(t)
+	plantCreditMemoOrgs(t, pool)
 	cust := seedCustomer(t, pool, tag)
 	// An invoice with room to credit: 1000.00 of goods and 130.00 of tax.
 	inv := seedInvoice(t, pool, cust, tag, invSpec{
@@ -181,7 +189,7 @@ func TestIntegration_CreditMemoRoute_TheCreditReachesTheSubledgerTheLedgerAndThe
 		InvoiceID:   inv,
 		AmountCents: 100_000,
 		Reason:      "Goods came back",
-	})
+	}, creditMemoAnyCaller())
 	if err != nil {
 		t.Fatalf("issue the credit: %v", err)
 	}
@@ -278,6 +286,7 @@ func TestIntegration_CreditMemoRoute_OverTheThresholdNothingMoves(t *testing.T) 
 	pool := intPool(t)
 	ctx := context.Background()
 	tag := ns(t)
+	plantCreditMemoOrgs(t, pool)
 	cust := seedCustomer(t, pool, tag)
 	inv := seedInvoice(t, pool, cust, tag, invSpec{
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
@@ -299,7 +308,7 @@ func TestIntegration_CreditMemoRoute_OverTheThresholdNothingMoves(t *testing.T) 
 		InvoiceID:   inv,
 		AmountCents: 100_000,
 		Reason:      "Goods came back",
-	})
+	}, creditMemoAnyCaller())
 	if err != nil {
 		t.Fatalf("park the credit: %v", err)
 	}
@@ -350,6 +359,7 @@ func TestIntegration_CreditMemoRoute_TheSameKeyRaisesOneCredit(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
 	tag := ns(t)
+	plantCreditMemoOrgs(t, pool)
 	cust := seedCustomer(t, pool, tag)
 	inv := seedInvoice(t, pool, cust, tag, invSpec{
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
@@ -369,11 +379,11 @@ func TestIntegration_CreditMemoRoute_TheSameKeyRaisesOneCredit(t *testing.T) {
 		AmountCents: 100_000,
 		Reason:      "Goods came back",
 	}
-	first, err := svc.Issue(ctx, req)
+	first, err := svc.Issue(ctx, req, creditMemoAnyCaller())
 	if err != nil {
 		t.Fatalf("issue the credit: %v", err)
 	}
-	second, err := svc.Issue(ctx, req)
+	second, err := svc.Issue(ctx, req, creditMemoAnyCaller())
 	if err != nil {
 		t.Fatalf("retry the credit: %v", err)
 	}
@@ -397,6 +407,7 @@ func TestIntegration_CreditMemoRoute_AReasonIsRequired(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
 	tag := ns(t)
+	plantCreditMemoOrgs(t, pool)
 	cust := seedCustomer(t, pool, tag)
 	inv := seedInvoice(t, pool, cust, tag, invSpec{
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
@@ -414,7 +425,7 @@ func TestIntegration_CreditMemoRoute_AReasonIsRequired(t *testing.T) {
 		InvoiceID:   inv,
 		AmountCents: 100_000,
 		Reason:      "   ",
-	})
+	}, creditMemoAnyCaller())
 	if err == nil {
 		t.Fatal("a credit with no reason was issued")
 	}
@@ -435,6 +446,7 @@ func TestIntegration_CreditMemoRoute_AnAccountThePostingRulesDoNotAllowIsRefused
 	pool := intPool(t)
 	ctx := context.Background()
 	tag := ns(t)
+	plantCreditMemoOrgs(t, pool)
 	cust := seedCustomer(t, pool, tag)
 	inv := seedInvoice(t, pool, cust, tag, invSpec{
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
@@ -453,7 +465,7 @@ func TestIntegration_CreditMemoRoute_AnAccountThePostingRulesDoNotAllowIsRefused
 		AmountCents: 100_000,
 		Reason:      "Goods came back",
 		GLAccount:   "9999",
-	})
+	}, creditMemoAnyCaller())
 	if err == nil {
 		t.Fatal("a credit naming an account the posting rules do not allow was issued")
 	}

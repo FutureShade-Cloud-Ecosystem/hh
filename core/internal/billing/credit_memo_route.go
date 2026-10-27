@@ -236,6 +236,25 @@ func (s *CreditMemoService) WithClock(now func() time.Time) *CreditMemoService {
 	return s
 }
 
+// CreditMemoCaller is the fence's view of the caller, exactly what the guard resolved: the org the
+// request is signed into (authz.StaffScope), and the resolved authority's scope and branch grants
+// (identity.StaffAuthority). It arrives as an argument, never from a token or the context, the same
+// rule the guards state for the handler itself.
+type CreditMemoCaller struct {
+	OrgID    string
+	Scope    identity.Scope
+	Branches map[string]bool
+}
+
+// reaches says whether the caller holds the branch: a GLOBAL caller reaches every branch it can name,
+// a branch scoped caller only its grants.
+func (c CreditMemoCaller) reaches(branchID string) bool {
+	if c.Scope == identity.ScopeGlobal {
+		return true
+	}
+	return c.Branches[branchID]
+}
+
 // Issue raises a credit memo: standalone against the account, or against one invoice, capped at what
 // that invoice has left (the SF-2e cap the writer enforces).
 //
@@ -243,7 +262,7 @@ func (s *CreditMemoService) WithClock(now func() time.Time) *CreditMemoService {
 // the branch, the amount, the account, and only then the money. A caller who sent a request with no
 // reason learns that before anything else, because a reason is the one field whose absence makes the
 // credit unexplainable afterwards.
-func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteRequest) (CreditMemoRouteResult, error) {
+func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteRequest, caller CreditMemoCaller) (CreditMemoRouteResult, error) {
 	if s.w == nil || s.w.pool == nil {
 		return CreditMemoRouteResult{}, errNoDB
 	}
@@ -578,7 +597,15 @@ func (h *CreditMemoRouteHandler) issue(w http.ResponseWriter, r *http.Request, c
 		h.writeErr(w, r, err)
 		return
 	}
-	res, err := h.svc.Issue(r.Context(), body)
+	branches := make(map[string]bool, len(caller.Branches))
+	for _, b := range caller.Branches {
+		branches[b] = true
+	}
+	res, err := h.svc.Issue(r.Context(), body, CreditMemoCaller{
+		OrgID:    caller.OrgID,
+		Scope:    identity.ScopeFromCanonical(caller.Scope),
+		Branches: branches,
+	})
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
