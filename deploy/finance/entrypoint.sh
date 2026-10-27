@@ -5,9 +5,9 @@
 #   0. the variable checks: one line per missing name, never a value, and
 #      the box statement values (HH_BOX_KIND, APP_ENV, CORE_SIGNIN_MODE)
 #      checked for the exact required words
-#   1. the one database name held in both spellings: CORE_DATABASE_URL is
-#      set from DATABASE_URL, so the core's migrate refusal for two
-#      different values can never fire on this box
+#   1. the one database name held in both spellings: a differing
+#      DATABASE_URL / CORE_DATABASE_URL pair refuses before anything runs,
+#      and with only one set both spellings carry its target
 #   2. the console copy's session signing key made private where the
 #      platform mounted it too open (the demo entrypoint's discipline,
 #      copied verbatim below)
@@ -67,10 +67,18 @@ done
 [ "$CORE_SIGNIN_MODE" = console ] || \
 	fail "CORE_SIGNIN_MODE must be console on the finance box: the default build accepts no other mode"
 
-# Step 1: one database in both spellings. Every one-shot role reads
-# CORE_DATABASE_URL or DATABASE_URL and refuses when the two name different
-# targets; on this box they are the same value by construction.
-export CORE_DATABASE_URL="$DATABASE_URL"
+# Step 1: one database in both spellings. A differing pair is the operator
+# pointing the box's two readers at two databases: refused here, one line
+# naming the pair and never a value, before anything runs. One set name is
+# enough: DATABASE_URL is required above, so with CORE_DATABASE_URL unset
+# both spellings carry DATABASE_URL's target.
+if [ -n "${CORE_DATABASE_URL:-}" ] && [ "$CORE_DATABASE_URL" != "$DATABASE_URL" ]; then
+	fail "DATABASE_URL and CORE_DATABASE_URL name different targets: set both to the same database, or set DATABASE_URL alone and leave CORE_DATABASE_URL unset"
+fi
+if [ -z "${CORE_DATABASE_URL:-}" ]; then
+	CORE_DATABASE_URL="$DATABASE_URL"
+fi
+export CORE_DATABASE_URL
 
 # --------------------------------------------------------------------------
 # Step 2: the console copy's session signing key (the demo entrypoint's
