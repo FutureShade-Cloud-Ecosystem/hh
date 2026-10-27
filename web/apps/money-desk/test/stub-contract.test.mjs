@@ -15,6 +15,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { houseDayOffset } from "./house-day.mjs";
 import { SCHEMA_DESCRIPTORS } from "../../../packages/api-client/src/testing.ts";
 import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 
@@ -131,11 +132,9 @@ function refused(res, status, fragment) {
 }
 
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-const later = (days) => {
-  const at = new Date();
-  at.setUTCDate(at.getUTCDate() + days);
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
-};
+// The offset counts the house zone's own calendar days, never UTC days: the
+// UTC reading drifts by one across the zone's DST change (test/house-day.mjs).
+const later = (days) => houseDayOffset(days);
 
 test("the landing, the aging and the register answer in the contract's shapes", async () => {
   await reset();

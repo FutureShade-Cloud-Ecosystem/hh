@@ -3,6 +3,7 @@ package tax
 import (
 	"encoding/json"
 	"errors"
+	auth "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"net/http"
@@ -82,6 +83,9 @@ func (h *Handler) upsertProfile(w http.ResponseWriter, r *http.Request, caller g
 }
 
 func (h *Handler) reviewQueue(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !dealerWideReads(w, caller) {
+		return
+	}
 	rows, err := h.svc.ListProfiles(r.Context())
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -123,6 +127,9 @@ func (h *Handler) updateConfig(w http.ResponseWriter, r *http.Request, caller gu
 // -- evidence (masked-only) -------------------------------------------------------
 
 func (h *Handler) listEvidence(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !dealerWideReads(w, caller) {
+		return
+	}
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	rows, err := h.svc.ListEvidence(r.Context(), EvidenceFilter{
@@ -151,6 +158,9 @@ func (h *Handler) captureEvidence(w http.ResponseWriter, r *http.Request, caller
 }
 
 func (h *Handler) viewEvidence(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !dealerWideReads(w, caller) {
+		return
+	}
 	ev, ok, err := h.svc.ViewEvidence(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -164,6 +174,9 @@ func (h *Handler) viewEvidence(w http.ResponseWriter, r *http.Request, caller gu
 }
 
 func (h *Handler) downloadEvidence(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !dealerWideReads(w, caller) {
+		return
+	}
 	ev, ok, err := h.svc.DownloadEvidence(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -203,6 +216,17 @@ func (h *Handler) recompute(w http.ResponseWriter, r *http.Request, caller guard
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
+// dealerWideReads fences the finance reads whose rows carry no branch of their own: the exemption
+// profiles and the evidence records name no branch column, so they are the dealer's whole certificate
+// book, a dealer wide caller's read (615 round 2, P2-3). The fence answers before any existence read.
+func dealerWideReads(w http.ResponseWriter, caller guards.StaffCaller) bool {
+	if caller.Scope != auth.ScopeGlobal {
+		httpx.Error(w, http.StatusForbidden, "tax: the exemption certificates and the review queue are the dealer's whole book, a dealer wide caller's read")
+		return false
+	}
+	return true
+}
+
 func (h *Handler) recon(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	q := r.URL.Query()
 	year, _ := strconv.Atoi(q.Get("year"))
@@ -211,7 +235,15 @@ func (h *Handler) recon(w http.ResponseWriter, r *http.Request, caller guards.St
 		httpx.Error(w, http.StatusBadRequest, "year required")
 		return
 	}
-	out, err := h.svc.ReconcileReport(r.Context(), year, month, q.Get("branch_id"))
+	// FW1-10: the reconcile is fenced to the caller's branch reach, the rule the fenced GL reads
+	// carry (ListJournals, DIB-392). A named branch must be reachable, and the consolidated figure
+	// (no branch named) is the whole company's books, a dealer wide caller's read.
+	branchID := q.Get("branch_id")
+	if (branchID == "" && caller.Scope != auth.ScopeGlobal) || (branchID != "" && !caller.CanAccessBranch(branchID)) {
+		httpx.Error(w, http.StatusForbidden, "tax: caller cannot access this branch")
+		return
+	}
+	out, err := h.svc.ReconcileReport(r.Context(), year, month, branchID)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

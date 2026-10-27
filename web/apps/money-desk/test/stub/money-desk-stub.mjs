@@ -16,6 +16,7 @@ import { createBankrecWorld } from "./bankrec-world.mjs";
 import { createTaxWorld } from "./tax-world.mjs";
 import { createLienWorld } from "./lien-world.mjs";
 import { createAssistWorld } from "./assist-world.mjs";
+import { houseDayOffset } from "../house-day.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
@@ -129,11 +130,9 @@ function mintToken(sub) {
   return `${part({ alg: "ES256", typ: "JWT" })}.${part(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
 }
 
-function dayOffset(offset) {
-  const at = new Date();
-  at.setUTCDate(at.getUTCDate() + offset);
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
-}
+// The offset counts the house zone's own calendar days, never UTC days: the
+// UTC reading drifts by one across the zone's DST change (test/house-day.mjs).
+const dayOffset = (offset) => houseDayOffset(offset);
 
 function uuid(kind, n) {
   return `${kind}0000000-0000-4000-8000-${String(n).padStart(12, "0")}`;

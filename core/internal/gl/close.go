@@ -46,7 +46,16 @@ type TrialBalanceResult struct {
 	BalanceCents int64             `json:"balance_cents"` // Σ net debit; 0 == in balance
 }
 
+// TrialBalance is fenced to the caller's branch reach (FW1-10), the same rule ListJournals carries
+// (DIB-392): a named branch must be reachable, and the consolidated figure (no branch named) is the
+// whole company's books, a GLOBAL caller's read. A branch-scoped caller is refused in plain words
+// rather than silently served a figure over its own branches only: the branch-list filter the
+// partial consolidation needs is a new mechanism, and the dealer wide statements (finstmt) already
+// serve that rule.
 func (s *Service) TrialBalance(ctx context.Context, year, month int, branchID string) (TrialBalanceResult, error) {
+	if err := s.authorizeBranchRead(ctx, branchID); err != nil {
+		return TrialBalanceResult{}, err
+	}
 	rows, err := s.store.TrialBalance(ctx, year, month, branchID)
 	if err != nil {
 		return TrialBalanceResult{}, err
@@ -64,8 +73,12 @@ func (s *Service) TrialBalance(ctx context.Context, year, month int, branchID st
 
 // TieOut compares the AR subledger balance (billing.ARBalanceCents) against GL account 1100 as-of a date and
 // persists the first-seen discrepancy age (gl_tieout_state), so the report carries out_of_tie_since + age_days
-// across checks. branchID "" is consolidated.
+// across checks. branchID "" is consolidated. Fenced to the caller's branch reach (FW1-10) with the
+// same rule as TrialBalance above.
 func (s *Service) TieOut(ctx context.Context, asOf time.Time, branchID string) ([]TieoutState, error) {
+	if err := s.authorizeBranchRead(ctx, branchID); err != nil {
+		return nil, err
+	}
 	if asOf.IsZero() {
 		asOf = s.clock()
 	}

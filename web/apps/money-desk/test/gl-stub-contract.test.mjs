@@ -174,6 +174,37 @@ test("the journals, a journal, the trial balance and the branches answer the con
   branches.json.forEach((b) => holds("Branch", b));
 });
 
+test("the ledger reads are fenced to the caller's branch reach (FW1-10)", async () => {
+  await reset();
+  // A branch-scoped caller (the Sales manager, Point Loma alone) is refused the whole company's
+  // books and a foreign branch, in the core's own sentence.
+  refused(await call(IDS.manager, "GET", "/api/v1/gl/journals"), 403, "gl: caller cannot access this branch");
+  refused(await call(IDS.manager, "GET", `/api/v1/gl/journals?branch_id=${IDS.julian}`), 403, "gl: caller cannot access this branch");
+  refused(await call(IDS.manager, "GET", "/api/v1/gl/trial-balance"), 403, "gl: caller cannot access this branch");
+  refused(await call(IDS.manager, "GET", `/api/v1/gl/trial-balance?branch_id=${IDS.julian}`), 403, "gl: caller cannot access this branch");
+  refused(await call(IDS.manager, "GET", "/api/v1/gl/tie-out"), 403, "gl: caller cannot access this branch");
+  // A journal out of reach answers as missing, never 403: an id is an existence oracle. The foreign
+  // journal is planted HERE, through the world's own POST (its own entry sequence), so the seeded
+  // world and its asserted trial balance totals never carry it.
+  const planted = await call(IDS.controller, "POST", "/api/v1/gl/journals", {
+    branch_id: IDS.julian,
+    memo: "FW1-10 out of reach proof",
+    source: "MANUAL",
+    lines: [line("1300", 4000, 0), line("1000", 0, 4000)],
+  });
+  assert.equal(planted.status, 201, JSON.stringify(planted.json));
+  const missing = await call(IDS.manager, "GET", `/api/v1/gl/journals/${planted.json.id}`);
+  assert.equal(missing.status, 404);
+  assert.deepEqual(missing.json, { error: "not found" });
+  // The caller's own branch still serves, and names only its rows.
+  const mine = await call(IDS.manager, "GET", `/api/v1/gl/journals?branch_id=${IDS.pointLoma}`);
+  assert.equal(mine.status, 200);
+  assert.ok(mine.json.items.length > 0);
+  assert.ok(mine.json.items.every((j) => j.branch_id === IDS.pointLoma));
+  const ownTb = await call(IDS.manager, "GET", `/api/v1/gl/trial-balance?branch_id=${IDS.pointLoma}`);
+  assert.equal(ownTb.status, 200);
+});
+
 test("the controller decides the floor request and the parked journal, and the trial balance carries the journal", async () => {
   await reset();
   const before = (await call(IDS.controller, "GET", "/api/v1/gl/trial-balance")).json;
