@@ -107,7 +107,7 @@ export interface StandingIn {
 
 /** What the counter's account standing read says; an absent field is the read saying nothing. */
 export interface HoldRead {
-  standing: "walk_in" | "clear" | "past_due" | "on_hold";
+  standing: "walk_in" | "clear" | "past_due" | "on_hold" | "withheld";
   onHold: boolean;
   pastDueCents: number | null;
   oldestBucket: string | null;
@@ -204,6 +204,16 @@ export function standingOf(read: StandingIn | null, hold: HoldRead | null): Stan
       termsText,
       gate: "hold",
       gateText: `${facts} The server reports a credit hold on this account.${pastDue} The order is refused while the hold stands, so ask accounts receivable to release it first.`,
+    };
+  }
+  if (hold.standing === "withheld") {
+    // Round 4 (principal item 206): the standing read withheld this caller's position, and clear is
+    // a position like any other, so the desk never reads the withheld word as good standing.
+    return {
+      terms: "ACCOUNT",
+      termsText,
+      gate: "server",
+      gateText: `${facts} The account's credit position is not shown for your role. ${SERVER_DECIDES}`,
     };
   }
   if (hold.standing === "past_due") {

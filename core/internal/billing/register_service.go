@@ -289,6 +289,23 @@ func (s *RegisterService) Register(ctx context.Context, f RegisterFilter) (Regis
 	if err != nil {
 		return RegisterPage{}, err
 	}
+	allowed := accountAllowed(ctx, s.callerFrom, pol.AccountPositionVisibility)
+	if !allowed {
+		// The derived chips ask for a predicate a refused caller may not have AS A LIST, so each
+		// refuses in words before the store is asked for anything (row 3172, the policy-is-the-
+		// authority posture). Overdue and past due are the withheld predicate itself. CURRENT is
+		// that predicate told backwards: ALL less CURRENT lists the overdue accounts by
+		// subtraction (item 220), so it refuses with the same words. DUE_SOON is the one derived
+		// state left, and refuses under its own words. The remaining chips filter on stored facts
+		// a refused caller still receives, so they keep answering: the refused status filter
+		// offers stored statuses only.
+		switch strings.ToUpper(strings.TrimSpace(f.Chip)) {
+		case StatusOverdue, "PAST_DUE", "CURRENT":
+			return RegisterPage{}, httpx.BadRequestf("the past due view is not shown for your role")
+		case StatusDueSoon:
+			return RegisterPage{}, httpx.BadRequestf("the due soon view is not shown for your role")
+		}
+	}
 	rows, total, err := s.store.RegisterRows(ctx, asOf, pol.DueSoonDays, f)
 	if err != nil {
 		return RegisterPage{}, err
@@ -297,7 +314,8 @@ func (s *RegisterService) Register(ctx context.Context, f RegisterFilter) (Regis
 	if err != nil {
 		return RegisterPage{}, err
 	}
-	if accountAllowed(ctx, s.callerFrom, pol.AccountPositionVisibility) {
+	page := RegisterPage{Items: rows, Counts: counts, Total: total, AsOf: asOf, PositionWithheld: !allowed}
+	if allowed {
 		// One position per ACCOUNT, not per row: a page of eleven invoices for one contractor asks the
 		// same question eleven times otherwise.
 		seen := map[string]*AccountPosition{}
@@ -313,8 +331,12 @@ func (s *RegisterService) Register(ctx context.Context, f RegisterFilter) (Regis
 			}
 			rows[i].Account = pos
 		}
+	} else {
+		for i := range rows {
+			rows[i].PositionWithheld = true
+		}
 	}
-	return RegisterPage{Items: rows, Counts: counts, Total: total, AsOf: asOf}, nil
+	return page, nil
 }
 
 // Selection sums an explicit selection server-side, the bulk bar's figure.
@@ -450,6 +472,8 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 			return InvoiceDetail{}, err
 		}
 		block.Account = &pos
+	} else {
+		d.PositionWithheld = true
 	}
 	d.Customer = block
 

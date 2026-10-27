@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord } from "../src/ar/ar-logic.ts";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, offeredChips, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
 import { houseDay, resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
@@ -164,6 +164,37 @@ test("a register row's marks: the day count is the status word, a promise or a d
   assert.deepEqual(rowMarks({ status: "DUE_SOON", days_overdue: 0, disputed: false }), [{ word: "due soon", tone: "watch", dashed: false }]);
   assert.deepEqual(rowMarks({ status: "OPEN", days_overdue: 0, disputed: false }), [{ word: "open", tone: "plain", dashed: false }]);
   assert.deepEqual(rowMarks({ status: "PAID", days_overdue: 0, disputed: false }), [{ word: "paid", tone: "good", dashed: false }]);
+});
+
+test("a withheld register answers the past due chip in words, and the stored status reads as words, never a past due pill", () => {
+  // The core sends a refused caller no days_overdue and no overdue or due_soon count (UX-97 round 6),
+  // so the desk's past due chip says so instead of quietly summing nothing.
+  const withheld = [{ stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 70000 }];
+  assert.deepEqual(pastDueLine("past_due", withheld), { kind: "withheld" });
+  assert.deepEqual(pastDueLine("all", withheld), { kind: "off" });
+  assert.deepEqual(
+    pastDueLine("past_due", [{ stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 70000, days_overdue: 12 }, { stored_status: "PAID", doc_type: "INVOICE", balance_cents: 0, days_overdue: 0 }]),
+    { kind: "figures", pastDueCount: 1, totalCount: 1, pastDueCents: 70000 },
+  );
+  // The stored status a refused caller now receives in `status` reads as words, and no mark
+  // derives a past due state from its absence.
+  assert.equal(statusWord("FINALIZED"), "On file");
+  assert.equal(statusTone("FINALIZED"), "plain");
+  assert.deepEqual(rowMarks({ status: "FINALIZED", days_overdue: undefined, disputed: false }), [{ word: "on file", tone: "plain", dashed: false }]);
+});
+
+test("a refused caller's filter chips are the stored set: no Current chip offers the overdue list by subtraction", () => {
+  // The core sends a refused caller no day counts (UX-97 round 6) and refuses the current and due
+  // soon chips outright (UX-97 item 220), so the desk offers that caller no Current chip either:
+  // ALL less CURRENT is the overdue list, the past due predicate told backwards. A caller the
+  // policy allows keeps every chip.
+  const clerkRows = [{ stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 70000 }];
+  assert.deepEqual(offeredChips(clerkRows), ["all", "past_due", "on_hold"]);
+  const managerRows = [
+    { stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 70000, days_overdue: 12 },
+    { stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 50000, days_overdue: 0 },
+  ];
+  assert.deepEqual(offeredChips(managerRows), ["all", "past_due", "current", "on_hold"]);
 });
 
 test("what the server's split says about an invoice, in the references' words", () => {

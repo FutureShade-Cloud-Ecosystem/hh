@@ -14,6 +14,7 @@ export interface AccountCheckCustomer {
   credit_limit_cents?: number;
   open_balance_cents?: number;
   on_hold?: boolean;
+  available_credit_cents?: number;
 }
 
 export interface AccountCheckStanding {
@@ -98,6 +99,22 @@ export interface AccountCheckResult {
   waysForward: readonly WayForward[];
 }
 
+/** What stands where the credit figure would be for a caller the dealer's account position policy refuses (UX-97). */
+export const POSITION_WITHHELD_WORDS = 'Credit position not shown for your role';
+
+/**
+ * True when the customer carries no account position at all: the three figures are absent, not zero,
+ * for a caller the policy refuses. The check then says so in words and never reads the absence as a
+ * credit line of zero ("No credit available" is a sentence the server never said).
+ */
+export function positionWithheld(customer: AccountCheckCustomer): boolean {
+  return (
+    customer.credit_limit_cents === undefined &&
+    customer.open_balance_cents === undefined &&
+    customer.available_credit_cents === undefined
+  );
+}
+
 /** The available credit in words: the server's figure when positive, else a plain statement. */
 function availableCreditWords(availableCents: number): string {
   return availableCents > 0 ? formatMoney(availableCents) : 'none (the credit line is used up or not set)';
@@ -117,11 +134,12 @@ export function evaluateAccountCheck(
   const blocked = isAccountBlocked(customer, standing, options);
   const name = (customer.name || '').trim();
 
+  const withheld = positionWithheld(customer);
   const calculatedAvailable = availableCreditCents({
     credit_limit_cents: customer.credit_limit_cents ?? 0,
     open_balance_cents: customer.open_balance_cents ?? 0,
   });
-  const availableCreditFormatted = availableCreditWords(calculatedAvailable);
+  const availableCreditFormatted = withheld ? POSITION_WITHHELD_WORDS : availableCreditWords(calculatedAvailable);
 
   const termsDays = customer.payment_terms_days && customer.payment_terms_days > 0 ? customer.payment_terms_days : 0;
   const termsWords = termsDays > 0 ? `Terms ${termsDays} days` : 'No terms on file';
@@ -134,6 +152,10 @@ export function evaluateAccountCheck(
     if (options?.cashOnDemand === true) {
       crewMemberLine = `${name} pays before release: the sale is paid before the goods go out.`;
       lines = ['Cash on demand: pay before release.', crewMemberLine];
+    } else if (withheld) {
+      title = 'No hold on this account';
+      crewMemberLine = `${name} has no hold. The charge is checked when the sale rings.`;
+      lines = [`${POSITION_WITHHELD_WORDS} · ${termsWords}.`, crewMemberLine];
     } else if (calculatedAvailable <= 0) {
       title = 'No credit available';
       crewMemberLine = 'No credit is available, so a charge to this account will be refused.';
@@ -166,13 +188,19 @@ export function evaluateAccountCheck(
   const bucketLabel = rawBucket === '' ? null : rawBucket.includes('days') ? rawBucket : `${rawBucket} days`;
   const title = bucketLabel === null ? 'On hold' : `On hold: past due ${bucketLabel}`;
 
-  const pastDuePart = pastDueFormatted
+  // The past due figure is a credit figure like the limit, the balance and the available: a caller
+  // the position withholds gets the hold words without it (round 3, visual review P1 3). The till
+  // renders no past due row at all for such a caller, word or figure.
+  const pastDuePart = !withheld && pastDueFormatted
     ? ` · Past due ${pastDueFormatted}${bucketLabel ? `, ${bucketLabel}` : ''}.`
     : '.';
-  const line1 = `Available credit ${availableCreditFormatted}, but the account is on hold${pastDuePart}`;
+  const line1 = withheld
+    ? `${POSITION_WITHHELD_WORDS}, and the account is on hold${pastDuePart}`
+    : `Available credit ${availableCreditFormatted}, but the account is on hold${pastDuePart}`;
+  // line1 already says the account is on hold, so the way forward line does not say it again.
   const crewLine = options?.crewMemberName
-    ? `${options.crewMemberName} is a listed crew member of ${name}, but the account is on hold, so a charge to it will be refused.`
-    : 'The account is on hold. Three ways forward:';
+    ? `${options.crewMemberName} is a listed crew member of ${name}, so a charge to it will be refused.`
+    : 'Three ways forward:';
   const lines = [line1];
   if (standing?.promise_text) lines.push(standing.promise_text);
   lines.push(crewLine);

@@ -130,8 +130,12 @@ test("the margin labels speak percent and stay silent where the fields are absen
 test("the identity card's words: initials, the credit line, the type tag", () => {
   assert.equal(initialsOf("Maple Ridge Contracting"), "MR");
   assert.equal(initialsOf("  "), "?");
-  assert.equal(creditLine({ credit_limit_cents: 500000, open_balance_cents: 125000 }, (c) => `$${c}`), "Outstanding $125000 · Credit available $375000");
-  assert.equal(creditLine({ credit_limit_cents: 500000, open_balance_cents: 0 }, (c) => `$${c}`), "Account current · Credit available $500000");
+  // The available figure is the core's own (UX-97), never limit less balance in the browser.
+  assert.equal(creditLine({ open_balance_cents: 125000, available_credit_cents: 375000 }, (c) => `$${c}`), "Outstanding $125000 · Credit available $375000");
+  assert.equal(creditLine({ open_balance_cents: 0, available_credit_cents: 500000 }, (c) => `$${c}`), "Account current · Credit available $500000");
+  // A caller the dealer's account position policy refuses gets no figure: the line is empty, never a zero.
+  assert.equal(creditLine({}, (c) => `$${c}`), "");
+  assert.equal(creditLine({ open_balance_cents: 125000 }, (c) => `$${c}`), "");
   assert.equal(customerTypeTag("CONTRACTOR"), "Contractor");
   assert.equal(customerTypeTag(""), "");
 });
