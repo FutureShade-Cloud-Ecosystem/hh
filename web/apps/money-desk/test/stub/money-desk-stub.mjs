@@ -850,24 +850,24 @@ function detail(inv) {
     ...world.credit_memos
       .filter((m) => m.acct === inv.acct && m.status !== "VOID" && m.amount_cents - (m.applied_cents ?? 0) > 0)
       .map((m) => ({
-        id: m.id,
-        kind: "MEMO",
-        credit_no: m.no,
-        issued_at: String(m.issued_at).slice(0, 10),
-        total_cents: m.amount_cents,
+        credit_kind: "MEMO",
+        credit_id: m.id,
+        reference: m.no,
+        issued_at: String(m.issued_at),
+        amount_cents: m.amount_cents,
         open_cents: m.amount_cents - (m.applied_cents ?? 0),
-        ...(m.reason ? { reason: m.reason } : {}),
+        ...(m.reason ? { memo: m.reason } : {}),
       })),
     ...(world.account_credits ?? [])
       .filter((c) => c.acct === inv.acct && c.open_cents > 0)
       .map((c) => ({
-        id: c.id,
-        kind: "ACCOUNT",
-        credit_no: c.no,
-        issued_at: c.issued_at,
-        total_cents: c.total_cents,
+        credit_kind: "ACCOUNT",
+        credit_id: c.id,
+        reference: c.no,
+        issued_at: String(c.issued_at),
+        amount_cents: c.total_cents,
         open_cents: c.open_cents,
-        ...(c.reason ? { reason: c.reason } : {}),
+        ...(c.reason ? { memo: c.reason } : {}),
       })),
   ];
   out.credit_applications = (world.credit_applications ?? [])
@@ -876,10 +876,11 @@ function detail(inv) {
       application_id: app.application_id,
       credit_id: app.credit_id,
       credit_kind: app.credit_kind,
-      credit_no: app.credit_no,
+      credit_reference: app.credit_no,
       amount_cents: app.amount_cents,
       reason: app.reason,
       applied_at: app.applied_at,
+      reversed: app.reversed_at !== undefined,
       ...(app.reversed_at ? { reversed_at: app.reversed_at, reversal_reason: app.reversal_reason } : {}),
     }));
   out.order_no = `SO-${2000 + invNumber(inv)}`;

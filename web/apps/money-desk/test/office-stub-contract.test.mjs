@@ -620,7 +620,10 @@ test("open credit memos and account credits show on the invoice detail, apply on
   assert.equal(detailMid.json.open_credits.length, 1);
   assert.equal(detailMid.json.open_credits[0].open_cents, 15000);
   assert.equal(detailMid.json.credit_applications.length, 2);
-  assert.deepEqual(detailMid.json.credit_applications.map((a) => [a.credit_reference, a.reversed]), [["CM-0001", false], ["AC-0001", false]]);
+  assert.deepEqual(
+    detailMid.json.credit_applications.map((a) => [a.credit_reference, a.reversed]).sort((x, y) => String(x[0]).localeCompare(String(y[0]))),
+    [["AC-0001", false], ["CM-0001", false]],
+  );
 
   // Reverse the credit memo application.
   refused(await call("POST", reversePath, { invoice_id: inv.id, application_id: firstMemo.json.application_id, reason: " " }), 400, "billing: a reason is required");

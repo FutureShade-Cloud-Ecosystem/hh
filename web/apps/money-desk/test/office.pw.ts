@@ -474,8 +474,9 @@ test("an open credit memo is applied to the invoice, refused beyond what either 
   await expect(page.locator("[data-error]")).toHaveText("That is more than the $250.00 open on this credit.");
   await page.locator("[data-field='credit-apply-amount']").fill("100.00");
   await page.getByRole("button", { name: "Apply to invoice" }).click();
+  // A refused apply moves nothing.
   await expect(page.locator("[data-error]")).toHaveText("Enter why the credit is being applied, such as applying open credit memo to balance.");
-  await expect(page.locator("[data-invoice-balance]")).toHaveText("$960.00", "a refused apply moves nothing");
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$960.00");
 
   // A part, and the server's balance follows it.
   await page.locator("[data-field='credit-apply-reason']").fill("Applying open credit memo to balance");

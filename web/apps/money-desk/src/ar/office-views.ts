@@ -512,12 +512,12 @@ export function renderInvoiceCredits(
             ${apps.map(
               (app) => html`
                 <li data-credit-app-row>
-                  <span>${app.credit_no} · ${app.credit_kind === "MEMO" ? "credit memo" : "account credit"} · ${formatMoney(app.amount_cents)}${app.reason ? ` · ${app.reason}` : ""}
-                    ${app.reversed_at !== undefined ? html`<span class="pill pill-plain">Reversed</span>` : html`<span class="pill pill-good">Applied</span>`}</span>
-                  ${app.reversed_at !== undefined
+                  <span>${app.credit_reference} · ${app.credit_kind === "MEMO" ? "credit memo" : "account credit"} · ${formatMoney(app.amount_cents)}${app.reason ? ` · ${app.reason}` : ""}
+                    ${app.reversed ? html`<span class="pill pill-plain">Reversed</span>` : html`<span class="pill pill-good">Applied</span>`}</span>
+                  ${app.reversed
                     ? nothing
                     : om.reversingCreditApp === app.application_id
-                      ? html`<span class="inline-form" data-credit-reverse-form><label><span class="visually-hidden">Why the credit application is reversed</span><input type="text" data-field="credit-reverse-reason" placeholder="Why it is reversed, such as applied to the wrong invoice" autocomplete="off" /></label><button type="button" class="btn btn-danger small-btn" data-action="credit-reverse-confirm" data-invoice-id="${d.id}" data-application-id="${app.application_id}" ?disabled=${om.busy}>Confirm reverse credit</button><button type="button" class="btn btn-secondary small-btn" data-action="credit-reverse-cancel">Cancel</button></span>`
+                      ? html`<span class="inline-form" data-credit-reverse-form><label><span class="visually-hidden">Why the credit application is reversed</span><input type="text" data-field="credit-reverse-reason" placeholder="Why it is reversed, such as applied to the wrong invoice" autocomplete="off" /></label><button type="button" class="btn btn-danger small-btn" data-action="credit-reverse-confirm" data-invoice-id="${d.id}" data-application-id="${app.application_id}" data-credit-ref="${app.credit_reference}" ?disabled=${om.busy}>Confirm reverse credit</button><button type="button" class="btn btn-secondary small-btn" data-action="credit-reverse-cancel">Cancel</button></span>`
                       : html`<span class="row-actions"><button type="button" class="btn btn-secondary small-btn" data-action="credit-reverse-start" data-application-id="${app.application_id}">Reverse credit</button></span>`}
                 </li>
               `,
@@ -532,12 +532,12 @@ export function renderInvoiceCredits(
             ${credits.map(
               (c) => html`
                 <li data-open-credit-row>
-                  <span><b>${c.credit_no}</b> · ${c.kind === "MEMO" ? "credit memo" : "account credit"} · ${c.issued_at}${c.reason ? ` · ${c.reason}` : ""} · <span data-open-credit-amount>${formatMoney(c.open_cents)} open</span></span>
-                  ${om.applyingCredit !== null && om.applyingCredit.creditId === c.id
+                  <span><b>${c.reference}</b> · ${c.credit_kind === "MEMO" ? "credit memo" : "account credit"} · ${c.issued_at.slice(0, 10)}${c.memo ? ` · ${c.memo}` : ""} · <span data-open-credit-amount>${formatMoney(c.open_cents)} open</span></span>
+                  ${om.applyingCredit !== null && om.applyingCredit.creditId === c.credit_id
                     ? renderApplyCreditForm(om, c, d, choices)
                     : choices.length === 0
                       ? nothing
-                      : html`<span class="row-actions"><button type="button" class="btn btn-secondary small-btn" data-action="credit-apply-start" data-customer-id="${d.customer.customer_id}" data-credit-id="${c.id}" data-credit-kind="${c.kind}" data-credit-no="${c.credit_no}" data-credit-open="${String(c.open_cents)}" data-invoice-id="${current?.id ?? ""}" data-balance-cents="${currentPayable === null ? "" : String(currentPayable)}">Apply credit</button></span>`}
+                      : html`<span class="row-actions"><button type="button" class="btn btn-secondary small-btn" data-action="credit-apply-start" data-customer-id="${d.customer.customer_id}" data-credit-id="${c.credit_id}" data-credit-kind="${c.credit_kind}" data-credit-ref="${c.reference}" data-credit-open="${String(c.open_cents)}" data-invoice-id="${current?.id ?? ""}" data-balance-cents="${currentPayable === null ? "" : String(currentPayable)}">Apply credit</button></span>`}
                 </li>
               `,
             )}
@@ -555,10 +555,10 @@ function renderApplyCreditForm(
   const view = om.applyingCredit;
   if (view === null) return html``;
   const maxCents = view.invoiceBalanceCents === null ? credit.open_cents : Math.min(credit.open_cents, view.invoiceBalanceCents);
-  const kindLabel = credit.kind === "MEMO" ? "credit memo" : "account credit";
+  const kindLabel = credit.credit_kind === "MEMO" ? "credit memo" : "account credit";
   return html`
     <form class="held-form" aria-label="Apply credit to an invoice" data-credit-apply-form>
-      <p class="callout" data-credit-callout><b>${formatMoney(credit.open_cents)} is open on ${kindLabel} ${credit.credit_no}.</b> Applying it reduces the open balance of the chosen invoice without recording a new payment.</p>
+      <p class="callout" data-credit-callout><b>${formatMoney(credit.open_cents)} is open on ${kindLabel} ${credit.reference}.</b> Applying it reduces the open balance of the chosen invoice without recording a new payment.</p>
       <p class="dim small">Apply to invoice</p>
       <div class="row-actions" role="group" aria-label="Invoice to apply credit to" data-credit-apply-invoices>
         ${choices.length === 0

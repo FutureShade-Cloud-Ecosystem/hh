@@ -93,7 +93,7 @@ export interface ApplyCreditView {
   readonly customerId: string;
   readonly creditId: string;
   readonly creditKind: "MEMO" | "ACCOUNT";
-  readonly creditNo: string;
+  readonly creditRef: string;
   readonly creditOpenCents: number;
   readonly invoiceId: string;
   readonly invoiceBalanceCents: number | null;
@@ -741,14 +741,14 @@ export class OfficeDesk {
       return;
     }
     this.#applyingCredit = null;
-    this.#host.notice(applyCreditWords(result.value));
+    this.#host.notice(applyCreditWords(result.value, view.creditRef));
     this.#host.reveal("[data-notice]");
     await Promise.all([this.#host.reloadAccount(), this.#host.reloadBook()]);
     this.#host.repaint();
   }
 
   /** Reverses a credit application on an invoice with a reason (FW1-12b). */
-  async #reverseCreditApp(invoiceId: string, applicationId: string): Promise<void> {
+  async #reverseCreditApp(invoiceId: string, applicationId: string, creditRef: string): Promise<void> {
     if (this.#busy) return;
     const check = reverseCreditAppCheck(this.#host.field("credit-reverse-reason"));
     if (!check.ok) return this.#stop(check.words);
@@ -767,7 +767,7 @@ export class OfficeDesk {
       return;
     }
     this.#reversingCreditApp = null;
-    this.#host.notice(reverseCreditAppWords(result.value));
+    this.#host.notice(reverseCreditAppWords(result.value, creditRef));
     this.#host.reveal("[data-notice]");
     await Promise.all([this.#host.reloadAccount(), this.#host.reloadBook()]);
     this.#host.repaint();
@@ -910,7 +910,7 @@ export class OfficeDesk {
           customerId: attr("data-customer-id"),
           creditId: attr("data-credit-id"),
           creditKind: attr("data-credit-kind") === "ACCOUNT" ? "ACCOUNT" : "MEMO",
-          creditNo: attr("data-credit-no"),
+          creditRef: attr("data-credit-ref"),
           creditOpenCents: Number.isInteger(openRaw) && openRaw > 0 ? openRaw : 0,
           invoiceId: attr("data-invoice-id"),
           invoiceBalanceCents: balanceRaw === "" ? null : Number(balanceRaw),
@@ -952,7 +952,7 @@ export class OfficeDesk {
         this.#host.repaint();
         return true;
       case "credit-reverse-confirm":
-        void this.#reverseCreditApp(attr("data-invoice-id"), attr("data-application-id"));
+        void this.#reverseCreditApp(attr("data-invoice-id"), attr("data-application-id"), attr("data-credit-ref"));
         return true;
       case "paper-sweep":
         void this.#sweepPaper();

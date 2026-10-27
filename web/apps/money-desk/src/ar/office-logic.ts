@@ -383,11 +383,11 @@ export function applyCreditCheck(input: {
   return { ok: true, creditKind: input.creditKind, creditId: input.creditId.trim(), invoiceId: input.invoiceId, amountCents: cents, reason };
 }
 
-/** What a credit application did, from the server's own answer: the credit applied and what remains open on the credit. */
-export function applyCreditWords(result: BillingCreditApplication): string {
+/** What a credit application did, from the server's own answer: the credit applied and what remains open on the credit. The credit's reference is the row's, which the answer does not carry. */
+export function applyCreditWords(result: BillingCreditApplication, creditRef: string): string {
   const kindWord = result.credit_kind === "MEMO" ? "credit memo" : "account credit";
-  const left = result.credit_after_cents === 0 ? `Nothing is left open on ${result.credit_no} now.` : `${formatMoney(result.credit_after_cents)} is still open on ${result.credit_no}.`;
-  return `${formatMoney(result.applied_cents)} of ${kindWord} ${result.credit_no} is applied to invoice ${result.invoice_no}. ${left}`;
+  const left = result.credit_open_after_cents === 0 ? `Nothing is left open on ${creditRef} now.` : `${formatMoney(result.credit_open_after_cents)} is still open on ${creditRef}.`;
+  return `${formatMoney(result.applied_cents)} of ${kindWord} ${creditRef} is applied to invoice ${result.invoice_no}. ${left}`;
 }
 
 export type ReverseCreditAppCheck = { ok: true; reason: string } | { ok: false; words: string };
@@ -401,9 +401,9 @@ export function reverseCreditAppCheck(reason: string): ReverseCreditAppCheck {
   return { ok: true, reason: trimmed };
 }
 
-/** What reversing a credit application undid, from the server's own answer. */
-export function reverseCreditAppWords(result: BillingCreditApplicationReversed): string {
-  return `Credit application of ${formatMoney(result.amount_cents)} from ${result.credit_no} is reversed on invoice ${result.invoice_no}. ${formatMoney(result.credit_open_cents)} is open on ${result.credit_no} again.`;
+/** What reversing a credit application undid, from the server's own answer. The credit's reference is the row's, which the answer does not carry. */
+export function reverseCreditAppWords(result: BillingCreditApplicationReversed, creditRef: string): string {
+  return `Credit application of ${formatMoney(result.restored_cents)} is reversed on invoice ${result.invoice_no}. ${formatMoney(result.credit_open_after_cents)} is open on ${creditRef} again.`;
 }
 
 // ---- settings: the receivables rules, the register, the returned payment fee, automatic holds ----------------------------

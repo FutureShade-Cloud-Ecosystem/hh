@@ -419,11 +419,8 @@ export function createOfficeWorld(ctx) {
       return ok(
         {
           ...spent.answer,
-          credit_before_cents: creditNow + spent.amount_cents,
-          credit_after_cents: creditNow,
-          invoice_balance_before_cents: inv.balance_cents + spent.amount_cents,
-          invoice_balance_after_cents: inv.balance_cents,
-          outcome: inv.balance_cents <= 0 ? "CLOSES" : "PART",
+          credit_open_after_cents: creditNow,
+          lines: [{ invoice_id: inv.id, invoice_no: inv.invoice_no, applied_cents: spent.amount_cents, outcome: inv.balance_cents <= 0 ? "CLOSES" : "PART", balance_after_cents: inv.balance_cents }],
           replayed: true,
         },
         200,
@@ -441,9 +438,7 @@ export function createOfficeWorld(ctx) {
     const appId = ctx.uuid("b", 800 + world.counter);
     const journalId = ctx.uuid("e", 800 + world.counter);
     const creditNo = kind === "MEMO" ? memo.no : acctCredit.no;
-    const creditBefore = creditOpen;
     const creditAfter = creditOpen - body.amount_cents;
-    const invBefore = inv.balance_cents;
     const invAfter = inv.balance_cents - body.amount_cents;
     if (kind === "MEMO") {
       memo.applied_cents = (memo.applied_cents ?? 0) + body.amount_cents;
@@ -467,19 +462,13 @@ export function createOfficeWorld(ctx) {
     });
     const answer = {
       application_id: appId,
-      customer_id: custLower,
       credit_kind: kind,
       credit_id: creditLower,
-      credit_no: creditNo,
       invoice_id: inv.id,
       invoice_no: inv.invoice_no,
       applied_cents: body.amount_cents,
-      credit_before_cents: creditBefore,
-      credit_after_cents: creditAfter,
-      invoice_balance_before_cents: invBefore,
-      invoice_balance_after_cents: invAfter,
-      outcome: invAfter <= 0 ? "CLOSES" : "PART",
-      journal_entry_id: journalId,
+      credit_open_after_cents: creditAfter,
+      lines: [{ invoice_id: inv.id, invoice_no: inv.invoice_no, applied_cents: body.amount_cents, outcome: invAfter <= 0 ? "CLOSES" : "PART", balance_after_cents: invAfter }],
       replayed: false,
     };
     world.creditApplyKeys.set(key, {
@@ -523,24 +512,18 @@ export function createOfficeWorld(ctx) {
     }
     inv.balance_cents += app.amount_cents;
     world.counter += 1;
-    const reversalId = ctx.uuid("b", 900 + world.counter);
-    const journalId = ctx.uuid("e", 900 + world.counter);
     app.reversed_at = NOW_ISO();
     app.reversal_reason = reason;
     return ok(
       {
         application_id: app.application_id,
-        reversal_id: reversalId,
-        credit_kind: app.credit_kind,
-        credit_id: app.credit_id,
-        credit_no: app.credit_no,
         invoice_id: inv.id,
         invoice_no: inv.invoice_no,
-        amount_cents: app.amount_cents,
-        credit_open_cents: creditOpenAfter,
-        invoice_balance_cents: inv.balance_cents,
-        reason,
-        journal_entry_id: journalId,
+        restored_cents: app.amount_cents,
+        invoice_balance_after_cents: inv.balance_cents,
+        credit_open_after_cents: creditOpenAfter,
+        lines: [{ invoice_id: inv.id, invoice_no: inv.invoice_no, applied_cents: app.amount_cents, outcome: inv.balance_cents <= 0 ? "CLOSES" : "PART", balance_after_cents: inv.balance_cents }],
+        replayed: false,
       },
       201,
     );
