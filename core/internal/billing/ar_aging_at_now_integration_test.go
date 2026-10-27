@@ -189,4 +189,18 @@ func TestIntegration_TheAgingAtNowReadsTheBalanceForEachWriter(t *testing.T) {
 		t.Fatalf("move the balance by hand: %v", err)
 	}
 	assertAtNowIsTheBalance(t, pool, before, cust)
+
+	// Issued ahead of the house day (the seed's own UTC shape, the assistant's parity fixture): a
+	// document issued tomorrow by the zone's reading is on the books at now, where the issue cut is
+	// a past date's cut and the figure is the balance.
+	before, err = repo.ARBalanceCents(ctx, time.Now(), "")
+	if err != nil {
+		t.Fatalf("read the tie figure: %v", err)
+	}
+	cust = seedCustomer(t, pool, ns(t))
+	seedInvoice(t, pool, cust, ns(t), invSpec{no: "AHEAD", status: "FINALIZED", subtotal: 4_000, tax: 0, total: 4_000, balance: 4_000, finalized: true})
+	if _, err := pool.Exec(ctx, `UPDATE invoices SET issue_date = CURRENT_DATE + 1, due_date = CURRENT_DATE + 31 WHERE customer_id = $1::uuid`, cust); err != nil {
+		t.Fatalf("issue ahead of the house day: %v", err)
+	}
+	assertAtNowIsTheBalance(t, pool, before, cust)
 }
