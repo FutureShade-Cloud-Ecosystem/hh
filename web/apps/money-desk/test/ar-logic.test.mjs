@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, offeredChips, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
 import { houseDay, resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
@@ -181,6 +181,20 @@ test("a withheld register answers the past due chip in words, and the stored sta
   assert.equal(statusWord("FINALIZED"), "On file");
   assert.equal(statusTone("FINALIZED"), "plain");
   assert.deepEqual(rowMarks({ status: "FINALIZED", days_overdue: undefined, disputed: false }), [{ word: "on file", tone: "plain", dashed: false }]);
+});
+
+test("a refused caller's filter chips are the stored set: no Current chip offers the overdue list by subtraction", () => {
+  // The core sends a refused caller no day counts (UX-97 round 6) and refuses the current and due
+  // soon chips outright (UX-97 item 220), so the desk offers that caller no Current chip either:
+  // ALL less CURRENT is the overdue list, the past due predicate told backwards. A caller the
+  // policy allows keeps every chip.
+  const clerkRows = [{ stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 70000 }];
+  assert.deepEqual(offeredChips(clerkRows), ["all", "past_due", "on_hold"]);
+  const managerRows = [
+    { stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 70000, days_overdue: 12 },
+    { stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 50000, days_overdue: 0 },
+  ];
+  assert.deepEqual(offeredChips(managerRows), ["all", "past_due", "current", "on_hold"]);
 });
 
 test("what the server's split says about an invoice, in the references' words", () => {

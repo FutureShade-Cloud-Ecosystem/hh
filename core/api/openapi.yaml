@@ -889,7 +889,7 @@ paths:
         - name: chip
           in: query
           required: false
-          description: Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit alongside the legacy StatusX strings; old URLs still resolve. The overdue and past_due chips answer 400 in words for a caller the account position policy refuses.
+          description: Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit alongside the legacy StatusX strings; old URLs still resolve. The overdue, past_due and current chips answer 400 with the past due words for a caller the account position policy refuses (current is the complement of past due, so all less current lists the overdue accounts by subtraction), and the DUE_SOON chip answers 400 with the due soon words for the same caller. A refused caller's status filter offers stored statuses only.
           schema:
             type: string
             enum:
@@ -1059,7 +1059,7 @@ paths:
       tags:
         - staff-billing
       summary: Download the current register view as CSV
-      description: The same filter and the same figures as the register read. The body is CSV text with a Content-Disposition attachment filename, not JSON; the wire shape is raw text rather than a struct. For a caller the account position policy refuses, the Days overdue header and its column are absent and the Status column carries the invoice's stored status.
+      description: The same filter and the same figures as the register read. The body is CSV text with a Content-Disposition attachment filename, not JSON; the wire shape is raw text rather than a struct. For a caller the account position policy refuses, the Days overdue header and its column are absent and the Status column carries the invoice's stored status; the overdue, past_due, current and DUE_SOON chips refuse that caller in words exactly as the register read does.
       x-role: requireStaff
       x-access:
         surfaces:

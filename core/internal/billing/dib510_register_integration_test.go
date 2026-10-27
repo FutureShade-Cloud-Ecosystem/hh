@@ -458,7 +458,8 @@ func TestRegister_ARefusedCallerCarriesTheStoredStatusAndNoPastDueFlags(t *testi
 
 // TestRegister_ThePastDueChipsRefuseACallerTheGateRefuses pins the filter half of round 6: the
 // overdue and past due chips ask for the withheld predicate AS A LIST, so the service refuses them
-// in words for a caller the account position policy refuses, while every other chip still answers.
+// in words for a caller the account position policy refuses, while the chips that name no derived
+// predicate still answer.
 func TestRegister_ThePastDueChipsRefuseACallerTheGateRefuses(t *testing.T) {
 	f := newD510Fixture(t)
 	f.invoice(t, "LATE", "FINALIZED", -12, 70000, 70000, "INVOICE")
@@ -481,6 +482,35 @@ func TestRegister_ThePastDueChipsRefuseACallerTheGateRefuses(t *testing.T) {
 	// And a manager filters by the same chips still.
 	if _, err := f.service(d510Manager()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Chip: StatusOverdue, Limit: 50}); err != nil {
 		t.Fatalf("the overdue chip still answers an allowed manager: %v", err)
+	}
+}
+
+// TestRegister_TheCurrentAndDueSoonChipsRefuseACallerTheGateRefuses pins item 220 (S5 R6 P3): the
+// current chip is the complement of the past due predicate, so ALL less CURRENT lists the overdue
+// accounts by subtraction, and due soon is the one derived predicate left as a server list. A
+// caller the account position policy refuses hears the refusal in words and receives no rows for
+// either, so the refused status filter offers stored statuses only. The manager keeps every chip.
+func TestRegister_TheCurrentAndDueSoonChipsRefuseACallerTheGateRefuses(t *testing.T) {
+	f := newD510Fixture(t)
+	ctx := context.Background()
+	f.invoice(t, "LATE", "FINALIZED", -12, 70000, 70000, "INVOICE") // overdue
+	f.invoice(t, "SOON", "FINALIZED", 3, 50000, 50000, "INVOICE")   // due soon
+
+	for _, chip := range []string{"CURRENT", ChipCurrent, StatusDueSoon, "due_soon"} {
+		_, err := f.service(d510Frontline()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Chip: chip, Limit: 50})
+		if err == nil {
+			t.Fatalf("chip %s must refuse a caller the account position policy refuses", chip)
+		}
+	}
+	// The manager still gets both, one row each.
+	for _, chip := range []string{"CURRENT", StatusDueSoon} {
+		page, err := f.service(d510Manager()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Chip: chip, Limit: 50})
+		if err != nil {
+			t.Fatalf("chip %s must still answer an allowed manager: %v", chip, err)
+		}
+		if page.Total != 1 {
+			t.Fatalf("chip %s reads its one row, got total %d", chip, page.Total)
+		}
 	}
 }
 
