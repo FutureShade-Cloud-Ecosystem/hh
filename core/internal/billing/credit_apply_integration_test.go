@@ -85,7 +85,7 @@ func TestIntegration_FW1_12b_ApplyCreditMemoAndAccountCredit_TiesTo1100AndRevers
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO customer_transactions
 		  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
-		VALUES ($1::uuid, 'ADJUSTMENT', -10000, 25000, 'order_deposit_cancel', gen_random_uuid(), $2::uuid, 'cancelled order deposit credit')
+		VALUES ($1::uuid, 'ADJUSTMENT', -10000, 25000, 'deposit_cancel', gen_random_uuid(), $2::uuid, 'cancelled order deposit credit')
 		RETURNING id::text`,
 		custID, trentonBranch).Scan(&acctCreditID); err != nil {
 		t.Fatalf("seed account credit: %v", err)
@@ -416,7 +416,7 @@ func TestIntegration_FW1_12b_ASpentCreditOutOfReachAnswersNotFound(t *testing.T)
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO customer_transactions
 		  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
-		VALUES ($1::uuid, 'ADJUSTMENT', -6000, 25000, 'order_deposit_cancel', gen_random_uuid(), $2::uuid, 'deposit credit')
+		VALUES ($1::uuid, 'ADJUSTMENT', -6000, 25000, 'deposit_cancel', gen_random_uuid(), $2::uuid, 'deposit credit')
 		RETURNING id::text`,
 		custID, kingstonBranch).Scan(&acctCreditID); err != nil {
 		t.Fatalf("seed account credit: %v", err)
@@ -519,7 +519,7 @@ func TestIntegration_FW1_12b_TwoAppliesNamingDifferentRowsOfOneGroupCannotBothPa
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO customer_transactions
 		  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
-		VALUES ($1::uuid, 'ADJUSTMENT', -10000, 25000, 'order_deposit_cancel', gen_random_uuid(), $2::uuid, 'deposit credit')
+		VALUES ($1::uuid, 'ADJUSTMENT', -10000, 25000, 'deposit_cancel', gen_random_uuid(), $2::uuid, 'deposit credit')
 		RETURNING id::text, COALESCE(source_ref_id, id)::text`,
 		custID, trentonBranch).Scan(&creditID, &groupRef); err != nil {
 		t.Fatalf("seed account credit: %v", err)
@@ -552,7 +552,7 @@ func TestIntegration_FW1_12b_TwoAppliesNamingDifferentRowsOfOneGroupCannotBothPa
 	var offsetID string
 	if err := pool.QueryRow(ctx, `
 		SELECT id::text FROM customer_transactions
-		 WHERE customer_id = $1::uuid AND amount_cents > 0 AND COALESCE(source_type, '') = 'order_deposit_cancel'
+		 WHERE customer_id = $1::uuid AND amount_cents > 0 AND COALESCE(source_type, '') = 'deposit_cancel'
 		 ORDER BY id LIMIT 1`, custID).Scan(&offsetID); err != nil {
 		t.Fatalf("read the offsetting row: %v", err)
 	}
@@ -627,7 +627,7 @@ func TestIntegration_FW1_12b_TwoAppliesNamingDifferentRowsOfOneGroupCannotBothPa
 	if err := pool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
 		 WHERE customer_id = $1::uuid
-		   AND COALESCE(source_type, '') = 'order_deposit_cancel'
+		   AND COALESCE(source_type, '') = 'deposit_cancel'
 		   AND COALESCE(source_ref_id, id) = $2::uuid
 		   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')`,
 		custID, groupRef).Scan(&groupSum); err != nil {
@@ -677,7 +677,7 @@ func TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce(t *testing
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO customer_transactions
 		  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
-		VALUES ($1::uuid, 'ADJUSTMENT', -10000, 25000, 'order_deposit_cancel', gen_random_uuid(), $2::uuid, 'deposit credit')
+		VALUES ($1::uuid, 'ADJUSTMENT', -10000, 25000, 'deposit_cancel', gen_random_uuid(), $2::uuid, 'deposit credit')
 		RETURNING id::text, COALESCE(source_ref_id, id)::text`,
 		custID, trentonBranch).Scan(&creditID, &groupRef); err != nil {
 		t.Fatalf("seed account credit: %v", err)
@@ -713,7 +713,7 @@ func TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce(t *testing
 	var offsetID string
 	if err := pool.QueryRow(ctx, `
 		SELECT id::text FROM customer_transactions
-		 WHERE customer_id = $1::uuid AND amount_cents = 4000 AND COALESCE(source_type, '') = 'order_deposit_cancel'
+		 WHERE customer_id = $1::uuid AND amount_cents = 4000 AND COALESCE(source_type, '') = 'deposit_cancel'
 		 ORDER BY id LIMIT 1`, custID).Scan(&offsetID); err != nil {
 		t.Fatalf("read the offsetting row: %v", err)
 	}
@@ -735,7 +735,7 @@ func TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce(t *testing
 	grows, err := pool.Query(ctx, `
 		SELECT id::text FROM customer_transactions
 		 WHERE customer_id = $1::uuid
-		   AND COALESCE(source_type, '') = 'order_deposit_cancel'
+		   AND COALESCE(source_type, '') = 'deposit_cancel'
 		   AND COALESCE(source_ref_id, id) = $2::uuid
 		   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')`, custID, groupRef)
 	if err != nil {
@@ -818,7 +818,7 @@ func TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce(t *testing
 	if err := pool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
 		 WHERE customer_id = $1::uuid
-		   AND COALESCE(source_type, '') = 'order_deposit_cancel'
+		   AND COALESCE(source_type, '') = 'deposit_cancel'
 		   AND COALESCE(source_ref_id, id) = $2::uuid
 		   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')`,
 		custID, groupRef).Scan(&groupSum); err != nil {
@@ -853,7 +853,7 @@ func TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce(t *testing
 		       count(*) FILTER (WHERE amount_cents = -6000)
 		  FROM customer_transactions
 		 WHERE customer_id = $1::uuid
-		   AND COALESCE(source_type, '') = 'order_deposit_cancel'
+		   AND COALESCE(source_type, '') = 'deposit_cancel'
 		   AND COALESCE(source_ref_id, id) = $2::uuid
 		   AND memo LIKE 'credit application reversed%'`,
 		custID, groupRef).Scan(&restores, &at4000, &at6000); err != nil {
@@ -904,7 +904,7 @@ func TestIntegration_FW1_12b_AReversalAndAnApplyOfOneGroupNeverDeadlock(t *testi
 			if err := pool.QueryRow(ctx, `
 				INSERT INTO customer_transactions
 				  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
-				VALUES ($1::uuid, 'ADJUSTMENT', -10000, 25000, 'order_deposit_cancel', gen_random_uuid(), $2::uuid, 'deposit credit')
+				VALUES ($1::uuid, 'ADJUSTMENT', -10000, 25000, 'deposit_cancel', gen_random_uuid(), $2::uuid, 'deposit credit')
 				RETURNING id::text, COALESCE(source_ref_id, id)::text`,
 				custID, trentonBranch).Scan(&creditID, &groupRef); err != nil {
 				t.Fatalf("iteration %d: seed account credit: %v", iteration, err)
@@ -936,7 +936,7 @@ func TestIntegration_FW1_12b_AReversalAndAnApplyOfOneGroupNeverDeadlock(t *testi
 			var offsetID string
 			if err := pool.QueryRow(ctx, `
 				SELECT id::text FROM customer_transactions
-				 WHERE customer_id = $1::uuid AND amount_cents = 4000 AND COALESCE(source_type, '') = 'order_deposit_cancel'
+				 WHERE customer_id = $1::uuid AND amount_cents = 4000 AND COALESCE(source_type, '') = 'deposit_cancel'
 				 ORDER BY id LIMIT 1`, custID).Scan(&offsetID); err != nil {
 				t.Fatalf("iteration %d: read the offsetting row: %v", iteration, err)
 			}
@@ -1031,7 +1031,7 @@ func TestIntegration_FW1_12b_AReversalAndAnApplyOfOneGroupNeverDeadlock(t *testi
 			if err := pool.QueryRow(ctx, `
 				SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
 				 WHERE customer_id = $1::uuid
-				   AND COALESCE(source_type, '') = 'order_deposit_cancel'
+				   AND COALESCE(source_type, '') = 'deposit_cancel'
 				   AND COALESCE(source_ref_id, id) = $2::uuid
 				   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')`,
 				custID, groupRef).Scan(&groupSum); err != nil {
@@ -1616,12 +1616,14 @@ func TestIntegration_FW1_12b_AWriteOffRowIsNotACredit(t *testing.T) {
 	due := time.Now().UTC().AddDate(0, 0, 27).Format("2006-01-02")
 
 	// Leg 1: a WRITE_OFF row, the type an older box's history might carry. No code writes one today;
-	// the row here is what such a history would hold, and the door must refuse it.
+	// the row here is what such a history would hold, and the door must refuse it. The row sits in a
+	// credit family the door DOES accept ('deposit_cancel'), so the refusal is the write off's own
+	// rule and not the family's.
 	var writeOffID, woInvID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO customer_transactions
 		  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
-		VALUES ($1::uuid, 'WRITE_OFF', -5000, 25000, 'manual', gen_random_uuid(), $2::uuid, 'old box write off')
+		VALUES ($1::uuid, 'WRITE_OFF', -5000, 25000, 'deposit_cancel', gen_random_uuid(), $2::uuid, 'old box write off')
 		RETURNING id::text`,
 		writeOffCust, trentonBranch).Scan(&writeOffID); err != nil {
 		t.Fatalf("seed write off row: %v", err)

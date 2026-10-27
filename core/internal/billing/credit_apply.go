@@ -9,10 +9,30 @@ package billing
 //     NEGATIVE magnitude. It rides the invoices arm of ARBalanceCents. Issued by the credit memo
 //     writer (credit_memo.go) or the POS return's offset rows.
 //   · An ACCOUNT CREDIT is a subledger row family: customer_transactions whose txn_type is one of
-//     the 0009 vocabulary's AR kinds, whose source_type is NOT 'invoice', and whose amount is
-//     negative (the POS return's store credit remainder, a supplier deposit credited back). It
-//     rides the non-invoice arm of ARBalanceCents, grouped by (customer, branch, source_type,
-//     source_ref_id) exactly as agingSelect groups it.
+//     the 0009 vocabulary's AR kinds, whose source_type is one of the CREDIT FAMILIES below, and
+//     whose amount is negative. It rides the non-invoice arm of ARBalanceCents, grouped by
+//     (customer, branch, source_type, source_ref_id) exactly as agingSelect groups it.
+//
+// -- THE CREDIT FAMILIES, AND WHY THE DOOR NAMES THEM ----------------------------------------------
+// A customer's credit is not "any group whose sum happens to be negative". A negative row can be
+// money the customer PAID rather than money the customer HOLDS: the NSF fee payment row (the
+// payments module's NSF fee branch of applyAllocations) is a negative ADJUSTMENT row in the
+// 'payment_nsf' family, and the fee's charge and its payment share a group. The door must name the
+// families it accepts, and they are the two a producer writes when it gives the customer value back:
+//
+//   · 'pos_return'   the POS store credit remainder (pos/returns.go), a CREDIT_MEMO row.
+//   · 'deposit_cancel' the deposit cancel credit back (billing/deposit_cancel.go), an ADJUSTMENT row.
+//
+// 'payment_nsf' is a DEBT the customer owes, never a credit, and every other family is a document
+// side or an amount already accounted for. A row in a family the door does not accept answers the
+// no such credit the unknown credit answers (NoSuchCreditError), so no existence leaks.
+//
+// The MEMO arm is the other kind of credit and it is a document, not a family: a CREDIT_MEMO
+// invoice whose balance_cents is a NEGATIVE magnitude.
+//
+// The group's own figure is the AGING's figure: the aging, ARBalanceCents, the statement, the
+// account read and the deposit cancel all read a group with WRITE_OFF in the kind list, so the
+// door reads the group the same way. One group's one figure, read by every reader of it.
 //
 // -- WHAT AN APPLICATION IS, AND WHAT IT POSTS ----------------------------------------------------
 // Applying a credit to a later invoice moves value FROM the credit TO the invoice. Both live in AR
@@ -54,6 +74,12 @@ package billing
 // The record is also what a reversal reads to restore both sides, so no application exists anywhere
 // but on the invoice it moved.
 //
+// The key's SCOPE is the route, not one invoice (K3's P3): the key's record is read across the
+// route's invoices, so a key already spent on another invoice is spent here too and is refused as
+// the spent key it is. The key's own advisory slot is taken before any row, the house's idiom for
+// a key's own serialization (order/duplicate.go's duplicate key, order/reorder.go's reorder key),
+// so two requests under one key cannot both find it unspent.
+//
 // -- THE LOCKS -------------------------------------------------------------------------------------
 // The one money lock order (payments/LOCK-ORDER.md): the target invoice rows ascending, then the
 // memo row or the group anchor, then the feed counter. MEMO takes the memo document's row FOR NO
@@ -68,6 +94,11 @@ package billing
 // once drew the counter first while the apply took the group's or the memo's row first, so each
 // could hold what the other needed. No payments counter is drawn: nothing here stamps a payments
 // row.
+//
+// The apply takes ONE more lock before the target invoice row: the idempotency key's own advisory
+// slot (the key's scope is the route, so the key's slot is taken before any row is). It takes no
+// row, so it cannot close a cycle with any row lock, and it is released when the transaction
+// ends.
 
 import (
 	"context"
@@ -97,6 +128,34 @@ const (
 	CreditKindMemo    = "MEMO"
 	CreditKindAccount = "ACCOUNT"
 )
+
+// creditAccountFamilies are the ACCOUNT credit families the door accepts, by their source_type.
+//
+// A credit is not "any group whose sum is negative": a negative row can be money the customer PAID
+// rather than money the customer HOLDS (the NSF fee payment row is exactly that, and the fee's
+// charge and its payment share a group). These two are the families a producer writes when it
+// gives the customer value back: the POS store credit remainder ('pos_return') and the deposit
+// cancel credit back ('deposit_cancel'). 'payment_nsf' is a debt, never a credit.
+//
+// The MEMO arm is the other kind of credit and it is a document, not a family: a CREDIT_MEMO
+// invoice whose balance is a negative magnitude.
+var creditAccountFamilies = []string{"pos_return", "deposit_cancel"}
+
+// creditGroupTxnTypes are the kinds a credit GROUP is read with: the 0009 AR vocabulary, the list
+// the aging (agingSelect), ARBalanceCents, the statement, the account read and the deposit cancel
+// all read a group with. The door reads the group the same way, so the door's figure and the
+// aging's figure are ONE figure for the same group (M3's P2-1: a WRITE_OFF row inside the group
+// is invisible to a reader that leaves it out, so a group the aging reads as zero reads to the
+// door as an open credit, and applying it turns the group positive, a debit the customer never
+// owed).
+var creditGroupTxnTypes = []string{"NSF", "ADJUSTMENT", "CREDIT_MEMO", "WRITE_OFF"}
+
+// creditRowTxnTypes are the kinds a CREDIT ROW may be, the row a caller names as the credit. A
+// write off is not one of them (S6's P3): a write off is never value the customer holds, so it can
+// never be the credit a door applies, whatever family it sits in. The GROUP that row sits in is
+// still read with the aging's kinds (creditGroupTxnTypes), which do include a write off: the aging
+// reads the group that way, so the door's figure has to be that figure.
+var creditRowTxnTypes = []string{"NSF", "ADJUSTMENT", "CREDIT_MEMO"}
 
 // CreditApplicationNotOpen is the refusal for a credit that holds nothing open.
 var CreditApplicationNotOpen = errors.New("billing: that credit has nothing left to apply")
@@ -269,6 +328,11 @@ type creditApplicationRecord struct {
 	Reason        string `json:"reason"`
 	AppliedBy     string `json:"applied_by,omitempty"`
 	AppliedAt     string `json:"applied_at"`
+	// CreditPriorStatus is the status the credit carried BEFORE this application: a MEMO credit's
+	// document status, read under the memo row's lock. The reversal restores that status, so a memo
+	// that was not FINALIZED does not come back FINALIZED (M3's P3-2). It is empty for an ACCOUNT
+	// credit, which has no document status, and for an application recorded before this rule.
+	CreditPriorStatus string `json:"credit_prior_status,omitempty"`
 	// Reversal is set when the application has been undone; the record then stays as the act's history.
 	Reversal *creditReversalRecord `json:"reversal,omitempty"`
 }
@@ -302,6 +366,60 @@ func readCreditApplications(raw string) (map[string]creditApplicationRecord, err
 	return m.CreditApplications, nil
 }
 
+// lockCreditApplicationKey takes the idempotency key's own advisory slot, the house's idiom for a
+// key's own serialization (order/duplicate.go's duplicate key, order/reorder.go's reorder key, the
+// inventory module's branch cost key).
+//
+// It is taken BEFORE any row, because the key's scope is the route: two requests under one key must
+// not both find it unspent, whichever invoice each of them names. It is a transaction scoped lock
+// (pg_advisory_xact_lock), so the transaction releases it, and it takes no row, so it can close no
+// cycle with any row lock.
+func lockCreditApplicationKey(ctx context.Context, tx pgx.Tx, key string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		"billing:credit_apply:"+key); err != nil {
+		return fmt.Errorf("credit apply: lock the idempotency key: %w", err)
+	}
+	return nil
+}
+
+// findCreditApplicationByKey reads the route's record for one idempotency key: the invoice that
+// carries it and the record itself (K3's P3).
+//
+// The key's scope is the ROUTE, not one invoice, so the record is read across the route's invoices
+// rather than on the target invoice alone. The route's own record store is the invoices' metadata
+// (the file's IDEMPOTENCY WITHOUT A NEW TABLE header), so this is one read of that store: there is
+// no index on the metadata's key, so it is a scan of the invoices table. The key's advisory slot
+// (lockCreditApplicationKey) is what makes the read sound: the caller holds it, so a twin under the
+// same key has committed and is visible here, and no two requests under one key can both find it
+// unspent.
+//
+// The invoice that carries the key is named back with the record, because the replay is the same
+// request only when the key's own invoice is this invoice: a key already spent on ANOTHER invoice
+// is spent, and the door says so. When more than one invoice carries the key (only a record from
+// before this rule could, since the key's slot lets one application per key through), the TARGET's
+// own record wins, so a retry of this request still answers its first result.
+func (r *Repository) findCreditApplicationByKey(ctx context.Context, tx pgx.Tx, key, targetInvoiceID string) (string, creditApplicationRecord, bool, error) {
+	var invoiceID string
+	var raw string
+	err := tx.QueryRow(ctx, `
+		SELECT id::text, COALESCE(metadata->'credit_applications'->$1::text, '{}'::jsonb)::text
+		  FROM invoices
+		 WHERE (COALESCE(metadata, '{}'::jsonb) -> 'credit_applications') ? $1::text
+		 ORDER BY (id = $2::uuid) DESC, id ASC
+		 LIMIT 1`, key, targetInvoiceID).Scan(&invoiceID, &raw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", creditApplicationRecord{}, false, nil
+		}
+		return "", creditApplicationRecord{}, false, fmt.Errorf("credit apply: read the idempotency key across the route: %w", err)
+	}
+	var rec creditApplicationRecord
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		return "", creditApplicationRecord{}, false, fmt.Errorf("credit apply: read the idempotency key's record: %w", err)
+	}
+	return invoiceID, rec, true, nil
+}
+
 // ApplyCredit is the repository write. ONE transaction: the locks walked in the file's THE LOCKS
 // order, every judgement under the locks, the replay judged under the target invoice's row, then
 // the balance moves, the subledger rows and the metadata stamp. A refused request writes nothing.
@@ -319,7 +437,15 @@ func (r *Repository) ApplyCredit(ctx context.Context, in ApplyCreditInput, now t
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// The target invoice row, the first step of the file's THE LOCKS order. The memo row is NOT
+	// The idempotency key's own advisory slot, the door's first lock. The key's scope is the route,
+	// so the key's slot is taken before any row: two requests under one key cannot both find it
+	// unspent, whichever invoice each of them names. It takes no row, so it closes no cycle with
+	// any row lock, and the transaction releases it.
+	if err := lockCreditApplicationKey(ctx, tx, in.IdempotencyKey); err != nil {
+		return CreditApplication{}, err
+	}
+
+	// The target invoice row, the first ROW step of the file's THE LOCKS order. The memo row is NOT
 	// taken here: it is this door's credit step in the switch below, through the shared helper,
 	// after this row is held, so the two doors can never hold one mixed sorted set of the invoice
 	// rows and the memo row (round 6).
@@ -351,6 +477,35 @@ SELECT invoice_no::text, balance_cents, holdback_cents, branch_id::text, status,
 	if in.OrgID != "" && invOrg != "" && invOrg != in.OrgID {
 		return CreditApplication{}, httpx.BadRequestf("invoice %s is another org's document, this desk cannot apply a credit to it", invNo)
 	}
+
+	// The invoice's own application records, read under its row lock. The stamp at the end writes
+	// them back with this act's own record added, so no other act's record is lost.
+	apps, err := readCreditApplications(metadataRaw)
+	if err != nil {
+		return CreditApplication{}, err
+	}
+
+	// The replay, judged AFTER the reach checks and BEFORE the open and ceiling checks (K3's P2-2):
+	// a retry of an application that took its invoice to PAID must answer the first result, not
+	// trip the not open refusal on the balances the first application already moved. A lost
+	// response must not be indistinguishable from a validation refusal.
+	//
+	// The key's scope is the ROUTE, not this invoice (K3's P3): the key's record is read across the
+	// route's invoices, so a key already spent on another invoice is spent here too. The key's own
+	// advisory slot is held, so a twin that committed while this request waited is already visible.
+	spentOn, prior, found, err := r.findCreditApplicationByKey(ctx, tx, in.IdempotencyKey, in.InvoiceID)
+	if err != nil {
+		return CreditApplication{}, err
+	}
+	if found {
+		if spentOn == in.InvoiceID && prior.CreditKind == in.CreditKind && prior.CreditID == in.CreditID &&
+			prior.AmountCents == in.AmountCents {
+			return r.replayApplication(ctx, tx, prior)
+		}
+		return CreditApplication{}, CreditApplicationConflictError{
+			Msg: "that idempotency key already applied a credit differently; use a new key"}
+	}
+
 	if invStatus != "FINALIZED" && invStatus != "PARTIALLY_PAID" {
 		return CreditApplication{}, httpx.BadRequestf("invoice %s is not open, a credit can only be applied to an open invoice", invNo)
 	}
@@ -359,26 +514,13 @@ SELECT invoice_no::text, balance_cents, holdback_cents, branch_id::text, status,
 		payable = 0
 	}
 
-	// The replay is judged under the target invoice's row, so a twin that committed while this
-	// request waited is already visible here: the same key and the same body answers the first
-	// result and writes nothing, a spent key with another body is refused.
-	apps, err := readCreditApplications(metadataRaw)
-	if err != nil {
-		return CreditApplication{}, err
-	}
-	if prior, ok := apps[in.IdempotencyKey]; ok {
-		if prior.CreditKind == in.CreditKind && prior.CreditID == in.CreditID &&
-			prior.InvoiceID == in.InvoiceID && prior.AmountCents == in.AmountCents {
-			return r.replayApplication(ctx, tx, prior)
-		}
-		return CreditApplication{}, CreditApplicationConflictError{
-			Msg: "that idempotency key already applied a credit differently; use a new key"}
-	}
-
 	// The credit, judged under the locks. kind MEMO: the memo document's row. kind ACCOUNT: the
 	// anchor row and its group sum, read the way the aging reads the group.
 	var creditOpen int64 // a positive magnitude: what the credit still holds
 	var creditBranch, creditOrg string
+	// creditPriorStatus is the status the credit carried before this application, so the reversal
+	// can restore it (M3's P3-2). Only a MEMO credit has one.
+	var creditPriorStatus string
 	switch in.CreditKind {
 	case CreditKindMemo:
 		// The credit step: the memo row, locked and read as one through the shared helper, after
@@ -399,19 +541,25 @@ SELECT invoice_no::text, balance_cents, holdback_cents, branch_id::text, status,
 			return CreditApplication{}, NoSuchCreditError{CreditID: in.CreditID}
 		}
 		creditOrg, creditBranch = memo.org, memo.branch
+		creditPriorStatus = memo.status
 		if memo.balance >= 0 {
 			return CreditApplication{}, CreditApplicationNotOpen
 		}
 		creditOpen = -memo.balance
 	case CreditKindAccount:
+		// The credit's own row, read from a family the door ACCEPTS (the file's THE CREDIT
+		// FAMILIES): a credit is a NAMED family, not "any group with a negative sum". A row in a
+		// family the door does not accept answers the same no such credit an unknown credit
+		// answers, so the NSF fee (a debt, and money the customer PAID) is never a credit here.
 		var groupSourceType, groupRef string
 		err := tx.QueryRow(ctx, `
 SELECT COALESCE(source_type, ''), COALESCE(source_ref_id, id)::text, COALESCE(branch_id::text, '')
   FROM customer_transactions
- WHERE id = $1::uuid AND customer_id = $2::uuid AND COALESCE(source_type, '') <> 'invoice'
-   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')
+ WHERE id = $1::uuid AND customer_id = $2::uuid
+   AND COALESCE(source_type, '') = ANY($3::text[])
+   AND txn_type = ANY($4::text[])
    FOR UPDATE`,
-			in.CreditID, in.CustomerID).Scan(&groupSourceType, &groupRef, &creditBranch)
+			in.CreditID, in.CustomerID, creditAccountFamilies, creditRowTxnTypes).Scan(&groupSourceType, &groupRef, &creditBranch)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return CreditApplication{}, NoSuchCreditError{CreditID: in.CreditID}
@@ -433,6 +581,8 @@ SELECT COALESCE(source_type, ''), COALESCE(source_ref_id, id)::text, COALESCE(br
 		if !anchorFound {
 			return CreditApplication{}, CreditApplicationNotOpen
 		}
+		// The group's figure, read the way the aging reads it (M3's P2-1): the same kinds, so the
+		// door's figure and the aging's figure are ONE figure for the same group.
 		if err := tx.QueryRow(ctx, `
 SELECT COALESCE(SUM(amount_cents), 0)
   FROM customer_transactions
@@ -440,8 +590,8 @@ SELECT COALESCE(SUM(amount_cents), 0)
    AND COALESCE(source_type, '') = $2
    AND COALESCE(source_ref_id, id) = $3::uuid
    AND COALESCE(branch_id::text, '') = $4
-   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')`,
-			in.CustomerID, groupSourceType, groupRef, creditBranch).Scan(&creditOpen); err != nil {
+   AND txn_type = ANY($5::text[])`,
+			in.CustomerID, groupSourceType, groupRef, creditBranch, creditGroupTxnTypes).Scan(&creditOpen); err != nil {
 			return CreditApplication{}, fmt.Errorf("credit apply: read the credit's group: %w", err)
 		}
 		if creditOpen >= 0 {
@@ -543,6 +693,7 @@ VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
 		ApplicationID: applicationID, CreditKind: in.CreditKind, CreditID: in.CreditID,
 		InvoiceID: in.InvoiceID, AmountCents: in.AmountCents, Reason: in.Reason,
 		AppliedBy: in.ActorID, AppliedAt: now.UTC().Format(time.RFC3339),
+		CreditPriorStatus: creditPriorStatus,
 	}
 	if err := stampCreditApplications(ctx, tx, in.InvoiceID, apps); err != nil {
 		return CreditApplication{}, err
@@ -635,9 +786,13 @@ const creditFeedSeqCTE = `WITH iseq AS (
 // apply once took the group first and the reversal drew the counter first, so a staged reversal
 // and apply of one group could each hold what the other needed and one answered SQLSTATE 40P01,
 // the books right and the door a raw 400. One shared helper, called before either door's counter
-// draw, is what keeps the order from drifting. WRITE_OFF stays out of the type list on purpose: a
-// write off is never value the customer holds (S6 P3), so it is no part of a credit group and
-// never the anchor.
+// draw, is what keeps the order from drifting.
+//
+// The group's own kinds are the AGING's kinds (creditGroupTxnTypes), so the anchor and the group's
+// figure read the same group the aging reads. A write off is part of that group, so a group whose
+// only negative row were a write off is still a group the door judges; a write off carries a
+// POSITIVE amount in practice, so it is never the anchor itself (the anchor is the group's first
+// NEGATIVE row).
 //
 // It answers found = false when the group holds no negative row left. The apply reads that as the
 // group holding nothing open and refuses (CreditApplicationNotOpen); the reversal keeps its
@@ -652,11 +807,11 @@ SELECT 1
    AND COALESCE(source_type, '') = $2
    AND COALESCE(source_ref_id, id) = $3::uuid
    AND COALESCE(branch_id::text, '') = $4
-   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')
+   AND txn_type = ANY($5::text[])
    AND amount_cents < 0
  ORDER BY occurred_at ASC, id ASC
  LIMIT 1
-   FOR UPDATE`, customerID, sourceType, groupRef, branchID).Scan(&one)
+   FOR UPDATE`, customerID, sourceType, groupRef, branchID, creditGroupTxnTypes).Scan(&one)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
@@ -800,6 +955,17 @@ SELECT invoice_no::text, customer_id::text, total_cents, balance_cents, holdback
 	if in.OrgID != "" && invOrg != "" && invOrg != in.OrgID {
 		return CreditApplicationReversed{}, httpx.BadRequestf("invoice %s is another org's document, this desk cannot reverse its applications", invNo)
 	}
+	// The invoice's status is judged before anything is written (M3's P3-2): an invoice that is not
+	// open is not restored by this door. A VOID invoice stays VOID and its application cannot be
+	// reversed; a DRAFT one never carried an application at all. FINALIZED, PARTIALLY_PAID and PAID
+	// are the three a restored invoice may carry, and PAID is the ordinary case: the application
+	// closed it.
+	switch invStatus {
+	case "FINALIZED", "PARTIALLY_PAID", "PAID":
+	default:
+		return CreditApplicationReversed{}, httpx.BadRequestf(
+			"invoice %s is %s, its credit application cannot be reversed", invNo, strings.ToLower(invStatus))
+	}
 	apps, err := readCreditApplications(metadataRaw)
 	if err != nil {
 		return CreditApplicationReversed{}, err
@@ -882,17 +1048,26 @@ UPDATE invoices
 		// The memo's row is already locked and read (the credit step above); only the restore's
 		// counter draw remains.
 		creditOpenAfter = -memoBalance + amount
+		// The memo's status is RESTORED, not set (M3's P3-2): the status the memo carried before
+		// the application is the status it carries back. The record carries it (the apply read it
+		// under the memo row's lock); a record from before this rule carries none, and the fallback
+		// is the status a credit memo is written with.
+		priorStatus := record.CreditPriorStatus
+		if priorStatus == "" {
+			priorStatus = "FINALIZED"
+		}
 		if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
 UPDATE invoices
-   SET balance_cents = $2::bigint, status = CASE WHEN $2::bigint >= 0 THEN 'PAID' ELSE 'FINALIZED' END,
+   SET balance_cents = $2::bigint, status = CASE WHEN $2::bigint >= 0 THEN 'PAID' ELSE $3::text END,
        updated_at = now(), seq = (SELECT next_value FROM iseq)
- WHERE id = $1::uuid`, record.CreditID, memoBalance-amount); err != nil {
+ WHERE id = $1::uuid`, record.CreditID, memoBalance-amount, priorStatus); err != nil {
 			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: restore the memo: %w", err)
 		}
 	case CreditKindAccount:
 		// The group's sum, read under the anchor lock the door took before the counter: no
 		// other writer of the group can sit between the anchor and its commit, so this is the
-		// committed state, not a raced one.
+		// committed state, not a raced one. It is read with the AGING's kinds, so the figure the
+		// reversal reports is the figure the aging reads for the same group.
 		var anchorSum int64
 		if err := tx.QueryRow(ctx, `
 SELECT COALESCE(SUM(amount_cents), 0)
@@ -901,8 +1076,8 @@ SELECT COALESCE(SUM(amount_cents), 0)
    AND COALESCE(source_type, '') = $2
    AND COALESCE(source_ref_id, id) = $3::uuid
    AND COALESCE(branch_id::text, '') = $4
-   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')`,
-			invCust, groupSourceType, groupRef, groupBranch).Scan(&anchorSum); err != nil {
+   AND txn_type = ANY($5::text[])`,
+			invCust, groupSourceType, groupRef, groupBranch, creditGroupTxnTypes).Scan(&anchorSum); err != nil {
 			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: read the credit's group: %w", err)
 		}
 		creditOpenAfter = -anchorSum + amount
@@ -970,6 +1145,12 @@ SELECT customer_id, 'ADJUSTMENT', $2, $3, 'invoice', id::uuid, branch_id, $4, $5
 
 // OpenCreditsFor reads the open credit memos (MEMO) and unapplied account credits (ACCOUNT) for one
 // customer at a branch so the invoice detail panel can offer them in one round trip.
+//
+// The ACCOUNT arm offers the credit FAMILIES the door accepts (creditAccountFamilies) and reads
+// each group with the AGING's kinds (creditGroupTxnTypes), so the desk offers exactly what the
+// door will take and the figure it shows is the figure the aging reads for that group. A group in
+// any other family is not a credit the customer holds and is not offered, and a group the aging
+// reads as zero is not open and is not offered either.
 func (r *Repository) OpenCreditsFor(ctx context.Context, customerID, branchID string) ([]OpenCreditSummary, error) {
 	if r.pool == nil {
 		return nil, errNoDB
@@ -1009,11 +1190,11 @@ SELECT (ARRAY_AGG(id::text ORDER BY occurred_at ASC, id ASC))[1] AS anchor_id,
   FROM customer_transactions
  WHERE customer_id = $1::uuid
    AND COALESCE(branch_id::text, '') = $2
-   AND COALESCE(source_type, '') <> 'invoice'
-   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')
+   AND COALESCE(source_type, '') = ANY($3::text[])
+   AND txn_type = ANY($4::text[])
  GROUP BY COALESCE(source_type, ''), COALESCE(source_ref_id, id)
 HAVING SUM(amount_cents) < 0
- ORDER BY MIN(occurred_at) ASC`, customerID, branchID)
+ ORDER BY MIN(occurred_at) ASC`, customerID, branchID, creditAccountFamilies, creditGroupTxnTypes)
 	if err != nil {
 		return nil, fmt.Errorf("credit apply: list open account credits: %w", err)
 	}
