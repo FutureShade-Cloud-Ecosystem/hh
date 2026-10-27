@@ -291,12 +291,26 @@ func TestFW113LodgementJournalIsDatedByItsBusinessDay(t *testing.T) {
 	w := newMJWorld(t)
 	ctx := context.Background()
 
-	// The house zone's late evening on the last day of a 31 day month of the newest seeded year:
-	// 23:30 in America/Toronto is past midnight UTC, so a server-zone date would file next month.
-	var year int
-	if err := w.pool.QueryRow(ctx, `SELECT max(year) FROM fiscal_periods`).Scan(&year); err != nil {
-		t.Skipf("no seeded fiscal periods: %v", err)
+	// The house zone's late evening on the last day of a 31 day month: 23:30 in America/Toronto is
+	// past midnight UTC, so a server-zone date would file next month. The leg sets up its OWN fiscal
+	// year, ten past the newest seeded one: the shared gate database's months get closed by earlier
+	// packages' legs, and a closed period refuses the journal silently through the outbox (the row
+	// goes DEAD and the leg would read a missing journal).
+	var maxYear int
+	if err := w.pool.QueryRow(ctx, `SELECT COALESCE(max(year), 2026) FROM fiscal_periods`).Scan(&maxYear); err != nil {
+		t.Skipf("no fiscal periods to read: %v", err)
 	}
+	year := maxYear + 10
+	if _, err := w.pool.Exec(ctx, `
+		INSERT INTO fiscal_periods (year, month, status) VALUES ($1, 7, 'OPEN')
+		ON CONFLICT (year, month) DO UPDATE SET status = 'OPEN'`, year); err != nil {
+		t.Fatalf("set up the leg's own period: %v", err)
+	}
+	// Registered BEFORE the journal cleanup below, so it runs AFTER it: the journal names the period.
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = w.pool.Exec(c, `DELETE FROM fiscal_periods WHERE year = $1 AND month = 7`, year)
+	})
 	day := time.Date(year, 7, 31, 23, 30, 0, 0, time.FixedZone("EDT", -4*3600))
 	// A fixed UUID: the journal's source_ref_id is a uuid column, as every real movement id is.
 	movementID := "00000000-0000-4000-8000-0000000d47ed"
