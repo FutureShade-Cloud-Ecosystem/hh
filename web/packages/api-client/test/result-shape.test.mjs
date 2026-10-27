@@ -53,11 +53,11 @@ test("every generated operation's signature returns Promise<Result<...>>", (t) =
     emitted.length + variants.length,
     "one scanned function per emitted manifest route and per declared body variant",
   );
-  // 779 scanned / 778 emitted / 779 in the manifest: main's counts plus SF-2l's paymentsReapplyHeld and paymentsHeldFor, FW1-02's glListPostingQueue and glPostingQueueCount, and SF-2m's paymentsPayOutHeld.
-  assert.equal(operations, 779, "the document's operation count minus the excluded stream, plus the declared body variant");
-  assert.equal(emitted.length, 778, "the document's operation count minus the excluded stream");
+  // 784 scanned / 783 emitted / 784 in the manifest: main's 782 / 781 / 782 plus this lane's billingApplyCredit and billingReverseCreditApplication.
+  assert.equal(operations, 784, "the document's operation count minus the excluded stream, plus the declared body variant");
+  assert.equal(emitted.length, 783, "the document's operation count minus the excluded stream");
   assert.deepEqual(variants, ["feedbackCreateMultipart"], "the only multi content type body is feedbackCreate's multipart form");
-  assert.equal(ROUTES.length, 779, "the manifest census keeps the full route table");
+  assert.equal(ROUTES.length, 784, "the manifest census keeps the full route table");
 });
 
 test("each declared body variant resolves to a live generated function beside its operation", (t) => {

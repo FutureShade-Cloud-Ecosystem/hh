@@ -42,7 +42,9 @@ func (s *Service) CreateAccount(ctx context.Context, in CreateAccountInput) (Acc
 
 // DeactivateAccount flips an account inactive, but refuses (409) when a DRAFT journal still references it -
 // deactivating out from under an unposted entry would strand it. POSTED history is unaffected (the account
-// keeps its ledger rows; it just cannot be used on new entries).
+// keeps its ledger rows; it just cannot be used on new entries). It also refuses (FW1-09a) when an active
+// posting rule points at the account: every automated posting the rule carries would be refused as
+// "inactive" and dead letter, so the refusal names the rules and their topics instead.
 func (s *Service) DeactivateAccount(ctx context.Context, code string) (Account, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
@@ -59,6 +61,19 @@ func (s *Service) DeactivateAccount(ctx context.Context, code string) (Account, 
 	}
 	if n > 0 {
 		return Account{}, errAccountInUse
+	}
+	rules, err := s.store.ListActiveRules(ctx)
+	if err != nil {
+		return Account{}, err
+	}
+	var need []string
+	for _, rr := range rules {
+		if strings.EqualFold(rr.AccountCode, code) {
+			need = append(need, fmt.Sprintf("%s (%s)", rr.EventType, rr.LineRole))
+		}
+	}
+	if len(need) > 0 {
+		return Account{}, clientErr(409, "gl: account %s cannot be deactivated: the posting rules %s need it; deactivating it would stop those postings", code, strings.Join(need, ", "))
 	}
 	return s.store.SetAccountActive(ctx, code, false)
 }
@@ -85,10 +100,36 @@ func (s *Service) ListJournals(ctx context.Context, f JournalFilter) ([]Journal,
 	return js, nil
 }
 
-func (s *Service) GetJournal(ctx context.Context, id string) (Journal, error) {
+// GetJournal is fenced to the caller's branch reach (FW1-10), the same rule ListJournals carries
+// (DIB-392): a journal posted at a branch the caller cannot reach answers as MISSING, never 403,
+// because an id is an existence oracle and the list already hides these rows. A journal with no
+// branch is the consolidated books (until FW1-08 stamps every line, branch money sits in such
+// journals), so it reads by id only by a dealer wide caller, the trial balance rule.
+// journalAnswered reads a just-written journal back through the STORE, never through the fenced read,
+// so an answer never contradicts a committed write (615 round 2, P2-2): the caller just wrote this
+// row, and a refused-looking answer for a landed write is the contradiction S2 named. The write
+// fences themselves (SECURITY-SOD gap 19) are a named item's, FW1-09b.
+func (s *Service) journalAnswered(ctx context.Context, id string) (Journal, error) {
 	j, err := s.store.GetJournal(ctx, id)
 	if err != nil {
 		return Journal{}, err
+	}
+	j.DerivedStatus = derivedStatus(j.Status, j.TotalCents(), s.thresholdFor(ctx, j.BranchID))
+	return j, nil
+}
+
+// GetJournal is the fenced READ route. Writers answer through journalAnswered.
+func (s *Service) GetJournal(ctx context.Context, id string) (Journal, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return Journal{}, err
+	}
+	j, err := s.store.GetJournal(ctx, id)
+	if err != nil {
+		return Journal{}, err
+	}
+	if !caller.CanAccessBranch(j.BranchID) {
+		return Journal{}, errNotFound
 	}
 	j.DerivedStatus = derivedStatus(j.Status, j.TotalCents(), s.thresholdFor(ctx, j.BranchID))
 	return j, nil
@@ -180,13 +221,20 @@ func (s *Service) CreateJournal(ctx context.Context, in CreateJournalInput) (Jou
 		if notify != nil {
 			notify(ctx)
 		}
-		return s.GetJournal(ctx, id)
+		return s.journalAnswered(ctx, id)
+	}
+	if draft.BranchID == "" {
+		ho, herr := s.store.HeadOfficeBranchID(ctx)
+		if herr != nil {
+			return Journal{}, herr
+		}
+		draft.BranchID = ho
 	}
 	id, _, err := s.store.InsertJournal(ctx, draft)
 	if err != nil {
 		return Journal{}, err
 	}
-	return s.GetJournal(ctx, id)
+	return s.journalAnswered(ctx, id)
 }
 
 // ApproveJournal is the checker half of maker-checker: a manager other than the creator (four-eyes) approves a
@@ -262,6 +310,14 @@ func (s *Service) ApproveJournalTx(ctx context.Context, tx pgx.Tx, id, deciderID
 	return s.store.ApproveJournalTx(ctx, tx, id, deciderID)
 }
 
+// VoidJournalTx voids a parked DRAFT journal on the caller's transaction: the rail's reject arm's
+// journal half (FW1-12a's core round). The composition root's bridge voids the parked credit memo's
+// document beside it, both on the decision's own transaction. Idempotent on a journal that is not a
+// DRAFT.
+func (s *Service) VoidJournalTx(ctx context.Context, tx pgx.Tx, id string) error {
+	return s.store.VoidJournalTx(ctx, tx, id)
+}
+
 // VoidJournal voids a DRAFT (a POSTED journal is corrected with a reversing JE, never voided).
 func (s *Service) VoidJournal(ctx context.Context, id string) (Journal, error) {
 	if _, err := s.caller(ctx); err != nil {
@@ -277,7 +333,9 @@ func (s *Service) VoidJournal(ctx context.Context, id string) (Journal, error) {
 
 // ReverseJournal posts a one-click net-zero reversing JE for a POSTED journal: every leg's debit/credit is
 // swapped, so the original + reversal sum to zero on every account. The reversal links back via
-// reverses_journal_id; the original stays POSTED (audit trail intact).
+// reverses_journal_id; the original stays POSTED (audit trail intact). Two guards (FW1-09a): a journal is
+// reversed once, and a journal a module posted is not reversed from the ledger (its document's own
+// correction is the path, so the subledgers stay tied to the GL).
 func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
@@ -290,6 +348,21 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 	if orig.Status != StatusPosted {
 		return Journal{}, clientErr(409, "gl: only a POSTED journal can be reversed (status=%s)", orig.Status)
 	}
+	if orig.Source != SourceManual {
+		if orig.ReversesJournalID != "" {
+			return Journal{}, clientErr(409, "gl: entry #%d is itself a reversal; a reversal cannot be reversed", orig.EntryNo)
+		}
+		if owner := systemJournalOwner(orig); owner != "" {
+			return Journal{}, clientErr(409, "gl: entry #%d was posted by %s, not by a person in the ledger; it cannot be reversed from here", orig.EntryNo, owner)
+		}
+	}
+	reversed, err := s.store.JournalIsReversed(ctx, id)
+	if err != nil {
+		return Journal{}, err
+	}
+	if reversed {
+		return Journal{}, alreadyReversedErr(orig.EntryNo)
+	}
 	lines := make([]draftLine, 0, len(orig.Lines))
 	for _, l := range orig.Lines {
 		lines = append(lines, draftLine{
@@ -299,21 +372,70 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 			Memo:        "reversal",
 		})
 	}
+	branchID := orig.BranchID
+	if branchID == "" {
+		ho, herr := s.store.HeadOfficeBranchID(ctx)
+		if herr != nil {
+			return Journal{}, herr
+		}
+		branchID = ho
+	}
 	draft := journalDraft{
 		Source:            SourceAdjustment,
 		Memo:              fmt.Sprintf("Reversal of entry #%d", orig.EntryNo),
-		BranchID:          orig.BranchID,
+		BranchID:          branchID,
 		Status:            StatusPosted,
 		ReversesJournalID: orig.ID,
 		CreatedBy:         caller.UserID,
 		OccurredAt:        s.clock(),
 		Lines:             lines,
 	}
+	// InsertJournal locks the original gl_journals row FOR UPDATE inside its transaction before re-checking
+	// reverses_journal_id and drawing next_entry_no (PR 621 round 2), and maps a unique violation on 0440's
+	// partial index to the same refusal, so two concurrent reversals serialise and only one lands.
 	newID, _, err := s.store.InsertJournal(ctx, draft)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return Journal{}, alreadyReversedErr(orig.EntryNo)
+		}
 		return Journal{}, err
 	}
-	return s.GetJournal(ctx, newID)
+	return s.journalAnswered(ctx, newID)
+}
+
+func alreadyReversedErr(entryNo int) error {
+	return clientErr(409, "gl: entry #%d was already reversed; a journal can be reversed once", entryNo)
+}
+
+// systemJournalOwner names the module behind a journal the ledger did not post, for the reverse route's
+// refusal. It is only called for non MANUAL sources. ADJUSTMENT covers several writers, so the
+// idempotency key's prefix names the writer when the source alone cannot (bankrec's clearing journals,
+// the landed cost paths and the holdback release all file under ADJUSTMENT); a key the map does not
+// know still refuses, as "another module". FW1-09a.
+func systemJournalOwner(j Journal) string {
+	switch j.Source {
+	case SourceInvoice:
+		return "the invoicing module"
+	case SourcePayment:
+		return "the payments module"
+	case SourceFulfillment:
+		return "the fulfilment module"
+	case SourcePOReceipt:
+		return "the purchasing module"
+	case SourceClosing:
+		return "the year end close"
+	}
+	for prefix, owner := range map[string]string{
+		"bankrec:":                "the bank reconciliation module",
+		"landedcost.":             "the landed cost module",
+		"holdback-release:":       "the holdback module",
+		"till.session.completed:": "the till module",
+	} {
+		if strings.HasPrefix(j.IdempotencyKey, prefix) {
+			return owner
+		}
+	}
+	return "another module"
 }
 
 // - recurring -
@@ -346,11 +468,21 @@ func (s *Service) RunRecurring(ctx context.Context, id string) (Journal, error) 
 	}
 	// SourceRefID carries the template's id: the only MANUAL journals with a source ref are recurring runs, and
 	// the approve route reads it to name the template when it refuses an over-threshold run (ruling 108).
+	// FW1-08b (ruling 82.3): the run lands in its template's branch when set, else the head office branch.
+	branch := tpl.BranchID
+	if branch == "" {
+		var berr error
+		branch, berr = s.store.HeadOfficeBranchID(ctx)
+		if berr != nil {
+			return Journal{}, berr
+		}
+	}
 	draft := journalDraft{
 		Source:      SourceManual,
 		SourceRefID: tpl.ID,
 		Memo:        memo,
 		Status:      StatusDraft,
+		BranchID:    branch,
 		CreatedBy:   caller.UserID,
 		OccurredAt:  s.clock(),
 		Lines:       lines,
@@ -359,7 +491,7 @@ func (s *Service) RunRecurring(ctx context.Context, id string) (Journal, error) 
 	if err != nil {
 		return Journal{}, err
 	}
-	return s.GetJournal(ctx, id)
+	return s.journalAnswered(ctx, id)
 }
 
 // - derived maker-checker status -

@@ -352,6 +352,27 @@ func (r *Repository) InsertParkedJournal(ctx context.Context, d journalDraft, fi
 // idempotency race and returns the winner's id; found=false falls through to the original error. A
 // created=false, nil-error return means onDup supplied the winner and tx is no longer usable for a commit.
 func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDraft, onDup func() (string, bool)) (string, bool, error) {
+	// PR 621 round 2 (FW1-09a): a reversal locks the original journal row FOR UPDATE inside the insert
+	// transaction before checking whether a reversal already exists and before drawing next_entry_no, so
+	// two concurrent reversals of one journal serialise on the original row and the second is refused in
+	// words without burning an entry number.
+	var reversedEntryNo int
+	if d.ReversesJournalID != "" {
+		if err := tx.QueryRow(ctx, `SELECT entry_no FROM gl_journals WHERE id = $1::uuid FOR UPDATE`, d.ReversesJournalID).Scan(&reversedEntryNo); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", false, errNotFound
+			}
+			return "", false, fmt.Errorf("gl: lock journal for reversal: %w", err)
+		}
+		var reversed bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM gl_journals WHERE reverses_journal_id = $1::uuid)`, d.ReversesJournalID).Scan(&reversed); err != nil {
+			return "", false, fmt.Errorf("gl: read whether the journal was reversed: %w", err)
+		}
+		if reversed {
+			return "", false, alreadyReversedErr(reversedEntryNo)
+		}
+	}
+
 	// THE HOUSE ZONE, not the instant's own. `OccurredAt` defaults to the service clock, so before
 	// this the month a posting landed in was decided by the server's timezone, and on a UTC server
 	// that files a 9pm Ontario sale into tomorrow, and a 9pm sale on the 31st into next month's
@@ -363,15 +384,60 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 	}
 	y, m := fiscalYearMonthIn(zone, d.OccurredAt)
 	var periodID, pstatus string
-	err = tx.QueryRow(ctx, `SELECT id::text, status FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus)
+	var periodYear int
+	err = tx.QueryRow(ctx, `SELECT id::text, status, year FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus, &periodYear)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, clientErr(422, "gl: no fiscal period for %04d-%02d", y, m)
+		// FW1-01: the year roll forward. A posting dated past the latest seeded year used to be
+		// refused outright (the GL-02 / ENV-CI blocker: once the house day passed the twelfth
+		// seeded month, every writer on every box went 422). The GL now creates the FOLLOWING
+		// year idempotently at the latest when a posting needs it: exactly one year beyond the
+		// latest that exists, never a bridge of years (a typo'd far-future date still refuses).
+		maxYear, merr := r.maxSeededYearTx(ctx, tx)
+		if merr != nil {
+			return "", false, merr
+		}
+		switch {
+		case y == maxYear+1:
+			// Round 1: the next year is created at the latest when a posting needs it. Round 2 (S2
+			// P2-1): exactly the next year, so a far future typo date still refuses.
+			if err := r.ensureFiscalYearTx(ctx, tx, y); err != nil {
+				return "", false, err
+			}
+			err = tx.QueryRow(ctx, `SELECT id::text, status, year FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus, &periodYear)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", false, clientErr(422, "gl: no fiscal period for %04d-%02d", y, m)
+			}
+		case y > maxYear:
+			// A date beyond the next year refuses, deliberate.
+		default:
+			// Round 2 (S2 P2-2): never create a PAST year. A document dated before the books' first
+			// period (or in a gap with no row) files late into the earliest open month at or after
+			// its own, the round 1b rule, keeping its document date.
+			pid, py, eerr := r.earliestOpenPeriodTx(ctx, tx, y, m)
+			if eerr != nil {
+				return "", false, eerr
+			}
+			periodID, periodYear, pstatus = pid, py, "OPEN"
+			err = nil
+		}
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return "", false, fmt.Errorf("gl: resolve period: %w", err)
 	}
 	if pstatus == "CLOSED" {
-		return "", false, errClosedPeriod
+		// FW1-01, ruling 82.2: a MANUAL journal into a closed month is still refused. A SYSTEM
+		// journal never is: a refusal is how the subledger and the GL come apart. It posts into
+		// the EARLIEST OPEN month instead, keeps the document date on posted_at, and reads back
+		// late posted (its posted_at falls before its period's month). If every period is closed,
+		// the roll forward above opens the next year rather than refusing.
+		if d.Source == SourceManual {
+			return "", false, errClosedPeriod
+		}
+		docY, docM := fiscalYearMonthIn(zone, d.OccurredAt)
+		periodID, periodYear, err = r.earliestOpenPeriodTx(ctx, tx, docY, docM)
+		if err != nil {
+			return "", false, err
+		}
 	}
 
 	// Resolve account codes → active account ids.
@@ -400,7 +466,7 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 	// (outbox consumer, landed cost, bankrec, close). next_entry_no locks the year's counter row FOR UPDATE
 	// before reading it, so a second minter waits instead of colliding; the bump lives in THIS transaction,
 	// so a rollback returns the number rather than burning it (numbering stays gapless, unlike a sequence).
-	if err := tx.QueryRow(ctx, `SELECT next_entry_no($1)`, y).Scan(&entryNo); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT next_entry_no($1)`, periodYear).Scan(&entryNo); err != nil {
 		return "", false, fmt.Errorf("gl: next entry_no: %w", err)
 	}
 
@@ -415,13 +481,16 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 		    created_by, idempotency_key, approved_by, reverses_journal_id)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		 RETURNING id::text`,
-		y, entryNo, periodID, d.Source, nullStr(d.SourceRefID), d.Memo, d.Status, postedAt, nullStr(d.BranchID),
+		periodYear, entryNo, periodID, d.Source, nullStr(d.SourceRefID), d.Memo, d.Status, postedAt, nullStr(d.BranchID),
 		nullStr(d.CreatedBy), d.IdempotencyKey, nullStr(d.ApprovedBy), nullStr(d.ReversesJournalID)).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) && d.IdempotencyKey != "" {
 			if existing, found := onDup(); found {
 				return existing, false, nil
 			}
+		}
+		if isUniqueViolation(err) && d.ReversesJournalID != "" {
+			return "", false, alreadyReversedErr(reversedEntryNo)
 		}
 		return "", false, fmt.Errorf("gl: insert journal header: %w", err)
 	}
@@ -485,15 +554,37 @@ func journalIDByKeyOn(ctx context.Context, q rowQuerier, key string) (string, bo
 	return id, true, nil
 }
 
+// journalCols ends in the derived late_posted marker (FW1-01, ruling 82.2): a POSTED journal whose
+// posted_at, the document date it carries, does not fall in its own period's month. It is derived,
+// not stored: the insert keeps the document date on posted_at and files the journal in the earliest
+// open month when its own is closed, so the marker is exactly "the date and the month it landed in
+// are not the same month". The derivation
+// reads the date in the default Ontario house zone (businessday.go's houseZone), the zone a dealer
+// with no configuration is filed under; a dealer configured elsewhere still posts through the dealer
+// zone and the marker can disagree by a boundary hour at month edge, display only.
+// asOfEffectiveInstant is the instant an as of read counts a POSTED journal at (round 2, S2 P2-3,
+// ruled): its posted_at, EXCEPT for a late posted journal, whose document date sits before the month
+// it was filed in, where the read uses the first instant after its FILED period instead. A closed
+// month's figures are final at its end: a journal filed past it into a later open month shows from
+// that month's end on, never back inside the closed one. FW1-00's assertion 1 and FW1-04's month end
+// read both stand on this. The zone is the same America/Toronto derivation the late posted marker
+// reads (S2 P3-1 tracks reading the dealer zone).
+const asOfEffectiveInstant = `(CASE WHEN date_trunc('month', j.posted_at AT TIME ZONE 'America/Toronto') = make_date(fp.year, fp.month, 1)
+        THEN j.posted_at
+        ELSE (make_date(fp.year, fp.month, 1)::timestamp + INTERVAL '1 month') AT TIME ZONE 'America/Toronto' END)`
+
 const journalCols = `id::text, fiscal_year, entry_no, period_id::text, source, COALESCE(source_ref_id::text,''),
 	memo, status, posted_at, COALESCE(branch_id::text,''), COALESCE(approved_by::text,''),
-	COALESCE(reverses_journal_id::text,''), idempotency_key, COALESCE(created_by::text,''), created_at`
+	COALESCE(reverses_journal_id::text,''), idempotency_key, COALESCE(created_by::text,''), created_at,
+	EXISTS (SELECT 1 FROM fiscal_periods lp WHERE lp.id = gl_journals.period_id
+	        AND gl_journals.posted_at IS NOT NULL
+	        AND date_trunc('month', gl_journals.posted_at AT TIME ZONE 'America/Toronto') != make_date(lp.year, lp.month, 1))`
 
 func scanJournal(row pgx.Row) (Journal, error) {
 	var j Journal
 	err := row.Scan(&j.ID, &j.FiscalYear, &j.EntryNo, &j.PeriodID, &j.Source, &j.SourceRefID, &j.Memo,
 		&j.Status, &j.PostedAt, &j.BranchID, &j.ApprovedBy, &j.ReversesJournalID, &j.IdempotencyKey,
-		&j.CreatedBy, &j.CreatedAt)
+		&j.CreatedBy, &j.CreatedAt, &j.LatePosted)
 	return j, err
 }
 
@@ -563,20 +654,28 @@ func (r *Repository) ListJournals(ctx context.Context, f JournalFilter) ([]Journ
 	// are the resume key (NULL on the first page, guarded by the IS NULL
 	// leg so the row comparison only evaluates with a key present), $8 the
 	// limit. No count query: the cursor envelope carries no total.
+	const latePosted = `EXISTS (SELECT 1 FROM fiscal_periods lp WHERE lp.id = gl_journals.period_id
+	        AND gl_journals.posted_at IS NOT NULL
+	        AND date_trunc('month', gl_journals.posted_at AT TIME ZONE 'America/Toronto') != make_date(lp.year, lp.month, 1))`
 	const whereClause = `
 		 WHERE ($1 = '' OR status = $1) AND ($2 = '' OR branch_id = $2::uuid)
 		   AND ($3 = '' OR source_ref_id = $3::uuid)
 		   AND ($4 = '' OR (posted_at IS NOT NULL AND posted_at::date >= $4::date))
 		   AND ($5 = '' OR (posted_at IS NOT NULL AND posted_at::date <= $5::date))
-		   AND ($6::int IS NULL OR (fiscal_year, entry_no) < ($6::int, $7::int))`
+		   AND ($6::int IS NULL OR (fiscal_year, entry_no) < ($6::int, $7::int))
+		   AND ($9::bool IS NULL OR $9 = ` + latePosted + `)`
 	var fy, en any
 	if f.AfterCursor {
 		fy, en = f.CursorFiscalYear, f.CursorEntryNo
 	}
+	var late any
+	if f.LatePosted != nil {
+		late = *f.LatePosted
+	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+journalCols+` FROM gl_journals`+whereClause+`
 		 ORDER BY fiscal_year DESC, entry_no DESC
-		 LIMIT $8`, f.Status, f.BranchID, f.SourceRefID, f.DateFrom, f.DateTo, fy, en, f.Limit)
+		 LIMIT $8`, f.Status, f.BranchID, f.SourceRefID, f.DateFrom, f.DateTo, fy, en, f.Limit, late)
 	if err != nil {
 		return nil, fmt.Errorf("gl: list journals: %w", err)
 	}
@@ -669,6 +768,22 @@ func (r *Repository) VoidJournal(ctx context.Context, id string) (Journal, error
 		return Journal{}, clientErr(409, "gl: only a DRAFT journal can be voided (POSTED journals must be reversed)")
 	}
 	return r.GetJournal(ctx, id)
+}
+
+// VoidJournalTx voids a parked DRAFT journal on the CALLER's transaction: the approvals rail's reject
+// arm (FW1-12a's core round), so a refused or withdrawn credit memo's journal is voided on the
+// decision's own transaction and the composition root may void it beside the memo document it
+// belongs to. A journal that is not a DRAFT is left as it stands: posted is the ledger's business,
+// already void needs nothing.
+func (r *Repository) VoidJournalTx(ctx context.Context, tx pgx.Tx, id string) error {
+	if tx == nil {
+		return errNoDB
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE gl_journals SET status = 'VOID', updated_at = now() WHERE id = $1 AND status = 'DRAFT'`, id); err != nil {
+		return fmt.Errorf("gl: void journal on the caller's transaction: %w", err)
+	}
+	return nil
 }
 
 // - periods -
@@ -769,6 +884,175 @@ func (r *Repository) ReopenPeriod(ctx context.Context, id, actorID, reason strin
 	return r.GetPeriod(ctx, id)
 }
 
+// ensureFiscalYearTx idempotently creates a fiscal year's twelve OPEN calendar months on tx. Periods are
+// calendar months (0007 seeds 1..12 of one year and fiscalYearMonthIn answers the calendar pair), so the
+// following year is the same twelve months of year+1; gl_policy.fiscal_year_start_month is a stored policy
+// read no period math follows today, and this roll forward keeps that (it changes nothing about which
+// month a date lands in, only that the month exists).
+func (r *Repository) ensureFiscalYearTx(ctx context.Context, tx pgx.Tx, year int) error {
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO fiscal_periods (year, month)
+		 SELECT $1, m FROM generate_series(1,12) AS m
+		 ON CONFLICT (year, month) DO NOTHING`, year); err != nil {
+		return fmt.Errorf("gl: create fiscal year %d: %w", year, err)
+	}
+	return nil
+}
+
+// earliestOpenPeriodTx answers the earliest OPEN fiscal period AT OR AFTER the document's (year, month)
+// on tx (round 1b, FROM-PRINCIPAL 96: a stray earlier open month, one a controller left open behind a
+// closed month, never catches the late journal), creating the next fiscal year first when no open month
+// from there on exists (a system journal is never refused for want of an open month).
+func (r *Repository) earliestOpenPeriodTx(ctx context.Context, tx pgx.Tx, docYear, docMonth int) (string, int, error) {
+	scan := func() (string, int, error) {
+		var id string
+		var year int
+		err := tx.QueryRow(ctx,
+			`SELECT id::text, year FROM fiscal_periods
+			  WHERE status = 'OPEN' AND (year > $1 OR (year = $1 AND month >= $2))
+			  ORDER BY year, month LIMIT 1`, docYear, docMonth).Scan(&id, &year)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", 0, pgx.ErrNoRows
+		}
+		if err != nil {
+			return "", 0, fmt.Errorf("gl: resolve the earliest open period at or after %04d-%02d: %w", docYear, docMonth, err)
+		}
+		return id, year, nil
+	}
+	id, year, err := scan()
+	if errors.Is(err, pgx.ErrNoRows) {
+		max, merr := r.maxSeededYearTx(ctx, tx)
+		if merr != nil {
+			return "", 0, merr
+		}
+		next := max + 1
+		if docYear > next {
+			next = docYear
+		}
+		if err := r.ensureFiscalYearTx(ctx, tx, next); err != nil {
+			return "", 0, err
+		}
+		id, year, err = scan()
+		if err != nil {
+			return "", 0, err
+		}
+	} else if err != nil {
+		return "", 0, err
+	}
+	return id, year, nil
+}
+
+// maxSeededYearTx answers the latest fiscal year the database holds on tx.
+func (r *Repository) maxSeededYearTx(ctx context.Context, tx pgx.Tx) (int, error) {
+	var max int
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(year), 0) FROM fiscal_periods`).Scan(&max); err != nil {
+		return 0, fmt.Errorf("gl: read the latest fiscal year: %w", err)
+	}
+	return max, nil
+}
+
+// EnsureNextFiscalYear creates the fiscal year AFTER the latest that exists, idempotently, and answers
+// the year it made sure of. Called at worker start on every box (the year exists ahead of need) and by
+// the posting path's own boundary leg, so a box that never opens the Controller action still rolls forward.
+// houseYearTx answers the clock's year in the dealer's house zone on tx: the
+// year the roll forward counts from (round 2, S2 P2-1).
+func (r *Repository) houseYearTx(ctx context.Context, tx pgx.Tx, now time.Time) (int, error) {
+	zone, err := r.journalZone(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	y, _ := fiscalYearMonthIn(zone, now)
+	return y, nil
+}
+
+// ensureThroughTx creates the years from the latest seeded year at or before house through target,
+// filling any gap (a partial year's missing months included, and any gap below a future period row).
+func (r *Repository) ensureThroughTx(ctx context.Context, tx pgx.Tx, house, target int) error {
+	var start int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(year), $1) FROM fiscal_periods WHERE year <= $1`, house,
+	).Scan(&start); err != nil {
+		return fmt.Errorf("gl: read fiscal year through %d: %w", house, err)
+	}
+	for y := start; y <= target; y++ {
+		if err := r.ensureFiscalYearTx(ctx, tx, y); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// EnsureNextFiscalYear makes sure the year after the CURRENT HOUSE YEAR exists, idempotently: a
+// repeat writes nothing (round 2, S2 P2-1, the creep probe: three calls made 2027, 2028 and 2029).
+// It answers the year it made sure of.
+func (r *Repository) EnsureNextFiscalYear(ctx context.Context, now time.Time) (int, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("gl: begin ensure next fiscal year: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	max, err := r.maxSeededYearTx(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	if max == 0 {
+		return 0, clientErr(409, "gl: no fiscal period exists to roll forward from")
+	}
+	house, err := r.houseYearTx(ctx, tx, now)
+	if err != nil {
+		return 0, err
+	}
+	target := house + 1
+	if err := r.ensureThroughTx(ctx, tx, house, target); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("gl: commit ensure next fiscal year: %w", err)
+	}
+	return target, nil
+}
+
+// OpenNextFiscalYear is the Controller's early open: at most one year beyond the roll forward's
+// target (house year + 2), a repeat a no op, and the record callback runs INSIDE the year's
+// transaction so the audit row commits or rolls back with the year it opens (round 2, S2 P2-4).
+func (r *Repository) OpenNextFiscalYear(ctx context.Context, now time.Time, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("gl: begin open next fiscal year: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	max, err := r.maxSeededYearTx(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	if max == 0 {
+		return 0, clientErr(409, "gl: no fiscal period exists to roll forward from")
+	}
+	house, err := r.houseYearTx(ctx, tx, now)
+	if err != nil {
+		return 0, err
+	}
+	target := house + 2
+	if err := r.ensureThroughTx(ctx, tx, house, target); err != nil {
+		return 0, err
+	}
+	if record != nil {
+		if err := record(ctx, tx, target); err != nil {
+			return 0, fmt.Errorf("gl: audit open fiscal year: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("gl: commit open next fiscal year: %w", err)
+	}
+	return target, nil
+}
+
 func (r *Repository) ClosePeriodsForYear(ctx context.Context, year int, actorID, reason string) error {
 	if r.pool == nil {
 		return errNoDB
@@ -861,7 +1145,8 @@ func (r *Repository) AccountBalanceAsOf(ctx context.Context, code string, asOf t
 		 FROM gl_journals j
 		 JOIN gl_journal_lines l ON l.journal_id = j.id
 		 JOIN gl_accounts a      ON a.id = l.account_id
-		 WHERE a.code = $1 AND j.status = 'POSTED' AND j.posted_at <= $2
+		 JOIN fiscal_periods fp  ON fp.id = j.period_id
+		 WHERE a.code = $1 AND j.status = 'POSTED' AND `+asOfEffectiveInstant+` <= $2
 		   AND ($3 = '' OR COALESCE(l.branch_id, j.branch_id) = $3::uuid)`,
 		code, asOf, branchID).Scan(&netDebit)
 	if err != nil {
@@ -889,7 +1174,8 @@ func (r *Repository) TrialBalanceAsOf(ctx context.Context, asOf time.Time, branc
 		 FROM gl_accounts a
 		 JOIN gl_journal_lines l ON l.account_id = a.id
 		 JOIN gl_journals j      ON j.id = l.journal_id
-		 WHERE j.status = 'POSTED' AND j.posted_at <= $1
+		 JOIN fiscal_periods fp  ON fp.id = j.period_id
+		 WHERE j.status = 'POSTED' AND `+asOfEffectiveInstant+` <= $1
 		   AND ($2 = '' OR COALESCE(l.branch_id, j.branch_id) = $2::uuid)
 		 GROUP BY a.code, a.name, a.account_type, a.normal_balance
 		 ORDER BY a.code`, asOf, branchID)
@@ -963,6 +1249,118 @@ func (r *Repository) PLBalances(ctx context.Context, year int) ([]TrialBalanceRo
 			return nil, fmt.Errorf("gl: scan pl row: %w", err)
 		}
 		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// DefaultHeadOfficeBranchID is the Trenton (TRT) branch uuid, the default head office
+// branch when gl_policy carries no override yet (ruling 82.3).
+const DefaultHeadOfficeBranchID = "5d1b3f6e-0000-4000-9000-000000000001"
+
+func (r *Repository) headOfficeFallback() string {
+	r.hoMu.RLock()
+	defer r.hoMu.RUnlock()
+	if r.hoOverride != "" {
+		return r.hoOverride
+	}
+	return DefaultHeadOfficeBranchID
+}
+
+// HeadOfficeBranchID answers the head office branch the company level lines
+// stamp (ruling 82.3): reads gl_policy (org default row) and falls back to
+// Trenton (TRT, DefaultHeadOfficeBranchID).
+func (r *Repository) HeadOfficeBranchID(ctx context.Context) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	fallback := r.headOfficeFallback()
+	var id string
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(NULLIF(to_jsonb(p)->>'head_office_branch_id', ''), $1)
+		   FROM gl_policy p
+		  WHERE p.branch_id IS NULL
+		  LIMIT 1`, fallback).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fallback, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("gl: head office branch: %w", err)
+	}
+	return id, nil
+}
+
+// SetHeadOfficeBranch updates the head office branch in gl_policy (org default row)
+// and records the sensitive-access audit entry inside the same transaction (ruling 82.3).
+func (r *Repository) SetHeadOfficeBranch(ctx context.Context, branchID string, record func(ctx context.Context, tx pgx.Tx) error) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("gl: begin set head office branch: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SAVEPOINT sp_gl_ho_col`); err != nil {
+		return fmt.Errorf("gl: savepoint set head office branch: %w", err)
+	}
+	_, uerr := tx.Exec(ctx,
+		`UPDATE gl_policy SET head_office_branch_id = $1::uuid, updated_at = now() WHERE branch_id IS NULL`,
+		branchID)
+	if uerr != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(uerr, &pgErr) && pgErr.Code == "42703" {
+			if _, rberr := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT sp_gl_ho_col`); rberr != nil {
+				return fmt.Errorf("gl: rollback savepoint set head office branch: %w", rberr)
+			}
+			if _, uerr2 := tx.Exec(ctx, `UPDATE gl_policy SET updated_at = now() WHERE branch_id IS NULL`); uerr2 != nil {
+				return fmt.Errorf("gl: touch gl_policy for head office branch: %w", uerr2)
+			}
+		} else {
+			return fmt.Errorf("gl: update head office branch: %w", uerr)
+		}
+	}
+	if _, err := tx.Exec(ctx, `RELEASE SAVEPOINT sp_gl_ho_col`); err != nil {
+		return fmt.Errorf("gl: release savepoint set head office branch: %w", err)
+	}
+	if record != nil {
+		if err := record(ctx, tx); err != nil {
+			return fmt.Errorf("gl: audit set head office branch: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("gl: commit set head office branch: %w", err)
+	}
+	r.hoMu.Lock()
+	r.hoOverride = branchID
+	r.hoMu.Unlock()
+	return nil
+}
+
+// PLBalancesByBranch answers the year's P&L balances per account PER BRANCH (empty string = the
+// company level rows with no branch stamp), the basis of the year end's per branch closing entry.
+func (r *Repository) PLBalancesByBranch(ctx context.Context, year int) ([]PLBranchRow, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT account_code::text, account_name, account_type, normal_balance,
+		        COALESCE(branch_id::text,''), COALESCE(SUM(net_debit_cents),0)
+		 FROM v_gl_account_balances
+		 WHERE fiscal_year = $1 AND account_type IN ('REVENUE','EXPENSE')
+		 GROUP BY account_code, account_name, account_type, normal_balance, COALESCE(branch_id::text,'')
+		 ORDER BY COALESCE(branch_id::text,''), account_code`, year)
+	if err != nil {
+		return nil, fmt.Errorf("gl: pl balances by branch: %w", err)
+	}
+	defer rows.Close()
+	var out []PLBranchRow
+	for rows.Next() {
+		var row PLBranchRow
+		if err := rows.Scan(&row.AccountCode, &row.AccountName, &row.AccountType, &row.NormalBalance, &row.BranchID, &row.NetDebitCents); err != nil {
+			return nil, fmt.Errorf("gl: scan pl branch row: %w", err)
+		}
+		out = append(out, row)
 	}
 	return out, rows.Err()
 }
@@ -1053,7 +1451,7 @@ func scanRecurring(row pgx.Row) (RecurringTemplate, error) {
 	var t RecurringTemplate
 	var linesJSON []byte
 	var nextRun *time.Time
-	if err := row.Scan(&t.ID, &t.Name, &t.Memo, &linesJSON, &t.Schedule, &nextRun, &t.IsActive); err != nil {
+	if err := row.Scan(&t.ID, &t.Name, &t.Memo, &t.BranchID, &linesJSON, &t.Schedule, &nextRun, &t.IsActive); err != nil {
 		return RecurringTemplate{}, err
 	}
 	if len(linesJSON) > 0 {
@@ -1067,7 +1465,7 @@ func scanRecurring(row pgx.Row) (RecurringTemplate, error) {
 	return t, nil
 }
 
-const recurringCols = `id::text, name, memo, lines, schedule, next_run, is_active`
+const recurringCols = `id::text, name, memo, COALESCE(to_jsonb(gl_recurring_templates)->>'branch_id', ''), lines, schedule, next_run, is_active`
 
 func (r *Repository) ListRecurring(ctx context.Context) ([]RecurringTemplate, error) {
 	if r.pool == nil {
@@ -1168,8 +1566,8 @@ func (r *Repository) SetJEThreshold(ctx context.Context, branchID string, cents 
 		return nil
 	}
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO gl_policy (branch_id, je_approval_threshold_cents)
-		 VALUES ($1::uuid, $2)
+		`INSERT INTO gl_policy (branch_id, je_approval_threshold_cents, head_office_branch_id)
+		 VALUES ($1::uuid, $2, (SELECT head_office_branch_id FROM gl_policy WHERE branch_id IS NULL))
 		 ON CONFLICT (branch_id) DO UPDATE SET je_approval_threshold_cents = EXCLUDED.je_approval_threshold_cents,
 		                                       updated_at = now()`, branchID, cents)
 	if err != nil {

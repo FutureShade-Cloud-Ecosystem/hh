@@ -16,6 +16,7 @@ import { createBankrecWorld } from "./bankrec-world.mjs";
 import { createTaxWorld } from "./tax-world.mjs";
 import { createLienWorld } from "./lien-world.mjs";
 import { createAssistWorld } from "./assist-world.mjs";
+import { houseDayOffset } from "../house-day.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
@@ -34,6 +35,10 @@ const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
+// The maker-checker threshold the seeded org policy row carries (gl_policy, 0032, $5,000). The credit
+// memo's rail reads this number, the way the route does, and the stub's own credit route parks
+// against it: a credit at or over it waits for a second pair of eyes and moves no money.
+const GL_APPROVAL_THRESHOLD_CENTS = 500_000;
 // The core's closed table, in its order: the till's pair, the Yard manager, the Yard Team and the
 // Driver, Payables and Receivables, the Procurement manager, then the Money Desk's controller. The
 // table is listed whole so the way in's filter and the cross app card legs mean something against it. The
@@ -125,11 +130,9 @@ function mintToken(sub) {
   return `${part({ alg: "ES256", typ: "JWT" })}.${part(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
 }
 
-function dayOffset(offset) {
-  const at = new Date();
-  at.setUTCDate(at.getUTCDate() + offset);
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
-}
+// The offset counts the house zone's own calendar days, never UTC days: the
+// UTC reading drifts by one across the zone's DST change (test/house-day.mjs).
+const dayOffset = (offset) => houseDayOffset(offset);
 
 function uuid(kind, n) {
   return `${kind}0000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -163,6 +166,38 @@ const INVOICES = [
 ];
 
 const NSF_FEE = 3500;
+
+// The tax the stub's invoices carry: 13%, the way the core's tax rules price an Ontario sale. An
+// invoice's total is its subtotal and its tax, so the subtotal is the total without the tax, and the
+// tax is what is left. One rule, one place: the room a credit is capped at is read from these two.
+const TAX_BPS = 1300;
+
+/** The subtotal of an invoice whose total is known. */
+function invSubtotal(total) {
+  return Math.round((total * 10000) / (10000 + TAX_BPS));
+}
+
+/** Money as the core writes it: dollars with the thousands separator, the way every figure reads. */
+function money(cents) {
+  return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/**
+ * The tax on a PARTIAL credit against an invoice, pro-rated from the tax that is left (the core's
+ * rule, core/internal/billing/credit_memo.go and moneyutil.AllocateLargestRemainder): the tax is
+ * split between the part credited and the part left, each takes its floor, and the leftover cents
+ * go to the part with the largest remainder, so the two add up to the cent.
+ */
+function proRatedTax(roomTax, amount, roomSubtotal) {
+  if (amount <= 0 || amount >= roomSubtotal) return roomTax;
+  const other = roomSubtotal - amount;
+  const share = Math.floor((roomTax * amount) / roomSubtotal);
+  const shareOther = Math.floor((roomTax * other) / roomSubtotal);
+  const leftover = roomTax - share - shareOther;
+  const rem = roomTax * amount - share * roomSubtotal;
+  const remOther = roomTax * other - shareOther * roomSubtotal;
+  return share + (leftover > 0 && Math.abs(rem) >= Math.abs(remOther) ? 1 : 0);
+}
 
 // Documents the register serves that are not collectible invoices (the core's no chip read returns every
 // INVOICE document whatever its stored status, and credit memos only with show_credits): a draft, a void
@@ -218,6 +253,10 @@ function reset(kind = "full") {
       acct: i.acct,
       late: i.late,
       total_cents: i.total,
+      // The invoice's own subtotal and tax (the core's room, core/internal/billing/credit_memo.go):
+      // what has been PAID is not what has been CREDITED, so a paid invoice still has a room.
+      subtotal_cents: i.subtotal ?? invSubtotal(i.total),
+      tax_cents: i.tax ?? i.total - (i.subtotal ?? invSubtotal(i.total)),
       balance_cents: i.paid === true ? 0 : i.total,
       holdback_cents: i.holdback ?? 0,
       promise: null,
@@ -1568,6 +1607,137 @@ async function handle(req, res) {
     const body = await readBody(req);
     const picked = (body?.invoice_ids ?? []).map(invById).filter(Boolean);
     return send(res, 200, { count: picked.length, balance_cents: picked.reduce((t, i) => t + i.balance_cents, 0) });
+  }
+
+  // The credit quote (core/internal/billing/credit_memo_route.go's Quote): what a credit against one
+  // invoice would come to, and how much room that invoice has left to credit. Nothing moves.
+  //
+  // The room is the invoice's own subtotal and tax: what has been PAID is not what has been
+  // CREDITED, so a paid invoice still has a room where the balance shows nothing. The tax on a
+  // partial credit is pro-rated from what is left, the core's way.
+  if (method === "POST" && path === "/api/v1/ar/credit-memos/quote") {
+    const body = await readBody(req);
+    if (body === null) return refuse(res, 400, "the request body must be JSON");
+    const customerId = typeof body.customer_id === "string" ? body.customer_id.trim() : "";
+    if (customerId === "") return refuse(res, 400, "a credit needs a customer");
+    const branchId = typeof body.branch_id === "string" ? body.branch_id.trim() : "";
+    if (branchId === "") return refuse(res, 400, "a credit needs a branch");
+    const invoiceId = typeof body.invoice_id === "string" ? body.invoice_id.trim() : "";
+    if (invoiceId === "") return refuse(res, 400, "a quote is against one invoice: name the invoice");
+    const invoice = invById(invoiceId);
+    if (!invoice) return refuse(res, 400, "no such invoice to reverse");
+    if (custId(invoice.acct) !== customerId) return refuse(res, 400, "the credit memo's customer must match the invoice it reverses");
+    const amount = typeof body.amount_cents === "number" ? Math.trunc(body.amount_cents) : 0;
+    if (amount < 0) return refuse(res, 400, "a credit amount is a positive magnitude; the sign is billing's");
+    const roomSubtotal = invoice.subtotal_cents;
+    const roomTax = invoice.tax_cents;
+    if (amount > roomSubtotal) {
+      return refuse(res, 400, `a credit memo cannot be more than invoice ${invoice.invoice_no} has left to credit: ${money(roomSubtotal)} before tax (${money(roomSubtotal + roomTax)} with tax) is left`);
+    }
+    // The whole of what is left, or the part named, with the tax pro-rated from what is left.
+    const tax = amount === 0 ? roomTax : proRatedTax(roomTax, amount, roomSubtotal);
+    const subtotal = amount === 0 ? roomSubtotal : amount;
+    return send(res, 200, {
+      invoice_id: invoiceId,
+      remaining_subtotal_cents: roomSubtotal,
+      remaining_tax_cents: roomTax,
+      remaining_total_cents: roomSubtotal + roomTax,
+      subtotal_cents: subtotal,
+      tax_cents: tax,
+      total_cents: subtotal + tax,
+      message: `This credit of ${money(subtotal)} comes to ${money(subtotal + tax)} with tax.`,
+    });
+  }
+
+  // The credit memo route (core/internal/billing/credit_memo_route.go): the money the dealer gives back.
+  // The core's own order of checks: the reason, the customer, the branch, the amount, the account the
+  // posting rules allow, and the idempotency key. The same key answers with the same credit, so a
+  // double press raises one credit and not two.
+  if (method === "POST" && path === "/api/v1/ar/credit-memos") {
+    const body = await readBody(req);
+    if (body === null) return refuse(res, 400, "the request body must be JSON");
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    if (reason === "") return refuse(res, 400, "a credit needs a reason");
+    const customerId = typeof body.customer_id === "string" ? body.customer_id.trim() : "";
+    if (customerId === "") return refuse(res, 400, "a credit needs a customer");
+    const branchId = typeof body.branch_id === "string" ? body.branch_id.trim() : "";
+    if (branchId === "") return refuse(res, 400, "a credit needs a branch");
+    const amount = typeof body.amount_cents === "number" ? Math.trunc(body.amount_cents) : 0;
+    if (amount <= 0) return refuse(res, 400, "the amount must be more than zero");
+    const key = typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : "";
+    if (key === "") return refuse(res, 400, "a credit needs an idempotency key");
+    const named = typeof body.gl_account === "string" ? body.gl_account.trim() : "";
+    if (named !== "" && named !== "4000") return refuse(res, 400, `the posting rules for this branch credit account 4000, not ${named}`);
+    const invoiceId = typeof body.invoice_id === "string" ? body.invoice_id.trim() : "";
+    const invoice = invoiceId === "" ? undefined : invById(invoiceId);
+    if (invoiceId !== "") {
+      if (!invoice) return refuse(res, 400, "no such invoice to reverse");
+      if (custId(invoice.acct) !== customerId) return refuse(res, 400, "the credit memo's customer must match the invoice it reverses");
+      // The cap is the invoice's ROOM: what it has left to CREDIT. A paid invoice has no balance
+      // and still has room, and the core issues a credit against it.
+      if (amount > invoice.subtotal_cents) {
+        return refuse(res, 400, `a credit memo cannot be more than invoice ${invoice.invoice_no} has left to credit: ${money(invoice.subtotal_cents)} before tax (${money(invoice.subtotal_cents + invoice.tax_cents)} with tax) is left`);
+      }
+    }
+    // The replay: the same key answers with the same credit, which is what a double press is.
+    const held = world.keys.get(`credit:${key}`);
+    if (held !== undefined) return send(res, 200, { ...held, reused: true });
+    const tax = invoice === undefined ? Math.round((amount * 13) / 100) : proRatedTax(invoice.tax_cents, amount, invoice.subtotal_cents);
+    const total = amount + tax;
+    // The maker-checker rail (gl_policy.je_approval_threshold_cents), read against the credit's
+    // TOTAL, tax included: at or over the threshold the credit parks and moves no money at all.
+    if (total >= GL_APPROVAL_THRESHOLD_CENTS) {
+      const parked = {
+        status: "AWAITING_APPROVAL",
+        credit_memo_id: uuid("c", 1),
+        credit_memo_no: "#CM-9001",
+        customer_id: customerId,
+        branch_id: branchId,
+        invoice_id: invoiceId === "" ? undefined : invoiceId,
+        subtotal_cents: -amount,
+        tax_cents: -tax,
+        total_cents: -total,
+        gl_account: "4000",
+        reason,
+        reused: false,
+        message: `Credit memo #CM-9001 for $${(total / 100).toFixed(2)} is waiting for a second pair of eyes. No money has moved yet.`,
+      };
+      world.keys.set(`credit:${key}`, parked);
+      return send(res, 202, parked);
+    }
+    const credit = {
+      status: "ISSUED",
+      credit_memo_id: uuid("c", 1),
+      credit_memo_no: "#CM-9001",
+      customer_id: customerId,
+      branch_id: branchId,
+      invoice_id: invoiceId === "" ? undefined : invoiceId,
+      subtotal_cents: -amount,
+      tax_cents: -tax,
+      total_cents: -total,
+      gl_account: "4000",
+      reason,
+      reused: false,
+      message: `Credit memo #CM-9001 for $${(total / 100).toFixed(2)} is issued.`,
+    };
+    world.keys.set(`credit:${key}`, credit);
+    return send(res, 201, credit);
+  }
+
+  // The GL policy row (core/internal/gl/handler.go, GET /api/v1/gl/policy): the branch's
+  // maker-checker threshold, the branch's row over the org default. The credit form reads this
+  // number so it can say what the rail will do BEFORE the press, and the stub's own credit route
+  // parks against it, the way the core does.
+  if (method === "GET" && path === "/api/v1/gl/policy") {
+    const branch = (url.searchParams.get("branch_id") ?? "").trim();
+    return send(res, 200, {
+      ...(branch === "" ? {} : { branch_id: branch }),
+      je_approval_threshold_cents: GL_APPROVAL_THRESHOLD_CENTS,
+      fiscal_year_start_month: 1,
+      cost_basis_strategy: "WEIGHTED_AVG",
+      exclude_special_buys: false,
+      notes: "",
+    });
   }
 
   if (method === "POST" && path === "/api/v1/ar/register/reminders") {

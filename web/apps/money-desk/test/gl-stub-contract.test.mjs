@@ -174,6 +174,37 @@ test("the journals, a journal, the trial balance and the branches answer the con
   branches.json.forEach((b) => holds("Branch", b));
 });
 
+test("the ledger reads are fenced to the caller's branch reach (FW1-10)", async () => {
+  await reset();
+  // A branch-scoped caller (the Sales manager, Point Loma alone) is refused the whole company's
+  // books and a foreign branch, in the core's own sentence.
+  refused(await call(IDS.manager, "GET", "/api/v1/gl/journals"), 403, "gl: caller cannot access this branch");
+  refused(await call(IDS.manager, "GET", `/api/v1/gl/journals?branch_id=${IDS.julian}`), 403, "gl: caller cannot access this branch");
+  refused(await call(IDS.manager, "GET", "/api/v1/gl/trial-balance"), 403, "gl: caller cannot access this branch");
+  refused(await call(IDS.manager, "GET", `/api/v1/gl/trial-balance?branch_id=${IDS.julian}`), 403, "gl: caller cannot access this branch");
+  refused(await call(IDS.manager, "GET", "/api/v1/gl/tie-out"), 403, "gl: caller cannot access this branch");
+  // A journal out of reach answers as missing, never 403: an id is an existence oracle. The foreign
+  // journal is planted HERE, through the world's own POST (its own entry sequence), so the seeded
+  // world and its asserted trial balance totals never carry it.
+  const planted = await call(IDS.controller, "POST", "/api/v1/gl/journals", {
+    branch_id: IDS.julian,
+    memo: "FW1-10 out of reach proof",
+    source: "MANUAL",
+    lines: [line("1300", 4000, 0), line("1000", 0, 4000)],
+  });
+  assert.equal(planted.status, 201, JSON.stringify(planted.json));
+  const missing = await call(IDS.manager, "GET", `/api/v1/gl/journals/${planted.json.id}`);
+  assert.equal(missing.status, 404);
+  assert.deepEqual(missing.json, { error: "not found" });
+  // The caller's own branch still serves, and names only its rows.
+  const mine = await call(IDS.manager, "GET", `/api/v1/gl/journals?branch_id=${IDS.pointLoma}`);
+  assert.equal(mine.status, 200);
+  assert.ok(mine.json.items.length > 0);
+  assert.ok(mine.json.items.every((j) => j.branch_id === IDS.pointLoma));
+  const ownTb = await call(IDS.manager, "GET", `/api/v1/gl/trial-balance?branch_id=${IDS.pointLoma}`);
+  assert.equal(ownTb.status, 200);
+});
+
 test("the controller decides the floor request and the parked journal, and the trial balance carries the journal", async () => {
   await reset();
   const before = (await call(IDS.controller, "GET", "/api/v1/gl/trial-balance")).json;
@@ -235,6 +266,10 @@ test("the chart of accounts answers the contract's page, creates an account and 
   refused(await call(IDS.controller, "POST", "/api/v1/gl/accounts/9999/deactivate"), 404, "gl: not found");
   // 1300 sits on the parked insurance journal, so it cannot be deactivated while that is a draft.
   refused(await call(IDS.controller, "POST", "/api/v1/gl/accounts/1300/deactivate"), 409, "gl: account is referenced by DRAFT journal(s); cannot deactivate");
+  // 1100 is free of drafts, but the seeded posting rules point at it (FW1-09a): the refusal names them.
+  const guarded = await call(IDS.controller, "POST", "/api/v1/gl/accounts/1100/deactivate");
+  refused(guarded, 409, "need it; deactivating it would stop those postings");
+  assert.ok(guarded.json.error.includes("the posting rules invoice.finalized (ar), payment.bounced (ar), payment.received (ar), payment.reversed (ar)"), guarded.json.error);
 });
 
 test("a journal posts below the threshold, parks at or over it, and every refusal is the core's sentence in the core's order", async () => {
@@ -266,15 +301,19 @@ test("a journal posts below the threshold, parks at or over it, and every refusa
 
 test("void, reverse and approve answer the contract's shapes and refuse in the core's words", async () => {
   await reset();
-  const posted = "7a1e0000-0000-4000-9000-000000000004";
+  const posted = IDS.opening;
   const rev = await call(IDS.controller, "POST", `/api/v1/gl/journals/${posted}/reverse`);
   assert.equal(rev.status, 201);
   holds("GlJournal", rev.json);
   assert.equal(rev.json.source, "ADJUSTMENT");
   assert.equal(rev.json.reverses_journal_id, posted);
-  assert.equal(rev.json.memo, "Reversal of entry #4");
+  assert.equal(rev.json.memo, "Reversal of entry #1");
   const original = (await call(IDS.controller, "GET", `/api/v1/gl/journals/${posted}`)).json;
   assert.deepEqual(rev.json.lines.map((l) => [l.account_code, l.debit_cents, l.credit_cents]), original.lines.map((l) => [l.account_code, l.credit_cents, l.debit_cents]));
+  // The guards (FW1-09a): a journal a module posted is not reversed from the ledger and names its module
+  // (the till's journal files under its topic key), and a journal is reversed once.
+  refused(await call(IDS.controller, "POST", `/api/v1/gl/journals/${IDS.till}/reverse`), 409, "not by a person in the ledger; it cannot be reversed from here");
+  refused(await call(IDS.controller, "POST", `/api/v1/gl/journals/${posted}/reverse`), 409, "was already reversed; a journal can be reversed once");
   refused(await call(IDS.controller, "POST", `/api/v1/gl/journals/${IDS.j1}/reverse`), 409, "gl: only a POSTED journal can be reversed");
   refused(await call(IDS.controller, "POST", `/api/v1/gl/journals/${posted}/void`), 409, "gl: only a DRAFT journal can be voided (POSTED journals must be reversed)");
   const voided = await call(IDS.controller, "POST", `/api/v1/gl/journals/${IDS.j2}/void`);

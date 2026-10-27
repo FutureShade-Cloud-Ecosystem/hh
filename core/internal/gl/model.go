@@ -87,6 +87,11 @@ type Journal struct {
 	CreatedBy         string        `json:"created_by,omitempty"`
 	CreatedAt         time.Time     `json:"created_at"`
 	Lines             []JournalLine `json:"lines"`
+	// LatePosted, derived on read (FW1-01, ruling 82.2): the journal's document date does not
+	// fall in its own period's month, the closed month it was posted past into the earliest open
+	// one. A system journal is never refused for a closed month; this marker is what the
+	// Controller's late posted list reads.
+	LatePosted bool `json:"late_posted"`
 }
 
 // TotalCents is the journal's debit total (== credit total when balanced), the maker-checker gate reads it.
@@ -128,6 +133,17 @@ type TrialBalanceRow struct {
 	BalanceCents  int64  `json:"balance_cents"` // net debit (Σdebit − Σcredit)
 }
 
+// PLBranchRow is one account's P&L net for a fiscal year under one branch stamp ("" = company level),
+// the year end's per branch input (FW1-08b).
+type PLBranchRow struct {
+	AccountCode   string
+	AccountName   string
+	AccountType   string
+	NormalBalance string
+	BranchID      string
+	NetDebitCents int64
+}
+
 // TieoutState is a subledger tie-out result with the persisted first-seen discrepancy age (0032 gl_tieout_state).
 type TieoutState struct {
 	Subledger      string     `json:"subledger"`
@@ -147,6 +163,7 @@ type RecurringTemplate struct {
 	ID       string             `json:"id"`
 	Name     string             `json:"name"`
 	Memo     string             `json:"memo"`
+	BranchID string             `json:"-"`
 	Schedule string             `json:"schedule"`
 	NextRun  string             `json:"next_run,omitempty"`
 	IsActive bool               `json:"is_active"`
@@ -217,6 +234,9 @@ type JournalFilter struct {
 	AfterCursor      bool
 	CursorFiscalYear int
 	CursorEntryNo    int
+	// LatePosted, when set, filters to journals posted past a closed month into a later open one
+	// (the Controller's late posted list). Nil reads both.
+	LatePosted *bool
 }
 
 // - internal posting draft (the shared persist path: manual create, outbox consumer, PostExternal) -

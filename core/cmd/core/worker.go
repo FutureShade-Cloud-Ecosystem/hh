@@ -131,6 +131,17 @@ func worker(getenv func(string) string) error {
 	messaging.NewPortalBridge(graph.ops.messagingSvc, log).RegisterHandlers(dispatcher)
 	go dispatcher.Run(ctx) // stops on ctx cancellation (SIGINT/SIGTERM)
 
+	// FW1-01: the fiscal year roll forward runs at worker start on every box,
+	// idempotently, so the year after the latest that exists is always there
+	// ahead of need (the posting path covers the boundary itself; this makes
+	// it true even on a box nobody posts on until the day after the last
+	// seeded month).
+	if res, err := graph.money.glSvc.EnsureNextFiscalYear(ctx); err != nil {
+		return fmt.Errorf("worker: ensure the next fiscal year: %w", err)
+	} else {
+		log.Info("worker: next fiscal year ensured", "fiscal_year", res.FiscalYear)
+	}
+
 	// FW1-02: the dead letter retry. The dispatcher dead letters a GL event
 	// whose journal is refused five times; this loop brings such rows back on
 	// a schedule with backoff, so a refusal that gets fixed is retried without

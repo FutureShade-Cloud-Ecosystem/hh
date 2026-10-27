@@ -28,8 +28,8 @@ test("two fresh generations are byte-identical and match the committed tree", ()
   try {
     const out1 = generate(one);
     const out2 = generate(two);
-    // 778 operations: main's 773 plus SF-2l's paymentsReapplyHeld and paymentsHeldFor, FW1-02's glListPostingQueue and glPostingQueueCount, and SF-2m's paymentsPayOutHeld.
-    if (!out1.includes("778 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
+    // 783 operations: main's 781 plus this lane's billingApplyCredit and billingReverseCreditApplication.
+    if (!out1.includes("783 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
     const a = snapshot(one);
     const b = snapshot(two);
     const c = snapshot(committed);

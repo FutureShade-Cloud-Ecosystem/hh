@@ -29,11 +29,14 @@ func pinnedHouseDay(t *testing.T) (time.Time, string) {
 
 // houseDaySource is the order-facts seam answering one fixed billable order, so the writer's own
 // transaction is the only thing under test.
-type houseDaySource struct{ customer, branch string }
+type houseDaySource struct {
+	customer, branch string
+	terms            int
+}
 
 func (s houseDaySource) InvoiceableOrder(_ context.Context, _ string, _ []string) (OrderInvoiceFacts, error) {
 	return OrderInvoiceFacts{
-		CustomerID: s.customer, BranchID: s.branch, ClosesOrder: true, TermsDays: 30,
+		CustomerID: s.customer, BranchID: s.branch, ClosesOrder: true, TermsDays: s.terms,
 		Lines: []OrderInvoiceLine{{
 			LineNo: 1, Description: "Pavers", QtyEntered: "1", UOMEntered: "EA", QtyBase: "1",
 			UnitPriceCents: 5_000, PriceUOM: "EA", LineTotalCents: 5_000,
@@ -51,7 +54,7 @@ func TestIntegrationInvoiceWriter_IssueDayIsTheHousesDayAtTheUTCDayChange(t *tes
 	cust := seedCustomer(t, pool, ns(t))
 	at, wantDay := pinnedHouseDay(t)
 	w := NewInvoiceWriter(pool).
-		WithOrderSource(houseDaySource{customer: cust, branch: trentonBranch}).
+		WithOrderSource(houseDaySource{customer: cust, branch: trentonBranch, terms: 30}).
 		WithClock(func() time.Time { return at })
 	doc, err := w.InvoiceOrder(ctx, "")
 	if err != nil {
@@ -70,6 +73,40 @@ func TestIntegrationInvoiceWriter_IssueDayIsTheHousesDayAtTheUTCDayChange(t *tes
 	// invoice is never due a day earlier than its own terms.
 	if want := "2026-02-03"; due != want {
 		t.Fatalf("the due date is the house issue day plus the terms: got %s, want %s", due, want)
+	}
+}
+
+// TestIntegrationInvoiceWriter_CashOnDemandIsDueOnIssue, the Dibbits COD rule at the writer: Cash
+// On Demand means pay before release, with an invoice number while unpaid, so a terms 0 order's
+// invoice is due the day it is issued. Every order invoice that is not rung at the till (the Quote
+// Desk order payment, the Counter Till Pay balance raise, the multi-ship group invoice) resolves
+// its terms through the same seam, so one leg here covers all three.
+func TestIntegrationInvoiceWriter_CashOnDemandIsDueOnIssue(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	cust := seedCustomer(t, pool, ns(t))
+	if _, err := pool.Exec(ctx,
+		`UPDATE customers SET payment_terms_days = 0 WHERE id = $1::uuid`, cust); err != nil {
+		t.Fatalf("make the account Cash On Demand: %v", err)
+	}
+	at, wantDay := pinnedHouseDay(t)
+	w := NewInvoiceWriter(pool).
+		WithOrderSource(houseDaySource{customer: cust, branch: trentonBranch, terms: 0}).
+		WithClock(func() time.Time { return at })
+	doc, err := w.InvoiceOrder(ctx, "")
+	if err != nil {
+		t.Fatalf("raise the Cash On Demand order invoice: %v", err)
+	}
+	var issue, due string
+	if err := pool.QueryRow(ctx,
+		`SELECT issue_date::text, due_date::text FROM invoices WHERE id = $1::uuid`,
+		doc.InvoiceID).Scan(&issue, &due); err != nil {
+		t.Fatalf("read the raised invoice: %v", err)
+	}
+	// A Cash On Demand invoice is due on issue: the customer's 0 counts as 0 days, never as the
+	// writer's own default month.
+	if issue != wantDay || due != wantDay {
+		t.Fatalf("a Cash On Demand invoice is due on issue: got issue %s due %s, want both %s", issue, due, wantDay)
 	}
 }
 
