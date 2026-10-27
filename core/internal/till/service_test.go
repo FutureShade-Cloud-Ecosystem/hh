@@ -206,6 +206,25 @@ func (f *fakeStore) InsertMovement(_ context.Context, m MovementRow) error {
 	return nil
 }
 
+// PaymentsForSlip answers the fake's payment rows for the slip validation, the same fields the real
+// read carries: absent rows are absent.
+func (f *fakeStore) PaymentsForSlip(_ context.Context, sessionID, method string, ids []string) ([]SlipPayment, error) {
+	var out []SlipPayment
+	for id, p := range f.payments {
+		if p.TillSessionID != sessionID || p.Method != method {
+			continue
+		}
+		for _, want := range ids {
+			if id == want {
+				// The fake holds no reversed payments (a reversal's refusal is a real-read leg), so
+				// Reversed is always false here.
+				out = append(out, SlipPayment{ID: id, AmountCents: p.AmountCents, Status: p.Status, Reversed: false})
+			}
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) InsertMovementTx(_ context.Context, _ pgx.Tx, m MovementRow) error {
 	f.movements[m.TillSessionID] = append(f.movements[m.TillSessionID], m)
 	f.txMovements = append(f.txMovements, m)
