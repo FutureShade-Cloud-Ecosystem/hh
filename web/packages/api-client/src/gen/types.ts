@@ -2818,7 +2818,8 @@ export type BankRecReconInput = {
   bank_account_id: string;
   year: number;
   month: number;
-  statement_balance_cents: number;
+  statement_balance_cents?: number;
+  refresh?: boolean;
 };
 export type BankRecReconciliationList = BankRecReconciliation[];
 export type IdentityPing = {
