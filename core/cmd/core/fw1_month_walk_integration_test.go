@@ -376,9 +376,16 @@ func TestFW1MonthWalk(t *testing.T) {
 	}
 	seedInvRows.Close()
 
+	// The walk's opening AR posting covers ONLY documents marked as opening balances (the seed's
+	// metadata.opening_balance marker, FROM-PRINCIPAL 177 and 180): a document the migrations gave
+	// a finalize journal of its own (the 0055 demo pair) is already in the ledger and is not posted
+	// again here.
 	openRows, err := w.pool.Query(ctx, `
 		SELECT branch_id::text, COALESCE(SUM(balance_cents),0)
-		  FROM invoices WHERE status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents > 0 GROUP BY branch_id`)
+		  FROM invoices
+		 WHERE status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents > 0
+		   AND COALESCE(metadata->>'opening_balance','') = 'true'
+		 GROUP BY branch_id`)
 	if err != nil {
 		t.Fatalf("the opening AR read: %v", err)
 	}
