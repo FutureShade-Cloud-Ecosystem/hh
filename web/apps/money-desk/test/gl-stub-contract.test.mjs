@@ -174,6 +174,33 @@ test("the journals, a journal, the trial balance and the branches answer the con
   branches.json.forEach((b) => holds("Branch", b));
 });
 
+test("the late posted filter lists the journals that carry a closed month's date and landed in an open one", async () => {
+  await reset();
+  const all = await call(IDS.controller, "GET", "/api/v1/gl/journals");
+  holds("GlJournalPage", all.json);
+  assert.ok(
+    all.json.items.every((j) => typeof j.late_posted === "boolean"),
+    "every journal carries the marker the core derives on read",
+  );
+  const late = await call(IDS.controller, "GET", "/api/v1/gl/journals?late_posted=true");
+  assert.equal(late.status, 200);
+  holds("GlJournalPage", late.json);
+  assert.ok(late.json.items.length >= 1, "the stub has no late posted journal to list");
+  assert.ok(late.json.items.every((j) => j.late_posted === true));
+  // Each one carries a document date that is not in the month it landed in.
+  const periods = (await call(IDS.controller, "GET", "/api/v1/gl/periods")).json.items;
+  late.json.items.forEach((j) => {
+    const period = periods.find((p) => p.id === j.period_id);
+    assert.ok(period !== undefined, `the period ${j.period_id} is not on the list`);
+    assert.ok(
+      Number(j.posted_at.slice(0, 4)) !== period.year || Number(j.posted_at.slice(5, 7)) !== period.month,
+      `${j.id} is marked late posted but its date falls in the month it landed in`,
+    );
+  });
+  // The filter that is neither true nor false is refused in the core's words.
+  refused(await call(IDS.controller, "GET", "/api/v1/gl/journals?late_posted=maybe"), 400, "late_posted must be true or false");
+});
+
 test("the controller decides the floor request and the parked journal, and the trial balance carries the journal", async () => {
   await reset();
   const before = (await call(IDS.controller, "GET", "/api/v1/gl/trial-balance")).json;
@@ -341,6 +368,27 @@ test("the periods list, close, reopen and the year end close answer the contract
   // A closed period refuses a journal dated into it, in its own words.
   await call(IDS.controller, "POST", `/api/v1/gl/periods/${list.json.items.find((p) => p.month === BOOKS_MONTH).id}/close`, {});
   refused(await call(IDS.controller, "POST", "/api/v1/gl/journals", { ...fresh, lines: [line("5200", 100, 0), line("1000", 0, 100)] }), 409, "gl: fiscal period is CLOSED");
+});
+
+test("the next fiscal year opens for the Controller with a reason and refuses in the core's words", async () => {
+  await reset();
+  refused(await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { reason: "   " }), 422, "gl: a reason is required");
+  refused(await call(IDS.payRec, "POST", "/api/v1/gl/periods/open-year", { reason: "x" }), 403, "Forbidden");
+  const opened = await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { reason: "The year is set up early" });
+  assert.equal(opened.status, 200);
+  holds("GlYearOpenResult", opened.json);
+  assert.equal(opened.json.fiscal_year, 2027);
+  // The year joins the periods with its twelve months, open for posting.
+  const periods = (await call(IDS.controller, "GET", "/api/v1/gl/periods")).json.items;
+  const next = periods.filter((p) => p.year === 2027);
+  assert.equal(next.length, 12);
+  assert.ok(next.every((p) => p.status === "OPEN"));
+  // The core's roll forward is a year at a time (core/internal/gl/repository.go EnsureNextFiscalYear makes
+  // the year after the latest that exists), so asking again answers the year after the one just made.
+  const again = await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { reason: "And again" });
+  assert.equal(again.status, 200);
+  assert.equal(again.json.fiscal_year, 2028);
+  assert.equal((await call(IDS.controller, "GET", "/api/v1/gl/periods")).json.items.filter((p) => p.year === 2027).length, 12);
 });
 
 test("the year end close sweeps net income into retained earnings and seals the year", async () => {
