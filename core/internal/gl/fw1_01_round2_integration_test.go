@@ -290,14 +290,14 @@ func TestIntegration_FW1_01R2_OpenYearAuditInTheYearsTransaction(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
-	fw1ScrubYear(t, pool, 2027)
-	t.Cleanup(func() { fw1ScrubYear(t, pool, 2027) })
+	fw1ScrubYear(t, pool, 2027, 2028)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, 2027, 2028) })
 	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC))
 
-	years := func() int {
+	years := func(year int) int {
 		t.Helper()
 		var n int
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year=2027`).Scan(&n); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year=$1`, year).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n
@@ -308,8 +308,8 @@ func TestIntegration_FW1_01R2_OpenYearAuditInTheYearsTransaction(t *testing.T) {
 	if _, err := bad.OpenNextFiscalYear(ctx, "FW1-01 round 2 audit proof"); err == nil {
 		t.Fatalf("the open succeeded with the audit write refused; the audit must hold the year")
 	}
-	if years() != 0 {
-		t.Fatalf("the refused audit left %d periods of 2027 behind; the year rolls back with its audit", years())
+	if years(2027) != 0 || years(2028) != 0 {
+		t.Fatalf("the refused audit left years behind (%d, %d); the years roll back with their audit", years(2027), years(2028))
 	}
 
 	good := &fw1AuditTx{}
@@ -317,13 +317,13 @@ func TestIntegration_FW1_01R2_OpenYearAuditInTheYearsTransaction(t *testing.T) {
 	if _, err := ok.OpenNextFiscalYear(ctx, "FW1-01 round 2 audit proof"); err != nil {
 		t.Fatalf("the open with a working audit: %v", err)
 	}
-	if years() != 12 {
-		t.Fatalf("2027 holds %d periods, want 12", years())
+	if years(2027) != 12 || years(2028) != 12 {
+		t.Fatalf("the open's years hold (%d, %d) periods, want 12 and 12", years(2027), years(2028))
 	}
 	if len(good.recorded) != 1 {
 		t.Fatalf("%d audit rows recorded, want 1", len(good.recorded))
 	}
-	if good.recorded[0].EntityID != "fiscal_year:2027" {
-		t.Fatalf("the audit names %q, want fiscal_year:2027", good.recorded[0].EntityID)
+	if good.recorded[0].EntityID != "fiscal_year:2028" {
+		t.Fatalf("the audit names %q, want fiscal_year:2028 (the open's target, one beyond the roll forward's)", good.recorded[0].EntityID)
 	}
 }
