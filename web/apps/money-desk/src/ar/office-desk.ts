@@ -23,8 +23,11 @@ import type {
 import { OfficeApi } from "./office-api.js";
 import { SettingsDesk, type SettingsModel } from "./office-settings.js";
 import { newKey } from "./held-keys.js";
+import { centsToField } from "./ar-money.js";
 import {
   AttemptKeys,
+  applyCreditCheck,
+  applyCreditWords,
   disputeCheck,
   officeRefusal,
   outcomeUnknown,
@@ -34,6 +37,8 @@ import {
   reapplyCheck,
   reapplyWords,
   reminderResultWords,
+  reverseCreditAppCheck,
+  reverseCreditAppWords,
   reversalCheck,
   reversalWords,
   voidCheck,
@@ -85,6 +90,17 @@ export interface ReapplyView {
   readonly balanceCents: number | null;
 }
 
+/** The open credit memo or account credit being applied to an invoice of the same customer (FW1-12b). */
+export interface ApplyCreditView {
+  readonly customerId: string;
+  readonly creditId: string;
+  readonly creditKind: "MEMO" | "ACCOUNT";
+  readonly creditRef: string;
+  readonly creditOpenCents: number;
+  readonly invoiceId: string;
+  readonly invoiceBalanceCents: number | null;
+}
+
 /** The panel an invoice's extra actions open, and what it is about. */
 export type InvoiceMode = "none" | "document" | "dispute" | "resolve";
 
@@ -126,6 +142,10 @@ export interface OfficeModel {
   readonly voiding: string | null;
   /** The reversed payment whose held money is being put on an invoice, with the figure the core holds for it. */
   readonly reapplying: ReapplyView | null;
+  /** The open credit memo or account credit being applied to an invoice of the same customer (FW1-12b). */
+  readonly applyingCredit: ApplyCreditView | null;
+  /** The credit application being reversed on the open invoice, waiting on a reason (FW1-12b). */
+  readonly reversingCreditApp: string | null;
   readonly accounts: readonly BillingAgingRow[];
   readonly policy: BillingLandingPolicy | null;
   readonly remind: RemindForm;
@@ -181,6 +201,8 @@ export class OfficeDesk {
   #reversing: string | null = null;
   #voiding: string | null = null;
   #reapplying: ReapplyView | null = null;
+  #applyingCredit: ApplyCreditView | null = null;
+  #reversingCreditApp: string | null = null;
   /** The account whose name field the next paint must fill from its contact. */
   #fillContactFor: string | null = null;
 
@@ -204,6 +226,8 @@ export class OfficeDesk {
       reversing: this.#reversing,
       voiding: this.#voiding,
       reapplying: this.#reapplying,
+      applyingCredit: this.#applyingCredit,
+      reversingCreditApp: this.#reversingCreditApp,
       accounts: this.#host.accounts(),
       policy: this.#host.policy(),
       remind: this.#remind,
@@ -493,6 +517,8 @@ export class OfficeDesk {
     this.#reversing = null;
     this.#voiding = null;
     this.#reapplying = null;
+    this.#applyingCredit = null;
+    this.#reversingCreditApp = null;
   }
 
   async #sendInvoice(invoiceId: string): Promise<void> {
@@ -708,6 +734,74 @@ export class OfficeDesk {
     this.#host.repaint();
   }
 
+  /** Applies an open credit memo or account credit to an open invoice of the same customer (FW1-12b). */
+  async #applyCredit(): Promise<void> {
+    if (this.#busy) return;
+    const view = this.#applyingCredit;
+    if (view === null) return;
+    const check = applyCreditCheck({
+      creditKind: view.creditKind,
+      creditId: view.creditId,
+      invoiceId: view.invoiceId,
+      amountText: this.#host.field("credit-apply-amount"),
+      reason: this.#host.field("credit-apply-reason"),
+      creditOpenCents: view.creditOpenCents,
+      invoiceBalanceCents: view.invoiceBalanceCents,
+    });
+    if (!check.ok) return this.#stop(check.words);
+    const attempt = `credit-apply:${view.creditId}:${check.invoiceId}:${check.amountCents}`;
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.applyCredit({
+      customerId: view.customerId,
+      creditKind: check.creditKind,
+      creditId: check.creditId,
+      invoiceId: check.invoiceId,
+      amountCents: check.amountCents,
+      reason: check.reason,
+      key: this.#keys.keyFor(attempt),
+    });
+    this.#busy = false;
+    if (!outcomeUnknown(result.ok ? 200 : result.status)) this.#keys.settle(attempt);
+    if (!result.ok) {
+      this.#fail("credit-apply", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    this.#applyingCredit = null;
+    this.#host.notice(applyCreditWords(result.value, view.creditRef));
+    this.#host.reveal("[data-notice]");
+    await Promise.all([this.#host.reloadAccount(), this.#host.reloadBook()]);
+    this.#host.repaint();
+  }
+
+  /** Reverses a credit application on an invoice with a reason (FW1-12b). */
+  async #reverseCreditApp(invoiceId: string, applicationId: string, creditRef: string): Promise<void> {
+    if (this.#busy) return;
+    const check = reverseCreditAppCheck(this.#host.field("credit-reverse-reason"));
+    if (!check.ok) return this.#stop(check.words);
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.reverseCreditApplication({
+      invoiceId,
+      applicationId,
+      reason: check.reason,
+    });
+    this.#busy = false;
+    if (!result.ok) {
+      this.#fail("credit-reverse", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    this.#reversingCreditApp = null;
+    this.#host.notice(reverseCreditAppWords(result.value, creditRef));
+    this.#host.reveal("[data-notice]");
+    await Promise.all([this.#host.reloadAccount(), this.#host.reloadBook()]);
+    this.#host.repaint();
+  }
+
   // ---- settings, holds a returned payment placed, the dispatch gate -----------------------------------------
 
   openSettings(): Promise<void> {
@@ -848,6 +942,57 @@ export class OfficeDesk {
         return true;
       case "reapply-confirm":
         void this.#reapply(attr("data-payment-id"), attr("data-payment-no"));
+        return true;
+      case "credit-apply-start": {
+        const balanceRaw = attr("data-balance-cents");
+        const openRaw = Number(attr("data-credit-open"));
+        this.#applyingCredit = {
+          customerId: attr("data-customer-id"),
+          creditId: attr("data-credit-id"),
+          creditKind: attr("data-credit-kind") === "ACCOUNT" ? "ACCOUNT" : "MEMO",
+          creditRef: attr("data-credit-ref"),
+          creditOpenCents: Number.isInteger(openRaw) && openRaw > 0 ? openRaw : 0,
+          invoiceId: attr("data-invoice-id"),
+          invoiceBalanceCents: balanceRaw === "" ? null : Number(balanceRaw),
+        };
+        this.#reversingCreditApp = null;
+        this.#host.repaint();
+        return true;
+      }
+      case "credit-apply-pick":
+        if (this.#applyingCredit !== null) {
+          this.#applyingCredit = {
+            ...this.#applyingCredit,
+            invoiceId: attr("data-invoice-id"),
+            invoiceBalanceCents: Number(attr("data-balance-cents")),
+          };
+          this.#host.repaint();
+        }
+        return true;
+      case "credit-apply-full":
+        if (this.#applyingCredit !== null && this.#applyingCredit.invoiceBalanceCents !== null) {
+          const maxCents = Math.min(this.#applyingCredit.creditOpenCents, this.#applyingCredit.invoiceBalanceCents);
+          this.#host.setField("credit-apply-amount", centsToField(maxCents));
+        }
+        return true;
+      case "credit-apply-cancel":
+        this.#applyingCredit = null;
+        this.#host.repaint();
+        return true;
+      case "credit-apply-confirm":
+        void this.#applyCredit();
+        return true;
+      case "credit-reverse-start":
+        this.#reversingCreditApp = attr("data-application-id");
+        this.#applyingCredit = null;
+        this.#host.repaint();
+        return true;
+      case "credit-reverse-cancel":
+        this.#reversingCreditApp = null;
+        this.#host.repaint();
+        return true;
+      case "credit-reverse-confirm":
+        void this.#reverseCreditApp(attr("data-invoice-id"), attr("data-application-id"), attr("data-credit-ref"));
         return true;
       case "paper-sweep":
         void this.#sweepPaper();

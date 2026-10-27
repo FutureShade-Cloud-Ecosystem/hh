@@ -289,6 +289,15 @@ func (r *Repository) SetDefaultMethod(ctx context.Context, customerID, methodID 
 // while never queuing behind a foreign key's FOR KEY SHARE (a POS return's pos_returns insert).
 // The ascending order is PR 277's (the till's returns lock their documents the same way), so a
 // received payment and a return can never meet head on, whatever order the caller's list came in.
+//
+// The targets are INVOICES (doc_type = 'INVOICE'), and the filter is here, in the locking
+// statement, for K3's P2-1: a hand-built request may name a CREDIT_MEMO beside its target
+// INVOICE, and the memo passes this walk's open status check (it is FINALIZED) while its
+// negative balance only produces zero payable, so the walk kept the memo's row lock while it
+// paid the invoice beside it. With the memo's id below the invoice's, this walk takes the memo
+// and then the invoice while the billing credit apply takes the invoice and then the memo: each
+// door holds the row the other needs and Postgres answers one side 40P01. A memo is a document a
+// payment can never land on, so the walk refuses it here, before it takes a row at all.
 func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in ApplyRequest) ([]applyInvoiceRow, error) {
 	ids := append([]string(nil), in.InvoiceIDs...)
 	sort.Strings(ids)
@@ -304,6 +313,7 @@ func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in Appl
 			       issue_date, due_date, balance_cents, holdback_cents
 			  FROM invoices
 			 WHERE id = $1::uuid AND customer_id = $2::uuid
+			   AND doc_type = 'INVOICE'
 			   AND ($3::text[] IS NULL OR branch_id = ANY($3::uuid[]))
 			   FOR NO KEY UPDATE`, id, in.CustomerID, reach).
 			Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
@@ -389,6 +399,11 @@ func branchInReach(reach []string, branchID string) bool {
 // a single row lock. The judgements run in the same ascending id order the apply locks in, over
 // the rows the statement returned, so the refusal a preview surfaces is the refusal the apply
 // would surface.
+//
+// The targets are INVOICES (doc_type = 'INVOICE'), the same filter the apply's locking statement
+// carries (K3's P2-1), so the preview refuses a named credit memo exactly as the apply refuses
+// it: a memo is a document a payment can never land on. The preview takes no row either way, so
+// the filter here is about the answer the desk sees, not about a lock.
 func (r *Repository) readApplyInvoices(ctx context.Context, in ApplyRequest) ([]applyInvoiceRow, error) {
 	ids := append([]string(nil), in.InvoiceIDs...)
 	sort.Strings(ids)
@@ -402,6 +417,7 @@ func (r *Repository) readApplyInvoices(ctx context.Context, in ApplyRequest) ([]
 		       issue_date, due_date, balance_cents, holdback_cents
 		  FROM invoices
 		 WHERE id = ANY($1::uuid[]) AND customer_id = $2::uuid
+		   AND doc_type = 'INVOICE'
 		   AND ($3::text[] IS NULL OR branch_id = ANY($3::uuid[]))`, ids, in.CustomerID, reach)
 	if err != nil {
 		return nil, fmt.Errorf("apply preview: read invoices: %w", err)
