@@ -258,20 +258,21 @@ func (j Journal) balancedForTest() bool {
 }
 
 // 615 round 2, P2-2: a write reads its answer back through the store, never through the fenced read,
-// so an answer never contradicts a committed write. The write fences themselves are a named item's
-// (SECURITY-SOD gap 19, FW1-09b).
+// so an answer never contradicts a committed write. The write fences are landed now (SECURITY-SOD gap 19,
+// FW1-09b round 3), so a write outside the maker's reach is refused before it lands (the round 3 legs pin
+// that refusal) and these legs write inside the maker's reach to pin the answer path alone.
 func TestCreateJournal_AnswerNeverContradictsACommittedWrite(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeStore()
 	maker := identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager,
 		Scope: identity.ScopeBranch, Status: identity.StatusActive, Branches: map[string]bool{"b1": true}}
 	j, err := newTestServiceAs(f, maker).CreateJournal(ctx, CreateJournalInput{
-		BranchID: "b2", Memo: "written outside the maker's reach", Lines: balancedLines(),
+		BranchID: "b1", Memo: "written inside the maker's reach", Lines: balancedLines(),
 	})
 	if err != nil {
 		t.Fatalf("the write landed in the store, so its answer must not read as a refusal: %v", err)
 	}
-	if j.ID == "" || j.Memo != "written outside the maker's reach" {
+	if j.ID == "" || j.Memo != "written inside the maker's reach" {
 		t.Fatalf("the answer is not the committed row: %+v", j)
 	}
 }
@@ -288,7 +289,6 @@ func TestReverseJournal_AnswerNeverContradictsACommittedWrite(t *testing.T) {
 	}
 	orig := f.journals[posted.ID]
 	orig.Status = StatusPosted
-	orig.BranchID = "b2" // the reversal targets a journal outside the maker's reach
 	rev, err := svc.ReverseJournal(ctx, posted.ID)
 	if err != nil {
 		t.Fatalf("the reversal landed in the store, so its answer must not read as a refusal: %v", err)
