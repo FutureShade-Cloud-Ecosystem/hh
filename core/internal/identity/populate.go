@@ -955,9 +955,13 @@ type PortalUserSeed struct {
 	PlatformUserID string
 }
 
-// portalNoPassword is the marker stored in password_hash for a seeded user:
-// not a hash of anything, so no password verifies against it.
-const portalNoPassword = "seeded-no-password"
+// PortalNoPasswordMarker is the marker stored in password_hash for a seeded
+// user: not a hash of anything, so no password verifies against it. It is
+// exported because two modules meet on it: identity plants the portal
+// accounts with it, and the portal module's own seam marks every portal
+// password unusable with it. One marker, one value, so the marker that
+// clears the passwords is the marker the accounts were planted with.
+const PortalNoPasswordMarker = "seeded-no-password"
 
 // ProvisionPortalUsers writes the contractor portal users once: a row
 // already holding an id is left as it is, so a re-run counts zero. A role
@@ -985,7 +989,7 @@ func ProvisionPortalUsers(ctx context.Context, db DBTX, users []PortalUserSeed) 
 			INSERT INTO portal_users (id, customer_id, email, name, password_hash, role, status, platform_user_id, tenant_id)
 			VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $2::uuid)
 			ON CONFLICT (id) DO NOTHING`,
-			u.ID, u.CustomerID, u.Email, u.Name, portalNoPassword, u.Role, PortalStatusActive, u.PlatformUserID)
+			u.ID, u.CustomerID, u.Email, u.Name, PortalNoPasswordMarker, u.Role, PortalStatusActive, u.PlatformUserID)
 		if err != nil {
 			return created, fmt.Errorf("identity: portal user write failed: %w", err)
 		}

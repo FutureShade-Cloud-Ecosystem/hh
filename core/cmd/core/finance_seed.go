@@ -4,13 +4,14 @@ package main
 // FINANCE-BOX-SPEC-r1, sections 3 and 8). It applies the embedded dibbits
 // seed to a fresh, empty database the one time the finance box first boots,
 // records box_kind=finance in system_settings through the settings module,
-// and leaves the fresh world with no usable password through the identity
-// module (every staff hash and every portal hash, the seed's logins and the
-// migrations' demonstration logins alike), so the seeded world cannot be
-// signed into with any known password. core seed itself is never the answer
-// outside dev, and an unset APP_ENV would count as dev and plant tier 1
-// admins with a usable password. finance-seed refuses unless the box says
-// the finance statement in full:
+// and leaves the fresh world with no usable password through the two
+// modules that own the credential tables (every staff hash through the
+// identity module and every portal hash through the portal module, the
+// seed's logins and the migrations' demonstration logins alike), so the
+// seeded world cannot be signed into with any known password. core seed
+// itself is never the answer outside dev, and an unset APP_ENV would count
+// as dev and plant tier 1 admins with a usable password. finance-seed
+// refuses unless the box says the finance statement in full:
 //
 //   - HH_BOX_KIND=finance (the box kind guard, boxkind.go);
 //   - APP_ENV=staging (the rails refuse production by themselves, and the
@@ -34,6 +35,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/logging"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 )
 
@@ -108,10 +110,18 @@ func financeSeedRole(getenv func(string) string) error {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("finance-seed: recording the box kind: %w", err)
 	}
-	creds, err := identity.DisableSeedCredentials(ctx, tx)
+	staffCleared, err := identity.DisableSeedCredentials(ctx, tx)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("finance-seed: clearing the seed credentials: %w", err)
+	}
+	// The portal half of the same leg, through the portal module's own
+	// seam: the portal module owns portal_users, so its statement lives
+	// there and no other module's SQL names that table.
+	portalCleared, err := portal.DisableSeedCredentials(ctx, tx)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("finance-seed: clearing the portal seed credentials: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("finance-seed: commit: %w", err)
@@ -119,6 +129,6 @@ func financeSeedRole(getenv func(string) string) error {
 
 	log.Info("finance-seed: the Dibbits seed world is loaded",
 		"box_kind", boxKindFinance,
-		"staff_passwords_cleared", creds.StaffCleared, "portal_passwords_cleared", creds.PortalCleared)
+		"staff_passwords_cleared", staffCleared, "portal_passwords_cleared", portalCleared)
 	return nil
 }

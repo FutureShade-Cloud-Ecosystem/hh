@@ -1,13 +1,13 @@
 package identity
 
-// DisableSeedCredentials, the finance seed's password leg (the deploy spec
-// FINANCE-BOX-SPEC-r1, section 3). Passwords in this tree are stored as
+// DisableSeedCredentials, the finance seed's staff password leg (the deploy
+// spec FINANCE-BOX-SPEC-r1, section 3). Passwords in this tree are stored as
 // bcrypt hashes: staff in users.password_hash, portal in
 // portal_users.password_hash. A fresh finance world has no real user, so the
-// clear is deliberately blanket: every staff hash NULLed, every portal hash
-// on the no-password marker, so the seed's logins AND the migrations'
-// demonstration logins end usable by no password. This file owns the
-// statements; cmd/core calls the seam, never SQL of its own.
+// clear is deliberately blanket: every staff hash NULLed, so the seed's
+// logins AND the migrations' demonstration logins end usable by no
+// password. This file owns the staff statement; cmd/core calls the seam
+// beside the portal module's own, never SQL of its own.
 
 import (
 	"context"
@@ -50,27 +50,22 @@ func TestDisableSeedCredentials_RefusesNilDatabase(t *testing.T) {
 	}
 }
 
-func TestDisableSeedCredentials_ClearsEveryCredentialOnBothTables(t *testing.T) {
-	fake := &seedCredFake{tags: []pgconn.CommandTag{
-		pgconn.NewCommandTag("UPDATE 6"),
-		pgconn.NewCommandTag("UPDATE 1"),
-	}}
-	report, err := DisableSeedCredentials(context.Background(), fake)
+func TestDisableSeedCredentials_ClearsEveryStaffCredential(t *testing.T) {
+	fake := &seedCredFake{tags: []pgconn.CommandTag{pgconn.NewCommandTag("UPDATE 6")}}
+	cleared, err := DisableSeedCredentials(context.Background(), fake)
 	if err != nil {
 		t.Fatalf("DisableSeedCredentials: %v", err)
 	}
-	if len(fake.sqls) != 2 {
-		t.Fatalf("both credential tables must be cleared, got %d statements", len(fake.sqls))
+	if cleared != 6 {
+		t.Fatalf("the seam must report how many rows it cleared, got %d", cleared)
 	}
-	if report.StaffCleared != 6 || report.PortalCleared != 1 {
-		t.Fatalf("the report must carry both counts, got %+v", report)
+	if len(fake.sqls) != 1 {
+		t.Fatalf("the staff table is the one credential table this module owns, got %d statements", len(fake.sqls))
 	}
-	for i, table := range []string{"users", "portal_users"} {
-		if !strings.Contains(fake.sqls[i], "UPDATE "+table) || !strings.Contains(fake.sqls[i], "password_hash") {
-			t.Fatalf("statement %d must rewrite the password hash on %s, got: %s", i, table, fake.sqls[i])
-		}
+	if !strings.Contains(fake.sqls[0], "UPDATE users") || !strings.Contains(fake.sqls[0], "password_hash") {
+		t.Fatalf("the statement must rewrite the password hash on users, got: %s", fake.sqls[0])
 	}
-	// The statements are blanket: no id list, no email, no other key names
+	// The statement is blanket: no id list, no email, no other key names
 	// rows. A demonstration login the migrations planted must be cleared by
 	// the same statement that clears the seed's own logins, so a planted
 	// credential can never survive for want of a list entry.
@@ -83,10 +78,20 @@ func TestDisableSeedCredentials_ClearsEveryCredentialOnBothTables(t *testing.T) 
 	if !strings.Contains(fake.sqls[0], "password_hash IS NOT NULL") {
 		t.Fatalf("the staff statement must touch only rows that hold a hash (idempotency), got: %s", fake.sqls[0])
 	}
-	if len(fake.args[1]) != 1 || fake.args[1][0] != portalNoPassword {
-		t.Fatalf("the portal statement must carry only the %q marker, got: %v", portalNoPassword, fake.args[1])
+}
+
+// TestDisableSeedCredentials_TouchesNoOtherModuleTable is the census rule
+// proved where the statement lives: this module owns the users table and
+// writes no other module's table. The portal half of the seed's password
+// leg lives in the portal module, which owns portal_users.
+func TestDisableSeedCredentials_TouchesNoOtherModuleTable(t *testing.T) {
+	fake := &seedCredFake{}
+	if _, err := DisableSeedCredentials(context.Background(), fake); err != nil {
+		t.Fatalf("DisableSeedCredentials: %v", err)
 	}
-	if !strings.Contains(fake.sqls[1], "password_hash <> $1") {
-		t.Fatalf("the portal statement must touch only rows off the marker (idempotency), got: %s", fake.sqls[1])
+	for _, sql := range fake.sqls {
+		if strings.Contains(sql, "portal_users") {
+			t.Fatalf("the identity module must not write the portal module's table, got: %s", sql)
+		}
 	}
 }
