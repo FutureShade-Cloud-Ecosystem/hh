@@ -727,6 +727,11 @@ type paymentPaidOutPayload struct {
 	CreditRole  string `json:"credit_role"`
 	Method      string `json:"method"`
 	BranchID    string `json:"branch_id"`
+	// OccurredAt is the pay out's own instant, carried by the payments module (one clock rules the
+	// transaction, FW1-13b): the payout row, the drawer's movement and this journal all carry it, so
+	// the journal posts in the month the money left. Zero means the emitter carried none, and the
+	// journal falls back to the clock.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // paidOutCreditRoles is the closed set of roles a pay out may credit against 2310: the drawer (1020), the bank (1000),
@@ -764,13 +769,19 @@ func (s *Service) buildPaymentPaidOut(ctx context.Context, payload []byte) (jour
 	if err != nil {
 		return journalDraft{}, false, err
 	}
+	occurredAt := p.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = s.clock()
+	}
 	return journalDraft{
 		Source:         SourcePayment,
 		SourceRefID:    p.PaymentID,
 		IdempotencyKey: "payment.paid_out:" + p.PayoutID,
 		Memo:           "Held payment paid out " + p.Kind,
 		BranchID:       p.BranchID,
-		OccurredAt:     s.clock(),
+		// FW1-13b: the pay out's own instant, the same one the payout row and the drawer's movement
+		// carry, so the journal posts in the month the money left.
+		OccurredAt: occurredAt,
 		Lines: []draftLine{
 			dr(refundCode, p.AmountCents, "held money paid out ("+p.Kind+")"),
 			cr(creditCode, p.AmountCents, "money left ("+p.Kind+")"),
