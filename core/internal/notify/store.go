@@ -154,15 +154,23 @@ SELECT event_id::text, topic,
 	return out, rows.Err()
 }
 
+// WaitingBannerThreshold is how long a PENDING outbox row with zero failed
+// attempts may wait for the worker's next drain before the Money Desk banner
+// counts it as stuck: a fresh event on a healthy system raises no alert.
+const WaitingBannerThreshold = 5 * time.Minute
+
 // WaitingOrDeadCounts returns how many rows for the named topics are waiting
-// and how many are dead lettered. A nil pool answers zeroes.
+// (failed at least once, or older than WaitingBannerThreshold) and how many are
+// dead lettered. A nil pool answers zeroes.
 func (s *PgOutboxStore) WaitingOrDeadCounts(ctx context.Context, topics []string) (waiting, dead int, err error) {
 	if s.pool == nil || len(topics) == 0 {
 		return 0, 0, nil
 	}
+	cutoff := time.Now().Add(-WaitingBannerThreshold)
 	if err := s.pool.QueryRow(ctx, `
-SELECT COUNT(*) FILTER (WHERE status = 'PENDING'), COUNT(*) FILTER (WHERE status = 'DEAD')
-  FROM events_outbox WHERE topic = ANY($1::text[])`, topics).Scan(&waiting, &dead); err != nil {
+SELECT COUNT(*) FILTER (WHERE status = 'PENDING' AND (attempts > 0 OR occurred_at <= $2)),
+       COUNT(*) FILTER (WHERE status = 'DEAD')
+  FROM events_outbox WHERE topic = ANY($1::text[])`, topics, cutoff).Scan(&waiting, &dead); err != nil {
 		return 0, 0, fmt.Errorf("notify: queue counts: %w", err)
 	}
 	return waiting, dead, nil
