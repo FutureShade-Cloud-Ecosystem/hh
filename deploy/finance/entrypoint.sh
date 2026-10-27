@@ -52,6 +52,7 @@ for name in \
 	CORE_APPWRITE_ENDPOINT CORE_APPWRITE_PROJECT CORE_APPWRITE_API_KEY \
 	CORE_SIGNIN_EMAIL_ADDRESSES \
 	PAYMENT_VAULT_KEY PORTAL_BASE_URL ERP_BASE_URL PORT \
+	HH_ACCEPTANCE_SIGN_KEY_ID HH_ACCEPTANCE_SIGN_KEY \
 	HH_WEB_MODE HH_WEB_ORG HH_WEB_CONSOLE_ENDPOINT HH_WEB_CONSOLE_PROJECT_ID \
 	HH_WEB_DEALER_NAME; do
 	if [ -z "$(printenv "$name")" ]; then
@@ -201,6 +202,7 @@ fi
 # --------------------------------------------------------------------------
 EXIT_FILE="/dev/shm/finance-box-exits.$$"
 : > "$EXIT_FILE"
+CADDY_FILE=""
 trap 'rm -f "$EXIT_FILE" "$CADDY_FILE" 2>/dev/null || true' EXIT
 
 run_child() {

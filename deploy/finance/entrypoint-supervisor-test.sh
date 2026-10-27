@@ -84,6 +84,8 @@ run_supervisor() {
 		PORTAL_BASE_URL=https://finance-box.example.test \
 		ERP_BASE_URL=https://finance-box.example.test \
 		PORT=57726 \
+		HH_ACCEPTANCE_SIGN_KEY_ID=finbox-test-accept-key \
+		HH_ACCEPTANCE_SIGN_KEY=0000000000000000000000000000000000000000000000000000000000000000 \
 		HH_WEB_MODE=console \
 		HH_WEB_ORG=finbox \
 		HH_WEB_CONSOLE_ENDPOINT=https://console.example.test \

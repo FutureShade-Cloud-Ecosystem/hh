@@ -79,6 +79,9 @@ the variable):
   membership
 - `CORE_SIGNIN_EMAIL_ADDRESSES` - the sign in allow list
 - `PAYMENT_VAULT_KEY` - 64 hex characters (32 bytes)
+- `HH_ACCEPTANCE_SIGN_KEY_ID`, `HH_ACCEPTANCE_SIGN_KEY` - the customer
+  quote acceptance signing pair (key id and hex key; the spawn refuses
+  without both)
 - `PORTAL_BASE_URL`, `ERP_BASE_URL` - https origins, required outside dev
 - `PORT` - the public port Caddy listens on
 - `HH_WEB_MODE` - `console`
