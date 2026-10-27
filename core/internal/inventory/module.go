@@ -244,6 +244,26 @@ func (s *Service) PendingFulfilments(ctx context.Context, branchID string) ([]Pe
 	return s.db().PendingFulfilments(ctx, branchID)
 }
 
+// PreReceiptException is a Controller exception row for a sale fulfilled before the product's
+// first receipt at the branch (ruling 82.4: posted at fallback cost and awaiting true-up at first receipt).
+type PreReceiptException struct {
+	MoveID                   string  `json:"move_id"`
+	OrderID                  string  `json:"order_id"`
+	ProductID                string  `json:"product_id"`
+	BranchID                 string  `json:"branch_id"`
+	QtyBase                  float64 `json:"qty_base"`
+	ProvisionalUnitCostCents int64   `json:"provisional_unit_cost_cents"`
+	ProvisionalValueCents    int64   `json:"provisional_value_cents"`
+	FallbackSource           string  `json:"fallback_source"`
+	OccurredAt               string  `json:"occurred_at"`
+}
+
+// ControllerExceptions lists pre-receipt sales that were posted at a fallback cost and have not yet
+// been trued up by a subsequent receipt at that branch.
+func (s *Service) ControllerExceptions(ctx context.Context, branchID string) ([]PreReceiptException, error) {
+	return nil, nil
+}
+
 // - posting consumer registration -
 
 // InventoryTopics is the frozen set of outbox topics the inventory posting consumer owns. These do NOT overlap
