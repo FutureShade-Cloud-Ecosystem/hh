@@ -12,6 +12,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
@@ -22,9 +23,34 @@ func (s *Service) Accounts(ctx context.Context) ([]BankAccount, error) {
 	return s.repo.ListAccounts(ctx)
 }
 
-// RecordCutover records the reconciliation starting point for a bank account (FW1-04 round 2).
+// RecordCutover records the reconciliation starting point for a bank account (FW1-04 round 2):
+// the cut-over date and opening statement balance accepted as reconciled to the book, plus an optional
+// confirmed list of ledger entry journal IDs on or before that date that remain outstanding at cut-over.
+// It is Financial Controller only, refused once a later month has signed off, and audited (BANKREC_CUTOVER).
 func (s *Service) RecordCutover(ctx context.Context, in CutoverInput) (BankAccount, error) {
-	return BankAccount{}, errNotImplemented
+	caller, ok := identity.StaffContextFromContext(ctx)
+	if !ok || caller.UserID == "" || (caller.RoleCode != "FINANCIAL_CONTROLLER" && caller.RoleCode != "financial_controller") {
+		return BankAccount{}, forbidden("bankrec: only the Financial Controller may record a bank reconciliation cut-over")
+	}
+	if strings.TrimSpace(in.BankAccountID) == "" {
+		return BankAccount{}, badRequest("bankrec: bank_account_id is required")
+	}
+	if _, err := time.Parse("2006-01-02", in.CutoverDate); err != nil {
+		return BankAccount{}, badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", in.CutoverDate)
+	}
+	for _, jid := range in.OutstandingJournalIDs {
+		if _, err := uuid.Parse(jid); err != nil {
+			return BankAccount{}, badRequest("bankrec: invalid outstanding journal id %q", jid)
+		}
+	}
+	acct, err := s.repo.RecordAccountCutover(ctx, in, caller.UserID)
+	if err != nil {
+		return BankAccount{}, err
+	}
+	s.recordAudit(ctx, "BANKREC_CUTOVER", "bankrec.account", acct.ID, caller.UserID,
+		"record bank reconciliation cut-over",
+		fmt.Sprintf("date=%s balance=%d outstanding=%d", in.CutoverDate, in.OpeningStatementBalanceCents, len(in.OutstandingJournalIDs)))
+	return acct, nil
 }
 
 // Import parses a statement export under a profile, dedupes it into bank_statement_lines, and records an
@@ -475,12 +501,12 @@ type bankBookEntryReader interface {
 	BankAccountEntriesAsOf(ctx context.Context, glAccountCode string, asOf time.Time) ([]gl.BankBookEntry, error)
 }
 
-func monthEndCut(year, month int) time.Time {
-	loc, err := time.LoadLocation("America/Toronto")
+func (s *Service) monthEndCut(ctx context.Context, year, month int) time.Time {
+	zone, err := houseday.Resolve(ctx, s.zone)
 	if err != nil {
-		loc = time.UTC
+		zone = houseday.DefaultZone()
 	}
-	return time.Date(year, time.Month(month)+1, 1, 0, 0, 0, 0, loc).Add(-time.Nanosecond)
+	return time.Date(year, time.Month(month)+1, 1, 0, 0, 0, 0, zone.Location()).Add(-time.Nanosecond)
 }
 
 // computeReconFigures is the ONE shared calculation for statement balance, GL closing balance at month end,
@@ -527,13 +553,27 @@ func (s *Service) computeReconFigures(
 	var ditCents, ocCents int64
 	if usesClosingBalance && s.journals != nil {
 		if br, ok := s.journals.(bankBookEntryReader); ok {
-			entries, err := br.BankAccountEntriesAsOf(ctx, acct.GLAccountCode, monthEndCut(year, month))
+			entries, err := br.BankAccountEntriesAsOf(ctx, acct.GLAccountCode, s.monthEndCut(ctx, year, month))
 			if err != nil {
 				return reconFigures{}, err
+			}
+			zone, zerr := houseday.Resolve(ctx, s.zone)
+			if zerr != nil {
+				zone = houseday.DefaultZone()
+			}
+			confirmedCutover := map[string]bool{}
+			for _, jid := range acct.CutoverOutstandingJournalIDs {
+				confirmedCutover[jid] = true
 			}
 			for _, e := range entries {
 				if stats.ClearedJournalIDs[e.JournalID] || (e.SourceRefID != "" && stats.ClearedJournalIDs[e.SourceRefID]) {
 					continue
+				}
+				if acct.CutoverDate != nil && *acct.CutoverDate != "" {
+					entryDay := e.PostedAt.In(zone.Location()).Format("2006-01-02")
+					if entryDay <= *acct.CutoverDate && !confirmedCutover[e.JournalID] && !(e.SourceRefID != "" && confirmedCutover[e.SourceRefID]) {
+						continue
+					}
 				}
 				if e.NetCents > 0 {
 					dit = append(dit, OutstandingItem{
@@ -857,8 +897,13 @@ func (s *Service) CompleteReconciliation(ctx context.Context, id, completedBy st
 	zone, _ := houseday.Resolve(ctx, s.zone)
 	today := zone.Today(s.clock)
 	monthEndDay := fmt.Sprintf("%04d-%02d-%02d", rec.Year, rec.Month, daysInMonth(rec.Year, rec.Month))
-	if today < monthEndDay {
-		return Reconciliation{}, unprocessable("bankrec: cannot complete, %d-%02d has not reached month end yet (month end is %s)", rec.Year, rec.Month, monthEndDay)
+	nextY, nextM := rec.Year, rec.Month+1
+	if rec.Month == 12 {
+		nextY, nextM = rec.Year+1, 1
+	}
+	firstSignOffDay := fmt.Sprintf("%04d-%02d-01", nextY, nextM)
+	if today <= monthEndDay {
+		return Reconciliation{}, unprocessable("bankrec: cannot complete, %d-%02d has not reached month end yet (month end is %s; first day to sign off is %s)", rec.Year, rec.Month, monthEndDay, firstSignOffDay)
 	}
 	unmatched, err := s.repo.CountUnmatchedInMonth(ctx, rec.BankAccountID, rec.Year, rec.Month)
 	if err != nil {
