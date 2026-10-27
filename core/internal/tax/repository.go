@@ -409,51 +409,6 @@ func (r *Repository) InsertSnapshot(ctx context.Context, s Snapshot) (string, er
 	return id, nil
 }
 
-// DocumentSalesHSTCents sums the tax on the period's sales DOCUMENTS: the invoices' tax_cents with the
-// credit memos' subtracted (a return or a finance credit gives its tax back), on the documents' own
-// issue dates (the dealer's calendar, not the server's reading of an instant). This is the collected
-// side of the HST → GL tie-out (FW1-11); the tax-decision snapshots are relief-audit rows, most sales
-// never write one, and they never stand in for collected tax again. month 0 is the whole year;
-// branchID "" is consolidated.
-func (r *Repository) DocumentSalesHSTCents(ctx context.Context, year, month int, branchID string) (int64, error) {
-	if r.pool == nil {
-		return 0, errNoDB
-	}
-	var total int64
-	err := r.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN doc_type = 'CREDIT_MEMO' THEN -tax_cents ELSE tax_cents END), 0)
-		FROM invoices
-		WHERE status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
-		  AND EXTRACT(YEAR FROM issue_date) = $1
-		  AND ($2 = 0 OR EXTRACT(MONTH FROM issue_date) = $2)
-		  AND ($3 = '' OR branch_id = $3::uuid)`, year, month, branchID).Scan(&total)
-	if err != nil {
-		return 0, fmt.Errorf("tax: document sales hst: %w", err)
-	}
-	return total, nil
-}
-
-// VendorBillITCCents sums the input tax credits on the period's POSTED vendor bills, by the bills' own
-// bill_date: the 2200 debits side of the tie-out, shown apart from the collected side and netted
-// against it (FW1-11). month 0 is the whole year; branchID "" is consolidated.
-func (r *Repository) VendorBillITCCents(ctx context.Context, year, month int, branchID string) (int64, error) {
-	if r.pool == nil {
-		return 0, errNoDB
-	}
-	var total int64
-	err := r.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(tax_cents), 0)
-		FROM purchasing_bills
-		WHERE status = 'POSTED'
-		  AND EXTRACT(YEAR FROM bill_date) = $1
-		  AND ($2 = 0 OR EXTRACT(MONTH FROM bill_date) = $2)
-		  AND ($3 = '' OR branch_id = $3::uuid)`, year, month, branchID).Scan(&total)
-	if err != nil {
-		return 0, fmt.Errorf("tax: vendor bill itc: %w", err)
-	}
-	return total, nil
-}
-
 // standardRateOrOntario answers the standard rate a snapshot row is written with: a zero (a caller that
 // carries none) is the Ontario 13 percent, the column's default.
 func standardRateOrOntario(bps int) int {
