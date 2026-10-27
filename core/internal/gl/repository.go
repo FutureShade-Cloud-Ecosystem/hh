@@ -459,13 +459,19 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 		lineAcctIDs[i] = id
 	}
 
-	return r.insertJournalRowsTx(ctx, tx, d, periodYear, periodID, lineAcctIDs, onDup)
+	return r.insertJournalRowsTx(ctx, tx, d, reversedEntryNo, periodYear, periodID, lineAcctIDs, onDup)
 }
 
 // insertJournalRowsTx is the journal row write given a RESOLVED period: the entry number minted for the
 // period's year, the header, and the lines. insertJournalIn resolves the period by date; the year end's
 // dedicated insert resolves its own December explicitly (round 4) and calls this with it.
-func (r *Repository) insertJournalRowsTx(ctx context.Context, tx pgx.Tx, d journalDraft, periodYear int, periodID string, lineAcctIDs []string, onDup func() (string, bool)) (string, bool, error) {
+// reversedEntryNo is the entry number of the journal this draft reverses, carried in from the caller that
+// locked it (FW1-09a, PR 621): the header insert can still lose 0440's unique index on reverses_journal_id
+// even after the earlier "already reversed" check passed, and the refusal must then name the SAME journal
+// that check would have named. It is never read back here: a failed insert has aborted the transaction, so
+// a query would fail. Zero means "no journal was reversed here" and belongs to a caller that cannot reach
+// the reversal refusal (the year end's closing journal never reverses another).
+func (r *Repository) insertJournalRowsTx(ctx context.Context, tx pgx.Tx, d journalDraft, reversedEntryNo int, periodYear int, periodID string, lineAcctIDs []string, onDup func() (string, bool)) (string, bool, error) {
 	var entryNo int
 	// SWARM-W4-C DIB-418: mint through next_entry_no(fiscal_year) (migration 0119) instead of
 	// COALESCE(MAX(entry_no),0)+1. The old expression was a read-modify-write under UNIQUE(fiscal_year,
@@ -498,6 +504,9 @@ func (r *Repository) insertJournalRowsTx(ctx context.Context, tx pgx.Tx, d journ
 			}
 		}
 		if isUniqueViolation(err) && d.ReversesJournalID != "" {
+			// PR 621: 0440's unique index refused a second reversal row. The number is the one the
+			// caller's own earlier check would have named, carried in with the draft; it is never read
+			// back here, the failed insert having aborted the transaction.
 			return "", false, alreadyReversedErr(reversedEntryNo)
 		}
 		return "", false, fmt.Errorf("gl: insert journal header: %w", err)
@@ -1148,7 +1157,10 @@ func (r *Repository) InsertClosingJournalTx(ctx context.Context, tx pgx.Tx, d jo
 		}
 		lineAcctIDs = append(lineAcctIDs, acctID)
 	}
-	id, _, err := r.insertJournalRowsTx(ctx, tx, d, periodYear, periodID, lineAcctIDs, func() (string, bool) { return "", false })
+	// The year end's closing journal never reverses another (it is the closing entry, source CLOSING),
+	// so it has no reversed entry number to carry and passes 0: the reversal refusal inside the shared
+	// row write is unreachable from here.
+	id, _, err := r.insertJournalRowsTx(ctx, tx, d, 0, periodYear, periodID, lineAcctIDs, func() (string, bool) { return "", false })
 	return id, err
 }
 
