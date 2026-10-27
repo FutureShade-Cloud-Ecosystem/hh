@@ -11,6 +11,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 )
 
 type glExternalPoster struct {
@@ -197,5 +198,143 @@ func TestIntegration_FW1_06a_LodgedChequeBounceCreditsBank(t *testing.T) {
 				t.Fatalf("lodged cheque bounce credited wrong account: GL 1020 delta = %d (want 0), GL 1000 delta = %d (want 0)", delta1020, delta1000)
 			}
 		})
+	}
+}
+
+// TestIntegration_FW1_06a_BounceOfFeePayingPaymentReopensNSFFee proves Ruling 128 (P1-1 bounce leg):
+// when a replacement cheque pays both a reopened invoice ($500.00) and an open NSF fee ($45.00)
+// and that replacement cheque subsequently bounces via MarkNSF, MarkNSF restores both the invoice
+// and the $45.00 NSF fee in customer_transactions and ReversedCents so GL 1100 and the AR subledger tie.
+func TestIntegration_FW1_06a_BounceOfFeePayingPaymentReopensNSFFee(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	branchID, userID := seedBranchUser(t, pool)
+	cctx := globalCtx(userID)
+
+	tillRepo := NewRepository(pool)
+	tillSvc := realSvc(pool)
+	payRepo := payments.NewRepository(pool)
+	glSvc := gl.NewService(gl.NewRepository(pool)).WithPaymentReader(tillRepo)
+
+	outbox := &singleEventOutbox{}
+	disp := notify.NewDispatcher(outbox, nil)
+	glSvc.RegisterPostingHandlers(disp)
+	deliver := func(t *testing.T, topic string, payload []byte) {
+		t.Helper()
+		outbox.ev = notify.Event{Topic: topic, Payload: payload}
+		disp.DrainOnce(ctx)
+		if outbox.lastSett.LastError != "" {
+			t.Fatalf("deliver %s: %s", topic, outbox.lastSett.LastError)
+		}
+	}
+
+	suffix := fmt.Sprintf("fw106a-bnc-fee-%d", time.Now().UnixNano()%1_000_000_000)
+	var custID, invID, bouncedPayID, nsfID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
+		VALUES ('FW106A-'||$1, 'FW1-06a Bounce Fee Co', 'CONTRACTOR', 30, 5000000) RETURNING id::text`,
+		suffix).Scan(&custID); err != nil {
+		t.Fatalf("plant customer: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE source_ref_id IN (SELECT id::text FROM payments WHERE customer_id = $1::uuid))`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM gl_journals WHERE source_ref_id IN (SELECT id::text FROM payments WHERE customer_id = $1::uuid)`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1 OR payload->>'payment_id' IN (SELECT id::text FROM payments WHERE customer_id = $1::uuid)`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM payment_nsf WHERE customer_id = $1::uuid OR payment_id IN (SELECT id FROM payments WHERE customer_id = $1::uuid)`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+	})
+
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, doc_type)
+		VALUES ('INV-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 10, CURRENT_DATE + 20, 50000, 0, 50000, 50000, 'INVOICE')
+		RETURNING id::text`, suffix, custID, branchID).Scan(&invID); err != nil {
+		t.Fatalf("plant invoice: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO payments (payment_no, customer_id, branch_id, method, amount_cents, status, idempotency_key)
+		VALUES ('PAY-BNC1-'||$1, $2::uuid, $3::uuid, 'CHEQUE', 50000, 'BOUNCED', 'bnc1-key-'||$1)
+		RETURNING id::text`, suffix, custID, branchID).Scan(&bouncedPayID); err != nil {
+		t.Fatalf("plant bounced payment: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO payment_nsf (payment_id, customer_id, fee_cents, reason, recorded_by)
+		VALUES ($1::uuid, $2::uuid, 4500, 'first bounce', $3::uuid)
+		RETURNING id::text`, bouncedPayID, custID, userID).Scan(&nsfID); err != nil {
+		t.Fatalf("plant payment_nsf: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO customer_transactions
+		   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+		 VALUES
+		   ($1::uuid, 'INVOICE', 50000, 50000, 'invoice', $2::uuid, $3::uuid, 'reopened invoice'),
+		   ($1::uuid, 'ADJUSTMENT', 4500, 54500, 'payment_nsf', $4::uuid, $3::uuid, 'NSF fee')`,
+		custID, invID, branchID, nsfID); err != nil {
+		t.Fatalf("plant customer_transactions: %v", err)
+	}
+
+	applied, err := payRepo.ApplyReceived(ctx, payments.ApplyRequest{
+		CustomerID:     custID,
+		InvoiceIDs:     []string{invID, nsfID},
+		AmountCents:    54500,
+		Method:         "CHEQUE",
+		Reference:      "REPL-CHQ-BNC",
+		IdempotencyKey: suffix + "-repl-chq",
+	})
+	if err != nil {
+		t.Fatalf("ApplyReceived: %v", err)
+	}
+
+	loc, _ := time.LoadLocation("America/Toronto")
+	now := time.Now().In(loc)
+	year, month := now.Year(), int(now.Month())
+
+	glBefore, err := glSvc.GLBalanceCents(cctx, "1100", year, month, "")
+	if err != nil {
+		t.Fatalf("GLBalanceCents 1100 before bounce: %v", err)
+	}
+	var subBefore int64
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions WHERE customer_id = $1::uuid`, custID).Scan(&subBefore); err != nil {
+		t.Fatalf("subledger before bounce: %v", err)
+	}
+
+	nsfRes, err := tillSvc.MarkNSF(cctx, NSFInput{
+		PaymentID: applied.PaymentID,
+		Reason:    "replacement cheque bounced NSF",
+	})
+	if err != nil {
+		t.Fatalf("MarkNSF: %v", err)
+	}
+	var bouncedPayload []byte
+	if err := pool.QueryRow(ctx,
+		`SELECT payload FROM events_outbox WHERE topic = 'payment.bounced' AND payload->>'payment_id' = $1 ORDER BY created_at DESC LIMIT 1`,
+		applied.PaymentID).Scan(&bouncedPayload); err != nil {
+		t.Fatalf("read payment.bounced outbox event: %v", err)
+	}
+	deliver(t, "payment.bounced", bouncedPayload)
+
+	glAfter, err := glSvc.GLBalanceCents(cctx, "1100", year, month, "")
+	if err != nil {
+		t.Fatalf("GLBalanceCents 1100 after bounce: %v", err)
+	}
+	var subAfter, feeNetAfter int64
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions WHERE customer_id = $1::uuid`, custID).Scan(&subAfter); err != nil {
+		t.Fatalf("subledger after bounce: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions WHERE customer_id = $1::uuid AND source_type = 'payment_nsf' AND source_ref_id = $2::uuid`,
+		custID, nsfID).Scan(&feeNetAfter); err != nil {
+		t.Fatalf("nsf group sum after bounce: %v", err)
+	}
+	glDelta := glAfter - glBefore
+	subDelta := subAfter - subBefore
+	wantDelta := int64(54500) + nsfRes.FeeCents
+	if nsfRes.ReversedCents != 54500 || glDelta != wantDelta || subDelta != wantDelta || feeNetAfter != 4500 {
+		t.Fatalf("bounce of fee-paying payment drifted AR: ReversedCents = %d (want 54500), GL 1100 delta = %d, subledger delta = %d (want %d), payment_nsf group sum = %d (want 4500)",
+			nsfRes.ReversedCents, glDelta, subDelta, wantDelta, feeNetAfter)
 	}
 }
