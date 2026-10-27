@@ -10,7 +10,7 @@
 // and trial balance screens.
 import { html, nothing, type TemplateResult } from "lit";
 import type { Branch, GlJournal, GlTrialBalanceResult, IdentityApproval } from "@hardscapehouse/api-client";
-import { approvalKind, approvalTitle, canDecide, detailWords, floorFigures, floorWords, journalTone, journalWord, monthWord } from "./gl-logic.js";
+import { approvalKind, approvalTitle, canDecide, detailWords, entryLabel, floorFigures, floorWords, journalTone, journalWord, monthWord } from "./gl-logic.js";
 import { formatMoney } from "./gl-money.js";
 import { chartView, checksView, composerView, confirmFor, linesTable, periodsView, policyView, recurringView, type BooksModel } from "./gl-books.js";
 
@@ -51,10 +51,6 @@ function filterMatches(filter: JournalFilter, journal: GlJournal): boolean {
   if (filter === "posted") return journal.derived_status === "POSTED";
   if (filter === "draft") return journal.derived_status === "DRAFT";
   return journal.derived_status === "VOID";
-}
-
-function entryLabel(journal: GlJournal): string {
-  return `JE-${String(journal.entry_no).padStart(4, "0")}`;
 }
 
 function branchName(branches: readonly Branch[], id: string | undefined): string {

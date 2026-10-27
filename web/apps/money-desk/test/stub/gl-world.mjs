@@ -28,6 +28,8 @@ export const IDS = {
   payRec: "de110000-0000-4000-9000-000000000007",
   // Period ids carry their month in the last two digits; the stub's clock stands in the ninth.
   period: (month) => `9e000000-0000-4000-9000-0000000000${String(month).padStart(2, "0")}`,
+  // A period of a year the dealer has not had yet: the year and the month in its digits.
+  periodFor: (year, month) => `9e${String(year).padStart(6, "0")}-0000-4000-9000-${String(month).padStart(12, "0")}`,
   recurringRent: "6c000000-0000-4000-9000-000000000001",
   recurringInsurance: "6c000000-0000-4000-9000-000000000002",
 };
@@ -76,7 +78,7 @@ function journal(id, entryNo, source, memo, status, branch, createdBy, hoursAgo,
     })),
     ...extra,
   };
-  if (status === "POSTED") j.posted_at = stamp(hoursAgo);
+  if (status === "POSTED" && j.posted_at === undefined) j.posted_at = stamp(hoursAgo);
   return j;
 }
 
@@ -199,10 +201,13 @@ function fresh() {
         ["1000", 500000, 0],
         ["1100", 0, 500000],
       ]),
-      journal("7a1e0000-0000-4000-9000-000000000002", 2, "INVOICE", "Invoice posted", "POSTED", IDS.pointLoma, null, 400, [
+      // A July invoice that landed in August: the date it carries is in a closed month and the month it
+      // landed in is open, which is what the core's late posted marker reads. Its id is its own, so the
+      // way to it from the late posted list opens this journal and not another one.
+      journal("7a1e0000-0000-4000-9000-000000000012", 2, "INVOICE", "July invoice booked in August (demo)", "POSTED", IDS.pointLoma, null, 400, [
         ["1100", 1200000, 0],
         ["4000", 0, 1200000],
-      ]),
+      ], { posted_at: "2026-07-18T00:00:00.000Z" }),
       journal("7a1e0000-0000-4000-9000-000000000001", 1, "MANUAL", "Opening balances", "POSTED", IDS.pointLoma, IDS.manager, 500, [
         ["1000", 2000000, 0],
         ["3000", 0, 2000000],
@@ -219,6 +224,21 @@ export function createGlWorld() {
   };
 
   const monthOf = (j) => world.periods.find((p) => p.id === j.period_id)?.month ?? 0;
+
+  /**
+   * The core derives the late posted marker on every read (FW1-01): a POSTED journal whose document date
+   * does not fall in its own period's month. The stub derives it the same way, so the Controller's late
+   * posted list reads the same journals on the stub as on the server.
+   */
+  const latePosted = (j) => {
+    if (j.status !== "POSTED" || typeof j.posted_at !== "string") return false;
+    const period = world.periods.find((p) => p.id === j.period_id);
+    if (period === undefined) return false;
+    return Number(j.posted_at.slice(0, 4)) !== period.year || Number(j.posted_at.slice(5, 7)) !== period.month;
+  };
+
+  /** A journal as the core serves it: the marker derived on read. */
+  const read = (j) => ({ ...j, late_posted: latePosted(j) });
 
   const trialBalance = (branch, year = FY, month = 0) => {
     const byCode = new Map();
@@ -429,7 +449,7 @@ export function createGlWorld() {
           status: "PENDING",
         });
       }
-      return { status: 201, body: made.journal };
+      return { status: 201, body: read(made.journal) };
     }
     const act = path.match(/^\/api\/v1\/gl\/journals\/([^/]+)\/(approve|void|reverse)$/);
     if (m === "POST" && act) {
@@ -442,7 +462,7 @@ export function createGlWorld() {
         if (j.status !== "DRAFT") return say(409, "gl: only a DRAFT journal can be voided (POSTED journals must be reversed)");
         j.status = "VOID";
         j.derived_status = "VOID";
-        return { status: 200, body: j };
+        return { status: 200, body: read(j) };
       }
       if (act[2] === "reverse") {
         if (j.status !== "POSTED") return say(409, `gl: only a POSTED journal can be reversed (status=${j.status})`);
@@ -455,7 +475,7 @@ export function createGlWorld() {
           created_by: caller.id,
           lines: j.lines.map((l) => ({ account_code: l.account_code, debit_cents: l.credit_cents, credit_cents: l.debit_cents, memo: "reversal" })),
         });
-        return made.journal === undefined ? made : { status: 201, body: made.journal };
+        return made.journal === undefined ? made : { status: 201, body: read(made.journal) };
       }
       // approve, the checker half: the core's order is state, four eyes, then what the approvals queue holds.
       if (j.status !== "DRAFT") return say(409, `gl: journal is ${j.status}, not DRAFT, cannot approve`);
@@ -467,7 +487,7 @@ export function createGlWorld() {
           j.approved_by = caller.id;
           j.posted_at = new Date(NOW).toISOString();
           refreshDerived(j);
-          return { status: 200, body: j };
+          return { status: 200, body: read(j) };
         }
         if (j.source === "MANUAL" && j.source_ref_id) {
           const template = world.recurring.find((t) => t.id === j.source_ref_id);
@@ -482,7 +502,7 @@ export function createGlWorld() {
       j.approved_by = caller.id;
       j.posted_at = new Date(NOW).toISOString();
       refreshDerived(j);
-      return { status: 200, body: j };
+      return { status: 200, body: read(j) };
     }
 
     // recurring templates
@@ -532,6 +552,22 @@ export function createGlWorld() {
       period.status = "OPEN";
       delete period.closed_at;
       return { status: 200, body: period };
+    }
+    if (m === "POST" && path === "/api/v1/gl/periods/open-year") {
+      const refused = gate(caller, "admin");
+      if (refused !== null) return refused;
+      if (String(body.reason ?? "").trim() === "") return say(422, "gl: a reason is required");
+      // The roll forward the core does on its own: the year after the last one, with its twelve periods
+      // open for posting. Opening it again is the same year.
+      const latest = world.periods.reduce((top, p) => Math.max(top, p.year), 0);
+      if (latest === 0) return say(409, "gl: no fiscal period exists to roll forward from");
+      const year = latest + 1;
+      if (!world.periods.some((p) => p.year === year)) {
+        for (let month = 1; month <= 12; month += 1) {
+          world.periods.push({ id: IDS.periodFor(year, month), year, month, status: "OPEN" });
+        }
+      }
+      return { status: 200, body: { fiscal_year: year } };
     }
     if (m === "POST" && path === "/api/v1/gl/periods/close-year") {
       const refused = gate(caller, "admin");
@@ -795,15 +831,23 @@ export function createGlWorld() {
     }
     if (req.method === "GET" && path === "/api/v1/gl/journals") {
       const wanted = url.searchParams.get("status");
+      // The late posted filter, the way the core reads it: true is the Controller's list, false is the
+      // rest, and anything else is refused in the core's words.
+      const lateParam = url.searchParams.get("late_posted");
+      if (lateParam !== null && lateParam !== "" && lateParam !== "true" && lateParam !== "false") {
+        return say(400, "late_posted must be true or false");
+      }
+      const late = lateParam === null || lateParam === "" ? null : lateParam === "true";
       const rows = [...world.journals]
         .filter((j) => wanted === null || wanted === "" || j.derived_status === wanted)
+        .filter((j) => late === null || latePosted(j) === late)
         .sort((a, b) => b.entry_no - a.entry_no);
-      return { status: 200, body: { items: rows, next_cursor: null, limit: 100 } };
+      return { status: 200, body: { items: rows.map(read), next_cursor: null, limit: 100 } };
     }
     const one = path.match(/^\/api\/v1\/gl\/journals\/([^/]+)$/);
     if (req.method === "GET" && one) {
       const j = world.journals.find((x) => x.id === one[1]);
-      return j === undefined ? { status: 404, body: { error: "not found" } } : { status: 200, body: j };
+      return j === undefined ? { status: 404, body: { error: "not found" } } : { status: 200, body: read(j) };
     }
     if (req.method === "GET" && path === "/api/v1/gl/trial-balance") {
       const bad = badBranch(url);

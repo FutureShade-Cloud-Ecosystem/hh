@@ -4,14 +4,14 @@
 // (approvals under /api/v1/staff, the ledger under /api/v1/gl); nothing new
 // was asked of the core.
 //
-// Reads: the pending approvals, a journal, the journal register, the trial
-// balance (by branch, year and month), the branches (for the words on a row),
-// the chart, the recurring templates, the periods, the policy, the receivables
+// Reads: the pending approvals, a journal, the journal register, the late posted
+// journals, the trial balance (by branch, year and month), the branches (for the words
+// on a row), the chart, the recurring templates, the periods, the policy, the receivables
 // tie out and the legacy import check. Writes: decide an approval (which is also how
 // a parked journal is approved: the core posts the journal in the same
 // transaction that stamps the request), post a journal, approve, void or
 // reverse one, run a template, create or deactivate an account, close or
-// reopen a period, close the year, and take the GP parity export.
+// reopen a period, close the year, open the next fiscal year, and take the GP parity export.
 //
 // The approvals list, the journal register and the ledger lists are the
 // contract's pages (items, next_cursor); the branches are the contract's plain
@@ -35,6 +35,7 @@ import {
   type GlTieoutState,
   type GlTrialBalanceResult,
   type GlYearCloseResult,
+  type GlYearOpenResult,
   type IdentityApproval,
   type Result,
 } from "@hardscapehouse/api-client";
@@ -79,6 +80,14 @@ export class GlApi {
     const answer = await staffGl.glListJournals(this.#client, { limit: 100 });
     if (!answer.ok) return answer;
     if (!Array.isArray(answer.value.items)) return { ok: false, error: "The journal register was not readable." };
+    return { ok: true, value: answer.value.items };
+  }
+
+  /** The journals that carry a date from a closed month and landed in an open one: the Controller's late posted list. */
+  async latePostedJournals(): Promise<Result<GlJournal[]>> {
+    const answer = await staffGl.glListJournals(this.#client, { late_posted: true, limit: 100 });
+    if (!answer.ok) return answer;
+    if (!Array.isArray(answer.value.items)) return { ok: false, error: "The late posted journals were not readable." };
     return { ok: true, value: answer.value.items };
   }
 
@@ -159,6 +168,11 @@ export class GlApi {
 
   closeYear(year: number, reason: string): Promise<Result<GlYearCloseResult>> {
     return staffGl.glCloseYear(this.#client, { year, reason });
+  }
+
+  /** The Controller's early open of the next fiscal year: the roll forward the core does on its own, asked for by hand with a reason kept. */
+  openNextYear(reason: string): Promise<Result<GlYearOpenResult>> {
+    return staffGl.glOpenYear(this.#client, { reason });
   }
 
   policy(branchId = ""): Promise<Result<GlPolicy>> {

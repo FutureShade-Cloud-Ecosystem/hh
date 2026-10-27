@@ -22,7 +22,7 @@ import type { Result } from "@hardscapehouse/api-client";
 import type { GlApi } from "./gl-api.js";
 import type { BooksModel, Confirm, Review, Section } from "./gl-books.js";
 import { branchChoices } from "./gl-books.js";
-import { canDecide, checkDraft, periodName, refusalWords, type DraftLine } from "./gl-logic.js";
+import { canDecide, checkDraft, latePostedRow, periodName, refusalWords, type DraftLine, type LatePostedRow } from "./gl-logic.js";
 import { formatMoney, parseAmountToCents } from "./gl-money.js";
 import { renderGl, tabsFor, type GlModel, type GlTab, type JournalFilter } from "./gl-views.js";
 
@@ -79,6 +79,8 @@ export class GlDesk {
   #chart: Section<GlAccount[]> = idle([]);
   #recurring: Section<GlRecurringTemplate[]> = idle([]);
   #periods: Section<GlPeriod[]> = idle([]);
+  // The journals that carry a date from a closed month and landed in an open one: the Controller's list.
+  #latePosted: Section<LatePostedRow[]> = idle([]);
   #policy: Section<GlPolicy | null> = idle(null);
   #tie: Section<GlTieoutState[]> = idle([]);
   #bis: Section<GlBisTrackTieoutReport | null> = idle(null);
@@ -150,7 +152,14 @@ export class GlDesk {
       if (this.#composing && wanted(this.#chart)) void this.#readChart();
     }
     if (tab === "chart" && wanted(this.#chart)) void this.#readChart();
-    if ((tab === "trial" || tab === "periods") && wanted(this.#periods)) void this.#readPeriods();
+    if (tab === "trial" && wanted(this.#periods)) void this.#readPeriods();
+    if (tab === "periods") {
+      if (force) this.#latePosted = idle(this.#latePosted.value);
+      // The late posted list names the month each journal landed in, and the periods are what say which
+      // month that is, so the list is read after them.
+      if (wanted(this.#periods)) void this.#readPeriods();
+      else if (this.#periods.phase === "ready" && wanted(this.#latePosted)) void this.#readLatePosted();
+    }
     if (tab === "policy" && wanted(this.#policy)) void this.#readPolicy();
     if (tab === "checks" && wanted(this.#tie)) void this.#readTie();
   }
@@ -176,6 +185,19 @@ export class GlDesk {
     this.#host.repaint();
     const answer = await this.#api.periods();
     this.#periods = answer.ok ? { phase: "ready", value: answer.value, error: "" } : { phase: "error", value: [], error: refusalWords("books", answer.error, answer.status ?? 0) };
+    this.#host.repaint();
+    // The late posted list names the month each journal landed in, so it waits for the periods to say
+    // which month that is. A list read before them would name a month it does not hold.
+    if (this.#tab === "periods" && this.#latePosted.phase === "idle") void this.#readLatePosted();
+  }
+
+  async #readLatePosted(): Promise<void> {
+    this.#latePosted = { ...this.#latePosted, phase: "loading" };
+    this.#host.repaint();
+    const answer = await this.#api.latePostedJournals();
+    this.#latePosted = answer.ok
+      ? { phase: "ready", value: answer.value.map((j) => latePostedRow(j, this.#periods.value.find((p) => p.id === j.period_id))), error: "" }
+      : { phase: "error", value: [], error: refusalWords("books", answer.error, answer.status ?? 0) };
     this.#host.repaint();
   }
 
@@ -285,6 +307,21 @@ export class GlDesk {
         return this.#ask({ kind: "reopen", id: control.getAttribute("data-id") ?? "" });
       case "gl-close-year":
         return this.#ask({ kind: "close-year", year: Number(control.getAttribute("data-year") ?? "0") || 0 });
+      case "gl-open-year":
+        return this.#ask({ kind: "open-year" });
+      case "gl-open-journal": {
+        // The way to a late posted journal: the register holds it, so the desk opens it there.
+        const id = control.getAttribute("data-id") ?? "";
+        this.#selectedJournal = id;
+        this.#tab = "journals";
+        this.#error = "";
+        this.#notice = "";
+        this.#confirm = null;
+        this.#reveal = "[data-journal-panel]";
+        this.#host.repaint();
+        this.#ensure("journals");
+        return true;
+      }
       case "gl-confirm-cancel":
         this.#confirm = null;
         this.#error = "";
@@ -510,6 +547,11 @@ export class GlDesk {
       this.#host.repaint();
       return;
     }
+    if (confirm.kind === "open-year" && reason === "") {
+      this.#error = refusalWords("open-year", "gl: a reason is required", 422);
+      this.#host.repaint();
+      return;
+    }
     this.#busy = true;
     this.#error = "";
     this.#notice = "";
@@ -535,6 +577,11 @@ export class GlDesk {
       if (answer.ok) {
         words = `Fiscal year ${answer.value.fiscal_year} is closed. Net income of ${formatMoney(answer.value.net_income_cents)} moved to Retained Earnings${answer.value.closing_journal_id === undefined ? " (nothing needed closing)" : ""}, and the year's periods are closed.`;
       } else failed = answer;
+    } else if (confirm.kind === "open-year") {
+      action = "open-year";
+      const answer = await this.#api.openNextYear(reason);
+      if (answer.ok) words = `Fiscal year ${answer.value.fiscal_year} is open. Your reason is on record.`;
+      else failed = answer;
     } else if (confirm.kind === "reverse") {
       action = "reverse";
       const original = this.#journals.find((j) => j.id === confirm.id);
@@ -582,6 +629,11 @@ export class GlDesk {
     if (kind === "deactivate") this.#chart = idle(this.#chart.value);
     if (kind === "close-period" || kind === "reopen" || kind === "close-year") this.#periods = idle(this.#periods.value);
     if (kind === "close-year") this.#tie = idle(this.#tie.value);
+    // The year that opens joins the periods, so both the periods and the late posted list are read again.
+    if (kind === "open-year") {
+      this.#periods = idle(this.#periods.value);
+      this.#latePosted = idle(this.#latePosted.value);
+    }
   }
 
   async #approveOnRoute(id: string): Promise<void> {
@@ -702,6 +754,7 @@ export class GlDesk {
       chart: this.#chart,
       recurring: this.#recurring,
       periods: this.#periods,
+      latePosted: this.#latePosted,
       policy: this.#policy,
       tie: this.#tie,
       bis: this.#bis,

@@ -119,6 +119,7 @@ const WRITES: Record<string, { what: string; who: string }> = {
   "close-period": { what: "close a period", who: "the Financial Controller or the General Manager" },
   reopen: { what: "reopen a period", who: "the Financial Controller" },
   "close-year": { what: "close the year", who: "the Financial Controller" },
+  "open-year": { what: "open the next fiscal year", who: "the Financial Controller" },
   "legacy-import": { what: "read the legacy import check", who: "the Financial Controller" },
   export: { what: "take the export", who: "the Financial Controller" },
 };
@@ -279,6 +280,54 @@ export function periodTone(status: string): "good" | "plain" {
 
 export function periodStatusWord(status: string): string {
   return status === "OPEN" ? "Open" : status === "CLOSED" ? "Closed" : status;
+}
+
+// ---- the late posted list -------------------------------------------------------------------------
+
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** A date is read from its digits, never through a zone: the core sends the document date the journal carries. */
+export function dayWords(value: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  const month = m === null ? undefined : MONTHS_SHORT[Number(m[2]) - 1];
+  if (m === null || month === undefined) return value;
+  return `${month} ${Number(m[3])}, ${m[1]}`;
+}
+
+/** A journal by the number the register names it by. */
+export function entryLabel(journal: { entry_no: number }): string {
+  return `JE-${String(journal.entry_no).padStart(4, "0")}`;
+}
+
+/** One journal on the Controller's late posted list, as a person reads it. */
+export interface LatePostedRow {
+  /** The journal's own id, for the way to the journal. */
+  readonly id: string;
+  /** The number the register names it by. */
+  readonly entry: string;
+  readonly memo: string;
+  /** The document date the journal carries. */
+  readonly documentDate: string;
+  /** The month it landed in, the period's own name; "" when the period is not on the list. */
+  readonly landedIn: string;
+}
+
+/**
+ * A late posted journal as the list reads it: the number it is known by, the document date it carries and
+ * the month it landed in. Both dates are the server's: the document date is the one the journal carries and
+ * the month is the period it was filed in.
+ */
+export function latePostedRow(
+  journal: { id: string; entry_no: number; memo: string; posted_at?: string | null },
+  period: { year: number; month: number } | undefined,
+): LatePostedRow {
+  return {
+    id: journal.id,
+    entry: entryLabel(journal),
+    memo: journal.memo,
+    documentDate: journal.posted_at === undefined || journal.posted_at === null ? "" : dayWords(journal.posted_at),
+    landedIn: period === undefined ? "" : periodName(period),
+  };
 }
 
 // ---- policy and checks ----------------------------------------------------------------------------

@@ -22,12 +22,14 @@ import {
   accountTypeWord,
   bisSourceWord,
   costBasisWord,
+  entryLabel,
   monthWord,
   periodName,
   periodStatusWord,
   periodTone,
   sideWord,
   tieWords,
+  type LatePostedRow,
   type ReadyLine,
 } from "./gl-logic.js";
 import { formatMoney } from "./gl-money.js";
@@ -44,6 +46,7 @@ export type Confirm =
   | { readonly kind: "close-period"; readonly id: string }
   | { readonly kind: "reopen"; readonly id: string }
   | { readonly kind: "close-year"; readonly year: number }
+  | { readonly kind: "open-year" }
   | { readonly kind: "reverse"; readonly id: string }
   | { readonly kind: "void"; readonly id: string }
   | { readonly kind: "deactivate"; readonly code: string };
@@ -61,6 +64,8 @@ export interface BooksModel {
   readonly chart: Section<readonly GlAccount[]>;
   readonly recurring: Section<readonly GlRecurringTemplate[]>;
   readonly periods: Section<readonly GlPeriod[]>;
+  /** The journals that carry a date from a closed month and landed in an open one: the Controller's list. */
+  readonly latePosted: Section<readonly LatePostedRow[]>;
   readonly policy: Section<GlPolicy | null>;
   readonly tie: Section<readonly GlTieoutState[]>;
   readonly bis: Section<GlBisTrackTieoutReport | null>;
@@ -104,10 +109,6 @@ function sectionState<T>(section: Section<T>, what: string): TemplateResult | nu
     `;
   }
   return null;
-}
-
-function entryLabel(journal: GlJournal): string {
-  return `JE-${String(journal.entry_no).padStart(4, "0")}`;
 }
 
 function branchName(branches: readonly Branch[], id: string | undefined): string {
@@ -191,6 +192,25 @@ function closeYearConfirm(frame: Frame, year: number): TemplateResult {
   );
 }
 
+function openYearConfirm(frame: Frame): TemplateResult {
+  return confirmShell(
+    frame,
+    "Open the next fiscal year?",
+    "watch",
+    html`
+      <ul class="gl-changes" aria-label="What changes">
+        <li>The next fiscal year is open for posting.</li>
+        <li>Your reason is kept with the open, and the open is recorded as a sensitive act.</li>
+        <li>No period is closed and no journal moves.</li>
+      </ul>
+      <label class="gl-field">Reason (required)
+        <textarea data-field="reason" rows="2" aria-label="Reason for opening the year"></textarea>
+      </label>
+    `,
+    html`<button type="button" class="btn btn-primary" data-action="gl-confirm-go" ?disabled=${frame.busy}>Open the next fiscal year</button>`,
+  );
+}
+
 function reverseConfirm(frame: Frame, journal: GlJournal): TemplateResult {
   return confirmShell(
     frame,
@@ -249,6 +269,7 @@ export function confirmFor(model: Frame, kinds: ReadonlyArray<Confirm["kind"]>):
     return confirm.kind === "close-period" ? closePeriodConfirm(model, period) : reopenConfirm(model, period);
   }
   if (confirm.kind === "close-year") return closeYearConfirm(model, confirm.year);
+  if (confirm.kind === "open-year") return openYearConfirm(model);
   if (confirm.kind === "reverse" || confirm.kind === "void") {
     const journal = model.journals.find((j) => j.id === confirm.id);
     if (journal === undefined) return nothing;
@@ -494,6 +515,42 @@ export function recurringView(frame: Frame): TemplateResult {
 
 // ---- periods --------------------------------------------------------------------------------------
 
+/**
+ * The late posted list: the journals that carry a date from a closed month and landed in an open one.
+ * Each row says the document date the journal carries, the month it landed in, and the way to the
+ * journal itself, which the register holds.
+ */
+function latePostedCard(frame: Frame): TemplateResult {
+  const late = frame.books.latePosted;
+  const state = sectionState(late, "the late posted journals");
+  return html`
+    <section class="gl-panel" aria-label="Late posted journals" data-late-posted>
+      <div class="gl-panel-head"><h3>Late posted</h3></div>
+      <p class="gl-dim">Journals that carry a date from a closed month and landed in an open one.</p>
+      ${state ??
+      (late.value.length === 0
+        ? html`<div class="gl-empty"><strong>No late posted journals.</strong><span class="gl-dim">A journal that carries a date from a closed month shows here.</span></div>`
+        : html`
+            <div class="gl-scroll">
+              <table aria-label="Late posted journals">
+                <thead><tr><th>Journal</th><th>Document date</th><th>Landed in</th><th><span class="gl-visually">Action</span></th></tr></thead>
+                <tbody>
+                  ${late.value.map(
+                    (row) => html`<tr data-late-posted-row=${row.id}>
+                      <td><strong>${row.entry}</strong><span class="gl-row-detail">${row.memo}</span></td>
+                      <td>${row.documentDate}</td>
+                      <td>${row.landedIn === "" ? "Not on this list" : row.landedIn}</td>
+                      <td><button type="button" class="gl-link" data-action="gl-open-journal" data-id=${row.id} aria-label="Open ${row.entry}">Open</button></td>
+                    </tr>`,
+                  )}
+                </tbody>
+              </table>
+            </div>
+          `)}
+    </section>
+  `;
+}
+
 export function periodsView(frame: Frame): TemplateResult {
   const periods = frame.books.periods;
   const state = sectionState(periods, "the fiscal periods");
@@ -502,12 +559,15 @@ export function periodsView(frame: Frame): TemplateResult {
   const open = (year: number): boolean => periods.value.some((p) => p.year === year && p.status === "OPEN");
   return html`
     <div class="gl-stack">
-      ${confirmFor(frame, ["close-period", "reopen", "close-year"])}
+      ${confirmFor(frame, ["close-period", "reopen", "close-year", "open-year"])}
       <section class="gl-panel" aria-label="Fiscal periods" data-periods>
         <div class="gl-panel-head">
           <h3>Fiscal periods</h3>
-          ${controller && years.length > 0
-            ? html`<span class="gl-actions">${years.filter(open).map((y) => html`<button type="button" class="btn btn-secondary" data-action="gl-close-year" data-year=${String(y)}>Close fiscal year ${y}</button>`)}</span>`
+          ${controller
+            ? html`<span class="gl-actions">
+                ${years.filter(open).map((y) => html`<button type="button" class="btn btn-secondary" data-action="gl-close-year" data-year=${String(y)}>Close fiscal year ${y}</button>`)}
+                <button type="button" class="btn btn-secondary" data-action="gl-open-year">Open the next fiscal year</button>
+              </span>`
             : nothing}
         </div>
         ${state ??
@@ -533,8 +593,9 @@ export function periodsView(frame: Frame): TemplateResult {
                 </table>
               </div>
             `)}
-        ${controller ? nothing : held("Closing a period is for the Financial Controller or the General Manager, and reopening one and closing the year are for the Financial Controller.")}
+        ${controller ? nothing : held("Closing a period is for the Financial Controller or the General Manager, and reopening one, closing the year and opening the next one are for the Financial Controller.")}
       </section>
+      ${controller ? latePostedCard(frame) : nothing}
     </div>
   `;
 }
