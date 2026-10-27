@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 )
 
@@ -30,10 +31,16 @@ func (s *exportRecordingStore) RegisterRows(_ context.Context, _ time.Time, _ in
 
 func TestHH194_ExportReadsTheWholeViewInOneCall(t *testing.T) {
 	store := &exportRecordingStore{}
+	store.policy = RegisterPolicy{AccountPositionVisibility: VisibilityManagerUp, DueSoonDays: 7}
 	for i := 0; i < 450; i++ {
 		store.rows = append(store.rows, RegisterRow{InvoiceNo: "INV-X", CustomerName: "Test Co"})
 	}
-	h := NewRegisterHandler(NewRegisterService(store), nil, nil)
+	// A manager caller on the context: this leg pins the export's READ SHAPE, not the position gate,
+	// so the gate has to admit the caller rather than fail closed under an unauthenticated context.
+	svc := NewRegisterService(store).
+		WithClock(func() time.Time { return time.Now() }).
+		withCaller(callerAs(identity.TierManager, identity.ScopeGlobal))
+	h := NewRegisterHandler(svc, nil, nil)
 	rec := httptest.NewRecorder()
 	h.export(rec, httptest.NewRequest(http.MethodGet, "/api/v1/ar/register/export?chip=overdue", nil), guards.StaffCaller{})
 	if rec.Code != http.StatusOK {

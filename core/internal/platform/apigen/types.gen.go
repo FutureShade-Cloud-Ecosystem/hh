@@ -361,12 +361,12 @@ type BillingRegisterRow struct {
 }
 
 type BillingRegisterCounts struct {
-	Open     int32 `json:"open"`
-	DueSoon  int32 `json:"due_soon"`
-	Overdue  int32 `json:"overdue"`
-	Disputed int32 `json:"disputed"`
-	Paid     int32 `json:"paid"`
-	Credits  int32 `json:"credits"`
+	Open     int32  `json:"open"`
+	DueSoon  *int32 `json:"due_soon,omitempty"`
+	Overdue  *int32 `json:"overdue,omitempty"`
+	Disputed int32  `json:"disputed"`
+	Paid     int32  `json:"paid"`
+	Credits  int32  `json:"credits"`
 }
 
 type BillingRegisterPage struct {

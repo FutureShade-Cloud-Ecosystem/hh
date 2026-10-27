@@ -286,7 +286,7 @@ export type BillingRegisterRow = {
   balance_cents: number;
   holdback_cents?: number;
   stored_status: "DRAFT" | "FINALIZED" | "PARTIALLY_PAID" | "PAID" | "VOID";
-  status: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT";
+  status: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT" | "FINALIZED";
   days_overdue?: number;
   bucket_label?: "" | "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
   bucket_key?: "" | "CURRENT" | "1_30" | "31_60" | "61_90" | "90_PLUS";
@@ -300,8 +300,8 @@ export type BillingRegisterRow = {
 };
 export type BillingRegisterCounts = {
   open: number;
-  due_soon: number;
-  overdue: number;
+  due_soon?: number;
+  overdue?: number;
   disputed: number;
   paid: number;
   credits: number;
@@ -461,7 +461,7 @@ export type BillingInvoiceDetail = {
   invoice_no: string;
   doc_type: "INVOICE" | "CREDIT_MEMO";
   stored_status: "DRAFT" | "FINALIZED" | "PARTIALLY_PAID" | "PAID" | "VOID";
-  status: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT";
+  status: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT" | "FINALIZED";
   days_overdue?: number;
   issue_date: string;
   due_date: string;

@@ -889,7 +889,7 @@ paths:
         - name: chip
           in: query
           required: false
-          description: Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit alongside the legacy StatusX strings; old URLs still resolve.
+          description: Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit alongside the legacy StatusX strings; old URLs still resolve. The overdue and past_due chips answer 400 in words for a caller the account position policy refuses.
           schema:
             type: string
             enum:
@@ -1059,7 +1059,7 @@ paths:
       tags:
         - staff-billing
       summary: Download the current register view as CSV
-      description: The same filter and the same figures as the register read. The body is CSV text with a Content-Disposition attachment filename, not JSON; the wire shape is raw text rather than a struct.
+      description: The same filter and the same figures as the register read. The body is CSV text with a Content-Disposition attachment filename, not JSON; the wire shape is raw text rather than a struct. For a caller the account position policy refuses, the Days overdue header and its column are absent and the Status column carries the invoice's stored status.
       x-role: requireStaff
       x-access:
         surfaces:
@@ -29976,7 +29976,7 @@ components:
             - VOID
         status:
           type: string
-          description: The derived register pill state
+          description: "The derived register pill state. A caller the account position policy refuses receives the invoice's STORED status here instead, never the derived OVERDUE or DUE_SOON: no past due flag reaches a refused caller on any route."
           enum:
             - OPEN
             - DUE_SOON
@@ -29988,6 +29988,7 @@ components:
             - DRAFT
             - VOID
             - CREDIT
+            - FINALIZED
         days_overdue:
           type: integer
           format: int32
@@ -30044,11 +30045,9 @@ components:
           $ref: "#/components/schemas/BillingAccountPosition"
     BillingRegisterCounts:
       type: object
-      description: Counts of the same predicates the chip filters apply, computed over the same rows
+      description: "Counts of the same predicates the chip filters apply, computed over the same rows. A caller the account position policy refuses receives neither overdue nor due_soon: the count of a withheld predicate is the predicate told in numbers. Every other caller receives both keys."
       required:
         - open
-        - due_soon
-        - overdue
         - disputed
         - paid
         - credits
@@ -30059,9 +30058,11 @@ components:
         due_soon:
           type: integer
           format: int32
+          description: Absent for a caller the account position policy refuses
         overdue:
           type: integer
           format: int32
+          description: Absent for a caller the account position policy refuses
         disputed:
           type: integer
           format: int32
@@ -30625,6 +30626,7 @@ components:
             - VOID
         status:
           type: string
+          description: The derived pill state. A caller the account position policy refuses receives the invoice's STORED status here instead, never the derived OVERDUE or DUE_SOON.
           enum:
             - OPEN
             - DUE_SOON
@@ -30636,6 +30638,7 @@ components:
             - DRAFT
             - VOID
             - CREDIT
+            - FINALIZED
         days_overdue:
           type: integer
           format: int32
