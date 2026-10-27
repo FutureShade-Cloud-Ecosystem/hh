@@ -97,6 +97,13 @@ type fw1Walk struct {
 	month            int
 	monthEnd         time.Time
 
+	// The bank month is the LAST ENDED month in the house zone (FROM-PRINCIPAL 169). The walk's
+	// bank story trades there, so its reconciliation signs off an ended month rather than a
+	// running one, while the AR, stock, HST and statement legs keep trading in the current month.
+	bankYear, bankMonth int
+	bankMonthEnd        time.Time // the bank month's own last instant, in the house zone
+	bankDay             time.Time // the instant the walk pins the till and payments clocks to
+
 	// figures assertion 5 names in its failure message
 	outstandingChequeCents           int64
 	depositInTransitCents            int64
@@ -233,13 +240,29 @@ func newFW1Walk(t *testing.T) *fw1Walk {
 		t.Fatalf("loading dealer zone America/Toronto: %v", err)
 	}
 	now := time.Now().In(zone)
+	// The last ended month in the house zone: the current month's first instant less one second,
+	// so on a month's own first day the bank month is still the month before. The bank month has
+	// fully ended however early in the month the walk runs.
+	bankMonthEnd := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, zone).Add(-time.Second)
 	w := &fw1Walk{
 		t: t, pool: pool, mux: mux, sg: sg, money: money, ops: ops, tops: tops, disp: d,
 		prod: map[string]string{}, cust: map[string]string{},
 		year: now.Year(), month: int(now.Month()),
 		monthEnd: time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, zone).
 			AddDate(0, 1, 0).Add(-time.Second),
+		bankYear:     bankMonthEnd.Year(),
+		bankMonth:    int(bankMonthEnd.Month()),
+		bankMonthEnd: bankMonthEnd,
+		bankDay:      time.Date(bankMonthEnd.Year(), bankMonthEnd.Month(), 5, 10, 0, 0, 0, zone),
 	}
+
+	// Pin the till and payments clocks through their existing WithClock setters (FROM-PRINCIPAL
+	// 209). The instances are the wiring's own, carried on the operations spine as unexported
+	// fields; production builds and registers both exactly as before, and the walk alone moves
+	// their clocks into the bank month, so the till's count and close stamps and the payment
+	// reversal's stamps land in the month the bank story trades in.
+	w.ops.tillSvc.WithClock(func() time.Time { return w.bankDay })
+	w.ops.paymentsReverseSvc.WithClock(func() time.Time { return w.bankDay })
 	for _, sku := range []string{"DBS-GATOR-SAND", "DBS-INLITE-LED", "DBS-UL-BRUSSELS", "DBS-TB-BLU60", "DBS-SIKA-SEALER"} {
 		var id string
 		if err := pool.QueryRow(ctx, `SELECT id::text FROM products WHERE sku = $1`, sku).Scan(&id); err != nil {
@@ -724,23 +747,32 @@ func TestFW1MonthWalk(t *testing.T) {
 	w.ok("receive the stock transfer", http.MethodPost, "/api/v1/inventory/transfers/"+trResp.ID+"/receive", map[string]any{})
 	w.drain()
 
-	// The bank month. An outstanding cheque (a vendor payment the bank has not seen) through
-	// the GL's own manual journal; a deposit in transit (the Kingston lodgement, not on the
-	// statement); a statement that carries the Trenton lodgement and a bank charge, with the
-	// bank charge booked on the ledger and matched to its statement line.
+	// The bank month. The walk's bank story trades in the LAST ENDED month in the house zone
+	// (FROM-PRINCIPAL 169), so its reconciliation signs off an ended month rather than a running
+	// one: the statement's lines and the walk's own bank journals carry the bank month's days.
+	// An outstanding cheque (a vendor payment the bank has not seen); a deposit in transit (the
+	// Kingston lodgement, not on the statement); a statement that carries the Trenton lodgement
+	// and a bank charge, with the bank charge booked on the ledger and matched to its statement
+	// line. The walk's own journals post through the GL provider seam with the document's own
+	// day (FROM-PRINCIPAL 209 keeps the manual journal route dateless), and posted_at rides the
+	// document date, so the bank month's own as-of read sees them.
 	w.outstandingChequeCents = 12500
 	w.depositInTransitCents = 25000
-	w.ok("outstanding cheque journal", http.MethodPost, "/api/v1/gl/journals", map[string]any{
-		"branch_id": fw1TRT, "memo": "fw1 walk vendor cheque, not yet presented", "source": "MANUAL",
-		"lines": []map[string]any{
-			{"account_code": "2100", "debit_cents": w.outstandingChequeCents, "memo": "vendor payment"},
-			{"account_code": "1000", "credit_cents": w.outstandingChequeCents, "memo": "cheque written"},
+	if _, err := w.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
+		Source: "MANUAL", IdempotencyKey: "fw1:outstanding:cheque",
+		Memo: "fw1 walk vendor cheque, not yet presented", BranchID: fw1TRT,
+		DocumentDate: time.Date(w.bankYear, time.Month(w.bankMonth), 5, 0, 0, 0, 0, w.bankMonthEnd.Location()),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "2100", DebitCents: w.outstandingChequeCents, Memo: "vendor payment"},
+			{AccountCode: "1000", CreditCents: w.outstandingChequeCents, Memo: "cheque written"},
 		},
-	})
+	}); err != nil {
+		t.Fatalf("the outstanding cheque journal: %v", err)
+	}
 	w.drain()
 	importBody := "Date,Description,Amount,Reference\n" +
-		fmt.Sprintf("%04d-%02d-10,DEPOSIT TRT,400.00,DEP-TRT-1\n", w.year, w.month) +
-		fmt.Sprintf("%04d-%02d-12,BANK CHARGE,-6.50,SVC\n", w.year, w.month)
+		fmt.Sprintf("%04d-%02d-10,DEPOSIT TRT,400.00,DEP-TRT-1\n", w.bankYear, w.bankMonth) +
+		fmt.Sprintf("%04d-%02d-12,BANK CHARGE,-6.50,SVC\n", w.bankYear, w.bankMonth)
 	w.ok("bank statement import", http.MethodPost, "/api/v1/bankrec/imports", map[string]any{
 		"bank_account_id": w.bankAccountID, "profile_code": "rbc-default", "filename": "fw1-rbc.csv", "content": importBody,
 	})
@@ -769,25 +801,25 @@ func TestFW1MonthWalk(t *testing.T) {
 	})
 	w.drain()
 	w.journals1000AfterLodgementMatch = count1000Journals("after lodgement match")
-	// Book the monthly bank charge on the ledger and match the statement line to that journal.
-	feeOut := w.ok("bank charge journal", http.MethodPost, "/api/v1/gl/journals", map[string]any{
-		"branch_id": fw1TRT, "memo": "fw1 walk monthly bank service charge", "source": "MANUAL",
-		"lines": []map[string]any{
-			{"account_code": "6300", "debit_cents": 650, "memo": "bank service charge"},
-			{"account_code": "1000", "credit_cents": 650, "memo": "bank service charge"},
+	// Book the monthly bank charge on the ledger, dated on its statement line's own day in the
+	// bank month, and match the statement line to that journal.
+	feeID, err := w.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
+		Source: "MANUAL", IdempotencyKey: "fw1:bank:charge",
+		Memo: "fw1 walk monthly bank service charge", BranchID: fw1TRT,
+		DocumentDate: time.Date(w.bankYear, time.Month(w.bankMonth), 12, 0, 0, 0, 0, w.bankMonthEnd.Location()),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "6300", DebitCents: 650, Memo: "bank service charge"},
+			{AccountCode: "1000", CreditCents: 650, Memo: "bank service charge"},
 		},
 	})
-	var feeResp struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(feeOut, &feeResp); err != nil || feeResp.ID == "" {
-		t.Fatalf("bank charge journal returned no id: %s", feeOut)
+	if err != nil {
+		t.Fatalf("bank charge journal: %v", err)
 	}
 	w.drain()
 	stmtChargeLine := w.one(`SELECT id::text FROM bank_statement_lines WHERE bank_account_id = $1 AND reference = 'SVC' LIMIT 1`, w.bankAccountID)
 	w.ok("match the bank charge", http.MethodPost, "/api/v1/bankrec/match", map[string]any{
 		"mode": "manual", "bank_account_id": w.bankAccountID,
-		"statement_line_id": stmtChargeLine, "target_type": "JOURNAL", "target_ref_id": feeResp.ID,
+		"statement_line_id": stmtChargeLine, "target_type": "JOURNAL", "target_ref_id": feeID,
 		"amount_cents": -650,
 	})
 	w.drain()
@@ -1064,6 +1096,11 @@ func (w *fw1Walk) assertHSTTies(t fw1TB) {
 // 5. The bank month signs off at a zero difference computed from balances at month end, with
 // the outstanding items listed.
 //
+// THE BANK MONTH IS THE LAST ENDED MONTH in the house zone (FROM-PRINCIPAL 169): the walk's
+// bank story (the statement, the outstanding cheque, the bank charge, the till lodgements) all
+// carry that month's days, so the reconciliation opens and signs off an ended month. A running
+// month cannot sign off (627's guard), which is why the walk moved here.
+//
 // THE LODGEMENT RULE (FROM-PRINCIPAL 117 and 120), binding: the textbook bank reconciliation:
 //   - Lodgement: a till lodgement posts DR 1000 Bank / CR 1020 Undeposited Funds AT LODGEMENT,
 //     dated by its business day in the house zone, and marks the lodged payments DEPOSITED in the
@@ -1108,6 +1145,8 @@ func (w *fw1Walk) assertTillLodgementPostsAtLodgement(t fw1TB) {
 	}
 	for _, l := range lodgements {
 		var posted int
+		// The lodgements trade in the bank month (the walk's till clock is pinned into it), so
+		// the lodgement journals' period is the bank month's, not the trading month's.
 		if err := w.pool.QueryRow(ctx, `
 			SELECT count(*)
 			  FROM gl_journals j
@@ -1125,12 +1164,12 @@ func (w *fw1Walk) assertTillLodgementPostsAtLodgement(t fw1TB) {
 			       SELECT 1 FROM gl_journal_lines cl
 			         JOIN gl_accounts ca ON ca.id = cl.account_id
 			        WHERE cl.journal_id = j.id AND ca.code = '1020' AND cl.credit_cents = $2
-			   )`, l.id, l.amount, w.year, w.month).Scan(&posted); err != nil {
+			   )`, l.id, l.amount, w.bankYear, w.bankMonth).Scan(&posted); err != nil {
 			t.Fatalf("the lodgement journal read for %s: %v", l.ref, err)
 		}
 		if posted != 1 {
 			t.Errorf("till lodgement %s (%s) posted %d DR 1000 / CR 1020 journals dated in %04d-%02d at lodgement (want 1)",
-				l.ref, fw1Dollars(l.amount), posted, w.year, w.month)
+				l.ref, fw1Dollars(l.amount), posted, w.bankYear, w.bankMonth)
 		}
 	}
 
@@ -1220,7 +1259,10 @@ func (w *fw1Walk) assertBankLodgementMatchPostsNothing(t fw1TB) {
 
 func (w *fw1Walk) assertBankMonth(t fw1TB) {
 	ctx := context.Background()
-	gl1000, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(ctx, "1000", w.monthEnd, "")
+	// The GL side reads the bank month's own end. The walk's bank journals carry the bank
+	// month's document dates and posted_at rides the document date, so the as-of read at the
+	// bank month's end sees exactly the month's bank story.
+	gl1000, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(ctx, "1000", w.bankMonthEnd, "")
 	if err != nil {
 		t.Fatalf("the GL 1000 read: %v", err)
 	}
@@ -1266,7 +1308,7 @@ func (w *fw1Walk) assertBankMonth(t fw1TB) {
 		WithGLBalances(glBalanceAdapter{svc: w.money.glSvc}).
 		WithJournals(w.money.glSvc)
 	rec, err := svc.OpenReconciliation(ctx, bankrec.ReconInput{
-		BankAccountID: w.bankAccountID, Year: w.year, Month: w.month, StatementBalanceCents: 0,
+		BankAccountID: w.bankAccountID, Year: w.bankYear, Month: w.bankMonth, StatementBalanceCents: 0,
 	})
 	if err != nil {
 		t.Fatalf("the bank month open: %v", err)
@@ -1278,7 +1320,8 @@ func (w *fw1Walk) assertBankMonth(t fw1TB) {
 	// Standard bank reconciliation tie: statement balance + deposits in transit - outstanding cheques = book balance (GL 1000).
 	adjustedBank := rec.StatementBalanceCents + depositInTransit - outstandingCheques
 	if rec.VarianceCents != 0 || adjustedBank != gl1000 {
-		t.Errorf("the bank month does not tie at zero: statement %s plus %s deposit in transit less %s outstanding cheques = %s against GL 1000 at month end %s (the ledger side is %s by %s; OpenReconciliation reports variance %s)",
+		t.Errorf("the bank month %04d-%02d does not tie at zero: statement %s plus %s deposit in transit less %s outstanding cheques = %s against GL 1000 at the month's end %s (the ledger side is %s by %s; OpenReconciliation reports variance %s)",
+			w.bankYear, w.bankMonth,
 			fw1Dollars(rec.StatementBalanceCents), fw1Dollars(depositInTransit),
 			fw1Dollars(outstandingCheques), fw1Dollars(adjustedBank), fw1Dollars(gl1000),
 			shorter(gl1000, adjustedBank), byDollars(gl1000-adjustedBank), fw1Dollars(rec.VarianceCents))
