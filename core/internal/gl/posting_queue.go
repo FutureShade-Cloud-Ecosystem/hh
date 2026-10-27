@@ -72,8 +72,13 @@ func (s *Service) PostingQueue(ctx context.Context) ([]PostingQueueRow, error) {
 }
 
 // PostingQueueCounts reads the waiting and dead lettered counts for the whole
-// posting queue: the desk's banner reads, with no documents attached.
+// posting queue: the desk's banner reads, with no documents attached. Because
+// outbox rows carry no branch column to filter on, the org wide count is held
+// to a global scope caller (the Controller and the global managers).
 func (s *Service) PostingQueueCounts(ctx context.Context) (PostingQueueCounts, error) {
+	if err := s.authorizeBranchRead(ctx, ""); err != nil {
+		return PostingQueueCounts{}, err
+	}
 	if s.queue == nil {
 		return PostingQueueCounts{}, errQueueNotWired
 	}
