@@ -30,6 +30,9 @@ import (
 
 const (
 	cmRoundNorthOrg = "ce110000-0000-4000-8000-0000000000d1"
+	// cmRoundLeftOrg is the org a leg of another package can leave a branch on when it does not
+	// restore what it stamped (FLAKE-4's leak, the leaver never named).
+	cmRoundLeftOrg = "ce110000-0000-4000-8000-0000000000d2"
 )
 
 // cmRoundWorld is one leg's fixture: the org, the customer, the invoice, the two staff users.
@@ -321,4 +324,50 @@ func TestIntegration_CreditMemoRound_ADeclineBridgesNothingForTheLedgersOwnJourn
 	if status != "DRAFT" {
 		t.Fatalf("the ledger's own parked journal reads %s after a decline, want DRAFT (the maker's own act to void)", status)
 	}
+}
+
+// TestIntegration_CreditMemoRound_ABranchLeftOnAnotherOrgStillParks pins the fence against the
+// leftover: a leg of an earlier package can leave Trenton on its own org and never give it back
+// (FLAKE-4), and the round that runs after must still park its credit, then restore that branch to
+// exactly the org it found, never a NULL and never the round's own.
+func TestIntegration_CreditMemoRound_ABranchLeftOnAnotherOrgStillParks(t *testing.T) {
+	pool := cmRoundPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO org (id, slug, name) VALUES ($1::uuid, 'cm-round-left', 'Credit Round Left')
+		ON CONFLICT (id) DO NOTHING`, cmRoundLeftOrg); err != nil {
+		t.Fatalf("plant the leftover org: %v", err)
+	}
+	var priorOrg *string
+	if err := pool.QueryRow(ctx, `SELECT org_id::text FROM locations WHERE id = $1::uuid`, trentonBranchID).
+		Scan(&priorOrg); err != nil {
+		t.Fatalf("read Trenton's prior org: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1::uuid WHERE id = $2::uuid`,
+		cmRoundLeftOrg, trentonBranchID); err != nil {
+		t.Fatalf("leave Trenton on the leftover org: %v", err)
+	}
+	// Registered before the plant's own cleanup, so it runs after the plant has restored: this
+	// asserts the restore was exact, then gives Trenton its own prior org back and removes the
+	// leftover org row.
+	t.Cleanup(func() {
+		c := context.Background()
+		var after *string
+		if err := pool.QueryRow(c, `SELECT org_id::text FROM locations WHERE id = $1::uuid`, trentonBranchID).
+			Scan(&after); err != nil {
+			t.Errorf("read Trenton's org after the round: %v", err)
+		} else if after == nil || *after != cmRoundLeftOrg {
+			t.Errorf("the round left Trenton on %v, want the leftover org restored exactly", after)
+		}
+		if _, err := pool.Exec(c, `UPDATE locations SET org_id = $1 WHERE id = $2::uuid`, priorOrg, trentonBranchID); err != nil {
+			t.Errorf("give Trenton its prior org back: %v", err)
+		}
+		_, _ = pool.Exec(c, `DELETE FROM org WHERE id = $1::uuid`, cmRoundLeftOrg)
+	})
+	world := cmRoundWorldPlant(t, pool)
+	svc, _ := cmRoundService(t, pool)
+
+	// On the unfixed plant the stamp skips Trenton (its org is not NULL), so the caller's org and
+	// the branch's disagree and the fence refuses the park here.
+	cmRoundParkCredit(t, pool, svc, world.requester, world.cust, world.inv, "cm-rail-left-org")
 }
