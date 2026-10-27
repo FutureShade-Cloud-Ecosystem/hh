@@ -71,8 +71,8 @@ package billing
 // the same discipline on billing's own table, which nothing overwrites wholesale). That record is
 // what a reversal reads to restore both sides, so the act's full state lives nowhere else.
 //
-// The KEY itself lives in billing's own credit_application_keys (0447), one row per key, the key
-// the PRIMARY KEY. Round 7 kept the key's record only on the invoices' metadata and read the key's
+// The KEY itself lives in billing's own credit_application_keys (0447), one row per org and key,
+// (org_id, idempotency_key) the PRIMARY KEY. Round 7 kept the key's record only on the invoices' metadata and read the key's
 // scope with a scan of that metadata under the key's advisory slot; the scan has no index behind
 // it and grows with every dealer's history. The key table makes the check one index lookup on the
 // primary key and lets the database itself refuse a second row under a spent key. The apply writes
@@ -87,10 +87,13 @@ package billing
 // the target invoice's own metadata (one primary key read, no scan), and the route wide refusal
 // beyond that invoice needs a backfill the migration does not make (its header says why).
 //
-// The key's SCOPE is the route, not one invoice (K3's P3): the primary key is the bare key string,
-// no org or invoice qualifier, because the handler passes the caller's key through untouched and
-// the round 7 check matched it across the route the same way. A key spent on any invoice of the
-// route is spent here.
+// The key's SCOPE is the caller's org, within it the route (K3's P3, then M3's P3-6): the primary
+// key is (org_id, idempotency_key), the org the caller's request carries (the handler passes it
+// through untouched, and the door refuses another org's invoice with it), no invoice qualifier. A
+// key spent on any invoice of one org is spent for that org; another org's FIRST use under the
+// same string applies, and a bare string is no longer a key one org can spend for another
+// (AGENTS.md: a scoped table is never keyed or queried without its scope). A caller that carries
+// no org shares one org-less scope, as the bare key did.
 //
 // -- THE LOCKS -------------------------------------------------------------------------------------
 // The one money lock order (payments/LOCK-ORDER.md): the target invoice row, then the application
@@ -419,19 +422,21 @@ func (row creditKeyRow) spent() bool { return row.applicationID != "" }
 // spent, answer replay or 409 on the hash) or this transaction's own fresh row (the key was
 // unspent, and the row already reserves it against a third request). The read is one index lookup
 // on the primary key, the whole reason the table exists: round 7's scan of the invoices' metadata
-// grew with every dealer's history, and this read does not.
+// grew with every dealer's history, and this read does not. The key's scope is the caller's org
+// (M3's P3-6): both steps carry the org predicate, so one org's spent key answers nothing to
+// another org's first use under the same string.
 func reserveCreditApplicationKey(ctx context.Context, tx pgx.Tx, in ApplyCreditInput) (creditKeyRow, error) {
 	if _, err := tx.Exec(ctx, `
-INSERT INTO credit_application_keys (idempotency_key, invoice_id, credit_kind, credit_id, request_hash)
-VALUES ($1, $2::uuid, $3, $4::uuid, $5)
-ON CONFLICT (idempotency_key) DO NOTHING`,
-		in.IdempotencyKey, in.InvoiceID, in.CreditKind, in.CreditID, creditKeyHash(in)); err != nil {
+INSERT INTO credit_application_keys (org_id, idempotency_key, invoice_id, credit_kind, credit_id, request_hash)
+VALUES ($1, $2, $3::uuid, $4, $5::uuid, $6)
+ON CONFLICT (org_id, idempotency_key) DO NOTHING`,
+		in.OrgID, in.IdempotencyKey, in.InvoiceID, in.CreditKind, in.CreditID, creditKeyHash(in)); err != nil {
 		return creditKeyRow{}, fmt.Errorf("credit apply: reserve the idempotency key: %w", err)
 	}
 	var row creditKeyRow
 	err := tx.QueryRow(ctx, `
 SELECT invoice_id::text, request_hash, COALESCE(stored_result::text, ''), COALESCE(application_id::text, '')
-  FROM credit_application_keys WHERE idempotency_key = $1`, in.IdempotencyKey).
+  FROM credit_application_keys WHERE org_id = $1 AND idempotency_key = $2`, in.OrgID, in.IdempotencyKey).
 		Scan(&row.invoiceID, &row.requestHash, &row.storedResult, &row.applicationID)
 	if err != nil {
 		return creditKeyRow{}, fmt.Errorf("credit apply: read the idempotency key: %w", err)
@@ -764,7 +769,7 @@ VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
 	if _, err := tx.Exec(ctx, `
 UPDATE credit_application_keys
    SET application_id = $2::uuid, stored_result = $3::jsonb
- WHERE idempotency_key = $1`, in.IdempotencyKey, applicationID, string(stored)); err != nil {
+ WHERE org_id = $4 AND idempotency_key = $1`, in.IdempotencyKey, applicationID, string(stored), in.OrgID); err != nil {
 		return CreditApplication{}, fmt.Errorf("credit apply: store the key's result: %w", err)
 	}
 
