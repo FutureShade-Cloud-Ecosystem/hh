@@ -11,6 +11,7 @@ package payments_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
@@ -581,4 +583,40 @@ func TestIntegration_Payout_DrawerNamesAnotherBranchsOpenSessionIsRefused(t *tes
 	if _, err := w.payOut(repo, orig, payments.PayoutDrawer, 1_000, func(in *payments.PayoutInput) { in.TillSessionID = home }); err != nil {
 		t.Errorf("the home branch OPEN drawer pay out of the same payment was refused: %v", err)
 	}
+}
+
+// (11) The table's own trigger (`payment_payouts_guard` -> `payment_held_guard`) refuses a direct insert into
+// `payment_payouts` for an unreversed payment or past the held figure (including after a re-application has taken the
+// rest), with `check_violation` (SQLSTATE 23514), when the service is bypassed (PR 606 round 3, S4 4.3).
+func TestIntegration_Payout_TheTableRefusesAnOverPayOutWhoeverWritesIt(t *testing.T) {
+	w := newReversalGLWorld(t)
+	w.cleanupPayouts()
+	orig := w.receipt("CHEQUE", 10_000)
+	inv := w.invoiceOf(orig)
+	w.drain()
+	insert := func(cents int64, key string) error {
+		_, err := w.r.obs.Exec(context.Background(), `INSERT INTO payment_payouts
+			(payment_id, customer_id, branch_id, kind, amount_cents, reason, reference, applied_by, idempotency_key)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, 'BANK', $4, 'direct', 'CHQ-DIRECT', $5::uuid, $6)`,
+			orig, w.r.custID, w.r.branchID, cents, w.r.userID, key)
+		return err
+	}
+	requireCheckViolation := func(name string, err error, want string) {
+		t.Helper()
+		var pgErr *pgconn.PgError
+		if err == nil || !errors.As(err, &pgErr) || pgErr.Code != "23514" || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: direct insert answered %v, want check_violation (23514) containing %q", name, err, want)
+		}
+	}
+	requireCheckViolation("unreversed payment", insert(1, "direct-po-unreversed-"+w.r.suffix), "has not been reversed")
+	w.reverse(orig)
+	requireCheckViolation("10001 against 10000 held", insert(10_001, "direct-po-over-"+w.r.suffix), "holds 10000 cents and 0 are already out")
+	if err := insert(6_000, "direct-po-ok-"+w.r.suffix); err != nil {
+		t.Errorf("the table refused a direct payout within the held amount: %v", err)
+	}
+	requireCheckViolation("4001 against 4000 remaining", insert(4_001, "direct-po-more-"+w.r.suffix), "holds 10000 cents and 6000 are already out")
+	if _, err := w.reapplyKeyed(w.r.repo, orig, "direct-po-reapply-"+w.r.suffix, payments.Allocation{InvoiceID: inv, AmountCents: 4_000}); err != nil {
+		t.Fatalf("re-apply the remaining 4000: %v", err)
+	}
+	requireCheckViolation("1 cent after payout and re-application exhausted held", insert(1, "direct-po-after-reapply-"+w.r.suffix), "holds 10000 cents and 10000 are already out")
 }
