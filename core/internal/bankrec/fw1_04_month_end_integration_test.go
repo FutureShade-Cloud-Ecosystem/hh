@@ -70,6 +70,8 @@ func fw104CleanYear(t *testing.T, pool *pgxpool.Pool, acct string, year int) {
 		{`UPDATE gl_journals SET status = 'DRAFT', reverses_journal_id = NULL WHERE fiscal_year = $1 OR reverses_journal_id IN (SELECT id FROM gl_journals WHERE fiscal_year = $1)`, []any{year}},
 		{`DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE fiscal_year = $1)`, []any{year}},
 		{`DELETE FROM gl_journals WHERE fiscal_year = $1`, []any{year}},
+		{`DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE o.period_id = p.id AND p.year = $1 AND p.year != 2026`, []any{year}},
+		{`DELETE FROM fiscal_periods WHERE year = $1 AND year != 2026`, []any{year}},
 	} {
 		if _, err := pool.Exec(ctx, q.sql, q.args...); err != nil {
 			t.Fatalf("fw104CleanYear(%d) query %q: %v", year, q.sql, err)
