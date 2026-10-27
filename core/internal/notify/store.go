@@ -112,9 +112,9 @@ func (s *PgOutboxStore) processOne(ctx context.Context, settle func(context.Cont
 
 // QueueRow is one outbox row still undelivered: waiting (PENDING) or dead
 // lettered (DEAD), the FW1-02 posting queue's read. Document is the payload's
-// own naming of the money document it carries (invoice_id, payment_id or
-// order_id), so a reader can say which invoice or payment a stuck journal
-// belongs to without parsing the payload.
+// own naming of the money document it carries (invoice_id, payment_id,
+// order_id, return_id or session_id), so a reader can say which document a
+// stuck journal belongs to without parsing the payload.
 type QueueRow struct {
 	EventID    string
 	Topic      string
@@ -133,7 +133,7 @@ func (s *PgOutboxStore) WaitingOrDead(ctx context.Context, topics []string, limi
 	}
 	rows, err := s.pool.Query(ctx, `
 SELECT event_id::text, topic,
-       COALESCE(payload->>'invoice_id', payload->>'payment_id', payload->>'order_id', ''),
+       COALESCE(payload->>'invoice_id', payload->>'payment_id', payload->>'order_id', payload->>'return_id', payload->>'session_id', ''),
        status, attempts, last_error, occurred_at
   FROM events_outbox
  WHERE status IN ('PENDING','DEAD') AND topic = ANY($1::text[])
