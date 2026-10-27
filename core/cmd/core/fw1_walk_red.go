@@ -13,7 +13,6 @@ var fw1WalkRed = map[string]string{
 	"bank_month_signs_off_at_zero_with_outstanding_items":               "FW1-04",
 	"customer_statement_equals_aging_and_subledger":                     "FW1-06a",
 	"every_journal_line_carries_a_branch_and_branch_trial_balances_sum": "FW1-08",
-	"no_journal_waiting_or_dead_lettered":                               "FW1-02",
 	"stock_value_ties_to_GL_1200":                                       "FW1-07",
 	"till_lodgement_posts_bank_1000_at_lodgement":                       "FW1-13",
 	"walk_month_and_next_year_periods_open":                             "FW1-01",
