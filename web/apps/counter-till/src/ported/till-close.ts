@@ -18,7 +18,7 @@ import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.
 import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
 import { rowStripe } from './styles/row-stripe.js';
 import { tenderMethodWord } from './tender-logic.js';
-import { formatMoney } from '../money.js';
+import { formatMoney } from "../money.js";
 
 interface TenderTotal {
   method: string;
