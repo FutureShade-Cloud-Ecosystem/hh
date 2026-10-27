@@ -17,6 +17,11 @@ package main
 // id is not a uuid, so the read fails with 22P02, the pre flight names a stock ledger nobody could read,
 // and the month close answers 409 on a month whose stock is on hand and in tie.
 //
+// ROUND 2's red (S5's read, P2): the adapter multiplied a float64 quantity by the cost in Go and
+// truncated the product, so one row at 0.29 units and a 100 cent cost (exact value 29 cents; the float
+// product evaluates 28.999999999999996) landed a cent below its own figure, and a month whose books tie
+// to the cent was refused by -$0.01. TestFW109DStockTieSurvivesAFractionalRow plants that row.
+//
 //	Run: DATABASE_URL='postgres://.../integration_gate?sslmode=disable' \
 //	     go test -tags integration ./cmd/core/ -run FW109D -count=1 -v
 
@@ -64,14 +69,55 @@ type fw109dBranchAmount struct {
 // TestFW109DClosePreflightPassesOnTheProductionWiring closes a month whose stock is on hand and in tie,
 // through the served route, on the production wiring, and expects the close to seal the period.
 func TestFW109DClosePreflightPassesOnTheProductionWiring(t *testing.T) {
+	fw109dCloseLeg(t, "fw109d", nil)
+}
+
+// TestFW109DStockTieSurvivesAFractionalRow plants S5's round 2 row and closes the same month: one
+// stock balance at 0.29 units and a 100 cent average cost. The exact value is 29 cents, but the
+// float64 product (0.29 * 100.0 evaluates 28.999999999999996) truncated to 28, so the stock side of
+// the tie read one cent below the 1200 opening the leg posts from its own exact SQL, and a month
+// whose books tie to the cent was refused by -$0.01. The close must seal.
+func TestFW109DStockTieSurvivesAFractionalRow(t *testing.T) {
+	fw109dCloseLeg(t, "fw109dfrac", func(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+		var productID, locationID, branchID string
+		err := pool.QueryRow(ctx, `
+			SELECT sb.product_id::text, sb.location_id::text, sb.branch_id::text
+			  FROM stock_balances sb
+			 WHERE sb.allocated_base <= 0.29
+			 ORDER BY sb.product_id, sb.location_id
+			 LIMIT 1`).Scan(&productID, &locationID, &branchID)
+		if err != nil {
+			t.Fatalf("finding the stock row the fractional plant goes on: %v", err)
+		}
+		mustExec(t, ctx, pool, `
+			UPDATE stock_balances SET on_hand_base = 0.29
+			 WHERE product_id = $1 AND location_id = $2`, productID, locationID)
+		mustExec(t, ctx, pool, `
+			INSERT INTO product_branch_costs (product_id, branch_id, avg_unit_cost_cents)
+			VALUES ($1, $2, 100)
+			ON CONFLICT (product_id, branch_id)
+			DO UPDATE SET avg_unit_cost_cents = 100`, productID, branchID)
+		t.Logf("the fractional plant: product %s at branch %s now 0.29 units at 100 cents", productID, branchID)
+	})
+}
+
+// fw109dCloseLeg is the composition leg both FW1-09d tests run: the served routes over the real money
+// spine, a seeded month whose opening ties are posted through the GL's own provider path, and the
+// close. The plant, when given, drops extra stock rows in right after the seed, before the leg reads
+// its opening figures, so both the 1200 opening and the pre flight's stock side see them.
+func fw109dCloseLeg(t *testing.T, suffix string, plant func(*testing.T, context.Context, *pgxpool.Pool)) {
+	t.Helper()
 	ctx := context.Background()
-	pool := freshMigratedDB(t, "fw109d")
+	pool := freshMigratedDB(t, suffix)
 	body, err := seedFS.ReadFile("dibbits_seed.sql")
 	if err != nil {
 		t.Fatalf("reading the embedded seed: %v", err)
 	}
 	if _, err := pool.Exec(ctx, string(body)); err != nil {
 		t.Fatalf("applying the seed: %v", err)
+	}
+	if plant != nil {
+		plant(t, ctx, pool)
 	}
 	mustExec(t, ctx, pool, `INSERT INTO org (id, slug, name) VALUES ($1, $2, 'FW1 09d Close Org') ON CONFLICT (id) DO NOTHING`, fw109dOrgID, fw109dOrgSlug)
 	mustExec(t, ctx, pool, `UPDATE locations SET org_id = $1 WHERE loc_type = 'BRANCH'`, fw109dOrgID)
