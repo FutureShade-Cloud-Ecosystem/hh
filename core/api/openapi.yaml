@@ -889,7 +889,7 @@ paths:
         - name: chip
           in: query
           required: false
-          description: Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit alongside the legacy StatusX strings; old URLs still resolve. The overdue and past_due chips answer 400 in words for a caller the account position policy refuses.
+          description: Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit alongside the legacy StatusX strings; old URLs still resolve. The overdue, past_due and current chips answer 400 with the past due words for a caller the account position policy refuses (current is the complement of past due, so all less current lists the overdue accounts by subtraction), and the DUE_SOON chip answers 400 with the due soon words for the same caller. A refused caller's status filter offers stored statuses only.
           schema:
             type: string
             enum:
@@ -1059,7 +1059,7 @@ paths:
       tags:
         - staff-billing
       summary: Download the current register view as CSV
-      description: The same filter and the same figures as the register read. The body is CSV text with a Content-Disposition attachment filename, not JSON; the wire shape is raw text rather than a struct. For a caller the account position policy refuses, the Days overdue header and its column are absent and the Status column carries the invoice's stored status.
+      description: The same filter and the same figures as the register read. The body is CSV text with a Content-Disposition attachment filename, not JSON; the wire shape is raw text rather than a struct. For a caller the account position policy refuses, the Days overdue header and its column are absent and the Status column carries the invoice's stored status; the overdue, past_due, current and DUE_SOON chips refuse that caller in words exactly as the register read does.
       x-role: requireStaff
       x-access:
         surfaces:
@@ -40462,11 +40462,15 @@ components:
           format: int32
     TaxReconReport:
       type: object
-      description: "The HST reconciliation: collected tax on the decision side tied to the GL liability account balances for the period."
+      description: "The HST reconciliation (FW1-11): the month's documents on each line, sales HST collected, tax refunded on POS returns, and vendor bill input tax credits shown apart, netted against the GL 2200 movement for the same period. Documents carrying the opening balance marker sit outside collected and are named on their own line."
       required:
         - year
         - month
         - collected_cents
+        - return_tax_cents
+        - input_tax_cents
+        - opening_balance_count
+        - opening_balance_hst_cents
         - gl_payable_cents
         - gl_federal_cents
         - gl_ontario_cents
@@ -40484,11 +40488,27 @@ components:
         collected_cents:
           type: integer
           format: int64
-          description: Sum of net-collected tax on the decision side
+          description: Sales tax on the period's documents (invoices less credit memos), opening balances excluded
+        return_tax_cents:
+          type: integer
+          format: int64
+          description: Sales tax refunded on the period's committed POS returns
+        input_tax_cents:
+          type: integer
+          format: int64
+          description: Input tax credits on the period's posted vendor bills
+        opening_balance_count:
+          type: integer
+          format: int32
+          description: The period's documents carrying the opening balance marker, excluded from collected
+        opening_balance_hst_cents:
+          type: integer
+          format: int64
+          description: Their HST, named here so nothing leaves the report silently
         gl_payable_cents:
           type: integer
           format: int64
-          description: The GL payable account balance
+          description: The GL 2200 movement for the period (credits less debits)
         gl_federal_cents:
           type: integer
           format: int64
@@ -40500,7 +40520,7 @@ components:
         variance_cents:
           type: integer
           format: int64
-          description: Payable balance minus collected; zero means tied out
+          description: The GL movement minus the documents' net (collected less returns less input tax); zero means tied out
         tied_out:
           type: boolean
     InventoryStockMove:

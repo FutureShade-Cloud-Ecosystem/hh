@@ -4,7 +4,7 @@
 // with the REAL gl.Service as the GL posting/rule/balance seam (proving the cross-module reason-coded journal)
 // and a FAKE stock/cost seam (INV-CORE lands the real one at integration). They exercise: snapshot freeze
 // (I1), the maker-checker four-eyes gate (I2), the idempotent cross-module post + the reason→account matrix
-// (I3), the lazy recon run-once (I4), and the negative-stock surface (I5). Run with:
+// (I3), the kept-per-period recon re-run (I4), and the negative-stock surface (I5). Run with:
 //
 //	DATABASE_URL='postgres://hardscape:hardscape@localhost:5435/hos_w6_a15?sslmode=disable' \
 //	  go test -tags=integration ./internal/invcount/... -count=1 -p 1
@@ -76,6 +76,10 @@ func (a glRuleAdapter) ResolveRule(ctx context.Context, e, r, b string) (string,
 }
 
 type glBalAdapter struct{ svc *gl.Service }
+
+func (a glBalAdapter) GLBalanceThroughCents(ctx context.Context, code string, y, m int, b string) (int64, error) {
+	return a.svc.GLBalanceThroughCents(ctx, code, y, m, b)
+}
 
 func (a glBalAdapter) GLBalanceCents(ctx context.Context, code string, y, m int, b string) (int64, error) {
 	return a.svc.GLBalanceCents(ctx, code, y, m, b)
@@ -359,7 +363,7 @@ func TestI3_PostIdempotentCrossModule(t *testing.T) {
 }
 
 // I4: the monthly recon runs lazily and once per period+branch (a second call returns the same row).
-func TestI4_ReconLazyRunOnce(t *testing.T) {
+func TestI4_ReconIsKeptPerPeriodAndReRuns(t *testing.T) {
 	pool := intPool(t)
 	stock := &fakeStockSeam{snaps: []Snapshot{
 		{ProductID: prodP1, LocationID: branchTRT, OnHandBase: 100, AvgCostCents: 350}, // 35000
@@ -389,13 +393,13 @@ func TestI4_ReconLazyRunOnce(t *testing.T) {
 	if run1.DeltaCents != d1 {
 		t.Errorf("delta mismatch %d vs %d", run1.DeltaCents, d1)
 	}
-	// second call, run-once: same row id, no new insert.
+	// second call: the same row is upserted, its identity stands.
 	if _, err := svc.ReconcileMonth(ctx, y, m, branchTRT); err != nil {
 		t.Fatal(err)
 	}
 	run2, _, _ := svc.ReconRunFor(ctx, y, m, branchTRT)
 	if run2.ID != run1.ID {
-		t.Errorf("run-once violated: %q vs %q", run2.ID, run1.ID)
+		t.Errorf("the period row moved identity: %q vs %q", run2.ID, run1.ID)
 	}
 	var count int
 	if err := pool.QueryRow(context.Background(),

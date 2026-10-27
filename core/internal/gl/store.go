@@ -77,6 +77,9 @@ type glStore interface {
 
 	// - balances (0034 views) -
 	AccountBalance(ctx context.Context, code string, year, month int, branchID string) (netDebit int64, normalBalance string, err error)
+	// AccountBalanceThrough is the cumulative through-period read the inventory tie-out's GL side
+	// takes (FW1-11); the fake answers it from the same rows.
+	AccountBalanceThrough(ctx context.Context, code string, year, month int, branchID string) (netDebit int64, normalBalance string, err error)
 	// AccountBalanceAsOf is the INCEPTION-TO-DATE net-debit of an account across ALL fiscal years, bounded by
 	// posted date <= asOf (the point-in-time basis the AR↔GL tie-out needs so a year-boundary carry-forward
 	// does not read as a spurious discrepancy). branchID "" is consolidated.

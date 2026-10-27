@@ -1220,7 +1220,7 @@ func (r *Repository) LodgementJournalForBank(ctx context.Context, movementID, gl
 		        WHERE rev.reverses_journal_id = j.id
 		          AND rev.status = 'POSTED'
 		   )
-		 LIMIT 1`, movementID, glAccountCode).Scan(&jid)
+	LIMIT 1`, movementID, glAccountCode).Scan(&jid)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
 	}
@@ -1228,6 +1228,35 @@ func (r *Repository) LodgementJournalForBank(ctx context.Context, movementID, gl
 		return "", false, fmt.Errorf("gl: lodgement journal for bank: %w", err)
 	}
 	return jid, true, nil
+}
+
+// AccountBalanceThrough sums the POSTED net-debit of an account over every fiscal period up to and
+// including (year, month), by period grain (FW1-11): the cumulative figure a balance tie-out reads
+// against a subledger valued as of the period end. It reads the same 0034 view the period reads do,
+// so where a late posted journal lands is decided by its filed period (the FW1-01 rule, 612) rather
+// than by its posted_at instant. month 0 is the whole year; branchID "" is consolidated.
+func (r *Repository) AccountBalanceThrough(ctx context.Context, code string, year, month int, branchID string) (int64, string, error) {
+	if r.pool == nil {
+		return 0, "", errNoDB
+	}
+	var normal string
+	err := r.pool.QueryRow(ctx, `SELECT normal_balance FROM gl_accounts WHERE code = $1`, code).Scan(&normal)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, "", errNotFound
+	}
+	if err != nil {
+		return 0, "", fmt.Errorf("gl: account normal balance: %w", err)
+	}
+	var netDebit int64
+	err = r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(net_debit_cents),0) FROM v_gl_account_balances
+		 WHERE account_code = $1
+		   AND (fiscal_year < $2 OR (fiscal_year = $2 AND ($3 <= 0 OR month <= $3)))
+		   AND ($4 = '' OR branch_id = $4::uuid)`, code, year, month, branchID).Scan(&netDebit)
+	if err != nil {
+		return 0, "", fmt.Errorf("gl: account balance through period: %w", err)
+	}
+	return netDebit, normal, nil
 }
 
 // TrialBalanceAsOf is the INCEPTION-TO-DATE closing trial balance: one row per account with any POSTED

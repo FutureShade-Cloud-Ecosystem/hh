@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -1151,6 +1152,12 @@ func (s *Service) PostBill(ctx context.Context, billID string, in PostBillReques
 	if s.rules == nil {
 		return BillDetail{}, ErrGLSeamUnwired
 	}
+	// The dealer's day, decided BEFORE the transaction opens (a zone read must not hold a
+	// connection beside the open transaction): the bill's own date is a calendar day in it.
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return BillDetail{}, err
+	}
 
 	tx, err := s.repo.Begin(ctx)
 	if err != nil {
@@ -1237,7 +1244,7 @@ func (s *Service) PostBill(ctx context.Context, billID string, in PostBillReques
 			bill.BillNo, legs.VarianceCents)
 	}
 
-	journalID, err := s.postBillJournal(ctx, tx, bill, legs)
+	journalID, err := s.postBillJournal(ctx, tx, bill, legs, zone)
 	if err != nil {
 		return BillDetail{}, err
 	}
@@ -1277,7 +1284,7 @@ func (s *Service) PostBill(ctx context.Context, billID string, in PostBillReques
 // bill. The idempotency key stays as belt and braces. Going through tx also means PostBill holds one pool
 // connection for the whole post, where posting on the pool made every PostBill pin one connection and wait
 // for another (connection starvation by second acquisition).
-func (s *Service) postBillJournal(ctx context.Context, tx pgx.Tx, bill Bill, legs JournalLegs) (string, error) {
+func (s *Service) postBillJournal(ctx context.Context, tx pgx.Tx, bill Bill, legs JournalLegs, zone houseday.Zone) (string, error) {
 	role := func(r string) (string, error) {
 		return s.rules.ResolveRuleTx(ctx, tx, eventBillPosted, r, bill.BranchID)
 	}
@@ -1313,6 +1320,20 @@ func (s *Service) postBillJournal(ctx context.Context, tx pgx.Tx, bill Bill, leg
 	}
 	glLines = append(glLines, GLLine{AccountCode: apCode, CreditCents: legs.APCents, Memo: "vendor bill " + bill.BillNo})
 
+	// The bill is the document: the journal carries the bill's own bill_date (the GL files it late
+	// into the earliest open month at or after it when the bill's month is closed), so the input
+	// tax credit the tax tie-out reads by bill_date and the 2200 debit land on the same month. The
+	// column is DATE NOT NULL DEFAULT CURRENT_DATE and pgx hands it back as YYYY-MM-DD, so an
+	// unparseable date keeps the clock as the belt, never the rule.
+	//
+	// THE DATE IS A CALENDAR DAY IN THE DEALER'S ZONE (houseday), never midnight at Greenwich: a
+	// bare time.Parse names the previous evening in the house zone, so a bill dated the first of a
+	// month filed into the month before it and the tax tie-out showed a variance in both months.
+	var documentDate time.Time
+	if d, err := zone.ParseDay(bill.BillDate); err == nil {
+		documentDate = d
+	}
+
 	return s.gl.PostJournalTx(ctx, tx, GLJournal{
 		Source:         glSourcePOReceipt,
 		SourceRefID:    bill.ID,
@@ -1320,6 +1341,7 @@ func (s *Service) postBillJournal(ctx context.Context, tx pgx.Tx, bill Bill, leg
 		Memo:           "Vendor bill " + bill.BillNo,
 		BranchID:       bill.BranchID,
 		Lines:          glLines,
+		DocumentDate:   documentDate,
 	})
 }
 

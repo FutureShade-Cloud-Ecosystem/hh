@@ -192,6 +192,11 @@ type ExternalJournal struct {
 	// statement line): the journal posts in that document's month when it is open, and into the
 	// earliest open month, dated by the document and late posted, when it is closed (ruling 82.2).
 	// Zero keeps the clock.
+	//
+	// A document date is a CALENDAR DAY in the dealer's own zone (houseday), the instant that day's
+	// house midnight begins, never midnight at Greenwich: the ledger files a journal by the month of
+	// the instant in the dealer's zone, so a Greenwich midnight (the previous evening in the house
+	// zone) would file a document dated the first of a month into the month before it.
 	DocumentDate time.Time
 }
 
@@ -451,6 +456,22 @@ func (s *Service) BankAccountEntriesAsOf(ctx context.Context, glAccountCode stri
 // journal keeps today's match.
 func (s *Service) LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error) {
 	return s.store.LodgementJournalForBank(ctx, movementID, glAccountCode)
+}
+
+// GLBalanceThroughCents returns an account's balance THROUGH a period (every period up to and
+// including year/month, cumulative), natural orientation. Additive provider read (FW1-11): the
+// inventory tie-out reads 1200's balance as of a period end, where the frozen GLBalanceCents keeps
+// answering one period's movement. The same view, so a late posted journal's filed period decides
+// where it lands (the FW1-01 rule, 612).
+func (s *Service) GLBalanceThroughCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	netDebit, normal, err := s.store.AccountBalanceThrough(ctx, accountCode, year, month, branchID)
+	if err != nil {
+		return 0, err
+	}
+	if normal == NormalCredit {
+		return -netDebit, nil
+	}
+	return netDebit, nil
 }
 
 // RegisterPostingHandlers wires the outbox consumer for all eight posted topics onto the dispatcher. Each
