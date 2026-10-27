@@ -47,13 +47,46 @@ func (IdentityCreditGate) Check(_ context.Context, _ string, orderTotalCents, op
 // build failure, not a silently un-wired gate at runtime).
 var _ CreditGate = IdentityCreditGate{}
 
+// PositionGate reports whether the staff caller on ctx may read the customer's account position
+// figures (credit limit, open balance) at branchID. Satisfied by *billing.AccountPositionGate.
+// A nil gate fails closed for staff conversion refusals.
+type PositionGate interface {
+	AccountPositionAllowed(ctx context.Context, branchID string) bool
+}
+
 // ErrCreditBlocked aborts a conversion whose customer fails the credit/hold gate. It carries the
 // identity.ActionBlocked verdict (policy + detail) so the refusal reason survives to the caller.
 //
 // Unwrap returns ErrInvalidTransition on purpose: the portal BFF's error mapping (portal/handler.go:323)
 // turns that into a 409, the SAME status pos/handler.go:285 answers for credit_blocked. A blocked
 // conversion is therefore a business refusal to the contractor, never a 500.
-type ErrCreditBlocked struct{ Blocked *identity.ActionBlocked }
+type ErrCreditBlocked struct {
+	Blocked          *identity.ActionBlocked
+	PositionWithheld bool
+}
+
+func (e ErrCreditBlocked) withPositionWithheld() ErrCreditBlocked {
+	out := ErrCreditBlocked{PositionWithheld: true}
+	if e.Blocked == nil {
+		return out
+	}
+	cp := *e.Blocked
+	if cp.Policy == identity.PolicyCredit {
+		cp.Detail = ""
+	}
+	if cp.Data != nil {
+		data := make(map[string]string, len(cp.Data))
+		for k, v := range cp.Data {
+			if k == "credit_limit" || k == "open_balance" {
+				continue
+			}
+			data[k] = v
+		}
+		cp.Data = data
+	}
+	out.Blocked = &cp
+	return out
+}
 
 func (e ErrCreditBlocked) Error() string {
 	if e.Blocked == nil {
@@ -196,11 +229,13 @@ func CreditRefusalMessage(e ErrCreditBlocked) string {
 	switch b.Policy {
 	case identity.PolicyCredit:
 		lead = "this order is over the customer's credit limit"
-		if total, ok := b.Data["order_total"]; ok {
-			if limit, ok2 := b.Data["credit_limit"]; ok2 {
-				lead = fmt.Sprintf("this order is %s against a %s credit limit", total, limit)
-				if bal, ok3 := b.Data["open_balance"]; ok3 && bal != "$0.00" {
-					lead += fmt.Sprintf(" with %s already owing", bal)
+		if !e.PositionWithheld {
+			if total, ok := b.Data["order_total"]; ok {
+				if limit, ok2 := b.Data["credit_limit"]; ok2 {
+					lead = fmt.Sprintf("this order is %s against a %s credit limit", total, limit)
+					if bal, ok3 := b.Data["open_balance"]; ok3 && bal != "$0.00" {
+						lead += fmt.Sprintf(" with %s already owing", bal)
+					}
 				}
 			}
 		}
@@ -210,6 +245,9 @@ func CreditRefusalMessage(e ErrCreditBlocked) string {
 		lead = "this conversion was refused by a credit policy"
 	}
 	detail := strings.TrimSpace(b.Detail)
+	if e.PositionWithheld && b.Policy == identity.PolicyCredit {
+		detail = ""
+	}
 	if detail == "" {
 		return lead + ", the quote is unchanged and no order was created; accounts receivable can release or override the hold"
 	}

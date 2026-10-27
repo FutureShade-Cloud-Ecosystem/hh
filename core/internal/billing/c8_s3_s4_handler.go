@@ -53,7 +53,8 @@ type C8S3S4Handler struct {
 	userLink identity.UserIDLinker
 	repo     *Repository
 	log      *slog.Logger
-	reach    WorkspaceReach // the customer module's reach rule (UX-89)
+	reach    WorkspaceReach        // the customer module's reach rule (UX-89)
+	position AccountPositionReader // the dealer's account position policy (UX-97)
 }
 
 // NewC8S3S4Handler wires the three new operations over a billing Repository. The
@@ -63,11 +64,28 @@ func NewC8S3S4Handler(repo *Repository, log *slog.Logger) *C8S3S4Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &C8S3S4Handler{repo: repo, log: log}
+	h := &C8S3S4Handler{repo: repo, log: log}
+	if repo != nil {
+		h.position = NewAccountPositionGate(repo)
+	}
+	return h
 }
 
 // WithCustomerReach binds the customer reach rule the statement preview holds its customer to (UX-89).
 func (h *C8S3S4Handler) WithCustomerReach(c WorkspaceReach) *C8S3S4Handler { h.reach = c; return h }
+
+// WithAccountPosition binds the account position policy reader (UX-97). Unbound, the figures are withheld.
+func (h *C8S3S4Handler) WithAccountPosition(p AccountPositionReader) *C8S3S4Handler {
+	h.position = p
+	return h
+}
+
+func (h *C8S3S4Handler) positionAllowed(ctx context.Context, homeBranchID string) bool {
+	if h.position == nil {
+		return false
+	}
+	return h.position.AccountPositionAllowed(ctx, homeBranchID)
+}
 
 // WithUserLinker binds the ERP users.id linker the caller-stamp carries. Nil is legal.
 func (h *C8S3S4Handler) WithUserLinker(link identity.UserIDLinker) *C8S3S4Handler {
@@ -169,6 +187,9 @@ func (h *C8S3S4Handler) createHold(w http.ResponseWriter, r *http.Request, calle
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
+	}
+	if !h.positionAllowed(r.Context(), hold.HomeBranchID) {
+		hold.Reason = withholdHoldReason(hold.Kind, hold.Reason, hold.AutoPlaced)
 	}
 	if placed {
 		httpx.WriteJSON(w, http.StatusCreated, hold)
@@ -340,11 +361,19 @@ func (h *C8S3S4Handler) statementPreview(w http.ResponseWriter, r *http.Request,
 	sumBuckets := aging.CurrentCents + aging.Days30Cents + aging.Days60Cents + aging.Days90Cents + aging.Days90PlusCents
 	sumLate := aging.Days30Cents + aging.Days60Cents + aging.Days90Cents + aging.Days90PlusCents
 	reconciled := sumBuckets == aging.OpenCents && sumLate == aging.OverdueCents
+	withheld := !h.positionAllowed(r.Context(), statement.HomeBranchID)
+	if withheld {
+		statement.PositionWithheld = true
+		for i := range lines {
+			lines[i].PositionWithheld = true
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, BillingStatementPreview{
-		Statement:  statement,
-		OpenLines:  lines,
-		Aging:      aging,
-		Reconciled: reconciled,
+		Statement:        statement,
+		OpenLines:        lines,
+		Aging:            aging,
+		Reconciled:       reconciled,
+		PositionWithheld: withheld,
 	})
 }
 

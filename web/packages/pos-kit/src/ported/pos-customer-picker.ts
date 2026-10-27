@@ -3,7 +3,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { money, searchCustomers } from './pos-api.js';
-import { api, availableCreditCents } from './ports.js';
+import { api, serverAvailableCreditCents } from './ports.js';
 import type { PosCustomer } from './pos-customer-strip.js';
 import { customerTypeWord } from './_customer-picker.js';
 import { focusRing } from './styles/focus-ring.js';
@@ -490,6 +490,7 @@ export class HosPosCustomerPicker extends LitElement {
         payment_terms_days?: number;
         credit_limit_cents?: number;
         balance_cents?: number;
+        available_credit_cents?: number;
       };
  // The new account is the answer to the picker's own question: select it,
       // unless nobody is waiting for the answer any more (DIB-636).
@@ -511,8 +512,9 @@ export class HosPosCustomerPicker extends LitElement {
         account_no: acctBody.account_no,
         customer_type: acctBody.customer_type,
         payment_terms_days: acctBody.payment_terms_days ?? 0,
-        credit_limit_cents: acctBody.credit_limit_cents ?? 0,
-        open_balance_cents: acctBody.balance_cents ?? 0,
+        credit_limit_cents: acctBody.credit_limit_cents,
+        open_balance_cents: acctBody.balance_cents,
+        available_credit_cents: acctBody.available_credit_cents,
       });
     } catch {
       this.createError = 'Could not reach the server: try again.';
@@ -629,9 +631,9 @@ export class HosPosCustomerPicker extends LitElement {
               ? html`<div class="empty">No accounts match “${this.term.trim()}”.</div>`
               : this.results.map((c) => {
                   // HH note: the reference subtracted the balance from the limit here; the core
-                  // computes credit in HH, so the port asks the host seam (CLOSURE.md names it),
-                  // already clamped for display.
-                  const available = availableCreditCents(c);
+                  // computes the available credit and sends it (UX-97), or leaves it out when the
+                  // dealer's account position policy withholds it from this caller.
+                  const available = serverAvailableCreditCents(c);
                   return html`<button class="row" @keydown=${this.onRowsKeydown} @click=${() => this.pick(c)}>
                     <div>
                       <div class="name">${c.name}</div>
@@ -639,9 +641,11 @@ export class HosPosCustomerPicker extends LitElement {
                            picker: the till and the quote desk cannot call an account two things. */ ''}
                       <div class="acct">${c.account_no} · ${customerTypeWord(c.customer_type)}</div>
                     </div>
-                    <div class="credit">
-                      Available (derived)<span class="num">${money(available)}</span>
-                    </div>
+                    ${available === null
+                      ? nothing
+                      : html`<div class="credit">
+                          Available<span class="num">${money(available)}</span>
+                        </div>`}
                   </button>`;
                 })}
 

@@ -37,6 +37,9 @@ for (const size of SIZES) {
         if (theme === "brand") {
           await page.locator("hh-shell-header button.account").click();
           await page.getByRole("button", { name: "Brand theme" }).click();
+          // The account menu closes after the switch, so no shot carries an open popover.
+          await page.keyboard.press("Escape");
+          await expect(page.locator("hh-shell-header button.account")).toBeFocused();
         }
       };
 
