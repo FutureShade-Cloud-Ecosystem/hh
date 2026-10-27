@@ -6,9 +6,13 @@ package main
 //
 // The walk is committed red first with this map empty; the lines below name exactly the
 // assertions that failed on main, with their red lines quoted in FW1-00-REPORT.md.
+//
+// The month close line (FW1-09d) is refused by the AR tie, the same $700.00 FW1-06a's own line
+// reports: the stock tie passes in the walk, so the line is owned by FW1-06a and goes green with it.
 var fw1WalkRed = map[string]string{
 	"AR_aging_ties_to_GL_1100":                                  "FW1-06a",
 	"bank_month_signs_off_at_zero_with_outstanding_items":       "FW1-04",
+	"month_close_passes_its_pre_flight_and_seals_the_month":     "FW1-06a",
 	"walk_month_and_next_year_periods_open":                     "FW1-01",
 	"year_end_close_opens_next_year_and_keeps_income_statement": "FW1-09",
 }
