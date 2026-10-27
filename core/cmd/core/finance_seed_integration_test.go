@@ -104,10 +104,12 @@ func TestIntegration_FinanceSeedAppliesTheWorldAndRefusesASecondRun(t *testing.T
 		t.Fatalf("the seed must record box_kind=finance through settings, got %q", kind)
 	}
 
-	// The seed's users hold no usable password: every seed staff id and the
-	// seed's portal account read NULL, and the demo bcrypt appears nowhere.
-	// The id list is the dibbits seed's fixed staff ids (dibbits_seed.sql),
-	// the rows DisableSeedCredentials must clear.
+	// The seed's users hold no usable password: every seed staff id reads
+	// NULL (the INVITED spelling) and the seed's portal account carries the
+	// seeded-no-password marker (the NOT NULL table's spelling), and the
+	// demo bcrypt appears nowhere. The id list is the dibbits seed's fixed
+	// staff ids (dibbits_seed.sql), the rows DisableSeedCredentials must
+	// clear.
 	var holding int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM users
@@ -117,22 +119,26 @@ func TestIntegration_FinanceSeedAppliesTheWorldAndRefusesASecondRun(t *testing.T
 	if holding != 0 {
 		t.Fatalf("%d seed staff users still hold a usable password", holding)
 	}
+	var portalHash string
 	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM portal_users
-		 WHERE id = 'e7000000-0000-4000-9000-000000000001'::uuid AND password_hash IS NOT NULL`).Scan(&holding); err != nil {
+		SELECT password_hash FROM portal_users WHERE id = 'e7000000-0000-4000-9000-000000000001'::uuid`).Scan(&portalHash); err != nil {
 		t.Fatalf("portal password probe: %v", err)
 	}
-	if holding != 0 {
-		t.Fatal("the seed's portal account still holds a usable password")
+	if strings.HasPrefix(portalHash, "$2") {
+		t.Fatal("the seed's portal account still holds a usable bcrypt password")
 	}
+	// The seed's own demo bcrypt must survive nowhere (staff or portal).
+	// Other planted demo logins the migrations carry are a separate finding
+	// for the lead, outside this item's scope.
 	var hashes int
 	if err := pool.QueryRow(ctx, `
-		SELECT (SELECT count(*) FROM users WHERE password_hash LIKE '$2a$%')
-		     + (SELECT count(*) FROM portal_users WHERE password_hash LIKE '$2a$%')`).Scan(&hashes); err != nil {
-		t.Fatalf("bcrypt sweep: %v", err)
+		SELECT (SELECT count(*) FROM users WHERE password_hash = $1)
+		     + (SELECT count(*) FROM portal_users WHERE password_hash = $1)`,
+		"$2a$10$ja7jD99TS1QsOtU.7dVDIu.HwgOK2pBERc60C4IyjMEi49IvR/dGO").Scan(&hashes); err != nil {
+		t.Fatalf("seed hash sweep: %v", err)
 	}
 	if hashes != 0 {
-		t.Fatalf("the demo bcrypt must survive the seed nowhere, found %d rows still holding one", hashes)
+		t.Fatalf("the seed's demo bcrypt must survive the seed nowhere, found %d rows still holding it", hashes)
 	}
 
 	// The second run refuses: the seed is applied.

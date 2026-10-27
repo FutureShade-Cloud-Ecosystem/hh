@@ -66,9 +66,18 @@ func TestDisableSeedCredentials_ClearsTheSeedUsersOnBothTables(t *testing.T) {
 		t.Fatalf("the report must carry both counts, got %+v", report)
 	}
 	for i, table := range []string{"users", "portal_users"} {
-		if !strings.Contains(fake.sqls[i], "UPDATE "+table) || !strings.Contains(fake.sqls[i], "password_hash = NULL") {
-			t.Fatalf("statement %d must NULL the password hash on %s, got: %s", i, table, fake.sqls[i])
+		if !strings.Contains(fake.sqls[i], "UPDATE "+table) || !strings.Contains(fake.sqls[i], "password_hash") {
+			t.Fatalf("statement %d must rewrite the password hash on %s, got: %s", i, table, fake.sqls[i])
 		}
+	}
+	if !strings.Contains(fake.sqls[0], "password_hash = NULL") {
+		t.Fatalf("the staff statement must NULL the hash (the INVITED spelling), got: %s", fake.sqls[0])
+	}
+	if !strings.Contains(fake.sqls[1], "password_hash = $2") {
+		t.Fatalf("the portal statement must rewrite the hash through the marker parameter, got: %s", fake.sqls[1])
+	}
+	if len(fake.args[1]) != 2 || fake.args[1][0] != seedPortalUserID || fake.args[1][1] != portalNoPassword {
+		t.Fatalf("the portal statement must carry the seed portal id and the %q marker, got: %v", portalNoPassword, fake.args[1])
 	}
 	// The staff statement must name every seed id, so a seed user can never
 	// keep a usable password while its neighbour loses theirs.
