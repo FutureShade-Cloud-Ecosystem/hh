@@ -367,7 +367,8 @@ type Service struct {
 	// UX-97). Nil fails closed.
 	position PositionGate
 	// surface is the same policy's visibility word read (standing.go): HIDDEN is the dealer's
-	// switch-off, the standing read's 403 (UX-97 item 208). Nil keeps the surface on.
+	// switch-off, the standing read's 403 (UX-97 item 208). Nil fails closed: the standing read
+	// answers as HIDDEN, the same way the nil position gate withholds.
 	surface PositionSurface
 	tender  TenderTaker
 	credit  CreditGate

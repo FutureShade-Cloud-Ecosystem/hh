@@ -411,6 +411,29 @@ func TestStanding_HiddenPolicy_NobodyGetsItAndIsRefused(t *testing.T) {
 	}
 }
 
+// TestStanding_AnUnwiredSurfaceFailsClosedToHidden pins the surface seam's fail-closed half: the
+// one wiring line at the composition root (cmd/core wire_tops, WithPositionSurface) is what
+// connects the dealer's ONE account position policy to the till, and if it goes missing the till
+// must answer as the HIDDEN word answers, the 403 with no figures, never an open read. The
+// walk-in leg consults no admission gate at all, so the seam alone decides it.
+func TestStanding_AnUnwiredSurfaceFailsClosedToHidden(t *testing.T) {
+	h, _ := standingHarness(t, behind(), nil) // manager-tier caller
+	h.svc.WithPositionGate(&fakePosition{vis: "HIDDEN", svc: h.svc})
+	h.svc.WithPositionSurface(nil) // the wiring line is missing
+	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
+	if standingStatus(err) != 403 {
+		t.Fatalf("an unwired surface answers HIDDEN, the standing read's 403: %v", err)
+	}
+	if out != (AccountStanding{}) {
+		t.Fatalf("and no figure rides with the refusal: %+v", out)
+	}
+	// A walk-in under the unwired surface meets the same refusal a wired HIDDEN word gives: the
+	// surface it meets is the branch the till names.
+	if _, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt"}); standingStatus(err) != 403 {
+		t.Fatalf("a walk-in under an unwired surface is refused with the read: %v", err)
+	}
+}
+
 // TestStanding_TheAccountHomeBranchDecidesTheAdmission pins the ONE branch rule (UX-97 item 208):
 // the standing decides at the ACCOUNT's home branch, the dealer default for an unhomed account,
 // exactly as the customer by-id read does, so the till cannot contradict the customer read one

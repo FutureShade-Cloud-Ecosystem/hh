@@ -147,13 +147,15 @@ const PositionVisibilityHidden = "HIDDEN"
 // default when branchID is empty). HIDDEN is the dealer's switch-off and the standing read's 403
 // for everyone: UX-97 item 208 makes this ONE policy the till's surface decider too, and retires
 // pos_policy.balance_visibility, whose column stays but decides nothing. Satisfied by
-// *billing.AccountPositionGate. Optional: an unwired surface never reads as off, and the admission
-// gate below still decides every figure.
+// *billing.AccountPositionGate. A security seam, and it fails closed: an unwired surface answers
+// as HIDDEN, the standing read's 403 with no figures, the same way the nil admission gate below
+// withholds.
 type PositionSurface interface {
 	AccountPositionVisibility(ctx context.Context, branchID string) (string, error)
 }
 
-// WithPositionSurface binds the visibility word read. Nil keeps the surface permanently on.
+// WithPositionSurface binds the visibility word read. Nil fails closed: the standing read answers
+// as HIDDEN, exactly as a wired HIDDEN word does.
 func (s *Service) WithPositionSurface(p PositionSurface) *Service { s.surface = p; return s }
 
 func (s *Service) positionAllowed(ctx context.Context, branchID string) bool {
@@ -165,10 +167,11 @@ func (s *Service) positionAllowed(ctx context.Context, branchID string) bool {
 
 // surfaceOff answers whether the dealer's account position surface is switched off at branchID:
 // the visibility word there is HIDDEN. A word that cannot be read is an error, never an on: the
-// read is refused or fails, it is never answered empty.
+// read is refused or fails, it is never answered empty. An unwired surface fails closed: a seam
+// the till cannot read is a switch-off, the same way a nil admission gate withholds.
 func (s *Service) surfaceOff(ctx context.Context, branchID string) (bool, error) {
 	if s == nil || s.surface == nil {
-		return false, nil
+		return true, nil
 	}
 	vis, err := s.surface.AccountPositionVisibility(ctx, branchID)
 	if err != nil {
