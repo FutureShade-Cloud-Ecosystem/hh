@@ -462,4 +462,65 @@ func TestIntegration_FW1_06a_LodgementPaymentIDsNeverGuesses(t *testing.T) {
 				fact.PaymentIDs, fact.PaymentsUnresolved)
 		}
 	})
+
+	// Leg 4 (R2-P3): the one unique exact set is claimed. Cheques of $250, $300 and $200 under a
+	// $500 cheque lodgement admit exactly one subset ($300 + $200), so the lodgement claims exactly
+	// those two payments and is not unresolved (S6's round 1 probe, pinned).
+	t.Run("unique_exact_set_is_claimed", func(t *testing.T) {
+		sid := newSession(t, "FW106A-UNIQ")
+		_ = newPayment(t, sid, "CHEQUE", 25000, "uniq-250")
+		p300 := newPayment(t, sid, "CHEQUE", 30000, "uniq-300")
+		p200 := newPayment(t, sid, "CHEQUE", 20000, "uniq-200")
+		lid := newLodgement(t, sid, "CHEQUE", 50000, "LDG-UNIQ-500")
+
+		fact, found, err := repo.LodgementFacts(ctx, lid)
+		if err != nil || !found {
+			t.Fatalf("LodgementFacts: found=%v err=%v", found, err)
+		}
+		want := map[string]bool{p300: true, p200: true}
+		if fact.PaymentsUnresolved || len(fact.PaymentIDs) != 2 || !want[fact.PaymentIDs[0]] || !want[fact.PaymentIDs[1]] {
+			t.Fatalf("unique exact set: PaymentIDs=%v PaymentsUnresolved=%v; want exactly the $300 and $200 cheques and PaymentsUnresolved=false",
+				fact.PaymentIDs, fact.PaymentsUnresolved)
+		}
+	})
+
+	// Leg 5 (R2-P1-2): a busy cheque session, 60 same-session payments of distinct even amounts
+	// under a lodgement no subset reaches. The answer must come back inside the bound with nothing
+	// claimed and PaymentsUnresolved (the ruling caps the candidates at 20); the subset walk this
+	// replaced was exponential (57 s at 36 payments) and never answered.
+	t.Run("sixty_payments_answer_inside_the_bound", func(t *testing.T) {
+		sid := newSession(t, "FW106A-SIXTY")
+		for i := 0; i < 60; i++ {
+			_ = newPayment(t, sid, "CHEQUE", int64(i+1)*100, fmt.Sprintf("sixty-%02d", i))
+		}
+		lid := newLodgement(t, sid, "CHEQUE", 99999, "LDG-SIXTY")
+
+		type answer struct {
+			fact  bankrec.LodgementFact
+			found bool
+			err   error
+		}
+		done := make(chan answer, 1)
+		start := time.Now()
+		go func() {
+			fact, found, err := repo.LodgementFacts(ctx, lid)
+			done <- answer{fact, found, err}
+		}()
+		var got answer
+		select {
+		case got = <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("LodgementFacts over 60 same-session cheque payments did not answer within 10s: the subset search is exponential (R2-P1-2)")
+		}
+		if got.err != nil || !got.found {
+			t.Fatalf("LodgementFacts: found=%v err=%v", got.found, got.err)
+		}
+		if elapsed := time.Since(start); elapsed > 10*time.Second {
+			t.Fatalf("LodgementFacts over 60 payments took %s, over the 10s bound", elapsed)
+		}
+		if len(got.fact.PaymentIDs) != 0 || !got.fact.PaymentsUnresolved {
+			t.Fatalf("capped lodgement claimed PaymentIDs=%v PaymentsUnresolved=%v; want nil PaymentIDs and PaymentsUnresolved=true",
+				got.fact.PaymentIDs, got.fact.PaymentsUnresolved)
+		}
+	})
 }

@@ -228,12 +228,26 @@ func (r *Repository) LodgementFacts(ctx context.Context, movementID string) (ban
 // Ruling 128 (P1-2): claim only payments from the lodgement's own till_session_id and method, and only
 // when exactly one subset of those payments sums to amountCents; never claim a partial set, another
 // session's payment, or another method's payment, and report unresolved when no unique set matches.
+//
+// Ruling 141 (round 3): only CHEQUE lodgements are resolved. A cash lodgement claims nothing and is
+// not called unresolved, because nothing downstream acts on its resolution: cash does not bounce, and
+// a DEPOSITED flag only changes which account a bounce credits. A unique-set search over every cash
+// taking of a busy session is also the exponential walk R2-P1-2 removed.
+//
+// maxLodgementCandidates caps the unique-set search at 20 candidates (about a millisecond at the
+// cap). More than that is marked unresolved rather than searched: 2^n subsets over a session's
+// takings never finishes in the request that asks for it.
+const maxLodgementCandidates = 20
+
 func (r *Repository) lodgementPaymentIDs(ctx context.Context, branchID, sessionID, method string, amountCents int64, used map[string]bool) ([]string, bool, error) {
 	if amountCents <= 0 {
 		return nil, false, nil
 	}
 	if branchID == "" || sessionID == "" || method == "" {
 		return nil, true, nil
+	}
+	if method != "CHEQUE" {
+		return nil, false, nil
 	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT p.id::text, p.amount_cents
@@ -270,6 +284,9 @@ func (r *Repository) lodgementPaymentIDs(ctx context.Context, branchID, sessionI
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, err
+	}
+	if len(cands) > maxLodgementCandidates {
+		return nil, true, nil
 	}
 
 	suffixSum := make([]int64, len(cands)+1)

@@ -906,7 +906,25 @@ export type PaymentsHeld = {
   amount_cents: number;
   reversed: boolean;
   applied_cents: number;
+  paid_out_cents: number;
   held_cents: number;
+};
+export type PaymentsPayoutRequest = {
+  kind: "DRAWER" | "BANK" | "WRITE_OFF";
+  amount_cents: number;
+  reason: string;
+  reference?: string;
+  till_session_id?: string;
+  idempotency_key: string;
+};
+export type PaymentsPayout = {
+  payment_id: string;
+  payout_id: string;
+  kind: "DRAWER" | "BANK" | "WRITE_OFF";
+  amount_cents: number;
+  held_before_cents: number;
+  held_after_cents: number;
+  replayed: boolean;
 };
 export type PaymentsReapplyRequest = {
   reason: string;
@@ -2800,7 +2818,8 @@ export type BankRecReconInput = {
   bank_account_id: string;
   year: number;
   month: number;
-  statement_balance_cents: number;
+  statement_balance_cents?: number;
+  refresh?: boolean;
 };
 export type BankRecReconciliationList = BankRecReconciliation[];
 export type IdentityPing = {

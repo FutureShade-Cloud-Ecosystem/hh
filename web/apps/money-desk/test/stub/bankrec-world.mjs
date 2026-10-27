@@ -34,6 +34,9 @@ export const IDS = {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const pad = (n, w = 2) => String(n).padStart(w, "0");
+// The core's dollars (bankrec dollars()): "$1,234.50", "-$45.00".
+const usd = (cents) =>
+  `${cents < 0 ? "-" : ""}$${String(Math.floor(Math.abs(cents) / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${pad(Math.abs(cents) % 100)}`;
 const uuid = (kind, n) => `${kind.padEnd(8, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 /** The month before today, from the host's own clock: the month the statement covers (the desk opens the same one). */
@@ -350,6 +353,12 @@ export function createBankrecWorld() {
     const made = [];
     let unmatched = 0;
     for (const line of lines) {
+      const year = Number(line.txn_date.slice(0, 4));
+      const month = Number(line.txn_date.slice(5, 7));
+      if (world.recons.some((r) => r.bank_account_id === line.bank_account_id && r.year === year && r.month === month && r.status === "COMPLETED")) {
+        unmatched += 1;
+        continue;
+      }
       let found = null;
       for (const rule of rules) {
         const kind = rule.spec.kind;
@@ -480,7 +489,7 @@ export function createBankrecWorld() {
     // A deposit whose payment was reversed cannot be unmatched, except a reversed CARD (SF-2d round 7): a card is
     // claimable again, while a reversed cheque, cash, EFT or other payment can never be matched again.
     if (match.target_type === "PAYMENT" && world.payments.some((p) => p.id === match.target_ref_id && p.reversed && p.method !== "CARD")) {
-      return clientError(409, "bankrec: this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again");
+      return clientError(409, "this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again");
     }
     match.unmatched_at = stamp();
     const line = world.lines.find((l) => l.id === match.statement_line_id);
@@ -530,15 +539,27 @@ export function createBankrecWorld() {
     if (!(input.month >= 1 && input.month <= 12) || !(input.year >= 2000)) return clientError(400, "valid year and month (1-12) are required");
     const account = world.accounts.find((a) => a.id === input.bank_account_id);
     if (account === undefined) return clientError(404, "not found");
-    // The core stores the month's line net when the typed balance is zero: its placeholder default.
-    const statement = input.statement_balance_cents ? input.statement_balance_cents : monthNet(account.id, input.year, input.month);
+    const netNow = monthNet(account.id, input.year, input.month);
     // Only the operating account has a ledger balance in this world; the cards are tracking only.
     const gl = account.gl_account_code === "1000" ? world.glCents : 0;
     const existing = world.recons.find((r) => r.bank_account_id === account.id && r.year === input.year && r.month === input.month);
     if (existing !== undefined && existing.status === "COMPLETED") {
       return clientError(409, `reconciliation for ${input.year}-${pad(input.month)} is already COMPLETED`);
     }
+    if (input.refresh === true) {
+      if (existing === undefined) return clientError(404, "not found");
+      const statement = existing.statement_balance_derived ? netNow : existing.statement_balance_cents;
+      existing.statement_balance_cents = statement;
+      existing.gl_balance_cents = gl;
+      existing.variance_cents = statement - gl;
+      return { status: 201, body: reconView(existing) };
+    }
+    // The core stores the month's line net when the typed balance is zero: its placeholder default.
+    // The derived flag comes from the act: an open with 0 sets it TRUE, an open with a typed figure sets it FALSE, always.
+    const derived = !input.statement_balance_cents;
+    const statement = derived ? netNow : input.statement_balance_cents;
     const target = existing ?? { id: uuid("b5", world.nextRecon++), bank_account_id: account.id, year: input.year, month: input.month, status: "OPEN" };
+    target.statement_balance_derived = derived;
     target.statement_balance_cents = statement;
     target.gl_balance_cents = gl;
     target.variance_cents = statement - gl;
@@ -556,7 +577,17 @@ export function createBankrecWorld() {
       (l) => l.bank_account_id === rec.bank_account_id && l.status === "UNMATCHED" && Number(l.txn_date.slice(0, 4)) === rec.year && Number(l.txn_date.slice(5, 7)) === rec.month,
     ).length;
     if (unmatched > 0) return clientError(422, `cannot complete, ${unmatched} UNMATCHED line(s) remain for ${rec.year}-${pad(rec.month)}`);
-    if (rec.variance_cents !== 0) return clientError(422, `cannot complete, variance is ${rec.variance_cents} cents (must be zero)`);
+    // SF-2s: the core recomputes the ledger (and a derived statement balance from the lines) at completion; the recomputed variance alone decides.
+    const stmt = rec.statement_balance_derived ? monthNet(rec.bank_account_id, rec.year, rec.month) : rec.statement_balance_cents;
+    const account = world.accounts.find((a) => a.id === rec.bank_account_id);
+    const ledger = account !== undefined && account.gl_account_code === "1000" ? world.glCents : 0;
+    if (stmt - ledger !== 0) {
+      const apart = Math.abs(stmt - ledger);
+      return clientError(422, `cannot complete, the statement reads ${usd(stmt)} and the ledger reads ${usd(ledger)} (${usd(apart)} apart); they must agree, refresh the figures and match what is open`);
+    }
+    rec.statement_balance_cents = stmt;
+    rec.gl_balance_cents = ledger;
+    rec.variance_cents = stmt - ledger;
     rec.status = "COMPLETED";
     rec.completed_at = stamp();
     return { status: 200, body: reconView(rec) };
@@ -574,6 +605,11 @@ export function createBankrecWorld() {
       return { status: 200, body: { ok: true } };
     }
     // A control the contract test uses to reverse a payment the way the payments module would (reversed_at set).
+    // A control the contract test uses to post to the operating account's ledger after a month was opened (SF-2s).
+    if (method === "POST" && path === "/_stub/post-to-bank") {
+      world.glCents += JSON.parse(bodyText || "{}").cents ?? 0;
+      return { status: 200, body: { ok: true } };
+    }
     if (method === "POST" && path === "/_stub/reverse-payment") {
       const input = JSON.parse(bodyText || "{}");
       if (input.all === true) {

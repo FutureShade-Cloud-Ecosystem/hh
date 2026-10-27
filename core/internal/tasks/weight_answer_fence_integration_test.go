@@ -221,3 +221,41 @@ func TestWeightSyncPullAndLoadHoldTheCallersBranchReach(t *testing.T) {
 		t.Errorf("a GLOBAL caller still pulls every branch of its org: %d items, %v", len(all), err)
 	}
 }
+
+// UX-81d: the weights sync replay door answers an out of reach row as not applied, the fence the pick
+// scope's FindApplied has held since 567 round 2. A branch B device replaying a key that applied on a
+// branch A task gets the absent key's answer, its own branch's key still answers, and a GLOBAL caller
+// of the org answers for both branches.
+func TestWeightSyncFindAppliedHoldsTheCallersBranchReach(t *testing.T) {
+	d := newPickDoor(t)
+	north := d.org
+	stampBranch(t, d, d.branchA, north)
+	stampBranch(t, d, d.branchB, north)
+	staffOf := func(sc identity.StaffContext) identity.SyncStaffResolver {
+		return func(context.Context, string, string) (identity.StaffContext, bool, error) { return sc, true, nil }
+	}
+	branches := branchesOfOrg{d.branchA: {north: true}, d.branchB: {north: true}}
+	global := scopedTo(uuid.NewString())
+	global.Scope, global.Tier = identity.ScopeGlobal, identity.TierLeadership
+	orderA := uuid.NewString()
+	owner := map[string]string{orderA: north}
+	byGlobal := NewWeightSyncStore(d.pool, weightDoorOrders{owner: owner, branch: d.branchA}, nil).
+		WithStaffAuthority(staffOf(global)).WithBranchOrgReader(branches)
+	key := uuid.NewString()
+	if _, err := byGlobal.Create(context.Background(), d.f, key, map[string]any{"order_id": orderA, "order_line_no": 1}); err != nil {
+		t.Fatalf("create the branch A weight task: %v", err)
+	}
+	deviceB := NewWeightSyncStore(d.pool, weightDoorOrders{owner: owner, branch: d.branchB}, nil).
+		WithStaffAuthority(staffOf(scopedTo(uuid.NewString(), d.branchB))).WithBranchOrgReader(branches)
+	deviceA := NewWeightSyncStore(d.pool, weightDoorOrders{owner: owner, branch: d.branchA}, nil).
+		WithStaffAuthority(staffOf(scopedTo(uuid.NewString(), d.branchA))).WithBranchOrgReader(branches)
+	if _, found, err := deviceB.FindApplied(context.Background(), d.f, key); err != nil || found {
+		t.Errorf("a branch B device replaying a key applied on a branch A task gets not applied: found %v err %v", found, err)
+	}
+	if _, found, err := deviceA.FindApplied(context.Background(), d.f, key); err != nil || !found {
+		t.Errorf("the task's own branch still answers applied: found %v err %v", found, err)
+	}
+	if _, found, err := byGlobal.FindApplied(context.Background(), d.f, key); err != nil || !found {
+		t.Errorf("a GLOBAL caller of the org still answers applied: found %v err %v", found, err)
+	}
+}

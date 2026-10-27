@@ -129,19 +129,25 @@ type Match struct {
 	MatchedBy       string     `json:"matched_by,omitempty"`
 	MatchedAt       time.Time  `json:"matched_at"`
 	UnmatchedAt     *time.Time `json:"unmatched_at,omitempty"`
+	// PaymentsUnresolved rides the match's answer (R2-P2-1): a LODGEMENT target whose covered
+	// payments the till could not uniquely resolve answers true, so the reconciliation screen
+	// (FW1-05) can show the lodgement as unresolved. It is an answer-time fact from the till's
+	// seam, not a bank_matches column; read-back answers of stored rows carry false.
+	PaymentsUnresolved bool `json:"payments_unresolved"`
 }
 
 // Reconciliation is one monthly per-account reconciliation (0033 bank_reconciliations).
 type Reconciliation struct {
-	ID                    string     `json:"id"`
-	BankAccountID         string     `json:"bank_account_id"`
-	Year                  int        `json:"year"`
-	Month                 int        `json:"month"`
-	StatementBalanceCents int64      `json:"statement_balance_cents"`
-	GLBalanceCents        int64      `json:"gl_balance_cents"`
-	VarianceCents         int64      `json:"variance_cents"`
-	Status                string     `json:"status"`
-	CompletedAt           *time.Time `json:"completed_at,omitempty"`
+	ID                      string     `json:"id"`
+	BankAccountID           string     `json:"bank_account_id"`
+	Year                    int        `json:"year"`
+	Month                   int        `json:"month"`
+	StatementBalanceCents   int64      `json:"statement_balance_cents"`
+	StatementBalanceDerived bool       `json:"-"`
+	GLBalanceCents          int64      `json:"gl_balance_cents"`
+	VarianceCents           int64      `json:"variance_cents"`
+	Status                  string     `json:"status"`
+	CompletedAt             *time.Time `json:"completed_at,omitempty"`
 }
 
 // - inputs (request bodies) -
@@ -185,12 +191,14 @@ type RuleInput struct {
 	Priority int            `json:"priority"`
 }
 
-// ReconInput opens (prepares) a monthly reconciliation: it computes the GL balance + variance.
+// ReconInput opens (prepares) a monthly reconciliation, or refreshes an existing open reconciliation in place when
+// Refresh is true without changing its stored derived flag or stated closing balance.
 type ReconInput struct {
 	BankAccountID         string `json:"bank_account_id"`
 	Year                  int    `json:"year"`
 	Month                 int    `json:"month"`
 	StatementBalanceCents int64  `json:"statement_balance_cents"`
+	Refresh               bool   `json:"refresh,omitempty"`
 }
 
 // - error taxonomy (mirrors internal/till) -
