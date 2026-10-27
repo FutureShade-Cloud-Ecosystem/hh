@@ -1062,6 +1062,211 @@ func TestIntegration_FW1_12b_AReversalAndAnApplyOfOneGroupNeverDeadlock(t *testi
 	}
 }
 
+// TestIntegration_FW1_12b_AMemoReversalAndAnApplyOfOneMemoNeverDeadlock pins the round 5 residual
+// (S6's read of round 4): the ACCOUNT doors have shared the one lock order since round 4, but the
+// MEMO reversal still drew the invoices feed counter on its invoice restore BEFORE it locked the
+// memo document's row, while a MEMO apply of the same memo locks the memo row (among the invoice
+// rows, ascending) before its own counter draw, so a staged reversal and apply of one memo could
+// each hold what the other needed (SQLSTATE 40P01 in 5 of S6's 10 runs): the books stayed right
+// and one door answered a raw 400. The fix this leg holds in place is one lock order for every
+// credit door: the target invoice rows, then the memo row or the group anchor, then the feed
+// counter. Ten staged pairs in one test, and every pair must see both doors complete with no
+// 40P01 and the balances land once: the memo back at exactly -9000 (the 4000 restored, the 1000
+// applied, the same figure whichever order the pair runs in), invoice 1 restored once to 10000
+// and invoice 2 moved once to 9000.
+//
+// The pair is staged deterministically, the round 4 leg's way: the test's own transaction first
+// holds the feed counter row, the reversal is launched and parks on it, the apply of the same memo
+// is launched and parks behind it (on the counter pre fix, on the memo row the reversal holds
+// under the shared order), and only then is the counter let go, with the reversal first in the
+// counter's queue. The leg fatals if either door answers without parking, so the staging is
+// proven, not assumed.
+func TestIntegration_FW1_12b_AMemoReversalAndAnApplyOfOneMemoNeverDeadlock(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	applySvc := NewCreditApplyService(repo)
+	ctx := context.Background()
+	n := ns(t)
+
+	issue := time.Now().UTC().AddDate(0, 0, -3).Format("2006-01-02")
+	due := time.Now().UTC().AddDate(0, 0, 27).Format("2006-01-02")
+
+	for iteration := 1; iteration <= 10; iteration++ {
+		func() {
+			tag := fmt.Sprintf("%s-RM%d", n, iteration)
+			custID := seedCustomer(t, pool, tag)
+			t.Cleanup(func() {
+				c := context.Background()
+				_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
+				_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
+				_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+			})
+
+			// One open credit memo of -10000 (a CREDIT_MEMO invoice, S6's probe's own
+			// spelling) and two invoices of 10000.
+			var memoID string
+			if err := pool.QueryRow(ctx, `
+				INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+				                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+				VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $4::date, -10000, 0, -10000, -10000, now(), 'CREDIT_MEMO')
+				RETURNING id::text`,
+				tag+"-CM", custID, trentonBranch, issue).Scan(&memoID); err != nil {
+				t.Fatalf("iteration %d: seed the memo: %v", iteration, err)
+			}
+			mkInv := func(no string) string {
+				var id string
+				if err := pool.QueryRow(ctx, `
+					INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+					                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+					VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $5::date, 10000, 0, 10000, 10000, now(), 'INVOICE')
+					RETURNING id::text`,
+					no, custID, trentonBranch, issue, due).Scan(&id); err != nil {
+					t.Fatalf("iteration %d: seed %s: %v", iteration, no, err)
+				}
+				return id
+			}
+			inv1, inv2 := mkInv(tag+"-INV1"), mkInv(tag+"-INV2")
+
+			// The application the staged reversal undoes: 4000 of the memo onto invoice 1,
+			// which leaves the memo at -6000 with 6000 open.
+			app1, err := applySvc.Apply(ctx, ApplyCreditInput{
+				CustomerID: custID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: inv1,
+				AmountCents: 4000, Reason: "first slice", IdempotencyKey: tag + "-k-first",
+			}, true)
+			if err != nil {
+				t.Fatalf("iteration %d: first apply: %v", iteration, err)
+			}
+
+			// Hold the feed counter row, launch the reversal, then the apply of the same memo.
+			held, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = held.Rollback(ctx) }()
+			if _, err := held.Exec(ctx, `
+				INSERT INTO scope_sequences (scope) VALUES ('invoices')
+				ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value`); err != nil {
+				t.Fatalf("iteration %d: hold the feed counter: %v", iteration, err)
+			}
+
+			type outcome struct {
+				name string
+				err  error
+			}
+			done := make(chan outcome, 2)
+			go func() {
+				_, e := applySvc.Reverse(ctx, ReverseCreditApplicationInput{
+					InvoiceID: inv1, ApplicationID: app1.ApplicationID, Reason: "undo the first slice",
+				}, true)
+				done <- outcome{"the reversal", e}
+			}()
+			deadline := time.Now().Add(15 * time.Second)
+			for {
+				var waiting int
+				if err := pool.QueryRow(ctx, `
+					SELECT count(*) FROM pg_stat_activity
+					 WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting >= 1 {
+					break
+				}
+				select {
+				case o := <-done:
+					t.Fatalf("iteration %d: %s answered without parking on the counter; the race was not staged (err = %v)", iteration, o.name, o.err)
+				default:
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("the reversal never reached its lock wait")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			go func() {
+				_, e := applySvc.Apply(ctx, ApplyCreditInput{
+					CustomerID: custID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: inv2,
+					AmountCents: 1000, Reason: "one more slice", IdempotencyKey: tag + "-k-second",
+				}, true)
+				done <- outcome{"the apply", e}
+			}()
+			deadline = time.Now().Add(15 * time.Second)
+			for {
+				var waiting int
+				if err := pool.QueryRow(ctx, `
+					SELECT count(*) FROM pg_stat_activity
+					 WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting >= 2 {
+					break
+				}
+				select {
+				case o := <-done:
+					t.Fatalf("iteration %d: %s answered without parking behind the reversal; the race was not staged (err = %v)", iteration, o.name, o.err)
+				default:
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("the apply never reached its lock wait")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			if err := held.Rollback(ctx); err != nil {
+				t.Fatalf("iteration %d: release the feed counter: %v", iteration, err)
+			}
+
+			a, b := <-done, <-done
+			for _, o := range []outcome{a, b} {
+				if o.err != nil {
+					t.Fatalf("iteration %d of 10: %s answered %v, want both doors of one memo to complete with no 40P01", iteration, o.name, o.err)
+				}
+			}
+
+			// The memo's balance after the pair is what a serial pair gives: from the applied
+			// -6000, the 4000 restored and the 1000 applied land it at exactly -9000, whatever
+			// order the pair ran in. A lost or doubled restore sits off that figure.
+			var memoBalance int64
+			if err := pool.QueryRow(ctx, `SELECT balance_cents FROM invoices WHERE id = $1::uuid`, memoID).Scan(&memoBalance); err != nil {
+				t.Fatalf("iteration %d: read the memo: %v", iteration, err)
+			}
+			if memoBalance != -9000 {
+				t.Fatalf("iteration %d of 10: the memo's balance after the pair = %d, want -9000, what a serial pair gives (the 4000 restored, the 1000 applied)", iteration, memoBalance)
+			}
+
+			// Each side landed once: invoice 1 back at its full 10000, invoice 2 down by the
+			// 1000 applied.
+			for name, want := range map[string]struct {
+				invoice string
+				balance int64
+			}{
+				"invoice 1": {inv1, 10000},
+				"invoice 2": {inv2, 9000},
+			} {
+				var balance int64
+				if err := pool.QueryRow(ctx, `SELECT balance_cents FROM invoices WHERE id = $1::uuid`, want.invoice).Scan(&balance); err != nil {
+					t.Fatalf("iteration %d: read %s: %v", iteration, name, err)
+				}
+				if balance != want.balance {
+					t.Fatalf("iteration %d: %s balance after the pair = %d, want %d", iteration, name, balance, want.balance)
+				}
+			}
+
+			// And the subledger moved once per door: exactly one restore row from the reversal
+			// and one mirror row from the apply tagged to the memo document.
+			var restored, applied int64
+			if err := pool.QueryRow(ctx, `
+				SELECT count(*) FILTER (WHERE memo LIKE 'credit memo restored%'),
+				       count(*) FILTER (WHERE memo LIKE 'credit memo applied%')
+				  FROM customer_transactions
+				 WHERE customer_id = $1::uuid AND source_type = 'invoice' AND source_ref_id = $2::uuid`,
+				custID, memoID).Scan(&restored, &applied); err != nil {
+				t.Fatalf("iteration %d: read the memo's rows: %v", iteration, err)
+			}
+			if restored != 1 || applied != 2 {
+				t.Fatalf("iteration %d: the memo carries %d restore rows and %d applied mirror rows (the seed's own apply included), want 1 and 2", iteration, restored, applied)
+			}
+		}()
+	}
+}
+
 // TestIntegration_FW1_12b_MemoApplicationSurvivesAPastDateAging pins S6's P1-4: the memo side of an
 // application (and its reversal's restore) is a ledger row tagged to the MEMO document itself, so
 // when 626 (FW1-06b) rebuilds a document's balance at a past date from its history, that row must
