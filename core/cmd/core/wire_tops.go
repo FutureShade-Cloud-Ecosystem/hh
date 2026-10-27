@@ -435,7 +435,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithARSubledger(billingRepo).
 		WithTaxSplitReader(posRepo).
 		WithPaymentReader(ops.tillRepo).
-		WithDeliveryReader(orderRepo)
+		WithDeliveryReader(orderRepo).
+		WithStockReader(glStockValueAdapter{svc: spine.inventorySvc}).
+		WithDrawerReader(tillDrawerAdapter{repo: ops.tillRepo}).
+		WithQueueReader(spine.outboxStore)
 
 	// A-04 finstmt: read-only statements over the 0034 views. The DIB-510
 	// receivables register mounts from here (billing's register handler,
@@ -486,10 +489,14 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		panic("billing: customer reach not wired - the account statement read and a one account statement run would serve any named account")
 	}
 	monthEndHandler.RegisterRoutes(r, g)
+	// The ONE account position gate answers both of the standing read's seams (UX-97 item 208):
+	// the caller's admission, and the visibility word whose HIDDEN is the dealer's switch-off.
+	posPositionGate := billing.NewAccountPositionGate(billingRepo)
 	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc}).
 		WithHoldReader(ops.tillRepo).
 		WithAccountChecker(posAccountAdapter{svc: customerSvc}).
-		WithPositionGate(billing.NewAccountPositionGate(billingRepo))
+		WithPositionGate(posPositionGate).
+		WithPositionSurface(posPositionGate)
 
 	arLandingRepo := billing.NewARLandingRepository(pool).WithZone(newDealerZone(pool))
 	arLandingSvc := billing.NewARLandingService(arLandingRepo).

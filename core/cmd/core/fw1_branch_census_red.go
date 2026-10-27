@@ -45,7 +45,12 @@ var fw1BranchCensusWriters = []string{
 }
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
-// item (the two bankrec paths left are FW1-05's).
+// item (the two bankrec paths left are FW1-05's). Main's map is the base:
+// 629 stamped every FW1-08b writer (the five entries this branch still listed
+// are gone on the merged tree), and year_end_close left the map with the
+// FW1-09b merge: the year end closes each branch's results in its own closing
+// journal, every leg under its branch stamp and the company level lines under
+// the head office branch, so it leaves no NULL branch_id line.
 var fw1BranchCensusRed = map[string]string{
 	"bankrec_manual_match_payment": "FW1-05",
 	"bankrec_unmatch_reversal":     "FW1-05",
@@ -60,6 +65,13 @@ type fw1NonGLWriterSite struct {
 	Kind         string
 	BranchSource string
 }
+
+// fw1OutboxReadKind names the census kind of a site that READS the outbox
+// instead of writing to it. The census covers the reads too: a read of the
+// outbox is not a writer, but a writer's sibling that must be on the record
+// with its true reason, so the table says so and the scanner checks that the
+// listed read is really there.
+const fw1OutboxReadKind = "read:events_outbox"
 
 // fw1NonGLJournalWriterCallSites lists every non-GL journal writer call site
 // or method-value selector (PostExternal, PostExternalTx, PostJournal,
@@ -331,6 +343,18 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		Func:         "(*Service).postBillJournal",
 		Kind:         "PostJournalTx",
 		BranchSource: "bill.BranchID from purchasing_bills.branch_id (NOT NULL)",
+	},
+	{
+		File:         "core/internal/till/recon_seam.go",
+		Func:         "(*Repository).OpenLodgements",
+		Kind:         fw1OutboxReadKind,
+		BranchSource: "no branch and no journal: the read asks whether the till's own journal for this lodgement has been emitted (the till.movement.posted row), so the bank match knows the lodgement carries its own journal; it reads the outbox and writes nothing",
+	},
+	{
+		File:         "core/internal/till/recon_seam.go",
+		Func:         "(*Repository).LodgementFacts",
+		Kind:         fw1OutboxReadKind,
+		BranchSource: "no branch and no journal: the same read for one lodgement (the manual match asks the same question of one movement); it reads the outbox and writes nothing",
 	},
 	{
 		File:         "core/internal/till/repository.go",

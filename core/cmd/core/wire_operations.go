@@ -165,6 +165,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithJournalPoster(glPosterAdapter{svc: spine.glSvc}).
 		WithGLBalances(glBalanceAdapter{svc: spine.glSvc}).
 		WithJournals(spine.glSvc).
+		WithJournalKeys(spine.glSvc).
 		WithAudit(auditSvc)
 	bankrec.NewHandler(bankrecSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
@@ -794,7 +795,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	_ = w3bPaySvc // consumed by the portal BFF at the tops batch; constructed so boot proves it wires
 	// DIB-170: payment reversal, manager-gated, reason-required, audited.
 	w3bReverseSvc := payments.NewReverseService(w3bPaymentsRepo).WithAudit(auditSvc)
-	payments.NewReversalHandler(w3bReverseSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	// FW1-06b: the true void of a mis-keyed desk receipt, manager-gated, reason-required, audited,
+	// the same dealer day only, no 2310 hold. The two undos share a mounting and stay apart in their
+	// services and their journals.
+	w3bVoidSvc := payments.NewVoidService(w3bPaymentsRepo).WithAudit(auditSvc).WithZone(newDealerZone(pool))
+	payments.NewReversalHandler(w3bReverseSvc, log).WithUserLinker(link).WithVoidService(w3bVoidSvc).RegisterRoutes(r, g)
 
 	return &operationsSpine{
 		lienSvc:       lienSvc,

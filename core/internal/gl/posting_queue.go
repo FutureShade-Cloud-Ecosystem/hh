@@ -41,6 +41,11 @@ type OutboxQueue interface {
 }
 
 // WithPostingQueue wires the outbox read the posting queue lists through.
+// It is the posting queue's OWN seam, distinct from the close pre flight's read
+// (WithQueueReader): this one lists and counts what is waiting or dead lettered
+// now, the pre flight's asks how many posted events in the closing month are
+// still unposted. One outbox store answers both, but each seam stays wired on
+// its own, so an unwired queue is refused in its own words.
 func (s *Service) WithPostingQueue(q OutboxQueue) *Service { s.queue = q; return s }
 
 // PostingQueue lists every posted topic event waiting or dead lettered, with

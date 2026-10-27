@@ -224,7 +224,8 @@ func (f *fakeLodgements) LodgementFacts(_ context.Context, id string) (Lodgement
 	for _, l := range f.open {
 		if l.MovementID == id {
 			return LodgementFact{BranchID: l.BranchID, AmountCents: l.AmountCents,
-				PaymentIDs: l.PaymentIDs, PaymentsUnresolved: l.PaymentsUnresolved}, true, nil
+				PaymentIDs: l.PaymentIDs, PaymentsUnresolved: l.PaymentsUnresolved,
+				CarriesJournal: l.CarriesJournal}, true, nil
 		}
 	}
 	return LodgementFact{}, false, nil

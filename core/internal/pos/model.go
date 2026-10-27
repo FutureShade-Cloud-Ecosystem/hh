@@ -607,14 +607,11 @@ const (
 	MarginVisibilityHidden    = "HIDDEN" // nobody, the dealer switched the surface off
 )
 
-// 0181: who may RECEIVE a customer's past-due balance on the Customer step. The same three words as
-// margin visibility, gated the same way at the same layer, but ALL_STAFF by default, because a
-// past-due balance is the CUSTOMER's fact and the counter person is the one being asked to raise it.
-const (
-	BalanceVisibilityAllStaff  = "ALL_STAFF" // the default
-	BalanceVisibilityManagerUp = "MANAGER_UP"
-	BalanceVisibilityHidden    = "HIDDEN"
-)
+// 0181: who may RECEIVE a customer's past-due balance on the Customer step was pos_policy's own
+// three-word knob (ALL_STAFF default) until UX-97 item 208 retired it: the dealer's ONE account
+// position policy (ar_invoice_policy.account_position_visibility) decides every staff read of a
+// customer's position, the till's standing included, and its HIDDEN is the switch-off. The
+// pos_policy.balance_visibility column survives the forward-only migrations and decides nothing.
 
 // The two dispositions of a cancelled special order's supplier deposit (row
 // 1193): what the dealer's default (and a manager's per-order override to
@@ -647,13 +644,11 @@ type PosPolicy struct {
 	// DIB-488 rev 8 (0170): who may RECEIVE margin/est-profit fields in POS payloads, the
 	// marshal-layer gate's dealer switch. MANAGER_UP (default) | ALL_STAFF | HIDDEN.
 	MarginVisibility string `json:"margin_visibility"`
-	// 0181: who may RECEIVE a customer's past-due balance on the Customer step. Same vocabulary and
-	// the same marshal-layer posture as MarginVisibility, deliberately, a dealer configuring the
-	// counter meets ONE idea about visibility, not two. The default differs (ALL_STAFF) because the
-	// two protect opposite things: margin is the dealer's own position, a past-due balance is the
-	// customer's own fact and the counter person is the one being asked to raise it.
-	// ALL_STAFF (default) | MANAGER_UP | HIDDEN.
-	BalanceVisibility string `json:"balance_visibility"`
+	// 0181: who may RECEIVE a customer's past-due balance on the Customer step was this knob until
+	// UX-97 item 208 retired it: the dealer's ONE account position policy decides every staff read
+	// of a customer's position, the till's standing included. The pos_policy.balance_visibility
+	// column survives the forward-only migrations and decides nothing, so it is no longer read,
+	// written or served.
 	// DIB-488 rev 8 (0170, item 4): the curated single-row quick-chip categories. Stored as a
 	// comma-separated TEXT column; served as a list. Empty on the wire = the service DERIVED
 	// nothing (no curated set and no sales history), the client falls back to the full chip row.

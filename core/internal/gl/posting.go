@@ -28,6 +28,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
@@ -63,6 +64,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildPaymentBounced(ctx, e.Payload)
 	case "payment.reversed":
 		draft, post, err = s.buildPaymentReversed(ctx, e.Payload)
+	case "payment.voided":
+		draft, post, err = s.buildPaymentVoided(ctx, e.Payload)
 	case "payment.reapplied":
 		draft, post, err = s.buildPaymentReapplied(ctx, e.Payload)
 	case "payment.paid_out":
@@ -75,6 +78,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildDepositCancelled(ctx, e.Payload)
 	case "till.session.completed":
 		draft, post, err = s.buildTillSessionCompleted(ctx, e.Payload)
+	case "till.movement.posted":
+		draft, post, err = s.buildTillMovementPosted(ctx, e.Payload)
 	case "pos.return.committed":
 		draft, post, err = s.buildPosReturnCommitted(ctx, e.Payload)
 	case "order.returned":
@@ -578,6 +583,81 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 		Lines: []draftLine{
 			dr(arCode, amount, "AR reinstated (payment reversed)"),
 			cr(refundCode, amount, "held for the customer (payment reversed)"),
+		},
+	}, true, nil
+}
+
+// paymentVoidedPayload is what payments/void.go emits in the void's own transaction: the voided
+// receipt's id and the facts read under its row lock, so the journal's branch, method and amount
+// are the receipt's own and never a re-read of the now VOID row.
+type paymentVoidedPayload struct {
+	PaymentID   string `json:"payment_id"`
+	AmountCents int64  `json:"amount_cents"`
+	Method      string `json:"method"`
+	BranchID    string `json:"branch_id"`
+}
+
+// buildPaymentVoided books the undo of a mis-keyed desk receipt (FW1-06b): Dr AR / Cr the account
+// the RECEIPT debited. The void says the receipt never happened, so its journal is the receipt's
+// own posting in mirror image, on the receipt's own routing: the legs are picked from the
+// payment.received rules (cash 1020 undeposited for cash, cheque and EFT, 1010 card clearing for a
+// card), never from the reversal's 2310 rule. A dealer who re-routes where receipts land moves
+// their voids with them, which is the point. 2310 never moves: the money never left the building,
+// so the customer is not owed it. The receipt was RECEIVED (the void's gate refuses anything else),
+// so there is no deposited arm here: a deposited receipt's undo is a reversal, and payment.reversed
+// keeps its own rule.
+func (s *Service) buildPaymentVoided(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p paymentVoidedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.voided payload: %w", err)
+	}
+	if p.PaymentID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.voided missing payment_id")
+	}
+	amount, method, branch := p.AmountCents, p.Method, p.BranchID
+	if (amount == 0 || branch == "" || method == "") && s.payments != nil {
+		if f, err := s.payments.PaymentForGL(ctx, p.PaymentID); err == nil {
+			if amount == 0 {
+				amount = f.AmountCents
+			}
+			if branch == "" {
+				branch = f.BranchID
+			}
+			if method == "" {
+				method = f.Method
+			}
+		}
+	}
+	if amount == 0 {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.voided has no amount")
+	}
+	// The RECEIPT's own rules decide where its void credits back.
+	rules, err := s.store.PostingAccounts(ctx, "payment.received", branch)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	arCode, err := pick(rules, "payment.received", "ar")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	creditRole := "cash" // the receipt debited 1020 undeposited funds
+	if method == "CARD" {
+		creditRole = "card_clearing" // the receipt debited 1010 card settlement clearing
+	}
+	creditCode, err := pick(rules, "payment.received", creditRole)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourcePayment,
+		SourceRefID:    p.PaymentID,
+		IdempotencyKey: "payment.voided:" + p.PaymentID,
+		Memo:           "Receipt voided " + method,
+		BranchID:       branch,
+		OccurredAt:     s.clock(),
+		Lines: []draftLine{
+			dr(arCode, amount, "AR reinstated (receipt voided)"),
+			cr(creditCode, amount, "receipt voided (mis-keyed)"),
 		},
 	}, true, nil
 }
@@ -1328,6 +1408,91 @@ func (s *Service) buildTillSessionCompleted(ctx context.Context, payload []byte)
 		// FW1-01b: the session's own business day, not the processing day.
 		OccurredAt: p.OccurredAt,
 		Lines:      lines,
+	}, true, nil
+}
+
+type tillMovementPayload struct {
+	MovementID   string    `json:"movement_id"`
+	SessionID    string    `json:"session_id"`
+	BranchID     string    `json:"branch_id"`
+	MovementType string    `json:"movement_type"`
+	Method       string    `json:"method"`
+	AmountCents  int64     `json:"amount_cents"`
+	Reason       string    `json:"reason"`
+	OccurredAt   time.Time `json:"occurred_at"`
+}
+
+// buildTillMovementPosted posts a till movement's journal (FW1-13). A paid out debits 9999 Suspense
+// and credits the drawer (undeposited), a paid in is the mirror; neither is cash over or short, so
+// 6350 stays for the counted over or short alone (FROM-PRINCIPAL 132). A LODGEMENT is the ruled
+// textbook deposit (FROM-PRINCIPAL 117): DR 1000 Bank, the account the ruling names, / CR 1020
+// Undeposited Funds, AT LODGEMENT; the bank match of a lodgement that carries its journal posts
+// nothing, so the pair never books twice, and a lodgement from before this change keeps today's match.
+// The journal is dated at the movement's own instant (the payload's occurred_at), so its period is the
+// house zone's business day of the lodgement, never the consumer's clock; the GL's period filing reads
+// the dealer's zone (insertJournalIn). A drop never reaches the outbox from the till (its cash is still
+// undeposited company cash), and the defensive post=false keeps a hand-planted drop row a no-op.
+//
+// Every line carries the drawer's own reason words (the payload's reason) and the branch (the journal's
+// branch, stamped on each line by insertJournalIn), so the suspense balance reads back to the movement
+// behind it.
+func (s *Service) buildTillMovementPosted(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p tillMovementPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: till.movement.posted payload: %w", err)
+	}
+	if p.MovementID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: till.movement.posted missing movement_id")
+	}
+	if p.MovementType != "PAID_IN" && p.MovementType != "PAID_OUT" && p.MovementType != "LODGEMENT" {
+		return journalDraft{}, false, nil
+	}
+	et := "till.session.completed" // the till family's rules; the drawer legs resolve there
+	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	undCode, err := pick(rules, et, "undeposited")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	occurredAt := p.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = s.clock()
+	}
+	var lines []draftLine
+	// The drawer's own words, on every line (FROM-PRINCIPAL 132). A drawer who typed none leaves the
+	// memo as it was.
+	reason := strings.TrimSpace(p.Reason)
+	words := ""
+	if reason != "" {
+		words = ": " + reason
+	}
+	memo := p.MovementType + " " + p.Method + " on session " + p.SessionID + words
+	var title string
+	switch p.MovementType {
+	case "PAID_OUT":
+		title = "Till movement PAID_OUT"
+		// 9999 Suspense is the ruled account (FROM-PRINCIPAL 132 names it flatly); a rules row may
+		// carry a per dealer suspense code one day, and this literal is where it swaps in.
+		lines = []draftLine{dr("9999", p.AmountCents, memo), cr(undCode, p.AmountCents, "drawer paid out"+words)}
+	case "PAID_IN":
+		title = "Till movement PAID_IN"
+		lines = []draftLine{dr(undCode, p.AmountCents, memo), cr("9999", p.AmountCents, "drawer paid in"+words)}
+	default:
+		title = "Till lodgement"
+		// Bank is the ruled account (FROM-PRINCIPAL 117 names 1000 Bank flatly); a rules row may
+		// carry a per dealer bank code one day, and this literal is where it swaps in.
+		lines = []draftLine{dr("1000", p.AmountCents, memo), cr(undCode, p.AmountCents, "lodged to the bank"+words)}
+	}
+	return journalDraft{
+		Source:         SourceAdjustment,
+		SourceRefID:    p.MovementID,
+		IdempotencyKey: "till.movement.posted:" + p.MovementID,
+		Memo:           title,
+		BranchID:       p.BranchID,
+		OccurredAt:     occurredAt,
+		Lines:          lines,
 	}, true, nil
 }
 

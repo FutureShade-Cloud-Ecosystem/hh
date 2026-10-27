@@ -32,10 +32,12 @@ func (r *Repository) ReadPosPolicy(ctx context.Context, branchID string) (PosPol
 	}
 	// The branch override wins when present; otherwise the org default (branch_id IS NULL, seeded by
 	// 0043). A branch with neither row falls back to a missing-default error, 0043 guarantees the seed.
+	// balance_visibility is the RETIRED 0181 column (UX-97 item 208): the account position policy
+	// decides the surface now, so the read stops selecting it and the column keeps its stored value.
 	const q = `
 SELECT COALESCE(branch_id::text,''), cod_enabled, restocking_fee_bps, notes,
        line_presentation, quick_chips_enabled, workspace_split_pct, workspace_arrangement,
-       lookup_presentation, margin_visibility, quick_chip_set, balance_visibility,
+       lookup_presentation, margin_visibility, quick_chip_set,
        supplier_deposit_cancel
   FROM pos_policy
  WHERE ($1 <> '' AND branch_id::text = $1) OR branch_id IS NULL
@@ -45,7 +47,7 @@ SELECT COALESCE(branch_id::text,''), cod_enabled, restocking_fee_bps, notes,
 	var chipSet string // 0170: comma-separated in the column; split for the wire in the service
 	err := r.pool.QueryRow(ctx, q, branchID).Scan(&p.BranchID, &p.CODEnabled, &p.RestockingFeeBps, &p.Notes,
 		&p.LinePresentation, &p.QuickChipsEnabled, &p.WorkspaceSplitPct, &p.WorkspaceArrangement,
-		&p.LookupPresentation, &p.MarginVisibility, &chipSet, &p.BalanceVisibility,
+		&p.LookupPresentation, &p.MarginVisibility, &chipSet,
 		&p.SupplierDepositCancel)
 	p.QuickChipSet = splitChipSet(chipSet)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -60,35 +62,36 @@ func (r *Repository) UpsertPosPolicy(ctx context.Context, p PosPolicy) error {
 	}
 	if p.BranchID == "" {
 		// The org-wide default row (branch_id IS NULL, UNIQUE does not cover NULLs, so update-in-place).
+		// balance_visibility is the retired 0181 column (UX-97 item 208): the write stops touching it,
+		// so whatever a dealer's older row stored there stays exactly as it is.
 		_, err := r.pool.Exec(ctx,
 			`UPDATE pos_policy SET cod_enabled = $1, restocking_fee_bps = $2, notes = $3,
 			        line_presentation = $4, quick_chips_enabled = $5,
 			        workspace_split_pct = $6, workspace_arrangement = $7,
 			        lookup_presentation = $8, margin_visibility = $9, quick_chip_set = $10,
-			        balance_visibility = $11, supplier_deposit_cancel = $12, updated_at = now()
+			        supplier_deposit_cancel = $11, updated_at = now()
 				  WHERE branch_id IS NULL`,
 			p.CODEnabled, p.RestockingFeeBps, p.Notes, p.LinePresentation, p.QuickChipsEnabled,
 			p.WorkspaceSplitPct, p.WorkspaceArrangement, p.LookupPresentation,
-			p.MarginVisibility, joinChipSet(p.QuickChipSet), p.BalanceVisibility, p.SupplierDepositCancel)
+			p.MarginVisibility, joinChipSet(p.QuickChipSet), p.SupplierDepositCancel)
 		return err
 	}
 	_, err := r.pool.Exec(ctx, `
 INSERT INTO pos_policy (branch_id, cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled,
                         workspace_split_pct, workspace_arrangement, lookup_presentation,
-                        margin_visibility, quick_chip_set, balance_visibility, supplier_deposit_cancel)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                        margin_visibility, quick_chip_set, supplier_deposit_cancel)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 ON CONFLICT (branch_id) DO UPDATE SET cod_enabled = EXCLUDED.cod_enabled,
   restocking_fee_bps = EXCLUDED.restocking_fee_bps, notes = EXCLUDED.notes,
   line_presentation = EXCLUDED.line_presentation, quick_chips_enabled = EXCLUDED.quick_chips_enabled,
   workspace_split_pct = EXCLUDED.workspace_split_pct, workspace_arrangement = EXCLUDED.workspace_arrangement,
   lookup_presentation = EXCLUDED.lookup_presentation,
   margin_visibility = EXCLUDED.margin_visibility, quick_chip_set = EXCLUDED.quick_chip_set,
-  balance_visibility = EXCLUDED.balance_visibility,
   supplier_deposit_cancel = EXCLUDED.supplier_deposit_cancel,
   updated_at = now()`,
 		p.BranchID, p.CODEnabled, p.RestockingFeeBps, p.Notes, p.LinePresentation, p.QuickChipsEnabled,
 		p.WorkspaceSplitPct, p.WorkspaceArrangement, p.LookupPresentation,
-		p.MarginVisibility, joinChipSet(p.QuickChipSet), p.BalanceVisibility, p.SupplierDepositCancel)
+		p.MarginVisibility, joinChipSet(p.QuickChipSet), p.SupplierDepositCancel)
 	return err
 }
 
