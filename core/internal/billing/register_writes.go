@@ -61,6 +61,33 @@ func (r *Repository) RecordSend(ctx context.Context, d SendRow) (string, bool, e
 	return id, false, nil
 }
 
+// SendByKey reports whether a delivery row already exists for this idempotency key, and its id.
+//
+// IT IS THE REPLAY GUARD, and it is read BEFORE the message goes out, not after: the transport is an
+// irreversible act, so the question "has this key already been honoured?" has to be answered before
+// the message, never after. RecordSend's own unique index still decides who writes the row, so two
+// requests that pass this read together still leave exactly one row; this read only stops the
+// ordinary replay (the desk retrying the same key because an answer was lost) from delivering a
+// second email to the customer.
+func (r *Repository) SendByKey(ctx context.Context, key string) (string, bool, error) {
+	if r.pool == nil {
+		return "", false, errNoDB
+	}
+	if key == "" {
+		return "", false, nil
+	}
+	var id string
+	err := r.pool.QueryRow(ctx,
+		`SELECT id::text FROM ar_invoice_deliveries WHERE idempotency_key = $1`, key).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("billing: read send by key: %w", err)
+	}
+	return id, true, nil
+}
+
 // SendRow is one row of the delivery log.
 type SendRow struct {
 	InvoiceID      string

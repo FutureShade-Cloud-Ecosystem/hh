@@ -321,6 +321,11 @@ func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to
 		}
 		lodg = kept
 	}
+	// A lodgement whose own journal has posted is only confirmed by its match (FROM-PRINCIPAL 117 and
+	// 120), so the candidates carry the fact before the matcher pairs them.
+	if err := s.markLodgementsWithJournals(ctx, lodg); err != nil {
+		return MatchSummary{}, err
+	}
 
 	summary := MatchSummary{}
 	for _, line := range lines {
@@ -403,6 +408,61 @@ func (s *Service) persistAndJournal(ctx context.Context, m Match, claim []string
 	return m, nil
 }
 
+// lodgementJournalKey is the idempotency key the till's movement journal carries, so the GL's keyed
+// existence read can name the lodgement's own journal (core/internal/gl/posting.go, the builder's key).
+const lodgementJournalKey = "till.movement.posted:"
+
+// carriesOwnJournal says whether a lodgement carries its OWN journal, the fact the match needs
+// (FROM-PRINCIPAL 117 and 120): a lodgement that journaled at lodgement is only CONFIRMED by its match,
+// which posts nothing, or the deposit is booked twice.
+//
+// The till's seam answers what the till knows (the slip's link rows, or the emission that carries the
+// journal). The GL's seam answers whether the journal itself has posted. The rule does NOT rest on the
+// outbox alone: an outbox row can be archived, and the journal that names the lodgement cannot.
+func (s *Service) carriesOwnJournal(ctx context.Context, movementID string, tillSays bool) (bool, error) {
+	if tillSays || movementID == "" || s.journalKeys == nil {
+		return tillSays, nil
+	}
+	found, err := s.journalKeys.JournalKeysExist(ctx, []string{lodgementJournalKey + movementID})
+	if err != nil {
+		return false, err
+	}
+	return len(found) > 0, nil
+}
+
+// markLodgementsWithJournals marks the candidates whose own journal has posted, so the matcher confirms
+// them instead of posting a second journal for the same deposit.
+func (s *Service) markLodgementsWithJournals(ctx context.Context, lodg []Lodgement) error {
+	if s.journalKeys == nil || len(lodg) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(lodg))
+	for _, l := range lodg {
+		if !l.CarriesJournal {
+			keys = append(keys, lodgementJournalKey+l.MovementID)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	found, err := s.journalKeys.JournalKeysExist(ctx, keys)
+	if err != nil {
+		return err
+	}
+	posted := make(map[string]bool, len(found))
+	for _, k := range found {
+		posted[k] = true
+	}
+	for i := range lodg {
+		if posted[lodgementJournalKey+lodg[i].MovementID] {
+			lodg[i].CarriesJournal = true
+			lodg[i].PaymentIDs = nil
+			lodg[i].PaymentsUnresolved = false
+		}
+	}
+	return nil
+}
+
 // persistProposal claims the match (flip line + claim payment + insert match row atomically), THEN posts the
 // clearing journal and writes its id back. Ordering is deliberate: PersistMatch's guards (line still
 // UNMATCHED, payment still RECEIVED, no live match on the target) run BEFORE any journal is posted, so a
@@ -422,21 +482,17 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 		PaymentsUnresolved: prop.PaymentsUnresolved,
 	}
 	// Where the match is written, a LODGEMENT target is fenced again (the candidates were cut already).
-	var skipLodgementClearing bool
 	if prop.TargetType == TargetLodgement {
 		if ok, lerr := s.lodgementReachable(ctx, prop.TargetRef, reach); lerr != nil {
 			return Match{}, lerr
 		} else if !ok {
 			return Match{}, errNotFound
 		}
-		if hasJ, jerr := s.hasLodgementJournal(ctx, prop.Line.BankAccountID, prop.TargetRef); jerr != nil {
-			return Match{}, jerr
-		} else if hasJ {
-			skipLodgementClearing = true
-		}
 	}
 	return s.persistAndJournal(ctx, m, prop.PaymentIDs, reach, func([]MatchPaymentFact) (gl.ExternalJournal, bool, error) {
-		return prop.Journal, !skipLodgementClearing, nil
+		// A lodgement that carries its OWN journal is only confirmed: the match posts no clearing journal
+		// (FROM-PRINCIPAL 117 and 120), so the deposit is booked once, at lodgement.
+		return prop.Journal, !prop.ConfirmsOnly, nil
 	})
 }
 
@@ -487,7 +543,9 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	if in.TargetType == TargetPayment && in.TargetRefID != "" {
 		claim = []string{in.TargetRefID}
 	}
-	var skipLodgementClearing bool
+	// carriesJournal says the lodgement target posted its own journal at lodgement, so the match only confirms
+	// the line and posts nothing (FROM-PRINCIPAL 117 and 120).
+	carriesJournal := false
 	var lodgBranch string
 	switch in.TargetType {
 	case TargetGroup:
@@ -510,13 +568,13 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 			return Match{}, unprocessable("bankrec: that lodgement is for %d cents and the line is %d cents, so it does not explain the line", facts.AmountCents, line.AmountCents)
 		}
 		lodgBranch = facts.BranchID
-		claim = facts.PaymentIDs
-		// The lodgement's own answer-time fact rides the answer (R2-P2-1).
-		m.PaymentsUnresolved = facts.PaymentsUnresolved
-		if hasJ, jerr := s.hasLodgementJournal(ctx, line.BankAccountID, in.TargetRefID); jerr != nil {
-			return Match{}, jerr
-		} else if hasJ {
-			skipLodgementClearing = true
+		if carriesJournal, err = s.carriesOwnJournal(ctx, in.TargetRefID, facts.CarriesJournal); err != nil {
+			return Match{}, err
+		}
+		if !carriesJournal {
+			claim = facts.PaymentIDs
+			// The lodgement's own answer-time fact rides the answer (R2-P2-1).
+			m.PaymentsUnresolved = facts.PaymentsUnresolved
 		}
 	case TargetJournal:
 		if jerr := s.checkJournalTarget(ctx, line, in); jerr != nil {
@@ -528,8 +586,8 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	// account its tender names (1010 card, 1020 cash and cheque).
 	journalFn := func(claimed []MatchPaymentFact) (gl.ExternalJournal, bool, error) {
 		if in.TargetType != TargetPayment {
-			j, ok := manualJournal(line, in.TargetType, "", lodgBranch)
-			return j, ok && !skipLodgementClearing, nil
+			j, ok := manualJournal(line, in.TargetType, "", lodgBranch, carriesJournal)
+			return j, ok, nil
 		}
 		if len(claimed) != 1 {
 			return gl.ExternalJournal{}, false, conflict("bankrec: payment already claimed, reversed or not RECEIVED (claimed %d of %d)", len(claimed), len(claim))
@@ -538,7 +596,7 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 		if f.AmountCents != line.AmountCents {
 			return gl.ExternalJournal{}, false, unprocessable("bankrec: that payment is for %d cents and the line is %d cents, so it does not explain the line", f.AmountCents, line.AmountCents)
 		}
-		j, ok := manualJournal(line, in.TargetType, f.Method, f.BranchID)
+		j, ok := manualJournal(line, in.TargetType, f.Method, f.BranchID, false)
 		if !ok {
 			return gl.ExternalJournal{}, false, unprocessable("bankrec: a %s payment cannot be matched by hand; match a card, a cash or a cheque deposit", f.Method)
 		}
@@ -645,26 +703,6 @@ func (s *Service) clock() time.Time {
 
 type lodgementJournalReader interface {
 	LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error)
-}
-
-// hasLodgementJournal checks whether a till lodgement movement already has a POSTED, unreversed book journal
-// touching the bank account's GL code (FROM-PRINCIPAL 117): a new lodgement with a lodgement journal in 1000
-// posts no second 1020 -> 1000 clearing journal on match, whereas an older lodgement with no lodgement journal
-// keeps today's match.
-func (s *Service) hasLodgementJournal(ctx context.Context, bankAccountID, movementID string) (bool, error) {
-	if s.journals == nil || movementID == "" || bankAccountID == "" {
-		return false, nil
-	}
-	lr, ok := s.journals.(lodgementJournalReader)
-	if !ok {
-		return false, nil
-	}
-	acct, err := s.repo.GetAccount(ctx, bankAccountID)
-	if err != nil {
-		return false, err
-	}
-	_, found, err := lr.LodgementJournalForBank(ctx, movementID, acct.GLAccountCode)
-	return found, err
 }
 
 // reconFigures holds the output of the single shared reconciliation computation (FW1-04) used by
@@ -883,27 +921,32 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 	if matchID == "" {
 		return badRequest("bankrec: match_id is required")
 	}
-	if tt, ref, live, perr := s.repo.PeekMatchTarget(ctx, matchID); perr != nil {
+	peekType, peekRef, live, perr := s.repo.PeekMatchTarget(ctx, matchID)
+	if perr != nil {
 		return perr
-	} else if live && tt == TargetLodgement {
-		if ok, lerr := s.lodgementReachable(ctx, ref, reach); lerr != nil {
+	}
+	if live && peekType == TargetLodgement {
+		if ok, lerr := s.lodgementReachable(ctx, peekRef, reach); lerr != nil {
 			return lerr
 		} else if !ok {
 			return conflict("bankrec: match %s is not live (already unmatched)", matchID)
 		}
 	}
 	lineDate, hasLineDate, _ := s.repo.MatchLineDate(ctx, matchID)
-	var skipLodgementReversal bool
+	// A lodgement that carries its OWN journal was only confirmed by its match (FROM-PRINCIPAL 117 and 120),
+	// so its undo reverses nothing. A match that posted its own clearing journal (an older lodgement's match)
+	// still reverses it: the gate rides the match's own recorded journal id, not the lodgement's fact alone.
+	carriesJournal := false
 	var lodgBranch string
 	if liveMatch, gerr := s.repo.GetLiveMatch(ctx, matchID); gerr == nil && liveMatch.TargetType == TargetLodgement {
-		if line, lerr := s.repo.GetLine(ctx, liveMatch.StatementLineID); lerr == nil {
-			if hasJ, _ := s.hasLodgementJournal(ctx, line.BankAccountID, liveMatch.TargetRefID); hasJ && liveMatch.JournalID == "" {
-				skipLodgementReversal = true
-			}
-		}
 		// The reversal carries the lodgement's branch (FW1-05 item 4); the facts are append only.
 		if f, found, ferr := s.lodgementFacts(ctx, liveMatch.TargetRefID); ferr == nil && found {
 			lodgBranch = f.BranchID
+			if hasJ, jerr := s.carriesOwnJournal(ctx, liveMatch.TargetRefID, f.CarriesJournal); jerr != nil {
+				return jerr
+			} else if hasJ && liveMatch.JournalID == "" {
+				carriesJournal = true
+			}
 		}
 	}
 	// The unmatch and its reversing journal share one transaction (FW1-05): the body runs on the caller's
@@ -917,12 +960,12 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 	if err != nil {
 		return err
 	}
-	if s.poster != nil && facts.AmountCents > 0 && !skipLodgementReversal {
+	if s.poster != nil && facts.AmountCents > 0 {
 		revBranch := facts.BranchID
 		if revBranch == "" {
 			revBranch = lodgBranch
 		}
-		if rev, ok := reversalJournal(matchID, facts.TargetType, revBranch, facts.ClearingAccount, facts.AmountCents, facts.FeeCents, facts.FeeAccountCode); ok {
+		if rev, ok := reversalJournal(matchID, facts.TargetType, revBranch, facts.ClearingAccount, facts.AmountCents, facts.FeeCents, facts.FeeAccountCode, carriesJournal); ok {
 			if hasLineDate {
 				rev.DocumentDate = statementDocDate(lineDate)
 			}

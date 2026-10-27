@@ -134,7 +134,7 @@ type TrialBalanceRow struct {
 }
 
 // PLBranchRow is one account's P&L net for a fiscal year under one branch stamp ("" = company level),
-// the year end's per branch input (FW1-08b).
+// the year end's per branch input (FW1-08b's stamps; FW1-09b's per branch close).
 type PLBranchRow struct {
 	AccountCode   string
 	AccountName   string

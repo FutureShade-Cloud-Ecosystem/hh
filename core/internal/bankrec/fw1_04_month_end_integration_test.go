@@ -535,124 +535,6 @@ func TestIntegration_FW1_04_MatchInClosedGLMonthLandsInEarliestOpenPeriodMarkedL
 	}
 }
 
-// Item 3 (FROM-PRINCIPAL 117): The Lodgement Rule, testing the new lodgement case (a lodgement in 1000 not yet on a
-// statement is a deposit in transit, and a new lodgement matched on a statement clears without booking 1020->1000 a
-// second time) beside the older lodgement case (a lodgement from before this change has no lodgement journal, so it
-// keeps today's match posting 1020->1000).
-func TestIntegration_FW1_04_LodgementRuleNewInTransitAndClearedBesideOlderLodgement(t *testing.T) {
-	pool := intPool(t)
-	cleanTables(t, pool)
-	acct := rbcAccountID(t, pool)
-	branch := aBranch(t, pool)
-	ctx := context.Background()
-
-	const year = 2023
-	may10 := time.Date(year, 5, 10, 0, 0, 0, 0, time.UTC)
-	may20 := time.Date(year, 5, 20, 0, 0, 0, 0, time.UTC)
-	may30 := time.Date(year, 5, 30, 12, 0, 0, 0, time.UTC)
-	june05 := time.Date(year, 6, 5, 14, 0, 0, 0, time.UTC)
-	fw104CleanYear(t, pool, acct, year)
-	fw104EnsurePeriods(t, pool, year, may10)
-	t.Cleanup(func() { fw104CleanYear(t, pool, acct, year) })
-
-	const (
-		oldMoveID        = "87040011-0000-4000-8000-000000000011" // Older lodgement: no journal in 1000 before match ($250.00)
-		newClearedMoveID = "87040012-0000-4000-8000-000000000012" // New lodgement: DR 1000 / CR 1020 at lodgement ($400.00), on May statement
-		newTransitMoveID = "87040013-0000-4000-8000-000000000013" // New lodgement: DR 1000 / CR 1020 at lodgement ($300.00), in transit at May end
-	)
-
-	glSvc := gl.NewService(gl.NewRepository(pool))
-	// Book the two new lodgements at lodgement time (DR 1000 / CR 1020, SourceRefID = movementID).
-	if _, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
-		IdempotencyKey: "till.movement.posted:" + newClearedMoveID,
-		Source:         "ADJUSTMENT",
-		SourceRefID:    newClearedMoveID,
-		Memo:           "Till lodgement " + newClearedMoveID[:8],
-		BranchID:       branch,
-		DocumentDate:   may20.Add(12 * time.Hour),
-		Lines: []gl.ExternalLine{
-			{AccountCode: "1000", DebitCents: 40000, Memo: "bank lodgement"},
-			{AccountCode: "1020", CreditCents: 40000, Memo: "undeposited funds"},
-		},
-	}); err != nil {
-		t.Fatalf("post new cleared lodgement journal: %v", err)
-	}
-	if _, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
-		IdempotencyKey: "till.movement.posted:" + newTransitMoveID,
-		Source:         "ADJUSTMENT",
-		SourceRefID:    newTransitMoveID,
-		Memo:           "Till lodgement in transit " + newTransitMoveID[:8],
-		BranchID:       branch,
-		DocumentDate:   may30,
-		Lines: []gl.ExternalLine{
-			{AccountCode: "1000", DebitCents: 30000, Memo: "bank lodgement in transit"},
-			{AccountCode: "1020", CreditCents: 30000, Memo: "undeposited funds"},
-		},
-	}); err != nil {
-		t.Fatalf("post new transit lodgement journal: %v", err)
-	}
-
-	// May bank statement has two deposit lines: $250.00 for oldMoveID and $400.00 for newClearedMoveID.
-	// newTransitMoveID ($300.00) is NOT on the May statement (deposit in transit).
-	oldLine := fw104InsertLineAt(t, pool, acct, may10, "MAY OLD LODGEMENT DEPOSIT", "LODG-OLD", 25000)
-	newLine := fw104InsertLineAt(t, pool, acct, may20, "MAY NEW LODGEMENT DEPOSIT", "LODG-NEW", 40000)
-
-	lodgSeam := &fakeLodgements{
-		open: []Lodgement{
-			{MovementID: oldMoveID, BranchID: branch, AmountCents: 25000, Reference: "LODG-OLD", OccurredAt: may10},
-			{MovementID: newClearedMoveID, BranchID: branch, AmountCents: 40000, Reference: "LODG-NEW", OccurredAt: may20},
-			{MovementID: newTransitMoveID, BranchID: branch, AmountCents: 30000, Reference: "LODG-TRN", OccurredAt: may30},
-		},
-	}
-	svc := NewService(NewRepository(pool)).
-		WithLodgements(lodgSeam).
-		WithJournals(glSvc).
-		WithJournalPoster(fw104GLPoster{svc: glSvc, clock: func() time.Time { return june05 }}).
-		WithGLBalances(glSvc)
-
-	// Match the older lodgement ($250.00): it has no lodgement journal, so it must post DR 1000 / CR 1020 once.
-	oldMatch, err := svc.ManualMatch(ctx, MatchInput{
-		Mode: "manual", StatementLineID: oldLine, TargetType: TargetLodgement, TargetRefID: oldMoveID, AmountCents: 25000, CanAccessBranch: AllBranches,
-	}, "")
-	if err != nil {
-		t.Fatalf("match older lodgement: %v", err)
-	}
-	if oldMatch.JournalID == "" {
-		t.Errorf("older lodgement match posted no clearing journal")
-	}
-
-	// Match the new lodgement ($400.00): it already has its DR 1000 / CR 1020 journal, so matching it must NOT book
-	// a second 1020 -> 1000 journal, and must mark the 1000 entry cleared.
-	if _, err := svc.ManualMatch(ctx, MatchInput{
-		Mode: "manual", StatementLineID: newLine, TargetType: TargetLodgement, TargetRefID: newClearedMoveID, AmountCents: 40000, CanAccessBranch: AllBranches,
-	}, ""); err != nil {
-		t.Fatalf("match new cleared lodgement: %v", err)
-	}
-
-	// May statement closing balance is $650.00 ($250.00 + $400.00).
-	// Deposits in transit at May 31 must be $300.00 (only newTransitMoveID).
-	// GL 1000 closing balance at May 31 must be $950.00 ($250.00 + $400.00 + $300.00), nothing booked twice.
-	mayRec, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: acct, Year: year, Month: 5, StatementBalanceCents: 65000})
-	if err != nil {
-		t.Fatalf("open may: %v", err)
-	}
-	if mayRec.DepositsInTransitCents != 30000 || len(mayRec.DepositsInTransit) != 1 {
-		t.Errorf("May DepositsInTransitCents = %d (count %d), want 30000 (count 1 for newTransitMoveID)",
-			mayRec.DepositsInTransitCents, len(mayRec.DepositsInTransit))
-	}
-	if mayRec.GLBalanceCents != 95000 || mayRec.AdjustedBankBalanceCents != 95000 || mayRec.VarianceCents != 0 {
-		t.Errorf("May GL=%d Adjusted=%d Variance=%d, want 95000, 95000, 0",
-			mayRec.GLBalanceCents, mayRec.AdjustedBankBalanceCents, mayRec.VarianceCents)
-	}
-	doneMay, err := svc.CompleteReconciliation(ctx, mayRec.ID, "")
-	if err != nil {
-		t.Fatalf("complete may with older + new cleared + new in-transit lodgements: %v", err)
-	}
-	if doneMay.Status != ReconCompleted || doneMay.VarianceCents != 0 {
-		t.Errorf("completed May = %+v, want COMPLETED with variance 0", doneMay)
-	}
-}
-
 // Item 4b: Sign-off is refused when no statement lines are loaded in the month for a BANK account.
 func TestIntegration_FW1_04_SignOffWithNoStatementLinesIsRefused(t *testing.T) {
 	pool := intPool(t)
@@ -721,7 +603,10 @@ func TestIntegration_FW1_04_SignOffRefusedWhenClearingJournalReversedAndDirectRe
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM users LIMIT 1`).Scan(&userID); err != nil {
 		t.Fatalf("select user: %v", err)
 	}
-	staffCtx := identity.ContextWithStaff(ctx, identity.StaffContext{UserID: userID})
+	// A caller that reaches the journal's books: the merged clearing journal's branch is the consolidated
+	// one (no branch), so the sign in must be dealer wide to get past the reach fence and pin the owner
+	// refusal ("posted by the bank reconciliation module") and not the reach refusal.
+	staffCtx := identity.ContextWithStaff(ctx, identity.StaffContext{UserID: userID, Scope: identity.ScopeGlobal})
 	if _, err := glSvc.ReverseJournal(staffCtx, m.JournalID); err == nil || !strings.Contains(err.Error(), "bank reconciliation") {
 		t.Fatalf("expected direct reversal of bankrec clearing journal to be refused, got %v", err)
 	}

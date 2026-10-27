@@ -22,6 +22,10 @@ type proposal struct {
 	PaymentsUnresolved bool
 	FeeCents           int64
 	Journal            gl.ExternalJournal
+	// ConfirmsOnly says the match posts NO journal: the target already carries its own (a lodgement
+	// that journaled at lodgement, FROM-PRINCIPAL 117). The match then only confirms the line, so the
+	// deposit is booked once. An older lodgement keeps today's match, which posts the clearing journal.
+	ConfirmsOnly bool
 }
 
 // matchLine runs the APPROVED rules (priority order) against one UNMATCHED credit line and returns the first
@@ -201,34 +205,46 @@ func buildPaymentProposal(line StatementLine, rule MatchRule, e settlementExplan
 
 // buildLodgementProposal builds a cash/cheque deposit clearing journal: DR 1000 (into bank) / CR 1020 (out
 // of undeposited funds) (AC3).
+//
+// A lodgement that carries its OWN journal (the till posted DR 1000 / CR 1020 AT LODGEMENT,
+// FROM-PRINCIPAL 117 and 120) is only CONFIRMED by its match: the proposal carries no journal and posts
+// nothing, so the deposit is booked once and never twice. A lodgement from before this change carries no
+// journal, so it keeps today's match, which posts the clearing journal.
 func buildLodgementProposal(line StatementLine, rule MatchRule, l Lodgement) proposal {
-	return proposal{
-		Line:               line,
-		TargetType:         TargetLodgement,
-		TargetRef:          l.MovementID,
-		Rule:               rule,
-		PaymentIDs:         l.PaymentIDs,
-		PaymentsUnresolved: l.PaymentsUnresolved,
-		Journal: gl.ExternalJournal{
-			Source:         "ADJUSTMENT",
-			SourceRefID:    line.ID,
-			IdempotencyKey: journalKey(line.ID),
-			Memo:           "bankrec lodgement deposit " + line.Reference,
-			BranchID:       l.BranchID,
-			DocumentDate:   statementDocDate(line.TxnDate),
-			Lines: []gl.ExternalLine{
-				{AccountCode: AcctBank, DebitCents: line.AmountCents, Memo: "bank deposit (lodgement)"},
-				{AccountCode: AcctUndeposited, CreditCents: line.AmountCents, Memo: "clear undeposited funds"},
-			},
+	p := proposal{
+		Line:       line,
+		TargetType: TargetLodgement,
+		TargetRef:  l.MovementID,
+		Rule:       rule,
+	}
+	if l.CarriesJournal {
+		p.ConfirmsOnly = true
+		return p
+	}
+	p.PaymentIDs = l.PaymentIDs
+	p.PaymentsUnresolved = l.PaymentsUnresolved
+	p.Journal = gl.ExternalJournal{
+		Source:         "ADJUSTMENT",
+		SourceRefID:    line.ID,
+		IdempotencyKey: journalKey(line.ID),
+		Memo:           "bankrec lodgement deposit " + line.Reference,
+		BranchID:       l.BranchID,
+		DocumentDate:   statementDocDate(line.TxnDate),
+		Lines: []gl.ExternalLine{
+			{AccountCode: AcctBank, DebitCents: line.AmountCents, Memo: "bank deposit (lodgement)"},
+			{AccountCode: AcctUndeposited, CreditCents: line.AmountCents, Memo: "clear undeposited funds"},
 		},
 	}
+	return p
 }
 
 // manualJournal builds the clearing journal for a MANUAL pairing by target type and, for a payment, by its
 // tender method (FW1-05 item 1): a card settlement clears 1010 (card processor clearing), a cash or cheque
 // deposit clears 1020 (undeposited funds); any other tender refuses. A GROUP or JOURNAL target posts no new
-// journal (the journal already exists / is a manual grouping header).
-func manualJournal(line StatementLine, targetType, method, branchID string) (gl.ExternalJournal, bool) {
+// journal (the journal already exists / is a manual grouping header). A lodgement that carries its OWN
+// journal posts no new journal either (FROM-PRINCIPAL 117 and 120): the match only confirms the line, and
+// the lodgement journaled at lodgement.
+func manualJournal(line StatementLine, targetType, method, branchID string, carriesJournal bool) (gl.ExternalJournal, bool) {
 	switch targetType {
 	case TargetPayment:
 		clearing, ok := clearingAccountForMethod(method)
@@ -251,6 +267,10 @@ func manualJournal(line StatementLine, targetType, method, branchID string) (gl.
 			},
 		}, true
 	case TargetLodgement:
+		if carriesJournal {
+			// The lodgement posted its own journal at lodgement: the match only confirms the line.
+			return gl.ExternalJournal{}, false
+		}
 		return gl.ExternalJournal{
 			Source: "ADJUSTMENT", SourceRefID: line.ID, IdempotencyKey: journalKey(line.ID),
 			Memo: "bankrec manual lodgement deposit " + line.Reference, BranchID: branchID,
@@ -296,7 +316,9 @@ func statementDocDate(txnDate time.Time) time.Time {
 // DR 1000 / CR 1020, so its reversal is DR 1020 / CR 1000. It carries the target's branch, so every line of
 // the reversal is stamped like the original's (FW1-05 item 4). Keyed on unmatchKey(matchID) (distinct from
 // the clearing key). GROUP/JOURNAL targets posted no clearing journal, so they have nothing to reverse.
-func reversalJournal(matchID, targetType, branchID, clearing string, amount, feeCents int64, feeAccount string) (gl.ExternalJournal, bool) {
+// A lodgement that carries its OWN journal posted no clearing journal either (FROM-PRINCIPAL 117 and 120),
+// so its undo reverses nothing.
+func reversalJournal(matchID, targetType, branchID, clearing string, amount, feeCents int64, feeAccount string, carriesJournal bool) (gl.ExternalJournal, bool) {
 	var lines []gl.ExternalLine
 	switch targetType {
 	case TargetPayment:
@@ -319,6 +341,9 @@ func reversalJournal(matchID, targetType, branchID, clearing string, amount, fee
 			lines = append(lines, gl.ExternalLine{AccountCode: feeAccount, CreditCents: feeCents, Memo: "reverse card processing fee (unmatch)"})
 		}
 	case TargetLodgement: // original DR1000/CR1020 → reverse DR1020/CR1000
+		if carriesJournal {
+			return gl.ExternalJournal{}, false
+		}
 		lines = []gl.ExternalLine{
 			{AccountCode: AcctUndeposited, DebitCents: amount, Memo: "reverse undeposited clear (unmatch)"},
 			{AccountCode: AcctBank, CreditCents: amount, Memo: "reverse bank deposit (unmatch)"},

@@ -59,7 +59,7 @@ func TestAC4_MakerChecker(t *testing.T) {
 	f := newFakeStore()
 	f.policy.JEApprovalThresholdCents = 500000
 
-	maker := identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager}
+	maker := identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 	makerSvc := newTestServiceAs(f, maker)
 
 	// $6,000 > $5,000 threshold → parks as PENDING_APPROVAL.
@@ -80,7 +80,7 @@ func TestAC4_MakerChecker(t *testing.T) {
 	}
 
 	// A different manager approves → POSTED with approved_by stamped.
-	checker := identity.StaffContext{UserID: "u-checker", RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}
+	checker := identity.StaffContext{UserID: "u-checker", RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 	checkerSvc := newTestServiceAs(f, checker)
 	approved, err := checkerSvc.ApproveJournal(ctx, j.ID)
 	if err != nil {
@@ -98,7 +98,7 @@ func TestAC4_MakerChecker(t *testing.T) {
 // the threshold; every other state, a failed read and an unwired guard refuse, and nothing is posted.
 func TestAC4_ApproveRefusesEveryStateButApproved(t *testing.T) {
 	ctx := context.Background()
-	checker := identity.StaffContext{UserID: "u-checker", RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}
+	checker := identity.StaffContext{UserID: "u-checker", RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 	for name, guard := range map[string]ApprovalStateChecker{
 		"pending":        fakeHold{state: ApprovalPending},
 		"rejected":       fakeHold{state: ApprovalRejected},
@@ -111,7 +111,7 @@ func TestAC4_ApproveRefusesEveryStateButApproved(t *testing.T) {
 	} {
 		f := newFakeStore()
 		f.policy.JEApprovalThresholdCents = 500000
-		maker := identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager}
+		maker := identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 		j, err := newTestServiceAs(f, maker).CreateJournal(ctx, CreateJournalInput{Memo: "big", Lines: []JournalLineInput{
 			{AccountCode: "1000", DebitCents: 600000},
 			{AccountCode: "4000", CreditCents: 600000},
@@ -134,7 +134,7 @@ func TestAC4_ApproveRefusesEveryStateButApproved(t *testing.T) {
 // it, no request refuses.
 func TestAC4_ApproveNoRequestNeedsNoneOnlyUnderTheThreshold(t *testing.T) {
 	ctx := context.Background()
-	checker := identity.StaffContext{UserID: "u-checker", RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}
+	checker := identity.StaffContext{UserID: "u-checker", RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 	for amount, wantOK := range map[int64]bool{100000: true, 500000: false, 600000: false} {
 		f := newFakeStore()
 		f.policy.JEApprovalThresholdCents = 500000
@@ -153,8 +153,10 @@ func TestAC4_ApproveNoRequestNeedsNoneOnlyUnderTheThreshold(t *testing.T) {
 // carrying path exists. Under the threshold it posts as before.
 func TestAC12_RecurringRunOverTheThresholdIsRefusedByTheApproveRoute(t *testing.T) {
 	ctx := context.Background()
-	maker := identity.StaffContext{UserID: "u-maker", RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership}
-	checker := identity.StaffContext{UserID: "u-checker", RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership}
+	// Round 3: the recurring run lands with no branch, the consolidated books, so the callers here are
+	// dealer wide; the fence legs prove the scoped refusals.
+	maker := identity.StaffContext{UserID: "u-maker", RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}
+	checker := identity.StaffContext{UserID: "u-checker", RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}
 	for amount, wantOK := range map[int64]bool{100000: true, 600000: false} {
 		f := newFakeStore()
 		f.policy.JEApprovalThresholdCents = 500000
@@ -256,20 +258,21 @@ func (j Journal) balancedForTest() bool {
 }
 
 // 615 round 2, P2-2: a write reads its answer back through the store, never through the fenced read,
-// so an answer never contradicts a committed write. The write fences themselves are a named item's
-// (SECURITY-SOD gap 19, FW1-09b).
+// so an answer never contradicts a committed write. The write fences are landed now (SECURITY-SOD gap 19,
+// FW1-09b round 3), so a write outside the maker's reach is refused before it lands (the round 3 legs pin
+// that refusal) and these legs write inside the maker's reach to pin the answer path alone.
 func TestCreateJournal_AnswerNeverContradictsACommittedWrite(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeStore()
 	maker := identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager,
 		Scope: identity.ScopeBranch, Status: identity.StatusActive, Branches: map[string]bool{"b1": true}}
 	j, err := newTestServiceAs(f, maker).CreateJournal(ctx, CreateJournalInput{
-		BranchID: "b2", Memo: "written outside the maker's reach", Lines: balancedLines(),
+		BranchID: "b1", Memo: "written inside the maker's reach", Lines: balancedLines(),
 	})
 	if err != nil {
 		t.Fatalf("the write landed in the store, so its answer must not read as a refusal: %v", err)
 	}
-	if j.ID == "" || j.Memo != "written outside the maker's reach" {
+	if j.ID == "" || j.Memo != "written inside the maker's reach" {
 		t.Fatalf("the answer is not the committed row: %+v", j)
 	}
 }
@@ -286,7 +289,6 @@ func TestReverseJournal_AnswerNeverContradictsACommittedWrite(t *testing.T) {
 	}
 	orig := f.journals[posted.ID]
 	orig.Status = StatusPosted
-	orig.BranchID = "b2" // the reversal targets a journal outside the maker's reach
 	rev, err := svc.ReverseJournal(ctx, posted.ID)
 	if err != nil {
 		t.Fatalf("the reversal landed in the store, so its answer must not read as a refusal: %v", err)

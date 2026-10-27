@@ -158,7 +158,7 @@ type ApprovalStateChecker interface {
 	JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (ApprovalState, error)
 }
 
-// - delivery date seam (round 2, S2 P1-2) -
+// - delivery date and audit seams (round 2, S2 P1-2 and P2-4) -
 
 // DeliveryReader answers the delivery fact MarkDelivered records on an order: when the goods left,
 // found=false when the order carries no stamp. Satisfied by order.Repository, wired in cmd/core.
@@ -171,6 +171,27 @@ type DeliveryReader interface {
 // Satisfied by audit.Service.RecordTx, wired in cmd/core. Nil (or unwired) records nothing.
 type AuditTxRecorder interface {
 	RecordTx(ctx context.Context, q audit.Execer, a audit.SensitiveAccess) error
+}
+
+// - close pre flight seams (FW1-09b; nil = the check is not wired and passes with no figures) -
+
+// StockValueReader is the stock ledger side of the close pre flight's 1200 tie check. Satisfied by
+// inventory.Service.SnapshotOnHand summed (the weighted average on-hand value), wired in cmd/core.
+type StockValueReader interface {
+	StockValueCents(ctx context.Context, branchID string) (int64, error)
+}
+
+// TillDrawerReader is the till side of the close pre flight: how many till sessions opened in the
+// month window stand OPEN still. The window is the pre flight's to compute (the dealer's zone); the
+// reader only queries. Satisfied by till.Repository, wired in cmd/core.
+type TillDrawerReader interface {
+	OpenDrawers(ctx context.Context, from, to time.Time) (int, error)
+}
+
+// OutboxQueueReader is the outbox side of the close pre flight: posting events for the month that are
+// still waiting (PENDING) or dead lettered (DEAD). Satisfied by notify.PgOutboxStore, wired in cmd/core.
+type OutboxQueueReader interface {
+	UnpostedForWindow(ctx context.Context, topics []string, from, to time.Time) (int, error)
 }
 
 // NoopCostBasis is the dormant W5 cost-basis seam: it always reports "no cost basis" (found=false) so the
@@ -272,13 +293,17 @@ type Service struct {
 	costBasis       CostBasis
 	dead            DeadRequeuer
 	audit           audit.Recorder
+	stockValue      StockValueReader
+	drawers         TillDrawerReader
+	preFlightQueue  OutboxQueueReader    // the pre flight's window read: how many posted events in the closing month are still waiting or dead lettered
 	approvalFiler   ApprovalFiler        // 0075: nil-able JE park → approvals-rail filing seam
 	standardRate    StandardRateReader   // the dealer's standard tax rate; nil is the Ontario 13 percent
 	taxWords        taxwords.Source      // the name of the dealer's tax in journal memos; nil is "HST"
 	approvalChecker ApprovalStateChecker // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
 	delivery        DeliveryReader       // round 2: the delivery fact the deposit release's date reads
 	auditTx         AuditTxRecorder      // round 2: the open year's audit, in the year's transaction
-	queue           OutboxQueue          // the outbox's waiting/dead read, the posting queue's rows (nil-able: unwired, the queue reads refuse)
+	strictPreFlight bool                 // round 4: production refuses a close when a pre flight check is unwired; tests may pass nil
+	queue           OutboxQueue          // the posting queue's rows: the waiting/dead events the Controller lists and the banner counts (nil-able: unwired, the queue reads refuse)
 	log             *slog.Logger
 	now             func() time.Time
 	callerFrom      func(context.Context) (identity.StaffContext, bool)
@@ -344,6 +369,34 @@ func (s *Service) authorizeBranchRead(ctx context.Context, branchID string) erro
 	return nil
 }
 
+// errForbiddenWrite is the write fence's plain words (round 3, SECURITY-SOD
+// gap 19): the refusal names the books the sign in covers, never a bare code.
+var errForbiddenWrite = clientError{status: 403, msg: "gl: this write reaches books your sign in does not cover; a scoped sign in writes only its own branches, and the consolidated books need a dealer wide one"}
+
+// authorizeBranchWrite fences a LEDGER WRITE (round 3) the way
+// authorizeBranchRead fences the reads: a dealer wide (GLOBAL) caller is
+// unrestricted; a scoped caller may write only inside their reach; and a
+// consolidated write (no branch: the consolidated books, period close and
+// reopen, the year end close, the chart of accounts) needs a dealer wide
+// caller. Applied BEFORE the write lands, so a refused write leaves nothing
+// behind and the answer never contradicts a commit.
+func (s *Service) authorizeBranchWrite(ctx context.Context, branchID string) error {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return err
+	}
+	if branchID == "" {
+		if caller.Scope != identity.ScopeGlobal {
+			return errForbiddenWrite
+		}
+		return nil
+	}
+	if !caller.CanAccessBranch(branchID) {
+		return errForbiddenWrite
+	}
+	return nil
+}
+
 // clock returns the service clock (defaults to time.Now).
 func (s *Service) clock() time.Time {
 	if s.now == nil {
@@ -381,6 +434,23 @@ func (s *Service) WithDeliveryReader(r DeliveryReader) *Service { s.delivery = r
 
 // WithAuditTxRecorder injects the in-transaction audit seam the Controller's open year records through (round 2).
 func (s *Service) WithAuditTxRecorder(r AuditTxRecorder) *Service { s.auditTx = r; return s }
+
+// WithStrictPreFlight makes the pre flight refuse a close when a check is unwired (round 4, S3's P2:
+// production wiring calls this; tests pass nil seams and skip the checks).
+func (s *Service) WithStrictPreFlight() *Service { s.strictPreFlight = true; return s }
+
+// WithStockReader injects the stock-ledger seam the close pre flight's 1200 tie check reads (FW1-09b).
+func (s *Service) WithStockReader(r StockValueReader) *Service { s.stockValue = r; return s }
+
+// WithDrawerReader injects the till seam the close pre flight's open drawer check reads (FW1-09b).
+func (s *Service) WithDrawerReader(r TillDrawerReader) *Service { s.drawers = r; return s }
+
+// WithQueueReader injects the outbox seam the close pre flight's waiting/dead lettered check reads (FW1-09b).
+// It is the pre flight's OWN seam, distinct from the posting queue's read (WithPostingQueue): the pre flight
+// asks how many posted events in the closing month are still unposted, the posting queue asks what is waiting
+// right now. One outbox store answers both, but each seam stays wired on its own, so an unwired check is named
+// as unwired (the strict pre flight refuses) instead of passing silently behind the other seam's wiring.
+func (s *Service) WithQueueReader(r OutboxQueueReader) *Service { s.preFlightQueue = r; return s }
 
 // WithTaxSplitReader injects the pos tax-split seam.
 func (s *Service) WithTaxSplitReader(r TaxSplitReader) *Service { s.taxSplits = r; return s }
@@ -507,7 +577,8 @@ func (s *Service) RegisterPostingHandlers(d *notify.Dispatcher) {
 
 // PostedTopics is the frozen set of outbox topics the GL posting consumer owns (the W5 eight + the two
 // W7 POS-return topics + the deposit release and the deposit cancel, 0374/0375 + the damaged goods write off, 0378
-// + the payment reversal, 0426 + the re-application of a reversal's held money, 0431).
+// + the payment reversal, 0426 + the re-application of a reversal's held money, 0431 + the true void of a
+// mis-keyed receipt, FW1-06b + the till paid in and paid out movements, FW1-13).
 var PostedTopics = []string{
 	"ar.invoice.finalized",
 	"payment.received",
@@ -515,11 +586,13 @@ var PostedTopics = []string{
 	"tax.relief.assessed",
 	"payment.bounced",
 	"payment.reversed",
+	"payment.voided",
 	"payment.reapplied",
 	"payment.paid_out",
 	"order.fulfilled",
 	"bank.recon.completed",
 	"till.session.completed",
+	"till.movement.posted",
 	"pos.return.committed",
 	"order.returned",
 	"deposit.released",

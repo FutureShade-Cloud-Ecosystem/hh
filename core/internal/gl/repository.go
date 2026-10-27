@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -458,6 +459,19 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 		lineAcctIDs[i] = id
 	}
 
+	return r.insertJournalRowsTx(ctx, tx, d, reversedEntryNo, periodYear, periodID, lineAcctIDs, onDup)
+}
+
+// insertJournalRowsTx is the journal row write given a RESOLVED period: the entry number minted for the
+// period's year, the header, and the lines. insertJournalIn resolves the period by date; the year end's
+// dedicated insert resolves its own December explicitly (round 4) and calls this with it.
+// reversedEntryNo is the entry number of the journal this draft reverses, carried in from the caller that
+// locked it (FW1-09a, PR 621): the header insert can still lose 0440's unique index on reverses_journal_id
+// even after the earlier "already reversed" check passed, and the refusal must then name the SAME journal
+// that check would have named. It is never read back here: a failed insert has aborted the transaction, so
+// a query would fail. Zero means "no journal was reversed here" and belongs to a caller that cannot reach
+// the reversal refusal (the year end's closing journal never reverses another).
+func (r *Repository) insertJournalRowsTx(ctx context.Context, tx pgx.Tx, d journalDraft, reversedEntryNo int, periodYear int, periodID string, lineAcctIDs []string, onDup func() (string, bool)) (string, bool, error) {
 	var entryNo int
 	// SWARM-W4-C DIB-418: mint through next_entry_no(fiscal_year) (migration 0119) instead of
 	// COALESCE(MAX(entry_no),0)+1. The old expression was a read-modify-write under UNIQUE(fiscal_year,
@@ -475,7 +489,7 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 		postedAt = d.OccurredAt
 	}
 	var id string
-	err = tx.QueryRow(ctx,
+	err := tx.QueryRow(ctx,
 		`INSERT INTO gl_journals
 		   (fiscal_year, entry_no, period_id, source, source_ref_id, memo, status, posted_at, branch_id,
 		    created_by, idempotency_key, approved_by, reverses_journal_id)
@@ -490,6 +504,9 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 			}
 		}
 		if isUniqueViolation(err) && d.ReversesJournalID != "" {
+			// PR 621: 0440's unique index refused a second reversal row. The number is the one the
+			// caller's own earlier check would have named, carried in with the draft; it is never read
+			// back here, the failed insert having aborted the transaction.
 			return "", false, alreadyReversedErr(reversedEntryNo)
 		}
 		return "", false, fmt.Errorf("gl: insert journal header: %w", err)
@@ -706,7 +723,14 @@ func (r *Repository) ApproveJournal(ctx context.Context, id, approverID string) 
 	if r.pool == nil {
 		return Journal{}, errNoDB
 	}
-	tag, err := r.pool.Exec(ctx,
+	// One transaction so the closed month guard's refusal rolls the post back with it (FW1-09b):
+	// the guarded UPDATE and the guard read share the tx, a refusal leaves the journal parked.
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Journal{}, fmt.Errorf("gl: begin approve: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx,
 		`UPDATE gl_journals SET status = 'POSTED', approved_by = $2, posted_at = now(), updated_at = now()
 		 WHERE id = $1 AND status = 'DRAFT'`, id, nullStr(approverID))
 	if err != nil {
@@ -718,7 +742,34 @@ func (r *Repository) ApproveJournal(ctx context.Context, id, approverID string) 
 	if tag.RowsAffected() == 0 {
 		return Journal{}, clientErr(409, "gl: journal is not in DRAFT state")
 	}
+	if err := r.approveClosedMonthGuardTx(ctx, tx, id); err != nil {
+		return Journal{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Journal{}, fmt.Errorf("gl: commit approve: %w", err)
+	}
 	return r.GetJournal(ctx, id)
+}
+
+// approveClosedMonthGuardTx is the closed month guard both approve paths run after their guarded
+// UPDATE posts (FW1-09b, the GL-02 / SECURITY-SOD blocker): a MANUAL journal whose own month closed
+// while it sat parked is refused in plain words and the caller's transaction rolls the post back. A
+// manual journal into a closed month is refused (ruling 82.2); the guard is what makes the refusal
+// hold for a month that closed UNDER an approved-while-open journal.
+func (r *Repository) approveClosedMonthGuardTx(ctx context.Context, tx pgx.Tx, id string) error {
+	var source, pstatus string
+	err := tx.QueryRow(ctx,
+		`SELECT j.source, p.status FROM gl_journals j JOIN fiscal_periods p ON p.id = j.period_id WHERE j.id = $1`, id).Scan(&source, &pstatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return clientErr(404, "gl: journal not found")
+	}
+	if err != nil {
+		return fmt.Errorf("gl: approve closed month guard: %w", err)
+	}
+	if source == SourceManual && pstatus == "CLOSED" {
+		return clientErr(409, "gl: the month this journal was parked in has since closed; a manual journal into a closed month is refused, void the journal or ask for the month to be reopened")
+	}
+	return nil
 }
 
 // ApproveJournalTx posts a parked DRAFT journal WITHIN the caller's transaction (approvals-rail atomic
@@ -738,7 +789,7 @@ func (r *Repository) ApproveJournalTx(ctx context.Context, tx pgx.Tx, id, approv
 		return fmt.Errorf("gl: approve journal (tx): %w", err)
 	}
 	if tag.RowsAffected() == 1 {
-		return nil
+		return r.approveClosedMonthGuardTx(ctx, tx, id)
 	}
 	// 0 rows, the guard rejected it. Diagnose (same tx) for a precise status.
 	var status string
@@ -1015,6 +1066,153 @@ func (r *Repository) EnsureNextFiscalYear(ctx context.Context, now time.Time) (i
 	return target, nil
 }
 
+// pgxTx is the queryer half of pgx.Tx, wide enough for the year end's transaction scoped reads; a
+// *pgxpool.Pool satisfies it too, which the unlocked wrapper passes.
+// BeginTx opens the year end's one transaction (round 5, S3's P1): the once only check, the closing
+// journals and the periods' sealing commit or roll back together.
+func (r *Repository) BeginTx(ctx context.Context) (pgx.Tx, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	return r.pool.Begin(ctx)
+}
+
+// ClosingJournalsForYear answers a year's CLOSING journals: their ids in entry order and the net
+// income they carried to 3900 (the 3900 legs' credit minus debit). The year end's once only rule
+// answers the first run with these (round 4).
+func (r *Repository) ClosingJournalsForYear(ctx context.Context, year int) ([]string, int64, error) {
+	if r.pool == nil {
+		return nil, 0, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("gl: begin closing journals read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	return r.ClosingJournalsForYearTx(ctx, tx, year)
+}
+
+// ClosingJournalsForYearTx is ClosingJournalsForYear inside the caller's transaction (round 5, S3's
+// P1): the once only check reads under the year end's lock, never before it.
+func (r *Repository) ClosingJournalsForYearTx(ctx context.Context, tx pgx.Tx, year int) ([]string, int64, error) {
+	rows, err := tx.Query(ctx,
+		`SELECT id::text FROM gl_journals WHERE fiscal_year = $1 AND source = 'CLOSING' ORDER BY entry_no`, year)
+	if err != nil {
+		return nil, 0, fmt.Errorf("gl: closing journals for year: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, 0, fmt.Errorf("gl: scan closing journal: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	var net int64
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(SUM(COALESCE(l.credit_cents,0) - COALESCE(l.debit_cents,0)), 0)
+		 FROM gl_journal_lines l
+		 JOIN gl_journals j ON j.id = l.journal_id
+		 JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE j.fiscal_year = $1 AND j.source = 'CLOSING' AND a.code = $2`, year, RetainedEarningsCode).Scan(&net); err != nil {
+		return nil, 0, fmt.Errorf("gl: closing net income: %w", err)
+	}
+	return ids, net, nil
+}
+
+// InsertClosingJournal is the year end's dedicated insert (round 4, S3's P1): the closing journal posts
+// into the closed year's December WHATEVER its status, the year end being the one act allowed to write
+// a closed month. The period is resolved explicitly, never by the posting date, so the late posted rule
+// cannot move it into the next year, and the entry number is the closed year's own.
+func (r *Repository) InsertClosingJournal(ctx context.Context, d journalDraft, year int) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("gl: begin closing insert: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	id, err := r.InsertClosingJournalTx(ctx, tx, d, year)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("gl: commit closing insert: %w", err)
+	}
+	return id, nil
+}
+
+// InsertClosingJournalTx is InsertClosingJournal inside the CALLER's transaction (round 5, S3's P1:
+// the whole year end runs under one transaction), so the closing journal commits or rolls back with
+// the periods' sealing.
+func (r *Repository) InsertClosingJournalTx(ctx context.Context, tx pgx.Tx, d journalDraft, year int) (string, error) {
+	if err := r.ensureFiscalYearTx(ctx, tx, year); err != nil {
+		return "", err
+	}
+	var periodID string
+	var periodYear int
+	if err := tx.QueryRow(ctx, `SELECT id::text, year FROM fiscal_periods WHERE year = $1 AND month = 12`, year).Scan(&periodID, &periodYear); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", clientErr(422, "gl: no fiscal period for %04d-12", year)
+		}
+		return "", fmt.Errorf("gl: resolve the closing period: %w", err)
+	}
+	lineAcctIDs := make([]string, 0, len(d.Lines))
+	for _, ln := range d.Lines {
+		var acctID string
+		if err := tx.QueryRow(ctx, `SELECT id::text FROM gl_accounts WHERE code = $1`, ln.AccountCode).Scan(&acctID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", unprocessable("gl: unknown account code %q", ln.AccountCode)
+			}
+			return "", fmt.Errorf("gl: resolve line account: %w", err)
+		}
+		lineAcctIDs = append(lineAcctIDs, acctID)
+	}
+	// The year end's closing journal never reverses another (it is the closing entry, source CLOSING),
+	// so it has no reversed entry number to carry and passes 0: the reversal refusal inside the shared
+	// row write is unreachable from here.
+	id, _, err := r.insertJournalRowsTx(ctx, tx, d, 0, periodYear, periodID, lineAcctIDs, func() (string, bool) { return "", false })
+	return id, err
+}
+
+// BusinessZone answers the dealer's business zone, the zone the posting path
+// files months by (round 4, S3's P2: the pre flight reads its instants in the
+// same zone, never a hard coded default).
+func (r *Repository) BusinessZone(ctx context.Context) (houseday.Zone, error) {
+	if r.pool == nil {
+		return houseday.DefaultZone(), nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return houseday.Zone{}, fmt.Errorf("gl: begin business zone read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	return r.journalZone(ctx, tx)
+}
+
+// HouseYearEnded answers whether the year's last day has passed in the dealer's zone: the first
+// instant of the next year, read in the zone the dealer's own midnight closes its months by.
+func (r *Repository) HouseYearEnded(ctx context.Context, year int, now time.Time) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("gl: begin house year read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	zone, err := r.journalZone(ctx, tx)
+	if err != nil {
+		return false, err
+	}
+	return !now.Before(time.Date(year+1, time.January, 1, 0, 0, 0, 0, zone.Location())), nil
+}
+
 // OpenNextFiscalYear is the Controller's early open: at most one year beyond the roll forward's
 // target (house year + 2), a repeat a no op, and the record callback runs INSIDE the year's
 // transaction so the audit row commits or rolls back with the year it opens (round 2, S2 P2-4).
@@ -1062,6 +1260,18 @@ func (r *Repository) ClosePeriodsForYear(ctx context.Context, year int, actorID,
 		return fmt.Errorf("gl: begin close-year: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := r.ClosePeriodsForYearTx(ctx, tx, year, actorID, reason); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("gl: commit close-year: %w", err)
+	}
+	return nil
+}
+
+// ClosePeriodsForYearTx is ClosePeriodsForYear inside the caller's transaction (round 5, S3's P1):
+// the periods seal with the closing journals or not at all.
+func (r *Repository) ClosePeriodsForYearTx(ctx context.Context, tx pgx.Tx, year int, actorID, reason string) error {
 	rows, err := tx.Query(ctx,
 		`UPDATE fiscal_periods SET status = 'CLOSED', closed_at = now(), closed_by = $2, updated_at = now()
 		 WHERE year = $1 AND status = 'OPEN' RETURNING id::text`, year, nullStr(actorID))
@@ -1086,7 +1296,7 @@ func (r *Repository) ClosePeriodsForYear(ctx context.Context, year int, actorID,
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func insertOverride(ctx context.Context, tx pgx.Tx, periodID, action, reason, actorID string) error {
@@ -1442,7 +1652,7 @@ func (r *Repository) SetHeadOfficeBranch(ctx context.Context, branchID string, r
 }
 
 // PLBalancesByBranch answers the year's P&L balances per account PER BRANCH (empty string = the
-// company level rows with no branch stamp), the basis of the year end's per branch closing entry.
+// company level rows with no branch stamp), the basis of the year end's per branch closing entry. The consolidated PLBalances above is the sum over these (FW1-09b closes each branch's results with its own entry).
 func (r *Repository) PLBalancesByBranch(ctx context.Context, year int) ([]PLBranchRow, error) {
 	if r.pool == nil {
 		return nil, errNoDB

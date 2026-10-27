@@ -59,6 +59,38 @@ func (r *Repository) BalanceSheet(ctx context.Context, year int, branchID string
 	return scanStatementRows(rows)
 }
 
+// UnclosedPriorEarnings answers the P&L of every year BEFORE the report's year that no year end has
+// closed into 3900 yet: the sum of those years' net income less the retained earnings the carried
+// balance sheet already holds (round 4, S3's P2, the computed equity line that makes the next year
+// balance after an unclosed one).
+func (r *Repository) UnclosedPriorEarnings(ctx context.Context, year int, branchID string) (int64, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	var priorNI int64
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(CASE WHEN account_type = 'REVENUE' THEN amount_cents ELSE -amount_cents END), 0)
+		   FROM v_income_statement
+		  WHERE fiscal_year < $1
+		    AND ($2 = '' OR branch_id = $2::uuid)`, year, branchID).Scan(&priorNI); err != nil {
+		return 0, fmt.Errorf("finstmt: prior years' net income: %w", err)
+	}
+	// Round 5 (S3's P2): only closings of years BEFORE the reporting year stand behind it, the
+	// carried balance being cumulative: the latest carried year strictly before the report's year.
+	// A year's own closing must not read again as negative unclosed on its own statement.
+	var retained int64
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount_cents), 0)
+		   FROM v_balance_sheet
+		  WHERE fiscal_year = (SELECT COALESCE(MAX(fiscal_year), 0) FROM v_balance_sheet
+		                        WHERE fiscal_year < $1 AND ($2 = '' OR branch_id = $2::uuid))
+		    AND account_code = '3900'
+		    AND ($2 = '' OR branch_id = $2::uuid)`, year, branchID).Scan(&retained); err != nil {
+		return 0, fmt.Errorf("finstmt: carried retained earnings: %w", err)
+	}
+	return priorNI - retained, nil
+}
+
 // TrialBalance returns the signed per-account balance (Σdebit − Σcredit) projected into StatementRow.
 func (r *Repository) TrialBalance(ctx context.Context, year int) ([]StatementRow, error) {
 	full, err := r.TrialBalanceFull(ctx, year)
