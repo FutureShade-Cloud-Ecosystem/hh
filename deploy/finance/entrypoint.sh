@@ -13,11 +13,18 @@
 #      copied verbatim below)
 #   3. the web runtime config (/srv/app/config.json) written from the
 #      HH_WEB_* names, console mode
-#   4. a bounded wait for the database to accept connections
-#   5. the database's shape classified: EMPTY means migrate then
-#      finance-seed; NON EMPTY means the box kind check (core
-#      finance-box-check, which refuses before anything writes) then
-#      migrate, forward only on every path
+#   4. a bounded wait for the database to accept connections, with the
+#      database URL in a libpq service file on the shared memory tmpfs
+#      rather than on a command line
+#   5. the database's shape classified by the core itself (core
+#      finance-box-state, the one definition of empty that the boot guard
+#      reads too): EMPTY means migrate then finance-seed; UNSEEDED (the
+#      box's own bookkeeping is there, the seed is not and nothing is
+#      marked) means migrate then finance-seed as well, so an interrupted
+#      first boot heals at the next boot; the finance box's own world means
+#      the box kind check (core finance-box-check, which refuses before
+#      anything writes) then migrate, forward only on every path; anything
+#      else is refused by the box kind check
 #   6. core serve, core worker and Caddy under the supervisor: the
 #      entrypoint exits non zero as soon as any one of the three exits, so
 #      the platform restarts the container. No signals are sent by this
@@ -152,61 +159,113 @@ write_web_config "$FINANCE_ROOT/app/config.json" || exit 1
 # The ports. The public port is the platform's PORT; the core listens on a
 # loopback port only and is never reachable except through Caddy. Only this
 # script reads CORE_INTERNAL_PORT (the core is told its address by
-# CORE_LISTEN_ADDR), so it is un-exported before any child starts.
+# CORE_LISTEN_ADDR), so it is un-exported before any child starts. BOTH
+# numbers are written into the Caddy template, so both must be digits: a
+# value that carries anything else would be substituted into the template as
+# something else entirely, and the entrypoint refuses instead of writing it.
 # --------------------------------------------------------------------------
+# BEGIN internal port
 GATE_PORT="$PORT"
 CORE_INTERNAL_PORT="${CORE_INTERNAL_PORT:-9090}"
+case "$GATE_PORT" in
+	''|*[!0-9]*)
+		fail "PORT must be digits and nothing else: the port is written into the Caddy template, and the entrypoint refuses a value it cannot write safely"
+		;;
+esac
+case "$CORE_INTERNAL_PORT" in
+	''|*[!0-9]*)
+		fail "CORE_INTERNAL_PORT must be digits and nothing else: the port is written into the Caddy template, and the entrypoint refuses a value it cannot write safely"
+		;;
+esac
 export CORE_LISTEN_ADDR="127.0.0.1:${CORE_INTERNAL_PORT}"
 UPSTREAM="127.0.0.1:${CORE_INTERNAL_PORT}"
 internal_port="$CORE_INTERNAL_PORT"
 unset CORE_INTERNAL_PORT
 CORE_INTERNAL_PORT="$internal_port"
 unset internal_port
+# END internal port
 
 # --------------------------------------------------------------------------
 # Step 4: a bounded wait for the database to accept connections. The
 # platform may start the database beside the image, not before it; exiting
 # here lets the platform retry the whole boot. Each probe is one cheap
 # query, and the bound is counted in probes, not announced as a wait.
+#
+# The database URL never sits on a command line. psql reads the connection
+# from a libpq service file on the shared memory tmpfs: the probe alone
+# reads it, the children never inherit it, and it is removed the moment the
+# probe is done. The password never reaches a command line, never reaches a
+# child's environment, and is never printed.
 # --------------------------------------------------------------------------
-PGCONNECT_TIMEOUT=2
-export PGCONNECT_TIMEOUT
+# shellcheck source=database-url.sh
+. "$(dirname "$0")/database-url.sh"
+
+PG_SERVICE_FILE="/dev/shm/finance-box-pgservice.$$"
+if ! pg_service_write "$PG_SERVICE_FILE" "$DATABASE_URL"; then
+	fail "${PG_URL_ERROR:-DATABASE_URL could not be read}: the entrypoint refuses to put the database URL on a command line"
+fi
+trap 'rm -f "$PG_SERVICE_FILE" 2>/dev/null || true' EXIT
 
 probes=0
-until psql "$DATABASE_URL" -tAqc 'SELECT 1' >/dev/null 2>&1; do
+until PGCONNECT_TIMEOUT=2 PGSERVICEFILE="$PG_SERVICE_FILE" PGSERVICE="$PG_SERVICE_NAME" \
+	psql -tAqc 'SELECT 1' >/dev/null 2>&1; do
 	probes=$((probes + 1))
 	if [ "$probes" -ge 60 ]; then
 		fail "the database never accepted a connection: the container exits so the platform can retry the boot"
 	fi
 	sleep 1
 done
-unset PGCONNECT_TIMEOUT
+rm -f "$PG_SERVICE_FILE"
 
 # --------------------------------------------------------------------------
-# Step 5: classify the database's shape and act on it. EMPTY (no schema
-# bookkeeping at all) is a fresh database: migrate, then finance-seed, which
-# applies the seed, records box_kind=finance through the settings module
-# and leaves the seed's users with no usable password. NON EMPTY is a
-# returning database: the box kind check runs BEFORE migrate and refuses a
-# database the box did not seed, so a box pointed at the testers' copy, a
-# staging world or a demo world writes nothing. migrate then runs forward
-# only, applying what the new image added since the last boot.
+# Step 5: the database's shape, classified by the core itself. The
+# classification is the core's one definition (core finance-box-state), so
+# the entrypoint and the boot guard can never answer "empty" differently:
+#
+#   empty     no migration bookkeeping and no table at all: a fresh
+#             database. Migrate, then finance-seed, which applies the seed,
+#             records box_kind=finance through the settings module and
+#             leaves the seed's users with no usable password.
+#   unseeded  the box's own bookkeeping is there, the seed is not and
+#             nothing is marked: an interrupted first boot (a crash between
+#             migrate and seed leaves exactly that) or an interrupted first
+#             migrate (the bookkeeping table and nothing else). The seed
+#             runs and its own guards decide whether it may, so the guards
+#             that keep the seed idempotent also keep it off a database it
+#             did not plant.
+#   finance   the finance box's own world: the box kind check runs BEFORE
+#             migrate and refuses a database the box did not seed, so a box
+#             pointed at the testers' copy, a staging world or a demo world
+#             writes nothing. Migrate then runs forward only, applying what
+#             the new image added since the last boot.
+#   foreign   anything else: the box kind check refuses it.
+#
+# Migrate runs forward only on every path.
 # --------------------------------------------------------------------------
-has_table() {
-	[ "$(psql "$DATABASE_URL" -tAqc \
-		"SELECT count(*) FROM information_schema.tables
-		  WHERE table_schema = current_schema() AND table_name = '$1'")" -gt 0 ]
-}
+state="$(core finance-box-state)"
 
-if ! has_table schema_migrations; then
-	log "the database is empty: migrate, then finance-seed"
-	core migrate
-	core finance-seed
-else
-	log "the database is not empty: the box kind check runs before migrate"
-	core finance-box-check
-	core migrate
-fi
+case "$state" in
+	empty)
+		log "the database is empty: migrate, then finance-seed"
+		core migrate
+		core finance-seed
+		;;
+	unseeded)
+		log "the database holds the migrations but no seed and no box kind: an interrupted first boot, so the seed runs and its own guards decide"
+		core migrate
+		core finance-seed
+		;;
+	finance)
+		log "the database is not empty: the box kind check runs before migrate"
+		core finance-box-check
+		core migrate
+		;;
+	*)
+		log "the database is not the finance box's own world: the box kind check refuses it"
+		core finance-box-check
+		fail "the database is not the finance box's own world: the box refuses to boot against it"
+		;;
+esac
 
 # --------------------------------------------------------------------------
 # Step 5a: the box's finance users, applied from the list the environment
@@ -236,7 +295,7 @@ fi
 EXIT_FILE="/dev/shm/finance-box-exits.$$"
 : > "$EXIT_FILE"
 CADDY_FILE=""
-trap 'rm -f "$EXIT_FILE" "$CADDY_FILE" 2>/dev/null || true' EXIT
+trap 'rm -f "$EXIT_FILE" "$CADDY_FILE" "$PG_SERVICE_FILE" 2>/dev/null || true' EXIT
 
 run_child() {
 	child_label="$1"

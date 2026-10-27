@@ -3,9 +3,10 @@
 # the PATH record their invocations and exit by themselves (never a
 # signal), and the entrypoint must exit non zero as soon as any one of the
 # three (serve, worker, Caddy) has exited. Two database shapes are walked:
-# the empty path (core migrate, then core finance-seed) and the non empty
-# one (core finance-box-check, then core migrate, no seed). Run from a
-# checkout:
+# the empty path (core finance-box-state answers empty, so core migrate then
+# core finance-seed) and the finance box's own world (core finance-box-state
+# answers finance, so core finance-box-check then core migrate, no seed). Run
+# from a checkout:
 #
 #   sh deploy/finance/entrypoint-supervisor-test.sh
 #
@@ -27,15 +28,14 @@ printf '%s\n' '-----BEGIN EC PRIVATE KEY-----' 'throwaway-test-key-material' '--
 chmod 0600 "$SCRATCH/session.pem"
 
 # The stand-ins. Each logs its invocation and exits; the worker's exit 3 is
-# the failure the supervisor must catch. psql answers the connection probe
-# and the shape question (schema_migrations present or not, per the
-# scenario file). wget answers the health probe; nothing in this test binds
-# a port.
+# the failure the supervisor must catch. psql answers the connection probe.
+# The core answers the shape question with the state the scenario file names,
+# the way the real core answers it from the database. wget answers the health
+# probe; nothing in this test binds a port.
 cat > "$SCRATCH/bin/psql" <<'EOF'
 #!/bin/sh
-case "$3" in
+case "$*" in
 	*'SELECT 1'*) echo 1 ;;
-	*"table_name = 'schema_migrations'"*) cat /dev/shm/finance-supervisor-test-has-migrations 2>/dev/null || echo 0 ;;
 	*) echo 0 ;;
 esac
 exit 0
@@ -44,6 +44,10 @@ cat > "$SCRATCH/bin/core" <<'EOF'
 #!/bin/sh
 echo "core $*" >> /dev/shm/finance-supervisor-test-calls
 case "$1" in
+	finance-box-state)
+		cat /dev/shm/finance-supervisor-test-state 2>/dev/null || echo empty
+		exit 0
+		;;
 	worker) exit 3 ;;
 	*) exit 0 ;;
 esac
@@ -60,11 +64,11 @@ EOF
 chmod 0755 "$SCRATCH/bin/psql" "$SCRATCH/bin/core" "$SCRATCH/bin/caddy" "$SCRATCH/bin/wget"
 
 run_supervisor() {
-	has_migrations="$1"
+	state="$1"
 	CALLS=/dev/shm/finance-supervisor-test-calls
-	HAS=/dev/shm/finance-supervisor-test-has-migrations
+	STATE=/dev/shm/finance-supervisor-test-state
 	: > "$CALLS"
-	echo "$has_migrations" > "$HAS"
+	echo "$state" > "$STATE"
 	rc=0
 	env \
 		PATH="$SCRATCH/bin:$PATH" \
@@ -99,7 +103,7 @@ run_supervisor() {
 
 # Scenario A: the empty database. migrate then finance-seed run, then the
 # children start, and the worker's own exit takes the container down.
-if out="$(run_supervisor 0)"; then
+if out="$(run_supervisor empty)"; then
 	fail "on the empty path the entrypoint exited zero though a child died"
 else
 	pass "on the empty path a child's own exit takes the entrypoint non zero"
@@ -125,10 +129,10 @@ esac
 	pass "the web config was written" || \
 	fail "the web config was not written"
 
-# Scenario B: the non empty database. The box kind check runs before
+# Scenario B: the finance box's own world. The box kind check runs before
 # migrate; the seed never runs; the worker's exit still takes the container
 # down.
-if out="$(run_supervisor 1)"; then
+if out="$(run_supervisor finance)"; then
 	fail "on the non empty path the entrypoint exited zero though a child died"
 else
 	pass "on the non empty path a child's own exit takes the entrypoint non zero"
@@ -142,7 +146,7 @@ case "$calls" in
 	*"finance-seed"*) fail "the non empty path must not seed: $calls" ;;
 	*) pass "the non empty path runs no seed" ;;
 esac
-rm -f /dev/shm/finance-supervisor-test-calls /dev/shm/finance-supervisor-test-has-migrations
+rm -f /dev/shm/finance-supervisor-test-calls /dev/shm/finance-supervisor-test-state
 
 if [ "$FAILURES" -ne 0 ]; then
 	echo "$FAILURES failure(s)"

@@ -55,7 +55,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: core <serve|worker|migrate|seed|finance-seed|finance-box-check|finance-user|demoseed|assist-billing-export> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: core <serve|worker|migrate|seed|finance-seed|finance-box-check|finance-box-state|finance-user|demoseed|assist-billing-export> [flags]")
 		os.Exit(2)
 	}
 	// Demo-only roles (the demo build's serve, the demo one-shots) answer
@@ -96,6 +96,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "core: finance-box-check:", err)
 			os.Exit(1)
 		}
+	case "finance-box-state":
+		if err := financeBoxStateRole(os.Getenv); err != nil {
+			fmt.Fprintln(os.Stderr, "core: finance-box-state:", err)
+			os.Exit(1)
+		}
 	case "assist-billing-export":
 		if err := assistBillingExportRole(os.Args[2:], os.Stdout, os.Stderr, os.Getenv); err != nil {
 			fmt.Fprintln(os.Stderr, "core: assist-billing-export:", err)
@@ -115,7 +120,7 @@ func main() {
 		if assistRoleDispatch(role) {
 			return
 		}
-		fmt.Fprintf(os.Stderr, "core: unknown role %q (want serve, worker, migrate, seed, finance-seed, finance-box-check, demoseed, assist-billing-export, assist-logins, assist-claims-key or assist-revoke-extension-functions)\n", role)
+		fmt.Fprintf(os.Stderr, "core: unknown role %q (want serve, worker, migrate, seed, finance-seed, finance-box-check, finance-box-state, demoseed, assist-billing-export, assist-logins, assist-claims-key or assist-revoke-extension-functions)\n", role)
 		os.Exit(2)
 	}
 }

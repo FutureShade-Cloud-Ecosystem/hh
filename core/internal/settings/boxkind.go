@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // KeyBoxKind is the system_settings key holding the box kind word.
@@ -67,6 +68,36 @@ func (r *DealerConfigReader) BoxKind(ctx context.Context) (string, error) {
 	return parseBoxKind(json.RawMessage(v), func() {
 		r.log.Warn("settings: the box kind is malformed; treating the box as unmarked", "key", KeyBoxKind)
 	}), nil
+}
+
+// BoxKindMark answers the box kind word and whether the settings table is
+// there to answer it at all. present is false when system_settings does not
+// exist yet, which is a database this tree's migrations have not reached
+// (never a marked world, and never a world with a seed in it): a caller that
+// has to tell "unmarked" from "not a database this tree owns" asks here, and
+// the table's own owner is the only place that knows whether the table is
+// there. The word is "" when the key is absent, blank or malformed, exactly
+// as BoxKind answers it.
+func (r *DealerConfigReader) BoxKindMark(ctx context.Context) (kind string, present bool, err error) {
+	if r == nil || r.pool == nil {
+		return "", false, nil
+	}
+	var v []byte
+	err = r.pool.QueryRow(ctx, `SELECT value FROM system_settings WHERE key = $1`, KeyBoxKind).Scan(&v)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", true, nil
+	}
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P01" {
+			// The settings table is not there yet.
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return parseBoxKind(json.RawMessage(v), func() {
+		r.log.Warn("settings: the box kind is malformed; treating the box as unmarked", "key", KeyBoxKind)
+	}), true, nil
 }
 
 // WriteBoxKindTx validates and upserts the box kind mark on the caller's
