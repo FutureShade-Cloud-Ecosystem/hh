@@ -22,8 +22,9 @@ import { houseDayOffset } from "../house-day.mjs";
 const glWorld = createGlWorld();
 // The statements slice's world (periods, the five statements, aging, saved packs), answered by its own module.
 const finstmtWorld = createFinstmtWorld();
-// The bank reconciliation slice's world (accounts, statement lines, matches, rules, months), answered by its own module.
-const bankrecWorld = createBankrecWorld();
+// The bank reconciliation slice's world (accounts, statement lines, matches, rules, months), answered by its own
+// module; its starting point preview reads the ledger's posted journals from the ledger world, one ledger.
+const bankrecWorld = createBankrecWorld({ ledgerPosted: glWorld.postedJournals });
 // The tax administration slice's world (rates, profiles, config, evidence, recompute, recon), answered by its own module.
 const taxWorld = createTaxWorld();
 // The liens and compliance slice's world (jobs, the holdback ledger, documents, the calendar, the roster), answered by its own module.
@@ -314,6 +315,25 @@ function reset(kind = "full") {
     allocations: [{ invoice_n: 2, amount_cents: 96_000 }],
   };
   world.payments.push(bounced);
+
+  // A card charge the processor captured (the portal's own payment, FW1-06b round 2, S6's P2-3): the
+  // money is at the processor, so its undo is a refund through the processor and a void as never
+  // received would owe the customer again while the settlement lands. It sits on no desk account and
+  // carries no allocation, so no desk list reads it: only the void route finds it, by its id.
+  const captured = {
+    id: uuid("c", 2),
+    no: "PAY-0002",
+    acct: 9,
+    method: "CARD",
+    gateway_ref: "pi_capture_0002",
+    amount_cents: 120_000,
+    status: "RECEIVED",
+    reason: "",
+    received_at: NOW_ISO(),
+    bounced_at: "",
+    allocations: [],
+  };
+  world.payments.push(captured);
 
   // Walk change 8 S5: seed a couple of cross-account promises so the Promises tab has live rows.
   world.promises.push({
@@ -1068,6 +1088,11 @@ async function handle(req, res) {
     const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
     return send(res, answer.status, answer.body);
   }
+  if (method === "POST" && path === "/_stub/outstanding-items") {
+    const body = await readBody(req);
+    const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
+    return send(res, answer.status, answer.body);
+  }
   if (method === "POST" && path === "/_stub/reverse-payment") {
     const body = await readBody(req);
     const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
@@ -1430,6 +1455,8 @@ async function handle(req, res) {
     if (p.status === "BOUNCED") return refuse(res, 409, "payment already marked BOUNCED");
     // A payment is reversed or bounced, never both (SF-2d round 7).
     if (p.reversed === true) return refuse(res, 409, "this payment was reversed, so it cannot be marked bounced (a payment is reversed or bounced, never both)");
+    // A bounce undoes a live receipt: a voided desk receipt (FW1-06b) or a refund row has nothing to give back.
+    if (p.status !== "RECEIVED" && p.status !== "DEPOSITED") return refuse(res, 409, "till: only a received or deposited payment can be marked bounced");
     p.status = "BOUNCED";
     p.fee_cents = officeWorld.state().nsf.fee_cents;
     p.reason = String(body.reason ?? "");

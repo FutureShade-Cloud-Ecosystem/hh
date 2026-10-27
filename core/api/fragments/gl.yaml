@@ -1107,10 +1107,10 @@ paths:
       tags: [staff-bankrec]
       summary: List bank and card accounts with unmatched-line counts
       description: CREDIT_CARD accounts are tracking-only; no card spend is booked through this surface.
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1124,6 +1124,99 @@ paths:
                 $ref: "#/components/schemas/BankRecAccountList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/bankrec/accounts/{id}/cutover:
+    get:
+      operationId: bankrecCutoverPreview
+      tags: [staff-bankrec]
+      summary: Read the ledger's entries on or before a cut over date, and the book balance they make
+      description: >-
+        The starting point form's read: the posted ledger entries on the account's GL code on or before the
+        given date, with the book balance their net makes at that date. The same read the reconciliation's
+        outstanding lists draw from, so what the Controller sees here is what the reconciliation will hold.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: date
+          in: query
+          required: true
+          description: The cut over date, written YYYY-MM-DD
+          schema: { type: string, format: date }
+        - name: statement_cents
+          in: query
+          required: false
+          description: >-
+            The statement balance typed on the form, in cents. When present the answer carries the difference
+            between it and the balance the book makes with the ticked entries, and whether it reconciles.
+          schema: { type: integer, format: int64 }
+        - name: ticked
+          in: query
+          required: false
+          description: Comma separated journal ids of the entries the form ticks as still outstanding at cut over
+          schema: { type: string }
+      responses:
+        "200":
+          description: The entries and the book balance at that date
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecCutoverPreview"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: bankrecRecordCutover
+      tags: [staff-bankrec]
+      summary: Record the account's reconciliation starting point (cut over)
+      description: >-
+        Records the reconciliation starting point for one bank account: the
+        cut over date and the statement balance on that date, accepted as
+        reconciled to the book, plus the optional confirmed list of ledger
+        entries on or before that date still outstanding at cut over. Ledger
+        entries on or before the cut over date that are not on that list are
+        never outstanding items. Financial Controller only (the route's admin
+        gate is the door; the service keeps the Controller check), audited as
+        BANKREC_CUTOVER, and refused with a conflict once the cut over month
+        or any later month on the account has signed off.
+      x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BankRecCutoverInput"
+      responses:
+        "200":
+          description: The account with its recorded cut over
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecAccount"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The cut over month or a later month has already signed off
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/v1/bankrec/imports:
     post:
       operationId: bankrecCreateImport
@@ -1166,10 +1259,10 @@ paths:
       operationId: bankrecListLines
       tags: [staff-bankrec]
       summary: List statement lines
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1272,10 +1365,10 @@ paths:
       operationId: bankrecListMatches
       tags: [staff-bankrec]
       summary: List match history, optionally for one statement line
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1300,10 +1393,10 @@ paths:
       operationId: bankrecListRules
       tags: [staff-bankrec]
       summary: List match rules
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1365,10 +1458,10 @@ paths:
       operationId: bankrecListReconciliations
       tags: [staff-bankrec]
       summary: List reconciliations, optionally for one bank account
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1728,6 +1821,10 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/GlPeriod" }
+        next_openable_year:
+          type: integer
+          format: int32
+          description: The next fiscal year the Financial Controller can open early, or 0 when the cap year is already open
         next_cursor: { type: [string, "null"] }
         limit: { type: integer, format: int32 }
     GlPostingQueueEvent:
@@ -1766,6 +1863,7 @@ components:
       type: object
       required: [reason]
       properties:
+        year: { type: integer, format: int32 }
         reason: { type: string }
     GlCloseYearBody:
       type: object
@@ -2053,6 +2151,75 @@ components:
           type: boolean
           description: True for CREDIT_CARD accounts (no spend is booked)
         unmatched_lines: { type: integer, format: int32 }
+        cutover_date:
+          type: [string, "null"]
+          format: date
+          description: The recorded reconciliation starting point's cut over date, or null when none is recorded
+        cutover_statement_balance_cents:
+          type: [integer, "null"]
+          format: int64
+          description: The statement balance on the cut over date, accepted as reconciled to the book
+        cutover_outstanding_journal_ids:
+          type: array
+          description: The confirmed ledger entries on or before the cut over date still outstanding at cut over
+          items: { type: string, format: uuid }
+    BankRecCutoverInput:
+      type: object
+      description: >-
+        Records a bank account's reconciliation starting point (cut over): the cut over date and the statement
+        balance on that date, accepted as reconciled to the book, plus the optional confirmed list of ledger
+        entries on or before that date still outstanding at cut over.
+      required: [cutover_date, opening_statement_balance_cents]
+      properties:
+        cutover_date:
+          type: string
+          format: date
+          description: The cut over date, written YYYY-MM-DD
+        opening_statement_balance_cents:
+          type: integer
+          format: int64
+          description: The statement balance on the cut over date
+        outstanding_journal_ids:
+          type: array
+          description: The ledger entries (journal ids) on or before the cut over date still outstanding at cut over
+          items: { type: string, format: uuid }
+    BankRecCutoverPreview:
+      type: object
+      description: >-
+        The ledger's entries on the account's GL code on or before a cut over date, and the book balance their
+        net makes at that date. The starting point form reads this and formats it; it computes no figure of its own.
+      required: [book_balance_cents]
+      properties:
+        book_balance_cents:
+          type: integer
+          format: int64
+          description: The signed net of every listed entry, the ledger's balance at the cut over date
+        entries:
+          type: array
+          description: The posted entries on the account's GL code on or before the cut over date, oldest first
+          items: { $ref: "#/components/schemas/BankRecCutoverPreviewEntry" }
+        difference_cents:
+          type: integer
+          format: int64
+          description: >-
+            Present only when the read carried statement_cents: the typed statement balance less the balance the
+            book makes with the ticked entries (the book balance less ticked outstanding cheques plus ticked
+            deposits in transit). A starting point must reconcile, so this must be zero.
+        reconciles:
+          type: boolean
+          description: Present only when the read carried statement_cents; true when difference_cents is zero
+    BankRecCutoverPreviewEntry:
+      type: object
+      description: One posted ledger entry on the bank's GL code, at its signed net on that code
+      required: [journal_id, posted_at, memo, amount_cents]
+      properties:
+        journal_id: { type: string, format: uuid }
+        posted_at: { type: string, format: date-time }
+        memo: { type: string }
+        amount_cents:
+          type: integer
+          format: int64
+          description: Signed net on the bank's GL code (a deposit positive, a payment negative)
     BankRecAccountList:
       type: array
       description: >-
@@ -2248,21 +2415,45 @@ components:
         The core writes the bare array as the whole answer body: no envelope,
         no cursor, no limit echo. An empty answer is [], never null.
       items: { $ref: "#/components/schemas/BankRecMatchRule" }
+    BankRecOutstandingItem:
+      type: object
+      description: A book entry in the bank GL account posted on or before month end that has not cleared a statement line on or before month end
+      required: [journal_id, posted_at, memo, amount_cents]
+      properties:
+        journal_id: { type: string, format: uuid }
+        posted_at: { type: string, format: date-time }
+        memo: { type: string }
+        amount_cents: { type: integer, format: int64 }
     BankRecReconciliation:
       type: object
-      description: One per-account period reconciliation
+      description: One per-account period reconciliation and its month-end reconciliation report figures
       required: [id, bank_account_id, year, month, statement_balance_cents, gl_balance_cents, variance_cents, status]
       properties:
         id: { type: string, format: uuid }
         bank_account_id: { type: string, format: uuid }
         year: { type: integer, format: int32 }
         month: { type: integer, format: int32 }
+        opening_balance_cents:
+          type: [integer, "null"]
+          format: int64
         statement_balance_cents: { type: integer, format: int64 }
+        deposits_in_transit_cents: { type: integer, format: int64 }
+        outstanding_cheques_cents: { type: integer, format: int64 }
+        adjusted_bank_balance_cents: { type: integer, format: int64 }
         gl_balance_cents: { type: integer, format: int64 }
         variance_cents: { type: integer, format: int64 }
+        matched_lines_count: { type: integer, format: int32 }
+        deposits_in_transit:
+          type: array
+          items: { $ref: "#/components/schemas/BankRecOutstandingItem" }
+        outstanding_cheques:
+          type: array
+          items: { $ref: "#/components/schemas/BankRecOutstandingItem" }
         status:
           type: string
           enum: [OPEN, COMPLETED]
+        completed_by:
+          type: [string, "null"]
         completed_at:
           type: [string, "null"]
           format: date-time

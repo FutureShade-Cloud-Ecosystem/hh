@@ -347,8 +347,10 @@ func TestIntegration_ChequeMovement_InChequeExpected(t *testing.T) {
 	}
 	t.Cleanup(func() { cleanupSession(pool, sid) })
 
-	takeInTx(t, pool, svc, cctx, TenderInput{TillSessionID: sid, Method: MethodCheque, AmountCents: 8000, IdempotencyKey: "itest-chq-sale-" + sid})
-	if err := svc.Lodge(cctx, MovementInput{TillSessionID: sid, MovementType: MovementLodgement, Method: MethodCheque, AmountCents: 8000, Reference: "bag-itest-chq"}); err != nil {
+	// A cheque lodgement names its slip (FW1-13 round 3): the drawer lodges the
+	// cheque it took in, so the lodgement carries that payment's id.
+	paymentID := takeInTx(t, pool, svc, cctx, TenderInput{TillSessionID: sid, Method: MethodCheque, AmountCents: 8000, IdempotencyKey: "itest-chq-sale-" + sid})
+	if err := svc.Lodge(cctx, MovementInput{TillSessionID: sid, MovementType: MovementLodgement, Method: MethodCheque, AmountCents: 8000, Reference: "bag-itest-chq", PaymentIDs: []string{paymentID}}); err != nil {
 		t.Fatalf("cheque lodge: %v", err)
 	}
 	if err := svc.CountTill(cctx, CountInput{TillSessionID: sid, Tenders: []TenderActual{

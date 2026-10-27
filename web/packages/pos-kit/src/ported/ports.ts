@@ -725,6 +725,24 @@ export function cartSubtotalCents(lines: readonly { lineTotalCents: number }[]):
 }
 
 /**
+ * The drawer's slip: the ticked cheques' own amounts added in integer cents, over
+ * the figures the core stated for each slip candidate. The sum is money
+ * arithmetic, so the host owns it, exactly as it owns the cart's subtotal
+ * (cartSubtotalCents, above) and the footer's summed figure
+ * (sumLineSavingCents, below). An amount the core did not answer contributes
+ * nothing rather than a guess: the slip a drawer ticks is the slip the lodgement
+ * carries, and a slip that does not add up is refused by the core in its own
+ * words.
+ */
+export function sumSlipCents(amounts: readonly number[]): number {
+  let sum = 0;
+  for (const amount of amounts) {
+    if (Number.isFinite(amount)) sum += amount;
+  }
+  return sum;
+}
+
+/**
  * One line's contribution to what the ticket saves against retail, as the
  * server priced it: the per-line saving times that line's quantity, rounded
  * to the whole cent. The multiplication is money arithmetic, so the host owns

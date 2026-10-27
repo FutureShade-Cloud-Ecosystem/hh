@@ -490,6 +490,47 @@ func TestRegister_ARefusedCallerCarriesTheStoredStatusAndNoPastDueFlags(t *testi
 	}
 }
 
+// TestRegister_AnAsOfFigureIsByteAbsentForARefusedCaller pins the two features meeting in one read:
+// the register's rows age their documents at the service's as of clock (the true views work), and
+// the account position withholding drops exactly those as of derived fields for a caller the policy
+// refuses. The proof has both halves: the ALLOWED manager's row at the same pinned clock carries
+// the as of figure (days_overdue 68, the 61 to 90 bucket, the account position), so the figure was
+// computed and then withheld, and the refused caller's bytes carry none of it, absent and never 0,
+// while the invoice's own document figures and stored status stay.
+func TestRegister_AnAsOfFigureIsByteAbsentForARefusedCaller(t *testing.T) {
+	f := newD510Fixture(t)
+	ctx := context.Background()
+	// 68 days past due at d510Now: deep in the 61 to 90 bucket at the pinned as of instant.
+	f.invoice(t, "AGED", "FINALIZED", -68, 90000, 90000, "INVOICE")
+
+	mgr, err := f.service(d510Manager()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Limit: 50})
+	if err != nil {
+		t.Fatalf("manager register: %v", err)
+	}
+	mgrJSON, _ := json.Marshal(mgr)
+	for _, want := range []string{`"days_overdue":68`, `"bucket_key":"61_90"`, `"bucket_label":"61 to 90"`, `"account":{`} {
+		if !strings.Contains(string(mgrJSON), want) {
+			t.Errorf("the manager's as of row must carry %s: %s", want, mgrJSON)
+		}
+	}
+
+	front, err := f.service(d510Frontline()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Limit: 50})
+	if err != nil {
+		t.Fatalf("frontline register: %v", err)
+	}
+	frontJSON, _ := json.Marshal(front)
+	for _, gated := range []string{"days_overdue", "bucket_label", "bucket_key", `"account":{`} {
+		if strings.Contains(string(frontJSON), gated) {
+			t.Errorf("a refused caller's register bytes must not carry the as of figure %s: %s", gated, frontJSON)
+		}
+	}
+	for _, keep := range []string{`"balance_cents":90000`, `"stored_status":"FINALIZED"`, `"as_of":`} {
+		if !strings.Contains(string(frontJSON), keep) {
+			t.Errorf("the refused page keeps %s: %s", keep, frontJSON)
+		}
+	}
+}
+
 // TestRegister_ThePastDueChipsRefuseACallerTheGateRefuses pins the filter half of round 6: the
 // overdue and past due chips ask for the withheld predicate AS A LIST, so the service refuses them
 // in words for a caller the account position policy refuses, while the chips that name no derived

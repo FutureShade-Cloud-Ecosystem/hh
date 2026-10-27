@@ -18,10 +18,14 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
-// ReversalHandler serves the staff-side payment undo.
+// ReversalHandler serves the staff-side payment undo: the reversal's held money and, since
+// FW1-06b, the true void of a mis-keyed desk receipt. The two acts stay apart in their services
+// and their journals (void.go states the rules); they share this one mounting because they are
+// the two undos one payment row can carry.
 type ReversalHandler struct {
 	userLink identity.UserIDLinker
 	svc      *ReverseService
+	void     *VoidService
 	log      *slog.Logger
 }
 
@@ -33,11 +37,19 @@ func NewReversalHandler(svc *ReverseService, log *slog.Logger) *ReversalHandler 
 	return &ReversalHandler{svc: svc, log: log}
 }
 
-// RegisterRoutes registers the undo route behind the manager gate. The gate is applied HERE as well
-// as inside the service (ReverseInput.IsManager): the route gate stops the request, the service check
-// stops an in-process caller that bypassed HTTP, and neither is a substitute for the other.
+// WithVoidService attaches the true void's service. Without it the void route answers 503 and
+// names the fault: an unwired seam is a deploy fault, not a policy one.
+func (h *ReversalHandler) WithVoidService(v *VoidService) *ReversalHandler { h.void = v; return h }
+
+// RegisterRoutes registers the undo routes behind the manager gate. The gate is applied HERE as
+// well as inside the services (ReverseInput.IsManager / VoidInput.IsManager): the route gate stops
+// the request, the service check stops an in-process caller that bypassed HTTP, and neither is a
+// substitute for the other.
 func (h *ReversalHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/ar/payments/{id}/reverse", g.RequireManager(h.staff(h.reverse)))
+	// FW1-06b: a mis-keyed desk receipt, undone as never taken on the dealer day it was taken.
+	// No 2310 hold: the void's journal is the receipt's own legs mirrored.
+	r.Handle("POST /api/v1/ar/payments/{id}/void", g.RequireManager(h.staff(h.voidPayment)))
 	// SF-2l: the money a reversal holds in 2310, applied to invoices of the same customer.
 	r.Handle("POST /api/v1/ar/payments/{id}/reapply", g.RequireManager(h.staff(h.reapply)))
 	r.Handle("GET /api/v1/ar/payments/{id}/held", g.RequireManager(h.staff(h.held)))
@@ -96,6 +108,54 @@ func (h *ReversalHandler) payout(w http.ResponseWriter, r *http.Request, caller 
 		status = http.StatusOK
 	}
 	httpx.WriteJSON(w, status, res)
+}
+
+func (h *ReversalHandler) voidPayment(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if h.void == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, ErrVoidNotWired.Error())
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	sc, _ := identity.StaffContextFromContext(r.Context())
+	v, err := h.void.Void(r.Context(), VoidInput{
+		PaymentID: r.PathValue("id"),
+		Reason:    req.Reason,
+		ActorID:   sc.UserID,
+		IsManager: sc.IsManager(),
+		// The caller's branch reach (a branch manager voids its own branch's receipts only).
+		CanAccessBranch: sc.CanAccessBranch,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			httpx.Error(w, http.StatusNotFound, "payment not found")
+		case errors.Is(err, ErrVoidNotWired):
+			httpx.Error(w, http.StatusServiceUnavailable, err.Error())
+		case errors.Is(err, ErrNotVoidable), errors.Is(err, ErrVoidReasonRequired):
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+		default:
+			h.log.Warn("payment void failed", "payment_id", r.PathValue("id"), "err", err)
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+		}
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
+		"label":             "VOID",
+		"payment_id":        v.PaymentID,
+		"payment_no":        v.PaymentNo,
+		"amount_cents":      v.AmountCents,
+		"reason":            v.Reason,
+		"voided_at":         v.VoidedAt,
+		"reopened_invoices": v.ReopenedInvoices,
+		"held_cents":        0,
+	})
 }
 
 func (h *ReversalHandler) held(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {

@@ -51,7 +51,7 @@ test("how a statement goes reads from its delivery word, never from the AP conta
 
 // ---- reminders and the paper path ----------------------------------------------------------------------------------
 
-import { channelWord, paperResolveCheck, recipientWords, reminderPreview, reminderResultWords, sendStatusWord } from "../src/ar/office-logic.ts";
+import { channelWord, paperResolveCheck, recipientWords, reminderPreview, reminderResultWords, reminderRunWords, sendStatusWord, voidCheck, voidWords } from "../src/ar/office-logic.ts";
 
 const POLICY = { aging_warn_days: 60, aging_escalate_days: 90, reminder_cadence_days: 7, reminder_max_per_cycle: 3, black_hole_window_days: 45, black_hole_min_sends: 3, reminder_email_enabled: true, reminder_sms_enabled: false, untagged_fallback: "CONFIRM", ar_tier: "PRO" };
 const TAGGED = { tagged: true, contact: { customer_id: "c", contact_name: "Accounts payable desk", email: "ap@x.invalid", phone: "" } };
@@ -84,6 +84,29 @@ test("a sent reminder reads by the recipient's kind, never the address", () => {
   assert.ok(!/@|ap@x/.test(words));
   assert.match(reminderResultWords({ ...send, status: "FAILED" }, "INV-1001"), /did not go: nothing left the building/);
   assert.match(reminderResultWords({ ...send, resend: true, watermark: "PAST DUE, 75 DAYS" }, "INV-1001"), /stamped PAST DUE, 75 DAYS/);
+});
+
+test("a Remind run says sent, recorded for retry, or nothing sent and why (FW1-06b)", () => {
+  const sent = reminderRunWords({ sent: 2, replayed: 0, tone: "FRIENDLY" });
+  assert.equal(sent.sent, true);
+  assert.equal(sent.notice, "Reminder sent for 2 invoices to the account's contact email.");
+  assert.match(reminderRunWords({ sent: 1, replayed: 1, tone: "FRIENDLY" }).notice, /1 had already been sent/);
+  const unwired = reminderRunWords({ sent: 0, replayed: 0, tone: "FRIENDLY", skipped: { "INV-1": "no email transport is wired on this deployment, nothing was sent" } });
+  assert.equal(unwired.sent, false);
+  assert.match(unwired.notice, /No reminder was sent: no email transport is wired on this deployment/);
+  const mixed = reminderRunWords({ sent: 0, replayed: 0, tone: "FRIENDLY", skipped: { "INV-1": "nothing outstanding", "INV-2": "no contact email on the account" } });
+  assert.match(mixed.notice, /2 invoices were skipped/);
+  const failed = reminderRunWords({ sent: 1, replayed: 0, tone: "FRIENDLY", skipped: { "INV-2": "delivery failed, nothing went out; send it again from the desk: transport unreachable" } });
+  assert.equal(failed.sent, true);
+  assert.match(failed.notice, /Reminder sent for 1 invoice to the account's contact email/);
+  assert.match(failed.notice, /1 was not sent: nothing went out, send it again from the desk/);
+  const allFailed = reminderRunWords({ sent: 0, replayed: 0, tone: "FRIENDLY", skipped: { "INV-1": "delivery failed, nothing went out; send it again from the desk: transport unreachable" } });
+  assert.equal(allFailed.sent, false);
+  assert.match(allFailed.notice, /No reminder went out: delivery failed, nothing went out/);
+  assert.match(allFailed.notice, /send it again from the desk/);
+  const replayedOnly = reminderRunWords({ sent: 0, replayed: 2, tone: "FRIENDLY", skipped: {} });
+  assert.equal(replayedOnly.sent, false);
+  assert.match(replayedOnly.notice, /2 had already been sent/);
 });
 
 test("closing a paper path flag needs a decision and a note, said before it is sent", () => {
@@ -221,7 +244,14 @@ test("applying and reversing a credit are checked before they are sent, and read
 test("a sent invoice says it went through the messaging sink, and a replay says nothing new went", () => {
   assert.equal(sendInvoiceWords({ sent: 1, replayed: 0, tone: "" }), "The invoice went to the account's contact through the messaging sink.");
   assert.equal(sendInvoiceWords({ sent: 0, replayed: 1, tone: "" }), "That invoice was already sent on this key, so nothing new went.");
-  assert.match(sendInvoiceWords({ sent: 1, replayed: 0, tone: "", skipped: { "INV-1": "recorded, but delivery failed: x" } }), /was recorded, but did not go: nothing left the building/);
+  // A delivery that did not go is named by the server's own reason, and never as a recorded send:
+  // there is no queue behind the desk, so nothing was recorded either (FW1-06b round 2, S6's P2-2).
+  const failed = sendInvoiceWords({ sent: 0, replayed: 0, tone: "", skipped: { "INV-1": "delivery failed, nothing went out; send it again from the desk: transport unreachable" } });
+  assert.match(failed, /The invoice did not go: delivery failed, nothing went out/);
+  assert.match(failed, /send it again from the desk/);
+  assert.ok(!/recorded/.test(failed), failed);
+  const unwired = sendInvoiceWords({ sent: 0, replayed: 0, tone: "", skipped: { "INV-1": "no email transport is wired on this deployment, nothing was sent" } });
+  assert.match(unwired, /The invoice did not go: no email transport is wired on this deployment/);
 });
 
 // ---- settings and the extra hold reads -------------------------------------------------------------------------------
@@ -305,4 +335,16 @@ test("the credit sweep says what it did, and when it only reported", () => {
   assert.equal(sweepWords({ evaluated: 5, placed: 0, would_hold: 1, dry_run: true }), "The sweep checked 5 accounts. It would hold 1 and placed none, because automatic holds are off.");
   assert.equal(sweepWords({ evaluated: 5, placed: 0, would_hold: 3, dry_run: true }), "The sweep checked 5 accounts. It would hold 3 and placed none, because automatic holds are off.");
   assert.equal(sweepWords({ evaluated: 5, placed: 0, would_hold: 0, dry_run: true }), "The sweep checked 5 accounts. It would hold none and placed none, because automatic holds are off.");
+});
+
+test("the true void says what it undid, and a reason is required (FW1-06b)", () => {
+  assert.equal(voidCheck(" keyed for the wrong amount ").ok, true);
+  const refusedReason = voidCheck("   ");
+  assert.equal(refusedReason.ok, false);
+  assert.match(refusedReason.words, /why the receipt is being voided/);
+  const words = voidWords({ label: "VOID", payment_id: "p", payment_no: "PAY-0007", amount_cents: 25000, reason: "keyed for the wrong amount", voided_at: "2026-01-01T00:00:00Z", reopened_invoices: ["i1", "i2"], held_cents: 0 }, "PAY-0007");
+  assert.match(words, /PAY-0007 is voided as never received/);
+  assert.match(words, /\$250\.00 is owing again on 2 invoices/);
+  assert.match(words, /nothing is held for the customer/);
+  assert.ok(!/2310/.test(words), "the ledger account is bookkeeping, not the operator's words");
 });

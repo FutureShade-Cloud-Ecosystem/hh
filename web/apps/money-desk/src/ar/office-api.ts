@@ -29,6 +29,7 @@ import {
   type PaymentsPayout,
   type PaymentsReapplication,
   type PaymentsReversalResult,
+  type PaymentsVoidResult,
   type Result,
   type TillCreditHoldPage,
   type TillNSFPolicy,
@@ -120,6 +121,11 @@ export class OfficeApi {
 
   reversePayment(paymentId: string, reason: string): Promise<Result<PaymentsReversalResult>> {
     return staffPayments.paymentsReversePayment(this.#client, paymentId, { reason });
+  }
+
+  /** Voids a mis-keyed desk receipt as never taken (FW1-06b): manager only, the same dealer day, nothing held. */
+  voidPayment(paymentId: string, reason: string): Promise<Result<PaymentsVoidResult>> {
+    return staffPayments.paymentsVoidPayment(this.#client, paymentId, { reason });
   }
 
   /** What a reversed payment still holds in 2310: the figure the re-application form shows. */

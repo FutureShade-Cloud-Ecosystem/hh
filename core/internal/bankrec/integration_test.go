@@ -52,6 +52,13 @@ func cleanTables(t *testing.T, pool *pgxpool.Pool) {
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
+	_, _ = pool.Exec(context.Background(), `
+		UPDATE bank_accounts
+		   SET cutover_date = NULL,
+		       cutover_statement_balance_cents = NULL,
+		       cutover_outstanding_journal_ids = '{}'::uuid[],
+		       cutover_recorded_by = NULL,
+		       cutover_recorded_at = NULL`)
 }
 
 func rbcAccountID(t *testing.T, pool *pgxpool.Pool) string {
@@ -217,7 +224,8 @@ func (f *fakeLodgements) LodgementFacts(_ context.Context, id string) (Lodgement
 	for _, l := range f.open {
 		if l.MovementID == id {
 			return LodgementFact{BranchID: l.BranchID, AmountCents: l.AmountCents,
-				PaymentIDs: l.PaymentIDs, PaymentsUnresolved: l.PaymentsUnresolved}, true, nil
+				PaymentIDs: l.PaymentIDs, PaymentsUnresolved: l.PaymentsUnresolved,
+				CarriesJournal: l.CarriesJournal}, true, nil
 		}
 	}
 	return LodgementFact{}, false, nil

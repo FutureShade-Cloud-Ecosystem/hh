@@ -637,6 +637,7 @@ var ownedObjects = map[string]string{
 	"tax_rates":                       "tax",               // 0042_tax_engine
 	"tax_status_card_profiles":        "tax",               // 0042_tax_engine
 	"till_denomination_counts":        "till",              // 0028_till_drawer_ops
+	"till_lodgement_payments":         "till",              // 0441_till_lodgement_payments
 	"till_movements":                  "till",              // 0028_till_drawer_ops
 	"till_policy":                     "till",              // 0028_till_drawer_ops
 	"till_sessions":                   "till",              // 0010_payments_till

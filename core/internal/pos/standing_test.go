@@ -45,11 +45,14 @@ type fakeHolds struct {
 func (f *fakeHolds) HasActiveHold(context.Context, string) (bool, error) { return f.held, f.err }
 
 type fakeAccounts struct {
+	branch string // the account's home branch, "" unhomed
 	exists bool
 	err    error
 }
 
-func (f *fakeAccounts) AccountExists(context.Context, string) (bool, error) { return f.exists, f.err }
+func (f *fakeAccounts) AccountHomeBranch(context.Context, string) (string, bool, error) {
+	return f.branch, f.exists, f.err
+}
 
 type fakePosition struct {
 	vis string
@@ -74,6 +77,25 @@ func (f *fakePosition) AccountPositionAllowed(ctx context.Context, _ string) boo
 	}
 }
 
+// AccountPositionVisibility is the surface word read (UX-97 item 208): HIDDEN is the dealer's
+// switch-off, the standing read's 403 for everyone.
+func (f *fakePosition) AccountPositionVisibility(_ context.Context, _ string) (string, error) {
+	if f == nil {
+		return "", errors.New("unwired")
+	}
+	return f.vis, nil
+}
+
+// fakeSurface answers the visibility word per branch, for the one branch rule's legs.
+type fakeSurface struct{ byBranch map[string]string }
+
+func (f fakeSurface) AccountPositionVisibility(_ context.Context, branchID string) (string, error) {
+	if vis, ok := f.byBranch[branchID]; ok {
+		return vis, nil
+	}
+	return "MANAGER_UP", nil
+}
+
 // wireStanding wires the standing seams over a harness: an account that exists, no hold, the
 // given aging answer, and the dealer's default MANAGER_UP account position gate.
 func wireStanding(h *harness, due PastDue, err error) (*fakeAging, *fakeHolds, *fakeAccounts) {
@@ -81,7 +103,8 @@ func wireStanding(h *harness, due PastDue, err error) (*fakeAging, *fakeHolds, *
 	hd := &fakeHolds{}
 	ac := &fakeAccounts{exists: true}
 	h.svc.WithAgingReader(a).WithHoldReader(hd).WithAccountChecker(ac).
-		WithPositionGate(&fakePosition{vis: "MANAGER_UP", svc: h.svc})
+		WithPositionGate(&fakePosition{vis: "MANAGER_UP", svc: h.svc}).
+		WithPositionSurface(&fakePosition{vis: "MANAGER_UP", svc: h.svc})
 	return a, hd, ac
 }
 
@@ -243,10 +266,17 @@ func TestStanding_AFailedAccountCheckIsAnError(t *testing.T) {
 
 func TestStanding_AnUnreadablePolicyIsAnErrorNotAHiddenBalance(t *testing.T) {
 	h, _ := standingHarness(t, behind(), nil)
-	h.store.policyErr = errors.New("policy unreachable")
-	if _, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "b", CustomerID: standingCust}); !errors.Is(err, ErrStandingUnavailable) {
-		t.Fatalf("a policy that cannot be read is the unavailable error: %v", err)
+	h.svc.WithPositionSurface(errSurface{})
+	if _, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust}); !errors.Is(err, ErrStandingUnavailable) {
+		t.Fatalf("a policy word that cannot be read is the unavailable error: %v", err)
 	}
+}
+
+// errSurface is a visibility read that fails, the unreadable policy.
+type errSurface struct{}
+
+func (errSurface) AccountPositionVisibility(context.Context, string) (string, error) {
+	return "", errors.New("policy unreachable")
 }
 
 func TestStanding_AnUnwiredSeamIsUnavailableNotEmpty(t *testing.T) {
@@ -365,14 +395,96 @@ func TestStanding_ManagerUpPolicy_ManagerStillSeesIt(t *testing.T) {
 }
 
 func TestStanding_HiddenPolicy_NobodyGetsItAndIsRefused(t *testing.T) {
+	// UX-97 item 208: HIDDEN is the account position policy's own switch-off word, the 403 the
+	// retired pos_policy.balance_visibility column used to give. The manager is refused too:
+	// the surface is off for everyone.
 	h, _ := standingHarness(t, behind(), nil) // manager-tier caller
-	p := h.store.policies[""]
-	p.BalanceVisibility = BalanceVisibilityHidden
-	h.store.policies[""] = p
+	h.svc.WithPositionSurface(&fakePosition{vis: "HIDDEN", svc: h.svc})
 	_, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
 	if standingStatus(err) != 403 {
 		t.Fatalf("HIDDEN means the surface is off for everyone, and the answer is a 403: %v", err)
 	}
+	// A walk-in has no account, and the surface it meets is the branch the till names.
+	_, err = h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt"})
+	if standingStatus(err) != 403 {
+		t.Fatalf("a walk-in under HIDDEN is refused with the read: %v", err)
+	}
+}
+
+// TestStanding_AnUnwiredSurfaceFailsClosedToHidden pins the surface seam's fail-closed half: the
+// one wiring line at the composition root (cmd/core wire_tops, WithPositionSurface) is what
+// connects the dealer's ONE account position policy to the till, and if it goes missing the till
+// must answer as the HIDDEN word answers, the 403 with no figures, never an open read. The
+// walk-in leg consults no admission gate at all, so the seam alone decides it.
+func TestStanding_AnUnwiredSurfaceFailsClosedToHidden(t *testing.T) {
+	h, _ := standingHarness(t, behind(), nil) // manager-tier caller
+	h.svc.WithPositionGate(&fakePosition{vis: "HIDDEN", svc: h.svc})
+	h.svc.WithPositionSurface(nil) // the wiring line is missing
+	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
+	if standingStatus(err) != 403 {
+		t.Fatalf("an unwired surface answers HIDDEN, the standing read's 403: %v", err)
+	}
+	if out != (AccountStanding{}) {
+		t.Fatalf("and no figure rides with the refusal: %+v", out)
+	}
+	// A walk-in under the unwired surface meets the same refusal a wired HIDDEN word gives: the
+	// surface it meets is the branch the till names.
+	if _, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt"}); standingStatus(err) != 403 {
+		t.Fatalf("a walk-in under an unwired surface is refused with the read: %v", err)
+	}
+}
+
+// TestStanding_TheAccountHomeBranchDecidesTheAdmission pins the ONE branch rule (UX-97 item 208):
+// the standing decides at the ACCOUNT's home branch, the dealer default for an unhomed account,
+// exactly as the customer by-id read does, so the till cannot contradict the customer read one
+// screen over. A caller the till's own branch admits is still refused an account whose own branch
+// refuses them.
+func TestStanding_TheAccountHomeBranchDecidesTheAdmission(t *testing.T) {
+	h, _ := standingHarness(t, behind(), nil)
+	h.svc.WithAccountChecker(&fakeAccounts{branch: "branch-other", exists: true})
+	h.svc.WithPositionGate(&admittingAt{"branch-trt"})
+	h.svc.WithPositionSurface(fakeSurface{byBranch: map[string]string{
+		"branch-trt": "ALL_STAFF", "branch-other": "MANAGER_UP",
+	}})
+	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
+	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
+	if err != nil {
+		t.Fatalf("a refused caller is answered, not refused: %v", err)
+	}
+	raw, _ := json.Marshal(out)
+	if string(raw) != `{"standing":"withheld"}` {
+		t.Fatalf("the account's home branch decides, not the branch the till names: %s", raw)
+	}
+}
+
+// TestStanding_TheAccountHomeBranchsHiddenWordRefusesTheRead pins the surface half of the one
+// branch rule: HIDDEN at the account's home branch turns the read off even for a caller the
+// till's own ALL_STAFF branch admits.
+func TestStanding_TheAccountHomeBranchsHiddenWordRefusesTheRead(t *testing.T) {
+	h, _ := standingHarness(t, behind(), nil) // manager-tier caller, admitted under ALL_STAFF
+	h.svc.WithAccountChecker(&fakeAccounts{branch: "branch-other", exists: true})
+	h.svc.WithPositionGate(&admittingAt{"branch-trt"})
+	h.svc.WithPositionSurface(fakeSurface{byBranch: map[string]string{
+		"branch-trt": "ALL_STAFF", "branch-other": "HIDDEN",
+	}})
+	_, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
+	if standingStatus(err) != 403 {
+		t.Fatalf("the home branch's HIDDEN word refuses the read: %v", err)
+	}
+	// The same caller on an account homed where the surface is on reads in full.
+	h.svc.WithAccountChecker(&fakeAccounts{branch: "branch-trt", exists: true})
+	if out := standingOf(t, h, standingCust); out.PastDueCents == 0 {
+		t.Fatal("the caller the admitting branch admits reads the figures there")
+	}
+}
+
+// admittingAt is an admission gate that admits everyone at one named branch and nobody elsewhere,
+// the per branch word made concrete for the branch rule's legs.
+type admittingAt struct{ branch string }
+
+func (a *admittingAt) AccountPositionAllowed(_ context.Context, branchID string) bool {
+	return branchID == a.branch
 }
 
 func TestStanding_AnUnauthenticatedCallerIsRefused(t *testing.T) {
@@ -385,22 +497,10 @@ func TestStanding_AnUnauthenticatedCallerIsRefused(t *testing.T) {
 }
 
 // -- the policy knob -----------------------------------------------------------------------------
-
-func TestBalanceVisibility_ValidatesInWordsBeforeTheCHECKCouldFire(t *testing.T) {
-	if v, err := validateBalanceVisibility(""); err != nil || v != BalanceVisibilityAllStaff {
-		t.Fatalf("omitted normalizes to the column default: %q / %v", v, err)
-	}
-	for _, ok := range []string{BalanceVisibilityAllStaff, BalanceVisibilityManagerUp, BalanceVisibilityHidden} {
-		if v, err := validateBalanceVisibility(ok); err != nil || v != ok {
-			t.Fatalf("%q must be accepted: %v", ok, err)
-		}
-	}
-	if _, err := validateBalanceVisibility("EVERYONE"); err == nil {
-		t.Fatal("a bad word is a 422 in words, never a 500 from the CHECK")
-	} else if !strings.Contains(err.Error(), "MANAGER_UP, ALL_STAFF or HIDDEN") {
-		t.Fatalf("the refusal must name the way forward: %v", err)
-	}
-}
+//
+// The 0181 balance_visibility knob and its validator are gone (UX-97 item 208): the dealer's ONE
+// account position policy decides the customer's balance surface on every route, the till's
+// standing included, and the retired pos_policy column decides nothing.
 
 func TestOnAccountRefusal_WithholdsCreditLimitForRefusedCaller(t *testing.T) {
 	// Default policy: account_position_visibility is MANAGER_UP.

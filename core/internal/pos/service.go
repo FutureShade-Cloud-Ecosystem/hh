@@ -366,10 +366,14 @@ type Service struct {
 	// position is the dealer's account position policy gate (ar_invoice_policy.account_position_visibility,
 	// UX-97). Nil fails closed.
 	position PositionGate
-	tender   TenderTaker
-	credit   CreditGate
-	sig      SignatureProvider
-	tax      TaxAssessor
+	// surface is the same policy's visibility word read (standing.go): HIDDEN is the dealer's
+	// switch-off, the standing read's 403 (UX-97 item 208). Nil fails closed: the standing read
+	// answers as HIDDEN, the same way the nil position gate withholds.
+	surface PositionSurface
+	tender  TenderTaker
+	credit  CreditGate
+	sig     SignatureProvider
+	tax     TaxAssessor
 	// payInvoicer is the billing writer the Pay balance take raises an
 	// uninvoiced order's invoice through (pay_balance.go), the desk's own
 	// writer. Nil until wired; a take that needs a raise refuses (503) rather
@@ -1172,10 +1176,20 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 		}
 		// Sorted by product, so two sales over crossed products take their balance rows in one order.
 		sort.SliceStable(stockLines, func(i, j int) bool { return stockLines[i].ProductID < stockLines[j].ProductID })
-		if err := s.stockDec().DecrementForSaleTx(ctx, tx, StockDecrementInput{
+		// Round 2 (S3's P1): the decrement answers each line's own move value and
+		// the event carries it, so the COGS journal posts the value that moved.
+		values, derr := s.stockDec().DecrementForSaleValuesTx(ctx, tx, StockDecrementInput{
 			OrderID: orderID, BranchID: in.BranchID, SaleType: saleType, Lines: stockLines,
-		}); err != nil {
-			return err
+		})
+		if derr != nil {
+			return derr
+		}
+		byProduct := map[string]int64{}
+		for _, v := range values {
+			byProduct[v.ProductID] = v.ValueCents
+		}
+		for i := range fulfilledLines {
+			fulfilledLines[i]["value_cents"] = byProduct[fulfilledLines[i]["product_id"].(string)]
 		}
 		if err := s.store.EmitEvent(ctx, tx, "order.fulfilled", map[string]any{
 			"order_id": orderID, "branch_id": in.BranchID, "lines": fulfilledLines,

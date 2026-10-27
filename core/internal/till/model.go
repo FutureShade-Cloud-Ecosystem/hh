@@ -172,6 +172,21 @@ type ZReport struct {
 	PerTender         []TenderTotal `json:"per_tender"`
 	Cash              CashSummary   `json:"cash"`
 	ClosingFloatCents int64         `json:"closing_float_cents"`
+	// Movements are the drawer's movements: the paid ins and the paid outs that sit in the 9999 suspense
+	// balance, each line with the drawer's own reason words and the branch it belongs to (FROM-PRINCIPAL
+	// 132), so the Z report reads the suspense balance back to the movements behind it.
+	Movements []ZReportMovement `json:"movements"`
+}
+
+// ZReportMovement is one drawer movement on the Z report: what the drawer did, in the drawer's own
+// words, and the branch it belongs to.
+type ZReportMovement struct {
+	MovementType string `json:"movement_type"`
+	Method       string `json:"method"`
+	AmountCents  int64  `json:"amount_cents"`
+	Reason       string `json:"reason"`
+	Reference    string `json:"reference"`
+	BranchID     string `json:"branch_id"`
 }
 
 // CashSummary is the derived cash reconciliation block.
@@ -257,14 +272,17 @@ type OpenTillInput struct {
 	OpeningDenominations []DenominationCount `json:"opening_denominations"`
 }
 
-// MovementInput is a paid-in/out/drop/lodgement entry.
+// MovementInput is a paid-in/out/drop/lodgement entry. A lodgement may name its payments, like a
+// deposit slip (FROM-PRINCIPAL 128): the names are optional, and when given they must add up to the
+// slip's amount, every name on this drawer, this method, still RECEIVED and not reversed.
 type MovementInput struct {
-	TillSessionID string `json:"-"`
-	MovementType  string `json:"movement_type"`
-	Method        string `json:"method"`
-	AmountCents   int64  `json:"amount_cents"`
-	Reason        string `json:"reason"`
-	Reference     string `json:"reference"`
+	TillSessionID string   `json:"-"`
+	MovementType  string   `json:"movement_type"`
+	Method        string   `json:"method"`
+	AmountCents   int64    `json:"amount_cents"`
+	Reason        string   `json:"reason"`
+	Reference     string   `json:"reference"`
+	PaymentIDs    []string `json:"payment_ids"`
 }
 
 // CountInput is the blind per-tender actuals (+ optional CLOSE denominations).
@@ -353,6 +371,10 @@ var (
 	// errPaymentReversed refuses a bounce of a reversed payment (SF-2d round 7): a payment is reversed or bounced,
 	// never both. Decided in the store's locked read, mirrored by the service's fast check.
 	errPaymentReversed = clientError{status: http.StatusConflict, msg: "till: this payment was reversed, so it cannot be marked bounced (a payment is reversed or bounced, never both)"}
+	// errPaymentNotBounceable refuses a bounce of a payment that is not a live receipt: a reversing entry,
+	// a voided desk receipt or a refund row has nothing to give back, and reinstating its invoices would
+	// post money that never arrived. Decided in the store's locked read, mirrored by the service's fast check.
+	errPaymentNotBounceable = clientError{status: http.StatusConflict, msg: "till: only a received or deposited payment can be marked bounced"}
 )
 
 // unprocessable maps a SEMANTIC validation failure (well-formed request, value violates a rule) to 422
@@ -405,7 +427,9 @@ type PaymentRow struct {
 	SignatureRef    string
 }
 
-// MovementRow is one till_movements insert (paid-in/out/drop/lodgement).
+// MovementRow is one till_movements insert (paid-in/out/drop/lodgement). A lodgement carries the
+// deposit slip's named payment ids; the repository writes the slip's link rows and the DEPOSITED
+// marks in the movement's own transaction.
 type MovementRow struct {
 	TillSessionID string
 	MovementType  string
@@ -414,6 +438,15 @@ type MovementRow struct {
 	Reason        string
 	Reference     string
 	CreatedBy     string
+	PaymentIDs    []string
+}
+
+// SlipPayment is one named payment's read for a lodgement's deposit slip validation.
+type SlipPayment struct {
+	ID          string
+	AmountCents int64
+	Status      string
+	Reversed    bool
 }
 
 // MovementTotals are the per-session movement sums of ONE tender method, used in the drawer math
@@ -430,6 +463,20 @@ type SessionDetail struct {
 	TillSession
 	Tenders   []TenderTotal `json:"tenders"`
 	Movements []Movement    `json:"movements"`
+	// SlipCandidates are the drawer's unlodged cheques: the RECEIVED cheques on this session that no
+	// lodgement has named yet (FROM-PRINCIPAL 166 P1-1). The close lists them, each ticked by
+	// default, and the drawer unticks the ones this lodgement does not carry.
+	SlipCandidates []SlipCandidate `json:"slip_candidates"`
+}
+
+// SlipCandidate is one payment the drawer may put on a lodgement's slip: a RECEIVED, unreversed payment
+// on this session that no lodgement has named yet.
+type SlipCandidate struct {
+	PaymentID   string `json:"payment_id"`
+	PaymentNo   string `json:"payment_no"`
+	AmountCents int64  `json:"amount_cents"`
+	Method      string `json:"method"`
+	Reference   string `json:"reference"`
 }
 
 func abs64(x int64) int64 {

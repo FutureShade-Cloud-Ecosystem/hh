@@ -33,10 +33,12 @@ package pos
 // non-2xx answer as an empty standing.
 //
 // THE GATE IS AT THE MARSHAL LAYER (0181). A customer's outstanding balance is money about a third
-// party; who may see it is the dealer's decision, taken in pos_policy.balance_visibility and
-// applied HERE, by leaving the figures out of the bytes for a caller they are withheld from. Not
-// filtered downstream, not hidden in CSS, not sent-and-suppressed: the figure is never put in the
-// bytes.
+// party; who may see it is the dealer's decision, taken in ar_invoice_policy.account_position_visibility
+// (UX-97 item 208: the ONE account position policy, the same gate every other staff read answers to;
+// the old pos_policy.balance_visibility column is retired and decides nothing) and applied HERE, by
+// leaving the figures out of the bytes for a caller they are withheld from, and by answering 403
+// when the dealer's word there is HIDDEN, the surface off for everyone. Not filtered downstream, not
+// hidden in CSS, not sent-and-suppressed: the figure is never put in the bytes.
 
 import (
 	"context"
@@ -114,16 +116,18 @@ type HoldReader interface {
 
 // AccountChecker answers whether a customer account exists AND is reachable by the caller on the
 // context, so an unknown id and an account at a branch the caller cannot reach are the same 404 and
-// never a "clear" account or a hold word. The customer module owns the table and the reach fence;
-// the composition root adapts it.
+// never a "clear" account or a hold word, and names the branch the account is homed to ("" when
+// unhomed): the standing decides at the account's own branch, the dealer default for an unhomed
+// one (UX-97 item 208, the one branch rule, the customer by-id read's rule). The customer module
+// owns the table and the reach fence; the composition root adapts it.
 type AccountChecker interface {
-	AccountExists(ctx context.Context, customerID string) (bool, error)
+	AccountHomeBranch(ctx context.Context, customerID string) (branchID string, found bool, err error)
 }
 
 // WithHoldReader wires the hold read behind the standing read.
 func (s *Service) WithHoldReader(h HoldReader) *Service { s.holds = h; return s }
 
-// WithAccountChecker wires the account existence check behind the standing read.
+// WithAccountChecker wires the account existence and home branch read behind the standing read.
 func (s *Service) WithAccountChecker(a AccountChecker) *Service { s.accounts = a; return s }
 
 // PositionGate reports whether the caller on ctx may read the customer's account position figures
@@ -136,6 +140,24 @@ type PositionGate interface {
 // WithPositionGate binds the dealer's account position policy gate. A nil gate fails closed.
 func (s *Service) WithPositionGate(g PositionGate) *Service { s.position = g; return s }
 
+// PositionVisibilityHidden is the seam word for the dealer's account position switch-off.
+const PositionVisibilityHidden = "HIDDEN"
+
+// PositionSurface answers the dealer's account position visibility word for a branch (the dealer
+// default when branchID is empty). HIDDEN is the dealer's switch-off and the standing read's 403
+// for everyone: UX-97 item 208 makes this ONE policy the till's surface decider too, and retires
+// pos_policy.balance_visibility, whose column stays but decides nothing. Satisfied by
+// *billing.AccountPositionGate. A security seam, and it fails closed: an unwired surface answers
+// as HIDDEN, the standing read's 403 with no figures, the same way the nil admission gate below
+// withholds.
+type PositionSurface interface {
+	AccountPositionVisibility(ctx context.Context, branchID string) (string, error)
+}
+
+// WithPositionSurface binds the visibility word read. Nil fails closed: the standing read answers
+// as HIDDEN, exactly as a wired HIDDEN word does.
+func (s *Service) WithPositionSurface(p PositionSurface) *Service { s.surface = p; return s }
+
 func (s *Service) positionAllowed(ctx context.Context, branchID string) bool {
 	if s == nil || s.position == nil {
 		return false
@@ -143,49 +165,19 @@ func (s *Service) positionAllowed(ctx context.Context, branchID string) bool {
 	return s.position.AccountPositionAllowed(ctx, branchID)
 }
 
-// balanceGate is what the dealer's policies say about THIS caller on THIS branch.
-type balanceGate int
-
-const (
-	// balanceOpen: the counter standing surface is enabled and the caller is admitted by the
-	// dealer's account position policy (ar_invoice_policy.account_position_visibility). The read
-	// answers in full.
-	balanceOpen balanceGate = iota
-	// balanceFiguresWithheld: the counter standing surface is enabled, and the dealer's account
-	// position policy withholds figures from this caller. The read answers the hold state or the
-	// withheld word, and never puts the overdue figure, its bucket, or the clear/past_due word in
-	// the bytes.
-	balanceFiguresWithheld
-	// balanceOff: pos_policy.balance_visibility is HIDDEN. The surface is off for everyone, and
-	// the answer is a 403.
-	balanceOff
-)
-
-// balanceGateFor resolves the counter standing surface switch (pos_policy.balance_visibility =
-// HIDDEN is a 403 for everyone) and the dealer's one account position policy gate
-// (ar_invoice_policy.account_position_visibility, MANAGER_UP by default) behind the branch wall
-// (X2: a branch the caller's resolved authority does not reach is REFUSED with the wall's 403,
-// never answered with an empty card). A caller who cannot be resolved and a policy that cannot be
-// read are errors, not a quiet "no": the read is refused or fails, it is never answered empty.
-func (s *Service) balanceGateFor(ctx context.Context, branchID string) (balanceGate, error) {
-	caller, err := s.caller(ctx)
+// surfaceOff answers whether the dealer's account position surface is switched off at branchID:
+// the visibility word there is HIDDEN. A word that cannot be read is an error, never an on: the
+// read is refused or fails, it is never answered empty. An unwired surface fails closed: a seam
+// the till cannot read is a switch-off, the same way a nil admission gate withholds.
+func (s *Service) surfaceOff(ctx context.Context, branchID string) (bool, error) {
+	if s == nil || s.surface == nil {
+		return true, nil
+	}
+	vis, err := s.surface.AccountPositionVisibility(ctx, branchID)
 	if err != nil {
-		return balanceOff, err // the 401 an unresolved caller earns, never an empty card
+		return false, errors.Join(ErrStandingUnavailable, err)
 	}
-	if err := requireBranchReach(caller, branchID); err != nil {
-		return balanceOff, err
-	}
-	p, err := s.store.ReadPosPolicy(ctx, branchID)
-	if err != nil {
-		return balanceOff, errors.Join(ErrStandingUnavailable, err)
-	}
-	if p.BalanceVisibility == BalanceVisibilityHidden {
-		return balanceOff, nil
-	}
-	if s.positionAllowed(ctx, branchID) {
-		return balanceOpen, nil
-	}
-	return balanceFiguresWithheld, nil
+	return vis == PositionVisibilityHidden, nil
 }
 
 // AccountStandingInput is GET /api/v1/pos/account-standing.
@@ -199,10 +191,14 @@ type AccountStandingInput struct {
 // Every case answers with its own word or its own error status, see the file header. The order of
 // the checks is the order of what the caller is owed: a branch is required (400); a caller who
 // does not reach the branch is refused (403) before any account is touched, so a wall refusal
-// never confirms an account exists, and a dealer who switched the surface off is refused with it;
-// then the account itself (400 malformed, 404 unknown); then the facts, any of which failing is a
-// 503. A caller whom the policy strips the figures from still gets the hold state, under the word
-// `withheld` unless the account is on hold, and never the overdue figure or its bucket: those
+// never confirms an account exists; a walk-in names no account, so the surface is judged at the
+// branch the till names and the answer carries no position to withhold; then the account itself
+// (400 malformed, 404 unknown or unreachable); then the DEALER'S ONE ACCOUNT POSITION POLICY at
+// the account's home branch, the dealer default for an unhomed account (UX-97 item 208, the one
+// branch rule): HIDDEN is the switch-off and a 403 for everyone, a refused caller is answered
+// under the withheld word with the hold state, an admitted caller in full. Any fact read failing
+// is a 503. A caller whom the policy strips the figures from still gets the hold state, under the
+// word `withheld` unless the account is on hold, and never the overdue figure or its bucket: those
 // bytes are simply never written.
 func (s *Service) Standing(ctx context.Context, in AccountStandingInput) (AccountStanding, error) {
 	if in.BranchID == "" {
@@ -213,33 +209,48 @@ func (s *Service) Standing(ctx context.Context, in AccountStandingInput) (Accoun
 			return AccountStanding{}, clientErr(http.StatusBadRequest, "pos: customer_id must be a uuid")
 		}
 	}
-	gate, err := s.balanceGateFor(ctx, in.BranchID)
+	caller, err := s.caller(ctx)
 	if err != nil {
-		// The branch wall (X2) and the unreadable policy: a refusal or a failure, never an empty card.
+		return AccountStanding{}, err // the 401 an unresolved caller earns, never an empty card
+	}
+	// The branch wall (X2): a branch the caller's resolved authority does not reach is REFUSED with
+	// the wall's 403, never answered with an empty card.
+	if err := requireBranchReach(caller, in.BranchID); err != nil {
 		return AccountStanding{}, err
 	}
-	if gate == balanceOff {
-		return AccountStanding{}, clientErr(http.StatusForbidden, "pos: this caller may not see account balances")
-	}
 	if in.CustomerID == "" {
+		off, err := s.surfaceOff(ctx, in.BranchID)
+		if err != nil {
+			return AccountStanding{}, err
+		}
+		if off {
+			return AccountStanding{}, clientErr(http.StatusForbidden, "pos: this caller may not see account balances")
+		}
 		return AccountStanding{Standing: StandingWalkIn}, nil // a walk-in has no account and no balance
 	}
 	if s.aging == nil || s.holds == nil || s.accounts == nil {
 		return AccountStanding{}, errors.Join(ErrStandingUnavailable, errors.New("a standing seam is not wired"))
 	}
-	exists, err := s.accounts.AccountExists(ctx, in.CustomerID)
+	homeBranch, exists, err := s.accounts.AccountHomeBranch(ctx, in.CustomerID)
 	if err != nil {
 		return AccountStanding{}, errors.Join(ErrStandingUnavailable, err)
 	}
 	if !exists {
 		return AccountStanding{}, errCustomerNotFound // the one customer answer (customerFor): unreachable and unknown alike
 	}
+	off, err := s.surfaceOff(ctx, homeBranch)
+	if err != nil {
+		return AccountStanding{}, err
+	}
+	if off {
+		return AccountStanding{}, clientErr(http.StatusForbidden, "pos: this caller may not see account balances")
+	}
 	held, err := s.holds.HasActiveHold(ctx, in.CustomerID)
 	if err != nil {
 		return AccountStanding{}, errors.Join(ErrStandingUnavailable, err)
 	}
-	if gate == balanceFiguresWithheld {
-		// The policy withholds this caller's money, and "clear" is a position like any other: the
+	if !s.positionAllowed(ctx, homeBranch) {
+		// The policy refuses this caller's money, and "clear" is a position like any other: the
 		// answer is `withheld` unless the account is on hold, and the hold is decided from the SAME
 		// sources an admitted caller's is, the aging-derived flag included (round 4, principal item
 		// 206). The aging read runs for that flag alone: no figure and no bucket it returns ever

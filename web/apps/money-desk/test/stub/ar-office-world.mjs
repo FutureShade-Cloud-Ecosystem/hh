@@ -261,6 +261,33 @@ export function createOfficeWorld(ctx) {
     return ok({ label: "VOID", original_payment_id: p.id, reversal_payment_id: reversal.id, reversal_no: reversal.no, amount_cents: p.amount_cents, reason, same_day: true, reopened_invoices: reopened }, 201);
   }
 
+  // ---- a true void of a mis-keyed desk receipt (core/internal/payments void.go, FW1-06b) --------------------------
+  // The receipt is undone as never taken: its allocations go, its invoices re-open at their full balances, and
+  // nothing is held in 2310. The gates, in the core's order under the row lock, in the core's words.
+
+  function voidPayment(id, body) {
+    if (body === null) return refuse(400, "invalid JSON body");
+    const world = ctx.world();
+    const reason = String(body.reason ?? "");
+    if (reason === "") return refuse(400, "payments: a void reason is required");
+    const p = world.payments.find((x) => x.id === id);
+    if (p === undefined) return refuse(404, "payment not found");
+    if (p.reversed === true) return refuse(400, "payments: this payment cannot be voided: it was reversed, and the reversal owns the undo");
+    if (p.reverses !== undefined) return refuse(400, "payments: this payment cannot be voided: it is itself a reversing entry, not a receipt");
+    if (p.status !== "RECEIVED") return refuse(400, `payments: this payment cannot be voided: its status is ${p.status}, only a received receipt that has not been deposited can be voided`);
+    if (p.gateway_ref) return refuse(400, "payments: this payment cannot be voided: the processor captured this card charge, and its undo is a refund through the processor, not a void");
+    const reopened = [];
+    for (const al of p.allocations) {
+      const inv = world.invoices.find((i) => ctx.invNumber(i) === al.invoice_n);
+      inv.balance_cents += al.amount_cents;
+      reopened.push(inv.id);
+    }
+    p.allocations = [];
+    p.status = "VOID";
+    p.void_reason = reason;
+    return ok({ label: "VOID", payment_id: p.id, payment_no: p.no, amount_cents: p.amount_cents, reason, voided_at: NOW_ISO(), reopened_invoices: reopened, held_cents: 0 }, 201);
+  }
+
   // ---- the money a reversal holds, applied to an invoice (core/internal/payments reapply.go, reversal.go) ----------------
 
   /** What the payment holds: amount less what was re-applied, for a reversed original; zero otherwise. */
@@ -658,6 +685,8 @@ export function createOfficeWorld(ctx) {
     }
     m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/reverse$/);
     if (m && method === "POST") return reversePayment(m[1], body);
+    m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/void$/);
+    if (m && method === "POST") return voidPayment(m[1], body);
     m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/reapply$/);
     if (m && method === "POST") return reapplyHeld(m[1], body);
     m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/payout$/);

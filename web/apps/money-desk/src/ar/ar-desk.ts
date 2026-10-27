@@ -17,7 +17,7 @@ import { HeldKeys, newKey } from "./held-keys.js";
 import { canLiftHolds, creditCheck, creditWords, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import { OfficeDesk, type OfficeHost } from "./office-desk.js";
-import { AttemptKeys, sweepWords } from "./office-logic.js";
+import { AttemptKeys, reminderRunWords, sweepWords } from "./office-logic.js";
 import {
   renderAccount,
   renderHolds,
@@ -1164,9 +1164,16 @@ export class ArDesk {
     if (!sent.ok) {
       this.#fail("reminder", sent);
     } else {
-      const s = sent.value;
-      this.#notice = `Reminder sent for ${s.sent} ${s.sent === 1 ? "invoice" : "invoices"} to the AP contact.${s.replayed > 0 ? ` ${s.replayed} had already been sent.` : ""}`;
-      if (this.#work !== null) this.#work = { ...this.#work, note: this.#notice };
+      // The server says what happened: sent, or nothing sent and why (FW1-06b). There is no queue
+      // behind the desk, so no run is ever told as sent, or as waiting for a retry, when nothing
+      // left the building (FW1-06b round 2, S6's P2-2).
+      const words = reminderRunWords(sent.value);
+      if (words.sent) {
+        this.#notice = words.notice;
+        if (this.#work !== null) this.#work = { ...this.#work, note: this.#notice };
+      } else {
+        this.#error = words.notice;
+      }
     }
     this.#host.repaint();
   }

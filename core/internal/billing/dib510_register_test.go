@@ -302,6 +302,9 @@ type fakeRegisterStore struct {
 	headerNF bool
 	promises []PromiseWrite
 	sends    []SendRow
+	// seenKeys are the idempotency keys the store has already honoured, the fake's own replay
+	// guard, so the fake behaves like the unique index the real store carries.
+	seenKeys map[string]bool
 }
 
 func (f *fakeRegisterStore) RegisterPolicyFor(context.Context, string) (RegisterPolicy, error) {
@@ -355,7 +358,20 @@ func (f *fakeRegisterStore) LastContactFor(context.Context, string) (*time.Time,
 }
 func (f *fakeRegisterStore) RecordSend(_ context.Context, d SendRow) (string, bool, error) {
 	f.sends = append(f.sends, d)
+	if f.seenKeys == nil {
+		f.seenKeys = map[string]bool{}
+	}
+	if f.seenKeys[d.IdempotencyKey] {
+		return "send-1", true, nil
+	}
+	f.seenKeys[d.IdempotencyKey] = true
 	return "send-1", false, nil
+}
+func (f *fakeRegisterStore) SendByKey(_ context.Context, key string) (string, bool, error) {
+	if f.seenKeys[key] {
+		return "send-1", true, nil
+	}
+	return "", false, nil
 }
 func (f *fakeRegisterStore) MarkOpened(context.Context, string, time.Time) (bool, error) {
 	return true, nil
