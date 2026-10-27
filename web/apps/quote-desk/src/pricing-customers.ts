@@ -114,7 +114,7 @@ export class QdPricingCustomers extends PricingTabBase {
       const id = this.focusCustomerId.trim();
       if (id !== "" && id !== this.customerId) {
         this.customerId = id;
-        this.picked = { id, name: "A customer", account_no: "", customer_type: "", payment_terms_days: 0, credit_limit_cents: 0, open_balance_cents: 0 };
+        this.picked = { id, name: "A customer", account_no: "", customer_type: "", payment_terms_days: 0 };
         void this.load(id);
       }
     }

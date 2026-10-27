@@ -355,6 +355,12 @@ func (w *InvoiceWriter) WithCreditMemoPoster(p CreditMemoPoster) *InvoiceWriter 
 }
 
 // WithClock overrides the clock (tests).
+//
+// This clock is NOT the clock the deposit cancel reads: that one reads the DATABASE's clock inside
+// its own transaction, because the journal it books and the AR rows it writes must be ONE clock and
+// the writer's Go clock is a different clock (FW1-01b round 2b, FROM-PRINCIPAL 121). The nil-tolerant
+// reader that once sat beside this (nowOrClock) went with that read: it had no other caller, and a
+// path that wants nil tolerance again can ask for it.
 func (w *InvoiceWriter) WithClock(now func() time.Time) *InvoiceWriter {
 	if now != nil {
 		w.now = now

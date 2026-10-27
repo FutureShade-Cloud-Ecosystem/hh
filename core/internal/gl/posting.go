@@ -6,11 +6,29 @@ package gl
 // frozen two-name mapping) and the event's finance facts (through the sibling read seams) into a BALANCED
 // journal, posted idempotently on a deterministic key so a redelivered outbox row can never double-post
 // (gl_journals.idempotency_key).
+//
+// THE JOURNAL'S DATE (FW1-01b). A journal carries the date of the DOCUMENT it books, not the day the
+// outbox row was consumed. The document's date reaches the builder one of two ways:
+//
+//   - through the reader seam the builder already uses, when the document's date is a column of the row
+//     the seam reads (payment.received reads the payment's received_at; deposit.cancelled and
+//     deposit.released read the invoice's finalization), or
+//   - through the event payload's "occurred_at", which the module that OWNS the document stamps on it
+//     (the bounce's NSF record, the reversal's row, the re-application, the POS return, the till
+//     session's business day, the order).
+//
+// Either way the date is the document's own, and a document dated on the last day of a month and consumed
+// after midnight stays in the month it belongs to. An event that carries no date, and a seam that
+// resolved none, leave the journal undated here and consume falls back to the clock, which is what a
+// row written before this rule existed posts as. The closed month rule is FW1-01's and unchanged: a
+// system journal is never refused for a closed month, it posts into the earliest open month and reads
+// back late posted with the document's date kept on posted_at.
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/jackc/pgx/v5"
@@ -246,14 +264,21 @@ func (s *Service) buildPaymentReceived(ctx context.Context, payload []byte) (jou
 		IdempotencyKey: "payment.received:" + p.PaymentID,
 		Memo:           "Payment " + f.Method,
 		BranchID:       f.BranchID,
-		OccurredAt:     s.clock(),
-		Lines:          lines,
+		// FW1-01b: the receipt's own date, the payment's received_at, read through the
+		// PaymentReader seam with the payment's other facts. The clock is only the fallback
+		// (a seam that resolved no date leaves it zero and consume fills the clock).
+		OccurredAt: f.ReceivedAt,
+		Lines:      lines,
 	}, true, nil
 }
 
 type taxReliefPayload struct {
 	OrderID  string `json:"order_id"`
 	BranchID string `json:"branch_id"`
+	// OccurredAt is the relief's own assessment instant, carried by the POS that
+	// assessed it (FW1-01b). Zero means the emitter carried none, and the journal
+	// falls back to the clock.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // TaxSplitBranchReader resolves the order's branch when a replayed or legacy
@@ -332,8 +357,9 @@ func (s *Service) buildTaxRelief(ctx context.Context, payload []byte) (journalDr
 		IdempotencyKey: "tax.relief.assessed:" + p.OrderID,
 		Memo:           memo,
 		BranchID:       branchID,
-		OccurredAt:     s.clock(),
-		Lines:          lines,
+		// FW1-01b: the relief's own assessment instant, not the processing day.
+		OccurredAt: p.OccurredAt,
+		Lines:      lines,
 	}, true, nil
 }
 
@@ -345,6 +371,10 @@ type paymentBouncedPayload struct {
 	FeeCents    int64  `json:"fee_cents"`
 	FeeTaxable  bool   `json:"fee_taxable"` // true = the gross NSF fee splits into 4200 income + 2200 HST
 	Cleared     bool   `json:"cleared"`     // true = had settled to bank 1000; false = still undeposited/clearing
+	// OccurredAt is the bounce's own instant (the NSF record's created_at), carried by
+	// the till that recorded the bounce (FW1-01b). Zero means the emitter carried none,
+	// and the journal falls back to the clock.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // ontarioHSTRateBps is the 13% Ontario HST rate an unwired service backs out of a tax-inclusive (gross) NSF
@@ -461,8 +491,9 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 		IdempotencyKey: "payment.bounced:" + p.PaymentID,
 		Memo:           "NSF reversal",
 		BranchID:       branch,
-		OccurredAt:     s.clock(),
-		Lines:          lines,
+		// FW1-01b: the bounce's own instant, not the processing day.
+		OccurredAt: p.OccurredAt,
+		Lines:      lines,
 	}, true, nil
 }
 
@@ -475,6 +506,10 @@ type paymentReversedPayload struct {
 	AmountCents       int64  `json:"amount_cents"`
 	Method            string `json:"method"`
 	BranchID          string `json:"branch_id"`
+	// OccurredAt is the reversal's own instant, carried by the payments module that
+	// wrote the reversing row (FW1-01b). Zero means the emitter carried none, and the
+	// journal falls back to the clock.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // buildPaymentReversed books the reversal of a received payment: Dr AR / Cr 2310 refund_payable, the money held for
@@ -538,7 +573,8 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 		IdempotencyKey: "payment.reversed:" + p.PaymentID,
 		Memo:           "Payment reversal " + method,
 		BranchID:       branch,
-		OccurredAt:     s.clock(),
+		// FW1-01b: the reversal's own instant, not the processing day.
+		OccurredAt: p.OccurredAt,
 		Lines: []draftLine{
 			dr(arCode, amount, "AR reinstated (payment reversed)"),
 			cr(refundCode, amount, "held for the customer (payment reversed)"),
@@ -552,6 +588,10 @@ type paymentReappliedPayload struct {
 	AmountCents int64  `json:"amount_cents"`
 	Method      string `json:"method"`
 	BranchID    string `json:"branch_id"`
+	// OccurredAt is the re-application's own instant, carried by the payments module
+	// that applied the money (FW1-01b). Zero means the emitter carried none, and the
+	// journal falls back to the clock.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // buildPaymentReapplied books the re-application of money a reversal holds: Dr 2310 refund_payable / Cr AR for the
@@ -590,7 +630,8 @@ func (s *Service) buildPaymentReapplied(ctx context.Context, payload []byte) (jo
 		IdempotencyKey: "payment.reapplied:" + p.BatchID,
 		Memo:           "Held payment re-applied to invoices " + p.Method,
 		BranchID:       p.BranchID,
-		OccurredAt:     s.clock(),
+		// FW1-01b: the re-application's own instant, not the processing day.
+		OccurredAt: p.OccurredAt,
 		Lines: []draftLine{
 			dr(refundCode, p.AmountCents, "held money applied (payment re-applied)"),
 			cr(arCode, p.AmountCents, "AR cleared (payment re-applied)"),
@@ -666,6 +707,10 @@ type orderFulfilledPayload struct {
 		QtyBase    float64 `json:"qty_base"`
 		ValueCents *int64  `json:"value_cents"`
 	} `json:"lines"`
+	// OccurredAt is the order's own date (the sale that fulfilled it), carried by
+	// the POS that rung it (FW1-01b). Zero means the emitter carried none, and the
+	// journal falls back to the clock.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 func (s *Service) resolveLineCost(ctx context.Context, productID, branchID string, qtyBase float64) (int64, bool, error) {
@@ -754,8 +799,9 @@ func (s *Service) buildOrderFulfilled(ctx context.Context, payload []byte) (jour
 		IdempotencyKey: key,
 		Memo:           "COGS on fulfillment",
 		BranchID:       p.BranchID,
-		OccurredAt:     s.clock(),
-		Lines:          []draftLine{dr(cogsCode, total, "COGS"), cr(invCode, total, "inventory relief")},
+		// FW1-01b: the order's own date, not the processing day.
+		OccurredAt: p.OccurredAt,
+		Lines:      []draftLine{dr(cogsCode, total, "COGS"), cr(invCode, total, "inventory relief")},
 	}, true, nil
 }
 
@@ -858,6 +904,12 @@ type depositCancelledPayload struct {
 	// closed rest against the receivable.
 	PaidCents   int64 `json:"paid_cents"`
 	ClosedCents int64 `json:"closed_cents"`
+	// OccurredAt is the CANCEL's own instant, the moment the liability left the books, carried
+	// by the settlement that made it (FW1-01b round 2, S3's P1). The deposit's own finalization
+	// is an EARLIER document and never dates this journal: a deposit taken in January and cancelled
+	// in March books in March, the month the cancel happened. Zero means the settlement carried
+	// none, and the journal falls back to the clock.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // buildDepositCancelled posts the exit of a supplier deposit whose special
@@ -956,8 +1008,12 @@ func (s *Service) buildDepositCancelled(ctx context.Context, payload []byte) (jo
 		IdempotencyKey: "deposit.cancelled:" + p.InvoiceID,
 		Memo:           memo,
 		BranchID:       a.BranchID,
-		OccurredAt:     s.clock(),
-		Lines:          lines,
+		// FW1-01b round 2 (S3's P1): the CANCEL's own instant, the act this journal books. The
+		// deposit's finalization is an earlier document and never dates it: dated by the
+		// finalization, a deposit taken in January and cancelled in March moved money out of a
+		// month already reported with nothing showing it moved.
+		OccurredAt: p.OccurredAt,
+		Lines:      lines,
 	}, true, nil
 }
 
@@ -978,6 +1034,10 @@ type posReturnCommittedPayload struct {
 	// the receivable, as the applied credit does.
 	InvoiceOffsetCents int64  `json:"invoice_offset_cents"`
 	BranchID           string `json:"branch_id"`
+	// OccurredAt is the return's own date, carried by the POS that rang the return
+	// (FW1-01b). Zero means the emitter carried none, and the journal falls back to
+	// the clock.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // buildPosReturnCommitted posts the money reversal of a POS return: DR 4000 revenue (subtotal) + DR 2200
@@ -1076,8 +1136,9 @@ func (s *Service) buildPosReturnCommitted(ctx context.Context, payload []byte) (
 		IdempotencyKey: "pos.return.committed:" + p.ReturnID,
 		Memo:           "POS return refund",
 		BranchID:       p.BranchID,
-		OccurredAt:     s.clock(),
-		Lines:          lines,
+		// FW1-01b: the return's own date, not the processing day.
+		OccurredAt: p.OccurredAt,
+		Lines:      lines,
 	}, true, nil
 }
 
@@ -1090,6 +1151,10 @@ type orderReturnedPayload struct {
 		QtyBase    float64 `json:"qty_base"`
 		ValueCents *int64  `json:"value_cents"`
 	} `json:"lines"`
+	// OccurredAt is the return's own date, carried by the POS that rang the return
+	// (FW1-01b). Zero means the emitter carried none, and the journal falls back to
+	// the clock.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // buildOrderReturned posts the stock side of a restocked POS return, buildOrderFulfilled inverted:
@@ -1146,8 +1211,9 @@ func (s *Service) buildOrderReturned(ctx context.Context, payload []byte) (journ
 		IdempotencyKey: "order.returned:" + p.ReturnID,
 		Memo:           "COGS reversed on return",
 		BranchID:       p.BranchID,
-		OccurredAt:     s.clock(),
-		Lines:          []draftLine{dr(invCode, total, "inventory restocked"), cr(cogsCode, total, "COGS reversal")},
+		// FW1-01b: the return's own date, not the processing day.
+		OccurredAt: p.OccurredAt,
+		Lines:      []draftLine{dr(invCode, total, "inventory restocked"), cr(cogsCode, total, "COGS reversal")},
 	}, true, nil
 }
 
@@ -1206,8 +1272,9 @@ func (s *Service) buildPosReturnWrittenOff(ctx context.Context, payload []byte) 
 		IdempotencyKey: "pos.return.written_off:" + p.ReturnID,
 		Memo:           "Damaged goods written off on return",
 		BranchID:       p.BranchID,
-		OccurredAt:     s.clock(),
-		Lines:          []draftLine{dr(expenseCode, total, "damaged goods written off"), cr(cogsCode, total, "COGS moved to write off")},
+		// FW1-01b: the return's own date, not the processing day.
+		OccurredAt: p.OccurredAt,
+		Lines:      []draftLine{dr(expenseCode, total, "damaged goods written off"), cr(cogsCode, total, "COGS moved to write off")},
 	}, true, nil
 }
 
@@ -1215,6 +1282,11 @@ type tillCompletedPayload struct {
 	SessionID      string `json:"session_id"`
 	BranchID       string `json:"branch_id"`
 	OverShortCents int64  `json:"over_short_cents"`
+	// OccurredAt is the session's own business day, carried by the till that closed
+	// the drawer (FW1-01b): the day the drawer was opened, which is the day the
+	// over/short belongs to, even when the count happens after midnight. Zero means
+	// the emitter carried none, and the journal falls back to the clock.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 func (s *Service) buildTillSessionCompleted(ctx context.Context, payload []byte) (journalDraft, bool, error) {
@@ -1253,8 +1325,9 @@ func (s *Service) buildTillSessionCompleted(ctx context.Context, payload []byte)
 		IdempotencyKey: "till.session.completed:" + p.SessionID,
 		Memo:           "Till over/short",
 		BranchID:       p.BranchID,
-		OccurredAt:     s.clock(),
-		Lines:          lines,
+		// FW1-01b: the session's own business day, not the processing day.
+		OccurredAt: p.OccurredAt,
+		Lines:      lines,
 	}, true, nil
 }
 

@@ -2219,8 +2219,11 @@ components:
       type: object
       description: >-
         The counter-facing projection the POS picker renders: enough to
-        identify the account and show its credit posture.
-      required: [id, name, account_no, customer_type, payment_terms_days, credit_limit_cents, open_balance_cents]
+        identify the account and show its credit posture. The two position
+        figures follow the dealer's account position policy
+        (ar_invoice_policy.account_position_visibility, per branch): they are
+        absent entirely, never 0, for a caller the policy refuses.
+      required: [id, name, account_no, customer_type, payment_terms_days, cash_on_demand]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -2229,16 +2232,37 @@ components:
           type: string
           enum: [CONTRACTOR, RETAIL, BUILDER, GOVERNMENT, INTERNAL]
         payment_terms_days: { type: integer, format: int32 }
-        credit_limit_cents: { type: integer, format: int64 }
+        cash_on_demand:
+          type: boolean
+          description: >-
+            The account pays before release: zero day terms with a credit line, the rule
+            the payment options offer pay before release by. A payment rule, not a
+            figure, so it is present under every account position policy.
+        credit_limit_cents:
+          type: integer
+          format: int64
+          description: Absent for a caller the account position policy refuses.
         open_balance_cents:
           type: integer
           format: int64
-          description: The account's current AR balance
+          description: >-
+            The account's current AR balance. Absent for a caller the account
+            position policy refuses.
+        available_credit_cents:
+          type: integer
+          format: int64
+          description: >-
+            The core's headroom, the limit minus the open balance and never below
+            zero, so no client subtracts it. Absent for a caller the account
+            position policy refuses.
 
     CustomerAccount:
       type: object
-      description: The resolved view of a customers row
-      required: [customer_id, account_no, name, customer_type, branch_id, payment_terms_days, credit_limit_cents, on_hold, tax_exempt, balance_cents, is_active]
+      description: >-
+        The resolved view of a customers row. On the staff reads the credit
+        limit and balance follow the dealer's account position policy: absent
+        entirely, never 0, for a caller the policy refuses.
+      required: [customer_id, account_no, name, customer_type, branch_id, payment_terms_days, cash_on_demand, on_hold, tax_exempt, is_active]
       properties:
         customer_id: { type: string, format: uuid }
         account_no: { type: string }
@@ -2250,13 +2274,30 @@ components:
           type: string
           description: The home branch, empty when unset
         payment_terms_days: { type: integer, format: int32 }
-        credit_limit_cents: { type: integer, format: int64 }
+        cash_on_demand:
+          type: boolean
+          description: >-
+            The account pays before release (zero day terms with a credit line). A payment
+            rule, not a figure, so it is present under every account position policy.
+        credit_limit_cents:
+          type: integer
+          format: int64
+          description: Absent for a caller the account position policy refuses.
         on_hold: { type: boolean }
         tax_exempt: { type: boolean }
         balance_cents:
           type: integer
           format: int64
-          description: The account's current AR balance, composed in by the billing read
+          description: >-
+            The account's current AR balance, composed in by the billing read.
+            Absent for a caller the account position policy refuses.
+        available_credit_cents:
+          type: integer
+          format: int64
+          description: >-
+            The core's headroom, the limit minus the balance and never below
+            zero, so no client subtracts it. Absent for a caller the account
+            position policy refuses.
         is_active: { type: boolean }
 
     CustomerCreate:

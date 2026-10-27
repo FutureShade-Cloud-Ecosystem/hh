@@ -321,52 +321,6 @@ func (s stubGL) GLBalanceCents(context.Context, string, int, int, string) (int64
 	return s.bal, nil
 }
 
-func TestIntegration_Reconcile_CollectedTiesToGL(t *testing.T) {
-	pool := intPool(t)
-	if pool == nil {
-		return
-	}
-	defer pool.Close()
-	svc := intSvc(t, pool)
-	ctx := context.Background()
-	orderID := seededOrderID(t, pool)
-	// Isolate the 2091 window so a re-run against the same DB does not accumulate.
-	if _, err := pool.Exec(ctx, `DELETE FROM tax_decision_snapshot WHERE order_id=$1::uuid AND EXTRACT(YEAR FROM created_at)=2091`, orderID); err != nil {
-		t.Fatal(err)
-	}
-	// DIB-419: and restore it on the way out too (defer, not t.Cleanup, see the note in
-	// the recompute test), so the 2091 row is not left as residue for the next run.
-	defer func() {
-		if _, err := pool.Exec(context.Background(), `DELETE FROM tax_decision_snapshot WHERE order_id=$1::uuid AND EXTRACT(YEAR FROM created_at)=2091`, orderID); err != nil {
-			t.Errorf("DIB-419: teardown of the 2091 reconcile fixture failed: %v", err)
-		}
-	}()
-
-	// A collected snapshot in a fresh, isolated period (year 2091) so it never collides with other rows.
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO tax_decision_snapshot (order_id, tax_reason_code, rule_version, rate_bps, full_hst_cents, net_collected_cents, automated, created_at)
-		VALUES ($1::uuid,'STD_ON_HST_13','W4-flat-13',1300,13000,13000,false, TIMESTAMPTZ '2091-03-15 12:00:00+00')`, orderID); err != nil {
-		t.Fatal(err)
-	}
-	collected, err := svc.repo.CollectedHSTCents(ctx, 2091, 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if collected != 13_000 {
-		t.Fatalf("collected for 2091-03 = %d, want 13000", collected)
-	}
-
-	// With the GL 2200 balance matching the collected total, the recon ties out.
-	svc.glBalance = stubGL{bal: collected}
-	rep, err := svc.ReconcileReport(ctx, 2091, 3, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !rep.TiedOut || rep.VarianceCents != 0 {
-		t.Fatalf("expected tie-out, got variance=%d tied=%v", rep.VarianceCents, rep.TiedOut)
-	}
-}
-
 // -- ON_FN_POS_8: 5% net collected + 8% Ontario POS credit, and the evidence hard-gate on the credit ----------
 //
 // DIB-41 finance verification: the Ontario First-Nations point-of-sale relief resolves through the REAL

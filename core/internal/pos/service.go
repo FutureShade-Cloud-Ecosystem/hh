@@ -363,6 +363,9 @@ type Service struct {
 	// hold, and that the account exists at all. Nil answers the read unavailable, never empty.
 	holds    HoldReader
 	accounts AccountChecker
+	// position is the dealer's account position policy gate (ar_invoice_policy.account_position_visibility,
+	// UX-97). Nil fails closed.
+	position PositionGate
 	tender   TenderTaker
 	credit   CreditGate
 	sig      SignatureProvider
@@ -586,6 +589,16 @@ func (s *Service) WithBranchNames(b BranchNamer) *Service { s.branchNames = b; r
 
 // WithClock injects a deterministic clock (tests).
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
+
+// nowOrClock is the service's clock, falling back to the wall clock when a harness built the service
+// literally and left the clock nil. The same nil-tolerant shape houseday.Zone.Today has, so a caller
+// never has to nil-check the clock before asking for the instant.
+func (s *Service) nowOrClock() time.Time {
+	if s.now == nil {
+		return time.Now()
+	}
+	return s.now()
+}
 
 // WithZone binds the dealer's business day zone source: the ring's issue and due days are filed in the
 // dealer's own calendar. Nil keeps the Ontario dealer's (America/Toronto).
@@ -938,10 +951,16 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	}
 	if onAccount > 0 {
 		if codSale || cust.PaymentTermsDays <= 0 || cust.CreditLimitCents <= 0 {
+			withheld := !s.positionAllowed(ctx, in.BranchID)
+			var limitCents int64
+			if !withheld {
+				limitCents = cust.CreditLimitCents
+			}
 			return nil, nil, ErrAccountShapeNotAvailable{
 				AmountCents:      onAccount,
-				CreditLimitCents: cust.CreditLimitCents,
+				CreditLimitCents: limitCents,
 				ZeroDayTerms:     codSale || cust.PaymentTermsDays <= 0,
+				PositionWithheld: withheld,
 			}
 		}
 	}
@@ -1070,6 +1089,9 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	poJobRef, jobAddress, jobReference, salespersonName := p.poJobRef, p.jobAddress, p.jobReference, p.salespersonName
 	customerID, cust, captures, capturedCents, fullyPaid, actor := p.customerID, p.cust, p.captures, p.capturedCents, p.fullyPaid, p.actor
 	applied := p.applied
+	// The sale's own instant, read once so every event this sale emits carries the same date (the
+	// order's date and the relief's assessment instant are the same moment, the ring).
+	saleAt := s.nowOrClock()
 	var tenderResults []till.TenderResult
 	defer func() { *trp = tenderResults }()
 	var out Sale
@@ -1167,6 +1189,9 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 		}
 		if err := s.store.EmitEvent(ctx, tx, "order.fulfilled", map[string]any{
 			"order_id": orderID, "branch_id": in.BranchID, "lines": fulfilledLines,
+			// FW1-01b: the order's own date, so the COGS journal is booked in the day the
+			// order was rung even when the consumer reads the outbox after midnight.
+			"occurred_at": saleAt,
 		}); err != nil {
 			return err
 		}
@@ -1446,6 +1471,9 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 		if err := s.store.EmitEvent(ctx, tx, "payment.received", map[string]any{
 			"payment_id": c.PaymentID, "order_id": orderID, "amount_cents": c.AmountCents,
 			"method": c.Method, "gateway_ref": c.GatewayRef,
+			// FW1-01b: no date rides this event. The receipt's date is the payment's own
+			// received_at, which the database stamped on the payments row, so the GL reads it
+			// through the payment seam with the payment's other facts.
 		}); err != nil {
 			return err
 		}
@@ -1453,6 +1481,9 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	if in.Relief != nil {
 		if err := s.store.EmitEvent(ctx, tx, "tax.relief.assessed", map[string]any{
 			"order_id": orderID, "branch_id": in.BranchID, "reason_code": taxReason, "automated": false,
+			// FW1-01b: the relief's own assessment instant, so the ledger books the relief in
+			// the day the sale assessed it even when the consumer reads the outbox after midnight.
+			"occurred_at": saleAt,
 		}); err != nil {
 			return err
 		}

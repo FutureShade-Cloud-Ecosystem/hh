@@ -530,9 +530,12 @@ function reconResult(r: TaxReconReport | null): TemplateResult {
     <div data-recon-result>
       <div class="tx-stats">
         <div class="tx-stat"><span class="tx-stat-label">Collected by sales</span><span class="tx-stat-figure" data-collected>${formatMoney(r.collected_cents)}</span></div>
-        <div class="tx-stat"><span class="tx-stat-label">Sales tax payable in the ledger</span><span class="tx-stat-figure" data-ledger>${formatMoney(r.gl_payable_cents)}</span></div>
+        <div class="tx-stat"><span class="tx-stat-label">Refunded on returns</span><span class="tx-stat-figure" data-return-tax>${formatMoney(r.return_tax_cents)}</span></div>
+        <div class="tx-stat"><span class="tx-stat-label">Input tax credits on vendor bills</span><span class="tx-stat-figure" data-input-tax>${formatMoney(r.input_tax_cents)}</span></div>
+        <div class="tx-stat"><span class="tx-stat-label">The ledger's month movement on sales tax payable</span><span class="tx-stat-figure" data-ledger>${formatMoney(r.gl_payable_cents)}</span></div>
         <div class="tx-stat"><span class="tx-stat-label">Difference</span><span class="tx-stat-figure">${pill(v.tone, v.word)}</span></div>
       </div>
+      <p class="tx-dim" data-opening-balances>Opening balances, not this period's: ${r.opening_balance_count} ${r.opening_balance_count === 1 ? "document" : "documents"} carrying ${formatMoney(r.opening_balance_hst_cents)} of sales tax, kept out of every figure above.</p>
       <p class="tx-alert ${v.tone === "good" ? "tx-alert-ok" : "tx-alert-error"}" role="status" data-recon-words>${periodWords(r.year, r.month)}: ${v.detail}</p>
       ${r.gl_federal_cents === 0 && r.gl_ontario_cents === 0
         ? nothing
@@ -564,7 +567,7 @@ function checksView(model: TaxModel): TemplateResult {
     <div class="tx-split" data-tx-checks>
       <section class="tx-panel" aria-label="Reconcile to the ledger" data-reconcile>
         <div class="tx-panel-head"><h3>Reconcile to the ledger</h3></div>
-        <p class="tx-note">Compares the tax the sales collected with the sales tax payable account in the ledger for a month, or for the whole year.</p>
+        <p class="tx-note">Compares a month's documents with the ledger for the same month: the sales tax the invoices collected, the input tax credits on posted vendor bills shown apart, the two netted against the sales tax payable account's movement.</p>
         <div class="tx-form" role="group" aria-label="Period to reconcile">
           <label class="tx-field">Month
             <select data-field="tx-r-month" aria-label="Month">

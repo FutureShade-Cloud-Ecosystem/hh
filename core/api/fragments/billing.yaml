@@ -74,7 +74,13 @@ paths:
         - name: chip
           in: query
           required: false
-          description: Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit alongside the legacy StatusX strings; old URLs still resolve.
+          description: >-
+            Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit
+            alongside the legacy StatusX strings; old URLs still resolve. The overdue, past_due and
+            current chips answer 400 with the past due words for a caller the account position policy
+            refuses (current is the complement of past due, so all less current lists the overdue
+            accounts by subtraction), and the DUE_SOON chip answers 400 with the due soon words for
+            the same caller. A refused caller's status filter offers stored statuses only.
           schema:
             type: string
             enum: [OPEN, DUE_SOON, OVERDUE, PARTIALLY_PAID, PAID, DISPUTED, CREDIT_HOLD, DRAFT, VOID, CREDIT, all, past_due, current, on_hold]
@@ -204,7 +210,11 @@ paths:
       description: >-
         The same filter and the same figures as the register read. The body is
         CSV text with a Content-Disposition attachment filename, not JSON; the
-        wire shape is raw text rather than a struct.
+        wire shape is raw text rather than a struct. For a caller the account
+        position policy refuses, the Days overdue header and its column are
+        absent and the Status column carries the invoice's stored status; the
+        overdue, past_due, current and DUE_SOON chips refuse that caller in
+        words exactly as the register read does.
       x-role: requireStaff
       x-access:
         surfaces: [money-desk]
@@ -2185,7 +2195,6 @@ components:
         - balance_cents
         - stored_status
         - status
-        - days_overdue
         - account_status
         - disputed
       properties:
@@ -2213,8 +2222,12 @@ components:
           enum: [DRAFT, FINALIZED, PARTIALLY_PAID, PAID, VOID]
         status:
           type: string
-          description: The derived register pill state
-          enum: [OPEN, DUE_SOON, OVERDUE, PARTIALLY_PAID, PAID, DISPUTED, CREDIT_HOLD, DRAFT, VOID, CREDIT]
+          description: >-
+            The derived register pill state. A caller the account position policy
+            refuses receives the invoice's STORED status here instead, never the
+            derived OVERDUE or DUE_SOON: no past due flag reaches a refused
+            caller on any route.
+          enum: [OPEN, DUE_SOON, OVERDUE, PARTIALLY_PAID, PAID, DISPUTED, CREDIT_HOLD, DRAFT, VOID, CREDIT, FINALIZED]
         days_overdue:
           type: integer
           format: int32
@@ -2250,12 +2263,22 @@ components:
 
     BillingRegisterCounts:
       type: object
-      description: Counts of the same predicates the chip filters apply, computed over the same rows
-      required: [open, due_soon, overdue, disputed, paid, credits]
+      description: >-
+        Counts of the same predicates the chip filters apply, computed over the
+        same rows. A caller the account position policy refuses receives neither
+        overdue nor due_soon: the count of a withheld predicate is the predicate
+        told in numbers. Every other caller receives both keys.
+      required: [open, disputed, paid, credits]
       properties:
         open: { type: integer, format: int32 }
-        due_soon: { type: integer, format: int32 }
-        overdue: { type: integer, format: int32 }
+        due_soon:
+          type: integer
+          format: int32
+          description: Absent for a caller the account position policy refuses
+        overdue:
+          type: integer
+          format: int32
+          description: Absent for a caller the account position policy refuses
         disputed: { type: integer, format: int32 }
         paid: { type: integer, format: int32 }
         credits: { type: integer, format: int32 }
@@ -2572,7 +2595,6 @@ components:
         - doc_type
         - stored_status
         - status
-        - days_overdue
         - issue_date
         - due_date
         - branch_id
@@ -2593,7 +2615,11 @@ components:
           enum: [DRAFT, FINALIZED, PARTIALLY_PAID, PAID, VOID]
         status:
           type: string
-          enum: [OPEN, DUE_SOON, OVERDUE, PARTIALLY_PAID, PAID, DISPUTED, CREDIT_HOLD, DRAFT, VOID, CREDIT]
+          description: >-
+            The derived pill state. A caller the account position policy refuses
+            receives the invoice's STORED status here instead, never the derived
+            OVERDUE or DUE_SOON.
+          enum: [OPEN, DUE_SOON, OVERDUE, PARTIALLY_PAID, PAID, DISPUTED, CREDIT_HOLD, DRAFT, VOID, CREDIT, FINALIZED]
         days_overdue: { type: integer, format: int32 }
         issue_date: { type: string, format: date-time }
         due_date: { type: string, format: date-time }
@@ -3250,17 +3276,14 @@ components:
       type: object
       description: >-
         One stored statement: the rendered artefact and the aging figures as
-        they stood at as_of_date, never a re-derived query.
+        they stood at as_of_date, never a re-derived query. Aging and closing
+        balance are absent when the dealer's account position policy refuses
+        this caller.
       required:
         - id
         - run_id
         - customer_id
         - as_of_date
-        - current_cents
-        - days_30_cents
-        - days_60_cents
-        - days_90_plus_cents
-        - closing_balance_cents
         - delivery_status
         - created_at
       properties:
@@ -3883,16 +3906,18 @@ components:
         - account_no
         - status
         - terms_days
-        - credit_limit_cents
-        - open_cents
-        - available_credit_cents
-        - overdue_cents
-        - utilization_bps
-        - aging
+        - account_position_withheld
       properties:
         customer_id: { type: string, format: uuid }
         name: { type: string }
         account_no: { type: string }
+        account_position_withheld:
+          type: boolean
+          description: >-
+            True when the dealer's account position policy refuses this caller. The
+            credit limit, open, available, overdue, utilization and aging are then
+            absent entirely (never 0); a screen says so in words. The status badge
+            is operational and stays.
         status:
           type: string
           enum: [CURRENT, CREDIT_APPROVED, CREDIT_HOLD, UNDER_REVIEW]
@@ -3901,14 +3926,26 @@ components:
             account carries a balance inside terms; CREDIT_HOLD when the master
             on_hold bit is set; UNDER_REVIEW when an open dispute exists.
         terms_days: { type: integer }
-        credit_limit_cents: { type: integer, format: int64 }
-        open_cents: { type: integer, format: int64 }
-        available_credit_cents: { type: integer, format: int64 }
-        overdue_cents: { type: integer, format: int64 }
+        credit_limit_cents:
+          type: integer
+          format: int64
+          description: Absent when account_position_withheld.
+        open_cents:
+          type: integer
+          format: int64
+          description: Absent when account_position_withheld.
+        available_credit_cents:
+          type: integer
+          format: int64
+          description: Absent when account_position_withheld.
+        overdue_cents:
+          type: integer
+          format: int64
+          description: Absent when account_position_withheld.
         utilization_bps:
           type: integer
           description: >-
-            OpenCents * 10000 / CreditLimitCents, basis points of the limit used. A
+            Absent when account_position_withheld. OpenCents * 10000 / CreditLimitCents, basis points of the limit used. A
             zero limit reads 0; an over-limit account reads 10000+ (the bar reads
             "over limit" past 10000, an honest answer).
         primary_ap_contact_name: { type: string }
@@ -3922,7 +3959,10 @@ components:
           type: integer
           format: int64
           description: Absent when the caller does not hold the payment trail (ruling 87).
-        aging: { $ref: "#/components/schemas/BillingCustomerWorkspaceAging" }
+        aging:
+          description: Absent when account_position_withheld.
+          allOf:
+            - $ref: "#/components/schemas/BillingCustomerWorkspaceAging"
     BillingCustomerWorkspaceAging:
       type: object
       description: >-
@@ -3950,6 +3990,8 @@ components:
       description: >-
         One invoice row the workspace invoices tab carries. Three lists reach this
         shape (open, closed, disputed); the bucket label matches the 5-bucket header.
+        days_overdue and days_overdue_bucket are absent when the dealer's account
+        position policy refuses this caller.
       required:
         - id
         - invoice_no
@@ -3959,8 +4001,6 @@ components:
         - due_date
         - total_cents
         - balance_cents
-        - days_overdue
-        - days_overdue_bucket
         - is_disputed
         - has_open_promise
       properties:
@@ -4029,13 +4069,13 @@ components:
       description: >-
         One statement row from ar_statements the workspace statements tab carries.
         The closing_balance_cents is the figure that went out the door on that date,
-        an immutable artefact per migration 0105.
+        an immutable artefact per migration 0105, and is absent when the dealer's
+        account position policy refuses this caller.
       required:
         - id
         - run_id
         - mode
         - as_of_date
-        - closing_balance_cents
         - delivery_status
         - created_at
       properties:
@@ -4090,7 +4130,9 @@ components:
         balance_after_cents:
           type: integer
           format: int64
-          description: Absent when the caller does not hold the payment trail (ruling 87).
+          description: >-
+            Absent when the caller does not hold the payment trail (ruling 87) or when
+            the dealer's account position policy refuses this caller.
         branch_id: { type: string, format: uuid }
         memo: { type: string }
         occurred_at: { type: string, format: date-time }
@@ -4231,11 +4273,11 @@ components:
         The C8 statement preview: the statement artefact (the figure that went out the door,
         0105) plus the customer's open lines and a 5-bucket aging breakdown. The breakdown
         reconciles to the penny: sum of the five buckets equals openCents; sum of the four
-        late buckets equals overdueCents. Reconciled is true exactly when both hold.
+        late buckets equals overdueCents. Reconciled is true exactly when both hold. Aging is
+        absent when the dealer's account position policy refuses this caller.
       required:
         - statement
         - open_lines
-        - aging
         - reconciled
       properties:
         statement: { $ref: "#/components/schemas/BillingStatement" }
@@ -4249,8 +4291,9 @@ components:
       description: >-
         One open invoice on the statement preview. balance_cents is the figure that has to
         reconcile to the penny; bucket_label is the row's 5-bucket name, derived server-side
-        from days_overdue, never computed in the browser.
-      required: [invoice_id, invoice_no, due_date, balance_cents, days_overdue, bucket_label]
+        from days_overdue, never computed in the browser. days_overdue and bucket_label are
+        absent when the dealer's account position policy refuses this caller.
+      required: [invoice_id, invoice_no, due_date, balance_cents]
       properties:
         invoice_id: { type: string, format: uuid }
         invoice_no: { type: string }

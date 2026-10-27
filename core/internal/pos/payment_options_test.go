@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
 
@@ -401,6 +402,27 @@ func TestSale_PayBeforeReleaseOption_RingsTheCODOrderState(t *testing.T) {
 	for _, ev := range h.store.events {
 		if ev == "order.fulfilled" {
 			t.Fatal("the shape must NOT fulfil at ring")
+		}
+	}
+}
+
+// UX-97 round 2: the customer reads state the cash on demand posture as their own field
+// (customer.IsCashOnDemand). It must be the account paymentOptionsFor offers pay before release to,
+// held or not, so the till's words and the server's options cannot drift.
+func TestCashOnDemandFieldMatchesThePayBeforeReleaseOption(t *testing.T) {
+	for _, terms := range []int{0, 15, 30} {
+		for _, limit := range []int64{0, 500_000} {
+			for _, held := range []bool{false, true} {
+				offered := false
+				for _, o := range paymentOptionsFor(terms, limit, held) {
+					if o.Shape == PaymentShapePayBeforeRelease {
+						offered = true
+					}
+				}
+				if offered != customer.IsCashOnDemand(terms, limit) {
+					t.Errorf("terms %d limit %d held %v: option offered %v, customer.IsCashOnDemand %v", terms, limit, held, offered, customer.IsCashOnDemand(terms, limit))
+				}
+			}
 		}
 	}
 }

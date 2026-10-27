@@ -70,7 +70,8 @@ type ReasonCode struct {
 	IsActive    bool   `json:"is_active"`
 }
 
-// ReconRun is one monthly inventory→GL reconciliation (lazy current-month run-once per period+branch).
+// ReconRun is one monthly inventory→GL reconciliation (kept per period and branch; re-runnable in the
+// current open month, frozen once written for past periods).
 type ReconRun struct {
 	ID             string `json:"id"`
 	BranchID       string `json:"branch_id,omitempty"`
@@ -138,6 +139,10 @@ type SubmitCountsRequest struct {
 // deviation for the integrator. Additive; no frozen signature changes.
 type GLBalanceReader interface {
 	GLBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error)
+	// GLBalanceThroughCents is the cumulative through-period balance the tie-out's GL side reads
+	// (FW1-11): stock as of the period end against the ledger as of the period end, not one month's
+	// movement. Satisfied by the gl provider through the composition root's adapter.
+	GLBalanceThroughCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error)
 }
 
 // WithGLBalanceReader injects the GL account-balance seam (the recon 1200 tie-out side). Optional.
