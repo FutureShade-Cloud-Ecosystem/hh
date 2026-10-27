@@ -161,6 +161,86 @@ func (s *Svc) sneakDynamicTopic(dynTopic string) {
 			}
 		}
 	})
+
+	t.Run("dodge_new_gl_service_method", func(t *testing.T) {
+		tmpRoot := fw1WriteProbeFile(t, `package probe
+
+func (s *Svc) sneakNewGLMethod() {
+	_, _ = s.gl.ZzS4Book(nil, nil)
+}
+`)
+		glDir := filepath.Join(tmpRoot, "internal", "gl")
+		if err := os.MkdirAll(glDir, 0o755); err != nil {
+			t.Fatalf("mkdir gl: %v", err)
+		}
+		glSrc := `package gl
+
+type Service struct{ store glStore }
+
+func (s *Service) CreateJournal()   { s.store.InsertJournal() }
+func (s *Service) ReverseJournal()  { s.store.InsertJournal() }
+func (s *Service) RunRecurring()    { s.store.InsertJournal() }
+func (s *Service) CloseYear()       { s.store.InsertJournal() }
+func (s *Service) PostExternal()    { s.postExternal() }
+func (s *Service) PostExternalTx()  { s.postExternalTx() }
+func (s *Service) ZzS4Book()        { s.postExternal() }
+func (s *Service) postExternal()    { s.store.InsertJournal() }
+func (s *Service) postExternalTx()  { s.store.InsertJournalTx() }
+`
+		if err := os.WriteFile(filepath.Join(glDir, "gl.go"), []byte(glSrc), 0o644); err != nil {
+			t.Fatalf("write gl.go: %v", err)
+		}
+		probeErrs, err := fw1VerifyNonGLSites(tmpRoot, nil)
+		if err != nil {
+			t.Fatalf("scan probe: %v", err)
+		}
+		if !fw1HasErrorContaining(probeErrs, "ZzS4Book") || !fw1HasErrorContaining(probeErrs, "kind=ZzS4Book") {
+			t.Fatalf("RED dodge probe failed: new exported gl.Service writer method ZzS4Book and its caller were not caught (errors: %v)", probeErrs)
+		}
+	})
+
+	t.Run("dodge_concat_sql_and_topic", func(t *testing.T) {
+		tmpRoot := fw1WriteProbeFile(t, `package probe
+
+const zzS4Prefix = "till.session."
+
+func (s *Svc) sneakConcat() {
+	_, _ = s.tx.Exec(nil, "INSERT INTO events_outbox (topic, payload) "+"VALUES ('till.session.completed', '{}')")
+	_ = s.repo.EmitEvent(nil, nil, "till.session."+"completed", nil, nil)
+	_ = emitOutbox(nil, nil, zzS4Prefix+"completed", nil)
+}
+`)
+		probeErrs, err := fw1VerifyNonGLSites(tmpRoot, nil)
+		if err != nil {
+			t.Fatalf("scan probe: %v", err)
+		}
+		count := 0
+		for _, e := range probeErrs {
+			if strings.Contains(e, "kind=emit:till.session.completed") {
+				count++
+			}
+		}
+		if count != 3 {
+			t.Fatalf("RED dodge probe failed: expected 3 emit:till.session.completed errors from string concatenation, got %d (errors: %v)", count, probeErrs)
+		}
+	})
+
+	t.Run("dodge_unrecorded_events_outbox_literal", func(t *testing.T) {
+		tmpRoot := fw1WriteProbeFile(t, `package probe
+
+func (s *Svc) sneakUnrecordedOutboxLiteral() {
+	q := "INSERT INTO events_outbox (topic, payload) VALUES ('till.session.completed', '{}')"
+	_, _ = s.tx.Exec(nil, q)
+}
+`)
+		probeErrs, err := fw1VerifyNonGLSites(tmpRoot, nil)
+		if err != nil {
+			t.Fatalf("scan probe: %v", err)
+		}
+		if !fw1HasErrorContaining(probeErrs, "UNRECORDED events_outbox string literal") {
+			t.Fatalf("RED dodge probe failed: unrecorded events_outbox literal was not flagged (errors: %v)", probeErrs)
+		}
+	})
 }
 
 func fw1WriteProbeFile(t *testing.T, src string) string {
