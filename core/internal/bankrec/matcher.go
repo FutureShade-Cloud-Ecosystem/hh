@@ -40,17 +40,17 @@ func matchLine(line StatementLine, rules []MatchRule, pmts []CandidatePayment, l
 		switch rule.Kind {
 		case KindGatewayRefExact:
 			if p, ok := matchGatewayExact(line, rule, pmts); ok {
-				// The tolerance's remainder is a processor fee: it books to the fee account so the journal
-				// balances (FW1-05 item 6); matchGatewayExact guarantees it is never negative.
-				return buildPaymentProposal(line, rule, p, p.AmountCents-line.AmountCents), true
+				e, _ := settleCardPayment(line, p, rule.ToleranceCents)
+				return buildPaymentProposal(line, rule, e), true
 			}
 		case KindLodgementRefExact:
 			if l, ok := matchLodgementExact(line, rule, lodg); ok {
 				return buildLodgementProposal(line, rule, l), true
 			}
 		case KindDescriptorFuzzy:
-			if p, fee, ok := matchDescriptorFuzzy(line, rule, pmts); ok {
-				return buildPaymentProposal(line, rule, p, fee), true
+			if p, ok := matchDescriptorFuzzy(line, rule, pmts); ok {
+				e, _ := settleCardPayment(line, p, rule.ToleranceCents)
+				return buildPaymentProposal(line, rule, e), true
 			}
 		}
 	}
@@ -95,13 +95,44 @@ func matchLodgementExact(line StatementLine, rule MatchRule, lodg []Lodgement) (
 	return Lodgement{}, false
 }
 
+// settlementExplanation is the named component list a card settlement is booked from (FROM-PRINCIPAL 84):
+// the payments claimed, the processor fee, and a reserved slot for recorded refunds. Wave 1 leaves the
+// refund slot empty (the later card refund arm fills it without reworking this); only the fee absorbs a
+// remainder, and only within the rule's tolerance.
+type settlementExplanation struct {
+	PaymentIDs    []string
+	BranchID      string
+	ClaimedCents  int64 // the payments claimed
+	RefundedCents int64 // recorded refunds the processor netted (reserved, wave 1: always 0)
+	NetCents      int64 // what the statement paid in
+	FeeCents      int64 // the processor fee, the ONLY component allowed to absorb a remainder
+}
+
+// settleCardPayment explains a settlement line of NetCents from one claimed payment: the fee takes the
+// remainder (claimed less refunds less net), and only within toleranceCents. A remainder the tolerance
+// cannot absorb refuses the settlement, so a whole shortfall is never booked as a fee (FROM-PRINCIPAL 84).
+func settleCardPayment(line StatementLine, p CandidatePayment, toleranceCents int64) (settlementExplanation, bool) {
+	fee := p.AmountCents - line.AmountCents - 0 // less the refund slot, empty in wave 1
+	if fee < 0 || fee > toleranceCents {
+		return settlementExplanation{}, false
+	}
+	return settlementExplanation{
+		PaymentIDs:    []string{p.PaymentID},
+		BranchID:      p.BranchID,
+		ClaimedCents:  p.AmountCents,
+		RefundedCents: 0,
+		NetCents:      line.AmountCents,
+		FeeCents:      fee,
+	}, true
+}
+
 // matchDescriptorFuzzy pairs a RUN-batch settlement line to a payment by descriptor ILIKE + a ± date window,
-// allowing the bank net = payment gross − processor fee. Returns the fee (gross − net) to split to 6300. The
-// payment chosen is the one within the window whose gross ≥ net and gives the smallest non-negative fee
-// (deterministic), so a re-run picks the same payment (idempotent, AC4).
-func matchDescriptorFuzzy(line StatementLine, rule MatchRule, pmts []CandidatePayment) (CandidatePayment, int64, bool) {
+// allowing the bank net = payment gross − processor fee. The payment chosen is the one within the window
+// whose gross ≥ net, whose remainder the rule's tolerance can absorb (FROM-PRINCIPAL 84), and that gives the
+// smallest non-negative fee (deterministic), so a re-run picks the same payment (idempotent, AC4).
+func matchDescriptorFuzzy(line StatementLine, rule MatchRule, pmts []CandidatePayment) (CandidatePayment, bool) {
 	if !descriptorMatches(line.Description, rule.DescriptorILike) {
-		return CandidatePayment{}, 0, false
+		return CandidatePayment{}, false
 	}
 	var best CandidatePayment
 	var bestFee int64 = -1
@@ -116,46 +147,49 @@ func matchDescriptorFuzzy(line StatementLine, rule MatchRule, pmts []CandidatePa
 		if !rule.AllowFeeSplit && fee != 0 {
 			continue // this rule does not permit a fee split
 		}
+		if fee > rule.ToleranceCents {
+			continue // only the fee absorbs a remainder, and only within the tolerance (FROM-PRINCIPAL 84)
+		}
 		if bestFee == -1 || fee < bestFee {
 			best = p
 			bestFee = fee
 		}
 	}
 	if bestFee < 0 {
-		return CandidatePayment{}, 0, false
+		return CandidatePayment{}, false
 	}
-	return best, bestFee, true
+	return best, true
 }
 
-// buildPaymentProposal builds a card-settlement clearing journal: DR 1000 (net to bank) [+ DR 6300 (fee)]
-// / CR 1010 (gross out of card clearing). With no fee this is the plain DR 1000 / CR 1010 (AC2).
-func buildPaymentProposal(line StatementLine, rule MatchRule, p CandidatePayment, feeCents int64) proposal {
-	net := line.AmountCents
-	gross := p.AmountCents
+// buildPaymentProposal builds a card-settlement clearing journal from the settlement's named components
+// (FROM-PRINCIPAL 84): DR 1000 (the net paid in) [+ DR feeAcct (the fee)] / CR 1010 (the claimed payments'
+// gross). With no fee this is the plain DR 1000 / CR 1010 (AC2). The recorded refunds slot stays empty in
+// wave 1; the card refund arm nets it into the fee's place without reworking this builder.
+func buildPaymentProposal(line StatementLine, rule MatchRule, e settlementExplanation) proposal {
 	feeAcct := rule.FeeAccountCode
 	if feeAcct == "" {
 		feeAcct = "6300"
 	}
 	lines := []gl.ExternalLine{
-		{AccountCode: AcctBank, DebitCents: net, Memo: "bank deposit (card settlement)"},
+		{AccountCode: AcctBank, DebitCents: e.NetCents, Memo: "bank deposit (card settlement)"},
 	}
-	if feeCents > 0 {
-		lines = append(lines, gl.ExternalLine{AccountCode: feeAcct, DebitCents: feeCents, Memo: "card processing fee"})
+	if e.FeeCents > 0 {
+		lines = append(lines, gl.ExternalLine{AccountCode: feeAcct, DebitCents: e.FeeCents, Memo: "card processing fee"})
 	}
-	lines = append(lines, gl.ExternalLine{AccountCode: AcctCardClearing, CreditCents: gross, Memo: "clear card settlement"})
+	lines = append(lines, gl.ExternalLine{AccountCode: AcctCardClearing, CreditCents: e.ClaimedCents, Memo: "clear card settlement"})
 	return proposal{
 		Line:       line,
 		TargetType: TargetPayment,
-		TargetRef:  p.PaymentID,
+		TargetRef:  e.PaymentIDs[0],
 		Rule:       rule,
-		PaymentIDs: []string{p.PaymentID},
-		FeeCents:   feeCents,
+		PaymentIDs: e.PaymentIDs,
+		FeeCents:   e.FeeCents,
 		Journal: gl.ExternalJournal{
 			Source:         "ADJUSTMENT",
 			SourceRefID:    line.ID,
 			IdempotencyKey: journalKey(line.ID),
 			Memo:           "bankrec card settlement " + line.Reference,
-			BranchID:       p.BranchID,
+			BranchID:       e.BranchID,
 			DocumentDate:   statementDocDate(line.TxnDate),
 			Lines:          lines,
 		},
