@@ -230,6 +230,10 @@ func (s *Service) RestockForReturnTx(ctx context.Context, tx pgx.Tx, in RestockI
 // ReceivePOTx posts the RECEIPT moves + GRNI (DR 1200 / CR 2150) for a PO receipt inside the caller's tx, and
 // maintains the weighted-average cost. FROZEN signature; INV-CORE fills the body.
 func (s *Service) ReceivePOTx(ctx context.Context, tx pgx.Tx, poID string) error {
+	if tx == nil && s.repo != nil && s.repo.pool != nil {
+		_, err := s.receive(ctx, ReceiveRequest{POID: poID})
+		return err
+	}
 	_, err := s.applyReceipt(ctx, tx, poID, nil, "")
 	return err
 }
@@ -261,7 +265,7 @@ type PreReceiptException struct {
 // ControllerExceptions lists pre-receipt sales that were posted at a fallback cost and have not yet
 // been trued up by a subsequent receipt at that branch.
 func (s *Service) ControllerExceptions(ctx context.Context, branchID string) ([]PreReceiptException, error) {
-	return nil, nil
+	return s.db().PreReceiptExceptions(ctx, branchID)
 }
 
 // - posting consumer registration -
@@ -321,6 +325,7 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/inventory/on-hand", g.RequireStaff(h.staff(h.onHand)))
 	r.Handle("GET /api/v1/inventory/moves", g.RequireStaff(h.staff(h.moves)))
 	r.Handle("GET /api/v1/inventory/pending-fulfilment", g.RequireStaff(h.staff(h.pendingFulfilment)))
+	r.Handle("GET /api/v1/inventory/controller-exceptions", g.RequireStaff(h.staff(h.controllerExceptions)))
 	r.Handle("POST /api/v1/inventory/receive", g.RequireManager(h.staff(h.receive)))
 
 	// - DIB-472 · the transit-days config behind the transfer eta pre-fill -

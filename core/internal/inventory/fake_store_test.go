@@ -112,6 +112,18 @@ func (f *fakeStore) UpsertBranchCost(_ context.Context, _ pgx.Tx, productID, bra
 	f.cost[key(productID, branchID)] = avgCents
 	return nil
 }
+func (f *fakeStore) FallbackCost(_ context.Context, _ pgx.Tx, productID, _ string) (int64, string, bool, error) {
+	if c, ok := f.productCost[productID]; ok && c > 0 {
+		return c, "LAST_KNOWN_COST", true, nil
+	}
+	return 0, "", false, nil
+}
+func (f *fakeStore) UntruedProvisionalShipMoves(_ context.Context, _ pgx.Tx, _, _ string) ([]PreReceiptException, error) {
+	return nil, nil
+}
+func (f *fakeStore) PreReceiptExceptions(_ context.Context, _ string) ([]PreReceiptException, error) {
+	return nil, nil
+}
 func (f *fakeStore) AvailabilityFacts(_ context.Context, productID, branchID string) (AvailabilityFacts, error) {
 	active, found := f.products[productID]
 	sumFor := func(m map[string]float64) float64 {

@@ -84,6 +84,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 		ValueCents int64   `json:"value_cents"`
 	}
 	var eventLines []evLine
+	var trueUps []poTrueUpLine
 
 	for _, ln := range lines {
 		remaining := ln.QtyBase - ln.ReceivedBase
@@ -141,13 +142,43 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 		if err != nil {
 			return ReceiptResult{}, err
 		}
+		provMoves, err := s.db().UntruedProvisionalShipMoves(ctx, tx, ln.ProductID, hdr.BranchID)
+		if err != nil {
+			return ReceiptResult{}, err
+		}
 		base := math.Max(onHand, 0)
 		newAvg := cadUnit
-		if denom := base + recvQty; denom > 0 {
-			newAvg, err = blendAvg(base, oldAvg, recvQty, cadUnit)
+		if len(provMoves) == 0 {
+			if denom := base + recvQty; denom > 0 {
+				newAvg, err = blendAvg(base, oldAvg, recvQty, cadUnit)
+				if err != nil {
+					return ReceiptResult{}, err
+				}
+			}
+		}
+		var moveMeta map[string]any
+		if len(provMoves) > 0 {
+			var provQty float64
+			var provValue int64
+			moveIDs := make([]string, 0, len(provMoves))
+			for _, pm := range provMoves {
+				provQty += pm.QtyBase
+				provValue += pm.ProvisionalValueCents
+				moveIDs = append(moveIDs, pm.MoveID)
+			}
+			actualSoldValue, err := qtyTimesCents(provQty, cadUnit)
 			if err != nil {
 				return ReceiptResult{}, err
 			}
+			trueUpDelta := actualSoldValue - provValue
+			moveMeta = map[string]any{
+				"trued_up_move_ids":   moveIDs,
+				"true_up_delta_cents": trueUpDelta,
+			}
+			trueUps = append(trueUps, poTrueUpLine{
+				ProductID:  ln.ProductID,
+				DeltaCents: trueUpDelta,
+			})
 		}
 		if err := s.db().UpsertBranchCost(ctx, tx, ln.ProductID, hdr.BranchID, newAvg); err != nil {
 			return ReceiptResult{}, err
@@ -156,6 +187,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 			ProductID: ln.ProductID, BranchID: hdr.BranchID, ToLocation: hdr.BranchID, UOM: ln.UOM,
 			MoveType: MoveReceipt, QtyBase: recvQty, UnitCostCents: cadUnit, ValueCents: recvValue,
 			SourceType: "po_receipt", SourceRefID: receiptID, Reason: "PO receipt " + hdr.PONo,
+			Metadata: moveMeta,
 		}); err != nil {
 			return ReceiptResult{}, err
 		}
@@ -190,7 +222,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 	}
 	if err := s.db().EmitEvent(ctx, tx, "po.received", map[string]any{
 		"po_id": poID, "receipt_id": receiptID, "branch_id": hdr.BranchID,
-		"value_cents": totalValue, "lines": eventLines,
+		"value_cents": totalValue, "lines": eventLines, "true_ups": trueUps,
 	}); err != nil {
 		return ReceiptResult{}, err
 	}
@@ -253,9 +285,31 @@ func (s *Service) decrementForSale(ctx context.Context, tx pgx.Tx, in DecrementI
 }
 
 func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, branchID, sourceType, reason string, ln SaleLine) error {
-	avg, _, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, branchID)
+	avg, hadCost, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, branchID)
 	if err != nil {
 		return err
+	}
+	provMoves, err := s.db().UntruedProvisionalShipMoves(ctx, tx, ln.ProductID, branchID)
+	if err != nil {
+		return err
+	}
+	var moveMeta map[string]any
+	if !hadCost || avg <= 0 || len(provMoves) > 0 {
+		fallbackCost, source, found, err := s.db().FallbackCost(ctx, tx, ln.ProductID, branchID)
+		if err != nil {
+			return err
+		}
+		if found && fallbackCost > 0 {
+			avg = fallbackCost
+			moveMeta = map[string]any{
+				"provisional_cost":         true,
+				"fallback_source":          source,
+				"fallback_unit_cost_cents": fallbackCost,
+			}
+			if err := s.db().UpsertBranchCost(ctx, tx, ln.ProductID, branchID, avg); err != nil {
+				return err
+			}
+		}
 	}
 	value, err := qtyTimesCents(ln.QtyBase, avg)
 	if err != nil {
@@ -265,6 +319,7 @@ func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, 
 		ProductID: ln.ProductID, BranchID: branchID, FromLocation: branchID,
 		MoveType: MoveShip, QtyBase: ln.QtyBase, UnitCostCents: avg, ValueCents: value,
 		SourceType: sourceType, SourceRefID: orderID, Reason: reason,
+		Metadata: moveMeta,
 	}); err != nil {
 		return err
 	}
@@ -362,11 +417,17 @@ func (s *Service) restockForReturn(ctx context.Context, tx pgx.Tx, in RestockInp
 
 // - posting consumers (po.received + inventory.adjusted) -
 
+type poTrueUpLine struct {
+	ProductID  string `json:"product_id"`
+	DeltaCents int64  `json:"delta_cents"`
+}
+
 type poReceivedPayload struct {
-	POID       string `json:"po_id"`
-	ReceiptID  string `json:"receipt_id"`
-	BranchID   string `json:"branch_id"`
-	ValueCents int64  `json:"value_cents"`
+	POID       string         `json:"po_id"`
+	ReceiptID  string         `json:"receipt_id"`
+	BranchID   string         `json:"branch_id"`
+	ValueCents int64          `json:"value_cents"`
+	TrueUps    []poTrueUpLine `json:"true_ups"`
 }
 
 // postPOReceived posts the GRNI journal for a receipt: DR 1200 Inventory / CR 2150 Received-Not-Invoiced, both
@@ -379,7 +440,7 @@ func (s *Service) postPOReceived(ctx context.Context, payload []byte) error {
 	if p.ReceiptID == "" {
 		return fmt.Errorf("inventory: po.received missing receipt_id")
 	}
-	if p.ValueCents == 0 {
+	if p.ValueCents == 0 && len(p.TrueUps) == 0 {
 		return nil
 	}
 	if s.gl == nil {
@@ -396,18 +457,57 @@ func (s *Service) postPOReceived(ctx context.Context, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.gl.PostJournal(ctx, GLJournal{
-		Source:         "PO_RECEIPT",
-		SourceRefID:    p.ReceiptID,
-		IdempotencyKey: "po.received:" + p.ReceiptID,
-		Memo:           "GRNI on PO receipt",
-		BranchID:       p.BranchID,
-		Lines: []GLLine{
-			{AccountCode: invCode, DebitCents: p.ValueCents, Memo: "inventory received"},
-			{AccountCode: apCode, CreditCents: p.ValueCents, Memo: "received not invoiced"},
-		},
-	})
-	return err
+	if p.ValueCents != 0 {
+		if _, err := s.gl.PostJournal(ctx, GLJournal{
+			Source:         "PO_RECEIPT",
+			SourceRefID:    p.ReceiptID,
+			IdempotencyKey: "po.received:" + p.ReceiptID,
+			Memo:           "GRNI on PO receipt",
+			BranchID:       p.BranchID,
+			Lines: []GLLine{
+				{AccountCode: invCode, DebitCents: p.ValueCents, Memo: "inventory received"},
+				{AccountCode: apCode, CreditCents: p.ValueCents, Memo: "received not invoiced"},
+			},
+		}); err != nil {
+			return err
+		}
+	}
+	for _, tu := range p.TrueUps {
+		if tu.DeltaCents == 0 || tu.ProductID == "" {
+			continue
+		}
+		cogsCode, err := s.rules.ResolveRule(ctx, "order.fulfilled", "cogs", p.BranchID)
+		if err != nil || cogsCode == "" {
+			cogsCode = "5000"
+		}
+		amt := tu.DeltaCents
+		if amt < 0 {
+			amt = -amt
+		}
+		var lines []GLLine
+		if tu.DeltaCents > 0 {
+			lines = []GLLine{
+				{AccountCode: cogsCode, DebitCents: amt, Memo: "pre-receipt sale COGS true-up"},
+				{AccountCode: invCode, CreditCents: amt, Memo: "pre-receipt sale inventory true-up"},
+			}
+		} else {
+			lines = []GLLine{
+				{AccountCode: invCode, DebitCents: amt, Memo: "pre-receipt sale inventory true-up"},
+				{AccountCode: cogsCode, CreditCents: amt, Memo: "pre-receipt sale COGS true-up"},
+			}
+		}
+		if _, err := s.gl.PostJournal(ctx, GLJournal{
+			Source:         "ADJUSTMENT",
+			SourceRefID:    p.ReceiptID,
+			IdempotencyKey: "pre_receipt_trueup:" + p.ReceiptID + ":" + tu.ProductID,
+			Memo:           "Pre-receipt sale cost true-up on first receipt",
+			BranchID:       p.BranchID,
+			Lines:          lines,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type inventoryAdjustedPayload struct {

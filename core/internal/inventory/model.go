@@ -102,6 +102,7 @@ type moveParams struct {
 	SourceType    string
 	SourceRefID   string
 	Reason        string
+	Metadata      map[string]any
 }
 
 // - persistence seam (store) -
@@ -144,11 +145,14 @@ type store interface {
 	LockBalances(ctx context.Context, tx pgx.Tx, branchID string, productIDs []string) error
 	GetBranchCost(ctx context.Context, tx pgx.Tx, productID, branchID string) (int64, bool, error)
 	UpsertBranchCost(ctx context.Context, tx pgx.Tx, productID, branchID string, avgCents int64) error
+	FallbackCost(ctx context.Context, tx pgx.Tx, productID, branchID string) (unitCost int64, source string, found bool, err error)
+	UntruedProvisionalShipMoves(ctx context.Context, tx pgx.Tx, productID, branchID string) ([]PreReceiptException, error)
 
 	// read models (pool)
 	AvailabilityFacts(ctx context.Context, productID, branchID string) (AvailabilityFacts, error)
 	ProductCostCents(ctx context.Context, productID string) (int64, bool, error)
 	BranchCostCents(ctx context.Context, productID, branchID string) (int64, bool, error)
+	PreReceiptExceptions(ctx context.Context, branchID string) ([]PreReceiptException, error)
 	OnHandFor(ctx context.Context, productID string) ([]OnHand, error)
 	RecentMoves(ctx context.Context, productID, branchID string, limit int) ([]StockMove, error)
 	PendingFulfilments(ctx context.Context, branchID string) ([]PendingFulfilment, error)
