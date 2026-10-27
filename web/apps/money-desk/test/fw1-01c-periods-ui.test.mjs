@@ -80,7 +80,7 @@ function markup(node) {
 test("the Controller's Periods tab carries the control that opens the next fiscal year", () => {
   const view = markup(books.periodsView(frame()));
   assert.ok(view.includes('data-action="gl-open-year"'), "the open year control is not on the Periods tab");
-  assert.ok(view.includes("Open the next fiscal year"), "the control does not say what it opens");
+  assert.ok(view.includes("Open fiscal year 2027"), "the control does not say what it opens");
 });
 
 test("the Controller's Periods tab carries the late posted list, each journal with its document date, the month it landed in and a way to the journal", () => {

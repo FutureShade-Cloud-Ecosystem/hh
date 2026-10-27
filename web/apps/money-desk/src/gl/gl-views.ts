@@ -431,7 +431,7 @@ const HEADINGS: Record<GlTab, { title: string; line: string }> = {
   journals: { title: "Ledger", line: "Post a journal, decide the parked ones, void a draft or reverse a posted entry." },
   chart: { title: "Ledger", line: "The chart of accounts: what a journal can post to." },
   trial: { title: "Ledger", line: "The trial balance for the year or one month, and the export." },
-  periods: { title: "Ledger", line: "Which months are open to posting, and the year end close." },
+  periods: { title: "Ledger", line: "Which months are open to posting, the year end close, opening the next fiscal year, and the late posted journals." },
   checks: { title: "Ledger", line: "Does the ledger agree with the receivables ledger." },
   policy: { title: "Ledger", line: "The approval threshold and the year the books keep." },
 };

@@ -192,14 +192,32 @@ function closeYearConfirm(frame: Frame, year: number): TemplateResult {
   );
 }
 
+/** The fiscal year the open year control opens: the one after the latest the periods list holds. */
+function nextFiscalYear(periods: readonly GlPeriod[]): number {
+  let latest = 0;
+  for (const p of periods) {
+    if (p.year > latest) latest = p.year;
+  }
+  return latest === 0 ? 0 : latest + 1;
+}
+
+/** The control's words, naming the fiscal year it opens the way "Close fiscal year" names its year. */
+function openYearWords(year: number): string {
+  return year === 0 ? "Open the next fiscal year" : `Open fiscal year ${year}`;
+}
+
 function openYearConfirm(frame: Frame): TemplateResult {
+  const year = nextFiscalYear(frame.books.periods.value);
+  const name = openYearWords(year);
   return confirmShell(
     frame,
-    "Open the next fiscal year?",
+    `${name}?`,
     "watch",
     html`
       <ul class="gl-changes" aria-label="What changes">
-        <li>The next fiscal year is open for posting.</li>
+        ${year === 0
+          ? html`<li>The next fiscal year opens for posting.</li>`
+          : html`<li>The twelve monthly periods of fiscal year ${year} open for posting.</li>`}
         <li>Your reason is kept with the open, and the open is recorded as a sensitive act.</li>
         <li>No period is closed and no journal moves.</li>
       </ul>
@@ -207,7 +225,7 @@ function openYearConfirm(frame: Frame): TemplateResult {
         <textarea data-field="reason" rows="2" aria-label="Reason for opening the year"></textarea>
       </label>
     `,
-    html`<button type="button" class="btn btn-primary" data-action="gl-confirm-go" ?disabled=${frame.busy}>Open the next fiscal year</button>`,
+    html`<button type="button" class="btn btn-primary" data-action="gl-confirm-go" ?disabled=${frame.busy}>${name}</button>`,
   );
 }
 
@@ -557,6 +575,7 @@ export function periodsView(frame: Frame): TemplateResult {
   const controller = frame.books.mode === "controller";
   const years = [...new Set(periods.value.map((p) => p.year))].sort((a, b) => b - a);
   const open = (year: number): boolean => periods.value.some((p) => p.year === year && p.status === "OPEN");
+  const nextYear = nextFiscalYear(periods.value);
   return html`
     <div class="gl-stack">
       ${confirmFor(frame, ["close-period", "reopen", "close-year", "open-year"])}
@@ -566,7 +585,7 @@ export function periodsView(frame: Frame): TemplateResult {
           ${controller
             ? html`<span class="gl-actions">
                 ${years.filter(open).map((y) => html`<button type="button" class="btn btn-secondary" data-action="gl-close-year" data-year=${String(y)}>Close fiscal year ${y}</button>`)}
-                <button type="button" class="btn btn-secondary" data-action="gl-open-year">Open the next fiscal year</button>
+                <button type="button" class="btn btn-secondary" data-action="gl-open-year">${openYearWords(nextYear)}</button>
               </span>`
             : nothing}
         </div>

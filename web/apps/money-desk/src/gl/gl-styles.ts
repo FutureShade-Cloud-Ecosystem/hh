@@ -74,6 +74,10 @@ export const glStyles = css`
   .gl-field textarea:focus-visible, .gl-field input:focus-visible, .gl-field select:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
   .gl-field input[inputmode="decimal"] { text-align: end; font-variant-numeric: tabular-nums; }
   .gl-actions { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; margin-bottom: var(--hh-s-12); }
+  /* A panel head's buttons sit on the heading's centre line, and the row that ends a review holds no
+     margin below it: the card's own padding is the space under them. */
+  .gl-panel-head .gl-actions { margin-bottom: 0; }
+  .gl-confirm > .gl-actions:last-child { margin-bottom: 0; }
   .gl-note { margin: var(--hh-s-8) 0 0; padding: var(--hh-s-12) var(--hh-s-16); border-radius: var(--hh-radius-control); background: color-mix(in srgb, var(--hh-accent) 18%, var(--hh-card)); color: var(--hh-text); font-size: 14px; }
 
   /* Journals and the trial balance. */
@@ -89,6 +93,8 @@ export const glStyles = css`
   .gl-panel th { text-align: start; font-weight: 700; padding: var(--hh-s-8) var(--hh-s-12); border-bottom: 1px solid var(--hh-line); color: var(--hh-text-dim); white-space: nowrap; }
   .gl-panel td { padding: var(--hh-s-12); border-bottom: 1px solid var(--hh-line); vertical-align: middle; }
   .gl-panel th.num, .gl-panel td.num { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* The trailing action cell sits at the table's right edge, where the panel's own buttons sit. */
+  [data-periods] th:last-child, [data-periods] td:last-child, [data-late-posted] th:last-child, [data-late-posted] td:last-child { text-align: end; }
   .gl-panel tr[aria-current="true"] td { background: var(--hh-row-alt); }
   .gl-panel tr.gl-total td { border-top: 2px solid var(--hh-line); border-bottom: 0; }
   .gl-status { display: inline-flex; align-items: center; gap: var(--hh-s-8); padding: var(--hh-s-2) var(--hh-s-12); border-radius: var(--hh-radius-pill); font-size: 13px; font-weight: 700; border: 1px solid var(--hh-line); white-space: nowrap; }
@@ -137,6 +143,12 @@ export const glStyles = css`
     .gl-panel table { font-size: 13px; }
     .gl-panel th, .gl-panel td { padding: var(--hh-s-8) var(--hh-s-4); }
     .gl-panel th { white-space: normal; }
-    main.gl-desk { padding: var(--hh-s-16) var(--hh-s-12) var(--hh-s-40); }
+  }
+  /* UX-29: a coarse pointer or a phone width takes every control on the page to the 44 px bar, the desk's
+     own rule (the receivables slice carries the same one). The desktop look is untouched. */
+  @media (pointer: coarse), (max-width: 520px) {
+    .gl-link, .gl-filter { min-height: 44px; min-width: 44px; }
+    .gl-link { display: inline-flex; align-items: center; justify-content: flex-end; padding: 0 var(--hh-s-4); }
+    .gl-filter { display: inline-flex; align-items: center; justify-content: center; }
   }
 `;

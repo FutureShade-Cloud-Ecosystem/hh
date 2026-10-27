@@ -43,7 +43,7 @@ for (const size of SIZES) {
       await expect(page.getByRole("table", { name: "Late posted journals" })).toBeVisible();
       await take("01", "periods");
 
-      await page.getByRole("button", { name: "Open the next fiscal year" }).first().click();
+      await page.getByRole("button", { name: "Open fiscal year 2027" }).first().click();
       await expect(page.locator("[data-confirm]")).toBeVisible();
       await take("02", "open-year-review");
     });
