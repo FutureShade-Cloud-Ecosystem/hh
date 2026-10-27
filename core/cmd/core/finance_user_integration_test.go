@@ -413,7 +413,8 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 	steady := finPerson{platformID: "fin-fix-steady", email: "fin-fix-steady@example.invalid", name: "Fix Steady", member: true}
 	held := finPerson{platformID: "fin-fix-held", email: "fin-fix-held@example.invalid", name: "Fix Held", member: true}
 	held2 := finPerson{platformID: "fin-fix-held2", email: "fin-fix-held2@example.invalid", name: "Fix Held Again", member: true}
-	addresses := []string{victim.email, other.email, multi.email, gone.email, anchor.email, general.email, nameless.email, demotee.email, steady.email, held.email, held2.email}
+	twicer := finPerson{platformID: "fin-fix-twicer", email: "fin-fix-twicer@example.invalid", name: "Fix Twicer", member: true}
+	addresses := []string{victim.email, other.email, multi.email, gone.email, anchor.email, general.email, nameless.email, demotee.email, steady.email, held.email, held2.email, twicer.email}
 	console := newFinConsole(t, victim, other, demotee)
 	env := func(over map[string]string) func(string) string { return finEnvFor(dsn, addresses, over) }
 
@@ -719,6 +720,60 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 		same := []string{"--email", strings.ToUpper(held.email), "--platform-user-id", held.platformID, "--display-name", held.name, "--role", "financial_controller"}
 		if err := financeUserRole(same, out, out, env(nil)); err != nil {
 			t.Fatalf("the same address in another case must converge: %v (out %q)", err, out.String())
+		}
+	})
+
+	t.Run("a second revoke is a quiet success", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		if err := financeUserRole(provisionArgs(twicer, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("the provision: %v (out %q)", err, out.String())
+		}
+		revoke := []string{"--revoke", "--email", twicer.email, "--platform-user-id", twicer.platformID}
+		out.Reset()
+		if err := financeUserRole(revoke, out, out, env(nil)); err != nil {
+			t.Fatalf("the first revoke: %v (out %q)", err, out.String())
+		}
+		revokeRows := func() int {
+			t.Helper()
+			var userID string
+			if err := pool.QueryRow(ctx,
+				`SELECT id::text FROM users WHERE platform_user_id = $1`, twicer.platformID).Scan(&userID); err != nil {
+				t.Fatal(err)
+			}
+			var n int
+			if err := pool.QueryRow(ctx,
+				`SELECT count(*) FROM audit_log WHERE action = 'STAFF_REVOKE' AND entity_id = $1`, userID).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			return n
+		}
+		if n := revokeRows(); n != 1 {
+			t.Fatalf("the first revoke wrote %d audit rows, want 1", n)
+		}
+		// The boot time reconciler runs the revoke at every boot for an
+		// entry that left the list: the second revoke of a revoked person
+		// exits 0, writes nothing, records nothing and prints nothing, or
+		// the second boot would refuse the box.
+		out.Reset()
+		if err := financeUserRole(revoke, out, out, env(nil)); err != nil {
+			t.Fatalf("the second revoke must be a quiet success, got %v (out %q)", err, out.String())
+		}
+		if out.String() != "" {
+			t.Fatalf("the second revoke printed %q, want nothing", out.String())
+		}
+		if n := revokeRows(); n != 1 {
+			t.Fatalf("the second revoke wrote another audit row: %d rows, want 1", n)
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, twicer.platformID); n != 0 {
+			t.Fatalf("the person holds %d live grants after the second revoke, want 0", n)
+		}
+		var status string
+		if err := pool.QueryRow(ctx,
+			`SELECT status FROM users WHERE platform_user_id = $1`, twicer.platformID).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status != "DEACTIVATED" {
+			t.Fatalf("the row's status after the second revoke is %q, want DEACTIVATED", status)
 		}
 	})
 }
