@@ -32,10 +32,11 @@ function flattenTemplate(value) {
   return "";
 }
 
-// The core's viz answer for a controller: sales by branch, margin in basis
-// points (the branch split carries NO total, rates are never summed; the
-// weighted all branches rate rides the none composition), the AR aging buckets
-// and the past-due-by-branch split. Numbers the core computed, not a board's.
+// The core's viz answer for a controller: sales by branch, the margin in
+// basis points (the branch tile's total IS the weighted all branches figure,
+// the provider's own ungrouped run; there is no none composition, ParseComposition
+// refuses it, the metric composes branch only), the AR aging buckets and the
+// past-due-by-branch split. Numbers the core computed, not a board's.
 const BRANCH_NAMES = new Map([["TRT", "Trenton"], ["KGN", "Kingston"]]);
 const CORE_TILES = [
   {
@@ -46,18 +47,15 @@ const CORE_TILES = [
     ],
   },
   {
-    tile_id: "viz.margin.gross_bps-branch-list", state: "ok", total: null,
+    // The provider's own weighted aggregate rides the branch tile's total
+    // (totalFor): 22000 margin cents on 70000 sales cents across the two
+    // branches, 3120 bps. NOT 3240+3070=6310, the sum the old code showed,
+    // and NOT 3155, the mean.
+    tile_id: "viz.margin.gross_bps-branch-list", state: "ok", total: 3_120,
     points: [
       { label: "TRT", number: 3_240 },
       { label: "KGN", number: 3_070 },
     ],
-  },
-  {
-    // The provider's own weighted aggregate: 22000 margin cents on 70000 sales
-    // cents across the two branches, 3120 bps. NOT 3240+3070=6310, the sum the
-    // old code showed, and NOT 3155, the mean.
-    tile_id: "viz.margin.gross_bps-none-list", state: "ok", total: 3_120,
-    points: [{ label: "All branches", number: 3_120 }],
   },
   {
     tile_id: "viz.ar.aging-bucket-split", state: "ok", total: 96_240_00,
@@ -98,7 +96,8 @@ test("the KPI cards carry the core's figures: sales, margin, and AR past due", (
 
   // FROM-PRINCIPAL 132: the all branches gross margin is the core's own
   // weighted ratio (3120 bps), never the sum of the branch rates (6310) and
-  // never their mean (3155).
+  // never their mean (3155). It rides the branch tile's total, the only
+  // margin composition the core answers.
   const margin = kpis[1];
   assert.equal(margin.connected, true);
   assert.equal(margin.value, "31.2%");
@@ -120,10 +119,23 @@ test("the KPI cards carry the core's figures: sales, margin, and AR past due", (
   );
 });
 
-test("a margin card with branch points but no aggregate says Not connected yet", () => {
-  // The provider answered the branch series but no weighted aggregate: the
-  // card shows words, never the sum or the mean of the branch rates.
-  const kpis = landingKpisFrom(CORE_TILES.filter((t) => t.tile_id !== "viz.margin.gross_bps-none-list"), BRANCH_NAMES);
+// The figure is the committed sales' own total, gross of HST (S4's read of
+// round 5: the GL's revenue is net, the card's is not), so the words say
+// "including tax" beside it.
+test("the sales card's words say the figure is gross of tax", () => {
+  const kpis = landingKpisFrom(CORE_TILES, BRANCH_NAMES);
+  const markup = flattenTemplate(renderKpiCard(kpis[0], "combined"));
+  assert.match(markup, /Counter sales committed today, including tax/);
+});
+
+test("a margin card whose branch tile carries points but no aggregate says Not connected yet", () => {
+  // The provider answered the branch series but left the total nil: the card
+  // shows words, never the sum or the mean of the branch rates. The rate is
+  // never rebuilt from the points.
+  const kpis = landingKpisFrom(
+    CORE_TILES.map((t) => t.tile_id === "viz.margin.gross_bps-branch-list" ? { ...t, total: null } : t),
+    BRANCH_NAMES,
+  );
   assert.equal(kpis[1].connected, false);
   const markup = flattenTemplate(renderKpiCard(kpis[1], "combined"));
   assert.match(markup, new RegExp(LANDING_NOT_CONNECTED));
