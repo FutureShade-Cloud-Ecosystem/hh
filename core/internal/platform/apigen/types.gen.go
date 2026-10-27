@@ -6360,10 +6360,20 @@ type TillCashSummary struct {
 }
 
 type TillZReport struct {
-	SessionId         string            `json:"session_id"`
-	PerTender         []TillTenderTotal `json:"per_tender"`
-	Cash              TillCashSummary   `json:"cash"`
-	ClosingFloatCents int64             `json:"closing_float_cents"`
+	SessionId         string                `json:"session_id"`
+	PerTender         []TillTenderTotal     `json:"per_tender"`
+	Cash              TillCashSummary       `json:"cash"`
+	ClosingFloatCents int64                 `json:"closing_float_cents"`
+	Movements         []TillZReportMovement `json:"movements"`
+}
+
+type TillZReportMovement struct {
+	MovementType string `json:"movement_type"`
+	Method       string `json:"method"`
+	AmountCents  int64  `json:"amount_cents"`
+	Reason       string `json:"reason"`
+	Reference    string `json:"reference"`
+	BranchId     string `json:"branch_id"`
 }
 
 type TillOpenInput struct {

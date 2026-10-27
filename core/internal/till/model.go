@@ -172,6 +172,21 @@ type ZReport struct {
 	PerTender         []TenderTotal `json:"per_tender"`
 	Cash              CashSummary   `json:"cash"`
 	ClosingFloatCents int64         `json:"closing_float_cents"`
+	// Movements are the drawer's movements: the paid ins and the paid outs that sit in the 9999 suspense
+	// balance, each line with the drawer's own reason words and the branch it belongs to (FROM-PRINCIPAL
+	// 132), so the Z report reads the suspense balance back to the movements behind it.
+	Movements []ZReportMovement `json:"movements"`
+}
+
+// ZReportMovement is one drawer movement on the Z report: what the drawer did, in the drawer's own
+// words, and the branch it belongs to.
+type ZReportMovement struct {
+	MovementType string `json:"movement_type"`
+	Method       string `json:"method"`
+	AmountCents  int64  `json:"amount_cents"`
+	Reason       string `json:"reason"`
+	Reference    string `json:"reference"`
+	BranchID     string `json:"branch_id"`
 }
 
 // CashSummary is the derived cash reconciliation block.

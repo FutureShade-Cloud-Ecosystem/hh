@@ -53,6 +53,10 @@ type LodgementSource interface {
 type LodgementFact struct {
 	BranchID    string
 	AmountCents int64
+	// CarriesJournal says the lodgement carries its own journal, so its bank match only confirms
+	// the line and posts nothing (FROM-PRINCIPAL 117 and 120). An older lodgement keeps today's
+	// match, which posts the clearing journal.
+	CarriesJournal bool
 }
 
 // JournalSource reads one journal for a manual JOURNAL match (SF-2j): the GL module's seam, satisfied by
@@ -104,6 +108,11 @@ type Lodgement struct {
 	AmountCents int64
 	Reference   string
 	OccurredAt  time.Time
+	// CarriesJournal says the lodgement carries its own journal: the till posted DR 1000 / CR 1020
+	// AT LODGEMENT (FROM-PRINCIPAL 117). Its bank match then only confirms the line and posts
+	// nothing, so the deposit is never booked twice. A lodgement from before this change has no
+	// lodgement journal and keeps today's match, which posts the clearing journal.
+	CarriesJournal bool
 }
 
 // ImportProfile is the column-mapping profile a StatementSource parses under (0033 bank_import_profiles).

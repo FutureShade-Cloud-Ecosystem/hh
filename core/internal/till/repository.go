@@ -370,9 +370,10 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 	// Transactional outbox, the session close's own rail (till.session.completed, 0032): a paid in, a
 	// paid out or a lodgement carries its GL facts in the SAME tx as the row, so the journal posts
 	// exactly once. The lodgement's journal is the ruled one (FROM-PRINCIPAL 117): DR 1000 / CR 1020 at
-	// lodgement, and FW1-05's match of a lodgement that carries it posts nothing, so the pair never
+	// lodgement, and the bank match of a lodgement that carries it posts nothing, so the pair never
 	// books twice. A DROP deliberately emits nothing: the cash is still the dealer's undeposited cash,
-	// only out of the drawer.
+	// only out of the drawer. The payload carries the drawer's own reason words, because every line of
+	// the journal must carry them (FROM-PRINCIPAL 132).
 	if m.MovementType == MovementPaidIn || m.MovementType == MovementPaidOut || m.MovementType == MovementLodgement {
 		payload, err := json.Marshal(map[string]any{
 			"movement_id":   movementID,
@@ -381,6 +382,7 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 			"movement_type": m.MovementType,
 			"method":        m.Method,
 			"amount_cents":  m.AmountCents,
+			"reason":        m.Reason,
 			"occurred_at":   movementAt,
 		})
 		if err != nil {

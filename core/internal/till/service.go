@@ -652,7 +652,28 @@ func (s *Service) ZReportFor(ctx context.Context, sessionID string) (ZReport, er
 		// oracle on random session ids (the pos by id reads answer the same way).
 		return ZReport{}, errNotFound
 	}
-	return s.deriveZReport(ctx, sess)
+	z, err := s.deriveZReport(ctx, sess)
+	if err != nil {
+		return ZReport{}, err
+	}
+	// The Z report lists the drawer's movements (FROM-PRINCIPAL 132): the paid ins and the paid outs that
+	// sit in the 9999 suspense balance, each line with the drawer's own reason words and the branch.
+	moves, err := s.store.SessionMovements(ctx, sess.ID)
+	if err != nil {
+		return ZReport{}, err
+	}
+	z.Movements = make([]ZReportMovement, 0, len(moves))
+	for _, m := range moves {
+		z.Movements = append(z.Movements, ZReportMovement{
+			MovementType: m.MovementType,
+			Method:       m.Method,
+			AmountCents:  m.AmountCents,
+			Reason:       m.Reason,
+			Reference:    m.Reference,
+			BranchID:     sess.BranchID,
+		})
+	}
+	return z, nil
 }
 
 // deriveZReport is the single source of the drawer math (the over/short summary and the counted

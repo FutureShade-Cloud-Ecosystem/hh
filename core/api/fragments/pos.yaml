@@ -3782,7 +3782,7 @@ components:
     TillZReport:
       type: object
       description: Expected versus actual versus over/short, revealed after the count
-      required: [session_id, per_tender, cash, closing_float_cents]
+      required: [session_id, per_tender, cash, closing_float_cents, movements]
       properties:
         session_id: { type: string, format: uuid }
         per_tender:
@@ -3790,6 +3790,21 @@ components:
           items: { $ref: "#/components/schemas/TillTenderTotal" }
         cash: { $ref: "#/components/schemas/TillCashSummary" }
         closing_float_cents: { type: integer, format: int64 }
+        movements:
+          type: array
+          description: The drawer's movements, each with the drawer's own reason words and its branch
+          items: { $ref: "#/components/schemas/TillZReportMovement" }
+    TillZReportMovement:
+      type: object
+      description: One drawer movement on the Z report, with the drawer's own reason words and its branch
+      required: [movement_type, method, amount_cents, reason, reference, branch_id]
+      properties:
+        movement_type: { type: string, enum: [PAID_IN, PAID_OUT, DROP, LODGEMENT] }
+        method: { type: string, enum: [CASH, CHEQUE, CARD, EFT, OTHER] }
+        amount_cents: { type: integer, format: int64, exclusiveMinimum: 0 }
+        reason: { type: string }
+        reference: { type: string }
+        branch_id: { type: string, format: uuid }
     TillOpenInput:
       type: object
       description: Declares the opening float and optional opening denominations

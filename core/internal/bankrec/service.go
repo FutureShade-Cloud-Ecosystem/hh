@@ -204,7 +204,9 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 		return Match{}, err
 	}
 	m.ID = id
-	if s.poster != nil {
+	// A lodgement that carries its OWN journal is only confirmed: the match posts no clearing journal
+	// (FROM-PRINCIPAL 117 and 120), so the deposit is booked once, at lodgement.
+	if s.poster != nil && !prop.ConfirmsOnly {
 		prop.Journal.IdempotencyKey = clearingKey(id)
 		journalID, perr := s.poster.PostJournal(ctx, prop.Journal)
 		if perr != nil {
@@ -255,6 +257,9 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	if in.TargetType == TargetPayment && in.TargetRefID != "" {
 		claim = []string{in.TargetRefID}
 	}
+	// carriesJournal says the lodgement target posted its own journal at lodgement, so the match only confirms
+	// the line and posts nothing (FROM-PRINCIPAL 117 and 120).
+	carriesJournal := false
 	switch in.TargetType {
 	case TargetGroup:
 		// GROUP is a "manual grouping header" (migration 0033, matcher.go) with no member set: nothing resolves
@@ -275,6 +280,7 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 		if facts.AmountCents != line.AmountCents {
 			return Match{}, unprocessable("bankrec: that lodgement is for %d cents and the line is %d cents, so it does not explain the line", facts.AmountCents, line.AmountCents)
 		}
+		carriesJournal = facts.CarriesJournal
 	case TargetJournal:
 		if jerr := s.checkJournalTarget(ctx, line, in); jerr != nil {
 			return Match{}, jerr
@@ -286,7 +292,7 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	}
 	m.ID = id
 	// Post the clearing journal AFTER the match is claimed (a rejected duplicate posts none), keyed on match id.
-	if journal, post := manualJournal(line, in.TargetType, ""); post && s.poster != nil {
+	if journal, post := manualJournal(line, in.TargetType, "", carriesJournal); post && s.poster != nil {
 		journal.IdempotencyKey = clearingKey(id)
 		journalID, perr := s.poster.PostJournal(ctx, journal)
 		if perr != nil {
@@ -420,21 +426,33 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 	if matchID == "" {
 		return badRequest("bankrec: match_id is required")
 	}
-	if tt, ref, live, perr := s.repo.PeekMatchTarget(ctx, matchID); perr != nil {
+	peekType, peekRef, live, perr := s.repo.PeekMatchTarget(ctx, matchID)
+	if perr != nil {
 		return perr
-	} else if live && tt == TargetLodgement {
-		if ok, lerr := s.lodgementReachable(ctx, ref, reach); lerr != nil {
+	}
+	if live && peekType == TargetLodgement {
+		if ok, lerr := s.lodgementReachable(ctx, peekRef, reach); lerr != nil {
 			return lerr
 		} else if !ok {
 			return conflict("bankrec: match %s is not live (already unmatched)", matchID)
 		}
 	}
-	targetType, _, amount, err := s.repo.UnmatchReach(ctx, matchID, userID, reach)
+	targetType, targetRef, amount, err := s.repo.UnmatchReach(ctx, matchID, userID, reach)
 	if err != nil {
 		return err
 	}
+	// A lodgement that carries its OWN journal posted no clearing journal when it was matched
+	// (FROM-PRINCIPAL 117 and 120), so its undo reverses nothing either.
+	carriesJournal := false
+	if targetType == TargetLodgement {
+		if facts, found, ferr := s.lodgementFacts(ctx, targetRef); ferr != nil {
+			return ferr
+		} else if found {
+			carriesJournal = facts.CarriesJournal
+		}
+	}
 	if s.poster != nil && amount > 0 {
-		if rev, ok := reversalJournal(matchID, targetType, amount); ok {
+		if rev, ok := reversalJournal(matchID, targetType, amount, carriesJournal); ok {
 			if _, perr := s.poster.PostJournal(ctx, rev); perr != nil {
 				return perr
 			}

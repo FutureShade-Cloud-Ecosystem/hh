@@ -1035,11 +1035,16 @@ var allowlist = []allowlistEntry{
 	{
 		module: "till",
 		file:   "core/internal/till/recon_seam.go",
-		tables: []string{"payments"},
+		tables: []string{"events_outbox", "payments"},
 		writes: []string{"payments"},
 		// the file's own header: FROZEN scaffold seam; the sanctioned
 		// cross-module seam for bankrec and gl, read and deposit-stamp only.
-		reason: "the frozen bankrec and gl read seams over the payment rows (UnreconciledCardPayments, MarkDeposited, PaymentForGL), stated in the file header",
+		// The events_outbox READ is the till's own emission: the seam says
+		// whether a lodgement carries its own journal (the movement-posted
+		// event the till wrote in the movement's transaction), so the bank
+		// match can confirm the line without booking the deposit twice. It
+		// reads the till's own events, it writes none.
+		reason: "the frozen bankrec and gl read seams over the payment rows (UnreconciledCardPayments, MarkDeposited, PaymentForGL) and the till's own movement-posted emission, which says whether a lodgement carries its own journal, stated in the file header and in carriesJournalSQL",
 	},
 	{
 		module: "till",

@@ -4,9 +4,13 @@ package till
 // so the W5 bank-reconciliation (A-02) and GL (A-01) read seams live HERE (a sanctioned cross-module seam,
 // not a bankrec/gl reach into till's tables). These methods on *till.Repository satisfy:
 //   - bankrec.PaymentSource   (UnreconciledCardPayments + MarkDeposited)
-//   - bankrec.LodgementSource (OpenLodgements)
+//   - bankrec.LodgementSource (OpenLodgements + LodgementFacts)
 //   - gl.PaymentReader        (PaymentForGL, SELECT the finance facts of a payment)
 // Signatures are frozen; the A-02/A-01 workers rely on them exactly as declared.
+//
+// The seam also answers whether a lodgement carries its OWN journal (carriesJournalSQL), the fact the
+// bank match needs (FROM-PRINCIPAL 117 and 120): a lodgement that journaled at lodgement is only confirmed
+// by its match, and a lodgement from before this change keeps today's match.
 
 import (
 	"context"
@@ -147,15 +151,31 @@ func (r *Repository) MarkDeposited(ctx context.Context, paymentIDs []string, sta
 	return nil
 }
 
+// carriesJournalSQL says whether a lodgement carries its OWN journal, the fact the bank match needs
+// (FROM-PRINCIPAL 117 and 120): the till posted DR 1000 / CR 1020 AT LODGEMENT, so its bank match may
+// only confirm the line and post nothing, or the deposit is booked twice.
+//
+// A lodgement carries its journal when the till has emitted it, and the till emits it in the movement's
+// own transaction: the deposit slip's link rows (the marker the ruling names) or the movement-posted
+// emission. The emission covers the lodgement recorded without a slip, which carries its journal just
+// the same, and reading the emission rather than the posted journal closes the race: the journal is
+// still on its way when the match happens, and the match must not book ahead of it. A lodgement from
+// before this change has neither, so it keeps today's match.
+const carriesJournalSQL = `(
+    EXISTS (SELECT 1 FROM till_lodgement_payments p WHERE p.till_movement_id = m.id)
+ OR EXISTS (SELECT 1 FROM events_outbox o WHERE o.topic = 'till.movement.posted' AND o.payload->>'movement_id' = m.id::text)
+)`
+
 // OpenLodgements returns the cash/cheque banking movements (till_movements of type LODGEMENT) in [from, to),
 // branch-stamped via their session. "Open" means eligible for matching; the A-02 matcher dedupes against its
-// own live bank_matches before booking a deposit journal.
+// own live bank_matches before booking a deposit journal. Each lodgement carries whether it has a journal of
+// its own (carriesJournalSQL), so the matcher knows which match only confirms.
 func (r *Repository) OpenLodgements(ctx context.Context, from, to time.Time) ([]bankrec.Lodgement, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT m.id::text, s.branch_id::text, m.amount_cents, m.reference, m.created_at
+		`SELECT m.id::text, s.branch_id::text, m.amount_cents, m.reference, m.created_at, `+carriesJournalSQL+`
 		 FROM till_movements m
 		 JOIN till_sessions s ON s.id = m.till_session_id
 		 WHERE m.movement_type = 'LODGEMENT' AND m.created_at >= $1 AND m.created_at < $2
@@ -167,7 +187,7 @@ func (r *Repository) OpenLodgements(ctx context.Context, from, to time.Time) ([]
 	var out []bankrec.Lodgement
 	for rows.Next() {
 		var l bankrec.Lodgement
-		if err := rows.Scan(&l.MovementID, &l.BranchID, &l.AmountCents, &l.Reference, &l.OccurredAt); err != nil {
+		if err := rows.Scan(&l.MovementID, &l.BranchID, &l.AmountCents, &l.Reference, &l.OccurredAt, &l.CarriesJournal); err != nil {
 			return nil, fmt.Errorf("till: scan lodgement: %w", err)
 		}
 		out = append(out, l)
@@ -176,17 +196,18 @@ func (r *Repository) OpenLodgements(ctx context.Context, from, to time.Time) ([]
 }
 
 // LodgementFacts answers the branch and the amount of one lodgement (a till_movements row of type LODGEMENT), found
-// false when the id is no lodgement or not a uuid. A movement row is never updated or deleted, its branch is its
-// session's and its amount its own, so the facts are immutable.
+// false when the id is no lodgement or not a uuid, and whether it carries its own journal (carriesJournalSQL).
+// A movement row is never updated or deleted, its branch is its session's and its amount its own, so the facts
+// are immutable.
 func (r *Repository) LodgementFacts(ctx context.Context, movementID string) (bankrec.LodgementFact, bool, error) {
 	if r.pool == nil {
 		return bankrec.LodgementFact{}, false, errNoDB
 	}
 	var f bankrec.LodgementFact
 	err := r.pool.QueryRow(ctx,
-		`SELECT s.branch_id::text, m.amount_cents
+		`SELECT s.branch_id::text, m.amount_cents, `+carriesJournalSQL+`
 		   FROM till_movements m JOIN till_sessions s ON s.id = m.till_session_id
-		  WHERE m.id::text = $1 AND m.movement_type = 'LODGEMENT'`, movementID).Scan(&f.BranchID, &f.AmountCents)
+		  WHERE m.id::text = $1 AND m.movement_type = 'LODGEMENT'`, movementID).Scan(&f.BranchID, &f.AmountCents, &f.CarriesJournal)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return bankrec.LodgementFact{}, false, nil
 	}
