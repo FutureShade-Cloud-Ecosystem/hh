@@ -137,3 +137,23 @@ VALUES ($1, $2::jsonb, $3, $4, $5, $6) RETURNING event_id::text`,
 	}
 }
 
+func TestIntegration_PostingQueueCounts_RefusesBranchScopedManager(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	branchManager := identity.StaffContext{
+		UserID:   "5d1b3f6e-0000-4000-9000-0000000000ac",
+		RoleCode: "BRANCH_MANAGER",
+		Tier:     identity.TierManager,
+		Scope:    identity.ScopeBranch,
+	}
+
+	svc := NewService(NewRepository(pool)).
+		WithPostingQueue(notify.NewPgOutboxStore(pool)).
+		withCaller(func(context.Context) (identity.StaffContext, bool) { return branchManager, true })
+
+	if _, err := svc.PostingQueueCounts(ctx); err != errForbidden {
+		t.Fatalf("a branch scoped manager read the org wide posting queue counts: err = %v, want %v", err, errForbidden)
+	}
+}
+
+
