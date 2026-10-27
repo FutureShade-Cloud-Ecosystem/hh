@@ -34,6 +34,7 @@ import './pos-assess-relief.js';
 import './pos-signature.js';
 import './pos-return.js';
 import './pos-parked.js';
+import './till-close.js';
 // ── W3-A (DIB-165 / the pos-barcode ticket / pos-search / product-images-ui) ──
 import '@hardscapehouse/pos-kit/src/ported/pos-scan-box.js';
 import './pos-split-tender.js';
@@ -3841,15 +3842,10 @@ export class HosPosTerminal extends LitElement {
   // End Session opens the real A-03 close flow (movements → blind count → Z-report → complete);
   // the local chrome resets only once the till actually closes (or the cashier defers: COUNTED
   // sessions can be completed next morning, per the dealer's SOP).
-  // HH note: the reference's End Session opened its till-close screen
-  // (hos-till-close), a host boundary screen this release does not carry. The
-  // core refuses a complete unless the session is COUNTED (409), and a drawer
-  // that does not balance needs a manager's sign-off (row 500), so the mount
-  // cannot honestly end a session from here: the button stays visible but is
-  // closed (aria-disabled, focusable, its reason shown in the till's message line), and the gap is named in CLOSURE.md.
-  // The reference's handler is dropped for the day the close flow is ported.
-  private readonly endSessionClosedReason =
-    "Ending the session needs the blind count, the Z report and a manager's sign-off; the drawer close is not on this surface yet.";
+  // FW1-13: the close flow is ported (till-close.ts, the reference's hos-till-close). The wizard
+  // counts the drawer blind, by denomination, states the Z report, and asks for a manager's note
+  // when the variance is over the branch threshold; the completion is the session close the core
+  // already serves, which posts the over or short. The reference's handler is landed, not dropped.
 
   private onTillClosed(): void {
     this.showTillClose = false;
@@ -5955,33 +5951,10 @@ export class HosPosTerminal extends LitElement {
                   <button
                     class="topbtn"
                     data-testid="end-session"
-                    aria-disabled="true"
-                    aria-describedby="end-session-reason"
-                    title=${this.endSessionClosedReason}
-                    @click=${() => this.setUtil(this.endSessionClosedReason, 'note', true, 'session')}
-                    @focus=${() => this.setUtil(this.endSessionClosedReason, 'note', false, 'session')}
+                    title="Movements, blind count, Z-report, sign-off"
+                    @click=${() => (this.showTillClose = true)}
                   >End Session</button>
-                </span>
-                ${/* UI-3 (visual GAP 1): the reason renders beside its control, anchored under the
-                     session region the button lives in, in the note palette (never the success
-                     green), so a press answers where the hand is: the foot line sat at the flow's
-                     end, half under the hotkey bar. The status region arrives only on a press
-                     (announced once, polite); focus shows it silently, per the recorded ruling. */ ''}
-                ${/* ui3d P2-1: the card hangs off the SESSION region, not the button's own wrap: a
-                     wrap anchor right-aligns a 320px card to the button's right edge, and on a
-                     wrapped bar that edge sits a few hundred pixels from the window's left, so the
-                     card ran off screen below about 1415px wide. The session region is at least a
-                     card wide plus the bar's padding at every width the till supports, so its band
-                     keeps both edges of the card on screen. */ ''}
-                ${this.utilMsg !== '' && this.utilWhere === 'session'
-                  ? html`<span
-                      data-testid="end-session-notice"
-                      class="esnotice"
-                      role="${ifDefined(this.utilLive ? 'status' : undefined)}"
-                      >${this.utilMsg}</span
-                    >`
-                  : nothing}
-                <span id="end-session-reason" class="srdesc" data-testid="end-session-reason">${this.endSessionClosedReason}</span>`
+                </span>`
             : html`<button class="topbtn" @click=${this.openSession}>Open Session</button>`}
           ${/* COUNTER VIEW (R1/R2, the user half). The way back from a dismissed legend
                and the on/off for the hot list, in one place a counter person can reach without an

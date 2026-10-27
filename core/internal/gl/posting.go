@@ -28,6 +28,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
@@ -77,6 +78,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildDepositCancelled(ctx, e.Payload)
 	case "till.session.completed":
 		draft, post, err = s.buildTillSessionCompleted(ctx, e.Payload)
+	case "till.movement.posted":
+		draft, post, err = s.buildTillMovementPosted(ctx, e.Payload)
 	case "pos.return.committed":
 		draft, post, err = s.buildPosReturnCommitted(ctx, e.Payload)
 	case "order.returned":
@@ -1405,6 +1408,91 @@ func (s *Service) buildTillSessionCompleted(ctx context.Context, payload []byte)
 		// FW1-01b: the session's own business day, not the processing day.
 		OccurredAt: p.OccurredAt,
 		Lines:      lines,
+	}, true, nil
+}
+
+type tillMovementPayload struct {
+	MovementID   string    `json:"movement_id"`
+	SessionID    string    `json:"session_id"`
+	BranchID     string    `json:"branch_id"`
+	MovementType string    `json:"movement_type"`
+	Method       string    `json:"method"`
+	AmountCents  int64     `json:"amount_cents"`
+	Reason       string    `json:"reason"`
+	OccurredAt   time.Time `json:"occurred_at"`
+}
+
+// buildTillMovementPosted posts a till movement's journal (FW1-13). A paid out debits 9999 Suspense
+// and credits the drawer (undeposited), a paid in is the mirror; neither is cash over or short, so
+// 6350 stays for the counted over or short alone (FROM-PRINCIPAL 132). A LODGEMENT is the ruled
+// textbook deposit (FROM-PRINCIPAL 117): DR 1000 Bank, the account the ruling names, / CR 1020
+// Undeposited Funds, AT LODGEMENT; the bank match of a lodgement that carries its journal posts
+// nothing, so the pair never books twice, and a lodgement from before this change keeps today's match.
+// The journal is dated at the movement's own instant (the payload's occurred_at), so its period is the
+// house zone's business day of the lodgement, never the consumer's clock; the GL's period filing reads
+// the dealer's zone (insertJournalIn). A drop never reaches the outbox from the till (its cash is still
+// undeposited company cash), and the defensive post=false keeps a hand-planted drop row a no-op.
+//
+// Every line carries the drawer's own reason words (the payload's reason) and the branch (the journal's
+// branch, stamped on each line by insertJournalIn), so the suspense balance reads back to the movement
+// behind it.
+func (s *Service) buildTillMovementPosted(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p tillMovementPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: till.movement.posted payload: %w", err)
+	}
+	if p.MovementID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: till.movement.posted missing movement_id")
+	}
+	if p.MovementType != "PAID_IN" && p.MovementType != "PAID_OUT" && p.MovementType != "LODGEMENT" {
+		return journalDraft{}, false, nil
+	}
+	et := "till.session.completed" // the till family's rules; the drawer legs resolve there
+	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	undCode, err := pick(rules, et, "undeposited")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	occurredAt := p.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = s.clock()
+	}
+	var lines []draftLine
+	// The drawer's own words, on every line (FROM-PRINCIPAL 132). A drawer who typed none leaves the
+	// memo as it was.
+	reason := strings.TrimSpace(p.Reason)
+	words := ""
+	if reason != "" {
+		words = ": " + reason
+	}
+	memo := p.MovementType + " " + p.Method + " on session " + p.SessionID + words
+	var title string
+	switch p.MovementType {
+	case "PAID_OUT":
+		title = "Till movement PAID_OUT"
+		// 9999 Suspense is the ruled account (FROM-PRINCIPAL 132 names it flatly); a rules row may
+		// carry a per dealer suspense code one day, and this literal is where it swaps in.
+		lines = []draftLine{dr("9999", p.AmountCents, memo), cr(undCode, p.AmountCents, "drawer paid out"+words)}
+	case "PAID_IN":
+		title = "Till movement PAID_IN"
+		lines = []draftLine{dr(undCode, p.AmountCents, memo), cr("9999", p.AmountCents, "drawer paid in"+words)}
+	default:
+		title = "Till lodgement"
+		// Bank is the ruled account (FROM-PRINCIPAL 117 names 1000 Bank flatly); a rules row may
+		// carry a per dealer bank code one day, and this literal is where it swaps in.
+		lines = []draftLine{dr("1000", p.AmountCents, memo), cr(undCode, p.AmountCents, "lodged to the bank"+words)}
+	}
+	return journalDraft{
+		Source:         SourceAdjustment,
+		SourceRefID:    p.MovementID,
+		IdempotencyKey: "till.movement.posted:" + p.MovementID,
+		Memo:           title,
+		BranchID:       p.BranchID,
+		OccurredAt:     occurredAt,
+		Lines:          lines,
 	}, true, nil
 }
 

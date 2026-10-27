@@ -34,26 +34,16 @@ Two rulings close reference entries in the mount (lead rulings 15 and 16):
   the credit gate, in HH's reviewed sentence; a price_blocked refusal has no
   arm and would surface as the server's own word, like every other refusal.
 
-Open gap: End Session is closed in the mount. The core refuses a session
-complete unless the session is COUNTED (409, core/internal/till/service.go),
-answers CLOSED, and a drawer that does not balance needs a manager's sign-off
-(row 500). The reference's End Session opened a till-close screen (blind count,
-Z report, sign-off) that this release does not carry, so the button stays
-visible but closed: `aria-disabled="true"` (so it takes focus), grey and
-unfilled, named "End Session", with the reason on its title; the button
-points with `aria-describedby` at its own always-present visually hidden
-description (the reason), and a press or focus also shows the reason as a
-notice beside the control (anchored under the button in the top bar, in the
-same neutral notice style, not the success green) that is announced once
-(on a press; focus leaves the speaking to the description) ("Ending the
-session needs the blind count, the Z report and a manager's sign-off; the
-drawer close is not on this surface yet."), and it makes no request. The
-notice's place was moved for the ui3 visual round c review (its GAP 1): the
-till's foot message line put the answer about 680px from the button, half
-under the hotkey bar with the Items step open, so the reason now renders in
-the bar's own popover band and every other message keeps the foot line.
-Porting the close flow is the
-work that opens it; the stub carries no complete route.
+Closed gap (FW1-13): End Session now opens the real close flow. The
+reference's hos-till-close wizard is ported as till-close.ts: drawer movements
+(paid in, paid out, drop, lodgement), a blind count by denomination (no
+expected figure on screen before the count posts), the Z-report (expected,
+counted, variance, lodged, and the drawer's movements), and the completion the
+core already serves, which posts the over or short; an over-threshold variance
+asks for a manager's note before it completes, and Finish later leaves the
+session counted for the next morning. The button is an ordinary control again;
+the closed notice, its description and the closed press behaviour are gone
+with the gap they named.
 
 Open gap: the printed receipt does not carry the simulated word. The receipt
 is the core's document (GET /api/v1/pos/sales/{id}/receipt, printing module)

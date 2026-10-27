@@ -106,6 +106,56 @@ func TestMatch_LodgementZeroTolerance(t *testing.T) {
 	}
 }
 
+// FW1-13 round 2 (FROM-PRINCIPAL 117 and 120): the bank match of a lodgement that carries its own
+// journal posts NOTHING and only confirms the line, because the till posted DR 1000 / CR 1020 at
+// lodgement and a second journal would book the deposit twice. An older lodgement (no lodgement
+// journal) keeps today's match, which posts DR 1000 / CR 1020.
+func TestMatch_LodgementThatCarriesItsJournalPostsNothing(t *testing.T) {
+	line := StatementLine{ID: "L6", Status: LineUnmatched, AmountCents: 50000, Reference: "LODGE-88", TxnDate: refDate}
+
+	carries := []Lodgement{{MovementID: "M2", Reference: "LODGE-88", AmountCents: 50000, BranchID: "B1", OccurredAt: refDate, CarriesJournal: true, PaymentIDs: []string{"P-SLIP"}, PaymentsUnresolved: true}}
+	prop, ok := matchLine(line, approvedRules(), nil, carries)
+	if !ok {
+		t.Fatal("expected the lodgement line to match")
+	}
+	if prop.TargetType != TargetLodgement || prop.TargetRef != "M2" {
+		t.Fatalf("wrong target: %s %s", prop.TargetType, prop.TargetRef)
+	}
+	if !prop.ConfirmsOnly {
+		t.Fatal("a lodgement that carries its own journal must only confirm the line")
+	}
+	if len(prop.Journal.Lines) != 0 {
+		t.Fatalf("a lodgement that carries its own journal must post no leg, got %v", prop.Journal.Lines)
+	}
+	if len(prop.PaymentIDs) != 0 {
+		t.Fatalf("a lodgement that carries its own journal must claim no payment, got %v", prop.PaymentIDs)
+	}
+	if prop.PaymentsUnresolved {
+		t.Fatal("a lodgement that carries its own journal must not carry PaymentsUnresolved")
+	}
+
+	// An older lodgement (no lodgement journal) keeps today's match: DR 1000 / CR 1020, and carries
+	// the exact-set payment ids (or PaymentsUnresolved when unresolved).
+	older := []Lodgement{{MovementID: "M3", Reference: "LODGE-88", AmountCents: 50000, BranchID: "B1", OccurredAt: refDate, PaymentIDs: []string{"P-OLD"}, PaymentsUnresolved: false}}
+	prop2, ok := matchLine(line, approvedRules(), nil, older)
+	if !ok {
+		t.Fatal("expected the older lodgement line to match")
+	}
+	if prop2.ConfirmsOnly {
+		t.Fatal("an older lodgement keeps today's match, which posts the clearing journal")
+	}
+	if len(prop2.PaymentIDs) != 1 || prop2.PaymentIDs[0] != "P-OLD" || prop2.PaymentsUnresolved {
+		t.Fatalf("older lodgement proposal PaymentIDs=%v PaymentsUnresolved=%v; want [P-OLD] and false", prop2.PaymentIDs, prop2.PaymentsUnresolved)
+	}
+	if d, _ := legAmounts(prop2, AcctBank); d != 50000 {
+		t.Fatalf("expected DR 1000 = 50000, got %d", d)
+	}
+	if _, c := legAmounts(prop2, AcctUndeposited); c != 50000 {
+		t.Fatalf("expected CR 1020 = 50000, got %d", c)
+	}
+	assertBalanced(t, prop2)
+}
+
 // AC4, RUN settlement fee-split: bank net + fee to 6300 clears the gross card settlement. The journal key is
 // line-derived so a re-run posts the SAME key (GL dedupes → idempotent, no second journal).
 func TestMatch_RunSettlementFeeSplit(t *testing.T) {

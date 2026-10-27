@@ -49364,6 +49364,7 @@ components:
           required:
             - tenders
             - movements
+            - slip_candidates
           properties:
             tenders:
               type: array
@@ -49373,6 +49374,40 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/TillMovement"
+            slip_candidates:
+              type: array
+              description: The drawer's unlodged cheques, for the lodgement's slip
+              items:
+                $ref: "#/components/schemas/TillSlipCandidate"
+    TillSlipCandidate:
+      type: object
+      description: One payment the drawer may put on a lodgement's slip
+      required:
+        - payment_id
+        - payment_no
+        - amount_cents
+        - method
+        - reference
+      properties:
+        payment_id:
+          type: string
+          format: uuid
+        payment_no:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+          exclusiveMinimum: 0
+        method:
+          type: string
+          enum:
+            - CASH
+            - CHEQUE
+            - CARD
+            - EFT
+            - OTHER
+        reference:
+          type: string
     TillPolicy:
       type: object
       description: The branch variance threshold and close grain
@@ -49424,6 +49459,7 @@ components:
         - per_tender
         - cash
         - closing_float_cents
+        - movements
       properties:
         session_id:
           type: string
@@ -49437,6 +49473,48 @@ components:
         closing_float_cents:
           type: integer
           format: int64
+        movements:
+          type: array
+          description: The drawer's movements, each with the drawer's own reason words and its branch
+          items:
+            $ref: "#/components/schemas/TillZReportMovement"
+    TillZReportMovement:
+      type: object
+      description: One drawer movement on the Z report, with the drawer's own reason words and its branch
+      required:
+        - movement_type
+        - method
+        - amount_cents
+        - reason
+        - reference
+        - branch_id
+      properties:
+        movement_type:
+          type: string
+          enum:
+            - PAID_IN
+            - PAID_OUT
+            - DROP
+            - LODGEMENT
+        method:
+          type: string
+          enum:
+            - CASH
+            - CHEQUE
+            - CARD
+            - EFT
+            - OTHER
+        amount_cents:
+          type: integer
+          format: int64
+          exclusiveMinimum: 0
+        reason:
+          type: string
+        reference:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
     TillOpenInput:
       type: object
       description: Declares the opening float and optional opening denominations

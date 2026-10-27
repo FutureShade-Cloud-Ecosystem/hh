@@ -5600,7 +5600,14 @@ export type TillDenominationCount = {
   denomination_cents: number;
   quantity: number;
 };
-export type TillSessionDetail = TillSession & { tenders: TillTenderTotal[]; movements: TillMovement[] };
+export type TillSessionDetail = TillSession & { tenders: TillTenderTotal[]; movements: TillMovement[]; slip_candidates: TillSlipCandidate[] };
+export type TillSlipCandidate = {
+  payment_id: string;
+  payment_no: string;
+  amount_cents: number;
+  method: "CASH" | "CHEQUE" | "CARD" | "EFT" | "OTHER";
+  reference: string;
+};
 export type TillPolicy = {
   branch_id: string;
   variance_threshold_cents: number;
@@ -5618,6 +5625,15 @@ export type TillZReport = {
   per_tender: TillTenderTotal[];
   cash: TillCashSummary;
   closing_float_cents: number;
+  movements: TillZReportMovement[];
+};
+export type TillZReportMovement = {
+  movement_type: "PAID_IN" | "PAID_OUT" | "DROP" | "LODGEMENT";
+  method: "CASH" | "CHEQUE" | "CARD" | "EFT" | "OTHER";
+  amount_cents: number;
+  reason: string;
+  reference: string;
+  branch_id: string;
 };
 export type TillOpenInput = {
   branch_id: string;

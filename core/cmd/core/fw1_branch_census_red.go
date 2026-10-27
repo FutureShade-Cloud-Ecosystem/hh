@@ -66,6 +66,13 @@ type fw1NonGLWriterSite struct {
 	BranchSource string
 }
 
+// fw1OutboxReadKind names the census kind of a site that READS the outbox
+// instead of writing to it. The census covers the reads too: a read of the
+// outbox is not a writer, but a writer's sibling that must be on the record
+// with its true reason, so the table says so and the scanner checks that the
+// listed read is really there.
+const fw1OutboxReadKind = "read:events_outbox"
+
 // fw1NonGLJournalWriterCallSites lists every non-GL journal writer call site
 // or method-value selector (PostExternal, PostExternalTx, PostJournal,
 // PostJournalTx, PostCreditMemoJournal, CreateJournal, ReverseJournal,
@@ -336,6 +343,18 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		Func:         "(*Service).postBillJournal",
 		Kind:         "PostJournalTx",
 		BranchSource: "bill.BranchID from purchasing_bills.branch_id (NOT NULL)",
+	},
+	{
+		File:         "core/internal/till/recon_seam.go",
+		Func:         "(*Repository).OpenLodgements",
+		Kind:         fw1OutboxReadKind,
+		BranchSource: "no branch and no journal: the read asks whether the till's own journal for this lodgement has been emitted (the till.movement.posted row), so the bank match knows the lodgement carries its own journal; it reads the outbox and writes nothing",
+	},
+	{
+		File:         "core/internal/till/recon_seam.go",
+		Func:         "(*Repository).LodgementFacts",
+		Kind:         fw1OutboxReadKind,
+		BranchSource: "no branch and no journal: the same read for one lodgement (the manual match asks the same question of one movement); it reads the outbox and writes nothing",
 	},
 	{
 		File:         "core/internal/till/repository.go",
