@@ -70,7 +70,7 @@ func TestIntegration_FinanceBoxRefusesLivePortalRail(t *testing.T) {
 }
 
 func TestIntegration_FinanceBoxRefusesNonEmptyDatabaseWithoutBoxKind(t *testing.T) {
-	pool := freshMigratedBoxDB(t, "finboxnokind")
+	pool, _ := freshMigratedBoxDB(t, "finboxnokind")
 	cfg := financeStagingConfig(t)
 
 	err := financeBoxBootGuard(financeBoxGetenv(map[string]string{"HH_BOX_KIND": "finance"}), cfg, pool)
@@ -81,7 +81,7 @@ func TestIntegration_FinanceBoxRefusesNonEmptyDatabaseWithoutBoxKind(t *testing.
 
 func TestIntegration_FinanceBoxRefusesAnotherBoxKind(t *testing.T) {
 	ctx := context.Background()
-	pool := freshMigratedBoxDB(t, "finboxdemo")
+	pool, _ := freshMigratedBoxDB(t, "finboxdemo")
 	writeBoxKindForTest(t, ctx, pool, "demo")
 	cfg := financeStagingConfig(t)
 
@@ -102,7 +102,7 @@ func TestIntegration_FinanceBoxPassesOnEmptyDatabase(t *testing.T) {
 
 func TestIntegration_FinanceBoxPassesOnFinanceSeededDatabase(t *testing.T) {
 	ctx := context.Background()
-	pool := freshMigratedBoxDB(t, "finboxok")
+	pool, _ := freshMigratedBoxDB(t, "finboxok")
 	writeBoxKindForTest(t, ctx, pool, "finance")
 	cfg := financeStagingConfig(t)
 
@@ -153,7 +153,7 @@ func TestIntegration_FinanceBoxBootsThroughTheWiring(t *testing.T) {
 // migration file applied in order, each recorded in schema_migrations (the
 // demoseed suite's helper applies the files without the bookkeeping, which
 // would read as an empty database to the guard).
-func freshMigratedBoxDB(t *testing.T, suffix string) *pgxpool.Pool {
+func freshMigratedBoxDB(t *testing.T, suffix string) (*pgxpool.Pool, string) {
 	t.Helper()
 	base, ok := os.LookupEnv("DATABASE_URL")
 	if !ok {
@@ -214,7 +214,7 @@ func freshMigratedBoxDB(t *testing.T, suffix string) *pgxpool.Pool {
 			t.Fatalf("commit %s: %v", f, err)
 		}
 	}
-	return pool
+	return pool, testDSN
 }
 
 // freshEmptyDB creates a database with no migrations applied at all: the
