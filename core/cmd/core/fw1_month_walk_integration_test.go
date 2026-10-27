@@ -70,6 +70,7 @@ func fw1AssertionNames() []string {
 		"bank_month_signs_off_at_zero_with_outstanding_items",
 		"every_journal_line_carries_a_branch_and_branch_trial_balances_sum",
 		"no_journal_waiting_or_dead_lettered",
+		"walk_month_and_next_year_periods_open",
 		"year_end_close_opens_next_year_and_keeps_income_statement",
 	}
 }
@@ -221,17 +222,12 @@ func newFW1Walk(t *testing.T) *fw1Walk {
 	if err != nil {
 		t.Fatalf("loading dealer zone America/Toronto: %v", err)
 	}
-	var seededYear int
-	if err := pool.QueryRow(ctx, `SELECT year FROM fiscal_periods ORDER BY year DESC LIMIT 1`).Scan(&seededYear); err != nil {
-		t.Fatalf("reading seeded fiscal calendar year: %v", err)
-	}
 	now := time.Now().In(zone)
-	walkMonth := int(now.Month())
 	w := &fw1Walk{
 		t: t, pool: pool, mux: mux, sg: sg, money: money, ops: ops, tops: tops, disp: d,
 		prod: map[string]string{}, cust: map[string]string{},
-		year: seededYear, month: walkMonth,
-		monthEnd: time.Date(seededYear, time.Month(walkMonth), 1, 0, 0, 0, 0, zone).
+		year: now.Year(), month: int(now.Month()),
+		monthEnd: time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, zone).
 			AddDate(0, 1, 0).Add(-time.Second),
 	}
 	for _, sku := range []string{"DBS-GATOR-SAND", "DBS-INLITE-LED", "DBS-UL-BRUSSELS", "DBS-TB-BLU60", "DBS-SIKA-SEALER"} {
@@ -389,8 +385,19 @@ func TestFW1MonthWalk(t *testing.T) {
 		opens = append(opens, o)
 	}
 	openRows.Close()
+	var walkPeriodOpen int
+	if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year = $1 AND month = $2 AND status = 'OPEN'`, w.year, w.month).Scan(&walkPeriodOpen); err != nil {
+		t.Fatalf("the walk month period read: %v", err)
+	}
+	if walkPeriodOpen == 0 {
+		if item, red := fw1WalkRed["walk_month_and_next_year_periods_open"]; red {
+			t.Skipf("red until %s: the walk month %04d-%02d has no OPEN fiscal period", item, w.year, w.month)
+		}
+		t.Fatalf("the walk month %04d-%02d has no OPEN fiscal period", w.year, w.month)
+	}
+	var firstJournalID string
 	for i, o := range opens {
-		if _, err := w.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
+		jid, err := w.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
 			Source: "MANUAL", SourceRefID: "88a20000-0000-4000-8000-0000000000a2",
 			IdempotencyKey: fmt.Sprintf("fw1:opening:ar:%d", i),
 			Memo:           "opening accounts receivable, the seeded open invoices", BranchID: o.branch,
@@ -398,9 +405,25 @@ func TestFW1MonthWalk(t *testing.T) {
 				{AccountCode: "1100", DebitCents: o.bal, Memo: "opening AR"},
 				{AccountCode: "3000", CreditCents: o.bal, Memo: "opening equity"},
 			},
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatalf("the opening AR journal for %s: %v", o.branch, err)
 		}
+		if firstJournalID == "" {
+			firstJournalID = jid
+		}
+	}
+	// Unskipped frame guard: the walk's first posted journal's period_id must resolve to (w.year, w.month).
+	var firstYear, firstMonth int
+	if err := w.pool.QueryRow(ctx, `
+		SELECT fp.year, fp.month
+		  FROM gl_journals j
+		  JOIN fiscal_periods fp ON fp.id = j.period_id
+		 WHERE j.id = $1`, firstJournalID).Scan(&firstYear, &firstMonth); err != nil {
+		t.Fatalf("reading the walk's first journal period: %v", err)
+	}
+	if firstYear != w.year || firstMonth != w.month {
+		t.Fatalf("walk frame guard: first journal posted into %04d-%02d, want walk frame %04d-%02d", firstYear, firstMonth, w.year, w.month)
 	}
 	// Load the seeded opening AR into the customer_transactions subledger alongside the GL 1100
 	// opening journals (one INVOICE row per seeded open invoice, matching ReceivablesLoadWriter).
@@ -738,6 +761,7 @@ func TestFW1MonthWalk(t *testing.T) {
 		"bank_month_signs_off_at_zero_with_outstanding_items":               w.assertBankMonth,
 		"every_journal_line_carries_a_branch_and_branch_trial_balances_sum": w.assertBranchOnEveryLine,
 		"no_journal_waiting_or_dead_lettered":                               w.assertNothingWaiting,
+		"walk_month_and_next_year_periods_open":                             w.assertWalkMonthAndNextYearPeriodsOpen,
 		"year_end_close_opens_next_year_and_keeps_income_statement":         w.assertYearEndClose,
 	}
 	for _, name := range fw1AssertionNames() {
@@ -1064,6 +1088,24 @@ func (w *fw1Walk) assertNothingWaiting(t fw1TB) {
 		}
 		t.Errorf("%d journal events are waiting and %d are dead lettered after the consumer's pass (topics: %s)",
 			pending, dead, strings.Join(topics, ", "))
+	}
+}
+
+// The walk month's period exists and the next fiscal year's periods roll forward ahead of need (FW1-01).
+func (w *fw1Walk) assertWalkMonthAndNextYearPeriodsOpen(t fw1TB) {
+	var walkPeriod int
+	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM fiscal_periods WHERE year = $1 AND month = $2 AND status = 'OPEN'`, w.year, w.month).Scan(&walkPeriod); err != nil {
+		t.Fatalf("the walk month period read: %v", err)
+	}
+	if walkPeriod == 0 {
+		t.Errorf("the walk month %04d-%02d has no OPEN fiscal period", w.year, w.month)
+	}
+	var nextYear int
+	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM fiscal_periods WHERE year = $1 AND status = 'OPEN'`, w.year+1).Scan(&nextYear); err != nil {
+		t.Fatalf("the next year period read: %v", err)
+	}
+	if nextYear < 12 {
+		t.Errorf("the fiscal calendar opened %d OPEN periods for next year %d ahead of need (want 12): posting into %d is refused for want of a period", nextYear, w.year+1, w.year+1)
 	}
 }
 
