@@ -3336,7 +3336,8 @@ type BankRecReconInput struct {
 	BankAccountId         string `json:"bank_account_id"`
 	Year                  int32  `json:"year"`
 	Month                 int32  `json:"month"`
-	StatementBalanceCents int64  `json:"statement_balance_cents"`
+	StatementBalanceCents *int64 `json:"statement_balance_cents,omitempty"`
+	Refresh               *bool  `json:"refresh,omitempty"`
 }
 
 type BankRecReconciliationList []BankRecReconciliation
