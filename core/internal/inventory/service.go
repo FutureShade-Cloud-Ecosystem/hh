@@ -576,34 +576,7 @@ func (s *Service) postPOReceived(ctx context.Context, payload []byte) error {
 		}
 	}
 	if p.RoundingCents != 0 {
-		expCode, err := s.rules.ResolveRule(ctx, "inventory.adjusted", "expense", p.BranchID)
-		if err != nil || expCode == "" {
-			expCode = "5200"
-		}
-		amt := p.RoundingCents
-		if amt < 0 {
-			amt = -amt
-		}
-		var lines []GLLine
-		if p.RoundingCents > 0 {
-			lines = []GLLine{
-				{AccountCode: invCode, DebitCents: amt, Memo: "WAC integer-cent rounding"},
-				{AccountCode: expCode, CreditCents: amt, Memo: "WAC integer-cent rounding"},
-			}
-		} else {
-			lines = []GLLine{
-				{AccountCode: expCode, DebitCents: amt, Memo: "WAC integer-cent rounding"},
-				{AccountCode: invCode, CreditCents: amt, Memo: "WAC integer-cent rounding"},
-			}
-		}
-		if _, err := s.gl.PostJournal(ctx, GLJournal{
-			Source:         "ADJUSTMENT",
-			SourceRefID:    p.ReceiptID,
-			IdempotencyKey: "po.received.rounding:" + p.ReceiptID,
-			Memo:           "WAC integer-cent rounding on PO receipt",
-			BranchID:       p.BranchID,
-			Lines:          lines,
-		}); err != nil {
+		if err := s.postPOReceivedRounding(ctx, p, invCode); err != nil {
 			return err
 		}
 	}
@@ -611,36 +584,83 @@ func (s *Service) postPOReceived(ctx context.Context, payload []byte) error {
 		if tu.DeltaCents == 0 || tu.ProductID == "" {
 			continue
 		}
-		cogsCode, err := s.rules.ResolveRule(ctx, "order.fulfilled", "cogs", p.BranchID)
-		if err != nil || cogsCode == "" {
-			cogsCode = "5000"
-		}
-		amt := tu.DeltaCents
-		if amt < 0 {
-			amt = -amt
-		}
-		var lines []GLLine
-		if tu.DeltaCents > 0 {
-			lines = []GLLine{
-				{AccountCode: cogsCode, DebitCents: amt, Memo: "pre-receipt sale COGS true-up"},
-				{AccountCode: invCode, CreditCents: amt, Memo: "pre-receipt sale inventory true-up"},
-			}
-		} else {
-			lines = []GLLine{
-				{AccountCode: invCode, DebitCents: amt, Memo: "pre-receipt sale inventory true-up"},
-				{AccountCode: cogsCode, CreditCents: amt, Memo: "pre-receipt sale COGS true-up"},
-			}
-		}
-		if _, err := s.gl.PostJournal(ctx, GLJournal{
-			Source:         "ADJUSTMENT",
-			SourceRefID:    p.ReceiptID,
-			IdempotencyKey: "pre_receipt_trueup:" + p.ReceiptID + ":" + tu.ProductID,
-			Memo:           "Pre-receipt sale cost true-up on first receipt",
-			BranchID:       p.BranchID,
-			Lines:          lines,
-		}); err != nil {
+		if err := s.postPOReceivedTrueUp(ctx, p, tu, invCode); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// postPOReceivedRounding posts the WAC integer-cent rounding adjustment journal on a receipt
+// (round 1, sub item 2). Its own function so the branch census finds one journal writer per
+// function: the receipt's GRNI journal and this adjustment are one payload's separate journals.
+func (s *Service) postPOReceivedRounding(ctx context.Context, p poReceivedPayload, invCode string) error {
+	expCode, err := s.rules.ResolveRule(ctx, "inventory.adjusted", "expense", p.BranchID)
+	if err != nil || expCode == "" {
+		expCode = "5200"
+	}
+	amt := p.RoundingCents
+	if amt < 0 {
+		amt = -amt
+	}
+	var lines []GLLine
+	if p.RoundingCents > 0 {
+		lines = []GLLine{
+			{AccountCode: invCode, DebitCents: amt, Memo: "WAC integer-cent rounding"},
+			{AccountCode: expCode, CreditCents: amt, Memo: "WAC integer-cent rounding"},
+		}
+	} else {
+		lines = []GLLine{
+			{AccountCode: expCode, DebitCents: amt, Memo: "WAC integer-cent rounding"},
+			{AccountCode: invCode, CreditCents: amt, Memo: "WAC integer-cent rounding"},
+		}
+	}
+	if _, err := s.gl.PostJournal(ctx, GLJournal{
+		Source:         "ADJUSTMENT",
+		SourceRefID:    p.ReceiptID,
+		IdempotencyKey: "po.received.rounding:" + p.ReceiptID,
+		Memo:           "WAC integer-cent rounding on PO receipt",
+		BranchID:       p.BranchID,
+		Lines:          lines,
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// postPOReceivedTrueUp posts one line's pre-receipt sale cost true-up at the first receipt
+// (round 1, sub item 4, ruling 82.4). Its own function so the branch census finds one journal
+// writer per function: the receipt's payload carries one true-up per sold-before-receipt line.
+func (s *Service) postPOReceivedTrueUp(ctx context.Context, p poReceivedPayload, tu poTrueUpLine, invCode string) error {
+	cogsCode, err := s.rules.ResolveRule(ctx, "order.fulfilled", "cogs", p.BranchID)
+	if err != nil || cogsCode == "" {
+		cogsCode = "5000"
+	}
+	amt := tu.DeltaCents
+	if amt < 0 {
+		amt = -amt
+	}
+	var lines []GLLine
+	if tu.DeltaCents > 0 {
+		lines = []GLLine{
+			{AccountCode: cogsCode, DebitCents: amt, Memo: "pre-receipt sale COGS true-up"},
+			{AccountCode: invCode, CreditCents: amt, Memo: "pre-receipt sale inventory true-up"},
+		}
+	} else {
+		lines = []GLLine{
+			{AccountCode: invCode, DebitCents: amt, Memo: "pre-receipt sale inventory true-up"},
+			{AccountCode: cogsCode, CreditCents: amt, Memo: "pre-receipt sale COGS true-up"},
+		}
+	}
+	if _, err := s.gl.PostJournal(ctx, GLJournal{
+		Source:         "ADJUSTMENT",
+		SourceRefID:    p.ReceiptID,
+		IdempotencyKey: "pre_receipt_trueup:" + p.ReceiptID + ":" + tu.ProductID,
+		Memo:           "Pre-receipt sale cost true-up on first receipt",
+		BranchID:       p.BranchID,
+		Lines:          lines,
+	}); err != nil {
+		return err
 	}
 	return nil
 }
