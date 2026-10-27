@@ -185,6 +185,7 @@ echo "== the core serving the mint routes"
 			PAYMENT_VAULT_KEY="$VAULT" \
 			HH_ACCEPTANCE_SIGN_KEY_ID=d2-fd-exit \
 			HH_ACCEPTANCE_SIGN_KEY="$SIGN" \
+			HH_DEMO_MINT_VISITOR_ALLOWANCE=20 \
 			exec "$CORE_BIN" serve
 ) >"$CORE_LOG" 2>&1 &
 CORE_PID=$!
