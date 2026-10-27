@@ -202,13 +202,13 @@ export const homeStyles = css`
     }
     .cell.tall {
       grid-row: auto;
-    }
-  }
+    }  }
 
   .strip {
     display: flex;
     flex-wrap: wrap;
     gap: var(--hh-s-16);
+    margin: 0 0 var(--hh-s-24);
   }
   .tile {
     display: flex;
@@ -1136,6 +1136,16 @@ export const homeStyles = css`
     .runs-row {
       grid-template-columns: minmax(0, 1fr);
     }
+    /* The phone touch bar (HH-UX-BAR-L8 section 6): every tap control on the landing
+       reaches 44 px at phone width; desktop keeps its denser 36 px rows. */
+    .edit-open,
+    .row-chip,
+    .view-link,
+    .foot-link,
+    .queue-link {
+      min-height: 44px;
+    }
+
   }
   .run {
     display: flex;

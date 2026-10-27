@@ -164,4 +164,12 @@ export const pricingStyles = css`
   .pr-tabs-hidden {
     display: none !important;
   }
+  /* The phone touch bar (HH-UX-BAR-L8 section 6): the pricing pills and tabs reach 44 px
+     at phone width; desktop pointer keeps the denser 32 px rows. */
+  @media (max-width: 900px) {
+    .pr-tab,
+    .pr-board-pill {
+      min-height: 44px;
+    }
+  }
 `;
