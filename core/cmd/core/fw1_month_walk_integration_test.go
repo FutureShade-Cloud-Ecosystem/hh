@@ -96,14 +96,16 @@ type fw1Walk struct {
 	monthEnd         time.Time
 
 	// figures assertion 5 names in its failure message
-	outstandingChequeCents int64
-	depositInTransitCents  int64
-	statementBalanceCents  int64
-	bankAccountID          string
-	lodgedChequePaymentID  string
-	lodgedChequeInvoiceID  string
-	lodgedChequeMovementID string
-	lodgedChequeCents      int64
+	outstandingChequeCents           int64
+	depositInTransitCents            int64
+	statementBalanceCents            int64
+	bankAccountID                    string
+	lodgedChequePaymentID            string
+	lodgedChequeInvoiceID            string
+	lodgedChequeMovementID           string
+	lodgedChequeCents                int64
+	journals1000BeforeLodgementMatch int
+	journals1000AfterLodgementMatch  int
 
 	nullBranchLines int // snapshot taken before the year end close posts its own lines
 	seededInvoiceID []string
@@ -391,16 +393,6 @@ func TestFW1MonthWalk(t *testing.T) {
 		opens = append(opens, o)
 	}
 	openRows.Close()
-	var walkPeriodOpen int
-	if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year = $1 AND month = $2 AND status = 'OPEN'`, w.year, w.month).Scan(&walkPeriodOpen); err != nil {
-		t.Fatalf("the walk month period read: %v", err)
-	}
-	if walkPeriodOpen == 0 {
-		if item, red := fw1WalkRed["walk_month_and_next_year_periods_open"]; red {
-			t.Skipf("red until %s: the walk month %04d-%02d has no OPEN fiscal period", item, w.year, w.month)
-		}
-		t.Fatalf("the walk month %04d-%02d has no OPEN fiscal period", w.year, w.month)
-	}
 	var firstJournalID string
 	for i, o := range opens {
 		jid, err := w.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
@@ -413,11 +405,24 @@ func TestFW1MonthWalk(t *testing.T) {
 			},
 		})
 		if err != nil {
+			if item, red := fw1WalkRed["walk_month_and_next_year_periods_open"]; red {
+				t.Skipf("red until %s: the walk month %04d-%02d refused the first opening posting (%v); this skip hides the other lines' probes for that month", item, w.year, w.month, err)
+			}
 			t.Fatalf("the opening AR journal for %s: %v", o.branch, err)
 		}
 		if firstJournalID == "" {
 			firstJournalID = jid
 		}
+	}
+	var walkPeriodOpen int
+	if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year = $1 AND month = $2 AND status = 'OPEN'`, w.year, w.month).Scan(&walkPeriodOpen); err != nil {
+		t.Fatalf("the walk month period read: %v", err)
+	}
+	if walkPeriodOpen == 0 {
+		if item, red := fw1WalkRed["walk_month_and_next_year_periods_open"]; red {
+			t.Skipf("red until %s: the walk month %04d-%02d has no OPEN fiscal period after the opening journals posted; this skip hides the other lines' probes for that month", item, w.year, w.month)
+		}
+		t.Fatalf("the walk month %04d-%02d has no OPEN fiscal period after the opening journals posted", w.year, w.month)
 	}
 	// Unskipped frame guard: the walk's first posted journal's period_id must resolve to (w.year, w.month).
 	var firstYear, firstMonth int
@@ -731,15 +736,30 @@ func TestFW1MonthWalk(t *testing.T) {
 		"bank_account_id": w.bankAccountID, "profile_code": "rbc-default", "filename": "fw1-rbc.csv", "content": importBody,
 	})
 	w.drain()
-	// Match the deposit to the lodgement by hand, which posts the clearing DR 1000 / CR 1020.
+	// Match the deposit to the lodgement by hand, recording the journal count touching 1000
+	// before and after the match so assertion 5b can assert that the match creates no journal.
+	count1000Journals := func(step string) int {
+		var n int
+		if err := w.pool.QueryRow(ctx, `
+			SELECT count(DISTINCT j.id)
+			  FROM gl_journals j
+			  JOIN gl_journal_lines l ON l.journal_id = j.id
+			  JOIN gl_accounts a ON a.id = l.account_id
+			 WHERE j.status = 'POSTED' AND a.code = '1000'`).Scan(&n); err != nil {
+			t.Fatalf("%s: count 1000 journals: %v", step, err)
+		}
+		return n
+	}
 	lodgementTRT := w.one(`SELECT id::text FROM till_movements WHERE reference = 'DEP-TRT-1' ORDER BY id LIMIT 1`)
 	stmtDepositLine := w.one(`SELECT id::text FROM bank_statement_lines WHERE bank_account_id = $1 AND reference = 'DEP-TRT-1' LIMIT 1`, w.bankAccountID)
+	w.journals1000BeforeLodgementMatch = count1000Journals("before lodgement match")
 	w.ok("match the deposit", http.MethodPost, "/api/v1/bankrec/match", map[string]any{
 		"mode": "manual", "bank_account_id": w.bankAccountID,
 		"statement_line_id": stmtDepositLine, "target_type": "LODGEMENT", "target_ref_id": lodgementTRT,
 		"amount_cents": 40000,
 	})
 	w.drain()
+	w.journals1000AfterLodgementMatch = count1000Journals("after lodgement match")
 	// Book the monthly bank charge on the ledger and match the statement line to that journal.
 	feeOut := w.ok("bank charge journal", http.MethodPost, "/api/v1/gl/journals", map[string]any{
 		"branch_id": fw1TRT, "memo": "fw1 walk monthly bank service charge", "source": "MANUAL",
@@ -912,22 +932,27 @@ func (w *fw1Walk) createStatementTies(t fw1TB) {
 			t.Fatalf("the customer_transactions subledger read for %s: %v", c.acctNo, err)
 		}
 		// Independent net receivable from the customer's documents (invoices and credit memos)
-		// and receipts (including bounced cheque NSF fee records in payment_nsf, net of any
-		// invoice document that carries the fee) in the walk.
+		// and receipts (including bounced cheque NSF fee records in payment_nsf net of live
+		// payments.metadata->'nsf_fee_allocations' settlements per FW1-06a) in the walk.
 		var docsAndReceipts int64
 		if err := w.pool.QueryRow(ctx, `
 			SELECT COALESCE((
 			    SELECT SUM(balance_cents) FROM invoices
 			     WHERE customer_id = $1 AND status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
 			), 0) + COALESCE((
-			    SELECT SUM(pn.fee_cents) FROM payment_nsf pn
+			    SELECT SUM(
+			        pn.fee_cents - COALESCE((
+			            SELECT SUM((p2.metadata->'nsf_fee_allocations'->>pn.id::text)::bigint)
+			              FROM payments p2
+			             WHERE p2.customer_id = pn.customer_id
+			               AND p2.reversed_at IS NULL
+			               AND p2.reverses_payment_id IS NULL
+			               AND p2.status <> 'BOUNCED'
+			               AND (p2.metadata->'nsf_fee_allocations'->>pn.id::text) IS NOT NULL
+			        ), 0)
+			    )
+			      FROM payment_nsf pn
 			     WHERE pn.customer_id = $1
-			       AND NOT EXISTS (
-			           SELECT 1 FROM invoices i
-			            WHERE i.customer_id = pn.customer_id
-			              AND i.status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
-			              AND (i.source_doc_no = pn.id::text OR i.source_doc_no = pn.payment_id::text OR i.metadata->>'payment_nsf_id' = pn.id::text OR i.metadata->>'nsf_payment_id' = pn.payment_id::text OR i.source_kind = 'NSF')
-			       )
 			), 0)`, c.id).Scan(&docsAndReceipts); err != nil {
 			t.Fatalf("the independent documents and receipts read for %s: %v", c.acctNo, err)
 		}
@@ -1159,20 +1184,21 @@ func (w *fw1Walk) assertTillLodgementPostsAtLodgement(t fw1TB) {
 
 func (w *fw1Walk) assertBankLodgementMatchPostsNothing(t fw1TB) {
 	ctx := context.Background()
-	var clearingCount int
-	var clearingKey string
+	var nonLodgementJournalCount int
+	var nonLodgementJournalKey string
 	if err := w.pool.QueryRow(ctx, `
-		SELECT count(*), COALESCE(MAX(j.idempotency_key), '')
+		SELECT count(*), COALESCE(MAX(COALESCE(j.idempotency_key, j.id::text)), '')
 		  FROM bank_matches bm
 		  JOIN gl_journals j ON j.id = bm.journal_id
 		 WHERE bm.target_type = 'LODGEMENT'
 		   AND bm.unmatched_at IS NULL
-		   AND COALESCE(j.idempotency_key, '') LIKE 'bankrec:%'`).Scan(&clearingCount, &clearingKey); err != nil {
-		t.Fatalf("the lodgement match clearing journal read: %v", err)
+		   AND j.source_ref_id IS DISTINCT FROM bm.target_ref_id`).Scan(&nonLodgementJournalCount, &nonLodgementJournalKey); err != nil {
+		t.Fatalf("the lodgement match journal read: %v", err)
 	}
-	if clearingCount != 0 {
-		t.Errorf("the bank match of a till lodgement posted %d clearing journal(s) (%s) instead of matching the lodgement journal and posting nothing",
-			clearingCount, clearingKey)
+	delta1000 := w.journals1000AfterLodgementMatch - w.journals1000BeforeLodgementMatch
+	if nonLodgementJournalCount != 0 || delta1000 != 0 {
+		t.Errorf("the bank match of a till lodgement created %d journal(s) touching 1000 across the match and linked %d non-lodgement journal(s) (%s) on bank_matches.journal_id instead of matching the lodgement journal and posting nothing",
+			delta1000, nonLodgementJournalCount, nonLodgementJournalKey)
 	}
 }
 
