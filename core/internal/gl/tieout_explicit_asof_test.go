@@ -15,8 +15,17 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
+
+// dealerWideCaller is the caller these route-level tests run under: the tie-out is fenced to the
+// caller's branch reach (FW1-10), and a consolidated tie-out (no branch named) is a dealer wide
+// caller's read.
+var dealerWideCaller = identity.StaffContext{
+	UserID: "u-fc", RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership,
+	Scope: identity.ScopeGlobal, Status: identity.StatusActive,
+}
 
 // seenAR records the instant the AR arm was handed.
 type seenAR struct{ at time.Time }
@@ -30,7 +39,7 @@ func TestTieOutRoute_ExplicitAsOfNamesTheHouseDayOnBothArms(t *testing.T) {
 	const day = "2026-03-10"
 	f := &fakeStore{}
 	ar := &seenAR{}
-	h := NewHandler(newTestService(f).WithARSubledger(ar), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h := NewHandler(newTestServiceAs(f, dealerWideCaller).WithARSubledger(ar), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	req := httptest.NewRequest(http.MethodGet, "/gl/tie-out?as_of="+day, nil)
 	rec := httptest.NewRecorder()
@@ -72,7 +81,7 @@ func TestTieOutRoute_ExplicitAsOfIsCutOnTheDealersDay(t *testing.T) {
 	}{{"Los Angeles", la}, {"Toronto after Los Angeles", houseday.DefaultZone()}} {
 		f := &fakeStore{}
 		ar := &seenAR{}
-		h := NewHandler(newTestService(f).WithARSubledger(ar), slog.New(slog.NewTextHandler(io.Discard, nil))).
+		h := NewHandler(newTestServiceAs(f, dealerWideCaller).WithARSubledger(ar), slog.New(slog.NewTextHandler(io.Discard, nil))).
 			WithZone(glZoneSrc{z: tc.zone})
 		req := httptest.NewRequest(http.MethodGet, "/gl/tie-out?as_of="+day, nil)
 		rec := httptest.NewRecorder()
