@@ -16,6 +16,8 @@ drops:
     reason: "Not a route: a comment line in order/activity.go:27 quoting an API framing the surface exists to hide. The literal grep cannot tell comments from registrations."
 
 additions:
+  - route: "POST /api/v1/gl/periods/open-year"
+    reason: "FW1-01: the Controller's early open of the next fiscal year, audit stamped with a reason; the ERP seeded years by hand and had no route that created one."
   - route: "GET /api/v1/gl/posting-queue"
     reason: "FW1-02: the Financial Controller's read of GL events waiting or dead lettered (topic, document, last error, attempts); the ERP posted journals inline and had no outbox to watch."
   - route: "GET /api/v1/gl/posting-queue/count"

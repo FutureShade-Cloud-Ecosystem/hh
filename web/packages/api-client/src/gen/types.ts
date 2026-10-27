@@ -2442,6 +2442,7 @@ export type GlJournal = {
   idempotency_key?: string;
   created_by?: string;
   created_at: string;
+  late_posted?: boolean;
   lines: GlJournalLine[];
 };
 export type GlJournalLineInput = {
@@ -2571,6 +2572,9 @@ export type GlPeriodReopenBody = {
 export type GlCloseYearBody = {
   year: number;
   reason: string;
+};
+export type GlYearOpenResult = {
+  fiscal_year: number;
 };
 export type GlYearCloseResult = {
   fiscal_year: number;
@@ -2831,7 +2835,8 @@ export type BankRecReconInput = {
   bank_account_id: string;
   year: number;
   month: number;
-  statement_balance_cents: number;
+  statement_balance_cents?: number;
+  refresh?: boolean;
 };
 export type BankRecReconciliationList = BankRecReconciliation[];
 export type IdentityPing = {
