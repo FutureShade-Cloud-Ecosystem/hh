@@ -135,6 +135,22 @@ test("the console's password rules are all mapped to words", () => {
   }
 });
 
+test("the console words are keyed on the strings the pinned console sends", () => {
+  // FB Console is Appwrite 2.1.0. Its two named password rules arrive on the
+  // wire as password_recently_used and password_personal_data (the values
+  // carry no user_ prefix; that sits on the PHP constant's name only), and
+  // every other refusal this route can give about the password (a length
+  // outside 8 to 256, the project's own policy, a breached password) arrives
+  // as one anonymous 400 typed general_argument_invalid, because a failed
+  // validator is not a named refusal. The route takes no confirm field, so a
+  // mismatch type cannot arrive either.
+  assert.deepEqual(Object.keys(CONSOLE_PASSWORD_WORDS).sort(), [
+    "general_argument_invalid",
+    "password_personal_data",
+    "password_recently_used",
+  ]);
+});
+
 test("the rule is shown on the page, and the success says what the brief says", () => {
   assert.equal(RECOVERY_RULE_WORD, "At least 8 characters.");
   assert.equal(RECOVERY_DONE_WORDS.title, "Your password is set");
