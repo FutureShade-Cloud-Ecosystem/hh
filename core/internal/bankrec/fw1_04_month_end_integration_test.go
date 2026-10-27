@@ -1369,3 +1369,108 @@ func TestIntegration_FW1_04_CutoverPreviewRouteLegs(t *testing.T) {
 		t.Errorf("preview at 2022-03-30 must be empty at zero: %s", body)
 	}
 }
+
+// Round 4 (FROM-PRINCIPAL 181, P1 money): a starting point must reconcile. The statement balance equals the
+// book balance less ticked outstanding cheques plus ticked deposits in transit; the server refuses the same
+// through RecordCutover, in the desk's words, with the difference named.
+func TestIntegration_FW1_04_CutoverMustReconcile(t *testing.T) {
+	pool := intPool(t)
+	cleanTables(t, pool)
+	acct := rbcAccountID(t, pool)
+	ctx := context.Background()
+
+	const year = 2022
+	mar30 := time.Date(year, 3, 30, 12, 0, 0, 0, time.UTC)
+	mar31 := time.Date(year, 3, 31, 12, 0, 0, 0, time.UTC)
+
+	resetCutover := func() {
+		_, _ = pool.Exec(context.Background(), `
+			UPDATE bank_accounts
+			   SET cutover_date = NULL, cutover_statement_balance_cents = NULL,
+			       cutover_outstanding_journal_ids = '{}'::uuid[], cutover_recorded_by = NULL, cutover_recorded_at = NULL
+			 WHERE id = $1::uuid`, acct)
+	}
+	fw104CleanYear(t, pool, acct, year)
+	fw104EnsurePeriods(t, pool, year, mar31)
+	resetCutover()
+	t.Cleanup(func() {
+		resetCutover()
+		fw104CleanYear(t, pool, acct, year)
+	})
+
+	var userID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("select user: %v", err)
+	}
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	svc := NewService(NewRepository(pool)).WithJournals(glSvc).WithGLBalances(glSvc)
+	h := NewHandler(svc, slog.Default()).WithUserLinker(func(context.Context, string) (string, bool) { return userID, true })
+	sg := testkit.NewStaffGuards(t)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, sg.Guards)
+	bearer := sg.Bearer(t)
+	sg.SetAuthority(identityPkg.StaffAuthority{RoleID: "financial_controller", Tier: identityPkg.TierLeadership, Scope: identityPkg.ScopeGlobal})
+
+	// The ledger at cut over: the go live opening on 2022-03-31 and a cheque written 2022-03-30, still in flight.
+	openJID, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-r4-open",
+		Source:         "ADJUSTMENT",
+		Memo:           "opening balance at go live",
+		DocumentDate:   mar31,
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 500000, Memo: "opening balance"},
+			{AccountCode: "3900", CreditCents: 500000, Memo: "retained earnings"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post opening balance: %v", err)
+	}
+	chequeJID, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-r4-cheque",
+		Source:         "ADJUSTMENT",
+		Memo:           "cheque 998 still in flight at cut over",
+		DocumentDate:   mar30,
+		Lines: []gl.ExternalLine{
+			{AccountCode: "6300", DebitCents: 20000, Memo: "vendor"},
+			{AccountCode: "1000", CreditCents: 20000, Memo: "cheque 998"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post cheque: %v", err)
+	}
+
+	post := func(body string) (int, string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/bankrec/accounts/"+acct+"/cutover", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set(authz.HeaderXOrg, testkit.OrgNorthSlug)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+
+	// The book at cut over is $4,800.00 (the $5,000.00 opening less the $200.00 cheque), so the statement the
+	// book expects with nothing ticked is $4,800.00: a statement of $5,000.00 with nothing ticked is refused
+	// in words naming $200.00.
+	code, body := post(`{"cutover_date":"2022-03-31","opening_statement_balance_cents":500000}`)
+	if code != http.StatusUnprocessableEntity || !strings.Contains(body, "the statement and the book differ by $200.00") || !strings.Contains(body, "tick the items still outstanding at cut over, or check the date and balance") {
+		t.Errorf("unreconciled cut-over: status = %d body %s, want 422 naming the difference and the tick", code, body)
+	}
+	code, body = post(`{"cutover_date":"2022-03-31","opening_statement_balance_cents":490000,"outstanding_journal_ids":["` + chequeJID + `"]}`)
+	if code != http.StatusUnprocessableEntity || !strings.Contains(body, "the statement and the book differ by $100.00") {
+		t.Errorf("ticked but short cut-over: status = %d body %s, want 422 differing by $100.00", code, body)
+	}
+	// The reconciling record lands: statement $5,000.00 with the cheque ticked (book $4,800.00 plus the $200.00
+	// still outstanding), and again with nothing ticked at a balance the book makes exactly.
+	code, body = post(`{"cutover_date":"2022-03-31","opening_statement_balance_cents":500000,"outstanding_journal_ids":["` + chequeJID + `"]}`)
+	if code != http.StatusOK {
+		t.Errorf("reconciling cut-over with the cheque ticked: status = %d body %s, want 200 OK", code, body)
+	}
+	resetCutover()
+	code, body = post(`{"cutover_date":"2022-03-31","opening_statement_balance_cents":480000}`)
+	if code != http.StatusOK {
+		t.Errorf("reconciling cut-over at the bare book: status = %d body %s, want 200 OK", code, body)
+	}
+	_ = openJID
+}
