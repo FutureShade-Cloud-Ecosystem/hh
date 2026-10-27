@@ -292,7 +292,7 @@ func walkEveryCustomerDoor(t *testing.T, pool *pgxpool.Pool, custB, custShared, 
 	// Round 4 fixtures: North B's account with an invoice and a promise at each branch, and rep assignments.
 	invoice := func(branch, tag string) string {
 		return one(`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, org_id)
-			VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', current_date, current_date, 700, 0, 700, 700, now(), $4::uuid) RETURNING id::text`,
+			VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date, 700, 0, 700, 700, now(), $4::uuid) RETURNING id::text`,
 			"R4-INV-"+tag+"-"+suffix, custB, branch, testkit.OrgNorthID)
 	}
 	invA, invB := invoice(testkit.BranchNorthAID, "A"), invoice(testkit.BranchNorthBID, "B")

@@ -255,7 +255,7 @@ func TestIntegration_FW1_06a_BounceOfFeePayingPaymentReopensNSFFee(t *testing.T)
 
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, doc_type)
-		VALUES ('INV-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 10, CURRENT_DATE + 20, 50000, 0, 50000, 50000, 'INVOICE')
+		VALUES ('INV-'||$1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date - 10, (now() AT TIME ZONE 'America/Toronto')::date + 20, 50000, 0, 50000, 50000, 'INVOICE')
 		RETURNING id::text`, suffix, custID, branchID).Scan(&invID); err != nil {
 		t.Fatalf("plant invoice: %v", err)
 	}

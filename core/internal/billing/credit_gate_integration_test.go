@@ -84,8 +84,8 @@ func (r *creditRig) invoiceDueDaysAgo(t *testing.T, tag string, cents int64, day
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, order_id, status, issue_date, due_date,
 		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
 		 VALUES ('INV-CRED-'||$1, $2::uuid, $3::uuid, $6::uuid, 'FINALIZED',
-		         CURRENT_DATE - $4::int - 30, CURRENT_DATE - $4::int, $5, 0, $5, $5,
-		         (CURRENT_DATE - $4::int - 30)::timestamptz)
+		         (now() AT TIME ZONE 'America/Toronto')::date - $4::int - 30, (now() AT TIME ZONE 'America/Toronto')::date - $4::int, $5, 0, $5, $5,
+		         ((now() AT TIME ZONE 'America/Toronto')::date - $4::int - 30)::timestamptz)
 		 RETURNING id::text`,
 		fmt.Sprintf("%s-%d", tag, time.Now().UnixNano()%1_000_000_000),
 		r.customerID, r.branchID, daysAgo, cents, order).Scan(&id); err != nil {
