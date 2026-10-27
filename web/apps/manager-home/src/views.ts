@@ -156,7 +156,7 @@ export function renderC10Landing(
       <section class="today-section" data-test="c10-today-kpis" aria-label="Branch figures today">
         <div class="today-head">
           <h2 class="section-eyebrow">Today</h2>
-          <div class="branch-toggle" role="group" aria-label="Branch scope">
+          <div class="branch-toggle" role="group" aria-label="Applies to">
             <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="combined" aria-pressed=${branchMode === "combined" ? "true" : "false"}>All branches together</button>
             <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="split" aria-pressed=${branchMode === "split" ? "true" : "false"}>Branch beside branch</button>
           </div>

@@ -1496,7 +1496,7 @@ function myHomeBody(profile) {
   };
 }
 
-function vizSeries(metricId) {
+function vizSeries(metricId, dimension) {
   if (metricId === "picks.queue") {
     return { total: 20, points: [
       { label: "Waiting", number: 8 },
@@ -1507,13 +1507,23 @@ function vizSeries(metricId) {
   }
   if (metricId === "deliveries.today") return { total: 14, points: [{ label: "Trenton", number: 10 }, { label: "Kingston", number: 4 }] };
   if (metricId === "sales.today") return { total: 123456, points: [{ label: "Trenton", number: 123456 }] };
-  if (metricId === "ar.aging") return { total: 9624000, points: [
-    { label: "Current", number: 6130000 },
-    { label: "1-30", number: 1840000 },
-    { label: "31-60", number: 900000 },
-    { label: "60+", number: 754000 },
-  ] };
-  if (metricId === "margin.gross_bps") return { total: 3180, points: [{ label: "PLM", number: 3180 }] };
+  if (metricId === "ar.aging") {
+    // The bucket arm by bucket; past due per branch by branch. The branch rows
+    // tie with the buckets' non-Current total: 1840000+900000+754000 = 3494000.
+    if (dimension === "branch") return { total: null, points: [{ label: "PLM", number: 3494000 }] };
+    return { total: 9624000, points: [
+      { label: "Current", number: 6130000 },
+      { label: "1-30", number: 1840000 },
+      { label: "31-60", number: 900000 },
+      { label: "60+", number: 754000 },
+    ] };
+  }
+  if (metricId === "margin.gross_bps") {
+    // FROM-PRINCIPAL 132: the branch split carries no total (a rate is never
+    // summed); the weighted all branches rate rides the none composition.
+    if (dimension === "none") return { total: 3180, points: [{ label: "All branches", number: 3180 }] };
+    return { total: null, points: [{ label: "PLM", number: 3180 }] };
+  }
   if (metricId === "warranty.open_claims") return { total: 3, points: [{ label: "Open", number: 3 }] };
   if (metricId === "orders.open") return { total: 12, points: [] };
   return null;
@@ -1970,7 +1980,7 @@ async function handle(req, res) {
       const metricId = dimAt > 0 ? head.slice(0, dimAt) : head;
       const measure = WIDGET_MEASURES.find((m) => m.metric_id === metricId);
       if (measure === undefined) return null;
-      const series = vizSeries(metricId);
+      const series = vizSeries(metricId, dimension);
       if (series === null) return null;
       return {
         tile_id: id,

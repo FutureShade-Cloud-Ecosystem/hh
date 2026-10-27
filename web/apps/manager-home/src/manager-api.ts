@@ -561,11 +561,16 @@ export class ManagerApi {
 
   // -- WALK-C10 / FW1-14: the TODAY cards, every figure the core returned ------------------------
 
-  /** The four TODAY money KPI cards, measured by the core's own viz series. */
+  /** The four TODAY money KPI cards, measured by the core's own viz series. Branch rows carry the
+   * caller's own branch names, read through the same fenced branches route every other view uses. */
   async readLandingKpis(): Promise<Result<readonly LandingKpi[]>> {
-    const answer = await staffDashboard.dashboardGetViz(this.#client, { tile: [...LANDING_VIZ_TILES] });
+    const [answer, names] = await Promise.all([
+      staffDashboard.dashboardGetViz(this.#client, { tile: [...LANDING_VIZ_TILES] }),
+      this.branches(),
+    ]);
     if (!answer.ok) return answer;
-    return { ok: true, value: landingKpisFrom(toLandingTiles(answer.value)) };
+    const nameByCode = new Map(names.ok ? names.value.map((b) => [b.code, b.name]) : []);
+    return { ok: true, value: landingKpisFrom(toLandingTiles(answer.value), nameByCode) };
   }
 
   /** The DELIVERIES TODAY card, counted off each branch's own dispatch board. */
@@ -619,8 +624,10 @@ function toLandingTiles(raw: unknown): readonly LandingVizTile[] {
  * answer and its card says so in words. */
 const LANDING_VIZ_TILES = [
   "viz.sales.today-branch-split",
+  "viz.margin.gross_bps-none-list",
   "viz.margin.gross_bps-branch-list",
   "viz.ar.aging-bucket-split",
+  "viz.ar.aging-branch-split",
 ] as const;
 
 function landingMoney(cents: number): string {
@@ -636,32 +643,47 @@ function landingNotConnected(title: string, kind: "money" | "percent"): LandingK
 }
 
 /** The four money KPI cards from the core's viz answer. A measure that did not come back, or came
- * back in any state but ok, is a card with its title and LANDING_NOT_CONNECTED, never a figure. */
-export function landingKpisFrom(tiles: readonly LandingVizTile[]): readonly LandingKpi[] {
+ * back in any state but ok, is a card with its title and LANDING_NOT_CONNECTED, never a figure.
+ *
+ * FROM-PRINCIPAL 132: a RATE is never summed and never averaged. The all branches gross margin is
+ * the provider's own weighted aggregate (the none composition's total, total margin cents over
+ * total sales cents across the branches); with branch points but no aggregate the card says
+ * LANDING_NOT_CONNECTED. Branch rows name the branches (the caller's own branch list), never the
+ * three letter codes the series carries. */
+export function landingKpisFrom(
+  tiles: readonly LandingVizTile[],
+  branchNames: ReadonlyMap<string, string> = new Map(),
+): readonly LandingKpi[] {
   const byId = new Map(tiles.map((t) => [t.tile_id, t]));
   const measured = (id: string): LandingVizTile | null => {
     const tile = byId.get(id);
     return tile !== undefined && tile.state === "ok" ? tile : null;
   };
-  const totalOf = (tile: LandingVizTile): number => tile.total ?? tile.points.reduce((a, p) => a + p.number, 0);
+  const branchLabel = (code: string): string => branchNames.get(code) ?? code;
+  const branchRows = (tile: LandingVizTile, show: (n: number) => string) =>
+    tile.points.map((p) => ({ label: branchLabel(p.label), value: show(p.number) }));
 
   const sales = measured("viz.sales.today-branch-split");
-  const margin = measured("viz.margin.gross_bps-branch-list");
+  const marginRate = measured("viz.margin.gross_bps-none-list");
+  const marginByBranch = measured("viz.margin.gross_bps-branch-list");
   const aging = measured("viz.ar.aging-bucket-split");
+  const agingByBranch = measured("viz.ar.aging-branch-split");
 
   const cards: LandingKpi[] = [];
   cards.push(sales !== null
     ? {
         title: "Sales today", kind: "money", connected: true,
-        value: landingMoney(totalOf(sales)), note: "Counter sales committed today",
-        branches: sales.points.map((p) => ({ label: p.label, value: landingMoney(p.number) })),
+        value: landingMoney(sales.total ?? sales.points.reduce((a, p) => a + p.number, 0)),
+        note: "Counter sales committed today",
+        branches: branchRows(sales, landingMoney),
       }
     : landingNotConnected("Sales today", "money"));
-  cards.push(margin !== null
+  // Money adds; a rate does not. The combined margin is the core's weighted aggregate alone.
+  cards.push(marginRate !== null && marginRate.total !== null
     ? {
         title: "Gross margin", kind: "percent", connected: true,
-        value: landingPercentFromBps(totalOf(margin)), note: "All invoiced order lines, all time",
-        branches: margin.points.map((p) => ({ label: p.label, value: landingPercentFromBps(p.number) })),
+        value: landingPercentFromBps(marginRate.total), note: "All invoiced order lines, all time",
+        branches: marginByBranch !== null ? branchRows(marginByBranch, landingPercentFromBps) : [],
       }
     : landingNotConnected("Gross margin", "percent"));
   cards.push(aging !== null
@@ -669,7 +691,7 @@ export function landingKpisFrom(tiles: readonly LandingVizTile[]): readonly Land
         title: "Receivables past due", kind: "money", connected: true,
         value: landingMoney(aging.points.filter((p) => p.label !== "Current").reduce((a, p) => a + p.number, 0)),
         note: "Open invoices past their due day",
-        branches: [],
+        branches: agingByBranch !== null ? branchRows(agingByBranch, landingMoney) : [],
       }
     : landingNotConnected("Receivables past due", "money"));
   // Cash collected today: no core measure ships for it, so the card says so in words.
@@ -708,7 +730,7 @@ export function landingDeliveriesFrom(
         runId: run.run_no,
         branch: branches.find((b) => b.id === board.branch_id)?.name ?? board.branch_id,
         when: run.dispatched_at !== null ? `left ${landingClockWords(run.dispatched_at)}` : "not left yet",
-        stops: `${done} of ${run.stop_count} stops done`,
+        stops: `${done} of ${run.stop_count} ${run.stop_count === 1 ? "stop" : "stops"} done`,
       });
     }
   }
@@ -732,7 +754,7 @@ function landingClockWords(iso: string): string {
 const LANDING_NEED_KIND_WORDS: Readonly<Record<string, string>> = Object.freeze({
   MARGIN_BELOW_MINIMUM: "Margin floor",
   CREDIT_LIMIT_EXCEEDED: "Credit limit",
-  COD_CONSTRAINT: "Cash on demand",
+  COD_CONSTRAINT: "Cash On Demand",
   JE_OVER_THRESHOLD: "Journal over threshold",
   FREIGHT_ABOVE_QUOTE: "Freight above the quote",
 });
@@ -753,7 +775,7 @@ export function landingNeedsFrom(rows: readonly ApprovalRow[]): readonly Landing
         id: row.id,
         title: ref === "" ? kindWord : `${kindWord}: ${ref}`,
         body: body === "" ? row.detail : body.charAt(0).toUpperCase() + body.slice(1),
-        amountLabel: row.amount_cents > 0 ? landingMoney(row.amount_cents) : "not priced",
+        amountLabel: row.amount_cents > 0 ? landingMoney(row.amount_cents) : "Not priced",
         action: "open-approvals",
         actionLabel: "Open the request",
         accent: row.policy_type === "MARGIN_BELOW_MINIMUM" ? "margin"
