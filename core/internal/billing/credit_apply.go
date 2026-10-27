@@ -56,12 +56,14 @@ package billing
 //
 // -- THE LOCKS -------------------------------------------------------------------------------------
 // The one money lock order (payments/LOCK-ORDER.md) as the reapply walks it: the named invoice rows
-// FOR NO KEY UPDATE in ascending id order, then an ACCOUNT credit's group anchor row FOR UPDATE
-// (lockCreditGroupAnchor, the one helper both doors call), and only then the first balance move's
-// draw of the invoices counter. No payments counter is drawn: nothing here stamps a payments row.
-// The anchor before the counter in BOTH doors is what keeps a staged reversal and apply of one
-// group from deadlocking (SQLSTATE 40P01, round 4): the reversal once drew the counter first and
-// the apply took the group first, so each could hold what the other needed.
+// FOR NO KEY UPDATE in ascending id order, then the credit's own lock step, an ACCOUNT credit's
+// group anchor row FOR UPDATE (lockCreditGroupAnchor) or a MEMO credit's document row FOR NO KEY
+// UPDATE (lockCreditMemoRow; the apply takes the memo among the invoice rows ascending), and only
+// then the first balance move's draw of the invoices counter. No payments counter is drawn: nothing
+// here stamps a payments row. The credit's lock before the counter in BOTH doors of either kind is
+// what keeps a staged reversal and apply from deadlocking (SQLSTATE 40P01, rounds 4 and 5): a
+// reversal once drew the counter first while the apply took the group's or the memo's row first,
+// so each could hold what the other needed.
 
 import (
 	"context"
@@ -670,6 +672,35 @@ SELECT 1
 	return true, nil
 }
 
+// lockCreditMemoRow is the one memo step of the MEMO doors (round 5), the anchor helper's sibling
+// for the memo document's own row, so both credit kinds share the one order rule the file's THE
+// LOCKS header states: the target invoice rows first (ascending id), then the credit's own lock,
+// the memo document's row here or the group's anchor row there (lockCreditGroupAnchor), and only
+// then the first draw of the invoices feed counter. The reversal once drew the counter on its
+// invoice restore before it locked the memo row, while an apply of the same memo locks the memo
+// row among the invoice rows before its own counter draw, so a staged reversal and apply of one
+// memo could each hold what the other needed (SQLSTATE 40P01, round 5). Taking the lock and the
+// read as one step lets the reversal judge balance and status against the committed state.
+//
+// A missing row, or one of another account's, answers NoSuchCreditError, the apply's memo read's
+// own answer, so no existence leaks.
+func lockCreditMemoRow(ctx context.Context, tx pgx.Tx, customerID, memoID string) (int64, string, error) {
+	var balance int64
+	var status string
+	err := tx.QueryRow(ctx, `
+SELECT balance_cents, status
+  FROM invoices
+ WHERE id = $1::uuid AND customer_id = $2::uuid
+   FOR NO KEY UPDATE`, memoID, customerID).Scan(&balance, &status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, "", NoSuchCreditError{CreditID: memoID}
+		}
+		return 0, "", err
+	}
+	return balance, status, nil
+}
+
 // -- the reversal ---------------------------------------------------------------------------------
 
 // ReverseCreditApplicationInput is one reversal request.
@@ -814,7 +845,27 @@ SELECT COALESCE(source_type, ''), COALESCE(source_ref_id, id)::text, COALESCE(br
 		}
 	}
 
-	// Restore the invoice side.
+	// MEMO: the memo document's row is the credit step's lock (round 5, the shared helper), taken
+	// here BEFORE the restore's counter draw below, the same order the apply walks (the memo among
+	// the invoice rows ascending, before its own counter draw). Balance and status are judged
+	// under that lock: a memo VOIDED after its application stays VOID (S6 P3), so the restore is
+	// refused rather than bringing the memo back FINALIZED, and nothing has been written yet.
+	isMemo := record.CreditKind == CreditKindMemo
+	var memoBalance int64
+	if isMemo {
+		var memoStatus string
+		memoBalance, memoStatus, err = lockCreditMemoRow(ctx, tx, invCust, record.CreditID)
+		if err != nil {
+			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: read the memo: %w", err)
+		}
+		if memoStatus == "VOID" {
+			return CreditApplicationReversed{}, httpx.BadRequestf(
+				"credit memo %s is void, its application cannot be reversed", record.CreditID)
+		}
+	}
+
+	// Restore the invoice side. Both of the credit step's locks (the anchor, or the memo row) are
+	// held by the time this first counter draw happens.
 	after := invBalance + amount
 	if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
 UPDATE invoices
@@ -828,21 +879,8 @@ UPDATE invoices
 	creditOpenAfter := int64(0)
 	switch record.CreditKind {
 	case CreditKindMemo:
-		var memoBalance int64
-		var memoStatus string
-		if err := tx.QueryRow(ctx, `SELECT balance_cents, status FROM invoices WHERE id = $1::uuid AND customer_id = $2::uuid FOR NO KEY UPDATE`,
-			record.CreditID, invCust).Scan(&memoBalance, &memoStatus); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return CreditApplicationReversed{}, NoSuchCreditError{CreditID: record.CreditID}
-			}
-			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: read the memo: %w", err)
-		}
-		// The reversal checks the memo's status (S6 P3): a memo VOIDED after its application stays
-		// VOID, so the restore is refused rather than bringing the memo back FINALIZED.
-		if memoStatus == "VOID" {
-			return CreditApplicationReversed{}, httpx.BadRequestf(
-				"credit memo %s is void, its application cannot be reversed", record.CreditID)
-		}
+		// The memo's row is already locked and read (the credit step above); only the restore's
+		// counter draw remains.
 		creditOpenAfter = -memoBalance + amount
 		if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
 UPDATE invoices
