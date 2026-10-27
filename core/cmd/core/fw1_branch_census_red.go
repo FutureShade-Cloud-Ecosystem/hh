@@ -154,21 +154,27 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 	},
 	{
 		File:         "core/internal/bankrec/service.go",
-		Func:         "(*Service).persistProposal",
-		Kind:         "PostJournal",
-		BranchSource: "prop.Journal.BranchID (CandidatePayment.BranchID for PAYMENT; Lodgement.BranchID for LODGEMENT)",
+		Func:         "(*Service).persistAndJournal",
+		Kind:         "PostJournalTx",
+		BranchSource: "the journal journalFn built carries its branch: the claimed payment's (PAYMENT, manualJournal from the payment's facts) or the lodgement's (LODGEMENT and the other paths)",
 	},
 	{
 		File:         "core/internal/bankrec/service.go",
-		Func:         "(*Service).ManualMatch",
+		Func:         "(*Service).persistAndJournal",
 		Kind:         "PostJournal",
-		BranchSource: "manualJournal stamps the LODGEMENT path from the till's lodgement facts (FW1-06a) and passes empty BranchID for PAYMENT today (RED, owned by FW1-05)",
+		BranchSource: "the two step order for a poster without the transaction arm; the same journalFn branch source",
+	},
+	{
+		File:         "core/internal/bankrec/service.go",
+		Func:         "(*Service).UnmatchReach",
+		Kind:         "PostJournalTx",
+		BranchSource: "reversalJournal carries the claimed payment's branch, or the lodgement's from the till's append only facts (FW1-05 item 4)",
 	},
 	{
 		File:         "core/internal/bankrec/service.go",
 		Func:         "(*Service).UnmatchReach",
 		Kind:         "PostJournal",
-		BranchSource: "reversalJournal sets no BranchID today (RED, owned by FW1-05)",
+		BranchSource: "the two step order for a poster without the transaction arm; reversalJournal carries the claimed payment's branch, or the lodgement's from the till's append only facts (FW1-05 item 4)",
 	},
 	{
 		File:         "core/internal/billing/credit_memo.go",
