@@ -229,6 +229,35 @@ func TestIntegration_Workspace_FeedGivesNoPaymentBack(t *testing.T) {
 	}
 }
 
+// An account whose only open AR is an NSF fee, written exactly as till writes it (ADJUSTMENT,
+// source payment_nsf, till/repository.go): the workspace must answer 200 and the header's open
+// figure must carry the fee, because the header reads the same union the aging reads (R2-P1-1).
+func TestIntegration_Workspace_OpenNSFFeeAnswersOK(t *testing.T) {
+	pool := intPool(t)
+	id := seedCustomer(t, pool, "-FEE")
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, memo, occurred_at)
+		 VALUES ($1::uuid, 'ADJUSTMENT', 2500, 2500, 'payment_nsf', gen_random_uuid(), 'NSF fee', now() - interval '1 hour')`, id); err != nil {
+		t.Fatalf("seed fee: %v", err)
+	}
+	link := func(context.Context, string) (string, bool) { return "a1b2c3d4-0000-4000-9000-000000000001", true }
+	code, body := workspaceCall(t, pool, true, link, http.MethodGet, "/api/v1/billing/ar/customers/"+id+"/workspace", "")
+	if code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", code, body)
+	}
+	var w struct {
+		Header struct {
+			OpenCents int64 `json:"open_cents"`
+		} `json:"header"`
+	}
+	if err := json.Unmarshal([]byte(body), &w); err != nil {
+		t.Fatal(err)
+	}
+	if w.Header.OpenCents != 2500 {
+		t.Fatalf("header open_cents = %d, want 2500 (the open NSF fee, the same union the aging reads)", w.Header.OpenCents)
+	}
+}
+
 // A platform id that is not a uuid (FB Console's are not) must not reach the author column.
 func TestIntegration_Workspace_NoteSavesForANonUuidPlatformId(t *testing.T) {
 	pool := intPool(t)
