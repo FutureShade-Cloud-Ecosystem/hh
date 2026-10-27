@@ -34,6 +34,10 @@ const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
+// The maker-checker threshold the seeded org policy row carries (gl_policy, 0032, $5,000). The credit
+// memo's rail reads this number, the way the route does, and the stub's own credit route parks
+// against it: a credit at or over it waits for a second pair of eyes and moves no money.
+const GL_APPROVAL_THRESHOLD_CENTS = 500_000;
 // The core's closed table, in its order: the till's pair, the Yard manager, the Yard Team and the
 // Driver, Payables and Receivables, the Procurement manager, then the Money Desk's controller. The
 // table is listed whole so the way in's filter and the cross app card legs mean something against it. The
@@ -1547,6 +1551,28 @@ async function handle(req, res) {
     const held = world.keys.get(`credit:${key}`);
     if (held !== undefined) return send(res, 200, { ...held, reused: true });
     const tax = Math.round((amount * 13) / 100);
+    const total = amount + tax;
+    // The maker-checker rail (gl_policy.je_approval_threshold_cents), read against the credit's
+    // TOTAL, tax included: at or over the threshold the credit parks and moves no money at all.
+    if (total >= GL_APPROVAL_THRESHOLD_CENTS) {
+      const parked = {
+        status: "AWAITING_APPROVAL",
+        credit_memo_id: uuid("c", 1),
+        credit_memo_no: "#CM-9001",
+        customer_id: customerId,
+        branch_id: branchId,
+        invoice_id: invoiceId === "" ? undefined : invoiceId,
+        subtotal_cents: -amount,
+        tax_cents: -tax,
+        total_cents: -total,
+        gl_account: "4000",
+        reason,
+        reused: false,
+        message: `Credit memo #CM-9001 for $${(total / 100).toFixed(2)} is waiting for a second pair of eyes. No money has moved yet.`,
+      };
+      world.keys.set(`credit:${key}`, parked);
+      return send(res, 202, parked);
+    }
     const credit = {
       status: "ISSUED",
       credit_memo_id: uuid("c", 1),
@@ -1556,14 +1582,30 @@ async function handle(req, res) {
       invoice_id: invoiceId === "" ? undefined : invoiceId,
       subtotal_cents: -amount,
       tax_cents: -tax,
-      total_cents: -(amount + tax),
+      total_cents: -total,
       gl_account: "4000",
       reason,
       reused: false,
-      message: `Credit memo #CM-9001 for $${((amount + tax) / 100).toFixed(2)} is issued.`,
+      message: `Credit memo #CM-9001 for $${(total / 100).toFixed(2)} is issued.`,
     };
     world.keys.set(`credit:${key}`, credit);
     return send(res, 201, credit);
+  }
+
+  // The GL policy row (core/internal/gl/handler.go, GET /api/v1/gl/policy): the branch's
+  // maker-checker threshold, the branch's row over the org default. The credit form reads this
+  // number so it can say what the rail will do BEFORE the press, and the stub's own credit route
+  // parks against it, the way the core does.
+  if (method === "GET" && path === "/api/v1/gl/policy") {
+    const branch = (url.searchParams.get("branch_id") ?? "").trim();
+    return send(res, 200, {
+      ...(branch === "" ? {} : { branch_id: branch }),
+      je_approval_threshold_cents: GL_APPROVAL_THRESHOLD_CENTS,
+      fiscal_year_start_month: 1,
+      cost_basis_strategy: "WEIGHTED_AVG",
+      exclude_special_buys: false,
+      notes: "",
+    });
   }
 
   if (method === "POST" && path === "/api/v1/ar/register/reminders") {

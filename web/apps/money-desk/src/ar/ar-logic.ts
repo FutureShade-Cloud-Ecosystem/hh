@@ -246,6 +246,42 @@ export function creditWords(result: { status: string; credit_memo_no: string; to
   return `Credit memo ${result.credit_memo_no} for ${formatMoney(Math.abs(result.total_cents))} is issued.`;
 }
 
+/**
+ * What the credit DOES, in one sentence, for the person about to press.
+ *
+ * A credit on the account lowers what the customer owes on their account and touches no invoice; a
+ * credit against one invoice lowers what is owed on that invoice, up to what that invoice has left.
+ * The two are different credits, and the person pressing the button has to be able to see which one
+ * they are about to give.
+ */
+export function creditTargetWords(invoice: { invoice_no: string; balance_cents: number } | null): string {
+  if (invoice === null) {
+    return "On the account: this credit lowers what this customer owes on their account. It does not change any open invoice.";
+  }
+  return `Against invoice ${invoice.invoice_no}: this credit lowers what is owed on that invoice, up to ${formatMoney(invoice.balance_cents)}.`;
+}
+
+/**
+ * What the approval rail will do to this credit, for the person about to press.
+ *
+ * The threshold is the branch's own (gl_policy.je_approval_threshold_cents), read the way the route
+ * reads it: the branch's row over the org default. Null means the desk could not read it, and zero
+ * is gl's "no rail": either way the desk says nothing about approval rather than guess at a number.
+ *
+ * The route compares the credit's TOTAL, tax included, with the threshold; the desk compares the
+ * AMOUNT it was given. The sentence is true in both directions: an amount at or over the threshold
+ * always waits (a total is never smaller than its amount), and the sentence about what waits says
+ * "tax included", so a credit that only crosses the threshold once its tax is added is named too.
+ */
+export function creditApprovalWords(thresholdCents: number | null, amountCents: number | null): string {
+  if (thresholdCents === null || thresholdCents <= 0) return "";
+  const at = formatMoney(thresholdCents);
+  if (amountCents !== null && amountCents >= thresholdCents) {
+    return `This credit is at or over ${at}, so it waits for a second pair of eyes. It moves no money until it is approved.`;
+  }
+  return `A credit of ${at} or more, tax included, waits for a second pair of eyes. It moves no money until it is approved.`;
+}
+
 export function validatePromise(input: { amountText: string; date: string; by: string; note: string; balanceCents: number }): PromiseCheck {
   if (input.amountText.trim() === "") return { ok: false, words: "Enter the amount promised, such as 100.00." };
   const cents = parseAmountToCents(input.amountText);
