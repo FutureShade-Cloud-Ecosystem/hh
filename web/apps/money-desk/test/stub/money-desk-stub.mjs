@@ -231,6 +231,8 @@ function reset(kind = "full") {
     credits: [{ acct: 4, amount_cents: 12_500 }],
     holds: [],
     credit_memos: [],
+    account_credits: [],
+    credit_applications: [],
     ap_contacts: new Map(),
     statements: new Map(),
     workspace_statements: [],
@@ -325,6 +327,10 @@ function reset(kind = "full") {
   world.credit_memos.push(
     { id: uuid("a", 500), no: "CM-0001", acct: 1, issued_at: NOW_ISO(), amount_cents: 25_000, applied_cents: 0, reason: "Damaged on arrival, partial credit", status: "POSTED" },
     { id: uuid("a", 501), no: "CM-0002", acct: 2, issued_at: NOW_ISO(), amount_cents: 50_000, applied_cents: 50_000, reason: "Returned full pallet", status: "POSTED" },
+  );
+  world.account_credits.push(
+    { id: uuid("a", 600), no: "AC-0001", acct: 1, issued_at: dayOffset(-5), total_cents: 15_000, open_cents: 15_000, reason: "Unapplied overpayment credit" },
+    { id: uuid("a", 601), no: "AC-0002", acct: 4, issued_at: dayOffset(-3), total_cents: 12_500, open_cents: 12_500, reason: "Deposit credit on account" },
   );
   world.ap_contacts.set(custId(1), { name: "Maria Quinn", email: "ap@graniteedge.example", phone: "+1-555-0101" });
   world.ap_contacts.set(custId(2), { name: "Otis Bell", email: "ops@oakline.example", phone: "+1-555-0102" });
@@ -840,6 +846,42 @@ function detail(inv) {
   };
   if (inv.promise !== null) out.promise = inv.promise;
   if (inv.dispute !== null) out.dispute = inv.dispute;
+  out.open_credits = [
+    ...world.credit_memos
+      .filter((m) => m.acct === inv.acct && m.status !== "VOID" && m.amount_cents - (m.applied_cents ?? 0) > 0)
+      .map((m) => ({
+        id: m.id,
+        kind: "MEMO",
+        credit_no: m.no,
+        issued_at: String(m.issued_at).slice(0, 10),
+        total_cents: m.amount_cents,
+        open_cents: m.amount_cents - (m.applied_cents ?? 0),
+        ...(m.reason ? { reason: m.reason } : {}),
+      })),
+    ...(world.account_credits ?? [])
+      .filter((c) => c.acct === inv.acct && c.open_cents > 0)
+      .map((c) => ({
+        id: c.id,
+        kind: "ACCOUNT",
+        credit_no: c.no,
+        issued_at: c.issued_at,
+        total_cents: c.total_cents,
+        open_cents: c.open_cents,
+        ...(c.reason ? { reason: c.reason } : {}),
+      })),
+  ];
+  out.credit_applications = (world.credit_applications ?? [])
+    .filter((app) => app.invoice_id === inv.id)
+    .map((app) => ({
+      application_id: app.application_id,
+      credit_id: app.credit_id,
+      credit_kind: app.credit_kind,
+      credit_no: app.credit_no,
+      amount_cents: app.amount_cents,
+      reason: app.reason,
+      applied_at: app.applied_at,
+      ...(app.reversed_at ? { reversed_at: app.reversed_at, reversal_reason: app.reversal_reason } : {}),
+    }));
   out.order_no = `SO-${2000 + invNumber(inv)}`;
   out.order_id = uuid("o", invNumber(inv));
   return out;

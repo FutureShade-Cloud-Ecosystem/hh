@@ -35,7 +35,7 @@ import type { ApplyAnswer } from "./ar-api.js";
 import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
-import { renderContacts, renderInvoiceActions, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
+import { renderContacts, renderInvoiceActions, renderInvoiceCredits, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
 import { renderSettingsPanels } from "./office-settings-views.js";
 
 export type Tab = "receivables" | "statements" | "holds" | "reminders" | "settings";
@@ -892,6 +892,7 @@ function invoicePanel(model: DeskModel, account: AccountModel): TemplateResult {
       ${renderInvoiceActions(model.office, d)}
       <h3>Payments on this invoice</h3>
       ${paymentList(model, account)}
+      ${renderInvoiceCredits(model.office, d, account.invoices.filter(isUnpaidInvoice))}
     </section>
   `;
 }
