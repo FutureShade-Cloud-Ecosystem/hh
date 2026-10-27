@@ -20,11 +20,16 @@ func (m *movingBalance) GLBalanceCents(_ context.Context, _ string, _, _ int, _ 
 	return m.val, nil
 }
 
+func (w *reachWorld) closedMonthLine(t *testing.T, desc string, cents int64) string {
+	t.Helper()
+	return insertLine(t, w.pool, w.account, time.Now().UTC().Truncate(24*time.Hour).AddDate(0, -1, 0), desc, desc, cents)
+}
+
 func varianceWorld(t *testing.T) (*reachWorld, *Service, *movingBalance, Reconciliation, string) {
 	t.Helper()
 	w := newReachWorld(t)
 	ctx := context.Background()
-	line := w.line(t, "SF2S DEPOSIT", 70000)
+	line := w.closedMonthLine(t, "SF2S DEPOSIT", 70000)
 	if code, body := w.post(w.callerAB, w.manualOf(line, "JOURNAL", w.plantJournal(t, "sf2s-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 70000, 0}, {"4950", 0, 70000}}), 70000)); code != http.StatusCreated {
 		t.Fatalf("setup: %d %s", code, body)
 	}
@@ -79,7 +84,7 @@ func TestIntegration_ReconVariance_ALedgerThatMovedAfterTheOpenRefusesTheSignOff
 func TestIntegration_ReconVariance_ADerivedStatementBalanceIsRecomputedFromTheLines(t *testing.T) {
 	w := newReachWorld(t)
 	ctx := context.Background()
-	line := w.line(t, "SF2S DERIVED", 50000)
+	line := w.closedMonthLine(t, "SF2S DERIVED", 50000)
 	if code, body := w.post(w.callerAB, w.manualOf(line, "JOURNAL", w.plantJournal(t, "sf2s-d-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 50000, 0}, {"4950", 0, 50000}}), 50000)); code != http.StatusCreated {
 		t.Fatalf("setup: %d %s", code, body)
 	}
@@ -97,7 +102,7 @@ func TestIntegration_ReconVariance_ADerivedStatementBalanceIsRecomputedFromTheLi
 		t.Fatalf("setup: statement %d variance %d, want 50000 and 0", rec.StatementBalanceCents, rec.VarianceCents)
 	}
 	time.Sleep(20 * time.Millisecond)
-	late := w.line(t, "SF2S LATE", 1234)
+	late := w.closedMonthLine(t, "SF2S LATE", 1234)
 	if code, body := w.post(w.callerAB, w.manualOf(late, "JOURNAL", w.plantJournal(t, "sf2s-l-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 1234, 0}, {"4950", 0, 1234}}), 1234)); code != http.StatusCreated {
 		t.Fatalf("setup: %d %s", code, body)
 	}
@@ -117,7 +122,7 @@ func TestIntegration_ReconVariance_ADerivedStatementBalanceIsRecomputedFromTheLi
 func TestIntegration_ReconVariance_ADerivedBalanceStaysDerivedAfterARefresh(t *testing.T) {
 	w := newReachWorld(t)
 	ctx := context.Background()
-	line := w.line(t, "SF2S P21 OPEN", 50000)
+	line := w.closedMonthLine(t, "SF2S P21 OPEN", 50000)
 	if code, body := w.post(w.callerAB, w.manualOf(line, "JOURNAL", w.plantJournal(t, "sf2s-p21-o-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 50000, 0}, {"4950", 0, 50000}}), 50000)); code != http.StatusCreated {
 		t.Fatalf("setup: %d %s", code, body)
 	}
@@ -132,7 +137,7 @@ func TestIntegration_ReconVariance_ADerivedBalanceStaysDerivedAfterARefresh(t *t
 		_, _ = w.pool.Exec(context.Background(), `DELETE FROM bank_reconciliations WHERE id = $1::uuid`, rec.ID)
 	})
 	time.Sleep(20 * time.Millisecond)
-	late := w.line(t, "SF2S P21 LATE", 1234)
+	late := w.closedMonthLine(t, "SF2S P21 LATE", 1234)
 	if code, body := w.post(w.callerAB, w.manualOf(late, "JOURNAL", w.plantJournal(t, "sf2s-p21-l-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 1234, 0}, {"4950", 0, 1234}}), 1234)); code != http.StatusCreated {
 		t.Fatalf("setup: %d %s", code, body)
 	}
@@ -170,7 +175,7 @@ func TestIntegration_ReconVariance_AStatedBalanceEqualToTheLinesAtOpenRefusesAnE
 	w, svc, bal, rec, _ := varianceWorld(t)
 	ctx := context.Background()
 	time.Sleep(20 * time.Millisecond)
-	extra := w.line(t, "SF2S P22 EXTRA", 5000)
+	extra := w.closedMonthLine(t, "SF2S P22 EXTRA", 5000)
 	if code, body := w.post(w.callerAB, w.manualOf(extra, "JOURNAL", w.plantJournal(t, "sf2s-p22-e-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 5000, 0}, {"4950", 0, 5000}}), 5000)); code != http.StatusCreated {
 		t.Fatalf("setup: %d %s", code, body)
 	}
@@ -242,7 +247,7 @@ func TestIntegration_ReconVariance_NilLedgerReaderOrCallbackRefusesCompletion(t 
 func TestIntegration_ReconVariance_ProbeA_ARefreshBeforeLateImportKeepsDerivedFlag(t *testing.T) {
 	w := newReachWorld(t)
 	ctx := context.Background()
-	line := w.line(t, "SF2S PROBE A OPEN", 50000)
+	line := w.closedMonthLine(t, "SF2S PROBE A OPEN", 50000)
 	if code, body := w.post(w.callerAB, w.manualOf(line, "JOURNAL", w.plantJournal(t, "sf2s-pa-o-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 50000, 0}, {"4950", 0, 50000}}), 50000)); code != http.StatusCreated {
 		t.Fatalf("setup: %d %s", code, body)
 	}
@@ -265,7 +270,7 @@ func TestIntegration_ReconVariance_ProbeA_ARefreshBeforeLateImportKeepsDerivedFl
 		t.Errorf("Probe A: a refresh before the late import flipped StatementBalanceDerived to false")
 	}
 	time.Sleep(20 * time.Millisecond)
-	late := w.line(t, "SF2S PROBE A LATE", 1234)
+	late := w.closedMonthLine(t, "SF2S PROBE A LATE", 1234)
 	if code, body := w.post(w.callerAB, w.manualOf(late, "JOURNAL", w.plantJournal(t, "sf2s-pa-l-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 1234, 0}, {"4950", 0, 1234}}), 1234)); code != http.StatusCreated {
 		t.Fatalf("setup: %d %s", code, body)
 	}
@@ -285,7 +290,7 @@ func TestIntegration_ReconVariance_ProbeA_ARefreshBeforeLateImportKeepsDerivedFl
 func TestIntegration_ReconVariance_ProbeB_ATypedBalanceEqualToStoredDerivedIsNotOverridden(t *testing.T) {
 	w := newReachWorld(t)
 	ctx := context.Background()
-	line := w.line(t, "SF2S PROBE B OPEN", 50000)
+	line := w.closedMonthLine(t, "SF2S PROBE B OPEN", 50000)
 	if code, body := w.post(w.callerAB, w.manualOf(line, "JOURNAL", w.plantJournal(t, "sf2s-pb-o-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 50000, 0}, {"4950", 0, 50000}}), 50000)); code != http.StatusCreated {
 		t.Fatalf("setup: %d %s", code, body)
 	}
@@ -300,7 +305,7 @@ func TestIntegration_ReconVariance_ProbeB_ATypedBalanceEqualToStoredDerivedIsNot
 		_, _ = w.pool.Exec(context.Background(), `DELETE FROM bank_reconciliations WHERE id = $1::uuid`, rec.ID)
 	})
 	time.Sleep(20 * time.Millisecond)
-	late := w.line(t, "SF2S PROBE B LATE", 1234)
+	late := w.closedMonthLine(t, "SF2S PROBE B LATE", 1234)
 	if code, body := w.post(w.callerAB, w.manualOf(late, "JOURNAL", w.plantJournal(t, "sf2s-pb-l-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 1234, 0}, {"4950", 0, 1234}}), 1234)); code != http.StatusCreated {
 		t.Fatalf("setup: %d %s", code, body)
 	}
@@ -328,7 +333,7 @@ func TestIntegration_ReconVariance_ProbeB_ATypedBalanceEqualToStoredDerivedIsNot
 func TestIntegration_ReconVariance_P3_3_StaleStoredVarianceDoesNotRefuseWhenRecomputedVarianceIsZero(t *testing.T) {
 	w := newReachWorld(t)
 	ctx := context.Background()
-	line := w.line(t, "SF2S P33 DEPOSIT", 70000)
+	line := w.closedMonthLine(t, "SF2S P33 DEPOSIT", 70000)
 	if code, body := w.post(w.callerAB, w.manualOf(line, "JOURNAL", w.plantJournal(t, "sf2s-p33-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 70000, 0}, {"4950", 0, 70000}}), 70000)); code != http.StatusCreated {
 		t.Fatalf("setup: %d %s", code, body)
 	}

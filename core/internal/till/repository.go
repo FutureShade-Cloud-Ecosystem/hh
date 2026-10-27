@@ -769,6 +769,11 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	if reversed {
 		return nsfReverseResult{}, errPaymentReversed
 	}
+	// A bounce undoes a live receipt: a reversing entry, a voided desk receipt (FW1-06b) or a refund row has
+	// nothing to give back, and reinstating its invoices would post money that never arrived.
+	if status != "RECEIVED" && status != "DEPOSITED" {
+		return nsfReverseResult{}, errPaymentNotBounceable
+	}
 	// Capture whether the receipt had already settled to the bank (DEPOSITED) BEFORE we flip it to BOUNCED.
 	// The GL payment.bounced consumer needs this to reverse the right leg: DEPOSITED → bank 1000, else the
 	// still-undeposited 1020. It cannot be recovered from PaymentReader after the flip, so it rides the event.
@@ -1119,4 +1124,20 @@ func (r *Repository) RecordPaymentAttempt(ctx context.Context, in PaymentAttempt
 		return fmt.Errorf("till: record payment attempt: %w", err)
 	}
 	return nil
+}
+
+// OpenSessionsBetween answers how many till sessions stand OPEN with opened_at
+// in [from, to): the GL close pre flight's "no open till drawer in that month"
+// check (FW1-09b). A nil pool answers zero (scaffold/offline mode).
+func (r *Repository) OpenSessionsBetween(ctx context.Context, from, to time.Time) (int, error) {
+	if r == nil || r.pool == nil {
+		return 0, nil
+	}
+	var n int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT count(*) FROM till_sessions WHERE status = 'OPEN' AND opened_at >= $1 AND opened_at < $2`,
+		from, to).Scan(&n); err != nil {
+		return 0, fmt.Errorf("till: open sessions between: %w", err)
+	}
+	return n, nil
 }

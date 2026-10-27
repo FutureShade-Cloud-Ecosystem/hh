@@ -45,7 +45,12 @@ var fw1BranchCensusWriters = []string{
 }
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
-// item (the two bankrec paths left are FW1-05's).
+// item (the two bankrec paths left are FW1-05's). Main's map is the base:
+// 629 stamped every FW1-08b writer (the five entries this branch still listed
+// are gone on the merged tree), and year_end_close left the map with the
+// FW1-09b merge: the year end closes each branch's results in its own closing
+// journal, every leg under its branch stamp and the company level lines under
+// the head office branch, so it leaves no NULL branch_id line.
 var fw1BranchCensusRed = map[string]string{
 	"bankrec_manual_match_payment": "FW1-05",
 	"bankrec_unmatch_reversal":     "FW1-05",
@@ -104,6 +109,12 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		Func:         "(invGLPoster).PostJournal",
 		Kind:         "PostExternal",
 		BranchSource: "in.BranchID from inventory.GLJournal.BranchID",
+	},
+	{
+		File:         "core/cmd/core/wire_money.go",
+		Func:         "(invGLPoster).PostJournalTx",
+		Kind:         "PostExternalTx",
+		BranchSource: "in.BranchID from inventory.GLJournal.BranchID (FW1-07 round 2 sub item 5: the transfer leg's journal rides the move's transaction)",
 	},
 	{
 		File:         "core/cmd/core/wire_operations.go",
@@ -215,9 +226,27 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 	},
 	{
 		File:         "core/internal/inventory/service.go",
+		Func:         "(*Service).fulfilLinesTx",
+		Kind:         "emit:order.fulfilled",
+		BranchSource: "branch_id on the order.fulfilled payload, the fulfilling branch the order's relief or group relief passes in (FW1-07)",
+	},
+	{
+		File:         "core/internal/inventory/service.go",
 		Func:         "(*Service).postPOReceived",
 		Kind:         "PostJournal",
 		BranchSource: "p.BranchID from po.received outbox payload emitted at inventory/service.go:179",
+	},
+	{
+		File:         "core/internal/inventory/service.go",
+		Func:         "(*Service).postPOReceivedRounding",
+		Kind:         "PostJournal",
+		BranchSource: "p.BranchID from po.received outbox payload (FW1-07 round 1 sub item 2: the WAC rounding adjustment is its own journal, so its own function)",
+	},
+	{
+		File:         "core/internal/inventory/service.go",
+		Func:         "(*Service).postPOReceivedTrueUp",
+		Kind:         "PostJournal",
+		BranchSource: "p.BranchID from po.received outbox payload (FW1-07 round 1 sub item 4, ruling 82.4: one true-up journal per line, so its own function)",
 	},
 	{
 		File:         "core/internal/inventory/service.go",
@@ -227,9 +256,15 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 	},
 	{
 		File:         "core/internal/inventory/transfer.go",
-		Func:         "(*Service).postTransferLeg",
-		Kind:         "PostJournal",
+		Func:         "(*Service).postTransferLegTx",
+		Kind:         "PostJournalTx",
 		BranchSource: "p.BranchID (from_branch_id on ship, to_branch_id on receive; two-branch transfer question is FW1-07)",
+	},
+	{
+		File:         "core/internal/inventory/transfer.go",
+		Func:         "(*Service).postTransferLegCommitting",
+		Kind:         "PostJournal",
+		BranchSource: "p.BranchID (from_branch_id on ship, to_branch_id on receive; two-branch transfer question is FW1-07), passed through postTransferLegTx",
 	},
 	{
 		File:         "core/internal/landedcost/service.go",

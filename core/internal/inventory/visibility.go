@@ -318,3 +318,31 @@ func (r *Repository) BranchInOrg(ctx context.Context, orgID, branchID string) (b
 		branchID, orgID).Scan(&in)
 	return in, err
 }
+
+// OrgBranchIDs returns the branch ids whose locations row carries orgID. An empty org matches
+// nothing.
+func (r *Repository) OrgBranchIDs(ctx context.Context, orgID string) ([]string, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if _, err := uuid.Parse(orgID); err != nil {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id::text FROM locations
+		 WHERE loc_type = 'BRANCH' AND org_id = $1::uuid
+		 ORDER BY id`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

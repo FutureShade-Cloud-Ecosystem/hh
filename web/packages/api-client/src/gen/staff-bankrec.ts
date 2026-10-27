@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { BankRecAccountList, BankRecImportInput, BankRecImportResult, BankRecMatchInput, BankRecMatchList, BankRecMatchRule, BankRecMatchRuleList, BankRecMatchSummary, BankRecReconInput, BankRecReconciliation, BankRecReconciliationList, BankRecRuleInput, BankRecStatementLinePage, BankRecUnmatchInput, BankRecUnmatchResult } from "./types.js";
+import type { BankRecAccount, BankRecAccountList, BankRecCutoverInput, BankRecCutoverPreview, BankRecImportInput, BankRecImportResult, BankRecMatchInput, BankRecMatchList, BankRecMatchRule, BankRecMatchRuleList, BankRecMatchSummary, BankRecReconInput, BankRecReconciliation, BankRecReconciliationList, BankRecRuleInput, BankRecStatementLinePage, BankRecUnmatchInput, BankRecUnmatchResult } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -19,6 +19,40 @@ export async function bankrecListAccounts(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "bankrecListAccounts",
+  });
+}
+
+export async function bankrecCutoverPreview(
+  client: ApiClient,
+  id: string | number,
+  opts: { date: string; statement_cents?: number; ticked?: string },
+  call?: ApiCallOptions
+): Promise<Result<BankRecCutoverPreview>> {
+  return client.request<BankRecCutoverPreview>({
+    method: "GET",
+    path: "/api/v1/bankrec/accounts/{id}/cutover",
+    pathParams: { id },
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "bankrecCutoverPreview",
+  });
+}
+
+export async function bankrecRecordCutover(
+  client: ApiClient,
+  id: string | number,
+  body: BankRecCutoverInput,
+  call?: ApiCallOptions
+): Promise<Result<BankRecAccount>> {
+  return client.request<BankRecAccount>({
+    method: "POST",
+    path: "/api/v1/bankrec/accounts/{id}/cutover",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "bankrecRecordCutover",
   });
 }
 

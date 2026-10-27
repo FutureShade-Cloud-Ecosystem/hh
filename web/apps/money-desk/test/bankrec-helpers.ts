@@ -28,6 +28,15 @@ export function monthDay(day: number): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+/** The day before the statement month starts: the go live cut over date the starting point form takes. */
+export function cutoverDay(): { iso: string; words: string } {
+  const { year, month } = priorMonth();
+  const day = new Date(Date.UTC(year, month - 1, 0));
+  const iso = `${day.getUTCFullYear()}-${String(day.getUTCMonth() + 1).padStart(2, "0")}-${String(day.getUTCDate()).padStart(2, "0")}`;
+  const name = day.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  return { iso, words: `${name} ${day.getUTCDate()}, ${day.getUTCFullYear()}` };
+}
+
 /** Signs in as the controller through the front door's handoff and opens the bank reconciliation area. */
 export async function openBank(page: Page, request: APIRequestContext): Promise<void> {
   await resetStub(request);

@@ -12,6 +12,8 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // - import -
@@ -19,6 +21,175 @@ import (
 // Accounts lists the 9 bank/card accounts (the console grid).
 func (s *Service) Accounts(ctx context.Context) ([]BankAccount, error) {
 	return s.repo.ListAccounts(ctx)
+}
+
+// RecordCutover records the reconciliation starting point for a bank account (FW1-04 round 2):
+// the cut-over date and opening statement balance accepted as reconciled to the book, plus an optional
+// confirmed list of ledger entry journal IDs on or before that date that remain outstanding at cut-over.
+// It is Financial Controller only, refused once a later month has signed off, and audited (BANKREC_CUTOVER).
+func (s *Service) RecordCutover(ctx context.Context, in CutoverInput) (BankAccount, error) {
+	caller, ok := identity.StaffContextFromContext(ctx)
+	if !ok || caller.UserID == "" || (caller.RoleCode != "FINANCIAL_CONTROLLER" && caller.RoleCode != "financial_controller") {
+		return BankAccount{}, forbidden("bankrec: only the Financial Controller may record a bank reconciliation cut-over")
+	}
+	if strings.TrimSpace(in.BankAccountID) == "" {
+		return BankAccount{}, badRequest("bankrec: bank_account_id is required")
+	}
+	if _, err := time.Parse("2006-01-02", in.CutoverDate); err != nil {
+		return BankAccount{}, badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", in.CutoverDate)
+	}
+	for _, jid := range in.OutstandingJournalIDs {
+		if _, err := uuid.Parse(jid); err != nil {
+			return BankAccount{}, badRequest("bankrec: invalid outstanding journal id %q", jid)
+		}
+	}
+	acct, err := s.repo.GetAccount(ctx, in.BankAccountID)
+	if err != nil {
+		return BankAccount{}, err
+	}
+	if completedY, completedM, done, cerr := s.repo.FirstCompletedMonth(ctx, acct.ID); cerr != nil {
+		return BankAccount{}, cerr
+	} else if done {
+		return BankAccount{}, conflict("bankrec: cannot record cut-over at %s because month %d-%02d is already completed",
+			in.CutoverDate, completedY, completedM)
+	}
+	if err := s.checkCutoverReconciles(ctx, acct, in); err != nil {
+		return BankAccount{}, err
+	}
+	recored, err := s.repo.RecordAccountCutover(ctx, in, caller.UserID)
+	if err != nil {
+		return BankAccount{}, err
+	}
+	s.recordAudit(ctx, "BANKREC_CUTOVER", "bankrec.account", recored.ID, caller.UserID,
+		"record bank reconciliation cut-over",
+		fmt.Sprintf("date=%s balance=%d outstanding=%d", in.CutoverDate, in.OpeningStatementBalanceCents, len(in.OutstandingJournalIDs)))
+	return recored, nil
+}
+
+type asOfBalanceReader interface {
+	GLBalanceAsOfCents(ctx context.Context, accountCode string, asOf time.Time, branchID string) (int64, error)
+}
+
+func (s *Service) bookBalanceAsOf(ctx context.Context, glAccountCode string, asOf time.Time, entries []gl.BankBookEntry) (int64, error) {
+	if ar, ok := s.balances.(asOfBalanceReader); ok {
+		return ar.GLBalanceAsOfCents(ctx, glAccountCode, asOf, "")
+	}
+	if ar, ok := s.journals.(asOfBalanceReader); ok {
+		return ar.GLBalanceAsOfCents(ctx, glAccountCode, asOf, "")
+	}
+	var sum int64
+	for _, e := range entries {
+		sum += e.NetCents
+	}
+	return sum, nil
+}
+
+// checkCutoverReconciles is round 4's P1 (FROM-PRINCIPAL 181 and 183): a starting point must reconcile. The
+// statement balance on the cut over date must equal the ledger's own book balance at that date less the ticked
+// outstanding cheques plus the ticked deposits in transit, that is, the ledger balance less the net of the
+// ticked entries. Anything else plants a wrong opening in every later month, so the server refuses it in the
+// desk's words, naming the difference.
+func (s *Service) checkCutoverReconciles(ctx context.Context, acct BankAccount, in CutoverInput) error {
+	br, ok := s.journals.(bankBookEntryReader)
+	if s.journals == nil || !ok {
+		return unprocessable("bankrec: the ledger's entries cannot be read on this box")
+	}
+	zone, zerr := houseday.Resolve(ctx, s.zone)
+	if zerr != nil {
+		zone = houseday.DefaultZone()
+	}
+	day, err := time.ParseInLocation("2006-01-02", in.CutoverDate, zone.Location())
+	if err != nil {
+		return badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", in.CutoverDate)
+	}
+	asOf := day.AddDate(0, 0, 1).Add(-time.Nanosecond)
+	entries, err := br.BankAccountEntriesAsOf(ctx, acct.GLAccountCode, asOf)
+	if err != nil {
+		return err
+	}
+	book, err := s.bookBalanceAsOf(ctx, acct.GLAccountCode, asOf, entries)
+	if err != nil {
+		return err
+	}
+	confirmed := make(map[string]bool, len(in.OutstandingJournalIDs))
+	for _, id := range in.OutstandingJournalIDs {
+		confirmed[id] = true
+	}
+	var tickedNet int64
+	for _, e := range entries {
+		if confirmed[e.JournalID] || (e.SourceRefID != "" && confirmed[e.SourceRefID]) {
+			tickedNet += e.NetCents
+		}
+	}
+	if diff := in.OpeningStatementBalanceCents - (book - tickedNet); diff != 0 {
+		size := diff
+		if size < 0 {
+			size = -size
+		}
+		return unprocessable("bankrec: cannot record cut-over at %s: the statement and the book differ by %s; tick the items still outstanding at cut over, or check the date and balance",
+			in.CutoverDate, dollars(size))
+	}
+	return nil
+}
+
+// CutoverPreview answers the starting point form's read (FW1-04 round 3 and round 4): the ledger's entries on
+// the account's GL code on or before the cut over date (the same read the reconciliation's outstanding lists
+// draw from), with the ledger's own book balance at that date. When the read carries the form's typed statement
+// balance and its ticked entries (round 4), the answer also carries the difference between them and whether it
+// reconciles, so the desk shows the server's difference and never computes one of its own.
+func (s *Service) CutoverPreview(ctx context.Context, accountID, date string, statementCents *int64, ticked []string) (CutoverPreview, error) {
+	acct, err := s.repo.GetAccount(ctx, accountID)
+	if err != nil {
+		return CutoverPreview{}, err
+	}
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		return CutoverPreview{}, badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", date)
+	}
+	br, ok := s.journals.(bankBookEntryReader)
+	if s.journals == nil || !ok {
+		return CutoverPreview{}, unprocessable("bankrec: the ledger's entries cannot be read on this box")
+	}
+	zone, zerr := houseday.Resolve(ctx, s.zone)
+	if zerr != nil {
+		zone = houseday.DefaultZone()
+	}
+	day, err := time.ParseInLocation("2006-01-02", date, zone.Location())
+	if err != nil {
+		return CutoverPreview{}, badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", date)
+	}
+	asOf := day.AddDate(0, 0, 1).Add(-time.Nanosecond)
+	entries, err := br.BankAccountEntriesAsOf(ctx, acct.GLAccountCode, asOf)
+	if err != nil {
+		return CutoverPreview{}, err
+	}
+	book, err := s.bookBalanceAsOf(ctx, acct.GLAccountCode, asOf, entries)
+	if err != nil {
+		return CutoverPreview{}, err
+	}
+	confirmed := make(map[string]bool, len(ticked))
+	for _, id := range ticked {
+		confirmed[id] = true
+	}
+	out := CutoverPreview{BookBalanceCents: book}
+	var tickedNet int64
+	for _, e := range entries {
+		out.Entries = append(out.Entries, CutoverPreviewEntry{
+			JournalID:   e.JournalID,
+			PostedAt:    e.PostedAt,
+			Memo:        e.Memo,
+			AmountCents: e.NetCents,
+		})
+		if confirmed[e.JournalID] || (e.SourceRefID != "" && confirmed[e.SourceRefID]) {
+			tickedNet += e.NetCents
+		}
+	}
+	if statementCents != nil {
+		diff := *statementCents - (out.BookBalanceCents - tickedNet)
+		out.DifferenceCents = &diff
+		reconciles := diff == 0
+		out.Reconciles = &reconciles
+	}
+	return out, nil
 }
 
 // Import parses a statement export under a profile, dedupes it into bank_statement_lines, and records an
@@ -285,8 +456,9 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 }
 
 // ManualMatch pairs a statement line to a target by hand (method MANUAL), posting the matching clearing
-// journal for PAYMENT/LODGEMENT targets. GROUP/JOURNAL targets post no new journal. Kept in the same match
-// history as AUTO matches (AC6).
+// journal for PAYMENT and older LODGEMENT targets. GROUP/JOURNAL targets (and new LODGEMENT targets that
+// already posted DR 1000 / CR 1020 at lodgement time, FROM-PRINCIPAL 117) post no new journal. Kept in the
+// same match history as AUTO matches (AC6).
 func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy string) (Match, error) {
 	if in.CanAccessBranch == nil {
 		return Match{}, errNoReach // a nil reach never means "no fence" (SF-2d round 5); a dealer wide caller passes AllBranches
@@ -463,41 +635,201 @@ func dollars(cents int64) string {
 	return fmt.Sprintf("%s$%s.%02d", sign, whole, cents%100)
 }
 
-// ledgerBalance reads the bank account's GL balance for a month through the GLBalanceReader seam (no GL table read
-// here), for CompleteReconciliation to take inside its transaction after the month's lock. An unwired reader refuses
-// completion in plain words.
-func (s *Service) ledgerBalance(glCode string) func(ctx context.Context, year, month int) (int64, error) {
-	return func(ctx context.Context, year, month int) (int64, error) {
-		if s.balances == nil {
-			return 0, unprocessable("bankrec: cannot complete, the ledger balance cannot be read")
-		}
-		return s.balances.GLBalanceCents(ctx, glCode, year, month, "")
+// clock returns the service clock (defaults to time.Now).
+func (s *Service) clock() time.Time {
+	if s.now == nil {
+		return time.Now()
 	}
+	return s.now()
 }
 
-// recheckJournalMatches is CompleteReconciliation's recheck (SF-2j round 2): every live JOURNAL match in the month is
-// read again through the GL seam and must still explain its line. A journal reversed since the match, or one that no
-// longer qualifies, refuses the sign off and names the line. It runs inside the completion's transaction, after the
-// month's lines are locked, so the set of matches cannot change under it. A month with journal matches cannot be
-// rechecked without the seam, and is refused.
+type lodgementJournalReader interface {
+	LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error)
+}
+
+// reconFigures holds the output of the single shared reconciliation computation (FW1-04) used by
+// OpenReconciliation, RefreshReconciliation, CompleteReconciliation, and Reconciliations.
+type reconFigures struct {
+	OpeningBalanceCents      *int64
+	StatementBalanceCents    int64
+	StatementBalanceDerived  bool
+	DepositsInTransitCents   int64
+	OutstandingChequesCents  int64
+	AdjustedBankBalanceCents int64
+	GLBalanceCents           int64
+	VarianceCents            int64
+	MatchedLinesCount        int
+	DepositsInTransit        []OutstandingItem
+	OutstandingCheques       []OutstandingItem
+}
+
+func (rec *Reconciliation) applyFigures(f reconFigures) {
+	rec.OpeningBalanceCents = f.OpeningBalanceCents
+	rec.StatementBalanceCents = f.StatementBalanceCents
+	rec.StatementBalanceDerived = f.StatementBalanceDerived
+	rec.DepositsInTransitCents = f.DepositsInTransitCents
+	rec.OutstandingChequesCents = f.OutstandingChequesCents
+	rec.AdjustedBankBalanceCents = f.AdjustedBankBalanceCents
+	rec.GLBalanceCents = f.GLBalanceCents
+	rec.VarianceCents = f.VarianceCents
+	rec.MatchedLinesCount = f.MatchedLinesCount
+	rec.DepositsInTransit = f.DepositsInTransit
+	rec.OutstandingCheques = f.OutstandingCheques
+}
+
+type closingBalanceReader interface {
+	GLClosingBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error)
+}
+
+type bankBookEntryReader interface {
+	BankAccountEntriesAsOf(ctx context.Context, glAccountCode string, asOf time.Time) ([]gl.BankBookEntry, error)
+}
+
+func (s *Service) monthEndCut(ctx context.Context, year, month int) time.Time {
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		zone = houseday.DefaultZone()
+	}
+	return time.Date(year, time.Month(month)+1, 1, 0, 0, 0, 0, zone.Location()).Add(-time.Nanosecond)
+}
+
+// computeReconFigures is the ONE shared calculation for statement balance, GL closing balance at month end,
+// deposits in transit, outstanding cheques, adjusted bank balance, and variance across OpenReconciliation,
+// RefreshReconciliation, CompleteReconciliation, and Reconciliations (FW1-04).
+func (s *Service) computeReconFigures(
+	ctx context.Context,
+	acct BankAccount,
+	year, month int,
+	statedBalanceCents int64,
+	derived bool,
+	stats monthLineStats,
+	requireBalances bool,
+) (reconFigures, error) {
+	if requireBalances && s.balances == nil {
+		return reconFigures{}, unprocessable("bankrec: cannot complete, the ledger balance cannot be read")
+	}
+	stmtBal := statedBalanceCents
+	if derived {
+		stmtBal = stats.LineSumCents
+		if stats.PriorCompletedClosing != nil {
+			stmtBal += *stats.PriorCompletedClosing
+		}
+	}
+	var glBal int64
+	var usesClosingBalance bool
+	if s.balances != nil {
+		if cr, ok := s.balances.(closingBalanceReader); ok {
+			usesClosingBalance = true
+			var err error
+			if glBal, err = cr.GLClosingBalanceCents(ctx, acct.GLAccountCode, year, month, ""); err != nil {
+				return reconFigures{}, err
+			}
+		} else {
+			var err error
+			if glBal, err = s.balances.GLBalanceCents(ctx, acct.GLAccountCode, year, month, ""); err != nil {
+				return reconFigures{}, err
+			}
+		}
+	}
+
+	var dit []OutstandingItem
+	var oc []OutstandingItem
+	var ditCents, ocCents int64
+	if usesClosingBalance && s.journals != nil {
+		if br, ok := s.journals.(bankBookEntryReader); ok {
+			entries, err := br.BankAccountEntriesAsOf(ctx, acct.GLAccountCode, s.monthEndCut(ctx, year, month))
+			if err != nil {
+				return reconFigures{}, err
+			}
+			zone, zerr := houseday.Resolve(ctx, s.zone)
+			if zerr != nil {
+				zone = houseday.DefaultZone()
+			}
+			confirmedCutover := map[string]bool{}
+			for _, jid := range acct.CutoverOutstandingJournalIDs {
+				confirmedCutover[jid] = true
+			}
+			for _, e := range entries {
+				if stats.ClearedJournalIDs[e.JournalID] || (e.SourceRefID != "" && stats.ClearedJournalIDs[e.SourceRefID]) {
+					continue
+				}
+				if acct.CutoverDate != nil && *acct.CutoverDate != "" {
+					entryDay := e.PostedAt.In(zone.Location()).Format("2006-01-02")
+					if entryDay <= *acct.CutoverDate && !confirmedCutover[e.JournalID] && !(e.SourceRefID != "" && confirmedCutover[e.SourceRefID]) {
+						continue
+					}
+				}
+				if e.NetCents > 0 {
+					dit = append(dit, OutstandingItem{
+						JournalID:   e.JournalID,
+						PostedAt:    e.PostedAt,
+						Memo:        e.Memo,
+						AmountCents: e.NetCents,
+					})
+					ditCents += e.NetCents
+				} else if e.NetCents < 0 {
+					amt := -e.NetCents
+					oc = append(oc, OutstandingItem{
+						JournalID:   e.JournalID,
+						PostedAt:    e.PostedAt,
+						Memo:        e.Memo,
+						AmountCents: amt,
+					})
+					ocCents += amt
+				}
+			}
+		}
+	}
+
+	adjBank := stmtBal + ditCents - ocCents
+	variance := adjBank - glBal
+	return reconFigures{
+		OpeningBalanceCents:      stats.PriorCompletedClosing,
+		StatementBalanceCents:    stmtBal,
+		StatementBalanceDerived:  derived,
+		DepositsInTransitCents:   ditCents,
+		OutstandingChequesCents:  ocCents,
+		AdjustedBankBalanceCents: adjBank,
+		GLBalanceCents:           glBal,
+		VarianceCents:            variance,
+		MatchedLinesCount:        stats.MatchedLines,
+		DepositsInTransit:        dit,
+		OutstandingCheques:       oc,
+	}, nil
+}
+
+// recheckJournalMatches is CompleteReconciliation's recheck (SF-2j round 2 + FW1-04): every live JOURNAL match in
+// the month is read again through the GL seam and must still explain its line, and every clearing journal posted on
+// a PAYMENT/LODGEMENT match is checked so a clearing journal reversed in the ledger refuses the sign off.
 func (s *Service) recheckJournalMatches(glCode string) func(ctx context.Context, matches []JournalMatchFact) error {
 	return func(ctx context.Context, matches []JournalMatchFact) error {
 		if len(matches) == 0 {
 			return nil
 		}
 		for _, m := range matches {
-			if s.journals == nil {
-				return unprocessable("bankrec: cannot complete, the journal matched to %q cannot be checked", m.LineDescription)
+			if m.TargetType == TargetJournal {
+				if s.journals == nil {
+					return unprocessable("bankrec: cannot complete, the journal matched to %q cannot be checked", m.LineDescription)
+				}
+				f, found, err := s.journals.JournalForBank(ctx, m.JournalID, glCode)
+				if err != nil {
+					return err
+				}
+				if !found {
+					return unprocessable("bankrec: cannot complete, the journal matched to the statement line %q no longer exists", m.LineDescription)
+				}
+				if jerr := journalExplains(f, m.LineAmountCents); jerr != nil {
+					return unprocessable("bankrec: cannot complete, the journal matched to the statement line %q no longer explains it (%s)", m.LineDescription, strings.TrimPrefix(jerr.Error(), "bankrec: that journal "))
+				}
 			}
-			f, found, err := s.journals.JournalForBank(ctx, m.JournalID, glCode)
-			if err != nil {
-				return err
-			}
-			if !found {
-				return unprocessable("bankrec: cannot complete, the journal matched to the statement line %q no longer exists", m.LineDescription)
-			}
-			if jerr := journalExplains(f, m.LineAmountCents); jerr != nil {
-				return unprocessable("bankrec: cannot complete, the journal matched to the statement line %q no longer explains it (%s)", m.LineDescription, strings.TrimPrefix(jerr.Error(), "bankrec: that journal "))
+			if m.ClearingJournalID != "" && s.journals != nil {
+				f, found, err := s.journals.JournalForBank(ctx, m.ClearingJournalID, glCode)
+				if err != nil {
+					return err
+				}
+				if !found || !f.Posted || f.Reversed {
+					return unprocessable("bankrec: cannot complete, the clearing journal for %q has been reversed in the ledger", m.LineDescription)
+				}
 			}
 		}
 		return nil
@@ -535,6 +867,7 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 			return conflict("bankrec: match %s is not live (already unmatched)", matchID)
 		}
 	}
+	lineDate, hasLineDate, _ := s.repo.MatchLineDate(ctx, matchID)
 	targetType, targetRef, amount, err := s.repo.UnmatchReach(ctx, matchID, userID, reach)
 	if err != nil {
 		return err
@@ -555,6 +888,9 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 	}
 	if s.poster != nil && amount > 0 {
 		if rev, ok := reversalJournal(matchID, targetType, amount, carriesJournal); ok {
+			if hasLineDate {
+				rev.DocumentDate = statementDocDate(lineDate)
+			}
 			if _, perr := s.poster.PostJournal(ctx, rev); perr != nil {
 				return perr
 			}
@@ -606,10 +942,10 @@ func (s *Service) ApproveRule(ctx context.Context, in RuleInput, approvedBy stri
 // - reconciliation -
 
 // OpenReconciliation prepares (or refreshes when in.Refresh is true) the monthly reconciliation: it reads the GL
-// balance through the GLBalanceReader seam (never the 0034 views directly) and computes the variance against the
-// statement balance (the caller's real closing balance, or the month's line net as a placeholder default when opened
-// with zero). The derived flag comes from the act (an open with zero sets it TRUE, an open with a typed figure sets it
-// FALSE, and a refresh keeps the stored flag and stated figure).
+// closing balance through the GLBalanceReader seam (never the 0034 views directly), computes deposits in transit and
+// outstanding cheques at month end, and computes the variance against the adjusted bank balance through the single
+// shared computeReconFigures function (FW1-04). The derived flag comes from the act (an open with zero sets it TRUE,
+// an open with a typed figure sets it FALSE, and a refresh keeps the stored flag and stated figure).
 func (s *Service) OpenReconciliation(ctx context.Context, in ReconInput) (Reconciliation, error) {
 	if in.Refresh {
 		return s.RefreshReconciliation(ctx, in.BankAccountID, in.Year, in.Month)
@@ -624,32 +960,33 @@ func (s *Service) OpenReconciliation(ctx context.Context, in ReconInput) (Reconc
 	if err != nil {
 		return Reconciliation{}, err
 	}
-	stmtBal := in.StatementBalanceCents
-	derived := stmtBal == 0
-	if derived {
-		if stmtBal, err = s.repo.MonthLineSum(ctx, acct.ID, in.Year, in.Month); err != nil {
-			return Reconciliation{}, err
-		}
+	derived := in.StatementBalanceCents == 0
+	stats, err := s.repo.MonthLineStats(ctx, acct.ID, in.Year, in.Month)
+	if err != nil {
+		return Reconciliation{}, err
 	}
-	var glBal int64
-	if s.balances != nil {
-		if glBal, err = s.balances.GLBalanceCents(ctx, acct.GLAccountCode, in.Year, in.Month, ""); err != nil {
-			return Reconciliation{}, err
-		}
+	figs, err := s.computeReconFigures(ctx, acct, in.Year, in.Month, in.StatementBalanceCents, derived, stats, false)
+	if err != nil {
+		return Reconciliation{}, err
 	}
-	return s.repo.UpsertReconciliation(ctx, Reconciliation{
+	rec, err := s.repo.UpsertReconciliation(ctx, Reconciliation{
 		BankAccountID:           acct.ID,
 		Year:                    in.Year,
 		Month:                   in.Month,
-		StatementBalanceCents:   stmtBal,
-		StatementBalanceDerived: derived,
-		GLBalanceCents:          glBal,
-		VarianceCents:           stmtBal - glBal,
+		StatementBalanceCents:   figs.StatementBalanceCents,
+		StatementBalanceDerived: figs.StatementBalanceDerived,
+		GLBalanceCents:          figs.GLBalanceCents,
+		VarianceCents:           figs.VarianceCents,
 	})
+	if err != nil {
+		return Reconciliation{}, err
+	}
+	rec.applyFigures(figs)
+	return rec, nil
 }
 
-// RefreshReconciliation re-reads the ledger (and the month's lines when the reconciliation was opened with a derived
-// balance) in place while keeping the stored derived flag and any stated closing balance. Takes no figure.
+// RefreshReconciliation re-reads the ledger, outstanding items, and (when derived is true) the month's lines in place
+// while keeping the stored derived flag and any stated closing balance, using the shared computeReconFigures function.
 func (s *Service) RefreshReconciliation(ctx context.Context, bankAccountID string, year, month int) (Reconciliation, error) {
 	if bankAccountID == "" {
 		return Reconciliation{}, badRequest("bankrec: bank_account_id is required")
@@ -661,31 +998,84 @@ func (s *Service) RefreshReconciliation(ctx context.Context, bankAccountID strin
 	if err != nil {
 		return Reconciliation{}, err
 	}
-	var glBal int64
-	if s.balances != nil {
-		if glBal, err = s.balances.GLBalanceCents(ctx, acct.GLAccountCode, year, month, ""); err != nil {
-			return Reconciliation{}, err
-		}
+	existing, err := s.repo.GetOpenReconciliationByPeriod(ctx, acct.ID, year, month)
+	if err != nil {
+		return Reconciliation{}, err
 	}
-	return s.repo.RefreshReconciliation(ctx, acct.ID, year, month, glBal)
+	stats, err := s.repo.MonthLineStats(ctx, acct.ID, year, month)
+	if err != nil {
+		return Reconciliation{}, err
+	}
+	figs, err := s.computeReconFigures(ctx, acct, year, month, existing.StatementBalanceCents, existing.StatementBalanceDerived, stats, false)
+	if err != nil {
+		return Reconciliation{}, err
+	}
+	rec, err := s.repo.UpdateOpenReconciliationFigures(ctx, acct.ID, year, month, figs.StatementBalanceCents, figs.GLBalanceCents, figs.VarianceCents)
+	if err != nil {
+		return Reconciliation{}, err
+	}
+	rec.applyFigures(figs)
+	return rec, nil
 }
 
-// Reconciliations lists reconciliations (optionally scoped to an account).
+// Reconciliations lists reconciliations (optionally scoped to an account) with their month-end report breakdown.
 func (s *Service) Reconciliations(ctx context.Context, accountID string) ([]Reconciliation, error) {
-	return s.repo.ListReconciliations(ctx, accountID)
+	rows, err := s.repo.ListReconciliations(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	acctCache := map[string]BankAccount{}
+	for i := range rows {
+		r := &rows[i]
+		acct, ok := acctCache[r.BankAccountID]
+		if !ok {
+			if a, aerr := s.repo.GetAccount(ctx, r.BankAccountID); aerr == nil {
+				acct = a
+				acctCache[r.BankAccountID] = a
+			}
+		}
+		if acct.ID == "" {
+			r.AdjustedBankBalanceCents = r.StatementBalanceCents
+			continue
+		}
+		stats, serr := s.repo.MonthLineStats(ctx, r.BankAccountID, r.Year, r.Month)
+		if serr != nil {
+			r.AdjustedBankBalanceCents = r.StatementBalanceCents
+			continue
+		}
+		figs, ferr := s.computeReconFigures(ctx, acct, r.Year, r.Month, r.StatementBalanceCents, r.StatementBalanceDerived && r.Status == ReconOpen, stats, false)
+		if ferr != nil {
+			r.OpeningBalanceCents = stats.PriorCompletedClosing
+			r.MatchedLinesCount = stats.MatchedLines
+			r.AdjustedBankBalanceCents = r.StatementBalanceCents
+			continue
+		}
+		r.OpeningBalanceCents = figs.OpeningBalanceCents
+		r.DepositsInTransitCents = figs.DepositsInTransitCents
+		r.OutstandingChequesCents = figs.OutstandingChequesCents
+		r.AdjustedBankBalanceCents = r.StatementBalanceCents + figs.DepositsInTransitCents - figs.OutstandingChequesCents
+		r.MatchedLinesCount = figs.MatchedLinesCount
+		r.DepositsInTransit = figs.DepositsInTransit
+		r.OutstandingCheques = figs.OutstandingCheques
+	}
+	return rows, nil
 }
 
-// CompleteReconciliation signs off a monthly reconciliation. Guards (AC7): the account must have ZERO
-// UNMATCHED lines in the month AND zero recomputed variance. On success it flips COMPLETED and emits
-// bank.recon.completed in the same tx.
+// CompleteReconciliation signs off a monthly reconciliation. Guards (AC7 + FW1-04):
+//   - the month must have reached month end in the dealer's house zone,
+//   - a bank account must have at least one imported statement line in the month,
+//   - the account must have ZERO UNMATCHED lines in the month,
+//   - no earlier month on the account may still be OPEN, and no later month may already be COMPLETED,
+//   - every live match's journal or clearing journal must still be POSTED and unreversed in the GL,
+//   - the opening statement balance must equal the prior completed month's closing statement balance,
+//   - the recomputed variance (adjusted bank balance minus GL closing balance) must be zero.
+//
+// On success it flips COMPLETED and emits bank.recon.completed in the same tx, returning the full
+// reconciliation report.
 func (s *Service) CompleteReconciliation(ctx context.Context, id, completedBy string) (Reconciliation, error) {
 	if id == "" {
 		return Reconciliation{}, badRequest("bankrec: reconciliation id is required")
 	}
-	// A malformed (non-UUID) id must not reach the uuid PK cast (SQLSTATE 22P02 → HTTP 500). Guard
-	// here rather than in the repo: under pgx's default cache-statement mode the bad-uuid failure can
-	// surface as a client-side encode error, not a server PgError, which a code=="22P02" check would
-	// miss. errNotFound (404) keeps a malformed id indistinguishable from an absent one.
 	if _, err := uuid.Parse(id); err != nil {
 		return Reconciliation{}, errNotFound
 	}
@@ -695,6 +1085,17 @@ func (s *Service) CompleteReconciliation(ctx context.Context, id, completedBy st
 	}
 	if rec.Status == ReconCompleted {
 		return Reconciliation{}, conflict("bankrec: reconciliation %s is already COMPLETED", id)
+	}
+	zone, _ := houseday.Resolve(ctx, s.zone)
+	today := zone.Today(s.clock)
+	monthEndDay := fmt.Sprintf("%04d-%02d-%02d", rec.Year, rec.Month, daysInMonth(rec.Year, rec.Month))
+	nextY, nextM := rec.Year, rec.Month+1
+	if rec.Month == 12 {
+		nextY, nextM = rec.Year+1, 1
+	}
+	firstSignOffDay := fmt.Sprintf("%04d-%02d-01", nextY, nextM)
+	if today <= monthEndDay {
+		return Reconciliation{}, unprocessable("bankrec: cannot complete, %d-%02d has not reached month end yet (month end is %s; first day to sign off is %s)", rec.Year, rec.Month, monthEndDay, firstSignOffDay)
 	}
 	unmatched, err := s.repo.CountUnmatchedInMonth(ctx, rec.BankAccountID, rec.Year, rec.Month)
 	if err != nil {
@@ -707,7 +1108,10 @@ func (s *Service) CompleteReconciliation(ctx context.Context, id, completedBy st
 	if err != nil {
 		return Reconciliation{}, err
 	}
-	out, err := s.repo.CompleteReconciliation(ctx, id, acct.GLAccountCode, completedBy, s.recheckJournalMatches(acct.GLAccountCode), s.ledgerBalance(acct.GLAccountCode))
+	compute := func(ctx context.Context, year, month int, storedStmt int64, derived bool, stats monthLineStats) (reconFigures, error) {
+		return s.computeReconFigures(ctx, acct, year, month, storedStmt, derived, stats, true)
+	}
+	out, err := s.repo.completeReconciliation(ctx, id, acct, completedBy, s.recheckJournalMatches(acct.GLAccountCode), compute)
 	if err != nil {
 		return Reconciliation{}, err
 	}
@@ -765,4 +1169,18 @@ func removeLodgement(lodg []Lodgement, movementID string) []Lodgement {
 		}
 	}
 	return out
+}
+
+func daysInMonth(year, month int) int {
+	switch month {
+	case 4, 6, 9, 11:
+		return 30
+	case 2:
+		if (year%4 == 0 && year%100 != 0) || year%400 == 0 {
+			return 29
+		}
+		return 28
+	default:
+		return 31
+	}
 }

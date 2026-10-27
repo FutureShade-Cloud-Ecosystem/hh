@@ -37,8 +37,11 @@ func TestFW1_08b_HeadOfficePolicyMultiBranchCloseAndCrossBranchReturn(t *testing
 	ctx := context.Background()
 	pool := fw1CensusDB(t)
 
-	// Ensure FY 2026 and FY 2028 periods 1..12 exist and are OPEN.
-	for _, yr := range []int{2026, 2028} {
+	// Ensure FY 2026 and FY 2018 periods 1..12 exist and are OPEN. The year end leg
+	// closes 2018, a year whose last day has passed on the real clock: the merged tree
+	// keeps FW1-09b round 2's refusal of a year end whose year has not ended (the same
+	// reason the census leg closes 2020).
+	for _, yr := range []int{2026, 2018} {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO fiscal_periods (year, month, status)
 			SELECT $1, m, 'OPEN' FROM generate_series(1, 12) AS m
@@ -156,49 +159,49 @@ func TestFW1_08b_HeadOfficePolicyMultiBranchCloseAndCrossBranchReturn(t *testing
 		t.Fatalf("SetHeadOfficeBranch(TRT): %v", err)
 	}
 
-	// 2. Multi-branch CloseYear on FY 2028 (TRT + KGN + company-level P&L lines).
-	postFY2028 := func(branchID, memo, acctDr, acctCr string, cents int64) string {
+	// 2. Multi-branch CloseYear on FY 2018 (TRT + KGN + company-level P&L lines).
+	postFY2018 := func(branchID, memo, acctDr, acctCr string, cents int64) string {
 		t.Helper()
 		jid, err := glSvc.PostExternal(ctrlCtx, gl.ExternalJournal{
 			Source:         gl.SourceAdjustment,
-			IdempotencyKey: "fw1-08b-fy2028:" + uuid.NewString(),
+			IdempotencyKey: "fw1-08b-fy2018:" + uuid.NewString(),
 			Memo:           memo,
 			BranchID:       branchID,
-			DocumentDate:   time.Date(2028, 6, 15, 12, 0, 0, 0, time.UTC),
+			DocumentDate:   time.Date(2018, 6, 15, 12, 0, 0, 0, time.UTC),
 			Lines: []gl.ExternalLine{
 				{AccountCode: acctDr, DebitCents: cents, Memo: memo},
 				{AccountCode: acctCr, CreditCents: cents, Memo: memo},
 			},
 		})
 		if err != nil {
-			t.Fatalf("postFY2028(%s): %v", memo, err)
+			t.Fatalf("postFY2018(%s): %v", memo, err)
 		}
 		return jid
 	}
 	// TRT: revenue 80000, expense 30000 -> net income 50000.
-	postFY2028(trtBranchID, "TRT FY2028 revenue", "1000", "4000", 80000)
-	postFY2028(trtBranchID, "TRT FY2028 expense", "5000", "1000", 30000)
+	postFY2018(trtBranchID, "TRT FY2018 revenue", "1000", "4000", 80000)
+	postFY2018(trtBranchID, "TRT FY2018 expense", "5000", "1000", 30000)
 	// KGN: revenue 50000, expense 20000 -> net income 30000.
-	postFY2028(kgnBranchID, "KGN FY2028 revenue", "1000", "4000", 50000)
-	postFY2028(kgnBranchID, "KGN FY2028 expense", "5000", "1000", 20000)
+	postFY2018(kgnBranchID, "KGN FY2018 revenue", "1000", "4000", 50000)
+	postFY2018(kgnBranchID, "KGN FY2018 expense", "5000", "1000", 20000)
 
-	closeRes, err := glSvc.CloseYear(ctrlCtx, 2028, "FW1-08b multi-branch close")
+	closeRes, err := glSvc.CloseYear(ctrlCtx, 2018, "FW1-08b multi-branch close")
 	if err != nil {
-		t.Fatalf("CloseYear(2028): %v", err)
+		t.Fatalf("CloseYear(2018): %v", err)
 	}
 	if closeRes.NetIncomeCents != 80000 {
-		t.Fatalf("CloseYear(2028) NetIncomeCents = %d, want 80000", closeRes.NetIncomeCents)
+		t.Fatalf("CloseYear(2018) NetIncomeCents = %d, want 80000", closeRes.NetIncomeCents)
 	}
 
 	// Verify both TRT and KGN received balanced CLOSING journals with non-null branch_id on every line.
 	rows, err := pool.Query(ctx, `
 		SELECT id::text, COALESCE(branch_id::text, '')
 		  FROM gl_journals
-		 WHERE fiscal_year = 2028 AND source = 'CLOSING'
+		 WHERE fiscal_year = 2018 AND source = 'CLOSING'
 		 ORDER BY entry_no
 	`)
 	if err != nil {
-		t.Fatalf("query FY2028 CLOSING journals: %v", err)
+		t.Fatalf("query FY2018 CLOSING journals: %v", err)
 	}
 	closingByBranch := map[string]string{}
 	for rows.Next() {
@@ -213,19 +216,19 @@ func TestFW1_08b_HeadOfficePolicyMultiBranchCloseAndCrossBranchReturn(t *testing
 	for _, wantBranch := range []string{trtBranchID, kgnBranchID} {
 		jid, ok := closingByBranch[wantBranch]
 		if !ok {
-			t.Fatalf("missing FY2028 CLOSING journal for branch %s (got %v)", wantBranch, closingByBranch)
+			t.Fatalf("missing FY2018 CLOSING journal for branch %s (got %v)", wantBranch, closingByBranch)
 		}
 		assertJournalLinesBranch(t, ctx, pool, jid, wantBranch)
 	}
 
-	// Verify PLBalancesByBranch(2028) nets to 0 on every P&L row after CloseYear.
-	plAfter, err := glRepo.PLBalancesByBranch(ctrlCtx, 2028)
+	// Verify PLBalancesByBranch(2018) nets to 0 on every P&L row after CloseYear.
+	plAfter, err := glRepo.PLBalancesByBranch(ctrlCtx, 2018)
 	if err != nil {
-		t.Fatalf("PLBalancesByBranch(2028) after close: %v", err)
+		t.Fatalf("PLBalancesByBranch(2018) after close: %v", err)
 	}
 	for _, r := range plAfter {
 		if r.NetDebitCents != 0 {
-			t.Errorf("PLBalancesByBranch(2028) after close has non-zero row: %+v", r)
+			t.Errorf("PLBalancesByBranch(2018) after close has non-zero row: %+v", r)
 		}
 	}
 

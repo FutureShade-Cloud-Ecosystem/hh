@@ -95,6 +95,8 @@ function fresh() {
       { id: IDS.ruleBatch, code: "run-settlement-fuzzy", name: "Batch settlement, description and date window", priority: 30, version: 1, status: "APPROVED", spec: { kind: "descriptor_fuzzy", target: "PAYMENT", descriptor_ilike: "%RUN%", date_window_days: 3, allow_fee_split: true, fee_account_code: "6300" } },
     ],
     recons: [],
+    depositsInTransit: [],
+    outstandingCheques: [],
     // The ledger side (account 1000): moved by the clearing journals a match posts and the reversal an undo posts.
     glCents: OPENING_CENTS + BOOKED_BEFORE_MATCHING,
     nextMatch: 1,
@@ -126,7 +128,7 @@ const withinDays = (a, b, days) => Math.abs(dayOf(a) - dayOf(b)) <= days * 86_40
 
 const clientError = (status, message) => ({ status, body: { error: message } });
 
-export function createBankrecWorld() {
+export function createBankrecWorld({ ledgerPosted = null } = {}) {
   let world = fresh();
   const reset = () => {
     world = fresh();
@@ -169,16 +171,32 @@ export function createBankrecWorld() {
     return out;
   };
   const reconView = (r) => {
+    const acct = world.accounts.find((a) => a.id === r.bank_account_id);
+    const dit = acct?.gl_account_code === "1000" ? world.depositsInTransit : [];
+    const oc = acct?.gl_account_code === "1000" ? world.outstandingCheques : [];
+    const ditCents = dit.reduce((s, x) => s + x.amount_cents, 0);
+    const ocCents = oc.reduce((s, x) => s + x.amount_cents, 0);
+    const matchedCount = world.lines.filter(
+      (l) => l.bank_account_id === r.bank_account_id && l.status === "MATCHED" && Number(l.txn_date.slice(0, 4)) === r.year && Number(l.txn_date.slice(5, 7)) === r.month,
+    ).length;
     const out = {
       id: r.id,
       bank_account_id: r.bank_account_id,
       year: r.year,
       month: r.month,
       statement_balance_cents: r.statement_balance_cents,
+      deposits_in_transit_cents: ditCents,
+      outstanding_cheques_cents: ocCents,
+      adjusted_bank_balance_cents: r.statement_balance_cents + ditCents - ocCents,
       gl_balance_cents: r.gl_balance_cents,
       variance_cents: r.variance_cents,
+      matched_lines_count: matchedCount,
       status: r.status,
     };
+    if (r.opening_balance_cents !== undefined && r.opening_balance_cents !== null) out.opening_balance_cents = r.opening_balance_cents;
+    if (dit.length > 0) out.deposits_in_transit = dit;
+    if (oc.length > 0) out.outstanding_cheques = oc;
+    if (r.completed_by) out.completed_by = r.completed_by;
     if (r.completed_at) out.completed_at = r.completed_at;
     return out;
   };
@@ -237,6 +255,14 @@ export function createBankrecWorld() {
     const header = readRow();
     if (header === null) return { error: "bankrec: read csv header: EOF" };
     const idx = new Map(header.map((h, n) => [h.trim(), n]));
+    if (profile === "rbc-default" && !idx.has(mapping.date) && idx.has("Transaction Date") && idx.has("CAD$")) {
+      mapping.date = "Transaction Date";
+      mapping.desc = "Description 1";
+      mapping.desc2 = "Description 2";
+      mapping.amount = "CAD$";
+      mapping.ref = "Description 2";
+      mapping.cheque = "Cheque Number";
+    }
     for (const col of [mapping.date, mapping.amount]) {
       if (!idx.has(col)) return { error: `bankrec: csv is missing the mapped column "${col}"` };
     }
@@ -248,13 +274,29 @@ export function createBankrecWorld() {
       if (rec.every((f) => f.trim() === "")) continue;
       const field = (col) => (idx.has(col) ? (rec[idx.get(col)] ?? "").trim() : "");
       const dateText = field(mapping.date);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText) || Number.isNaN(Date.parse(`${dateText}T00:00:00Z`))) {
+      let isoDate = dateText;
+      const slash = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(dateText);
+      if (slash !== null) {
+        isoDate = `${slash[3]}-${pad(Number(slash[1]))}-${pad(Number(slash[2]))}`;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate) || Number.isNaN(Date.parse(`${isoDate}T00:00:00Z`))) {
         return { error: `bankrec: csv row ${rowNo - 1}: bad date "${dateText}" (want "2006-01-02"): parsing time "${dateText}" as "2006-01-02": cannot parse "${dateText}" as "2006"` };
       }
+      if (idx.has("USD$") && field("USD$") !== "") {
+        return { error: `bankrec: csv row ${rowNo - 1}: USD amount "${field("USD$")}" is not supported on a CAD statement import` };
+      }
       const amountText = field(mapping.amount);
+      if (amountText === "") {
+        return { error: `bankrec: csv row ${rowNo - 1}: missing amount` };
+      }
       const cents = parseCents(amountText);
       if (cents === null) return { error: `bankrec: csv row ${rowNo - 1}: bad amount "${amountText}": not a number: "${amountText}"` };
-      rows.push({ date: dateText, description: field(mapping.desc), reference: field(mapping.ref), amount_cents: cents });
+      const desc1 = field(mapping.desc);
+      const desc2 = mapping.desc2 ? field(mapping.desc2) : "";
+      const description = desc2 ? (desc1 ? `${desc1} ${desc2}` : desc2) : desc1;
+      const cheque = mapping.cheque ? field(mapping.cheque) : "";
+      const reference = cheque || field(mapping.ref);
+      rows.push({ date: isoDate, description, reference, amount_cents: cents });
     }
     return { rows };
   }
@@ -542,6 +584,8 @@ export function createBankrecWorld() {
     const netNow = monthNet(account.id, input.year, input.month);
     // Only the operating account has a ledger balance in this world; the cards are tracking only.
     const gl = account.gl_account_code === "1000" ? world.glCents : 0;
+    const ditCents = account.gl_account_code === "1000" ? world.depositsInTransit.reduce((s, x) => s + x.amount_cents, 0) : 0;
+    const ocCents = account.gl_account_code === "1000" ? world.outstandingCheques.reduce((s, x) => s + x.amount_cents, 0) : 0;
     const existing = world.recons.find((r) => r.bank_account_id === account.id && r.year === input.year && r.month === input.month);
     if (existing !== undefined && existing.status === "COMPLETED") {
       return clientError(409, `reconciliation for ${input.year}-${pad(input.month)} is already COMPLETED`);
@@ -551,7 +595,7 @@ export function createBankrecWorld() {
       const statement = existing.statement_balance_derived ? netNow : existing.statement_balance_cents;
       existing.statement_balance_cents = statement;
       existing.gl_balance_cents = gl;
-      existing.variance_cents = statement - gl;
+      existing.variance_cents = statement + ditCents - ocCents - gl;
       return { status: 201, body: reconView(existing) };
     }
     // The core stores the month's line net when the typed balance is zero: its placeholder default.
@@ -562,33 +606,119 @@ export function createBankrecWorld() {
     target.statement_balance_derived = derived;
     target.statement_balance_cents = statement;
     target.gl_balance_cents = gl;
-    target.variance_cents = statement - gl;
+    target.variance_cents = statement + ditCents - ocCents - gl;
     if (existing === undefined) world.recons.push(target);
     return { status: 201, body: reconView(target) };
   }
 
-  function completeReconciliation(id, caller) {
-    if (!id) return clientError(400, "reconciliation id is required");
+  // The Controller's door to the cut over (round 3): the recorded point lands on the account, refused with the
+  // core's conflict once the cut over month or any later month on the account has signed off.
+  function recordCutover(accountId, input) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(input.cutover_date ?? ""))) {
+      return clientError(400, `bankrec: cutover_date must be YYYY-MM-DD, got ${JSON.stringify(input.cutover_date ?? "")}`);
+    }
+    const ids = Array.isArray(input.outstanding_journal_ids) ? input.outstanding_journal_ids : [];
+    for (const id of ids) {
+      if (!UUID.test(String(id))) return clientError(400, `bankrec: invalid outstanding journal id ${JSON.stringify(String(id))}`);
+    }
+    const account = world.accounts.find((a) => a.id === accountId);
+    if (account === undefined) return clientError(404, "not found");
+    // Once any month on the account has signed off, any cut-over (new or changed) is refused in words naming
+    // that month (round 4, FROM-PRINCIPAL 183).
+    const done = world.recons
+      .filter((r) => r.bank_account_id === account.id && r.status === "COMPLETED")
+      .sort((a, b) => a.year - b.year || a.month - b.month)[0];
+    if (done !== undefined) {
+      return clientError(409, `bankrec: cannot record cut-over at ${input.cutover_date} because month ${done.year}-${pad(done.month)} is already completed`);
+    }
+    // A starting point must reconcile (round 4): the statement balance is the book less ticked outstanding
+    // cheques plus ticked deposits in transit, the book balance at the date less the net of the ticked entries.
+    {
+      const preview = cutoverPreview(accountId, new URL(`http://x/?date=${input.cutover_date}&statement_cents=${Number(input.opening_statement_balance_cents) || 0}${(input.outstanding_journal_ids ?? []).length > 0 ? `&ticked=${(input.outstanding_journal_ids ?? []).join(",")}` : ""}`));
+      if (preview.status === 200 && preview.body.reconciles === false) {
+        const apart = Math.abs(preview.body.difference_cents);
+        const size = `${apart < 0 ? "-" : ""}$${String(Math.floor(apart / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${pad(apart % 100)}`;
+        return clientError(422, `bankrec: cannot record cut-over at ${input.cutover_date}: the statement and the book differ by ${size}; tick the items still outstanding at cut over, or check the date and balance`);
+      }
+    }
+    account.cutover_date = input.cutover_date;
+    account.cutover_statement_balance_cents = Number(input.opening_statement_balance_cents) || 0;
+    account.cutover_outstanding_journal_ids = ids.map(String);
+    return { status: 200, body: accountView(account) };
+  }
+
+  // The starting point form's read (round 3): the ledger's entries on the account's GL code on or before the
+  // date, and the book balance their net makes, computed from the same posted journals the register serves.
+  function cutoverPreview(accountId, url) {
+    const date = url.searchParams.get("date") ?? "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return clientError(400, `bankrec: cutover_date must be YYYY-MM-DD, got ${JSON.stringify(date)}`);
+    }
+    const account = world.accounts.find((a) => a.id === accountId);
+    if (account === undefined) return clientError(404, "not found");
+    const rows = (typeof ledgerPosted === "function" ? ledgerPosted() : [])
+      .flatMap((j) =>
+        j.lines
+          .filter((l) => l.account_code === account.gl_account_code)
+          .map((l) => ({ journal: j, net: l.debit_cents - l.credit_cents })),
+      )
+      .filter((e) => e.net !== 0 && (e.journal.posted_at ?? "").slice(0, 10) <= date)
+      .sort((a, b) => (a.journal.posted_at < b.journal.posted_at ? -1 : 1));
+    const entries = rows.map(({ journal, net }) => ({ journal_id: journal.id, posted_at: journal.posted_at, memo: journal.memo, amount_cents: net }));
+    const book = entries.reduce((s, e) => s + e.amount_cents, 0);
+    const body = { book_balance_cents: book, ...(entries.length > 0 ? { entries } : {}) };
+    // With the form's typed balance and ticks, the difference and whether it reconciles ride the answer too.
+    const rawStatement = url.searchParams.get("statement_cents");
+    if (rawStatement !== null && rawStatement !== "") {
+      if (!/^-?\d+$/.test(rawStatement)) return clientError(400, "bankrec: statement_cents must be a whole number of cents");
+      const ticked = new Set((url.searchParams.get("ticked") ?? "").split(",").filter((s) => s !== ""));
+      const tickedNet = entries.filter((e) => ticked.has(e.journal_id)).reduce((s, e) => s + e.amount_cents, 0);
+      const diff = Number(rawStatement) - (book - tickedNet);
+      body.difference_cents = diff;
+      body.reconciles = diff === 0;
+    }
+    return { status: 200, body };
+  }
+
+  function completeReconciliation(id, caller) {    if (!id) return clientError(400, "reconciliation id is required");
     if (!UUID.test(id)) return clientError(404, "not found");
     const rec = world.recons.find((r) => r.id === id);
     if (rec === undefined) return clientError(404, "not found");
     if (rec.status === "COMPLETED") return clientError(409, `reconciliation ${id} is already COMPLETED`);
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Toronto" });
+    const monthEnd = new Date(Date.UTC(rec.year, rec.month, 0)).toISOString().slice(0, 10);
+    const nextY = rec.month === 12 ? rec.year + 1 : rec.year;
+    const nextM = rec.month === 12 ? 1 : rec.month + 1;
+    const firstSignOffDay = `${nextY}-${pad(nextM)}-01`;
+    if (today <= monthEnd) {
+      return clientError(422, `cannot complete, ${rec.year}-${pad(rec.month)} has not reached month end yet (month end is ${monthEnd}; first day to sign off is ${firstSignOffDay})`);
+    }
     const unmatched = world.lines.filter(
       (l) => l.bank_account_id === rec.bank_account_id && l.status === "UNMATCHED" && Number(l.txn_date.slice(0, 4)) === rec.year && Number(l.txn_date.slice(5, 7)) === rec.month,
     ).length;
     if (unmatched > 0) return clientError(422, `cannot complete, ${unmatched} UNMATCHED line(s) remain for ${rec.year}-${pad(rec.month)}`);
-    // SF-2s: the core recomputes the ledger (and a derived statement balance from the lines) at completion; the recomputed variance alone decides.
-    const stmt = rec.statement_balance_derived ? monthNet(rec.bank_account_id, rec.year, rec.month) : rec.statement_balance_cents;
     const account = world.accounts.find((a) => a.id === rec.bank_account_id);
+    const totalLines = world.lines.filter(
+      (l) => l.bank_account_id === rec.bank_account_id && Number(l.txn_date.slice(0, 4)) === rec.year && Number(l.txn_date.slice(5, 7)) === rec.month,
+    ).length;
+    if (account?.account_type === "BANK" && totalLines === 0) {
+      return clientError(422, `cannot complete, no statement lines have been imported for ${rec.year}-${pad(rec.month)}`);
+    }
+    // SF-2s + FW1-04: the core recomputes the ledger, outstanding items, and a derived statement balance from the lines at completion.
+    const stmt = rec.statement_balance_derived ? monthNet(rec.bank_account_id, rec.year, rec.month) : rec.statement_balance_cents;
     const ledger = account !== undefined && account.gl_account_code === "1000" ? world.glCents : 0;
-    if (stmt - ledger !== 0) {
-      const apart = Math.abs(stmt - ledger);
+    const ditCents = account !== undefined && account.gl_account_code === "1000" ? world.depositsInTransit.reduce((s, x) => s + x.amount_cents, 0) : 0;
+    const ocCents = account !== undefined && account.gl_account_code === "1000" ? world.outstandingCheques.reduce((s, x) => s + x.amount_cents, 0) : 0;
+    const adjBank = stmt + ditCents - ocCents;
+    if (adjBank - ledger !== 0) {
+      const apart = Math.abs(adjBank - ledger);
       return clientError(422, `cannot complete, the statement reads ${usd(stmt)} and the ledger reads ${usd(ledger)} (${usd(apart)} apart); they must agree, refresh the figures and match what is open`);
     }
     rec.statement_balance_cents = stmt;
     rec.gl_balance_cents = ledger;
-    rec.variance_cents = stmt - ledger;
+    rec.variance_cents = adjBank - ledger;
     rec.status = "COMPLETED";
+    rec.completed_by = caller.id;
     rec.completed_at = stamp();
     return { status: 200, body: reconView(rec) };
   }
@@ -610,6 +740,12 @@ export function createBankrecWorld() {
       world.glCents += JSON.parse(bodyText || "{}").cents ?? 0;
       return { status: 200, body: { ok: true } };
     }
+    if (method === "POST" && path === "/_stub/outstanding-items") {
+      const input = JSON.parse(bodyText || "{}");
+      world.depositsInTransit = Array.isArray(input.deposits_in_transit) ? input.deposits_in_transit : [];
+      world.outstandingCheques = Array.isArray(input.outstanding_cheques) ? input.outstanding_cheques : [];
+      return { status: 200, body: { ok: true } };
+    }
     if (method === "POST" && path === "/_stub/reverse-payment") {
       const input = JSON.parse(bodyText || "{}");
       if (input.all === true) {
@@ -623,12 +759,20 @@ export function createBankrecWorld() {
     }
     if (!path.startsWith("/api/v1/bankrec/")) return null;
     const caller = callerOf(req);
-    const route = `${method} ${path.replace(/\/[0-9a-f-]{36}\/complete$/i, "/{id}/complete")}`;
-    // The guards, per route: reads any staff, writes a manager (tier 1 or 2), rules and sign off an administrator.
-    const admin = route === "POST /api/v1/bankrec/rules" || route === "POST /api/v1/bankrec/reconciliations/{id}/complete";
+    const route = `${method} ${path
+      .replace(/\/[0-9a-f-]{36}\/complete$/i, "/{id}/complete")
+      .replace(/\/[0-9a-f-]{36}\/cutover$/i, "/{id}/cutover")}`;
+    // The guards, per route: reads require Money Desk work or above (controller or Payables and Receivables, FROM-PRINCIPAL 111),
+    // writes a manager (tier 1 or 2), rules, sign off and the cut over an administrator.
+    const admin =
+      route === "POST /api/v1/bankrec/rules" ||
+      route === "POST /api/v1/bankrec/reconciliations/{id}/complete" ||
+      route === "POST /api/v1/bankrec/accounts/{id}/cutover";
     const manager = admin || ["POST /api/v1/bankrec/imports", "POST /api/v1/bankrec/match", "POST /api/v1/bankrec/unmatch", "POST /api/v1/bankrec/reconciliations"].includes(route);
+    const readWork = method === "GET";
     if (admin && caller.tier !== 1) return forbidden();
     if (manager && caller.tier > 2) return forbidden();
+    if (readWork && caller.id !== IDS.controller && caller.id !== IDS.payrec) return forbidden();
     let input = {};
     if (method === "POST" && route !== "POST /api/v1/bankrec/reconciliations/{id}/complete") {
       try {
@@ -640,6 +784,14 @@ export function createBankrecWorld() {
     switch (route) {
       case "GET /api/v1/bankrec/accounts":
         return { status: 200, body: world.accounts.map(accountView) };
+      case "GET /api/v1/bankrec/accounts/{id}/cutover": {
+        const accountId = path.split("/")[5] ?? "";
+        return cutoverPreview(accountId, url);
+      }
+      case "POST /api/v1/bankrec/accounts/{id}/cutover": {
+        const accountId = path.split("/")[5] ?? "";
+        return recordCutover(accountId, input);
+      }
       case "POST /api/v1/bankrec/imports":
         return importStatement(input, caller);
       case "GET /api/v1/bankrec/lines":

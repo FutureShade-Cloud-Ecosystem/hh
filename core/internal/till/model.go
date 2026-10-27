@@ -371,6 +371,10 @@ var (
 	// errPaymentReversed refuses a bounce of a reversed payment (SF-2d round 7): a payment is reversed or bounced,
 	// never both. Decided in the store's locked read, mirrored by the service's fast check.
 	errPaymentReversed = clientError{status: http.StatusConflict, msg: "till: this payment was reversed, so it cannot be marked bounced (a payment is reversed or bounced, never both)"}
+	// errPaymentNotBounceable refuses a bounce of a payment that is not a live receipt: a reversing entry,
+	// a voided desk receipt or a refund row has nothing to give back, and reinstating its invoices would
+	// post money that never arrived. Decided in the store's locked read, mirrored by the service's fast check.
+	errPaymentNotBounceable = clientError{status: http.StatusConflict, msg: "till: only a received or deposited payment can be marked bounced"}
 )
 
 // unprocessable maps a SEMANTIC validation failure (well-formed request, value violates a rule) to 422

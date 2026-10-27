@@ -1172,10 +1172,20 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 		}
 		// Sorted by product, so two sales over crossed products take their balance rows in one order.
 		sort.SliceStable(stockLines, func(i, j int) bool { return stockLines[i].ProductID < stockLines[j].ProductID })
-		if err := s.stockDec().DecrementForSaleTx(ctx, tx, StockDecrementInput{
+		// Round 2 (S3's P1): the decrement answers each line's own move value and
+		// the event carries it, so the COGS journal posts the value that moved.
+		values, derr := s.stockDec().DecrementForSaleValuesTx(ctx, tx, StockDecrementInput{
 			OrderID: orderID, BranchID: in.BranchID, SaleType: saleType, Lines: stockLines,
-		}); err != nil {
-			return err
+		})
+		if derr != nil {
+			return derr
+		}
+		byProduct := map[string]int64{}
+		for _, v := range values {
+			byProduct[v.ProductID] = v.ValueCents
+		}
+		for i := range fulfilledLines {
+			fulfilledLines[i]["value_cents"] = byProduct[fulfilledLines[i]["product_id"].(string)]
 		}
 		if err := s.store.EmitEvent(ctx, tx, "order.fulfilled", map[string]any{
 			"order_id": orderID, "branch_id": in.BranchID, "lines": fulfilledLines,
