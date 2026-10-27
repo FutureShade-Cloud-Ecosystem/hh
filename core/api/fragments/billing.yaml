@@ -565,6 +565,50 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  # --- billing: the quote door (FW1-12a). What a credit against an invoice
+  # would come to, and how much room that invoice has left. It raises nothing:
+  # no document, no journal, no approval. The room is what the invoice has left
+  # to credit, before tax and with it; the credit is what the amount comes to,
+  # tax included. A paid invoice still has a room: what has been paid is not
+  # what has been credited.
+  /api/v1/ar/credit-memos/quote:
+    post:
+      operationId: billingQuoteCreditMemo
+      tags: [staff-billing]
+      summary: Quote what a credit against an invoice would come to
+      description: >-
+        What a credit against one invoice would come to, and how much room that
+        invoice has left to credit. Nothing moves: no document, no journal, no
+        approval. The room is what the invoice has left to credit, before tax and
+        with it; the credit is what the amount comes to, tax included. A paid
+        invoice still has a room: what has been paid is not what has been
+        credited. An amount over the room is refused in the same words the credit
+        itself is refused in, so the cap is the core's and not a second rule
+        somewhere else.
+      x-addition: "Change 8 credit memos for finance; the ERP raised a credit memo only from the warranty settlement"
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreditMemoQuoteInput"
+      responses:
+        "200":
+          description: The quote, and the room it was taken against
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditMemoQuote"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/ar/register/reminders:
     post:
       operationId: billingSendRegisterReminders
@@ -2742,6 +2786,65 @@ components:
             Makes a retry safe: the same key returns the same credit. Absent
             means the server derives one from the request, so a double click
             raises one credit and not two.
+
+    BillingCreditMemoQuoteInput:
+      type: object
+      description: >-
+        What to quote: the account, the branch the credit would be filed at, the
+        invoice it would be against, and the amount to price. The amount is a
+        positive magnitude, before tax, exactly as the credit takes it; zero
+        prices the whole of what the invoice has left.
+      required: [customer_id, branch_id, invoice_id]
+      properties:
+        customer_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        invoice_id:
+          type: string
+          format: uuid
+          description: The one invoice to price the credit against; the room is that invoice's
+        amount_cents:
+          type: integer
+          format: int64
+          description: The amount to price, before tax; absent or zero prices the whole of what the invoice has left
+
+    BillingCreditMemoQuote:
+      type: object
+      description: >-
+        The quote, and the room it was taken against. The room is what the
+        invoice has left to credit: remaining_subtotal_cents before tax and
+        remaining_total_cents with it. The credit is what the amount comes to:
+        subtotal_cents before tax, tax_cents, and total_cents with tax. The
+        figures are the core's arithmetic; a reader never works out a tax.
+      required: [invoice_id, remaining_subtotal_cents, remaining_tax_cents, remaining_total_cents, subtotal_cents, tax_cents, total_cents, message]
+      properties:
+        invoice_id: { type: string, format: uuid }
+        remaining_subtotal_cents:
+          type: integer
+          format: int64
+          description: What the invoice has left to credit, before tax
+        remaining_tax_cents:
+          type: integer
+          format: int64
+          description: The tax that is left with it
+        remaining_total_cents:
+          type: integer
+          format: int64
+          description: What the invoice has left to credit, with tax
+        subtotal_cents:
+          type: integer
+          format: int64
+          description: What the amount comes to, before tax
+        tax_cents:
+          type: integer
+          format: int64
+          description: The tax pro-rated from what is left
+        total_cents:
+          type: integer
+          format: int64
+          description: What the amount comes to, with tax
+        message:
+          type: string
+          description: What a person reads under the amount they are typing
 
     BillingCreditMemoResult:
       type: object
