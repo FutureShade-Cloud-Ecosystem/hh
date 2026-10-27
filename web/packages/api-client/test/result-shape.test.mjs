@@ -53,11 +53,12 @@ test("every generated operation's signature returns Promise<Result<...>>", (t) =
     emitted.length + variants.length,
     "one scanned function per emitted manifest route and per declared body variant",
   );
-  // 780 scanned / 779 emitted / 780 in the manifest: main's counts plus FW1-01's glOpenYear.
-  assert.equal(operations, 780, "the document's operation count minus the excluded stream, plus the declared body variant");
-  assert.equal(emitted.length, 779, "the document's operation count minus the excluded stream");
+  // 781 scanned / 780 emitted / 781 in the manifest: the merged document's counts, FW1-01's
+  // glOpenYear and FW1-07's inventory controller exceptions read beside main's.
+  assert.equal(operations, 781, "the document's operation count minus the excluded stream, plus the declared body variant");
+  assert.equal(emitted.length, 780, "the document's operation count minus the excluded stream");
   assert.deepEqual(variants, ["feedbackCreateMultipart"], "the only multi content type body is feedbackCreate's multipart form");
-  assert.equal(ROUTES.length, 780, "the manifest census keeps the full route table");
+  assert.equal(ROUTES.length, 781, "the manifest census keeps the full route table");
 });
 
 test("each declared body variant resolves to a live generated function beside its operation", (t) => {
