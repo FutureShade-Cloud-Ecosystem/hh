@@ -291,6 +291,10 @@ func (f *fakeStore) ClosePeriodsForYear(_ context.Context, _ int, _, _ string) e
 func (f *fakeStore) AccountBalance(_ context.Context, _ string, _, _ int, _ string) (int64, string, error) {
 	return 0, NormalDebit, nil
 }
+
+func (f *fakeStore) AccountBalanceThrough(_ context.Context, _ string, _, _ int, _ string) (int64, string, error) {
+	return 0, NormalDebit, nil
+}
 func (f *fakeStore) AccountBalanceAsOf(_ context.Context, _ string, at time.Time, _ string) (int64, string, error) {
 	f.asOfSeen = at
 	return f.asOfNetDebit, NormalDebit, nil

@@ -3683,15 +3683,19 @@ type TaxRecomputeResult struct {
 }
 
 type TaxReconReport struct {
-	Year           int32   `json:"year"`
-	Month          int32   `json:"month"`
-	BranchId       *string `json:"branch_id,omitempty"`
-	CollectedCents int64   `json:"collected_cents"`
-	GlPayableCents int64   `json:"gl_payable_cents"`
-	GlFederalCents int64   `json:"gl_federal_cents"`
-	GlOntarioCents int64   `json:"gl_ontario_cents"`
-	VarianceCents  int64   `json:"variance_cents"`
-	TiedOut        bool    `json:"tied_out"`
+	Year                   int32   `json:"year"`
+	Month                  int32   `json:"month"`
+	BranchId               *string `json:"branch_id,omitempty"`
+	CollectedCents         int64   `json:"collected_cents"`
+	ReturnTaxCents         int64   `json:"return_tax_cents"`
+	InputTaxCents          int64   `json:"input_tax_cents"`
+	OpeningBalanceCount    int32   `json:"opening_balance_count"`
+	OpeningBalanceHstCents int64   `json:"opening_balance_hst_cents"`
+	GlPayableCents         int64   `json:"gl_payable_cents"`
+	GlFederalCents         int64   `json:"gl_federal_cents"`
+	GlOntarioCents         int64   `json:"gl_ontario_cents"`
+	VarianceCents          int64   `json:"variance_cents"`
+	TiedOut                bool    `json:"tied_out"`
 }
 
 type InventoryStockMove struct {

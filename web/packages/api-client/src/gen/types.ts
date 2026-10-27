@@ -3116,6 +3116,10 @@ export type TaxReconReport = {
   month: number;
   branch_id?: string;
   collected_cents: number;
+  return_tax_cents: number;
+  input_tax_cents: number;
+  opening_balance_count: number;
+  opening_balance_hst_cents: number;
   gl_payable_cents: number;
   gl_federal_cents: number;
   gl_ontario_cents: number;

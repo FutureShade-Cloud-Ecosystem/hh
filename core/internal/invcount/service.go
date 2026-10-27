@@ -318,15 +318,18 @@ func postSheetGL(ctx context.Context, st countStore, rr RuleResolver, sheet Shee
 	return err
 }
 
-// reconcileMonth runs (or returns) the lazy inventory→GL reconciliation for a period+branch. Run-once: an
-// existing run for the period is returned unchanged; otherwise the subledger (Σ weighted-avg on-hand) and the
-// GL 1200 balance are computed, the delta + tie status derived, and the row inserted ON CONFLICT DO NOTHING so
-// concurrent screen loads converge on one row.
+// reconcileMonth runs the lazy inventory→GL reconciliation for a period+branch (FW1-11). A past
+// period's row stays frozen once recorded, so looking at an older period never overwrites its
+// subledger figure with today's live shelf stock; the current open month re-runs and upserts its
+// row, so a correction in the month is never hidden behind the first run's figures.
 func reconcileMonth(ctx context.Context, st countStore, sc StockCounter, glBal GLBalanceReader, runBy string, year, month int, branchID string) (ReconRun, error) {
 	if existing, found, err := st.GetReconRun(ctx, year, month, branchID); err != nil {
 		return ReconRun{}, err
 	} else if found {
-		return existing, nil
+		curYear, curMonth := currentYearMonth(time.Now())
+		if year != curYear || month != curMonth {
+			return existing, nil
+		}
 	}
 	if sc == nil {
 		return ReconRun{}, clientErr(503, "invcount: inventory snapshot seam not wired")
@@ -341,7 +344,10 @@ func reconcileMonth(ctx context.Context, st countStore, sc StockCounter, glBal G
 	}
 	var gl1200 int64
 	if glBal != nil {
-		gl1200, err = glBal.GLBalanceCents(ctx, "1200", year, month, branchID)
+		// FW1-11: the GL side is 1200's balance THROUGH the period (cumulative, by period grain until
+		// 612's late posted filing rule lands), never one month's movement: the subledger arm values
+		// the whole stock, so the ledger arm must read the whole ledger account.
+		gl1200, err = glBal.GLBalanceThroughCents(ctx, "1200", year, month, branchID)
 		if err != nil {
 			return ReconRun{}, err
 		}

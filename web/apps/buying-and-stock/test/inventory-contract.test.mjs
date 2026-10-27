@@ -507,7 +507,7 @@ test("a sheet is abandoned before post, and the reason codes and negative stock 
   assert.ok(negative.json.items.length >= 1, "the sand sold before receipt at Julian reads negative");
 });
 
-test("the recon runs once per period and branch, and ties or names the delta", async () => {
+test("the recon is kept per period and branch, ties or names the delta, and re-runs to the same row", async () => {
   const { plm } = await world();
   const res = await call("GET", `/api/v1/counts/recon?branch_id=${plm}`);
   assert.equal(res.status, 200);
@@ -516,7 +516,7 @@ test("the recon runs once per period and branch, and ties or names the delta", a
   assert.ok(["TIED", "OUT_OF_TIE", "OPEN"].includes(res.json.current.status));
   assert.ok(Array.isArray(res.json.history.items));
   const again = await call("GET", `/api/v1/counts/recon?branch_id=${plm}`);
-  assert.equal(again.json.current.id, res.json.current.id, "the run is run-once: a second read answers the same row");
+  assert.equal(again.json.current.id, res.json.current.id, "a re-run upserts the period's row, so its identity stands");
 });
 
 // ---- the role walls ------------------------------------------------------------------------------------------

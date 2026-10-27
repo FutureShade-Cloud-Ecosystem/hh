@@ -291,13 +291,19 @@ func (s *RegisterService) Register(ctx context.Context, f RegisterFilter) (Regis
 	}
 	allowed := accountAllowed(ctx, s.callerFrom, pol.AccountPositionVisibility)
 	if !allowed {
-		// The overdue and past due chips ask for the withheld predicate AS A LIST, so a refused
-		// caller would otherwise read the overdue accounts straight off the filter (row 3172, no
-		// past due flag on any route). Refused in words, the policy-is-the-authority posture, before
-		// the store is asked for anything. The remaining chips filter on stored facts a refused
-		// caller still receives, so they keep answering.
-		if chip := strings.ToUpper(strings.TrimSpace(f.Chip)); chip == StatusOverdue || chip == "PAST_DUE" {
+		// The derived chips ask for a predicate a refused caller may not have AS A LIST, so each
+		// refuses in words before the store is asked for anything (row 3172, the policy-is-the-
+		// authority posture). Overdue and past due are the withheld predicate itself. CURRENT is
+		// that predicate told backwards: ALL less CURRENT lists the overdue accounts by
+		// subtraction (item 220), so it refuses with the same words. DUE_SOON is the one derived
+		// state left, and refuses under its own words. The remaining chips filter on stored facts
+		// a refused caller still receives, so they keep answering: the refused status filter
+		// offers stored statuses only.
+		switch strings.ToUpper(strings.TrimSpace(f.Chip)) {
+		case StatusOverdue, "PAST_DUE", "CURRENT":
 			return RegisterPage{}, httpx.BadRequestf("the past due view is not shown for your role")
+		case StatusDueSoon:
+			return RegisterPage{}, httpx.BadRequestf("the due soon view is not shown for your role")
 		}
 	}
 	rows, total, err := s.store.RegisterRows(ctx, asOf, pol.DueSoonDays, f)

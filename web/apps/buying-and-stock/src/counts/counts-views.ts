@@ -395,7 +395,7 @@ function reconPane(model: CountsModel): TemplateResult {
               <dt>GL 1200</dt><dd class="num">${formatMoney(run.gl_1200_cents)}</dd>
               <dt>Delta</dt><dd class="num ${signTone(run.delta_cents) === "plain" ? "" : signTone(run.delta_cents)}"><strong>${formatMoney(run.delta_cents)}</strong></dd>
             </div>
-            <p class="foot dim">The run is made once per period and branch, on the first look; the next look reads the same run.</p>
+            <p class="foot dim">The run is kept per period and branch: the open month can be run again (a second look re-reads the shelves and the ledger, and the latest run stands), while past periods stay frozen once written.</p>
           `
         : html`<p class="dim">Pick a branch and run the tie-out: the stock the yards hold, valued, against the GL's inventory account.</p>`}
       ${model.recon !== null && model.recon.history.length > 1

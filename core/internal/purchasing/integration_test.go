@@ -119,6 +119,8 @@ func (a itLanded) CreateAndApply(ctx context.Context, in LandedCostDraft) (strin
 
 type itGL struct{ svc *gl.Service }
 
+// itGL mirrors main.go's w4cGLPoster field for field, the document date included, so the legs read
+// the same filing the production wiring gives a posted bill.
 func (a itGL) PostJournal(ctx context.Context, in GLJournal) (string, error) {
 	lines := make([]gl.ExternalLine, len(in.Lines))
 	for i, l := range in.Lines {
@@ -126,7 +128,7 @@ func (a itGL) PostJournal(ctx context.Context, in GLJournal) (string, error) {
 	}
 	return a.svc.PostExternal(ctx, gl.ExternalJournal{
 		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
-		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines, DocumentDate: in.DocumentDate,
 	})
 }
 
@@ -137,7 +139,7 @@ func (a itGL) PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (strin
 	}
 	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{
 		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
-		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines, DocumentDate: in.DocumentDate,
 	})
 }
 
