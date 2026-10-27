@@ -12,6 +12,7 @@
 import {
   staffBilling,
   staffBranches,
+  staffGl,
   staffTill,
   type ApiClient,
   type BillingAddCustomerNoteInput,
@@ -243,5 +244,19 @@ export class ArApi {
   // whether the credit parks for a second pair of eyes.
   issueCreditMemo(input: BillingCreditMemoInput): Promise<Result<BillingCreditMemoResult>> {
     return staffBilling.billingIssueCreditMemo(this.#client, input);
+  }
+
+  /**
+   * The branch's maker-checker threshold (gl_policy.je_approval_threshold_cents), read the way the
+   * credit route reads it: the branch's own row over the org default, which is the same read
+   * GET /api/v1/gl/policy serves.
+   *
+   * The form needs the number to say what the rail will do BEFORE the press. Null when the read
+   * fails: the desk then says nothing about approval rather than guess, and the server still decides.
+   */
+  async creditApprovalThreshold(branchId: string): Promise<number | null> {
+    const policy = await staffGl.glGetPolicy(this.#client, { branch_id: branchId });
+    if (!policy.ok) return null;
+    return policy.value.je_approval_threshold_cents;
   }
 }

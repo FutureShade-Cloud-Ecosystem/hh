@@ -315,12 +315,16 @@ export class ArDesk {
       case "sub":
         if (this.#account !== null) this.#account = { ...this.#account, sub: choice === "statement" ? "statement" : choice === "contacts" ? "contacts" : "invoices" };
         if (choice === "contacts" && this.#account !== null) void this.#office.ensureContact(this.#account.customerId);
+        // A credit belongs to the view it was opened in: changing tab closes the form.
+        this.#credit = null;
         this.#clearMessages();
         this.#host.repaint();
         this.#afterFill();
         return true;
       case "invoice-scope":
         if (this.#account !== null) this.#account = { ...this.#account, showAll: choice === "all" };
+        // Narrowing the list can take away the row the credit is open on, so the form closes too.
+        this.#credit = null;
         this.#host.repaint();
         return true;
       case "open-invoice":
@@ -335,9 +339,12 @@ export class ArDesk {
       case "credit-start": {
         // The credit is against one invoice, or against the account itself when the press named none.
         const invoiceId = attr("data-invoice-id");
-        this.#credit = { invoiceId: invoiceId === "" ? null : invoiceId };
+        const id = invoiceId === "" ? null : invoiceId;
+        this.#credit = { invoiceId: id, amountText: "", thresholdCents: null };
         this.#clearMessages();
         this.#host.repaint();
+        // The form says what the approval rail will do, so it needs the branch's own threshold.
+        void this.#readCreditThreshold(id);
         return true;
       }
       case "credit-cancel":
@@ -571,6 +578,13 @@ export class ArDesk {
       this.#host.repaint();
       return;
     }
+    if (this.#credit !== null && control.getAttribute("data-field") === "credit-amount") {
+      // The form says what the credit will do as it is typed: an amount at or over the threshold
+      // waits for a second pair of eyes, and the manager reads that before the press.
+      this.#credit = { ...this.#credit, amountText: (control as HTMLInputElement).value };
+      this.#host.repaint();
+      return;
+    }
     if (account === null) return;
     if (control.getAttribute("data-field") === "receive-amount") {
       this.#account = { ...account, amountText: (control as HTMLInputElement).value };
@@ -667,6 +681,8 @@ export class ArDesk {
     const row = this.#aging.find((a) => a.customer_id === customerId);
     this.#clearMessages();
     this.#work = null;
+    // A credit belongs to the account it was opened on.
+    this.#credit = null;
     this.#tab = "receivables";
     this.#account = {
       customerId,
@@ -925,6 +941,24 @@ export class ArDesk {
     this.#notice = creditWords(result.value);
     this.#host.reveal("[data-notice]");
     await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
+    this.#host.repaint();
+  }
+
+  /**
+   * The branch's maker-checker threshold, read from the server the way the route reads it.
+   *
+   * The form says what the rail will do to this credit BEFORE the press, and that sentence needs the
+   * branch's own number. A read that fails leaves the number unknown: the desk then says nothing
+   * about the rail rather than guess, and the server still decides.
+   */
+  async #readCreditThreshold(invoiceId: string | null): Promise<void> {
+    const branchId = this.#creditBranch(invoiceId);
+    if (branchId === "") return;
+    const thresholdCents = await this.#api.creditApprovalThreshold(branchId);
+    const form = this.#credit;
+    // The form may have closed, or moved to another credit, while the read was in flight.
+    if (form === null || form.invoiceId !== invoiceId) return;
+    this.#credit = { ...form, thresholdCents };
     this.#host.repaint();
   }
 

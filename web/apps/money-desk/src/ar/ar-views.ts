@@ -32,7 +32,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditTargetWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
@@ -54,6 +54,10 @@ export type WorkChoice = "replacement" | "promise" | "reminder";
  */
 export interface CreditForm {
   readonly invoiceId: string | null;
+  /** What the manager has typed into the amount box, so the form can say what the credit will do. */
+  readonly amountText: string;
+  /** The branch's approval threshold in cents, or null when the desk could not read it. */
+  readonly thresholdCents: number | null;
 }
 
 export interface AccountModel {
@@ -735,21 +739,47 @@ export function renderHolds(model: DeskModel): TemplateResult {
  * to learn. The reason is asked for because the server asks for it: a credit with no stated reason
  * cannot be explained to the customer, to the Controller, or to whoever reads the file in a year.
  *
- * The form says what the credit is AGAINST, in words: the one invoice it names, or the account. A
- * credit against the account and a credit against one invoice are different credits, and the person
- * pressing the button must be able to see which one they are about to give.
+ * It says what the credit is AGAINST, in words, and what it DOES: the one invoice it names and the
+ * cap that invoice has left, or the account and the balance it lowers. A credit against the account
+ * and a credit against one invoice are different credits, and the person pressing the button must be
+ * able to see which one they are about to give.
+ *
+ * It says what the approval rail will do too, before the press: a credit at or over the branch's
+ * threshold waits for a second pair of eyes and moves no money until it is approved. The threshold is
+ * the server's own number, read the way the route reads it, never a number typed into this file.
  */
 function creditForm(model: DeskModel, account: AccountModel): TemplateResult {
-  const invoice = model.credit === null ? undefined : account.invoices.find((r) => r.id === model.credit?.invoiceId);
+  const form = model.credit;
+  const invoice = form === null || form.invoiceId === null ? null : account.invoices.find((r) => r.id === form.invoiceId) ?? null;
+  const target = creditTargetWords(invoice === null ? null : { invoice_no: invoice.invoice_no, balance_cents: invoice.balance_cents });
+  const approval = creditApprovalWords(form?.thresholdCents ?? null, form === null ? null : parseAmountToCents(form.amountText));
+  const cap = invoice === null ? null : invoice.balance_cents;
   return html`
-    <div class="credit-form" data-credit-form>
-      <p class="dim small" data-credit-target>${invoice === undefined ? "On the account" : `Against invoice ${invoice.invoice_no}`}</p>
-      <label><span class="visually-hidden">How much to credit</span><input type="text" data-field="credit-amount" placeholder="How much to credit" autocomplete="off" /></label>
-      <label><span class="visually-hidden">Why the customer is credited</span><input type="text" data-field="credit-reason" placeholder="Why the customer is credited" autocomplete="off" /></label>
-      <button type="button" class="btn btn-danger small-btn" data-action="credit-confirm" ?disabled=${model.busy}>Issue the credit</button>
-      <button type="button" class="btn btn-secondary small-btn" data-action="credit-cancel">Cancel</button>
-    </div>
+    <form class="credit-form" data-credit-form aria-label="Issue a credit">
+      <p class="callout" data-credit-target>${target}</p>
+      ${approval === "" ? nothing : html`<p class="note" data-credit-approval>${approval}</p>`}
+      <label>
+        <span data-credit-amount-label>Amount to credit${cap === null ? nothing : html` <span class="dim small">(up to ${formatMoney(cap)})</span>`}</span>
+        <input type="text" inputmode="decimal" data-field="credit-amount" placeholder="Such as 100.00" autocomplete="off" />
+      </label>
+      <label>
+        <span data-credit-reason-label>Why the customer is credited (required)</span>
+        <input type="text" data-field="credit-reason" placeholder="Such as the goods came back" autocomplete="off" />
+      </label>
+      <div class="actions">
+        <button type="button" class="btn btn-danger" data-action="credit-confirm" ?disabled=${model.busy}>Issue the credit</button>
+        <button type="button" class="btn btn-secondary" data-action="credit-cancel">Cancel</button>
+      </div>
+    </form>
   `;
+}
+
+/**
+ * The credit form in a card of its own: the credit on the ACCOUNT, which belongs to no single row,
+ * so it opens under the tabs in a panel rather than in the table.
+ */
+function creditPanel(model: DeskModel, account: AccountModel): TemplateResult {
+  return html`<section class="panel" aria-label="Issue a credit">${creditForm(model, account)}</section>`;
 }
 
 function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
@@ -791,7 +821,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
               const applied = split.get(r.id);
               return html`
                 <tr data-invoice-row class="${paidRow ? "dimrow" : ""}" aria-current="${account.selectedInvoiceId === r.id ? "true" : "false"}">
-                  <td><button type="button" class="link-row" data-action="open-invoice" data-invoice-id="${r.id}"><span class="who">${r.invoice_no}</span></button><span class="dim small">${r.order_no ?? ""}</span>${paidRow ? nothing : html`<br /><button type="button" class="link small" data-action="credit-start" data-invoice-id="${r.id}">Credit</button>`}</td>
+                  <td><button type="button" class="link-row" data-action="open-invoice" data-invoice-id="${r.id}"><span class="who">${r.invoice_no}</span></button><span class="dim small">${r.order_no ?? ""}</span>${paidRow ? nothing : html`<button type="button" class="link small" data-action="credit-start" data-invoice-id="${r.id}">Credit</button>`}</td>
                   <td class="nowrap">${relativeDay(r.issue_date, model.asOf)}</td>
                   <td class="nowrap ${r.days_overdue > 0 && !paidRow ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
                   <td><span class="marks">${rowMarks(r).map(markPill)}</span></td>
@@ -800,6 +830,9 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
                   <td class="num">${paidRow ? nothing : html`<button type="button" class="pick" role="checkbox" aria-checked="${picked ? "true" : "false"}" aria-label="Pay ${r.invoice_no}" data-action="pick" data-invoice-id="${r.id}"></button>`}</td>
                   <td class="num applied-cell" data-applied-cell>${paidRow || applied === undefined ? "" : formatMoney(applied)}</td>
                 </tr>
+                ${model.credit !== null && model.credit.invoiceId === r.id
+                  ? html`<tr class="credit-form-row"><td colspan="8">${creditForm(model, account)}</td></tr>`
+                  : nothing}
               `;
             })}
           </tbody>
@@ -1010,13 +1043,13 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
         ${hold === undefined ? nothing : html`<button type="button" class="btn btn-secondary" data-action="ask-lift">Ask to lift the hold</button>`}
       </div>
     </div>
-    ${model.credit !== null ? creditForm(model, account) : nothing}
     <nav class="tabs" aria-label="Account views">
       <button type="button" class="tab" data-action="sub" data-choice="invoices" aria-current="${account.sub === "invoices" ? "true" : "false"}">Open invoices</button>
       <button type="button" class="tab" data-action="sub" data-choice="statement" aria-current="${account.sub === "statement" ? "true" : "false"}">Statement</button>
       <span class="tab tab-later" aria-disabled="true">Activity ${later()}</span>
       <button type="button" class="tab" data-action="sub" data-choice="contacts" aria-current="${account.sub === "contacts" ? "true" : "false"}">Contacts</button>
     </nav>
+    ${model.credit !== null && model.credit.invoiceId === null ? creditPanel(model, account) : nothing}
     ${messages(model)}
     ${account.sub === "statement"
       ? statementDoc(model, account)
