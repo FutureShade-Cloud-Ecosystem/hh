@@ -280,14 +280,16 @@ func clientErr(status int, format string, a ...any) error {
 }
 
 var (
-	errNotFound      = clientError{status: http.StatusNotFound, msg: "gl: not found"}
-	errNoDB          = clientError{status: http.StatusServiceUnavailable, msg: "gl: database not configured"}
-	errUnauthorized  = clientError{status: http.StatusUnauthorized, msg: "gl: unauthenticated"}
-	errClosedPeriod  = clientError{status: http.StatusConflict, msg: "gl: fiscal period is CLOSED"}
-	errUnbalanced    = clientError{status: http.StatusUnprocessableEntity, msg: "gl: journal is unbalanced (Σdebit ≠ Σcredit)"}
-	errAccountInUse  = clientError{status: http.StatusConflict, msg: "gl: account is referenced by DRAFT journal(s); cannot deactivate"}
-	errFourEyes      = clientError{status: http.StatusForbidden, msg: "gl: an approver must differ from the journal's creator (four-eyes)"}
-	errNotController = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may reopen a closed period"}
+	errNotFound           = clientError{status: http.StatusNotFound, msg: "gl: not found"}
+	errNoDB               = clientError{status: http.StatusServiceUnavailable, msg: "gl: database not configured"}
+	errUnauthorized       = clientError{status: http.StatusUnauthorized, msg: "gl: unauthenticated"}
+	errClosedPeriod       = clientError{status: http.StatusConflict, msg: "gl: fiscal period is CLOSED"}
+	errUnbalanced         = clientError{status: http.StatusUnprocessableEntity, msg: "gl: journal is unbalanced (Σdebit ≠ Σcredit)"}
+	errAccountInUse       = clientError{status: http.StatusConflict, msg: "gl: account is referenced by DRAFT journal(s); cannot deactivate"}
+	errFourEyes           = clientError{status: http.StatusForbidden, msg: "gl: an approver must differ from the journal's creator (four-eyes)"}
+	errNotController      = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may reopen a closed period"}
+	errNotControllerQueue = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may read the posting queue"}
+	errQueueNotWired      = clientError{status: http.StatusServiceUnavailable, msg: "gl: the posting queue is not wired"}
 	// errForbidden is DIB-392's horizontal-read boundary: a manager asking for a branch's (or the whole
 	// org's) ledger that their scope does not reach.
 	errForbidden      = clientError{status: http.StatusForbidden, msg: "gl: caller cannot access this branch"}

@@ -34,6 +34,7 @@ export interface GlModel {
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
+  readonly postingQueueWords: string;
   readonly books: BooksModel;
 }
 
@@ -449,6 +450,7 @@ export function renderGl(model: GlModel): TemplateResult {
       <h1>${head.title}</h1>
       <p class="gl-dim">${head.line}</p>
     </div>
+    ${model.postingQueueWords !== "" ? html`<p class="gl-alert gl-alert-error" role="alert" data-posting-queue>${model.postingQueueWords}</p>` : nothing}
     ${tabs(model)} ${messages(model)}
     ${model.tab === "approvals"
       ? approvalsView(model)

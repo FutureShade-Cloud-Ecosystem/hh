@@ -51,6 +51,7 @@ func (h *Handler) requestWeight(w http.ResponseWriter, r *http.Request, caller g
 		Note:        req.Note,
 		RequestedBy: identity.StaffUserIDFromContext(r.Context()),
 		OrgID:       caller.StaffScope.OrgID,
+		Reach:       h.callerReach(r, caller),
 	})
 	if err != nil {
 		h.writeWeightErr(w, r, err)
@@ -79,6 +80,8 @@ func (h *Handler) submitWeight(w http.ResponseWriter, r *http.Request, caller gu
 		Weight:  req.Weight,
 		UOM:     req.UOM,
 		Note:    req.Note,
+		OrgID:   caller.StaffScope.OrgID,
+		Reach:   h.callerReach(r, caller),
 	})
 	if err != nil {
 		h.writeWeightErr(w, r, err)

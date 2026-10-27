@@ -175,7 +175,15 @@ func (s *Service) buildInvoiceFinalized(ctx context.Context, payload []byte) (jo
 		}
 		lines = append(lines, dr(hbCode, a.HoldbackCents, "holdback receivable"))
 	}
-	lines = append(lines, cr(revCode, a.SubtotalCents, "revenue"), cr(taxCode, a.TaxCents, s.taxWord(ctx)))
+	lines = append(lines, cr(revCode, a.SubtotalCents, "revenue"))
+	// A zero tax line is not a line: gl_journal_lines' CHECK (0007) demands a
+	// positive debit or credit, so an untaxed invoice's tax leg would fail
+	// the insert and dead letter the whole accrual. The tax rule is still
+	// resolved above (a config missing its tax account is a loud error even
+	// when this invoice collects no tax).
+	if a.TaxCents > 0 {
+		lines = append(lines, cr(taxCode, a.TaxCents, s.taxWord(ctx)))
+	}
 	return journalDraft{
 		Source:         SourceInvoice,
 		SourceRefID:    p.InvoiceID,
