@@ -46,7 +46,7 @@ func TestIntegration_DepositRelease_TheRingTheBeatAndTheFulfilment(t *testing.T)
 		 WHERE p.is_active AND p.base_uom = 'SF' LIMIT 1`).Scan(&productID); err != nil {
 		t.Skipf("no seeded SF-priceable product: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations LIMIT 1`).Scan(&branchID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'TRT' LIMIT 1`).Scan(&branchID); err != nil {
 		t.Skipf("no seeded branch: %v", err)
 	}
 	var user string
@@ -127,10 +127,11 @@ func TestIntegration_DepositRelease_TheRingTheBeatAndTheFulfilment(t *testing.T)
 	// owner of the finance topics (production's wiring), the lifecycle consumer
 	// as the observer, the real dispatcher draining the real outbox.
 	auditSvc := audit.NewService(audit.NewRepository(pool), nil)
-	orderSvc := NewService(NewRepository(pool)).WithAudit(auditSvc).WithAuditTrail(auditSvc).
+	orderRepo := NewRepository(pool)
+	orderSvc := NewService(orderRepo).WithAudit(auditSvc).WithAuditTrail(auditSvc).
 		WithDepositReleaser(billing.NewInvoiceWriter(pool))
 	billingRepo := billing.NewRepository(pool)
-	glSvc := gl.NewService(gl.NewRepository(pool)).WithInvoiceReader(billingRepo)
+	glSvc := gl.NewService(gl.NewRepository(pool)).WithInvoiceReader(billingRepo).WithDeliveryReader(orderRepo)
 	dispatcher := notify.NewDispatcher(notify.NewPgOutboxStore(pool), nil)
 	glSvc.RegisterPostingHandlers(dispatcher)
 	NewLifecycleConsumer(orderSvc, billingRepo, nil).RegisterHandlers(dispatcher)
@@ -255,4 +256,100 @@ func docNetDebitsAndCredits(t *testing.T, pool *pgxpool.Pool, dep, rest string) 
 		t.Fatalf("the sale's journals: %v", err)
 	}
 	return dr, cr
+}
+
+// TestIntegration_DepositRelease_DeliveredAtStampsAndGarbage proves on a real
+// database that:
+//  1. MarkDelivered writes an unambiguous stamp with an explicit offset, and
+//     DeliveredAt returns that instant (not "not delivered").
+//  2. A row stamped in the old now()::text form reads back as its instant.
+//  3. A garbage stamp returns an error, never a silent false.
+func TestIntegration_DepositRelease_DeliveredAtStampsAndGarbage(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	var branchID, custID, orderID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations LIMIT 1`).Scan(&branchID); err != nil {
+		t.Skipf("no seeded branch: %v", err)
+	}
+	suffix := fmt.Sprintf("deliv-%d", time.Now().UnixNano())
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
+		VALUES ('DLV-'||$1, 'DeliveredAt proof', 'CONTRACTOR', 30, 5000000) RETURNING id::text`,
+		suffix).Scan(&custID); err != nil {
+		t.Fatalf("plant customer: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
+		VALUES ('#DLV-'||$1, $2, $3, 'CONFIRMED', 'PICKUP', 4000, 4000) RETURNING id::text`,
+		suffix, custID, branchID).Scan(&orderID); err != nil {
+		t.Fatalf("plant order: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, orderID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
+	})
+
+	// Before MarkDelivered: absent stamp answers found=false with no error.
+	if _, found, err := repo.DeliveredAt(ctx, orderID); err != nil || found {
+		t.Fatalf("before MarkDelivered: found=%v err=%v, want false, nil", found, err)
+	}
+
+	t.Run("MarkDelivered then DeliveredAt returns that instant", func(t *testing.T) {
+		before := time.Now().Add(-5 * time.Second)
+		if err := repo.MarkDelivered(ctx, orderID); err != nil {
+			t.Fatalf("MarkDelivered: %v", err)
+		}
+		after := time.Now().Add(5 * time.Second)
+		at, found, err := repo.DeliveredAt(ctx, orderID)
+		if err != nil {
+			t.Fatalf("DeliveredAt after MarkDelivered: %v", err)
+		}
+		if !found || at.IsZero() {
+			t.Fatalf("DeliveredAt after MarkDelivered: found=%v at=%v, want true and non-zero instant", found, at)
+		}
+		if at.Before(before) || at.After(after) {
+			t.Fatalf("DeliveredAt instant %v outside [%v, %v]", at.UTC(), before.UTC(), after.UTC())
+		}
+		var raw string
+		if err := pool.QueryRow(ctx, `SELECT metadata->>'delivered_at' FROM orders WHERE id = $1`, orderID).Scan(&raw); err != nil {
+			t.Fatalf("read raw delivered_at: %v", err)
+		}
+		if _, err := time.Parse(time.RFC3339Nano, raw); err != nil {
+			t.Fatalf("new delivered_at stamp %q is not unambiguous RFC3339 with offset: %v", raw, err)
+		}
+	})
+
+	t.Run("a row stamped in the old now()::text form reads back as its instant", func(t *testing.T) {
+		const oldStamp = "2026-06-15 16:00:00.123456+00"
+		wantOld, err := time.Parse(time.RFC3339Nano, "2026-06-15T16:00:00.123456Z")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx,
+			`UPDATE orders SET metadata = jsonb_build_object('delivered_at', $2::text) WHERE id = $1`,
+			orderID, oldStamp); err != nil {
+			t.Fatalf("set old now()::text stamp: %v", err)
+		}
+		gotOld, found, err := repo.DeliveredAt(ctx, orderID)
+		if err != nil {
+			t.Fatalf("DeliveredAt on old now()::text stamp: %v", err)
+		}
+		if !found || !gotOld.Equal(wantOld) {
+			t.Fatalf("DeliveredAt on old now()::text stamp = (%v, %v), want (%v, true)", gotOld.UTC(), found, wantOld.UTC())
+		}
+	})
+
+	t.Run("a garbage stamp returns an error", func(t *testing.T) {
+		if _, err := pool.Exec(ctx,
+			`UPDATE orders SET metadata = jsonb_build_object('delivered_at', 'not-a-timestamp') WHERE id = $1`,
+			orderID); err != nil {
+			t.Fatalf("set garbage stamp: %v", err)
+		}
+		if _, found, err := repo.DeliveredAt(ctx, orderID); err == nil || found {
+			t.Fatalf("DeliveredAt on garbage stamp = (found=%v, err=%v), want error and found=false", found, err)
+		}
+	})
 }

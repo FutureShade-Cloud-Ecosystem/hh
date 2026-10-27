@@ -5,13 +5,13 @@
 // carries, for databases the OLD plan already seeded.
 //
 // WHY A REPAIR AT ALL. The applier is INSERT-only, by construction, so a change to a row the plan
-// already wrote (the home branch of C01, C04 and C08, which the plan now leaves empty so the three
-// are shared accounts) lands only on databases that had never been seeded: on every box seeded
-// before the ruling, the customers row conflicts and the apply writes nothing, and the three keep a
+// already wrote (the home branch of C01, C04, C08 and C09, which the plan now leaves empty so every account
+// it seeds with no home is shared) lands only on databases that had never been seeded: on every box seeded
+// before the ruling, the customers row conflicts and the apply writes nothing, and those accounts keep a
 // yard's home that is not true of them. The scrub-name pass (demoseed_scrubname_demo.go) exists for
 // the same class of row, with the same answer, and this file follows its guarantees one for one:
 //
-//   - a FIXED list of rows addressed by the plan's own ids, demoID("customer:C01") and its two
+//   - a FIXED list of rows addressed by the plan's own ids, demoID("customer:C01") and its
 //     peers, never a filter over names or accounts;
 //   - the WHERE names the exact values being repaired (the seed's own branches, the homes any older
 //     plan wrote), so the second run matches no row, and a row somebody re-homed by hand to a

@@ -26,6 +26,7 @@ type fakeStore struct {
 	tasks     map[string]Task
 	seq       int
 	createErr error
+	created   []NewTaskInput // every create's input, so a test reads the org the row would carry
 
 	// W2 yard state (the store methods live in yard_fake_test.go, mirroring yard_repository.go).
 	shortages map[string][]Shortage // task id → its shortages, in report order
@@ -47,6 +48,7 @@ func (f *fakeStore) CreateTask(_ context.Context, in NewTaskInput) (Task, error)
 	if f.createErr != nil {
 		return Task{}, f.createErr
 	}
+	f.created = append(f.created, in)
 	f.seq++
 	id := "00000000-0000-4000-8000-" + padID(f.seq)
 	now := time.Now()
