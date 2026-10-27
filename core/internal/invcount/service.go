@@ -318,10 +318,19 @@ func postSheetGL(ctx context.Context, st countStore, rr RuleResolver, sheet Shee
 	return err
 }
 
-// reconcileMonth runs the lazy inventory→GL reconciliation for a period+branch and UPSERTS the period's
-// row (FW1-11: a period re-runs, the latest run stands), so concurrent screen loads converge on one row
-// and a correction in the month is never hidden behind the first run's figures.
+// reconcileMonth runs the lazy inventory→GL reconciliation for a period+branch (FW1-11). A past
+// period's row stays frozen once recorded, so looking at an older period never overwrites its
+// subledger figure with today's live shelf stock; the current open month re-runs and upserts its
+// row, so a correction in the month is never hidden behind the first run's figures.
 func reconcileMonth(ctx context.Context, st countStore, sc StockCounter, glBal GLBalanceReader, runBy string, year, month int, branchID string) (ReconRun, error) {
+	if existing, found, err := st.GetReconRun(ctx, year, month, branchID); err != nil {
+		return ReconRun{}, err
+	} else if found {
+		curYear, curMonth := currentYearMonth(time.Now())
+		if year != curYear || month != curMonth {
+			return existing, nil
+		}
+	}
 	if sc == nil {
 		return ReconRun{}, clientErr(503, "invcount: inventory snapshot seam not wired")
 	}

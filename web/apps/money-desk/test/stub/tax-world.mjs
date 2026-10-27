@@ -77,7 +77,7 @@ export function olderMonth() {
 }
 
 // The tie out the stub holds, in cents: the month before today ties; the month before that is off.
-export const RECON = { tiedCollectedCents: 482_375, tiedITCsCents: 87_300, olderCollectedCents: 391_250, olderITCsCents: 81_500, olderLedgerCents: 389_900 };
+export const RECON = { tiedCollectedCents: 482_375, tiedReturnsCents: 12_000, tiedITCsCents: 87_300, olderCollectedCents: 391_250, olderReturnsCents: 5_000, olderITCsCents: 81_500, olderLedgerCents: 389_900 };
 
 // Go's %q of a string, close enough for the reason codes the tests send (printable ASCII with quotes escaped).
 const goQuote = (s) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -335,19 +335,23 @@ export function createTaxWorld() {
     const prior = taxMonth();
     const older = olderMonth();
     let collected = 0;
+    let returns = 0;
     let itcs = 0;
     let ledger = 0;
     if (year === prior.year && month === prior.month) {
       collected = RECON.tiedCollectedCents;
+      returns = RECON.tiedReturnsCents;
       itcs = RECON.tiedITCsCents;
-      ledger = RECON.tiedCollectedCents - RECON.tiedITCsCents;
+      ledger = RECON.tiedCollectedCents - RECON.tiedReturnsCents - RECON.tiedITCsCents;
     } else if (year === older.year && month === older.month) {
       collected = RECON.olderCollectedCents;
+      returns = RECON.olderReturnsCents;
       itcs = RECON.olderITCsCents;
       ledger = RECON.olderLedgerCents;
     }
-    // FW1-11: the two document sides ride apart, and the variance nets them against 2200's movement.
-    const out = { year, month, collected_cents: collected, input_tax_cents: itcs, gl_payable_cents: ledger, gl_federal_cents: 0, gl_ontario_cents: 0, variance_cents: ledger - (collected - itcs), tied_out: ledger - (collected - itcs) === 0 };
+    // FW1-11: the three document lines ride apart, and the variance nets them against 2200's movement.
+    const netDocs = collected - returns - itcs;
+    const out = { year, month, collected_cents: collected, return_tax_cents: returns, input_tax_cents: itcs, gl_payable_cents: ledger, gl_federal_cents: 0, gl_ontario_cents: 0, variance_cents: ledger - netDocs, tied_out: ledger - netDocs === 0 };
     const branch = url.searchParams.get("branch_id");
     if (branch) out.branch_id = branch;
     return { status: 200, body: out };

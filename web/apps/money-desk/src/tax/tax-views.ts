@@ -530,6 +530,7 @@ function reconResult(r: TaxReconReport | null): TemplateResult {
     <div data-recon-result>
       <div class="tx-stats">
         <div class="tx-stat"><span class="tx-stat-label">Collected by sales</span><span class="tx-stat-figure" data-collected>${formatMoney(r.collected_cents)}</span></div>
+        <div class="tx-stat"><span class="tx-stat-label">Refunded on returns</span><span class="tx-stat-figure" data-return-tax>${formatMoney(r.return_tax_cents)}</span></div>
         <div class="tx-stat"><span class="tx-stat-label">Input tax credits on vendor bills</span><span class="tx-stat-figure" data-input-tax>${formatMoney(r.input_tax_cents)}</span></div>
         <div class="tx-stat"><span class="tx-stat-label">The ledger's month movement on sales tax payable</span><span class="tx-stat-figure" data-ledger>${formatMoney(r.gl_payable_cents)}</span></div>
         <div class="tx-stat"><span class="tx-stat-label">Difference</span><span class="tx-stat-figure">${pill(v.tone, v.word)}</span></div>

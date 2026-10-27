@@ -15,22 +15,27 @@ import (
 // -- in-memory fakes (no DB) -----------------------------------------------------
 
 type fakeStore struct {
-	rates    map[string]int // "jur|reason" -> bps (effective-agnostic for the unit tests)
-	rateRows []Rate         // dated rows, what MaxRateInRange honestly resolves (the interval legs)
-	profiles map[string]StatusCardProfile
-	evidence map[string]Evidence
-	config   map[string]Config
-	w4       []Snapshot
-	inserted []Snapshot
-	salesHST int64 // the period's document tax, what the reconcile reads as collected
-	billITCs int64 // the period's posted vendor bill tax, shown apart
-	evSeq    int
+	rates     map[string]int // "jur|reason" -> bps (effective-agnostic for the unit tests)
+	rateRows  []Rate         // dated rows, what MaxRateInRange honestly resolves (the interval legs)
+	profiles  map[string]StatusCardProfile
+	evidence  map[string]Evidence
+	config    map[string]Config
+	w4        []Snapshot
+	inserted  []Snapshot
+	salesHST  int64 // the period's document tax, what the reconcile reads as collected
+	returnHST int64 // the period's POS return tax, shown as returns
+	billITCs  int64 // the period's posted vendor bill tax, shown apart
+	evSeq     int
 }
 
-// DocumentSalesHSTCents and VendorBillITCCents stand in for the billing and purchasing seams
-// (FW1-11): the reconcile reads the period's documents through them, never snapshots.
+// DocumentSalesHSTCents, ReturnHSTCents and VendorBillITCCents stand in for the billing, pos and
+// purchasing seams (FW1-11): the reconcile reads the period's documents through them, never snapshots.
 func (f *fakeStore) DocumentSalesHSTCents(context.Context, int, int, string) (int64, error) {
 	return f.salesHST, nil
+}
+
+func (f *fakeStore) ReturnHSTCents(context.Context, int, int, string) (int64, error) {
+	return f.returnHST, nil
 }
 
 func (f *fakeStore) VendorBillITCCents(context.Context, int, int, string) (int64, error) {
@@ -457,9 +462,11 @@ func TestValidateReliefEvidence_ExpiredTCRDBlocks(t *testing.T) {
 func TestReconcile_TiesTheMonthsDocumentsToGL(t *testing.T) {
 	f := newFakeStore()
 	f.salesHST = 26_000
-	f.billITCs = 6_000
+	f.returnHST = 1_500
+	f.billITCs = 4_500
 	svc, _ := newSvc(f)
 	svc.salesHST = f
+	svc.returnHST = f
 	svc.billITCs = f
 	svc.glBalance = fakeGL{balances: map[string]int64{acctHSTPayable: 20_000, acctHSTFederal: 10_000, acctHSTOntario: 16_000}}
 
@@ -467,10 +474,10 @@ func TestReconcile_TiesTheMonthsDocumentsToGL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.CollectedCents != 26_000 || rep.InputTaxCreditsCents != 6_000 {
-		t.Fatalf("the document sides must ride apart, got collected=%d itcs=%d", rep.CollectedCents, rep.InputTaxCreditsCents)
+	if rep.CollectedCents != 26_000 || rep.ReturnTaxCents != 1_500 || rep.InputTaxCreditsCents != 4_500 {
+		t.Fatalf("the document sides must ride apart, got collected=%d returns=%d itcs=%d", rep.CollectedCents, rep.ReturnTaxCents, rep.InputTaxCreditsCents)
 	}
-	// 2200's movement (20000) against the documents net (26000 − 6000): tied.
+	// 2200's movement (20000) against the documents net (26000 − 1500 − 4500): tied.
 	if !rep.TiedOut || rep.VarianceCents != 0 {
 		t.Fatalf("expected tie-out, got variance=%d tied=%v", rep.VarianceCents, rep.TiedOut)
 	}
@@ -478,16 +485,21 @@ func TestReconcile_TiesTheMonthsDocumentsToGL(t *testing.T) {
 		t.Errorf("split mismatch: fed=%d on=%d", rep.GLFederalCents, rep.GLOntarioCents)
 	}
 
-	// A drift on either side surfaces as a non-zero variance.
+	// A drift on any side surfaces as a non-zero variance.
 	f.salesHST = 25_000
 	rep2, _ := svc.ReconcileReport(context.Background(), 2026, 7, "")
 	if rep2.TiedOut || rep2.VarianceCents != 1_000 {
 		t.Fatalf("expected variance 1000, got %d tied=%v", rep2.VarianceCents, rep2.TiedOut)
 	}
-	f.billITCs = 7_000
+	f.billITCs = 5_500
 	rep3, _ := svc.ReconcileReport(context.Background(), 2026, 7, "")
 	if rep3.TiedOut || rep3.VarianceCents != 2_000 {
 		t.Fatalf("expected variance 2000 after the ITC moves, got %d tied=%v", rep3.VarianceCents, rep3.TiedOut)
+	}
+	f.returnHST = 2_000
+	rep4, _ := svc.ReconcileReport(context.Background(), 2026, 7, "")
+	if rep4.TiedOut || rep4.VarianceCents != 2_500 {
+		t.Fatalf("expected variance 2500 after the return tax moves, got %d tied=%v", rep4.VarianceCents, rep4.TiedOut)
 	}
 }
 
@@ -499,6 +511,10 @@ func TestReconcile_UnwiredSeamsRefuse(t *testing.T) {
 		t.Fatalf("an unwired sales seam must refuse, got %v", err)
 	}
 	svc.salesHST = f
+	if _, err := svc.ReconcileReport(context.Background(), 2026, 7, ""); err == nil || !strings.Contains(err.Error(), "POS return HST seam") {
+		t.Fatalf("an unwired POS return seam must refuse, got %v", err)
+	}
+	svc.returnHST = f
 	if _, err := svc.ReconcileReport(context.Background(), 2026, 7, ""); err == nil || !strings.Contains(err.Error(), "vendor bill input tax seam") {
 		t.Fatalf("an unwired ITC seam must refuse, got %v", err)
 	}

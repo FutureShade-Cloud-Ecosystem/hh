@@ -39712,11 +39712,12 @@ components:
           format: int32
     TaxReconReport:
       type: object
-      description: "The HST reconciliation (FW1-11): the month's documents on both sides, sales HST collected and vendor bill input tax credits shown apart, netted against the GL 2200 movement for the same period."
+      description: "The HST reconciliation (FW1-11): the month's documents on each line, sales HST collected, tax refunded on POS returns, and vendor bill input tax credits shown apart, netted against the GL 2200 movement for the same period."
       required:
         - year
         - month
         - collected_cents
+        - return_tax_cents
         - input_tax_cents
         - gl_payable_cents
         - gl_federal_cents
@@ -39736,6 +39737,10 @@ components:
           type: integer
           format: int64
           description: Sales tax on the period's documents (invoices less credit memos)
+        return_tax_cents:
+          type: integer
+          format: int64
+          description: Sales tax refunded on the period's committed POS returns
         input_tax_cents:
           type: integer
           format: int64
@@ -39755,7 +39760,7 @@ components:
         variance_cents:
           type: integer
           format: int64
-          description: The GL movement minus the documents' net (collected less input tax); zero means tied out
+          description: The GL movement minus the documents' net (collected less returns less input tax); zero means tied out
         tied_out:
           type: boolean
     InventoryStockMove:

@@ -448,10 +448,12 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// its stubs for the real engines (tax, stock, restock, the card
 	// refunder).
 	// FW1-11: the reconcile's document sides read the owning modules' seams (billing's invoices,
-	// purchasing's posted bills), the same rule the GL side follows (never the views directly).
+	// pos's committed returns, purchasing's posted bills), the same rule the GL side follows
+	// (never the views directly).
 	taxSvc := newTaxEngine(pool).
 		WithGLBalances(glBalanceAdapter{svc: spine.glSvc}).
 		WithSalesHSTs(billing.NewRepository(pool)).
+		WithReturnHSTs(posRepo).
 		WithBillITCs(purchasing.NewRepository(pool)).
 		WithAudit(auditSvc)
 	tax.NewHandler(taxSvc, log).WithUserLinker(link).RegisterRoutes(r, g)

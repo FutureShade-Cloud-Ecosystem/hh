@@ -269,15 +269,17 @@ type ReconReport struct {
 	Month    int    `json:"month"`
 	BranchID string `json:"branch_id,omitempty"`
 	// CollectedCents is the sales HST on the period's documents (invoices less credit memos), the
-	// figure the return's line 101 asks for. InputTaxCreditsCents is the tax on the period's posted
-	// vendor bills, shown apart (the return's line 108). The two are netted for the tie against the
-	// GL 2200 movement.
+	// figure the return's line 101 asks for. ReturnTaxCents is the tax refunded on the period's
+	// committed POS returns, shown as its own line (returns). InputTaxCreditsCents is the tax on the
+	// period's posted vendor bills, shown apart (the return's line 108). The three are netted for the
+	// tie against the GL 2200 movement.
 	CollectedCents       int64 `json:"collected_cents"`
+	ReturnTaxCents       int64 `json:"return_tax_cents"`
 	InputTaxCreditsCents int64 `json:"input_tax_cents"`
 	GLPayableCents       int64 `json:"gl_payable_cents"` // 2200's movement for the period
 	GLFederalCents       int64 `json:"gl_federal_cents"` // 2201 balance
 	GLOntarioCents       int64 `json:"gl_ontario_cents"` // 2202 balance
-	VarianceCents        int64 `json:"variance_cents"`   // GL 2200 movement − (collected − input tax)
+	VarianceCents        int64 `json:"variance_cents"`   // GL 2200 movement − (collected − returns − input tax)
 	TiedOut              bool  `json:"tied_out"`
 }
 
@@ -329,6 +331,13 @@ type SalesHSTReader interface {
 // purchasing tables directly.
 type BillITCReader interface {
 	VendorBillITCCents(ctx context.Context, year, month int, branchID string) (int64, error)
+}
+
+// ReturnHSTReader reads the tax refunded on the period's committed POS returns (the returns line of
+// the tie-out). Satisfied by *pos.Repository through a main.go wiring; tax never reads the POS tables
+// directly.
+type ReturnHSTReader interface {
+	ReturnHSTCents(ctx context.Context, year, month int, branchID string) (int64, error)
 }
 
 // -- pure helpers --------------------------------------------------------------

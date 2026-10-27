@@ -141,8 +141,8 @@ func (h *Handler) negativeStock(w http.ResponseWriter, r *http.Request, caller g
 }
 
 // recon runs the current-month inventory→GL reconciliation on screen load (kept per period and branch,
-// re-runnable, the latest run stands) and returns the period run plus the branch's recon history.
-// ?branch_id required; ?year & ?month override the current period.
+// re-runnable in the current open month while past periods stay frozen once written) and returns the
+// period run plus the branch's recon history. ?branch_id required; ?year & ?month override the current period.
 func (h *Handler) recon(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	branchID := r.URL.Query().Get("branch_id")
 	year, month := currentYearMonth(time.Now())

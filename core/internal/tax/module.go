@@ -112,8 +112,9 @@ func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: po
 type Service struct {
 	repo      taxStore
 	glBalance GLBalanceReader
-	salesHST  SalesHSTReader // the collected side of the HST reconcile (billing's documents)
-	billITCs  BillITCReader  // the input tax credits side (purchasing's posted bills)
+	salesHST  SalesHSTReader  // the collected side of the HST reconcile (billing's documents)
+	returnHST ReturnHSTReader // the returns line of the HST reconcile (pos's committed returns)
+	billITCs  BillITCReader   // the input tax credits side (purchasing's posted bills)
 	audit     audit.Recorder
 	log       *slog.Logger
 	now       func() time.Time // injectable clock (tests); nil → time.Now
@@ -131,6 +132,9 @@ func (s *Service) WithGLBalances(r GLBalanceReader) *Service { s.glBalance = r; 
 
 // WithSalesHSTs injects the collected-side seam: the tax on the period's sales documents (billing).
 func (s *Service) WithSalesHSTs(r SalesHSTReader) *Service { s.salesHST = r; return s }
+
+// WithReturnHSTs injects the returns-line seam: the tax refunded on the period's POS returns (pos).
+func (s *Service) WithReturnHSTs(r ReturnHSTReader) *Service { s.returnHST = r; return s }
 
 // WithBillITCs injects the input-tax-credits seam: the tax on the period's posted vendor bills
 // (purchasing).

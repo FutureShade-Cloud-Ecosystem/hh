@@ -558,11 +558,12 @@ func reconstructBase(src Snapshot) int64 {
 
 // reconcile ties the period's DOCUMENT tax to the GL 2200 movement for the same period (FW1-11): the
 // sales HST on the invoices less the credit memos (the collected side, the return's line 101), the
-// input tax credits on the posted vendor bills shown apart (line 108), the two netted against 2200's
-// month movement, which carries both. The document sides read through the billing and purchasing
-// seams, the GL side through the frozen GLBalanceReader; the relief snapshots never stand in for
-// collected tax again (the audit's LEDGER-TIEOUT finding). Variance 0 = tied out. The 2201/2202
-// federal/Ontario split balances are surfaced for the report, unmoved: no posting rule writes them.
+// tax refunded on POS returns shown as its own line (returns), and the input tax credits on the
+// posted vendor bills shown apart (line 108), the three netted against 2200's month movement, which
+// carries all three. The document sides read through the billing, pos and purchasing seams, the GL
+// side through the frozen GLBalanceReader; the relief snapshots never stand in for collected tax
+// again (the audit's LEDGER-TIEOUT finding). Variance 0 = tied out. The 2201/2202 federal/Ontario
+// split balances are surfaced for the report, unmoved: no posting rule writes them.
 //
 // Until 612's late posted filing rule is on this base, both sides read the period by its own grain:
 // the documents by their dates, the GL by the journal's fiscal period. The rebase after 612 merges
@@ -577,6 +578,14 @@ func (s *Service) reconcile(ctx context.Context, year, month int, branchID strin
 		return rep, err
 	}
 	rep.CollectedCents = sales
+	if s.returnHST == nil {
+		return rep, fmt.Errorf("tax: the POS return HST seam is not wired; the reconcile cannot be computed")
+	}
+	returns, err := s.returnHST.ReturnHSTCents(ctx, year, month, branchID)
+	if err != nil {
+		return rep, err
+	}
+	rep.ReturnTaxCents = returns
 	if s.billITCs == nil {
 		return rep, fmt.Errorf("tax: the vendor bill input tax seam is not wired; the reconcile cannot be computed")
 	}
@@ -598,7 +607,7 @@ func (s *Service) reconcile(ctx context.Context, year, month int, branchID strin
 			rep.GLOntarioCents = v
 		}
 	}
-	rep.VarianceCents = rep.GLPayableCents - (rep.CollectedCents - rep.InputTaxCreditsCents)
+	rep.VarianceCents = rep.GLPayableCents - (rep.CollectedCents - rep.ReturnTaxCents - rep.InputTaxCreditsCents)
 	rep.TiedOut = rep.VarianceCents == 0
 	return rep, nil
 }

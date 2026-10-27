@@ -70,7 +70,8 @@ type ReasonCode struct {
 	IsActive    bool   `json:"is_active"`
 }
 
-// ReconRun is one monthly inventory→GL reconciliation (kept per period and branch, re-runnable).
+// ReconRun is one monthly inventory→GL reconciliation (kept per period and branch; re-runnable in the
+// current open month, frozen once written for past periods).
 type ReconRun struct {
 	ID             string `json:"id"`
 	BranchID       string `json:"branch_id,omitempty"`

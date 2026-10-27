@@ -131,8 +131,9 @@ func (s *Service) PostSheet(ctx context.Context, sheetID string) error {
 	return postCountedSheet(ctx, s.store(), s.stock, s.gl, s.rules, sheetID)
 }
 
-// ReconcileMonth runs the lazy inventory→GL recon (kept per period and branch, re-runnable: the
-// latest run stands) and returns the tie delta (subledger − GL 1200 through the period). Fenced to the
+// ReconcileMonth runs the lazy inventory→GL recon (kept per period and branch; a past period's row
+// stays frozen, and the current open month re-runs so the latest run stands) and returns the tie
+// delta (subledger − GL 1200 through the period). Fenced to the
 // caller's branch reach (FW1-10, the DIB-390 rule every count-sheet transition already carries): the
 // recon takes a REQUIRED branch, which the caller must reach. FROZEN signature.
 func (s *Service) ReconcileMonth(ctx context.Context, year, month int, branchID string) (int64, error) {
