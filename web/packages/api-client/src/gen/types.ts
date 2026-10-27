@@ -536,6 +536,48 @@ export type BillingReceiptResult = {
   status: "RECEIVED" | "DEPOSITED" | "BOUNCED" | "REFUNDED" | "VOID" | "PENDING";
   replayed: boolean;
 };
+export type BillingCreditMemoInput = {
+  customer_id: string;
+  branch_id: string;
+  invoice_id?: string;
+  amount_cents: number;
+  reason: string;
+  gl_account?: string;
+  idempotency_key?: string;
+};
+export type BillingCreditMemoQuoteInput = {
+  customer_id: string;
+  branch_id: string;
+  invoice_id: string;
+  amount_cents?: number;
+};
+export type BillingCreditMemoQuote = {
+  invoice_id: string;
+  remaining_subtotal_cents: number;
+  remaining_tax_cents: number;
+  remaining_total_cents: number;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  message: string;
+};
+export type BillingCreditMemoResult = {
+  status: "ISSUED" | "AWAITING_APPROVAL";
+  credit_memo_id: string;
+  credit_memo_no: string;
+  customer_id: string;
+  branch_id: string;
+  invoice_id?: string;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  gl_account: string;
+  reason: string;
+  approval_id?: string;
+  gl_journal_id?: string;
+  reused?: boolean;
+  message: string;
+};
 export type BillingApplyPaymentInput = {
   customer_id: string;
   method: "CASH" | "CARD" | "CHEQUE" | "EFT";

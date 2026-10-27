@@ -800,6 +800,14 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	orderSvc.WithMultiShipInvoicer(w6cMultiShipInvoicer{w: w6cInvoiceWriter})
 	ops.warrantySvc.WithCustomerCredit(w6cWarrantyCreditIssuer{w: w6cInvoiceWriter})
 
+	// THE CREDIT MEMO ROUTE (FW1-12). Finance raises a credit memo here: standalone against an account,
+	// or against one invoice, capped at what that invoice has left. It is manager-or-Controller only,
+	// audited, idempotent by key, and it parks over the maker-checker threshold for a second pair of
+	// eyes rather than moving money past the rail.
+	newCreditMemoHandler(pool, w6cInvoiceWriter, spine.glSvc, spine.approvals, log).
+		WithUserLinker(link).
+		RegisterRoutes(r, g)
+
 	// The invoices and payments sync scopes (HH-3.5 follow-up, both
 	// server_wins) register here, beside the collaborators their doors
 	// run through: the invoices Store settles documents through the

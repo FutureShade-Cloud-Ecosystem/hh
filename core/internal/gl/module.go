@@ -31,6 +31,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -212,6 +213,11 @@ type Repository struct {
 	// zone is the dealer's business day zone, read ON the posting transaction; nil = the Ontario
 	// dealer's. It decides which fiscal period a posting's instant belongs to.
 	zone ZoneTxSource
+	// hoMu and hoOverride hold an in-process head office branch override before the FW1-08b
+	// migration adds gl_policy.head_office_branch_id; once the column exists, gl_policy is the
+	// authoritative source.
+	hoMu       sync.RWMutex
+	hoOverride string
 }
 
 // ZoneTxSource is the dealer's business day zone read on a caller's open transaction. A journal is

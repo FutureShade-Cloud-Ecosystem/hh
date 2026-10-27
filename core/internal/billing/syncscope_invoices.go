@@ -181,8 +181,11 @@ func (s *InvoicesSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since 
 	if !ok {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
 	}
+	// A PARKED CREDIT MEMO IS NOT IN THE PAGE, for the reason the aging scope gives: a draft credit
+	// has moved no money, so the desk must not see it as a credit before its approval.
 	rows, err := s.pool.Query(ctx, invoiceSyncQuery+`
 		WHERE `+where+` AND i.seq IS NOT NULL AND i.seq > $2
+		  AND NOT (i.doc_type = 'CREDIT_MEMO' AND i.status = 'DRAFT')
 		ORDER BY i.seq ASC
 		LIMIT $3`, append(args, since, limit)...)
 	if err != nil {

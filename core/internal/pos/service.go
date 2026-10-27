@@ -1458,7 +1458,7 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	}
 	if in.Relief != nil {
 		if err := s.store.EmitEvent(ctx, tx, "tax.relief.assessed", map[string]any{
-			"order_id": orderID, "reason_code": taxReason, "automated": false,
+			"order_id": orderID, "branch_id": in.BranchID, "reason_code": taxReason, "automated": false,
 		}); err != nil {
 			return err
 		}

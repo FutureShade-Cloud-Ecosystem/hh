@@ -28,16 +28,24 @@ func (f *fakeNotifier) ApprovalDecided(_ context.Context, n ApprovalDecidedNotic
 	f.decided = append(f.decided, n)
 }
 
-// fakeJEDecider stands in for the GL bridge: it records the call + returns a scripted error.
+// fakeJEDecider stands in for the GL bridge: it records which arm was called + returns a scripted error.
 type fakeJEDecider struct {
-	called    bool
-	journalID string
-	deciderID string
-	err       error
+	called       bool
+	rejectCalled bool
+	journalID    string
+	deciderID    string
+	err          error
 }
 
 func (f *fakeJEDecider) ApproveJournalTx(_ context.Context, _ pgx.Tx, journalID, deciderID string) error {
 	f.called = true
+	f.journalID = journalID
+	f.deciderID = deciderID
+	return f.err
+}
+
+func (f *fakeJEDecider) RejectJournalTx(_ context.Context, _ pgx.Tx, journalID, deciderID string) error {
+	f.rejectCalled = true
 	f.journalID = journalID
 	f.deciderID = deciderID
 	return f.err
@@ -135,15 +143,17 @@ func TestDecideApproval_JEOrdering(t *testing.T) {
 		t.Fatalf("a successful JE approve must COMMIT the tx, got %+v", f.lastTx)
 	}
 
-	// (c) DECLINE bridges nothing: GL is never called, the request is REJECTED, the journal stays DRAFT.
+	// (c) DECLINE calls the reject arm and never the approve arm: the request is REJECTED and the tx
+	// commits. Whether the journal stays DRAFT is the adapter's own call (FW1-12a's core round: the
+	// adapter no-ops for the ledger's own parked journals and voids a credit memo's park).
 	f = newStore()
 	jd = &fakeJEDecider{}
 	s = NewApprovals(f).WithJEDecider(jd)
 	if err := s.DecideApproval(context.Background(), tstApproval, gmCtx(), false, "no"); err != nil {
 		t.Fatalf("decline should succeed: %v", err)
 	}
-	if jd.called {
-		t.Fatal("a DECLINE must NOT call the GL bridge (the journal stays DRAFT)")
+	if !jd.rejectCalled || jd.called {
+		t.Fatal("a DECLINE must call the reject arm and never the approve arm")
 	}
 	if f.saved == nil || f.saved.status != ApprovalRejected {
 		t.Fatalf("request should be stamped REJECTED on decline, got %+v", f.saved)
