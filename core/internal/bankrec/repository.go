@@ -789,6 +789,10 @@ type UnmatchFacts struct {
 	FeeAccountCode  string
 	BranchID        string
 	ClearingAccount string
+	// JournalID is the clearing journal the match itself posted (bank_matches.journal_id): the reversal
+	// mirrors THAT journal's credit account, which an older arm may have booked on another account than
+	// today's tender rule names (PR 632 round 4). Empty for a match that posted no journal.
+	JournalID string
 }
 
 // UnmatchReach is Unmatch with both of its fences, in ONE body under ONE payment row lock: the caller's branch reach
@@ -891,8 +895,9 @@ func (r *Repository) UnmatchReachTx(ctx context.Context, tx pgx.Tx, matchID, use
 	err = tx.QueryRow(ctx,
 		`UPDATE bank_matches SET unmatched_at = now(), unmatched_by = $2
 		 WHERE id = $1 AND unmatched_at IS NULL
-		 RETURNING statement_line_id::text, target_type, COALESCE(target_ref_id::text, ''), amount_cents`,
-		matchID, nullStr(userID)).Scan(&lineID, &out.TargetType, &out.TargetRef, &out.AmountCents)
+		 RETURNING statement_line_id::text, target_type, COALESCE(target_ref_id::text, ''), amount_cents,
+		           COALESCE(journal_id::text, '')`,
+		matchID, nullStr(userID)).Scan(&lineID, &out.TargetType, &out.TargetRef, &out.AmountCents, &out.JournalID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return out, conflict("bankrec: match %s is not live (already unmatched)", matchID)
 	}
@@ -920,9 +925,9 @@ func (r *Repository) UnmatchReachTx(ctx context.Context, tx pgx.Tx, matchID, use
 		}
 		if f, ok := pf[strings.ToLower(out.TargetRef)]; ok {
 			out.BranchID = f.BranchID
-			// The reversal must mirror the clearing account the ORIGINAL journal credited, and that
-			// account follows the payment's tender (FW1-05 item 1: 1010 card, 1020 cash and cheque),
-			// so a cash or cheque unmatch restores 1020, never 1010 (P1-B round 2).
+			// The method names the clearing account only as the FALLBACK for a match that posted no
+			// journal (an older match row): the mirror of the match's own journal happens in the service
+			// through the GL seam, by facts.JournalID (PR 632 round 4, S4's P2-1).
 			if clearing, cok := clearingAccountForMethod(f.Method); cok {
 				out.ClearingAccount = clearing
 			}

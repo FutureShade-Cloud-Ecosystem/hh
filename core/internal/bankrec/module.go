@@ -80,6 +80,11 @@ type JournalMatchFact struct {
 
 type JournalSource interface {
 	JournalForBank(ctx context.Context, journalID, glAccountCode string) (gl.BankJournalFacts, bool, error)
+
+	// JournalClearingAccount answers the account a journal credited, so an unmatch mirrors the clearing
+	// journal the match actually posted by its own journal_id (PR 632 round 4) instead of recomputing the
+	// account from today's tender rule.
+	JournalClearingAccount(ctx context.Context, journalID string) (string, bool, error)
 }
 
 // JournalKeyReader answers which of the given idempotency keys already name a journal. Satisfied by

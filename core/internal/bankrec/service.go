@@ -982,6 +982,20 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 	if err != nil {
 		return err
 	}
+	// PR 632 round 4 (S4's P2-1): the reversal mirrors the clearing journal the MATCH posted, by its own
+	// journal_id, read through the GL seam (bankrec never reads gl_journals itself). A match made while an
+	// older arm stood booked its credit on the arm's account, so the undo must reverse that account, not
+	// today's rule's; the payment's method (facts.ClearingAccount) stays the fallback for a match that
+	// posted no journal.
+	if facts.TargetType == TargetPayment && facts.JournalID != "" && s.journals != nil {
+		clearing, found, jerr := s.journals.JournalClearingAccount(ctx, facts.JournalID)
+		if jerr != nil {
+			return jerr
+		}
+		if found {
+			facts.ClearingAccount = clearing
+		}
+	}
 	if s.poster != nil && facts.AmountCents > 0 {
 		revBranch := facts.BranchID
 		if revBranch == "" {

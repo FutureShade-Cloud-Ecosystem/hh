@@ -310,14 +310,15 @@ func statementDocDate(txnDate time.Time) time.Time {
 
 // reversalJournal builds the offsetting clearing journal an unmatch posts: it mirrors the ORIGINAL clearing
 // journal's legs, swapped, so the net GL effect of the match returns to zero (FW1-05 item 3). A payment
-// settlement's original was DR 1000 net [+ DR fee fee] / CR clearing gross, where clearing is the tender's
-// account the match booked (1010 card, 1020 cash and cheque; 1010 when the facts name none, the historical
-// card shape), so the reversal is DR clearing gross / CR 1000 net [+ CR fee fee]; a lodgement's original was
-// DR 1000 / CR 1020, so its reversal is DR 1020 / CR 1000. It carries the target's branch, so every line of
-// the reversal is stamped like the original's (FW1-05 item 4). Keyed on unmatchKey(matchID) (distinct from
-// the clearing key). GROUP/JOURNAL targets posted no clearing journal, so they have nothing to reverse.
-// A lodgement that carries its OWN journal posted no clearing journal either (FROM-PRINCIPAL 117 and 120),
-// so its undo reverses nothing.
+// settlement's original was DR 1000 net [+ DR fee fee] / CR clearing gross, where clearing is the account the
+// match's own journal credited (read by the match's journal_id through the GL seam, PR 632 round 4), or the
+// tender's account when it posted none (1010 card, 1020 cash and cheque; 1010 when the facts name none, the
+// historical card shape), so the reversal is DR clearing gross / CR 1000 net [+ CR fee fee]; a lodgement's
+// original was DR 1000 / CR 1020, so its reversal is DR 1020 / CR 1000. It carries the target's branch, so
+// every line of the reversal is stamped like the original's (FW1-05 item 4). Keyed on unmatchKey(matchID)
+// (distinct from the clearing key). GROUP/JOURNAL targets posted no clearing journal, so they have nothing to
+// reverse. A lodgement that carries its OWN journal posted no clearing journal either (FROM-PRINCIPAL 117 and
+// 120), so its undo reverses nothing.
 func reversalJournal(matchID, targetType, branchID, clearing string, amount, feeCents int64, feeAccount string, carriesJournal bool) (gl.ExternalJournal, bool) {
 	var lines []gl.ExternalLine
 	switch targetType {
