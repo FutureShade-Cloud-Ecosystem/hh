@@ -96,14 +96,17 @@ test("a Remind run says sent, recorded for retry, or nothing sent and why (FW1-0
   assert.match(unwired.notice, /No reminder was sent: no email transport is wired on this deployment/);
   const mixed = reminderRunWords({ sent: 0, replayed: 0, tone: "FRIENDLY", skipped: { "INV-1": "nothing outstanding", "INV-2": "no contact email on the account" } });
   assert.match(mixed.notice, /2 invoices were skipped/);
-  const retrying = reminderRunWords({ sent: 1, replayed: 0, tone: "FRIENDLY", skipped: { "INV-2": "recorded, but delivery failed: transport unreachable" } });
-  assert.equal(retrying.sent, true);
-  assert.match(retrying.notice, /Reminder sent for 1 invoice to the account's contact email/);
-  assert.match(retrying.notice, /1 is recorded for the queue to retry/);
-  const allQueued = reminderRunWords({ sent: 0, replayed: 0, tone: "FRIENDLY", skipped: { "INV-1": "recorded, but delivery failed: transport unreachable" } });
-  assert.equal(allQueued.sent, false);
-  assert.match(allQueued.notice, /No reminder went out: recorded, but delivery failed/);
-  assert.match(allQueued.notice, /the queue to retry/);
+  const failed = reminderRunWords({ sent: 1, replayed: 0, tone: "FRIENDLY", skipped: { "INV-2": "delivery failed, nothing went out; send it again from the desk: transport unreachable" } });
+  assert.equal(failed.sent, true);
+  assert.match(failed.notice, /Reminder sent for 1 invoice to the account's contact email/);
+  assert.match(failed.notice, /1 was not sent: nothing went out, send it again from the desk/);
+  const allFailed = reminderRunWords({ sent: 0, replayed: 0, tone: "FRIENDLY", skipped: { "INV-1": "delivery failed, nothing went out; send it again from the desk: transport unreachable" } });
+  assert.equal(allFailed.sent, false);
+  assert.match(allFailed.notice, /No reminder went out: delivery failed, nothing went out/);
+  assert.match(allFailed.notice, /send it again from the desk/);
+  const replayedOnly = reminderRunWords({ sent: 0, replayed: 2, tone: "FRIENDLY", skipped: {} });
+  assert.equal(replayedOnly.sent, false);
+  assert.match(replayedOnly.notice, /2 had already been sent/);
 });
 
 test("closing a paper path flag needs a decision and a note, said before it is sent", () => {

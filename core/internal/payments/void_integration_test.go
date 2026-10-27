@@ -139,6 +139,21 @@ func TestIntegration_PaymentVoid_RefusesTheActsItMustNotTouch(t *testing.T) {
 		t.Errorf("voiding a reversing entry answers %v, want ErrNotVoidable", err)
 	}
 
+	// A portal card payment the processor really captured (S6's P2-3): the processor has the money,
+	// so the undo is a refund through the processor and a void as never received would owe the
+	// customer again while the settlement lands.
+	capw := newReversalGLWorld(t)
+	capID := capw.registerReceipt("CARD", 5_000)
+	if _, err := capw.r.obs.Exec(ctx, `UPDATE payments SET gateway_ref = 'pi_round2_capture' WHERE id = $1::uuid`, capID); err != nil {
+		t.Fatalf("stamp the capture: %v", err)
+	}
+	_, err = payments.NewRepository(capw.r.pool).VoidPayment(ctx, payments.VoidInput{
+		PaymentID: capID, Reason: "void a captured card payment", ActorID: capw.r.userID, IsManager: true,
+	}, time.Now(), houseday.DefaultZone())
+	if !errors.Is(err, payments.ErrNotVoidable) {
+		t.Errorf("fw1-06b round 2 red: voiding a captured card payment answers %v, want ErrNotVoidable (its undo is a refund)", err)
+	}
+
 	// A deposited receipt has cleared to the bank; its undo is a reversal.
 	dep := newReversalGLWorld(t)
 	depID := dep.registerReceipt("CHEQUE", 5_000)
