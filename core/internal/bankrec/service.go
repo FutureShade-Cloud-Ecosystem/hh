@@ -371,8 +371,8 @@ func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to
 // together (FW1-05): a refused journal leaves the line UNMATCHED and the payment RECEIVED, and a refused
 // match posts nothing. The journal is built by journalFn AFTER the claim, so a hand match can check the
 // claimed payment's facts (amount, method) under the same lock and book its clearing journal by tender. A
-// poster without the transaction arm keeps the historical two step order, the match first, then the journal
-// (the claim's guards still run before any post, so a rejected duplicate posts none).
+// poster without the transaction arm fails the match closed (FROM-PRINCIPAL 232): refused in words, nothing
+// written, so a refused journal can never leave an orphan match.
 func (s *Service) persistAndJournal(ctx context.Context, m Match, claim []string, reach func(string) bool, journalFn func(claimed []MatchPaymentFact) (gl.ExternalJournal, bool, error)) (Match, error) {
 	tx, err := s.repo.Begin(ctx)
 	if err != nil {
@@ -400,18 +400,10 @@ func (s *Service) persistAndJournal(ctx context.Context, m Match, claim []string
 				return Match{}, err
 			}
 		} else {
-			if err := tx.Commit(ctx); err != nil {
-				return Match{}, err
-			}
-			journalID, perr := s.poster.PostJournal(ctx, journal)
-			if perr != nil {
-				return Match{}, perr
-			}
-			m.JournalID = journalID
-			if err := s.repo.SetMatchJournal(ctx, id, journalID); err != nil {
-				return Match{}, err
-			}
-			return m, nil
+			// FW1-05b (FROM-PRINCIPAL 232): no production path posts in two steps. A poster without the
+			// transaction arm fails the match closed, refused in words, nothing written, so a refused
+			// journal can never leave an orphan MATCHED line and a claimed payment behind.
+			return Match{}, unprocessable("bankrec: the journal poster cannot post inside the match's transaction, so the match is refused and nothing is written")
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1008,14 +1000,10 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 					return perr
 				}
 			} else {
-				if err := tx.Commit(ctx); err != nil {
-					return err
-				}
-				if _, perr := s.poster.PostJournal(ctx, rev); perr != nil {
-					return perr
-				}
-				s.recordAudit(ctx, "BANKREC_UNMATCH", "bankrec.match", matchID, userID, "manual unmatch", "")
-				return nil
+				// FW1-05b (FROM-PRINCIPAL 232): the unmatch fails closed on a poster without the
+				// transaction arm: a reversal posted after the commit would free the payment while the
+				// original clearing journal stands.
+				return unprocessable("bankrec: the journal poster cannot post inside the unmatch's transaction, so the unmatch is refused and nothing is written")
 			}
 		}
 	}

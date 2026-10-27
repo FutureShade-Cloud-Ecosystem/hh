@@ -88,6 +88,13 @@ func TestIntegration_FW1_05b_TillCashPaymentIsNeverAPaymentTarget(t *testing.T) 
 
 	lineID := fw104InsertLineAt(t, pool, acct, may24, "CASH DEPOSIT 05B TILL", "DEP-05B-CASH", amount)
 
+	// The package's other legs post bankrec journals of their own on the shared database, so the leg
+	// asserts on the DELTA: the refused match must write no new bankrec journal.
+	var bankrecJournalsBefore int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM gl_journals WHERE idempotency_key LIKE 'bankrec:%'`).Scan(&bankrecJournalsBefore); err != nil {
+		t.Fatalf("bankrec journals before: %v", err)
+	}
+
 	_, err := svc.ManualMatch(ctx, MatchInput{
 		Mode: "manual", StatementLineID: lineID, TargetType: TargetPayment, TargetRefID: payID,
 		AmountCents: amount, CanAccessBranch: AllBranches,
@@ -115,8 +122,8 @@ func TestIntegration_FW1_05b_TillCashPaymentIsNeverAPaymentTarget(t *testing.T) 
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM gl_journals WHERE idempotency_key LIKE 'bankrec:%'`).Scan(&journals); err != nil {
 		t.Fatalf("bankrec journals: %v", err)
 	}
-	if matches != 0 || journals != 0 {
-		t.Fatalf("the refused match wrote %d match rows and %d bankrec journals, want none", matches, journals)
+	if matches != 0 || journals != bankrecJournalsBefore {
+		t.Fatalf("the refused match wrote %d match rows and %d new bankrec journals, want none", matches, journals-bankrecJournalsBefore)
 	}
 }
 

@@ -46,6 +46,13 @@ func TestIntegration_FW1_05b_CreditCardLodgementMatchRefused(t *testing.T) {
 
 	lineID := fw104InsertLineAt(t, pool, cardAcct, may24, "VISA DEPOSIT 05B", "DEP-05B-VISA", 7700)
 
+	// The package's other legs post bankrec journals of their own on the shared database, so the leg
+	// asserts on the DELTA: the refused match must write no new bankrec journal.
+	var bankrecJournalsBefore int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM gl_journals WHERE idempotency_key LIKE 'bankrec:%'`).Scan(&bankrecJournalsBefore); err != nil {
+		t.Fatalf("bankrec journals before: %v", err)
+	}
+
 	_, err := svc.ManualMatch(ctx, MatchInput{
 		Mode: "manual", StatementLineID: lineID, TargetType: TargetLodgement,
 		TargetRefID: "55555555-5555-4555-8555-555555555501",
@@ -71,8 +78,8 @@ func TestIntegration_FW1_05b_CreditCardLodgementMatchRefused(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM gl_journals WHERE idempotency_key LIKE 'bankrec:%'`).Scan(&journals); err != nil {
 		t.Fatalf("bankrec journals: %v", err)
 	}
-	if matches != 0 || journals != 0 {
-		t.Fatalf("the refused match wrote %d match rows and %d bankrec journals, want none", matches, journals)
+	if matches != 0 || journals != bankrecJournalsBefore {
+		t.Fatalf("the refused match wrote %d match rows and %d new bankrec journals, want none", matches, journals-bankrecJournalsBefore)
 	}
 }
 
