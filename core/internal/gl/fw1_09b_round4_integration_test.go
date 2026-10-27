@@ -198,12 +198,25 @@ func TestIntegration_FW1_09bR4_TheYearEndRunsThePreFlight(t *testing.T) {
 	ensurePeriods(t, pool, 3076)
 	fw1ScrubAfter(t, pool, 3076)
 	t.Cleanup(func() { fw1ScrubAfter(t, pool, 3076) })
+	// The stock tie must hold for every month the pre flight walks, so the
+	// fake answers the ledger's own 1200 inception to date balance (the same
+	// figure at every month end of 3076: this leg plants nothing, and fw1ScrubAfter
+	// removed every year after it). A fixed zero fails January first on the
+	// shared gate database, before the walk ever reaches December (round 6).
+	zone, err := NewRepository(pool).BusinessZone(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stock1200, _, err := NewRepository(pool).AccountBalanceAsOf(ctx, "1200", time.Date(3077, 1, 1, 0, 0, 0, 0, zone.Location()), "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	drawers := &fw1WindowDrawers{year: 3076, month: 12}
 	closer := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(3077, 1, 5, 12, 0, 0, 0, time.UTC)).
 		WithDrawerReader(drawers).
-		WithStockReader(fw1FixedStock{cents: 0})
+		WithStockReader(fw1FixedStock{cents: stock1200})
 
-	_, err := closer.CloseYear(ctx, 3076, "round 4 pre flight proof")
+	_, err = closer.CloseYear(ctx, 3076, "round 4 pre flight proof")
 	if err == nil {
 		t.Fatalf("the year end sealed a year with three open drawers in December; it must run the pre flight")
 	}
