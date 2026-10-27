@@ -80,6 +80,12 @@ export interface LandingModel {
 }
 
 const NOT_HERE = "Not available yet";
+// The tile foot under a REAL figure: the figure is on the card, what the tile
+// has none of is the trend the original's stat tiles carried, so the words
+// name the trend and never the figure's availability (FROM-PRINCIPAL 158,
+// round 6 P2-1). A needs row's not here span keeps NOT_HERE: there the missing
+// thing is the row's own action, which is what the words deny.
+const NO_TREND = "No trend yet";
 
 export function renderLanding(model: LandingModel): TemplateResult {
   if (model.phase === "loading") {
@@ -142,6 +148,9 @@ export function renderC10Landing(
   stakeNeeds: readonly LandingNeedRow[],
 ): TemplateResult | typeof nothing {
   if (kpis.length === 0 && deliveries === null && stakeNeeds.length === 0) return nothing;
+  // P2-2 (FROM-PRINCIPAL 158 round 6): the strip mixes a today figure, an all time rate and a
+  // standing balance, so the heading says what the strip is, and the page keeps one Today heading
+  // (the bento's, P2-3). Each card's own words carry its scope.
   return html`
     <div class="c10-landing" data-test="c10-landing">
       <section class="quick-actions" data-test="c10-quick-actions" aria-label="Quick actions">
@@ -153,9 +162,9 @@ export function renderC10Landing(
           <button type="button" class="qa-pill" data-action="qa-action" data-qa="message-branch">Message a branch</button>
         </div>
       </section>
-      <section class="today-section" data-test="c10-today-kpis" aria-label="Branch figures today">
+      <section class="today-section" data-test="c10-today-kpis" aria-label="Branch figures at a glance">
         <div class="today-head">
-          <h2 class="section-eyebrow">Today</h2>
+          <h2 class="section-eyebrow">At a glance</h2>
           <div class="branch-toggle" role="group" aria-label="Applies to">
             <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="combined" aria-pressed=${branchMode === "combined" ? "true" : "false"}>All branches together</button>
             <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="split" aria-pressed=${branchMode === "split" ? "true" : "false"}>Branch beside branch</button>
@@ -325,7 +334,7 @@ function renderWidget(
 
 /**
  * The foot of a card: a link to the live app (or this app's view) that owns the measure, and the
- * honest coming words only where no app exists. A link never carries a figure of its own.
+ * missing trend's words only where no app exists. A link never carries a figure of its own.
  */
 function renderFoot(w: WidgetView, profile: string): TemplateResult {
   const link = widgetLink(w, profile);
@@ -335,7 +344,7 @@ function renderFoot(w: WidgetView, profile: string): TemplateResult {
   if (link.kind === "view") {
     return html`<p class="tile-foot"><button type="button" class="foot-link" data-action="open-view" data-view=${link.view}>Open ${VIEW_TITLE[link.view]}<span class="chev" aria-hidden="true">›</span></button></p>`;
   }
-  return html`<p class="tile-foot">${NOT_HERE}</p>`;
+  return html`<p class="tile-foot">${NO_TREND}</p>`;
 }
 
 /**
