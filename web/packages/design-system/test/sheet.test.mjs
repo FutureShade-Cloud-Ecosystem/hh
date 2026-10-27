@@ -20,12 +20,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { restoreLitShimFetch } from '../src/lit-dom-fetch-guard.js';
 import '@lit-labs/ssr/lib/install-global-dom-shim.js';
 import { html } from 'lit';
 import { render } from '@lit-labs/ssr';
 import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';
 
 import { HHSheet, hhSheetEvents, hhSheetTag, HHSheetCloseEvent } from '../src/sheet.js';
+
+// The shim installer above copies its window, node-fetch's fetch included,
+// onto globalThis; put the process's own fetch back so the suites after this
+// file in the shared runner process keep streaming bodies.
+restoreLitShimFetch();
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 

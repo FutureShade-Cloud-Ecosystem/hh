@@ -31,7 +31,10 @@
 // The DOM shim must be installed before any LitElement subclass is defined
 // (Node has no HTMLElement of its own); the side-effect import orderings here
 // and in the test helper are the contract, and the class definitions below
-// depend on it.
+// depend on it. The guard's import is part of that contract: it holds the
+// process's fetch before the installer runs, and the restore below puts it
+// back once the shim has installed.
+import { restoreLitShimFetch } from './lit-dom-fetch-guard.js';
 import '@lit-labs/ssr/lib/install-global-dom-shim.js';
 import { render } from '@lit-labs/ssr';
 import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';
@@ -47,6 +50,8 @@ import { GuidedFlowKit } from './kits/guided-flow.js';
 import { DashboardKit } from './kits/dashboard.js';
 import { InboxKit } from './kits/inbox.js';
 import { HHSheet } from './sheet.js';
+
+restoreLitShimFetch();
 
 export const HARNESS_TITLE = '@hardscapehouse/design-system harness';
 export const WIDTHS = [1440, 1920] as const;

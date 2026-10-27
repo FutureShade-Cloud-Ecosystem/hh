@@ -6,11 +6,18 @@
 //
 // Import order matters and is a contract: the DOM shim must be on globalThis
 // before any LitElement subclass is defined, so anything that renders kit
-// classes in Node imports this module BEFORE importing from ../src/.
+// classes in Node imports this module BEFORE importing from ../src/. The
+// guard sits before the installer for the same reason: it holds the
+// process's fetch before the shim installs, and the restore below puts it
+// back, so the shim's node-fetch never becomes the fetch of the suites that
+// run after this file in the shared runner process.
 
+import { restoreLitShimFetch } from '../../src/lit-dom-fetch-guard.js';
 import '@lit-labs/ssr/lib/install-global-dom-shim.js';
 import { render } from '@lit-labs/ssr';
 import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';
+
+restoreLitShimFetch();
 
 /** Renders a kit in the given props (state above all) to the markup string
  * the browser would commit. Throws synchronously on a refused value. */
