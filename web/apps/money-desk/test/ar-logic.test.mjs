@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, pastDueLine, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord } from "../src/ar/ar-logic.ts";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
 import { houseDay, resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
@@ -336,4 +336,39 @@ test("the money desk surface config read serves the dealer's zone for the day wo
 test("the statement's over band notice says over 60 days, the strip's own word, and never more than", () => {
   assert.equal(STATEMENT_OVERDUE_NOTE, "of this balance is over 60 days past due. Please contact our office to arrange payment.");
   assert.ok(!STATEMENT_OVERDUE_NOTE.includes("more than"));
+});
+
+// -- the credit memo (FW1-12) ------------------------------------------------------------------------
+
+test("a credit is asked for its reason before it is asked for its money", () => {
+  const noReason = creditCheck({ amountText: "100.00", reason: "   " });
+  assert.equal(noReason.ok, false);
+  assert.match(noReason.words, /why the customer is being credited/i);
+  const noAmount = creditCheck({ amountText: "", reason: "The goods came back" });
+  assert.equal(noAmount.ok, false);
+  assert.match(noAmount.words, /how much to credit|amount to credit/i);
+  const notMoney = creditCheck({ amountText: "20.005", reason: "The goods came back" });
+  assert.equal(notMoney.ok, false);
+  assert.match(notMoney.words, /dollars and cents/i);
+  const nothing = creditCheck({ amountText: "0", reason: "The goods came back" });
+  assert.equal(nothing.ok, false);
+  assert.match(nothing.words, /more than zero/i);
+});
+
+test("a credit reads its amount through the decimal string and keeps the reason as typed", () => {
+  const check = creditCheck({ amountText: "19.68", reason: "  The goods came back  " });
+  assert.equal(check.ok, true);
+  assert.equal(check.amountCents, 1968);
+  assert.equal(check.reason, "The goods came back");
+});
+
+test("a parked credit says plainly that no money has moved", () => {
+  const parked = creditWords({ status: "AWAITING_APPROVAL", credit_memo_no: "#CM-7", total_cents: -11300, message: "" });
+  assert.match(parked, /#CM-7/);
+  assert.match(parked, /\$113\.00/);
+  assert.match(parked, /No money has moved yet/i);
+  const issued = creditWords({ status: "ISSUED", credit_memo_no: "#CM-8", total_cents: -5000, message: "" });
+  assert.match(issued, /#CM-8/);
+  assert.match(issued, /\$50\.00/);
+  assert.ok(!/No money has moved/i.test(issued));
 });

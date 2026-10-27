@@ -47,6 +47,10 @@ type glStore interface {
 	// the approval-decision transaction.
 	ApproveJournalTx(ctx context.Context, tx pgx.Tx, id, approverID string) error
 	VoidJournal(ctx context.Context, id string) (Journal, error)
+	// VoidJournalTx voids a parked DRAFT journal on the caller's transaction (the rail's reject arm,
+	// FW1-12a's core round): a refused or withdrawn credit memo's journal must not hold its room as a
+	// draft forever. A journal that is not a DRAFT is left as it stands (idempotent).
+	VoidJournalTx(ctx context.Context, tx pgx.Tx, id string) error
 
 	// - periods -
 	ListPeriods(ctx context.Context) ([]Period, error)
@@ -64,6 +68,13 @@ type glStore interface {
 	// back with the year it opens (round 2, S2 P2-4).
 	OpenNextFiscalYear(ctx context.Context, now time.Time, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error)
 
+	// HeadOfficeBranchID answers the head office branch the company level lines
+	// stamp (ruling 82.3): defaults to Trenton (TRT) and reads gl_policy.
+	HeadOfficeBranchID(ctx context.Context) (string, error)
+	// SetHeadOfficeBranch updates the head office branch setting in gl_policy and runs record
+	// inside the same transaction (ruling 82.3).
+	SetHeadOfficeBranch(ctx context.Context, branchID string, record func(ctx context.Context, tx pgx.Tx) error) error
+
 	// - balances (0034 views) -
 	AccountBalance(ctx context.Context, code string, year, month int, branchID string) (netDebit int64, normalBalance string, err error)
 	// AccountBalanceAsOf is the INCEPTION-TO-DATE net-debit of an account across ALL fiscal years, bounded by
@@ -77,6 +88,9 @@ type glStore interface {
 	TrialBalanceAsOf(ctx context.Context, asOf time.Time, branchID string) ([]TrialBalanceRow, error)
 	TrialBalance(ctx context.Context, year, month int, branchID string) ([]TrialBalanceRow, error)
 	PLBalances(ctx context.Context, year int) ([]TrialBalanceRow, error)
+	// PLBalancesByBranch is PLBalances per branch stamp ("" = company level), the year end's per
+	// branch input (FW1-08b/FW1-09b).
+	PLBalancesByBranch(ctx context.Context, year int) ([]PLBranchRow, error)
 
 	// - tie-out state (first-seen age) -
 	UpsertTieout(ctx context.Context, subledger, accountCode, branchID string, subledgerCents, glCents int64, at time.Time) (TieoutState, error)

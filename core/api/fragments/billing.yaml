@@ -524,6 +524,96 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  # --- billing: the credit memo door (FW1-12). The door finance uses to give
+  # a customer money back. Manager or Controller, audited, idempotent by key,
+  # and parked for a second pair of eyes above the maker-checker threshold.
+  /api/v1/ar/credit-memos:
+    post:
+      operationId: billingIssueCreditMemo
+      tags: [staff-billing]
+      summary: Issue a credit memo against an account or one invoice
+      description: >-
+        Raises a credit memo: money the dealer gives back. Standalone against
+        the account, or against one invoice, capped at what that invoice has
+        left. The reason is required and travels with the document, the AR
+        subledger row and the audit row. The GL account is the one the posting
+        rules allow for that branch. The same idempotency key returns the same
+        credit, so a double click raises one credit and not two. At or above
+        the maker-checker threshold the credit is parked: nothing moves until a
+        second pair of eyes approves it.
+      x-addition: "Change 8 credit memos for finance; the ERP raised a credit memo only from the warranty settlement"
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreditMemoInput"
+      responses:
+        "201":
+          description: The credit memo is a document and its journal is posted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditMemoResult"
+        "202":
+          description: The credit is parked for approval; no money has moved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditMemoResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  # --- billing: the quote door (FW1-12a). What a credit against an invoice
+  # would come to, and how much room that invoice has left. It raises nothing:
+  # no document, no journal, no approval. The room is what the invoice has left
+  # to credit, before tax and with it; the credit is what the amount comes to,
+  # tax included. A paid invoice still has a room: what has been paid is not
+  # what has been credited.
+  /api/v1/ar/credit-memos/quote:
+    post:
+      operationId: billingQuoteCreditMemo
+      tags: [staff-billing]
+      summary: Quote what a credit against an invoice would come to
+      description: >-
+        What a credit against one invoice would come to, and how much room that
+        invoice has left to credit. Nothing moves: no document, no journal, no
+        approval. The room is what the invoice has left to credit, before tax and
+        with it; the credit is what the amount comes to, tax included. A paid
+        invoice still has a room: what has been paid is not what has been
+        credited. An amount over the room is refused in the same words the credit
+        itself is refused in, so the cap is the core's and not a second rule
+        somewhere else.
+      x-addition: "Change 8 credit memos for finance; the ERP raised a credit memo only from the warranty settlement"
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreditMemoQuoteInput"
+      responses:
+        "200":
+          description: The quote, and the room it was taken against
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditMemoQuote"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/ar/register/reminders:
     post:
       operationId: billingSendRegisterReminders
@@ -2681,6 +2771,138 @@ components:
         replayed:
           type: boolean
           description: True when the idempotency key was already honoured and this request posted nothing
+
+    BillingCreditMemoInput:
+      type: object
+      description: >-
+        One credit the dealer gives back. The amount is a positive magnitude and
+        the sign is the server's business. Against an invoice, zero means the
+        whole of what that invoice has left. The reason is required: a credit
+        with no stated reason cannot be explained to the customer, to the
+        Controller, or to whoever reads the file later.
+      required: [customer_id, branch_id, amount_cents, reason]
+      properties:
+        customer_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        invoice_id:
+          type: string
+          format: uuid
+          description: The one invoice this credit is against; absent means a standalone credit on the account
+        amount_cents:
+          type: integer
+          format: int64
+          description: A positive magnitude; zero against an invoice means the whole of what is left
+        reason:
+          type: string
+          description: Why the dealer gives this money back; it travels with the document and the audit row
+        gl_account:
+          type: string
+          description: >-
+            The account the credit books against; absent means the revenue
+            account the posting rules resolve for that branch, and naming one
+            the posting rules do not allow is refused
+        idempotency_key:
+          type: string
+          description: >-
+            Makes a retry safe: the same key returns the same credit. Absent
+            means the server derives one from the request, so a double click
+            raises one credit and not two.
+
+    BillingCreditMemoQuoteInput:
+      type: object
+      description: >-
+        What to quote: the account, the branch the credit would be filed at, the
+        invoice it would be against, and the amount to price. The amount is a
+        positive magnitude, before tax, exactly as the credit takes it; zero
+        prices the whole of what the invoice has left.
+      required: [customer_id, branch_id, invoice_id]
+      properties:
+        customer_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        invoice_id:
+          type: string
+          format: uuid
+          description: The one invoice to price the credit against; the room is that invoice's
+        amount_cents:
+          type: integer
+          format: int64
+          description: The amount to price, before tax; absent or zero prices the whole of what the invoice has left
+
+    BillingCreditMemoQuote:
+      type: object
+      description: >-
+        The quote, and the room it was taken against. The room is what the
+        invoice has left to credit: remaining_subtotal_cents before tax and
+        remaining_total_cents with it. The credit is what the amount comes to:
+        subtotal_cents before tax, tax_cents, and total_cents with tax. The
+        figures are the core's arithmetic; a reader never works out a tax.
+      required: [invoice_id, remaining_subtotal_cents, remaining_tax_cents, remaining_total_cents, subtotal_cents, tax_cents, total_cents, message]
+      properties:
+        invoice_id: { type: string, format: uuid }
+        remaining_subtotal_cents:
+          type: integer
+          format: int64
+          description: What the invoice has left to credit, before tax
+        remaining_tax_cents:
+          type: integer
+          format: int64
+          description: The tax that is left with it
+        remaining_total_cents:
+          type: integer
+          format: int64
+          description: What the invoice has left to credit, with tax
+        subtotal_cents:
+          type: integer
+          format: int64
+          description: What the amount comes to, before tax
+        tax_cents:
+          type: integer
+          format: int64
+          description: The tax pro-rated from what is left
+        total_cents:
+          type: integer
+          format: int64
+          description: What the amount comes to, with tax
+        message:
+          type: string
+          description: What a person reads under the amount they are typing
+
+    BillingCreditMemoResult:
+      type: object
+      description: >-
+        The credit as it now stands. ISSUED means it is a document and its
+        journal is posted. AWAITING_APPROVAL means it is parked at or above
+        the maker-checker threshold: no money has moved and a second pair of
+        eyes has to approve it.
+      required: [status, credit_memo_id, credit_memo_no, customer_id, branch_id, subtotal_cents, tax_cents, total_cents, gl_account, reason, message]
+      properties:
+        status:
+          type: string
+          enum: [ISSUED, AWAITING_APPROVAL]
+        credit_memo_id: { type: string, format: uuid }
+        credit_memo_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        gl_account:
+          type: string
+          description: The account the credit booked against
+        reason: { type: string }
+        approval_id:
+          type: string
+          format: uuid
+          description: The approval request waiting on the parked credit
+        gl_journal_id:
+          type: string
+          format: uuid
+          description: The journal that carries the credit into the ledger
+        reused:
+          type: boolean
+          description: True when the idempotency key named a credit that already exists
+        message: { type: string }
 
     BillingApplyPaymentInput:
       type: object
