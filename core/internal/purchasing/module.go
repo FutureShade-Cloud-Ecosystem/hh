@@ -145,6 +145,12 @@ type GLJournal struct {
 	Memo           string
 	BranchID       string
 	Lines          []GLLine
+	// DocumentDate, when set, is the document the journal belongs to (a vendor bill's own
+	// bill_date): the journal posts in the bill's month under the GL's document date rule, filing
+	// late into the earliest open month at or after it when that month is closed, so the input tax
+	// credit the tax tie-out reads by bill_date and the 2200 debit land on the same month. Zero
+	// keeps the clock.
+	DocumentDate time.Time
 }
 
 // GLLine is one leg of a GLJournal.

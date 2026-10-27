@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -1313,6 +1314,16 @@ func (s *Service) postBillJournal(ctx context.Context, tx pgx.Tx, bill Bill, leg
 	}
 	glLines = append(glLines, GLLine{AccountCode: apCode, CreditCents: legs.APCents, Memo: "vendor bill " + bill.BillNo})
 
+	// The bill is the document: the journal carries the bill's own bill_date (the GL files it late
+	// into the earliest open month at or after it when the bill's month is closed), so the input
+	// tax credit the tax tie-out reads by bill_date and the 2200 debit land on the same month. The
+	// column is DATE NOT NULL DEFAULT CURRENT_DATE and pgx hands it back as YYYY-MM-DD, so an
+	// unparseable date keeps the clock as the belt, never the rule.
+	var documentDate time.Time
+	if d, err := time.Parse("2006-01-02", bill.BillDate); err == nil {
+		documentDate = d
+	}
+
 	return s.gl.PostJournalTx(ctx, tx, GLJournal{
 		Source:         glSourcePOReceipt,
 		SourceRefID:    bill.ID,
@@ -1320,6 +1331,7 @@ func (s *Service) postBillJournal(ctx context.Context, tx pgx.Tx, bill Bill, leg
 		Memo:           "Vendor bill " + bill.BillNo,
 		BranchID:       bill.BranchID,
 		Lines:          glLines,
+		DocumentDate:   documentDate,
 	})
 }
 

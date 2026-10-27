@@ -1928,7 +1928,7 @@ func (a w4cGLPoster) PostJournal(ctx context.Context, in purchasing.GLJournal) (
 	}
 	return a.svc.PostExternal(ctx, gl.ExternalJournal{
 		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
-		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines, DocumentDate: in.DocumentDate,
 	})
 }
 
@@ -1940,7 +1940,7 @@ func (a w4cGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in purchasing
 	}
 	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{
 		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
-		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines, DocumentDate: in.DocumentDate,
 	})
 }
 
