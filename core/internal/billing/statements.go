@@ -27,6 +27,7 @@ package billing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"strings"
@@ -72,6 +73,36 @@ type Statement struct {
 	HTML            string    `json:"html,omitempty"`
 	DeliveryStatus  string    `json:"delivery_status"`
 	CreatedAt       time.Time `json:"created_at"`
+
+	// HomeBranchID is the customer's home branch, used to resolve the account position policy.
+	HomeBranchID string `json:"-"`
+	// PositionWithheld is set by the handler when the dealer's account position policy refuses this
+	// caller. MarshalJSON then leaves the aging buckets, closing balance and rendered HTML off the wire.
+	PositionWithheld bool `json:"-"`
+}
+
+// MarshalJSON writes the statement row, omitting the aging buckets, closing balance and HTML when
+// the caller is refused by the account position policy.
+func (s Statement) MarshalJSON() ([]byte, error) {
+	type plain Statement
+	w := struct {
+		plain
+		CurrentCents    *int64 `json:"current_cents,omitempty"`
+		Days30Cents     *int64 `json:"days_30_cents,omitempty"`
+		Days60Cents     *int64 `json:"days_60_cents,omitempty"`
+		Days90PlusCents *int64 `json:"days_90_plus_cents,omitempty"`
+		ClosingCents    *int64 `json:"closing_balance_cents,omitempty"`
+		HTML            string `json:"html,omitempty"`
+	}{plain: plain(s)}
+	if !s.PositionWithheld {
+		w.CurrentCents = &s.CurrentCents
+		w.Days30Cents = &s.Days30Cents
+		w.Days60Cents = &s.Days60Cents
+		w.Days90PlusCents = &s.Days90PlusCents
+		w.ClosingCents = &s.ClosingCents
+		w.HTML = s.HTML
+	}
+	return json.Marshal(w)
 }
 
 // StatementRun is one ar_statement_runs row.

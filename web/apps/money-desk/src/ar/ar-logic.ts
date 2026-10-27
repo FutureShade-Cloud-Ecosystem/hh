@@ -68,6 +68,9 @@ const STATUS_WORD: Record<string, string> = {
   DRAFT: "Draft",
   VOID: "Void",
   CREDIT: "Credit",
+  // The STORED status a caller the account position policy refuses receives in `status` (the core
+  // never derives it): it reads as words, never as a raw code and never as a past due pill.
+  FINALIZED: "On file",
 };
 
 export function statusWord(status: string): string {
@@ -325,6 +328,30 @@ export function isUnpaidInvoice(row: { stored_status: string; doc_type?: string 
   return (row.stored_status === "FINALIZED" || row.stored_status === "PARTIALLY_PAID") && (row.doc_type === undefined || row.doc_type === "INVOICE");
 }
 
+/**
+ * What the Past due chip's header line says. The core sends a caller the account position policy
+ * refuses no `days_overdue` and no overdue or due_soon count (UX-97 round 6), so when any open row
+ * lacks its day count the line says so in words instead of quietly summing nothing; a caller the
+ * policy allows gets the figures it always did, and another chip draws no line at all.
+ */
+export type PastDueLine =
+  | { kind: "off" }
+  | { kind: "withheld" }
+  | { kind: "figures"; pastDueCount: number; totalCount: number; pastDueCents: number };
+
+export function pastDueLine(
+  filter: string,
+  rows: ReadonlyArray<{ days_overdue?: number | undefined; balance_cents: number; stored_status: string; doc_type?: string | undefined }>,
+): PastDueLine {
+  if (filter !== "past_due") return { kind: "off" };
+  const open = rows.filter(isUnpaidInvoice);
+  if (open.some((r) => r.days_overdue === undefined)) return { kind: "withheld" };
+  const pastDue = open.filter((r) => (r.days_overdue ?? 0) > 0);
+  let cents = 0;
+  for (const r of pastDue) cents += r.balance_cents;
+  return { kind: "figures", pastDueCount: pastDue.length, totalCount: open.length, pastDueCents: cents };
+}
+
 export function relativeDay(date: string, asOf: string): string {
   const gap = dayNumber(asOf) - dayNumber(date);
   if (gap === 0) return "today";
@@ -344,10 +371,11 @@ export interface Mark {
  * The marks a register row carries. The first is the status with the day count as its word; a
  * promise or a dispute rides the row as a second mark, never a colour alone.
  */
-export function rowMarks(row: { status: string; days_overdue: number; disputed: boolean; promised_date?: string | null | undefined }): Mark[] {
+export function rowMarks(row: { status: string; days_overdue?: number | undefined; disputed: boolean; promised_date?: string | null | undefined }): Mark[] {
   const marks: Mark[] = [];
-  const overdue = row.days_overdue > 0 && row.status !== "PAID";
-  if (overdue) marks.push({ word: `${row.days_overdue}d past due`, tone: "stop", dashed: false });
+  const daysOverdue = row.days_overdue ?? 0;
+  const overdue = daysOverdue > 0 && row.status !== "PAID";
+  if (overdue) marks.push({ word: `${daysOverdue}d past due`, tone: "stop", dashed: false });
   else if (row.status === "DISPUTED") marks.push({ word: "disputed", tone: "info", dashed: false });
   else marks.push({ word: statusWord(row.status).toLowerCase(), tone: statusTone(row.status), dashed: false });
   if (typeof row.promised_date === "string" && row.promised_date !== "") marks.push({ word: "promise open", tone: "watch", dashed: true });

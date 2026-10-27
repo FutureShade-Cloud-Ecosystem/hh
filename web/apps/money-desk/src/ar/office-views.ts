@@ -49,7 +49,7 @@ export function renderRunPanel(om: OfficeModel, asOf: string): TemplateResult {
                     (s) => html`
                       <tr data-run-row>
                         <td><span class="who">${s.customer_name ?? "Account"}</span></td>
-                        <td class="num">${formatMoney(s.closing_balance_cents)}</td>
+                        <td class="num">${s.closing_balance_cents == null ? html`<span class="dim">Not shown for your role</span>` : formatMoney(s.closing_balance_cents)}</td>
                         <td>${deliveryPill(s)}</td>
                         <td data-run-goes>${statementHow(s.delivery_status)}</td>
                       </tr>
@@ -131,7 +131,7 @@ function remindForm(om: OfficeModel): TemplateResult {
         </label>
         <label>Invoice
           <select data-field="remind-invoice" ?disabled=${f.customerId === "" || f.invoices === "loading"}>
-            ${f.customerId === "" ? html`<option>Choose an account first</option>` : f.invoices === "loading" ? html`<option>Loading the invoices</option>` : invoices.length === 0 ? html`<option>Nothing is owing</option>` : invoices.map((r) => html`<option data-id="${r.id}">${r.invoice_no}, ${formatMoney(r.balance_cents)}${r.days_overdue > 0 ? `, ${r.days_overdue} days over` : ""}</option>`)}
+            ${f.customerId === "" ? html`<option>Choose an account first</option>` : f.invoices === "loading" ? html`<option>Loading the invoices</option>` : invoices.length === 0 ? html`<option>Nothing is owing</option>` : invoices.map((r) => html`<option data-id="${r.id}">${r.invoice_no}, ${formatMoney(r.balance_cents)}${(r.days_overdue ?? 0) > 0 ? `, ${r.days_overdue} days over` : ""}</option>`)}
           </select>
         </label>
         <div><div class="label" id="remind-channel-label">Channel</div>

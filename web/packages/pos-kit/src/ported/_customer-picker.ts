@@ -17,8 +17,12 @@ export interface PickerCustomer {
   account_no: string;
   customer_type: string;
   payment_terms_days: number;
-  credit_limit_cents: number;
-  open_balance_cents: number;
+  /** The account position: absent, not zero, when the dealer's policy refuses the caller (UX-97). */
+  /** The core's own statement that the account pays before release, present under every policy. */
+  cash_on_demand?: boolean;
+  credit_limit_cents?: number;
+  open_balance_cents?: number;
+  available_credit_cents?: number;
 }
 
 /** How many recently-used accounts we keep, per branch. */
