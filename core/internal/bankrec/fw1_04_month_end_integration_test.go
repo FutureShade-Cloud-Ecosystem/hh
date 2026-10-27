@@ -84,6 +84,17 @@ func fw104InsertLineAt(t *testing.T, pool *pgxpool.Pool, acct string, txnDate ti
 	return insertLine(t, pool, acct, txnDate, desc, ref, cents)
 }
 
+// anyUserID is any seeded user's id: the gl read fences (FW1-10, merged from main) read a stamped caller, and a
+// ledger read in a test needs one to hand.
+func anyUserID(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	var userID string
+	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("select user: %v", err)
+	}
+	return userID
+}
+
 // Leg 1: A month (2023-05) whose statement lines are matched in the following month (2023-06) against an account with
 // a prior month's closing balance ($1,000.00 in 2023-04, plus a +$500.00 card settlement in 2023-05 matched on
 // 2023-06-05) must post its clearing journal on the statement line's date (in 2023-05), read the closing GL balance as
@@ -495,7 +506,7 @@ func TestIntegration_FW1_04_MatchInClosedGLMonthLandsInEarliestOpenPeriodMarkedL
 	if err != nil {
 		t.Fatalf("match on statement line in closed GL month was refused: %v", err)
 	}
-	j, err := glSvc.GetJournal(ctx, m.JournalID)
+	j, err := glSvc.GetJournal(identity.ContextWithStaff(ctx, identity.StaffContext{UserID: anyUserID(t, pool), Scope: identity.ScopeGlobal}), m.JournalID)
 	if err != nil {
 		t.Fatalf("get clearing journal: %v", err)
 	}
