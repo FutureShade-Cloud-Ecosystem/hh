@@ -67,6 +67,8 @@ func fw1AssertionNames() []string {
 		"customer_statement_equals_aging_and_subledger",
 		"stock_value_ties_to_GL_1200",
 		"HST_reconcile_ties",
+		"till_lodgement_posts_bank_1000_at_lodgement",
+		"bank_lodgement_match_posts_no_second_journal",
 		"bank_month_signs_off_at_zero_with_outstanding_items",
 		"every_journal_line_carries_a_branch_and_branch_trial_balances_sum",
 		"no_journal_waiting_or_dead_lettered",
@@ -758,6 +760,8 @@ func TestFW1MonthWalk(t *testing.T) {
 		"customer_statement_equals_aging_and_subledger":                     w.createStatementTies,
 		"stock_value_ties_to_GL_1200":                                       w.assertStockTies,
 		"HST_reconcile_ties":                                                w.assertHSTTies,
+		"till_lodgement_posts_bank_1000_at_lodgement":                       w.assertTillLodgementPostsAtLodgement,
+		"bank_lodgement_match_posts_no_second_journal":                      w.assertBankLodgementMatchPostsNothing,
 		"bank_month_signs_off_at_zero_with_outstanding_items":               w.assertBankMonth,
 		"every_journal_line_carries_a_branch_and_branch_trial_balances_sum": w.assertBranchOnEveryLine,
 		"no_journal_waiting_or_dead_lettered":                               w.assertNothingWaiting,
@@ -971,6 +975,90 @@ func (w *fw1Walk) assertHSTTies(t fw1TB) {
 
 // 5. The bank month signs off at a zero difference computed from balances at month end, with
 // the outstanding items listed.
+//
+// THE LODGEMENT RULE (FROM-PRINCIPAL 117), binding: the textbook bank reconciliation:
+//   - Lodgement: a till lodgement posts DR 1000 Bank / CR 1020 Undeposited Funds AT LODGEMENT,
+//     dated by its business day in the house zone. FW1-13 owns this.
+//   - Match: the bank match of that deposit line matches the lodgement journal and posts NOTHING.
+//     Its undo reverses nothing. FW1-05 owns this.
+//   - Deposits in transit: a lodgement in 1000 that is not yet on a statement is a deposit in
+//     transit, listed on the reconciliation as a reconciling item. FW1-04 owns this.
+//   - Older lodgements: a lodgement from before this change has no lodgement journal, so it keeps
+//     today's match, which posts 1020 to 1000. Nothing is booked twice on a box with history.
+//     Each owner tests the old case beside the new one.
+func (w *fw1Walk) assertTillLodgementPostsAtLodgement(t fw1TB) {
+	ctx := context.Background()
+	rows, err := w.pool.Query(ctx, `
+		SELECT tm.id::text, COALESCE(tm.reference, ''), tm.amount_cents
+		  FROM till_movements tm
+		 WHERE tm.movement_type = 'LODGEMENT'
+		 ORDER BY tm.created_at, tm.id`)
+	if err != nil {
+		t.Fatalf("the till lodgements read: %v", err)
+	}
+	defer rows.Close()
+	type lodgRow struct {
+		id     string
+		ref    string
+		amount int64
+	}
+	var lodgements []lodgRow
+	for rows.Next() {
+		var r lodgRow
+		if err := rows.Scan(&r.id, &r.ref, &r.amount); err != nil {
+			t.Fatal(err)
+		}
+		lodgements = append(lodgements, r)
+	}
+	if len(lodgements) == 0 {
+		t.Fatal("the walk left no till lodgements")
+	}
+	for _, l := range lodgements {
+		var posted int
+		if err := w.pool.QueryRow(ctx, `
+			SELECT count(*)
+			  FROM gl_journals j
+			 WHERE j.status = 'POSTED'
+			   AND j.source_ref_id = $1::uuid
+			   AND COALESCE(j.idempotency_key, '') NOT LIKE 'bankrec:%'
+			   AND EXISTS (
+			       SELECT 1 FROM gl_journal_lines dl
+			         JOIN gl_accounts da ON da.id = dl.account_id
+			        WHERE dl.journal_id = j.id AND da.code = '1000' AND dl.debit_cents = $2
+			   )
+			   AND EXISTS (
+			       SELECT 1 FROM gl_journal_lines cl
+			         JOIN gl_accounts ca ON ca.id = cl.account_id
+			        WHERE cl.journal_id = j.id AND ca.code = '1020' AND cl.credit_cents = $2
+			   )`, l.id, l.amount).Scan(&posted); err != nil {
+			t.Fatalf("the lodgement journal read for %s: %v", l.ref, err)
+		}
+		if posted != 1 {
+			t.Errorf("till lodgement %s (%s) posted %d DR 1000 / CR 1020 journals at lodgement (want 1)",
+				l.ref, fw1Dollars(l.amount), posted)
+		}
+	}
+}
+
+func (w *fw1Walk) assertBankLodgementMatchPostsNothing(t fw1TB) {
+	ctx := context.Background()
+	var clearingCount int
+	var clearingKey string
+	if err := w.pool.QueryRow(ctx, `
+		SELECT count(*), COALESCE(MAX(j.idempotency_key), '')
+		  FROM bank_matches bm
+		  JOIN gl_journals j ON j.id = bm.journal_id
+		 WHERE bm.target_type = 'LODGEMENT'
+		   AND bm.unmatched_at IS NULL
+		   AND COALESCE(j.idempotency_key, '') LIKE 'bankrec:%'`).Scan(&clearingCount, &clearingKey); err != nil {
+		t.Fatalf("the lodgement match clearing journal read: %v", err)
+	}
+	if clearingCount != 0 {
+		t.Errorf("the bank match of a till lodgement posted %d clearing journal(s) (%s) instead of matching the lodgement journal and posting nothing",
+			clearingCount, clearingKey)
+	}
+}
+
 func (w *fw1Walk) assertBankMonth(t fw1TB) {
 	ctx := context.Background()
 	gl1000, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(ctx, "1000", w.monthEnd, "")
