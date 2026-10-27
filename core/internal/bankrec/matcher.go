@@ -290,18 +290,26 @@ func statementDocDate(txnDate time.Time) time.Time {
 
 // reversalJournal builds the offsetting clearing journal an unmatch posts: it mirrors the ORIGINAL clearing
 // journal's legs, swapped, so the net GL effect of the match returns to zero (FW1-05 item 3). A payment
-// settlement's original was DR 1000 net [+ DR fee fee] / CR 1010 gross, so the reversal is DR 1010 gross /
-// CR 1000 net [+ CR fee fee]; a lodgement's original was DR 1000 / CR 1020, so its reversal is DR 1020 /
-// CR 1000. It carries the target's branch, so every line of the reversal is stamped like the original's
-// (FW1-05 item 4). Keyed on unmatchKey(matchID) (distinct from the clearing key). GROUP/JOURNAL targets
-// posted no clearing journal, so they have nothing to reverse.
-func reversalJournal(matchID, targetType, branchID string, amount, feeCents int64, feeAccount string) (gl.ExternalJournal, bool) {
+// settlement's original was DR 1000 net [+ DR fee fee] / CR clearing gross, where clearing is the tender's
+// account the match booked (1010 card, 1020 cash and cheque; 1010 when the facts name none, the historical
+// card shape), so the reversal is DR clearing gross / CR 1000 net [+ CR fee fee]; a lodgement's original was
+// DR 1000 / CR 1020, so its reversal is DR 1020 / CR 1000. It carries the target's branch, so every line of
+// the reversal is stamped like the original's (FW1-05 item 4). Keyed on unmatchKey(matchID) (distinct from
+// the clearing key). GROUP/JOURNAL targets posted no clearing journal, so they have nothing to reverse.
+func reversalJournal(matchID, targetType, branchID, clearing string, amount, feeCents int64, feeAccount string) (gl.ExternalJournal, bool) {
 	var lines []gl.ExternalLine
 	switch targetType {
 	case TargetPayment:
+		if clearing == "" {
+			clearing = AcctCardClearing
+		}
+		clearMemo := "reverse card settlement (unmatch)"
+		if clearing == AcctUndeposited {
+			clearMemo = "reverse undeposited clear (unmatch)"
+		}
 		gross := amount + feeCents
 		lines = []gl.ExternalLine{
-			{AccountCode: AcctCardClearing, DebitCents: gross, Memo: "reverse card settlement (unmatch)"},
+			{AccountCode: clearing, DebitCents: gross, Memo: clearMemo},
 			{AccountCode: AcctBank, CreditCents: amount, Memo: "reverse bank deposit (unmatch)"},
 		}
 		if feeCents > 0 {

@@ -774,15 +774,17 @@ func (r *Repository) MatchLineDate(ctx context.Context, matchID string) (time.Ti
 
 // UnmatchFacts is what an unmatch read about the match it just reversed, all under its own transaction
 // (FW1-05): the target the reversal mirrors, the line amount it moved, the fee the original clearing
-// journal booked (the claimed payment's gross less the line, with the rule's own fee account), and the
-// branch the reversing journal carries.
+// journal booked (the claimed payment's gross less the line, with the rule's own fee account), the branch
+// the reversing journal carries, and the clearing account the original credited (the tender's, P1-B
+// round 2), which the reversal debits.
 type UnmatchFacts struct {
-	TargetType     string
-	TargetRef      string
-	AmountCents    int64
-	FeeCents       int64
-	FeeAccountCode string
-	BranchID       string
+	TargetType      string
+	TargetRef       string
+	AmountCents     int64
+	FeeCents        int64
+	FeeAccountCode  string
+	BranchID        string
+	ClearingAccount string
 }
 
 // UnmatchReach is Unmatch with both of its fences, in ONE body under ONE payment row lock: the caller's branch reach
@@ -914,6 +916,12 @@ func (r *Repository) UnmatchReachTx(ctx context.Context, tx pgx.Tx, matchID, use
 		}
 		if f, ok := pf[strings.ToLower(out.TargetRef)]; ok {
 			out.BranchID = f.BranchID
+			// The reversal must mirror the clearing account the ORIGINAL journal credited, and that
+			// account follows the payment's tender (FW1-05 item 1: 1010 card, 1020 cash and cheque),
+			// so a cash or cheque unmatch restores 1020, never 1010 (P1-B round 2).
+			if clearing, cok := clearingAccountForMethod(f.Method); cok {
+				out.ClearingAccount = clearing
+			}
 			if f.AmountCents > out.AmountCents {
 				out.FeeCents = f.AmountCents - out.AmountCents
 				feeAcct, ferr := r.matchFeeAccountTx(ctx, tx, matchID)

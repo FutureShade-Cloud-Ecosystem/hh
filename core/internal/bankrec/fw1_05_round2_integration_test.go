@@ -59,8 +59,8 @@ func TestIntegration_FW1_05_R2_UnmatchRestoresEachTendersClearingAccount(t *test
 			}
 			// The hand match books DR 1000 / CR <the tender's clearing account>.
 			assertJournalLegs(t, pool, m.JournalID, map[string][2]int64{
-				AcctBank:         {amount, 0},
-				tt.clearing:      {0, amount},
+				AcctBank:    {amount, 0},
+				tt.clearing: {0, amount},
 			})
 
 			if err := svc.UnmatchReach(ctx, m.ID, "", AllBranches); err != nil {

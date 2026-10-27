@@ -922,7 +922,7 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 		if revBranch == "" {
 			revBranch = lodgBranch
 		}
-		if rev, ok := reversalJournal(matchID, facts.TargetType, revBranch, facts.AmountCents, facts.FeeCents, facts.FeeAccountCode); ok {
+		if rev, ok := reversalJournal(matchID, facts.TargetType, revBranch, facts.ClearingAccount, facts.AmountCents, facts.FeeCents, facts.FeeAccountCode); ok {
 			if hasLineDate {
 				rev.DocumentDate = statementDocDate(lineDate)
 			}
