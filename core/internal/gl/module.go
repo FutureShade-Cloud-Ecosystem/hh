@@ -507,7 +507,8 @@ func (s *Service) RegisterPostingHandlers(d *notify.Dispatcher) {
 
 // PostedTopics is the frozen set of outbox topics the GL posting consumer owns (the W5 eight + the two
 // W7 POS-return topics + the deposit release and the deposit cancel, 0374/0375 + the damaged goods write off, 0378
-// + the payment reversal, 0426 + the re-application of a reversal's held money, 0431).
+// + the payment reversal, 0426 + the re-application of a reversal's held money, 0431 + the true void of a
+// mis-keyed receipt, FW1-06b).
 var PostedTopics = []string{
 	"ar.invoice.finalized",
 	"payment.received",
@@ -515,6 +516,7 @@ var PostedTopics = []string{
 	"tax.relief.assessed",
 	"payment.bounced",
 	"payment.reversed",
+	"payment.voided",
 	"payment.reapplied",
 	"payment.paid_out",
 	"order.fulfilled",

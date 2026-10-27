@@ -1095,6 +1095,40 @@ test("a draft or a void invoice is neither listed as open nor picked, and never 
   await expect(page.locator("[data-invoice-row]", { hasText: "INV-1202" })).toHaveCount(0);
 });
 
+test("a mis-keyed same day receipt is voided as never taken by a manager, and nothing is held (FW1-06b)", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openAccount(page, "Riverstone Paving (demo)");
+  await page.locator("[data-field='receive-amount']").fill("250.00");
+  await expect(page.locator("[data-applied]")).toHaveText("$250.00 of $250.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 7782");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 applied: $250.00 on INV-1005");
+  await page.locator("[data-invoice-row]", { hasText: "INV-1005" }).getByRole("button", { name: "INV-1005" }).click();
+  const row = page.locator("[data-payment-row]");
+  await row.getByRole("button", { name: "Void", exact: true }).click();
+  await page.locator("[data-field='void-reason']").fill("Keyed for the wrong amount");
+  await row.getByRole("button", { name: "Confirm voided" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 is voided as never received");
+  await expect(page.locator("[data-notice]")).toContainText("nothing is held for the customer");
+  // The receipt never happened: its row is gone from the invoice's payments, and the invoice is open
+  // again at the balance it had before the cheque.
+  await expect(page.locator("[data-payment-row]")).toHaveCount(0);
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1005" })).toContainText("$887.50");
+});
+
+test("the Void action is a manager's: Payables and Receivables sees no Void on a same day receipt (FW1-06b)", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openAccount(page, "Riverstone Paving (demo)");
+  await page.locator("[data-field='receive-amount']").fill("250.00");
+  await expect(page.locator("[data-applied]")).toHaveText("$250.00 of $250.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 7783");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 applied: $250.00 on INV-1005");
+  await page.locator("[data-invoice-row]", { hasText: "INV-1005" }).getByRole("button", { name: "INV-1005" }).click();
+  await expect(page.locator("[data-payment-row]").getByRole("button", { name: "Mark bounced" })).toBeVisible();
+  await expect(page.locator("[data-payment-row]").getByRole("button", { name: "Void", exact: true })).toHaveCount(0);
+});
+
 test("while the invoices are loading or have failed, Remind gives no reason that reads as nothing owed", async ({ page, request }) => {
   await openDesk(page, request);
   await page.route("**/api/v1/ar/register?*customer_id=*", (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }));
