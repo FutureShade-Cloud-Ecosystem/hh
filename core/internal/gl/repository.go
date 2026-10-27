@@ -671,6 +671,22 @@ func (r *Repository) VoidJournal(ctx context.Context, id string) (Journal, error
 	return r.GetJournal(ctx, id)
 }
 
+// VoidJournalTx voids a parked DRAFT journal on the CALLER's transaction: the approvals rail's reject
+// arm (FW1-12a's core round), so a refused or withdrawn credit memo's journal is voided on the
+// decision's own transaction and the composition root may void it beside the memo document it
+// belongs to. A journal that is not a DRAFT is left as it stands: posted is the ledger's business,
+// already void needs nothing.
+func (r *Repository) VoidJournalTx(ctx context.Context, tx pgx.Tx, id string) error {
+	if tx == nil {
+		return errNoDB
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE gl_journals SET status = 'VOID', updated_at = now() WHERE id = $1 AND status = 'DRAFT'`, id); err != nil {
+		return fmt.Errorf("gl: void journal on the caller's transaction: %w", err)
+	}
+	return nil
+}
+
 // - periods -
 
 const periodCols = `id::text, year, month, status, closed_at`

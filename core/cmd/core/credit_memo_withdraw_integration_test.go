@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
@@ -25,8 +26,10 @@ func TestIntegration_CreditMemoRound_AWithdrawnParkVoidsTheMemoAndFreesTheRoom(t
 
 	res := cmRoundParkCredit(t, pool, svc, world.requester, world.cust, world.inv, "cm-rail-withdraw")
 
-	// The requester takes their request back through the rail's own door.
-	store := identity.NewApprovalsSyncStore(pool, linkedUserID(pool))
+	// The requester takes their request back through the rail's own door. The store carries the same
+	// JE bridge the decide path does, as the composition root wires it.
+	store := identity.NewApprovalsSyncStore(pool, linkedUserID(pool)).
+		WithJEDecider(jeDeciderAdapter{svc: gl.NewService(gl.NewRepository(pool)), memos: billing.NewInvoiceWriter(pool)})
 	if _, err := store.Delete(context.Background(),
 		sync.ScopeFilter{OrgID: world.org, Actor: world.requesterPlatform}, res.ApprovalID, ""); err != nil {
 		t.Fatalf("withdraw the request: %v", err)

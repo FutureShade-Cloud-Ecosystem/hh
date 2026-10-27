@@ -345,6 +345,27 @@ type jeDeciderAdapter struct {
 	memos *billing.InvoiceWriter
 }
 
+// RejectJournalTx is the decline arm (FW1-12a's core round): a refused or withdrawn credit memo's
+// park is voided on the decision's own transaction, the memo document and its journal together. The
+// shipped rule stands for every other parked journal: a decline bridges nothing, because voiding a
+// DRAFT journal is the maker's own act, so a journal without the credit memo's key is a no-op.
+func (a jeDeciderAdapter) RejectJournalTx(ctx context.Context, tx pgx.Tx, journalID, _ string) error {
+	if a.memos == nil {
+		return nil
+	}
+	j, err := a.svc.GetJournal(ctx, journalID)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(j.IdempotencyKey, billing.CreditMemoJournalKeyPrefix) {
+		return nil
+	}
+	if err := a.memos.VoidParkedCreditMemoTx(ctx, tx, j.SourceRefID); err != nil {
+		return err
+	}
+	return a.svc.VoidJournalTx(ctx, tx, journalID)
+}
+
 func (a jeDeciderAdapter) ApproveJournalTx(ctx context.Context, tx pgx.Tx, journalID, deciderID string) error {
 	if a.memos != nil {
 		j, err := a.svc.GetJournal(ctx, journalID)

@@ -221,6 +221,15 @@ func (f *fakeStore) ApproveJournal(_ context.Context, id, approverID string) (Jo
 
 // ApproveJournalTx mirrors ApproveJournal for the atomic approvals-rail path (0075); the fake ignores the
 // tx and enforces the same DRAFT-state + four-eyes guards.
+// VoidJournalTx mirrors VoidJournal for the rail's reject arm; the fake flips a DRAFT to VOID and
+// leaves anything else standing, as the repository does.
+func (f *fakeStore) VoidJournalTx(_ context.Context, _ pgx.Tx, id string) error {
+	if j, ok := f.journals[id]; ok && j.Status == StatusDraft {
+		j.Status = StatusVoid
+	}
+	return nil
+}
+
 func (f *fakeStore) ApproveJournalTx(_ context.Context, _ pgx.Tx, id, approverID string) error {
 	j, ok := f.journals[id]
 	if !ok {

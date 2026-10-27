@@ -77,9 +77,10 @@ func cmRoundWorldPlant(t *testing.T, pool *pgxpool.Pool) cmRoundWorld {
 		t.Fatalf("seed the rail customer: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, org_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
-		VALUES ('CMRAIL-INV-' || floor(random() * 1e9)::text, $1::uuid, $2::uuid, 'FINALIZED',
+		VALUES ('CMRAIL-INV-' || floor(random() * 1e9)::text, $1::uuid, $2::uuid,
+		        (SELECT org_id FROM locations WHERE id = $2::uuid), 'FINALIZED',
 		        '1990-01-15', '1990-01-15', 600_000, 78_000, 678_000, 678_000, now())
 		RETURNING id::text`, world.cust, trentonBranchID).Scan(&world.inv); err != nil {
 		t.Fatalf("seed the rail invoice: %v", err)
@@ -199,7 +200,7 @@ func TestIntegration_CreditMemoRound_TheRealRailPostsAParkedCredit(t *testing.T)
 	}
 	var arNet int64
 	if err := pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(l.debit_cents - l.credit_cents), 0) FROM gl_journal_lines l
+		SELECT COALESCE(SUM(COALESCE(l.debit_cents, 0) - COALESCE(l.credit_cents, 0)), 0) FROM gl_journal_lines l
 		 JOIN gl_accounts a ON a.id = l.account_id
 		 JOIN gl_journals j ON j.id = l.journal_id
 		 WHERE j.idempotency_key = $1 AND a.code = '1100'`,
@@ -266,5 +267,52 @@ func TestIntegration_CreditMemoRound_ARefusedParkVoidsTheMemoAndFreesTheRoom(t *
 	}
 	if follow.Status != billing.CreditMemoIssued {
 		t.Fatalf("the next credit is %q, want ISSUED", follow.Status)
+	}
+}
+
+// TestIntegration_CreditMemoRound_ADeclineBridgesNothingForTheLedgersOwnJournal pins the shipped rule
+// where the core round moved it: the adapter's reject arm no-ops for a journal that is not a credit
+// memo's, so the ledger's own parked journal stays DRAFT on a decline, the maker's own act to void.
+func TestIntegration_CreditMemoRound_ADeclineBridgesNothingForTheLedgersOwnJournal(t *testing.T) {
+	pool := cmRoundPool(t)
+	world := cmRoundWorldPlant(t, pool)
+	_, approvals := cmRoundService(t, pool)
+
+	glSvc := gl.NewService(gl.NewRepository(pool)).WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals})
+	maker := identity.ContextWithStaff(context.Background(), identity.StaffContext{
+		UserID: world.requester, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive, Branches: map[string]bool{},
+	})
+	j, err := glSvc.CreateJournal(maker, gl.CreateJournalInput{
+		Memo: "a parked manual journal", BranchID: trentonBranchID,
+		Lines: []gl.JournalLineInput{
+			{AccountCode: "1000", DebitCents: 600_000},
+			{AccountCode: "4000", CreditCents: 600_000},
+		},
+	})
+	if err != nil {
+		t.Fatalf("park the manual journal: %v", err)
+	}
+	if j.Status != "DRAFT" {
+		t.Fatalf("the manual journal reads %s, want DRAFT (over the threshold)", j.Status)
+	}
+	var reqID string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT id::text FROM permission_approval_requests WHERE subject_ref = $1 AND status = 'PENDING'`,
+		j.ID).Scan(&reqID); err != nil {
+		t.Fatalf("read the journal's request: %v", err)
+	}
+	decider := cmRoundDecider()
+	decider.UserID = world.decider
+	if err := approvals.DecideApproval(context.Background(), reqID, decider, false, "not warranted"); err != nil {
+		t.Fatalf("decline the manual journal: %v", err)
+	}
+	var status string
+	if err := pool.QueryRow(context.Background(), `SELECT status FROM gl_journals WHERE id = $1`, j.ID).
+		Scan(&status); err != nil {
+		t.Fatalf("read the declined journal: %v", err)
+	}
+	if status != "DRAFT" {
+		t.Fatalf("the ledger's own parked journal reads %s after a decline, want DRAFT (the maker's own act to void)", status)
 	}
 }

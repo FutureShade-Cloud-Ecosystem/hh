@@ -68,6 +68,13 @@ type ApprovalDecidedNotice struct {
 // typed 403/409 the wire adapter translates via NewClientError so identity surfaces the right status.
 type JEDecider interface {
 	ApproveJournalTx(ctx context.Context, tx pgx.Tx, journalID, deciderID string) error
+
+	// RejectJournalTx bridges a JE_OVER_THRESHOLD decline on the decision's own transaction. The
+	// shipped rule stands for the ledger's own parked journals: a decline bridges nothing, because
+	// voiding a DRAFT journal is the maker's own act. A parked credit memo is not the maker's to
+	// clean up, so the adapter voids its memo document and journal (FW1-12a's core round); a refused
+	// or withdrawn park that stayed DRAFT would hold the invoice's room for good. Idempotent.
+	RejectJournalTx(ctx context.Context, tx pgx.Tx, journalID, deciderID string) error
 }
 
 // FreightDecider bridges a FREIGHT_ABOVE_QUOTE rail decision to the PARKED freight raise dispatch
