@@ -229,17 +229,36 @@ import { formatMoney, parseAmountToCents } from "./ar-money.js";
 
 export function sendInvoiceWords(result: BillingReminderResult): string {
   if (result.replayed > 0 && result.sent === 0) return "That invoice was already sent on this key, so nothing new went.";
-  if (result.skipped !== undefined && Object.keys(result.skipped).length > 0) return "The send was recorded, but did not go: nothing left the building.";
+  const skipped = Object.entries(result.skipped ?? {});
+  if (skipped.length > 0) {
+    const reasons = [...new Set(skipped.map(([, why]) => why))];
+    if (reasons.length === 1) return `The invoice did not go: ${reasons[0]}.`;
+    return `The invoice did not go: ${skipped.length} invoices were skipped.`;
+  }
   return "The invoice went to the account's contact through the messaging sink.";
 }
 
+// The server's own word for a delivery that did not go. The desk says it, but the reason is the
+// server's: there is no queue behind the desk, so a failed delivery is not a reminder waiting to be
+// retried by anything (FW1-06b round 2, S6's P2-2).
+const FAILED_DELIVERY = "delivery failed";
+
+/**
+ * What the account page's Remind run says happened (FW1-06b): sent, or nothing sent and why. The
+ * server decides all of it; this words its answer. A run that says sent when nothing left the
+ * building is the one thing this screen must never do, so anything the server did not count as sent
+ * is named with its reason.
+ */
 export function reminderRunWords(result: BillingReminderResult): { notice: string; sent: boolean } {
   const skipped = Object.entries(result.skipped ?? {});
   if (result.replayed > 0 && result.sent === 0 && skipped.length === 0) {
-    return { notice: `Nothing new went out: ${result.replayed} ${result.replayed === 1 ? "had" : "had"} already been sent.`, sent: false };
+    return { notice: `Nothing new went out: ${result.replayed} had already been sent.`, sent: false };
   }
   if (result.sent === 0) {
     const reasons = [...new Set(skipped.map(([, why]) => why))];
+    if (reasons.length === 1 && reasons[0].startsWith(FAILED_DELIVERY)) {
+      return { notice: `No reminder went out: ${reasons[0]}.`, sent: false };
+    }
     if (reasons.length === 1) return { notice: `No reminder was sent: ${reasons[0]}.`, sent: false };
     return { notice: `No reminder was sent: ${skipped.length} ${skipped.length === 1 ? "invoice was" : "invoices were"} skipped.`, sent: false };
   }

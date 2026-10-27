@@ -985,8 +985,9 @@ export class ArDesk {
     if (!sent.ok) {
       this.#fail("reminder", sent);
     } else {
-      // The server says what happened: sent, recorded for the queue to retry, or nothing sent and
-      // why (FW1-06b). A run is never told as sent when nothing left the building.
+      // The server says what happened: sent, or nothing sent and why (FW1-06b). There is no queue
+      // behind the desk, so no run is ever told as sent, or as waiting for a retry, when nothing
+      // left the building (FW1-06b round 2, S6's P2-2).
       const words = reminderRunWords(sent.value);
       if (words.sent) {
         this.#notice = words.notice;

@@ -112,6 +112,17 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 // honesty note: a bounce deletes its payment's allocation rows, so a cheque that was good at the
 // as-of date and bounced afterwards shows as owed at that date; the payment's per-invoice split is
 // unrecoverable once those rows are gone.
+//
+// What this costs (S6's P3, measured with EXPLAIN on a migrated database): the three rebuild arms
+// are index-backed lookups per document (idx_cust_txn_source on the ledger rows, the
+// payment_allocations index on invoice_id, idx_payment_reapplications_invoice), so the cost driver
+// is the DOCUMENT COUNT: the join reads every invoice of every customer, the PAID ones included,
+// because a document paid after the as-of date must still age at its full total, and the HAVING
+// drops the settled ones only after their balance has been rebuilt. A dealer with years of history
+// pays three index lookups for each of those documents. The narrowings that would pay it down (a
+// settled-after column on the document, or a created_at index on the allocation so a settled
+// document can be skipped without a rebuild) are schema changes, and the migration numbers are a
+// shared space, so they are a lead's call, not this query's.
 const agingSelect = `
 	SELECT c.id::text, c.name, c.account_no::text, COALESCE(c.home_branch_id::text,''),
 	       c.payment_terms_days, c.credit_limit_cents,

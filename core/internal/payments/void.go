@@ -23,9 +23,16 @@ package payments
 // The gates, decided under the payment row lock: manager only (route gate and service check, the
 // reversal's own double gate), reason required, RECEIVED only (a DEPOSITED receipt has cleared to
 // the bank and its undo is a reversal; a BOUNCED receipt has its own act; VOID is already voided;
-// REFUNDED has nothing to give back), the same dealer day as the clock (afterwards the books of a
-// closed day are at stake and a reversal is the act), never a payment that was already reversed
-// (the reversal owns the undo then) and never a reversing entry itself.
+// REFUNDED has nothing to give back), never a payment the processor captured (the undo of a
+// captured card charge is a refund through the processor, not a void), the same dealer day as the
+// clock (afterwards the books of a closed day are at stake and a reversal is the act), never a
+// payment that was already reversed (the reversal owns the undo then) and never a reversing entry
+// itself.
+//
+// The money the receipt took is the whole receipt, fee included: a receipt that settled an NSF fee
+// carries the fee in its metadata (PR 622's nsf_fee_allocations), and the void gives the fee back
+// beside the invoices, so the subledger nets to zero over the receipt and its void (S6's P2-4, the
+// sequencing with PR 622).
 
 import (
 	"context"
@@ -113,13 +120,15 @@ func (r *Repository) VoidPayment(ctx context.Context, in VoidInput, now time.Tim
 		isItselfAReversal                               bool
 		onATillSession                                  bool
 		gatewayRef                                      string
+		nsfAllocJSON                                    []byte
 	)
 	err = tx.QueryRow(ctx,
 		`SELECT COALESCE(customer_id::text,''), method, branch_id::text, status, amount_cents, received_at,
 		        payment_no::text, reversed_at IS NOT NULL, reverses_payment_id IS NOT NULL,
-		        till_session_id IS NOT NULL, COALESCE(gateway_ref,'')
+		        till_session_id IS NOT NULL, COALESCE(gateway_ref,''),
+		        COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb)
 		   FROM payments WHERE id = $1::uuid FOR UPDATE`, in.PaymentID).
-		Scan(&customerID, &method, &branchID, &status, &amount, &receivedAt, &paymentNo, &alreadyReversed, &isItselfAReversal, &onATillSession, &gatewayRef)
+		Scan(&customerID, &method, &branchID, &status, &amount, &receivedAt, &paymentNo, &alreadyReversed, &isItselfAReversal, &onATillSession, &gatewayRef, &nsfAllocJSON)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Void{}, ErrNotFound
@@ -192,6 +201,28 @@ func (r *Repository) VoidPayment(ctx context.Context, in VoidInput, now time.Tim
 		}
 	}
 
+	// The NSF fees this receipt settled, if any. A receipt that paid a bounce fee carries the fee in
+	// its metadata (PR 622's nsf_fee_allocations: the fee id and the cents it took), and the fee is
+	// part of the receipt's money: the void has to give it back too, or the fee stays paid in the
+	// subledger while 1100 moves by the receipt's whole amount (S6's P2-4, the sequencing with PR
+	// 622). The fee rows are locked in ascending id order, the same order the reversal takes them in.
+	nsfAllocs := map[string]int64{}
+	// The map is written by our own settle (jsonb_build_object over the fee id and the cents it
+	// took), so a malformed one cannot arrive from the desk; the reversal reads it the same way.
+	_ = json.Unmarshal(nsfAllocJSON, &nsfAllocs)
+	nsfIDs := make([]string, 0, len(nsfAllocs))
+	for id, amt := range nsfAllocs {
+		if amt > 0 {
+			nsfIDs = append(nsfIDs, id)
+		}
+	}
+	slices.Sort(nsfIDs)
+	for _, id := range nsfIDs {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM payment_nsf WHERE id = $1::uuid FOR NO KEY UPDATE`, id); err != nil {
+			return Void{}, fmt.Errorf("void: lock nsf fee %s: %w", id, err)
+		}
+	}
+
 	// Re-open each invoice and mirror the subledger, in the lock order taken above.
 	var runningAR int64
 	if customerID != "" {
@@ -233,6 +264,22 @@ UPDATE invoices
 			}
 		}
 		reopened = append(reopened, a.invoiceID)
+	}
+	// The NSF fees the receipt paid are given back beside the invoices: the fee's own subledger row
+	// (PR 622's ADJUSTMENT against the fee) is countered by this one, so the fee is open again and the
+	// subledger nets to zero over the receipt and its void, fee included.
+	for _, nsfID := range nsfIDs {
+		feeAmt := nsfAllocs[nsfID]
+		runningAR += feeAmt
+		if customerID != "" {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO customer_transactions
+				   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+				 VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'payment_nsf', $4::uuid, $5::uuid, $6)`,
+				customerID, feeAmt, runningAR, nsfID, branchID, "voided receipt: "+in.Reason); err != nil {
+				return Void{}, fmt.Errorf("void: insert nsf fee subledger txn: %w", err)
+			}
+		}
 	}
 	// The receipt's application goes: the bounce's own undo. Nothing contra is left behind, because
 	// nothing is contra: the receipt never happened.
