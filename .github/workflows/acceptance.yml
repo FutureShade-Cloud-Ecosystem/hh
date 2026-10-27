@@ -251,8 +251,11 @@ jobs:
           . "$RUNNER_TEMP/acc-lib.sh"
           fresh_box acc_counter_till || { echo "counter-till|advisory|FAIL" >> "$ACC_VERDICTS"; echo "VERDICT counter-till: FAIL (advisory, the box did not start)"; exit 0; }
           suite_counter_till() {
+            # The Julian sale's line id: the demo world renames the base
+            # world's -KGN- orders to -JUL- (Kingston becomes Julian), so the
+            # number is the renamed one.
             kgn_line="$(psql "$ACC_PG_URL/acc_counter_till?sslmode=disable" -tAc \
-              "SELECT ol.id::text FROM order_lines ol JOIN orders o ON o.id = ol.order_id WHERE o.order_no = 'DEMO-KGN-S01' LIMIT 1" | tr -d '[:space:]')" || return 1
+              "SELECT ol.id::text FROM order_lines ol JOIN orders o ON o.id = ol.order_id WHERE o.order_no = 'DEMO-JUL-S01' LIMIT 1" | tr -d '[:space:]')" || return 1
             CT_IMAGE_URL="$ACC_BOX_URL" CT_GATE_PHRASE="$ACC_PHRASE" CT_SHOT_DIR="$ACC_OUT/counter-till/shots" CT_KGN_LINE="$kgn_line" \
               pw counter-till counter-till --config test/acceptance.config.ts --grep-invert restart
           }
