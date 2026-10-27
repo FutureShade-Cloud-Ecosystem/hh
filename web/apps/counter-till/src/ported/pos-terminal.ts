@@ -7872,13 +7872,20 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
        // The figure is absent, not zero, when the dealer's account position policy withholds it
        // from this caller, and the card then says so in words.
       const available = serverAvailableCreditCents(c);
-      const held = this.standing.on_hold === true;
+      /* The hold state arrives on its own read (the standing), which can land after the position
+         did. Until it is KNOWN the card renders no headroom at all: a held account must never
+         flash a green available figure it is about to take back (the r2 1440 light shot caught
+         exactly that window). */
+      const standingKnown = this.standing.standing !== undefined;
+      const held = standingKnown && this.standing.on_hold === true;
       const withheld = available === null && c.credit_limit_cents === undefined;
       /* On a held account the headroom is not what a clerk can spend: a green figure beside the
          red hold tag reads as "can buy". While the hold stands the card says "On hold" where the
          figure would be (rather than muting a number that still reads as headroom). */
       const headroom = (label: string) =>
-        held
+        !standingKnown
+          ? nothing
+          : held
           ? html`<span data-testid="cust-available-on-hold">${label} <span class="num out">On hold</span></span>`
           : available === null
             ? nothing
@@ -7929,6 +7936,12 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
                 : (c.credit_limit_cents ?? 0) > 0
                   ? html`${outstanding}${headroom('Credit available')}`
                   : html`<span>No credit line</span>`
+              : codPosture
+              ? /* Round 3 (visual review P1 1): the posture is the account's payment rule, not a
+                   role's privilege. The manager's card shows it exactly where the clerk's does, and
+                   no green available figure ever sits beside a pay before release account. */
+                html`${outstanding}
+                  <span data-testid="cust-cod-posture">Cash On Demand: pay before release</span>`
               : html`${headroom('Available')}${outstanding}`}
             ${/* THE PAST-DUE FACT (N4). The back-office lead starts a counter sale partly because "it
                also gives me an opportunity to ask them to pay their bill": this is the thing that was

@@ -2421,6 +2421,10 @@ const server = createServer(async (request, response) => {
   // (Fenwick's) so the three postures a counter meets are all visible: a
   // current account, one past due, and one on hold. The house walk-in has no
   // account and no balance, and the empty answer is the walk-in's answer.
+  // A caller the dealer's balance policy withholds figures from gets the hold
+  // state and the clear word and NO money, the same field absence the core's
+  // standing read answers with (round 3, UX-97 visual review): the overdue
+  // figure and its bucket never enter the bytes for that caller.
   if (request.method === "GET" && path === "/api/v1/pos/account-standing") {
     const customerId = url.searchParams.get("customer_id") ?? "";
     if (customerId === "") {
@@ -2432,10 +2436,16 @@ const server = createServer(async (request, response) => {
       respondJson(response, 404, { error: "no such customer account" });
       return;
     }
+    if (!accountPositionAllowed(request)) {
+      const held = customer.on_hold === true;
+      respondJson(response, 200, held ? { standing: "on_hold", on_hold: true } : { standing: "clear" });
+      return;
+    }
     const isBluffside = customer.id === "c-bluffside" || customer.name === "Bluffside Builders";
     const pastDue = customer.account_no === "C02" ? 41500 : (isBluffside ? 1482000 : 0);
     const bucket = isBluffside ? "61 to 90" : (pastDue > 0 ? "30" : undefined);
     respondJson(response, 200, {
+      standing: pastDue > 0 ? "past_due" : (customer.on_hold === true ? "on_hold" : "clear"),
       past_due_cents: pastDue,
       oldest_bucket: bucket,
       on_hold: customer.on_hold,

@@ -154,7 +154,7 @@ export function evaluateAccountCheck(
       lines = ['Cash on demand: pay before release.', crewMemberLine];
     } else if (withheld) {
       title = 'No hold on this account';
-      crewMemberLine = `${name} has no hold. The server decides a charge to this account when the sale rings.`;
+      crewMemberLine = `${name} has no hold. The charge is checked when the sale rings.`;
       lines = [`${POSITION_WITHHELD_WORDS} · ${termsWords}.`, crewMemberLine];
     } else if (calculatedAvailable <= 0) {
       title = 'No credit available';
@@ -188,15 +188,19 @@ export function evaluateAccountCheck(
   const bucketLabel = rawBucket === '' ? null : rawBucket.includes('days') ? rawBucket : `${rawBucket} days`;
   const title = bucketLabel === null ? 'On hold' : `On hold: past due ${bucketLabel}`;
 
-  const pastDuePart = pastDueFormatted
+  // The past due figure is a credit figure like the limit, the balance and the available: a caller
+  // the position withholds gets the hold words without it (round 3, visual review P1 3). The till
+  // renders no past due row at all for such a caller, word or figure.
+  const pastDuePart = !withheld && pastDueFormatted
     ? ` · Past due ${pastDueFormatted}${bucketLabel ? `, ${bucketLabel}` : ''}.`
     : '.';
   const line1 = withheld
     ? `${POSITION_WITHHELD_WORDS}, and the account is on hold${pastDuePart}`
     : `Available credit ${availableCreditFormatted}, but the account is on hold${pastDuePart}`;
+  // line1 already says the account is on hold, so the way forward line does not say it again.
   const crewLine = options?.crewMemberName
-    ? `${options.crewMemberName} is a listed crew member of ${name}, but the account is on hold, so a charge to it will be refused.`
-    : 'The account is on hold. Three ways forward:';
+    ? `${options.crewMemberName} is a listed crew member of ${name}, so a charge to it will be refused.`
+    : 'Three ways forward:';
   const lines = [line1];
   if (standing?.promise_text) lines.push(standing.promise_text);
   lines.push(crewLine);

@@ -74,8 +74,11 @@ test("a refused clerk's search carries no figure, the row and the card say nothi
   await expect(card).not.toContainText("Available");
   await expect(card).not.toContainText("Outstanding");
   await expect(card).not.toContainText("derived");
-  // The past due fact is the standing read, not the account position, and stays.
-  await expect(page.getByTestId("cust-past-due")).toBeVisible();
+  // Round 3 (visual review P1 3): the overdue amount is a credit figure like the rest of the
+  // position, and the standing read withholds it from this caller, so the card carries neither the
+  // figure nor the words.
+  await expect(card.getByTestId("cust-past-due")).toHaveCount(0);
+  await expect(card).not.toContainText("Past due");
 
   // The account check says so in words; it never claims a zero credit line.
   await openStep(page, "items");
@@ -86,6 +89,7 @@ test("a refused clerk's search carries no figure, the row and the card say nothi
   const check = page.getByTestId("pos-account-check");
   await expect(check).toHaveAttribute("data-standing", "good_standing");
   await expect(check).toContainText("Credit position not shown for your role");
+  await expect(check).toContainText("The charge is checked when the sale rings.");
   await expect(check).not.toContainText("No credit available");
   await expect(check).not.toContainText("used up");
   await expect(check).not.toContainText("$");
@@ -139,6 +143,49 @@ test("on a held account the available figure steps aside for On hold beside the 
   await expect(card.getByTestId("cust-available")).toHaveCount(0);
   await expect(card.getByTestId("cust-available-on-hold")).toHaveText(/Available\s*On hold/);
   await expect(card.locator(".num.avail")).toHaveCount(0);
+});
+
+// Round 3 (visual review P1 1): the cash on demand posture is the account's payment rule, so the
+// manager's card reads it exactly where the clerk's does, and no available figure ever sits beside
+// a pay before release account.
+test("a manager's card on a cash on demand account says pay before release, never a green available", async ({
+  page,
+}) => {
+  await signIn(page, "Sales manager");
+  const { row } = await search(page, "C10", "Cash On Demand Landscaping");
+  await pickAndOpenCard(page, row, "Cash On Demand Landscaping");
+  const card = page.getByTestId("customer-card");
+  await expect(card.getByTestId("cust-cod-posture")).toHaveText(/cash on demand: pay before release/i);
+  await expect(card.getByTestId("cust-available")).toHaveCount(0);
+  await expect(card.getByTestId("cust-position-withheld")).toHaveCount(0);
+  await expect(card.locator(".num.avail")).toHaveCount(0);
+});
+
+// Round 3 (visual review P1 2): the hold state arrives on its own read, and the card renders no
+// available figure until it has arrived, so a held account can never flash a green figure.
+test("the card shows no available figure before the hold state is known, then On hold", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  const { row } = await search(page, "C09", "Harbour Drywall Inc");
+  // Hold the standing answer until the leg releases it: the position alone must not buy a figure.
+  let release!: () => void;
+  const released = new Promise<void>((keep) => {
+    release = keep;
+  });
+  await page.route("**/api/v1/pos/account-standing*", async (route) => {
+    await released;
+    await route.continue();
+  });
+  await pickAndOpenCard(page, row, "Harbour Drywall Inc");
+  const card = page.getByTestId("customer-card");
+  await expect(card.getByTestId("cust-available")).toHaveCount(0);
+  await expect(card.getByTestId("cust-available-on-hold")).toHaveCount(0);
+  await expect(card.locator(".num.avail")).toHaveCount(0);
+  await expect(card.getByTestId("cust-on-hold")).toHaveCount(0);
+  // The standing lands: the hold badge and the On hold word arrive together, still no green figure.
+  release();
+  await expect(card.getByTestId("cust-on-hold")).toBeVisible({ timeout: 10_000 });
+  await expect(card.getByTestId("cust-available-on-hold")).toHaveText(/Available\s*On hold/);
+  await expect(card.getByTestId("cust-available")).toHaveCount(0);
 });
 
 test("a refused clerk reads Cash on demand: pay before release on C10, from the core's own field, with no figure", async ({
@@ -207,10 +254,29 @@ if (shots !== "") {
   }
 }
 
-// Round 2 shots for the visual read: the till card and the account check for a clerk and a manager,
-// on an ordinary account, a held account and the cash on demand account.
-const r2 = process.env.UX97_R2_SHOTS_DIR ?? "";
-if (r2 !== "") {
+// Round 3 shots for the visual read: the full set, retaken after the round 3 fixes. Every shot
+// waits for the account state and the tax quote to settle on rendered elements (never a sleep),
+// and the 390 check shots scroll the mini card's top into view.
+const r3 = process.env.UX97_R3_SHOTS_DIR ?? "";
+if (r3 !== "") {
+  const settleCard = async (
+    card: ReturnType<Page["getByTestId"]>,
+    kind: "ordinary" | "held" | "cod",
+    who: "clerk" | "manager",
+  ) => {
+    // The card is settled when the element that depends on the standing read is on screen: the
+    // figure, the On hold word, the hold badge, the posture or the withheld sentence.
+    if (kind === "held") {
+      if (who === "manager") await expect(card.getByTestId("cust-available-on-hold")).toHaveText(/Available\s*On hold/);
+      else await expect(card.getByTestId("cust-on-hold")).toBeVisible();
+    } else if (kind === "cod") {
+      await expect(card.getByTestId("cust-cod-posture")).toContainText(/pay before release/i);
+    } else if (who === "manager") {
+      await expect(card.getByTestId("cust-available")).toContainText(/\$[0-9]/);
+    } else {
+      await expect(card.getByTestId("cust-position-withheld")).toBeVisible();
+    }
+  };
   for (const [width, height] of [
     [1440, 900],
     [390, 844],
@@ -225,22 +291,31 @@ if (r2 !== "") {
           ["C09", "Harbour Drywall Inc", "held"],
           ["C10", "Cash On Demand Landscaping", "cod"],
         ] as const) {
-          test(`r2 shots: ${kind} account, ${who}, ${width}, ${mode}`, async ({ page }) => {
+          test(`r3 shots: ${kind} account, ${who}, ${width}, ${mode}`, async ({ page }) => {
             await page.setViewportSize({ width, height });
             await signIn(page, role);
             await theme(page, mode);
             const { row } = await search(page, term, name);
             await pickAndOpenCard(page, row, name);
+            const card = page.getByTestId("customer-card");
+            await settleCard(card, kind, who);
             await theme(page, mode);
-            await page.screenshot({ path: `${r2}/card-${kind}-${who}-${width}-${mode}.png` });
+            await page.screenshot({ path: `${r3}/card-${kind}-${who}-${width}-${mode}.png` });
             await openStep(page, "items");
             await page.getByTestId("pos-scan-input").fill("charcoal");
             await page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first().click();
             await openStep(page, "payment");
             const charge = page.getByRole("button", { name: "Charge Account" });
             if (await charge.count()) await charge.click();
+            const check = page.getByTestId("pos-account-check");
+            await expect(check).toBeVisible();
+            // Settled means the tax quote answered: nothing on the check may read pending.
+            await expect(check).not.toContainText(/pending/i, { timeout: 15_000 });
+            if (width === 390) {
+              await page.getByTestId("pay-customer-card").scrollIntoViewIfNeeded();
+            }
             await theme(page, mode);
-            await page.screenshot({ path: `${r2}/check-${kind}-${who}-${width}-${mode}.png` });
+            await page.screenshot({ path: `${r3}/check-${kind}-${who}-${width}-${mode}.png` });
           });
         }
       }

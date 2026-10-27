@@ -20,16 +20,21 @@ package pos
 // it lets a quote become an order. The standing word names the case: walk_in (no customer named),
 // clear (an account with nothing past due and no hold), past_due (money past the terms), on_hold
 // (an active credit hold, whether or not anything is past due). A caller the dealer's balance
-// policy refuses is a 403, an account that does not exist a 404, a malformed id a 400, and a read
-// that could not be made an error status: never an empty 200 that reads as "current". The three
-// older fields stay exactly as they were and are present exactly when they were, so the Counter
-// Till, which reads them by name, keeps working; it already treats any non-2xx answer as an empty
-// standing.
+// policy refuses is answered WITHOUT its money (round 3 of the UX-97 visual review): the overdue
+// figure and its bucket never enter the bytes, the same field absence the customer position
+// answers with for limit, balance and available, while the hold state and the clear word stay, so
+// the counter can still serve the account safely. A branch the caller does not reach is a 403, an
+// account that does not exist a 404, a malformed id a 400, a dealer who switched the surface off
+// a 403, and a read that could not be made an error status: never an empty 200 that reads as
+// "current". The three older fields stay exactly as they were and are present exactly when they
+// were, so the Counter Till, which reads them by name, keeps working; it already treats any
+// non-2xx answer as an empty standing.
 //
 // THE GATE IS AT THE MARSHAL LAYER (0181). A customer's outstanding balance is money about a third
 // party; who may see it is the dealer's decision, taken in pos_policy.balance_visibility and
-// applied HERE, by refusing the caller before any figure is read. Not filtered downstream, not
-// hidden in CSS, not sent-and-suppressed: the figure is never put in the bytes.
+// applied HERE, by leaving the figures out of the bytes for a caller they are withheld from. Not
+// filtered downstream, not hidden in CSS, not sent-and-suppressed: the figure is never put in the
+// bytes.
 
 import (
 	"context"
@@ -118,32 +123,46 @@ func (s *Service) WithHoldReader(h HoldReader) *Service { s.holds = h; return s 
 // WithAccountChecker wires the account existence check behind the standing read.
 func (s *Service) WithAccountChecker(a AccountChecker) *Service { s.accounts = a; return s }
 
-// balanceAllowed answers whether THIS caller may receive the balance fields
-// under the branch policy, behind the same branch wall the glance runs (X2:
-// a branch the caller's resolved authority does not reach is REFUSED with
-// the wall's 403, never answered with an empty card). Same shape as
-// marginAllowed by design, one idea about visibility, applied twice. A
-// caller who cannot be resolved and a policy that cannot be read are errors,
-// not a quiet "no": the read is refused or fails, it is never answered empty.
-func (s *Service) balanceAllowed(ctx context.Context, branchID string) (bool, error) {
+// balanceGate is what the dealer's balance policy says about THIS caller on THIS branch.
+type balanceGate int
+
+const (
+	// balanceOpen: ALL_STAFF, or MANAGER_UP and the caller is a manager. The read answers in full.
+	balanceOpen balanceGate = iota
+	// balanceFiguresWithheld: MANAGER_UP and the caller is not a manager. The read answers the hold
+	// state and the clear word, and never puts the overdue figure or its bucket in the bytes.
+	balanceFiguresWithheld
+	// balanceOff: HIDDEN. The surface is off for everyone, and the answer is a 403.
+	balanceOff
+)
+
+// balanceGateFor resolves the dealer's balance policy for THIS caller, behind the same branch wall
+// the glance runs (X2: a branch the caller's resolved authority does not reach is REFUSED with the
+// wall's 403, never answered with an empty card). Same shape as marginAllowed by design, one idea
+// about visibility, applied twice. A caller who cannot be resolved and a policy that cannot be read
+// are errors, not a quiet "no": the read is refused or fails, it is never answered empty.
+func (s *Service) balanceGateFor(ctx context.Context, branchID string) (balanceGate, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
-		return false, err // the 401 an unresolved caller earns, never an empty card
+		return balanceOff, err // the 401 an unresolved caller earns, never an empty card
 	}
 	if err := requireBranchReach(caller, branchID); err != nil {
-		return false, err
+		return balanceOff, err
 	}
 	p, err := s.store.ReadPosPolicy(ctx, branchID)
 	if err != nil {
-		return false, errors.Join(ErrStandingUnavailable, err)
+		return balanceOff, errors.Join(ErrStandingUnavailable, err)
 	}
 	switch p.BalanceVisibility {
 	case BalanceVisibilityManagerUp:
-		return caller.IsManager(), nil
+		if caller.IsManager() {
+			return balanceOpen, nil
+		}
+		return balanceFiguresWithheld, nil
 	case BalanceVisibilityHidden:
-		return false, nil
+		return balanceOff, nil
 	default: // ALL_STAFF, the column default, and what a pre-0181 fake resolves to
-		return true, nil
+		return balanceOpen, nil
 	}
 }
 
@@ -157,9 +176,11 @@ type AccountStandingInput struct {
 //
 // Every case answers with its own word or its own error status, see the file header. The order of
 // the checks is the order of what the caller is owed: a branch is required (400); a caller who
-// does not reach the branch, or whom the dealer's policy withholds balances from, is refused (403)
-// before any account is touched, so a refusal never confirms an account exists; then the account
-// itself (400 malformed, 404 unknown); then the facts, any of which failing is a 503.
+// does not reach the branch is refused (403) before any account is touched, so a wall refusal
+// never confirms an account exists, and a dealer who switched the surface off is refused with it;
+// then the account itself (400 malformed, 404 unknown); then the facts, any of which failing is a
+// 503. A caller whom the policy strips the figures from still gets the hold state and the clear
+// word, and never the overdue figure or its bucket: those bytes are simply never written.
 func (s *Service) Standing(ctx context.Context, in AccountStandingInput) (AccountStanding, error) {
 	if in.BranchID == "" {
 		return AccountStanding{}, clientErr(http.StatusBadRequest, "pos: branch_id is required")
@@ -169,12 +190,12 @@ func (s *Service) Standing(ctx context.Context, in AccountStandingInput) (Accoun
 			return AccountStanding{}, clientErr(http.StatusBadRequest, "pos: customer_id must be a uuid")
 		}
 	}
-	allowed, err := s.balanceAllowed(ctx, in.BranchID)
+	gate, err := s.balanceGateFor(ctx, in.BranchID)
 	if err != nil {
 		// The branch wall (X2) and the unreadable policy: a refusal or a failure, never an empty card.
 		return AccountStanding{}, err
 	}
-	if !allowed {
+	if gate == balanceOff {
 		return AccountStanding{}, clientErr(http.StatusForbidden, "pos: this caller may not see account balances")
 	}
 	if in.CustomerID == "" {
@@ -190,11 +211,22 @@ func (s *Service) Standing(ctx context.Context, in AccountStandingInput) (Accoun
 	if !exists {
 		return AccountStanding{}, errCustomerNotFound // the one customer answer (customerFor): unreachable and unknown alike
 	}
-	due, err := s.aging.CustomerAging(ctx, in.CustomerID)
+	held, err := s.holds.HasActiveHold(ctx, in.CustomerID)
 	if err != nil {
 		return AccountStanding{}, errors.Join(ErrStandingUnavailable, err)
 	}
-	held, err := s.holds.HasActiveHold(ctx, in.CustomerID)
+	if gate == balanceFiguresWithheld {
+		// The policy withholds this caller's money: the aging read is never made, so the overdue
+		// figure and its bucket cannot leak, and the answer carries only what serving the account
+		// safely needs, the hold state and the clear word.
+		out := AccountStanding{Standing: StandingClear}
+		if held {
+			out.Standing = StandingOnHold
+			out.OnHold = true
+		}
+		return out, nil
+	}
+	due, err := s.aging.CustomerAging(ctx, in.CustomerID)
 	if err != nil {
 		return AccountStanding{}, errors.Join(ErrStandingUnavailable, err)
 	}

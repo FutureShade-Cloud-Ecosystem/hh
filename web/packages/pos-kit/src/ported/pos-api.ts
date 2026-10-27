@@ -764,14 +764,20 @@ export async function counterPrices(
 /**
  * AccountStanding: the Customer step's past-due FACT, role-gated SERVER-SIDE.
  *
- * Every field is optional because the whole answer is optional: a walk-in, a current account, a
- * caller the dealer's balance_visibility policy does not allow, and an AR read that failed all
- * return `{}`. The client renders nothing for `{}` and asks no questions about which of those it
- * was: that indistinguishability is deliberate (see backend/internal/pos/standing.go): a counter
- * must never be told an account is current because a query timed out, and must never see a fault
- * banner over a fact nobody asked for.
+ * Every field is optional because the whole answer is optional: a walk-in, a current account, and
+ * an AR read that failed all return `{}`. A caller the dealer's balance_visibility policy strips
+ * the figures from gets the standing word and the hold state and NO money (round 3 of the UX-97
+ * visual review): `past_due_cents` and `oldest_bucket` are simply absent from the bytes. The
+ * client renders nothing for `{}` and asks no questions about which of those it was: that
+ * indistinguishability is deliberate (see core/internal/pos/standing.go): a counter must never be
+ * told an account is current because a query timed out, and must never see a fault banner over a
+ * fact nobody asked for. Its converse is the card's own rule: no available figure renders until
+ * `standing` is present, because the hold state arrives on this read and a green figure that a
+ * landing hold takes back is a lie the card must never tell.
  */
 export interface AccountStanding {
+  /** The case word, present exactly when the read was made: the hold state's known-marker. */
+  standing?: 'walk_in' | 'clear' | 'past_due' | 'on_hold';
   past_due_cents?: number;
   oldest_bucket?: string;
   on_hold?: boolean;

@@ -7,9 +7,10 @@ package pos
 //
 // What is pinned here is that every case answers distinctly (a walk-in, a clear account, a past-due
 // one and a held one each carry their own standing word), that the fact is still a fact (it never
-// carries a verdict, it never blocks), that a caller the dealer's policy does not allow is REFUSED
-// with a 403 and never answered empty, and that a read that cannot be made is an error and never an
-// empty answer that reads as a clear account.
+// carries a verdict, it never blocks), that a caller the dealer's MANAGER_UP policy does not allow
+// is answered without a single money byte in it while the hold state stays, that HIDDEN is off for
+// everyone with a 403, and that a read that cannot be made is an error and never an empty answer
+// that reads as a clear account.
 
 import (
 	"context"
@@ -251,7 +252,12 @@ func TestStanding_AllStaffIsTheDefaultBecauseTheCOUNTERAsked(t *testing.T) {
 	}
 }
 
-func TestStanding_ManagerUpPolicy_ClerkIsRefusedAndAgingIsNeverRead(t *testing.T) {
+func TestStanding_ManagerUpPolicy_ClerkGetsNoFigureAndTheAgingIsNeverRead(t *testing.T) {
+	// Round 3 of the UX-97 visual review: the overdue amount is a credit figure, and the dealer's
+	// balance policy withholds it from this caller exactly as the customer position withholds the
+	// limit, the balance and the available. The bytes never carry it, and the aging read is never
+	// even made, so the figure cannot leak through a seam. What the counter still needs to serve
+	// the account safely stays: the hold state and the clear word.
 	h, a := standingHarness(t, behind(), nil)
 	p := h.store.policies[""]
 	p.BalanceVisibility = BalanceVisibilityManagerUp
@@ -259,14 +265,35 @@ func TestStanding_ManagerUpPolicy_ClerkIsRefusedAndAgingIsNeverRead(t *testing.T
 	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
-	if standingStatus(err) != 403 {
-		t.Fatalf("a frontline caller under MANAGER_UP is refused with a 403, never an empty 200: %v", err)
+	if err != nil {
+		t.Fatalf("a withheld caller is answered, not refused: %v", err)
 	}
-	if out != (AccountStanding{}) {
-		t.Fatalf("and carries no bytes of the figure: %+v", out)
+	raw, _ := json.Marshal(out)
+	if string(raw) != `{"standing":"clear"}` {
+		t.Fatalf("the answer carries the clear word and no money at all: %s", raw)
 	}
 	if len(a.asks) != 0 {
-		t.Fatalf("the figure is never even read for a refused caller: %v", a.asks)
+		t.Fatalf("the figure is never even read for a withheld caller: %v", a.asks)
+	}
+}
+
+func TestStanding_ManagerUpPolicy_AWithheldCallerStillHearsTheHold(t *testing.T) {
+	// The hold is not a figure: the counter needs it to serve the account (the card's hold tag and
+	// the check's on hold words ride it), so it stays while the money goes.
+	h, _ := standingHarness(t, behind(), nil)
+	h.svc.WithHoldReader(&fakeHolds{held: true})
+	p := h.store.policies[""]
+	p.BalanceVisibility = BalanceVisibilityManagerUp
+	h.store.policies[""] = p
+	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
+	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(out)
+	if string(raw) != `{"standing":"on_hold","on_hold":true}` {
+		t.Fatalf("the hold state stays and the money stays gone: %s", raw)
 	}
 }
 
