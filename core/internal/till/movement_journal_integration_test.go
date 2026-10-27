@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,6 +172,58 @@ func (w *mjWorld) legs(idempotencyKey string) map[string][2]int64 {
 	return out
 }
 
+// mjLeg is one journal line as the books carry it: the account, the money, the words and the branch.
+type mjLeg struct {
+	Debit  int64
+	Credit int64
+	Memo   string
+	Branch string
+}
+
+// legsWithMemo reads one journal's lines with their memos and their branch, by idempotency key.
+func (w *mjWorld) legsWithMemo(idempotencyKey string) map[string]mjLeg {
+	w.t.Helper()
+	rows, err := w.pool.Query(context.Background(), `
+		SELECT a.code, COALESCE(l.debit_cents, 0), COALESCE(l.credit_cents, 0), COALESCE(l.memo, ''),
+		       COALESCE(l.branch_id::text, '')
+		  FROM gl_journals j
+		  JOIN gl_journal_lines l ON l.journal_id = j.id
+		  JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE j.idempotency_key = $1`, idempotencyKey)
+	if err != nil {
+		w.t.Fatalf("read the journal lines: %v", err)
+	}
+	defer rows.Close()
+	out := map[string]mjLeg{}
+	for rows.Next() {
+		var code string
+		var l mjLeg
+		if err := rows.Scan(&code, &l.Debit, &l.Credit, &l.Memo, &l.Branch); err != nil {
+			w.t.Fatalf("scan the journal line: %v", err)
+		}
+		out[code] = l
+	}
+	if err := rows.Err(); err != nil {
+		w.t.Fatalf("walk the journal lines: %v", err)
+	}
+	return out
+}
+
+// mjPrivateDay names a day in the leg's OWN year: ten past the newest seeded fiscal year, the same
+// window the dated leg below opens. The bankrec suite's own legs complete the CURRENT month's
+// reconciliation while they run, and a match inside a completed month is refused, so a line dated today
+// would fail the match whenever that suite runs beside this one. A month no other leg completes is the
+// leg's own, and the date of a statement line never reaches the books: the clearing journal is dated by
+// the GL's own clock.
+func (w *mjWorld) privateDay() time.Time {
+	w.t.Helper()
+	var maxYear int
+	if err := w.pool.QueryRow(context.Background(), `SELECT COALESCE(max(year), 2026) FROM fiscal_periods`).Scan(&maxYear); err != nil {
+		w.t.Skipf("no fiscal periods to read: %v", err)
+	}
+	return time.Date(maxYear+10, time.July, 1, 0, 0, 0, 0, time.UTC)
+}
+
 // statementLine seeds one unmatched bank statement line for a lodgement match, the same shape the
 // payments walk's legs use, cleaned up by exact id.
 func (w *mjWorld) statementLine(cents int64) string {
@@ -180,13 +233,13 @@ func (w *mjWorld) statementLine(cents int64) string {
 	if err := w.pool.QueryRow(ctx, `SELECT id::text FROM bank_accounts WHERE gl_account_code = '1000'`).Scan(&acct); err != nil {
 		w.t.Skipf("no seeded bank account: %v", err)
 	}
-	day := time.Now().UTC().Truncate(24 * time.Hour)
+	day := w.privateDay()
 	ref := "MJ-" + fmt.Sprint(os.Getpid())
 	var id string
 	if err := w.pool.QueryRow(ctx, `
 		INSERT INTO bank_statement_lines (bank_account_id, txn_date, description, reference, amount_cents, dedupe_hash, status)
-		VALUES ($1, $2, 'FW1-13 OLD LODGEMENT', $3, $4, $5, 'UNMATCHED') RETURNING id::text`,
-		acct, day, ref, cents, bankrec.DedupeHash(day, cents, "FW1-13 OLD LODGEMENT", ref)).Scan(&id); err != nil {
+		VALUES ($1, $2, 'FW1-13 LODGEMENT', $3, $4, $5, 'UNMATCHED') RETURNING id::text`,
+		acct, day, ref, cents, bankrec.DedupeHash(day, cents, "FW1-13 LODGEMENT", ref)).Scan(&id); err != nil {
 		w.t.Fatalf("seed statement line: %v", err)
 	}
 	w.t.Cleanup(func() {
@@ -198,7 +251,8 @@ func (w *mjWorld) statementLine(cents int64) string {
 }
 
 // TestFW113PaidOutPostsItsJournal is the brief's red leg: a paid out moves the drawer's expected
-// cash and its journal (DR the rules' expense account, CR 1020) posts through the outbox exactly once.
+// cash and its journal (DR 9999 Suspense / CR 1020) posts through the outbox exactly once. 6350 is for
+// the counted over or short alone, so a paid out never touches it (FROM-PRINCIPAL 132).
 func TestFW113PaidOutPostsItsJournal(t *testing.T) {
 	w := newMJWorld(t)
 
@@ -227,18 +281,36 @@ func TestFW113PaidOutPostsItsJournal(t *testing.T) {
 	if len(legs) == 0 {
 		t.Fatalf("a paid out posts no journal: no gl_journals row for idempotency_key till.movement.posted:%s", id)
 	}
-	expense, ok := legs["6350"]
-	if !ok || expense[0] != amount || expense[1] != 0 {
-		t.Fatalf("the paid out's expense leg is wrong: want DR 6350 %d, got %v", amount, legs)
+	suspense, ok := legs["9999"]
+	if !ok || suspense[0] != amount || suspense[1] != 0 {
+		t.Fatalf("the paid out's suspense leg is wrong: want DR 9999 %d, got %v", amount, legs)
 	}
 	undeposited, ok := legs["1020"]
 	if !ok || undeposited[0] != 0 || undeposited[1] != amount {
 		t.Fatalf("the paid out's undeposited leg is wrong: want CR 1020 %d, got %v", amount, legs)
 	}
+	if _, over := legs["6350"]; over {
+		t.Fatalf("a paid out touched 6350, which is for the counted over or short alone: got %v", legs)
+	}
+
+	// Every line carries the drawer's own reason words and the branch.
+	detailed := w.legsWithMemo("till.movement.posted:" + id)
+	for _, code := range []string{"9999", "1020"} {
+		line, ok := detailed[code]
+		if !ok {
+			t.Fatalf("the %s leg is missing: %v", code, detailed)
+		}
+		if !strings.Contains(line.Memo, "FW1-13 walk") {
+			t.Fatalf("the %s leg does not carry the drawer's reason words: %q", code, line.Memo)
+		}
+		if line.Branch != w.branchID {
+			t.Fatalf("the %s leg carries branch %q, want the drawer's branch %q", code, line.Branch, w.branchID)
+		}
+	}
 }
 
-// TestFW113PaidInMirrorsThePaidOut: a paid in is the mirror journal (DR 1020 / CR the expense
-// account the rules hold), through the same outbox path, once.
+// TestFW113PaidInMirrorsThePaidOut: a paid in is the mirror journal (DR 1020 / CR 9999 Suspense),
+// through the same outbox path, once.
 func TestFW113PaidInMirrorsThePaidOut(t *testing.T) {
 	w := newMJWorld(t)
 	amount := int64(45_67)
@@ -253,9 +325,25 @@ func TestFW113PaidInMirrorsThePaidOut(t *testing.T) {
 	if !ok || undeposited[0] != amount || undeposited[1] != 0 {
 		t.Fatalf("the paid in's undeposited leg is wrong: want DR 1020 %d, got %v", amount, legs)
 	}
-	expense, ok := legs["6350"]
-	if !ok || expense[0] != 0 || expense[1] != amount {
-		t.Fatalf("the paid in's expense leg is wrong: want CR 6350 %d, got %v", amount, legs)
+	suspense, ok := legs["9999"]
+	if !ok || suspense[0] != 0 || suspense[1] != amount {
+		t.Fatalf("the paid in's suspense leg is wrong: want CR 9999 %d, got %v", amount, legs)
+	}
+	if _, over := legs["6350"]; over {
+		t.Fatalf("a paid in touched 6350, which is for the counted over or short alone: got %v", legs)
+	}
+	detailed := w.legsWithMemo("till.movement.posted:" + id)
+	for _, code := range []string{"1020", "9999"} {
+		line, ok := detailed[code]
+		if !ok {
+			t.Fatalf("the %s leg is missing: %v", code, detailed)
+		}
+		if !strings.Contains(line.Memo, "FW1-13 walk") {
+			t.Fatalf("the %s leg does not carry the drawer's reason words: %q", code, line.Memo)
+		}
+		if line.Branch != w.branchID {
+			t.Fatalf("the %s leg carries branch %q, want the drawer's branch %q", code, line.Branch, w.branchID)
+		}
 	}
 }
 
@@ -528,5 +616,127 @@ func TestFW113OldLodgementKeepsTodaysMatch(t *testing.T) {
 	}
 	if undeposited := legs["1020"]; undeposited[1] != 15_00 {
 		t.Fatalf("the old lodgement's match posted no undeposited credit: got %v", legs)
+	}
+}
+
+// TestFW113LodgementThatCarriesItsJournalIsOnlyConfirmed is the match half of the lodgement rule
+// (FROM-PRINCIPAL 117 and 120): a lodgement that carries its own journal (it has link rows, and the
+// till posted DR 1000 / CR 1020 at lodgement) is CONFIRMED by its bank match and posts nothing, so the
+// deposit is booked once and never twice. Its undo reverses nothing either, because the match booked
+// nothing. The older lodgement's match, in the leg above, keeps today's posting.
+func TestFW113LodgementThatCarriesItsJournalIsOnlyConfirmed(t *testing.T) {
+	w := newMJWorld(t)
+	ctx := context.Background()
+
+	// The lodgement with its slip: the link rows land, the named payments turn DEPOSITED at lodgement,
+	// and the ruled journal posts DR 1000 / CR 1020.
+	cheque := w.slipPayment("CASH", 15_00)
+	if err := w.lodgeWithSlip(15_00, []string{cheque}); err != nil {
+		t.Fatalf("the lodgement with its slip: %v", err)
+	}
+	var movementID string
+	if err := w.pool.QueryRow(ctx,
+		`SELECT id::text FROM till_movements WHERE till_session_id = $1::uuid AND movement_type = 'LODGEMENT'`, w.sessionID).Scan(&movementID); err != nil {
+		t.Fatalf("find the lodgement: %v", err)
+	}
+	var links int
+	if err := w.pool.QueryRow(ctx,
+		`SELECT count(*) FROM till_lodgement_payments WHERE till_movement_id = $1::uuid`, movementID).Scan(&links); err != nil {
+		t.Fatalf("read the link rows: %v", err)
+	}
+	if links != 1 {
+		t.Fatalf("the lodgement carries %d link rows, want 1", links)
+	}
+	w.drain()
+	if bankLeg := w.legs("till.movement.posted:" + movementID)["1000"]; bankLeg[0] != 15_00 {
+		t.Fatalf("the lodgement posted no bank debit at lodgement: got %v", w.legs("till.movement.posted:"+movementID))
+	}
+
+	// The bank match: it confirms the line and posts NOTHING.
+	line := w.statementLine(15_00)
+	bank := bankrec.NewService(bankrec.NewRepository(w.pool)).
+		WithJournalPoster(glPosterOver{gl.NewService(gl.NewRepository(w.pool)).WithPaymentReader(till.NewRepository(w.pool))}).
+		WithLodgements(till.NewRepository(w.pool))
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{
+		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetLodgement,
+		TargetRefID: movementID, AmountCents: 15_00, CanAccessBranch: bankrec.AllBranches,
+	}, w.userID)
+	if err != nil {
+		t.Fatalf("the lodgement's match: %v", err)
+	}
+	if legs := w.legs("bankrec:match:" + m.ID); len(legs) != 0 {
+		t.Fatalf("a lodgement that carries its own journal must be confirmed, not journaled: got %v", legs)
+	}
+
+	// The match claimed no payment either: the lodgement already marked its slip DEPOSITED, and the
+	// match must not mark anything again.
+	var status string
+	if err := w.pool.QueryRow(ctx, `SELECT status FROM payments WHERE id = $1::uuid`, cheque).Scan(&status); err != nil {
+		t.Fatalf("read the slip payment: %v", err)
+	}
+	if status != "DEPOSITED" {
+		t.Fatalf("the slip payment is %s, want DEPOSITED (marked at lodgement, never by the match)", status)
+	}
+
+	// The undo reverses nothing: the match booked nothing.
+	if err := bank.UnmatchReach(ctx, m.ID, w.userID, bankrec.AllBranches); err != nil {
+		t.Fatalf("the lodgement's unmatch: %v", err)
+	}
+	if legs := w.legs("bankrec:unmatch:" + m.ID); len(legs) != 0 {
+		t.Fatalf("the undo of a confirmed match must reverse nothing: got %v", legs)
+	}
+}
+
+// TestFW113ZReportListsTheDrawerMovements is the Z report half of the 9999 rule (FROM-PRINCIPAL 132):
+// the Z report lists the drawer's movements, each line with the drawer's own reason words and the
+// branch it belongs to, so the controller can read the suspense balance back to the movements behind it.
+func TestFW113ZReportListsTheDrawerMovements(t *testing.T) {
+	w := newMJWorld(t)
+	if err := w.svc.PaidIn(staffCtx(w.userID, w.branchID), till.MovementInput{
+		TillSessionID: w.sessionID, MovementType: "PAID_IN", Method: "CASH",
+		AmountCents: 45_67, Reason: "change from the safe",
+	}); err != nil {
+		t.Fatalf("the paid in: %v", err)
+	}
+	if err := w.svc.PaidOut(staffCtx(w.userID, w.branchID), till.MovementInput{
+		TillSessionID: w.sessionID, MovementType: "PAID_OUT", Method: "CASH",
+		AmountCents: 12_34, Reason: "petty cash for the courier",
+	}); err != nil {
+		t.Fatalf("the paid out: %v", err)
+	}
+
+	z, err := w.svc.ZReportFor(staffCtx(w.userID, w.branchID), w.sessionID)
+	if err != nil {
+		t.Fatalf("the Z report: %v", err)
+	}
+	seen := map[string]till.ZReportMovement{}
+	for _, m := range z.Movements {
+		seen[m.MovementType] = m
+	}
+	in, ok := seen["PAID_IN"]
+	if !ok {
+		t.Fatalf("the Z report lists no paid in: %+v", z.Movements)
+	}
+	if in.AmountCents != 45_67 {
+		t.Fatalf("the paid in line on the Z report is %d, want 4567", in.AmountCents)
+	}
+	if in.Reason != "change from the safe" {
+		t.Fatalf("the paid in line does not carry the drawer's reason words: %q", in.Reason)
+	}
+	if in.BranchID != w.branchID {
+		t.Fatalf("the paid in line carries branch %q, want the drawer's branch %q", in.BranchID, w.branchID)
+	}
+	out, ok := seen["PAID_OUT"]
+	if !ok {
+		t.Fatalf("the Z report lists no paid out: %+v", z.Movements)
+	}
+	if out.AmountCents != 12_34 {
+		t.Fatalf("the paid out line on the Z report is %d, want 1234", out.AmountCents)
+	}
+	if out.Reason != "petty cash for the courier" {
+		t.Fatalf("the paid out line does not carry the drawer's reason words: %q", out.Reason)
+	}
+	if out.BranchID != w.branchID {
+		t.Fatalf("the paid out line carries branch %q, want the drawer's branch %q", out.BranchID, w.branchID)
 	}
 }
