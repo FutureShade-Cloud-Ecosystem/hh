@@ -134,6 +134,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	inventorySvc.WithGLPoster(invGLPoster{svc: glSvc}).WithRuleResolver(glRuleAdapter{svc: glSvc})
+	glSvc.WithCostBasis(inventorySvc)
 	pricingSvc.WithCandidateSource(pricingFloorCandidates{products: productSvc, inventory: inventorySvc})
 	productSvc.WithStock(productStockReader{svc: inventorySvc}).WithBranchStock(inventorySvc).WithListPrices(pricingSvc)
 	// X3, the yard fence: the stock reads' cost legs (on hand, branch
@@ -160,6 +161,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithAuditTrail(auditSvc).
 		WithReorderPricing(pricingSvc).
 		WithReorderInventory(inventorySvc).
+		WithStockFulfiller(inventorySvc).
 		// The money a reversal held and a manager applied to the order's invoices, read through the payments module's
 		// own seam for the activity stream (SF-2r round 2).
 		WithReapplied(order.NewPaymentsReappliedReader(payments.NewRepository(pool)))
@@ -449,6 +451,14 @@ type tillDrawerAdapter struct{ repo *till.Repository }
 func (a tillDrawerAdapter) OpenDrawers(ctx context.Context, from, to time.Time) (int, error) {
 	_ = to
 	return a.repo.OpenSessionsBetween(ctx, from, to)
+}
+
+func (a invGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in inventory.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
 }
 
 // w5aQuoteStockReserver satisfies quote's stock reservation seam over

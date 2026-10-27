@@ -81,6 +81,14 @@ func (f *fakeStore) InsertMove(_ context.Context, _ pgx.Tx, m moveParams) (strin
 	f.moves = append(f.moves, m)
 	return "move-" + itoa(len(f.moves)), nil
 }
+func (f *fakeStore) HasShipMovesForOrderTx(_ context.Context, _ pgx.Tx, orderID string) (bool, error) {
+	for _, m := range f.moves {
+		if m.MoveType == MoveShip && m.SourceRefID == orderID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 func (f *fakeStore) OnHandQtyBranch(_ context.Context, _ pgx.Tx, productID, branchID string) (float64, error) {
 	return f.onhand[key(productID, branchID)], nil
 }
@@ -103,6 +111,18 @@ func (f *fakeStore) GetBranchCost(_ context.Context, _ pgx.Tx, productID, branch
 func (f *fakeStore) UpsertBranchCost(_ context.Context, _ pgx.Tx, productID, branchID string, avgCents int64) error {
 	f.cost[key(productID, branchID)] = avgCents
 	return nil
+}
+func (f *fakeStore) FallbackCost(_ context.Context, _ pgx.Tx, productID, _ string) (int64, string, bool, error) {
+	if c, ok := f.productCost[productID]; ok && c > 0 {
+		return c, "LAST_KNOWN_COST", true, nil
+	}
+	return 0, "", false, nil
+}
+func (f *fakeStore) UntruedProvisionalShipMoves(_ context.Context, _ pgx.Tx, _, _ string) ([]PreReceiptException, error) {
+	return nil, nil
+}
+func (f *fakeStore) PreReceiptExceptions(_ context.Context, _ string) ([]PreReceiptException, error) {
+	return nil, nil
 }
 func (f *fakeStore) AvailabilityFacts(_ context.Context, productID, branchID string) (AvailabilityFacts, error) {
 	active, found := f.products[productID]
