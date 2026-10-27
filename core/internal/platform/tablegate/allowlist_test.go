@@ -515,6 +515,18 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "order",
+		file:   "core/internal/order/duplicate.go",
+		tables: []string{"locations"},
+		reason: "the duplicate draft insert stamps orders.org_id with the branch's org through the org anchor read on locations, read only, locations.id and locations.org_id and nothing else (UX-95: every orders writer stamps the org)",
+	},
+	{
+		module: "order",
+		file:   "core/internal/order/reorder.go",
+		tables: []string{"locations"},
+		reason: "the reorder draft insert stamps orders.org_id with the branch's org through the org anchor read on locations, read only, locations.id and locations.org_id and nothing else (UX-95: every orders writer stamps the org)",
+	},
+	{
+		module: "order",
 		file:   "core/internal/order/activity_repository.go",
 		tables: []string{"invoices", "payment_allocations", "payments", "users"},
 		// the file's own header: a READ ONLY presentation projection, never a
@@ -905,12 +917,12 @@ var allowlist = []allowlistEntry{
 	{
 		module: "quote",
 		file:   "core/internal/quote/repository.go",
-		tables: []string{"order_lines", "orders", "products"},
+		tables: []string{"locations", "order_lines", "orders", "products"},
 		writes: []string{"order_lines", "orders", "scope_sequences"},
 		// the lineage header states it: this module already writes
 		// orders/order_lines inside Convert, the conversion IS the order
 		// write, 0008's design. products feeds the quote lines' display.
-		reason: "conversion writes the order and its lines (0008's design: the conversion is the order write, stated in lineage_repository.go's header) and reads product facts for the quote's own lines",
+		reason: "conversion writes the order and its lines (0008's design: the conversion is the order write, stated in lineage_repository.go's header), stamps the order's org through the org anchor read on locations (read only, locations.id and locations.org_id, UX-95), and reads product facts for the quote's own lines",
 	},
 	{
 		module: "quote",

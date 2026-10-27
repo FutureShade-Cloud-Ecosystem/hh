@@ -43,6 +43,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // DepositReleaser is billing's seam: it reads the order's live SUPPLIER_DEPOSIT
@@ -135,7 +138,7 @@ func (r *Repository) MarkDelivered(ctx context.Context, orderID string) error {
 	}
 	if _, err := r.pool.Exec(ctx, `
 		UPDATE orders
-		   SET metadata = metadata || jsonb_build_object('delivered_at', now()::text)
+		   SET metadata = metadata || jsonb_build_object('delivered_at', to_jsonb(now()))
 		 WHERE id = $1 AND NOT (metadata ? 'delivered_at')`, orderID); err != nil {
 		return fmt.Errorf("order: mark delivered %s: %w", orderID, err)
 	}
@@ -167,4 +170,29 @@ func (r *Repository) DeliveredOrderIDs(ctx context.Context, orderIDs []string) (
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// DeliveredAt answers the delivery stamp MarkDelivered recorded on one order:
+// when the goods left, found=false when the stamp is absent (round 2's gl
+// DeliveryReader, the deposit release's date). A stamp that cannot be read as
+// a timestamp is an error, never a silent false.
+func (r *Repository) DeliveredAt(ctx context.Context, orderID string) (time.Time, bool, error) {
+	if r.pool == nil {
+		return time.Time{}, false, errNoDB
+	}
+	if !looksLikeUUID(orderID) {
+		return time.Time{}, false, nil
+	}
+	var at *time.Time
+	if err := r.pool.QueryRow(ctx,
+		`SELECT (metadata->>'delivered_at')::timestamptz FROM orders WHERE id = $1 AND metadata ? 'delivered_at'`, orderID).Scan(&at); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, fmt.Errorf("order: delivered at %s: %w", orderID, err)
+	}
+	if at == nil {
+		return time.Time{}, false, fmt.Errorf("order: delivered at %s: empty stamp", orderID)
+	}
+	return *at, true, nil
 }

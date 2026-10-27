@@ -228,8 +228,9 @@ func fulfillmentColumns(f string) (cols, vals string, err error) {
 // The two new columns are spliced BEFORE the fulfilment splice points, so the positional pairing
 // fulfillmentColumns depends on is untouched.
 func convertInsertSQL(cols, vals string) string {
-	return `INSERT INTO orders (order_no, customer_id, branch_id, quote_id, subtotal_cents, tax_cents, total_cents, freight_cents, quoted_freight_cents` + cols + `)
-		 SELECT next_order_no(branch_id), customer_id, branch_id, id, subtotal_cents, tax_cents, total_cents, delivery_fee_cents, delivery_fee_cents` + vals + `
+	return `INSERT INTO orders (order_no, customer_id, branch_id, quote_id, subtotal_cents, tax_cents, total_cents, freight_cents, quoted_freight_cents, org_id` + cols + `)
+		 SELECT next_order_no(branch_id), customer_id, branch_id, id, subtotal_cents, tax_cents, total_cents, delivery_fee_cents, delivery_fee_cents,
+		        (SELECT l.org_id FROM locations l WHERE l.id = quotes.branch_id)` + vals + `
 		 FROM quotes WHERE id=$2 AND customer_id=$1
 		 RETURNING id::text, order_no::text`
 }

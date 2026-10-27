@@ -3,6 +3,8 @@ package bankrec
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -377,6 +379,31 @@ func journalExplains(f gl.BankJournalFacts, lineCents int64) error {
 	return nil
 }
 
+// dollars writes cents as a dealer reads them, "$1,234.50" ("-$45.00" below zero).
+func dollars(cents int64) string {
+	sign := ""
+	if cents < 0 {
+		sign, cents = "-", -cents
+	}
+	whole := strconv.FormatInt(cents/100, 10)
+	for i := len(whole) - 3; i > 0; i -= 3 {
+		whole = whole[:i] + "," + whole[i:]
+	}
+	return fmt.Sprintf("%s$%s.%02d", sign, whole, cents%100)
+}
+
+// ledgerBalance reads the bank account's GL balance for a month through the GLBalanceReader seam (no GL table read
+// here), for CompleteReconciliation to take inside its transaction after the month's lock. An unwired reader refuses
+// completion in plain words.
+func (s *Service) ledgerBalance(glCode string) func(ctx context.Context, year, month int) (int64, error) {
+	return func(ctx context.Context, year, month int) (int64, error) {
+		if s.balances == nil {
+			return 0, unprocessable("bankrec: cannot complete, the ledger balance cannot be read")
+		}
+		return s.balances.GLBalanceCents(ctx, glCode, year, month, "")
+	}
+}
+
 // recheckJournalMatches is CompleteReconciliation's recheck (SF-2j round 2): every live JOURNAL match in the month is
 // read again through the GL seam and must still explain its line. A journal reversed since the match, or one that no
 // longer qualifies, refuses the sign off and names the line. It runs inside the completion's transaction, after the
@@ -503,10 +530,15 @@ func (s *Service) ApproveRule(ctx context.Context, in RuleInput, approvedBy stri
 
 // - reconciliation -
 
-// OpenReconciliation prepares (or refreshes) the monthly reconciliation: it reads the GL balance through the
-// GLBalanceReader seam (never the 0034 views directly) and computes the variance against the statement
-// balance (the caller's real closing balance, or the month's line net as a placeholder default).
+// OpenReconciliation prepares (or refreshes when in.Refresh is true) the monthly reconciliation: it reads the GL
+// balance through the GLBalanceReader seam (never the 0034 views directly) and computes the variance against the
+// statement balance (the caller's real closing balance, or the month's line net as a placeholder default when opened
+// with zero). The derived flag comes from the act (an open with zero sets it TRUE, an open with a typed figure sets it
+// FALSE, and a refresh keeps the stored flag and stated figure).
 func (s *Service) OpenReconciliation(ctx context.Context, in ReconInput) (Reconciliation, error) {
+	if in.Refresh {
+		return s.RefreshReconciliation(ctx, in.BankAccountID, in.Year, in.Month)
+	}
 	if in.BankAccountID == "" {
 		return Reconciliation{}, badRequest("bankrec: bank_account_id is required")
 	}
@@ -518,7 +550,8 @@ func (s *Service) OpenReconciliation(ctx context.Context, in ReconInput) (Reconc
 		return Reconciliation{}, err
 	}
 	stmtBal := in.StatementBalanceCents
-	if stmtBal == 0 {
+	derived := stmtBal == 0
+	if derived {
 		if stmtBal, err = s.repo.MonthLineSum(ctx, acct.ID, in.Year, in.Month); err != nil {
 			return Reconciliation{}, err
 		}
@@ -530,13 +563,36 @@ func (s *Service) OpenReconciliation(ctx context.Context, in ReconInput) (Reconc
 		}
 	}
 	return s.repo.UpsertReconciliation(ctx, Reconciliation{
-		BankAccountID:         acct.ID,
-		Year:                  in.Year,
-		Month:                 in.Month,
-		StatementBalanceCents: stmtBal,
-		GLBalanceCents:        glBal,
-		VarianceCents:         stmtBal - glBal,
+		BankAccountID:           acct.ID,
+		Year:                    in.Year,
+		Month:                   in.Month,
+		StatementBalanceCents:   stmtBal,
+		StatementBalanceDerived: derived,
+		GLBalanceCents:          glBal,
+		VarianceCents:           stmtBal - glBal,
 	})
+}
+
+// RefreshReconciliation re-reads the ledger (and the month's lines when the reconciliation was opened with a derived
+// balance) in place while keeping the stored derived flag and any stated closing balance. Takes no figure.
+func (s *Service) RefreshReconciliation(ctx context.Context, bankAccountID string, year, month int) (Reconciliation, error) {
+	if bankAccountID == "" {
+		return Reconciliation{}, badRequest("bankrec: bank_account_id is required")
+	}
+	if month < 1 || month > 12 || year < 2000 {
+		return Reconciliation{}, badRequest("bankrec: valid year and month (1-12) are required")
+	}
+	acct, err := s.repo.GetAccount(ctx, bankAccountID)
+	if err != nil {
+		return Reconciliation{}, err
+	}
+	var glBal int64
+	if s.balances != nil {
+		if glBal, err = s.balances.GLBalanceCents(ctx, acct.GLAccountCode, year, month, ""); err != nil {
+			return Reconciliation{}, err
+		}
+	}
+	return s.repo.RefreshReconciliation(ctx, acct.ID, year, month, glBal)
 }
 
 // Reconciliations lists reconciliations (optionally scoped to an account).
@@ -545,7 +601,7 @@ func (s *Service) Reconciliations(ctx context.Context, accountID string) ([]Reco
 }
 
 // CompleteReconciliation signs off a monthly reconciliation. Guards (AC7): the account must have ZERO
-// UNMATCHED lines in the month AND zero variance. On success it flips COMPLETED and emits
+// UNMATCHED lines in the month AND zero recomputed variance. On success it flips COMPLETED and emits
 // bank.recon.completed in the same tx.
 func (s *Service) CompleteReconciliation(ctx context.Context, id, completedBy string) (Reconciliation, error) {
 	if id == "" {
@@ -572,14 +628,11 @@ func (s *Service) CompleteReconciliation(ctx context.Context, id, completedBy st
 	if unmatched > 0 {
 		return Reconciliation{}, unprocessable("bankrec: cannot complete, %d UNMATCHED line(s) remain for %d-%02d", unmatched, rec.Year, rec.Month)
 	}
-	if rec.VarianceCents != 0 {
-		return Reconciliation{}, unprocessable("bankrec: cannot complete, variance is %d cents (must be zero)", rec.VarianceCents)
-	}
 	acct, err := s.repo.GetAccount(ctx, rec.BankAccountID)
 	if err != nil {
 		return Reconciliation{}, err
 	}
-	out, err := s.repo.CompleteReconciliation(ctx, id, acct.GLAccountCode, completedBy, s.recheckJournalMatches(acct.GLAccountCode))
+	out, err := s.repo.CompleteReconciliation(ctx, id, acct.GLAccountCode, completedBy, s.recheckJournalMatches(acct.GLAccountCode), s.ledgerBalance(acct.GLAccountCode))
 	if err != nil {
 		return Reconciliation{}, err
 	}

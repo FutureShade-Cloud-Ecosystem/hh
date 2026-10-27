@@ -176,6 +176,7 @@ const noHomeBranch = -1
 // Trenton, and equally to a caller whose one grant is the other yard (TestDemoWorld_CustomerSearch
 // walks every customer with a document at Trenton and then searches as a caller at the other branch).
 // The repair for databases seeded with the older homes sits in the demoseed_repair pair.
+// The names a demo box shows come from glsExact in demoseed_glsworld_demo.go (for example C01 Northline reads as Bluffside Builders).
 var demoCustomers = []custSpec{
 	{"C01", "Northline Hardscapes Ltd (demo)", "CONTRACTOR", 30, 5_000_000, noHomeBranch, false},
 	{"C02", "Bay Ridge Landscaping (demo)", "CONTRACTOR", 30, 2_500_000, 1, false},
