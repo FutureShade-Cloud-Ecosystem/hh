@@ -189,3 +189,40 @@ test("the frame does not jump when the controller moves between the ledger and r
   const receivables = { switch: await left("nav.areas button"), content: await left("main h1") };
   expect(receivables).toEqual(ledger);
 });
+
+test("one dead lettered journal planted through the stub shows the posting queue banner with its words, and none shows no banner", async ({ page, request }) => {
+  await openApprovals(page, request);
+  await expect(page.locator("[data-posting-queue]")).toHaveCount(0);
+  await request.post("/_stub/posting-queue", {
+    data: {
+      items: [
+        {
+          event_id: "d0560000-0000-4000-9000-0000000000f3",
+          topic: "ar.invoice.finalized",
+          document: "d0560000-0000-4000-9000-0000000000f4",
+          status: "DEAD",
+          attempts: 5,
+          last_error: "gl: account \"2200\" is inactive; cannot post",
+          occurred_at: "2026-03-12T11:00:00Z",
+        },
+        {
+          event_id: "d0560000-0000-4000-9000-0000000000f5",
+          topic: "payment.received",
+          document: "d0560000-0000-4000-9000-0000000000f6",
+          status: "PENDING",
+          attempts: 0,
+          last_error: "",
+          occurred_at: new Date().toISOString(),
+        },
+      ],
+    },
+  });
+  await page.reload();
+  await expect(page.locator("[data-posting-queue]")).toHaveText(
+    "1 journal failed to post and is set aside. The posting queue lists them for the Financial Controller.",
+  );
+  await request.post("/_stub/posting-queue", { data: { items: [] } });
+  await page.reload();
+  await expect(page.locator("[data-posting-queue]")).toHaveCount(0);
+});
+

@@ -448,6 +448,15 @@ test("the posting queue answers the Controller's list and the banner's counts, a
       last_error: "gl: account \"2200\" is inactive; cannot post",
       occurred_at: "2026-03-12T11:00:00Z",
     },
+    {
+      event_id: "d0560000-0000-4000-9000-0000000000f5",
+      topic: "payment.received",
+      document: "d0560000-0000-4000-9000-0000000000f6",
+      status: "PENDING",
+      attempts: 0,
+      last_error: "",
+      occurred_at: new Date().toISOString(),
+    },
   ];
   const set = await fetch(`${base}/_stub/posting-queue`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) });
   assert.equal(set.status, 200);
@@ -461,8 +470,9 @@ test("the posting queue answers the Controller's list and the banner's counts, a
   assert.deepEqual(counts.json, { waiting: 1, dead: 1 });
   refused(await call(IDS.generalManager, "GET", "/api/v1/gl/posting-queue"), 403, "gl: only the Financial Controller may read the posting queue");
   refused(await call(IDS.manager, "GET", "/api/v1/gl/posting-queue"), 403, "Forbidden");
-  const managerCounts = await call(IDS.manager, "GET", "/api/v1/gl/posting-queue/count");
-  assert.equal(managerCounts.status, 200);
-  assert.deepEqual(managerCounts.json, { waiting: 1, dead: 1 });
+  const gmCounts = await call(IDS.generalManager, "GET", "/api/v1/gl/posting-queue/count");
+  assert.equal(gmCounts.status, 200);
+  assert.deepEqual(gmCounts.json, { waiting: 1, dead: 1 });
+  refused(await call(IDS.manager, "GET", "/api/v1/gl/posting-queue/count"), 403, "gl: caller cannot access this branch");
   await reset();
 });
