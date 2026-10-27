@@ -338,14 +338,6 @@ export function canVoidReceipt(roleCode: string): boolean {
   return canLiftHolds(roleCode);
 }
 
-/** Whether a receipt was taken today, the browser's reading of the dealer day. The core's gate is the
- * authority and answers in its own words when the day has turned; this only keeps the offer honest on screen. */
-export function isSameDealerDay(receivedAtText: string, nowMs: number): boolean {
-  const then = new Date(receivedAtText);
-  const now = new Date(nowMs);
-  return then.getFullYear() === now.getFullYear() && then.getMonth() === now.getMonth() && then.getDate() === now.getDate();
-}
-
 export function paymentReferenceRequired(method: string): boolean {
   return ["CHEQUE", "EFT", "WIRE"].includes(method.trim().toUpperCase());
 }

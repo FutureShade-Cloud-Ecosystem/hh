@@ -275,6 +275,7 @@ export function createOfficeWorld(ctx) {
     if (p.reversed === true) return refuse(400, "payments: this payment cannot be voided: it was reversed, and the reversal owns the undo");
     if (p.reverses !== undefined) return refuse(400, "payments: this payment cannot be voided: it is itself a reversing entry, not a receipt");
     if (p.status !== "RECEIVED") return refuse(400, `payments: this payment cannot be voided: its status is ${p.status}, only a received receipt that has not been deposited can be voided`);
+    if (p.gateway_ref) return refuse(400, "payments: this payment cannot be voided: the processor captured this card charge, and its undo is a refund through the processor, not a void");
     const reopened = [];
     for (const al of p.allocations) {
       const inv = world.invoices.find((i) => ctx.invNumber(i) === al.invoice_n);

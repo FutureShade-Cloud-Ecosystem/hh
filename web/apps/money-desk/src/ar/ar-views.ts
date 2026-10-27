@@ -32,7 +32,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, canVoidReceipt, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isSameDealerDay, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, canVoidReceipt, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel, renderVoid } from "./office-views.js";
@@ -865,7 +865,7 @@ function paymentList(model: DeskModel, account: AccountModel): TemplateResult {
               ? nothing
               : account.bounceFor === p.payment_id
                 ? html`<span class="inline-form"><label><span class="visually-hidden">Reason it bounced</span><input type="text" data-field="bounce-reason" placeholder="Why it came back, such as cheque returned NSF" autocomplete="off" /></label><button type="button" class="btn btn-danger small-btn" data-action="bounce-confirm" data-payment-id="${p.payment_id}">Confirm bounced</button><button type="button" class="btn btn-secondary small-btn" data-action="bounce-cancel">Cancel</button></span>`
-                : html`<span class="row-actions"><button type="button" class="btn btn-secondary small-btn" data-action="bounce-start" data-payment-id="${p.payment_id}">Mark bounced</button>${renderReverse(model.office, p)}${p.status === "RECEIVED" && canVoidReceipt(model.roleCode) && isSameDealerDay(p.received_at, model.nowMs) ? renderVoid(model.office, p) : nothing}</span>`}
+                : html`<span class="row-actions"><button type="button" class="btn btn-secondary small-btn" data-action="bounce-start" data-payment-id="${p.payment_id}">Mark bounced</button>${renderReverse(model.office, p)}${p.status === "RECEIVED" && canVoidReceipt(model.roleCode) ? renderVoid(model.office, p) : nothing}</span>`}
           </li>
         `,
       )}

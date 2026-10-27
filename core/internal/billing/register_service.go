@@ -607,6 +607,15 @@ func (s *RegisterService) SendReminder(ctx context.Context, in ReminderInput) (R
 			out.Skipped[h.InvoiceNo] = "no email transport is wired on this deployment, nothing was sent"
 			continue
 		}
+		// A failed delivery records nothing: there is no queue behind the desk, so a row that says we
+		// chased when nothing left the building is a lie the activity trail would repeat (FW1-06b
+		// round 2, S6's P2-2). The delivery row is written when the transport accepts, and a retry
+		// with the same key re-attempts a send that never landed.
+		if err := s.sender.SendInvoiceMessage(ctx, block.ContactEmail,
+			reminderSubject(tone, h.InvoiceNo), reminderBody(tone, block.Name, h.InvoiceNo, h.BalanceCents, h.DueDate)); err != nil {
+			out.Skipped[h.InvoiceNo] = "delivery failed, nothing went out; send it again from the desk: " + err.Error()
+			continue
+		}
 		_, replayed, err := s.store.RecordSend(ctx, SendRow{
 			InvoiceID: h.ID, CustomerID: h.CustomerID, InvoiceNo: h.InvoiceNo,
 			Kind: "REMINDER", Tone: tone, Channel: "EMAIL", ToAddress: block.ContactEmail,
@@ -618,14 +627,6 @@ func (s *RegisterService) SendReminder(ctx context.Context, in ReminderInput) (R
 		}
 		if replayed {
 			out.Replayed++
-			continue
-		}
-		// A transport failure does NOT unwrite the ledger row: we decided to chase and recorded the
-		// decision, and the queue is what retries. Reported, never swallowed, and not counted as
-		// sent: only a delivery the transport accepted is a send.
-		if err := s.sender.SendInvoiceMessage(ctx, block.ContactEmail,
-			reminderSubject(tone, h.InvoiceNo), reminderBody(tone, block.Name, h.InvoiceNo, h.BalanceCents, h.DueDate)); err != nil {
-			out.Skipped[h.InvoiceNo] = "recorded, but delivery failed: " + err.Error()
 			continue
 		}
 		out.Sent++
@@ -652,6 +653,17 @@ func (s *RegisterService) SendInvoice(ctx context.Context, invoiceID, key string
 	if block.ContactEmail == "" {
 		return ReminderResult{}, httpx.BadRequestf("%s has no contact email on the account", block.Name)
 	}
+	if s.sender == nil {
+		// No transport is wired on this deployment: nothing left the building, so no delivery is
+		// recorded and nothing counts as sent (FW1-06b round 2, S6's P2-1), the Remind run's rule.
+		return ReminderResult{Skipped: map[string]string{h.InvoiceNo: "no email transport is wired on this deployment, nothing was sent"}}, nil
+	}
+	if err := s.sender.SendInvoiceMessage(ctx, block.ContactEmail,
+		"Invoice "+h.InvoiceNo, invoiceBody(block.Name, h.InvoiceNo, h.BalanceCents, h.DueDate)); err != nil {
+		// A failed delivery records nothing: there is no queue behind the desk, and the activity
+		// trail reads the delivery rows, so a row for a send that never left would repeat the lie.
+		return ReminderResult{Skipped: map[string]string{h.InvoiceNo: "delivery failed, nothing went out; send it again from the desk: " + err.Error()}}, nil
+	}
 	caller, _ := s.callerFrom(ctx)
 	_, replayed, err := s.store.RecordSend(ctx, SendRow{
 		InvoiceID: h.ID, CustomerID: h.CustomerID, InvoiceNo: h.InvoiceNo,
@@ -661,18 +673,11 @@ func (s *RegisterService) SendInvoice(ctx context.Context, invoiceID, key string
 	if err != nil {
 		return ReminderResult{}, err
 	}
-	res := ReminderResult{}
+	res := ReminderResult{Sent: 1}
 	if replayed {
 		res.Replayed = 1
-		return res, nil
+		res.Sent = 0
 	}
-	if s.sender != nil {
-		if err := s.sender.SendInvoiceMessage(ctx, block.ContactEmail,
-			"Invoice "+h.InvoiceNo, invoiceBody(block.Name, h.InvoiceNo, h.BalanceCents, h.DueDate)); err != nil {
-			res.Skipped = map[string]string{h.InvoiceNo: "recorded, but delivery failed: " + err.Error()}
-		}
-	}
-	res.Sent = 1
 	return res, nil
 }
 

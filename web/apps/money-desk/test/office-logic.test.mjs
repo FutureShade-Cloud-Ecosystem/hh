@@ -102,7 +102,7 @@ test("a Remind run says sent, recorded for retry, or nothing sent and why (FW1-0
   assert.match(failed.notice, /1 was not sent: nothing went out, send it again from the desk/);
   const allFailed = reminderRunWords({ sent: 0, replayed: 0, tone: "FRIENDLY", skipped: { "INV-1": "delivery failed, nothing went out; send it again from the desk: transport unreachable" } });
   assert.equal(allFailed.sent, false);
-  assert.match(allFailed.notice, /No reminder went out: delivery failed, nothing went out/);
+  assert.match(allFailed.notice, /No reminder was sent: delivery failed, nothing went out/);
   assert.match(allFailed.notice, /send it again from the desk/);
   const replayedOnly = reminderRunWords({ sent: 0, replayed: 2, tone: "FRIENDLY", skipped: {} });
   assert.equal(replayedOnly.sent, false);

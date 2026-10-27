@@ -112,13 +112,14 @@ func (r *Repository) VoidPayment(ctx context.Context, in VoidInput, now time.Tim
 		alreadyReversed                                 bool
 		isItselfAReversal                               bool
 		onATillSession                                  bool
+		gatewayRef                                      string
 	)
 	err = tx.QueryRow(ctx,
 		`SELECT COALESCE(customer_id::text,''), method, branch_id::text, status, amount_cents, received_at,
 		        payment_no::text, reversed_at IS NOT NULL, reverses_payment_id IS NOT NULL,
-		        till_session_id IS NOT NULL
+		        till_session_id IS NOT NULL, COALESCE(gateway_ref,'')
 		   FROM payments WHERE id = $1::uuid FOR UPDATE`, in.PaymentID).
-		Scan(&customerID, &method, &branchID, &status, &amount, &receivedAt, &paymentNo, &alreadyReversed, &isItselfAReversal, &onATillSession)
+		Scan(&customerID, &method, &branchID, &status, &amount, &receivedAt, &paymentNo, &alreadyReversed, &isItselfAReversal, &onATillSession, &gatewayRef)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Void{}, ErrNotFound
@@ -137,6 +138,11 @@ func (r *Repository) VoidPayment(ctx context.Context, in VoidInput, now time.Tim
 		return Void{}, fmt.Errorf("%w: it is itself a reversing entry, not a receipt", ErrNotVoidable)
 	case status != "RECEIVED":
 		return Void{}, fmt.Errorf("%w: its status is %s, only a received receipt that has not been deposited can be voided", ErrNotVoidable, status)
+	case gatewayRef != "":
+		// A processor capture (the portal's card charge) has the money at the processor: the undo is a
+		// refund through the processor, and a void as never received would owe the customer again
+		// while the settlement lands (FW1-06b round 2, S6's P2-3).
+		return Void{}, fmt.Errorf("%w: the processor captured this card charge, and its undo is a refund through the processor, not a void", ErrNotVoidable)
 	case onATillSession:
 		return Void{}, fmt.Errorf("%w: it was taken on a till session, and the drawer count owns that undo; a void is for a desk receipt", ErrNotVoidable)
 	case !sameHouseDay(receivedAt, now, zone):

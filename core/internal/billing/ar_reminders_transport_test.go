@@ -52,7 +52,7 @@ func (deliveringSender) SendInvoiceMessage(context.Context, string, string, stri
 	return nil
 }
 
-func TestSendReminder_AFailedDeliveryIsRecordedForRetryAndNotCountedAsSent(t *testing.T) {
+func TestSendReminder_AFailedDeliveryRecordsNothingAndIsNotCountedAsSent(t *testing.T) {
 	store := &fakeRegisterStore{
 		policy: RegisterPolicy{AccountPositionVisibility: VisibilityManagerUp, DueSoonDays: 7,
 			ReminderTones: []string{ToneFriendly}},
@@ -67,11 +67,11 @@ func TestSendReminder_AFailedDeliveryIsRecordedForRetryAndNotCountedAsSent(t *te
 	if res.Sent != 0 {
 		t.Fatalf("a delivery the transport refused says %d sent, want 0", res.Sent)
 	}
-	if !strings.Contains(res.Skipped["INV-1"], "recorded, but delivery failed") {
+	if !strings.Contains(res.Skipped["INV-1"], "delivery failed") {
 		t.Fatalf("the skipped reason must name the failure, got %q", res.Skipped["INV-1"])
 	}
-	if len(store.sends) != 1 {
-		t.Fatalf("the decision to chase is recorded so the queue retries it, got %d delivery rows", len(store.sends))
+	if len(store.sends) != 0 {
+		t.Fatalf("a delivery the transport refused records %d rows; nothing went out, so nothing is recorded", len(store.sends))
 	}
 }
 
