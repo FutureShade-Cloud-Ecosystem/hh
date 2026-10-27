@@ -936,6 +936,12 @@ func (w *fw1Walk) assertStockTies(t fw1TB) {
 }
 
 // 4. The HST reconcile ties.
+//
+// Note on what the walk's own leg proves: buildInvoiceFinalized posts GL 2200 from the same
+// invoices.tax_cents column, so comparing GL 2200's month movement against SUM(invoices.tax_cents)
+// less vendor bill ITC is a posting completeness check (proving every walk document's tax reached
+// GL 2200), not a rate check on its own. Alongside it, svc.ReconcileReport compares GL 2200
+// payable against the tax engine's collected tax decisions.
 func (w *fw1Walk) assertHSTTies(t fw1TB) {
 	ctx := context.Background()
 	var gl2200Move, docSalesHST, billITC int64
