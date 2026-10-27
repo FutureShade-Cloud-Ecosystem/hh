@@ -457,7 +457,7 @@ test("a derived month in the stub recomputes its statement balance from the line
   const derived = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: 0 })).json;
   assert.equal(derived.statement_balance_cents, 675_575);
   assert.equal(derived.variance_cents, 0);
-  // Probe A: refreshing before the late import (takes no figure) keeps the month derived.
+  // Probe A: refreshing before the late import, taking no figure, keeps the month derived.
   const preRefreshed = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, refresh: true });
   assert.equal(preRefreshed.status, 201);
   assert.equal(preRefreshed.json.statement_balance_cents, 675_575);
