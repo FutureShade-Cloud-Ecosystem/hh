@@ -73,12 +73,17 @@ func (r *DealerConfigReader) BoxKind(ctx context.Context) (string, error) {
 // transaction: the seam a guarded box setup command writes it through, so
 // the mark commits or rolls back with the rest of the setup. A blank or
 // malformed kind is refused; a box with no mark has no row.
+//
+// The shape is checked before the handle, so a malformed kind refuses as
+// malformed on any handle and the refusal never reads as the missing
+// handle's refusal wearing the shape's name. A well shaped kind on no
+// handle refuses as the missing handle it is.
 func WriteBoxKindTx(ctx context.Context, tx DealerConfigExecer, kind string) error {
-	if tx == nil {
-		return errors.New("settings: a box kind write requires a database handle")
-	}
 	if !boxKindShape.MatchString(kind) {
 		return fmt.Errorf("settings: box kind must be a short lowercase word")
+	}
+	if tx == nil {
+		return errors.New("settings: a box kind write requires a database handle")
 	}
 	b, err := json.Marshal(kind)
 	if err != nil {

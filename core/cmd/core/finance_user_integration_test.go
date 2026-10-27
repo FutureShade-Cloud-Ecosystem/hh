@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
@@ -139,6 +141,29 @@ func finSignIn(h *exchange.Handler, p finPerson, tok string) *httptest.ResponseR
 	return rec
 }
 
+// finEnvFor is the finance box's environment: the database, the box kind,
+// the sign in mode, the allow list and the org slug, with the caller's
+// overrides on top. An override with an empty value removes the name.
+func finEnvFor(dsn string, addresses []string, over map[string]string) func(string) string {
+	base := map[string]string{
+		"DATABASE_URL":                dsn,
+		"CORE_DATABASE_URL":           dsn,
+		"HH_BOX_KIND":                 "finance",
+		"APP_ENV":                     "staging",
+		"CORE_SIGNIN_MODE":            "console",
+		"CORE_SIGNIN_EMAIL_ADDRESSES": strings.Join(addresses, ","),
+		"HH_WEB_ORG":                  finOrgSlug,
+	}
+	for k, v := range over {
+		if v == "" {
+			delete(base, k)
+		} else {
+			base[k] = v
+		}
+	}
+	return func(k string) string { return base[k] }
+}
+
 func TestIntegration_FinanceUser(t *testing.T) {
 	ctx := context.Background()
 	pool := freshMigratedDB(t, "finuser")
@@ -164,23 +189,7 @@ func TestIntegration_FinanceUser(t *testing.T) {
 	console := newFinConsole(t, personA, personB)
 
 	finEnv := func(over map[string]string) func(string) string {
-		base := map[string]string{
-			"DATABASE_URL":                dsn,
-			"CORE_DATABASE_URL":           dsn,
-			"HH_BOX_KIND":                 "finance",
-			"APP_ENV":                     "staging",
-			"CORE_SIGNIN_MODE":            "console",
-			"CORE_SIGNIN_EMAIL_ADDRESSES": personA.email + "," + personB.email,
-			"HH_WEB_ORG":                  finOrgSlug,
-		}
-		for k, v := range over {
-			if v == "" {
-				delete(base, k)
-			} else {
-				base[k] = v
-			}
-		}
-		return func(k string) string { return base[k] }
+		return finEnvFor(dsn, []string{personA.email, personB.email}, over)
 	}
 	provisionA := []string{"--email", personA.email, "--platform-user-id", personA.platformID, "--display-name", personA.name, "--role", "financial_controller"}
 	provisionB := []string{"--email", personB.email, "--platform-user-id", personB.platformID, "--display-name", personB.name, "--role", "payables_receivables"}
@@ -321,4 +330,277 @@ func TestIntegration_FinanceUser(t *testing.T) {
 	if provisioned != 2 || revoked != 1 {
 		t.Fatalf("audit rows: %d provisioned, %d revoked, want 2 and 1", provisioned, revoked)
 	}
+}
+
+// finLiveGrants counts the live grants one platform user holds in one org.
+func finLiveGrants(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, platformUserID string) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM staff_role_grant
+		WHERE org_id = $1::uuid AND platform_user_id = $2 AND deleted_at IS NULL`,
+		orgID, platformUserID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// finLiveGrantRoles reads the roles of the live grants one platform user
+// holds in one org.
+func finLiveGrantRoles(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, platformUserID string) []string {
+	t.Helper()
+	rows, err := pool.Query(ctx, `
+		SELECT role_id FROM staff_role_grant
+		WHERE org_id = $1::uuid AND platform_user_id = $2 AND deleted_at IS NULL
+		ORDER BY role_id`,
+		orgID, platformUserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var role string
+		if err := rows.Scan(&role); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, role)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestIntegration_FinanceUserFixes is the fix round's proof (W2-2): the
+// allowed role list, the revoke that names its subject, the revoke that
+// takes every live grant, the revoke that still works after the email left
+// the allow list, and the provision that keeps the org anchor's name. One
+// platform subject per leg, so a leg's failure names its own rule and no
+// leg leans on another.
+func TestIntegration_FinanceUserFixes(t *testing.T) {
+	ctx := context.Background()
+	pool := freshMigratedDB(t, "finuserfix")
+	dsn := swapDatabase(os.Getenv("DATABASE_URL"), "demoseed_it_finuserfix")
+
+	// The seeded dealer world, through the seed role itself.
+	t.Setenv("APP_ENV", "dev")
+	seedEnv := func(k string) string {
+		switch k {
+		case "DATABASE_URL", "CORE_DATABASE_URL":
+			return dsn
+		case "APP_ENV":
+			return "dev"
+		}
+		return ""
+	}
+	if err := seedRole(seedEnv); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Mark the box, or every leg refuses at the guard before it acts.
+	if err := settings.WriteBoxKindTx(ctx, pool, "finance"); err != nil {
+		t.Fatalf("marking the box: %v", err)
+	}
+
+	victim := finPerson{platformID: "fin-fix-victim", email: "fin-fix-victim@example.invalid", name: "Fix Victim", member: true}
+	other := finPerson{platformID: "fin-fix-other", email: "fin-fix-other@example.invalid", name: "Fix Other", member: true}
+	multi := finPerson{platformID: "fin-fix-multi", email: "fin-fix-multi@example.invalid", name: "Fix Multi", member: true}
+	gone := finPerson{platformID: "fin-fix-gone", email: "fin-fix-gone@example.invalid", name: "Fix Gone", member: true}
+	anchor := finPerson{platformID: "fin-fix-anchor", email: "fin-fix-anchor@example.invalid", name: "Fix Anchor", member: true}
+	general := finPerson{platformID: "fin-fix-general", email: "fin-fix-general@example.invalid", name: "Fix General", member: true}
+	nameless := finPerson{platformID: "fin-fix-nameless", email: "fin-fix-nameless@example.invalid", name: "Fix Nameless", member: true}
+	addresses := []string{victim.email, other.email, multi.email, gone.email, anchor.email, general.email, nameless.email}
+	console := newFinConsole(t, victim, other)
+	env := func(over map[string]string) func(string) string { return finEnvFor(dsn, addresses, over) }
+
+	// The production exchange wiring, FB Console faked over HTTP only: the
+	// legs that prove a person still signs in after a refused revoke need
+	// the real exchange.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	minter, err := identity.NewSessionMinter(key, finIssuer, finStaffAudience)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := minter.WithTenantAudience(finTenantAud); err != nil {
+		t.Fatal(err)
+	}
+	orgs, err := authz.NewPgxOrgResolver(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staff, err := identity.NewStaffAuthorityResolver(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logBuf := &bytes.Buffer{}
+	log := slog.New(slog.NewTextHandler(logBuf, nil))
+	exch, err := buildExchange(exchangeDeps{
+		getenv: env(nil), log: log, pool: pool,
+		session:  &sessionComposition{minter: minter, exchangeTTL: time.Hour},
+		appwrite: appwriteNames{endpoint: console.srv.URL, project: "fin-proj", apiKey: "fin-key"},
+		orgs:     orgs, staff: staff,
+		knob:  dispatchDriverSessionKnob{repo: dispatch.NewRepository(pool)},
+		audit: audit.NewService(audit.NewRepository(pool), log),
+	})
+	if err != nil {
+		t.Fatalf("buildExchange: %v", err)
+	}
+	signIn := func(p finPerson) int {
+		t.Helper()
+		rec := finSignIn(exch, p, console.jwt(p))
+		return rec.Code
+	}
+
+	// The org anchor of the box, as the seed would name it, and the id the
+	// grant counts read.
+	if _, _, err := identity.ProvisionOrgAnchor(ctx, pool, finOrgSlug, "Finance Box"); err != nil {
+		t.Fatalf("the org anchor: %v", err)
+	}
+	var orgID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM org WHERE slug = $1`, finOrgSlug).Scan(&orgID); err != nil {
+		t.Fatal(err)
+	}
+
+	provisionArgs := func(p finPerson, role string) []string {
+		return []string{"--email", p.email, "--platform-user-id", p.platformID, "--display-name", p.name, "--role", role}
+	}
+
+	t.Run("the general manager role is refused", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		err := financeUserRole(provisionArgs(general, "general_manager"), out, out, env(nil))
+		if err == nil {
+			t.Fatalf("the general manager role must refuse, got nil (out %q)", out.String())
+		}
+		if !strings.Contains(err.Error(), "role") {
+			t.Fatalf("the refusal must name the role, got %v", err)
+		}
+	})
+
+	t.Run("a revoke naming another email refuses", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		if err := financeUserRole(provisionArgs(victim, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("provisioning the victim: %v", err)
+		}
+		// The revoke names the other person's email and the victim's
+		// platform id: the subject and the affected person may not differ.
+		out.Reset()
+		err := financeUserRole([]string{"--revoke", "--email", other.email, "--platform-user-id", victim.platformID, "--display-name", victim.name}, out, out, env(nil))
+		if err == nil {
+			t.Fatalf("a revoke naming another person's email must refuse, got nil (out %q)", out.String())
+		}
+		if code := signIn(victim); code != http.StatusOK {
+			t.Fatalf("the victim after the refused revoke: status %d, want 200 (log %s)", code, logBuf.String())
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, victim.platformID); n != 1 {
+			t.Fatalf("the victim holds %d live grants after the refused revoke, want 1", n)
+		}
+		var revokedRows int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'STAFF_REVOKE'`).Scan(&revokedRows); err != nil {
+			t.Fatal(err)
+		}
+		if revokedRows != 0 {
+			t.Fatalf("the refused revoke wrote %d audit rows, want 0", revokedRows)
+		}
+		// The same revoke with the email in another case is the same person.
+		out.Reset()
+		if err := financeUserRole([]string{"--revoke", "--email", strings.ToUpper(victim.email), "--platform-user-id", victim.platformID, "--display-name", victim.name}, out, out, env(nil)); err != nil {
+			t.Fatalf("a revoke with the email in another case must work: %v (out %q)", err, out.String())
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, victim.platformID); n != 0 {
+			t.Fatalf("the victim holds %d live grants after the revoke, want 0", n)
+		}
+	})
+
+	t.Run("a revoke does not need the display name", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		if err := financeUserRole(provisionArgs(nameless, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("provisioning: %v", err)
+		}
+		// The revoke names the person by email and platform id; the
+		// display name belongs to the provision path only.
+		out.Reset()
+		err := financeUserRole([]string{"--revoke", "--email", nameless.email, "--platform-user-id", nameless.platformID}, out, out, env(nil))
+		if err != nil {
+			t.Fatalf("a revoke without the display name must work: %v (out %q)", err, out.String())
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, nameless.platformID); n != 0 {
+			t.Fatalf("the person holds %d live grants after the revoke, want 0", n)
+		}
+	})
+
+	t.Run("a revoke takes every live grant", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		for _, role := range []string{"financial_controller", "payables_receivables"} {
+			if err := financeUserRole(provisionArgs(multi, role), out, out, env(nil)); err != nil {
+				t.Fatalf("provisioning %s: %v", role, err)
+			}
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, multi.platformID); n != 2 {
+			t.Fatalf("the person holds %d live grants, want 2", n)
+		}
+		out.Reset()
+		err := financeUserRole([]string{"--revoke", "--email", multi.email, "--platform-user-id", multi.platformID, "--display-name", multi.name, "--role", "financial_controller"}, out, out, env(nil))
+		if err != nil {
+			t.Fatalf("the revoke: %v (out %q)", err, out.String())
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, multi.platformID); n != 0 {
+			t.Fatalf("the person still holds %d live grants after the revoke, want 0", n)
+		}
+		if got := strings.Count(out.String(), "grant_id="); got != 2 {
+			t.Fatalf("the revoke printed %d grant ids, want 2 (out %q)", got, out.String())
+		}
+		if strings.Contains(out.String(), "grant_id=\n") || strings.Contains(out.String(), "grant_id= ") {
+			t.Fatalf("the revoke printed an empty grant id (out %q)", out.String())
+		}
+		// A later provision brings the person back with the role named then,
+		// and with that role only.
+		out.Reset()
+		if err := financeUserRole(provisionArgs(multi, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("the re-provision: %v", err)
+		}
+		roles := finLiveGrantRoles(t, ctx, pool, orgID, multi.platformID)
+		if len(roles) != 1 || roles[0] != "financial_controller" {
+			t.Fatalf("after the re-provision the person holds %v, want financial_controller only", roles)
+		}
+	})
+
+	t.Run("a revoke works after the email left the allow list", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		if err := financeUserRole(provisionArgs(gone, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("provisioning: %v", err)
+		}
+		// The email is off the allow list now, which is the order an
+		// operator cuts access in.
+		out.Reset()
+		err := financeUserRole([]string{"--revoke", "--email", gone.email, "--platform-user-id", gone.platformID, "--display-name", gone.name}, out, out,
+			env(map[string]string{"CORE_SIGNIN_EMAIL_ADDRESSES": ""}))
+		if err != nil {
+			t.Fatalf("a revoke after the email left the allow list must work: %v (out %q)", err, out.String())
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, gone.platformID); n != 0 {
+			t.Fatalf("the person holds %d live grants after the revoke, want 0", n)
+		}
+	})
+
+	t.Run("the provision keeps the org anchor name", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		slug := "finboxanchor"
+		if _, _, err := identity.ProvisionOrgAnchor(ctx, pool, slug, "Anchor As Named"); err != nil {
+			t.Fatalf("the anchor: %v", err)
+		}
+		if err := financeUserRole(provisionArgs(anchor, "financial_controller"), out, out,
+			env(map[string]string{"HH_WEB_ORG": slug})); err != nil {
+			t.Fatalf("the provision: %v (out %q)", err, out.String())
+		}
+		var name string
+		if err := pool.QueryRow(ctx, `SELECT name FROM org WHERE slug = $1`, slug).Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		if name != "Anchor As Named" {
+			t.Fatalf("the anchor's name = %q, want the name it already had", name)
+		}
+	})
 }

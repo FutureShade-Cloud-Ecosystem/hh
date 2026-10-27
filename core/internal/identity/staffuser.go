@@ -90,10 +90,35 @@ func EnsureStaffUser(ctx context.Context, db DBTX, orgID, platformUserID, email,
 	return userID, true, nil
 }
 
+// StaffUserByPlatformID reads the users row the platform subject holds: the
+// row's id and the email it carries. The unique index on platform_user_id
+// makes the row at most one, so the read is the subject a caller acts on:
+// a revoke names its person by email and by platform id, and the two must
+// agree before anything is written. The email comes back as the row holds
+// it, so the caller folds the case itself. found is false when no row
+// holds the platform user.
+func StaffUserByPlatformID(ctx context.Context, db DBTX, platformUserID string) (userID, email string, found bool, err error) {
+	if db == nil {
+		return "", "", false, errors.New("identity: a staff user read requires a database handle")
+	}
+	if platformUserID == "" {
+		return "", "", false, errors.New("identity: a staff user read requires the platform user")
+	}
+	err = db.QueryRow(ctx, `
+		SELECT id::text, email::text FROM users WHERE platform_user_id = $1`, platformUserID).Scan(&userID, &email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("identity: staff user read failed: %w", err)
+	}
+	return userID, email, true, nil
+}
+
 // DeactivateStaffUser ends the person's sign in: the linked users row, if
 // live, becomes DEACTIVATED and the exchange's gate 6 refuses them from the
 // next request. It is the revoke's user half; the grant half is
-// RevokeStaffGrant. deactivated is false when no live row held the
+// RevokeStaffGrants. deactivated is false when no live row held the
 // platform user. Nothing is deleted: the row is a provisioning fact.
 func DeactivateStaffUser(ctx context.Context, db DBTX, platformUserID string) (userID string, deactivated bool, err error) {
 	if db == nil {
@@ -115,29 +140,40 @@ func DeactivateStaffUser(ctx context.Context, db DBTX, platformUserID string) (u
 	return userID, true, nil
 }
 
-// RevokeStaffGrant soft deletes the person's live grant of one role in the
-// org, the revoke's grant half beside DeactivateStaffUser. The partial
-// unique index keeps the tombstone out of the live set, so a later
-// EnsureStaffGrant writes a fresh row and the history keeps this one.
-// revoked is false when no live grant matched.
-func RevokeStaffGrant(ctx context.Context, db DBTX, orgID, platformUserID, roleID string) (grantID string, revoked bool, err error) {
+// RevokeStaffGrants soft deletes every live grant the platform user holds
+// in the org, the revoke's grant half beside DeactivateStaffUser. It is
+// every grant and not one role: a grant left live comes back with the next
+// EnsureStaffGrant, so a revoke that named only the role the caller had in
+// mind would not be the last word. The partial unique index keeps the
+// tombstones out of the live set, so a later EnsureStaffGrant writes fresh
+// rows and the history keeps these ones. The ids come back in the order
+// the database hands them out; revoked is false when no live grant matched.
+func RevokeStaffGrants(ctx context.Context, db DBTX, orgID, platformUserID string) (grantIDs []string, revoked bool, err error) {
 	if db == nil {
-		return "", false, errors.New("identity: a staff grant revocation requires a database handle")
+		return nil, false, errors.New("identity: a staff grant revocation requires a database handle")
 	}
-	if orgID == "" || platformUserID == "" || roleID == "" {
-		return "", false, errors.New("identity: a staff grant revocation requires the org, the platform user and the role")
+	if orgID == "" || platformUserID == "" {
+		return nil, false, errors.New("identity: a staff grant revocation requires the org and the platform user")
 	}
-	err = db.QueryRow(ctx, `
+	rows, err := db.Query(ctx, `
 		UPDATE staff_role_grant SET deleted_at = now()
-		WHERE org_id = $1 AND platform_user_id = $2 AND role_id = $3 AND deleted_at IS NULL
-		RETURNING id::text`, orgID, platformUserID, roleID).Scan(&grantID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
-	}
+		WHERE org_id = $1 AND platform_user_id = $2 AND deleted_at IS NULL
+		RETURNING id::text`, orgID, platformUserID)
 	if err != nil {
-		return "", false, fmt.Errorf("identity: staff grant revocation failed: %w", err)
+		return nil, false, fmt.Errorf("identity: staff grant revocation failed: %w", err)
 	}
-	return grantID, true, nil
+	defer rows.Close()
+	for rows.Next() {
+		var grantID string
+		if err := rows.Scan(&grantID); err != nil {
+			return nil, false, fmt.Errorf("identity: staff grant revocation read failed: %w", err)
+		}
+		grantIDs = append(grantIDs, grantID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("identity: staff grant revocation read failed: %w", err)
+	}
+	return grantIDs, len(grantIDs) > 0, nil
 }
 
 // StaffGrantID reads the id of the person's live grant of one role in the

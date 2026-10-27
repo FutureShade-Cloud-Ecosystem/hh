@@ -1,9 +1,12 @@
 // finance_user.go carries the finance-user role (W2-2): the one-shot the
 // principal runs once per named tester on the finance box. One person per
 // run, by email, FB Console user id, display name and role, all at run
-// time: the command provisions the org anchor, an ACTIVE users row and a
-// global staff grant so the console exchange's gate 6 links the person to
-// their role, and --revoke closes what it opened. Every write lands
+// time: the command makes sure the org anchor exists (keeping the name it
+// already has), writes an ACTIVE users row and a global staff grant so the
+// console exchange's gate 6 links the person to their role, and --revoke
+// closes what it opened. The revoke names its subject twice, by email and
+// by platform id, and takes every live grant that subject holds in the
+// org, so the last revocation is the durable one. Every write lands
 // through the identity and audit modules' own seams inside one
 // transaction, no agent ever sets or sees a password, and nothing is ever
 // deleted. The guard refuses anywhere but the finance box, one line naming
@@ -46,11 +49,13 @@ const (
 // financeUserRoles is the one allowed list of finance roles a named tester
 // may hold (the finance roles of the staff_role catalog, every one global
 // scope). The default is financial_controller; the second finance role is
-// what makes the four eyes approvals hold two people.
+// what makes the four eyes approvals hold two people. No other role is on
+// the list: general_manager is the dealer leadership role, and it carries
+// the dealer admin and house message surfaces, which no finance tester
+// needs on a public box.
 var financeUserRoles = []string{
 	"financial_controller",
 	"payables_receivables",
-	"general_manager",
 }
 
 const financeUserDefaultRole = "financial_controller"
@@ -82,11 +87,11 @@ func financeBoxReady(ctx context.Context, getenv func(string) string, pool *pgxp
 func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string) string) error {
 	fs := flag.NewFlagSet("finance-user", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	email := fs.String("email", "", "the person's email, on the sign in allow list (required)")
+	email := fs.String("email", "", "the person's email, on the sign in allow list on the provision path (required)")
 	platformUserID := fs.String("platform-user-id", "", "the person's FB Console user id (required)")
-	displayName := fs.String("display-name", "", "the person's display name (required)")
+	displayName := fs.String("display-name", "", "the person's display name (required to provision)")
 	role := fs.String("role", financeUserDefaultRole, "the finance role to grant")
-	revoke := fs.Bool("revoke", false, "deactivate the person and revoke the grant instead of granting")
+	revoke := fs.Bool("revoke", false, "deactivate the person and revoke every live grant instead of granting")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -99,8 +104,13 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 	if strings.TrimSpace(*platformUserID) == "" {
 		return errors.New("finance-user: -platform-user-id is required")
 	}
-	if strings.TrimSpace(*displayName) == "" {
-		return errors.New("finance-user: -display-name is required")
+	// The display name belongs to the provision path: a revoke names the
+	// person by email and platform id, and the name is not what it acts on.
+	if !*revoke && strings.TrimSpace(*displayName) == "" {
+		return errors.New("finance-user: -display-name is required to provision a staff user")
+	}
+	if !slices.Contains(financeUserRoles, *role) {
+		return fmt.Errorf("finance-user: -role must be one of the finance roles: %s", strings.Join(financeUserRoles, ", "))
 	}
 
 	dsn, err := resolveOneshotDatabaseURL(getenv)
@@ -118,9 +128,12 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 	if err := financeBoxReady(ctx, getenv, pool); err != nil {
 		return err
 	}
-	if !slices.Contains(financeUserRoles, *role) {
-		return fmt.Errorf("finance-user: -role must be one of the finance roles: %s", strings.Join(financeUserRoles, ", "))
+	if *revoke {
+		return financeUserRevoke(ctx, pool, stdout, getenv, strings.TrimSpace(*platformUserID), strings.TrimSpace(*email))
 	}
+	// The sign in allow list is the provision path's rule. A revoke must
+	// still work after the email has left the list, because taking the
+	// person off the list first is the order an operator cuts access in.
 	listed := map[string]bool{}
 	for _, a := range exchange.ParseAllowList(getenv(envSigninEmailAddresses)) {
 		listed[a] = true
@@ -128,16 +141,13 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 	if !listed[strings.ToLower(strings.TrimSpace(*email))] {
 		return fmt.Errorf("finance-user: the email is not on the sign in allow list (%s)", envSigninEmailAddresses)
 	}
-
-	if *revoke {
-		return financeUserRevoke(ctx, pool, stdout, getenv, *platformUserID, *role)
-	}
 	return financeUserProvision(ctx, pool, stdout, getenv, strings.TrimSpace(*email), strings.TrimSpace(*platformUserID), strings.TrimSpace(*displayName), *role)
 }
 
-// financeUserProvision writes the org anchor, the staff users row and the
-// global grant in one transaction, then the audit row, and prints only the
-// users row id and the grant id.
+// financeUserProvision makes sure the org anchor exists, keeping the name
+// it already has, then writes the staff users row and the global grant in
+// one transaction, then the audit row, and prints only the users row id
+// and the grant id.
 func financeUserProvision(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer, getenv func(string) string, email, platformUserID, displayName, role string) error {
 	slug := strings.TrimSpace(getenv(envWebOrg))
 	if slug == "" {
@@ -149,7 +159,7 @@ func financeUserProvision(ctx context.Context, pool *pgxpool.Pool, stdout io.Wri
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	orgID, _, err := identity.ProvisionOrgAnchor(ctx, tx, slug, financeBoxOrgName)
+	orgID, _, _, err := identity.EnsureOrgAnchor(ctx, tx, slug, financeBoxOrgName)
 	if err != nil {
 		return fmt.Errorf("finance-user: the org anchor: %w", err)
 	}
@@ -182,10 +192,12 @@ func financeUserProvision(ctx context.Context, pool *pgxpool.Pool, stdout io.Wri
 	return nil
 }
 
-// financeUserRevoke deactivates the staff users row and soft deletes the
-// live grant in one transaction, then the audit row, and prints only the
-// users row id and the grant id. Never a delete.
-func financeUserRevoke(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer, getenv func(string) string, platformUserID, role string) error {
+// financeUserRevoke deactivates the staff users row and soft deletes every
+// live grant the platform user holds in the org, in one transaction, then
+// the audit row, and prints the users row id and the id of every grant it
+// revoked. Never a delete, never an empty grant id: a revoke with nothing
+// to revoke refuses.
+func financeUserRevoke(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer, getenv func(string) string, platformUserID, email string) error {
 	slug := strings.TrimSpace(getenv(envWebOrg))
 	if slug == "" {
 		return fmt.Errorf("finance-user: %s must name the org slug", envWebOrg)
@@ -207,16 +219,32 @@ func financeUserRevoke(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	userID, deactivated, err := identity.DeactivateStaffUser(ctx, tx, platformUserID)
+	// The subject: the users row the platform id holds must carry the email
+	// the operator named, or the revoke would act on another person. The
+	// comparison folds case, because an address is one address however it
+	// is spelled.
+	userID, rowEmail, found, err := identity.StaffUserByPlatformID(ctx, tx, platformUserID)
 	if err != nil {
-		return fmt.Errorf("finance-user: the deactivation: %w", err)
+		return fmt.Errorf("finance-user: the staff user read: %w", err)
 	}
-	grantID, revoked, err := identity.RevokeStaffGrant(ctx, tx, orgID, platformUserID, role)
+	if !found {
+		return errors.New("finance-user: no staff user row holds that platform user; nothing to revoke")
+	}
+	if !strings.EqualFold(strings.TrimSpace(rowEmail), strings.TrimSpace(email)) {
+		return errors.New("finance-user: the email does not match the staff user row that platform user holds; refusing to revoke another person")
+	}
+	// Every live grant goes, not only the role the caller names: a grant
+	// left live would come back with the next provision, and the last
+	// revocation has to be the durable one.
+	grantIDs, revoked, err := identity.RevokeStaffGrants(ctx, tx, orgID, platformUserID)
 	if err != nil {
 		return fmt.Errorf("finance-user: the grant revocation: %w", err)
 	}
-	if !deactivated && !revoked {
-		return errors.New("finance-user: no live staff user or grant held that platform user")
+	if !revoked {
+		return errors.New("finance-user: no live staff grant to revoke")
+	}
+	if _, _, err := identity.DeactivateStaffUser(ctx, tx, platformUserID); err != nil {
+		return fmt.Errorf("finance-user: the deactivation: %w", err)
 	}
 	svc := audit.NewService(audit.NewRepository(pool), slog.Default())
 	if err := svc.RecordTx(ctx, tx, audit.SensitiveAccess{
@@ -232,6 +260,8 @@ func financeUserRevoke(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("finance-user: cannot commit: %w", err)
 	}
-	fmt.Fprintf(stdout, "user_id=%s grant_id=%s\n", userID, grantID)
+	for _, grantID := range grantIDs {
+		fmt.Fprintf(stdout, "user_id=%s grant_id=%s\n", userID, grantID)
+	}
 	return nil
 }
