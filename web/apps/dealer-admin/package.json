@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/console-boot.test.mjs test/no-signal.test.mjs test/sinks.test.mjs test/logic.test.mjs test/api.test.mjs test/admin-logic.test.mjs test/admin-api.test.mjs test/config.test.mjs test/settings.test.mjs test/pricing-logic.test.mjs test/pricing-controller.test.mjs test/pricing-floor-cost-gate.test.mjs test/warranty-logic.test.mjs test/framed-band.test.mjs test/staff-initials.test.mjs test/payment-terms.test.mjs && playwright test"
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/console-boot.test.mjs test/no-signal.test.mjs test/sinks.test.mjs test/logic.test.mjs test/api.test.mjs test/admin-logic.test.mjs test/admin-api.test.mjs test/config.test.mjs test/settings.test.mjs test/pricing-logic.test.mjs test/pricing-controller.test.mjs test/pricing-floor-cost-gate.test.mjs test/warranty-logic.test.mjs test/framed-band.test.mjs test/staff-initials.test.mjs test/payment-terms.test.mjs test/surface-list.test.mjs && playwright test"
   },
   "dependencies": {
     "@hardscapehouse/api-client": "0.0.0",
