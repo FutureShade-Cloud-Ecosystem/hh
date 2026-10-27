@@ -1410,6 +1410,22 @@ func (s *Service) glBalanceCents(ctx context.Context, accountCode string, year, 
 	return netDebit, nil
 }
 
+func (s *Service) glBalanceAsOfCents(ctx context.Context, accountCode string, asOf time.Time, branchID string) (int64, error) {
+	netDebit, normal, err := s.store.AccountBalanceAsOf(ctx, accountCode, asOf, branchID)
+	if err != nil {
+		return 0, err
+	}
+	if normal == NormalCredit {
+		return -netDebit, nil
+	}
+	return netDebit, nil
+}
+
+func (s *Service) glClosingBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	asOf := time.Date(year, time.Month(month)+1, 1, 0, 0, 0, 0, houseLocation()).Add(-time.Nanosecond)
+	return s.glBalanceAsOfCents(ctx, accountCode, asOf, branchID)
+}
+
 // ValidatePostingRules is the boot-time parity check (also exposed for the AC8 test): every ACTIVE posting
 // rule must resolve to an existing + active account, AND every role the eight posting builders require must
 // exist for its event_type. A failure here means an event would post a wrong or zero-leg journal, so it is a

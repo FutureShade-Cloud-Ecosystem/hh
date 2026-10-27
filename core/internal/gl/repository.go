@@ -1155,6 +1155,81 @@ func (r *Repository) AccountBalanceAsOf(ctx context.Context, code string, asOf t
 	return netDebit, normal, nil
 }
 
+// BankAccountEntriesAsOf returns every POSTED, unreversed book journal touching the given GL account code
+// through asOf (excluding bankrec's own clearing/unmatch postings), using the same asOfEffectiveInstant
+// closed-month cutoff as AccountBalanceAsOf so bank reconciliation can identify deposits in transit and
+// outstanding cheques at month end (FW1-04).
+func (r *Repository) BankAccountEntriesAsOf(ctx context.Context, code string, asOf time.Time) ([]BankBookEntry, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT j.id::text, COALESCE(j.source_ref_id::text, ''), j.posted_at, j.memo,
+		       COALESCE(SUM(COALESCE(l.debit_cents, 0) - COALESCE(l.credit_cents, 0)), 0)::bigint AS net_cents
+		  FROM gl_journals j
+		  JOIN gl_journal_lines l ON l.journal_id = j.id
+		  JOIN gl_accounts a      ON a.id = l.account_id
+		  JOIN fiscal_periods fp  ON fp.id = j.period_id
+		 WHERE a.code = $1
+		   AND j.status = 'POSTED'
+		   AND `+asOfEffectiveInstant+` <= $2
+		   AND j.reverses_journal_id IS NULL
+		   AND j.idempotency_key NOT LIKE 'bankrec:%'
+		   AND NOT EXISTS (
+		       SELECT 1 FROM gl_journals rev
+		        WHERE rev.reverses_journal_id = j.id
+		          AND rev.status = 'POSTED'
+		   )
+		 GROUP BY j.id, j.source_ref_id, j.posted_at, j.memo, j.entry_no
+		 HAVING COALESCE(SUM(COALESCE(l.debit_cents, 0) - COALESCE(l.credit_cents, 0)), 0) <> 0
+		 ORDER BY j.posted_at, j.entry_no`, code, asOf)
+	if err != nil {
+		return nil, fmt.Errorf("gl: bank account entries as-of: %w", err)
+	}
+	defer rows.Close()
+	var out []BankBookEntry
+	for rows.Next() {
+		var e BankBookEntry
+		if err := rows.Scan(&e.JournalID, &e.SourceRefID, &e.PostedAt, &e.Memo, &e.NetCents); err != nil {
+			return nil, fmt.Errorf("gl: scan bank account entry: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// LodgementJournalForBank answers whether a till lodgement movement already has a POSTED, unreversed book
+// journal touching glAccountCode (FROM-PRINCIPAL 117).
+func (r *Repository) LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error) {
+	if r.pool == nil {
+		return "", false, errNoDB
+	}
+	var jid string
+	err := r.pool.QueryRow(ctx, `
+		SELECT j.id::text
+		  FROM gl_journals j
+		  JOIN gl_journal_lines l ON l.journal_id = j.id
+		  JOIN gl_accounts a      ON a.id = l.account_id
+		 WHERE j.source_ref_id::text = $1
+		   AND a.code = $2
+		   AND j.status = 'POSTED'
+		   AND j.reverses_journal_id IS NULL
+		   AND j.idempotency_key NOT LIKE 'bankrec:%'
+		   AND NOT EXISTS (
+		       SELECT 1 FROM gl_journals rev
+		        WHERE rev.reverses_journal_id = j.id
+		          AND rev.status = 'POSTED'
+		   )
+	LIMIT 1`, movementID, glAccountCode).Scan(&jid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("gl: lodgement journal for bank: %w", err)
+	}
+	return jid, true, nil
+}
+
 // AccountBalanceThrough sums the POSTED net-debit of an account over every fiscal period up to and
 // including (year, month), by period grain (FW1-11): the cumulative figure a balance tie-out reads
 // against a subledger valued as of the period end. It reads the same 0034 view the period reads do,

@@ -52,6 +52,13 @@ func cleanTables(t *testing.T, pool *pgxpool.Pool) {
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
+	_, _ = pool.Exec(context.Background(), `
+		UPDATE bank_accounts
+		   SET cutover_date = NULL,
+		       cutover_statement_balance_cents = NULL,
+		       cutover_outstanding_journal_ids = '{}'::uuid[],
+		       cutover_recorded_by = NULL,
+		       cutover_recorded_at = NULL`)
 }
 
 func rbcAccountID(t *testing.T, pool *pgxpool.Pool) string {
