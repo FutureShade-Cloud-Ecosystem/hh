@@ -2302,6 +2302,10 @@ components:
 
     CustomerCreate:
       type: object
+      description: >-
+        The account number and name are the caller's. payment_terms_days
+        defaults to 30 when absent (how the counter and quote desk pickers
+        create); zero is legal and means Cash On Demand, pay before release.
       required: [account_no, name]
       properties:
         account_no: { type: string }
@@ -2311,7 +2315,7 @@ components:
           default: CONTRACTOR
           enum: [CONTRACTOR, RETAIL, BUILDER, GOVERNMENT, INTERNAL]
         home_branch_id: { type: string, format: uuid }
-        payment_terms_days: { type: integer, format: int32, minimum: 0 }
+        payment_terms_days: { type: integer, format: int32 }
         credit_limit_cents: { type: integer, format: int64, minimum: 0 }
         tax_exempt: { type: boolean }
         billing_address:

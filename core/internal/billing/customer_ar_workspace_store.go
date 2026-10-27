@@ -44,8 +44,9 @@ import (
 // code, status badge, credit limit, utilization bar, terms, primary AP contact, last payment
 // and the 5-bucket aging that opens with it.
 //
-// OpenCents is the same figure CustomerAging opens with (TotalCents, every open invoice balance,
-// current and late). The workspace does not re-sum it, by the same rule the file header opens
+// OpenCents is the same figure CustomerAging opens with (TotalCents, the same union the aging
+// reads: every open invoice balance plus the grouped non invoice AR rows, current and late). The
+// workspace does not re-sum it, by the same rule the file header opens
 // with. AvailableCreditCents is the same CreditLimitCents - OpenCents computation the account
 // position card on the invoice detail carries, deliberately: the workspace account card and
 // the invoice detail account card cannot quote different available figures for the same

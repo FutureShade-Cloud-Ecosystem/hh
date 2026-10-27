@@ -1319,10 +1319,11 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	// allocation (Q-044). `running` is the customer's balance as each row lands, so the subledger
 	// reads as a true running total rather than a set of independently-computed snapshots.
 	//
-	// A fully-captured sale never touches AR: the invoice books PAID, so the running balance is
-	// unchanged and only PAYMENT rows are written (identical to the single-tender behavior this
-	// generalizes). An uncaptured remainder books the INVOICE first, then each capture nets it
-	// down, landing at open + (total − captured), which is exactly the invoice's own balance.
+	// The subledger follows the journal (Ruling 128 P1-3): ar.invoice.finalized always posts
+	// DR 1100 for invTotal and each payment.received posts CR 1100 for c.AmountCents, so the
+	// subledger always books the INVOICE row (+invTotal) first and then each capture's PAYMENT
+	// row (-c.AmountCents), landing at open + (total - captured), which is the invoice's own
+	// balance and nets to 0 on a fully-captured cash or card counter sale.
 	// The running balance is read ON the transaction, after whatever it already wrote for this
 	// customer (a swap's credit note children post account credit rows first), never from the
 	// pre-transaction read, which would hand the rows below a stale base.
@@ -1331,17 +1332,12 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 		return openErr
 	}
 	running := openRec.OpenBalanceCents
-	// A swap's applied credit settles the invoice without a tender: the invoice is booked to the
-	// account and the credit comes off it, so the account nets to the shortfall alone.
-	invoiceBooked := !fullyPaid || applied > 0
-	if invoiceBooked {
-		running += invTotal
-		if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
-			CustomerID: customerID, TxnType: "INVOICE", AmountCents: invTotal,
-			BalanceAfter: running, SourceType: "invoice", SourceRefID: invoiceID, BranchID: in.BranchID,
-		}); err != nil {
-			return err
-		}
+	running += invTotal
+	if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
+		CustomerID: customerID, TxnType: "INVOICE", AmountCents: invTotal,
+		BalanceAfter: running, SourceType: "invoice", SourceRefID: invoiceID, BranchID: in.BranchID,
+	}); err != nil {
+		return err
 	}
 	if supplierDeposit > 0 {
 		running += supplierDeposit
@@ -1363,14 +1359,12 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 		}
 	}
 	for _, c := range captures {
-		if invoiceBooked {
-			running -= c.AmountCents
-		}
+		running -= c.AmountCents
 		if err := s.store.InsertPaymentAllocation(ctx, tx, c.PaymentID, invoiceID, c.AmountCents, actor); err != nil {
 			return err
 		}
 		if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
-			CustomerID: customerID, TxnType: "PAYMENT", AmountCents: c.AmountCents,
+			CustomerID: customerID, TxnType: "PAYMENT", AmountCents: -c.AmountCents,
 			BalanceAfter: running, SourceType: "payment", SourceRefID: c.PaymentID, BranchID: in.BranchID,
 		}); err != nil {
 			return err

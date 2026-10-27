@@ -425,12 +425,22 @@ func (r *Repository) LastContactFor(ctx context.Context, customerID string) (*ti
 
 // WorkspaceHeader reads the customer account workspace top-bar card (Change 8 S2 + S2M), joining
 // customers, ar_ap_contacts, credit_holds, ar_invoice_disputes, invoices and payments.
+//
+// OpenCents and OverdueCents read the same union the AR aging reads (agingSelect's open_ar): open
+// invoice balances plus the grouped non invoice AR rows (NSF reversals' fee rows, adjustments,
+// standalone credits, write offs). One figure, read once: the header's open figure and the aging
+// the workspace opens with are the same union, so an account whose only open AR is an NSF fee
+// reconciles on the workspace instead of failing the penny check (FW1-06a round 3).
 func (r *Repository) WorkspaceHeader(ctx context.Context, customerID string) (CustomerWorkspaceHeader, error) {
 	if r.pool == nil {
 		return CustomerWorkspaceHeader{}, errNoDB
 	}
 	if !looksLikeUUIDish(customerID) {
 		return CustomerWorkspaceHeader{}, nil
+	}
+	zone, err := r.zoneFor(ctx)
+	if err != nil {
+		return CustomerWorkspaceHeader{}, err
 	}
 	day, err := r.clockAt(ctx, time.Now())
 	if err != nil {
@@ -444,11 +454,8 @@ func (r *Repository) WorkspaceHeader(ctx context.Context, customerID string) (Cu
 	err = r.pool.QueryRow(ctx,
 		`SELECT c.id::text, c.name, c.account_no::text, c.payment_terms_days, c.credit_limit_cents,
 		        COALESCE(c.home_branch_id::text, ''),
-		        COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
-		                   WHERE i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0),
-		        COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
-		                   WHERE i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')
-		                     AND i.due_date < $2::date), 0),
+		        COALESCE(ar.open_cents, 0),
+		        COALESCE(ar.overdue_cents, 0),
 		        EXISTS (SELECT 1 FROM credit_holds ch WHERE ch.customer_id = c.id AND ch.status = 'ACTIVE'),
 		        EXISTS (SELECT 1 FROM ar_invoice_disputes d WHERE d.customer_id = c.id AND d.status = 'OPEN'),
 		        COALESCE(a.contact_name, ''), COALESCE(a.email, ''), COALESCE(a.phone, ''),
@@ -460,7 +467,24 @@ func (r *Repository) WorkspaceHeader(ctx context.Context, customerID string) (Cu
 		                                    WHERE p2.customer_id = c.id AND p2.status NOT IN ('VOID')))
 		   FROM customers c
 		   LEFT JOIN ar_ap_contacts a ON a.customer_id = c.id
-		  WHERE c.id = $1::uuid`, customerID, day).
+		   LEFT JOIN LATERAL (
+		     SELECT SUM(u.balance_cents) AS open_cents,
+		            SUM(u.balance_cents) FILTER (WHERE u.due_date < $2::date) AS overdue_cents
+		       FROM (
+		         SELECT i.balance_cents, i.due_date
+		           FROM invoices i
+		          WHERE i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.balance_cents <> 0
+		         UNION ALL
+		         SELECT SUM(ct.amount_cents), MIN((ct.occurred_at AT TIME ZONE $3::text)::date)
+		           FROM customer_transactions ct
+		          WHERE ct.customer_id = c.id
+		            AND ct.txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')
+		            AND ct.source_type <> 'invoice'
+		          GROUP BY ct.source_type, COALESCE(ct.source_ref_id, ct.id)
+		         HAVING SUM(ct.amount_cents) <> 0
+		       ) u
+		   ) ar ON TRUE
+		  WHERE c.id = $1::uuid`, customerID, day, zone.Name()).
 		Scan(&h.CustomerID, &h.Name, &h.AccountNo, &h.TermsDays, &h.CreditLimitCents, &h.HomeBranchID,
 			&h.OpenCents, &h.OverdueCents, &onHold, &hasOpenDispute,
 			&apName, &apEmail, &apPhone, &lastPaymentAt, &lastPaymentCents)

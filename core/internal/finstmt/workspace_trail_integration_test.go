@@ -161,8 +161,9 @@ func seedCustomer(t *testing.T, pool *pgxpool.Pool, suffix string) string {
 	return id
 }
 
-// The ledger: INVOICE 100000, PAYMENT -41234, INVOICE 5000, NSF +41234, the NSF fee ADJUSTMENT 2500
-// (source_type payment_nsf, as till/repository.go writes it), INVOICE 1000.
+// The ledger: INVOICE 100000, PAYMENT -41234, INVOICE 5000, the NSF reversal row +41234 (source
+// invoice, exactly as till/repository.go writes it, excluded from the aging union because the
+// reopened invoice carries the AR), the NSF fee ADJUSTMENT 2500 (source_type payment_nsf), INVOICE 1000.
 func TestIntegration_Workspace_FeedGivesNoPaymentBack(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
@@ -174,7 +175,7 @@ func TestIntegration_Workspace_FeedGivesNoPaymentBack(t *testing.T) {
 		{"INVOICE", "invoice", "", 100000, 100000},
 		{"PAYMENT", "payment", "", -41234, 58766},
 		{"INVOICE", "invoice", "", 5000, 63766},
-		{"NSF", "payment_nsf", "", 41234, 105000},
+		{"NSF", "invoice", "", 41234, 105000},
 		{"ADJUSTMENT", "payment_nsf", "NSF fee", 2500, 107500},
 		{"INVOICE", "invoice", "", 1000, 108500},
 	}
@@ -210,7 +211,10 @@ func TestIntegration_Workspace_FeedGivesNoPaymentBack(t *testing.T) {
 			t.Fatalf("only invoice rows remain: %v", a)
 		}
 	}
-	for _, leak := range []string{"NSF", "41234", "2500", "PAYMENT"} {
+	// The header's open figure (2500, the fee) is the account's open AR under the same union the
+	// aging reads, an account fact like the invoice balances; what stays withheld is the row
+	// detail: the fee's memo, the bounced payment and its amount, the running balance.
+	for _, leak := range []string{"NSF", "41234", "PAYMENT"} {
 		if strings.Contains(body, leak) {
 			t.Fatalf("%q reached a caller without the trail: %s", leak, body)
 		}
@@ -226,6 +230,35 @@ func TestIntegration_Workspace_FeedGivesNoPaymentBack(t *testing.T) {
 	}
 	if len(w.Activity) != 6 || !strings.Contains(body, `"balance_after_cents":108500`) || !strings.Contains(body, "NSF fee") {
 		t.Fatalf("the full feed expected: %s", body)
+	}
+}
+
+// An account whose only open AR is an NSF fee, written exactly as till writes it (ADJUSTMENT,
+// source payment_nsf, till/repository.go): the workspace must answer 200 and the header's open
+// figure must carry the fee, because the header reads the same union the aging reads (R2-P1-1).
+func TestIntegration_Workspace_OpenNSFFeeAnswersOK(t *testing.T) {
+	pool := intPool(t)
+	id := seedCustomer(t, pool, "-FEE")
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, memo, occurred_at)
+		 VALUES ($1::uuid, 'ADJUSTMENT', 2500, 2500, 'payment_nsf', gen_random_uuid(), 'NSF fee', now() - interval '1 hour')`, id); err != nil {
+		t.Fatalf("seed fee: %v", err)
+	}
+	link := func(context.Context, string) (string, bool) { return "a1b2c3d4-0000-4000-9000-000000000001", true }
+	code, body := workspaceCall(t, pool, true, link, http.MethodGet, "/api/v1/billing/ar/customers/"+id+"/workspace", "")
+	if code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", code, body)
+	}
+	var w struct {
+		Header struct {
+			OpenCents int64 `json:"open_cents"`
+		} `json:"header"`
+	}
+	if err := json.Unmarshal([]byte(body), &w); err != nil {
+		t.Fatal(err)
+	}
+	if w.Header.OpenCents != 2500 {
+		t.Fatalf("header open_cents = %d, want 2500 (the open NSF fee, the same union the aging reads)", w.Header.OpenCents)
 	}
 }
 

@@ -213,9 +213,9 @@ func (h *WorkspaceHandler) workspace(w http.ResponseWriter, r *http.Request, cal
 		httpx.Error(w, http.StatusInternalServerError, "workspace aging does not reconcile to the penny")
 		return
 	}
-	// Same reconciliation for the header. The header's OpenCents is the same figure
-	// the workspace card reads, derived independently from invoice balance sums, and a
-	// drift means either the header's logic is wrong or the service's is. Either way,
+	// Same reconciliation for the header. The header's OpenCents reads the same union the aging
+	// reads (open invoices plus the grouped non invoice AR rows), computed by its own query, so a
+	// drift means one of the two reads is wrong or the two reads straddled a write. Either way,
 	// the screen is unsafe.
 	if h.credit != nil && out.Header.Aging.OpenCents != out.Header.OpenCents {
 		h.log.Error("workspace header drift",

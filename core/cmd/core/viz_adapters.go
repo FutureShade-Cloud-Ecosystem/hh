@@ -142,12 +142,17 @@ func vizARAging(pool *pgxpool.Pool) dashboard.SeriesFunc {
 		         ELSE 4 END
 		 GROUP BY b.ord, b.label
 		 ORDER BY b.ord`
+	// The branch arm is PAST DUE per branch (due before the house's day), the same cut the bucket
+	// arm's non-Current bands make, so the branch points sum to the buckets' non-Current total and
+	// a past-due card's branch rows tie with its own headline. All open balances by branch is the
+	// aging view's job, the bucket arm.
 	const byBranch = `
 		SELECT l.code::text, COALESCE(SUM(i.balance_cents), 0)::bigint
 		  FROM invoices i
 		  JOIN locations l ON l.id = i.branch_id
 		 WHERE i.status IN ('FINALIZED', 'PARTIALLY_PAID')
 		   AND i.balance_cents > 0
+		   AND i.due_date < $2::date
 		   AND ($1::uuid[] IS NULL OR i.branch_id = ANY($1::uuid[]))
 		 GROUP BY l.code ORDER BY 2 DESC, 1`
 	return func(ctx context.Context, sc dashboard.Scope, dim string) ([]dashboard.Point, error) {
@@ -155,7 +160,7 @@ func vizARAging(pool *pgxpool.Pool) dashboard.SeriesFunc {
 		case dashboard.DimBucket:
 			return vizPoints(ctx, pool, byBucket, w6aBranchScope(sc), w6aDay(sc))
 		case dashboard.DimBranch:
-			return vizPoints(ctx, pool, byBranch, w6aBranchScope(sc))
+			return vizPoints(ctx, pool, byBranch, w6aBranchScope(sc), w6aDay(sc))
 		}
 		return vizUnknownDim()
 	}
@@ -285,14 +290,33 @@ func vizGrossMargin(pool *pgxpool.Pool) dashboard.SeriesFunc {
 		 WHERE o.status NOT IN ('DRAFT', 'CANCELLED')
 		   AND ($1::uuid[] IS NULL OR o.branch_id = ANY($1::uuid[]))
 		 GROUP BY l.code ORDER BY 2 DESC, 1`
+	// The aggregate arm (SplitNone): the WEIGHTED all branches rate, the same arithmetic run
+	// ungrouped, so total margin cents over total sales cents across the scope. The service asks
+	// for it as the tile's headline total; a rate is never summed from its branch points
+	// (FROM-PRINCIPAL 132).
+	const aggregate = `
+		SELECT 'All branches',
+		       CASE WHEN COALESCE(SUM(ol.line_total_cents), 0) <= 0 THEN 0::bigint
+		            ELSE (((SUM(ol.line_total_cents)
+		                    - COALESCE(SUM(ol.qty_base * c.avg_unit_cost_cents), 0)) * 10000)
+		                  / SUM(ol.line_total_cents))::bigint END
+		  FROM order_lines ol
+		  JOIN orders o    ON o.id = ol.order_id
+		  LEFT JOIN product_branch_costs c
+		    ON c.product_id = ol.product_id AND c.branch_id = o.branch_id
+		 WHERE o.status NOT IN ('DRAFT', 'CANCELLED')
+		   AND ($1::uuid[] IS NULL OR o.branch_id = ANY($1::uuid[]))`
 	return func(ctx context.Context, sc dashboard.Scope, dim string) ([]dashboard.Point, error) {
 		if !sc.CostAllowed {
 			return nil, errCostNotAllowed
 		}
-		if dim != dashboard.DimBranch {
-			return vizUnknownDim()
+		switch dim {
+		case dashboard.DimBranch:
+			return vizPoints(ctx, pool, byBranch, w6aBranchScope(sc))
+		case dashboard.SplitNone:
+			return vizPoints(ctx, pool, aggregate, w6aBranchScope(sc))
 		}
-		return vizPoints(ctx, pool, byBranch, w6aBranchScope(sc))
+		return vizUnknownDim()
 	}
 }
 
