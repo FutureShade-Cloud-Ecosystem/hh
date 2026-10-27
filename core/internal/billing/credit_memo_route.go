@@ -617,11 +617,12 @@ func (s *CreditMemoService) creditMemoKey(ctx context.Context, req CreditMemoRou
 
 // houseDay is the dealer's own day, the same zone the writer dates its documents in. A credit asked
 // for at eleven at night and one asked for the next morning are different credits; two asked for in
-// the same minute are the same one.
+// the same minute are the same one. A dealer whose zone cannot be read falls back to the house's
+// default zone, never to the server's or to Greenwich.
 func (s *CreditMemoService) houseDay(ctx context.Context) string {
 	zone, err := houseday.Resolve(ctx, s.w.zone)
 	if err != nil {
-		return s.now().UTC().Format("2006-01-02")
+		return houseday.DefaultZone().Today(s.now)
 	}
 	return zone.Today(s.now)
 }
