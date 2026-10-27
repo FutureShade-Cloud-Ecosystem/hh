@@ -41,6 +41,7 @@ var fw1BranchCensusWriters = []string{
 	"external_credit_memo_poster",
 	"external_post_external_tx",
 	"year_end_close",
+	"parked_credit_memo_journal",
 }
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
@@ -68,6 +69,12 @@ type fw1NonGLWriterSite struct {
 // carries a branch, and every dynamic-topic outbox helper outside
 // core/internal/gl. Guarded by TestFW1NonGLJournalWriterCallSitesComplete.
 var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
+	{
+		File:         "core/cmd/core/credit_memo_wire.go",
+		Func:         "(creditMemoParkerAdapter).ParkCreditMemo",
+		Kind:         "ParkExternalJournalTx",
+		BranchSource: "journal.BranchID from billing's parked credit memo journal, the branch the credit was filed at",
+	},
 	{
 		File:         "core/cmd/core/order_events.go",
 		Func:         "(orderChangeEvents).EnqueueTx",

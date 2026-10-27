@@ -4,14 +4,16 @@ package main
 
 // Scope of TestFW1JournalLinesCarryBranch and the non-GL writer call-site census:
 //
-// 1. What the 27 paths in TestFW1JournalLinesCarryBranch are:
-//    The 27 driven paths cover the GL's own writers (the 13 outbox builders in
+// 1. What the 28 paths in TestFW1JournalLinesCarryBranch are:
+//    The 28 driven paths cover the GL's own writers (the 13 outbox builders in
 //    gl/posting.go consume's switch, CreateJournal with and without a branch,
 //    ReverseJournal with and without a branch, RunRecurring, CloseYear,
 //    bankrec's 5 auto/manual/unmatch paths, and the 0056/0221 migration setup
-//    entries) plus two stand-in calls (external_post_external_tx for
-//    gl.Service.PostExternalTx and external_credit_memo_poster for
-//    w6cCreditMemoPoster.PostCreditMemoJournal).
+//    entries) plus three stand-in calls (external_post_external_tx for
+//    gl.Service.PostExternalTx, external_credit_memo_poster for
+//    w6cCreditMemoPoster.PostCreditMemoJournal, and parked_credit_memo_journal
+//    for gl.Service.ParkExternalJournalTx, the parked reversing entry a credit
+//    memo over the approval threshold waits on).
 //
 // 2. How the non-GL module writer paths and outbox emitters are pinned here:
 //    Every caller outside core/internal/gl that reaches a journal (inventory,
@@ -663,6 +665,34 @@ func TestFW1JournalLinesCarryBranch(t *testing.T) {
 		t.Fatalf("year_end_close: %v", err)
 	}
 	record("year_end_close", "core/internal/gl/close.go:159-212 (CloseYear)", closeRes.ClosingJournalID)
+
+	// 28. The parked credit memo journal (cmd/core/credit_memo_wire.go:95). A
+	// credit over the approval threshold parks its reversing entry as a DRAFT
+	// and waits for a second pair of eyes, so the writer is the credit memo
+	// route's own and it stamps the branch of the credit it parks.
+	parkTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx for ParkExternalJournalTx: %v", err)
+	}
+	parkedJID, err := glSvc.ParkExternalJournalTx(ctx, parkTx, gl.ExternalJournal{
+		Source:         gl.SourceInvoice,
+		SourceRefID:    uuid.NewString(),
+		IdempotencyKey: "fw1-census:park-credit-memo-journal",
+		Memo:           "fw1 census parked credit memo journal with branch",
+		BranchID:       trtBranchID,
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1200", DebitCents: 12000, Memo: "credit memo"},
+			{AccountCode: "2100", CreditCents: 12000, Memo: "credit memo"},
+		},
+	})
+	if err != nil {
+		_ = parkTx.Rollback(ctx)
+		t.Fatalf("parked_credit_memo_journal: %v", err)
+	}
+	if err := parkTx.Commit(ctx); err != nil {
+		t.Fatalf("commit ParkExternalJournalTx: %v", err)
+	}
+	record("parked_credit_memo_journal", "core/cmd/core/credit_memo_wire.go:95 (creditMemoParkerAdapter.ParkCreditMemo)", parkedJID)
 
 	// Verify that every writer in fw1BranchCensusWriters was exercised.
 	exercised := make(map[string]bool, len(results))

@@ -208,6 +208,91 @@ export function pickCeilingWords(picked: number): string {
 
 export type PromiseCheck = { ok: true; promisedCents: number } | { ok: false; words: string };
 
+// ---- the credit memo (FW1-12) ---------------------------------------------------------------------
+
+export type CreditCheck = { ok: true; amountCents: number; reason: string } | { ok: false; words: string };
+
+/**
+ * The credit's own checks, said before the request is sent.
+ *
+ * A reason is REQUIRED and is asked for first: a credit with no stated reason cannot be explained to
+ * the customer, to the Controller, or to whoever reads the file in a year, so the desk asks before it
+ * asks about the money.
+ *
+ * The amount is a positive magnitude and the sign is the server's business, the same rule the core
+ * states. Against one invoice the cap is the server's too: the desk does not compute what an invoice
+ * has left, it asks.
+ */
+export function creditCheck(input: { amountText: string; reason: string }): CreditCheck {
+  const reason = input.reason.trim();
+  if (reason === "") return { ok: false, words: "Enter why the customer is being credited, such as the goods came back." };
+  if (input.amountText.trim() === "") return { ok: false, words: "Enter the amount to credit, such as 100.00." };
+  const cents = parseAmountToCents(input.amountText);
+  if (cents === null) return { ok: false, words: "Enter the amount as dollars and cents, such as 100.00." };
+  if (cents === 0) return { ok: false, words: "The amount must be more than zero." };
+  return { ok: true, amountCents: cents, reason };
+}
+
+/**
+ * What the credit did, in the desk's own words.
+ *
+ * AWAITING_APPROVAL says plainly that nothing has moved: a credit parked for a second pair of eyes is
+ * not a credit yet, and telling the desk it is one would be a lie the customer would later see undone.
+ */
+export function creditWords(result: { status: string; credit_memo_no: string; total_cents: number; message: string }): string {
+  if (result.status === "AWAITING_APPROVAL") {
+    return `Credit memo ${result.credit_memo_no} for ${formatMoney(Math.abs(result.total_cents))} is waiting for a second pair of eyes. No money has moved yet.`;
+  }
+  return `Credit memo ${result.credit_memo_no} for ${formatMoney(Math.abs(result.total_cents))} is issued.`;
+}
+
+/**
+ * What the credit DOES, in one sentence, for the person about to press.
+ *
+ * A credit on the account lowers what the customer owes on their account and touches no invoice; a
+ * credit against one invoice lowers what is owed on that invoice, up to what that invoice has left.
+ * The two are different credits, and the person pressing the button has to be able to see which one
+ * they are about to give.
+ *
+ * The cap is the core's ROOM: what the invoice has left to credit, BEFORE tax, and the same room with
+ * tax. The balance with tax is a different number (what is owed, not what may be credited) and it was
+ * the wrong one on a paid invoice, which has no balance and still has room. Null means the core has
+ * not answered yet, and the desk then says no figure rather than guess one.
+ */
+export function creditTargetWords(
+  invoice: { invoice_no: string } | null,
+  quote: { remainingSubtotalCents: number; remainingTotalCents: number } | null,
+): string {
+  if (invoice === null) {
+    return "On the account: this credit lowers what this customer owes on their account. It does not change any open invoice.";
+  }
+  if (quote === null) {
+    return `Against invoice ${invoice.invoice_no}: this credit lowers what is owed on that invoice.`;
+  }
+  return `Against invoice ${invoice.invoice_no}: this credit lowers what is owed on that invoice, up to ${formatMoney(quote.remainingSubtotalCents)} before tax (${formatMoney(quote.remainingTotalCents)} with tax).`;
+}
+
+/**
+ * What the approval rail will do to this credit, for the person about to press.
+ *
+ * The threshold is the branch's own (gl_policy.je_approval_threshold_cents), read the way the route
+ * reads it: the branch's row over the org default. Null means the desk could not read it, and zero
+ * is gl's "no rail": either way the desk says nothing about approval rather than guess at a number.
+ *
+ * The route compares the credit's TOTAL, tax included, with the threshold; the desk compares the
+ * AMOUNT it was given. The sentence is true in both directions: an amount at or over the threshold
+ * always waits (a total is never smaller than its amount), and the sentence about what waits says
+ * "tax included", so a credit that only crosses the threshold once its tax is added is named too.
+ */
+export function creditApprovalWords(thresholdCents: number | null, amountCents: number | null): string {
+  if (thresholdCents === null || thresholdCents <= 0) return "";
+  const at = formatMoney(thresholdCents);
+  if (amountCents !== null && amountCents >= thresholdCents) {
+    return `This credit is at or over ${at}, so it waits for a second pair of eyes. It moves no money until it is approved.`;
+  }
+  return `A credit of ${at} or more, tax included, waits for a second pair of eyes. It moves no money until it is approved.`;
+}
+
 export function validatePromise(input: { amountText: string; date: string; by: string; note: string; balanceCents: number }): PromiseCheck {
   if (input.amountText.trim() === "") return { ok: false, words: "Enter the amount promised, such as 100.00." };
   const cents = parseAmountToCents(input.amountText);
