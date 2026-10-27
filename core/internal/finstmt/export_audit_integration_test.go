@@ -35,6 +35,10 @@ func TestIntegration_Finstmt_ExportAuditRowThroughTheRealRecorder(t *testing.T) 
 		WithAudit(audit.NewService(audit.NewRepository(pool), nil))
 	h := NewHandler(svc, slog.New(slog.DiscardHandler))
 
+	var before int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'FINSTMT_EXPORT'`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/finstmt/income-statement?year=2026&format=csv", nil).
 		WithContext(identity.ContextWithStaffUserID(ctx, user))
 	rec := httptest.NewRecorder()
@@ -47,8 +51,8 @@ func TestIntegration_Finstmt_ExportAuditRowThroughTheRealRecorder(t *testing.T) 
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'FINSTMT_EXPORT'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("audit_log holds %d FINSTMT_EXPORT rows after the export, want 1", n)
+	if n != before+1 {
+		t.Fatalf("audit_log holds %d FINSTMT_EXPORT rows after the export (before %d), want exactly one more", n, before)
 	}
 	var entityID, report, format, actor string
 	if err := pool.QueryRow(ctx,
