@@ -538,29 +538,103 @@ type BillingDisputeView struct {
 }
 
 type BillingInvoiceDetail struct {
-	Id            string                 `json:"id"`
-	InvoiceNo     string                 `json:"invoice_no"`
-	DocType       string                 `json:"doc_type"`
-	StoredStatus  string                 `json:"stored_status"`
-	Status        string                 `json:"status"`
-	DaysOverdue   *int32                 `json:"days_overdue,omitempty"`
-	IssueDate     time.Time              `json:"issue_date"`
-	DueDate       time.Time              `json:"due_date"`
-	BranchId      string                 `json:"branch_id"`
-	OrderId       *string                `json:"order_id,omitempty"`
-	OrderNo       *string                `json:"order_no,omitempty"`
-	CustomerPo    *string                `json:"customer_po,omitempty"`
-	Salesperson   *string                `json:"salesperson,omitempty"`
-	Customer      BillingCustomerBlock   `json:"customer"`
-	Lines         []BillingDetailLine    `json:"lines"`
-	Totals        BillingTotals          `json:"totals"`
-	Proof         *BillingProof          `json:"proof,omitempty"`
-	Activity      []BillingActivityEntry `json:"activity"`
-	Promise       *BillingPromiseView    `json:"promise,omitempty"`
-	Dispute       *BillingDisputeView    `json:"dispute,omitempty"`
-	ReminderTones []string               `json:"reminder_tones"`
-	LastContactAt *time.Time             `json:"last_contact_at,omitempty"`
-	AsOf          time.Time              `json:"as_of"`
+	Id                 string                          `json:"id"`
+	InvoiceNo          string                          `json:"invoice_no"`
+	DocType            string                          `json:"doc_type"`
+	StoredStatus       string                          `json:"stored_status"`
+	Status             string                          `json:"status"`
+	DaysOverdue        *int32                          `json:"days_overdue,omitempty"`
+	IssueDate          time.Time                       `json:"issue_date"`
+	DueDate            time.Time                       `json:"due_date"`
+	BranchId           string                          `json:"branch_id"`
+	OrderId            *string                         `json:"order_id,omitempty"`
+	OrderNo            *string                         `json:"order_no,omitempty"`
+	CustomerPo         *string                         `json:"customer_po,omitempty"`
+	Salesperson        *string                         `json:"salesperson,omitempty"`
+	Customer           BillingCustomerBlock            `json:"customer"`
+	Lines              []BillingDetailLine             `json:"lines"`
+	Totals             BillingTotals                   `json:"totals"`
+	Proof              *BillingProof                   `json:"proof,omitempty"`
+	Activity           []BillingActivityEntry          `json:"activity"`
+	Promise            *BillingPromiseView             `json:"promise,omitempty"`
+	Dispute            *BillingDisputeView             `json:"dispute,omitempty"`
+	ReminderTones      []string                        `json:"reminder_tones"`
+	LastContactAt      *time.Time                      `json:"last_contact_at,omitempty"`
+	OpenCredits        *[]BillingOpenCreditSummary     `json:"open_credits,omitempty"`
+	CreditApplications *[]BillingCreditApplicationView `json:"credit_applications,omitempty"`
+	AsOf               time.Time                       `json:"as_of"`
+}
+
+type BillingOpenCreditSummary struct {
+	CreditKind  string    `json:"credit_kind"`
+	CreditId    string    `json:"credit_id"`
+	Reference   string    `json:"reference"`
+	Memo        *string   `json:"memo,omitempty"`
+	IssuedAt    time.Time `json:"issued_at"`
+	AmountCents int64     `json:"amount_cents"`
+	OpenCents   int64     `json:"open_cents"`
+}
+
+type BillingCreditApplicationView struct {
+	ApplicationId   string  `json:"application_id"`
+	CreditKind      string  `json:"credit_kind"`
+	CreditId        string  `json:"credit_id"`
+	CreditReference *string `json:"credit_reference,omitempty"`
+	AmountCents     int64   `json:"amount_cents"`
+	Reason          string  `json:"reason"`
+	AppliedBy       *string `json:"applied_by,omitempty"`
+	AppliedAt       string  `json:"applied_at"`
+	Reversed        bool    `json:"reversed"`
+	ReversalReason  *string `json:"reversal_reason,omitempty"`
+	ReversedBy      *string `json:"reversed_by,omitempty"`
+	ReversedAt      *string `json:"reversed_at,omitempty"`
+}
+
+type BillingApplyCreditInput struct {
+	CustomerId     string `json:"customer_id"`
+	CreditKind     string `json:"credit_kind"`
+	CreditId       string `json:"credit_id"`
+	InvoiceId      string `json:"invoice_id"`
+	AmountCents    int64  `json:"amount_cents"`
+	Reason         string `json:"reason"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type BillingCreditApplicationLine struct {
+	InvoiceId         string `json:"invoice_id"`
+	InvoiceNo         string `json:"invoice_no"`
+	AppliedCents      int64  `json:"applied_cents"`
+	Outcome           string `json:"outcome"`
+	BalanceAfterCents int64  `json:"balance_after_cents"`
+}
+
+type BillingCreditApplication struct {
+	ApplicationId        string                         `json:"application_id"`
+	CreditKind           string                         `json:"credit_kind"`
+	CreditId             string                         `json:"credit_id"`
+	InvoiceId            string                         `json:"invoice_id"`
+	InvoiceNo            string                         `json:"invoice_no"`
+	AppliedCents         int64                          `json:"applied_cents"`
+	CreditOpenAfterCents int64                          `json:"credit_open_after_cents"`
+	Lines                []BillingCreditApplicationLine `json:"lines"`
+	Replayed             bool                           `json:"replayed"`
+}
+
+type BillingReverseCreditApplicationInput struct {
+	InvoiceId     string `json:"invoice_id"`
+	ApplicationId string `json:"application_id"`
+	Reason        string `json:"reason"`
+}
+
+type BillingCreditApplicationReversed struct {
+	ApplicationId            string                         `json:"application_id"`
+	InvoiceId                string                         `json:"invoice_id"`
+	InvoiceNo                string                         `json:"invoice_no"`
+	RestoredCents            int64                          `json:"restored_cents"`
+	InvoiceBalanceAfterCents int64                          `json:"invoice_balance_after_cents"`
+	CreditOpenAfterCents     int64                          `json:"credit_open_after_cents"`
+	Lines                    []BillingCreditApplicationLine `json:"lines"`
+	Replayed                 bool                           `json:"replayed"`
 }
 
 type BillingARWorklistRow struct {
