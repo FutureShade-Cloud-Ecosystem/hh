@@ -708,13 +708,30 @@ test("set the starting point lists the ledger's bank entries to tick, shows the 
   // The result before saving: the book balance, the statement balance, and nothing ticked yet.
   await page.locator("[data-field='br-cutover-balance']").fill("25,000.00");
   const result = panel.locator("[data-cutover-result]");
+  await expect(result).toContainText("What saving will record");
   await expect(result.locator("[data-cutover-book]")).toHaveText("$25,025.00");
   await expect(result.locator("[data-cutover-statement]")).toHaveText("$25,000.00");
   await expect(result).toContainText("Nothing is ticked as still outstanding");
-  // Ticking an entry names it in the result.
-  panel.locator("[data-cutover-entries] li").filter({ hasText: "Till over/short" }).locator("[data-cutover-tick]").check();
+  // The gap is its own line, the server's figure: $25.00 apart while nothing is ticked.
+  await expect(result.locator("[data-cutover-difference]")).toContainText("$25.00");
+  // Save is refused in words and sends nothing while the difference stands.
+  const sent: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "POST" && r.url().includes("/cutover")) sent.push(r.url());
+  });
+  await panel.getByRole("button", { name: "Save the starting point" }).click();
+  await expect(page.locator("[data-error]")).toContainText("The statement and the book differ by $25.00; tick the items still outstanding at cut over, or check the date and balance");
+  expect(sent).toEqual([]);
+  // Each entry is one row: the checkbox leads it as its label, with the date, the memo and the amount beside it.
+  const tillRow = panel.locator("[data-cutover-entries] li").filter({ hasText: "Till over/short" });
+  const rowLabel = tillRow.locator("label");
+  await expect(rowLabel).toContainText("Till over/short");
+  await expect(rowLabel).toContainText("$25.00");
+  await expect(rowLabel.locator("[data-cutover-tick]")).toHaveCount(1);
+  await rowLabel.locator("[data-cutover-tick]").check();
   await expect(result.locator("[data-cutover-ticked]")).toContainText("Till over/short");
   await expect(result.locator("[data-cutover-ticked]")).toContainText("$25.00");
+  await expect(result.locator("[data-cutover-difference]")).toContainText("reconciles");
   await panel.getByRole("button", { name: "Save the starting point" }).click();
   await expect(page.locator("[data-notice]")).toContainText("The starting point is recorded");
   const recorded = panel.locator("[data-cutover-recorded]");
@@ -731,7 +748,7 @@ test("once a month has signed off the recorded starting point is shown and canno
   await openBank(page, request);
   const panel = page.locator("[data-cutover]");
   await page.locator("[data-field='br-cutover-date']").fill(cutoverDay().iso);
-  await page.locator("[data-field='br-cutover-balance']").fill("25,025.75");
+  await page.locator("[data-field='br-cutover-balance']").fill("25,025.00");
   await panel.getByRole("button", { name: "Save the starting point" }).click();
   await expect(page.locator("[data-notice]")).toContainText("The starting point is recorded");
   // Sign the prior month off, exactly as the sign off leg walks it.
@@ -763,11 +780,46 @@ test("once a month has signed off the recorded starting point is shown and canno
   // The recorded point stands, and the form is gone: nothing on the screen can change it.
   const recorded = page.locator("[data-cutover-recorded]");
   await expect(recorded).toContainText(cutoverDay().words);
-  await expect(recorded).toContainText("$25,025.75");
+  await expect(recorded).toContainText("$25,025.00");
   await expect(page.locator("[data-cutover-form]")).toHaveCount(0);
+  await expect(page.locator("[data-cutover]").getByRole("button", { name: "Save the starting point" })).toHaveCount(0);
   // A reload shows the same recorded point, still unchangeable.
   await page.reload();
   await page.getByRole("button", { name: "Bank reconciliation", exact: true }).click();
   await expect(page.locator("[data-cutover-recorded]")).toContainText(cutoverDay().words);
   await expect(page.locator("[data-cutover-form]")).toHaveCount(0);
+});
+
+test("with a month signed off and no starting point recorded, the section says it can no longer be set and offers no save", async ({ page, request }) => {
+  await openBank(page, request);
+  // Sign the prior month off without recording any starting point.
+  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);
+  await page.getByRole("button", { name: "Open month" }).click();
+  await tab(page, "match");
+  await page.getByRole("button", { name: "Run auto match" }).click();
+  for (const [text, how] of [
+    ["WIRE FROM CONTRACTOR", "payment"],
+    ["CHEQUE DEPOSIT", "cheque"],
+    ["MONTHLY SERVICE FEE", "fee"],
+  ] as const) {
+    await chooseLine(page, text);
+    const linePanel = page.locator("[data-line-panel]");
+    if (how === "payment") {
+      await linePanel.getByRole("textbox", { name: "Payment id" }).fill(WIRE_PAYMENT);
+    } else {
+      await linePanel.getByRole("radio", { name: /Journal/ }).click();
+      await linePanel.getByRole("combobox", { name: "Journal" }).selectOption({ label: how === "fee" ? FEE_JOURNAL : CHEQUE_JOURNAL });
+    }
+    await linePanel.getByRole("button", { name: "Match line" }).click();
+    await expect(page.locator("[data-notice]")).toContainText("Matched.");
+  }
+  await tab(page, "accounts");
+  await page.locator("[data-recon-id]").getByRole("button", { name: "Refresh figures" }).click();
+  await page.locator("[data-recon-id]").getByRole("button", { name: "Sign off" }).click();
+  await page.getByRole("button", { name: "Confirm sign off" }).click();
+  await expect(page.locator("[data-recon-id]")).toContainText("Signed off");
+  const section = page.locator("[data-cutover]");
+  await expect(section.locator("[data-cutover-closed]")).toContainText("can no longer be set");
+  await expect(section.locator("[data-cutover-form]")).toHaveCount(0);
+  await expect(section.getByRole("button", { name: "Save the starting point" })).toHaveCount(0);
 });
