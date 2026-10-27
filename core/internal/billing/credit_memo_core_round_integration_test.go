@@ -11,7 +11,8 @@ package billing
 //     through it (testkit.NewInsertPark, a BEFORE INSERT park, never an AFTER trigger).
 //   - THE FENCE: an invoice at a branch the caller does not reach, and one at a branch of another
 //     org, answer exactly as a missing invoice answers; a body branch out of reach, and one of
-//     another org, are refused.
+//     another org, are refused. A customer whose home branch is another org's is refused too (the
+//     review's P3), through the owning modules' real repositories.
 //   - THE KEY IS BOUND TO ITS REQUEST: the same idempotency key with a different body is a conflict,
 //     never somebody else's credit read back as issued.
 //   - THE APPROVAL RE-CHECKS THE RIGHT RULE: a credit of a PAID invoice is approvable (the old
@@ -26,6 +27,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
@@ -319,6 +322,39 @@ func TestIntegration_CreditMemoRound_ABranchOfAnotherOrgIsRefused(t *testing.T) 
 	}, cmNorthGlobalCaller())
 	if err == nil {
 		t.Fatal("fw1-12a core red: a standalone credit at another org's branch was issued")
+	}
+	var memos int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM invoices WHERE doc_type = 'CREDIT_MEMO' AND customer_id = $1`, cust).Scan(&memos); err != nil {
+		t.Fatalf("count the credit memos: %v", err)
+	}
+	if memos != 0 {
+		t.Fatalf("the other org's credit wrote %d documents, want none", memos)
+	}
+}
+
+// TestIntegration_CreditMemoRound_ACustomerOfAnotherOrgIsRefused is the fence's org line on the
+// customer: an account whose home branch is another org's is refused even when the credit is filed
+// at the caller's own branch, because the credit's subledger row would land in another org's books.
+// The fence's two reads are the REAL owning modules' repositories, as newCreditMemoHandler wires
+// them, so the leg runs through the seam and not a fixture map.
+func TestIntegration_CreditMemoRound_ACustomerOfAnotherOrgIsRefused(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	tag := ns(t)
+	plantCreditMemoOrgs(t, pool)
+	cust := seedCustomerAt(t, pool, tag, cmSouthBranchID)
+	svc := NewCreditMemoService(NewInvoiceWriter(pool), slog.Default()).
+		WithPostingRules(creditMemoFixedRules{accounts: creditMemoRules}).
+		WithThreshold(creditMemoFixedThreshold{cents: 0}).
+		WithBranchOrg(branches.NewRepository(pool)).
+		WithCustomerHome(customer.NewRepository(pool))
+
+	_, err := svc.Issue(ctx, CreditMemoRouteRequest{
+		CustomerID: cust, BranchID: trentonBranch,
+		AmountCents: 10_000, Reason: "Goodwill",
+	}, cmTrentonOnlyCaller())
+	if err == nil || !strings.Contains(err.Error(), "that customer is not in your organization") {
+		t.Fatalf("a customer of another org answered %v, want the org refusal", err)
 	}
 	var memos int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM invoices WHERE doc_type = 'CREDIT_MEMO' AND customer_id = $1`, cust).Scan(&memos); err != nil {
