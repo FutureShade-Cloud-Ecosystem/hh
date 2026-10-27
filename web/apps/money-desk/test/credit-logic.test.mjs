@@ -12,16 +12,31 @@ import assert from "node:assert/strict";
 import { creditApprovalWords, creditTargetWords } from "../src/ar/ar-logic.ts";
 
 test("the account credit says what it does to the account, and names no invoice", () => {
-  const words = creditTargetWords(null);
+  const words = creditTargetWords(null, null);
   assert.match(words, /On the account/);
   assert.match(words, /lowers what this customer owes/);
   assert.doesNotMatch(words, /INV-/);
 });
 
-test("an invoice credit names that invoice and the cap it has left", () => {
-  const words = creditTargetWords({ invoice_no: "INV-1001", balance_cents: 482500 });
+test("an invoice credit names that invoice and the ROOM it has left, before tax and with tax", () => {
+  // The room is the core's: what the invoice has left to credit, before tax, and the same room with
+  // tax. The balance with tax ($4,825.00) is what is OWED, not what may be credited: it was the
+  // figure the desk used to show, and on a paid invoice it was $0.00 while the invoice still had room.
+  const words = creditTargetWords(
+    { invoice_no: "INV-1001", balance_cents: 482500 },
+    { remainingSubtotalCents: 426991, remainingTotalCents: 482500 },
+  );
   assert.match(words, /Against invoice INV-1001/);
-  assert.match(words, /up to \$4,825\.00/);
+  assert.match(words, /up to \$4,269\.91 before tax/);
+  assert.match(words, /\$4,825\.00 with tax/);
+  assert.doesNotMatch(words, /up to \$4,825\.00\b/);
+});
+
+test("an invoice credit whose room the core has not answered names no figure", () => {
+  // The desk never guesses a cap: an unanswered quote says no figure rather than a wrong one.
+  const words = creditTargetWords({ invoice_no: "INV-1001" }, null);
+  assert.match(words, /Against invoice INV-1001/);
+  assert.doesNotMatch(words, /up to \$/);
 });
 
 test("a credit at or over the threshold says it waits for a second pair of eyes and moves no money", () => {

@@ -42,7 +42,7 @@ test("the form shows its labels, and says what the credit does, before the press
   await expect(form.locator("[data-credit-target]")).toContainText("lowers what this customer owes");
 });
 
-test("a credit against one invoice names the invoice and the cap it has left", async ({ page, request }) => {
+test("a credit against one invoice names the invoice and the ROOM it has left", async ({ page, request }) => {
   await openDesk(page, request);
   await openAccount(page, "Granite Edge Landscaping");
 
@@ -50,9 +50,53 @@ test("a credit against one invoice names the invoice and the cap it has left", a
   const form = page.locator("[data-credit-form]");
   await expect(form).toBeVisible();
   await expect(form.locator("[data-credit-target]")).toContainText("Against invoice INV-1001");
-  await expect(form.locator("[data-credit-target]")).toContainText("up to $4,825.00");
+  // The room is what the invoice has left to CREDIT, before tax, and the same room with tax. The
+  // balance with tax ($4,825.00) is what is OWED, not what may be credited: the core takes a pre tax
+  // amount, capped by the remaining subtotal, and a typed $4,825.00 would be refused.
+  await expect(form.locator("[data-credit-target]")).toContainText("up to $4,269.91 before tax");
+  await expect(form.locator("[data-credit-target]")).toContainText("$4,825.00 with tax");
   // The cap is on the amount label too, where the amount is typed.
-  await expect(form.locator("[data-credit-amount-label]")).toContainText("up to $4,825.00");
+  await expect(form.locator("[data-credit-amount-label]")).toContainText("up to $4,269.91 before tax");
+});
+
+test("the form says what the credit comes to with tax, as the amount is typed", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping");
+
+  await page.locator("[data-invoice-row] button[data-action='credit-start']").first().click();
+  const form = page.locator("[data-credit-form]");
+  await expect(form).toBeVisible();
+
+  // The desk never works out a tax: it asks the core, and shows what the core says.
+  await page.locator("[data-field='credit-amount']").fill("100.00");
+  await expect(form.locator("[data-credit-amount-words]")).toContainText("$100.00");
+  await expect(form.locator("[data-credit-amount-words]")).toContainText("with tax");
+  await expect(form.locator("[data-credit-amount-words]")).toContainText("$113.00");
+
+  // An amount over the room is refused in the core's own words, and those words name the cap.
+  await page.locator("[data-field='credit-amount']").fill("9999.00");
+  await expect(form.locator("[data-credit-quote-error]")).toContainText("has left to credit");
+  await expect(form.locator("[data-credit-quote-error]")).toContainText("$4,269.91");
+});
+
+test("a paid invoice shows its real cap, not $0.00", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping");
+
+  // The paid invoice is on the account with no balance due. What has been PAID is not what has been
+  // CREDITED: the invoice still has room, and the core issues a credit against it.
+  const paid = page.locator("[data-invoice-row]", { hasText: "INV-1010" });
+  await expect(paid).toBeVisible();
+  await paid.locator("button[data-action='credit-start']").click();
+  const form = page.locator("[data-credit-form]");
+  await expect(form).toBeVisible();
+  await expect(form.locator("[data-credit-target]")).toContainText("Against invoice INV-1010");
+  await expect(form.locator("[data-credit-target]")).toContainText("up to $2,049.91 before tax");
+  await expect(form.locator("[data-credit-target]")).not.toContainText("$0.00");
+  // The cap on the amount label is the room too: the balance of a paid invoice is $0.00, and $0.00
+  // is not what may be credited.
+  await expect(form.locator("[data-credit-amount-label]")).toContainText("up to $2,049.91 before tax");
+  await expect(form.locator("[data-credit-amount-label]")).not.toContainText("$0.00");
 });
 
 test("a credit at or over the approval threshold says it waits and moves no money", async ({ page, request }) => {

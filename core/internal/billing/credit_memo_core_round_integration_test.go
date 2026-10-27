@@ -337,6 +337,10 @@ func TestIntegration_CreditMemoRound_ABranchOfAnotherOrgIsRefused(t *testing.T) 
 // at the caller's own branch, because the credit's subledger row would land in another org's books.
 // The fence's two reads are the REAL owning modules' repositories, as newCreditMemoHandler wires
 // them, so the leg runs through the seam and not a fixture map.
+//
+// The answer is THE customer answer (UX-89, FW1-12 round 3): an account of another org answers
+// exactly as an account the caller cannot reach, and as an id that is no account, does. The door
+// says "customer not found" and nothing about orgs, so it is no existence oracle.
 func TestIntegration_CreditMemoRound_ACustomerOfAnotherOrgIsRefused(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
@@ -353,8 +357,8 @@ func TestIntegration_CreditMemoRound_ACustomerOfAnotherOrgIsRefused(t *testing.T
 		CustomerID: cust, BranchID: trentonBranch,
 		AmountCents: 10_000, Reason: "Goodwill",
 	}, cmTrentonOnlyCaller())
-	if err == nil || !strings.Contains(err.Error(), "that customer is not in your organization") {
-		t.Fatalf("a customer of another org answered %v, want the org refusal", err)
+	if err == nil || !cmHouseAnswerIs(err) {
+		t.Fatalf("a customer of another org answered %v, want the house's %q", err, "customer not found")
 	}
 	var memos int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM invoices WHERE doc_type = 'CREDIT_MEMO' AND customer_id = $1`, cust).Scan(&memos); err != nil {
