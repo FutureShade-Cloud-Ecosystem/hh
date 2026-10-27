@@ -166,6 +166,11 @@ func (s *Service) ClosePeriod(ctx context.Context, id, reason string) (Period, e
 	if err != nil {
 		return Period{}, err
 	}
+	// Round 5 (S3's P2): the fence runs BEFORE the pre flight, so a refused caller never reads the
+	// company's figures in the refusal. A period is company wide, its close a dealer wide act.
+	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
+		return Period{}, err
+	}
 	// The pre flight reads its instants before the close's own write, unlocked; a posting landing
 	// between the two follows 612's late posted rule, which is acceptable and stated (round 4).
 	if fails := s.runClosePreFlight(ctx, p.Year, p.Month); len(fails) > 0 {
@@ -174,10 +179,6 @@ func (s *Service) ClosePeriod(ctx context.Context, id, reason string) (Period, e
 			caveat = " (the stock tie reads today's stock value)"
 		}
 		return Period{}, clientErr(409, "gl: period close pre flight failed%s: %s", caveat, strings.Join(fails, "; "))
-	}
-	// Round 3: a period is company wide, its close a dealer wide act.
-	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
-		return Period{}, err
 	}
 	if reason == "" {
 		reason = "period close"
@@ -253,11 +254,23 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
 		return YearCloseResult{}, err
 	}
-	// Round 4 (S3's P1): a second year end for a year that already has CLOSING journals is a no op
-	// answering the first run's result, never a second posting.
-	if ids, net, err := s.store.ClosingJournalsForYear(ctx, year); err != nil {
+	// Round 4 (S3's P1), round 5 form: the once only check, every branch's closing journal and the
+	// periods' sealing run under ONE transaction holding a transaction scoped advisory lock on the
+	// year, so two presses at once queue and the second answers the first run's result; a failure
+	// mid close leaves nothing behind, never a half closed year.
+	tx, err := s.store.BeginTx(ctx)
+	if err != nil {
 		return YearCloseResult{}, err
-	} else if len(ids) > 0 {
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('gl:year-end:' || $1::int))`, year); err != nil {
+		return YearCloseResult{}, fmt.Errorf("gl: lock the year end: %w", err)
+	}
+	ids, net, err := s.store.ClosingJournalsForYearTx(ctx, tx, year)
+	if err != nil {
+		return YearCloseResult{}, err
+	}
+	if len(ids) > 0 {
 		return YearCloseResult{FiscalYear: year, ClosingJournalIDs: ids, ClosingJournalID: firstID(ids), NetIncomeCents: net, PeriodsClosed: true}, nil
 	}
 	// FW1-09b, the lead's Ask 2: the close is refused until the year's last day has passed in the
@@ -338,7 +351,7 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 		// Round 4 (S3's P1): the closing journal posts into the closed year's own December whatever its
 		// status, through the dedicated insert that resolves the period explicitly. The late posted rule
 		// never touches it.
-		id, err := s.store.InsertClosingJournal(ctx, draft, year)
+		id, err := s.store.InsertClosingJournalTx(ctx, tx, draft, year)
 		if err != nil {
 			return YearCloseResult{}, err
 		}
@@ -348,8 +361,11 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	if len(res.ClosingJournalIDs) == 1 {
 		res.ClosingJournalID = res.ClosingJournalIDs[0]
 	}
-	if err := s.store.ClosePeriodsForYear(ctx, year, caller.UserID, reason); err != nil {
+	if err := s.store.ClosePeriodsForYearTx(ctx, tx, year, caller.UserID, reason); err != nil {
 		return YearCloseResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return YearCloseResult{}, fmt.Errorf("gl: commit the year end: %w", err)
 	}
 	res.PeriodsClosed = true
 	return res, nil

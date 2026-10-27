@@ -64,6 +64,14 @@ type glStore interface {
 	// HouseYearEnded answers whether the year's last day has passed in the dealer's zone: the year end
 	// close is refused until it has (FW1-09b, the lead's Ask 2).
 	HouseYearEnded(ctx context.Context, year int, now time.Time) (bool, error)
+	// BeginTx opens the year end's one transaction (round 5, S3's P1); the fake ignores it.
+	BeginTx(ctx context.Context) (pgx.Tx, error)
+	// ClosingJournalsForYearTx is the once only check read under the year end's lock.
+	ClosingJournalsForYearTx(ctx context.Context, tx pgx.Tx, year int) ([]string, int64, error)
+	// InsertClosingJournalTx posts a closing journal inside the year end's transaction.
+	InsertClosingJournalTx(ctx context.Context, tx pgx.Tx, d journalDraft, year int) (string, error)
+	// ClosePeriodsForYearTx seals the year's periods inside the year end's transaction.
+	ClosePeriodsForYearTx(ctx context.Context, tx pgx.Tx, year int, actorID, reason string) error
 	// ClosingJournalsForYear answers a year's CLOSING journals (ids in entry order, the net income they
 	// carried to 3900): the year end's once only rule answers the first run with these (round 4).
 	ClosingJournalsForYear(ctx context.Context, year int) ([]string, int64, error)

@@ -1017,6 +1017,17 @@ func (r *Repository) EnsureNextFiscalYear(ctx context.Context, now time.Time) (i
 	return target, nil
 }
 
+// pgxTx is the queryer half of pgx.Tx, wide enough for the year end's transaction scoped reads; a
+// *pgxpool.Pool satisfies it too, which the unlocked wrapper passes.
+// BeginTx opens the year end's one transaction (round 5, S3's P1): the once only check, the closing
+// journals and the periods' sealing commit or roll back together.
+func (r *Repository) BeginTx(ctx context.Context) (pgx.Tx, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	return r.pool.Begin(ctx)
+}
+
 // ClosingJournalsForYear answers a year's CLOSING journals: their ids in entry order and the net
 // income they carried to 3900 (the 3900 legs' credit minus debit). The year end's once only rule
 // answers the first run with these (round 4).
@@ -1024,7 +1035,18 @@ func (r *Repository) ClosingJournalsForYear(ctx context.Context, year int) ([]st
 	if r.pool == nil {
 		return nil, 0, errNoDB
 	}
-	rows, err := r.pool.Query(ctx,
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("gl: begin closing journals read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	return r.ClosingJournalsForYearTx(ctx, tx, year)
+}
+
+// ClosingJournalsForYearTx is ClosingJournalsForYear inside the caller's transaction (round 5, S3's
+// P1): the once only check reads under the year end's lock, never before it.
+func (r *Repository) ClosingJournalsForYearTx(ctx context.Context, tx pgx.Tx, year int) ([]string, int64, error) {
+	rows, err := tx.Query(ctx,
 		`SELECT id::text FROM gl_journals WHERE fiscal_year = $1 AND source = 'CLOSING' ORDER BY entry_no`, year)
 	if err != nil {
 		return nil, 0, fmt.Errorf("gl: closing journals for year: %w", err)
@@ -1042,7 +1064,7 @@ func (r *Repository) ClosingJournalsForYear(ctx context.Context, year int) ([]st
 		return nil, 0, err
 	}
 	var net int64
-	if err := r.pool.QueryRow(ctx,
+	if err := tx.QueryRow(ctx,
 		`SELECT COALESCE(SUM(COALESCE(l.credit_cents,0) - COALESCE(l.debit_cents,0)), 0)
 		 FROM gl_journal_lines l
 		 JOIN gl_journals j ON j.id = l.journal_id
@@ -1066,6 +1088,20 @@ func (r *Repository) InsertClosingJournal(ctx context.Context, d journalDraft, y
 		return "", fmt.Errorf("gl: begin closing insert: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	id, err := r.InsertClosingJournalTx(ctx, tx, d, year)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("gl: commit closing insert: %w", err)
+	}
+	return id, nil
+}
+
+// InsertClosingJournalTx is InsertClosingJournal inside the CALLER's transaction (round 5, S3's P1:
+// the whole year end runs under one transaction), so the closing journal commits or rolls back with
+// the periods' sealing.
+func (r *Repository) InsertClosingJournalTx(ctx context.Context, tx pgx.Tx, d journalDraft, year int) (string, error) {
 	if err := r.ensureFiscalYearTx(ctx, tx, year); err != nil {
 		return "", err
 	}
@@ -1089,13 +1125,7 @@ func (r *Repository) InsertClosingJournal(ctx context.Context, d journalDraft, y
 		lineAcctIDs = append(lineAcctIDs, acctID)
 	}
 	id, _, err := r.insertJournalRowsTx(ctx, tx, d, periodYear, periodID, lineAcctIDs, func() (string, bool) { return "", false })
-	if err != nil {
-		return "", err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return "", fmt.Errorf("gl: commit closing insert: %w", err)
-	}
-	return id, nil
+	return id, err
 }
 
 // BusinessZone answers the dealer's business zone, the zone the posting path
@@ -1178,6 +1208,18 @@ func (r *Repository) ClosePeriodsForYear(ctx context.Context, year int, actorID,
 		return fmt.Errorf("gl: begin close-year: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := r.ClosePeriodsForYearTx(ctx, tx, year, actorID, reason); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("gl: commit close-year: %w", err)
+	}
+	return nil
+}
+
+// ClosePeriodsForYearTx is ClosePeriodsForYear inside the caller's transaction (round 5, S3's P1):
+// the periods seal with the closing journals or not at all.
+func (r *Repository) ClosePeriodsForYearTx(ctx context.Context, tx pgx.Tx, year int, actorID, reason string) error {
 	rows, err := tx.Query(ctx,
 		`UPDATE fiscal_periods SET status = 'CLOSED', closed_at = now(), closed_by = $2, updated_at = now()
 		 WHERE year = $1 AND status = 'OPEN' RETURNING id::text`, year, nullStr(actorID))
@@ -1202,7 +1244,7 @@ func (r *Repository) ClosePeriodsForYear(ctx context.Context, year int, actorID,
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func insertOverride(ctx context.Context, tx pgx.Tx, periodID, action, reason, actorID string) error {

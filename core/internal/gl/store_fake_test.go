@@ -266,6 +266,20 @@ func (f *fakeStore) HouseYearEnded(_ context.Context, _ int, _ time.Time) (bool,
 	return true, nil
 }
 
+func (f *fakeStore) BeginTx(context.Context) (pgx.Tx, error) { return nil, nil }
+
+func (f *fakeStore) ClosingJournalsForYearTx(ctx context.Context, _ pgx.Tx, year int) ([]string, int64, error) {
+	return f.ClosingJournalsForYear(ctx, year)
+}
+
+func (f *fakeStore) InsertClosingJournalTx(ctx context.Context, _ pgx.Tx, d journalDraft, year int) (string, error) {
+	return f.InsertClosingJournal(ctx, d, year)
+}
+
+func (f *fakeStore) ClosePeriodsForYearTx(ctx context.Context, _ pgx.Tx, year int, actorID, reason string) error {
+	return f.ClosePeriodsForYear(ctx, year, actorID, reason)
+}
+
 func (f *fakeStore) ClosingJournalsForYear(_ context.Context, _ int) ([]string, int64, error) {
 	return f.closingIDs, 0, nil
 }

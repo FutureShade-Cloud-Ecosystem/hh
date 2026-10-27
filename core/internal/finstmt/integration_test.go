@@ -206,6 +206,9 @@ func TestIntegration_AC2_BalanceSheetInvariant(t *testing.T) {
 	svc := realSvc(pool)
 	const yr = 2102
 	resetYear(t, pool, yr)
+	// Round 5 (S3's P1): the year's periods exist BEFORE the baseline is read, so the carried
+	// history (0439) stands behind both reads equally and the proof stays the fixture's own delta.
+	ensureStmtPeriods(t, pool, yr)
 
 	// 0439: the balance sheet carries history forward, so the year's totals stand on every year behind
 	// it, the seeded books included. The baseline is read BEFORE the fixture, and the proof is the
@@ -536,6 +539,9 @@ func TestIntegration_AC7_TrialBalanceInBalance(t *testing.T) {
 	svc := realSvc(pool)
 	const yr = 2107
 	resetYear(t, pool, yr)
+	// Round 5 (S3's P1): the year's periods exist BEFORE the baseline is read, so the carried
+	// history (0439) stands behind both reads equally and the proof stays the fixture's own delta.
+	ensureStmtPeriods(t, pool, yr)
 
 	// Round 4 (S3's P2): the trial balance's BALANCE accounts read inception to date, so the proof is
 	// the DELTA over the baseline this database already held (the seeded books and any earlier band's
@@ -595,6 +601,15 @@ func TestIntegration_AC7_TrialBalanceInBalance(t *testing.T) {
 	// (2) totals are equal
 	if rep.TotalDebitCents != rep.TotalCreditCents {
 		t.Fatalf("Σdebit %d != Σcredit %d", rep.TotalDebitCents, rep.TotalCreditCents)
+	}
+	// (2b) round 5 (S3's section 3): every row's balance is debit minus credit, the computed 3901
+	// line included, so the whole report's signed balances sum to zero.
+	var balanceSum int64
+	for _, r := range rep.Rows {
+		balanceSum += r.BalanceCents
+	}
+	if balanceSum != 0 {
+		t.Fatalf("Σbalance %d != 0 (the 3901 line's sign is off by twice its amount)", balanceSum)
 	}
 	// (3) the DELTAS equal the exact Σ of seeded (balanced) amounts, DRAFT excluded
 	if rep.TotalDebitCents-baseTotals[0] != expDebit {

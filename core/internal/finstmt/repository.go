@@ -75,11 +75,16 @@ func (r *Repository) UnclosedPriorEarnings(ctx context.Context, year int, branch
 		    AND ($2 = '' OR branch_id = $2::uuid)`, year, branchID).Scan(&priorNI); err != nil {
 		return 0, fmt.Errorf("finstmt: prior years' net income: %w", err)
 	}
+	// Round 5 (S3's P2): only closings of years BEFORE the reporting year stand behind it, the
+	// carried balance being cumulative: the latest carried year strictly before the report's year.
+	// A year's own closing must not read again as negative unclosed on its own statement.
 	var retained int64
 	if err := r.pool.QueryRow(ctx,
 		`SELECT COALESCE(SUM(amount_cents), 0)
 		   FROM v_balance_sheet
-		  WHERE fiscal_year = $1 AND account_code = '3900'
+		  WHERE fiscal_year = (SELECT COALESCE(MAX(fiscal_year), 0) FROM v_balance_sheet
+		                        WHERE fiscal_year < $1 AND ($2 = '' OR branch_id = $2::uuid))
+		    AND account_code = '3900'
 		    AND ($2 = '' OR branch_id = $2::uuid)`, year, branchID).Scan(&retained); err != nil {
 		return 0, fmt.Errorf("finstmt: carried retained earnings: %w", err)
 	}

@@ -129,12 +129,18 @@ UNION ALL
 SELECT '3901', 'Retained earnings to date (unclosed years)', 'EQUITY', 'CREDIT', y.year,
        CASE WHEN prior.amount < 0 THEN -prior.amount ELSE 0 END,
        CASE WHEN prior.amount > 0 THEN prior.amount ELSE 0 END,
-       prior.amount
+       -prior.amount
 FROM (SELECT DISTINCT year FROM fiscal_periods) y
 CROSS JOIN LATERAL (
+  -- Round 5 (S3's P2): only closings of years BEFORE the reporting year stand behind it, the
+  -- carried balance being cumulative, so the latest carried year strictly before y.year is the
+  -- right figure (a year's own closing must not read again as negative unclosed on its own
+  -- statement). Every row's balance is debit minus credit, so the computed credit figure lands
+  -- negated in balance_cents (S3's P1, the sign).
   SELECT COALESCE((SELECT SUM(CASE WHEN account_type = 'REVENUE' THEN amount_cents ELSE -amount_cents END)
                      FROM v_income_statement WHERE fiscal_year < y.year), 0)
        - COALESCE((SELECT SUM(amount_cents) FROM v_balance_sheet
-                   WHERE fiscal_year = y.year AND account_code = '3900'), 0) AS amount
+                   WHERE fiscal_year = (SELECT COALESCE(MAX(fiscal_year), 0) FROM v_balance_sheet WHERE fiscal_year < y.year)
+                     AND account_code = '3900'), 0) AS amount
 ) prior
 WHERE prior.amount <> 0;

@@ -72,14 +72,18 @@ func (s *Service) runClosePreFlight(ctx context.Context, year, month int) []stri
 		}
 	}
 	if s.strictPreFlight {
-		for unwired, name := range map[bool]string{
-			s.ar == nil:         "the AR tie check",
-			s.stockValue == nil: "the stock tie check",
-			s.queue == nil:      "the posting queue check",
-			s.drawers == nil:    "the open drawer check",
+		// A slice of pairs, not a map keyed on the bool: two unwired checks must both be named.
+		for _, check := range []struct {
+			wired bool
+			name  string
+		}{
+			{s.ar != nil, "the AR tie check"},
+			{s.stockValue != nil, "the stock tie check"},
+			{s.queue != nil, "the posting queue check"},
+			{s.drawers != nil, "the open drawer check"},
 		} {
-			if unwired {
-				fails = append(fails, name+" is not wired, so it cannot run")
+			if !check.wired {
+				fails = append(fails, check.name+" is not wired, so it cannot run")
 			}
 		}
 	}
