@@ -351,6 +351,38 @@ test("a reversed payment's held money is read, applied to an invoice, replayed o
   assert.ok(coreSource.includes("the money is held for the payment it reversed"));
 });
 
+test("a reversed payment's held money is paid out, never past what is held, replayed once, and the write off waits for a count", async () => {
+  await reset();
+  const inv = await invoiceOf("INV-1002");
+  const paid = await call("POST", `/api/v1/ar/register/invoices/${inv.id}/payments`, { method: "CHEQUE", amount_cents: 2500, reference: "r", idempotency_key: "po-1" });
+  const id = paid.json.payment_id;
+  const out = `/api/v1/ar/payments/${id}/payout`;
+  const body = (key, kind, cents, extra = {}) => ({ kind, amount_cents: cents, reason: "The customer asked for it back", idempotency_key: key, ...extra });
+  refused(await call("POST", out, body("po-k1", "BANK", 100, { reference: "CHQ 1" })), 409, "it has not been reversed");
+  assert.equal((await call("POST", `/api/v1/ar/payments/${id}/reverse`, { reason: "Keyed on the wrong account" })).status, 201);
+  refused(await call("POST", out, { ...body("po-k2", "BANK", 100, { reference: "CHQ 1" }), reason: " " }), 400, "payments: a reason is required");
+  refused(await call("POST", out, body("", "BANK", 100, { reference: "CHQ 1" })), 400, "paying out held money needs an idempotency key");
+  refused(await call("POST", out, body("po-k3", "CASHBACK", 100)), 400, "the kind must be DRAWER, BANK or WRITE_OFF");
+  refused(await call("POST", out, body("po-k4", "BANK", 100)), 400, "a bank pay out needs the cheque number or transfer reference");
+  refused(await call("POST", out, body("po-k5", "BANK", 2501, { reference: "CHQ 1" })), 409, "that is more than the payment still holds");
+  refused(await call("POST", out, body("po-k6", "WRITE_OFF", 100)), 409, "this payment was not rung through a till session, so there is no count to cover a write off");
+  const first = await call("POST", out, body("po-k7", "BANK", 1000, { reference: "CHQ 100245" }));
+  assert.equal(first.status, 201);
+  holds("PaymentsPayout", first.json);
+  assert.deepEqual([first.json.amount_cents, first.json.held_before_cents, first.json.held_after_cents, first.json.replayed], [1000, 2500, 1500, false]);
+  const held = await call("GET", `/api/v1/ar/payments/${id}/held`);
+  holds("PaymentsHeld", held.json);
+  assert.deepEqual([held.json.held_cents, held.json.paid_out_cents], [1500, 1000]);
+  const replay = await call("POST", out, body("po-k7", "BANK", 1000, { reference: "CHQ 100245" }));
+  assert.equal(replay.status, 200);
+  assert.deepEqual([replay.json.replayed, replay.json.payout_id], [true, first.json.payout_id]);
+  refused(await call("POST", out, body("po-k7", "BANK", 1100, { reference: "CHQ 100245" })), 409, "that idempotency key already paid out held money differently; use a new key");
+  const drawer = await call("POST", out, body("po-k8", "DRAWER", 1500));
+  assert.equal(drawer.status, 201);
+  assert.equal((await call("GET", `/api/v1/ar/payments/${id}/held`)).json.held_cents, 0);
+  refused(await call("POST", out, body("po-k9", "DRAWER", 1)), 409, "that is more than the payment still holds");
+});
+
 test("a bounced payment cannot be reversed, and the core says why", async () => {
   await reset();
   const inv = await invoiceOf("INV-1002");

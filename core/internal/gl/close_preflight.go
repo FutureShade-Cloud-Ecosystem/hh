@@ -57,8 +57,8 @@ func (s *Service) runClosePreFlight(ctx context.Context, year, month int) []stri
 				usdCents(stock-gl), usdCents(stock), usdCents(gl)))
 		}
 	}
-	if s.queue != nil {
-		if n, err := s.queue.UnpostedForWindow(ctx, PostedTopics, monthStart, nextMonth); err != nil {
+	if s.preFlightQueue != nil {
+		if n, err := s.preFlightQueue.UnpostedForWindow(ctx, PostedTopics, monthStart, nextMonth); err != nil {
 			fails = append(fails, fmt.Sprintf("the posting queue could not be read (%v)", err))
 		} else if n > 0 {
 			fails = append(fails, fmt.Sprintf("%d posting event%s still waiting or dead lettered for this month", n, plural(n)))
@@ -79,7 +79,7 @@ func (s *Service) runClosePreFlight(ctx context.Context, year, month int) []stri
 		}{
 			{s.ar != nil, "the AR tie check"},
 			{s.stockValue != nil, "the stock tie check"},
-			{s.queue != nil, "the posting queue check"},
+			{s.preFlightQueue != nil, "the posting queue check"},
 			{s.drawers != nil, "the open drawer check"},
 		} {
 			if !check.wired {

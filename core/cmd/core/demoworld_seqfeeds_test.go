@@ -52,11 +52,11 @@ func feedIDs(t *testing.T, c *tillClient, scope string) []string {
 	return ids
 }
 
-// pickIDsInReach reads the seeded picks the persona's branch reach covers, the rule the pick_tasks pull holds to
+// taskIDsInReach reads the seeded tasks of one type (PICK or NEED_WEIGHT) the persona's branch reach covers, the rule the pick_tasks pull holds to
 // (UX-81): the staff authority's branch grants, GLOBAL reaching every pick, a scoped persona only the picks of its
 // own branches (a pick with no branch is a GLOBAL caller's alone). It also returns how many sequenced picks the
 // seed holds in all, so the proof can show the fence has something to hold back.
-func pickIDsInReach(t *testing.T, w *driveWorld, sub string) (reach map[string]bool, all int) {
+func taskIDsInReach(t *testing.T, w *driveWorld, sub, taskType string) (reach map[string]bool, all int) {
 	t.Helper()
 	ctx := context.Background()
 	var orgID string
@@ -73,7 +73,7 @@ func pickIDsInReach(t *testing.T, w *driveWorld, sub string) (reach map[string]b
 	}
 	sc := identity.FromAuthority(a)
 	rows, err := w.pool.Query(ctx, `SELECT id::text, COALESCE(branch_id::text, '') FROM tasks
-		WHERE task_type = 'PICK' AND org_id = $1::uuid AND seq IS NOT NULL`, orgID)
+		WHERE task_type = $2 AND org_id = $1::uuid AND seq IS NOT NULL AND deleted_at IS NULL`, orgID, taskType)
 	if err != nil {
 		t.Fatalf("read the seeded picks: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestDemoWorld_SeededRowsReachTheDeviceFeeds(t *testing.T) {
 	}{
 		// Yard Pick: the picks, the shortage notices and the weights queue, plus the catalogue it looks up.
 		{"Yard Team", "d0200000-0000-4000-9000-000000000002", []feedWant{
-			{"shortages", 3}, {"weights", 2}, {"products", 22}, {"inventory_lookup", 22},
+			{"shortages", 3}, {"products", 22}, {"inventory_lookup", 22},
 			{"customers", 16}, {"drivers", 7}, {"trucks", 7}, {"runs", 9}, {"stops", 22},
 		}},
 		{"Sales", qwSalesUserID, []feedWant{
@@ -134,7 +134,7 @@ func TestDemoWorld_SeededRowsReachTheDeviceFeeds(t *testing.T) {
 	// branch), so the proof counts the seeded picks in that reach rather than a literal: the feed must serve every
 	// one of them and no pick from another branch.
 	yard := w.as("d0200000-0000-4000-9000-000000000002", "Yard Team")
-	reach, all := pickIDsInReach(t, w, "d0200000-0000-4000-9000-000000000002")
+	reach, all := taskIDsInReach(t, w, "d0200000-0000-4000-9000-000000000002", "PICK")
 	if len(reach) == 0 {
 		t.Fatal("the seed holds no pick in the yard persona's branch reach: the proof would be empty")
 	}
@@ -150,6 +150,25 @@ func TestDemoWorld_SeededRowsReachTheDeviceFeeds(t *testing.T) {
 			t.Errorf("Yard Team: the pick_tasks feed omits pick %s, which is in the persona's branch reach", id)
 		}
 	}
+	// The weights feed is held to the same reach (UX-81c round 3): the persona's weights queue is the seeded weight
+	// tasks of its own branch, every one served and none from another branch.
+	weightReach, weightAll := taskIDsInReach(t, w, "d0200000-0000-4000-9000-000000000002", "NEED_WEIGHT")
+	if len(weightReach) == 0 || len(weightReach) == weightAll {
+		t.Errorf("the seed holds %d weight tasks, %d in the yard persona's reach: the proof needs some in reach and some held back", weightAll, len(weightReach))
+	}
+	weightServed := map[string]bool{}
+	for _, id := range feedIDs(t, yard, "weights") {
+		weightServed[id] = true
+		if !weightReach[id] {
+			t.Errorf("Yard Team: the weights feed serves task %s, which is outside the persona's branch reach", id)
+		}
+	}
+	for id := range weightReach {
+		if !weightServed[id] {
+			t.Errorf("Yard Team: the weights feed omits task %s, which is in the persona's branch reach", id)
+		}
+	}
+	t.Logf("Yard Team: %d of the seed's %d weight tasks are in the persona's branch reach, and the feed serves %d", len(weightReach), weightAll, len(weightServed))
 	t.Logf("Yard Team: %d of the seed's %d picks are in the persona's branch reach, and the feed serves %d", len(reach), all, len(served))
 
 	// HH Pro: the contractor account's own login, the account admin, who holds every Pro surface.

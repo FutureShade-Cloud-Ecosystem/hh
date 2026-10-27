@@ -83,27 +83,30 @@ type createRequest struct {
 	SourceMessageID string `json:"source_message_id"` // optional; the chat message that spawned it
 }
 
+// callerReach is the caller's branch reach (UX-81 round 3): GLOBAL reaches the branches of its OWN org only (round 5), a
+// scoped caller its granted ones, a request with no staff context none (fail closed).
+func (h *Handler) callerReach(r *http.Request, caller guards.StaffCaller) func(branch string) (bool, error) {
+	sc, haveStaff := identity.StaffContextFromContext(r.Context())
+	return func(branch string) (bool, error) {
+		if !haveStaff || !sc.CanAccessBranch(branch) {
+			return false, nil
+		}
+		return h.branchInCallersOrg(withOrg(r.Context(), caller.StaffScope.OrgID), branch)
+	}
+}
+
 func (h *Handler) create(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var req createRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	// The caller's branch reach (UX-81 round 3): GLOBAL reaches every branch, a scoped caller its granted ones, a
-	// request with no staff context none (fail closed).
-	sc, haveStaff := identity.StaffContextFromContext(r.Context())
 	t, err := h.svc.CreateFromOrder(r.Context(), CreateInput{
 		OrderID:         req.OrderID,
 		Source:          req.Source,
 		CreatedBy:       identity.StaffUserIDFromContext(r.Context()),
 		SourceMessageID: req.SourceMessageID,
 		OrgID:           caller.StaffScope.OrgID,
-		Reach: func(branch string) (bool, error) {
-			if !haveStaff || !sc.CanAccessBranch(branch) {
-				return false, nil
-			}
-			// GLOBAL reaches the branches of its OWN org only (UX-81 round 5).
-			return h.branchInCallersOrg(withOrg(r.Context(), caller.StaffScope.OrgID), branch)
-		},
+		Reach:           h.callerReach(r, caller),
 	})
 	if err != nil {
 		h.writeErr(w, r, err)

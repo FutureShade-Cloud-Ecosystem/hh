@@ -49,6 +49,10 @@ import (
 // resolving and this proof goes red, which is the point.
 const driverPersonaUserID = "d0200000-0000-4000-9000-000000000003"
 
+// dispatchPersonaUserID is the 0200 login the demo populate gives the dispatch role, repeated here
+// on purpose like the driver's.
+const dispatchPersonaUserID = "d0200000-0000-4000-9000-000000000001"
+
 // driveWorld is the booted demo world plus the Driver persona's client on the real served
 // surface. Both proofs in this file boot it the same way a demo box does.
 type driveWorld struct {
@@ -322,6 +326,75 @@ func TestDemoWorld_DriverRunOutForDelivery(t *testing.T) {
 		t.Fatal("the next day's apply created nothing, the Driver's run would go dark after the first day")
 	}
 	walkTheDay("the next day", nextDay)
+}
+
+// TestDemoWorld_DriverRunDispatchedByAPersona proves the Driver's second run of the day, the
+// afternoon run that is still PLANNED, can be dispatched by a demo persona through the real
+// route, and that the driver then reaches both the proof of delivery and the could not deliver
+// states on it. Until the dispatch persona was given the driver's branch, no demo login could
+// dispatch the driver's runs (the server refused it at the branch fence), so Drive's status
+// advance answered "The run has not been dispatched" and neither sheet could be reached.
+func TestDemoWorld_DriverRunDispatchedByAPersona(t *testing.T) {
+	world := bootDriveWorld(t)
+	driver := world.driver
+	dispatcher := world.as(dispatchPersonaUserID, "Logistics manager")
+	date := qwClock.In(seedLocation()).Format("2006-01-02")
+
+	rsp := driver.call("GET", "/api/v1/dispatch/my-runs?date="+date, nil)
+	rsp.ok(t, http.StatusOK)
+	var list struct {
+		Items []driveRun `json:"items"`
+	}
+	rsp.decode(t, &list)
+	var planned *driveRun
+	for i := range list.Items {
+		if list.Items[i].Status == "PLANNED" {
+			planned = &list.Items[i]
+			break
+		}
+	}
+	if planned == nil {
+		t.Fatalf("the Driver's day %s holds no PLANNED run to dispatch", date)
+	}
+	if len(planned.Stops) < 2 {
+		t.Fatalf("the planned run %s carries %d stops, the walk needs two", planned.RunNo, len(planned.Stops))
+	}
+
+	// Before the dispatch the core refuses en route, which is the state the walk met.
+	early := driver.call("POST", "/api/v1/dispatch/stops/"+planned.Stops[0].ID+"/status",
+		map[string]string{"status": "EN_ROUTE", "reason": ""})
+	if early.status == http.StatusOK {
+		t.Fatalf("a stop went en route on the run %s before it was dispatched", planned.RunNo)
+	}
+
+	// A persona dispatches the run through the real route.
+	dispatcher.call("POST", "/api/v1/dispatch/runs/"+planned.ID+"/dispatch", nil).ok(t, http.StatusOK)
+
+	// Stop one: en route, delivered with a typed proof of delivery.
+	first := planned.Stops[0]
+	driver.call("POST", "/api/v1/dispatch/stops/"+first.ID+"/status",
+		map[string]string{"status": "EN_ROUTE", "reason": ""}).ok(t, http.StatusOK)
+	pod := driver.call("POST", "/api/v1/dispatch/stops/"+first.ID+"/pod",
+		map[string]any{"received_by": "Receiving clerk (demo)", "affirmed": true})
+	pod.ok(t, http.StatusOK)
+	var done driveStop
+	pod.decode(t, &done)
+	if done.Status != "DELIVERED" {
+		t.Fatalf("the proof of delivery left stop %d %q, want DELIVERED", first.StopNo, done.Status)
+	}
+
+	// Stop two: en route, handed back with a reason.
+	second := planned.Stops[1]
+	driver.call("POST", "/api/v1/dispatch/stops/"+second.ID+"/status",
+		map[string]string{"status": "EN_ROUTE", "reason": ""}).ok(t, http.StatusOK)
+	f := driver.call("POST", "/api/v1/dispatch/stops/"+second.ID+"/status",
+		map[string]string{"status": "FAILED", "reason": "Nobody on site (demo)"})
+	f.ok(t, http.StatusOK)
+	var failed driveStop
+	f.decode(t, &failed)
+	if failed.Status != "FAILED" {
+		t.Fatalf("the handback left stop %d %q, want FAILED", second.StopNo, failed.Status)
+	}
 }
 
 // -- the money half (ruling 91) -------------------------------------------------------------------

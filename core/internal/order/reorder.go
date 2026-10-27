@@ -489,8 +489,9 @@ func (r *Repository) CreateReorderDraft(ctx context.Context, d ReorderDraft) (Re
 		// DIB-388: the branch-coded mint (migration 0087's next_order_no) replaces the global
 		// '#SO-' || nextval sequence, so a reorder draft carries the branch it belongs to in its number.
 		`INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment,
-		                     subtotal_cents, tax_cents, total_cents, metadata)
-		 VALUES (next_order_no($2), $1, $2, 'DRAFT', $3, $4, 0, $4, $5)
+		                     subtotal_cents, tax_cents, total_cents, metadata, org_id)
+		 VALUES (next_order_no($2), $1, $2, 'DRAFT', $3, $4, 0, $4, $5,
+		         (SELECT l.org_id FROM locations l WHERE l.id = $2))
 		 RETURNING id::text, order_no::text, status`,
 		d.CustomerID, d.BranchID, d.Fulfillment, d.SubtotalCents, meta).
 		Scan(&res.OrderID, &res.OrderNo, &res.Status)

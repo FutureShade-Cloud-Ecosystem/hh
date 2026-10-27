@@ -271,7 +271,7 @@ type Service struct {
 	audit           audit.Recorder
 	stockValue      StockValueReader
 	drawers         TillDrawerReader
-	queue           OutboxQueueReader
+	preFlightQueue  OutboxQueueReader    // the pre flight's window read: how many posted events in the closing month are still waiting or dead lettered
 	approvalFiler   ApprovalFiler        // 0075: nil-able JE park → approvals-rail filing seam
 	standardRate    StandardRateReader   // the dealer's standard tax rate; nil is the Ontario 13 percent
 	taxWords        taxwords.Source      // the name of the dealer's tax in journal memos; nil is "HST"
@@ -279,6 +279,7 @@ type Service struct {
 	delivery        DeliveryReader       // round 2: the delivery fact the deposit release's date reads
 	auditTx         AuditTxRecorder      // round 2: the open year's audit, in the year's transaction
 	strictPreFlight bool                 // round 4: production refuses a close when a pre flight check is unwired; tests may pass nil
+	queue           OutboxQueue          // the posting queue's rows: the waiting/dead events the Controller lists and the banner counts (nil-able: unwired, the queue reads refuse)
 	log             *slog.Logger
 	now             func() time.Time
 	callerFrom      func(context.Context) (identity.StaffContext, bool)
@@ -421,7 +422,11 @@ func (s *Service) WithStockReader(r StockValueReader) *Service { s.stockValue = 
 func (s *Service) WithDrawerReader(r TillDrawerReader) *Service { s.drawers = r; return s }
 
 // WithQueueReader injects the outbox seam the close pre flight's waiting/dead lettered check reads (FW1-09b).
-func (s *Service) WithQueueReader(r OutboxQueueReader) *Service { s.queue = r; return s }
+// It is the pre flight's OWN seam, distinct from the posting queue's read (WithPostingQueue): the pre flight
+// asks how many posted events in the closing month are still unposted, the posting queue asks what is waiting
+// right now. One outbox store answers both, but each seam stays wired on its own, so an unwired check is named
+// as unwired (the strict pre flight refuses) instead of passing silently behind the other seam's wiring.
+func (s *Service) WithQueueReader(r OutboxQueueReader) *Service { s.preFlightQueue = r; return s }
 
 // WithTaxSplitReader injects the pos tax-split seam.
 func (s *Service) WithTaxSplitReader(r TaxSplitReader) *Service { s.taxSplits = r; return s }
@@ -514,6 +519,7 @@ var PostedTopics = []string{
 	"payment.bounced",
 	"payment.reversed",
 	"payment.reapplied",
+	"payment.paid_out",
 	"order.fulfilled",
 	"bank.recon.completed",
 	"till.session.completed",
@@ -605,6 +611,10 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/gl/periods/{id}/reopen", g.RequireAdmin(h.staff(h.reopenPeriod)))
 	r.Handle("POST /api/v1/gl/periods/close-year", g.RequireAdmin(h.staff(h.closeYear)))
 	r.Handle("POST /api/v1/gl/periods/open-year", g.RequireAdmin(h.staff(h.openYear)))
+	// The posting queue: the Controller's list of journals waiting or dead
+	// lettered, and the two counts the Money Desk's banner reads.
+	r.Handle("GET /api/v1/gl/posting-queue", g.RequireAdmin(h.staff(h.listPostingQueue)))
+	r.Handle("GET /api/v1/gl/posting-queue/count", g.RequireManager(h.staff(h.postingQueueCounts)))
 	// Policy + export
 	r.Handle("GET /api/v1/gl/policy", g.RequireManager(h.staff(h.policy)))
 	r.Handle("POST /api/v1/gl/export", g.RequireAdmin(h.staff(h.export)))
