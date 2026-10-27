@@ -126,3 +126,12 @@ test("a late posted row reads its document date, the month it landed in and the 
   assert.equal(row.memo, "July invoice booked in August (demo)");
   assert.equal(row.id, LATE.id);
 });
+
+test("a late posted row shows its document date in the house zone, where lateness is decided (P3)", () => {
+  const eveningInHouseZone = {
+    ...LATE,
+    posted_at: "2026-06-01T02:30:00.000Z", // 22:30 May 31 in America/Toronto
+  };
+  const row = logic.latePostedRow(eveningInHouseZone, PERIODS[1]);
+  assert.equal(row.documentDate, "May 31, 2026");
+});

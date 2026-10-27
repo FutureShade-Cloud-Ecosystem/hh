@@ -12,12 +12,16 @@ package gl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
@@ -367,11 +371,10 @@ func TestIntegration_FW1_01R2_OpenYearAuditInTheYearsTransaction(t *testing.T) {
 }
 
 // TestIntegration_FW1_01R2_OpenAtTheCapIsRefusedInWords is the S2 round's
-// P2-1 red (RULED, FROM-PRINCIPAL 182): with the cap year (the house year + 2)
-// already open, a further open is refused in words, never answered with a
-// silent 200 no op. The screen offers the open only while the core's own read
-// answers a year, so a stale press must read a refusal naming the year, not a
-// success that would make the notice name another year than the button did.
+// P2-1 red (RULED, FROM-PRINCIPAL 182): the core's periods read gives the next
+// year the Controller can open (or 0 when the cap is already open), and a
+// request for a year already open or past the cap (house year + 2) is refused
+// in words, never answered with a silent 200 no op.
 func TestIntegration_FW1_01R2_OpenAtTheCapIsRefusedInWords(t *testing.T) {
 	pool := intPool(t)
 	user := aUser(t, pool)
@@ -381,18 +384,56 @@ func TestIntegration_FW1_01R2_OpenAtTheCapIsRefusedInWords(t *testing.T) {
 	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location())
 	worker := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt)
 	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, clockAt)
+	h := NewHandler(controller, nil)
+
+	readNextYear := func() int {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/gl/periods", nil)
+		h.listPeriods(rec, req, guards.StaffCaller{})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("listPeriods status %d: %s", rec.Code, rec.Body.String())
+		}
+		var page struct {
+			NextOpenableYear int `json:"next_openable_year"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+			t.Fatalf("decode listPeriods: %v", err)
+		}
+		return page.NextOpenableYear
+	}
+
+	postOpenYear := func(body string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/gl/periods/open-year", strings.NewReader(body))
+		h.openYear(rec, req, guards.StaffCaller{})
+		return rec.Code, rec.Body.String()
+	}
 
 	if _, err := worker.EnsureNextFiscalYear(context.Background()); err != nil {
 		t.Fatalf("the boot roll forward: %v", err)
 	}
+	if got := readNextYear(); got != 2028 {
+		t.Fatalf("before the early open, the periods read answers next_openable_year=%d, want 2028", got)
+	}
+	if code, body := postOpenYear(`{"year":2029,"reason":"past the cap"}`); code == http.StatusOK || !strings.Contains(body, "2029 is too far ahead; the next year that can open is 2028") {
+		t.Fatalf("requesting 2029 past the cap answered %d %s, want refusal '2029 is too far ahead; the next year that can open is 2028'", code, body)
+	}
 	if _, err := controller.OpenNextFiscalYear(context.Background(), "FW1-01 round 3 early open"); err != nil {
 		t.Fatalf("the controller open: %v", err)
 	}
+	if got := readNextYear(); got != 0 {
+		t.Fatalf("after 2028 is open, the periods read answers next_openable_year=%d, want 0", got)
+	}
 	_, err := controller.OpenNextFiscalYear(context.Background(), "FW1-01 round 3 repeat at the cap")
 	if err == nil {
-		t.Fatal("the open at the cap answered 200; the ruling refuses it in words (fiscal year 2028 is already open)")
+		t.Fatal("the open at the cap answered 200; the ruling refuses it in words (2028 is already open)")
 	}
-	if !strings.Contains(err.Error(), "already open") {
-		t.Fatalf("the refusal reads %q, want words naming the year that is already open", err)
+	if !strings.Contains(err.Error(), "2028 is already open") {
+		t.Fatalf("the refusal reads %q, want '2028 is already open'", err)
+	}
+	if code, body := postOpenYear(`{"year":2028,"reason":"repeat 2028"}`); code == http.StatusOK || !strings.Contains(body, "2028 is already open") {
+		t.Fatalf("requesting 2028 when already open answered %d %s, want refusal '2028 is already open'", code, body)
 	}
 }

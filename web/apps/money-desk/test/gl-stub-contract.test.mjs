@@ -413,21 +413,30 @@ test("the next fiscal year opens for the Controller with a reason and refuses in
   await reset();
   refused(await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { reason: "   " }), 422, "gl: a reason is required");
   refused(await call(IDS.payRec, "POST", "/api/v1/gl/periods/open-year", { reason: "x" }), 403, "Forbidden");
-  const opened = await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { reason: "The year is set up early" });
+  refused(await call(IDS.gm, "POST", "/api/v1/gl/periods/open-year", { reason: "x" }), 403, "gl: only the Financial Controller may reopen a closed period");
+  const beforePage = await call(IDS.controller, "GET", "/api/v1/gl/periods");
+  assert.equal(beforePage.status, 200);
+  holds("GlPeriodPage", beforePage.json);
+  assert.equal(beforePage.json.next_openable_year, 2028);
+  const tooFar = await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { year: 2029, reason: "Too far ahead" });
+  refused(tooFar, 409, "is too far ahead; the next year that can open is");
+  assert.ok(tooFar.json.error.includes("2029 is too far ahead; the next year that can open is 2028"), tooFar.json.error);
+  const opened = await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { year: 2028, reason: "The year is set up early" });
   assert.equal(opened.status, 200);
   holds("GlYearOpenResult", opened.json);
-  assert.equal(opened.json.fiscal_year, 2027);
-  // The year joins the periods with its twelve months, open for posting.
-  const periods = (await call(IDS.controller, "GET", "/api/v1/gl/periods")).json.items;
-  const next = periods.filter((p) => p.year === 2027);
+  assert.equal(opened.json.fiscal_year, 2028);
+  // The year joins the periods with its twelve months, open for posting, and the read now answers 0 (none left to open).
+  const afterPage = await call(IDS.controller, "GET", "/api/v1/gl/periods");
+  holds("GlPeriodPage", afterPage.json);
+  assert.equal(afterPage.json.next_openable_year, 0);
+  const next = afterPage.json.items.filter((p) => p.year === 2028);
   assert.equal(next.length, 12);
   assert.ok(next.every((p) => p.status === "OPEN"));
-  // The core's roll forward is a year at a time (core/internal/gl/repository.go EnsureNextFiscalYear makes
-  // the year after the latest that exists), so asking again answers the year after the one just made.
-  const again = await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { reason: "And again" });
-  assert.equal(again.status, 200);
-  assert.equal(again.json.fiscal_year, 2028);
-  assert.equal((await call(IDS.controller, "GET", "/api/v1/gl/periods")).json.items.filter((p) => p.year === 2027).length, 12);
+  // At the cap (house year + 2), asking again is refused in words, never a silent 200 or latest + 1.
+  const again = await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { year: 2028, reason: "And again" });
+  refused(again, 409, "is already open");
+  assert.ok(again.json.error.includes("2028 is already open"), again.json.error);
+  assert.equal((await call(IDS.controller, "GET", "/api/v1/gl/periods")).json.items.filter((p) => p.year === 2029).length, 0);
 });
 
 test("the year end close sweeps net income into retained earnings and seals the year", async () => {
