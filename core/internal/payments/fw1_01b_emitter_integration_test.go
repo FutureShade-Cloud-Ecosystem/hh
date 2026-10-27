@@ -51,11 +51,18 @@ func TestIntegration_FW1_01B_R2_ReversalCarriesItsOwnInstant(t *testing.T) {
 
 // TestIntegration_FW1_01B_R2_ReapplyCarriesItsOwnInstant is the re-application's emitter leg:
 // the payment.reapplied event carries the instant the held money was applied.
+//
+// ONE CLOCK IN THIS FILE. The reversal below is stamped with a FIXED instant, not with the wall
+// clock: this file pins its dates, so a real clock beside them is the dated-test tripwire's
+// "fixed date meets a moving clock" (internal/testaudit), and the leg has no use for the wall
+// clock anyway. The reversal's own instant is not asserted here (the reversal's leg is above);
+// only the re-application's is.
 func TestIntegration_FW1_01B_R2_ReapplyCarriesItsOwnInstant(t *testing.T) {
 	w := newReversalGLWorld(t)
 	orig := w.receipt("CHEQUE", 10_000)
+	reversedAt := time.Date(2026, 3, 10, 8, 0, 0, 0, time.UTC)
 	if _, err := w.r.repo.ReversePayment(context.Background(), payments.ReverseInput{
-		PaymentID: orig, Reason: "the round 2 date proof", ActorID: w.r.userID, IsManager: true}, time.Now()); err != nil {
+		PaymentID: orig, Reason: "the round 2 date proof", ActorID: w.r.userID, IsManager: true}, reversedAt); err != nil {
 		t.Fatalf("reverse: %v", err)
 	}
 	// The invoice the receipt paid: the reversal reopened it, so it can take the money back.
