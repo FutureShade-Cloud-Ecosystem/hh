@@ -268,6 +268,8 @@ func (f *fakeStore) VoidJournal(_ context.Context, id string) (Journal, error) {
 	return *j, nil
 }
 
+// The fake's year answers are private fixtures: no unit test asserts their values and no database
+// stands behind the fake, so no books' year can move them.
 func (f *fakeStore) EnsureNextFiscalYear(_ context.Context, _ time.Time) (int, error) {
 	return 2027, nil
 }
@@ -470,6 +472,7 @@ func newTestService(f *fakeStore) *Service {
 	return NewService(nil).
 		WithApprovalStateChecker(fakeHold{}).
 		withStore(f).
+		// The unit clock is a private fixture date; no books stand behind it.
 		withClock(func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }).
 		withCaller(func(_ context.Context) (identity.StaffContext, bool) { return holder, holder.UserID != "" })
 }
@@ -479,6 +482,7 @@ func newTestServiceAs(f *fakeStore, caller identity.StaffContext) *Service {
 	return NewService(nil).
 		WithApprovalStateChecker(fakeHold{}).
 		withStore(f).
+		// The unit clock is a private fixture date; no books stand behind it.
 		withClock(func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }).
 		withCaller(func(_ context.Context) (identity.StaffContext, bool) { return caller, caller.UserID != "" })
 }

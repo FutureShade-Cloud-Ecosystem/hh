@@ -10,6 +10,7 @@ package finstmt
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -39,7 +40,16 @@ func TestIntegration_Finstmt_ExportAuditRowThroughTheRealRecorder(t *testing.T) 
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'FINSTMT_EXPORT'`).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/finstmt/income-statement?year=2026&format=csv", nil).
+	// The export names a year the books hold (the seeded books' first), never a literal: the audit
+	// assertions below do not care which year it is, only that the export answers.
+	var year int
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(MIN(year), 0) FROM fiscal_periods`).Scan(&year); err != nil {
+		t.Fatal(err)
+	}
+	if year == 0 {
+		t.Skipf("no fiscal periods seeded")
+	}
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/finstmt/income-statement?year=%d&format=csv", year), nil).
 		WithContext(identity.ContextWithStaffUserID(ctx, user))
 	rec := httptest.NewRecorder()
 	h.incomeStatement(rec, req, guards.StaffCaller{})

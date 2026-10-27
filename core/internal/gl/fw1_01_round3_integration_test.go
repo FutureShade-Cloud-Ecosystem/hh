@@ -9,6 +9,7 @@ package gl
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,18 +22,23 @@ import (
 )
 
 // TestIntegration_FW1_01R3_PastMissingYearIsRefusedInWordsWithNoAuditRow is
-// round 3's P2-1 red: the Controller asking for 2020, before the books' first
-// year, is answered 200 with 2028 today, and the audit names an open that did
-// not happen. After the fix the answer is a refusal in words, with no year
-// written and no audit row.
+// round 3's P2-1 red: the Controller asking for a year before the books'
+// first year is answered 200 with the cap year today, and the audit names an
+// open that did not happen. After the fix the answer is a refusal in words,
+// with no year written and no audit row.
 func TestIntegration_FW1_01R3_PastMissingYearIsRefusedInWordsWithNoAuditRow(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
-	fw1EnsureHouseYear(t, pool, 2026)
-	fw1ScrubYear(t, pool, 2027, 2028)
-	t.Cleanup(func() { fw1ScrubYear(t, pool, 2027, 2028) })
-	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location())
+	// The band is the database's own frontier, the way the roll forward leg's dynamic `beyond`
+	// takes it: the house year IS the latest year that exists, and the scrub keeps the two years
+	// after it free so the refusal proves it writes nothing.
+	house := fw1NextYear(t, pool) - 1
+	target, beyond := house+1, house+2
+	fw1EnsureHouseYear(t, pool, house)
+	fw1ScrubYear(t, pool, target, beyond)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, target, beyond) })
+	clockAt := time.Date(house, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location())
 	auditTx := &fw1AuditTx{}
 	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, clockAt).WithAuditTxRecorder(auditTx)
 	h := NewHandler(controller, nil)
@@ -45,14 +51,20 @@ func TestIntegration_FW1_01R3_PastMissingYearIsRefusedInWordsWithNoAuditRow(t *t
 		return rec.Code, rec.Body.String()
 	}
 
-	code, body := postOpenYear(`{"year":2020,"reason":"before the books"}`)
-	if code == http.StatusOK || !strings.Contains(body, "2020 is before the books' first year; only the next year can be opened here") {
-		t.Fatalf("requesting 2020, before the books' first year, answered %d %s, want refusal '2020 is before the books' first year; only the next year can be opened here'", code, body)
+	// The request names the year before the books' own first year, read off the books.
+	var first int
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(MIN(year), 0) FROM fiscal_periods`).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	before := first - 1
+	code, body := postOpenYear(fmt.Sprintf(`{"year":%d,"reason":"before the books"}`, before))
+	if code == http.StatusOK || !strings.Contains(body, fmt.Sprintf("%d is before the books' first year; only the next year can be opened here", before)) {
+		t.Fatalf("requesting %d, before the books' first year %d, answered %d %s, want refusal '%d is before the books' first year; only the next year can be opened here'", before, first, code, body, before)
 	}
 	if len(auditTx.recorded) != 0 {
 		t.Fatalf("the refused open recorded %d audit rows, want none: the audit must never name an open that did not happen", len(auditTx.recorded))
 	}
-	for _, year := range []int{2027, 2028} {
+	for _, year := range []int{target, beyond} {
 		var n int
 		if err := pool.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year=$1`, year).Scan(&n); err != nil {
 			t.Fatal(err)

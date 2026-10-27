@@ -27,9 +27,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// fw1R4Controller builds a Financial Controller's service at the round's pinned clock in 2026.
-func fw1R4Controller(pool *pgxpool.Pool, user string) *Service {
-	return svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2026, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location()))
+// fw1R4Controller builds a Financial Controller's service at the round's pinned clock inside the
+// given house year.
+func fw1R4Controller(pool *pgxpool.Pool, user string, house int) *Service {
+	return svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(house, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location()))
 }
 
 // TestIntegration_FW1_01R4_OpenYearAuditRowThroughTheRealRecorder is the
@@ -40,13 +41,19 @@ func TestIntegration_FW1_01R4_OpenYearAuditRowThroughTheRealRecorder(t *testing.
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
-	fw1EnsureHouseYear(t, pool, 2026)
-	fw1ScrubYear(t, pool, 2027, 2028)
-	t.Cleanup(func() { fw1ScrubYear(t, pool, 2027, 2028) })
-	fw1PlantFuturePeriod(t, pool, 2109)
+	// The band is the database's own frontier, the way the roll forward leg's dynamic `beyond`
+	// takes it: the house year IS the latest year that exists, the roll forward's target and the
+	// cap are the two years after it.
+	house := fw1NextYear(t, pool) - 1
+	target, beyond := house+1, house+2
+	fw1ScrubYear(t, pool, target, beyond)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, target, beyond) })
+	// A far future band above the leg's own, the shape finstmt's suite leaves on the shared CI
+	// database: the open must follow the clock's house year, never the latest year that exists.
+	fw1PlantFuturePeriod(t, pool, beyond+80)
 	// The REAL recorder, not a fake: the whole defect lives between the two.
 	recorder := audit.NewService(audit.NewRepository(pool), nil)
-	controller := fw1R4Controller(pool, user).WithAuditTxRecorder(recorder)
+	controller := fw1R4Controller(pool, user, house).WithAuditTxRecorder(recorder)
 
 	var before int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'GL_FISCAL_YEAR_OPEN'`).Scan(&before); err != nil {
@@ -56,8 +63,8 @@ func TestIntegration_FW1_01R4_OpenYearAuditRowThroughTheRealRecorder(t *testing.
 	if err != nil {
 		t.Fatalf("the Controller's open through the real audit recorder: %v", err)
 	}
-	if res.FiscalYear != 2028 {
-		t.Fatalf("the open answered %d, want 2028", res.FiscalYear)
+	if res.FiscalYear != beyond {
+		t.Fatalf("the open answered %d, want %d (the cap year)", res.FiscalYear, beyond)
 	}
 	var n int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'GL_FISCAL_YEAR_OPEN'`).Scan(&n); err != nil {
@@ -73,14 +80,14 @@ func TestIntegration_FW1_01R4_OpenYearAuditRowThroughTheRealRecorder(t *testing.
 		t.Fatal(err)
 	}
 	var januaryID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year = 2028 AND month = 1`).Scan(&januaryID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year = $1 AND month = 1`, beyond).Scan(&januaryID); err != nil {
 		t.Fatalf("read the opened year's January period: %v", err)
 	}
 	if entityID != januaryID {
 		t.Fatalf("the audit's entity_id is %q, want the opened year's January period id %q (audit_log.entity_id is a uuid column)", entityID, januaryID)
 	}
-	if yearWords != "2028" {
-		t.Fatalf("the audit's changes carry fiscal_year %q, want 2028 (the year rides Extra once the entity is the period)", yearWords)
+	if yearWords != fmt.Sprintf("%d", beyond) {
+		t.Fatalf("the audit's changes carry fiscal_year %q, want %d (the year rides Extra once the entity is the period)", yearWords, beyond)
 	}
 	if actor != user {
 		t.Fatalf("the audit's actor is %q, want the Controller %q", actor, user)
@@ -97,14 +104,18 @@ func TestIntegration_FW1_01R4_PeriodCloseLeavesItsOverrideRow(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
-	fw1ScrubYear(t, pool, 2027)
-	fw1EnsureHouseYear(t, pool, 2027)
-	t.Cleanup(func() { fw1ScrubYear(t, pool, 2027) })
+	// The closed period sits in the year after the books' latest (the roll forward's target),
+	// planted by the leg, so no books' year can move under it.
+	house := fw1NextYear(t, pool) - 1
+	target := house + 1
+	fw1ScrubYear(t, pool, target)
+	fw1EnsureHouseYear(t, pool, target)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, target) })
 	recorder := audit.NewService(audit.NewRepository(pool), nil)
-	controller := fw1R4Controller(pool, user).WithAudit(recorder)
+	controller := fw1R4Controller(pool, user, house).WithAudit(recorder)
 
 	var periodID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year = 2027 AND month = 2`).Scan(&periodID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year = $1 AND month = 2`, target).Scan(&periodID); err != nil {
 		t.Fatal(err)
 	}
 	var before int
@@ -143,14 +154,18 @@ func TestIntegration_FW1_01R4_ReopenAuditRowThroughTheRealRecorder(t *testing.T)
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
-	fw1ScrubYear(t, pool, 2027)
-	fw1EnsureHouseYear(t, pool, 2027)
-	t.Cleanup(func() { fw1ScrubYear(t, pool, 2027) })
+	// The reopened period sits in the year after the books' latest (the roll forward's target),
+	// planted by the leg, so no books' year can move under it.
+	house := fw1NextYear(t, pool) - 1
+	target := house + 1
+	fw1ScrubYear(t, pool, target)
+	fw1EnsureHouseYear(t, pool, target)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, target) })
 	recorder := audit.NewService(audit.NewRepository(pool), nil)
-	controller := fw1R4Controller(pool, user).WithAudit(recorder)
+	controller := fw1R4Controller(pool, user, house).WithAudit(recorder)
 
 	var periodID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year = 2027 AND month = 3`).Scan(&periodID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year = $1 AND month = 3`, target).Scan(&periodID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := controller.ClosePeriod(ctx, periodID, "round 4 reopen setup"); err != nil {
@@ -199,22 +214,27 @@ func TestIntegration_FW1_01R4_YearEndLeavesItsOverrideRows(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
+	// 2091 is the leg's own far future band (the package's 209x isolation rule): ensurePeriods
+	// plants it and scrubs it on cleanup, and every assertion below reads only 2091's own rows.
 	ensurePeriods(t, pool, 2091)
 	recorder := audit.NewService(audit.NewRepository(pool), nil)
-	// The leg's clock stands inside 2091, so the seeded P&L journals file into 2091 (a posting files
-	// by the clock's own period, the AC13 seed's rule).
-	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2091, 6, 15, 12, 0, 0, 0, time.UTC)).WithAudit(recorder)
+	// The clock stands AFTER 2091's last day (main 613's round 2 rule: the year end close is
+	// refused until the year has ended in the dealer's zone), and the P&L journals carry a 2091
+	// document date, so they file into 2091 (a posting files by its document's period).
+	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2092, 1, 5, 12, 0, 0, 0, time.UTC)).WithAudit(recorder)
 
 	// Post a revenue and an expense so the year end has a net income to sweep (the AC13 seed).
 	if _, err := controller.PostExternal(ctx, ExternalJournal{
 		Source: SourceAdjustment, IdempotencyKey: fmt.Sprintf("r4-rev-%d", time.Now().UnixNano()),
-		Lines: []ExternalLine{{AccountCode: "1000", DebitCents: 100000}, {AccountCode: "4000", CreditCents: 100000}},
+		DocumentDate: time.Date(2091, 6, 10, 12, 0, 0, 0, time.UTC),
+		Lines:        []ExternalLine{{AccountCode: "1000", DebitCents: 100000}, {AccountCode: "4000", CreditCents: 100000}},
 	}); err != nil {
 		t.Fatalf("post revenue: %v", err)
 	}
 	if _, err := controller.PostExternal(ctx, ExternalJournal{
 		Source: SourceAdjustment, IdempotencyKey: fmt.Sprintf("r4-exp-%d", time.Now().UnixNano()),
-		Lines: []ExternalLine{{AccountCode: "6100", DebitCents: 40000}, {AccountCode: "1000", CreditCents: 40000}},
+		DocumentDate: time.Date(2091, 6, 20, 12, 0, 0, 0, time.UTC),
+		Lines:        []ExternalLine{{AccountCode: "6100", DebitCents: 40000}, {AccountCode: "1000", CreditCents: 40000}},
 	}); err != nil {
 		t.Fatalf("post expense: %v", err)
 	}
@@ -251,8 +271,9 @@ func TestIntegration_FW1_01R4_HeadOfficeSetAuditRowThroughTheRealRecorder(t *tes
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
+	house := fw1NextYear(t, pool) - 1
 	recorder := audit.NewService(audit.NewRepository(pool), nil)
-	controller := fw1R4Controller(pool, user).WithAuditTxRecorder(recorder)
+	controller := fw1R4Controller(pool, user, house).WithAuditTxRecorder(recorder)
 
 	var branchID string
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations LIMIT 1`).Scan(&branchID); err != nil {
@@ -300,16 +321,22 @@ func TestIntegration_FW1_01R4_GapYearIsRefusedInWords(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
-	fw1EnsureHouseYear(t, pool, 2026)
-	fw1ScrubYear(t, pool, 2024, 2025, 2027, 2028)
-	t.Cleanup(func() { fw1ScrubYear(t, pool, 2024, 2025, 2027, 2028) })
-	// The books' first year becomes 2024, so 2025 is a gap, not a year before the books.
+	// The band is the database's own frontier, the way the roll forward leg's dynamic `beyond`
+	// takes it: the leg plants one period two years below the house (the books' first year), the
+	// year between it and the house is the gap, and the two years above stay free.
+	house := fw1NextYear(t, pool) - 1
+	first, gap, target, beyond := house-2, house-1, house+1, house+2
+	fw1EnsureHouseYear(t, pool, house)
+	fw1ScrubYear(t, pool, first, gap, target, beyond)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, first, gap, target, beyond) })
+	// The planted period makes the year two below the house the books' first year, so the scrubbed
+	// year between it and the house is a gap, not a year before the books.
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO fiscal_periods (year, month, status) VALUES (2024, 1, 'OPEN') ON CONFLICT (year, month) DO NOTHING`); err != nil {
+		`INSERT INTO fiscal_periods (year, month, status) VALUES ($1, 1, 'OPEN') ON CONFLICT (year, month) DO NOTHING`, first); err != nil {
 		t.Fatalf("plant the first year's period: %v", err)
 	}
 	auditTx := &fw1AuditTx{}
-	controller := fw1R4Controller(pool, user).WithAuditTxRecorder(auditTx)
+	controller := fw1R4Controller(pool, user, house).WithAuditTxRecorder(auditTx)
 	h := NewHandler(controller, nil)
 
 	postOpenYear := func(body string) (int, string) {
@@ -320,14 +347,14 @@ func TestIntegration_FW1_01R4_GapYearIsRefusedInWords(t *testing.T) {
 		return rsp.Code, rsp.Body.String()
 	}
 
-	code, body := postOpenYear(`{"year":2025,"reason":"the gap year"}`)
-	if code == http.StatusOK || !strings.Contains(body, "2025 is missing from the books; only the next year can be opened here") {
-		t.Fatalf("requesting the gap year 2025 answered %d %s, want refusal '2025 is missing from the books; only the next year can be opened here'", code, body)
+	code, body := postOpenYear(fmt.Sprintf(`{"year":%d,"reason":"the gap year"}`, gap))
+	if code == http.StatusOK || !strings.Contains(body, fmt.Sprintf("%d is missing from the books; only the next year can be opened here", gap)) {
+		t.Fatalf("requesting the gap year %d answered %d %s, want refusal '%d is missing from the books; only the next year can be opened here'", gap, code, body, gap)
 	}
 	if len(auditTx.recorded) != 0 {
 		t.Fatalf("the refused gap year recorded %d audit rows, want none", len(auditTx.recorded))
 	}
-	for _, year := range []int{2025, 2027, 2028} {
+	for _, year := range []int{gap, target, beyond} {
 		var n int
 		if err := pool.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year=$1`, year).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -347,11 +374,16 @@ func TestIntegration_FW1_01R4_TheCoresRefusalWords(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
-	fw1EnsureHouseYear(t, pool, 2026)
-	fw1ScrubYear(t, pool, 2027, 2028)
-	t.Cleanup(func() { fw1ScrubYear(t, pool, 2027, 2028) })
-	fw1PlantFuturePeriod(t, pool, 2109)
-	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location())
+	// The band is the database's own frontier, the way the roll forward leg's dynamic `beyond`
+	// takes it: the house year IS the latest year that exists, and the two years after it stay
+	// free.
+	house := fw1NextYear(t, pool) - 1
+	target, beyond := house+1, house+2
+	fw1EnsureHouseYear(t, pool, house)
+	fw1ScrubYear(t, pool, target, beyond)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, target, beyond) })
+	fw1PlantFuturePeriod(t, pool, beyond+80)
+	clockAt := time.Date(house, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location())
 	manager := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt)
 	h := NewHandler(manager, nil)
 
@@ -379,7 +411,7 @@ func TestIntegration_FW1_01R4_TheCoresRefusalWords(t *testing.T) {
 		t.Fatalf("the open's refusal speaks of reopening: %s", body)
 	}
 	var periodID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year = 2026 AND month = 8`).Scan(&periodID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year = $1 AND month = 8`, house).Scan(&periodID); err != nil {
 		t.Fatal(err)
 	}
 	code, body = post("/api/v1/gl/periods/{id}/reopen", periodID, `{"reason":"a manager asks"}`)
