@@ -83,9 +83,9 @@ func TestPopulate_BuildsTheSignInPersonas(t *testing.T) {
 			t.Errorf("persona %s holds %v, want %v", p.ID, roles, p.StaffRoles())
 		}
 		if a.Scope == "branch" {
-			want := personaBranch(p)
-			if len(a.Branches) != 1 || a.Branches[0] != want {
-				t.Errorf("persona %s reaches %v, want exactly %s", p.ID, a.Branches, want)
+			want := personaBranches(p)
+			if strings.Join(sorted(a.Branches), ",") != strings.Join(sorted(want), ",") {
+				t.Errorf("persona %s reaches %v, want exactly %v", p.ID, a.Branches, want)
 			}
 		}
 	}
@@ -104,8 +104,8 @@ func TestPopulate_BuildsTheSignInPersonas(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM staff_role_grant WHERE platform_user_id LIKE 'persona:%' AND deleted_at IS NULL`).Scan(&stray); err != nil {
 		t.Fatal(err)
 	}
-	if stray != 15 {
-		t.Errorf("%d persona grants, want 15 (thirteen staff roles, the dealer administrator and the yard manager's driver grant)", stray)
+	if stray != 16 {
+		t.Errorf("%d persona grants, want 16 (thirteen staff roles, the dealer administrator, the yard manager's driver grant and the logistics manager's second yard)", stray)
 	}
 	// No Console style account was created.
 	var consoleStyle int

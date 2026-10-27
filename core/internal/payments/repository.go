@@ -83,6 +83,7 @@ const methodColumns = `id::text, customer_id::text, gateway, method_type, brand,
 // existing tables - it never recreates them.
 type Repository struct {
 	pool *pgxpool.Pool // nil in scaffold/tests
+	till TillSeam      // the till's side of the held money drawer pay out and write off (payout.go); nil leaves them off
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
