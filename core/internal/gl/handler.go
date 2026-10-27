@@ -497,10 +497,15 @@ func (h *Handler) listPeriods(w http.ResponseWriter, r *http.Request, _ guards.S
 		h.writeErr(w, r, err)
 		return
 	}
+	nextYear, err := h.svc.NextOpenableFiscalYear(r.Context())
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
 	if ps == nil {
 		ps = []Period{}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": ps})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": ps, "next_openable_year": nextYear})
 }
 
 type reasonBody struct {
@@ -560,11 +565,14 @@ func (h *Handler) closeYear(w http.ResponseWriter, r *http.Request, _ guards.Sta
 }
 
 func (h *Handler) openYear(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
-	var b reasonBody
+	var b struct {
+		Year   int    `json:"year"`
+		Reason string `json:"reason"`
+	}
 	if !decodeJSON(w, r, &b) {
 		return
 	}
-	res, err := h.svc.OpenNextFiscalYear(r.Context(), b.Reason)
+	res, err := h.svc.OpenFiscalYear(r.Context(), b.Year, b.Reason)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

@@ -45,7 +45,11 @@ export const dealerStyles = css`
     }
   }
 
+  /* The desk widths pin the list and the work to their own columns, so the
+     phone's control and the DOM order that serves it change nothing there. */
   .surface-list {
+    grid-column: 1;
+    grid-row: 1;
     display: flex;
     flex-direction: column;
     gap: var(--hh-s-16);
@@ -55,6 +59,47 @@ export const dealerStyles = css`
     background: var(--hh-card);
     border: 1px solid var(--hh-hairline);
     border-radius: var(--hh-radius-card);
+  }
+  .surface-work {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+  }
+  /* The phone's Settings control (UX-104): the section's own work comes
+     first on a phone, so the left list waits folded behind this control
+     until it is asked for. A native button, so keyboard and touch arrive
+     the same way; the sheet holds it to a 44px touch target, and
+     aria-expanded with aria-controls announce the folded list. The desk
+     widths hide it and never fold the list. */
+  .surface-list-toggle {
+    display: none;
+  }
+  @media (max-width: 900px) {
+    .surface-list {
+      grid-column: 1;
+      grid-row: auto;
+    }
+    .surface-work {
+      grid-column: 1;
+      grid-row: auto;
+    }
+    .surface-list-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 var(--hh-s-16);
+      border: 1px solid var(--hh-control-line);
+      border-radius: var(--hh-radius-control);
+      background: var(--hh-card);
+      color: var(--hh-text);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .app-body:not(.list-open) .surface-list {
+      display: none;
+    }
   }
   .nav-group {
     display: flex;
