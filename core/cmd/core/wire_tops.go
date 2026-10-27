@@ -529,7 +529,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// transaction, with the boot fail-fast beside it.
 	pickupsSync := dispatch.NewPickupsSyncStore(
 		pool, dispatchTenantOrders{repo: orderRepo}, dispatchSignatureAdapter{svc: posSvc}, dispatchPickHoldAdapter{repo: billingRepo}, linkedUserID(pool)).
-		WithOrderFulfiller(orderSvc)
+		WithOrderFulfiller(dispatchFulfilAdapter{svc: orderSvc})
 	if !pickupsSync.PickHoldGateWired() {
 		panic("dispatch: pickups sync store pick hold gate not wired - a pay before release order's pickup could be confirmed offline unpaid")
 	}

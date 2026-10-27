@@ -472,7 +472,7 @@ func (s *PickupsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, ke
 		return sync.RowState{}, fmt.Errorf("dispatch: commit pickups write: %w", err)
 	}
 	if s.orderFulfiller != nil && r.pickup.OrderID != "" {
-		_ = s.orderFulfiller.AdvanceFromDelivery(ctx, r.pickup.OrderID, "willcall:"+id)
+		_ = s.orderFulfiller.MarkFulfilled(ctx, r.pickup.OrderID, "willcall:"+id)
 	}
 	return pickupRowStateOf(r)
 }

@@ -129,7 +129,6 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	inventorySvc.WithGLPoster(invGLPoster{svc: glSvc}).WithRuleResolver(glRuleAdapter{svc: glSvc})
 	glSvc.WithCostBasis(inventorySvc)
-	orderSvc.WithStockFulfiller(inventorySvc)
 	pricingSvc.WithCandidateSource(pricingFloorCandidates{products: productSvc, inventory: inventorySvc})
 	productSvc.WithStock(productStockReader{svc: inventorySvc}).WithBranchStock(inventorySvc).WithListPrices(pricingSvc)
 	// X3, the yard fence: the stock reads' cost legs (on hand, branch
@@ -156,6 +155,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithAuditTrail(auditSvc).
 		WithReorderPricing(pricingSvc).
 		WithReorderInventory(inventorySvc).
+		WithStockFulfiller(inventorySvc).
 		// The money a reversal held and a manager applied to the order's invoices, read through the payments module's
 		// own seam for the activity stream (SF-2r round 2).
 		WithReapplied(order.NewPaymentsReappliedReader(payments.NewRepository(pool)))
