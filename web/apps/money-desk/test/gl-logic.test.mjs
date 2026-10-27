@@ -15,6 +15,7 @@ import {
   journalTone,
   journalWord,
   refusalWords,
+  postingQueueBannerWords,
 } from "../src/gl/gl-logic.ts";
 
 test("cents read as dollars, and a missing figure is never a plausible zero", () => {
@@ -96,4 +97,18 @@ test("a floor request reads in words: the quote, the line, the discount, the mar
   assert.equal(bpsWords("2000"), "20.0%");
   assert.equal(bpsWords("95"), "0.9%");
   assert.equal(bpsWords("-120"), "-1.2%");
+});
+
+test("the posting queue banner reads its two counts, and an empty queue shows nothing", () => {
+  assert.equal(postingQueueBannerWords({ waiting: 0, dead: 0 }), "");
+  assert.equal(postingQueueBannerWords({ waiting: 1, dead: 0 }),
+    "1 journal is waiting to post. The posting queue lists them for the Financial Controller.");
+  assert.equal(postingQueueBannerWords({ waiting: 3, dead: 0 }),
+    "3 journals are waiting to post. The posting queue lists them for the Financial Controller.");
+  assert.equal(postingQueueBannerWords({ waiting: 0, dead: 1 }),
+    "1 journal failed to post and is set aside. The posting queue lists them for the Financial Controller.");
+  assert.equal(postingQueueBannerWords({ waiting: 0, dead: 2 }),
+    "2 journals failed to post and are set aside. The posting queue lists them for the Financial Controller.");
+  assert.equal(postingQueueBannerWords({ waiting: 1, dead: 4 }),
+    "1 journal is waiting to post and 4 have failed and are set aside. The posting queue lists them for the Financial Controller.");
 });

@@ -103,6 +103,7 @@ type HeldFigure struct {
 	AmountCents  int64  `json:"amount_cents"`
 	Reversed     bool   `json:"reversed"`
 	AppliedCents int64  `json:"applied_cents"`
+	PaidOutCents int64  `json:"paid_out_cents"` // paid out or written off (SF-2m)
 	HeldCents    int64  `json:"held_cents"`
 }
 

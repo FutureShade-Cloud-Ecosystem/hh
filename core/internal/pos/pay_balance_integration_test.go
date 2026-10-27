@@ -68,7 +68,7 @@ func otherBranchID(t *testing.T, pool *pgxpool.Pool, not string) string {
 	t.Helper()
 	var id string
 	if err := pool.QueryRow(context.Background(),
-		`SELECT id::text FROM locations WHERE id::text <> $1 LIMIT 1`, not).Scan(&id); err != nil {
+		`SELECT id::text FROM locations WHERE code = 'KGN' AND id::text <> $1 LIMIT 1`, not).Scan(&id); err != nil {
 		t.Skipf("no second branch seeded: %v", err)
 	}
 	return id
@@ -301,7 +301,7 @@ func TestIntegration_PayBalance_FindCountsAVoidedInvoiceAsUnbilled(t *testing.T)
 		WITH c AS (INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
 		           VALUES ('PBV-'||$1, 'Void invoice proof', 'CONTRACTOR', 0, 5000000) RETURNING id)
 		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
-		SELECT '#SO-PBV-'||$1, c.id, (SELECT id FROM locations WHERE loc_type='BRANCH' LIMIT 1),
+		SELECT '#SO-PBV-'||$1, c.id, (SELECT id FROM locations WHERE loc_type='BRANCH' AND code='TRT' LIMIT 1),
 		       'CONFIRMED', 'WILL_CALL', 10000, 10000
 		  FROM c RETURNING id::text, order_no`, suffix).Scan(&orderID, &orderNo); err != nil {
 		t.Fatalf("plant the order: %v", err)
@@ -557,7 +557,7 @@ func TestIntegration_PayBalance_PreReadAndLockedReadAgree(t *testing.T) {
 		WITH c AS (INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
 		           VALUES ('PBA-'||$1, 'Pre and locked proof', 'CONTRACTOR', 0, 5000000) RETURNING id)
 		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
-		SELECT '#SO-PBA-'||$1, c.id, (SELECT id FROM locations WHERE loc_type='BRANCH' LIMIT 1),
+		SELECT '#SO-PBA-'||$1, c.id, (SELECT id FROM locations WHERE loc_type='BRANCH' AND code='TRT' LIMIT 1),
 		       'CONFIRMED', 'WILL_CALL', 10000, 10000
 		  FROM c RETURNING id::text, customer_id::text`, suffix).Scan(&orderID, &custID); err != nil {
 		t.Fatalf("plant the order: %v", err)
@@ -625,7 +625,7 @@ func TestIntegration_PayBalance_FindEscapesTheWildcards(t *testing.T) {
 			WITH c AS (INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
 			           VALUES ('PBE-'||$1, $2, 'CONTRACTOR', 0, 5000000) RETURNING id)
 			INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
-			SELECT '#SO-PBE-'||$1, c.id, (SELECT id FROM locations WHERE loc_type='BRANCH' LIMIT 1),
+			SELECT '#SO-PBE-'||$1, c.id, (SELECT id FROM locations WHERE loc_type='BRANCH' AND code='TRT' LIMIT 1),
 			       'CONFIRMED', 'WILL_CALL', 10000, 10000
 			  FROM c RETURNING id::text, order_no`, suffix+name, name).Scan(&orderID, &orderNo); err != nil {
 			t.Fatalf("plant %s: %v", name, err)
@@ -694,7 +694,7 @@ func plantOwingOrder(t *testing.T, pool *pgxpool.Pool, invoices []struct {
 		WITH c AS (INSERT INTO customers (account_no, name, customer_type, payment_terms_days, credit_limit_cents)
 		           VALUES ('PBM-'||$1, 'Multi invoice proof', 'CONTRACTOR', 0, 5000000) RETURNING id)
 		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
-		SELECT '#SO-PBM-'||$1, c.id, (SELECT id FROM locations WHERE loc_type='BRANCH' LIMIT 1),
+		SELECT '#SO-PBM-'||$1, c.id, (SELECT id FROM locations WHERE loc_type='BRANCH' AND code='TRT' LIMIT 1),
 		       'CONFIRMED', 'WILL_CALL', 15000, 15000
 		  FROM c RETURNING id::text, customer_id::text, branch_id::text`, suffix).Scan(&orderID, &custID, &branchID); err != nil {
 		t.Fatalf("plant the order: %v", err)

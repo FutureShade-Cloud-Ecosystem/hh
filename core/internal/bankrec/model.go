@@ -133,15 +133,16 @@ type Match struct {
 
 // Reconciliation is one monthly per-account reconciliation (0033 bank_reconciliations).
 type Reconciliation struct {
-	ID                    string     `json:"id"`
-	BankAccountID         string     `json:"bank_account_id"`
-	Year                  int        `json:"year"`
-	Month                 int        `json:"month"`
-	StatementBalanceCents int64      `json:"statement_balance_cents"`
-	GLBalanceCents        int64      `json:"gl_balance_cents"`
-	VarianceCents         int64      `json:"variance_cents"`
-	Status                string     `json:"status"`
-	CompletedAt           *time.Time `json:"completed_at,omitempty"`
+	ID                      string     `json:"id"`
+	BankAccountID           string     `json:"bank_account_id"`
+	Year                    int        `json:"year"`
+	Month                   int        `json:"month"`
+	StatementBalanceCents   int64      `json:"statement_balance_cents"`
+	StatementBalanceDerived bool       `json:"-"`
+	GLBalanceCents          int64      `json:"gl_balance_cents"`
+	VarianceCents           int64      `json:"variance_cents"`
+	Status                  string     `json:"status"`
+	CompletedAt             *time.Time `json:"completed_at,omitempty"`
 }
 
 // - inputs (request bodies) -
@@ -185,12 +186,14 @@ type RuleInput struct {
 	Priority int            `json:"priority"`
 }
 
-// ReconInput opens (prepares) a monthly reconciliation: it computes the GL balance + variance.
+// ReconInput opens (prepares) a monthly reconciliation, or refreshes an existing open reconciliation in place when
+// Refresh is true without changing its stored derived flag or stated closing balance.
 type ReconInput struct {
 	BankAccountID         string `json:"bank_account_id"`
 	Year                  int    `json:"year"`
 	Month                 int    `json:"month"`
 	StatementBalanceCents int64  `json:"statement_balance_cents"`
+	Refresh               bool   `json:"refresh,omitempty"`
 }
 
 // - error taxonomy (mirrors internal/till) -
