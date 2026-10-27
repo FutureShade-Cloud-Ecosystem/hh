@@ -353,6 +353,11 @@ func (s *Service) RunRecurring(ctx context.Context, id string) (Journal, error) 
 	if err != nil {
 		return Journal{}, err
 	}
+	// Round 4 (the lead's add): the run's own create is a write like the others, and the recurring
+	// journal carries no branch, the consolidated books, so it needs a dealer wide caller.
+	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
+		return Journal{}, err
+	}
 	tpl, err := s.store.GetRecurring(ctx, id)
 	if err != nil {
 		return Journal{}, err

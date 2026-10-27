@@ -230,13 +230,17 @@ func TestIntegration_AC2_BalanceSheetInvariant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The absolute identity holds with earnings to date (round 4): assets == liabilities + equity
+	// (the carried equity plus the unclosed years' retained earnings to date) + this year's net income.
+	if !rep.Balanced {
+		t.Fatalf("not balanced: A=%d L=%d E=%d NI=%d",
+			rep.TotalAssetsCents, rep.TotalLiabilitiesCents, rep.TotalEquityCents, rep.NetIncomeCents)
+	}
+	// The fixture's own movements, per bucket, over the baseline.
 	dA := rep.TotalAssetsCents - base.TotalAssetsCents
 	dL := rep.TotalLiabilitiesCents - base.TotalLiabilitiesCents
 	dE := rep.TotalEquityCents - base.TotalEquityCents
 	dNI := rep.NetIncomeCents - base.NetIncomeCents
-	if dA != dL+dE+dNI {
-		t.Fatalf("not balanced over the fixture: dA=%d dL=%d dE=%d dNI=%d", dA, dL, dE, dNI)
-	}
 	if dA != 1_650_000 || dL != 450_000 || dE != 1_000_000 || dNI != 200_000 {
 		t.Fatalf("unexpected deltas over the baseline: base=%+v rep=%+v", base, rep)
 	}
@@ -533,6 +537,19 @@ func TestIntegration_AC7_TrialBalanceInBalance(t *testing.T) {
 	const yr = 2107
 	resetYear(t, pool, yr)
 
+	// Round 4 (S3's P2): the trial balance's BALANCE accounts read inception to date, so the proof is
+	// the DELTA over the baseline this database already held (the seeded books and any earlier band's
+	// history stand behind the year), the P&L accounts staying the year's own movement.
+	base, err := svc.TrialBalanceReportFor(ctx, yr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseBy := func(code string) (int64, int64, bool) {
+		r, ok := tbRow(base.Rows, code)
+		return r.TotalDebitCents, r.TotalCreditCents, ok
+	}
+	baseTotals := [2]int64{base.TotalDebitCents, base.TotalCreditCents}
+
 	// Several balanced POSTED journals touching assets/liabilities/equity/revenue/expense.
 	// Each journal balances by construction (debits == credits), so Σall-debits == Σall-credits.
 	// The seeded line amounts are the ground truth; we independently accumulate the expected
@@ -579,28 +596,30 @@ func TestIntegration_AC7_TrialBalanceInBalance(t *testing.T) {
 	if rep.TotalDebitCents != rep.TotalCreditCents {
 		t.Fatalf("Σdebit %d != Σcredit %d", rep.TotalDebitCents, rep.TotalCreditCents)
 	}
-	// (3) both equal the exact Σ of seeded (balanced) amounts, DRAFT excluded
-	if rep.TotalDebitCents != expDebit {
-		t.Fatalf("Σdebit %d != seeded Σdebit %d (DRAFT must be excluded)", rep.TotalDebitCents, expDebit)
+	// (3) the DELTAS equal the exact Σ of seeded (balanced) amounts, DRAFT excluded
+	if rep.TotalDebitCents-baseTotals[0] != expDebit {
+		t.Fatalf("Σdebit delta %d != seeded Σdebit %d (DRAFT must be excluded)", rep.TotalDebitCents-baseTotals[0], expDebit)
 	}
-	if rep.TotalCreditCents != expCredit {
-		t.Fatalf("Σcredit %d != seeded Σcredit %d (DRAFT must be excluded)", rep.TotalCreditCents, expCredit)
+	if rep.TotalCreditCents-baseTotals[1] != expCredit {
+		t.Fatalf("Σcredit delta %d != seeded Σcredit %d (DRAFT must be excluded)", rep.TotalCreditCents-baseTotals[1], expCredit)
 	}
 
-	// (4) one account's BalanceCents == its Σdebit − Σcredit from the fixtures.
-	// 1000 (cash): debit 1_000_000 + 600_000, credit 250_000 → balance 1_350_000.
+	// (4) one account's BalanceCents delta == its Σdebit − Σcredit from the fixtures (1000 is a BALANCE
+	// account, inception to date since 0439 round 4: the fixture's delta over the carried baseline).
+	// 1000 (cash): debit 1_000_000 + 600_000, credit 250_000 → delta 1_350_000.
 	const cashCode = "1000"
 	row, ok := tbRow(rep.Rows, cashCode)
 	if !ok {
 		t.Fatalf("account %s missing from trial balance", cashCode)
 	}
 	wantCashBal := debitBy[cashCode] - creditBy[cashCode]
-	if row.BalanceCents != wantCashBal {
-		t.Fatalf("%s balance %d != Σdebit−Σcredit %d", cashCode, row.BalanceCents, wantCashBal)
+	bd, bc, had := baseBy(cashCode)
+	if row.BalanceCents-(bd-bc) != wantCashBal {
+		t.Fatalf("%s balance delta %d != Σdebit−Σcredit %d", cashCode, row.BalanceCents-(bd-bc), wantCashBal)
 	}
-	if row.TotalDebitCents != debitBy[cashCode] || row.TotalCreditCents != creditBy[cashCode] {
+	if had && (row.TotalDebitCents-bd != debitBy[cashCode] || row.TotalCreditCents-bc != creditBy[cashCode]) {
 		t.Fatalf("%s debit/credit columns wrong: got d=%d c=%d want d=%d c=%d",
-			cashCode, row.TotalDebitCents, row.TotalCreditCents, debitBy[cashCode], creditBy[cashCode])
+			cashCode, row.TotalDebitCents-bd, row.TotalCreditCents-bc, debitBy[cashCode], creditBy[cashCode])
 	}
 	// the DRAFT credit of 777_777 must not have leaked into revenue 4000's credit column
 	if r4000, ok := tbRow(rep.Rows, "4000"); ok && r4000.TotalCreditCents != creditBy["4000"] {

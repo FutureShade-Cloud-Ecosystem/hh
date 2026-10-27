@@ -10,6 +10,7 @@ import (
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -32,6 +33,8 @@ func defaultRules() map[string]map[string]string {
 }
 
 type fakeStore struct {
+	closingIDs []string
+
 	policy        Policy
 	rules         map[string]map[string]string
 	activeRules   []RuleRef
@@ -261,6 +264,19 @@ func (f *fakeStore) OpenNextFiscalYear(_ context.Context, _ time.Time, _ func(ct
 
 func (f *fakeStore) HouseYearEnded(_ context.Context, _ int, _ time.Time) (bool, error) {
 	return true, nil
+}
+
+func (f *fakeStore) ClosingJournalsForYear(_ context.Context, _ int) ([]string, int64, error) {
+	return f.closingIDs, 0, nil
+}
+
+func (f *fakeStore) InsertClosingJournal(_ context.Context, _ journalDraft, _ int) (string, error) {
+	f.closingIDs = append(f.closingIDs, "closing-1")
+	return "closing-1", nil
+}
+
+func (f *fakeStore) BusinessZone(_ context.Context) (houseday.Zone, error) {
+	return houseday.DefaultZone(), nil
 }
 
 func (f *fakeStore) ListPeriods(_ context.Context) ([]Period, error) { return nil, nil }

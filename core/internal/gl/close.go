@@ -166,8 +166,14 @@ func (s *Service) ClosePeriod(ctx context.Context, id, reason string) (Period, e
 	if err != nil {
 		return Period{}, err
 	}
+	// The pre flight reads its instants before the close's own write, unlocked; a posting landing
+	// between the two follows 612's late posted rule, which is acceptable and stated (round 4).
 	if fails := s.runClosePreFlight(ctx, p.Year, p.Month); len(fails) > 0 {
-		return Period{}, clientErr(409, "gl: period close pre flight failed: %s", strings.Join(fails, "; "))
+		caveat := ""
+		if s.stockValue != nil {
+			caveat = " (the stock tie reads today's stock value)"
+		}
+		return Period{}, clientErr(409, "gl: period close pre flight failed%s: %s", caveat, strings.Join(fails, "; "))
 	}
 	// Round 3: a period is company wide, its close a dealer wide act.
 	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
@@ -247,6 +253,13 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
 		return YearCloseResult{}, err
 	}
+	// Round 4 (S3's P1): a second year end for a year that already has CLOSING journals is a no op
+	// answering the first run's result, never a second posting.
+	if ids, net, err := s.store.ClosingJournalsForYear(ctx, year); err != nil {
+		return YearCloseResult{}, err
+	} else if len(ids) > 0 {
+		return YearCloseResult{FiscalYear: year, ClosingJournalIDs: ids, ClosingJournalID: firstID(ids), NetIncomeCents: net, PeriodsClosed: true}, nil
+	}
 	// FW1-09b, the lead's Ask 2: the close is refused until the year's last day has passed in the
 	// dealer's zone (a mid year press sealed the months still ahead and stopped all posting).
 	ended, err := s.store.HouseYearEnded(ctx, year, s.now())
@@ -255,6 +268,25 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	}
 	if !ended {
 		return YearCloseResult{}, clientErr(409, "gl: fiscal year %d has not ended; the year end close is refused until the year's last day has passed in the dealer's zone", year)
+	}
+	// Round 4 (S3's P1): the year end runs the pre flight for every month it will seal, and refuses in
+	// words naming the month. The pre flight reads its instants before the close's own write, unlocked; a
+	// posting landing between the two follows 612's late posted rule, which is acceptable and stated.
+	periods, err := s.store.ListPeriods(ctx)
+	if err != nil {
+		return YearCloseResult{}, err
+	}
+	for _, p := range periods {
+		if p.Year != year || p.Status != "OPEN" {
+			continue
+		}
+		if fails := s.runClosePreFlight(ctx, p.Year, p.Month); len(fails) > 0 {
+			caveat := ""
+			if s.stockValue != nil {
+				caveat = " (the stock tie reads today's stock value)"
+			}
+			return YearCloseResult{}, clientErr(409, "gl: year end close pre flight failed for %04d-%02d%s: %s", p.Year, p.Month, caveat, strings.Join(fails, "; "))
+		}
 	}
 	pls, err := s.store.PLBalancesByBranch(ctx, year)
 	if err != nil {
@@ -303,7 +335,10 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 			OccurredAt: closingAt,
 			Lines:      lines,
 		}
-		id, _, err := s.store.InsertJournal(ctx, draft)
+		// Round 4 (S3's P1): the closing journal posts into the closed year's own December whatever its
+		// status, through the dedicated insert that resolves the period explicitly. The late posted rule
+		// never touches it.
+		id, err := s.store.InsertClosingJournal(ctx, draft, year)
 		if err != nil {
 			return YearCloseResult{}, err
 		}
@@ -388,4 +423,13 @@ func csvEscape(s string) string {
 		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 	}
 	return s
+}
+
+// firstID answers a slice's first id (the year end's singular result field
+// stays populated only when exactly one closing journal exists).
+func firstID(ids []string) string {
+	if len(ids) == 1 {
+		return ids[0]
+	}
+	return ""
 }

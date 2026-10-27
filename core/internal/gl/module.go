@@ -278,6 +278,7 @@ type Service struct {
 	approvalChecker ApprovalStateChecker // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
 	delivery        DeliveryReader       // round 2: the delivery fact the deposit release's date reads
 	auditTx         AuditTxRecorder      // round 2: the open year's audit, in the year's transaction
+	strictPreFlight bool                 // round 4: production refuses a close when a pre flight check is unwired; tests may pass nil
 	log             *slog.Logger
 	now             func() time.Time
 	callerFrom      func(context.Context) (identity.StaffContext, bool)
@@ -408,6 +409,10 @@ func (s *Service) WithDeliveryReader(r DeliveryReader) *Service { s.delivery = r
 
 // WithAuditTxRecorder injects the in-transaction audit seam the Controller's open year records through (round 2).
 func (s *Service) WithAuditTxRecorder(r AuditTxRecorder) *Service { s.auditTx = r; return s }
+
+// WithStrictPreFlight makes the pre flight refuse a close when a check is unwired (round 4, S3's P2:
+// production wiring calls this; tests pass nil seams and skip the checks).
+func (s *Service) WithStrictPreFlight() *Service { s.strictPreFlight = true; return s }
 
 // WithStockReader injects the stock-ledger seam the close pre flight's 1200 tie check reads (FW1-09b).
 func (s *Service) WithStockReader(r StockValueReader) *Service { s.stockValue = r; return s }

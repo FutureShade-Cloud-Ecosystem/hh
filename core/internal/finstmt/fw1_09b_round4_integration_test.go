@@ -25,6 +25,14 @@ func TestIntegration_FW1_09bR4_TheBalanceSheetCarriesItsEarnings(t *testing.T) {
 		resetYear(t, pool, next)
 	})
 
+	// The database's own unclosed prior earnings stand in the baseline (every
+	// shared fixture's unclosed P&L is in the same ledger), so the proof is
+	// the DELTA: the year's $700.00 of income lifts the retained earnings to
+	// date line by exactly $700.00, and the books balance before and after.
+	base, err := svc.BalanceSheetReportFor(ctx, next, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	seedJournal(t, pool, yr, 6, 1, "POSTED", trenton, []jline{
 		{code: "1000", debit: 700}, {code: "4000", credit: 700},
 	})
@@ -38,10 +46,10 @@ func TestIntegration_FW1_09bR4_TheBalanceSheetCarriesItsEarnings(t *testing.T) {
 		t.Fatalf("not balanced: A=%d L=%d E=%d NI=%d (the carried balances stand against this year's income only; the unclosed year's earnings must read as retained earnings to date)",
 			rep.TotalAssetsCents, rep.TotalLiabilitiesCents, rep.TotalEquityCents, rep.NetIncomeCents)
 	}
-	if got := amount(rep.Equity, "3901"); got != 700 {
-		t.Fatalf("retained earnings to date = %d, want the unclosed year's 700", got)
+	if got := amount(rep.Equity, "3901") - amount(base.Equity, "3901"); got != 700 {
+		t.Fatalf("retained earnings to date moved %d, want the unclosed year's 700", got)
 	}
-	if rep.TotalAssetsCents != 700 {
-		t.Fatalf("assets = %d, want the year's own 700", rep.TotalAssetsCents)
+	if rep.TotalAssetsCents-base.TotalAssetsCents != 700 {
+		t.Fatalf("assets moved %d, want the year's own 700", rep.TotalAssetsCents-base.TotalAssetsCents)
 	}
 }

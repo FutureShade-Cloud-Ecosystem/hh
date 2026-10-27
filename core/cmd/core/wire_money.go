@@ -122,6 +122,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithDeadRequeuer(outboxStore).
 		WithAudit(auditSvc).
 		WithAuditTxRecorder(auditSvc).
+		WithStrictPreFlight().
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
 		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
 	gl.NewHandler(glSvc, log).WithZone(newDealerZone(pool)).WithLegacyImport(settings.NewDealerConfigReader(pool)).WithUserLinker(link).RegisterRoutes(r, g)

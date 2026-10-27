@@ -201,7 +201,7 @@ func TestIntegration_FW1_09bR4_TheYearEndRunsThePreFlight(t *testing.T) {
 	drawers := &fw1WindowDrawers{year: 3076, month: 12}
 	closer := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(3077, 1, 5, 12, 0, 0, 0, time.UTC)).
 		WithDrawerReader(drawers).
-		WithStockReader(fw1FixedStock{cents: 500})
+		WithStockReader(fw1FixedStock{cents: 0})
 
 	_, err := closer.CloseYear(ctx, 3076, "round 4 pre flight proof")
 	if err == nil {
@@ -256,7 +256,11 @@ func TestIntegration_FW1_09bR4_ThePreFlightReadsTheMonthEndAndTheQueueWindow(t *
 	if len(tie.asOfs) == 0 {
 		t.Fatalf("the AR tie was never read")
 	}
-	want := time.Date(3078, 7, 1, 0, 0, 0, 0, time.UTC)
+	zone, err := NewRepository(pool).BusinessZone(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(3078, 7, 1, 0, 0, 0, 0, zone.Location())
 	for _, got := range tie.asOfs {
 		if !got.Equal(want) {
 			t.Fatalf("the AR tie read as of %s, want the first instant of the next month in the dealer's zone (%s)", got, want)

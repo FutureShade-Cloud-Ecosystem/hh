@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -437,6 +438,13 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 		lineAcctIDs[i] = id
 	}
 
+	return r.insertJournalRowsTx(ctx, tx, d, periodYear, periodID, lineAcctIDs, onDup)
+}
+
+// insertJournalRowsTx is the journal row write given a RESOLVED period: the entry number minted for the
+// period's year, the header, and the lines. insertJournalIn resolves the period by date; the year end's
+// dedicated insert resolves its own December explicitly (round 4) and calls this with it.
+func (r *Repository) insertJournalRowsTx(ctx context.Context, tx pgx.Tx, d journalDraft, periodYear int, periodID string, lineAcctIDs []string, onDup func() (string, bool)) (string, bool, error) {
 	var entryNo int
 	// SWARM-W4-C DIB-418: mint through next_entry_no(fiscal_year) (migration 0119) instead of
 	// COALESCE(MAX(entry_no),0)+1. The old expression was a read-modify-write under UNIQUE(fiscal_year,
@@ -454,7 +462,7 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 		postedAt = d.OccurredAt
 	}
 	var id string
-	err = tx.QueryRow(ctx,
+	err := tx.QueryRow(ctx,
 		`INSERT INTO gl_journals
 		   (fiscal_year, entry_no, period_id, source, source_ref_id, memo, status, posted_at, branch_id,
 		    created_by, idempotency_key, approved_by, reverses_journal_id)
@@ -1009,6 +1017,102 @@ func (r *Repository) EnsureNextFiscalYear(ctx context.Context, now time.Time) (i
 		return 0, fmt.Errorf("gl: commit ensure next fiscal year: %w", err)
 	}
 	return target, nil
+}
+
+// ClosingJournalsForYear answers a year's CLOSING journals: their ids in entry order and the net
+// income they carried to 3900 (the 3900 legs' credit minus debit). The year end's once only rule
+// answers the first run with these (round 4).
+func (r *Repository) ClosingJournalsForYear(ctx context.Context, year int) ([]string, int64, error) {
+	if r.pool == nil {
+		return nil, 0, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT id::text FROM gl_journals WHERE fiscal_year = $1 AND source = 'CLOSING' ORDER BY entry_no`, year)
+	if err != nil {
+		return nil, 0, fmt.Errorf("gl: closing journals for year: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, 0, fmt.Errorf("gl: scan closing journal: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	var net int64
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(COALESCE(l.credit_cents,0) - COALESCE(l.debit_cents,0)), 0)
+		 FROM gl_journal_lines l
+		 JOIN gl_journals j ON j.id = l.journal_id
+		 JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE j.fiscal_year = $1 AND j.source = 'CLOSING' AND a.code = $2`, year, RetainedEarningsCode).Scan(&net); err != nil {
+		return nil, 0, fmt.Errorf("gl: closing net income: %w", err)
+	}
+	return ids, net, nil
+}
+
+// InsertClosingJournal is the year end's dedicated insert (round 4, S3's P1): the closing journal posts
+// into the closed year's December WHATEVER its status, the year end being the one act allowed to write
+// a closed month. The period is resolved explicitly, never by the posting date, so the late posted rule
+// cannot move it into the next year, and the entry number is the closed year's own.
+func (r *Repository) InsertClosingJournal(ctx context.Context, d journalDraft, year int) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("gl: begin closing insert: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := r.ensureFiscalYearTx(ctx, tx, year); err != nil {
+		return "", err
+	}
+	var periodID string
+	var periodYear int
+	if err := tx.QueryRow(ctx, `SELECT id::text, year FROM fiscal_periods WHERE year = $1 AND month = 12`, year).Scan(&periodID, &periodYear); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", clientErr(422, "gl: no fiscal period for %04d-12", year)
+		}
+		return "", fmt.Errorf("gl: resolve the closing period: %w", err)
+	}
+	lineAcctIDs := make([]string, 0, len(d.Lines))
+	for _, ln := range d.Lines {
+		var acctID string
+		if err := tx.QueryRow(ctx, `SELECT id::text FROM gl_accounts WHERE code = $1`, ln.AccountCode).Scan(&acctID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", unprocessable("gl: unknown account code %q", ln.AccountCode)
+			}
+			return "", fmt.Errorf("gl: resolve line account: %w", err)
+		}
+		lineAcctIDs = append(lineAcctIDs, acctID)
+	}
+	id, _, err := r.insertJournalRowsTx(ctx, tx, d, periodYear, periodID, lineAcctIDs, func() (string, bool) { return "", false })
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("gl: commit closing insert: %w", err)
+	}
+	return id, nil
+}
+
+// BusinessZone answers the dealer's business zone, the zone the posting path
+// files months by (round 4, S3's P2: the pre flight reads its instants in the
+// same zone, never a hard coded default).
+func (r *Repository) BusinessZone(ctx context.Context) (houseday.Zone, error) {
+	if r.pool == nil {
+		return houseday.DefaultZone(), nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return houseday.Zone{}, fmt.Errorf("gl: begin business zone read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	return r.journalZone(ctx, tx)
 }
 
 // HouseYearEnded answers whether the year's last day has passed in the dealer's zone: the first
