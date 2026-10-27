@@ -14,10 +14,14 @@ package gl
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -283,5 +287,53 @@ func TestIntegration_FW1_01R4_HeadOfficeSetAuditRowThroughTheRealRecorder(t *tes
 	}
 	if actor != user {
 		t.Fatalf("the head office audit's actor is %q, want the Controller %q", actor, user)
+	}
+}
+
+// TestIntegration_FW1_01R4_GapYearIsRefusedInWords is S2's round 3 P3 red:
+// the first-year check refuses a year before the books' first year, but a
+// year MISSING BETWEEN the books' first year and the house year (a hole in
+// the fiscal calendar) passed the check and fell through to a silent 200 with
+// the cap year. After the fix it is refused in the same words' shape, with no
+// year written and no audit row.
+func TestIntegration_FW1_01R4_GapYearIsRefusedInWords(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	user := aUser(t, pool)
+	fw1EnsureHouseYear(t, pool, 2026)
+	fw1ScrubYear(t, pool, 2024, 2025, 2027, 2028)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, 2024, 2025, 2027, 2028) })
+	// The books' first year becomes 2024, so 2025 is a gap, not a year before the books.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO fiscal_periods (year, month, status) VALUES (2024, 1, 'OPEN') ON CONFLICT (year, month) DO NOTHING`); err != nil {
+		t.Fatalf("plant the first year's period: %v", err)
+	}
+	auditTx := &fw1AuditTx{}
+	controller := fw1R4Controller(pool, user).WithAuditTxRecorder(auditTx)
+	h := NewHandler(controller, nil)
+
+	postOpenYear := func(body string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRequest(http.MethodPost, "/api/v1/gl/periods/open-year", strings.NewReader(body))
+		rsp := httptest.NewRecorder()
+		h.openYear(rsp, rec, guards.StaffCaller{})
+		return rsp.Code, rsp.Body.String()
+	}
+
+	code, body := postOpenYear(`{"year":2025,"reason":"the gap year"}`)
+	if code == http.StatusOK || !strings.Contains(body, "2025 is missing from the books; only the next year can be opened here") {
+		t.Fatalf("requesting the gap year 2025 answered %d %s, want refusal '2025 is missing from the books; only the next year can be opened here'", code, body)
+	}
+	if len(auditTx.recorded) != 0 {
+		t.Fatalf("the refused gap year recorded %d audit rows, want none", len(auditTx.recorded))
+	}
+	for _, year := range []int{2025, 2027, 2028} {
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year=$1`, year).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Fatalf("the refused gap year left %d periods behind for %d, want none", n, year)
+		}
 	}
 }
