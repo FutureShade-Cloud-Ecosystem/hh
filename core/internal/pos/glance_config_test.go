@@ -379,12 +379,14 @@ func TestStanding_UnreachableBranch_RefusedNotBlanked(t *testing.T) {
 }
 
 // The standing read keeps its policy gate for a reachable branch: the wall
-// adds a refusal, it does not remove the dealer's balance switch.
+// adds a refusal, it does not remove the dealer's switch-off. The switch is
+// the account position policy's own HIDDEN word now (UX-97 item 208), not
+// the retired pos_policy.balance_visibility column.
 func TestStanding_ReachableBranch_PolicyStillDecidesTheBytes(t *testing.T) {
 	h := newHarness()
 	h.caller = salesCaller()
 	wireStanding(h, behind(), nil)
-	h.store.policies["branch-trt"] = PosPolicy{BranchID: "branch-trt", BalanceVisibility: BalanceVisibilityHidden}
+	h.svc.WithPositionSurface(&fakePosition{vis: "HIDDEN", svc: h.svc})
 
 	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
 	var ce clientError

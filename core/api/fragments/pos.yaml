@@ -543,15 +543,21 @@ paths:
         word names the case: walk_in (no customer_id), clear (nothing past
         due, no hold), past_due, on_hold (an active credit hold, whether or
         not anything is past due), or withheld (round 4: a caller the
-        dealer's balance_visibility policy strips the figures from, whose
-        answer never names a position; clear is a position too). The hold is
+        dealer's account position policy strips the figures from, whose
+        answer never names a position; clear is a position too). The ONE
+        account position policy (ar_invoice_policy.account_position_visibility)
+        decides at the ACCOUNT's home branch, the dealer default for an
+        unhomed account, exactly as the customer by-id read decides
+        (UX-97 item 208), and the old pos_policy.balance_visibility column
+        decides nothing. The hold is
         the same for every caller, decided from the same sources: a withheld
         caller reads on_hold when the account is on hold, by an active hold
         row or by aging, and withheld otherwise, and never receives the
         past-due amount or the aging bucket. The past-due amount, the oldest
         aging bucket and the hold flag ride beside the word when they apply.
         A caller whose grants do not reach the branch, or from whom the
-        dealer switched the surface off (HIDDEN), is a 403; an unknown
+        dealer switched the surface off (account_position_visibility HIDDEN),
+        is a 403; an unknown
         customer is a 404; a malformed customer_id is a 400; a read that
         could not be made (the AR, hold or policy read failed) is a 503.
         Never an empty 200. Counter Till or Quote Desk at read: the Quote
@@ -2967,7 +2973,7 @@ components:
         word is always present and names the case; the three older fields
         are present exactly when they were before: past_due_cents and
         oldest_bucket only when money is past due, on_hold only when true.
-        A caller the dealer's balance_visibility policy strips the figures
+        A caller the dealer's account position policy strips the figures
         from reads `withheld`, or `on_hold` when the account is on hold, and
         never receives past_due_cents or oldest_bucket: clear is a position
         too, and it is withheld along with the money.
@@ -3034,8 +3040,12 @@ components:
       description: >-
         The branch-overridable POS behavior policy; branch_id empty is the
         org-wide default row. quick_chip_set empty on the wire means the service
-        derived nothing and the client falls back to the full chip row.
-      required: [branch_id, cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled, workspace_split_pct, workspace_arrangement, lookup_presentation, margin_visibility, balance_visibility, supplier_deposit_cancel]
+        derived nothing and the client falls back to the full chip row. The old
+        balance_visibility knob is retired (UX-97 item 208): the dealer's ONE
+        account position policy decides who sees a customer's balance on every
+        route, the till's standing included, so the key is no part of this row
+        and a write that still carries it is ignored.
+      required: [branch_id, cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled, workspace_split_pct, workspace_arrangement, lookup_presentation, margin_visibility, supplier_deposit_cancel]
       properties:
         branch_id: { type: string, description: Empty is the org-wide default row }
         cod_enabled: { type: boolean }
@@ -3050,10 +3060,6 @@ components:
           type: string
           enum: [MANAGER_UP, ALL_STAFF, HIDDEN]
           description: Who may receive margin and estimated-profit fields in POS payloads
-        balance_visibility:
-          type: string
-          enum: [ALL_STAFF, MANAGER_UP, HIDDEN]
-          description: Who may receive a customer's past-due balance on the customer step
         supplier_deposit_cancel:
           type: string
           enum: [CREDIT_BACK, KEPT]
