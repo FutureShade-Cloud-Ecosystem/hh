@@ -1091,6 +1091,12 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	subtotal, taxTotal := g.subtotal, g.taxTotal
 	total := subtotal + taxTotal
 
+	// FW1-01b: the return's own date, the instant the return was rung. It rides the three GL events
+	// this return emits (the stock reversal, the damage write off and the money-side refund), so the
+	// ledger books them in the day the return happened even when the consumer reads the outbox after
+	// midnight.
+	returnAt := s.nowOrClock()
+
 	// A-06 restocking fee, derived from the ACTUAL committed subtotal (round half-up) so the fee is
 	// exact under partial/capped refunds. fee ≤ subtotal ≤ total by construction (bps ≤ 10000), so the
 	// credited amount (total − fee) can never go negative.
@@ -1281,6 +1287,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		}
 		if err := s.store.EmitEvent(ctx, tx, "order.returned", map[string]any{
 			"order_id": oc.OrderID, "return_id": returnID, "branch_id": oc.BranchID, "lines": eventLines,
+			"occurred_at": returnAt,
 		}); err != nil {
 			return Return{}, err
 		}
@@ -1290,6 +1297,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	if len(g.writeOffLines) > 0 {
 		if err := s.store.EmitEvent(ctx, tx, "pos.return.written_off", map[string]any{
 			"order_id": oc.OrderID, "return_id": returnID, "branch_id": oc.BranchID, "lines": g.writeOffLines,
+			"occurred_at": returnAt,
 		}); err != nil {
 			return Return{}, err
 		}
@@ -1315,6 +1323,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		"refund_method": in.RefundMethod, "subtotal_cents": subtotal, "tax_cents": taxTotal,
 		"total_cents": total, "fee_cents": feeCents, "branch_id": oc.BranchID,
 		"applied_cents": plan.applied, "invoice_offset_cents": plan.offset,
+		"occurred_at": returnAt,
 	}
 	if approvedHere {
 		committed["decided_by"] = approverStaff

@@ -311,6 +311,9 @@ UPDATE invoices
 		"original_status":  status,
 		"original_cleared": status == "DEPOSITED",
 		"branch_id":        branchID,
+		// FW1-01b: the reversal's own instant, so the GL books the reversing journal in the month the
+		// reversal happened and not in the month the consumer read the outbox.
+		"occurred_at": now,
 	})
 	if err != nil {
 		return Reversal{}, fmt.Errorf("reverse: marshal payment.reversed: %w", err)
@@ -572,6 +575,9 @@ func (r *Repository) ReapplyHeld(ctx context.Context, in ReapplyInput, now time.
 	for _, t := range targets {
 		invoiceIDs = append(invoiceIDs, t.a.InvoiceID)
 	}
+	// The batch's own instant, the request's own clock reading (the same instant the reversing
+	// journal carries). It rides the event so the GL books the re-application in the month the money
+	// was applied, not the month the consumer read the outbox (FW1-01b).
 	payload, err := json.Marshal(map[string]any{
 		"batch_id":     batchID,
 		"payment_id":   in.PaymentID,
@@ -581,6 +587,7 @@ func (r *Repository) ReapplyHeld(ctx context.Context, in ReapplyInput, now time.
 		"method":       method,
 		"reason":       in.Reason,
 		"invoice_ids":  invoiceIDs,
+		"occurred_at":  now,
 	})
 	if err != nil {
 		return Reapplication{}, fmt.Errorf("reapply: marshal payment.reapplied: %w", err)
