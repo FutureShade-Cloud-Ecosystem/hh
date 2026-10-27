@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
@@ -126,7 +128,11 @@ func cmRoundService(t *testing.T, pool *pgxpool.Pool) (*billing.CreditMemoServic
 	svc := billing.NewCreditMemoService(w, slog.Default()).
 		WithPostingRules(creditMemoRulesAdapter{rules: rules}).
 		WithThreshold(creditMemoThresholdAdapter{rules: rules}).
-		WithParker(creditMemoParkerAdapter{pool: pool, w: w, gl: glSvc, rules: rules, approvals: approvals})
+		WithParker(creditMemoParkerAdapter{pool: pool, w: w, gl: glSvc, rules: rules, approvals: approvals}).
+		// The fence's org reads, wired as newCreditMemoHandler wires them: without them the fence
+		// fails closed and every park here is refused.
+		WithBranchOrg(branches.NewRepository(pool)).
+		WithCustomerHome(customer.NewRepository(pool))
 	return svc, approvals
 }
 
