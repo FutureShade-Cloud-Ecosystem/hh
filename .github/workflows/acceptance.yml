@@ -152,6 +152,9 @@ jobs:
             probes=0
             while [ "$probes" -lt 150 ]; do
               if curl -sf "$ACC_BOX_URL/healthz" >/dev/null 2>&1; then return 0; fi
+              # A refused boot never comes back: stop the wait at once and
+              # show the log tail the failure path keeps.
+              [ "$(docker inspect -f '{{.State.Running}}' "$ACC_NAME-box" 2>/dev/null)" = "true" ] || break
               probes=$((probes + 1))
               sleep 2
             done
