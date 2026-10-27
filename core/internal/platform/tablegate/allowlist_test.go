@@ -138,13 +138,17 @@ var allowlist = []allowlistEntry{
 	{
 		module: "billing",
 		file:   "core/internal/billing/credit_repository.go",
-		tables: []string{"credit_holds", "customers", "orders"},
+		tables: []string{"credit_holds", "customers", "orders", "payment_allocations", "payment_reapplications", "payments"},
 		writes: []string{"credit_holds"},
 		// the file's own header, restating the module note: billing WRITES
 		// credit_holds, deliberate and documented in migration 0104, the
 		// alternative was a second holds table duplicating the one ACTIVE
-		// hold invariant. customers and orders feed the credit gates.
-		reason: "AR credit gates place and read holds (documented in migration 0104, stated in the file header) and read the customer and order facts the gates decide on",
+		// hold invariant. customers and orders feed the credit gates. The
+		// as-of aging (FW1-06b) rebuilds each document's balance at the
+		// as-of instant inside the one aging query, from the dated acts
+		// that moved it: the payments module's allocations, contra
+		// allocations and reapplications.
+		reason: "AR credit gates place and read holds (documented in migration 0104, stated in the file header), read the customer and order facts the gates decide on, and the as-of aging rebuild reads the dated payment acts per document in the one aging query; read only",
 	},
 	{
 		module: "billing",
@@ -154,6 +158,17 @@ var allowlist = []allowlistEntry{
 		// the consumer read picks its answer out of the same rows the AR
 		// console reads.
 		reason: "consumer-facing AR read reuses the payments stream rather than re-implementing the arithmetic, stated in the file header",
+	},
+	{
+		module: "billing",
+		file:   "core/internal/billing/gl_seam.go",
+		tables: []string{"payment_allocations", "payment_reapplications", "payments"},
+		// the file's own doc: ARBalanceCents is the 1100 tie-out's subledger
+		// figure. The as-of arm (FW1-06b) rebuilds each invoice's balance at
+		// the as-of instant inside the one query, from the same dated acts
+		// the aging's rebuild reads, so the tie-out at a past date compares
+		// what was owed then with the GL at that date.
+		reason: "the 1100 tie-out's as-of arm rebuilds each invoice's balance from the dated payment acts in the one query, the same reconstruction the aging runs, so the two tie by construction; read only",
 	},
 	{
 		module: "billing",
@@ -612,6 +627,18 @@ var allowlist = []allowlistEntry{
 		// subledger and the general ledger are append-only projections of the
 		// payment stream.
 		reason: "reversals post the reversing rows into the AR subledger projection and un-apply the invoice balances, per the file header's pre-ratified ruling; events through the outbox, org and seq stamped",
+	},
+	{
+		module: "payments",
+		file:   "core/internal/payments/void.go",
+		tables: []string{"invoices"},
+		writes: []string{"customer_transactions", "events_outbox", "invoices", "scope_sequences"},
+		// the file's own header: the true void of a mis-keyed desk receipt
+		// (FW1-06b) undoes the receipt as never taken in ONE transaction,
+		// the reversal's sibling with no 2310 hold: the allocation is
+		// deleted, the invoice balances re-open, the subledger gets the
+		// mirror rows, and payment.voided rides the outbox.
+		reason: "the void of a mis-keyed receipt re-opens the invoice balances its allocation settled, mirrors the AR subledger rows, emits payment.voided through the outbox and stamps seq, the reversal's sibling act with no 2310 hold",
 	},
 	{
 		module: "product",
