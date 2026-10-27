@@ -191,30 +191,50 @@ func (s *WeightSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since in
 // FindApplied resolves one idempotency key to the NEED_WEIGHT row it
 // applied: the row's idempotency_key column or the applied-key history
 // the adapter records in task_events (the pilot's mechanism, the events
-// table IS this row's own log).
+// table IS this row's own log). The branch reach is part of the query, as
+// the weights pull's is: the column carries no unique index (0213's rule),
+// so a key can name rows on two branches and an unordered LIMIT 1 must not
+// hand back the out of reach one (UX-103).
 func (s *WeightSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
 	where, args, ok := weightScopePredicate(f)
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
+	// The reach clause is the pick scope's pull rule (SyncStore.pullReach), in the query so LIMIT 1 picks
+	// only among the rows the caller reaches: a task with no branch is no scoped caller's, a GLOBAL caller
+	// adds no clause (the org predicate bounds it), an unwired authority fences nothing, and an absent or
+	// inactive one answers not applied.
+	reachSQL := ""
+	var branches []string
+	if s.staff != nil {
+		var reach bool
+		var err error
+		branches, reach, err = (&SyncStore{staff: s.staff}).pullReach(ctx, f)
+		if err != nil {
+			return sync.RowState{}, false, err
+		}
+		if !reach {
+			return sync.RowState{}, false, nil
+		}
+		if branches != nil {
+			reachSQL = " AND branch_id = ANY($4::uuid[])"
+		}
+	}
 	q := fmt.Sprintf(`SELECT %s FROM tasks
 		WHERE %s
 		  AND (idempotency_key = $2::uuid
-		       OR EXISTS (SELECT 1 FROM task_events e WHERE e.task_id = tasks.id AND e.note = $3))
-		LIMIT 1`, syncColumns, where)
+		       OR EXISTS (SELECT 1 FROM task_events e WHERE e.task_id = tasks.id AND e.note = $3))%s
+		LIMIT 1`, syncColumns, where, reachSQL)
 	args = append(args, key, idemNote(key))
+	if branches != nil {
+		args = append(args, branches)
+	}
 	r, err := scanSyncRow(s.pool.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("tasks: weight sync find applied: %w", err)
-	}
-	// A replay never answers for a row the caller cannot pull (UX-81d): the key's row is out of reach,
-	// so it is not "applied" for this caller, the same answer an absent key gets (the pick scope's
-	// fence, 567 round 2).
-	if reach, err := s.callerReaches(ctx, f, r.task.BranchID); err != nil || !reach {
-		return sync.RowState{}, false, err
 	}
 	rs, err := rowStateOf(r)
 	return rs, true, err

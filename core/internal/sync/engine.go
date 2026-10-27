@@ -210,6 +210,30 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 		if err != nil {
 			return apigen.SyncPushResult{}, err
 		}
+		if bound {
+			// The ledger is keyed by org, tenant, scope and key, never by
+			// branch, so a key bound on one branch reaches this lookup from
+			// a device of another. For a fenced scope the store's Load is
+			// held to the caller's reach, and when it cannot read the
+			// entity the key applied, the key answers as an absent key:
+			// replayBound and keyReused would otherwise tell a device that
+			// cannot see the row that its key applied in its org. The
+			// absent path below is the store's own fences speaking, and a
+			// scope that fences nothing reads the row and answers as
+			// before. A key with no entity to check (no stored id and no
+			// payload id) keeps the plain bound answer.
+			id := entry.EntityID
+			if id == "" {
+				id, _ = op.Payload["id"].(string)
+			}
+			if id != "" {
+				if _, visible, lerr := store.Load(ctx, f, id); lerr != nil {
+					return e.classified(ctx, info, f, op, id, lerr)
+				} else if !visible {
+					bound = false
+				}
+			}
+		}
 		if bound && entry.Hash != hash {
 			return e.keyReused(ctx, info, f, op, entry.EntityID), nil
 		}
@@ -403,6 +427,10 @@ const ledgerWriteBound = 30 * time.Second
 // answer is applied from the row's current state and nothing is written. A
 // row that can no longer be read under the caller's filter answers applied
 // without a seq (the operation did land; there is no row left to report).
+// The fence's own answer happened before this point: a caller who cannot
+// read the row is never handed here, the bound key having answered as an
+// absent key in pushCanonical, so a miss here is a row that vanished
+// between the two reads.
 func (e *Engine) replayBound(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, entry LedgerEntry) (apigen.SyncPushResult, error) {
 	id := entry.EntityID
 	if id == "" {
