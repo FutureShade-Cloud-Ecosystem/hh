@@ -31,7 +31,9 @@
 //                                delayMs } (see CONSOLE below)
 //   /console/v1/account...    -> a fake FB Console: email session create (sets
 //                                an httpOnly cookie), account read, JWT mint,
-//                                session delete, the Google route
+//                                session delete, the Google route, and the
+//                                password recovery confirmation (PUT
+//                                /account/recovery)
 //   POST /api/v1/auth/exchange, GET /api/v1/auth/methods,
 //   POST /api/v1/auth/persona -> the core's three new public routes
 //
@@ -276,13 +278,13 @@ const SHARED_BODIES = {
 let servedConfig = { mode: "demo" };
 let consoleCookie = false;
 let consoleArms = {};
-let consoleLedger = { signins: [], exchanges: 0, jwts: 0, personas: [], methodsAsked: [] };
+let consoleLedger = { signins: [], exchanges: 0, jwts: 0, personas: [], methodsAsked: [], recoveries: [] };
 
 function resetConsole() {
   servedConfig = { mode: "demo" };
   consoleCookie = false;
   consoleArms = {};
-  consoleLedger = { signins: [], exchanges: 0, jwts: 0, personas: [], methodsAsked: [] };
+  consoleLedger = { signins: [], exchanges: 0, jwts: 0, personas: [], methodsAsked: [], recoveries: [] };
 }
 
 function sharedBody(status) {
@@ -391,6 +393,45 @@ async function handleConsole(request, response, url) {
     consoleCookie = false;
     response.writeHead(204, { "set-cookie": "a_session_stub=; Path=/; HttpOnly; Max-Age=0" });
     response.end();
+    return true;
+  }
+  // The password recovery confirmation: the console's PUT /account/recovery, the way
+  // the real one answers (FB Console is Appwrite 2.1.0): 200 with a token, 401 with
+  // user_invalid_token for a secret the console will not accept, 400 with the rule
+  // it refused. The ledger keeps the field NAMES and the field LENGTHS only: the
+  // secret and the password are never written down, here or anywhere.
+  if (sub === "/account/recovery" && request.method === "PUT") {
+    const body = await readBody(request);
+    const fields = body !== null && typeof body === "object" ? Object.keys(body).sort() : [];
+    consoleLedger.recoveries.push({
+      fields,
+      userId: typeof body?.userId === "string" ? body.userId : "",
+      secretLength: String(body?.secret ?? "").length,
+      passwordLength: String(body?.password ?? "").length,
+    });
+    await pause(consoleArms.delayMs?.recovery);
+    const armed = consoleArms.recovery;
+    if (armed !== undefined && armed !== null && typeof armed.status === "number") {
+      if (typeof armed.times === "number") {
+        armed.times -= 1;
+        if (armed.times <= 0) delete consoleArms.recovery;
+      }
+      sendJson(response, armed.status, {
+        message: "Simulated refusal",
+        code: armed.status,
+        type: armed.type ?? "general_unknown",
+      });
+      return true;
+    }
+    if (typeof body?.userId !== "string" || body.userId === "" || typeof body?.secret !== "string" || body.secret === "") {
+      sendJson(response, 400, { message: "Missing user id or secret", code: 400, type: "general_invalid_input" });
+      return true;
+    }
+    if (typeof body?.password !== "string" || body.password.length < 8) {
+      sendJson(response, 400, { message: "Password too short", code: 400, type: "user_password_invalid" });
+      return true;
+    }
+    sendJson(response, 200, { $id: "token-1", secret: "stub-recovery-token", expire: "stub" });
     return true;
   }
   if (sub === "/account/sessions/oauth2/google" && request.method === "GET") {

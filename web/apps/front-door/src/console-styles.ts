@@ -102,6 +102,15 @@ export const consoleStyles = css`
     display: grid;
     gap: var(--hh-s-16);
   }
+  /* The rule the page shows under the fields: quiet, and never the only place
+     the rule is written. */
+  .signin-hint {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.3;
+    color: var(--hh-text-dim);
+  }
   .field {
     display: grid;
     gap: var(--hh-s-4);
@@ -133,6 +142,23 @@ export const consoleStyles = css`
   }
   .signin-card .btn-primary:disabled {
     cursor: progress;
+  }
+  /* A link that wears the button's shape: the set password page's done state
+     points at the sign in page, and an anchor does not inherit the button's own
+     padding, edge or focus ring. */
+  .signin-card a.btn {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    text-decoration: none;
+  }
+  .signin-card a.btn:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
   }
   .spinner {
     width: 16px;

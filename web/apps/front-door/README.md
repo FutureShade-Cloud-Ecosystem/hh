@@ -128,6 +128,40 @@ the core's exchange:
   fall to their own demo entry. The wiring needed in each app is listed in the item
   7b report.
 
+## The set password page: `/set-password`
+
+The path FB Console's recovery link points at. It is a screen of its own, not a
+mode of the sign in screen, and it draws the sign in card exactly: the same
+card, the same type, the same spacing and the same themes, with two fields and
+no sign in.
+
+- The link arrives in the query: `?userId=<the user>&secret=<the token>`.
+  Both or nothing: half a link is no link, and the page then says it needs the
+  link from the email.
+- **The secret leaves the address bar.** The query is read and taken back out
+  before anything is awaited, so the secret never rests in the browser's
+  history or in a referrer the page hands on.
+- **The secret leaves in no Referer either.** The document sets
+  `<meta name="referrer" content="no-referrer">`, and the response header
+  `Referrer-Policy: no-referrer` carries the policy for real: the browser
+  begins fetching the page's own modules before a meta tag in the head is
+  parsed, so the header is the policy's home. The demo box's Caddyfile sends
+  it, and any other copy must too.
+- The two entries must match and the password must be eight characters or more
+  (FB Console's own minimum) before anything is sent: the console is never
+  asked to refuse what the page can see by itself. The field at fault is
+  marked.
+- The console's own rule about the password is said in plain words (too close to
+  the last one, too close to the person's own details, a password known to be
+  stolen), and a link the console will not take says it has expired and asks
+  for a new one. The offline words are the sign in screen's own.
+- On success the page says the password is set and points at the sign in page.
+- It is a console-only screen: a demo box has no console and so no recovery
+  link, and shows the configuration error page there.
+- The pure parts are in `src/set-password.ts` (the link, the query scrub, the
+  rules and the words); the card is in `src/console-views.ts` beside the sign in
+  screen.
+
 ## Running the app against the local stub
 
 Without a core, a local stub serves the mint in the contract's shape
