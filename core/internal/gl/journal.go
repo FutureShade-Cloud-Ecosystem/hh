@@ -42,7 +42,9 @@ func (s *Service) CreateAccount(ctx context.Context, in CreateAccountInput) (Acc
 
 // DeactivateAccount flips an account inactive, but refuses (409) when a DRAFT journal still references it -
 // deactivating out from under an unposted entry would strand it. POSTED history is unaffected (the account
-// keeps its ledger rows; it just cannot be used on new entries).
+// keeps its ledger rows; it just cannot be used on new entries). It also refuses (FW1-09a) when an active
+// posting rule points at the account: every automated posting the rule carries would be refused as
+// "inactive" and dead letter, so the refusal names the rules and their topics instead.
 func (s *Service) DeactivateAccount(ctx context.Context, code string) (Account, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
@@ -59,6 +61,19 @@ func (s *Service) DeactivateAccount(ctx context.Context, code string) (Account, 
 	}
 	if n > 0 {
 		return Account{}, errAccountInUse
+	}
+	rules, err := s.store.ListActiveRules(ctx)
+	if err != nil {
+		return Account{}, err
+	}
+	var need []string
+	for _, rr := range rules {
+		if strings.EqualFold(rr.AccountCode, code) {
+			need = append(need, fmt.Sprintf("%s (%s)", rr.EventType, rr.LineRole))
+		}
+	}
+	if len(need) > 0 {
+		return Account{}, clientErr(409, "gl: account %s cannot be deactivated: the posting rules %s need it; deactivating it would stop those postings", code, strings.Join(need, ", "))
 	}
 	return s.store.SetAccountActive(ctx, code, false)
 }
@@ -277,7 +292,9 @@ func (s *Service) VoidJournal(ctx context.Context, id string) (Journal, error) {
 
 // ReverseJournal posts a one-click net-zero reversing JE for a POSTED journal: every leg's debit/credit is
 // swapped, so the original + reversal sum to zero on every account. The reversal links back via
-// reverses_journal_id; the original stays POSTED (audit trail intact).
+// reverses_journal_id; the original stays POSTED (audit trail intact). Two guards (FW1-09a): a journal is
+// reversed once, and a journal a module posted is not reversed from the ledger (its document's own
+// correction is the path, so the subledgers stay tied to the GL).
 func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
@@ -290,8 +307,20 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 	if orig.Status != StatusPosted {
 		return Journal{}, clientErr(409, "gl: only a POSTED journal can be reversed (status=%s)", orig.Status)
 	}
-	if strings.HasPrefix(orig.IdempotencyKey, "bankrec:") {
-		return Journal{}, clientErr(409, "gl: a bank reconciliation clearing journal cannot be reversed here; undo the match in bank reconciliation instead")
+	if orig.Source != SourceManual {
+		if orig.ReversesJournalID != "" {
+			return Journal{}, clientErr(409, "gl: entry #%d is itself a reversal; a reversal cannot be reversed", orig.EntryNo)
+		}
+		if owner := systemJournalOwner(orig); owner != "" {
+			return Journal{}, clientErr(409, "gl: entry #%d was posted by %s, not by a person in the ledger; it cannot be reversed from here", orig.EntryNo, owner)
+		}
+	}
+	reversed, err := s.store.JournalIsReversed(ctx, id)
+	if err != nil {
+		return Journal{}, err
+	}
+	if reversed {
+		return Journal{}, alreadyReversedErr(orig.EntryNo)
 	}
 	lines := make([]draftLine, 0, len(orig.Lines))
 	for _, l := range orig.Lines {
@@ -312,11 +341,52 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 		OccurredAt:        s.clock(),
 		Lines:             lines,
 	}
+	// InsertJournal locks the original gl_journals row FOR UPDATE inside its transaction before re-checking
+	// reverses_journal_id and drawing next_entry_no (PR 621 round 2), and maps a unique violation on 0440's
+	// partial index to the same refusal, so two concurrent reversals serialise and only one lands.
 	newID, _, err := s.store.InsertJournal(ctx, draft)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return Journal{}, alreadyReversedErr(orig.EntryNo)
+		}
 		return Journal{}, err
 	}
 	return s.GetJournal(ctx, newID)
+}
+
+func alreadyReversedErr(entryNo int) error {
+	return clientErr(409, "gl: entry #%d was already reversed; a journal can be reversed once", entryNo)
+}
+
+// systemJournalOwner names the module behind a journal the ledger did not post, for the reverse route's
+// refusal. It is only called for non MANUAL sources. ADJUSTMENT covers several writers, so the
+// idempotency key's prefix names the writer when the source alone cannot (bankrec's clearing journals,
+// the landed cost paths and the holdback release all file under ADJUSTMENT); a key the map does not
+// know still refuses, as "another module". FW1-09a.
+func systemJournalOwner(j Journal) string {
+	switch j.Source {
+	case SourceInvoice:
+		return "the invoicing module"
+	case SourcePayment:
+		return "the payments module"
+	case SourceFulfillment:
+		return "the fulfilment module"
+	case SourcePOReceipt:
+		return "the purchasing module"
+	case SourceClosing:
+		return "the year end close"
+	}
+	for prefix, owner := range map[string]string{
+		"bankrec:":                "the bank reconciliation module",
+		"landedcost.":             "the landed cost module",
+		"holdback-release:":       "the holdback module",
+		"till.session.completed:": "the till module",
+	} {
+		if strings.HasPrefix(j.IdempotencyKey, prefix) {
+			return owner
+		}
+	}
+	return "another module"
 }
 
 // - recurring -

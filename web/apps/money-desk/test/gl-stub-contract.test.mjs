@@ -235,6 +235,10 @@ test("the chart of accounts answers the contract's page, creates an account and 
   refused(await call(IDS.controller, "POST", "/api/v1/gl/accounts/9999/deactivate"), 404, "gl: not found");
   // 1300 sits on the parked insurance journal, so it cannot be deactivated while that is a draft.
   refused(await call(IDS.controller, "POST", "/api/v1/gl/accounts/1300/deactivate"), 409, "gl: account is referenced by DRAFT journal(s); cannot deactivate");
+  // 1100 is free of drafts, but the seeded posting rules point at it (FW1-09a): the refusal names them.
+  const guarded = await call(IDS.controller, "POST", "/api/v1/gl/accounts/1100/deactivate");
+  refused(guarded, 409, "need it; deactivating it would stop those postings");
+  assert.ok(guarded.json.error.includes("the posting rules invoice.finalized (ar), payment.bounced (ar), payment.received (ar), payment.reversed (ar)"), guarded.json.error);
 });
 
 test("a journal posts below the threshold, parks at or over it, and every refusal is the core's sentence in the core's order", async () => {
@@ -266,15 +270,19 @@ test("a journal posts below the threshold, parks at or over it, and every refusa
 
 test("void, reverse and approve answer the contract's shapes and refuse in the core's words", async () => {
   await reset();
-  const posted = "7a1e0000-0000-4000-9000-000000000004";
+  const posted = IDS.opening;
   const rev = await call(IDS.controller, "POST", `/api/v1/gl/journals/${posted}/reverse`);
   assert.equal(rev.status, 201);
   holds("GlJournal", rev.json);
   assert.equal(rev.json.source, "ADJUSTMENT");
   assert.equal(rev.json.reverses_journal_id, posted);
-  assert.equal(rev.json.memo, "Reversal of entry #4");
+  assert.equal(rev.json.memo, "Reversal of entry #1");
   const original = (await call(IDS.controller, "GET", `/api/v1/gl/journals/${posted}`)).json;
   assert.deepEqual(rev.json.lines.map((l) => [l.account_code, l.debit_cents, l.credit_cents]), original.lines.map((l) => [l.account_code, l.credit_cents, l.debit_cents]));
+  // The guards (FW1-09a): a journal a module posted is not reversed from the ledger and names its module
+  // (the till's journal files under its topic key), and a journal is reversed once.
+  refused(await call(IDS.controller, "POST", `/api/v1/gl/journals/${IDS.till}/reverse`), 409, "not by a person in the ledger; it cannot be reversed from here");
+  refused(await call(IDS.controller, "POST", `/api/v1/gl/journals/${posted}/reverse`), 409, "was already reversed; a journal can be reversed once");
   refused(await call(IDS.controller, "POST", `/api/v1/gl/journals/${IDS.j1}/reverse`), 409, "gl: only a POSTED journal can be reversed");
   refused(await call(IDS.controller, "POST", `/api/v1/gl/journals/${posted}/void`), 409, "gl: only a DRAFT journal can be voided (POSTED journals must be reversed)");
   const voided = await call(IDS.controller, "POST", `/api/v1/gl/journals/${IDS.j2}/void`);
