@@ -51,7 +51,7 @@ test("how a statement goes reads from its delivery word, never from the AP conta
 
 // ---- reminders and the paper path ----------------------------------------------------------------------------------
 
-import { channelWord, paperResolveCheck, recipientWords, reminderPreview, reminderResultWords, sendStatusWord } from "../src/ar/office-logic.ts";
+import { channelWord, paperResolveCheck, recipientWords, reminderPreview, reminderResultWords, reminderRunWords, sendStatusWord } from "../src/ar/office-logic.ts";
 
 const POLICY = { aging_warn_days: 60, aging_escalate_days: 90, reminder_cadence_days: 7, reminder_max_per_cycle: 3, black_hole_window_days: 45, black_hole_min_sends: 3, reminder_email_enabled: true, reminder_sms_enabled: false, untagged_fallback: "CONFIRM", ar_tier: "PRO" };
 const TAGGED = { tagged: true, contact: { customer_id: "c", contact_name: "Accounts payable desk", email: "ap@x.invalid", phone: "" } };
@@ -84,6 +84,26 @@ test("a sent reminder reads by the recipient's kind, never the address", () => {
   assert.ok(!/@|ap@x/.test(words));
   assert.match(reminderResultWords({ ...send, status: "FAILED" }, "INV-1001"), /did not go: nothing left the building/);
   assert.match(reminderResultWords({ ...send, resend: true, watermark: "PAST DUE, 75 DAYS" }, "INV-1001"), /stamped PAST DUE, 75 DAYS/);
+});
+
+test("a Remind run says sent, recorded for retry, or nothing sent and why (FW1-06b)", () => {
+  const sent = reminderRunWords({ sent: 2, replayed: 0, tone: "FRIENDLY" });
+  assert.equal(sent.sent, true);
+  assert.equal(sent.notice, "Reminder sent for 2 invoices to the account's contact email.");
+  assert.match(reminderRunWords({ sent: 1, replayed: 1, tone: "FRIENDLY" }).notice, /1 had already been sent/);
+  const unwired = reminderRunWords({ sent: 0, replayed: 0, tone: "FRIENDLY", skipped: { "INV-1": "no email transport is wired on this deployment, nothing was sent" } });
+  assert.equal(unwired.sent, false);
+  assert.match(unwired.notice, /No reminder was sent: no email transport is wired on this deployment/);
+  const mixed = reminderRunWords({ sent: 0, replayed: 0, tone: "FRIENDLY", skipped: { "INV-1": "nothing outstanding", "INV-2": "no contact email on the account" } });
+  assert.match(mixed.notice, /2 invoices were skipped/);
+  const retrying = reminderRunWords({ sent: 1, replayed: 0, tone: "FRIENDLY", skipped: { "INV-2": "recorded, but delivery failed: transport unreachable" } });
+  assert.equal(retrying.sent, true);
+  assert.match(retrying.notice, /Reminder sent for 1 invoice to the account's contact email/);
+  assert.match(retrying.notice, /1 is recorded for the queue to retry/);
+  const allQueued = reminderRunWords({ sent: 0, replayed: 0, tone: "FRIENDLY", skipped: { "INV-1": "recorded, but delivery failed: transport unreachable" } });
+  assert.equal(allQueued.sent, false);
+  assert.match(allQueued.notice, /No reminder went out: recorded, but delivery failed/);
+  assert.match(allQueued.notice, /the queue to retry/);
 });
 
 test("closing a paper path flag needs a decision and a note, said before it is sent", () => {

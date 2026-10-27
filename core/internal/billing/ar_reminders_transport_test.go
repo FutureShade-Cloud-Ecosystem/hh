@@ -9,6 +9,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -34,5 +35,33 @@ func TestSendReminder_NeverSaysSentWhenNoTransportIsWired(t *testing.T) {
 	}
 	if len(store.sends) != 0 {
 		t.Fatal("nothing may be recorded as a delivery when nothing was sent")
+	}
+}
+
+// failingSender accepts nothing: every delivery fails at the transport.
+type failingSender struct{ err error }
+
+func (f failingSender) SendInvoiceMessage(context.Context, string, string, string) error { return f.err }
+
+func TestSendReminder_AFailedDeliveryIsRecordedForRetryAndNotCountedAsSent(t *testing.T) {
+	store := &fakeRegisterStore{
+		policy: RegisterPolicy{AccountPositionVisibility: VisibilityManagerUp, DueSoonDays: 7,
+			ReminderTones: []string{ToneFriendly}},
+		header: InvoiceHeaderFacts{ID: "i1", InvoiceNo: "INV-1", CustomerID: "c1", BalanceCents: 5000},
+	}
+	svc := newFakeService(t, store, time.Now()).WithSender(failingSender{err: errors.New("transport unreachable")})
+	res, err := svc.SendReminder(context.Background(), ReminderInput{
+		InvoiceIDs: []string{"i1"}, Tone: ToneFriendly, IdempotencyKey: "k"})
+	if err != nil {
+		t.Fatalf("a transport failure is reported, not an error: %v", err)
+	}
+	if res.Sent != 0 {
+		t.Fatalf("a delivery the transport refused says %d sent, want 0", res.Sent)
+	}
+	if !strings.Contains(res.Skipped["INV-1"], "recorded, but delivery failed") {
+		t.Fatalf("the skipped reason must name the failure, got %q", res.Skipped["INV-1"])
+	}
+	if len(store.sends) != 1 {
+		t.Fatalf("the decision to chase is recorded so the queue retries it, got %d delivery rows", len(store.sends))
 	}
 }

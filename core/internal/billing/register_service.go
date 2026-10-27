@@ -600,6 +600,13 @@ func (s *RegisterService) SendReminder(ctx context.Context, in ReminderInput) (R
 			out.Skipped[h.InvoiceNo] = "no contact email on the account"
 			continue
 		}
+		if s.sender == nil {
+			// No transport is wired on this deployment: nothing left the building, so no delivery is
+			// recorded and nothing counts as sent (FW1-06b). A reminder the operator believes went out
+			// is the worst thing this path could say.
+			out.Skipped[h.InvoiceNo] = "no email transport is wired on this deployment, nothing was sent"
+			continue
+		}
 		_, replayed, err := s.store.RecordSend(ctx, SendRow{
 			InvoiceID: h.ID, CustomerID: h.CustomerID, InvoiceNo: h.InvoiceNo,
 			Kind: "REMINDER", Tone: tone, Channel: "EMAIL", ToAddress: block.ContactEmail,
@@ -613,13 +620,13 @@ func (s *RegisterService) SendReminder(ctx context.Context, in ReminderInput) (R
 			out.Replayed++
 			continue
 		}
-		if s.sender != nil {
-			// A transport failure does NOT unwrite the ledger row: we decided to chase and recorded the
-			// decision, and the queue is what retries. Reported, never swallowed.
-			if err := s.sender.SendInvoiceMessage(ctx, block.ContactEmail,
-				reminderSubject(tone, h.InvoiceNo), reminderBody(tone, block.Name, h.InvoiceNo, h.BalanceCents, h.DueDate)); err != nil {
-				out.Skipped[h.InvoiceNo] = "recorded, but delivery failed: " + err.Error()
-			}
+		// A transport failure does NOT unwrite the ledger row: we decided to chase and recorded the
+		// decision, and the queue is what retries. Reported, never swallowed, and not counted as
+		// sent: only a delivery the transport accepted is a send.
+		if err := s.sender.SendInvoiceMessage(ctx, block.ContactEmail,
+			reminderSubject(tone, h.InvoiceNo), reminderBody(tone, block.Name, h.InvoiceNo, h.BalanceCents, h.DueDate)); err != nil {
+			out.Skipped[h.InvoiceNo] = "recorded, but delivery failed: " + err.Error()
+			continue
 		}
 		out.Sent++
 	}

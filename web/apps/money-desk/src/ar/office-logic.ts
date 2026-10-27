@@ -233,6 +233,33 @@ export function sendInvoiceWords(result: BillingReminderResult): string {
   return "The invoice went to the account's contact through the messaging sink.";
 }
 
+const QUEUED_PREFIX = "recorded, but delivery failed";
+
+/**
+ * What the account page's Remind run says happened (FW1-06b): sent, recorded for the queue to retry,
+ * or nothing sent and why. The server decides all of it; this words its answer. A run that says sent
+ * when nothing left the building is the one thing this screen must never do, so anything the server
+ * did not count as sent is named with its reason.
+ */
+export function reminderRunWords(result: BillingReminderResult): { notice: string; sent: boolean } {
+  const skipped = Object.entries(result.skipped ?? {});
+  if (result.sent === 0) {
+    const reasons = [...new Set(skipped.map(([, why]) => why))];
+    if (reasons.length === 1 && reasons[0].startsWith(QUEUED_PREFIX)) {
+      return { notice: `No reminder went out: ${reasons[0]}. The send is recorded for the queue to retry.`, sent: false };
+    }
+    if (reasons.length === 1) return { notice: `No reminder was sent: ${reasons[0]}.`, sent: false };
+    return { notice: `No reminder was sent: ${skipped.length} ${skipped.length === 1 ? "invoice was" : "invoices were"} skipped.`, sent: false };
+  }
+  const queued = skipped.filter(([, why]) => why.startsWith(QUEUED_PREFIX)).length;
+  const held = skipped.length - queued;
+  let notice = `Reminder sent for ${result.sent} ${result.sent === 1 ? "invoice" : "invoices"} to the account's contact email.`;
+  if (queued > 0) notice += ` ${queued} ${queued === 1 ? "is" : "are"} recorded for the queue to retry.`;
+  if (held > 0) notice += ` ${held} ${held === 1 ? "was" : "were"} not sent.`;
+  if (result.replayed > 0) notice += ` ${result.replayed} had already been sent.`;
+  return { notice, sent: true };
+}
+
 const DISPUTE_REASON_WORD: Record<string, string> = { SHORT_DELIVERY: "Short delivery", DAMAGED: "Damaged", PRICING: "Pricing", NOT_ORDERED: "Not ordered", OTHER: "Other" };
 const DISPUTE_OUTCOME_WORD: Record<string, string> = { PAID: "Paid", CREDITED: "Credited", WRITTEN_OFF: "Written off", WITHDRAWN: "Withdrawn" };
 
