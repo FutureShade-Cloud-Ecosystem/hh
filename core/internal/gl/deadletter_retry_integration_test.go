@@ -4,11 +4,12 @@ package gl_test
 
 // deadletter_retry_integration_test.go, FW1-02 sub item 3: a refused GL
 // journal is retried while the worker runs, never only at the next restart.
-// The leg plants an invoice whose month has no fiscal period (the audit's
-// named refusal), drains the outbox through the real posting consumer until
-// the event is DEAD, then opens the period (the refusal is fixed) and runs
-// the worker's dead letter retry pass: the event comes back, the journal
-// posts, and the books hold it with no restart anywhere.
+// The leg plants a finalized invoice whose total does not equal subtotal plus
+// tax so the journal builder refuses the unbalanced post, drains the outbox
+// through the real posting consumer until the event is DEAD, then corrects the
+// invoice total (the refusal is fixed) and runs the worker's dead letter retry
+// pass: the event comes back, the journal posts, and the books hold it with no
+// restart anywhere.
 
 import (
 	"context"
@@ -38,9 +39,9 @@ func TestIntegration_DeadLetteredJournal_IsRetriedAfterTheRefusalIsFixed(t *test
 	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
-	// The refused month: far past the seeded periods, so the journal builder's
-	// period lookup refuses the post.
-	const year = 2053
+	// The refused invoice: total_cents (9000) does not equal subtotal_cents +
+	// tax_cents (8000 + 1040 = 9040), so the posting consumer refuses the
+	// unbalanced journal draft until the invoice is corrected.
 	var customerID string
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO customers (account_no, name, customer_type, home_branch_id, credit_limit_cents)
@@ -48,13 +49,13 @@ func TestIntegration_DeadLetteredJournal_IsRetriedAfterTheRefusalIsFixed(t *test
 		 RETURNING id::text`).Scan(&customerID); err != nil {
 		t.Fatalf("seed customer: %v", err)
 	}
-	at := time.Date(year, time.March, 12, 10, 0, 0, 0, time.UTC)
+	at := time.Date(2026, time.March, 12, 10, 0, 0, 0, time.UTC)
 	var invoiceID string
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
 		 VALUES ('FW1-02-DL-1', $1::uuid, '5d1b3f6e-0000-4000-9000-000000000001'::uuid, 'FINALIZED',
-		         $2::date, $2::date, 8000, 1040, 9040, 9040, $2, 'INVOICE')
+		         $2::date, $2::date, 8000, 1040, 9000, 9000, $2, 'INVOICE')
 		 RETURNING id::text`, customerID, at.Format("2006-01-02")).Scan(&invoiceID); err != nil {
 		t.Fatalf("seed invoice: %v", err)
 	}
@@ -66,8 +67,6 @@ func TestIntegration_DeadLetteredJournal_IsRetriedAfterTheRefusalIsFixed(t *test
 		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'invoice_id' = $1`, invoiceID)
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE id = $1::uuid`, invoiceID)
 		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, customerID)
-		_, _ = pool.Exec(c, `DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE o.period_id = p.id AND p.year = $1`, year)
-		_, _ = pool.Exec(c, `DELETE FROM fiscal_periods WHERE year = $1`, year)
 	})
 
 	var eventID string
@@ -94,11 +93,10 @@ func TestIntegration_DeadLetteredJournal_IsRetriedAfterTheRefusalIsFixed(t *test
 		t.Fatalf("the refused event did not dead letter: status %s after %d attempts", status, attempts)
 	}
 
-	// The refusal is fixed: the month's periods exist now.
+	// The refusal is fixed: the invoice's total now equals subtotal plus tax.
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO fiscal_periods (year, month) SELECT $1, m FROM generate_series(1,12) AS m
-		 ON CONFLICT (year, month) DO NOTHING`, year); err != nil {
-		t.Fatalf("open the year's periods: %v", err)
+		`UPDATE invoices SET total_cents = 9040, balance_cents = 9040 WHERE id = $1::uuid`, invoiceID); err != nil {
+		t.Fatalf("correct the invoice total: %v", err)
 	}
 
 	// The worker's dead letter retry pass, the schedule the worker runs: with

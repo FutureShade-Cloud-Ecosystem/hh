@@ -39189,12 +39189,11 @@ components:
           format: date-time
     BankRecReconInput:
       type: object
-      description: Opens a reconciliation by computing the GL balance and the variance against the statement balance
+      description: Opens a reconciliation by computing the GL balance and the variance against the statement balance, or refreshes an open reconciliation in place when refresh is true
       required:
         - bank_account_id
         - year
         - month
-        - statement_balance_cents
       properties:
         bank_account_id:
           type: string
@@ -39210,6 +39209,9 @@ components:
         statement_balance_cents:
           type: integer
           format: int64
+        refresh:
+          type: boolean
+          description: When true, refreshes an open reconciliation in place without changing its stored derived flag or stated closing balance. Takes no statement_balance_cents figure.
     BankRecReconciliationList:
       type: array
       description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
