@@ -163,6 +163,7 @@ type RecurringTemplate struct {
 	ID       string             `json:"id"`
 	Name     string             `json:"name"`
 	Memo     string             `json:"memo"`
+	BranchID string             `json:"-"`
 	Schedule string             `json:"schedule"`
 	NextRun  string             `json:"next_run,omitempty"`
 	IsActive bool               `json:"is_active"`
