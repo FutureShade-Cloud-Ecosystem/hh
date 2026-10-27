@@ -753,6 +753,120 @@ func TestIntegration_FW1_12b_MemoApplicationSurvivesAPastDateAging(t *testing.T)
 	}
 }
 
+// TestIntegration_FW1_12b_AWriteOffRowIsNotACredit pins S6's P3: a WRITE_OFF ledger row is not a
+// credit. A write off is never value the customer holds, so the door refuses it with the unknown
+// credit's 404 instead of applying it. No code writes such a row today; the row here is what an
+// older box's history would carry.
+func TestIntegration_FW1_12b_AWriteOffRowIsNotACredit(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	applySvc := NewCreditApplyService(repo)
+	ctx := context.Background()
+	n := ns(t)
+
+	writeOffCust := seedCustomer(t, pool, n+"-WO")
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, writeOffCust)
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, writeOffCust)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, writeOffCust)
+	})
+
+	issue := time.Now().UTC().AddDate(0, 0, -3).Format("2006-01-02")
+	due := time.Now().UTC().AddDate(0, 0, 27).Format("2006-01-02")
+
+	// Leg 1: a WRITE_OFF row, the type an older box's history might carry. No code writes one today;
+	// the row here is what such a history would hold, and the door must refuse it.
+	var writeOffID, woInvID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO customer_transactions
+		  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+		VALUES ($1::uuid, 'WRITE_OFF', -5000, 25000, 'manual', gen_random_uuid(), $2::uuid, 'old box write off')
+		RETURNING id::text`,
+		writeOffCust, trentonBranch).Scan(&writeOffID); err != nil {
+		t.Fatalf("seed write off row: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $5::date, 20000, 0, 20000, 20000, now(), 'INVOICE')
+		RETURNING id::text`,
+		n+"-WO-INV", writeOffCust, trentonBranch, issue, due).Scan(&woInvID); err != nil {
+		t.Fatalf("seed write off invoice: %v", err)
+	}
+	if _, err := applySvc.Apply(ctx, ApplyCreditInput{
+		CustomerID: writeOffCust, CreditKind: CreditKindAccount, CreditID: writeOffID, InvoiceID: woInvID,
+		AmountCents: 1000, Reason: "write off is not a credit", IdempotencyKey: n + "-k-wo",
+	}, true); !errors.As(err, &NoSuchCreditError{}) {
+		t.Fatalf("applying a WRITE_OFF row err = %v, want NoSuchCreditError: a write off is never value the customer holds", err)
+	}
+}
+
+// TestIntegration_FW1_12b_ReversalRefusedOnAVoidedMemo pins S6's P3: the reversal checks the memo's
+// status. A memo VOIDED after its application must stay VOID, so the reversal of that application
+// is refused rather than bringing the memo back FINALIZED.
+func TestIntegration_FW1_12b_ReversalRefusedOnAVoidedMemo(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	applySvc := NewCreditApplyService(repo)
+	ctx := context.Background()
+	n := ns(t)
+
+	voidCust := seedCustomer(t, pool, n+"-VOID")
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, voidCust)
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, voidCust)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, voidCust)
+	})
+
+	issue := time.Now().UTC().AddDate(0, 0, -3).Format("2006-01-02")
+	due := time.Now().UTC().AddDate(0, 0, 27).Format("2006-01-02")
+
+	// A memo applied, then VOIDED the way a void writer would leave it (balance zeroed, status
+	// VOID). Reversing the application must be refused and the memo must stay VOID.
+	var memoID, vInvID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $4::date, -8000, 0, -8000, -8000, now(), 'CREDIT_MEMO')
+		RETURNING id::text`,
+		n+"-V-CM", voidCust, trentonBranch, issue).Scan(&memoID); err != nil {
+		t.Fatalf("seed void memo: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $5::date, 10000, 0, 10000, 10000, now(), 'INVOICE')
+		RETURNING id::text`,
+		n+"-V-INV", voidCust, trentonBranch, issue, due).Scan(&vInvID); err != nil {
+		t.Fatalf("seed void leg invoice: %v", err)
+	}
+	app, err := applySvc.Apply(ctx, ApplyCreditInput{
+		CustomerID: voidCust, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: vInvID,
+		AmountCents: 5000, Reason: "applied before the void", IdempotencyKey: n + "-k-void",
+	}, true)
+	if err != nil {
+		t.Fatalf("apply memo: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE invoices SET status = 'VOID', balance_cents = 0 WHERE id = $1::uuid`, memoID); err != nil {
+		t.Fatalf("void the memo: %v", err)
+	}
+	if _, err := applySvc.Reverse(ctx, ReverseCreditApplicationInput{
+		InvoiceID: vInvID, ApplicationID: app.ApplicationID, Reason: "reversing a voided memo's application",
+	}, true); err == nil {
+		t.Fatal("the reversal of a voided memo's application succeeded; the memo would come back FINALIZED, a VOID memo stays VOID")
+	}
+	var status string
+	var balance int64
+	if err := pool.QueryRow(ctx, `SELECT status, balance_cents FROM invoices WHERE id = $1::uuid`, memoID).Scan(&status, &balance); err != nil {
+		t.Fatalf("re-read the memo: %v", err)
+	}
+	if status != "VOID" || balance != 0 {
+		t.Fatalf("the memo moved to %s/%d on a refused reversal, want VOID/0", status, balance)
+	}
+}
+
 // TestIntegration_FW1_12b_HandlerAndDetailRoundTrip verifies CreditApplyHandler
 // over HTTP and RegisterService.Detail surfacing open_credits and credit_applications.
 func TestIntegration_FW1_12b_HandlerAndDetailRoundTrip(t *testing.T) {
