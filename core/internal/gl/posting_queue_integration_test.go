@@ -42,10 +42,12 @@ VALUES ($1, $2::jsonb, $3, $4, $5, $6) RETURNING event_id::text`,
 		waiting := plant("payment.received", `{"payment_id":"p-fw1-02-q"}`, "PENDING", 2, "gl: no fiscal period for 2027-01")
 		dead := plant("ar.invoice.finalized", `{"invoice_id":"i-fw1-02-q"}`, "DEAD", 5, "gl: account \"2200\" is inactive; cannot post")
 		// A topic the GL does not own never lists, whatever its state.
-		plant("crm.NewPortalContact", `{"x":"1"}`, "DEAD", 5, "no handler registered for topic")
+		other := plant("crm.NewPortalContact", `{"x":"1"}`, "DEAD", 5, "no handler registered for topic")
 		t.Cleanup(func() {
-			_, _ = pool.Exec(context.Background(),
-				`DELETE FROM events_outbox WHERE event_id = ANY($1::uuid[])`, []string{waiting, dead})
+			if _, err := pool.Exec(context.Background(),
+				`DELETE FROM events_outbox WHERE event_id = ANY($1::uuid[])`, []string{waiting, dead, other}); err != nil {
+				t.Errorf("cleanup outbox rows: %v", err)
+			}
 		})
 
 		svc := NewService(NewRepository(pool)).
@@ -214,6 +216,3 @@ VALUES ($1, $2::jsonb, 'DEAD', 5, 'gl: account is inactive; cannot post', $3) RE
 		t.Fatalf("till.session.completed row document = %q, want %q", docs[sesEvent], "ses-fw1-02-q")
 	}
 }
-
-
-
