@@ -160,7 +160,7 @@ func aPaver(t *testing.T, pool *pgxpool.Pool) (productID, branchID string) {
 	if err != nil {
 		t.Skipf("no seeded SF-priceable product: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations LIMIT 1`).Scan(&branchID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'TRT' LIMIT 1`).Scan(&branchID); err != nil {
 		t.Skipf("no seeded branch: %v", err)
 	}
 	return productID, branchID
@@ -279,7 +279,7 @@ func TestIntegration_FreshSeed_BanasSKU_CashSale_EndToEnd(t *testing.T) {
 		t.Skipf("DBS-BANAS-COPING not seeded: %v", err)
 	}
 	var branchID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations LIMIT 1`).Scan(&branchID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'TRT' LIMIT 1`).Scan(&branchID); err != nil {
 		t.Skipf("no branch seeded: %v", err)
 	}
 	till := openTill(t, pool, branchID)
@@ -318,7 +318,7 @@ func TestIntegration_CashSale_PricingGap_IsClientErrorNot500(t *testing.T) {
 	pool := intPool(t)
 	ctx := globalCtx(t, pool)
 	var branchID, prodID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations LIMIT 1`).Scan(&branchID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'TRT' LIMIT 1`).Scan(&branchID); err != nil {
 		t.Skipf("no branch seeded: %v", err)
 	}
 	// A product the engine cannot price: no product_uoms row → errNoConversion.
@@ -390,7 +390,7 @@ func TestIntegration_POSSale_AccountTender_CrossBranchForbidden(t *testing.T) {
 
 	// The other branch: the one the caller is NOT granted. Trenton/Kingston in the seed.
 	var otherBranch string
-	if err := pool.QueryRow(admin, `SELECT id::text FROM locations WHERE id::text <> $1 LIMIT 1`, homeBranch).Scan(&otherBranch); err != nil {
+	if err := pool.QueryRow(admin, `SELECT id::text FROM locations WHERE code = 'KGN' AND id::text <> $1 LIMIT 1`, homeBranch).Scan(&otherBranch); err != nil {
 		t.Skipf("need a second branch to prove cross-branch refusal: %v", err)
 	}
 	var custID string
@@ -459,7 +459,7 @@ func TestIntegration_POSSale_TillSessionFromAnotherBranch_Refused(t *testing.T) 
 	ctx := globalCtx(t, pool)
 	productID, homeBranch := aPaver(t, pool)
 	var otherBranch string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE id::text <> $1 LIMIT 1`, homeBranch).Scan(&otherBranch); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'KGN' AND id::text <> $1 LIMIT 1`, homeBranch).Scan(&otherBranch); err != nil {
 		t.Skipf("need a second branch: %v", err)
 	}
 	otherTill := openTill(t, pool, otherBranch) // drawer belongs to the OTHER branch

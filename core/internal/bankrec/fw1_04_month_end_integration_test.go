@@ -19,10 +19,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identityPkg "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/logging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -68,6 +70,8 @@ func fw104CleanYear(t *testing.T, pool *pgxpool.Pool, acct string, year int) {
 		{`UPDATE gl_journals SET status = 'DRAFT', reverses_journal_id = NULL WHERE fiscal_year = $1 OR reverses_journal_id IN (SELECT id FROM gl_journals WHERE fiscal_year = $1)`, []any{year}},
 		{`DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE fiscal_year = $1)`, []any{year}},
 		{`DELETE FROM gl_journals WHERE fiscal_year = $1`, []any{year}},
+		{`DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE o.period_id = p.id AND p.year = $1 AND p.year != 2026`, []any{year}},
+		{`DELETE FROM fiscal_periods WHERE year = $1 AND year != 2026`, []any{year}},
 	} {
 		if _, err := pool.Exec(ctx, q.sql, q.args...); err != nil {
 			t.Fatalf("fw104CleanYear(%d) query %q: %v", year, q.sql, err)
@@ -325,8 +329,55 @@ func TestIntegration_FW1_04_SignOffBeforeMonthEndIsRefused(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Leg 3: sign off before month end (2087-12) was accepted")
 	}
-	if !strings.Contains(err.Error(), "month end") {
-		t.Errorf("Leg 3: refusal %q does not mention month end", err.Error())
+	if !strings.Contains(err.Error(), "month end") || !strings.Contains(err.Error(), "2088-01-01") {
+		t.Errorf("Leg 3: refusal %q does not mention month end and first sign-off day 2088-01-01", err.Error())
+	}
+
+	// Round 2 (item 2.2): on the last day of the month itself (June 30 at noon in Toronto), sign-off must still be
+	// refused and must name the first day it may be signed off (2023-07-01).
+	const lastDayYear = 2023
+	june10 := time.Date(lastDayYear, 6, 10, 0, 0, 0, 0, time.UTC)
+	fw104CleanYear(t, pool, acct, lastDayYear)
+	fw104EnsurePeriods(t, pool, lastDayYear, june10)
+	t.Cleanup(func() { fw104CleanYear(t, pool, acct, lastDayYear) })
+
+	jJune, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-leg3-june-lastday",
+		Source:         "ADJUSTMENT",
+		Memo:           "June deposit",
+		DocumentDate:   june10.Add(12 * time.Hour),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 40000, Memo: "bank"},
+			{AccountCode: "4950", CreditCents: 40000, Memo: "offset"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post june journal: %v", err)
+	}
+	lineJune := fw104InsertLineAt(t, pool, acct, june10, "JUN DEPOSIT", "JUN-LAST-1", 40000)
+
+	torontoLoc, err := time.LoadLocation("America/Toronto")
+	if err != nil {
+		t.Fatalf("load toronto: %v", err)
+	}
+	june30Noon := time.Date(lastDayYear, 6, 30, 12, 0, 0, 0, torontoLoc)
+	svcLastDay := NewService(NewRepository(pool)).
+		WithClock(func() time.Time { return june30Noon }).
+		WithJournals(glSvc).
+		WithJournalPoster(fw104GLPoster{svc: glSvc, clock: func() time.Time { return june10 }}).
+		WithGLBalances(glSvc)
+
+	if _, err := svcLastDay.ManualMatch(ctx, MatchInput{
+		Mode: "manual", StatementLineID: lineJune, TargetType: TargetJournal, TargetRefID: jJune, AmountCents: 40000, CanAccessBranch: AllBranches,
+	}, ""); err != nil {
+		t.Fatalf("match june line: %v", err)
+	}
+	recJune, err := svcLastDay.OpenReconciliation(ctx, ReconInput{BankAccountID: acct, Year: lastDayYear, Month: 6, StatementBalanceCents: 40000})
+	if err != nil {
+		t.Fatalf("open june: %v", err)
+	}
+	if _, err := svcLastDay.CompleteReconciliation(ctx, recJune.ID, ""); err == nil || !strings.Contains(err.Error(), "2023-07-01") {
+		t.Fatalf("Leg 3 (round 2): sign-off on June 30 (last day of month) must be refused naming 2023-07-01, got %v", err)
 	}
 }
 
@@ -804,5 +855,279 @@ func TestIntegration_FW1_04_ChronologicalSignOffOrderAndStatementContinuity(t *t
 	}
 	if _, err := svc.CompleteReconciliation(ctx, marRec.ID, ""); err == nil || !strings.Contains(err.Error(), "already completed") {
 		t.Fatalf("expected refusal when completing March after April/May are completed, got %v", err)
+	}
+}
+
+// Round 2 (item 2.1, ruled, both halves): a reconciliation starting point per bank account (cut-over).
+//  1. S5's probe: GL 1000 opening balance $5,000.00 dated the last day of March 2022 on no statement, an April deposit
+//     of $100.00 on the April statement and matched, and April's real closing balance typed ($5,100.00) signs off at
+//     zero with the opening balance absent from the outstanding lists.
+//  2. Confirmed outstanding list at cut-over: an entry on the confirmed list stays outstanding, and one on or before
+//     cut-over not on the list never appears.
+//  3. Audited (BANKREC_CUTOVER), Financial Controller only, and refused once a later month has signed off.
+func TestIntegration_FW1_04_CutoverStartingPointAndConfirmedOutstanding(t *testing.T) {
+	pool := intPool(t)
+	cleanTables(t, pool)
+	acct := rbcAccountID(t, pool)
+	ctx := context.Background()
+
+	const year = 2022
+	mar30 := time.Date(year, 3, 30, 12, 0, 0, 0, time.UTC)
+	mar31 := time.Date(year, 3, 31, 12, 0, 0, 0, time.UTC)
+	apr10 := time.Date(year, 4, 10, 0, 0, 0, 0, time.UTC)
+
+	resetCutover := func() {
+		_, _ = pool.Exec(context.Background(), `
+			UPDATE bank_accounts
+			   SET cutover_date = NULL,
+			       cutover_statement_balance_cents = NULL,
+			       cutover_outstanding_journal_ids = '{}'::uuid[],
+			       cutover_recorded_by = NULL,
+			       cutover_recorded_at = NULL
+			 WHERE id = $1::uuid`, acct)
+	}
+	fw104CleanYear(t, pool, acct, year)
+	fw104EnsurePeriods(t, pool, year, mar30)
+	resetCutover()
+	t.Cleanup(func() {
+		resetCutover()
+		fw104CleanYear(t, pool, acct, year)
+	})
+
+	var userID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("select user: %v", err)
+	}
+	ctrlCtx := identity.ContextWithStaff(ctx, identity.StaffContext{
+		UserID:   userID,
+		RoleCode: "FINANCIAL_CONTROLLER",
+		Tier:     identity.TierLeadership,
+		Scope:    identity.ScopeGlobal,
+	})
+	gmCtx := identity.ContextWithStaff(ctx, identity.StaffContext{
+		UserID:   userID,
+		RoleCode: "GENERAL_MANAGER",
+		Tier:     identity.TierLeadership,
+		Scope:    identity.ScopeGlobal,
+	})
+	payRecCtx := identity.ContextWithStaff(ctx, identity.StaffContext{
+		UserID:   userID,
+		RoleCode: "PAYABLES_RECEIVABLES",
+		Tier:     identity.TierManager,
+		Scope:    identity.ScopeGlobal,
+	})
+
+	auditSvc := audit.NewService(audit.NewRepository(pool), logging.New("test"))
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	svc := NewService(NewRepository(pool)).
+		WithJournals(glSvc).
+		WithJournalPoster(fw104GLPoster{svc: glSvc, clock: func() time.Time { return apr10 }}).
+		WithGLBalances(glSvc).
+		WithAudit(auditSvc)
+
+	// Guard: non-Controller roles (General Manager, Payables and Receivables) are refused.
+	for _, tc := range []struct {
+		name string
+		c    context.Context
+	}{
+		{"general_manager", gmCtx},
+		{"payables_receivables", payRecCtx},
+	} {
+		if _, err := svc.RecordCutover(tc.c, CutoverInput{
+			BankAccountID:                acct,
+			CutoverDate:                  "2022-03-31",
+			OpeningStatementBalanceCents: 500000,
+		}); err == nil || !strings.Contains(err.Error(), "Controller") {
+			t.Fatalf("expected non-Controller (%s) cutover to be refused, got %v", tc.name, err)
+		}
+	}
+
+	// Half 1 (S5's probe): GL 1000 opening balance $5,000.00 dated 2022-03-31 on no statement, April deposit $100.00
+	// matched to the April statement, real closing balance $5,100.00 typed.
+	openJID, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-r2-cutover-open",
+		Source:         "ADJUSTMENT",
+		Memo:           "opening balance at go live",
+		DocumentDate:   mar31,
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 500000, Memo: "opening balance"},
+			{AccountCode: "3900", CreditCents: 500000, Memo: "retained earnings"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post opening balance: %v", err)
+	}
+	aprDepJID, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-r2-cutover-apr-dep",
+		Source:         "ADJUSTMENT",
+		Memo:           "April customer deposit",
+		DocumentDate:   apr10.Add(12 * time.Hour),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 10000, Memo: "bank"},
+			{AccountCode: "4950", CreditCents: 10000, Memo: "revenue"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post april deposit: %v", err)
+	}
+	aprLine := fw104InsertLineAt(t, pool, acct, apr10, "APRIL CUSTOMER DEPOSIT", "APR-DEP-1", 10000)
+	if _, err := svc.ManualMatch(ctx, MatchInput{
+		Mode: "manual", StatementLineID: aprLine, TargetType: TargetJournal, TargetRefID: aprDepJID, AmountCents: 10000, CanAccessBranch: AllBranches,
+	}, userID); err != nil {
+		t.Fatalf("match april deposit: %v", err)
+	}
+
+	var preAudit int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'BANKREC_CUTOVER' AND entity_id = $1`, acct).Scan(&preAudit); err != nil {
+		t.Fatalf("count pre audit: %v", err)
+	}
+
+	if _, err := svc.RecordCutover(ctrlCtx, CutoverInput{
+		BankAccountID:                acct,
+		CutoverDate:                  "2022-03-31",
+		OpeningStatementBalanceCents: 500000,
+	}); err != nil {
+		t.Fatalf("record cut-over: %v", err)
+	}
+
+	var postAudit int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'BANKREC_CUTOVER' AND entity_id = $1`, acct).Scan(&postAudit); err != nil {
+		t.Fatalf("count post audit: %v", err)
+	}
+	if postAudit != preAudit+1 {
+		t.Errorf("BANKREC_CUTOVER audit rows = %d, want %d", postAudit, preAudit+1)
+	}
+
+	recApr, err := svc.OpenReconciliation(ctx, ReconInput{
+		BankAccountID:         acct,
+		Year:                  year,
+		Month:                 4,
+		StatementBalanceCents: 510000,
+	})
+	if err != nil {
+		t.Fatalf("open april with cutover: %v", err)
+	}
+	if recApr.OpeningBalanceCents == nil || *recApr.OpeningBalanceCents != 500000 {
+		t.Errorf("April OpeningBalanceCents = %v, want 500000", recApr.OpeningBalanceCents)
+	}
+	if recApr.DepositsInTransitCents != 0 || len(recApr.DepositsInTransit) != 0 {
+		t.Errorf("April DepositsInTransit = %d (%+v), want 0 and empty (opening balance %s must not be outstanding)",
+			recApr.DepositsInTransitCents, recApr.DepositsInTransit, openJID)
+	}
+	if recApr.AdjustedBankBalanceCents != 510000 || recApr.GLBalanceCents != 510000 || recApr.VarianceCents != 0 {
+		t.Errorf("April figures: Adjusted=%d GL=%d Variance=%d, want 510000 510000 0",
+			recApr.AdjustedBankBalanceCents, recApr.GLBalanceCents, recApr.VarianceCents)
+	}
+
+	doneApr, err := svc.CompleteReconciliation(ctx, recApr.ID, userID)
+	if err != nil {
+		t.Fatalf("sign off april with cutover: %v", err)
+	}
+	if doneApr.Status != ReconCompleted || doneApr.VarianceCents != 0 || len(doneApr.DepositsInTransit) != 0 {
+		t.Errorf("completed April = %+v, want COMPLETED with variance 0 and no deposits in transit", doneApr)
+	}
+
+	// Guard: once a later month (2022-04) has signed off, recording or changing cut-over at 2022-03-31 is refused.
+	if _, err := svc.RecordCutover(ctrlCtx, CutoverInput{
+		BankAccountID:                acct,
+		CutoverDate:                  "2022-03-31",
+		OpeningStatementBalanceCents: 400000,
+	}); err == nil || !strings.Contains(err.Error(), "already completed") {
+		t.Fatalf("expected cutover refusal once a later month has signed off, got %v", err)
+	}
+
+	// Half 2: confirmed list of outstanding items at cut-over.
+	// Reset April's reconciliation row so we can record a cut-over with one confirmed outstanding cheque (-$200.00)
+	// dated 2022-03-30 alongside the $5,000.00 opening balance (not on the confirmed list).
+	if _, err := pool.Exec(ctx, `DELETE FROM bank_reconciliations WHERE bank_account_id = $1::uuid AND year = $2`, acct, year); err != nil {
+		t.Fatalf("delete april recon: %v", err)
+	}
+	chequeJID, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-r2-cutover-cheque",
+		Source:         "ADJUSTMENT",
+		Memo:           "March 30 cheque 998 still in flight at cut-over",
+		DocumentDate:   mar30,
+		Lines: []gl.ExternalLine{
+			{AccountCode: "6300", DebitCents: 20000, Memo: "vendor"},
+			{AccountCode: "1000", CreditCents: 20000, Memo: "cheque 998"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post cutover cheque: %v", err)
+	}
+	if _, err := svc.RecordCutover(ctrlCtx, CutoverInput{
+		BankAccountID:                acct,
+		CutoverDate:                  "2022-03-31",
+		OpeningStatementBalanceCents: 500000,
+		OutstandingJournalIDs:        []string{chequeJID},
+	}); err != nil {
+		t.Fatalf("record cutover with confirmed outstanding cheque: %v", err)
+	}
+
+	// In April, GL balance is 500,000 - 200,000_0 + 10,000 = 490,000 cents ($4,900.00); statement closing is 510,000 ($5,100.00).
+	// chequeJID ($200.00) stays in OutstandingCheques while openJID ($5,000.00) never appears in DepositsInTransit.
+	recApr2, err := svc.OpenReconciliation(ctx, ReconInput{
+		BankAccountID:         acct,
+		Year:                  year,
+		Month:                 4,
+		StatementBalanceCents: 510000,
+	})
+	if err != nil {
+		t.Fatalf("open april with confirmed outstanding list: %v", err)
+	}
+	if len(recApr2.DepositsInTransit) != 0 || recApr2.DepositsInTransitCents != 0 {
+		t.Errorf("unlisted cutover entry appeared in DepositsInTransit: %+v", recApr2.DepositsInTransit)
+	}
+	if len(recApr2.OutstandingCheques) != 1 || recApr2.OutstandingCheques[0].JournalID != chequeJID || recApr2.OutstandingChequesCents != 20000 {
+		t.Errorf("confirmed cutover cheque missing from OutstandingCheques: got %+v (sum %d), want [%s] (20000)",
+			recApr2.OutstandingCheques, recApr2.OutstandingChequesCents, chequeJID)
+	}
+	if recApr2.AdjustedBankBalanceCents != 490000 || recApr2.GLBalanceCents != 490000 || recApr2.VarianceCents != 0 {
+		t.Errorf("April with confirmed cutover cheque: Adjusted=%d GL=%d Variance=%d, want 490000 490000 0",
+			recApr2.AdjustedBankBalanceCents, recApr2.GLBalanceCents, recApr2.VarianceCents)
+	}
+	if _, err := svc.CompleteReconciliation(ctx, recApr2.ID, userID); err != nil {
+		t.Fatalf("complete april with confirmed cutover cheque: %v", err)
+	}
+}
+
+// Round 2 (item 2.3): importing a native RBC export row with a USD$ amount or an empty amount column is refused in
+// words and records a FAILED import audit with zero lines inserted.
+func TestIntegration_FW1_04_RBCImportRefusesUSDAndEmptyAmount(t *testing.T) {
+	pool := intPool(t)
+	cleanTables(t, pool)
+	acct := rbcAccountID(t, pool)
+	ctx := context.Background()
+
+	svc := NewService(NewRepository(pool))
+
+	usdContent := "Account Type,Account Number,Transaction Date,Cheque Number,Description 1,Description 2,CAD$,USD$\n" +
+		"Chequing,00123-1234567,6/10/2023,,USD WIRE,US VENDOR,,250.00\n"
+	resUSD, err := svc.Import(ctx, ImportInput{
+		BankAccountID: acct,
+		ProfileCode:   "rbc-default",
+		Filename:      "rbc_usd.csv",
+		Content:       usdContent,
+	}, "")
+	if err == nil || !strings.Contains(err.Error(), "USD") {
+		t.Fatalf("expected USD row import refusal mentioning USD, got res=%+v err=%v", resUSD, err)
+	}
+	if resUSD.Status != ImportStatusFailed || resUSD.Inserted != 0 {
+		t.Errorf("USD import result = %+v, want FAILED with 0 inserted", resUSD)
+	}
+
+	emptyContent := "Account Type,Account Number,Transaction Date,Cheque Number,Description 1,Description 2,CAD$,USD$\n" +
+		"Chequing,00123-1234567,6/10/2023,,BLANK ROW,MEMO,,\n"
+	resEmpty, err := svc.Import(ctx, ImportInput{
+		BankAccountID: acct,
+		ProfileCode:   "rbc-default",
+		Filename:      "rbc_empty.csv",
+		Content:       emptyContent,
+	}, "")
+	if err == nil || !strings.Contains(err.Error(), "missing amount") {
+		t.Fatalf("expected empty amount row import refusal mentioning missing amount, got res=%+v err=%v", resEmpty, err)
+	}
+	if resEmpty.Status != ImportStatusFailed || resEmpty.Inserted != 0 {
+		t.Errorf("empty import result = %+v, want FAILED with 0 inserted", resEmpty)
 	}
 }

@@ -39,7 +39,10 @@ func (r *Repository) ListAccounts(ctx context.Context) ([]BankAccount, error) {
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT a.id::text, a.name, a.account_type, a.gl_account_code::text, a.institution, a.last4, a.is_active,
-		       COALESCE(l.unmatched, 0)
+		       COALESCE(l.unmatched, 0),
+		       COALESCE(to_char(a.cutover_date, 'YYYY-MM-DD'), ''),
+		       a.cutover_statement_balance_cents,
+		       COALESCE(a.cutover_outstanding_journal_ids::text[], '{}'::text[])
 		FROM bank_accounts a
 		LEFT JOIN (
 			SELECT bank_account_id, COUNT(*) AS unmatched
@@ -53,8 +56,13 @@ func (r *Repository) ListAccounts(ctx context.Context) ([]BankAccount, error) {
 	var out []BankAccount
 	for rows.Next() {
 		var a BankAccount
-		if err := rows.Scan(&a.ID, &a.Name, &a.AccountType, &a.GLAccountCode, &a.Institution, &a.Last4, &a.IsActive, &a.UnmatchedLines); err != nil {
+		var cutDate string
+		if err := rows.Scan(&a.ID, &a.Name, &a.AccountType, &a.GLAccountCode, &a.Institution, &a.Last4, &a.IsActive,
+			&a.UnmatchedLines, &cutDate, &a.CutoverStatementBalanceCents, &a.CutoverOutstandingJournalIDs); err != nil {
 			return nil, fmt.Errorf("bankrec: scan account: %w", err)
+		}
+		if cutDate != "" {
+			a.CutoverDate = &cutDate
 		}
 		a.TrackingOnly = a.AccountType == AccountCreditCard
 		out = append(out, a)
@@ -68,17 +76,102 @@ func (r *Repository) GetAccount(ctx context.Context, id string) (BankAccount, er
 		return BankAccount{}, errNoDB
 	}
 	var a BankAccount
+	var cutDate string
 	err := r.pool.QueryRow(ctx,
-		`SELECT id::text, name, account_type, gl_account_code::text, institution, last4, is_active
+		`SELECT id::text, name, account_type, gl_account_code::text, institution, last4, is_active,
+		        COALESCE(to_char(cutover_date, 'YYYY-MM-DD'), ''),
+		        cutover_statement_balance_cents,
+		        COALESCE(cutover_outstanding_journal_ids::text[], '{}'::text[])
 		 FROM bank_accounts WHERE id = $1`, id,
-	).Scan(&a.ID, &a.Name, &a.AccountType, &a.GLAccountCode, &a.Institution, &a.Last4, &a.IsActive)
+	).Scan(&a.ID, &a.Name, &a.AccountType, &a.GLAccountCode, &a.Institution, &a.Last4, &a.IsActive,
+		&cutDate, &a.CutoverStatementBalanceCents, &a.CutoverOutstandingJournalIDs)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BankAccount{}, errNotFound
 	}
 	if err != nil {
 		return BankAccount{}, fmt.Errorf("bankrec: get account: %w", err)
 	}
+	if cutDate != "" {
+		a.CutoverDate = &cutDate
+	}
 	a.TrackingOnly = a.AccountType == AccountCreditCard
+	return a, nil
+}
+
+// RecordAccountCutover records the reconciliation starting point for a bank account under its row lock,
+// refusing when the cut-over month or any later month on that account has already signed off (FW1-04 round 2).
+func (r *Repository) RecordAccountCutover(ctx context.Context, in CutoverInput, actorID string) (BankAccount, error) {
+	if r.pool == nil {
+		return BankAccount{}, errNoDB
+	}
+	cutTime, err := time.Parse("2006-01-02", in.CutoverDate)
+	if err != nil {
+		return BankAccount{}, badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", in.CutoverDate)
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return BankAccount{}, fmt.Errorf("bankrec: begin cutover: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var a BankAccount
+	err = tx.QueryRow(ctx, `
+		SELECT id::text, name, account_type, gl_account_code::text, institution, last4, is_active
+		  FROM bank_accounts
+		 WHERE id = $1::uuid
+		   FOR UPDATE`, in.BankAccountID).
+		Scan(&a.ID, &a.Name, &a.AccountType, &a.GLAccountCode, &a.Institution, &a.Last4, &a.IsActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BankAccount{}, errNotFound
+	}
+	if err != nil {
+		return BankAccount{}, fmt.Errorf("bankrec: lock account for cutover: %w", err)
+	}
+	var completedY, completedM int
+	err = tx.QueryRow(ctx, `
+		SELECT year, month
+		  FROM bank_reconciliations
+		 WHERE bank_account_id = $1::uuid
+		   AND status = 'COMPLETED'
+		   AND (year > $2 OR (year = $2 AND month >= $3))
+		 ORDER BY year ASC, month ASC
+		 LIMIT 1`,
+		in.BankAccountID, cutTime.Year(), int(cutTime.Month())).Scan(&completedY, &completedM)
+	if err == nil {
+		return BankAccount{}, conflict("bankrec: cannot record cut-over at %s because month %d-%02d is already completed",
+			in.CutoverDate, completedY, completedM)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return BankAccount{}, fmt.Errorf("bankrec: check completed months for cutover: %w", err)
+	}
+
+	ids := in.OutstandingJournalIDs
+	if ids == nil {
+		ids = []string{}
+	}
+	var cutDate string
+	var cutBal int64
+	if err := tx.QueryRow(ctx, `
+		UPDATE bank_accounts
+		   SET cutover_date = $2::date,
+		       cutover_statement_balance_cents = $3::bigint,
+		       cutover_outstanding_journal_ids = $4::uuid[],
+		       cutover_recorded_by = $5,
+		       cutover_recorded_at = now()
+		 WHERE id = $1::uuid
+		RETURNING to_char(cutover_date, 'YYYY-MM-DD'),
+		          cutover_statement_balance_cents,
+		          COALESCE(cutover_outstanding_journal_ids::text[], '{}'::text[])`,
+		in.BankAccountID, in.CutoverDate, in.OpeningStatementBalanceCents, ids, nullStr(actorID)).
+		Scan(&cutDate, &cutBal, &a.CutoverOutstandingJournalIDs); err != nil {
+		return BankAccount{}, fmt.Errorf("bankrec: update account cutover: %w", err)
+	}
+	a.CutoverDate = &cutDate
+	a.CutoverStatementBalanceCents = &cutBal
+	a.TrackingOnly = a.AccountType == AccountCreditCard
+	if err := tx.Commit(ctx); err != nil {
+		return BankAccount{}, fmt.Errorf("bankrec: commit cutover: %w", err)
+	}
 	return a, nil
 }
 
@@ -889,6 +982,29 @@ func monthLineStatsOn(ctx context.Context, q reconRowQuerier, accountID string, 
 		st.PriorCompletedClosing = &priorClosing
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return monthLineStats{}, fmt.Errorf("bankrec: read prior completed closing balance: %w", err)
+	}
+	if st.PriorCompletedClosing == nil {
+		var cutoverClosing int64
+		if err := q.QueryRow(ctx, `
+			SELECT a.cutover_statement_balance_cents
+			  FROM bank_accounts a
+			 WHERE a.id = $1::uuid
+			   AND a.cutover_date IS NOT NULL
+			   AND a.cutover_statement_balance_cents IS NOT NULL
+			   AND (EXTRACT(YEAR FROM a.cutover_date) < $2
+			        OR (EXTRACT(YEAR FROM a.cutover_date) = $2 AND EXTRACT(MONTH FROM a.cutover_date) <= $3))
+			   AND NOT EXISTS (
+			       SELECT 1 FROM bank_reconciliations r
+			        WHERE r.bank_account_id = a.id
+			          AND (r.year > EXTRACT(YEAR FROM a.cutover_date)::int
+			               OR (r.year = EXTRACT(YEAR FROM a.cutover_date)::int AND r.month > EXTRACT(MONTH FROM a.cutover_date)::int))
+			          AND (r.year < $4 OR (r.year = $4 AND r.month < $5))
+			   )`,
+			accountID, prevY, prevM, year, month).Scan(&cutoverClosing); err == nil {
+			st.PriorCompletedClosing = &cutoverClosing
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return monthLineStats{}, fmt.Errorf("bankrec: read cutover opening balance: %w", err)
+		}
 	}
 	rows, err := q.Query(ctx, `
 		SELECT COALESCE(m.target_ref_id::text, ''), COALESCE(m.journal_id::text, '')

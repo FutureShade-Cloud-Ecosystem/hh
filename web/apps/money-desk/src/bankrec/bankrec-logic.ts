@@ -170,9 +170,16 @@ export function refusalWords(action: string, message: string, status: number): s
     const period = periodWords(Number(remain[2]), Number(remain[3]));
     return `Not signed off: ${plural(n, "statement line is", "statement lines are")} still unmatched for ${period}. ${n === 1 ? "Match it" : "Match them"}, or refresh the figures if you just did.`;
   }
-  const beforeEnd = /cannot complete, (\d{4})-(\d{2}) has not reached month end yet \(month end is (\d{4}-\d{2}-\d{2})\)/i.exec(message);
+  const beforeEnd =
+    /cannot complete, (\d{4})-(\d{2}) has not reached month end yet \(month end is (\d{4}-\d{2}-\d{2})(?:; first day to sign off is (\d{4}-\d{2}-\d{2}))?\)/i.exec(
+      message,
+    );
   if (beforeEnd !== null) {
-    return `Not signed off: ${periodWords(Number(beforeEnd[1]), Number(beforeEnd[2]))} has not reached month end yet (${dayWords(beforeEnd[3])}). Wait until the month has ended before signing it off.`;
+    const firstDay =
+      beforeEnd[4] !== undefined && beforeEnd[4] !== ""
+        ? ` The first day it may be signed off is ${dayWords(beforeEnd[4])}.`
+        : " Wait until the month has ended before signing it off.";
+    return `Not signed off: ${periodWords(Number(beforeEnd[1]), Number(beforeEnd[2]))} has not reached month end yet (${dayWords(beforeEnd[3])}).${firstDay}`;
   }
   const noLines = /cannot complete, no statement lines have been (?:imported|loaded) for (\d{4})-(\d{2})/i.exec(message);
   if (noLines !== null) {
@@ -291,6 +298,14 @@ export function importFailedWords(error: string): string {
   const date = /^csv row (\d+): bad date "([^"]*)"/.exec(text);
   if (date !== null) {
     return `Not imported: row ${date[1]} has a date the file format does not read ("${date[2]}"). Dates are written year, month, day, with dashes.`;
+  }
+  const usd = /^csv row (\d+): USD amount "([^"]*)" is not supported/.exec(text);
+  if (usd !== null) {
+    return `Not imported: row ${usd[1]} carries a USD amount ("${usd[2]}"), which cannot be imported into a CAD statement.`;
+  }
+  const missingAmt = /^csv row (\d+): missing amount/.exec(text);
+  if (missingAmt !== null) {
+    return `Not imported: row ${missingAmt[1]} has no amount.`;
   }
   const amount = /^csv row (\d+): bad (?:amount|debit|credit) "([^"]*)"/.exec(text);
   if (amount !== null) {

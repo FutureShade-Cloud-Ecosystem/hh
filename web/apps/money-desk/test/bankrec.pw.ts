@@ -627,7 +627,7 @@ test("a month with a deposit in transit and an outstanding cheque shows the reco
   await openBank(page, request);
   await request.post("/_stub/outstanding-items", {
     data: {
-      deposits_in_transit: [{ journal_id: "7a1e0000-0000-4000-9000-000000000081", posted_at: `${monthDay(28)}T12:00:00Z`, memo: "May deposit in transit", amount_cents: 30_000 }],
+      deposits_in_transit: [{ journal_id: "7a1e0000-0000-4000-9000-000000000081", posted_at: `${monthDay(28)}T12:00:00Z`, memo: "Month-end deposit in transit", amount_cents: 30_000 }],
       outstanding_cheques: [{ journal_id: "7a1e0000-0000-4000-9000-000000000082", posted_at: `${monthDay(29)}T12:00:00Z`, memo: "Cheque 1044 to vendor", amount_cents: 12_000 }],
     },
   });
@@ -651,8 +651,10 @@ test("a month with a deposit in transit and an outstanding cheque shows the reco
     await expect(page.locator("[data-notice]")).toContainText("Matched.");
   }
   await tab(page, "accounts");
+  await expect(page.locator("[data-month-note]")).toContainText("adjusted bank balance less the ledger");
   await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);
   await page.getByRole("button", { name: "Open month" }).click();
+  await expect(page.locator("[data-recon-id] [data-row-adjusted]")).toHaveText("$25,435.75");
   const report = page.locator("[data-recon-report]");
   await expect(report.locator("[data-report-statement]")).toHaveText("$25,255.75");
   await expect(report.locator("[data-report-dit]")).toHaveText("$300.00");
@@ -660,11 +662,12 @@ test("a month with a deposit in transit and an outstanding cheque shows the reco
   await expect(report.locator("[data-report-adjusted]")).toHaveText("$25,435.75");
   await expect(report.locator("[data-report-gl]")).toHaveText("$25,435.75");
   await expect(report.locator("[data-report-matched]")).toHaveText("7");
-  await expect(report.locator("[data-dit-list]")).toContainText("May deposit in transit · $300.00");
+  await expect(report.locator("[data-dit-list]")).toContainText("Month-end deposit in transit · $300.00");
   await expect(report.locator("[data-oc-list]")).toContainText("Cheque 1044 to vendor · $120.00");
   await page.locator("[data-recon-id]").getByRole("button", { name: "Sign off" }).click();
   await page.getByRole("button", { name: "Confirm sign off" }).click();
   await expect(report).toContainText("Signed off");
+  await expect(report.locator("[data-report-completed-by]")).toHaveText("Financial controller (demo)");
   await expect(report.locator("[data-report-completed-at]")).toBeVisible();
 
   const shotsDir = process.env["FW1_04_SHOTS_DIR"];

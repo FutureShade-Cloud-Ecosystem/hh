@@ -119,6 +119,7 @@ func (CSVStatementSource) Parse(_ context.Context, profile ImportProfile, r io.R
 	desc2I := optIdx(idx, desc2Col)
 	refI := optIdx(idx, refCol)
 	chequeI := optIdx(idx, chequeCol)
+	usdI := optIdx(idx, "USD$")
 
 	var amtI, debitI, creditI int
 	if hasSingleAmount {
@@ -168,18 +169,30 @@ func (CSVStatementSource) Parse(_ context.Context, profile ImportProfile, r io.R
 		}
 		var amountCents int64
 		if hasSingleAmount {
-			amountCents, perr = parseCents(field(amtI))
+			if usdI >= 0 && field(usdI) != "" {
+				return nil, fmt.Errorf("bankrec: csv row %d: USD amount %q is not supported on a CAD statement import", rowNo-1, field(usdI))
+			}
+			rawAmt := field(amtI)
+			if rawAmt == "" {
+				return nil, fmt.Errorf("bankrec: csv row %d: missing amount", rowNo-1)
+			}
+			amountCents, perr = parseCents(rawAmt)
 			if perr != nil {
-				return nil, fmt.Errorf("bankrec: csv row %d: bad amount %q: %w", rowNo-1, field(amtI), perr)
+				return nil, fmt.Errorf("bankrec: csv row %d: bad amount %q: %w", rowNo-1, rawAmt, perr)
 			}
 		} else {
 			var debit, credit int64
-			if debitI >= 0 && field(debitI) != "" {
+			hasDebit := debitI >= 0 && field(debitI) != ""
+			hasCredit := creditI >= 0 && field(creditI) != ""
+			if !hasDebit && !hasCredit {
+				return nil, fmt.Errorf("bankrec: csv row %d: missing amount", rowNo-1)
+			}
+			if hasDebit {
 				if debit, perr = parseCents(field(debitI)); perr != nil {
 					return nil, fmt.Errorf("bankrec: csv row %d: bad debit %q: %w", rowNo-1, field(debitI), perr)
 				}
 			}
-			if creditI >= 0 && field(creditI) != "" {
+			if hasCredit {
 				if credit, perr = parseCents(field(creditI)); perr != nil {
 					return nil, fmt.Errorf("bankrec: csv row %d: bad credit %q: %w", rowNo-1, field(creditI), perr)
 				}

@@ -203,6 +203,10 @@ test("the core's refusals read in words that say what to do, and a walled route 
     "Not signed off: December 2087 has not reached month end yet (Dec 31, 2087). Wait until the month has ended before signing it off.",
   );
   assert.equal(
+    refusalWords("complete", "bankrec: cannot complete, 2087-12 has not reached month end yet (month end is 2087-12-31; first day to sign off is 2088-01-01)", 422),
+    "Not signed off: December 2087 has not reached month end yet (Dec 31, 2087). The first day it may be signed off is Jan 1, 2088.",
+  );
+  assert.equal(
     refusalWords("complete", "bankrec: cannot complete, no statement lines have been imported for 2031-05", 422),
     "Not signed off: no statement lines have been imported for May 2031. Import the bank statement for that month first.",
   );
@@ -245,6 +249,14 @@ test("a failed import says what the file lacked in words a bookkeeper can act on
   assert.equal(
     importFailedWords('bankrec: csv is missing the mapped column "Date"'),
     'Not imported: the file has no "Date" column. The first row must name Date, Description, Amount and Reference.',
+  );
+  assert.equal(
+    importFailedWords('bankrec: csv row 2: USD amount "250.00" is not supported on a CAD statement import'),
+    'Not imported: row 2 carries a USD amount ("250.00"), which cannot be imported into a CAD statement.',
+  );
+  assert.equal(
+    importFailedWords("bankrec: csv row 2: missing amount"),
+    "Not imported: row 2 has no amount.",
   );
   assert.equal(importFailedWords("statement parse failed: bankrec: read csv header: EOF"), "Not imported: the file is empty or has no header row.");
   assert.equal(importFailedWords("statement parse failed: something else"), "Not imported: something else.");

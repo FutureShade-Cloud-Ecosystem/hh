@@ -62,6 +62,8 @@ export interface BankrecModel {
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
+  readonly userId?: string;
+  readonly userName?: string;
 }
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -193,12 +195,22 @@ function reconActions(model: BankrecModel, r: BankRecReconciliation): TemplateRe
   `;
 }
 
-function reconReport(r: BankRecReconciliation): TemplateResult {
+function signedOffByWords(model: BankrecModel, completedBy: string | null | undefined): string {
+  if (completedBy === undefined || completedBy === null || completedBy === "") return "";
+  if (!isUuid(completedBy)) return completedBy;
+  if (model.userId !== undefined && model.userId !== "" && completedBy === model.userId && model.userName !== undefined && model.userName !== "") {
+    return model.userName;
+  }
+  return "";
+}
+
+function reconReport(model: BankrecModel, r: BankRecReconciliation): TemplateResult {
   const dit = r.deposits_in_transit ?? [];
   const oc = r.outstanding_cheques ?? [];
   const ditCents = r.deposits_in_transit_cents ?? 0;
   const ocCents = r.outstanding_cheques_cents ?? 0;
   const adjusted = r.adjusted_bank_balance_cents ?? r.statement_balance_cents;
+  const signedBy = signedOffByWords(model, r.completed_by);
   return html`
     <div class="br-card" data-recon-report=${r.id}>
       <div class="br-card-top">
@@ -215,8 +227,8 @@ function reconReport(r: BankRecReconciliation): TemplateResult {
         <dt>Adjusted bank balance</dt><dd data-report-adjusted>${formatMoney(adjusted)}</dd>
         <dt>Closing ledger</dt><dd data-report-gl>${formatMoney(r.gl_balance_cents)}</dd>
         <dt>Matched lines</dt><dd data-report-matched>${r.matched_lines_count ?? 0}</dd>
-        ${r.completed_by !== undefined && r.completed_by !== null && r.completed_by !== ""
-          ? html`<dt>Signed off by</dt><dd data-report-completed-by>${isUuid(r.completed_by) ? "Financial Controller" : r.completed_by}</dd>`
+        ${signedBy !== ""
+          ? html`<dt>Signed off by</dt><dd data-report-completed-by>${signedBy}</dd>`
           : nothing}
         ${r.completed_at !== undefined && r.completed_at !== null
           ? html`<dt>Signed off</dt><dd data-report-completed-at>${dayWords(r.completed_at)}</dd>`
@@ -243,13 +255,15 @@ function reconRows(model: BankrecModel): TemplateResult {
   return html`
     <div class="br-scroll br-hide-narrow">
       <table aria-label="Months for this account">
-        <thead><tr><th>Month</th><th class="num">Statement</th><th class="num">Ledger</th><th>Difference</th><th></th></tr></thead>
+        <thead><tr><th>Month</th><th class="num">Statement</th><th class="num">Adjusted bank</th><th class="num">Ledger</th><th>Difference</th><th></th></tr></thead>
         <tbody>
           ${model.recons.map((r) => {
             const v = varianceWords(r.variance_cents);
+            const adjusted = r.adjusted_bank_balance_cents ?? r.statement_balance_cents;
             return html`<tr data-recon-id=${r.id}>
               <td><strong>${periodWords(r.year, r.month)}</strong><span class="br-sub">${pill(reconTone(r.status), reconStatusWord(r.status))}</span></td>
               <td class="num">${formatMoney(r.statement_balance_cents)}</td>
+              <td class="num" data-row-adjusted>${formatMoney(adjusted)}</td>
               <td class="num">${formatMoney(r.gl_balance_cents)}</td>
               <td>${pill(v.tone, v.word)}</td>
               <td>${reconActions(model, r)}</td>
@@ -261,10 +275,12 @@ function reconRows(model: BankrecModel): TemplateResult {
     <ul class="br-cards" aria-label="Months for this account, as cards">
       ${model.recons.map((r) => {
         const v = varianceWords(r.variance_cents);
+        const adjusted = r.adjusted_bank_balance_cents ?? r.statement_balance_cents;
         return html`<li class="br-card" data-recon-card=${r.id}>
           <div class="br-card-top"><strong>${periodWords(r.year, r.month)}</strong>${pill(reconTone(r.status), reconStatusWord(r.status))}</div>
           <dl class="br-facts">
             <dt>Statement</dt><dd>${formatMoney(r.statement_balance_cents)}</dd>
+            <dt>Adjusted bank</dt><dd data-card-adjusted>${formatMoney(adjusted)}</dd>
             <dt>Ledger</dt><dd>${formatMoney(r.gl_balance_cents)}</dd>
             <dt>Difference</dt><dd>${pill(v.tone, v.word)}</dd>
           </dl>
@@ -272,7 +288,7 @@ function reconRows(model: BankrecModel): TemplateResult {
         </li>`;
       })}
     </ul>
-    ${model.recons.map((r) => reconReport(r))}
+    ${model.recons.map((r) => reconReport(model, r))}
   `;
 }
 
@@ -295,7 +311,7 @@ function accountsView(model: BankrecModel): TemplateResult {
               <div class="br-actions">
                 <button type="button" class="btn btn-primary" data-action="br-open-month" ?disabled=${model.busy}>Open month</button>
               </div>
-              <p class="br-note" data-month-note>The difference is the statement less the ledger. It is worked out when you open or refresh the month, so refresh the figures after you match. A month signs off only when no line is unmatched and the difference is zero.</p>
+              <p class="br-note" data-month-note>The difference is the adjusted bank balance less the ledger. It is worked out when you open or refresh the month, so refresh the figures after you match. A month signs off only when no line is unmatched and the difference is zero.</p>
               ${reconRows(model)}
               ${account.tracking_only ? html`<p class="br-dim br-later-line">Card spend is tracked here and not yet booked to the ledger: ${later("later")}</p>` : nothing}
             `}
