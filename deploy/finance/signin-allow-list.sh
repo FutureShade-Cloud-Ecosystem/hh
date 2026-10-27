@@ -32,10 +32,14 @@ normalize_allow_list() {
 # an allow list that disagree the boot stops, naming the two variables and
 # never an address.
 derive_signin_allow_list() {
-	users="${HH_FINANCE_USERS:-}"
-	if [ -z "$users" ]; then
+	# Unset is "no list": the allow list stays as the operator set it. Set
+	# and empty is a list with nobody on it (finance_users_empty=1): the
+	# allow list is empty and the apply revokes every finance person.
+	finance_users_empty=0
+	if [ -z "${HH_FINANCE_USERS+set}" ]; then
 		return 0
 	fi
+	users="$HH_FINANCE_USERS"
 	derived=""
 	# The entries, split on ';'. The separator is the only thing that
 	# splits, so a display name with spaces stays whole, and the globbing
@@ -80,8 +84,14 @@ derive_signin_allow_list() {
 		fi
 	done
 	if [ -z "$derived" ]; then
-		allow_list_refuse "HH_FINANCE_USERS holds no entry: the box's finance users are applied from it, and the entrypoint refuses to start without it"
-		return 1
+		if [ -n "${CORE_SIGNIN_EMAIL_ADDRESSES:-}" ]; then
+			allow_list_refuse "CORE_SIGNIN_EMAIL_ADDRESSES and HH_FINANCE_USERS disagree on the sign in allow list: HH_FINANCE_USERS is set and empty, so the allow list must be empty too, and the entrypoint refuses to start on two"
+			return 1
+		fi
+		finance_users_empty=1
+		CORE_SIGNIN_EMAIL_ADDRESSES=""
+		export CORE_SIGNIN_EMAIL_ADDRESSES
+		return 0
 	fi
 	if [ -n "${CORE_SIGNIN_EMAIL_ADDRESSES:-}" ]; then
 		if [ "$(normalize_allow_list "$derived")" != "$(normalize_allow_list "$CORE_SIGNIN_EMAIL_ADDRESSES")" ]; then

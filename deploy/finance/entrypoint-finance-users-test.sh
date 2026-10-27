@@ -100,6 +100,24 @@ case "$out" in
 	*) fail "no finance user list changed the allow list: $out" ;;
 esac
 
+# A list set and empty is a list with nobody on it: the allow list is empty,
+# so nobody may sign in, and the apply revokes every finance person.
+out="$(derive "" unset)"
+case "$out" in
+	"derived=[]") pass "a set and empty finance user list derives an empty allow list" ;;
+	*) fail "a set and empty finance user list did not derive an empty allow list: $out" ;;
+esac
+# ...and an allow list beside it that still names someone disagrees.
+out="$(derive "" "$CONTROLLER")"
+case "$out" in
+	*CORE_SIGNIN_EMAIL_ADDRESSES*) pass "an empty list beside a non empty allow list refuses, naming the variable" ;;
+	*) fail "an empty list beside a non empty allow list was not refused: $out" ;;
+esac
+case "$out" in
+	*"$CONTROLLER"*) fail "that refusal carries a value: $out" ;;
+	*) pass "that refusal carries no address" ;;
+esac
+
 # The entrypoint legs: the same two rules, seen from the entrypoint itself.
 mkdir -p "$SCRATCH/finance-root/app" "$SCRATCH/finance-root/templates"
 printf '%s\n' '-----BEGIN EC PRIVATE KEY-----' 'throwaway-test-key-material' '-----END EC PRIVATE KEY-----' > "$SCRATCH/session.pem"

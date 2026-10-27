@@ -73,6 +73,10 @@ for name in \
 	HH_ACCEPTANCE_SIGN_KEY_ID HH_ACCEPTANCE_SIGN_KEY \
 	HH_WEB_MODE HH_WEB_ORG HH_WEB_CONSOLE_ENDPOINT HH_WEB_CONSOLE_PROJECT_ID \
 	HH_WEB_DEALER_NAME; do
+	if [ "$name" = CORE_SIGNIN_EMAIL_ADDRESSES ] && [ "${finance_users_empty:-0}" = 1 ]; then
+		# HH_FINANCE_USERS is set and empty: nobody may sign in, by design.
+		continue
+	fi
 	if [ -z "$(printenv "$name")" ]; then
 		fail "$name is not set: the finance box needs it at boot, and the entrypoint refuses to start without it"
 	fi
@@ -276,7 +280,10 @@ esac
 # there is nobody to apply, and the box's people are the ones the operator
 # linked with core finance-user.
 # --------------------------------------------------------------------------
-if [ -n "${HH_FINANCE_USERS:-}" ]; then
+if [ "${finance_users_empty:-0}" = 1 ]; then
+	log "the box's finance user list is set and empty: every finance person is revoked"
+	core finance-user --apply-from-env --empty-list-revokes-all
+elif [ -n "${HH_FINANCE_USERS:-}" ]; then
 	log "the box's finance user list is applied"
 	core finance-user --apply-from-env
 fi

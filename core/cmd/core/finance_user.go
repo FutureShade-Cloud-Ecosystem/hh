@@ -110,6 +110,7 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 	role := fs.String("role", financeUserDefaultRole, "the finance role to grant")
 	revoke := fs.Bool("revoke", false, "deactivate the person and revoke every live grant instead of granting")
 	applyFromEnv := fs.Bool("apply-from-env", false, "apply the box's finance user list from HH_FINANCE_USERS: provision every entry and revoke every finance person the list left out, in one transaction")
+	emptyRevokesAll := fs.Bool("empty-list-revokes-all", false, "with --apply-from-env: an empty HH_FINANCE_USERS revokes every finance person on the box (the entrypoint passes it only when the list is set and empty)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -121,7 +122,7 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 		// source of truth, so the apply path takes no name of its own.
 		var others []string
 		fs.Visit(func(f *flag.Flag) {
-			if f.Name != "apply-from-env" {
+			if f.Name != "apply-from-env" && f.Name != "empty-list-revokes-all" {
 				others = append(others, "-"+f.Name)
 			}
 		})
@@ -161,7 +162,7 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 		return err
 	}
 	if *applyFromEnv {
-		return financeUserApplyFromEnv(ctx, pool, stdout, getenv)
+		return financeUserApplyFromEnv(ctx, pool, stdout, getenv, *emptyRevokesAll)
 	}
 	if *revoke {
 		return financeUserRevoke(ctx, pool, stdout, getenv, strings.TrimSpace(*platformUserID), strings.TrimSpace(*email))
@@ -391,8 +392,13 @@ type financeUserEntry struct {
 // separated by ';', each one 'email|platform_user_id|display name|role'. A
 // bad entry refuses with one line naming the entry by its email alone, never
 // the platform id, the display name or the role it carries.
-func parseFinanceUserEntries(raw string) ([]financeUserEntry, error) {
+func parseFinanceUserEntries(raw string, allowEmpty bool) ([]financeUserEntry, error) {
 	if strings.TrimSpace(raw) == "" {
+		if allowEmpty {
+			// The entrypoint's word: the list is set and empty, so the box
+			// has no finance people and every one linked is revoked.
+			return nil, nil
+		}
 		return nil, fmt.Errorf("finance-user: %s holds no entry: the box's finance users are applied from it, and there is nothing to apply without it", envFinanceUsers)
 	}
 	var out []financeUserEntry
@@ -416,9 +422,16 @@ func parseFinanceUserEntries(raw string) ([]financeUserEntry, error) {
 		if !slices.Contains(financeUserRoles, e.role) {
 			return nil, fmt.Errorf("finance-user: the entry for %s has a role off the finance roles list: %s", e.email, strings.Join(financeUserRoles, ", "))
 		}
+		// One person, one entry: a platform id listed twice would let the
+		// last entry win in silence, so the list refuses before any write.
+		for _, prior := range out {
+			if prior.platformUserID == e.platformUserID {
+				return nil, fmt.Errorf("finance-user: the entry for %s repeats a platform user another entry already names", e.email)
+			}
+		}
 		out = append(out, e)
 	}
-	if len(out) == 0 {
+	if len(out) == 0 && !allowEmpty {
 		return nil, fmt.Errorf("finance-user: %s holds no entry: the box's finance users are applied from it, and there is nothing to apply without it", envFinanceUsers)
 	}
 	return out, nil
@@ -445,8 +458,8 @@ func financeUserEntryName(fields []string, position int) string {
 // The rules are the command's rules: the finance box alone, a role off the
 // finance list refuses, an email another platform subject holds refuses, and
 // a person already linked with the role the list gives is left alone.
-func financeUserApplyFromEnv(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer, getenv func(string) string) error {
-	entries, err := parseFinanceUserEntries(getenv(envFinanceUsers))
+func financeUserApplyFromEnv(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer, getenv func(string) string, emptyRevokesAll bool) error {
+	entries, err := parseFinanceUserEntries(getenv(envFinanceUsers), emptyRevokesAll)
 	if err != nil {
 		return err
 	}
@@ -460,7 +473,7 @@ func financeUserApplyFromEnv(ctx context.Context, pool *pgxpool.Pool, stdout io.
 	for _, a := range exchange.ParseAllowList(getenv(envSigninEmailAddresses)) {
 		listed[a] = true
 	}
-	if len(listed) == 0 {
+	if len(listed) == 0 && len(entries) > 0 {
 		return fmt.Errorf("finance-user: %s is not set: a person the list names must be on the sign in allow list, and the list is empty", envSigninEmailAddresses)
 	}
 	for _, e := range entries {
@@ -493,6 +506,15 @@ func financeUserApplyFromEnv(ctx context.Context, pool *pgxpool.Pool, stdout io.
 		}
 		orgID = p.orgID
 		applied = append(applied, appliedPerson{userID: p.userID, grantID: p.grantID})
+	}
+	if orgID == "" {
+		// An emptied list provisions nobody, so the anchor comes from the
+		// identity seam directly: the revoke below still needs the org.
+		var err error
+		orgID, _, _, err = identity.EnsureOrgAnchor(ctx, tx, slug, financeBoxOrgName)
+		if err != nil {
+			return fmt.Errorf("finance-user: the org anchor: %w", err)
+		}
 	}
 
 	// Every finance person the list left out, revoked the way the command
