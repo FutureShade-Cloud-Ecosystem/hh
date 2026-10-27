@@ -60,6 +60,45 @@ func TestIntegration_FW1_10_JournalDetailAnswersOutOfReachAsMissing(t *testing.T
 	}
 }
 
+// A journal with no branch is the consolidated books (until FW1-08 stamps every line, branch money
+// sits in such journals): readable by id only by a dealer wide caller, the trial balance rule.
+func TestIntegration_FW1_10_JournalWithNoBranchIsReadByIdByADealerWideCallerOnly(t *testing.T) {
+	pool := intPool(t)
+	controller := identity.StaffContext{
+		UserID: aUser(t, pool), RoleCode: controllerRole, Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive,
+	}
+	svc := NewService(NewRepository(pool)).
+		withCaller(func(context.Context) (identity.StaffContext, bool) { return controller, true })
+	j, err := svc.CreateJournal(context.Background(), CreateJournalInput{
+		Memo: "FW1-10 no branch journal",
+		Lines: []JournalLineInput{
+			{AccountCode: "1000", DebitCents: 15000, Memo: "cash"},
+			{AccountCode: "4000", CreditCents: 15000, Memo: "revenue"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("plant a no branch journal: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM gl_journal_lines WHERE journal_id = $1`, j.ID)
+		_, _ = pool.Exec(c, `DELETE FROM gl_journals WHERE id = $1`, j.ID)
+	})
+
+	kingston := identity.StaffContext{
+		UserID: aUser(t, pool), RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager,
+		Scope: identity.ScopeBranch, Status: identity.StatusActive,
+		Branches: map[string]bool{glKingston: true},
+	}
+	if got := liveMounted(t, pool, kingston, "/api/v1/gl/journals/"+j.ID); got != http.StatusNotFound {
+		t.Errorf("GET a no branch journal as a Kingston-only manager = %d, want 404 (it is the consolidated books)", got)
+	}
+	if got := liveMounted(t, pool, controller, "/api/v1/gl/journals/"+j.ID); got != http.StatusOK {
+		t.Errorf("GET a no branch journal as the Controller = %d, want 200", got)
+	}
+}
+
 func TestIntegration_FW1_10_TrialBalanceAndTieOutAreFencedToTheCallersReach(t *testing.T) {
 	pool := intPool(t)
 	fw1PlantTrentonJournal(t, pool)
