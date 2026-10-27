@@ -279,13 +279,13 @@ type ReconReport struct {
 	// OpeningBalanceCount and OpeningBalanceHSTCents list the period's documents carrying the
 	// opening balance marker (FROM-PRINCIPAL 177): excluded from CollectedCents, never inferred
 	// from a missing journal, and named here so nothing leaves the report silently.
-	OpeningBalanceCount  int   `json:"opening_balance_count"`
+	OpeningBalanceCount    int   `json:"opening_balance_count"`
 	OpeningBalanceHSTCents int64 `json:"opening_balance_hst_cents"`
-	GLPayableCents       int64 `json:"gl_payable_cents"` // 2200's movement for the period
-	GLFederalCents       int64 `json:"gl_federal_cents"` // 2201 balance
-	GLOntarioCents       int64 `json:"gl_ontario_cents"` // 2202 balance
-	VarianceCents        int64 `json:"variance_cents"`   // GL 2200 movement − (collected − returns − input tax)
-	TiedOut              bool  `json:"tied_out"`
+	GLPayableCents         int64 `json:"gl_payable_cents"` // 2200's movement for the period
+	GLFederalCents         int64 `json:"gl_federal_cents"` // 2201 balance
+	GLOntarioCents         int64 `json:"gl_ontario_cents"` // 2202 balance
+	VarianceCents          int64 `json:"variance_cents"`   // GL 2200 movement − (collected − returns − input tax)
+	TiedOut                bool  `json:"tied_out"`
 }
 
 // -- evidence-relief eligibility (the tcrd_expiry gate) -----------------------------------------------------

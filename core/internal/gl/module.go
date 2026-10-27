@@ -186,6 +186,11 @@ type ExternalJournal struct {
 	// statement line): the journal posts in that document's month when it is open, and into the
 	// earliest open month, dated by the document and late posted, when it is closed (ruling 82.2).
 	// Zero keeps the clock.
+	//
+	// A document date is a CALENDAR DAY in the dealer's own zone (houseday), the instant that day's
+	// house midnight begins, never midnight at Greenwich: the ledger files a journal by the month of
+	// the instant in the dealer's zone, so a Greenwich midnight (the previous evening in the house
+	// zone) would file a document dated the first of a month into the month before it.
 	DocumentDate time.Time
 }
 
