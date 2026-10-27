@@ -28,7 +28,7 @@ func TestIntegration_PostingQueueListsWaitingAndDeadForTheController(t *testing.
 		controller := identity.StaffContext{UserID: "5d1b3f6e-0000-4000-9000-0000000000aa", RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}
 		manager := identity.StaffContext{UserID: "5d1b3f6e-0000-4000-9000-0000000000ab", RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}
 
-		at := time.Date(2026, time.March, 12, 10, 0, 0, 0, time.UTC)
+		at := time.Now().UTC().Add(-time.Hour)
 		plant := func(topic, payload, status string, attempts int, lastErr string) string {
 			var id string
 			if err := pool.QueryRow(ctx, `
@@ -177,7 +177,7 @@ func TestIntegration_PostingQueue_ExtractsReturnAndSessionDocuments(t *testing.T
 	ctx := context.Background()
 	controller := identity.StaffContext{UserID: "5d1b3f6e-0000-4000-9000-0000000000aa", RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}
 
-	at := time.Date(2026, time.March, 12, 10, 0, 0, 0, time.UTC)
+	at := time.Now().UTC().Add(-time.Hour)
 	plant := func(topic, payload string) string {
 		var id string
 		if err := pool.QueryRow(ctx, `
