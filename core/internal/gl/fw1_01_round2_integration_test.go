@@ -190,8 +190,8 @@ func TestIntegration_FW1_01R2_RollForwardIsANoOpAndTheControllerOpensOneMore(t *
 	if months(2028) != 12 {
 		t.Fatalf("2028 holds %d periods, want 12", months(2028))
 	}
-	if _, err := controller.OpenNextFiscalYear(ctx, "FW1-01 round 2 repeat"); err != nil {
-		t.Fatalf("the repeat controller open: %v", err)
+	if _, err := controller.OpenNextFiscalYear(ctx, "FW1-01 round 2 repeat"); err == nil || !strings.Contains(err.Error(), "2028 is already open") {
+		t.Fatalf("the repeat controller open at the cap answered %v, want refusal '2028 is already open'", err)
 	}
 	if months(2029) != 0 {
 		t.Fatalf("a repeat controller open created 2029; at most one year beyond the roll forward's target")

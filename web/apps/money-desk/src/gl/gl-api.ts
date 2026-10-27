@@ -159,6 +159,26 @@ export class GlApi {
     return this.#items("fiscal periods", (cursor) => staffGl.glListPeriods(this.#client, { limit: 100, ...(cursor === undefined ? {} : { cursor }) }));
   }
 
+  /** Every fiscal period along with the core's answer for the next year the Controller can open early (0 when none can). */
+  async periodsPage(): Promise<Result<{ items: GlPeriod[]; nextOpenableYear: number }>> {
+    const rows: GlPeriod[] = [];
+    let nextOpenableYear = 0;
+    let cursor: string | undefined;
+    for (let pages = 0; pages < MAX_PAGES; pages += 1) {
+      const answer = await staffGl.glListPeriods(this.#client, { limit: 100, ...(cursor === undefined ? {} : { cursor }) });
+      if (!answer.ok) return answer;
+      if (!Array.isArray(answer.value.items)) return { ok: false, error: "The fiscal periods was not readable." };
+      if (pages === 0 && typeof answer.value.next_openable_year === "number" && answer.value.next_openable_year > 0) {
+        nextOpenableYear = answer.value.next_openable_year;
+      }
+      rows.push(...answer.value.items);
+      const next = answer.value.next_cursor;
+      if (next === undefined || next === null || next === "") return { ok: true, value: { items: rows, nextOpenableYear } };
+      cursor = next;
+    }
+    return { ok: false, error: "The fiscal periods did not end." };
+  }
+
   closePeriod(id: string, reason: string): Promise<Result<GlPeriod>> {
     return staffGl.glClosePeriod(this.#client, id, reason === "" ? {} : { reason });
   }
@@ -172,8 +192,8 @@ export class GlApi {
   }
 
   /** The Controller's early open of the next fiscal year: the roll forward the core does on its own, asked for by hand with a reason kept. */
-  openNextYear(reason: string): Promise<Result<GlYearOpenResult>> {
-    return staffGl.glOpenYear(this.#client, { reason });
+  openNextYear(reason: string, year?: number): Promise<Result<GlYearOpenResult>> {
+    return staffGl.glOpenYear(this.#client, year !== undefined && year > 0 ? { year, reason } : { reason });
   }
 
   policy(branchId = ""): Promise<Result<GlPolicy>> {

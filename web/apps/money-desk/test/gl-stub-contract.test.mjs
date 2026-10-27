@@ -413,7 +413,7 @@ test("the next fiscal year opens for the Controller with a reason and refuses in
   await reset();
   refused(await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { reason: "   " }), 422, "gl: a reason is required");
   refused(await call(IDS.payRec, "POST", "/api/v1/gl/periods/open-year", { reason: "x" }), 403, "Forbidden");
-  refused(await call(IDS.gm, "POST", "/api/v1/gl/periods/open-year", { reason: "x" }), 403, "gl: only the Financial Controller may reopen a closed period");
+  refused(await call(IDS.generalManager, "POST", "/api/v1/gl/periods/open-year", { reason: "x" }), 403, "gl: only the Financial Controller may reopen a closed period");
   const beforePage = await call(IDS.controller, "GET", "/api/v1/gl/periods");
   assert.equal(beforePage.status, 200);
   holds("GlPeriodPage", beforePage.json);

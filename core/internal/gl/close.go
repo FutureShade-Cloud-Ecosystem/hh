@@ -162,6 +162,12 @@ func (s *Service) ListPeriods(ctx context.Context) ([]Period, error) {
 	return s.store.ListPeriods(ctx)
 }
 
+// NextOpenableFiscalYear answers the next fiscal year the Financial Controller can open early
+// (house year + 2 when not yet open), or 0 when the cap year is already open (S2 round, P2-1).
+func (s *Service) NextOpenableFiscalYear(ctx context.Context) (int, error) {
+	return s.store.NextOpenableFiscalYear(ctx, s.clock())
+}
+
 // YearOpenResult answers which fiscal year an open made sure of.
 type YearOpenResult struct {
 	FiscalYear int `json:"fiscal_year"`
@@ -170,17 +176,22 @@ type YearOpenResult struct {
 // EnsureNextFiscalYear idempotently makes sure the year after the current house year exists. The worker
 // calls it at start on every box, so the next year exists ahead of need without anyone acting.
 func (s *Service) EnsureNextFiscalYear(ctx context.Context) (YearOpenResult, error) {
-	year, err := s.store.EnsureNextFiscalYear(ctx, s.now())
+	year, err := s.store.EnsureNextFiscalYear(ctx, s.clock())
 	if err != nil {
 		return YearOpenResult{}, err
 	}
 	return YearOpenResult{FiscalYear: year}, nil
 }
 
-// OpenNextFiscalYear is the Controller's early open: the same idempotent creation as EnsureNextFiscalYear,
-// narrowed to the Financial Controller, reason required, and audit stamped (the deliberate act is
-// distinguished from the automatic roll forward by the record, not by a different database write).
+// OpenNextFiscalYear is the Controller's early open when no year is named explicitly by the caller.
 func (s *Service) OpenNextFiscalYear(ctx context.Context, reason string) (YearOpenResult, error) {
+	return s.OpenFiscalYear(ctx, 0, reason)
+}
+
+// OpenFiscalYear is the Controller's early open: narrowed to the Financial Controller, reason required,
+// capped at one year beyond the roll forward's target (house year + 2), refusing in words when the year
+// is already open or past the cap, and audit stamped inside the year's transaction (S2 round, P2-1).
+func (s *Service) OpenFiscalYear(ctx context.Context, requestedYear int, reason string) (YearOpenResult, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return YearOpenResult{}, err
@@ -194,7 +205,7 @@ func (s *Service) OpenNextFiscalYear(ctx context.Context, reason string) (YearOp
 	// Round 2 (S2 P2-4): the audit row is recorded INSIDE the year's transaction, so it commits or
 	// rolls back with the year it opens; a failed audit leaves no year behind. Unwired, nothing is
 	// recorded (the guards above still hold).
-	year, err := s.store.OpenNextFiscalYear(ctx, s.now(), func(ctx context.Context, tx pgx.Tx, year int) error {
+	year, err := s.store.OpenNextFiscalYear(ctx, s.clock(), requestedYear, func(ctx context.Context, tx pgx.Tx, year int) error {
 		if s.auditTx == nil {
 			return nil
 		}

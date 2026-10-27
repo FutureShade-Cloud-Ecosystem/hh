@@ -13,16 +13,6 @@ async function openAccount(page: Page, name: string): Promise<void> {
   await expect(page.locator("[data-field='receive-amount']")).not.toHaveValue("");
 }
 
-/** The words the desk reads a due day back in, counted the way the stub seeds it and the app spells it: the
- * stub serves a calendar date dayFromToday(days) and the row carries its day gap, so the count follows the
- * zone's own day arithmetic (the night the zone leaves daylight time a nine day out invoice reads in 8 days)
- * and never the seed's bare number. */
-function dueInWords(days: number): string {
-  const dayNumber = (day: string): number => Math.floor(Date.parse(`${day}T00:00:00Z`) / 86_400_000);
-  const n = dayNumber(dayFromToday(days)) - dayNumber(dayFromToday(0));
-  return n <= 1 ? `in 1 day` : `in ${n} days`;
-}
-
 test("the way in with no handoff offers the role cards", async ({ page, request }) => {
   await request.post("/_stub/reset");
   await page.goto("/");
@@ -61,7 +51,7 @@ test("the desk opens on the register: four tiles, the rows overdue first, Needs 
   await expect(first).toContainText("promise open");
   await expect(first).toContainText("104 days ago");
   await expect(page.locator("[data-register-row]", { hasText: "INV-1004" })).toContainText("disputed");
-  await expect(page.locator("[data-register-row]", { hasText: "INV-1006" })).toContainText(dueInWords(9));
+  await expect(page.locator("[data-register-row]", { hasText: "INV-1006" })).toContainText("in 9 days");
   await expect(page.locator("[data-register-foot]")).toContainText("9 invoices, $16,049.50");
   await expect(page.locator("[data-bounced-row]")).toHaveCount(1);
   await expect(page.locator("[data-need-hold]")).toHaveCount(2);

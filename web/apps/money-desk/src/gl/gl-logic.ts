@@ -1,6 +1,7 @@
 // The ledger slice's plain logic: how the core's answers are read, what each
 // approval kind is called, who may decide it, and how a refusal reads out
 // loud. Nothing here computes money and nothing here is rendered.
+import { stampDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { formatMoney } from "./gl-money.js";
 
 /**
@@ -356,9 +357,10 @@ export function periodStatusWord(status: string): string {
 
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** A date is read from its digits, never through a zone: the core sends the document date the journal carries. */
+/** A document date in the dealer's house zone, where lateness is decided (P3). */
 export function dayWords(value: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  const day = stampDay(value);
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
   const month = m === null ? undefined : MONTHS_SHORT[Number(m[2]) - 1];
   if (m === null || month === undefined) return value;
   return `${month} ${Number(m[3])}, ${m[1]}`;

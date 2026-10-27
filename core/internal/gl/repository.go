@@ -999,10 +999,44 @@ func (r *Repository) EnsureNextFiscalYear(ctx context.Context, now time.Time) (i
 	return target, nil
 }
 
+// NextOpenableFiscalYear answers the next fiscal year the Financial Controller can open early
+// (house year + 2 when not yet open), or 0 when the cap year is already open (S2 round, P2-1).
+func (r *Repository) NextOpenableFiscalYear(ctx context.Context, now time.Time) (int, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("gl: begin next openable fiscal year: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	max, err := r.maxSeededYearTx(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	if max == 0 {
+		return 0, nil
+	}
+	house, err := r.houseYearTx(ctx, tx, now)
+	if err != nil {
+		return 0, err
+	}
+	target := house + 2
+	var existing int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year = $1`, target).Scan(&existing); err != nil {
+		return 0, fmt.Errorf("gl: count fiscal periods for %d: %w", target, err)
+	}
+	if existing >= 12 {
+		return 0, nil
+	}
+	return target, nil
+}
+
 // OpenNextFiscalYear is the Controller's early open: at most one year beyond the roll forward's
-// target (house year + 2), a repeat a no op, and the record callback runs INSIDE the year's
-// transaction so the audit row commits or rolls back with the year it opens (round 2, S2 P2-4).
-func (r *Repository) OpenNextFiscalYear(ctx context.Context, now time.Time, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
+// target (house year + 2), refusing in words when the year is already open or past the cap, and
+// running the record callback INSIDE the year's transaction so the audit row commits or rolls back
+// with the year it opens (round 2 S2 P2-4, S2 round P2-1).
+func (r *Repository) OpenNextFiscalYear(ctx context.Context, now time.Time, requestedYear int, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
 	if r.pool == nil {
 		return 0, errNoDB
 	}
@@ -1023,6 +1057,20 @@ func (r *Repository) OpenNextFiscalYear(ctx context.Context, now time.Time, reco
 		return 0, err
 	}
 	target := house + 2
+	if requestedYear > target {
+		return 0, clientErr(409, "gl: %d is too far ahead; the next year that can open is %d", requestedYear, target)
+	}
+	checkYear := target
+	if requestedYear > 0 && requestedYear < target {
+		checkYear = requestedYear
+	}
+	var existing int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year = $1`, checkYear).Scan(&existing); err != nil {
+		return 0, fmt.Errorf("gl: count fiscal periods for %d: %w", checkYear, err)
+	}
+	if existing >= 12 {
+		return 0, clientErr(409, "gl: %d is already open", checkYear)
+	}
 	if err := r.ensureThroughTx(ctx, tx, house, target); err != nil {
 		return 0, err
 	}

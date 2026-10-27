@@ -247,7 +247,7 @@ function fresh() {
       journal("7a1e0000-0000-4000-9000-000000000012", 2, "INVOICE", "July invoice booked in August (demo)", "POSTED", IDS.pointLoma, null, 400, [
         ["1100", 1200000, 0],
         ["4000", 0, 1200000],
-      ], { posted_at: "2026-07-18T00:00:00.000Z" }),
+      ], { posted_at: "2026-07-18T12:00:00.000Z" }),
       journal(IDS.opening, 1, "MANUAL", "Opening balances", "POSTED", IDS.pointLoma, IDS.manager, 500, [
         ["1000", 2000000, 0],
         ["3000", 0, 2000000],
@@ -265,16 +265,25 @@ export function createGlWorld() {
 
   const monthOf = (j) => world.periods.find((p) => p.id === j.period_id)?.month ?? 0;
 
+  const houseDayFmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Toronto",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
   /**
    * The core derives the late posted marker on every read (FW1-01): a POSTED journal whose document date
-   * does not fall in its own period's month. The stub derives it the same way, so the Controller's late
-   * posted list reads the same journals on the stub as on the server.
+   * in the dealer's house zone does not fall in its own period's month. The stub derives it the same way,
+   * so the Controller's late posted list reads the same journals on the stub as on the server.
    */
   const latePosted = (j) => {
     if (j.status !== "POSTED" || typeof j.posted_at !== "string") return false;
     const period = world.periods.find((p) => p.id === j.period_id);
     if (period === undefined) return false;
-    return Number(j.posted_at.slice(0, 4)) !== period.year || Number(j.posted_at.slice(5, 7)) !== period.month;
+    const ms = Date.parse(j.posted_at);
+    const day = Number.isNaN(ms) ? j.posted_at.slice(0, 10) : houseDayFmt.format(new Date(ms));
+    return Number(day.slice(0, 4)) !== period.year || Number(day.slice(5, 7)) !== period.month;
   };
 
   /** A journal as the core serves it: the marker derived on read. */
@@ -616,7 +625,10 @@ export function createGlWorld() {
     // periods
     if (m === "GET" && path === "/api/v1/gl/periods") {
       const refused = gate(caller, "read");
-      return refused ?? { status: 200, body: { items: world.periods } };
+      if (refused !== null) return refused;
+      const cap = FY + 2;
+      const next_openable_year = world.periods.length === 0 || world.periods.filter((p) => p.year === cap).length >= 12 ? 0 : cap;
+      return { status: 200, body: { items: world.periods, next_openable_year } };
     }
     const close = path.match(/^\/api\/v1\/gl\/periods\/([^/]+)\/(close|reopen)$/);
     if (m === "POST" && close) {
@@ -640,18 +652,27 @@ export function createGlWorld() {
     if (m === "POST" && path === "/api/v1/gl/periods/open-year") {
       const refused = gate(caller, "admin");
       if (refused !== null) return refused;
+      if (caller.role !== "FINANCIAL_CONTROLLER") return say(403, "gl: only the Financial Controller may reopen a closed period");
       if (String(body.reason ?? "").trim() === "") return say(422, "gl: a reason is required");
-      // The roll forward the core does on its own: the year after the last one, with its twelve periods
-      // open for posting. Opening it again is the same year.
       const latest = world.periods.reduce((top, p) => Math.max(top, p.year), 0);
       if (latest === 0) return say(409, "gl: no fiscal period exists to roll forward from");
-      const year = latest + 1;
-      if (!world.periods.some((p) => p.year === year)) {
-        for (let month = 1; month <= 12; month += 1) {
-          world.periods.push({ id: IDS.periodFor(year, month), year, month, status: "OPEN" });
+      const cap = FY + 2;
+      const requestedYear = Number(body.year ?? 0);
+      if (requestedYear > cap) {
+        return say(409, `gl: ${requestedYear} is too far ahead; the next year that can open is ${cap}`);
+      }
+      const checkYear = requestedYear > 0 && requestedYear < cap ? requestedYear : cap;
+      if (world.periods.filter((p) => p.year === checkYear).length >= 12) {
+        return say(409, `gl: ${checkYear} is already open`);
+      }
+      for (let year = FY + 1; year <= cap; year += 1) {
+        if (!world.periods.some((p) => p.year === year)) {
+          for (let month = 1; month <= 12; month += 1) {
+            world.periods.push({ id: IDS.periodFor(year, month), year, month, status: "OPEN" });
+          }
         }
       }
-      return { status: 200, body: { fiscal_year: year } };
+      return { status: 200, body: { fiscal_year: cap } };
     }
     if (m === "POST" && path === "/api/v1/gl/periods/close-year") {
       const refused = gate(caller, "admin");

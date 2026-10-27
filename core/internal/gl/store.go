@@ -59,10 +59,14 @@ type glStore interface {
 	// at start on every box; the posting path covers the boundary itself; the Controller's early open
 	// is OpenNextFiscalYear below, at most one year beyond.
 	EnsureNextFiscalYear(ctx context.Context, now time.Time) (int, error)
+	// NextOpenableFiscalYear answers the next fiscal year the Financial Controller may open early
+	// (house year + 2 when not yet open), or 0 when the cap year is already open (S2 round, P2-1).
+	NextOpenableFiscalYear(ctx context.Context, now time.Time) (int, error)
 	// OpenNextFiscalYear is the Controller's early open: at most one year beyond the roll forward's
-	// target, the record callback run INSIDE the year's transaction so the audit row commits or rolls
-	// back with the year it opens (round 2, S2 P2-4).
-	OpenNextFiscalYear(ctx context.Context, now time.Time, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error)
+	// target, refusing in words when the year is already open or past the cap, and running the record
+	// callback INSIDE the year's transaction so the audit row commits or rolls back with the year it
+	// opens (round 2 S2 P2-4, S2 round P2-1).
+	OpenNextFiscalYear(ctx context.Context, now time.Time, requestedYear int, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error)
 
 	// HeadOfficeBranchID answers the head office branch the company level lines
 	// stamp (ruling 82.3): defaults to Trenton (TRT) and reads gl_policy.

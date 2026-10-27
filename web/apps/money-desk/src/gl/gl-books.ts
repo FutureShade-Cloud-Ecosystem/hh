@@ -64,6 +64,8 @@ export interface BooksModel {
   readonly chart: Section<readonly GlAccount[]>;
   readonly recurring: Section<readonly GlRecurringTemplate[]>;
   readonly periods: Section<readonly GlPeriod[]>;
+  /** The next fiscal year the core's read says the Controller can open early, or 0 when none can. */
+  readonly nextOpenableYear: number;
   /** The journals that carry a date from a closed month and landed in an open one: the Controller's list. */
   readonly latePosted: Section<readonly LatePostedRow[]>;
   readonly policy: Section<GlPolicy | null>;
@@ -192,22 +194,12 @@ function closeYearConfirm(frame: Frame, year: number): TemplateResult {
   );
 }
 
-/** The fiscal year the open year control opens: the one after the latest the periods list holds. */
-function nextFiscalYear(periods: readonly GlPeriod[]): number {
-  let latest = 0;
-  for (const p of periods) {
-    if (p.year > latest) latest = p.year;
-  }
-  return latest === 0 ? 0 : latest + 1;
-}
-
-/** The control's words, naming the fiscal year it opens the way "Close fiscal year" names its year. */
+/** The control's words, naming the fiscal year the core's read says can open. */
 function openYearWords(year: number): string {
-  return year === 0 ? "Open the next fiscal year" : `Open fiscal year ${year}`;
+  return `Open fiscal year ${year}`;
 }
 
-function openYearConfirm(frame: Frame): TemplateResult {
-  const year = nextFiscalYear(frame.books.periods.value);
+function openYearConfirm(frame: Frame, year: number): TemplateResult {
   const name = openYearWords(year);
   return confirmShell(
     frame,
@@ -215,9 +207,7 @@ function openYearConfirm(frame: Frame): TemplateResult {
     "watch",
     html`
       <ul class="gl-changes" aria-label="What changes">
-        ${year === 0
-          ? html`<li>The next fiscal year opens for posting.</li>`
-          : html`<li>The twelve monthly periods of fiscal year ${year} open for posting.</li>`}
+        <li>The twelve monthly periods of fiscal year ${year} open for posting.</li>
         <li>Your reason is kept with the open, and the open is recorded as a sensitive act.</li>
         <li>No period is closed and no journal moves.</li>
       </ul>
@@ -287,7 +277,9 @@ export function confirmFor(model: Frame, kinds: ReadonlyArray<Confirm["kind"]>):
     return confirm.kind === "close-period" ? closePeriodConfirm(model, period) : reopenConfirm(model, period);
   }
   if (confirm.kind === "close-year") return closeYearConfirm(model, confirm.year);
-  if (confirm.kind === "open-year") return openYearConfirm(model);
+  if (confirm.kind === "open-year") {
+    return model.books.nextOpenableYear > 0 ? openYearConfirm(model, model.books.nextOpenableYear) : nothing;
+  }
   if (confirm.kind === "reverse" || confirm.kind === "void") {
     const journal = model.journals.find((j) => j.id === confirm.id);
     if (journal === undefined) return nothing;
@@ -575,7 +567,7 @@ export function periodsView(frame: Frame): TemplateResult {
   const controller = frame.books.mode === "controller";
   const years = [...new Set(periods.value.map((p) => p.year))].sort((a, b) => b - a);
   const open = (year: number): boolean => periods.value.some((p) => p.year === year && p.status === "OPEN");
-  const nextYear = nextFiscalYear(periods.value);
+  const nextYear = frame.books.nextOpenableYear;
   return html`
     <div class="gl-stack">
       ${confirmFor(frame, ["close-period", "reopen", "close-year", "open-year"])}
@@ -585,7 +577,7 @@ export function periodsView(frame: Frame): TemplateResult {
           ${controller
             ? html`<span class="gl-actions">
                 ${years.filter(open).map((y) => html`<button type="button" class="btn btn-secondary" data-action="gl-close-year" data-year=${String(y)}>Close fiscal year ${y}</button>`)}
-                <button type="button" class="btn btn-secondary" data-action="gl-open-year">${openYearWords(nextYear)}</button>
+                ${nextYear > 0 ? html`<button type="button" class="btn btn-secondary" data-action="gl-open-year">${openYearWords(nextYear)}</button>` : nothing}
               </span>`
             : nothing}
         </div>

@@ -80,6 +80,7 @@ export class GlDesk {
   #chart: Section<GlAccount[]> = idle([]);
   #recurring: Section<GlRecurringTemplate[]> = idle([]);
   #periods: Section<GlPeriod[]> = idle([]);
+  #nextOpenableYear = 0;
   // The journals that carry a date from a closed month and landed in an open one: the Controller's list.
   #latePosted: Section<LatePostedRow[]> = idle([]);
   #policy: Section<GlPolicy | null> = idle(null);
@@ -190,8 +191,9 @@ export class GlDesk {
   async #readPeriods(): Promise<void> {
     this.#periods = { ...this.#periods, phase: "loading" };
     this.#host.repaint();
-    const answer = await this.#api.periods();
-    this.#periods = answer.ok ? { phase: "ready", value: answer.value, error: "" } : { phase: "error", value: [], error: refusalWords("books", answer.error, answer.status ?? 0) };
+    const answer = await this.#api.periodsPage();
+    this.#periods = answer.ok ? { phase: "ready", value: answer.value.items, error: "" } : { phase: "error", value: [], error: refusalWords("books", answer.error, answer.status ?? 0) };
+    this.#nextOpenableYear = answer.ok ? answer.value.nextOpenableYear : 0;
     this.#host.repaint();
     // The late posted list names the month each journal landed in, so it waits for the periods to say
     // which month that is. A list read before them would name a month it does not hold.
@@ -586,7 +588,7 @@ export class GlDesk {
       } else failed = answer;
     } else if (confirm.kind === "open-year") {
       action = "open-year";
-      const answer = await this.#api.openNextYear(reason);
+      const answer = await this.#api.openNextYear(reason, this.#nextOpenableYear);
       if (answer.ok) words = `Fiscal year ${answer.value.fiscal_year} is open. Your reason is on record.`;
       else failed = answer;
     } else if (confirm.kind === "reverse") {
@@ -761,6 +763,7 @@ export class GlDesk {
       chart: this.#chart,
       recurring: this.#recurring,
       periods: this.#periods,
+      nextOpenableYear: this.#nextOpenableYear,
       latePosted: this.#latePosted,
       policy: this.#policy,
       tie: this.#tie,

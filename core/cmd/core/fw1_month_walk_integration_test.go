@@ -1347,8 +1347,10 @@ func (w *fw1Walk) assertWalkMonthAndNextYearPeriodsOpen(t fw1TB) {
 		t.Errorf("the fiscal calendar opened %d OPEN periods for next year %d ahead of need (want 12): posting into %d is refused for want of a period", nextYear, w.year+1, w.year+1)
 	}
 	// The promise kept, asserted by a posting and not by a row count alone: a journal dated in the
-	// next year is accepted and lands in an OPEN period of that year. The posting path creates the
-	// year at the latest when a posting needs it (repository.go insertJournalIn, y == maxYear+1).
+	// next year is accepted and lands in an OPEN period of that year. Passing here with PR 612's
+	// maxYear+1 arm in insertJournalIn neutered is accepted, because the boot roll forward above
+	// makes the year and PR 612's own gl leg
+	// (TestIntegration_FW1_01_YearRollForward_PostsOnTheFirstDayAfterTheSeededYear) guards the arm.
 	jid, err := w.money.glSvc.PostExternal(context.Background(), gl.ExternalJournal{
 		Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:next-year-posting:%d", w.year+1),
 		Memo: "the next year roll forward, a posting dated in the next year", BranchID: fw1TRT,

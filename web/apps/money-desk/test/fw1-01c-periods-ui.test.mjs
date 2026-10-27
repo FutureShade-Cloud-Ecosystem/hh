@@ -29,7 +29,7 @@ const LATE = {
   memo: "July invoice booked in August (demo)",
   status: "POSTED",
   derived_status: "POSTED",
-  posted_at: "2026-07-18T00:00:00.000Z",
+  posted_at: "2026-07-18T12:00:00.000Z",
   created_at: "2026-08-15T09:00:00.000Z",
   late_posted: true,
   lines: [],

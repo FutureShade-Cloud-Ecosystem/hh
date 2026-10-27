@@ -38141,6 +38141,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/GlPeriod"
+        next_openable_year:
+          type: integer
+          format: int32
+          description: The next fiscal year the Financial Controller can open early, or 0 when the cap year is already open
         next_cursor:
           type:
             - string
@@ -38212,6 +38216,9 @@ components:
       required:
         - reason
       properties:
+        year:
+          type: integer
+          format: int32
         reason:
           type: string
     GlCloseYearBody:

@@ -259,8 +259,12 @@ func (f *fakeStore) EnsureNextFiscalYear(_ context.Context, _ time.Time) (int, e
 	return 2027, nil
 }
 
-func (f *fakeStore) OpenNextFiscalYear(_ context.Context, _ time.Time, _ func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
-	return 2027, nil
+func (f *fakeStore) NextOpenableFiscalYear(_ context.Context, _ time.Time) (int, error) {
+	return 2028, nil
+}
+
+func (f *fakeStore) OpenNextFiscalYear(_ context.Context, _ time.Time, _ int, _ func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
+	return 2028, nil
 }
 
 func (f *fakeStore) ListPeriods(_ context.Context) ([]Period, error) { return nil, nil }
