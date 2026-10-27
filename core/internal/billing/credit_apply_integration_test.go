@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -856,6 +857,204 @@ func TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce(t *testing
 	}
 	if restores != 2 || at4000 != 1 || at6000 != 1 {
 		t.Fatalf("the group holds %d restore rows (%d at -4000, %d at -6000), want exactly one per application", restores, at4000, at6000)
+	}
+}
+
+// TestIntegration_FW1_12b_AReversalAndAnApplyOfOneGroupNeverDeadlock pins the round 4 residual
+// (S6's read of rounds 2 and 3): the reversal drew the shared invoices feed counter first and
+// touched the group after, while the apply took the group's rows first and drew the counter last,
+// so a staged reversal and apply on one ACCOUNT group deadlocked in 2 of 3 runs (SQLSTATE 40P01):
+// the books stayed right and the apply answered a raw 400. The fix this leg holds in place is one
+// lock order in both doors, the group's anchor row before the counter: five staged pairs in one
+// test, and every pair must see both doors complete with no 40P01 and the group's sum at what a
+// serial pair gives (the 4000 restored and the 1000 applied land the group at exactly -9000,
+// whichever door went first).
+//
+// The pair is staged deterministically: the test's own transaction first holds the feed counter
+// row, the reversal is launched and parks on it, the apply is launched and parks behind it (on
+// the counter today, on the anchor the reversal holds under the shared order), and only then is
+// the counter let go, with the reversal first in the counter's queue. From there the two doors
+// need what the other holds unless both share the one order.
+func TestIntegration_FW1_12b_AReversalAndAnApplyOfOneGroupNeverDeadlock(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	applySvc := NewCreditApplyService(repo)
+	ctx := context.Background()
+	n := ns(t)
+
+	issue := time.Now().UTC().AddDate(0, 0, -3).Format("2006-01-02")
+	due := time.Now().UTC().AddDate(0, 0, 27).Format("2006-01-02")
+
+	for iteration := 1; iteration <= 5; iteration++ {
+		func() {
+			tag := fmt.Sprintf("%s-RD%d", n, iteration)
+			custID := seedCustomer(t, pool, tag)
+			t.Cleanup(func() {
+				c := context.Background()
+				_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
+				_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
+				_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+			})
+
+			var creditID, groupRef string
+			if err := pool.QueryRow(ctx, `
+				INSERT INTO customer_transactions
+				  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+				VALUES ($1::uuid, 'ADJUSTMENT', -10000, 25000, 'order_deposit_cancel', gen_random_uuid(), $2::uuid, 'deposit credit')
+				RETURNING id::text, COALESCE(source_ref_id, id)::text`,
+				custID, trentonBranch).Scan(&creditID, &groupRef); err != nil {
+				t.Fatalf("iteration %d: seed account credit: %v", iteration, err)
+			}
+			mkInv := func(no string) string {
+				var id string
+				if err := pool.QueryRow(ctx, `
+					INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+					                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+					VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $5::date, 10000, 0, 10000, 10000, now(), 'INVOICE')
+					RETURNING id::text`,
+					no, custID, trentonBranch, issue, due).Scan(&id); err != nil {
+					t.Fatalf("iteration %d: seed %s: %v", iteration, no, err)
+				}
+				return id
+			}
+			inv1, inv2 := mkInv(tag+"-INV1"), mkInv(tag+"-INV2")
+
+			// A first application of 4000 names the group's original row and leaves the
+			// offsetting row (+4000) inside the group; 6000 stays open. Its record sits on
+			// invoice 1 and is what the staged reversal undoes.
+			app1, err := applySvc.Apply(ctx, ApplyCreditInput{
+				CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: inv1,
+				AmountCents: 4000, Reason: "first slice", IdempotencyKey: tag + "-k-first",
+			}, true)
+			if err != nil {
+				t.Fatalf("iteration %d: first apply: %v", iteration, err)
+			}
+			var offsetID string
+			if err := pool.QueryRow(ctx, `
+				SELECT id::text FROM customer_transactions
+				 WHERE customer_id = $1::uuid AND amount_cents = 4000 AND COALESCE(source_type, '') = 'order_deposit_cancel'
+				 ORDER BY id LIMIT 1`, custID).Scan(&offsetID); err != nil {
+				t.Fatalf("iteration %d: read the offsetting row: %v", iteration, err)
+			}
+
+			// Hold the feed counter row, launch the reversal, then the apply.
+			held, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = held.Rollback(ctx) }()
+			if _, err := held.Exec(ctx, `
+				INSERT INTO scope_sequences (scope) VALUES ('invoices')
+				ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value`); err != nil {
+				t.Fatalf("iteration %d: hold the feed counter: %v", iteration, err)
+			}
+
+			type outcome struct {
+				name string
+				err  error
+			}
+			done := make(chan outcome, 2)
+			go func() {
+				_, e := applySvc.Reverse(ctx, ReverseCreditApplicationInput{
+					InvoiceID: inv1, ApplicationID: app1.ApplicationID, Reason: "undo the first slice",
+				}, true)
+				done <- outcome{"the reversal", e}
+			}()
+			deadline := time.Now().Add(15 * time.Second)
+			for {
+				var waiting int
+				if err := pool.QueryRow(ctx, `
+					SELECT count(*) FROM pg_stat_activity
+					 WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting >= 1 {
+					break
+				}
+				select {
+				case o := <-done:
+					t.Fatalf("iteration %d: %s answered without parking on the counter; the race was not staged (err = %v)", iteration, o.name, o.err)
+				default:
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("the reversal never reached its lock wait")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			go func() {
+				_, e := applySvc.Apply(ctx, ApplyCreditInput{
+					CustomerID: custID, CreditKind: CreditKindAccount, CreditID: offsetID, InvoiceID: inv2,
+					AmountCents: 1000, Reason: "one more slice", IdempotencyKey: tag + "-k-second",
+				}, true)
+				done <- outcome{"the apply", e}
+			}()
+			deadline = time.Now().Add(15 * time.Second)
+			for {
+				var waiting int
+				if err := pool.QueryRow(ctx, `
+					SELECT count(*) FROM pg_stat_activity
+					 WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting >= 2 {
+					break
+				}
+				select {
+				case o := <-done:
+					t.Fatalf("iteration %d: %s answered without parking behind the reversal; the race was not staged (err = %v)", iteration, o.name, o.err)
+				default:
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("the apply never reached its lock wait")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			if err := held.Rollback(ctx); err != nil {
+				t.Fatalf("iteration %d: release the feed counter: %v", iteration, err)
+			}
+
+			a, b := <-done, <-done
+			for _, o := range []outcome{a, b} {
+				if o.err != nil {
+					t.Fatalf("iteration %d of 5: %s answered %v, want both doors of one account group to complete with no 40P01", iteration, o.name, o.err)
+				}
+			}
+
+			// The group's sum after the pair is what a serial pair gives: the 4000 restored
+			// and the 1000 applied leave the original -10000 group at exactly -9000, whatever
+			// order the pair ran in. A lost or doubled restore sits off that figure.
+			var groupSum int64
+			if err := pool.QueryRow(ctx, `
+				SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
+				 WHERE customer_id = $1::uuid
+				   AND COALESCE(source_type, '') = 'order_deposit_cancel'
+				   AND COALESCE(source_ref_id, id) = $2::uuid
+				   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')`,
+				custID, groupRef).Scan(&groupSum); err != nil {
+				t.Fatalf("iteration %d: read the group's sum: %v", iteration, err)
+			}
+			if groupSum != -9000 {
+				t.Fatalf("iteration %d of 5: the group's sum after the pair = %d, want -9000, what a serial pair gives (the 4000 restored, the 1000 applied)", iteration, groupSum)
+			}
+
+			// Each side landed once: invoice 1's balance back at its full 10000, invoice 2
+			// down by the 1000 applied.
+			for name, want := range map[string]struct {
+				invoice string
+				balance int64
+			}{
+				"invoice 1": {inv1, 10000},
+				"invoice 2": {inv2, 9000},
+			} {
+				var balance int64
+				if err := pool.QueryRow(ctx, `SELECT balance_cents FROM invoices WHERE id = $1::uuid`, want.invoice).Scan(&balance); err != nil {
+					t.Fatalf("iteration %d: read %s: %v", iteration, name, err)
+				}
+				if balance != want.balance {
+					t.Fatalf("iteration %d: %s balance after the pair = %d, want %d", iteration, name, balance, want.balance)
+				}
+			}
+		}()
 	}
 }
 
