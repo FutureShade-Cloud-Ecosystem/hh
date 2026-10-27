@@ -298,7 +298,8 @@ func TestFW113LodgementJournalIsDatedByItsBusinessDay(t *testing.T) {
 		t.Skipf("no seeded fiscal periods: %v", err)
 	}
 	day := time.Date(year, 7, 31, 23, 30, 0, 0, time.FixedZone("EDT", -4*3600))
-	movementID := "mj-dated-" + fmt.Sprint(os.Getpid())
+	// A fixed UUID: the journal's source_ref_id is a uuid column, as every real movement id is.
+	movementID := "00000000-0000-4000-8000-0000000d47ed"
 	payload, err := json.Marshal(map[string]any{
 		"movement_id":   movementID,
 		"session_id":    w.sessionID,
@@ -342,6 +343,129 @@ func TestFW113LodgementJournalIsDatedByItsBusinessDay(t *testing.T) {
 	if fy != day.In(houseday.Location()).Year() || fm != int(day.In(houseday.Location()).Month()) {
 		t.Fatalf("the lodgement journal filed to %04d-%02d, want the house zone's day %04d-%02d", fy, fm,
 			day.In(houseday.Location()).Year(), day.In(houseday.Location()).Month())
+	}
+}
+
+// slipPayment seeds one RECEIVED payment on the session, the deposit slip's raw material, cleaned up
+// by its own id.
+func (w *mjWorld) slipPayment(method string, cents int64) string {
+	w.t.Helper()
+	var id string
+	if err := w.pool.QueryRow(context.Background(), `
+		INSERT INTO payments (payment_no, method, amount_cents, status, branch_id, till_session_id)
+		VALUES ('MJ-SLIP-' || md5(random()::text), $1, $2, 'RECEIVED', $3::uuid, $4::uuid)
+		RETURNING id::text`, method, cents, w.branchID, w.sessionID).Scan(&id); err != nil {
+		w.t.Fatalf("seed the slip payment: %v", err)
+	}
+	w.t.Cleanup(func() {
+		c := context.Background()
+		_, _ = w.pool.Exec(c, `DELETE FROM till_lodgement_payments WHERE payment_id = $1::uuid`, id)
+		_, _ = w.pool.Exec(c, `DELETE FROM payments WHERE id = $1::uuid`, id)
+	})
+	return id
+}
+
+// lodgeWithSlip records a lodgement naming its payments.
+func (w *mjWorld) lodgeWithSlip(cents int64, paymentIDs []string) error {
+	return w.svc.Lodge(staffCtx(w.userID, w.branchID), till.MovementInput{
+		TillSessionID: w.sessionID, MovementType: "LODGEMENT", Method: "CASH",
+		AmountCents: cents, Reason: "FW1-13 slip", PaymentIDs: paymentIDs,
+	})
+}
+
+// TestFW113LodgementMarksItsNamedPaymentsDeposited is the deposit slip (FROM-PRINCIPAL 128): the
+// lodgement names its payments, the link rows land, the named payments turn DEPOSITED, and the ruled
+// journal posts, all from the one movement call. A slip that does not add up is refused and marks
+// nothing.
+func TestFW113LodgementMarksItsNamedPaymentsDeposited(t *testing.T) {
+	w := newMJWorld(t)
+	p1 := w.slipPayment("CASH", 12_00)
+	p2 := w.slipPayment("CASH", 8_00)
+
+	if err := w.lodgeWithSlip(20_00, []string{p1, p2}); err != nil {
+		t.Fatalf("the lodgement with its slip: %v", err)
+	}
+	var marks, links int
+	if err := w.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM payments WHERE id = ANY($1::uuid[]) AND status = 'DEPOSITED'`, []string{p1, p2}).Scan(&marks); err != nil {
+		t.Fatalf("read the marks: %v", err)
+	}
+	if marks != 2 {
+		t.Fatalf("the slip marked %d of 2 payments DEPOSITED", marks)
+	}
+	if err := w.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM till_lodgement_payments WHERE payment_id = ANY($1::uuid[])`, []string{p1, p2}).Scan(&links); err != nil {
+		t.Fatalf("read the slip links: %v", err)
+	}
+	if links != 2 {
+		t.Fatalf("the slip wrote %d of 2 link rows", links)
+	}
+	w.drain()
+	var movementID string
+	if err := w.pool.QueryRow(context.Background(),
+		`SELECT id::text FROM till_movements WHERE till_session_id = $1::uuid AND movement_type = 'LODGEMENT'`, w.sessionID).Scan(&movementID); err != nil {
+		t.Fatalf("find the lodgement: %v", err)
+	}
+	legs := w.legs("till.movement.posted:" + movementID)
+	if bank := legs["1000"]; bank[0] != 20_00 {
+		t.Fatalf("the slip's journal posted no bank debit: got %v", legs)
+	}
+
+	// A partial slip is refused, never claimed: a second slip under the drawer's sum answers 422 and
+	// marks nothing.
+	p3 := w.slipPayment("CASH", 5_00)
+	if err := w.lodgeWithSlip(9_00, []string{p3}); err == nil {
+		t.Fatalf("a slip that does not add up must be refused")
+	}
+	var still int
+	if err := w.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM payments WHERE id = $1::uuid AND status = 'DEPOSITED'`, p3).Scan(&still); err != nil {
+		t.Fatalf("read the refused slip's payment: %v", err)
+	}
+	if still != 0 {
+		t.Fatalf("a refused slip marked its payment DEPOSITED anyway")
+	}
+}
+
+// TestFW113ChequeLodgedThenBouncedBeforeTheMatchCreditsTheBank is ruling 120's between case: a
+// cheque lodged with its slip is DEPOSITED before any bank line exists, and its bounce then credits
+// 1000 by the 06a bounce rule, whether or not the line has been matched.
+func TestFW113ChequeLodgedThenBouncedBeforeTheMatchCreditsTheBank(t *testing.T) {
+	w := newMJWorld(t)
+	cheque := w.slipPayment("CHEQUE", 30_00)
+	if err := w.svc.Lodge(staffCtx(w.userID, w.branchID), till.MovementInput{
+		TillSessionID: w.sessionID, MovementType: "LODGEMENT", Method: "CHEQUE",
+		AmountCents: 30_00, Reason: "FW1-13 cheque slip", PaymentIDs: []string{cheque},
+	}); err != nil {
+		t.Fatalf("the cheque lodgement: %v", err)
+	}
+	var status string
+	if err := w.pool.QueryRow(context.Background(),
+		`SELECT status FROM payments WHERE id = $1::uuid`, cheque).Scan(&status); err != nil {
+		t.Fatalf("read the cheque: %v", err)
+	}
+	if status != "DEPOSITED" {
+		t.Fatalf("the lodged cheque is %s, want DEPOSITED before any bank match", status)
+	}
+
+	// The bounce before any match: the till's NSF path, whose event carries that the money had
+	// settled to the bank.
+	if _, err := w.svc.MarkNSF(staffCtx(w.userID, w.branchID), till.NSFInput{PaymentID: cheque, Reason: "bounced before the match"}); err != nil {
+		t.Fatalf("the bounce: %v", err)
+	}
+	w.drain()
+
+	var credits int64
+	if err := w.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(SUM(l.credit_cents), 0)
+		  FROM gl_journals j
+		  JOIN gl_journal_lines l ON l.journal_id = j.id
+		  JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE j.idempotency_key = $1 AND a.code = '1000'`, "payment.bounced:"+cheque).Scan(&credits); err != nil {
+		t.Fatalf("read the bounce journal: %v", err)
+	}
+	if credits != 30_00 {
+		t.Fatalf("the bounce of a lodged cheque credited %d to 1000, want 3000", credits)
 	}
 }
 
