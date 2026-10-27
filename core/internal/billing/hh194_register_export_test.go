@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
 // exportRecordingStore embeds the fake store and records every RegisterRows call.

@@ -68,6 +68,9 @@ const STATUS_WORD: Record<string, string> = {
   DRAFT: "Draft",
   VOID: "Void",
   CREDIT: "Credit",
+  // The STORED status a caller the account position policy refuses receives in `status` (the core
+  // never derives it): it reads as words, never as a raw code and never as a past due pill.
+  FINALIZED: "On file",
 };
 
 export function statusWord(status: string): string {
@@ -238,6 +241,30 @@ function dayNumber(date: string): number {
  */
 export function isUnpaidInvoice(row: { stored_status: string; doc_type?: string | undefined }): boolean {
   return (row.stored_status === "FINALIZED" || row.stored_status === "PARTIALLY_PAID") && (row.doc_type === undefined || row.doc_type === "INVOICE");
+}
+
+/**
+ * What the Past due chip's header line says. The core sends a caller the account position policy
+ * refuses no `days_overdue` and no overdue or due_soon count (UX-97 round 6), so when any open row
+ * lacks its day count the line says so in words instead of quietly summing nothing; a caller the
+ * policy allows gets the figures it always did, and another chip draws no line at all.
+ */
+export type PastDueLine =
+  | { kind: "off" }
+  | { kind: "withheld" }
+  | { kind: "figures"; pastDueCount: number; totalCount: number; pastDueCents: number };
+
+export function pastDueLine(
+  filter: string,
+  rows: ReadonlyArray<{ days_overdue?: number | undefined; balance_cents: number; stored_status: string; doc_type?: string | undefined }>,
+): PastDueLine {
+  if (filter !== "past_due") return { kind: "off" };
+  const open = rows.filter(isUnpaidInvoice);
+  if (open.some((r) => r.days_overdue === undefined)) return { kind: "withheld" };
+  const pastDue = open.filter((r) => (r.days_overdue ?? 0) > 0);
+  let cents = 0;
+  for (const r of pastDue) cents += r.balance_cents;
+  return { kind: "figures", pastDueCount: pastDue.length, totalCount: open.length, pastDueCents: cents };
 }
 
 export function relativeDay(date: string, asOf: string): string {

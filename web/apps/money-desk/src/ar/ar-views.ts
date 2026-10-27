@@ -32,7 +32,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, pastDueLine, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
@@ -282,19 +282,11 @@ function shownRows(model: DeskModel): BillingRegisterRow[] {
   return rows.sort((a, b) => (b.days_overdue ?? 0) - (a.days_overdue ?? 0) || a.due_date.localeCompare(b.due_date));
 }
 
-// pastDueSummary returns the "X of Y past due · $Z" line the register header renders when the
-// Past due chip is active. It is computed client-side from the currently loaded rows; a paginated
-// server reads the page from this same expression and the totals must agree. Returns null when the
-// chip is not the one currently active, so the summary does not bleed into other screens.
-function pastDueSummary(model: DeskModel): { pastDueCount: number; totalCount: number; pastDueCents: number } | null {
-  if (model.filter !== "past_due") return null;
-  const open = model.rows.filter(isOpenRow);
-  if (open.some((r) => r.days_overdue === undefined)) return null;
-  const pastDue = open.filter((r) => (r.days_overdue ?? 0) > 0);
-  let cents = 0;
-  for (const r of pastDue) cents += r.balance_cents;
-  return { pastDueCount: pastDue.length, totalCount: open.length, pastDueCents: cents };
-}
+// pastDueLine is the "X of Y past due · $Z" line the register header renders when the
+// Past due chip is active, computed from the currently loaded rows; a paginated
+// server reads the page from this same expression and the totals must agree. It answers
+// "withheld" when the core sent no day counts (a caller the account position policy refuses),
+// so the header says so in words rather than summing nothing.
 
 export function shownInvoiceIds(model: DeskModel): string[] {
   return shownRows(model).map((r) => r.id);
@@ -338,9 +330,10 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
 
 function register(model: DeskModel): TemplateResult {
   const rows = shownRows(model);
-  // The C8 summary line reads "N of M past due · $X" when the Past due chip is active; null when
-  // a different chip is active so the header does not contradict the table below it.
-  const summary = pastDueSummary(model);
+  // The C8 summary line reads "N of M past due · $X" when the Past due chip is active; "off" when
+  // a different chip is active so the header does not contradict the table below it, and the
+  // withheld words when the server sent no day counts for this caller.
+  const summary = pastDueLine(model.filter, model.rows);
   return html`
     <section class="panel" aria-label="AR register">
       <div class="panel-head">
@@ -350,11 +343,13 @@ function register(model: DeskModel): TemplateResult {
           <button type="button" class="btn btn-secondary small-btn" data-action="download-csv">Download CSV</button>
         </div>
       </div>
-      ${summary === null
+      ${summary.kind === "off"
         ? nothing
-        : html`<p class="dim small c8-summary" data-testid="c8-summary">
-            ${summary.pastDueCount} of ${summary.totalCount} past due · ${formatMoney(summary.pastDueCents)}
-          </p>`}
+        : summary.kind === "withheld"
+          ? html`<p class="dim small c8-summary" data-testid="c8-summary" data-past-due-withheld="true">Past due is not shown for your role.</p>`
+          : html`<p class="dim small c8-summary" data-testid="c8-summary">
+              ${summary.pastDueCount} of ${summary.totalCount} past due · ${formatMoney(summary.pastDueCents)}
+            </p>`}
       ${rows.length === 0
         ? html`<div class="empty"><strong>No invoices in this view.</strong><span class="dim">Nothing matches the filter.</span></div>`
         : html`
