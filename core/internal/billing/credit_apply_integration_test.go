@@ -637,6 +637,122 @@ func TestIntegration_FW1_12b_TwoAppliesNamingDifferentRowsOfOneGroupCannotBothPa
 	}
 }
 
+// TestIntegration_FW1_12b_MemoApplicationSurvivesAPastDateAging pins S6's P1-4: the memo side of an
+// application (and its reversal's restore) is a ledger row tagged to the MEMO document itself, so
+// when 626 (FW1-06b) rebuilds a document's balance at a past date from its history, that row must
+// keep counting it: apply a memo, then read the as of aging at a past date after the application,
+// and it equals the balances.
+//
+// HOW THIS LEG IS GATED, and it is never skipped silently: the leg bites only on a tree that carries
+// 626's past date rebuild. The gate is a runtime probe of 626's own behaviour, a PAID document on a
+// customer of its own: at a PAST as of a rebuilt aging still ages it at its full total, while a
+// pre 626 aging (today's balances only) has no row for it at all. No probe row means 626 is not
+// here, and the leg skips naming 626; it unskips the moment 626 merges to main, with no edit.
+func TestIntegration_FW1_12b_MemoApplicationSurvivesAPastDateAging(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	applySvc := NewCreditApplyService(repo)
+	ctx := context.Background()
+	n := ns(t)
+
+	probeID := seedCustomer(t, pool, n+"-PROBE")
+	custID := seedCustomer(t, pool, n+"-PAST")
+	t.Cleanup(func() {
+		c := context.Background()
+		for _, cid := range []string{probeID, custID} {
+			_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, cid)
+			_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, cid)
+			_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, cid)
+		}
+	})
+
+	// The probe: one document PAID after the as of date, settled with no allocation rows a rebuild
+	// could net against it, so at the past as of it ages at its full 40000.
+	probeIssue := time.Now().UTC().AddDate(0, 0, -6).Format("2006-01-02")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'PAID', $4::date, $5::date, 40000, 0, 40000, 0, $4::timestamptz, 'INVOICE')`,
+		n+"-PROBE-INV", probeID, trentonBranch, probeIssue,
+		time.Now().UTC().AddDate(0, 0, 24).Format("2006-01-02")); err != nil {
+		t.Fatalf("seed probe invoice: %v", err)
+	}
+
+	asOf := time.Now().UTC().AddDate(0, 0, -2)
+	probeRows, err := repo.AgingRows(ctx, asOf, 60, "")
+	if err != nil {
+		t.Fatalf("probe aging read: %v", err)
+	}
+	probeTotal, probeFound := int64(0), false
+	for _, r := range probeRows {
+		if r.CustomerID == probeID {
+			probeTotal, probeFound = r.TotalCents, true
+		}
+	}
+	if !probeFound {
+		t.Skipf("waiting on 626 (FW1-06b true as-of aging): the aging read does not rebuild a past date from its history yet (a document paid after the as of has no row at it), so this leg cannot bite; it unskips when 626 merges to main, with no edit")
+	}
+	if probeTotal != 40000 {
+		t.Fatalf("the past as-of aging holds the paid-after document at %d, want 40000; the rebuild itself moved", probeTotal)
+	}
+
+	// The application: a 226.00 memo, a 1000.00 invoice, 50.00 of the memo applied.
+	memoIssue := time.Now().UTC().AddDate(0, 0, -7)
+	invIssue := time.Now().UTC().AddDate(0, 0, -5)
+	var memoID, invID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $4::date, -22600, 0, -22600, -22600, $5::timestamptz, 'CREDIT_MEMO')
+		RETURNING id::text`,
+		n+"-CM", custID, trentonBranch, memoIssue.Format("2006-01-02"), memoIssue).Scan(&memoID); err != nil {
+		t.Fatalf("seed memo: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $6::date, 100000, 0, 100000, 100000, $5::timestamptz, 'INVOICE')
+		RETURNING id::text`,
+		n+"-INV", custID, trentonBranch, invIssue.Format("2006-01-02"), invIssue,
+		invIssue.AddDate(0, 0, 30).Format("2006-01-02")).Scan(&invID); err != nil {
+		t.Fatalf("seed invoice: %v", err)
+	}
+	if _, err := applySvc.Apply(ctx, ApplyCreditInput{
+		CustomerID: custID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: invID,
+		AmountCents: 5000, Reason: "past date leg", IdempotencyKey: n + "-k-past",
+	}, true); err != nil {
+		t.Fatalf("apply memo: %v", err)
+	}
+	// Move the application's two ledger rows three days back, so the past as of (two days ago) sits
+	// after the act, the way a history move would.
+	if _, err := pool.Exec(ctx, `
+		UPDATE customer_transactions
+		   SET created_at = created_at - interval '3 days', occurred_at = occurred_at - interval '3 days'
+		 WHERE customer_id = $1::uuid AND source_type = 'invoice'
+		   AND source_ref_id IN ($2::uuid, $3::uuid)`, custID, invID, memoID); err != nil {
+		t.Fatalf("backdate the application's rows: %v", err)
+	}
+
+	// Balances now, nothing having moved since the application: 95000 - 17600 = 77400. The aging at
+	// the past as of must say the same.
+	rows, err := repo.AgingRows(ctx, asOf, 60, "")
+	if err != nil {
+		t.Fatalf("aging read at the past as of: %v", err)
+	}
+	var got *AgingRow
+	for i := range rows {
+		if rows[i].CustomerID == custID {
+			got = &rows[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("the customer has no aging row at the past as of (%+v)", rows)
+	}
+	if got.TotalCents != 77400 {
+		t.Fatalf("the as of aging at a past date after the application = %d, want 77400 (the balances); the memo side of the application dropped out of the rebuild", got.TotalCents)
+	}
+}
+
 // TestIntegration_FW1_12b_HandlerAndDetailRoundTrip verifies CreditApplyHandler
 // over HTTP and RegisterService.Detail surfacing open_credits and credit_applications.
 func TestIntegration_FW1_12b_HandlerAndDetailRoundTrip(t *testing.T) {
