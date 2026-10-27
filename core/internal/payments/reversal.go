@@ -535,7 +535,11 @@ func (r *Repository) ReapplyHeld(ctx context.Context, in ReapplyInput, now time.
 	}
 
 	// The named invoice rows, ascending (the sort is the validation's), taken before any write. An invoice that is
-	// missing, another account's or outside the caller's branch reach is the same not found.
+	// missing, another account's, outside the caller's branch reach or not an INVOICE document is the same not found
+	// (M3's P2-5): without the doc_type filter a request could name a CREDIT_MEMO beside an invoice, and the door
+	// would take the memo's row first (the lower id) and reach for the invoice's row while still holding it, the
+	// order the credit apply walks its target and its memo in reverse, a lock cycle answered SQLSTATE 40P01. With
+	// the filter a memo matches no row, so nothing is locked and the refusal is the door's own no such invoice.
 	type target struct {
 		a       Allocation
 		no      string
@@ -549,7 +553,8 @@ func (r *Repository) ReapplyHeld(ctx context.Context, in ReapplyInput, now time.
 		)
 		err := tx.QueryRow(ctx,
 			`SELECT invoice_no::text, balance_cents, holdback_cents, branch_id::text, status
-			   FROM invoices WHERE id = $1::uuid AND customer_id = $2::uuid FOR NO KEY UPDATE`,
+			   FROM invoices WHERE id = $1::uuid AND customer_id = $2::uuid AND doc_type = 'INVOICE'
+			   FOR NO KEY UPDATE`,
 			a.InvoiceID, customerID).Scan(&no, &balance, &holdback, &invBranch, &status)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {

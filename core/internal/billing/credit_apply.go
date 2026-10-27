@@ -473,8 +473,13 @@ func (r *Repository) ApplyCredit(ctx context.Context, in ApplyCreditInput, now t
 	// The target invoice row, the first ROW step of the file's THE LOCKS order. The memo row is NOT
 	// taken here: it is this door's credit step in the switch below, through the shared helper,
 	// after this row is held, so the two doors can never hold one mixed sorted set of the invoice
-	// rows and the memo row (round 6).
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, in.InvoiceID); err != nil {
+	// rows and the memo row (round 6). The target must be a doc_type INVOICE document (M3's P2-5):
+	// a hand built request may name a CREDIT_MEMO here, and without the filter the door takes the
+	// memo's row as its target and reaches the credit's own lock with a memo in hand, its lock
+	// order live against a row another door may hold, the answer a raw 40P01 instead of words.
+	// With the filter a memo target matches no row, so nothing is locked and the read below
+	// answers the same no such invoice an unknown id answers, before any lock is held.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid AND doc_type = 'INVOICE' FOR NO KEY UPDATE`, in.InvoiceID); err != nil {
 		return CreditApplication{}, fmt.Errorf("credit apply: lock invoice %s: %w", in.InvoiceID, err)
 	}
 
@@ -488,7 +493,7 @@ func (r *Repository) ApplyCredit(ctx context.Context, in ApplyCreditInput, now t
 	err = tx.QueryRow(ctx, `
 SELECT invoice_no::text, balance_cents, holdback_cents, branch_id::text, status,
        COALESCE(org_id::text, ''), COALESCE(metadata::text, '')
-  FROM invoices WHERE id = $1::uuid AND customer_id = $2::uuid`, in.InvoiceID, in.CustomerID).
+  FROM invoices WHERE id = $1::uuid AND customer_id = $2::uuid AND doc_type = 'INVOICE'`, in.InvoiceID, in.CustomerID).
 		Scan(&invNo, &invBalance, &invHoldback, &invBranch, &invStatus, &invOrg, &metadataRaw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
