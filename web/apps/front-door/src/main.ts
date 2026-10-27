@@ -6,7 +6,9 @@ import "@hardscapehouse/design-system/src/tokens.css";
 import "./page.css";
 import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import "./app-root.js";
+import { isSetPasswordPath } from "./set-password.js";
 
 // The tab carries the card's own word for the page; "Front Door" is the
-// lane's internal name and never reaches a person's screen.
-applyTenantTitle("Sign in");
+// lane's internal name and never reaches a person's screen. The set password
+// page is a screen of its own and says its own name.
+applyTenantTitle(isSetPasswordPath(window.location.pathname) ? "Set your password" : "Sign in");

@@ -2,6 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- The page's own referrer policy, in the document beside the response
+         header the deployed copy carries. Both layers stay: a meta tag is
+         each browser's own read and not a guarantee across engines, while the
+         header is the layer the server controls. The policy covers fetches
+         and documents, not every subresource: a font a stylesheet loads was
+         measured carrying the full address in its Referer with the policy in
+         place. What keeps that request clean is the scrub, so taking the
+         query out of the address bar must stay the first act of the boot.
+         The set password page's link carries a one time secret in its query,
+         and no Referer may carry it anywhere. -->
+    <meta name="referrer" content="no-referrer" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sign in</title>
     <!-- The badge favicons, generated from the measured
