@@ -65,47 +65,64 @@ package billing
 //     source_ref_id) and keeps only groups that do not sum to zero, so the offset nets the credit's
 //     group to zero and it leaves the aging, and ARBalanceCents' second arm nets to zero with it.
 //
-// -- IDEMPOTENCY WITHOUT A NEW TABLE --------------------------------------------------------------
+// -- THE KEY'S RECORD: THE INVOICE'S METADATA, AND THE KEY TABLE (0447) ----------------------------
 // The act is recorded on the TARGET INVOICE's metadata, under the target invoice's own row lock
 // (payments stamped NSF fee allocations into payments.metadata under the payment row lock; this is
-// the same discipline on billing's own table, which nothing overwrites wholesale). The record is
-// keyed by the request's idempotency key: a replay is judged under the lock, the same key with the
-// same body answers the first result and writes nothing, a spent key with another body is refused.
-// The record is also what a reversal reads to restore both sides, so no application exists anywhere
-// but on the invoice it moved.
+// the same discipline on billing's own table, which nothing overwrites wholesale). That record is
+// what a reversal reads to restore both sides, so the act's full state lives nowhere else.
 //
-// The key's SCOPE is the route, not one invoice (K3's P3): the key's record is read across the
-// route's invoices, so a key already spent on another invoice is spent here too and is refused as
-// the spent key it is. The key's own advisory slot is taken before any row, the house's idiom for
-// a key's own serialization (order/duplicate.go's duplicate key, order/reorder.go's reorder key),
-// so two requests under one key cannot both find it unspent.
+// The KEY itself lives in billing's own credit_application_keys (0447), one row per key, the key
+// the PRIMARY KEY. Round 7 kept the key's record only on the invoices' metadata and read the key's
+// scope with a scan of that metadata under the key's advisory slot; the scan has no index behind
+// it and grows with every dealer's history. The key table makes the check one index lookup on the
+// primary key and lets the database itself refuse a second row under a spent key. The apply writes
+// the key row INSIDE the application's own transaction: the reservation insert (ON CONFLICT DO
+// NOTHING, then a read) is the twin serialisation the advisory slot used to provide, because a
+// twin's uncommitted row makes the insert wait for that transaction, so two requests under one key
+// cannot both find the key unspent, whichever invoice each names. The same transaction sets the
+// application id and the stored result before it commits; a request refused anywhere after the
+// reservation rolls the reservation back with it. The same key with a different request is refused
+// 409 on the request's own hash, where round 7 compared kind, credit and amount and a changed
+// reason replayed. An application recorded before 0447 has no key row; its retry is answered from
+// the target invoice's own metadata (one primary key read, no scan), and the route wide refusal
+// beyond that invoice needs a backfill the migration does not make (its header says why).
+//
+// The key's SCOPE is the route, not one invoice (K3's P3): the primary key is the bare key string,
+// no org or invoice qualifier, because the handler passes the caller's key through untouched and
+// the round 7 check matched it across the route the same way. A key spent on any invoice of the
+// route is spent here.
 //
 // -- THE LOCKS -------------------------------------------------------------------------------------
-// The one money lock order (payments/LOCK-ORDER.md): the target invoice rows ascending, then the
-// memo row or the group anchor, then the feed counter. MEMO takes the memo document's row FOR NO
-// KEY UPDATE through lockCreditMemoRow, ACCOUNT takes the group's first negative row FOR UPDATE
-// through lockCreditGroupAnchor, and every door here walks the steps in that order, the apply and
-// the reversal alike. No door ever takes one mixed sorted set of the invoice rows and the memo
-// row: the apply once sorted the memo into its ascending invoice set, so when the memo's id
-// sorted below the target invoice's the two doors wanted the same two rows in opposite orders and
-// a staged reversal and apply of one invoice and memo deadlocked ten pairs of ten (SQLSTATE
-// 40P01, round 6). The credit's lock before the counter in BOTH doors of either kind is what
-// keeps a staged reversal and apply from deadlocking (SQLSTATE 40P01, rounds 4 and 5): a reversal
-// once drew the counter first while the apply took the group's or the memo's row first, so each
-// could hold what the other needed. No payments counter is drawn: nothing here stamps a payments
-// row.
+// The one money lock order (payments/LOCK-ORDER.md): the target invoice row, then the application
+// key's own row (the apply only), then the memo row or the group anchor, then the feed counter.
+// MEMO takes the memo document's row FOR NO KEY UPDATE through lockCreditMemoRow, ACCOUNT takes
+// the group's first negative row FOR UPDATE through lockCreditGroupAnchor, and every door here
+// walks the steps in that order, the apply and the reversal alike. No door ever takes one mixed
+// sorted set of the invoice rows and the memo row: the apply once sorted the memo into its
+// ascending invoice set, so when the memo's id sorted below the target invoice's the two doors
+// wanted the same two rows in opposite orders and a staged reversal and apply of one invoice and
+// memo deadlocked ten pairs of ten (SQLSTATE 40P01, round 6). The credit's lock before the counter
+// in BOTH doors of either kind is what keeps a staged reversal and apply from deadlocking
+// (SQLSTATE 40P01, rounds 4 and 5): a reversal once drew the counter first while the apply took
+// the group's or the memo's row first, so each could hold what the other needed. No payments
+// counter is drawn: nothing here stamps a payments row.
 //
-// The apply takes ONE more lock before the target invoice row: the idempotency key's own advisory
-// slot (the key's scope is the route, so the key's slot is taken before any row is). It takes no
-// row, so it cannot close a cycle with any row lock, and it is released when the transaction
-// ends.
+// The apply takes ONE more lock than the reversal, the key's row, and it sits between the target
+// invoice row and the credit's own row: the reservation insert into credit_application_keys on the
+// key's primary key. No other writer touches that table, so the key row is a dead end no cycle can
+// close through: the door takes it after the one invoice row it has already judged and before any
+// other row, and a twin under the same key queues on the insert, not on any row the reversal or
+// the payment walk ever holds.
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -366,63 +383,79 @@ func readCreditApplications(raw string) (map[string]creditApplicationRecord, err
 	return m.CreditApplications, nil
 }
 
-// lockCreditApplicationKey takes the idempotency key's own advisory slot, the house's idiom for a
-// key's own serialization (order/duplicate.go's duplicate key, order/reorder.go's reorder key, the
-// inventory module's branch cost key).
-//
-// It is taken BEFORE any row, because the key's scope is the route: two requests under one key must
-// not both find it unspent, whichever invoice each of them names. It is a transaction scoped lock
-// (pg_advisory_xact_lock), so the transaction releases it, and it takes no row, so it can close no
-// cycle with any row lock.
-func lockCreditApplicationKey(ctx context.Context, tx pgx.Tx, key string) error {
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
-		"billing:credit_apply:"+key); err != nil {
-		return fmt.Errorf("credit apply: lock the idempotency key: %w", err)
-	}
-	return nil
+// creditKeyHash is the request's own hash: the sha256 of the request's body fields, newline
+// joined, on the validated input (the ids normalised to one canonical spelling, so a retry that
+// spells a uuid differently still replays). The key itself is not hashed in: it is the row's
+// primary key. The hash is what refuses the same key with a DIFFERENT request on the door's own
+// 409, where the round 7 door compared kind, credit and amount and a changed reason replayed.
+func creditKeyHash(in ApplyCreditInput) string {
+	h := sha256.Sum256([]byte(strings.Join([]string{
+		in.CustomerID, in.CreditKind, in.CreditID, in.InvoiceID,
+		strconv.FormatInt(in.AmountCents, 10), in.Reason,
+	}, "\n")))
+	return hex.EncodeToString(h[:])
 }
 
-// findCreditApplicationByKey reads the route's record for one idempotency key: the invoice that
-// carries it and the record itself (K3's P3).
-//
-// The key's scope is the ROUTE, not one invoice, so the record is read across the route's invoices
-// rather than on the target invoice alone. The route's own record store is the invoices' metadata
-// (the file's IDEMPOTENCY WITHOUT A NEW TABLE header), so this is one read of that store: there is
-// no index on the metadata's key, so it is a scan of the invoices table. The key's advisory slot
-// (lockCreditApplicationKey) is what makes the read sound: the caller holds it, so a twin under the
-// same key has committed and is visible here, and no two requests under one key can both find it
-// unspent.
-//
-// The invoice that carries the key is named back with the record, because the replay is the same
-// request only when the key's own invoice is this invoice: a key already spent on ANOTHER invoice
-// is spent, and the door says so. When more than one invoice carries the key (only a record from
-// before this rule could, since the key's slot lets one application per key through), the TARGET's
-// own record wins, so a retry of this request still answers its first result.
-func (r *Repository) findCreditApplicationByKey(ctx context.Context, tx pgx.Tx, key, targetInvoiceID string) (string, creditApplicationRecord, bool, error) {
-	var invoiceID string
-	var raw string
+// creditKeyRow is the key's row as the door reads it back after the reservation.
+type creditKeyRow struct {
+	invoiceID    string
+	requestHash  string
+	storedResult string
+	// applicationID is empty when the row is this transaction's own fresh reservation: a committed
+	// row always carries its application id, because the same transaction that inserts the
+	// reservation sets it before it commits, and anything else either committed whole or rolled
+	// back whole.
+	applicationID string
+}
+
+// spent answers whether the row records an application that committed, as against this
+// transaction's own fresh reservation.
+func (row creditKeyRow) spent() bool { return row.applicationID != "" }
+
+// reserveCreditApplicationKey is the door's key step (0447): the reservation INSERT on the key's
+// primary key, ON CONFLICT DO NOTHING, then the read. The insert is the twin serialisation the
+// advisory slot used to provide: a twin's uncommitted reservation makes this insert wait for that
+// transaction, so after the insert the read sees either the twin's committed row (the key is
+// spent, answer replay or 409 on the hash) or this transaction's own fresh row (the key was
+// unspent, and the row already reserves it against a third request). The read is one index lookup
+// on the primary key, the whole reason the table exists: round 7's scan of the invoices' metadata
+// grew with every dealer's history, and this read does not.
+func reserveCreditApplicationKey(ctx context.Context, tx pgx.Tx, in ApplyCreditInput) (creditKeyRow, error) {
+	if _, err := tx.Exec(ctx, `
+INSERT INTO credit_application_keys (idempotency_key, invoice_id, credit_kind, credit_id, request_hash)
+VALUES ($1, $2::uuid, $3, $4::uuid, $5)
+ON CONFLICT (idempotency_key) DO NOTHING`,
+		in.IdempotencyKey, in.InvoiceID, in.CreditKind, in.CreditID, creditKeyHash(in)); err != nil {
+		return creditKeyRow{}, fmt.Errorf("credit apply: reserve the idempotency key: %w", err)
+	}
+	var row creditKeyRow
 	err := tx.QueryRow(ctx, `
-		SELECT id::text, COALESCE(metadata->'credit_applications'->$1::text, '{}'::jsonb)::text
-		  FROM invoices
-		 WHERE (COALESCE(metadata, '{}'::jsonb) -> 'credit_applications') ? $1::text
-		 ORDER BY (id = $2::uuid) DESC, id ASC
-		 LIMIT 1`, key, targetInvoiceID).Scan(&invoiceID, &raw)
+SELECT invoice_id::text, request_hash, COALESCE(stored_result::text, ''), COALESCE(application_id::text, '')
+  FROM credit_application_keys WHERE idempotency_key = $1`, in.IdempotencyKey).
+		Scan(&row.invoiceID, &row.requestHash, &row.storedResult, &row.applicationID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", creditApplicationRecord{}, false, nil
-		}
-		return "", creditApplicationRecord{}, false, fmt.Errorf("credit apply: read the idempotency key across the route: %w", err)
+		return creditKeyRow{}, fmt.Errorf("credit apply: read the idempotency key: %w", err)
 	}
-	var rec creditApplicationRecord
-	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
-		return "", creditApplicationRecord{}, false, fmt.Errorf("credit apply: read the idempotency key's record: %w", err)
+	return row, nil
+}
+
+// replayStoredApplication answers a spent key's own request from the key row's stored result
+// (0447): the first answer, with Replayed=true. Nothing is read beside the key row and nothing is
+// written; the transaction's own reservation rolls back with the caller's deferred rollback.
+func replayStoredApplication(row creditKeyRow) (CreditApplication, error) {
+	var out CreditApplication
+	if err := json.Unmarshal([]byte(row.storedResult), &out); err != nil {
+		return CreditApplication{}, fmt.Errorf("credit apply: read the stored result: %w", err)
 	}
-	return invoiceID, rec, true, nil
+	out.Replayed = true
+	return out, nil
 }
 
 // ApplyCredit is the repository write. ONE transaction: the locks walked in the file's THE LOCKS
-// order, every judgement under the locks, the replay judged under the target invoice's row, then
-// the balance moves, the subledger rows and the metadata stamp. A refused request writes nothing.
+// order, every judgement under the locks, the key's reservation and the replay judged after the
+// target invoice's row, then the balance moves, the subledger rows, the metadata stamp and the key
+// row's stored result. A refused request writes nothing: its transaction rolls the key row's
+// reservation back with everything else.
 func (r *Repository) ApplyCredit(ctx context.Context, in ApplyCreditInput, now time.Time) (CreditApplication, error) {
 	if r.pool == nil {
 		return CreditApplication{}, errNoDB
@@ -436,14 +469,6 @@ func (r *Repository) ApplyCredit(ctx context.Context, in ApplyCreditInput, now t
 		return CreditApplication{}, fmt.Errorf("credit apply: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-
-	// The idempotency key's own advisory slot, the door's first lock. The key's scope is the route,
-	// so the key's slot is taken before any row: two requests under one key cannot both find it
-	// unspent, whichever invoice each of them names. It takes no row, so it closes no cycle with
-	// any row lock, and the transaction releases it.
-	if err := lockCreditApplicationKey(ctx, tx, in.IdempotencyKey); err != nil {
-		return CreditApplication{}, err
-	}
 
 	// The target invoice row, the first ROW step of the file's THE LOCKS order. The memo row is NOT
 	// taken here: it is this door's credit step in the switch below, through the shared helper,
@@ -485,20 +510,35 @@ SELECT invoice_no::text, balance_cents, holdback_cents, branch_id::text, status,
 		return CreditApplication{}, err
 	}
 
-	// The replay, judged AFTER the reach checks and BEFORE the open and ceiling checks (K3's P2-2):
-	// a retry of an application that took its invoice to PAID must answer the first result, not
-	// trip the not open refusal on the balances the first application already moved. A lost
-	// response must not be indistinguishable from a validation refusal.
+	// The key's row, the door's key step (0447), judged AFTER the reach checks and BEFORE the open
+	// and ceiling checks (K3's P2-2's order): a retry of an application that took its invoice to
+	// PAID must answer the first result, not trip the not open refusal on the balances the first
+	// application already moved. The reservation insert is the twin serialisation the advisory slot
+	// used to provide, and the read is one index lookup on the primary key.
 	//
-	// The key's scope is the ROUTE, not this invoice (K3's P3): the key's record is read across the
-	// route's invoices, so a key already spent on another invoice is spent here too. The key's own
-	// advisory slot is held, so a twin that committed while this request waited is already visible.
-	spentOn, prior, found, err := r.findCreditApplicationByKey(ctx, tx, in.IdempotencyKey, in.InvoiceID)
+	// A committed row is the key already spent, and the row itself says where and how: the same
+	// request (the row's own invoice, and the request's hash) replays its stored result with
+	// Replayed=true and writes nothing; any other request under the key, on this invoice or
+	// another, is refused 409 in the door's own words. A row with no application id is this
+	// transaction's own fresh reservation: the key was unspent, and the application proceeds.
+	keyRow, err := reserveCreditApplicationKey(ctx, tx, in)
 	if err != nil {
 		return CreditApplication{}, err
 	}
-	if found {
-		if spentOn == in.InvoiceID && prior.CreditKind == in.CreditKind && prior.CreditID == in.CreditID &&
+	if keyRow.spent() {
+		if keyRow.invoiceID == in.InvoiceID && keyRow.requestHash == creditKeyHash(in) {
+			return replayStoredApplication(keyRow)
+		}
+		return CreditApplication{}, CreditApplicationConflictError{
+			Msg: "that idempotency key already applied a credit differently; use a new key"}
+	}
+
+	// An application recorded BEFORE 0447 has no key row: its record lives only on the target
+	// invoice's metadata, read above under the invoice's row lock. Its retry is answered the round
+	// 7 way, on the record's own fields; a pre 0447 key spent on ANOTHER invoice is invisible here
+	// (there is no scan any more), and the migration's header carries that residual.
+	if prior, ok := apps[in.IdempotencyKey]; ok {
+		if prior.CreditKind == in.CreditKind && prior.CreditID == in.CreditID &&
 			prior.AmountCents == in.AmountCents {
 			return r.replayApplication(ctx, tx, prior)
 		}
@@ -688,7 +728,8 @@ VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
 	}
 
 	// The record of the act, on the target invoice's metadata, keyed by the idempotency key: the
-	// replay's answer and the reversal's source of truth.
+	// reversal's source of truth (the key table's stored result carries the answer, the metadata
+	// record carries the state a reversal restores from).
 	apps[in.IdempotencyKey] = creditApplicationRecord{
 		ApplicationID: applicationID, CreditKind: in.CreditKind, CreditID: in.CreditID,
 		InvoiceID: in.InvoiceID, AmountCents: in.AmountCents, Reason: in.Reason,
@@ -699,10 +740,10 @@ VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
 		return CreditApplication{}, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return CreditApplication{}, fmt.Errorf("credit apply: commit: %w", err)
-	}
-	return CreditApplication{
+	// The key row's reservation, completed (0447): the application id and the first answer as the
+	// stored result, in the application's own transaction, so a committed key row always carries
+	// both and a replay can answer from the row alone.
+	out := CreditApplication{
 		ApplicationID: applicationID, CreditKind: in.CreditKind, CreditID: in.CreditID,
 		InvoiceID: in.InvoiceID, InvoiceNo: invNo, AppliedCents: in.AmountCents,
 		CreditOpenAfter: creditOpenAfter,
@@ -710,7 +751,22 @@ VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
 			InvoiceID: in.InvoiceID, InvoiceNo: invNo, AppliedCents: in.AmountCents,
 			Outcome: outcome, BalanceAfterCents: after,
 		}},
-	}, nil
+	}
+	stored, err := json.Marshal(out)
+	if err != nil {
+		return CreditApplication{}, fmt.Errorf("credit apply: marshal the stored result: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE credit_application_keys
+   SET application_id = $2::uuid, stored_result = $3::jsonb
+ WHERE idempotency_key = $1`, in.IdempotencyKey, applicationID, string(stored)); err != nil {
+		return CreditApplication{}, fmt.Errorf("credit apply: store the key's result: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return CreditApplication{}, fmt.Errorf("credit apply: commit: %w", err)
+	}
+	return out, nil
 }
 
 // customerRunningAR computes the customer's running AR across both arms of ARBalanceCents:
