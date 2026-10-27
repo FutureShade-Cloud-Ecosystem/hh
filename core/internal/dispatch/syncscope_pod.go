@@ -240,7 +240,10 @@ func (s *PODSyncStore) load(ctx context.Context, db podQuerier, f sync.ScopeFilt
 	args = append(args, id)
 	r, err := scanSyncPod(db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return sync.RowState{}, false, nil
+		// Not a photo row: the id may name the stop a typed name
+		// attestation create answered with, the same fall through
+		// FindApplied runs for the attestation's key.
+		return s.loadAttestation(ctx, db, f, d, id)
 	}
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("dispatch: pod sync load: %w", err)

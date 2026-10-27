@@ -222,6 +222,13 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 			// scope that fences nothing reads the row and answers as
 			// before. A key with no entity to check (no stored id and no
 			// payload id) keeps the plain bound answer.
+			//
+			// The question is the caller's fence, never the table: a
+			// store's Load must answer for every row the scope's keys can
+			// name, the row the create answered included (an attestation
+			// create answers the stop it proved). A Load that misses a row
+			// for every caller is a store defect, not a fence, and would
+			// drop the owner's own bound answers.
 			id := entry.EntityID
 			if id == "" {
 				id, _ = op.Payload["id"].(string)
