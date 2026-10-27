@@ -298,21 +298,25 @@ func (s *ShortageSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since 
 // FindApplied resolves one idempotency key to the shortage row it applied:
 // the row's idempotency_key column (the latest key) or the applied-key
 // history the adapter records in the parent task's task_events log (every
-// key the row ever applied, so multi-operation outboxes replay clean). A
-// replay never answers for a shortage the caller cannot pull (UX-105): the
-// key's row out of reach is not "applied" for this caller, the same answer
-// an absent key gets (the pick scope's fence, 567 round 2).
+// key the row ever applied, so multi-operation outboxes replay clean). The
+// branch reach is part of the query, as the pull's is (UX-103, PR 640's
+// shape): the column carries no unique index (0213's rule), so a key can
+// name rows on two branches and an unordered LIMIT 1 must not hand back the
+// out of reach one.
 func (s *ShortageSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
 	where, args, ok := shortageScopePredicate(f)
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
-	// The reach clause is part of the query (the pick scope's pull rule, PR 640's shape), so the unordered
-	// LIMIT 1 can only ever land on the caller's own rows: one key can name shortages on two branches (the
-	// table carries no unique index on idempotency_key, 0213), and a post query check would let the other
-	// branch's row win the LIMIT and answer "not applied" to the caller that owns the other row. A GLOBAL
-	// caller adds no clause and keeps the org predicate alone; a shortage whose task has no branch is no
-	// branch scoped caller's; an unwired authority fences nothing, as the writes' branchFence.
+	// The reach clause is the pick scope's pull rule (SyncStore.pullReach), in the query so LIMIT 1 picks
+	// only among the rows the caller reaches: a shortage whose task has no branch is no branch scoped
+	// caller's, a GLOBAL caller adds no clause (the org predicate bounds it), an unwired authority fences
+	// nothing, and an absent or inactive one answers not applied. The answer carries no second reach check
+	// (PR 640 drops it from the pick and weights doors too): a check after the query turns the unordered
+	// LIMIT 1's winner into a refusal, so a GLOBAL caller that owns a row of the key was told "not
+	// applied" for it, the engine applied the operation again, and a second row carrying the same key
+	// landed in the caller's own org. The org bound rides the query (the org predicate), so a row of
+	// another org is still no caller's row.
 	reachSQL := ""
 	var branches []string
 	if s.staff != nil {
@@ -329,7 +333,7 @@ func (s *ShortageSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter,
 			reachSQL = " AND EXISTS (SELECT 1 FROM tasks rt WHERE rt.id = task_shortages.task_id AND rt.branch_id = ANY($4::uuid[]))"
 		}
 	}
-	q := fmt.Sprintf(`SELECT %s, (SELECT COALESCE(pt.branch_id::text, '') FROM tasks pt WHERE pt.id = task_shortages.task_id)
+	q := fmt.Sprintf(`SELECT %s
 		FROM task_shortages
 		WHERE %s
 		  AND (idempotency_key = $2::uuid
@@ -341,18 +345,12 @@ func (s *ShortageSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter,
 	if branches != nil {
 		args = append(args, branches)
 	}
-	r, branch, err := scanSyncShortageBranch(s.pool.QueryRow(ctx, q, args...))
+	r, err := scanSyncShortage(s.pool.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("tasks: shortage sync find applied: %w", err)
-	}
-	// The org bound rides the answer: a GLOBAL caller's reach is every branch of its OWN org, never every
-	// branch in the database (UX-81 round 5), the branchOrg seam the pick and weights doors carry. A row on
-	// a branch outside the caller's org is not "applied" for it, the same answer an absent key gets.
-	if reach, err := s.callerReaches(ctx, f, branch); err != nil || !reach {
-		return sync.RowState{}, false, err
 	}
 	rs, err := shortageRowState(r)
 	return rs, true, err
@@ -808,7 +806,9 @@ func optString(fields map[string]any, name string) any {
 // every branch in the database), a branch scoped caller its granted branches only, an absent or inactive
 // authority nothing, and an unreadable one the plain retryable error. An unwired seam fences nothing, as
 // the writes' branchFence: the posture the composition root refuses to boot a door in (StaffAuthorityWired
-// and BranchOrgWired are the fail fast's legs).
+// and BranchOrgWired are the fail fast's legs). The load door asks it (the row itself is held to the
+// caller's reach); find-applied's reach rides its query instead, PR 640's shape, so its org bound rides the
+// org predicate there.
 func (s *ShortageSyncStore) callerReaches(ctx context.Context, f sync.ScopeFilter, branch string) (bool, error) {
 	return (&SyncStore{staff: s.staff, branchOrg: s.branchOrg}).callerReaches(ctx, f, branch)
 }

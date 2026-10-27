@@ -198,11 +198,12 @@ func TestShortageSyncFindAppliedHoldsTheCallersBranchReach(t *testing.T) {
 	}
 }
 
-// TestShortageSyncHoldsTheCallersOrgBoundForAGlobalCaller: a GLOBAL caller's reach is every branch of its
-// OWN org, never every branch in the database (UX-81 round 5), the bound the pick and weights doors carry
-// through the branchOrg seam. A shortage whose parent task sits in the caller's own org but on a branch of
-// another org is out of the GLOBAL caller's reach: the key answers not applied and the row answers absent,
-// the same answers an out of reach row gets. A door without the seam runs the org predicate alone, the
+// TestShortageSyncHoldsTheCallersOrgBoundForAGlobalCaller: the org bound rides the query for find-applied
+// and the answer for load, the pick and weights doors' shape since PR 640 (UX-103). A shortage whose parent
+// task sits in the caller's OWN org is the caller's own fact, whichever branch that task names: find-applied
+// resolves its key (the org predicate held the row) and load still holds the row itself to the caller's org,
+// so the shortage on a branch of another org does not leak. A key on a row of another org answers not applied
+// (the org predicate in the query is the bound), and a door without the seam runs the org predicate alone, the
 // unwired posture the composition root refuses to boot a door in (BranchOrgWired is the fail fast's leg).
 func TestShortageSyncHoldsTheCallersOrgBoundForAGlobalCaller(t *testing.T) {
 	d := newShortDoor(t)
@@ -212,13 +213,30 @@ func TestShortageSyncHoldsTheCallersOrgBoundForAGlobalCaller(t *testing.T) {
 	keyOwn, keyForeign := uuid.NewString(), uuid.NewString()
 	shortOwn := shortageWithKey(t, d, taskOwn, keyOwn)
 	shortForeign := shortageWithKey(t, d, taskForeign, keyForeign)
+	// A row of another org: the org predicate in the query is the org bound find-applied carries.
+	other := d.f
+	other.OrgID = d.other
+	taskOut := ""
+	{
+		s := NewSyncStore(d.pool, pickDoorOrders{branch: own}, nil)
+		row, err := s.Create(context.Background(), other, uuid.NewString(), map[string]any{"order_id": uuid.NewString()})
+		if err != nil {
+			t.Fatalf("create a task in the other org: %v", err)
+		}
+		taskOut = row.ID
+	}
+	keyOut := uuid.NewString()
+	shortOut := uuid.NewString()
+	if _, err := d.store.Create(context.Background(), other, keyOut, appPayload(shortOut, taskOut)); err != nil {
+		t.Fatalf("create a shortage in the other org: %v", err)
+	}
 	global := scopedTo(uuid.NewString())
 	global.Scope, global.Tier = identity.ScopeGlobal, identity.TierLeadership
 	// The seam: the caller's own branch is a branch of its own org, the other one belongs to another org.
 	wired := shortageReachDoorWithOrg(d, global, branchesOfOrg{own: {d.org: true}, foreign: {d.other: true}})
 
-	if _, found, err := wired.FindApplied(context.Background(), d.f, keyForeign); err != nil || found {
-		t.Errorf("a GLOBAL caller does not resolve a key on a branch outside its own org: found %v err %v", found, err)
+	if _, found, err := wired.FindApplied(context.Background(), d.f, keyForeign); err != nil || !found {
+		t.Errorf("a GLOBAL caller resolves the key of a shortage of its OWN org, the branch is the branch's org: found %v err %v", found, err)
 	}
 	if _, found, err := wired.Load(context.Background(), d.f, shortForeign); err != nil || found {
 		t.Errorf("a GLOBAL caller does not load a shortage on a branch outside its own org: found %v err %v", found, err)
@@ -229,10 +247,53 @@ func TestShortageSyncHoldsTheCallersOrgBoundForAGlobalCaller(t *testing.T) {
 	if _, found, err := wired.Load(context.Background(), d.f, shortOwn); err != nil || !found {
 		t.Errorf("a GLOBAL caller still loads the shortage on its own org's branch: found %v err %v", found, err)
 	}
+	if _, found, err := wired.FindApplied(context.Background(), d.f, keyOut); err != nil || found {
+		t.Errorf("a GLOBAL caller does not resolve a key on a shortage of another org: found %v err %v", found, err)
+	}
+	if _, found, err := wired.Load(context.Background(), d.f, shortOut); err != nil || found {
+		t.Errorf("a GLOBAL caller does not load a shortage of another org: found %v err %v", found, err)
+	}
 	// The unwired posture: without the org bound seam the org predicate alone runs, exactly main's behavior.
 	unwired := shortageReachDoor(d, true, global)
 	if _, found, err := unwired.FindApplied(context.Background(), d.f, keyForeign); err != nil || !found {
 		t.Errorf("a door without the org bound seam keeps the org predicate alone, main's posture: found %v err %v", found, err)
+	}
+}
+
+// TestShortageSyncFindAppliedAnswersAppliedForAGlobalCallerWhoseKeyNamesTwoRows: M3's shape (UX-103). One
+// key names two shortages of the caller's OWN org, one of them on a branch of another org. The find-applied
+// query's unordered LIMIT 1 can land on either row, and the post query check on the answer then told a GLOBAL
+// caller "not applied" for a key its own org owns: the engine applies the operation again and a second row
+// carrying the same key lands in the caller's own org. The org bound rides the query (the org predicate), the
+// pick and weights doors' shape since PR 640, so the answer is applied. The load door keeps the bound on the
+// answer, so the row on the other org's branch does not leak.
+func TestShortageSyncFindAppliedAnswersAppliedForAGlobalCallerWhoseKeyNamesTwoRows(t *testing.T) {
+	d := newShortDoor(t)
+	own, foreign := uuid.NewString(), uuid.NewString()
+	taskOwn := shortageReachTask(t, d, own)
+	taskForeign := shortageReachTask(t, d, foreign)
+	key := uuid.NewString()
+	// The row on the other org's branch first: the query's unordered LIMIT 1 takes the row that comes first in
+	// the table, and the post query check refused that row, so the caller was told the key was not applied.
+	away := shortageWithKey(t, d, taskForeign, key)
+	here := shortageWithKey(t, d, taskOwn, key)
+	global := scopedTo(uuid.NewString())
+	global.Scope, global.Tier = identity.ScopeGlobal, identity.TierLeadership
+	// The seam: the caller's own branch is a branch of its own org, the other one belongs to another org.
+	wired := shortageReachDoorWithOrg(d, global, branchesOfOrg{own: {d.org: true}, foreign: {d.other: true}})
+
+	row, found, err := wired.FindApplied(context.Background(), d.f, key)
+	if err != nil || !found {
+		t.Errorf("a GLOBAL caller that owns a row of the key is told the key is not applied: found %v id %q seq %d err %v (own %q, the other org's branch's %q)",
+			found, row.ID, row.Seq, err, here, away)
+	}
+	if row.ID != here && row.ID != away {
+		t.Errorf("the answer names one of the caller's own org's rows: id %q (own %q, the other org's branch's %q)",
+			row.ID, here, away)
+	}
+	// The load door keeps the bound on the answer: the row on the other org's branch does not leak.
+	if _, found, err := wired.Load(context.Background(), d.f, away); err != nil || found {
+		t.Errorf("a GLOBAL caller does not load the shortage on a branch outside its own org: found %v err %v", found, err)
 	}
 }
 
