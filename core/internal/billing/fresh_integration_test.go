@@ -95,10 +95,8 @@ func TestIntegration_Fresh_CreditMemoReachesTheCustomersInvoicesFeed(t *testing.
 }
 
 // TestIntegration_Fresh_CreditMemoReachesTheDealersInvoicesFeed: the staff arm
-// (Counter Till), by org. The memo insert stamps no org_id, so this stays red
-// until SF-3 stamps it.
+// (Counter Till), by org. The memo insert stamps its branch's org (SF-2p), the org the staff filter carries.
 func TestIntegration_Fresh_CreditMemoReachesTheDealersInvoicesFeed(t *testing.T) {
-	t.Skip("SF-3: org stamp (the credit memo insert carries no org_id, so the staff fence never admits it)")
 	c := invoicesFreshCase(t)
 	c.Filter = sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: "fresh"}
 	harness.Fresh(t, c)

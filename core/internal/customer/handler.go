@@ -3,6 +3,7 @@ package customer
 import (
 	"encoding/json"
 	"errors"
+	coreidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -63,12 +64,32 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, _ guards.StaffCall
 	httpx.WriteJSON(w, http.StatusOK, h.svc.AccountForWire(r.Context(), out))
 }
 
+// fenceAccount holds the customer named in the path to the caller's reach by the customer read's own rule
+// (GetAccount): an account homed at a branch the caller cannot reach, an id that is no account, and a caller
+// with no linked staff row all answer 404 "customer not found", the seam's own words (the account read itself keeps its older "not found"), and nothing is read or
+// written. It reports whether the request may go on.
+func (h *Handler) fenceAccount(w http.ResponseWriter, r *http.Request, id string) bool {
+	if _, err := h.svc.GetAccount(r.Context(), id); err != nil {
+		var bad httpx.BadRequestError
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrUnauthenticated) || errors.As(err, &bad) {
+			httpx.Error(w, http.StatusNotFound, "customer not found")
+			return false
+		}
+		h.writeErr(w, r, err)
+		return false
+	}
+	return true
+}
+
 // smsConsent backs the consent control's read. GET /api/v1/customers/{id}/sms-consent.
 //
 // A customer with no row answers 200 with consent:false, recorded:false, NOT 404. "Nobody has ever
 // asked this customer" is an answer, and the empty-never-an-error rule applies to it exactly as it
 // does to an empty list.
 func (h *Handler) smsConsent(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !h.fenceAccount(w, r, r.PathValue("id")) {
+		return
+	}
 	out, err := h.svc.GetSMSConsent(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -96,6 +117,9 @@ func (h *Handler) setSMSConsent(w http.ResponseWriter, r *http.Request, _ guards
 		httpx.Error(w, http.StatusBadRequest, "invalid_json")
 		return
 	}
+	if !h.fenceAccount(w, r, r.PathValue("id")) {
+		return
+	}
 	out, err := h.svc.SetSMSConsent(r.Context(), r.PathValue("id"), in.Consent, in.PhoneE164)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -106,10 +130,19 @@ func (h *Handler) setSMSConsent(w http.ResponseWriter, r *http.Request, _ guards
 
 // create handles POST /api/v1/customers, a staff/manager create with server-side Canadian
 // postal/province validation on billing_address (M5). An invalid address is a 400.
-func (h *Handler) create(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+func (h *Handler) create(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in CreateInput
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	// The branch wall: an account is homed only at a branch the caller is granted. Homed anywhere else
+	// the creator could not read the account back (the account read answers it as not found).
+	// A company wide (null home) account is visible to every branch, so only a GLOBAL caller files one: a
+	// branch scoped caller must home the account at a branch it is granted, and a missing home is refused in
+	// the same 403 words as an ungranted one (the door's write refusal, not a 422).
+	if (in.HomeBranchID == "" && caller.Scope != coreidentity.ScopeGlobal) || (in.HomeBranchID != "" && !caller.CanAccessBranch(in.HomeBranchID)) {
+		httpx.Error(w, http.StatusForbidden, "that branch is outside your grants")
 		return
 	}
 	acct, err := h.svc.CreateCustomer(r.Context(), in)
@@ -126,6 +159,11 @@ func (h *Handler) updateBillingAddress(w http.ResponseWriter, r *http.Request, _
 	var addr map[string]any
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&addr); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	// The customer wall, the account read's own rule: an account homed at a branch the caller cannot reach
+	// answers as not found, and nothing is written.
+	if !h.fenceAccount(w, r, r.PathValue("id")) {
 		return
 	}
 	acct, err := h.svc.UpdateBillingAddress(r.Context(), r.PathValue("id"), addr)

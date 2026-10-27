@@ -439,7 +439,11 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// receivables register mounts from here (billing's register handler,
 	// registered under the Finance unit's gates exactly as the pin did).
 	finstmtSvc := finstmt.NewService(finstmt.NewRepository(pool)).WithAudit(auditSvc)
-	finstmt.NewHandler(finstmtSvc, log).WithZone(newDealerZone(pool)).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).WithCustomerReach(billing.NewCustomerModuleReach(customerSvc)).WithRegisterTaxLabel(newTaxWords(pool)).RegisterRoutes(r, g)
+	finstmtHandler := finstmt.NewHandler(finstmtSvc, log).WithZone(newDealerZone(pool)).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).WithCustomerReach(billing.NewCustomerModuleReach(customerSvc)).WithRegisterTaxLabel(newTaxWords(pool))
+	if !finstmtHandler.CustomerReachWired() {
+		panic("finstmt: customer reach not wired - the workspace, the statement preview, the payment policy, hold and paylink routes would serve any named account")
+	}
+	finstmtHandler.RegisterRoutes(r, g)
 
 	// M5 tax engine, then the W6 scaffold-owner rewire: the POS Sale leaves
 	// its stubs for the real engines (tax, stock, restock, the card
@@ -466,9 +470,14 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// half.
 	w3bCreditSvc := billing.NewCreditService(billingRepo).WithAudit(auditSvc)
 	w3bStatementSvc := billing.NewStatementService(billingRepo).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
-	billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
+	monthEndHandler := billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
 		WithZone(newDealerZone(pool)).
-		WithUserLinker(link).RegisterRoutes(r, g)
+		WithCustomerReach(billing.NewCustomerModuleReach(customerSvc)).
+		WithUserLinker(link)
+	if !monthEndHandler.CustomerReachWired() {
+		panic("billing: customer reach not wired - the account statement read and a one account statement run would serve any named account")
+	}
+	monthEndHandler.RegisterRoutes(r, g)
 	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc}).
 		WithHoldReader(ops.tillRepo).
 		WithAccountChecker(posAccountAdapter{svc: customerSvc})
@@ -484,10 +493,16 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// the send is recorded and marked FAILED in words, never a phantom
 	// DELIVERED the paper-path sweep would count; a real transport lands
 	// as an adapter passed in this same slot.
-	arReminderSvc := billing.NewARReminderService(arLandingRepo, arLandingSvc, billing.UnwiredSender{}, cfg.StaffBaseURL).WithZone(newDealerZone(pool))
-	billing.NewARLandingHandler(arLandingSvc, arReminderSvc, log).
+	arReminderSvc := billing.NewARReminderService(arLandingRepo, arLandingSvc, billing.UnwiredSender{}, cfg.StaffBaseURL).WithZone(newDealerZone(pool)).
+		WithCustomerReach(billing.NewCustomerModuleReach(customerSvc))
+	arLandingHandler := billing.NewARLandingHandler(arLandingSvc, arReminderSvc, log).
 		WithZone(newDealerZone(pool)).
-		WithUserLinker(link).RegisterRoutes(r, g)
+		WithCustomerReach(billing.NewCustomerModuleReach(customerSvc)).
+		WithUserLinker(link)
+	if !arLandingHandler.CustomerReachWired() {
+		panic("billing: customer reach not wired - the AP contact routes would serve any named account")
+	}
+	arLandingHandler.RegisterRoutes(r, g)
 	billing.NewARWorklistHandler(billing.NewARWorklistService(billingRepo).WithZone(newDealerZone(pool)), log).
 		WithZone(newDealerZone(pool)).
 		WithUserLinker(link).RegisterRoutes(r, g)

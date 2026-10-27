@@ -133,6 +133,14 @@ func (s StaffContext) CanAccessBranch(branchID string) bool {
 	return s.Branches[branchID]
 }
 
+// CanReachAccountHome is the customer module's account rule (customer/account_lookup.go) as a predicate on an
+// account's home branch: an account homed at a branch is held to callers who reach that branch, and an account
+// with no home ("") is shared company wide. A global caller reaches every home. The SQL of the account read
+// (home_branch_id = ANY(reach) OR home_branch_id IS NULL) says the same thing.
+func (s StaffContext) CanReachAccountHome(homeBranchID string) bool {
+	return homeBranchID == "" || s.CanAccessBranch(homeBranchID)
+}
+
 // -- Policy enforcement --------------------------------------------------
 
 type PolicyType string

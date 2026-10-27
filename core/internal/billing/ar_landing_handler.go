@@ -36,7 +36,17 @@ type ARLandingHandler struct {
 	reminders *ARReminderService
 	log       *slog.Logger
 	zone      houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
+	reach     WorkspaceReach  // the customer module's reach rule, for the AP contact routes (UX-89)
 }
+
+// WithCustomerReach binds the customer reach rule the AP contact routes hold their customer to.
+func (h *ARLandingHandler) WithCustomerReach(c WorkspaceReach) *ARLandingHandler {
+	h.reach = c
+	return h
+}
+
+// CustomerReachWired reports whether the customer reach rule is bound.
+func (h *ARLandingHandler) CustomerReachWired() bool { return h.reach != nil }
 
 // WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
 func (h *ARLandingHandler) WithZone(src houseday.Source) *ARLandingHandler { h.zone = src; return h }
@@ -145,6 +155,9 @@ func (h *ARLandingHandler) sendReminder(w http.ResponseWriter, r *http.Request, 
 		h.writeErr(w, r, err)
 		return
 	}
+	if !FenceCustomer(w, r, h.reach, in.CustomerID) {
+		return
+	}
 	caller, _ := identity.StaffContextFromContext(r.Context())
 	sent, err := h.reminders.Send(r.Context(), in, caller.UserID)
 	if err != nil {
@@ -158,6 +171,9 @@ func (h *ARLandingHandler) reminderHistory(w http.ResponseWriter, r *http.Reques
 	if h.reminders == nil {
 		httpx.Error(w, http.StatusServiceUnavailable,
 			"reminders are not configured on this server, the AR send seam is not wired")
+		return
+	}
+	if !FenceCustomer(w, r, h.reach, r.URL.Query().Get("customer_id")) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -222,6 +238,9 @@ func (h *ARLandingHandler) apRead(w http.ResponseWriter, r *http.Request, caller
 			"reminders are not configured on this server, the AR send seam is not wired")
 		return
 	}
+	if !FenceCustomer(w, r, h.reach, r.PathValue("customerID")) {
+		return
+	}
 	c, ok, err := h.reminders.APContact(r.Context(), r.PathValue("customerID"))
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -243,6 +262,9 @@ func (h *ARLandingHandler) apWrite(w http.ResponseWriter, r *http.Request, _ gua
 			"reminders are not configured on this server, the AR send seam is not wired")
 		return
 	}
+	if !FenceCustomer(w, r, h.reach, r.PathValue("customerID")) {
+		return
+	}
 	var c APContact
 	if err := decodeJSON(w, r, &c); err != nil {
 		h.writeErr(w, r, err)
@@ -262,6 +284,9 @@ func (h *ARLandingHandler) apDelete(w http.ResponseWriter, r *http.Request, call
 	if h.reminders == nil {
 		httpx.Error(w, http.StatusServiceUnavailable,
 			"reminders are not configured on this server, the AR send seam is not wired")
+		return
+	}
+	if !FenceCustomer(w, r, h.reach, r.PathValue("customerID")) {
 		return
 	}
 	if err := h.reminders.UntagAPContact(r.Context(), r.PathValue("customerID")); err != nil {

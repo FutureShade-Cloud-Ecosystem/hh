@@ -143,7 +143,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	tillSvc := till.NewService(tillRepo).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc)
-	till.NewHandler(tillSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	tillHandler := till.NewHandler(tillSvc, log).WithUserLinker(link).WithCustomerReach(newCustomerWall(pool))
+	if !tillHandler.CustomerReachWired() {
+		panic("till: customer reach not wired - payment attempts would record against any named account")
+	}
+	tillHandler.RegisterRoutes(r, g)
 
 	// DIB-387: the quote conversion's credit/hold gate, closable now till
 	// has landed. The pin wired the SAME gate instance the POS ring uses;
@@ -175,7 +179,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithGLPoster(lienGLPoster{svc: spine.glSvc}).
 		WithCoSigner(identity.NewApprovalRepository(pool)).
 		WithAudit(auditSvc)
-	lien.NewHandler(lienSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	lienHandler := lien.NewHandler(lienSvc, log).WithUserLinker(link).WithCustomerReach(newCustomerWall(pool))
+	if !lienHandler.CustomerReachWired() {
+		panic("lien: customer reach not wired - a lien job would open for any named account")
+	}
+	lienHandler.RegisterRoutes(r, g)
 
 	// A-15 (W6): inventory counts over inventory's count seam and the GL
 	// (the reason leg and the 1200 leg both resolve through the GL).
@@ -270,7 +278,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// SWARM-W5-D: the conversational tier registers through its own entry
 	// point on a second Handler value, exactly as at the pin (this
 	// surface needs neither the hub nor the tickets).
-	messaging.NewHandler(messagingSvc, log).WithUserLinker(link).RegisterConversationRoutes(r, g)
+	messagingConversationHandler := messaging.NewHandler(messagingSvc, log).WithUserLinker(link).WithCustomerReach(newCustomerWall(pool))
+	if !messagingConversationHandler.CustomerReachWired() {
+		panic("messaging: customer reach not wired - the rep and inbound customer doors would serve any named account")
+	}
+	messagingConversationHandler.RegisterConversationRoutes(r, g)
 
 	// The approvals rail's messaging seams (0075): the notifier fans
 	// cards and decision echoes into the hub, best-effort, never failing
@@ -360,7 +372,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("shortages", shortageSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("weights", tasks.NewWeightSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
+	weightSync := tasks.NewWeightSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link).WithStaffAuthority(syncStaff).
+		WithBranchOrgReader(branchOrg)
+	// The weight create's order read and branch reach are the pick door's (UX-81c); a box without them refuses to boot.
+	if pool != nil && !weightSync.OrgScoped() {
+		panic("tasks: the weight sync create is not bound to the caller's org and branch reach - a caller could request a weight on another dealer's order")
+	}
+	if err := syncEngine.RegisterScope("weights", weightSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	// THE DRIVER FENCE (the HH Drive fence, the role logins lane): the
@@ -601,7 +619,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// the system of record; the post is visibility.
 	payment.AlertFunc = cardAttemptEscalations{svc: messagingSvc}.post
 
-	warranty.NewHandler(warrantySvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	warrantyHandler := warranty.NewHandler(warrantySvc, log).WithUserLinker(link).WithCustomerReach(newCustomerWall(pool))
+	if !warrantyHandler.CustomerReachWired() {
+		panic("warranty: customer reach not wired - a claim would file for any named account")
+	}
+	warrantyHandler.RegisterRoutes(r, g)
 	warrantyW5Handler := warranty.NewHandler(warrantySvc, log).WithUserLinker(link)
 	warrantyW5Handler.RegisterW5Routes(r, g)
 	warrantyW5Handler.RegisterPublicRoutes(r)
@@ -733,7 +755,12 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if pool != nil && (!tasksHandler.BranchOrgWired() || !yardHandler.BranchOrgWired()) {
 		panic("tasks: the yard REST fences are not bound to the caller's org - a GLOBAL caller could reach another dealer's branch")
 	}
-	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(r, g)
+	weightHandler := tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).WithBranchOrgReader(branchOrg)
+	// The weight request holds the same fences as the yard doors beside it (UX-81c).
+	if pool != nil && !weightHandler.BranchOrgWired() {
+		panic("tasks: the weight REST fence is not bound to the caller's org - a GLOBAL caller could reach another dealer's branch")
+	}
+	weightHandler.RegisterWeightRoutes(r, g)
 
 	// The rail's HTTP surface (the A3 ownership ruling): the staff
 	// approvals routes register through the Guards with the same linker,

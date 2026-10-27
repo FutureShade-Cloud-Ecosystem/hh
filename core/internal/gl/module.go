@@ -232,6 +232,7 @@ type Service struct {
 	standardRate    StandardRateReader   // the dealer's standard tax rate; nil is the Ontario 13 percent
 	taxWords        taxwords.Source      // the name of the dealer's tax in journal memos; nil is "HST"
 	approvalChecker ApprovalStateChecker // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
+	queue           OutboxQueue          // the outbox's waiting/dead read, the posting queue's rows (nil-able: unwired, the queue reads refuse)
 	log             *slog.Logger
 	now             func() time.Time
 	callerFrom      func(context.Context) (identity.StaffContext, bool)
@@ -510,6 +511,10 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/gl/periods/{id}/close", g.RequireManager(h.staff(h.closePeriod)))
 	r.Handle("POST /api/v1/gl/periods/{id}/reopen", g.RequireAdmin(h.staff(h.reopenPeriod)))
 	r.Handle("POST /api/v1/gl/periods/close-year", g.RequireAdmin(h.staff(h.closeYear)))
+	// The posting queue: the Controller's list of journals waiting or dead
+	// lettered, and the two counts the Money Desk's banner reads.
+	r.Handle("GET /api/v1/gl/posting-queue", g.RequireAdmin(h.staff(h.listPostingQueue)))
+	r.Handle("GET /api/v1/gl/posting-queue/count", g.RequireManager(h.staff(h.postingQueueCounts)))
 	// Policy + export
 	r.Handle("GET /api/v1/gl/policy", g.RequireManager(h.staff(h.policy)))
 	r.Handle("POST /api/v1/gl/export", g.RequireAdmin(h.staff(h.export)))

@@ -662,6 +662,54 @@ type PopulateConfig struct {
 	OrgSlug   string
 	OrgName   string
 	Directory PlatformDirectory
+	// OrgTables are the other modules' org stamps, run right after StampOrgScope (SF-2p2). The identity module never
+	// names their tables: each entry is its owning module's one line seam.
+	OrgTables []OrgStampEntry
+}
+
+// OrgStampEntry is one table's org stamp: its name for the report, and the owning module's seam that stamps every NULL
+// org_id from the row's branch location and adds the table's NOT NULL check, by the one SQL rule (org_stamp_and_check,
+// 0432's body parameterised). Stamp answers the rows it stamped, refuses in 0432's words when a row has no branch or sits
+// at a location with no org, and is idempotent. Unstamped, when set, counts the rows still carrying no org (the
+// verification pass). A later table (orders, tasks) is one more entry wired in the composition root, never a second hook.
+type OrgStampEntry struct {
+	Name      string
+	Stamp     func(ctx context.Context, db DBTX) (int64, error)
+	Unstamped func(ctx context.Context, db DBTX) (int64, error)
+}
+
+// StampOrgTables is the one named hook (SF-2p2): it runs each entry in order, after the locations carry their org, and
+// answers the rows each stamped by name. A refusal stops the run at that entry and names it; the caller's transaction
+// rolls the run back, so nothing is half written.
+func StampOrgTables(ctx context.Context, db DBTX, entries []OrgStampEntry) (map[string]int64, error) {
+	out := map[string]int64{}
+	for _, e := range entries {
+		if e.Stamp == nil {
+			return out, fmt.Errorf("identity: org stamp entry %q has no stamp", e.Name)
+		}
+		n, err := e.Stamp(ctx, db)
+		if err != nil {
+			return out, fmt.Errorf("identity: org stamp of %s: %w", e.Name, err)
+		}
+		out[e.Name] = n
+	}
+	return out, nil
+}
+
+// UnstampedOrgTables is the verification half: the rows each entry still holds with no org, by name (zero after a run).
+func UnstampedOrgTables(ctx context.Context, db DBTX, entries []OrgStampEntry) (map[string]int64, error) {
+	out := map[string]int64{}
+	for _, e := range entries {
+		if e.Unstamped == nil {
+			continue
+		}
+		n, err := e.Unstamped(ctx, db)
+		if err != nil {
+			return out, fmt.Errorf("identity: org verification of %s: %w", e.Name, err)
+		}
+		out[e.Name] = n
+	}
+	return out, nil
 }
 
 // PopulateReport is the program's outcome: every step's counts by class,
@@ -671,9 +719,11 @@ type PopulateReport struct {
 	OrgID       string
 	OrgInserted bool
 	Stamp       StampReport
-	Link        LinkReport
-	Grants      GrantReport
-	Drivers     DriverReport
+	// OrgTables is the rows each OrgTables entry stamped, by name (a separate field: StampReport stays comparable).
+	OrgTables map[string]int64
+	Link      LinkReport
+	Grants    GrantReport
+	Drivers   DriverReport
 }
 
 // Populate runs the plan in order: step 0's read-only gate first (a
@@ -700,6 +750,11 @@ func Populate(ctx context.Context, db DBTX, cfg PopulateConfig) (PopulateReport,
 	report.OrgID, report.OrgInserted = orgID, inserted
 	stamp, err := StampOrgScope(ctx, db, orgID)
 	report.Stamp = stamp
+	if err != nil {
+		return report, err
+	}
+	orgTables, err := StampOrgTables(ctx, db, cfg.OrgTables)
+	report.OrgTables = orgTables
 	if err != nil {
 		return report, err
 	}

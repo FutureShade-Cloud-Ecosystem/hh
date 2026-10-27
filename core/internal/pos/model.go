@@ -394,6 +394,7 @@ type customerRec struct {
 	PaymentTermsDays int
 	CreditLimitCents int64
 	OpenBalanceCents int64
+	HomeBranchID     string // "" when the account is homed to no branch (company wide)
 }
 
 // eligibilityMasked is the masked-only read of a purchaser_eligibility_profile (never the cleartext id).
