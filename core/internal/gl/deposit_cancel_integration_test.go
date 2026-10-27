@@ -69,7 +69,7 @@ func TestIntegration_DepositCancel_BothDispositionsClear2300AndBalance(t *testin
 	user := aUser(t, pool)
 	ensurePeriods(t, pool, depositCancelYear)
 	at := time.Date(depositCancelYear, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at).
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at).
 		WithInvoiceReader(seedInvoiceReader{pool: pool})
 	suffix := time.Now().UnixNano()
 

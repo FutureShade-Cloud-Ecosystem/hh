@@ -507,11 +507,14 @@ var allowlist = []allowlistEntry{
 	{
 		module: "notify",
 		file:   "core/internal/notify/requeue.go",
-		tables: []string{},
+		tables: []string{"events_outbox"},
 		writes: []string{"events_outbox"},
 		// the file's own header: the scaffold-owned dead-row replay seam on
-		// the outbox store; gl's DeadRequeuer satisfied by notify.
-		reason: "the outbox dead-row replay resets DEAD rows to PENDING for redelivery, stated in the file header",
+		// the outbox store; gl's DeadRequeuer satisfied by notify. FW1-09b
+		// adds a read beside the reset: the close pre flight counts the
+		// month's PENDING and DEAD rows through UnpostedForWindow on the
+		// same store, the outbox read staying in its keeper module.
+		reason: "the outbox dead-row replay resets DEAD rows to PENDING for redelivery, and the close pre flight counts the month's waiting or dead rows, both stated in the file header",
 	},
 	{
 		module: "notify",

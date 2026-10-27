@@ -489,6 +489,9 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 			"postExternal":        true,
 			"postExternalTx":      true,
 			"insertJournalIn":     true,
+			// The year end's dedicated store insert (FW1-09b round 5): CloseYear
+			// reaches the journal insert path through it in the merged tree.
+			"InsertClosingJournalTx": true,
 		}
 		glDispatcherMethods := map[string]bool{
 			"consume":                 true,

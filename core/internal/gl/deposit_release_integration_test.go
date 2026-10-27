@@ -71,7 +71,7 @@ func TestIntegration_DepositRelease_TheWholeLifeOfADeposit(t *testing.T) {
 	user := aUser(t, pool)
 	ensurePeriods(t, pool, depositReleaseYear)
 	at := time.Date(depositReleaseYear, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at).
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at).
 		WithInvoiceReader(seedInvoiceReader{pool: pool})
 
 	// The sale's own shape: a 4000 deposit (its own FINALIZED document, the

@@ -45,7 +45,12 @@ var fw1BranchCensusWriters = []string{
 }
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
-// item (the two bankrec paths left are FW1-05's).
+// item (the two bankrec paths left are FW1-05's). Main's map is the base:
+// 629 stamped every FW1-08b writer (the five entries this branch still listed
+// are gone on the merged tree), and year_end_close left the map with the
+// FW1-09b merge: the year end closes each branch's results in its own closing
+// journal, every leg under its branch stamp and the company level lines under
+// the head office branch, so it leaves no NULL branch_id line.
 var fw1BranchCensusRed = map[string]string{
 	"bankrec_manual_match_payment": "FW1-05",
 	"bankrec_unmatch_reversal":     "FW1-05",

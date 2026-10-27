@@ -998,3 +998,19 @@ func (r *Repository) RecordPaymentAttempt(ctx context.Context, in PaymentAttempt
 	}
 	return nil
 }
+
+// OpenSessionsBetween answers how many till sessions stand OPEN with opened_at
+// in [from, to): the GL close pre flight's "no open till drawer in that month"
+// check (FW1-09b). A nil pool answers zero (scaffold/offline mode).
+func (r *Repository) OpenSessionsBetween(ctx context.Context, from, to time.Time) (int, error) {
+	if r == nil || r.pool == nil {
+		return 0, nil
+	}
+	var n int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT count(*) FROM till_sessions WHERE status = 'OPEN' AND opened_at >= $1 AND opened_at < $2`,
+		from, to).Scan(&n); err != nil {
+		return 0, fmt.Errorf("till: open sessions between: %w", err)
+	}
+	return n, nil
+}

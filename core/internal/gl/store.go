@@ -9,6 +9,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -63,6 +65,26 @@ type glStore interface {
 	// at start on every box; the posting path covers the boundary itself; the Controller's early open
 	// is OpenNextFiscalYear below, at most one year beyond.
 	EnsureNextFiscalYear(ctx context.Context, now time.Time) (int, error)
+	// HouseYearEnded answers whether the year's last day has passed in the dealer's zone: the year end
+	// close is refused until it has (FW1-09b, the lead's Ask 2).
+	HouseYearEnded(ctx context.Context, year int, now time.Time) (bool, error)
+	// BeginTx opens the year end's one transaction (round 5, S3's P1); the fake ignores it.
+	BeginTx(ctx context.Context) (pgx.Tx, error)
+	// ClosingJournalsForYearTx is the once only check read under the year end's lock.
+	ClosingJournalsForYearTx(ctx context.Context, tx pgx.Tx, year int) ([]string, int64, error)
+	// InsertClosingJournalTx posts a closing journal inside the year end's transaction.
+	InsertClosingJournalTx(ctx context.Context, tx pgx.Tx, d journalDraft, year int) (string, error)
+	// ClosePeriodsForYearTx seals the year's periods inside the year end's transaction.
+	ClosePeriodsForYearTx(ctx context.Context, tx pgx.Tx, year int, actorID, reason string) error
+	// ClosingJournalsForYear answers a year's CLOSING journals (ids in entry order, the net income they
+	// carried to 3900): the year end's once only rule answers the first run with these (round 4).
+	ClosingJournalsForYear(ctx context.Context, year int) ([]string, int64, error)
+	// InsertClosingJournal is the year end's dedicated insert: the closing journal posts into the closed
+	// year's December whatever its status, resolved explicitly, never by the posting date (round 4).
+	InsertClosingJournal(ctx context.Context, d journalDraft, year int) (string, error)
+	// BusinessZone answers the dealer's business zone: the pre flight reads its instants in it, the same
+	// zone the posting path files months by (round 4, S3's P2).
+	BusinessZone(ctx context.Context) (houseday.Zone, error)
 	// OpenNextFiscalYear is the Controller's early open: at most one year beyond the roll forward's
 	// target, the record callback run INSIDE the year's transaction so the audit row commits or rolls
 	// back with the year it opens (round 2, S2 P2-4).
