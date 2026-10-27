@@ -409,6 +409,7 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 			}
 		case y > maxYear:
 			// A date beyond the next year refuses, deliberate.
+			return "", false, clientErr(422, "gl: no fiscal period for %04d-%02d: a date more than one year past the books' latest year is refused", y, m)
 		default:
 			// Round 2 (S2 P2-2): never create a PAST year. A document dated before the books' first
 			// period (or in a gap with no row) files late into the earliest open month at or after

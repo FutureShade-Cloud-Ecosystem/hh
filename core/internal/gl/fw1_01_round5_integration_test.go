@@ -64,7 +64,7 @@ func TestIntegration_FW1_01R5_FarFutureSystemJournalIsRefusedInWordsAndWritesNoR
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM gl_journals WHERE idempotency_key=$1`, key).Scan(&journals); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id=j.id AND j.idempotency_key=$1`, key).Scan(&lines); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM gl_journal_lines l JOIN gl_journals j ON l.journal_id = j.id WHERE j.idempotency_key=$1`, key).Scan(&lines); err != nil {
 		t.Fatal(err)
 	}
 	if journals != 0 || lines != 0 {
