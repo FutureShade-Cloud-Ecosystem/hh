@@ -132,7 +132,7 @@ const agingSelect = `
 	       SELECT i.total_cents
 	            + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
 		                 WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
-		                   AND t.txn_type <> 'INVOICE' AND t.created_at <= $5::timestamptz), 0)
+		                   AND t.txn_type <> i.doc_type AND t.created_at <= $5::timestamptz), 0)
 	            - COALESCE((SELECT SUM(CASE WHEN p.reverses_payment_id IS NULL THEN a.amount_cents ELSE -a.amount_cents END)
 		                 FROM payment_allocations a JOIN payments p ON p.id = a.payment_id
 		                 WHERE a.invoice_id = i.id AND a.created_at <= $5::timestamptz), 0)
