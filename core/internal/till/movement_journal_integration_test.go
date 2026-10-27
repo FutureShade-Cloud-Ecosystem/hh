@@ -231,19 +231,22 @@ func (w *mjWorld) legsWithMemo(idempotencyKey string) map[string]mjLeg {
 	return out
 }
 
-// mjPrivateDay names a day in the leg's OWN year: ten past the newest seeded fiscal year, the same
-// window the dated leg below opens. The bankrec suite's own legs complete the CURRENT month's
-// reconciliation while they run, and a match inside a completed month is refused, so a line dated today
-// would fail the match whenever that suite runs beside this one. A month no other leg completes is the
-// leg's own, and the date of a statement line never reaches the books: the clearing journal is dated by
-// the GL's own clock.
+// mjPrivateDay names a day in the leg's OWN year: one past the newest seeded fiscal year, a year the
+// GL's roll forward creates at the latest when a posting needs it. The bankrec suite's own legs
+// complete the CURRENT month's reconciliation while they run, and a match inside a completed month is
+// refused, so a line dated today would fail the match whenever that suite runs beside this one. A
+// month no other leg completes is the leg's own, and the day stays inside the books: the clearing
+// journal takes the statement line's date now that the document date rule landed (main, 616 and 624),
+// so a day beyond the roll forward's reach would hit the empty beyond next year arm and die on the
+// uncreated period (FROM-PRINCIPAL 224). The descriptions and the pid or nanotime references keep
+// every dedupe hash unique against seeded rows.
 func (w *mjWorld) privateDay() time.Time {
 	w.t.Helper()
 	var maxYear int
 	if err := w.pool.QueryRow(context.Background(), `SELECT COALESCE(max(year), 2026) FROM fiscal_periods`).Scan(&maxYear); err != nil {
 		w.t.Skipf("no fiscal periods to read: %v", err)
 	}
-	return time.Date(maxYear+10, time.July, 1, 0, 0, 0, 0, time.UTC)
+	return time.Date(maxYear+1, time.July, 1, 0, 0, 0, 0, time.UTC)
 }
 
 // statementLine seeds one unmatched bank statement line for a lodgement match, the same shape the
