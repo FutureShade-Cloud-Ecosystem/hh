@@ -77,11 +77,11 @@ func reservationEffectFor(target string) reservationEffect {
 	switch target {
 	case "CONFIRMED":
 		return effectReserve
-	case "FULFILLED", "INVOICED", "CLOSED":
+	case "FULFILLED", "CLOSED":
 		return effectConsume
 	case "CANCELLED":
 		return effectRelease
-	case "PARTIALLY_FULFILLED", "PICKING", "READY", "DRAFT":
+	case "PARTIALLY_FULFILLED", "PICKING", "READY", "DRAFT", "INVOICED":
 		return effectNoChange
 	default:
 		return effectNone

@@ -76,6 +76,10 @@ func (a w5aInvReserver) LockHardHoldBalancesTx(ctx context.Context, tx pgx.Tx, s
 	return a.svc.LockHardHoldBalancesTx(ctx, tx, sourceType, sourceRefID)
 }
 
+func (a w5aInvReserver) FulfilOrderLinesTx(ctx context.Context, tx pgx.Tx, orderID, branchID string, productIDs []string, qtys []float64) error {
+	return a.svc.FulfilOrderLinesTx(ctx, tx, orderID, branchID, productIDs, qtys)
+}
+
 // - fixtures -
 
 // w5aWidePool is intPool with an explicit, generous MaxConns. The default is max(4, NumCPU), which
@@ -166,6 +170,16 @@ func w5aSeedOrderWithPricedLine(t *testing.T, pool *pgxpool.Pool, status string,
 			         WHERE source_ref_id = $1 AND status = 'ACTIVE' AND hold_mode = 'HARD'
 			         GROUP BY product_id, location_id) h
 			 WHERE sb.product_id = h.product_id AND sb.location_id = h.location_id`, ord)
+		_, _ = pool.Exec(c, `
+			UPDATE stock_balances sb
+			   SET on_hand_base = sb.on_hand_base + m.shipped
+			  FROM (SELECT product_id, branch_id, SUM(qty_base) AS shipped
+			          FROM stock_moves
+			         WHERE source_ref_id = $1::uuid AND move_type = 'SHIP'
+			         GROUP BY product_id, branch_id) m
+			 WHERE sb.product_id = m.product_id AND sb.branch_id = m.branch_id`, ord)
+		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE topic = 'order.fulfilled' AND payload->>'order_id' = $1`, ord)
+		_, _ = pool.Exec(c, `DELETE FROM stock_moves WHERE source_ref_id = $1::uuid`, ord)
 		_, _ = pool.Exec(c, `DELETE FROM stock_reservations WHERE source_ref_id = $1`, ord)
 		_, _ = pool.Exec(c, `DELETE FROM change_orders WHERE order_id = $1`, ord)
 		_, _ = pool.Exec(c, `DELETE FROM shipment_groups WHERE order_id = $1`, ord)

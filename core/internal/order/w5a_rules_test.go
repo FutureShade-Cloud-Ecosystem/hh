@@ -28,7 +28,7 @@ func TestReservationEffectFor_EveryOrderStatusHasARuling(t *testing.T) {
 		"READY":               effectNoChange,
 		"PARTIALLY_FULFILLED": effectNoChange, // the remainder is still promised, see reservations.go
 		"FULFILLED":           effectConsume,
-		"INVOICED":            effectConsume,
+		"INVOICED":            effectNoChange,
 		"CLOSED":              effectConsume,
 		"CANCELLED":           effectRelease,
 	}

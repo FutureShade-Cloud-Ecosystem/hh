@@ -105,7 +105,13 @@ type StockReserver interface {
 }
 
 // WithStockReserver injects the reservation port (main.go wires the *inventory.Service adapter).
-func (s *Service) WithStockReserver(r StockReserver) *Service { s.stock = r; return s }
+func (s *Service) WithStockReserver(r StockReserver) *Service {
+	s.stock = r
+	if f, ok := r.(StockFulfiller); ok && s.stockFulfiller == nil {
+		s.stockFulfiller = f
+	}
+	return s
+}
 
 // StockFulfiller relieves on-hand stock and emits order.fulfilled when an order is fulfilled.
 // *inventory.Service satisfies this interface directly.
