@@ -192,6 +192,8 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 		RuleID:          prop.Rule.ID,
 		AmountCents:     prop.Line.AmountCents,
 		MatchedBy:       matchedBy,
+		// A lodgement whose covered payments could not be resolved says so on the answer (R2-P2-1).
+		PaymentsUnresolved: prop.PaymentsUnresolved,
 	}
 	// Where the match is written, a LODGEMENT target is fenced again (the candidates were cut already).
 	if prop.TargetType == TargetLodgement {
@@ -280,6 +282,8 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 		}
 		claim = facts.PaymentIDs
 		journalBranchID = facts.BranchID
+		// The lodgement's own answer-time fact rides the answer (R2-P2-1).
+		m.PaymentsUnresolved = facts.PaymentsUnresolved
 	case TargetJournal:
 		if jerr := s.checkJournalTarget(ctx, line, in); jerr != nil {
 			return Match{}, jerr
