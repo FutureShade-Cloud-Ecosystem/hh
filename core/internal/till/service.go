@@ -395,7 +395,8 @@ func (s *Service) RefundTender(ctx context.Context, tx pgx.Tx, in RefundInput) (
 		return RefundResult{}, err
 	}
 	// The drawer movement follows the payments row and ONLY on a first insert (a replay must not
-	// double-reduce expected cash).
+	// double-reduce expected cash). One clock rules the transaction (FW1-13b): the movement row
+	// dates from the service clock.
 	if in.Method == MethodCash && inserted {
 		if err := s.store.InsertMovementTx(ctx, tx, MovementRow{
 			TillSessionID: row.TillSessionID,
@@ -405,6 +406,7 @@ func (s *Service) RefundTender(ctx context.Context, tx pgx.Tx, in RefundInput) (
 			Reason:        "RETURN " + in.Reference,
 			Reference:     in.Reference,
 			CreatedBy:     caller.UserID,
+			CreatedAt:     s.now(),
 		}); err != nil {
 			return RefundResult{}, err
 		}
@@ -559,6 +561,10 @@ func (s *Service) recordMovement(ctx context.Context, in MovementInput, mt strin
 			return err
 		}
 	}
+	// One clock rules the transaction (FW1-13b, the 616 rule): the movement row, the slip's link
+	// rows and the journal the outbox carries all date from this instant, never from the created_at
+	// column default, so a pinned clock reaches the books.
+	at := s.now()
 	return s.store.InsertMovement(ctx, MovementRow{
 		TillSessionID: sess.ID,
 		MovementType:  mt,
@@ -567,6 +573,7 @@ func (s *Service) recordMovement(ctx context.Context, in MovementInput, mt strin
 		Reason:        in.Reason,
 		Reference:     in.Reference,
 		CreatedBy:     caller.UserID,
+		CreatedAt:     at,
 		PaymentIDs:    slip,
 	})
 }
@@ -971,6 +978,8 @@ func (s *Service) MarkNSF(ctx context.Context, in NSFInput) (NSFResult, error) {
 	if err != nil {
 		return NSFResult{}, err
 	}
+	// One clock rules the transaction (FW1-13b, the 616 rule): the payment_nsf row and the journal
+	// the payment.bounced payload carries date from this instant.
 	res, err := s.store.MarkNSF(ctx, nsfReverseInput{
 		PaymentID:      in.PaymentID,
 		Reason:         in.Reason,
@@ -979,6 +988,7 @@ func (s *Service) MarkNSF(ctx context.Context, in NSFInput) (NSFResult, error) {
 		FeeTaxable:     policy.FeeTaxable,
 		FeeAccountCode: policy.FeeAccountCode,
 		AutoHold:       policy.AutoHold,
+		At:             s.now(),
 	})
 	if err != nil {
 		return NSFResult{}, err

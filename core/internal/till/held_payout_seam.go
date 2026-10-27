@@ -88,6 +88,7 @@ func (s *Service) PayOutHeldMoney(ctx context.Context, tx pgx.Tx, in payments.Dr
 		Reason:        "HELD PAYOUT " + in.Reason,
 		Reference:     in.Reference,
 		CreatedBy:     caller.UserID,
+		CreatedAt:     s.now(),
 	}); err != nil {
 		return "", err
 	}

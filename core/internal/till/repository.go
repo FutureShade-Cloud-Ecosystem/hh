@@ -336,7 +336,7 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 	var movementID string
 	var movementAt time.Time
 	if err := tx.QueryRow(ctx, insertMovementSQL+` RETURNING id, created_at`,
-		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy)).Scan(&movementID, &movementAt); err != nil {
+		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy), m.CreatedAt).Scan(&movementID, &movementAt); err != nil {
 		return fmt.Errorf("till: insert movement: %w", err)
 	}
 	// The deposit slip's rows and the DEPOSITED marks ride THIS transaction (FROM-PRINCIPAL 120): the
@@ -348,8 +348,8 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 	if len(m.PaymentIDs) > 0 {
 		for _, pid := range m.PaymentIDs {
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO till_lodgement_payments (till_movement_id, payment_id) VALUES ($1::uuid, $2::uuid)`,
-				movementID, pid); err != nil {
+				`INSERT INTO till_lodgement_payments (till_movement_id, payment_id, created_at) VALUES ($1::uuid, $2::uuid, $3)`,
+				movementID, pid, m.CreatedAt); err != nil {
 				return fmt.Errorf("till: insert lodgement slip row: %w", err)
 			}
 		}
@@ -396,12 +396,14 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 	return tx.Commit(ctx)
 }
 
-// insertMovementSQL is the movement INSERT. The pool path (InsertMovement) appends RETURNING id for
-// the outbox payload's own key; the in-caller-tx path (InsertMovementTx, the POS return's drawer
-// movement) shares the statement without it and never emits: the return event's journal already
-// carries the drawer credit.
-const insertMovementSQL = `INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reference, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`
+// insertMovementSQL is the movement INSERT. created_at is written from the service clock the
+// caller passes on the row (one clock rules the transaction, FW1-13b), never the column default:
+// the outbox payload's occurred_at is this row's created_at, and both journal builders date from
+// it. The pool path (InsertMovement) appends RETURNING id for the outbox payload's own key; the
+// in-caller-tx path (InsertMovementTx, the POS return's drawer movement) shares the statement
+// without it and never emits: the return event's journal already carries the drawer credit.
+const insertMovementSQL = `INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reference, created_by, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 // PaymentsForSlip reads the named payments for a lodgement's deposit slip validation. The read is
 // fenced to the session and the method: a name that is not on this drawer as this method reads as
@@ -462,9 +464,8 @@ func (r *Repository) SlipCandidates(ctx context.Context, sessionID, method strin
 // InsertMovementTx is InsertMovement inside the CALLER'S tx (the POS return path, the PAID_OUT
 // cash-refund movement must commit or roll back with the return it belongs to).
 func (r *Repository) InsertMovementTx(ctx context.Context, tx pgx.Tx, m MovementRow) error {
-	_, err := tx.Exec(ctx, insertMovementSQL,
-		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy))
-	if err != nil {
+	if _, err := tx.Exec(ctx, insertMovementSQL,
+		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy), m.CreatedAt); err != nil {
 		return fmt.Errorf("till: insert movement: %w", err)
 	}
 	return nil
@@ -882,13 +883,14 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 
 	// NSF record, fee captured from policy AT bounce time (a later policy change never rewrites history).
 	// The record's created_at is the bounce's own instant, which rides the event so the GL books the
-	// reversal in the month the bounce happened (FW1-01b).
+	// reversal in the month the bounce happened (FW1-01b). Written from the service clock the caller
+	// passed (one clock rules the transaction, FW1-13b), never the column default.
 	var nsfID string
 	var nsfAt time.Time
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO payment_nsf (payment_id, customer_id, reason, fee_cents, fee_taxable, fee_account_code, recorded_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id::text, created_at`,
-		in.PaymentID, nullStr(res.CustomerID), in.Reason, in.FeeCents, in.FeeTaxable, nullStr(in.FeeAccountCode), nullStr(in.ActorID),
+		`INSERT INTO payment_nsf (payment_id, customer_id, reason, fee_cents, fee_taxable, fee_account_code, recorded_by, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id::text, created_at`,
+		in.PaymentID, nullStr(res.CustomerID), in.Reason, in.FeeCents, in.FeeTaxable, nullStr(in.FeeAccountCode), nullStr(in.ActorID), in.At,
 	).Scan(&nsfID, &nsfAt); err != nil {
 		return nsfReverseResult{}, fmt.Errorf("till: insert nsf: %w", err)
 	}
