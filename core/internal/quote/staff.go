@@ -125,6 +125,9 @@ type StaffService struct {
 	invoicer OrderInvoicer
 	payer    CounterPayer
 
+	// position is the dealer's account position policy gate (UX-97); nil fails closed for staff conversion refusals.
+	position PositionGate
+
 	// callerFrom resolves the trusted, server-stamped acting staff member. Defaults to the identity
 	// guard-stamped caller; tests override it via withCaller. Mirrors order.Service.callerFrom.
 	callerFrom func(context.Context) (identity.StaffContext, bool)
@@ -141,6 +144,16 @@ func NewStaffService(store staffStore) *StaffService {
 		callerFrom: identity.StaffContextFromContext,
 		nowFn:      time.Now,
 	}
+}
+
+// WithPositionGate binds the dealer's account position policy gate (UX-97). A nil gate fails closed.
+func (s *StaffService) WithPositionGate(g PositionGate) *StaffService { s.position = g; return s }
+
+func (s *StaffService) positionAllowed(ctx context.Context, branchID string) bool {
+	if s == nil || s.position == nil {
+		return false
+	}
+	return s.position.AccountPositionAllowed(ctx, branchID)
 }
 
 // WithAudit injects the audit recorder. When it also satisfies txRecorder (the real *audit.Service

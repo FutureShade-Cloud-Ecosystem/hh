@@ -32,7 +32,7 @@ func TestEvaluateAccount_TriggersAndTheirPrecedence(t *testing.T) {
 			name:     "AR past the bucket trips the aging hold",
 			row:      AgingRow{TermsDays: 30, CreditLimitCents: 500000, TotalCents: 100000, PastBucketCents: 25000},
 			wantKind: HoldARAging,
-			wantIn:   "60 days past due",
+			wantIn:   "past due",
 		},
 		{
 			name:     "open AR over the limit trips the limit hold",
@@ -72,6 +72,9 @@ func TestEvaluateAccount_TriggersAndTheirPrecedence(t *testing.T) {
 			if tc.wantKind != "" && tc.wantIn != "" && !strings.Contains(reason, tc.wantIn) {
 				t.Fatalf("reason %q must explain itself to a human, want it to mention %q", reason, tc.wantIn)
 			}
+			if tc.wantKind != "" && strings.ContainsAny(reason, "$0123456789") {
+				t.Fatalf("auto hold reason %q must state the reason in words with no amount, limit or bucket", reason)
+			}
 			if tc.wantKind == "" && reason != "" {
 				t.Fatalf("a clean account produced a reason: %q", reason)
 			}
@@ -109,6 +112,7 @@ type fakeCreditStore struct {
 	rows       []AgingRow
 	placed     []string
 	holdExists map[string]bool
+	holds      []CreditHold
 	released   string
 	overridden string
 }
@@ -123,7 +127,9 @@ func (f *fakeCreditStore) AgingRowsIn(context.Context, time.Time, int, string, B
 	return f.rows, nil
 }
 func (f *fakeCreditStore) ListHoldsIn(context.Context, string, BranchReach) ([]CreditHold, error) {
-	return nil, nil
+	out := make([]CreditHold, len(f.holds))
+	copy(out, f.holds)
+	return out, nil
 }
 func (f *fakeCreditStore) PlaceHold(_ context.Context, customerID, kind, _, _ string) (string, bool, error) {
 	if f.holdExists[customerID] {
@@ -359,5 +365,30 @@ func TestMoney_RendersCentsForHumans(t *testing.T) {
 		if got := Money(tc.cents); got != tc.want {
 			t.Fatalf("Money(%d) = %q, want %q", tc.cents, got, tc.want)
 		}
+	}
+}
+
+func TestListHolds_WithholdsFiguresAndBucketsInReasonForRefusedCaller(t *testing.T) {
+	store := &fakeCreditStore{
+		holds: []CreditHold{
+			{ID: "h-1", CustomerID: "c-1", Kind: HoldCreditLimit, AutoPlaced: true, Reason: "open AR $1500.00 exceeds the $1000.00 credit limit"},
+			{ID: "h-2", CustomerID: "c-2", Kind: HoldARAging, AutoPlaced: false, Reason: "INV-2019 is 91 days past due"},
+		},
+	}
+	svc := NewCreditService(store) // nil position reader fails closed
+	got, err := svc.ListHolds(context.Background(), "ACTIVE")
+	if err != nil {
+		t.Fatalf("ListHolds: %v", err)
+	}
+	for _, h := range got {
+		if strings.ContainsAny(h.Reason, "$0123456789") {
+			t.Fatalf("refused caller received hold reason with amount/limit/bucket: %+v", h)
+		}
+	}
+	if got[0].Reason != "open AR exceeds the credit limit" {
+		t.Fatalf("limit hold reason = %q, want words", got[0].Reason)
+	}
+	if got[1].Reason != "open AR is past due" {
+		t.Fatalf("aging hold reason = %q, want words", got[1].Reason)
 	}
 }

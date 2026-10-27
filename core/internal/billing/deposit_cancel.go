@@ -42,9 +42,26 @@ package billing
 // second count of the same close would break the 1100 tie out by the closed
 // amount. The paid part's credit back keeps its own row (source_type
 // 'deposit_cancel', inside the tie out's second arm, the credit the customer
-// is owed). Both rows stamp occurred_at clock_timestamp(), the 0009 ordering
-// rule: they share one transaction, and now() is transaction fixed, so two
-// rows would tie and the latest balance_after read would pick arbitrarily.
+// is owed).
+//
+// ONE CLOCK, AND NO TIE. The closed row stamps the SETTLEMENT'S OWN INSTANT: the
+// clock_timestamp() this settlement reads inside the cancel's own transaction,
+// the same instant the GL event carries as occurred_at (FW1-01b round 2b,
+// FROM-PRINCIPAL 121). The journal the ledger posts for the cancel and the
+// settlement's AR row are then ONE clock by construction, so the ledger's date
+// and the customer's statement are the same date and can never land in
+// different months. The credit back row stamps ITS OWN clock_timestamp(), a
+// moment LATER, so the two rows never tie: the 0009 ordering rule, now() is
+// transaction fixed and two rows written with it would tie, and the gate that
+// reads the customer's balance (ORDER BY occurred_at DESC LIMIT 1, no
+// tiebreaker) would then pick arbitrarily and could read the closed row's
+// balance and miss the credit back.
+//
+// ONE READ PER DOCUMENT, NOT ONE PER CANCEL. The same gate reads the LATEST
+// row, so the rows must land in write order. One instant for the whole cancel
+// would give every document's closed row the same stamp, and a credit back row
+// written before a later document's closed row would then sort ABOVE it, so
+// the gate could read a balance that is not the final one.
 //
 // NEVER ROUTED THROUGH THE RETURNS FLOW. The settlement rides the cancel's
 // own transaction when the caller hands one over (the order cancel runs it
@@ -58,6 +75,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -163,6 +181,14 @@ type depositCancelDoc struct {
 // the voided document. Without the lock the overwrite below swallowed a
 // payment that committed between the read and the write. The lock order is
 // unchanged: the caller's order row first, then this invoice row.
+//
+// The settlement's OWN INSTANT is read HERE, from the DATABASE's clock, inside
+// the cancel's transaction (FW1-01b round 2b, FROM-PRINCIPAL 121): the writer's
+// own Go clock is a DIFFERENT clock, and a cancel that straddles a month
+// boundary would put the ledger's journal in one month and the AR rows in
+// another, so the statement and the books would disagree about the same act.
+// Reading the database's clock here makes the journal's date and the
+// settlement's AR row one clock BY CONSTRUCTION.
 func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, orderID, invoiceID, disposition, reason string) error {
 	var d depositCancelDoc
 	err := tx.QueryRow(ctx, `
@@ -180,6 +206,12 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 	}
 
 	paid, closed := d.total-d.balance, d.balance
+
+	// The cancel's own instant, from the database's clock, in the cancel's own transaction.
+	var settleAt time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&settleAt); err != nil {
+		return fmt.Errorf("read the settlement's own instant: %w", err)
+	}
 
 	// The open balance clears for both dispositions (credit back: the credit
 	// exactly clears the open document; kept: the unpaid rest is closed so
@@ -224,12 +256,14 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 		}
 	}
 	if writeClosed {
+		// The closed row stamps the settlement's OWN instant, the one the GL event carries:
+		// the journal's date and this row are the same instant, read from the same clock.
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO customer_transactions
 				(customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
-			VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, clock_timestamp())`,
+			VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
 			d.customer, -closed, arAfter, d.id, d.branch,
-			"Supplier deposit "+d.no+" closed on the order's cancel"); err != nil {
+			"Supplier deposit "+d.no+" closed on the order's cancel", settleAt); err != nil {
 			return fmt.Errorf("write the closed part's ledger row: %w", err)
 		}
 	}
@@ -237,6 +271,11 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 		// The paid part (total less what was still owed) becomes the account's
 		// credit. source_type 'deposit_cancel' keeps the row out of the credit
 		// memo document family and inside the AR tie-out's second arm.
+		//
+		// This row stamps ITS OWN clock_timestamp(), a moment AFTER the closed row's
+		// instant: the two must never tie, because the gate that reads the customer's
+		// balance takes the LATEST row with no tiebreaker, and a tie would let it read
+		// the closed row's balance and miss the credit back this row carries.
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO customer_transactions
 				(customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
@@ -252,10 +291,15 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 
 	// sub item 3's booking: the GL event, one per settled document, on the
 	// same transaction, so the journal can never lag the settlement it
-	// belongs to.
+	// belongs to. The event carries the settlement's OWN instant (occurred_at),
+	// read from the database's clock inside this transaction, so the ledger dates the
+	// cancel by the cancel and never by the deposit's finalization, which is an
+	// earlier document (FW1-01b round 2, S3's P1), and the journal's date and the
+	// settlement's AR row are one clock by construction (FW1-01b round 2b,
+	// FROM-PRINCIPAL 121).
 	if err := emitOutbox(ctx, tx, DepositCancelledTopic, map[string]any{
 		"invoice_id": d.id, "order_id": orderID, "disposition": disposition,
-		"paid_cents": paid, "closed_cents": closed,
+		"paid_cents": paid, "closed_cents": closed, "occurred_at": settleAt,
 	}); err != nil {
 		return err
 	}

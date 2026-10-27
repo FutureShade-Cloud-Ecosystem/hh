@@ -43,6 +43,9 @@ type SearchResult struct {
 	PaymentTermsDays int    `json:"payment_terms_days"`
 	CreditLimitCents int64  `json:"credit_limit_cents"`
 	OpenBalanceCents int64  `json:"open_balance_cents"`
+	// Unhomed is true when c.home_branch_id IS NULL (a company-wide account), so SearchForWire
+	// resolves the dealer default ("") rather than the search's branch, matching AccountForWire.
+	Unhomed bool `json:"-"`
 }
 
 // Contact is a customer_contacts row. IsPrimary marks the contact the onboarding

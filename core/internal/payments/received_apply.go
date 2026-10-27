@@ -122,7 +122,7 @@ type ApplyAnswer struct {
 	Replayed       bool        `json:"replayed"`
 }
 
-// applyInvoiceRow is one locked invoice as the allocation walk reads it.
+// applyInvoiceRow is one locked invoice (or open NSF fee) as the allocation walk reads it.
 type applyInvoiceRow struct {
 	InvoiceID     string
 	InvoiceNo     string
@@ -133,6 +133,7 @@ type applyInvoiceRow struct {
 	DueDate       time.Time
 	BalanceCents  int64
 	HoldbackCents int64
+	IsNSFFee      bool
 }
 
 // ApplyReceived records ONE received payment against a list of the account's open invoices and
@@ -220,10 +221,20 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	// The allocations handed to the shipped settle are ordered by invoice id, ascending, so the
 	// settle's own lock pass (which locks in allocation order) takes the rows in the same sorted
 	// order this transaction already holds them in.
+	nsfByID := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		if r.IsNSFFee {
+			nsfByID[r.InvoiceID] = true
+		}
+	}
 	allocs := make([]Allocation, 0, len(lines))
 	for _, l := range lines {
 		if l.AppliedCents > 0 {
-			allocs = append(allocs, Allocation{InvoiceID: l.InvoiceID, AmountCents: l.AppliedCents})
+			allocs = append(allocs, Allocation{
+				InvoiceID:   l.InvoiceID,
+				AmountCents: l.AppliedCents,
+				IsNSFFee:    nsfByID[l.InvoiceID],
+			})
 		}
 	}
 	sort.Slice(allocs, func(i, j int) bool { return allocs[i].InvoiceID < allocs[j].InvoiceID })

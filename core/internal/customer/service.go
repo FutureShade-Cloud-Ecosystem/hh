@@ -50,9 +50,10 @@ const (
 // writer seam (M5 / A-5) adds the staff create/update-address write path with Canadian
 // postal/province validation; a nil writer keeps the module read-only (unchanged behavior).
 type Service struct {
-	store   accountStore
-	writer  customerWriter
-	country CountrySource
+	store    accountStore
+	writer   customerWriter
+	country  CountrySource
+	position PositionGate
 }
 
 // CountrySource answers the dealer's country, the ISO 3166-1 alpha-2 code the address rules follow

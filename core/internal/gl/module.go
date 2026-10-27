@@ -31,6 +31,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -97,6 +98,12 @@ type PaymentFacts struct {
 	Method      string
 	Status      string
 	AmountCents int64
+	// ReceivedAt is the payment's own receipt instant (payments.received_at): the receipt
+	// document's date. FW1-01b: the receipt journal takes this date, not the processing day,
+	// so a receipt taken on the last day of a month and consumed after midnight stays in the
+	// month it was taken. Zero means the seam did not resolve one, and the journal falls back
+	// to the clock.
+	ReceivedAt time.Time
 }
 
 // CostBasis returns the unit cost for a fulfilled line (order.fulfilled → COGS). Dormant at W5: NoopCostBasis
@@ -206,6 +213,11 @@ type ExternalJournal struct {
 	// statement line): the journal posts in that document's month when it is open, and into the
 	// earliest open month, dated by the document and late posted, when it is closed (ruling 82.2).
 	// Zero keeps the clock.
+	//
+	// A document date is a CALENDAR DAY in the dealer's own zone (houseday), the instant that day's
+	// house midnight begins, never midnight at Greenwich: the ledger files a journal by the month of
+	// the instant in the dealer's zone, so a Greenwich midnight (the previous evening in the house
+	// zone) would file a document dated the first of a month into the month before it.
 	DocumentDate time.Time
 }
 
@@ -226,6 +238,11 @@ type Repository struct {
 	// zone is the dealer's business day zone, read ON the posting transaction; nil = the Ontario
 	// dealer's. It decides which fiscal period a posting's instant belongs to.
 	zone ZoneTxSource
+	// hoMu and hoOverride hold an in-process head office branch override before the FW1-08b
+	// migration adds gl_policy.head_office_branch_id; once the column exists, gl_policy is the
+	// authoritative source.
+	hoMu       sync.RWMutex
+	hoOverride string
 }
 
 // ZoneTxSource is the dealer's business day zone read on a caller's open transaction. A journal is
@@ -482,6 +499,22 @@ func (s *Service) JournalKeysExist(ctx context.Context, keys []string) ([]string
 // FROZEN signature; A-01 fills the body (must go real early, bankrec's variance check depends on it).
 func (s *Service) GLBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
 	return s.glBalanceCents(ctx, accountCode, year, month, branchID)
+}
+
+// GLBalanceThroughCents returns an account's balance THROUGH a period (every period up to and
+// including year/month, cumulative), natural orientation. Additive provider read (FW1-11): the
+// inventory tie-out reads 1200's balance as of a period end, where the frozen GLBalanceCents keeps
+// answering one period's movement. The same view, so a late posted journal's filed period decides
+// where it lands (the FW1-01 rule, 612).
+func (s *Service) GLBalanceThroughCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	netDebit, normal, err := s.store.AccountBalanceThrough(ctx, accountCode, year, month, branchID)
+	if err != nil {
+		return 0, err
+	}
+	if normal == NormalCredit {
+		return -netDebit, nil
+	}
+	return netDebit, nil
 }
 
 // RegisterPostingHandlers wires the outbox consumer for all eight posted topics onto the dispatcher. Each

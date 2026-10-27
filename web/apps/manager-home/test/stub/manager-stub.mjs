@@ -1399,6 +1399,8 @@ const WIDGET_MEASURES = [
   { metric_id: "picks.queue", label: "Pick queue", module: "tasks", kind: "count", dimensions: ["status"], shapes: ["bar", "list"], splits: ["none", "status"], widget_shapes: ["board", "gauge", "bars"], ranges: ["open"], unit: "yard", screen: "yard", lead: "The pick queue by status" },
   { metric_id: "orders.open", label: "Open orders", module: "order", kind: "count", dimensions: [], shapes: [], splits: ["none"], widget_shapes: ["stat"], ranges: ["open"], unit: "", screen: "", lead: "Orders nothing has closed yet" },
   { metric_id: "sales.today", label: "Today's sales", module: "pos", kind: "money_cents", dimensions: ["branch"], shapes: ["bar"], splits: ["none", "branch"], widget_shapes: ["stat"], ranges: ["today"], unit: "", screen: "", lead: "Taken at the counter today" },
+  { metric_id: "ar.aging", label: "Receivables", module: "billing", kind: "money_cents", dimensions: ["bucket", "branch"], shapes: ["split"], splits: ["none", "bucket", "branch"], widget_shapes: ["stat", "bars"], ranges: ["open"], unit: "finance", screen: "ar", lead: "Outstanding receivables, by age or by branch" },
+  { metric_id: "margin.gross_bps", label: "Gross margin", module: "pos", kind: "basis_points", dimensions: ["branch"], shapes: ["bar", "list"], splits: ["none", "branch"], widget_shapes: ["stat"], ranges: ["all_time"], unit: "sales", screen: "pos", lead: "Gross margin on invoiced order lines" },
   { metric_id: "warranty.open_claims", label: "Open claims", module: "warranty", kind: "count", dimensions: ["status"], shapes: ["list"], splits: ["none", "status"], widget_shapes: ["stat"], ranges: ["open"], unit: "", screen: "", lead: "Claims waiting on the yard" },
 ];
 
@@ -1494,7 +1496,7 @@ function myHomeBody(profile) {
   };
 }
 
-function vizSeries(metricId) {
+function vizSeries(metricId, dimension) {
   if (metricId === "picks.queue") {
     return { total: 20, points: [
       { label: "Waiting", number: 8 },
@@ -1505,6 +1507,23 @@ function vizSeries(metricId) {
   }
   if (metricId === "deliveries.today") return { total: 14, points: [{ label: "Trenton", number: 10 }, { label: "Kingston", number: 4 }] };
   if (metricId === "sales.today") return { total: 123456, points: [{ label: "Trenton", number: 123456 }] };
+  if (metricId === "ar.aging") {
+    // The bucket arm by bucket; past due per branch by branch. The branch rows
+    // tie with the buckets' non-Current total: 1840000+900000+754000 = 3494000.
+    if (dimension === "branch") return { total: null, points: [{ label: "PLM", number: 3494000 }] };
+    return { total: 9624000, points: [
+      { label: "Current", number: 6130000 },
+      { label: "1-30", number: 1840000 },
+      { label: "31-60", number: 900000 },
+      { label: "60+", number: 754000 },
+    ] };
+  }
+  if (metricId === "margin.gross_bps") {
+    // FROM-PRINCIPAL 174: there is no none composition (ParseComposition
+    // refuses it, the metric composes branch only), and the branch tile's
+    // total IS the weighted all branches figure (the core's totalFor).
+    return { total: 3180, points: [{ label: "PLM", number: 3180 }] };
+  }
   if (metricId === "warranty.open_claims") return { total: 3, points: [{ label: "Open", number: 3 }] };
   if (metricId === "orders.open") return { total: 12, points: [] };
   return null;
@@ -1949,15 +1968,24 @@ async function handle(req, res) {
 
   if (req.method === "GET" && path === "/api/v1/dashboard/viz") {
     const tiles = url.searchParams.getAll("tile").slice(0, 24).map((id) => {
-      // The composed id grammar: viz.<measure>-<dimension>-<shape>.
+      // The composed id grammar: viz.<measure>-<dimension>-<shape>, cut from
+      // the right exactly the way the core's ParseComposition cuts it, so a
+      // dotted measure id ("ar.aging", "sales.today") survives.
       const rest = id.startsWith("viz.") ? id.slice(4) : id;
-      const parts = rest.split("-");
-      const shape = parts[parts.length - 1];
-      const dimension = parts.length > 2 ? parts[parts.length - 2] : "";
-      const metricId = parts.slice(0, Math.max(1, parts.length - 2)).join("-");
+      const shapeAt = rest.lastIndexOf("-");
+      const shape = shapeAt > 0 ? rest.slice(shapeAt + 1) : "";
+      const head = shapeAt > 0 ? rest.slice(0, shapeAt) : rest;
+      const dimAt = head.lastIndexOf("-");
+      const dimension = dimAt > 0 ? head.slice(dimAt + 1) : "";
+      const metricId = dimAt > 0 ? head.slice(0, dimAt) : head;
       const measure = WIDGET_MEASURES.find((m) => m.metric_id === metricId);
       if (measure === undefined) return null;
-      const series = vizSeries(metricId);
+      // The core's ParseComposition validates the dimension against the
+      // metric's own closed set (not its splits): a dimension the metric does
+      // not offer is refused, the tile byte absent. Mirror that, so no client
+      // can grow a faked tile against the stub either.
+      if (dimension !== "" && !measure.dimensions.includes(dimension)) return null;
+      const series = vizSeries(metricId, dimension);
       if (series === null) return null;
       return {
         tile_id: id,

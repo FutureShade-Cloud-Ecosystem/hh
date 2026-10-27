@@ -742,6 +742,7 @@ export class HosCustomerPicker extends LitElement {
         payment_terms_days?: number;
         credit_limit_cents?: number;
         balance_cents?: number;
+        available_credit_cents?: number;
       };
       // The new account is the answer to the picker's own question, select it, exactly the path
       // choosing an existing row takes (same event, same recents, same host wiring).
@@ -764,8 +765,9 @@ export class HosCustomerPicker extends LitElement {
         account_no: acctBody.account_no,
         customer_type: acctBody.customer_type,
         payment_terms_days: acctBody.payment_terms_days ?? 0,
-        credit_limit_cents: acctBody.credit_limit_cents ?? 0,
-        open_balance_cents: acctBody.balance_cents ?? 0,
+        credit_limit_cents: acctBody.credit_limit_cents,
+        open_balance_cents: acctBody.balance_cents,
+        available_credit_cents: acctBody.available_credit_cents,
       });
     } catch {
       this.createError = 'Could not reach the server, try again.';

@@ -593,7 +593,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// feed seq so a device's stale replay meets the decided row. The
 	// org fence derives off the request's NOT NULL branch (the
 	// adapter's header states the total-derivation argument).
-	if err := syncEngine.RegisterScope("approvals", identity.NewApprovalsSyncStore(pool, link)); err != nil {
+	// The approvals scope carries the JE withdrawal bridge (FW1-12a's core round): a withdrawn credit
+	// memo's park is voided on the withdrawal's own transaction, the same adapter the rail's decide
+	// path bridges through.
+	if err := syncEngine.RegisterScope("approvals", identity.NewApprovalsSyncStore(pool, link).
+		WithJEDecider(jeDeciderAdapter{svc: spine.glSvc, journals: gl.NewRepository(pool).WithZone(newDealerZone(pool)), memos: billing.NewInvoiceWriter(pool)})); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	syncStaffRoles, syncPortalRoles := syncFenceSeams(pool)
@@ -825,6 +829,12 @@ type glBalanceAdapter struct{ svc *gl.Service }
 
 func (a glBalanceAdapter) GLBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
 	return a.svc.GLBalanceCents(ctx, accountCode, year, month, branchID)
+}
+
+// GLBalanceThroughCents is the cumulative through-period read the inventory tie-out's GL side takes
+// (FW1-11), answered by the same gl provider.
+func (a glBalanceAdapter) GLBalanceThroughCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	return a.svc.GLBalanceThroughCents(ctx, accountCode, year, month, branchID)
 }
 
 // lienGLPoster satisfies lien.GLPoster over glSvc.PostExternal (the
@@ -1922,7 +1932,7 @@ func (a w4cGLPoster) PostJournal(ctx context.Context, in purchasing.GLJournal) (
 	}
 	return a.svc.PostExternal(ctx, gl.ExternalJournal{
 		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
-		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines, DocumentDate: in.DocumentDate,
 	})
 }
 
@@ -1934,7 +1944,7 @@ func (a w4cGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in purchasing
 	}
 	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{
 		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
-		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines, DocumentDate: in.DocumentDate,
 	})
 }
 

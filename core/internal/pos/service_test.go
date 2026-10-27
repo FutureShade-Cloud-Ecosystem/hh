@@ -1439,6 +1439,7 @@ func newHarness() *harness {
 		// or none calls WithRoleConfig after the harness.
 		roles: testRoleConfig(),
 	}
+	h.svc.WithPositionGate(&fakePosition{vis: "MANAGER_UP", svc: h.svc})
 	return h
 }
 
@@ -1488,8 +1489,8 @@ func TestSale_Cash_ComposesPaidInvoiced(t *testing.T) {
 	if len(h.store.allocations) != 1 {
 		t.Fatalf("want 1 allocation, got %d", len(h.store.allocations))
 	}
-	if len(h.store.custTxns) != 1 || h.store.custTxns[0].TxnType != "PAYMENT" {
-		t.Fatalf("want PAYMENT txn: %+v", h.store.custTxns)
+	if len(h.store.custTxns) != 2 || h.store.custTxns[0].TxnType != "INVOICE" || h.store.custTxns[1].TxnType != "PAYMENT" {
+		t.Fatalf("want INVOICE+PAYMENT txns: %+v", h.store.custTxns)
 	}
 	if out.PaymentID != "pay-1" {
 		t.Fatalf("payment id not surfaced: %q", out.PaymentID)

@@ -170,151 +170,21 @@ function renderTab(model: PricingModel): TemplateResult {
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
 }
 
+// FW1-14: this tab was a board of invented figures with no route behind it
+// and buttons that silently did nothing (AR-09). No core route reads or
+// writes the dealer's payment terms or deposit rules today, so the honest
+// face is the empty state: what belongs here, said in words, with no figure
+// and no control until a route exists to stand behind one.
 export function renderPaymentTermsAndDeposits(): TemplateResult {
   return html`
-    <section class="card" data-test="pricing-cod-card">
+    <section class="card" data-test="pricing-terms-empty">
       <div class="card-head">
-        <h2 class="card-title">Cash On Demand by customer class</h2>
+        <h2 class="card-title">Payment terms and deposits</h2>
       </div>
       <p class="card-sub">
-        Cash On Demand means the customer pays before the goods are released, for any fulfilment: the counter, will-call or delivery. The invoice number is issued while the invoice is unpaid.
+        This is where the dealer's payment terms and deposit rules will live: when an account pays before its goods are released, and what an order takes up front while it waits.
       </p>
-      <div class="tablewrap">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">CUSTOMER CLASS</th>
-              <th scope="col">CASH ON DEMAND</th>
-              <th scope="col">CREDIT</th>
-              <th scope="col">TURNS ON</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Walk-in, no account</strong></td>
-              <td><span class="badge-always">ALWAYS</span></td>
-              <td>No credit is ever offered</td>
-              <td>Pay in full, or a deposit when the order waits</td>
-            </tr>
-            <tr>
-              <td><strong>Homeowner</strong></td>
-              <td><span class="badge-always">ALWAYS</span></td>
-              <td>Paid by card or cash at the order</td>
-              <td>Deposit when the order waits</td>
-            </tr>
-            <tr>
-              <td><strong>Contractor</strong></td>
-              <td><span class="badge-not-default">NOT BY DEFAULT</span></td>
-              <td>Terms 30 days once approved</td>
-              <td>Only on an account that falls past due</td>
-            </tr>
-            <tr>
-              <td><strong>Builder</strong></td>
-              <td><span class="badge-not-default">NOT BY DEFAULT</span></td>
-              <td>Terms 30 days once approved</td>
-              <td>Only on an account that falls past due</td>
-            </tr>
-            <tr>
-              <td><strong>Landscaper</strong></td>
-              <td><span class="badge-not-default">NOT BY DEFAULT</span></td>
-              <td>Terms 30 days once approved</td>
-              <td>Only on an account that falls past due</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card" data-test="pricing-accounts-card">
-      <div class="card-head">
-        <h2 class="card-title">Accounts set by hand</h2>
-        <span class="count dim">3 accounts</span>
-      </div>
-      <div class="tablewrap">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">ACCOUNT</th>
-              <th scope="col">SETTING</th>
-              <th scope="col">WHY</th>
-              <th scope="col">ENDS</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Fieldstone Pools and Patios</strong></td>
-              <td><span class="badge-cod">CASH ON DEMAND</span></td>
-              <td>Over limit by $2,100.00, order held</td>
-              <td>Until the balance is under the limit</td>
-            </tr>
-            <tr>
-              <td><strong>Granite Edge Paving</strong></td>
-              <td><span class="badge-cod">CASH ON DEMAND</span></td>
-              <td>91 days late, $22,300.00 past due</td>
-              <td>Until the account is current</td>
-            </tr>
-            <tr>
-              <td><strong>Bluffside Builders</strong></td>
-              <td><span class="badge-cod">CASH ON DEMAND</span></td>
-              <td>On hold: promise missed, $14,820.00 past due</td>
-              <td>Until the controller releases it</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="card-actions">
-        <button type="button" class="btn btn-secondary" data-action="set-account">Set an account</button>
-      </div>
-    </section>
-
-    <section class="card" data-test="pricing-deposits-card">
-      <div class="card-head">
-        <h2 class="card-title">Deposits</h2>
-      </div>
-      <p class="card-sub">
-        A deposit is offered only when the order waits: will-call, a scheduled delivery or a special order. A sale rung and released now takes the full amount.
-      </p>
-      <div class="tablewrap">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">ORDER KIND</th>
-              <th scope="col">DEPOSIT %</th>
-              <th scope="col">DUE</th>
-              <th scope="col">BALANCE DUE</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Will-call at the branch</strong></td>
-              <td><strong>25%</strong></td>
-              <td>At the order</td>
-              <td>Before the order is released</td>
-            </tr>
-            <tr>
-              <td><strong>Scheduled delivery</strong></td>
-              <td><strong>25%</strong></td>
-              <td>At the order</td>
-              <td>Before the truck leaves</td>
-            </tr>
-            <tr>
-              <td><strong>Special order</strong></td>
-              <td><strong>50%</strong></td>
-              <td>At the order</td>
-              <td>Before the order is released</td>
-            </tr>
-            <tr>
-              <td><strong>Cash On Demand order that waits</strong></td>
-              <td><strong>25%</strong></td>
-              <td>At the order</td>
-              <td>Before the order is released</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="card-actions">
-        <button type="button" class="btn btn-primary" data-action="save-deposits">Save changes</button>
-      </div>
+      <p class="notice-line">Not connected yet. Nothing here can be read or saved from this tab.</p>
     </section>
   `;
 }

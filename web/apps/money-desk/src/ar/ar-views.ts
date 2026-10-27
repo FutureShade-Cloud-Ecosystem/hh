@@ -32,7 +32,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditTargetWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, offeredChips, relativeDay, rowMarks, type Mark, type RegisterChip, pastDueLine } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
@@ -47,6 +47,40 @@ export type RegisterFilter = "all" | "past_due" | "current" | "on_hold"
 export type RightMode = "receive" | "invoice" | "promise";
 export type PayMethod = "CHEQUE" | "EFT" | "CARD" | "CASH";
 export type WorkChoice = "replacement" | "promise" | "reminder";
+
+/**
+ * The credit memo form (FW1-12): which invoice the credit is against, or nothing for a credit on the
+ * account itself. The amount and the reason are read from the form's own fields when it is sent.
+ */
+export interface CreditForm {
+  readonly invoiceId: string | null;
+  /** What the manager has typed into the amount box, so the form can say what the credit will do. */
+  readonly amountText: string;
+  /** The branch's approval threshold in cents, or null when the desk could not read it. */
+  readonly thresholdCents: number | null;
+  /**
+   * What the core says this credit would come to, and how much room the invoice has left. The
+   * figures are the core's: the desk never works out a tax and never guesses a cap. Null until the
+   * core answers.
+   */
+  readonly quote: CreditQuote | null;
+  /** The core's own words when the amount does not fit the room; empty when there is nothing to say. */
+  readonly quoteError: string;
+}
+
+/**
+ * What the core says a credit against an invoice comes to, and how much room that invoice has left
+ * to credit. The room is the cap the core holds the amount to: what is left BEFORE tax, and the same
+ * room WITH tax. A paid invoice still has a room: what has been paid is not what has been credited.
+ */
+export interface CreditQuote {
+  /** What the invoice has left to credit, before tax. */
+  readonly remainingSubtotalCents: number;
+  /** What the invoice has left to credit, with tax. */
+  readonly remainingTotalCents: number;
+  /** The core's own words about the amount typed: what the credit comes to, tax included. */
+  readonly message: string;
+}
 
 export interface AccountModel {
   readonly customerId: string;
@@ -105,6 +139,8 @@ export interface DeskModel {
   readonly holdPanel: "about" | "lift" | "place-later";
   readonly liftChoice: "lift" | "override";
   readonly account: AccountModel | null;
+  /** The credit memo form, when it is open; null when it is not. */
+  readonly credit: CreditForm | null;
   readonly office: OfficeModel;
   readonly busy: boolean;
   readonly error: string;
@@ -234,13 +270,15 @@ function tiles(model: DeskModel): TemplateResult {
 // C8 register filter chips. "All" is every open document (excludes PAID), "Past due" is the overdue
 // subset, "Current" is the not-yet-past-due subset, "On hold" is the credit-hold subset. The chip
 // order is the order the screen reads them: All, then the three status slices an operator most
-// often wants to see one at a time.
-const FILTERS: readonly { id: RegisterFilter; word: string }[] = [
-  { id: "all", word: "All" },
-  { id: "past_due", word: "Past due" },
-  { id: "current", word: "Current" },
-  { id: "on_hold", word: "On hold" },
-];
+// often wants to see one at a time. WHICH chips are offered follows the rows the core sent
+// (offeredChips): a caller the account position policy refuses is offered the stored set, never
+// Current.
+const CHIP_WORDS: Record<RegisterChip, string> = {
+  all: "All",
+  past_due: "Past due",
+  current: "Current",
+  on_hold: "On hold",
+};
 
 // isOpenRow is the shared "is this row one we still have to collect on" predicate. Both "all" and
 // "past_due" rely on it: paid invoices never appear, regardless of how late they once were, and
@@ -254,7 +292,7 @@ function shownRows(model: DeskModel): BillingRegisterRow[] {
   let rows = model.rows.filter((r) => ids === null || ids.has(r.customer_id));
   switch (model.filter) {
     case "past_due":
-      rows = rows.filter((r) => isOpenRow(r) && r.days_overdue > 0);
+      rows = rows.filter((r) => isOpenRow(r) && (r.days_overdue ?? 0) > 0);
       break;
     case "current":
       rows = rows.filter((r) => isOpenRow(r) && r.days_overdue === 0);
@@ -267,7 +305,7 @@ function shownRows(model: DeskModel): BillingRegisterRow[] {
       break;
     // Legacy chips: keep every old behaviour so a stored URL still works.
     case "overdue":
-      rows = rows.filter((r) => isOpenRow(r) && r.days_overdue > 0);
+      rows = rows.filter((r) => isOpenRow(r) && (r.days_overdue ?? 0) > 0);
       break;
     case "promised":
       rows = rows.filter((r) => isOpenRow(r) && typeof r.promised_date === "string" && r.promised_date !== "");
@@ -279,28 +317,22 @@ function shownRows(model: DeskModel): BillingRegisterRow[] {
       rows = rows.filter((r) => r.status === "PAID");
       break;
   }
-  return rows.sort((a, b) => b.days_overdue - a.days_overdue || a.due_date.localeCompare(b.due_date));
+  return rows.sort((a, b) => (b.days_overdue ?? 0) - (a.days_overdue ?? 0) || a.due_date.localeCompare(b.due_date));
 }
 
-// pastDueSummary returns the "X of Y past due · $Z" line the register header renders when the
-// Past due chip is active. It is computed client-side from the currently loaded rows; a paginated
-// server reads the page from this same expression and the totals must agree. Returns null when the
-// chip is not the one currently active, so the summary does not bleed into other screens.
-function pastDueSummary(model: DeskModel): { pastDueCount: number; totalCount: number; pastDueCents: number } | null {
-  if (model.filter !== "past_due") return null;
-  const open = model.rows.filter(isOpenRow);
-  const pastDue = open.filter((r) => r.days_overdue > 0);
-  let cents = 0;
-  for (const r of pastDue) cents += r.balance_cents;
-  return { pastDueCount: pastDue.length, totalCount: open.length, pastDueCents: cents };
-}
+// pastDueLine is the "X of Y past due · $Z" line the register header renders when the
+// Past due chip is active, computed from the currently loaded rows; a paginated
+// server reads the page from this same expression and the totals must agree. It answers
+// "withheld" when the core sent no day counts (a caller the account position policy refuses),
+// so the header says so in words rather than summing nothing.
 
 export function shownInvoiceIds(model: DeskModel): string[] {
   return shownRows(model).map((r) => r.id);
 }
 
 function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResult {
-  const overdue = r.days_overdue > 0 && r.status !== "PAID";
+  const daysOverdue = r.days_overdue ?? 0;
+  const overdue = daysOverdue > 0 && r.status !== "PAID";
   const acct = model.aging.find((a) => a.customer_id === r.customer_id);
   const terms = acct === undefined ? "" : ` · Net ${acct.payment_terms_days}`;
   // bucket_label is the C8 5-bucket label the server stamped for this row. When it is present
@@ -336,23 +368,26 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
 
 function register(model: DeskModel): TemplateResult {
   const rows = shownRows(model);
-  // The C8 summary line reads "N of M past due · $X" when the Past due chip is active; null when
-  // a different chip is active so the header does not contradict the table below it.
-  const summary = pastDueSummary(model);
+  // The C8 summary line reads "N of M past due · $X" when the Past due chip is active; "off" when
+  // a different chip is active so the header does not contradict the table below it, and the
+  // withheld words when the server sent no day counts for this caller.
+  const summary = pastDueLine(model.filter, model.rows);
   return html`
     <section class="panel" aria-label="AR register">
       <div class="panel-head">
         <h3>AR register</h3>
         <div class="tools">
-          ${segmented("Register filter", FILTERS, model.filter, "filter")}
+          ${segmented("Register filter", offeredChips(model.rows).map((id) => ({ id, word: CHIP_WORDS[id] })), model.filter, "filter")}
           <button type="button" class="btn btn-secondary small-btn" data-action="download-csv">Download CSV</button>
         </div>
       </div>
-      ${summary === null
+      ${summary.kind === "off"
         ? nothing
-        : html`<p class="dim small c8-summary" data-testid="c8-summary">
-            ${summary.pastDueCount} of ${summary.totalCount} past due · ${formatMoney(summary.pastDueCents)}
-          </p>`}
+        : summary.kind === "withheld"
+          ? html`<p class="dim small c8-summary" data-testid="c8-summary" data-past-due-withheld="true">Past due is not shown for your role.</p>`
+          : html`<p class="dim small c8-summary" data-testid="c8-summary">
+              ${summary.pastDueCount} of ${summary.totalCount} past due · ${formatMoney(summary.pastDueCents)}
+            </p>`}
       ${rows.length === 0
         ? html`<div class="empty"><strong>No invoices in this view.</strong><span class="dim">Nothing matches the filter.</span></div>`
         : html`
@@ -718,11 +753,66 @@ export function renderHolds(model: DeskModel): TemplateResult {
 
 // ---- an account --------------------------------------------------------------------------------
 
+/**
+ * The credit memo form (FW1-12): how much to credit and why, then one press that raises it.
+ *
+ * It is the Reverse form's shape on purpose: an inline row of fields and the press, with nothing else
+ * to learn. The reason is asked for because the server asks for it: a credit with no stated reason
+ * cannot be explained to the customer, to the Controller, or to whoever reads the file in a year.
+ *
+ * It says what the credit is AGAINST, in words, and what it DOES: the one invoice it names and the
+ * cap that invoice has left, or the account and the balance it lowers. A credit against the account
+ * and a credit against one invoice are different credits, and the person pressing the button must be
+ * able to see which one they are about to give.
+ *
+ * It says what the approval rail will do too, before the press: a credit at or over the branch's
+ * threshold waits for a second pair of eyes and moves no money until it is approved. The threshold is
+ * the server's own number, read the way the route reads it, never a number typed into this file.
+ */
+function creditForm(model: DeskModel, account: AccountModel): TemplateResult {
+  const form = model.credit;
+  const invoice = form === null || form.invoiceId === null ? null : account.invoices.find((r) => r.id === form.invoiceId) ?? null;
+  const quote = form?.quote ?? null;
+  const target = creditTargetWords(invoice === null ? null : { invoice_no: invoice.invoice_no }, quote);
+  const approval = creditApprovalWords(form?.thresholdCents ?? null, form === null ? null : parseAmountToCents(form.amountText));
+  // The cap is the core's room: what the invoice has LEFT to credit, before tax. The balance with tax
+  // is a different number, and it was the wrong one on a paid invoice.
+  const cap = quote === null ? null : quote.remainingSubtotalCents;
+  return html`
+    <form class="credit-form" data-credit-form aria-label="Issue a credit">
+      <p class="callout" data-credit-target>${target}</p>
+      ${approval === "" ? nothing : html`<p class="note" data-credit-approval>${approval}</p>`}
+      <label>
+        <span data-credit-amount-label>Amount to credit${cap === null ? nothing : html` <span class="dim small">(up to ${formatMoney(cap)} before tax)</span>`}</span>
+        <input type="text" inputmode="decimal" data-field="credit-amount" placeholder="Such as 100.00" autocomplete="off" />
+      </label>
+      ${quote === null || form?.quoteError ? nothing : html`<p class="note" data-credit-amount-words>${quote.message}</p>`}
+      ${form?.quoteError ? html`<p class="note" data-credit-quote-error>${form.quoteError}</p>` : nothing}
+      <label>
+        <span data-credit-reason-label>Why the customer is credited (required)</span>
+        <input type="text" data-field="credit-reason" placeholder="Such as the goods came back" autocomplete="off" />
+      </label>
+      <div class="actions">
+        <button type="button" class="btn btn-danger" data-action="credit-confirm" ?disabled=${model.busy}>Issue the credit</button>
+        <button type="button" class="btn btn-secondary" data-action="credit-cancel">Cancel</button>
+      </div>
+    </form>
+  `;
+}
+
+/**
+ * The credit form in a card of its own: the credit on the ACCOUNT, which belongs to no single row,
+ * so it opens under the tabs in a panel rather than in the table.
+ */
+function creditPanel(model: DeskModel, account: AccountModel): TemplateResult {
+  return html`<section class="panel" aria-label="Issue a credit">${creditForm(model, account)}</section>`;
+}
+
 function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
   // Drafts and voids are not owed and not settled: they are never listed here, so never picked.
   const paid = account.invoices.filter((r) => r.stored_status === "PAID").sort((x, y) => y.due_date.localeCompare(x.due_date));
   const rows = account.invoices.filter((r) => (account.showAll ? isUnpaidInvoice(r) || r.stored_status === "PAID" : isUnpaidInvoice(r))).concat(account.showAll ? [] : paid.slice(0, 1));
-  rows.sort((x, y) => Number(x.status === "PAID") - Number(y.status === "PAID") || y.days_overdue - x.days_overdue || x.due_date.localeCompare(y.due_date));
+  rows.sort((x, y) => Number(x.status === "PAID") - Number(y.status === "PAID") || (y.days_overdue ?? 0) - (x.days_overdue ?? 0) || x.due_date.localeCompare(y.due_date));
   const split = account.preview === null ? new Map<string, number>() : new Map(account.preview.lines.map((l) => [l.invoice_id, l.applied_cents]));
   const firstId = rows.find((r) => r.status !== "PAID")?.id ?? "";
   if (account.invoicesState !== "ready") {
@@ -757,15 +847,18 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
               const applied = split.get(r.id);
               return html`
                 <tr data-invoice-row class="${paidRow ? "dimrow" : ""}" aria-current="${account.selectedInvoiceId === r.id ? "true" : "false"}">
-                  <td><button type="button" class="link-row" data-action="open-invoice" data-invoice-id="${r.id}"><span class="who">${r.invoice_no}</span></button><span class="dim small">${r.order_no ?? ""}</span></td>
+                  <td><button type="button" class="link-row" data-action="open-invoice" data-invoice-id="${r.id}"><span class="who">${r.invoice_no}</span></button><span class="dim small">${r.order_no ?? ""}</span><button type="button" class="link small" data-action="credit-start" data-invoice-id="${r.id}">Credit</button></td>
                   <td class="nowrap">${relativeDay(r.issue_date, model.asOf)}</td>
-                  <td class="nowrap ${r.days_overdue > 0 && !paidRow ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
+                  <td class="nowrap ${(r.days_overdue ?? 0) > 0 && !paidRow ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
                   <td><span class="marks">${rowMarks(r).map(markPill)}</span></td>
                   <td class="num">${formatMoney(r.total_cents)}</td>
                   <td class="num"><b>${formatMoney(r.balance_cents)}</b></td>
                   <td class="num">${paidRow ? nothing : html`<button type="button" class="pick" role="checkbox" aria-checked="${picked ? "true" : "false"}" aria-label="Pay ${r.invoice_no}" data-action="pick" data-invoice-id="${r.id}"></button>`}</td>
                   <td class="num applied-cell" data-applied-cell>${paidRow || applied === undefined ? "" : formatMoney(applied)}</td>
                 </tr>
+                ${model.credit !== null && model.credit.invoiceId === r.id
+                  ? html`<tr class="credit-form-row"><td colspan="8">${creditForm(model, account)}</td></tr>`
+                  : nothing}
               `;
             })}
           </tbody>
@@ -882,7 +975,7 @@ function invoicePanel(model: DeskModel, account: AccountModel): TemplateResult {
       <dl class="facts">
         <dt>Status</dt><dd><span class="marks">${rowMarks({ status: d.status, days_overdue: d.days_overdue, disputed: d.dispute !== undefined, promised_date: d.promise?.promised_date }).map(markPill)}</span></dd>
         <dt>Issued</dt><dd>${d.issue_date}</dd>
-        <dt>Due</dt><dd>${d.due_date}${d.days_overdue > 0 ? ` (${d.days_overdue} days over)` : ""}</dd>
+        <dt>Due</dt><dd>${d.due_date}${(d.days_overdue ?? 0) > 0 ? ` (${d.days_overdue} days over)` : ""}</dd>
         <dt>Total</dt><dd>${formatMoney(d.totals.total_cents)}</dd>
         <dt>Applied</dt><dd>${formatMoney(d.totals.applied_cents)}</dd>
         <dt>Balance</dt><dd data-invoice-balance>${formatMoney(d.totals.balance_cents)}</dd>
@@ -939,6 +1032,9 @@ function statementDoc(model: DeskModel, account: AccountModel): TemplateResult {
                   </tbody>
                 </table>
               </div>
+              ${s.closing_balance_cents == null || s.current_cents == null || s.days_30_cents == null || s.days_60_cents == null || s.days_90_plus_cents == null
+                ? html`<p class="dim" data-account-position-withheld="true">Account position: Not shown for your role</p>`
+                : html`
               <dl class="strip">
                 <div><dt>${STATEMENT_STRIP_LABELS[0]}</dt><dd>${formatMoney(s.current_cents)}</dd></div>
                 <div><dt>${STATEMENT_STRIP_LABELS[1]}</dt><dd>${formatMoney(s.days_30_cents)}</dd></div>
@@ -947,6 +1043,7 @@ function statementDoc(model: DeskModel, account: AccountModel): TemplateResult {
                 <div><dt>${STATEMENT_STRIP_LABELS[4]}</dt><dd data-closing><span class="visually-hidden">Closing balance </span>${formatMoney(s.closing_balance_cents)}</dd></div>
               </dl>
               ${s.days_90_plus_cents > 0 ? html`<p class="overdue-note"><b>${formatMoney(s.days_90_plus_cents)}</b> ${STATEMENT_OVERDUE_NOTE}</p>` : nothing}
+              `}
               <p class="dim small">Statement generated ${relativeDay(s.created_at, model.asOf)}. Please contact the branch with any discrepancy.</p>
             `}
     </section>
@@ -957,7 +1054,7 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
   const hold = model.holds.find((h) => h.status === "ACTIVE" && h.customer_id === account.customerId);
   const promised = account.invoices.some((r) => typeof r.promised_date === "string" && r.promised_date !== "");
   const disputes = account.invoices.filter((r) => r.disputed).length;
-  const overdueOnAccount = account.invoices.some((r) => r.days_overdue > 0 && isUnpaidInvoice(r));
+  const overdueOnAccount = account.invoices.some((r) => (r.days_overdue ?? 0) > 0 && isUnpaidInvoice(r));
   return html`
     <button type="button" class="link back" data-action="back">‹ Receivables</button>
     <div class="head">
@@ -972,6 +1069,7 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
         <button type="button" class="btn btn-secondary" data-action="remind-account" data-customer-id="${account.customerId}" ?disabled=${!overdueOnAccount}>Remind</button>
         ${overdueOnAccount || account.invoicesState !== "ready" ? nothing : html`<span id="remind-why" class="dim small">Nothing on this account is overdue.</span>`}
         <button type="button" class="btn btn-secondary" data-action="promise-panel">Record a promise</button>
+        <button type="button" class="btn btn-secondary" data-action="credit-start">Issue a credit</button>
         ${hold === undefined ? nothing : html`<button type="button" class="btn btn-secondary" data-action="ask-lift">Ask to lift the hold</button>`}
       </div>
     </div>
@@ -981,6 +1079,7 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
       <span class="tab tab-later" aria-disabled="true">Activity ${later()}</span>
       <button type="button" class="tab" data-action="sub" data-choice="contacts" aria-current="${account.sub === "contacts" ? "true" : "false"}">Contacts</button>
     </nav>
+    ${model.credit !== null && model.credit.invoiceId === null ? creditPanel(model, account) : nothing}
     ${messages(model)}
     ${account.sub === "statement"
       ? statementDoc(model, account)

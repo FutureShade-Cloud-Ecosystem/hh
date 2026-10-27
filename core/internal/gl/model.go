@@ -134,7 +134,7 @@ type TrialBalanceRow struct {
 }
 
 // PLBranchRow is one account's P&L net for a fiscal year under one branch stamp ("" = company level),
-// the year end close's per branch input (FW1-09b).
+// the year end's per branch input (FW1-08b's stamps; FW1-09b's per branch close).
 type PLBranchRow struct {
 	AccountCode   string
 	AccountName   string
@@ -163,6 +163,7 @@ type RecurringTemplate struct {
 	ID       string             `json:"id"`
 	Name     string             `json:"name"`
 	Memo     string             `json:"memo"`
+	BranchID string             `json:"-"`
 	Schedule string             `json:"schedule"`
 	NextRun  string             `json:"next_run,omitempty"`
 	IsActive bool               `json:"is_active"`

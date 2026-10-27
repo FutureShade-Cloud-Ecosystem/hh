@@ -3,7 +3,7 @@
 import { LitElement, css, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { money } from './pos-api.js';
-import { availableCreditCents } from './ports.js';
+import { serverAvailableCreditCents } from './ports.js';
 
 export interface PosCustomer {
   id: string;
@@ -11,8 +11,16 @@ export interface PosCustomer {
   account_no: string;
   customer_type: string;
   payment_terms_days: number;
-  credit_limit_cents: number;
-  open_balance_cents: number;
+  /**
+   * The account position (UX-97): the three figures travel together and are ABSENT, not zero, when
+   * the dealer's policy refuses this caller. The core computes the available figure; the browser
+   * never subtracts it.
+   */
+  /** The core's own statement that the account pays before release, present under every policy. */
+  cash_on_demand?: boolean;
+  credit_limit_cents?: number;
+  open_balance_cents?: number;
+  available_credit_cents?: number;
 }
 
 /**
@@ -75,23 +83,23 @@ export class HosPosCustomerStrip extends LitElement {
     if (!c) {
       return html`<div class="strip"><span class="walkin">Walk-In / Cash Customer: no account</span></div>`;
     }
-    // HH note: the reference subtracted the balance from the limit here; the core computes
-    // credit in HH, so the port asks the host seam (CLOSURE.md names it). The subtraction is
-    // the browser's own arithmetic on server-stated operands, so the label says the figure is
-    // derived: the contract serves no counter-side available-credit field (the tenant billing
-    // summary and the AR register rows do, and the counter never reads them).
-    const available = availableCreditCents(c);
+    // HH note: the reference subtracted the balance from the limit here. The core computes the
+    // available credit and sends it (UX-97); the strip shows the server's figure, or none when
+    // the dealer's account position policy withheld it from this caller.
+    const available = serverAvailableCreditCents(c);
     return html`
       <div class="strip">
         <span class="name">${c.name}</span>
         <span class="acct">${c.account_no}</span>
         <span class="pill">Terms <span class="num">${c.payment_terms_days}d</span></span>
-        <span class="pill">
-          Available (derived) <span class="num avail">${money(available)}</span>
-        </span>
-        ${c.open_balance_cents > 0
+        ${available === null
+          ? ''
+          : html`<span class="pill">
+              Available <span class="num avail">${money(available)}</span>
+            </span>`}
+        ${(c.open_balance_cents ?? 0) > 0
           ? html`<span class="pill">
-              Outstanding <span class="num out">${money(c.open_balance_cents)}</span>
+              Outstanding <span class="num out">${money(c.open_balance_cents ?? 0)}</span>
             </span>`
           : ''}
       </div>

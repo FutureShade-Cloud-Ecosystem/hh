@@ -435,15 +435,29 @@ func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
 	}
 	standing := sales.call("GET", "/api/v1/pos/account-standing?branch_id="+trentonBranchID+"&customer_id="+c04, nil)
 	standing.ok(t, http.StatusOK)
+	var gotClerk struct {
+		Standing     string `json:"standing"`
+		PastDueCents int64  `json:"past_due_cents"`
+		OnHold       bool   `json:"on_hold"`
+	}
+	if err := json.Unmarshal(standing.body, &gotClerk); err != nil {
+		t.Fatalf("decode the clerk standing: %v: %s", err, standing.body)
+	}
+	if gotClerk.Standing != "on_hold" || !gotClerk.OnHold || gotClerk.PastDueCents != 0 || strings.Contains(string(standing.body), "past_due_cents") {
+		t.Errorf("RED the Trenton clerk read %+v (%s) for an account held at Kingston, want on_hold with past_due_cents withheld", gotClerk, standing.body)
+	}
+
+	mgrStanding := salesManager.call("GET", "/api/v1/pos/account-standing?branch_id="+trentonBranchID+"&customer_id="+c04, nil)
+	mgrStanding.ok(t, http.StatusOK)
 	var got struct {
 		Standing     string `json:"standing"`
 		PastDueCents int64  `json:"past_due_cents"`
 		OnHold       bool   `json:"on_hold"`
 	}
-	if err := json.Unmarshal(standing.body, &got); err != nil {
-		t.Fatalf("decode the standing: %v: %s", err, standing.body)
+	if err := json.Unmarshal(mgrStanding.body, &got); err != nil {
+		t.Fatalf("decode the manager standing: %v: %s", err, mgrStanding.body)
 	}
 	if got.Standing != "on_hold" || !got.OnHold || got.PastDueCents != openCents {
-		t.Errorf("RED the Trenton till read %+v for an account held and owing %d only at Kingston, want on hold with the whole past due", got, openCents)
+		t.Errorf("RED the Trenton sales manager read %+v for an account held and owing %d only at Kingston, want on hold with the whole past due", got, openCents)
 	}
 }

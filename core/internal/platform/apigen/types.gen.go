@@ -348,7 +348,7 @@ type BillingRegisterRow struct {
 	HoldbackCents *int64                  `json:"holdback_cents,omitempty"`
 	StoredStatus  string                  `json:"stored_status"`
 	Status        string                  `json:"status"`
-	DaysOverdue   int32                   `json:"days_overdue"`
+	DaysOverdue   *int32                  `json:"days_overdue,omitempty"`
 	BucketLabel   *string                 `json:"bucket_label,omitempty"`
 	BucketKey     *string                 `json:"bucket_key,omitempty"`
 	AccountStatus string                  `json:"account_status"`
@@ -361,12 +361,12 @@ type BillingRegisterRow struct {
 }
 
 type BillingRegisterCounts struct {
-	Open     int32 `json:"open"`
-	DueSoon  int32 `json:"due_soon"`
-	Overdue  int32 `json:"overdue"`
-	Disputed int32 `json:"disputed"`
-	Paid     int32 `json:"paid"`
-	Credits  int32 `json:"credits"`
+	Open     int32  `json:"open"`
+	DueSoon  *int32 `json:"due_soon,omitempty"`
+	Overdue  *int32 `json:"overdue,omitempty"`
+	Disputed int32  `json:"disputed"`
+	Paid     int32  `json:"paid"`
+	Credits  int32  `json:"credits"`
 }
 
 type BillingRegisterPage struct {
@@ -543,7 +543,7 @@ type BillingInvoiceDetail struct {
 	DocType       string                 `json:"doc_type"`
 	StoredStatus  string                 `json:"stored_status"`
 	Status        string                 `json:"status"`
-	DaysOverdue   int32                  `json:"days_overdue"`
+	DaysOverdue   *int32                 `json:"days_overdue,omitempty"`
 	IssueDate     time.Time              `json:"issue_date"`
 	DueDate       time.Time              `json:"due_date"`
 	BranchId      string                 `json:"branch_id"`
@@ -622,6 +622,52 @@ type BillingReceiptResult struct {
 	BalanceCents int64  `json:"balance_cents"`
 	Status       string `json:"status"`
 	Replayed     bool   `json:"replayed"`
+}
+
+type BillingCreditMemoInput struct {
+	CustomerId     string  `json:"customer_id"`
+	BranchId       string  `json:"branch_id"`
+	InvoiceId      *string `json:"invoice_id,omitempty"`
+	AmountCents    int64   `json:"amount_cents"`
+	Reason         string  `json:"reason"`
+	GlAccount      *string `json:"gl_account,omitempty"`
+	IdempotencyKey *string `json:"idempotency_key,omitempty"`
+}
+
+type BillingCreditMemoQuoteInput struct {
+	CustomerId  string `json:"customer_id"`
+	BranchId    string `json:"branch_id"`
+	InvoiceId   string `json:"invoice_id"`
+	AmountCents *int64 `json:"amount_cents,omitempty"`
+}
+
+type BillingCreditMemoQuote struct {
+	InvoiceId              string `json:"invoice_id"`
+	RemainingSubtotalCents int64  `json:"remaining_subtotal_cents"`
+	RemainingTaxCents      int64  `json:"remaining_tax_cents"`
+	RemainingTotalCents    int64  `json:"remaining_total_cents"`
+	SubtotalCents          int64  `json:"subtotal_cents"`
+	TaxCents               int64  `json:"tax_cents"`
+	TotalCents             int64  `json:"total_cents"`
+	Message                string `json:"message"`
+}
+
+type BillingCreditMemoResult struct {
+	Status        string  `json:"status"`
+	CreditMemoId  string  `json:"credit_memo_id"`
+	CreditMemoNo  string  `json:"credit_memo_no"`
+	CustomerId    string  `json:"customer_id"`
+	BranchId      string  `json:"branch_id"`
+	InvoiceId     *string `json:"invoice_id,omitempty"`
+	SubtotalCents int64   `json:"subtotal_cents"`
+	TaxCents      int64   `json:"tax_cents"`
+	TotalCents    int64   `json:"total_cents"`
+	GlAccount     string  `json:"gl_account"`
+	Reason        string  `json:"reason"`
+	ApprovalId    *string `json:"approval_id,omitempty"`
+	GlJournalId   *string `json:"gl_journal_id,omitempty"`
+	Reused        *bool   `json:"reused,omitempty"`
+	Message       string  `json:"message"`
 }
 
 type BillingApplyPaymentInput struct {
@@ -815,11 +861,11 @@ type BillingStatement struct {
 	CustomerId          string    `json:"customer_id"`
 	CustomerName        *string   `json:"customer_name,omitempty"`
 	AsOfDate            time.Time `json:"as_of_date"`
-	CurrentCents        int64     `json:"current_cents"`
-	Days30Cents         int64     `json:"days_30_cents"`
-	Days60Cents         int64     `json:"days_60_cents"`
-	Days90PlusCents     int64     `json:"days_90_plus_cents"`
-	ClosingBalanceCents int64     `json:"closing_balance_cents"`
+	CurrentCents        *int64    `json:"current_cents,omitempty"`
+	Days30Cents         *int64    `json:"days_30_cents,omitempty"`
+	Days60Cents         *int64    `json:"days_60_cents,omitempty"`
+	Days90PlusCents     *int64    `json:"days_90_plus_cents,omitempty"`
+	ClosingBalanceCents *int64    `json:"closing_balance_cents,omitempty"`
 	Html                *string   `json:"html,omitempty"`
 	DeliveryStatus      string    `json:"delivery_status"`
 	CreatedAt           time.Time `json:"created_at"`
@@ -1116,22 +1162,23 @@ type PaymentCardAttemptResolve struct {
 }
 
 type BillingCustomerWorkspaceHeader struct {
-	CustomerId            string                        `json:"customer_id"`
-	Name                  string                        `json:"name"`
-	AccountNo             string                        `json:"account_no"`
-	Status                string                        `json:"status"`
-	TermsDays             int                           `json:"terms_days"`
-	CreditLimitCents      int64                         `json:"credit_limit_cents"`
-	OpenCents             int64                         `json:"open_cents"`
-	AvailableCreditCents  int64                         `json:"available_credit_cents"`
-	OverdueCents          int64                         `json:"overdue_cents"`
-	UtilizationBps        int                           `json:"utilization_bps"`
-	PrimaryApContactName  *string                       `json:"primary_ap_contact_name,omitempty"`
-	PrimaryApContactEmail *string                       `json:"primary_ap_contact_email,omitempty"`
-	PrimaryApContactPhone *string                       `json:"primary_ap_contact_phone,omitempty"`
-	LastPaymentAt         *time.Time                    `json:"last_payment_at,omitempty"`
-	LastPaymentCents      *int64                        `json:"last_payment_cents,omitempty"`
-	Aging                 BillingCustomerWorkspaceAging `json:"aging"`
+	CustomerId              string     `json:"customer_id"`
+	Name                    string     `json:"name"`
+	AccountNo               string     `json:"account_no"`
+	AccountPositionWithheld bool       `json:"account_position_withheld"`
+	Status                  string     `json:"status"`
+	TermsDays               int        `json:"terms_days"`
+	CreditLimitCents        *int64     `json:"credit_limit_cents,omitempty"`
+	OpenCents               *int64     `json:"open_cents,omitempty"`
+	AvailableCreditCents    *int64     `json:"available_credit_cents,omitempty"`
+	OverdueCents            *int64     `json:"overdue_cents,omitempty"`
+	UtilizationBps          *int       `json:"utilization_bps,omitempty"`
+	PrimaryApContactName    *string    `json:"primary_ap_contact_name,omitempty"`
+	PrimaryApContactEmail   *string    `json:"primary_ap_contact_email,omitempty"`
+	PrimaryApContactPhone   *string    `json:"primary_ap_contact_phone,omitempty"`
+	LastPaymentAt           *time.Time `json:"last_payment_at,omitempty"`
+	LastPaymentCents        *int64     `json:"last_payment_cents,omitempty"`
+	Aging                   *struct{}  `json:"aging,omitempty"`
 }
 
 type BillingCustomerWorkspaceAging struct {
@@ -1145,18 +1192,18 @@ type BillingCustomerWorkspaceAging struct {
 }
 
 type BillingCustomerWorkspaceInvoice struct {
-	Id                string `json:"id"`
-	InvoiceNo         string `json:"invoice_no"`
-	DocType           string `json:"doc_type"`
-	Status            string `json:"status"`
-	IssueDate         string `json:"issue_date"`
-	DueDate           string `json:"due_date"`
-	TotalCents        int64  `json:"total_cents"`
-	BalanceCents      int64  `json:"balance_cents"`
-	DaysOverdue       int    `json:"days_overdue"`
-	DaysOverdueBucket string `json:"days_overdue_bucket"`
-	IsDisputed        bool   `json:"is_disputed"`
-	HasOpenPromise    bool   `json:"has_open_promise"`
+	Id                string  `json:"id"`
+	InvoiceNo         string  `json:"invoice_no"`
+	DocType           string  `json:"doc_type"`
+	Status            string  `json:"status"`
+	IssueDate         string  `json:"issue_date"`
+	DueDate           string  `json:"due_date"`
+	TotalCents        int64   `json:"total_cents"`
+	BalanceCents      int64   `json:"balance_cents"`
+	DaysOverdue       *int    `json:"days_overdue,omitempty"`
+	DaysOverdueBucket *string `json:"days_overdue_bucket,omitempty"`
+	IsDisputed        bool    `json:"is_disputed"`
+	HasOpenPromise    bool    `json:"has_open_promise"`
 }
 
 type BillingCustomerWorkspacePayment struct {
@@ -1183,7 +1230,7 @@ type BillingCustomerWorkspaceStatement struct {
 	RunId               string    `json:"run_id"`
 	Mode                string    `json:"mode"`
 	AsOfDate            string    `json:"as_of_date"`
-	ClosingBalanceCents int64     `json:"closing_balance_cents"`
+	ClosingBalanceCents *int64    `json:"closing_balance_cents,omitempty"`
 	DeliveryStatus      string    `json:"delivery_status"`
 	CreatedAt           time.Time `json:"created_at"`
 }
@@ -1254,17 +1301,17 @@ type BillingSendPaylinkResult struct {
 type BillingStatementPreview struct {
 	Statement  BillingStatement              `json:"statement"`
 	OpenLines  []BillingStatementPreviewLine `json:"open_lines"`
-	Aging      BillingStatementPreviewAging  `json:"aging"`
+	Aging      *BillingStatementPreviewAging `json:"aging,omitempty"`
 	Reconciled bool                          `json:"reconciled"`
 }
 
 type BillingStatementPreviewLine struct {
-	InvoiceId    string `json:"invoice_id"`
-	InvoiceNo    string `json:"invoice_no"`
-	DueDate      string `json:"due_date"`
-	BalanceCents int64  `json:"balance_cents"`
-	DaysOverdue  int32  `json:"days_overdue"`
-	BucketLabel  string `json:"bucket_label"`
+	InvoiceId    string  `json:"invoice_id"`
+	InvoiceNo    string  `json:"invoice_no"`
+	DueDate      string  `json:"due_date"`
+	BalanceCents int64   `json:"balance_cents"`
+	DaysOverdue  *int32  `json:"days_overdue,omitempty"`
+	BucketLabel  *string `json:"bucket_label,omitempty"`
 }
 
 type BillingStatementPreviewAging struct {
@@ -1727,27 +1774,31 @@ type TourRestartedResult struct {
 }
 
 type CustomerSearchResult struct {
-	Id               string `json:"id"`
-	Name             string `json:"name"`
-	AccountNo        string `json:"account_no"`
-	CustomerType     string `json:"customer_type"`
-	PaymentTermsDays int32  `json:"payment_terms_days"`
-	CreditLimitCents int64  `json:"credit_limit_cents"`
-	OpenBalanceCents int64  `json:"open_balance_cents"`
+	Id                   string `json:"id"`
+	Name                 string `json:"name"`
+	AccountNo            string `json:"account_no"`
+	CustomerType         string `json:"customer_type"`
+	PaymentTermsDays     int32  `json:"payment_terms_days"`
+	CashOnDemand         bool   `json:"cash_on_demand"`
+	CreditLimitCents     *int64 `json:"credit_limit_cents,omitempty"`
+	OpenBalanceCents     *int64 `json:"open_balance_cents,omitempty"`
+	AvailableCreditCents *int64 `json:"available_credit_cents,omitempty"`
 }
 
 type CustomerAccount struct {
-	CustomerId       string `json:"customer_id"`
-	AccountNo        string `json:"account_no"`
-	Name             string `json:"name"`
-	CustomerType     string `json:"customer_type"`
-	BranchId         string `json:"branch_id"`
-	PaymentTermsDays int32  `json:"payment_terms_days"`
-	CreditLimitCents int64  `json:"credit_limit_cents"`
-	OnHold           bool   `json:"on_hold"`
-	TaxExempt        bool   `json:"tax_exempt"`
-	BalanceCents     int64  `json:"balance_cents"`
-	IsActive         bool   `json:"is_active"`
+	CustomerId           string `json:"customer_id"`
+	AccountNo            string `json:"account_no"`
+	Name                 string `json:"name"`
+	CustomerType         string `json:"customer_type"`
+	BranchId             string `json:"branch_id"`
+	PaymentTermsDays     int32  `json:"payment_terms_days"`
+	CashOnDemand         bool   `json:"cash_on_demand"`
+	CreditLimitCents     *int64 `json:"credit_limit_cents,omitempty"`
+	OnHold               bool   `json:"on_hold"`
+	TaxExempt            bool   `json:"tax_exempt"`
+	BalanceCents         *int64 `json:"balance_cents,omitempty"`
+	AvailableCreditCents *int64 `json:"available_credit_cents,omitempty"`
+	IsActive             bool   `json:"is_active"`
 }
 
 type CustomerCreate struct {
@@ -3630,15 +3681,19 @@ type TaxRecomputeResult struct {
 }
 
 type TaxReconReport struct {
-	Year           int32   `json:"year"`
-	Month          int32   `json:"month"`
-	BranchId       *string `json:"branch_id,omitempty"`
-	CollectedCents int64   `json:"collected_cents"`
-	GlPayableCents int64   `json:"gl_payable_cents"`
-	GlFederalCents int64   `json:"gl_federal_cents"`
-	GlOntarioCents int64   `json:"gl_ontario_cents"`
-	VarianceCents  int64   `json:"variance_cents"`
-	TiedOut        bool    `json:"tied_out"`
+	Year                   int32   `json:"year"`
+	Month                  int32   `json:"month"`
+	BranchId               *string `json:"branch_id,omitempty"`
+	CollectedCents         int64   `json:"collected_cents"`
+	ReturnTaxCents         int64   `json:"return_tax_cents"`
+	InputTaxCents          int64   `json:"input_tax_cents"`
+	OpeningBalanceCount    int32   `json:"opening_balance_count"`
+	OpeningBalanceHstCents int64   `json:"opening_balance_hst_cents"`
+	GlPayableCents         int64   `json:"gl_payable_cents"`
+	GlFederalCents         int64   `json:"gl_federal_cents"`
+	GlOntarioCents         int64   `json:"gl_ontario_cents"`
+	VarianceCents          int64   `json:"variance_cents"`
+	TiedOut                bool    `json:"tied_out"`
 }
 
 type InventoryStockMove struct {

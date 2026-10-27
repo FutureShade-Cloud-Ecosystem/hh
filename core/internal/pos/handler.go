@@ -738,11 +738,14 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		// Item 9.2, the on account shape refusal: the problem body style
 		// split_total_mismatch uses, a stable word the till switches on, the
 		// money as integer cents fields, and a message in dollars.
-		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "on_account_not_available", map[string]any{
-			"amount_cents":       asn.AmountCents,
-			"credit_limit_cents": asn.CreditLimitCents,
-			"message":            accountShapeMessage(asn),
-		})
+		fields := map[string]any{
+			"amount_cents": asn.AmountCents,
+			"message":      accountShapeMessage(asn),
+		}
+		if !asn.PositionWithheld {
+			fields["credit_limit_cents"] = asn.CreditLimitCents
+		}
+		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "on_account_not_available", fields)
 	case errors.As(err, &dcn):
 		// Item 9.2, the deposit on a collect now sale, same problem body style.
 		httpx.ErrorWith(w, http.StatusUnprocessableEntity, "deposit_not_collect_now", map[string]any{

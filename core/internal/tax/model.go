@@ -265,15 +265,27 @@ type RecomputeResult struct {
 
 // ReconReport ties the collected HST (the tax-decision side) to the GL liability accounts for a period.
 type ReconReport struct {
-	Year           int    `json:"year"`
-	Month          int    `json:"month"`
-	BranchID       string `json:"branch_id,omitempty"`
-	CollectedCents int64  `json:"collected_cents"`  // Σ net_collected from tax decisions
-	GLPayableCents int64  `json:"gl_payable_cents"` // 2200 balance
-	GLFederalCents int64  `json:"gl_federal_cents"` // 2201 balance
-	GLOntarioCents int64  `json:"gl_ontario_cents"` // 2202 balance
-	VarianceCents  int64  `json:"variance_cents"`   // GL 2200 − collected (0 = tied out)
-	TiedOut        bool   `json:"tied_out"`
+	Year     int    `json:"year"`
+	Month    int    `json:"month"`
+	BranchID string `json:"branch_id,omitempty"`
+	// CollectedCents is the sales HST on the period's documents (invoices less credit memos), the
+	// figure the return's line 101 asks for. ReturnTaxCents is the tax refunded on the period's
+	// committed POS returns, shown as its own line (returns). InputTaxCreditsCents is the tax on the
+	// period's posted vendor bills, shown apart (the return's line 108). The three are netted for the
+	// tie against the GL 2200 movement.
+	CollectedCents       int64 `json:"collected_cents"`
+	ReturnTaxCents       int64 `json:"return_tax_cents"`
+	InputTaxCreditsCents int64 `json:"input_tax_cents"`
+	// OpeningBalanceCount and OpeningBalanceHSTCents list the period's documents carrying the
+	// opening balance marker (FROM-PRINCIPAL 177): excluded from CollectedCents, never inferred
+	// from a missing journal, and named here so nothing leaves the report silently.
+	OpeningBalanceCount    int   `json:"opening_balance_count"`
+	OpeningBalanceHSTCents int64 `json:"opening_balance_hst_cents"`
+	GLPayableCents         int64 `json:"gl_payable_cents"` // 2200's movement for the period
+	GLFederalCents         int64 `json:"gl_federal_cents"` // 2201 balance
+	GLOntarioCents         int64 `json:"gl_ontario_cents"` // 2202 balance
+	VarianceCents          int64 `json:"variance_cents"`   // GL 2200 movement − (collected − returns − input tax)
+	TiedOut                bool  `json:"tied_out"`
 }
 
 // -- evidence-relief eligibility (the tcrd_expiry gate) -----------------------------------------------------
@@ -310,8 +322,29 @@ type taxStore interface {
 	ListW4Snapshots(ctx context.Context, fromDate, toDate string) ([]Snapshot, error)
 	SnapshotExists(ctx context.Context, orderID, orderLineID, ruleVersion string) (bool, error)
 	InsertSnapshot(ctx context.Context, s Snapshot) (string, error)
+}
 
-	CollectedHSTCents(ctx context.Context, year, month int) (int64, error)
+// SalesHSTReader reads the tax on the period's sales documents (the collected side of the tie-out),
+// split by the opening balance marker: salesCents counts only this period's documents, and the
+// marked opening balances come back named (count and HST) so the report can list them. Satisfied by
+// *billing.Repository through a main.go wiring; tax never reads the invoices table directly, the
+// same rule its GL balance read follows (never the views directly).
+type SalesHSTReader interface {
+	DocumentSalesHSTCents(ctx context.Context, year, month int, branchID string) (salesCents int64, openingCount int, openingCents int64, err error)
+}
+
+// BillITCReader reads the input tax credits on the period's posted vendor bills (the 2200 debits side
+// of the tie-out). Satisfied by *purchasing.Repository through a main.go wiring; tax never reads the
+// purchasing tables directly.
+type BillITCReader interface {
+	VendorBillITCCents(ctx context.Context, year, month int, branchID string) (int64, error)
+}
+
+// ReturnHSTReader reads the tax refunded on the period's committed POS returns (the returns line of
+// the tie-out). Satisfied by *pos.Repository through a main.go wiring; tax never reads the POS tables
+// directly.
+type ReturnHSTReader interface {
+	ReturnHSTCents(ctx context.Context, year, month int, branchID string) (int64, error)
 }
 
 // -- pure helpers --------------------------------------------------------------
