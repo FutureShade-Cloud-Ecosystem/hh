@@ -375,6 +375,10 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 		if merr != nil {
 			return "", false, merr
 		}
+		var minYear int
+		if merr := tx.QueryRow(ctx, `SELECT COALESCE(MIN(year), 0) FROM fiscal_periods`).Scan(&minYear); merr != nil {
+			return "", false, fmt.Errorf("gl: read earliest fiscal year: %w", merr)
+		}
 		switch {
 		case y == maxYear+1:
 			// Round 1: the next year is created at the latest when a posting needs it. Round 2 (S2
@@ -386,18 +390,20 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 			if errors.Is(err, pgx.ErrNoRows) {
 				return "", false, clientErr(422, "gl: no fiscal period for %04d-%02d", y, m)
 			}
-		case y > maxYear:
-			// A date beyond the next year refuses, deliberate.
-		default:
+		case minYear > 0 && y < minYear && d.Source != SourceManual:
 			// Round 2 (S2 P2-2): never create a PAST year. A document dated before the books' first
-			// period (or in a gap with no row) files late into the earliest open month at or after
-			// its own, the round 1b rule, keeping its document date.
+			// period files late into the earliest open month at or after its own, the round 1b rule,
+			// keeping its document date.
 			pid, py, eerr := r.earliestOpenPeriodTx(ctx, tx, y, m)
 			if eerr != nil {
 				return "", false, eerr
 			}
 			periodID, periodYear, pstatus = pid, py, "OPEN"
 			err = nil
+		default:
+			// A date beyond the next year (or an unseeded future year below an isolated test band)
+			// refuses, deliberate.
+			return "", false, clientErr(422, "gl: no fiscal period for %04d-%02d", y, m)
 		}
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
