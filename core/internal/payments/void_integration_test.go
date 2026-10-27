@@ -345,8 +345,9 @@ func TestIntegration_PaymentVoid_TheVoidedFeeCountsPaidNoMore(t *testing.T) {
 	}
 
 	// Pay the fee again: a second receipt with the same fee in its own map, the settle's own shape.
-	again := w.registerReceipt("CHEQUE", 4_500)
+	again := w.registerReceipt("CASH", 4_500)
 	payTheFee(again)
+	w.drain()
 
 	// The fee the pay path counts (622's own expression: every payment's map except reversed,
 	// reversing and BOUNCED) is the second receipt's part only.
