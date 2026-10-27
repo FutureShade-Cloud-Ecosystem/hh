@@ -508,6 +508,7 @@ export const SCHEMA_DESCRIPTORS = {
   "InventoryNudgeResult": {"k":"object","req":["posted","channel","class","body","note"],"props":{"posted":{"k":"boolean"},"channel":{"k":"string"},"class":{"k":"string"},"body":{"k":"string"},"note":{"k":"string"}}},
   "InventoryOnHandList": {"k":"object","req":["on_hand"],"props":{"on_hand":{"k":"array","of":{"k":"ref","name":"InventoryOnHand"}}}},
   "InventoryMoveList": {"k":"object","req":["moves"],"props":{"moves":{"k":"array","of":{"k":"ref","name":"InventoryStockMove"}}}},
+  "InventoryPreReceiptException": {"k":"object","req":["move_id","order_id","product_id","branch_id","qty_base","provisional_unit_cost_cents","provisional_value_cents","fallback_source","occurred_at"],"props":{"move_id":{"k":"string"},"order_id":{"k":"string"},"product_id":{"k":"string"},"branch_id":{"k":"string"},"qty_base":{"k":"number"},"provisional_unit_cost_cents":{"k":"integer"},"provisional_value_cents":{"k":"integer"},"fallback_source":{"k":"string"},"occurred_at":{"k":"string"}}},
   "InventoryPendingFulfilmentList": {"k":"object","req":["pending"],"props":{"pending":{"k":"array","of":{"k":"ref","name":"InventoryPendingFulfilment"}}}},
   "InventoryTransitDaysPairList": {"k":"object","req":["pairs"],"props":{"pairs":{"k":"array","of":{"k":"ref","name":"InventoryTransitDaysPair"}}}},
   "InventoryBranchStockList": {"k":"object","req":["branches"],"props":{"branches":{"k":"union","of":[{"k":"array","of":{"k":"ref","name":"InventoryBranchStock"}},{"k":"null"}]}}},

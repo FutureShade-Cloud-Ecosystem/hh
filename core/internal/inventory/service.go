@@ -43,6 +43,18 @@ func (s *Service) unitCost(ctx context.Context, productID string, qtyBase float6
 	return v, true, err
 }
 
+func (s *Service) branchUnitCost(ctx context.Context, productID, branchID string, qtyBase float64) (int64, bool, error) {
+	if branchID == "" {
+		return s.unitCost(ctx, productID, qtyBase)
+	}
+	avg, found, err := s.db().BranchCostCents(ctx, productID, branchID)
+	if err != nil || !found {
+		return 0, false, err
+	}
+	v, err := qtyTimesCents(qtyBase, avg)
+	return v, true, err
+}
+
 // - PO receiving -
 
 // applyReceipt is the shared receiving core. requested==nil receives every outstanding unit; a non-nil map
@@ -64,6 +76,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 	usd := hdr.Currency == "USD"
 
 	var totalValue int64
+	var totalRounding int64
 	linesRecvd := 0
 	allFull := true
 	type evLine struct {
@@ -72,6 +85,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 		ValueCents int64   `json:"value_cents"`
 	}
 	var eventLines []evLine
+	var trueUps []poTrueUpLine
 
 	for _, ln := range lines {
 		remaining := ln.QtyBase - ln.ReceivedBase
@@ -129,13 +143,50 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 		if err != nil {
 			return ReceiptResult{}, err
 		}
+		provMoves, err := s.db().UntruedProvisionalShipMoves(ctx, tx, ln.ProductID, hdr.BranchID)
+		if err != nil {
+			return ReceiptResult{}, err
+		}
 		base := math.Max(onHand, 0)
 		newAvg := cadUnit
-		if denom := base + recvQty; denom > 0 {
-			newAvg, err = blendAvg(base, oldAvg, recvQty, cadUnit)
+		if len(provMoves) == 0 {
+			if denom := base + recvQty; denom > 0 {
+				newAvg, err = blendAvg(base, oldAvg, recvQty, cadUnit)
+				if err != nil {
+					return ReceiptResult{}, err
+				}
+			}
+			if base > 0 {
+				oldSubledgerVal, errOld := qtyTimesCents(base, oldAvg)
+				newSubledgerVal, errNew := qtyTimesCents(base+recvQty, newAvg)
+				if errOld == nil && errNew == nil {
+					totalRounding += (newSubledgerVal - oldSubledgerVal) - recvValue
+				}
+			}
+		}
+		var moveMeta map[string]any
+		if len(provMoves) > 0 {
+			var provQty float64
+			var provValue int64
+			moveIDs := make([]string, 0, len(provMoves))
+			for _, pm := range provMoves {
+				provQty += pm.QtyBase
+				provValue += pm.ProvisionalValueCents
+				moveIDs = append(moveIDs, pm.MoveID)
+			}
+			actualSoldValue, err := qtyTimesCents(provQty, cadUnit)
 			if err != nil {
 				return ReceiptResult{}, err
 			}
+			trueUpDelta := actualSoldValue - provValue
+			moveMeta = map[string]any{
+				"trued_up_move_ids":   moveIDs,
+				"true_up_delta_cents": trueUpDelta,
+			}
+			trueUps = append(trueUps, poTrueUpLine{
+				ProductID:  ln.ProductID,
+				DeltaCents: trueUpDelta,
+			})
 		}
 		if err := s.db().UpsertBranchCost(ctx, tx, ln.ProductID, hdr.BranchID, newAvg); err != nil {
 			return ReceiptResult{}, err
@@ -144,6 +195,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 			ProductID: ln.ProductID, BranchID: hdr.BranchID, ToLocation: hdr.BranchID, UOM: ln.UOM,
 			MoveType: MoveReceipt, QtyBase: recvQty, UnitCostCents: cadUnit, ValueCents: recvValue,
 			SourceType: "po_receipt", SourceRefID: receiptID, Reason: "PO receipt " + hdr.PONo,
+			Metadata: moveMeta,
 		}); err != nil {
 			return ReceiptResult{}, err
 		}
@@ -178,7 +230,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 	}
 	if err := s.db().EmitEvent(ctx, tx, "po.received", map[string]any{
 		"po_id": poID, "receipt_id": receiptID, "branch_id": hdr.BranchID,
-		"value_cents": totalValue, "lines": eventLines,
+		"value_cents": totalValue, "rounding_cents": totalRounding, "lines": eventLines, "true_ups": trueUps,
 	}); err != nil {
 		return ReceiptResult{}, err
 	}
@@ -224,35 +276,204 @@ func (s *Service) receive(ctx context.Context, in ReceiveRequest) (ReceiptResult
 // - POS stock decrement (DX-01 boundary) -
 
 // decrementForSale writes SHIP moves for a COLLECT_NOW sale (stock drops, may go negative by design).
-// DELIVERED / COLLECT_LATER record ZERO moves and surface on pending-fulfilment, the PARTIAL closure.
-func (s *Service) decrementForSale(ctx context.Context, tx pgx.Tx, in DecrementInput) error {
+// DELIVERED / COLLECT_LATER record ZERO moves at ring time and relieve stock at fulfilment via FulfilOrderLinesTx.
+func (s *Service) decrementForSale(ctx context.Context, tx pgx.Tx, in DecrementInput) ([]ShipLineValue, error) {
 	if in.SaleType != SaleCollectNow {
-		return nil // boundary: deferred fulfilment books no move at W6
+		return nil, nil // boundary: deferred fulfilment relieves stock at fulfilment
 	}
+	values := make([]ShipLineValue, 0, len(in.Lines))
 	for _, ln := range in.Lines {
 		if ln.QtyBase <= 0 {
 			continue
 		}
-		avg, _, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, in.BranchID)
+		value, err := s.decrementOneShipLine(ctx, tx, in.OrderID, in.BranchID, "pos_sale", "POS COLLECT_NOW sale", ln)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		value, err := qtyTimesCents(ln.QtyBase, avg)
-		if err != nil {
-			return err
-		}
-		if _, err := s.db().InsertMove(ctx, tx, moveParams{
-			ProductID: ln.ProductID, BranchID: in.BranchID, FromLocation: in.BranchID,
-			MoveType: MoveShip, QtyBase: ln.QtyBase, UnitCostCents: avg, ValueCents: value,
-			SourceType: "pos_sale", SourceRefID: in.OrderID, Reason: "POS COLLECT_NOW sale",
-		}); err != nil {
-			return err
-		}
-		if err := s.db().UpsertBalanceDelta(ctx, tx, ln.ProductID, in.BranchID, in.BranchID, -ln.QtyBase); err != nil {
-			return err
+		values = append(values, ShipLineValue{ProductID: ln.ProductID, QtyBase: ln.QtyBase, ValueCents: value})
+	}
+	return values, nil
+}
+
+// decrementOneShipLine writes the SHIP move at the branch average (or the provisional fallback) and
+// answers the move's own value_cents (round 2, S3's P1): the fulfilment event carries it, so the COGS
+// journal posts the value that moved, never a re-read average. A product with no cost at all ships
+// provisionally at $0.00 (round 2, S3's P2): the move is marked, the Controller exceptions list names
+// it, and the first receipt trues it up like any other provisional move.
+func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, branchID, sourceType, reason string, ln SaleLine, extraMeta ...map[string]any) (int64, error) {
+	avg, hadCost, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, branchID)
+	if err != nil {
+		return 0, err
+	}
+	provMoves, err := s.db().UntruedProvisionalShipMoves(ctx, tx, ln.ProductID, branchID)
+	if err != nil {
+		return 0, err
+	}
+	var moveMeta map[string]any
+	for _, extra := range extraMeta {
+		for k, v := range extra {
+			if moveMeta == nil {
+				moveMeta = map[string]any{}
+			}
+			moveMeta[k] = v
 		}
 	}
-	return nil
+	if !hadCost || avg <= 0 || len(provMoves) > 0 {
+		fallbackCost, source, found, err := s.db().FallbackCost(ctx, tx, ln.ProductID, branchID)
+		if err != nil {
+			return 0, err
+		}
+		if found && fallbackCost > 0 {
+			avg = fallbackCost
+			moveMeta = map[string]any{
+				"provisional_cost":         true,
+				"fallback_source":          source,
+				"fallback_unit_cost_cents": fallbackCost,
+			}
+			if err := s.db().UpsertBranchCost(ctx, tx, ln.ProductID, branchID, avg); err != nil {
+				return 0, err
+			}
+		} else {
+			// No cost at all: provisional at $0.00, marked and listed (round 2, S3's P2), never a
+			// silent skip.
+			moveMeta = map[string]any{
+				"provisional_cost":         true,
+				"fallback_source":          "none",
+				"fallback_unit_cost_cents": int64(0),
+			}
+		}
+	}
+	value, err := qtyTimesCents(ln.QtyBase, avg)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := s.db().InsertMove(ctx, tx, moveParams{
+		ProductID: ln.ProductID, BranchID: branchID, FromLocation: branchID,
+		MoveType: MoveShip, QtyBase: ln.QtyBase, UnitCostCents: avg, ValueCents: value,
+		SourceType: sourceType, SourceRefID: orderID, Reason: reason,
+		Metadata: moveMeta,
+	}); err != nil {
+		return 0, err
+	}
+	return value, s.db().UpsertBalanceDelta(ctx, tx, ln.ProductID, branchID, branchID, -ln.QtyBase)
+}
+
+// FulfilOrderLinesTx relieves on-hand stock for fulfilled order lines and emits
+// order.fulfilled to events_outbox in the same transaction. If the order was
+// already relieved (either at POS ring time for a COLLECT_NOW sale or by an
+// earlier fulfilment call), HasShipMovesForOrderTx returns true and this is a
+// no-op so stock and COGS are never double-posted.
+// FulfilOrderLinesTx relieves the ORDER's own lines (the order wide paths: the pickup and the
+// delivery roads). Group scoped relief is FulfilGroupLinesTx (round 2, S3's P1).
+func (s *Service) FulfilOrderLinesTx(ctx context.Context, tx pgx.Tx, orderID, branchID string, productIDs []string, qtys []float64) error {
+	return s.fulfilLinesTx(ctx, tx, orderID, "", branchID, productIDs, qtys)
+}
+
+// FulfilGroupLinesTx relieves a SHIP GROUP's own lines and quantities (round 2, S3's P1): the group's
+// id rides the move metadata and the event, so a group's relief and its idempotency key are the
+// group's own, never the order's.
+func (s *Service) FulfilGroupLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID, branchID string, productIDs []string, qtys []float64) error {
+	return s.fulfilLinesTx(ctx, tx, orderID, groupID, branchID, productIDs, qtys)
+}
+
+// HasShipMovesForGroupTx answers whether the group's own SHIP moves exist (the group's idempotency).
+func (s *Service) HasShipMovesForGroupTx(ctx context.Context, tx pgx.Tx, orderID, groupID string) (bool, error) {
+	var exists bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM stock_moves
+			 WHERE source_type = 'order' AND source_ref_id = $1::uuid
+			   AND move_type = 'SHIP' AND metadata->>'group_id' = $2
+		)`, orderID, groupID).Scan(&exists)
+	return exists, err
+}
+
+// HasShipMovesForOrderTx answers whether any SHIP move exists for the order, READ ON THE CALLER'S
+// TRANSACTION (round 2, S3's P1): the INVOICED holds rule's "the goods have left".
+//
+// TX SCOPED ON PURPOSE. A move the caller's own transaction wrote is uncommitted, and a pool read
+// cannot see it, so the order would be told its goods are still in the yard at the moment they are
+// not. The order module asks this question inside the very transaction that may be moving the
+// stock, and the answer has to be that transaction's.
+func (s *Service) HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error) {
+	if s.repo == nil || s.repo.pool == nil {
+		return false, nil
+	}
+	var exists bool
+	// THE SAME SHAPE AS THE REPOSITORY'S OWN CHECK, AND THAT IS THE POINT: a ring's sale moves the
+	// stock with source_type 'pos_sale' and an order's own relief with source_type 'order', and
+	// both are the goods leaving for THIS order. A filter that named one of them would let the other
+	// relieve the same stock twice.
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM stock_moves
+			 WHERE move_type = 'SHIP' AND source_ref_id = $1::uuid
+		)`, orderID).Scan(&exists)
+	return exists, err
+}
+
+func (s *Service) fulfilLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID, branchID string, productIDs []string, qtys []float64) error {
+	if orderID == "" || branchID == "" || len(productIDs) == 0 || len(productIDs) != len(qtys) {
+		return nil
+	}
+	if groupID == "" {
+		alreadyShipped, err := s.db().HasShipMovesForOrderTx(ctx, tx, orderID)
+		if err != nil {
+			return fmt.Errorf("inventory: check order ship moves: %w", err)
+		}
+		if alreadyShipped {
+			return nil
+		}
+	} else {
+		alreadyShipped, err := s.HasShipMovesForGroupTx(ctx, tx, orderID, groupID)
+		if err != nil {
+			return fmt.Errorf("inventory: check group ship moves: %w", err)
+		}
+		if alreadyShipped {
+			return nil
+		}
+	}
+	type outboxLine struct {
+		ProductID  string  `json:"product_id"`
+		QtyBase    float64 `json:"qty_base"`
+		ValueCents int64   `json:"value_cents"`
+	}
+	outLines := make([]outboxLine, 0, len(productIDs))
+	for i := range productIDs {
+		pid := productIDs[i]
+		qty := qtys[i]
+		if pid == "" || qty <= 0 {
+			continue
+		}
+		meta := map[string]any(nil)
+		if groupID != "" {
+			meta = map[string]any{"group_id": groupID}
+		}
+		value, err := s.decrementOneShipLine(ctx, tx, orderID, branchID, "order", "order_fulfilled", SaleLine{
+			ProductID: pid,
+			QtyBase:   qty,
+		}, meta)
+		if err != nil {
+			return err
+		}
+		outLines = append(outLines, outboxLine{
+			ProductID:  pid,
+			QtyBase:    qty,
+			ValueCents: value,
+		})
+	}
+	if len(outLines) == 0 {
+		return nil
+	}
+	event := map[string]any{
+		"order_id":  orderID,
+		"branch_id": branchID,
+		"lines":     outLines,
+	}
+	if groupID != "" {
+		event["group_id"] = groupID
+	}
+	return s.db().EmitEvent(ctx, tx, "order.fulfilled", event)
 }
 
 // LockStockTx takes the branch's balance rows of these products, sorted, before a move over several
@@ -298,11 +519,18 @@ func (s *Service) restockForReturn(ctx context.Context, tx pgx.Tx, in RestockInp
 
 // - posting consumers (po.received + inventory.adjusted) -
 
+type poTrueUpLine struct {
+	ProductID  string `json:"product_id"`
+	DeltaCents int64  `json:"delta_cents"`
+}
+
 type poReceivedPayload struct {
-	POID       string `json:"po_id"`
-	ReceiptID  string `json:"receipt_id"`
-	BranchID   string `json:"branch_id"`
-	ValueCents int64  `json:"value_cents"`
+	POID          string         `json:"po_id"`
+	ReceiptID     string         `json:"receipt_id"`
+	BranchID      string         `json:"branch_id"`
+	ValueCents    int64          `json:"value_cents"`
+	RoundingCents int64          `json:"rounding_cents"`
+	TrueUps       []poTrueUpLine `json:"true_ups"`
 }
 
 // postPOReceived posts the GRNI journal for a receipt: DR 1200 Inventory / CR 2150 Received-Not-Invoiced, both
@@ -315,7 +543,7 @@ func (s *Service) postPOReceived(ctx context.Context, payload []byte) error {
 	if p.ReceiptID == "" {
 		return fmt.Errorf("inventory: po.received missing receipt_id")
 	}
-	if p.ValueCents == 0 {
+	if p.ValueCents == 0 && p.RoundingCents == 0 && len(p.TrueUps) == 0 {
 		return nil
 	}
 	if s.gl == nil {
@@ -332,18 +560,109 @@ func (s *Service) postPOReceived(ctx context.Context, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.gl.PostJournal(ctx, GLJournal{
-		Source:         "PO_RECEIPT",
+	if p.ValueCents != 0 {
+		if _, err := s.gl.PostJournal(ctx, GLJournal{
+			Source:         "PO_RECEIPT",
+			SourceRefID:    p.ReceiptID,
+			IdempotencyKey: "po.received:" + p.ReceiptID,
+			Memo:           "GRNI on PO receipt",
+			BranchID:       p.BranchID,
+			Lines: []GLLine{
+				{AccountCode: invCode, DebitCents: p.ValueCents, Memo: "inventory received"},
+				{AccountCode: apCode, CreditCents: p.ValueCents, Memo: "received not invoiced"},
+			},
+		}); err != nil {
+			return err
+		}
+	}
+	if p.RoundingCents != 0 {
+		if err := s.postPOReceivedRounding(ctx, p, invCode); err != nil {
+			return err
+		}
+	}
+	for _, tu := range p.TrueUps {
+		if tu.DeltaCents == 0 || tu.ProductID == "" {
+			continue
+		}
+		if err := s.postPOReceivedTrueUp(ctx, p, tu, invCode); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// postPOReceivedRounding posts the WAC integer-cent rounding adjustment journal on a receipt
+// (round 1, sub item 2). Its own function so the branch census finds one journal writer per
+// function: the receipt's GRNI journal and this adjustment are one payload's separate journals.
+func (s *Service) postPOReceivedRounding(ctx context.Context, p poReceivedPayload, invCode string) error {
+	expCode, err := s.rules.ResolveRule(ctx, "inventory.adjusted", "expense", p.BranchID)
+	if err != nil || expCode == "" {
+		expCode = "5200"
+	}
+	amt := p.RoundingCents
+	if amt < 0 {
+		amt = -amt
+	}
+	var lines []GLLine
+	if p.RoundingCents > 0 {
+		lines = []GLLine{
+			{AccountCode: invCode, DebitCents: amt, Memo: "WAC integer-cent rounding"},
+			{AccountCode: expCode, CreditCents: amt, Memo: "WAC integer-cent rounding"},
+		}
+	} else {
+		lines = []GLLine{
+			{AccountCode: expCode, DebitCents: amt, Memo: "WAC integer-cent rounding"},
+			{AccountCode: invCode, CreditCents: amt, Memo: "WAC integer-cent rounding"},
+		}
+	}
+	if _, err := s.gl.PostJournal(ctx, GLJournal{
+		Source:         "ADJUSTMENT",
 		SourceRefID:    p.ReceiptID,
-		IdempotencyKey: "po.received:" + p.ReceiptID,
-		Memo:           "GRNI on PO receipt",
+		IdempotencyKey: "po.received.rounding:" + p.ReceiptID,
+		Memo:           "WAC integer-cent rounding on PO receipt",
 		BranchID:       p.BranchID,
-		Lines: []GLLine{
-			{AccountCode: invCode, DebitCents: p.ValueCents, Memo: "inventory received"},
-			{AccountCode: apCode, CreditCents: p.ValueCents, Memo: "received not invoiced"},
-		},
-	})
-	return err
+		Lines:          lines,
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// postPOReceivedTrueUp posts one line's pre-receipt sale cost true-up at the first receipt
+// (round 1, sub item 4, ruling 82.4). Its own function so the branch census finds one journal
+// writer per function: the receipt's payload carries one true-up per sold-before-receipt line.
+func (s *Service) postPOReceivedTrueUp(ctx context.Context, p poReceivedPayload, tu poTrueUpLine, invCode string) error {
+	cogsCode, err := s.rules.ResolveRule(ctx, "order.fulfilled", "cogs", p.BranchID)
+	if err != nil || cogsCode == "" {
+		cogsCode = "5000"
+	}
+	amt := tu.DeltaCents
+	if amt < 0 {
+		amt = -amt
+	}
+	var lines []GLLine
+	if tu.DeltaCents > 0 {
+		lines = []GLLine{
+			{AccountCode: cogsCode, DebitCents: amt, Memo: "pre-receipt sale COGS true-up"},
+			{AccountCode: invCode, CreditCents: amt, Memo: "pre-receipt sale inventory true-up"},
+		}
+	} else {
+		lines = []GLLine{
+			{AccountCode: invCode, DebitCents: amt, Memo: "pre-receipt sale inventory true-up"},
+			{AccountCode: cogsCode, CreditCents: amt, Memo: "pre-receipt sale COGS true-up"},
+		}
+	}
+	if _, err := s.gl.PostJournal(ctx, GLJournal{
+		Source:         "ADJUSTMENT",
+		SourceRefID:    p.ReceiptID,
+		IdempotencyKey: "pre_receipt_trueup:" + p.ReceiptID + ":" + tu.ProductID,
+		Memo:           "Pre-receipt sale cost true-up on first receipt",
+		BranchID:       p.BranchID,
+		Lines:          lines,
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 type inventoryAdjustedPayload struct {

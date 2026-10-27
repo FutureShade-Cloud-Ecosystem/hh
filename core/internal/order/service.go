@@ -138,7 +138,8 @@ type Service struct {
 	// consume on fulfil, release on cancel, every one of them inside the status transaction. nil
 	// until main.go injects it via WithStockReserver, and a nil seam turns the whole reservation lane
 	// OFF (fail-open, loudly: main.go asserts the binding at boot and StockSeamWired reports it).
-	stock StockReserver
+	stock          StockReserver
+	stockFulfiller StockFulfiller
 	// SCOPE:F10 change-order seams (change.go): picks reports whether the tasks substrate has a
 	// started pick for an order (that is what makes a change POST-pick); finance narrows who may sign
 	// a material delta through the DIB-360 approvals substrate. Both nil until main.go injects them.
@@ -331,6 +332,20 @@ func (s *Service) SetStatus(ctx context.Context, tenant, actor, orderID, newStat
 			if err != nil {
 				return err
 			}
+			if newStatus == "FULFILLED" {
+				if err := s.fulfilOrderOnDelivery(ctx, orderID); err != nil {
+					return err
+				}
+			}
+			// Round 2 (S3's P1): the INVOICED gate. This path returns here, so the gate
+			// belongs HERE and not only on the fenced path below: an order invoiced after its
+			// goods left consumes its holds and relieves what left, and one still waiting on
+			// the yard keeps both.
+			if newStatus == "INVOICED" {
+				if err := s.fulfilOrderOnInvoiced(ctx, orderID); err != nil {
+					return err
+				}
+			}
 			s.recordStatusChange(ctx, actor, orderID, oldStatus, newStatus, reason)
 			return nil
 		}
@@ -343,6 +358,19 @@ func (s *Service) SetStatus(ctx context.Context, tenant, actor, orderID, newStat
 		// ErrNoTransition (target == current) is benign, surface it so a caller can ignore
 		// it, but emit no history row.
 		return err
+	}
+	if newStatus == "FULFILLED" {
+		if err := s.fulfilOrderOnDelivery(ctx, orderID); err != nil {
+			return err
+		}
+	}
+	// Round 2 (S3's P1): an order invoiced after its goods left consumes its holds and relieves what
+	// left (the ring's invoice beat, the fulfilment invoice after dispatch); one still waiting on the
+	// yard keeps both, its relief staying at FULFILLED and CLOSED.
+	if newStatus == "INVOICED" {
+		if err := s.fulfilOrderOnInvoiced(ctx, orderID); err != nil {
+			return err
+		}
 	}
 	s.recordStatusChange(ctx, actor, orderID, oldStatus, newStatus, reason)
 	return nil
@@ -805,7 +833,11 @@ func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatu
 	// WITH the status. A target with no hold effect, or an unbound seam, takes the pre-existing path
 	// unchanged, the reservation lane is strictly additive and cannot alter a transition's legality.
 	effect := reservationEffectFor(newStatus)
-	if rs, ok := s.reservationLane(); ok && (effect == effectReserve || effect == effectConsume || effect == effectRelease) {
+	// Round 2 (S3's P1): INVOICED carries its own effect, effectConsumeIfShipped. The question
+	// ("the goods have left?") is asked INSIDE the status transaction, by the reservation lane's
+	// hook, so the answer is that transaction's own: a move the transaction wrote counts, and an
+	// order still waiting on the yard keeps its holds and its stock.
+	if rs, ok := s.reservationLane(); ok && (effect == effectReserve || effect == effectConsume || effect == effectRelease || effect == effectConsumeIfShipped) {
 		oldStatus, err = rs.UpdateStatusFromTx(ctx, orderID, newStatus, allowedFrom, pre,
 			s.applyReservationsTx(effect, orderID, actor))
 	} else if pre != nil {
@@ -827,6 +859,11 @@ func (s *Service) setStatusGuarded(ctx context.Context, actor, orderID, newStatu
 			}
 		}
 		return err // ErrNotFound / ErrIllegalTransition / ErrNoTransition / ErrCancelBlocked / ErrCancelUnverifiable
+	}
+	if newStatus == "FULFILLED" {
+		if err := s.fulfilOrderOnDelivery(ctx, orderID); err != nil {
+			return err
+		}
 	}
 	s.recordStatusChange(ctx, actor, orderID, oldStatus, newStatus, reason)
 	return nil

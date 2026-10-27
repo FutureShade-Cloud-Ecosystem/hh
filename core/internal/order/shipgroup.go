@@ -442,9 +442,17 @@ func (s *Service) TransitionGroup(ctx context.Context, groupID, target string) (
 		orderID := g.OrderID
 		pre = func(ctx context.Context) error { return s.refuseHeldFromPicking(ctx, orderID) }
 	}
+	orderID := g.OrderID
 	g, err = ss.TransitionShipmentGroup(ctx, groupID, target, allowed, pre)
 	if err != nil {
 		return ShipmentGroup{}, err
+	}
+	if target == GroupComplete {
+		// Round 2 (S3's P1): the group's completion relieves the group's own
+		// lines and quantities, never the whole order's.
+		if err := s.fulfilGroupOnDelivery(ctx, orderID, groupID); err != nil {
+			return ShipmentGroup{}, err
+		}
 	}
 	g.LegalActions = groupLegalActions(g.Status)
 	return g, nil

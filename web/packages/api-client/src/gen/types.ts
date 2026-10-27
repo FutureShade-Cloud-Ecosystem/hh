@@ -3448,6 +3448,17 @@ export type InventoryOnHandList = {
 export type InventoryMoveList = {
   moves: InventoryStockMove[];
 };
+export type InventoryPreReceiptException = {
+  move_id: string;
+  order_id: string;
+  product_id: string;
+  branch_id: string;
+  qty_base: number;
+  provisional_unit_cost_cents: number;
+  provisional_value_cents: number;
+  fallback_source: string;
+  occurred_at: string;
+};
 export type InventoryPendingFulfilmentList = {
   pending: InventoryPendingFulfilment[];
 };

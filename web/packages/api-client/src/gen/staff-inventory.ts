@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { InventoryAllocationPolicy, InventoryBootstrapRequest, InventoryBootstrapResult, InventoryBranchStockList, InventoryBrowseResult, InventoryCreatePOFromShortfallRequest, InventoryCreatePOResult, InventoryCreateTransferInput, InventoryExpireResult, InventoryInTransitLineList, InventoryMoveList, InventoryNudgeRequest, InventoryNudgeResult, InventoryOnHandList, InventoryPendingFulfilmentList, InventoryReceiptResult, InventoryReceiveRequest, InventoryReleaseRequest, InventoryReleaseResult, InventoryReorderPoint, InventoryReorderPointList, InventoryReorderRequest, InventoryReorderResult, InventoryReservationList, InventoryReserveInput, InventoryReserveResult, InventorySetTransitDaysInput, InventoryShipTransferRequest, InventoryShortfallPage, InventoryTransfer, InventoryTransferList, InventoryTransitDaysPair, InventoryTransitDaysPairList } from "./types.js";
+import type { InventoryAllocationPolicy, InventoryBootstrapRequest, InventoryBootstrapResult, InventoryBranchStockList, InventoryBrowseResult, InventoryCreatePOFromShortfallRequest, InventoryCreatePOResult, InventoryCreateTransferInput, InventoryExpireResult, InventoryInTransitLineList, InventoryMoveList, InventoryNudgeRequest, InventoryNudgeResult, InventoryOnHandList, InventoryPendingFulfilmentList, InventoryPreReceiptException, InventoryReceiptResult, InventoryReceiveRequest, InventoryReleaseRequest, InventoryReleaseResult, InventoryReorderPoint, InventoryReorderPointList, InventoryReorderRequest, InventoryReorderResult, InventoryReservationList, InventoryReserveInput, InventoryReserveResult, InventorySetTransitDaysInput, InventoryShipTransferRequest, InventoryShortfallPage, InventoryTransfer, InventoryTransferList, InventoryTransitDaysPair, InventoryTransitDaysPairList } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -64,6 +64,21 @@ export async function inventoryBrowse(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "inventoryBrowse",
+  });
+}
+
+export async function inventoryListControllerExceptions(
+  client: ApiClient,
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
+): Promise<Result<{ exceptions: InventoryPreReceiptException[] }>> {
+  return client.request<{ exceptions: InventoryPreReceiptException[] }>({
+    method: "GET",
+    path: "/api/v1/inventory/controller-exceptions",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "inventoryListControllerExceptions",
   });
 }
 
