@@ -878,15 +878,22 @@ func (w *fw1Walk) createStatementTies(t fw1TB) {
 			t.Fatalf("the customer_transactions subledger read for %s: %v", c.acctNo, err)
 		}
 		// Independent net receivable from the customer's documents (invoices and credit memos)
-		// and receipts (including bounced cheque NSF fee charges) in the walk.
+		// and receipts (including bounced cheque NSF fee records in payment_nsf, net of any
+		// invoice document that carries the fee) in the walk.
 		var docsAndReceipts int64
 		if err := w.pool.QueryRow(ctx, `
 			SELECT COALESCE((
 			    SELECT SUM(balance_cents) FROM invoices
 			     WHERE customer_id = $1 AND status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
 			), 0) + COALESCE((
-			    SELECT count(*) * 4500 FROM payments
-			     WHERE customer_id = $1 AND status = 'BOUNCED'
+			    SELECT SUM(pn.fee_cents) FROM payment_nsf pn
+			     WHERE pn.customer_id = $1
+			       AND NOT EXISTS (
+			           SELECT 1 FROM invoices i
+			            WHERE i.customer_id = pn.customer_id
+			              AND i.status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
+			              AND (i.source_doc_no = pn.id::text OR i.source_doc_no = pn.payment_id::text OR i.metadata->>'payment_nsf_id' = pn.id::text OR i.metadata->>'nsf_payment_id' = pn.payment_id::text OR i.source_kind = 'NSF')
+			       )
 			), 0)`, c.id).Scan(&docsAndReceipts); err != nil {
 			t.Fatalf("the independent documents and receipts read for %s: %v", c.acctNo, err)
 		}
