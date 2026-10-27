@@ -274,7 +274,7 @@ export function refusalWords(action: string, message: string, status: number): s
     return "Only a deposit (money in) can be matched to a payment; this line reads money out.";
   }
   if (lower.includes("cannot be matched by hand")) {
-    return "That payment's tender cannot be matched by hand; match a card, a cash or a cheque deposit.";
+    return "That payment's tender cannot be matched by hand; match a card, a cash, a cheque or an EFT deposit.";
   }
   // FW1-05b: a till cash payment reaches the bank only by its lodgement, so it is never a PAYMENT target.
   if (lower.includes("taken in a till session")) {

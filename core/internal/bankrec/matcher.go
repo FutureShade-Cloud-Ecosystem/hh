@@ -286,13 +286,14 @@ func manualJournal(line StatementLine, targetType, method, branchID string, carr
 }
 
 // clearingAccountForMethod names the clearing account a deposit of this tender clears through (FW1-05
-// item 1): a card settlement clears through 1010, cash and a cheque through 1020. Every other tender
-// answers false: a hand match of it is refused in words.
+// item 1): a card settlement clears through 1010, cash, a cheque and an EFT through 1020 (the round 3
+// P2-2 ruling: an EFT receipt sits on 1020 like office cash and cheques, so its match books the same
+// office arm). Every other tender answers false: a hand match of it is refused in words.
 func clearingAccountForMethod(method string) (string, bool) {
 	switch method {
 	case "CARD":
 		return AcctCardClearing, true
-	case "CASH", "CHEQUE":
+	case "CASH", "CHEQUE", "EFT":
 		return AcctUndeposited, true
 	}
 	return "", false

@@ -624,7 +624,7 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 		}
 		j, ok := manualJournal(line, in.TargetType, f.Method, f.BranchID, false)
 		if !ok {
-			return gl.ExternalJournal{}, false, unprocessable("bankrec: a %s payment cannot be matched by hand; match a card, a cash or a cheque deposit", f.Method)
+			return gl.ExternalJournal{}, false, unprocessable("bankrec: a %s payment cannot be matched by hand; match a card, a cash, a cheque or an EFT deposit", f.Method)
 		}
 		return j, true, nil
 	}
