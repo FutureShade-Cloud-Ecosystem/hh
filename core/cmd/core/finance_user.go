@@ -148,7 +148,10 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 // it already has, then writes the staff users row and the global grant in
 // one transaction, takes the live grants of the roles the provision does
 // not name so one entry maps to exactly one live role, then the audit
-// row, and prints only the users row id and the grant id.
+// row, and prints only the users row id and the grant id. The audit row
+// records only a run that wrote the anchor, the user or a grant: an
+// identical re-run stands still and says nothing, so the boot time
+// reconciler adds no rows of its own.
 func financeUserProvision(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer, getenv func(string) string, email, platformUserID, displayName, role string) error {
 	slug := strings.TrimSpace(getenv(envWebOrg))
 	if slug == "" {
@@ -160,38 +163,42 @@ func financeUserProvision(ctx context.Context, pool *pgxpool.Pool, stdout io.Wri
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	orgID, _, _, err := identity.EnsureOrgAnchor(ctx, tx, slug, financeBoxOrgName)
+	orgID, _, anchorWritten, err := identity.EnsureOrgAnchor(ctx, tx, slug, financeBoxOrgName)
 	if err != nil {
 		return fmt.Errorf("finance-user: the org anchor: %w", err)
 	}
-	userID, _, err := identity.EnsureStaffUser(ctx, tx, orgID, platformUserID, email, displayName)
+	userID, userWritten, err := identity.EnsureStaffUser(ctx, tx, orgID, platformUserID, email, displayName)
 	if err != nil {
 		return fmt.Errorf("finance-user: the staff user: %w", err)
 	}
-	if _, err := identity.EnsureStaffGrant(ctx, tx, orgID, platformUserID, role, nil); err != nil {
+	grantInserted, err := identity.EnsureStaffGrant(ctx, tx, orgID, platformUserID, role, nil)
+	if err != nil {
 		return fmt.Errorf("finance-user: the staff grant: %w", err)
 	}
 	// One entry of the finance list maps to exactly one live role: the
 	// grants of the roles this provision does not name go in the same
 	// transaction, so an edited entry demotes instead of stacking, and the
 	// tier 1 role never outlives its entry.
-	if _, _, err := identity.RevokeStaffGrantsExcept(ctx, tx, orgID, platformUserID, role); err != nil {
+	_, demoted, err := identity.RevokeStaffGrantsExcept(ctx, tx, orgID, platformUserID, role)
+	if err != nil {
 		return fmt.Errorf("finance-user: the grant demotion: %w", err)
 	}
 	grantID, ok, err := identity.StaffGrantID(ctx, tx, orgID, platformUserID, role)
 	if err != nil || !ok {
 		return fmt.Errorf("finance-user: the staff grant was not found after it was ensured")
 	}
-	svc := audit.NewService(audit.NewRepository(pool), slog.Default())
-	if err := svc.RecordTx(ctx, tx, audit.SensitiveAccess{
-		Action:     "STAFF_PROVISION",
-		EntityType: "identity.staff_user",
-		EntityID:   userID,
-		ActorID:    userID,
-		Purpose:    "FINANCE_BOX_ACCESS",
-		Extra:      map[string]any{"status": "provisioned"},
-	}); err != nil {
-		return fmt.Errorf("finance-user: the audit row: %w", err)
+	if anchorWritten || userWritten || grantInserted || demoted {
+		svc := audit.NewService(audit.NewRepository(pool), slog.Default())
+		if err := svc.RecordTx(ctx, tx, audit.SensitiveAccess{
+			Action:     "STAFF_PROVISION",
+			EntityType: "identity.staff_user",
+			EntityID:   userID,
+			ActorID:    userID,
+			Purpose:    "FINANCE_BOX_ACCESS",
+			Extra:      map[string]any{"status": "provisioned"},
+		}); err != nil {
+			return fmt.Errorf("finance-user: the audit row: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("finance-user: cannot commit: %w", err)
