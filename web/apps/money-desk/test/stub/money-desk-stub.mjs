@@ -126,9 +126,14 @@ function mintToken(sub) {
 }
 
 function dayOffset(offset) {
-  const at = new Date();
-  at.setUTCDate(at.getUTCDate() + offset);
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  // The dealer's calendar day plus a CALENDAR offset. An instant offset loses
+  // a day across the zone's DST changes: today plus nine days, formatted in
+  // America/Toronto, reads as the eighth day once the window crosses the
+  // November or March change, and every day count the desk words from these
+  // dates is calendar arithmetic.
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const [y, m, d] = today.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + offset)).toISOString().slice(0, 10);
 }
 
 function uuid(kind, n) {
