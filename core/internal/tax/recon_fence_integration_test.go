@@ -26,6 +26,31 @@ const (
 	fenceKingston = "5d1b3f6e-0000-4000-9000-000000000002"
 )
 
+// mountedTaxPost is mountedTax for a POST route.
+func mountedTaxPost(t *testing.T, pool *pgxpool.Pool, caller identity.StaffContext, path string) int {
+	t.Helper()
+	svc := NewService(NewRepository(pool))
+	h := NewHandler(svc, slog.New(slog.DiscardHandler))
+
+	sg := testkit.NewStaffGuards(t)
+	roleID, _ := identity.CanonicalForERPCode(caller.RoleCode)
+	sg.SetAuthority(auth.StaffAuthority{
+		RoleID:   roleID,
+		Tier:     int(caller.Tier),
+		Scope:    identity.CanonicalScope(caller.Scope),
+		Branches: fenceBranchList(caller.Branches),
+	})
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, sg.Guards)
+
+	r := httptest.NewRequest(http.MethodPost, path, nil)
+	r.Header.Set("Authorization", "Bearer "+sg.Bearer(t))
+	r.Header.Set("X-Org", testkit.OrgNorthSlug)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, r)
+	return rec.Code
+}
+
 // mountedTax serves path through the real tax route table behind the real guards, with the caller's
 // authority resolved the way the middleware resolves it (the same shape gl's read_guard harness uses).
 func mountedTax(t *testing.T, pool *pgxpool.Pool, caller identity.StaffContext, path string) int {
@@ -110,5 +135,50 @@ func TestIntegration_FW1_10_HSTReconcileKeepsRightfulReadsServing(t *testing.T) 
 	}
 	if got := mountedTax(t, pool, controller, "/api/v1/tax/recon?year=2026&month=5"); got != http.StatusOK {
 		t.Errorf("GET the consolidated HST reconcile as the Controller = %d, want 200", got)
+	}
+}
+
+// 615 round 2, P2-3: the exemption evidence (list, item, download) and the review queue hold customer
+// details and masked card numbers, and their rows carry no branch of their own: they are the dealer's
+// whole book, a dealer wide caller's read.
+func TestIntegration_FW1_10_TaxEvidenceAndReviewQueueAreDealerWideReads(t *testing.T) {
+	pool := intPool(t)
+	kingston := identity.StaffContext{
+		UserID: fenceSeedUser(t, pool), RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager,
+		Scope: identity.ScopeBranch, Status: identity.StatusActive,
+		Branches: map[string]bool{fenceKingston: true},
+	}
+	controller := identity.StaffContext{
+		UserID: fenceSeedUser(t, pool), RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive,
+	}
+
+	for name, path := range map[string]string{
+		"evidence list": "/api/v1/tax/evidence",
+		"evidence item": "/api/v1/tax/evidence/7c000000-0000-4000-8000-000000000001",
+		"review queue":  "/api/v1/tax/review-queue",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := mountedTax(t, pool, kingston, path); got != http.StatusForbidden {
+				t.Errorf("GET %s as a Kingston-only manager = %d, want 403 (the dealer's whole certificate book)", name, got)
+			}
+		})
+	}
+	// The download is a POST; the fence must answer before any existence read.
+	t.Run("evidence download", func(t *testing.T) {
+		if got := mountedTaxPost(t, pool, kingston, "/api/v1/tax/evidence/7c000000-0000-4000-8000-000000000001/download"); got != http.StatusForbidden {
+			t.Errorf("POST the evidence download as a Kingston-only manager = %d, want 403", got)
+		}
+	})
+	// The dealer wide caller still reads all four.
+	for name, path := range map[string]string{
+		"evidence list": "/api/v1/tax/evidence",
+		"review queue":  "/api/v1/tax/review-queue",
+	} {
+		t.Run("controller "+name, func(t *testing.T) {
+			if got := mountedTax(t, pool, controller, path); got != http.StatusOK {
+				t.Errorf("GET %s as the Controller = %d, want 200", name, got)
+			}
+		})
 	}
 }
