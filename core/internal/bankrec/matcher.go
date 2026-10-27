@@ -249,9 +249,10 @@ func statementDocDate(txnDate time.Time) time.Time {
 // journal's legs, swapped, so the net GL effect of the match returns to zero (FW1-05 item 3). A payment
 // settlement's original was DR 1000 net [+ DR fee fee] / CR 1010 gross, so the reversal is DR 1010 gross /
 // CR 1000 net [+ CR fee fee]; a lodgement's original was DR 1000 / CR 1020, so its reversal is DR 1020 /
-// CR 1000. Keyed on unmatchKey(matchID) (distinct from the clearing key). GROUP/JOURNAL targets posted no
-// clearing journal, so they have nothing to reverse.
-func reversalJournal(matchID, targetType string, amount, feeCents int64, feeAccount string) (gl.ExternalJournal, bool) {
+// CR 1000. It carries the target's branch, so every line of the reversal is stamped like the original's
+// (FW1-05 item 4). Keyed on unmatchKey(matchID) (distinct from the clearing key). GROUP/JOURNAL targets
+// posted no clearing journal, so they have nothing to reverse.
+func reversalJournal(matchID, targetType, branchID string, amount, feeCents int64, feeAccount string) (gl.ExternalJournal, bool) {
 	var lines []gl.ExternalLine
 	switch targetType {
 	case TargetPayment:
@@ -278,6 +279,7 @@ func reversalJournal(matchID, targetType string, amount, feeCents int64, feeAcco
 		Source:         "ADJUSTMENT",
 		IdempotencyKey: unmatchKey(matchID),
 		Memo:           "bankrec unmatch reversal",
+		BranchID:       branchID,
 		Lines:          lines,
 	}, true
 }

@@ -743,11 +743,16 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 	}
 	lineDate, hasLineDate, _ := s.repo.MatchLineDate(ctx, matchID)
 	var skipLodgementReversal bool
+	var lodgBranch string
 	if liveMatch, gerr := s.repo.GetLiveMatch(ctx, matchID); gerr == nil && liveMatch.TargetType == TargetLodgement {
 		if line, lerr := s.repo.GetLine(ctx, liveMatch.StatementLineID); lerr == nil {
 			if hasJ, _ := s.hasLodgementJournal(ctx, line.BankAccountID, liveMatch.TargetRefID); hasJ && liveMatch.JournalID == "" {
 				skipLodgementReversal = true
 			}
+		}
+		// The reversal carries the lodgement's branch (FW1-05 item 4); the facts are append only.
+		if f, found, ferr := s.lodgementFacts(ctx, liveMatch.TargetRefID); ferr == nil && found {
+			lodgBranch = f.BranchID
 		}
 	}
 	// The unmatch and its reversing journal share one transaction (FW1-05): the body runs on the caller's
@@ -762,7 +767,11 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 		return err
 	}
 	if s.poster != nil && facts.AmountCents > 0 && !skipLodgementReversal {
-		if rev, ok := reversalJournal(matchID, facts.TargetType, facts.AmountCents, facts.FeeCents, facts.FeeAccountCode); ok {
+		revBranch := facts.BranchID
+		if revBranch == "" {
+			revBranch = lodgBranch
+		}
+		if rev, ok := reversalJournal(matchID, facts.TargetType, revBranch, facts.AmountCents, facts.FeeCents, facts.FeeAccountCode); ok {
 			if hasLineDate {
 				rev.DocumentDate = statementDocDate(lineDate)
 			}
