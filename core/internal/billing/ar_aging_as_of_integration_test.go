@@ -39,14 +39,15 @@ func TestIntegrationARAgingAsOf_AgesWhatWasOwedOnTheDate(t *testing.T) {
 		t.Fatalf("AR balance baseline: %v", err)
 	}
 
-	// The invoice the account owed on the as of day: issued inside the window, due more than 90
-	// days before it, wholly unpaid AT it. The receipt below arrives long after the as of instant.
+	// The invoice the account owed on the as of day: issued and finalized inside the window, due
+	// more than 90 days before it, wholly unpaid AT it. The receipt below arrives long after the as
+	// of instant.
 	var paidID string
 	if err := pool.QueryRow(ctx, invoiceWriterSeqCTE+`
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, seq)
 		VALUES ($1, $2::uuid, $3::uuid, 'PAID', $4, '1990-02-14',
-		        9000, 0, 9000, 0, now(), (SELECT next_value FROM iseq))
+		        9000, 0, 9000, 0, $4::date::timestamptz, (SELECT next_value FROM iseq))
 		RETURNING id::text`,
 		"#INV-ASOF-PAID-"+n, cust, trentonBranch, epochIssue).Scan(&paidID); err != nil {
 		t.Fatalf("seed the invoice paid after the as of date: %v", err)
@@ -62,6 +63,18 @@ func TestIntegrationARAgingAsOf_AgesWhatWasOwedOnTheDate(t *testing.T) {
 		RETURNING id::text`,
 		"#INV-ASOF-LATE-"+n, cust, trentonBranch).Scan(&lateID); err != nil {
 		t.Fatalf("seed the invoice issued after the as of date: %v", err)
+	}
+
+	// S6's P3: a document drafted inside the window (issue_date before the as of day) but finalized
+	// AFTER the as of instant joins the books when its journal does, at finalized_at, never in the
+	// earlier period's past aging or 1100 tie out.
+	if _, err := pool.Exec(ctx, invoiceWriterSeqCTE+`
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, seq)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4, '1990-02-14',
+		        5555, 0, 5555, 5555, now(), (SELECT next_value FROM iseq))`,
+		"#INV-ASOF-FINALIZED-LATE-"+n, cust, trentonBranch, epochIssue); err != nil {
+		t.Fatalf("seed the invoice finalized after the as of date: %v", err)
 	}
 
 	// The receipt that came after the as of date, as the settle left the row: a desk cheque received

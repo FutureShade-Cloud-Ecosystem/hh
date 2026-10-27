@@ -178,10 +178,16 @@ func TestIntegration_TheAgingAtNowReadsTheBalanceForEachWriter(t *testing.T) {
 	assertAtNowIsTheBalance(t, pool, before, cust)
 
 	// Moved by hand: the adapters fixture's own shape, a document whose balance says one thing and
-	// whose history says another. At now the balance is the figure; the rebuild is for a past date.
+	// whose history says another. On or after the current house day (R3-P1-1, now and tomorrow
+	// alike) the balance is the figure; the rebuild is for a past date only.
+	tomorrow := time.Now().AddDate(0, 0, 1)
 	before, err = repo.ARBalanceCents(ctx, time.Now(), "")
 	if err != nil {
 		t.Fatalf("read the tie figure: %v", err)
+	}
+	beforeTomorrow, err := repo.ARBalanceCents(ctx, tomorrow, "")
+	if err != nil {
+		t.Fatalf("read the tie figure at tomorrow: %v", err)
 	}
 	cust = seedCustomer(t, pool, ns(t))
 	seedInvoice(t, pool, cust, ns(t), invSpec{no: "HAND", status: "FINALIZED", subtotal: 2_500, tax: 0, total: 2_500, balance: 2_500, finalized: true})
@@ -189,6 +195,16 @@ func TestIntegration_TheAgingAtNowReadsTheBalanceForEachWriter(t *testing.T) {
 		t.Fatalf("move the balance by hand: %v", err)
 	}
 	assertAtNowIsTheBalance(t, pool, before, cust)
+	if got, want := agingTotalForCustomer(t, pool, tomorrow, cust), atNowBalanceSum(t, pool, cust); got != want {
+		t.Fatalf("the as of aging at tomorrow reads %d, want the balance sum %d (on or after today the figure is the balance)", got, want)
+	}
+	afterTomorrow, err := repo.ARBalanceCents(ctx, tomorrow, "")
+	if err != nil {
+		t.Fatalf("read the tie figure at tomorrow: %v", err)
+	}
+	if want := atNowBalanceSum(t, pool, cust); afterTomorrow-beforeTomorrow != want {
+		t.Fatalf("the 1100 tie figure at tomorrow moved %d, want the balance sum %d (on or after today the figure is the balance)", afterTomorrow-beforeTomorrow, want)
+	}
 
 	// Issued ahead of the house day (the seed's own UTC shape, the assistant's parity fixture): a
 	// document issued tomorrow by the zone's reading is on the books at now, where the issue cut is
