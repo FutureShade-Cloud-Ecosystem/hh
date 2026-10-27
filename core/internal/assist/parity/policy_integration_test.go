@@ -95,6 +95,10 @@ func staffClaim(branches []string, global bool) readtx.Claims {
 func TestPolicy_OrderLinesRowsFollowTheClaimsBranches(t *testing.T) {
 	env := testsupport.Open(t)
 	plantSecondBranch(t, env)
+	// A third branch of the test's own holding two lines (UX-95d): a claim naming both branches must
+	// read none of them, and in a clean world no line sits outside the two, so without this planting
+	// such a leg could never fail.
+	plantThirdBranchWithLines(t, env)
 	branches := branchesWithOrders(t, env)
 	a, b := branches[0], branches[1]
 	var total int
@@ -114,6 +118,11 @@ func TestPolicy_OrderLinesRowsFollowTheClaimsBranches(t *testing.T) {
 	}
 	if got := countAsViewOwner(t, env, staffClaim([]string{b}, false), lines); got != linesB {
 		t.Errorf("branch b's claim reads %d lines, want %d", got, linesB)
+	}
+	// UX-95d: ONE claim naming both branches reads every line at a and b and none outside, the
+	// planted third branch's lines included in the exclusion.
+	if got := countAsViewOwner(t, env, staffClaim([]string{a, b}, false), lines); got != linesA+linesB {
+		t.Errorf("a claim naming both branches reads %d lines, want exactly a's and b's %d", got, linesA+linesB)
 	}
 	if got := countAsViewOwner(t, env, staffClaim(nil, false), lines); got != 0 {
 		t.Errorf("a staff claim with no grant reads %d lines from public.order_lines, want 0", got)
