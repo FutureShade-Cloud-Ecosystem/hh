@@ -118,15 +118,23 @@ function recordedOf(account: BankRecAccount | undefined): { date: string; balanc
 }
 
 /**
- * The starting point can no longer change: the core refuses a re-record once the cut over month or any later
- * month has signed off, so the screen holds back the form exactly when the server would refuse the write.
+ * Whether the starting point section is closed, and the month that closed it. With a recorded point, the core
+ * refuses a re-record once the cut over month or any later month has signed off. With none recorded, a signed
+ * off month means the go live moment has passed: any cut over date at or before the signed off month is refused,
+ * so the section says plainly that it can no longer be set rather than offering a save the server would refuse.
  */
-function lockedOf(account: BankRecAccount | undefined, recons: readonly BankRecReconciliation[]): boolean {
+function lockedOf(account: BankRecAccount | undefined, recons: readonly BankRecReconciliation[]): { locked: boolean; closedBy: { year: number; month: number } | null } {
+  const completed = recons.filter((r) => r.status === "COMPLETED");
+  const last = completed.reduce<{ year: number; month: number } | null>(
+    (acc, r) => (acc === null || r.year > acc.year || (r.year === acc.year && r.month > acc.month) ? { year: r.year, month: r.month } : acc),
+    null,
+  );
   const recorded = recordedOf(account);
-  if (recorded === null) return false;
+  if (recorded === null) return { locked: last !== null, closedBy: last };
   const year = Number(recorded.date.slice(0, 4));
   const month = Number(recorded.date.slice(5, 7));
-  return recons.some((r) => r.status === "COMPLETED" && (r.year > year || (r.year === year && r.month >= month)));
+  const closedBy = completed.find((r) => r.year > year || (r.year === year && r.month >= month));
+  return { locked: closedBy !== undefined, closedBy: closedBy === undefined ? null : { year: closedBy.year, month: closedBy.month } };
 }
 
 /** The posted ledger entries on the account's GL code on or before the typed cut over date, oldest first: the core's preview read, never a desk computation. */
@@ -160,19 +168,22 @@ function cutoverRecordedView(model: BankrecModel): TemplateResult {
 function cutoverPanel(model: BankrecModel): TemplateResult {
   const account = accountOf(model);
   if (account === undefined) return html`${nothing}`;
-  const locked = lockedOf(account, model.recons);
+  const { locked, closedBy } = lockedOf(account, model.recons);
   const recorded = recordedOf(account);
   return html`
     <section class="br-panel" aria-label="Set the starting point" data-cutover>
       <div class="br-panel-head"><h3>Set the starting point</h3></div>
-      ${recorded === null
+      ${recorded === null && !locked
         ? html`<p class="br-dim">The point reconciliation starts from: the day the dealer's books moved onto this ledger, and the statement balance on that day. Entries on or before it are not outstanding items unless they are ticked.</p>`
+        : nothing}
+      ${recorded === null && locked
+        ? html`<p class="br-note" data-cutover-closed>The starting point can no longer be set: ${closedBy === null ? "a month has signed off" : periodWords(closedBy.year, closedBy.month)} has signed off, and this account's months already reconcile. A starting point belongs before the months being reconciled.</p>`
         : nothing}
       ${cutoverRecordedView(model)}
       ${locked
         ? nothing
         : html`
-            <div class="br-form" role="group" aria-label="Set the starting point" data-cutover-form>
+            <div class="br-form br-form-stack" role="group" aria-label="Set the starting point" data-cutover-form>
               <label class="br-field">Cut over date
                 <input type="date" data-field="br-cutover-date" autocomplete="off" aria-label="Cut over date" />
               </label>
@@ -205,11 +216,12 @@ function cutoverEntriesList(model: BankrecModel): TemplateResult {
     <ul class="br-history" aria-label="The ledger's entries on or before the cut over date" data-cutover-entries>
       ${entries.map(
         (e) => html`<li>
-          <label>
+          <label class="br-tick-row">
             <input type="checkbox" data-field="br-cutover-tick" data-id=${e.journal_id} data-cutover-tick ?checked=${model.cutoverTicked[e.journal_id] === true} />
-            <span>${dayWords(e.posted_at)} · ${e.memo}</span>
+            <span class="br-tick-date">${dayWords(e.posted_at)}</span>
+            <span class="br-tick-memo">${e.memo}</span>
+            <span class="br-tick-amount">${formatMoney(e.amount_cents)}</span>
           </label>
-          <span class="br-card-amount">${formatMoney(e.amount_cents)}</span>
         </li>`,
       )}
     </ul>
@@ -223,14 +235,18 @@ function cutoverResultView(model: BankrecModel): TemplateResult {
   const ticked = entries.filter((e) => model.cutoverTicked[e.journal_id] === true);
   const typed = model.cutoverBalanceText.trim();
   const statement = typed === "" ? null : parseBalanceToCents(typed);
+  const reconciles = model.cutoverPreview?.reconciles;
   return html`
     <div class="br-card" data-cutover-result>
-      <div class="br-card-top"><strong>What saving records</strong></div>
+      <div class="br-card-top"><strong>What saving will record</strong></div>
       <dl class="br-facts">
         <dt>Book balance at cut over</dt>
         <dd data-cutover-book>${model.cutoverPreview === null ? "Reading the ledger." : formatMoney(model.cutoverPreview.book_balance_cents)}</dd>
         <dt>Statement balance that day</dt>
         <dd data-cutover-statement>${statement === null ? "Type the statement balance." : formatMoney(statement)}</dd>
+        ${reconciles === undefined
+          ? nothing
+          : html`<dt>Difference</dt><dd data-cutover-difference>${reconciles ? pill("good", "Nothing, it reconciles") : pill("stop", `${formatMoney(model.cutoverPreview?.difference_cents ?? 0)} apart`)}</dd>`}
       </dl>
       ${ticked.length === 0
         ? html`<p class="br-hint" data-cutover-none>Nothing is ticked as still outstanding.</p>`

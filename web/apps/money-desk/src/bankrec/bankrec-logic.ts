@@ -173,6 +173,10 @@ export function refusalWords(action: string, message: string, status: number): s
   if (lower.includes("only the financial controller may record")) {
     return "Recording the starting point is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.";
   }
+  const cutoverGap = /cannot record cut-over at \d{4}-\d{2}-\d{2}: the statement and the book differ by (-?\$[\d,]+\.\d{2})/i.exec(message);
+  if (cutoverGap !== null) {
+    return `The statement and the book differ by ${cutoverGap[1].replace("-", "")}; tick the items still outstanding at cut over, or check the date and balance.`;
+  }
   const remain = /cannot complete, (\d+) unmatched line\(s\) remain for (\d{4})-(\d{2})/i.exec(message);
   if (remain !== null) {
     const n = Number(remain[1]);

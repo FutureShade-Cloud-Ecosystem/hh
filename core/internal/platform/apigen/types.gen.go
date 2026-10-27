@@ -3224,6 +3224,8 @@ type BankRecCutoverInput struct {
 type BankRecCutoverPreview struct {
 	BookBalanceCents int64                         `json:"book_balance_cents"`
 	Entries          *[]BankRecCutoverPreviewEntry `json:"entries,omitempty"`
+	DifferenceCents  *int64                        `json:"difference_cents,omitempty"`
+	Reconciles       *bool                         `json:"reconciles,omitempty"`
 }
 
 type BankRecCutoverPreviewEntry struct {

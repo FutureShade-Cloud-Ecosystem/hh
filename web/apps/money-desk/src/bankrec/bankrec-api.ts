@@ -136,10 +136,15 @@ export class BankrecApi {
 
   /**
    * The starting point form's read: the ledger's entries on or before the cut over date and the book balance
-   * they make, answered by the core so the desk formats figures and never computes them.
+   * they make, answered by the core so the desk formats figures and never computes them. With the typed
+   * statement balance and the ticked ids, the answer also carries the difference and whether it reconciles.
    */
-  cutoverPreview(accountId: string, date: string): Promise<Result<BankRecCutoverPreview>> {
-    return staffBankrec.bankrecCutoverPreview(this.#client, accountId, { date });
+  cutoverPreview(accountId: string, date: string, statementCents: number | null, ticked: string[]): Promise<Result<BankRecCutoverPreview>> {
+    return staffBankrec.bankrecCutoverPreview(this.#client, accountId, {
+      date,
+      ...(statementCents === null ? {} : { statement_cents: statementCents }),
+      ...(ticked.length === 0 ? {} : { ticked: ticked.join(",") }),
+    });
   }
 
   /** The posted journals a statement line can be paired to; the ledger's own register, read only. */

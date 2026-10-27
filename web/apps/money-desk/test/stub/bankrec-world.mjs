@@ -623,6 +623,16 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
     }
     const account = world.accounts.find((a) => a.id === accountId);
     if (account === undefined) return clientError(404, "not found");
+    // A starting point must reconcile (round 4): the statement balance is the book less ticked outstanding
+    // cheques plus ticked deposits in transit, the book balance at the date less the net of the ticked entries.
+    {
+      const preview = cutoverPreview(accountId, new URL(`http://x/?date=${input.cutover_date}&statement_cents=${Number(input.opening_statement_balance_cents) || 0}${(input.outstanding_journal_ids ?? []).length > 0 ? `&ticked=${(input.outstanding_journal_ids ?? []).join(",")}` : ""}`));
+      if (preview.status === 200 && preview.body.reconciles === false) {
+        const apart = Math.abs(preview.body.difference_cents);
+        const size = `${apart < 0 ? "-" : ""}$${String(Math.floor(apart / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${pad(apart % 100)}`;
+        return clientError(422, `bankrec: cannot record cut-over at ${input.cutover_date}: the statement and the book differ by ${size}; tick the items still outstanding at cut over, or check the date and balance`);
+      }
+    }
     const year = Number(input.cutover_date.slice(0, 4));
     const month = Number(input.cutover_date.slice(5, 7));
     const done = world.recons
@@ -655,8 +665,18 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
       .filter((e) => e.net !== 0 && (e.journal.posted_at ?? "").slice(0, 10) <= date)
       .sort((a, b) => (a.journal.posted_at < b.journal.posted_at ? -1 : 1));
     const entries = rows.map(({ journal, net }) => ({ journal_id: journal.id, posted_at: journal.posted_at, memo: journal.memo, amount_cents: net }));
-    // The core omits an empty entry list (omitempty); the stub mirrors it.
-    const body = { book_balance_cents: entries.reduce((s, e) => s + e.amount_cents, 0), ...(entries.length > 0 ? { entries } : {}) };
+    const book = entries.reduce((s, e) => s + e.amount_cents, 0);
+    const body = { book_balance_cents: book, ...(entries.length > 0 ? { entries } : {}) };
+    // With the form's typed balance and ticks, the difference and whether it reconciles ride the answer too.
+    const rawStatement = url.searchParams.get("statement_cents");
+    if (rawStatement !== null && rawStatement !== "") {
+      if (!/^-?\d+$/.test(rawStatement)) return clientError(400, "bankrec: statement_cents must be a whole number of cents");
+      const ticked = new Set((url.searchParams.get("ticked") ?? "").split(",").filter((s) => s !== ""));
+      const tickedNet = entries.filter((e) => ticked.has(e.journal_id)).reduce((s, e) => s + e.amount_cents, 0);
+      const diff = Number(rawStatement) - (book - tickedNet);
+      body.difference_cents = diff;
+      body.reconciles = diff === 0;
+    }
     return { status: 200, body };
   }
 

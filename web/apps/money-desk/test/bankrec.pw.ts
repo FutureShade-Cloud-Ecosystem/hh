@@ -664,18 +664,17 @@ test("a month with a deposit in transit and an outstanding cheque shows the reco
   await expect(report.locator("[data-report-matched]")).toHaveText("7");
   await expect(report.locator("[data-dit-list]")).toContainText("Month-end deposit in transit · $300.00");
   await expect(report.locator("[data-oc-list]")).toContainText("Cheque 1044 to vendor · $120.00");
-  await page.locator("[data-recon-id]").getByRole("button", { name: "Sign off" }).click();
-  await page.getByRole("button", { name: "Confirm sign off" }).click();
-  await expect(report).toContainText("Signed off");
-  await expect(report.locator("[data-report-completed-by]")).toHaveText("Financial controller (demo)");
-  await expect(report.locator("[data-report-completed-at]")).toBeVisible();
 
   const shotsDir = process.env["FW1_04_SHOTS_DIR"];
   if (shotsDir) {
-    // The starting point form shows filled, as the Controller meets it: the entries listed, the result below.
+    // The starting point form shows filled and reconciled, as the Controller leaves it: the till entry ticked
+    // still outstanding, the difference at nothing, the result below. Before the sign off: once the month is
+    // signed off the section reads the recorded point read only, and that is its own state.
     await page.locator("[data-field='br-cutover-date']").fill(cutoverDay().iso);
     await page.locator("[data-field='br-cutover-balance']").fill("25,000.00");
     await expect(page.locator("[data-cutover-entries] li")).toHaveCount(3);
+    await page.locator("[data-cutover-entries] li").filter({ hasText: "Till over/short" }).locator("[data-cutover-tick]").check();
+    await expect(page.locator("[data-cutover-difference]")).toContainText("reconciles");
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.evaluate(() => document.documentElement.removeAttribute("data-theme"));
     await page.screenshot({ path: `${shotsDir}/bankrec-month-end-1440x900-charcoal.png`, fullPage: true });
@@ -687,6 +686,12 @@ test("a month with a deposit in transit and an outstanding cheque shows the reco
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
     await page.screenshot({ path: `${shotsDir}/bankrec-month-end-390x844-light.png`, fullPage: true });
   }
+
+  await page.locator("[data-recon-id]").getByRole("button", { name: "Sign off" }).click();
+  await page.getByRole("button", { name: "Confirm sign off" }).click();
+  await expect(report).toContainText("Signed off");
+  await expect(report.locator("[data-report-completed-by]")).toHaveText("Financial controller (demo)");
+  await expect(report.locator("[data-report-completed-at]")).toBeVisible();
 });
 
 

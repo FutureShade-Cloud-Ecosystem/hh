@@ -342,7 +342,7 @@ export class BankrecDesk {
       // The balance hints and the starting point's entry list and result read the typed text.
       if (name === "br-balance") this.#host.repaint();
       if (name === "br-cutover-date") void this.#loadCutoverPreview();
-      if (name === "br-cutover-balance") this.#host.repaint();
+      if (name === "br-cutover-balance") void this.#loadCutoverPreview();
     }
   }
 
@@ -353,7 +353,8 @@ export class BankrecDesk {
     if (control instanceof HTMLInputElement && name === "br-cutover-tick") {
       const id = control.getAttribute("data-id") ?? "";
       if (id !== "") this.#cutoverTicked[id] = control.checked;
-      this.#host.repaint();
+      // The difference is the server's figure: it moves with the ticks, so the preview is read again.
+      void this.#loadCutoverPreview();
       return;
     }
     if (control instanceof HTMLSelectElement) {
@@ -445,8 +446,9 @@ export class BankrecDesk {
   // ---- the starting point (the Controller's cut over door, round 3) ------------------------------------
 
   /**
-   * The starting point form's read: the ledger's entries on or before the typed date, and the book balance
-   * they make, answered by the core. The desk formats them; it computes none of its own.
+   * The starting point form's read: the ledger's entries on or before the typed date, the book balance they
+   * make, and with the typed statement balance and ticks, the difference and whether it reconciles. The core
+   * computes every figure; the desk formats them.
    */
   async #loadCutoverPreview(): Promise<void> {
     const date = (this.#form["br-cutover-date"] ?? "").trim();
@@ -457,9 +459,14 @@ export class BankrecDesk {
     }
     const account = this.#accounts.find((a) => a.id === this.#accountId);
     if (account === undefined) return;
+    const typed = (this.#form["br-cutover-balance"] ?? "").trim();
+    const statement = typed === "" ? null : parseBalanceToCents(typed);
+    const ticked = Object.entries(this.#cutoverTicked)
+      .filter(([, on]) => on === true)
+      .map(([id]) => id);
     this.#cutoverPreviewLoading = true;
     this.#host.repaint();
-    const answer = await this.#api.cutoverPreview(account.id, date);
+    const answer = await this.#api.cutoverPreview(account.id, date, statement, ticked);
     this.#cutoverPreviewLoading = false;
     if (date !== (this.#form["br-cutover-date"] ?? "").trim() || account.id !== this.#accountId) return;
     if (!answer.ok) {
@@ -499,6 +506,15 @@ export class BankrecDesk {
     const cents = parseBalanceToCents(typed);
     if (typed === "" || cents === null) {
       this.#error = "Enter the statement balance on the cut over date, in dollars and cents, such as 25,255.75.";
+      this.#host.repaint();
+      return;
+    }
+    // Round 4 (FROM-PRINCIPAL 181): the starting point must reconcile. The gap is the server's figure; the
+    // desk refuses in words and sends nothing while it stands, and the server refuses the same again.
+    if (this.#cutoverPreview?.reconciles === false) {
+      const apart = this.#cutoverPreview.difference_cents ?? 0;
+      const size = apart < 0 ? -apart : apart;
+      this.#error = `The statement and the book differ by ${formatMoney(size)}; tick the items still outstanding at cut over, or check the date and balance.`;
       this.#host.repaint();
       return;
     }
