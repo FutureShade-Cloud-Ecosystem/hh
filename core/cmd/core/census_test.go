@@ -32,8 +32,10 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	if staff != 686 {
-		t.Fatalf("census staff operations: %d, want the document's 686", staff)
+	// 688: main's 684, plus FW1-04's bankrecRecordCutover and bankrecCutoverPreview, plus FW1-07's controllerExceptions,
+	// plus this branch's paymentsVoidPayment.
+	if staff != 688 {
+		t.Fatalf("census staff operations: %d, want the document's 688", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }
