@@ -193,3 +193,37 @@ test("a page with no link asks for one and never asks the console", async () => 
   assert.equal(asked, 0);
   assert.equal(page.notice, "This page needs the link from your email.");
 });
+
+test("a second submit while the first is in flight is turned away", async () => {
+  let calls = 0;
+  let letThrough;
+  const gate = new Promise((resolve) => {
+    letThrough = resolve;
+  });
+  const page = new SetPasswordPage({
+    recovery: {
+      completeRecovery: async () => {
+        calls += 1;
+        await gate;
+        return { ok: true };
+      },
+    },
+    link: { userId: "user-42", secret: "abc123" },
+    onChange: () => {},
+  });
+
+  // Two overlapping submits: the second arrives while the first is saving.
+  // The state class itself is the guard, not the button's next render.
+  const first = page.submit("a good password", "a good password");
+  const second = page.submit("a good password", "a good password");
+  letThrough();
+  await Promise.all([first, second]);
+  assert.equal(calls, 1, "the console was asked once");
+  assert.equal(page.phase, "saved");
+  assert.equal(page.notice, "");
+
+  // After the success, another press is turned away the same way.
+  await page.submit("a good password", "a good password");
+  assert.equal(calls, 1, "a submit after saved is turned away");
+  assert.equal(page.phase, "saved");
+});
