@@ -393,6 +393,40 @@ func TestRegister_AccountPositionIsByteAbsentForAFrontlineCaller(t *testing.T) {
 			t.Errorf("invoice detail must keep invoice document figure %s: %s", keep, detailFrontJSON)
 		}
 	}
+
+	// Round 2 (S6 P1-1): the account's OPEN CREDITS are an account level figure like the position,
+	// so a caller the position policy refuses receives no open_credits bytes at all, while the
+	// document's own credit_applications stay (they are this invoice's own acts). The manager sees
+	// both.
+	memoID := f.invoice(t, "CRED", "FINALIZED", -5, -15000, -15000, "CREDIT_MEMO")
+	applySvc := NewCreditApplyService(NewRepository(f.pool))
+	if _, err := applySvc.Apply(ctx, ApplyCreditInput{
+		CustomerID: f.customerID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: invID,
+		AmountCents: 5000, Reason: "byte absence leg", IdempotencyKey: f.tag + "-apply",
+	}, true); err != nil {
+		t.Fatalf("apply memo to the gated invoice: %v", err)
+	}
+	mgrDetail2, err := f.service(d510Manager()).Detail(ctx, invID, false)
+	if err != nil {
+		t.Fatalf("manager detail with credits: %v", err)
+	}
+	mgrDetail2JSON, _ := json.Marshal(mgrDetail2)
+	for _, want := range []string{`"open_credits"`, `"credit_applications"`} {
+		if !strings.Contains(string(mgrDetail2JSON), want) {
+			t.Errorf("an allowed manager's detail carries %s: %s", want, mgrDetail2JSON)
+		}
+	}
+	frontDetail2, err := f.service(d510Frontline()).Detail(ctx, invID, false)
+	if err != nil {
+		t.Fatalf("frontline detail with credits: %v", err)
+	}
+	frontDetail2JSON, _ := json.Marshal(frontDetail2)
+	if strings.Contains(string(frontDetail2JSON), `"open_credits"`) {
+		t.Errorf("a refused caller's invoice detail must not contain %q at all: %s", "open_credits", frontDetail2JSON)
+	}
+	if !strings.Contains(string(frontDetail2JSON), `"credit_applications"`) {
+		t.Errorf("the invoice's own credit applications stay on a refused caller's detail: %s", frontDetail2JSON)
+	}
 }
 
 // TestRegister_ARefusedCallerCarriesTheStoredStatusAndNoPastDueFlags pins round 6 (S5 R5.6, row
