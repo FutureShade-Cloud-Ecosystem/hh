@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/jackc/pgx/v5"
 )
 
 // Transfer statuses (stock_transfers.status CHECK set, 0116).
@@ -247,16 +248,16 @@ func (s *Service) ShipTransferWithETA(ctx context.Context, transferID, actorID s
 	if err := s.repo.SetTransferShipped(ctx, tx, hdr.ID, actorID, eta); err != nil {
 		return Transfer{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Transfer{}, err
-	}
-	s.log.Info("inventory: transfer shipped", "transfer_no", hdr.TransferNo, "value_cents", totalValue, "eta", eta)
-	if err := s.postTransferLeg(ctx, transferPost{
+	if err := s.postTransferLegTx(ctx, tx, transferPost{
 		TransferID: hdr.ID, TransferNo: hdr.TransferNo,
 		BranchID: hdr.FromBranchID, ValueCents: totalValue,
 	}, EventTransferShipped, true); err != nil {
 		return Transfer{}, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return Transfer{}, err
+	}
+	s.log.Info("inventory: transfer shipped", "transfer_no", hdr.TransferNo, "value_cents", totalValue, "eta", eta)
 	return s.GetTransfer(ctx, hdr.ID)
 }
 
@@ -368,16 +369,16 @@ func (s *Service) ReceiveTransfer(ctx context.Context, transferID, actorID strin
 	if err := s.repo.SetTransferReceived(ctx, tx, hdr.ID, actorID); err != nil {
 		return Transfer{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Transfer{}, err
-	}
-	s.log.Info("inventory: transfer received", "transfer_no", hdr.TransferNo, "value_cents", totalValue)
-	if err := s.postTransferLeg(ctx, transferPost{
+	if err := s.postTransferLegTx(ctx, tx, transferPost{
 		TransferID: hdr.ID, TransferNo: hdr.TransferNo,
 		BranchID: hdr.ToBranchID, ValueCents: totalValue,
 	}, EventTransferReceived, false); err != nil {
 		return Transfer{}, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return Transfer{}, err
+	}
+	s.log.Info("inventory: transfer received", "transfer_no", hdr.TransferNo, "value_cents", totalValue)
 	return s.GetTransfer(ctx, hdr.ID)
 }
 
@@ -458,6 +459,10 @@ type transferPost struct {
 // debits in-transit and credits inventory at the SOURCE; shipping=false does the reverse at the
 // DESTINATION. Both codes resolve through the GL posting rules, never a literal.
 func (s *Service) postTransferLeg(ctx context.Context, p transferPost, event string, shipping bool) error {
+	return s.postTransferLegTx(ctx, nil, p, event, shipping)
+}
+
+func (s *Service) postTransferLegTx(ctx context.Context, tx pgx.Tx, p transferPost, event string, shipping bool) error {
 	if p.TransferID == "" {
 		return fmt.Errorf("inventory: %s missing transfer id", event)
 	}
@@ -473,11 +478,19 @@ func (s *Service) postTransferLeg(ctx context.Context, p transferPost, event str
 	if s.rules == nil {
 		return errNoRules
 	}
-	invCode, err := s.rules.ResolveRule(ctx, event, "inventory", p.BranchID)
+	resolveRule := func(role string) (string, error) {
+		if tx != nil {
+			if rr, ok := s.rules.(RuleResolverTx); ok {
+				return rr.ResolveRuleTx(ctx, tx, event, role, p.BranchID)
+			}
+		}
+		return s.rules.ResolveRule(ctx, event, role, p.BranchID)
+	}
+	invCode, err := resolveRule("inventory")
 	if err != nil {
 		return err
 	}
-	transitCode, err := s.rules.ResolveRule(ctx, event, "in_transit", p.BranchID)
+	transitCode, err := resolveRule("in_transit")
 	if err != nil {
 		return err
 	}
@@ -488,7 +501,7 @@ func (s *Service) postTransferLeg(ctx context.Context, p transferPost, event str
 	} else {
 		inv.DebitCents, transit.CreditCents = p.ValueCents, p.ValueCents
 	}
-	if _, err := s.gl.PostJournal(ctx, GLJournal{
+	jr := GLJournal{
 		// ADJUSTMENT, not a new "STOCK_TRANSFER" source. gl_journals.source carries a CHECK over seven
 		// values (0007) that NO migration has ever extended, and every module that posts something
 		// outside the core seven, bankrec, invcount, lien, warranty, uses ADJUSTMENT. Widening a GL
@@ -503,12 +516,21 @@ func (s *Service) postTransferLeg(ctx context.Context, p transferPost, event str
 		Memo:           "stock transfer " + p.TransferNo,
 		BranchID:       p.BranchID,
 		Lines:          []GLLine{inv, transit},
-	}); err != nil {
-		// Loud, because the stock side is already committed and the two are now momentarily out of
-		// step. The transfer number is in the message so an operator can retry against a real document.
-		s.log.Error("inventory: transfer GL journal did not post, stock moved, ledger did not",
-			"event", event, "transfer_no", p.TransferNo, "transfer_id", p.TransferID, "err", err)
-		return err
+	}
+	var postErr error
+	if tx != nil {
+		if gp, ok := s.gl.(GLPosterTx); ok {
+			_, postErr = gp.PostJournalTx(ctx, tx, jr)
+		} else {
+			_, postErr = s.gl.PostJournal(ctx, jr)
+		}
+	} else {
+		_, postErr = s.gl.PostJournal(ctx, jr)
+	}
+	if postErr != nil {
+		s.log.Error("inventory: transfer GL journal did not post",
+			"event", event, "transfer_no", p.TransferNo, "transfer_id", p.TransferID, "err", postErr)
+		return postErr
 	}
 	return nil
 }

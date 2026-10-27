@@ -370,6 +370,14 @@ func (a invGLPoster) PostJournal(ctx context.Context, in inventory.GLJournal) (s
 	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
 }
 
+func (a invGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in inventory.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+}
+
 // w5aQuoteStockReserver satisfies quote's stock reservation seam over
 // inventory (carried verbatim).
 type w5aQuoteStockReserver struct{ svc *inventory.Service }

@@ -123,10 +123,23 @@ type GLPoster interface {
 	PostJournal(ctx context.Context, in GLJournal) (string, error)
 }
 
+// GLPosterTx is an optional extension of GLPoster that posts a journal inside the caller's transaction
+// so a stock transfer move and its journal commit or roll back atomically.
+type GLPosterTx interface {
+	GLPoster
+	PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error)
+}
+
 // RuleResolver resolves a posting-rule role to an account code (satisfied by a main.go adapter over
 // *gl.Service.ResolveRule). INV-CORE resolves the 1200 inventory leg through this.
 type RuleResolver interface {
 	ResolveRule(ctx context.Context, eventType, lineRole, branchID string) (string, error)
+}
+
+// RuleResolverTx is an optional extension of RuleResolver that resolves a rule on the caller's transaction.
+type RuleResolverTx interface {
+	RuleResolver
+	ResolveRuleTx(ctx context.Context, tx pgx.Tx, eventType, lineRole, branchID string) (string, error)
 }
 
 // GLJournal + GLLine mirror gl.ExternalJournal by value so inventory does not import gl's service internals.
