@@ -22,6 +22,11 @@ func (s *Service) Accounts(ctx context.Context) ([]BankAccount, error) {
 	return s.repo.ListAccounts(ctx)
 }
 
+// RecordCutover records the reconciliation starting point for a bank account (FW1-04 round 2).
+func (s *Service) RecordCutover(ctx context.Context, in CutoverInput) (BankAccount, error) {
+	return BankAccount{}, errNotImplemented
+}
+
 // Import parses a statement export under a profile, dedupes it into bank_statement_lines, and records an
 // IMPORTED (or FAILED) audit. Re-importing the same file inserts 0 new lines (AC1). The parser is pluggable:
 // an injected StatementSource wins; otherwise the built-in CSV parser is used (AC8).

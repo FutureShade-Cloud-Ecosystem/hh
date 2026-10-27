@@ -57,15 +57,18 @@ const (
 // BankAccount is one seeded real bank/card account bound to its GL code (0033 bank_accounts). CREDIT_CARD
 // accounts (Corporate Visa 2110-2117) are TRACKING-ONLY at W5, no Visa spend is booked.
 type BankAccount struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	AccountType    string `json:"account_type"`
-	GLAccountCode  string `json:"gl_account_code"`
-	Institution    string `json:"institution"`
-	Last4          string `json:"last4"`
-	IsActive       bool   `json:"is_active"`
-	TrackingOnly   bool   `json:"tracking_only"` // true for CREDIT_CARD at W5
-	UnmatchedLines int    `json:"unmatched_lines"`
+	ID                           string   `json:"id"`
+	Name                         string   `json:"name"`
+	AccountType                  string   `json:"account_type"`
+	GLAccountCode                string   `json:"gl_account_code"`
+	Institution                  string   `json:"institution"`
+	Last4                        string   `json:"last4"`
+	IsActive                     bool     `json:"is_active"`
+	TrackingOnly                 bool     `json:"tracking_only"` // true for CREDIT_CARD at W5
+	UnmatchedLines               int      `json:"unmatched_lines"`
+	CutoverDate                  *string  `json:"-"`
+	CutoverStatementBalanceCents *int64   `json:"-"`
+	CutoverOutstandingJournalIDs []string `json:"-"`
 }
 
 // StatementLine is one parsed bank line (0033 bank_statement_lines). AmountCents is signed (+credit/−debit).
@@ -215,6 +218,16 @@ type ReconInput struct {
 	Refresh               bool   `json:"refresh,omitempty"`
 }
 
+// CutoverInput records a bank account's reconciliation starting point (cut-over, FW1-04 round 2):
+// the cut-over date and opening statement balance accepted as reconciled to the book, plus an optional
+// confirmed list of ledger entry journal IDs on or before that date that remain outstanding at cut-over.
+type CutoverInput struct {
+	BankAccountID                string   `json:"bank_account_id"`
+	CutoverDate                  string   `json:"cutover_date"`
+	OpeningStatementBalanceCents int64    `json:"opening_statement_balance_cents"`
+	OutstandingJournalIDs        []string `json:"outstanding_journal_ids,omitempty"`
+}
+
 // - error taxonomy (mirrors internal/till) -
 type clientError struct {
 	status int
@@ -234,6 +247,9 @@ func badRequest(format string, a ...any) error {
 }
 func conflict(format string, a ...any) error {
 	return clientError{status: http.StatusConflict, msg: fmt.Sprintf(format, a...)}
+}
+func forbidden(format string, a ...any) error {
+	return clientError{status: http.StatusForbidden, msg: fmt.Sprintf(format, a...)}
 }
 
 var (
