@@ -92,3 +92,48 @@ VALUES ($1, $2::jsonb, $3, $4, $5, $6) RETURNING event_id::text`,
 		t.Fatalf("the counts must answer a manager: %v", err)
 	}
 }
+
+func TestIntegration_PostingQueueCounts_SkipsFreshUnattemptedPending(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	controller := identity.StaffContext{UserID: "5d1b3f6e-0000-4000-9000-0000000000aa", RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}
+
+	svc := NewService(NewRepository(pool)).
+		WithPostingQueue(notify.NewPgOutboxStore(pool)).
+		withCaller(func(context.Context) (identity.StaffContext, bool) { return controller, true })
+
+	before, err := svc.PostingQueueCounts(ctx)
+	if err != nil {
+		t.Fatalf("baseline counts: %v", err)
+	}
+
+	now := time.Now().UTC()
+	plantAt := func(topic, payload, status string, attempts int, lastErr string, at time.Time) string {
+		var id string
+		if err := pool.QueryRow(ctx, `
+INSERT INTO events_outbox (topic, payload, status, attempts, last_error, occurred_at)
+VALUES ($1, $2::jsonb, $3, $4, $5, $6) RETURNING event_id::text`,
+			topic, payload, status, attempts, lastErr, at).Scan(&id); err != nil {
+			t.Fatalf("plant outbox row: %v", err)
+		}
+		return id
+	}
+	fresh := plantAt("payment.received", `{"payment_id":"p-fw1-02-fresh"}`, "PENDING", 0, "", now)
+	retried := plantAt("payment.received", `{"payment_id":"p-fw1-02-retried"}`, "PENDING", 1, "gl: transient", now)
+	stale := plantAt("payment.received", `{"payment_id":"p-fw1-02-stale"}`, "PENDING", 0, "", now.Add(-6*time.Minute))
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(),
+			`DELETE FROM events_outbox WHERE event_id = ANY($1::uuid[])`, []string{fresh, retried, stale}); err != nil {
+			t.Errorf("cleanup outbox rows: %v", err)
+		}
+	})
+
+	after, err := svc.PostingQueueCounts(ctx)
+	if err != nil {
+		t.Fatalf("after counts: %v", err)
+	}
+	if got := after.Waiting - before.Waiting; got != 2 {
+		t.Fatalf("a fresh unattempted PENDING row was counted on the banner: waiting delta = %d, want 2 (only attempts > 0 or age >= 5m)", got)
+	}
+}
+
