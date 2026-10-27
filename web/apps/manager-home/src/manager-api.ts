@@ -620,11 +620,11 @@ function toLandingTiles(raw: unknown): readonly LandingVizTile[] {
 }
 
 /** The composed ids the landing asks for: today's counter sales by branch, the all time margin in
- * basis points, and the AR aging buckets. An id the caller may not compose is byte absent in the
- * answer and its card says so in words. */
+ * basis points, and the AR aging buckets. Every id here must compose clean through the core's
+ * ParseComposition (the dashboard package's landing tile contract leg pins that): an id the caller
+ * may not compose is byte absent in the answer and its card says so in words. */
 const LANDING_VIZ_TILES = [
   "viz.sales.today-branch-split",
-  "viz.margin.gross_bps-none-list",
   "viz.margin.gross_bps-branch-list",
   "viz.ar.aging-bucket-split",
   "viz.ar.aging-branch-split",
@@ -646,10 +646,12 @@ function landingNotConnected(title: string, kind: "money" | "percent"): LandingK
  * back in any state but ok, is a card with its title and LANDING_NOT_CONNECTED, never a figure.
  *
  * FROM-PRINCIPAL 132: a RATE is never summed and never averaged. The all branches gross margin is
- * the provider's own weighted aggregate (the none composition's total, total margin cents over
- * total sales cents across the branches); with branch points but no aggregate the card says
- * LANDING_NOT_CONNECTED. Branch rows name the branches (the caller's own branch list), never the
- * three letter codes the series carries. */
+ * the provider's own weighted aggregate, the branch composition's total (the core's totalFor asks
+ * the provider's ungrouped run: total margin cents over total sales cents across the branches;
+ * FROM-PRINCIPAL 174: there is no none composition, ParseComposition refuses it, the metric
+ * composes branch only). Branch points with no aggregate is a Not connected yet card. Branch rows
+ * name the branches (the caller's own branch list), never the three letter codes the series
+ * carries. */
 export function landingKpisFrom(
   tiles: readonly LandingVizTile[],
   branchNames: ReadonlyMap<string, string> = new Map(),
@@ -664,7 +666,6 @@ export function landingKpisFrom(
     tile.points.map((p) => ({ label: branchLabel(p.label), value: show(p.number) }));
 
   const sales = measured("viz.sales.today-branch-split");
-  const marginRate = measured("viz.margin.gross_bps-none-list");
   const marginByBranch = measured("viz.margin.gross_bps-branch-list");
   const aging = measured("viz.ar.aging-bucket-split");
   const agingByBranch = measured("viz.ar.aging-branch-split");
@@ -674,16 +675,16 @@ export function landingKpisFrom(
     ? {
         title: "Sales today", kind: "money", connected: true,
         value: landingMoney(sales.total ?? sales.points.reduce((a, p) => a + p.number, 0)),
-        note: "Counter sales committed today",
+        note: "Counter sales committed today, including tax",
         branches: branchRows(sales, landingMoney),
       }
     : landingNotConnected("Sales today", "money"));
   // Money adds; a rate does not. The combined margin is the core's weighted aggregate alone.
-  cards.push(marginRate !== null && marginRate.total !== null
+  cards.push(marginByBranch !== null && marginByBranch.total !== null
     ? {
         title: "Gross margin", kind: "percent", connected: true,
-        value: landingPercentFromBps(marginRate.total), note: "All invoiced order lines, all time",
-        branches: marginByBranch !== null ? branchRows(marginByBranch, landingPercentFromBps) : [],
+        value: landingPercentFromBps(marginByBranch.total), note: "All invoiced order lines, all time",
+        branches: branchRows(marginByBranch, landingPercentFromBps),
       }
     : landingNotConnected("Gross margin", "percent"));
   cards.push(aging !== null

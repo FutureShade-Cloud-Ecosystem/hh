@@ -114,7 +114,7 @@ test("the TODAY money cards carry the core's figures, and a measure with no core
   // the card draws came back on the wire; none is a constant the app holds.
   const sales = kpis.locator(".kpi-card", { hasText: "Sales today" });
   await expect(sales.locator(".kpi-value")).toHaveText("$1,234.56");
-  await expect(sales.locator(".kpi-compare")).toHaveText("Counter sales committed today");
+  await expect(sales.locator(".kpi-compare")).toHaveText("Counter sales committed today, including tax");
   const margin = kpis.locator(".kpi-card", { hasText: "Gross margin" });
   await expect(margin.locator(".kpi-value")).toHaveText("31.8%");
   const pastDue = kpis.locator(".kpi-card", { hasText: "Receivables past due" });

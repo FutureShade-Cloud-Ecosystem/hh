@@ -1519,10 +1519,10 @@ function vizSeries(metricId, dimension) {
     ] };
   }
   if (metricId === "margin.gross_bps") {
-    // FROM-PRINCIPAL 132: the branch split carries no total (a rate is never
-    // summed); the weighted all branches rate rides the none composition.
-    if (dimension === "none") return { total: 3180, points: [{ label: "All branches", number: 3180 }] };
-    return { total: null, points: [{ label: "PLM", number: 3180 }] };
+    // FROM-PRINCIPAL 174: there is no none composition (ParseComposition
+    // refuses it, the metric composes branch only), and the branch tile's
+    // total IS the weighted all branches figure (the core's totalFor).
+    return { total: 3180, points: [{ label: "PLM", number: 3180 }] };
   }
   if (metricId === "warranty.open_claims") return { total: 3, points: [{ label: "Open", number: 3 }] };
   if (metricId === "orders.open") return { total: 12, points: [] };
@@ -1980,6 +1980,11 @@ async function handle(req, res) {
       const metricId = dimAt > 0 ? head.slice(0, dimAt) : head;
       const measure = WIDGET_MEASURES.find((m) => m.metric_id === metricId);
       if (measure === undefined) return null;
+      // The core's ParseComposition validates the dimension against the
+      // metric's own closed set (not its splits): a dimension the metric does
+      // not offer is refused, the tile byte absent. Mirror that, so no client
+      // can grow a faked tile against the stub either.
+      if (dimension !== "" && !measure.dimensions.includes(dimension)) return null;
       const series = vizSeries(metricId, dimension);
       if (series === null) return null;
       return {
