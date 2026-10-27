@@ -390,6 +390,34 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 	return rs, true, nil
 }
 
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// whether a task row the scope's keys can name still exists, for every
+// caller of the org at once. The org predicate alone, tombstone aware (a
+// tombstoned task is gone for everyone), never the branch reach the
+// caller's Load speaks: the gate may hide a key only for a live row a
+// caller cannot see, and a gone row keeps the bound answer. The weights
+// scope's store answers over the same rows through the same read.
+func (s *SyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	return taskBoundExists(ctx, s.pool, f, id)
+}
+
+// taskBoundExists is the existence read both task scope stores ask: a
+// tenant filter fails closed, a malformed id is the absent row, and a
+// read fault is the plain error (the gate's classified path), never a
+// silent verdict.
+func taskBoundExists(ctx context.Context, db pickQuerier, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || !looksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	if err := db.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL)`,
+		id, f.OrgID).Scan(&present); err != nil {
+		return false, fmt.Errorf("tasks: sync bound entity exists: %w", err)
+	}
+	return present, nil
+}
+
 // callerReaches says whether the caller's branch reach covers a pick on the given branch: exactly the pull's rule
 // (pullReach): GLOBAL reaches all, a scoped caller its granted branches only (a pick with no branch is in no scoped
 // caller's reach), an absent, inactive or unreadable authority nothing. An unwired seam fences nothing, as the pull.

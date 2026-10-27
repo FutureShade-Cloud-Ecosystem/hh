@@ -247,6 +247,13 @@ func (s *WeightSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id strin
 	return s.load(ctx, s.pool, f, id)
 }
 
+// BoundEntityExists answers the bound key gate's existence half (UX-103)
+// over the same task rows the pick store reads: the org predicate alone,
+// tombstone aware, never the branch reach the caller's Load speaks.
+func (s *WeightSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	return taskBoundExists(ctx, s.pool, f, id)
+}
+
 // weightQuerier is the read surface a pool and a transaction share, so one
 // loader body serves the public Load (the pool) and the callers that
 // already hold a transaction (their own connection).

@@ -185,10 +185,12 @@ func (s *PODSyncStore) attestationState(ctx context.Context, db attestationQueri
 // create answers the stop it proved (its id and its stops seq), so the
 // stop is the row Load reads, under the same fence the create's own stop
 // read runs (org, not deleted, the driver arm): a colleague's stop is
-// the same as absent, and the desk reads its org's stops. Without this
-// arm Load would miss the row for every caller, and the engine's bound
-// key gate would take that blindness for a fence and hide the owner's
-// own answers.
+// the same as absent, and the desk reads its org's stops. The stop must
+// carry the attestation (a received name): the proof Load answers is the
+// typed name's, so a stop delivered with a photo stays the absent row,
+// exactly as the create would refuse it (entry 489). Without this arm
+// Load would miss the row for every caller, and the engine's bound key
+// gate would take that blindness for a fence.
 func (s *PODSyncStore) loadAttestation(ctx context.Context, db attestationQuerier, f sync.ScopeFilter, d driverFence, id string) (sync.RowState, bool, error) {
 	if f.Tenant || f.OrgID == "" || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
@@ -196,7 +198,8 @@ func (s *PODSyncStore) loadAttestation(ctx context.Context, db attestationQuerie
 	arm, args := driverArm(d, []any{id, f.OrgID})
 	var present int
 	err := db.QueryRow(ctx,
-		`SELECT 1 FROM delivery_stops WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+arm,
+		`SELECT 1 FROM delivery_stops WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL
+		  AND pod_received_by <> ''`+arm,
 		args...).Scan(&present)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil

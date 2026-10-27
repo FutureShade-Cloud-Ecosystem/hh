@@ -219,6 +219,63 @@ func (s *PODSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) 
 	return s.load(ctx, s.pool, f, d, id)
 }
 
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// whether the entity a pod key applied still exists for every caller of
+// the org at once, a live photo row (the org riding its owning stop) or a
+// stop carrying a typed name attestation. The org and tenant predicate
+// alone, tombstone aware, never the driver arm the caller's Load speaks,
+// so the gate may hide a key only for a live entity a caller cannot see,
+// and a gone one keeps the bound answer.
+func (s *PODSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || !looksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM delivery_pod_photos p
+			JOIN delivery_stops os ON os.id = p.stop_id
+			WHERE p.id = $1::uuid AND p.deleted_at IS NULL AND os.org_id = $2::uuid
+		) OR EXISTS (
+			SELECT 1 FROM delivery_stops s
+			WHERE s.id = $1::uuid AND s.org_id = $2::uuid
+			  AND s.deleted_at IS NULL AND s.pod_received_by <> ''
+		)`, id, f.OrgID).Scan(&present)
+	if err != nil {
+		return false, fmt.Errorf("dispatch: pod sync bound entity exists: %w", err)
+	}
+	return present, nil
+}
+
+// LoadWritable is the write paths' row read (the engine's update and
+// delete): the photo rows only. The attestation create answers the stop it
+// proved, and Load and the replay read it, but a stop is nobody's photo to
+// edit: an update or delete naming a stop id is the row not found refusal
+// it always was, refused before the engine can build it a conflict
+// envelope from the stop's seq.
+func (s *PODSyncStore) LoadWritable(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	d, err := s.driverFence(ctx, f)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	where, args, ok := podScopePredicate(f, d)
+	if !ok || !looksLikeUUID(id) {
+		return sync.RowState{}, false, nil
+	}
+	q := podSyncQuery + `
+		WHERE p.id = ` + syncPH(len(args)+1) + `::uuid AND ` + where
+	args = append(args, id)
+	r, err := scanSyncPod(s.pool.QueryRow(ctx, q, args...))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sync.RowState{}, false, nil
+	}
+	if err != nil {
+		return sync.RowState{}, false, fmt.Errorf("dispatch: pod sync load: %w", err)
+	}
+	rs, err := podStateOf(r)
+	return rs, true, err
+}
+
 // podQuerier is the read surface a pool and a transaction share, so one
 // loader body serves the public Load (the pool) and the callers that
 // already hold a transaction (their own connection).

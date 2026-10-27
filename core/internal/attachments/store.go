@@ -474,6 +474,24 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 	return s.load(ctx, s.pool, f, id, nil)
 }
 
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// whether an attachment row the scope's keys can name still exists, for
+// every caller of the org at once. The org predicate alone, tombstone
+// aware, never the driver hold on the row's links the caller's Load
+// speaks.
+func (s *SyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || !looksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM attachment WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL)`,
+		id, f.OrgID).Scan(&present); err != nil {
+		return false, fmt.Errorf("attachments: sync bound entity exists: %w", err)
+	}
+	return present, nil
+}
+
 // rowQuerier is the read surface a pool and a transaction share, so one
 // loader body serves the public Load (the pool) and the callers that
 // already hold a transaction (their own connection).

@@ -67,6 +67,29 @@ func (f *fencedStore) Create(ctx context.Context, filter ScopeFilter, key string
 	return rs, err
 }
 
+// existsStore is a fencedStore that also answers the bound key gate's
+// optional existence read: the row's, not the caller's (no branch or
+// driver fence), tombstone aware through the gone set. UX-103 round 3:
+// the gate may drop a bound key only when a LIVE entity exists and the
+// caller's Load cannot see it; a gone-for-everyone entity keeps the bound
+// answer, and a store that cannot answer existence at all keeps it too.
+type existsStore struct {
+	*fencedStore
+	gone map[string]bool
+}
+
+func (f *existsStore) BoundEntityExists(_ context.Context, _ ScopeFilter, id string) (bool, error) {
+	if f.gone[id] {
+		return false, nil
+	}
+	for _, r := range f.rows {
+		if r.id == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // UX-103: the ledger is keyed by org, tenant, scope and key, never by
 // branch, so a key bound on one branch reaches the engine's lookup from a
 // device of another. The replay must answer like the absent key when the
@@ -76,7 +99,7 @@ func (f *fencedStore) Create(ctx context.Context, filter ScopeFilter, key string
 // whose reach covers both branches is answered as before.
 func TestBoundKeyAnswersLikeTheAbsentKeyWhenTheFenceHidesTheEntity(t *testing.T) {
 	inner := &fakeStore{}
-	fs := &fencedStore{fakeStore: inner, branch: map[string]string{},
+	fs := &existsStore{fencedStore: &fencedStore{fakeStore: inner, branch: map[string]string{},
 		reachFor: func(f ScopeFilter) []string {
 			switch f.Actor {
 			case "staff-a":
@@ -85,7 +108,7 @@ func TestBoundKeyAnswersLikeTheAbsentKeyWhenTheFenceHidesTheEntity(t *testing.T)
 				return []string{"br-b"}
 			}
 			return nil
-		}}
+		}}, gone: map[string]bool{}}
 	e := NewEngine()
 	if err := e.RegisterScope("pick_tasks", fs); err != nil {
 		t.Fatalf("register: %v", err)
@@ -142,5 +165,134 @@ func TestBoundKeyAnswersLikeTheAbsentKeyWhenTheFenceHidesTheEntity(t *testing.T)
 	}
 	if led.size() != 1 {
 		t.Errorf("the refused replays bind nothing new: %d entries, want 1", led.size())
+	}
+}
+
+// UX-103 round 3: the entity the key applied is GONE for everyone (deleted, tombstoned, hard
+// dropped). The gate must keep the bound answer: the replay answers applied with no seq and nothing
+// applies twice, for the owner and for a caller the fence holds anyway, and another body is still
+// key_reused. Hiding here would send the replay down the plain path, where a gone row can apply
+// AGAIN, the second create the gate exists to make impossible.
+func TestBoundKeyKeepsTheBoundAnswerWhenTheEntityIsGoneForEveryone(t *testing.T) {
+	inner := &fakeStore{}
+	fs := &existsStore{fencedStore: &fencedStore{fakeStore: inner, branch: map[string]string{},
+		reachFor: func(f ScopeFilter) []string {
+			switch f.Actor {
+			case "staff-a":
+				return []string{"br-a"}
+			case "staff-b":
+				return []string{"br-b"}
+			}
+			return nil
+		}}, gone: map[string]bool{}}
+	e := NewEngine()
+	if err := e.RegisterScope("pick_tasks", fs); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	led := newMemLedger()
+	e.WithKeyLedger(led)
+	info, ok := Lookup("pick_tasks")
+	if !ok {
+		t.Fatal("pick_tasks missing from the registry")
+	}
+	push := func(f ScopeFilter, op apigen.SyncPushOperation) apigen.SyncPushResult {
+		t.Helper()
+		resp, err := e.Push(context.Background(), info, f, []apigen.SyncPushOperation{op})
+		if err != nil {
+			t.Fatalf("push: %v", err)
+		}
+		return resp.Results[0]
+	}
+	fA := ScopeFilter{OrgID: testFilter.OrgID, Actor: "staff-a"}
+	fB := ScopeFilter{OrgID: testFilter.OrgID, Actor: "staff-b"}
+
+	op := apigen.SyncPushOperation{ClientId: key(17), Op: "create", Payload: map[string]any{"id": rowID(17), "v": "a"}}
+	first := push(fA, op)
+	if first.Status != "applied" || first.Seq == nil {
+		t.Fatalf("setup: the create applies: %+v", first)
+	}
+	// Gone for everyone: the row is dropped and the store says so, for every caller at once.
+	fs.gone[rowID(17)] = true
+	kept := inner.rows[:0]
+	for _, r := range inner.rows {
+		if r.id != rowID(17) {
+			kept = append(kept, r)
+		}
+	}
+	inner.rows = kept
+
+	again := push(fA, op)
+	if again.Status != "applied" || again.Seq != nil {
+		t.Errorf("the owner's replay over a gone row answers applied with no seq: %+v", again)
+	}
+	if len(inner.rows) != 0 {
+		t.Errorf("the replay applies nothing twice: %d rows, want 0", len(inner.rows))
+	}
+	other := apigen.SyncPushOperation{ClientId: key(17), Op: "create", Payload: map[string]any{"id": rowID(17), "v": "TAMPERED"}}
+	wantKeyReused(t, push(fA, other))
+
+	// A caller the fence holds anyway keeps the bound answer too: without a live row to hide there
+	// is no fence answer to give, only the key's own.
+	colleague := push(fB, op)
+	if colleague.Status != "applied" || colleague.Seq != nil {
+		t.Errorf("a branch B replay over a gone row answers applied with no seq, the bound answer: %+v", colleague)
+	}
+	if len(inner.rows) != 0 {
+		t.Errorf("the branch B replay applies nothing twice: %d rows, want 0", len(inner.rows))
+	}
+	if led.size() != 1 {
+		t.Errorf("the replays bind nothing new: %d entries, want 1", led.size())
+	}
+}
+
+// UX-103 round 3: a store that does not implement the optional existence read keeps the bound
+// answer wherever its Load misses, the pre-gate behaviour. The gate fails toward idempotency, never
+// toward a second create.
+func TestBoundKeyKeepsTheBoundAnswerWhenTheStoreCannotAnswerExistence(t *testing.T) {
+	inner := &fakeStore{}
+	fs := &fencedStore{fakeStore: inner, branch: map[string]string{},
+		reachFor: func(f ScopeFilter) []string {
+			switch f.Actor {
+			case "staff-a":
+				return []string{"br-a"}
+			case "staff-b":
+				return []string{"br-b"}
+			}
+			return nil
+		}}
+	e := NewEngine()
+	if err := e.RegisterScope("pick_tasks", fs); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	led := newMemLedger()
+	e.WithKeyLedger(led)
+	info, ok := Lookup("pick_tasks")
+	if !ok {
+		t.Fatal("pick_tasks missing from the registry")
+	}
+	push := func(f ScopeFilter, op apigen.SyncPushOperation) apigen.SyncPushResult {
+		t.Helper()
+		resp, err := e.Push(context.Background(), info, f, []apigen.SyncPushOperation{op})
+		if err != nil {
+			t.Fatalf("push: %v", err)
+		}
+		return resp.Results[0]
+	}
+	fA := ScopeFilter{OrgID: testFilter.OrgID, Actor: "staff-a"}
+	fB := ScopeFilter{OrgID: testFilter.OrgID, Actor: "staff-b"}
+
+	op := apigen.SyncPushOperation{ClientId: key(27), Op: "create", Payload: map[string]any{"id": rowID(27), "v": "a"}}
+	first := push(fA, op)
+	if first.Status != "applied" || first.Seq == nil {
+		t.Fatalf("setup: the create applies: %+v", first)
+	}
+	again := push(fB, op)
+	if again.Status != "applied" || again.Seq != nil {
+		t.Errorf("without the existence read a hidden row keeps the bound answer, applied with no seq: %+v", again)
+	}
+	other := apigen.SyncPushOperation{ClientId: key(27), Op: "create", Payload: map[string]any{"id": rowID(27), "v": "TAMPERED"}}
+	wantKeyReused(t, push(fB, other))
+	if led.size() != 1 {
+		t.Errorf("the replays bind nothing new: %d entries, want 1", led.size())
 	}
 }

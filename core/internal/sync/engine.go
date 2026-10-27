@@ -213,22 +213,35 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 		if bound {
 			// The ledger is keyed by org, tenant, scope and key, never by
 			// branch, so a key bound on one branch reaches this lookup from
-			// a device of another. For a fenced scope the store's Load is
-			// held to the caller's reach, and when it cannot read the
-			// entity the key applied, the key answers as an absent key:
-			// replayBound and keyReused would otherwise tell a device that
-			// cannot see the row that its key applied in its org. The
-			// absent path below is the store's own fences speaking, and a
-			// scope that fences nothing reads the row and answers as
-			// before. A key with no entity to check (no stored id and no
-			// payload id) keeps the plain bound answer.
+			// a device of another. Two cases can follow, and the gate must
+			// not confuse them:
 			//
-			// The question is the caller's fence, never the table: a
-			// store's Load must answer for every row the scope's keys can
-			// name, the row the create answered included (an attestation
-			// create answers the stop it proved). A Load that misses a row
-			// for every caller is a store defect, not a fence, and would
-			// drop the owner's own bound answers.
+			// The caller's fence hides a LIVE entity: the key answers as an
+			// absent key. replayBound and keyReused would otherwise tell a
+			// device that cannot see the row that its key applied in its
+			// org. The hide is the store's own answer: the engine asks the
+			// caller's Load, and on a miss asks the store's optional
+			// BoundEntityExists, the entity's existence for every caller of
+			// the scope at once (org and tenant only, tombstone aware,
+			// never the caller-side fence Load speaks). The hide fires only
+			// on a miss WITH that yes: the absent path below is then the
+			// store's own fences speaking, exactly what an unknown key
+			// gets.
+			//
+			// The entity is GONE for everyone (deleted, tombstoned) or the
+			// store cannot answer existence: the key KEEPS its bound
+			// answer, the pre-gate behaviour. The bound answer is the
+			// idempotent one: a replay of an applied key is answered
+			// applied without a seq, whatever became of the row, and a
+			// reused body is still key_reused. Hiding here would send the
+			// owner's replay down the plain path, where a gone row can
+			// apply AGAIN, the second create the ledger exists to make
+			// impossible.
+			//
+			// A fault in either read fails the push retryable (classified),
+			// never as a verdict on the operation, and a key with no entity
+			// to check (no stored id and no payload id) keeps the plain
+			// bound answer.
 			id := entry.EntityID
 			if id == "" {
 				id, _ = op.Payload["id"].(string)
@@ -237,7 +250,13 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 				if _, visible, lerr := store.Load(ctx, f, id); lerr != nil {
 					return e.classified(ctx, info, f, op, id, lerr)
 				} else if !visible {
-					bound = false
+					exists, xerr := boundEntityExists(ctx, store, f, id)
+					if xerr != nil {
+						return e.classified(ctx, info, f, op, id, xerr)
+					}
+					if exists {
+						bound = false
+					}
 				}
 			}
 		}
@@ -277,7 +296,7 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 		return res, nil
 	case opUpdate:
 		id, _ := op.Payload["id"].(string)
-		row, ok, err := store.Load(ctx, f, id)
+		row, ok, err := loadWritable(ctx, store, f, id)
 		if err != nil {
 			return e.classified(ctx, info, f, op, id, err)
 		}
@@ -299,7 +318,7 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 		return res, nil
 	case opDelete:
 		id, _ := op.Payload["id"].(string)
-		row, ok, err := store.Load(ctx, f, id)
+		row, ok, err := loadWritable(ctx, store, f, id)
 		if err != nil {
 			return e.classified(ctx, info, f, op, id, err)
 		}
@@ -328,6 +347,27 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 	// validOp pinned the op vocabulary; this arm is unreachable by
 	// construction and fails closed.
 	return e.auditRejected(ctx, info, f, op, "", fmt.Errorf("sync: unknown op %q", op.Op)), nil
+}
+
+// boundEntityExists asks the store's optional existence read for the
+// bound key gate. A store that does not implement BoundEntityChecker
+// answers no, which keeps the bound answer: the gate fails toward
+// idempotency, never toward a second create.
+func boundEntityExists(ctx context.Context, store Store, f ScopeFilter, id string) (bool, error) {
+	if c, ok := store.(BoundEntityChecker); ok {
+		return c.BoundEntityExists(ctx, f, id)
+	}
+	return false, nil
+}
+
+// loadWritable is the update and delete paths' row read: the store's own
+// writable read when it declares one (WritePathLoader), Load as before
+// when it does not.
+func loadWritable(ctx context.Context, store Store, f ScopeFilter, id string) (RowState, bool, error) {
+	if w, ok := store.(WritePathLoader); ok {
+		return w.LoadWritable(ctx, f, id)
+	}
+	return store.Load(ctx, f, id)
 }
 
 // classified sorts one store error: the seam's declared refusals are the
@@ -434,10 +474,11 @@ const ledgerWriteBound = 30 * time.Second
 // answer is applied from the row's current state and nothing is written. A
 // row that can no longer be read under the caller's filter answers applied
 // without a seq (the operation did land; there is no row left to report).
-// The fence's own answer happened before this point: a caller who cannot
-// read the row is never handed here, the bound key having answered as an
+// The gate's verdict happened before this point: a caller whose fence hides
+// a LIVE row is never handed here, the bound key having answered as an
 // absent key in pushCanonical, so a miss here is a row that vanished
-// between the two reads.
+// between the two reads or the gone-for-everyone row whose key kept its
+// bound answer on purpose.
 func (e *Engine) replayBound(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, entry LedgerEntry) (apigen.SyncPushResult, error) {
 	id := entry.EntityID
 	if id == "" {
