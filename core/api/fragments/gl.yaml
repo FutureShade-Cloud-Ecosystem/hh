@@ -1059,10 +1059,10 @@ paths:
       tags: [staff-bankrec]
       summary: List bank and card accounts with unmatched-line counts
       description: CREDIT_CARD accounts are tracking-only; no card spend is booked through this surface.
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1118,10 +1118,10 @@ paths:
       operationId: bankrecListLines
       tags: [staff-bankrec]
       summary: List statement lines
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1224,10 +1224,10 @@ paths:
       operationId: bankrecListMatches
       tags: [staff-bankrec]
       summary: List match history, optionally for one statement line
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1252,10 +1252,10 @@ paths:
       operationId: bankrecListRules
       tags: [staff-bankrec]
       summary: List match rules
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1317,10 +1317,10 @@ paths:
       operationId: bankrecListReconciliations
       tags: [staff-bankrec]
       summary: List reconciliations, optionally for one bank account
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"

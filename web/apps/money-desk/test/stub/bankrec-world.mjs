@@ -624,11 +624,14 @@ export function createBankrecWorld() {
     if (!path.startsWith("/api/v1/bankrec/")) return null;
     const caller = callerOf(req);
     const route = `${method} ${path.replace(/\/[0-9a-f-]{36}\/complete$/i, "/{id}/complete")}`;
-    // The guards, per route: reads any staff, writes a manager (tier 1 or 2), rules and sign off an administrator.
+    // The guards, per route: reads require Money Desk work or above (controller or Payables and Receivables, FROM-PRINCIPAL 111),
+    // writes a manager (tier 1 or 2), rules and sign off an administrator.
     const admin = route === "POST /api/v1/bankrec/rules" || route === "POST /api/v1/bankrec/reconciliations/{id}/complete";
     const manager = admin || ["POST /api/v1/bankrec/imports", "POST /api/v1/bankrec/match", "POST /api/v1/bankrec/unmatch", "POST /api/v1/bankrec/reconciliations"].includes(route);
+    const readWork = method === "GET";
     if (admin && caller.tier !== 1) return forbidden();
     if (manager && caller.tier > 2) return forbidden();
+    if (readWork && caller.id !== IDS.controller && caller.id !== IDS.payrec) return forbidden();
     let input = {};
     if (method === "POST" && route !== "POST /api/v1/bankrec/reconciliations/{id}/complete") {
       try {

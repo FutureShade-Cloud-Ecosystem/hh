@@ -13,17 +13,18 @@ package bankrec
 import (
 	"context"
 	"errors"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
-	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"io"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	identityPkg "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // errNotImplemented marks a scaffold stub the A-02 worker fills.
@@ -193,18 +194,27 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 	return &Handler{svc: svc, log: log}
 }
 
-// RegisterRoutes self-registers the bankrec routes. reads are RequireStaff; import/match are RequireManager;
+// requireMoneyDeskWork guards the five bankrec reads (FROM-PRINCIPAL 111): only global
+// Money Desk roles at work or above (payables_receivables, general_manager, financial_controller,
+// and platform roles) pass; counter and branch-scoped staff and HR are refused.
+func (h *Handler) requireMoneyDeskWork(g *guards.Guards, next guards.StaffHandler) http.Handler {
+	return g.RequireStaffPredicate(func(a identityPkg.StaffAuthority) bool {
+		return a.IsManager() && a.Scope == identityPkg.ScopeGlobal && a.RoleID != "hr"
+	}, next)
+}
+
+// RegisterRoutes self-registers the bankrec routes. reads are Money Desk work or above; import/match are RequireManager;
 // rule approval + reconciliation completion are RequireAdmin. Signature is FROZEN across the W5 handlers.
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/v1/bankrec/accounts", g.RequireStaff(h.staff(h.accounts)))
+	r.Handle("GET /api/v1/bankrec/accounts", h.requireMoneyDeskWork(g, h.staff(h.accounts)))
 	r.Handle("POST /api/v1/bankrec/imports", g.RequireManager(h.staff(h.createImport)))
-	r.Handle("GET /api/v1/bankrec/lines", g.RequireStaff(h.staff(h.lines)))
-	r.Handle("GET /api/v1/bankrec/matches", g.RequireStaff(h.staff(h.matchHistory)))
+	r.Handle("GET /api/v1/bankrec/lines", h.requireMoneyDeskWork(g, h.staff(h.lines)))
+	r.Handle("GET /api/v1/bankrec/matches", h.requireMoneyDeskWork(g, h.staff(h.matchHistory)))
 	r.Handle("POST /api/v1/bankrec/match", g.RequireManager(h.staff(h.match)))
 	r.Handle("POST /api/v1/bankrec/unmatch", g.RequireManager(h.staff(h.unmatch)))
-	r.Handle("GET /api/v1/bankrec/rules", g.RequireStaff(h.staff(h.rules)))
+	r.Handle("GET /api/v1/bankrec/rules", h.requireMoneyDeskWork(g, h.staff(h.rules)))
 	r.Handle("POST /api/v1/bankrec/rules", g.RequireAdmin(h.staff(h.createRule)))
-	r.Handle("GET /api/v1/bankrec/reconciliations", g.RequireStaff(h.staff(h.reconciliations)))
+	r.Handle("GET /api/v1/bankrec/reconciliations", h.requireMoneyDeskWork(g, h.staff(h.reconciliations)))
 	r.Handle("POST /api/v1/bankrec/reconciliations", g.RequireManager(h.staff(h.openReconciliation)))
 	r.Handle("POST /api/v1/bankrec/reconciliations/{id}/complete", g.RequireAdmin(h.staff(h.completeReconciliation)))
 }
