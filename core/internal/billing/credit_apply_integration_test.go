@@ -14,6 +14,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/google/uuid"
 )
 
 // TestIntegration_FW1_12b_ApplyCreditMemoAndAccountCredit_TiesTo1100AndReverses
@@ -350,6 +351,140 @@ func TestIntegration_FW1_12b_RefusalsLeaveNothingApplied(t *testing.T) {
 	var conflictErr CreditApplicationConflictError
 	if _, err := applySvc.Apply(ctx, spentDiff, true); !errors.As(err, &conflictErr) {
 		t.Fatalf("spent key with different body err = %v, want CreditApplicationConflictError", err)
+	}
+}
+
+// TestIntegration_FW1_12b_ASpentCreditOutOfReachAnswersNotFound pins S6's P1-3: the credit's
+// branch reach is judged directly after its row is read, BEFORE the "not open" judgement, for the
+// MEMO document and for the ACCOUNT group alike, so a spent credit at another branch answers the
+// same 404 no such credit as an unknown one, and the door's classification holds (an out of reach
+// credit and an unknown one are alike, whatever state the credit is in).
+func TestIntegration_FW1_12b_ASpentCreditOutOfReachAnswersNotFound(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	applySvc := NewCreditApplyService(repo)
+	ctx := context.Background()
+	n := ns(t)
+
+	custID := seedCustomer(t, pool, n+"-R2")
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+	})
+
+	// The target invoice sits at Trenton, inside the caller's reach; every credit sits at Kingston,
+	// outside it, and spending them takes a Kingston invoice of its own (a credit applies to its own
+	// branch's invoices only). The caller reaches Trenton only.
+	issue := time.Now().UTC().AddDate(0, 0, -3).Format("2006-01-02")
+	due := time.Now().UTC().AddDate(0, 0, 27).Format("2006-01-02")
+	var invID, kingstonInvID, spentMemoID, openMemoID, acctCreditID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $5::date, 100000, 0, 100000, 100000, now(), 'INVOICE')
+		RETURNING id::text`,
+		n+"-INV", custID, trentonBranch, issue, due).Scan(&invID); err != nil {
+		t.Fatalf("seed invoice: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $5::date, 100000, 0, 100000, 100000, now(), 'INVOICE')
+		RETURNING id::text`,
+		n+"-KINV", custID, kingstonBranch, issue, due).Scan(&kingstonInvID); err != nil {
+		t.Fatalf("seed kingston invoice: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $4::date, -8000, 0, -8000, -8000, now(), 'CREDIT_MEMO')
+		RETURNING id::text`,
+		n+"-CM-SPENT", custID, kingstonBranch, issue).Scan(&spentMemoID); err != nil {
+		t.Fatalf("seed spent memo: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $4::date, -7000, 0, -7000, -7000, now(), 'CREDIT_MEMO')
+		RETURNING id::text`,
+		n+"-CM-OPEN", custID, kingstonBranch, issue).Scan(&openMemoID); err != nil {
+		t.Fatalf("seed open memo: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO customer_transactions
+		  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+		VALUES ($1::uuid, 'ADJUSTMENT', -6000, 25000, 'order_deposit_cancel', gen_random_uuid(), $2::uuid, 'deposit credit')
+		RETURNING id::text`,
+		custID, kingstonBranch).Scan(&acctCreditID); err != nil {
+		t.Fatalf("seed account credit: %v", err)
+	}
+
+	// Spend the Kingston memo and the Kingston account credit against the Kingston invoice, with a
+	// caller who reaches every branch, so their state on the books is spent.
+	global := ApplyCreditInput{CustomerID: custID, InvoiceID: kingstonInvID, CanAccessBranch: nil}
+	if _, err := applySvc.Apply(ctx, func() ApplyCreditInput {
+		in := global
+		in.CreditKind, in.CreditID, in.AmountCents = CreditKindMemo, spentMemoID, 8000
+		in.Reason, in.IdempotencyKey = "spend the kingston memo", n+"-k-spend-memo"
+		return in
+	}(), true); err != nil {
+		t.Fatalf("spend the memo: %v", err)
+	}
+	if _, err := applySvc.Apply(ctx, func() ApplyCreditInput {
+		in := global
+		in.CreditKind, in.CreditID, in.AmountCents = CreditKindAccount, acctCreditID, 6000
+		in.Reason, in.IdempotencyKey = "spend the kingston account credit", n+"-k-spend-acct"
+		return in
+	}(), true); err != nil {
+		t.Fatalf("spend the account credit: %v", err)
+	}
+
+	// The caller reaches Trenton only.
+	trentonOnly := func(b string) bool { return b == trentonBranch }
+	var noCreditErr NoSuchCreditError
+
+	// A SPENT memo out of reach answers the unknown credit's 404, not the spent credit's 409. This
+	// is the leg S6 asked for: today the not open judgement runs first and leaks the state.
+	_, err := applySvc.Apply(ctx, ApplyCreditInput{
+		CustomerID: custID, CreditKind: CreditKindMemo, CreditID: spentMemoID, InvoiceID: invID,
+		AmountCents: 1, Reason: "spent and out of reach", IdempotencyKey: n + "-k-r2-spent",
+		CanAccessBranch: trentonOnly,
+	}, true)
+	if !errors.As(err, &noCreditErr) {
+		t.Fatalf("spent memo out of reach err = %v, want NoSuchCreditError", err)
+	}
+
+	// Same rule for the ACCOUNT group: a spent account credit out of reach answers 404.
+	_, err = applySvc.Apply(ctx, ApplyCreditInput{
+		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: acctCreditID, InvoiceID: invID,
+		AmountCents: 1, Reason: "spent and out of reach", IdempotencyKey: n + "-k-r2-spent-acct",
+		CanAccessBranch: trentonOnly,
+	}, true)
+	if !errors.As(err, &noCreditErr) {
+		t.Fatalf("spent account credit out of reach err = %v, want NoSuchCreditError", err)
+	}
+
+	// An OPEN credit out of reach keeps answering 404 (it already did; the move keeps it so).
+	_, err = applySvc.Apply(ctx, ApplyCreditInput{
+		CustomerID: custID, CreditKind: CreditKindMemo, CreditID: openMemoID, InvoiceID: invID,
+		AmountCents: 1, Reason: "open and out of reach", IdempotencyKey: n + "-k-r2-open",
+		CanAccessBranch: trentonOnly,
+	}, true)
+	if !errors.As(err, &noCreditErr) {
+		t.Fatalf("open memo out of reach err = %v, want NoSuchCreditError", err)
+	}
+
+	// And an unknown credit id inside the caller's reach answers the same 404, the classification's
+	// other half.
+	unknown := ApplyCreditInput{
+		CustomerID: custID, CreditKind: CreditKindMemo, CreditID: uuid.NewString(), InvoiceID: invID,
+		AmountCents: 1, Reason: "unknown credit", IdempotencyKey: n + "-k-r2-unknown",
+		CanAccessBranch: trentonOnly,
+	}
+	if _, err := applySvc.Apply(ctx, unknown, true); !errors.As(err, &noCreditErr) {
+		t.Fatalf("unknown credit err = %v, want NoSuchCreditError", err)
 	}
 }
 
