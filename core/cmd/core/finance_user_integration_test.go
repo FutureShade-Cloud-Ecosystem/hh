@@ -411,7 +411,9 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 	nameless := finPerson{platformID: "fin-fix-nameless", email: "fin-fix-nameless@example.invalid", name: "Fix Nameless", member: true}
 	demotee := finPerson{platformID: "fin-fix-demotee", email: "fin-fix-demotee@example.invalid", name: "Fix Demotee", member: true}
 	steady := finPerson{platformID: "fin-fix-steady", email: "fin-fix-steady@example.invalid", name: "Fix Steady", member: true}
-	addresses := []string{victim.email, other.email, multi.email, gone.email, anchor.email, general.email, nameless.email, demotee.email, steady.email}
+	held := finPerson{platformID: "fin-fix-held", email: "fin-fix-held@example.invalid", name: "Fix Held", member: true}
+	held2 := finPerson{platformID: "fin-fix-held2", email: "fin-fix-held2@example.invalid", name: "Fix Held Again", member: true}
+	addresses := []string{victim.email, other.email, multi.email, gone.email, anchor.email, general.email, nameless.email, demotee.email, steady.email, held.email, held2.email}
 	console := newFinConsole(t, victim, other, demotee)
 	env := func(over map[string]string) func(string) string { return finEnvFor(dsn, addresses, over) }
 
@@ -680,6 +682,43 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 		}
 		if n := provisionRows(); n != 1 {
 			t.Fatalf("the second identical provision wrote another audit row: %d rows, want 1", n)
+		}
+	})
+
+	t.Run("a provision naming a held platform id with another email refuses", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		if err := financeUserRole(provisionArgs(held, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("the first provision: %v (out %q)", err, out.String())
+		}
+		// The same platform id with another address would rewrite the row
+		// the id holds, and a second entry sharing the id would flip the
+		// row between the two addresses at every boot. It is refused in
+		// words, as the revoke refuses; a real email change is a revoke and
+		// a re-provision, which leaves its audit trail.
+		out.Reset()
+		err := financeUserRole([]string{"--email", held2.email, "--platform-user-id", held.platformID, "--display-name", held2.name, "--role", "payables_receivables"}, out, out, env(nil))
+		if err == nil {
+			t.Fatalf("a provision naming a held platform id with another email must refuse, got nil (out %q)", out.String())
+		}
+		if !strings.Contains(err.Error(), "another email") {
+			t.Fatalf("the refusal must name the held email, got %v", err)
+		}
+		var email, status string
+		if err := pool.QueryRow(ctx,
+			`SELECT email::text, status FROM users WHERE platform_user_id = $1`, held.platformID).Scan(&email, &status); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.EqualFold(email, held.email) || status != "ACTIVE" {
+			t.Fatalf("the held row now reads %q with status %q, want the first address and ACTIVE", email, status)
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, held.platformID); n != 1 {
+			t.Fatalf("the person holds %d live grants after the refused provision, want 1", n)
+		}
+		// The same address in another case is the same address, and converges.
+		out.Reset()
+		same := []string{"--email", strings.ToUpper(held.email), "--platform-user-id", held.platformID, "--display-name", held.name, "--role", "financial_controller"}
+		if err := financeUserRole(same, out, out, env(nil)); err != nil {
+			t.Fatalf("the same address in another case must converge: %v (out %q)", err, out.String())
 		}
 	})
 }
