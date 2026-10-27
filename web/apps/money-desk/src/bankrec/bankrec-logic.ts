@@ -276,6 +276,10 @@ export function refusalWords(action: string, message: string, status: number): s
   if (lower.includes("cannot be matched by hand")) {
     return "That payment's tender cannot be matched by hand; match a card, a cash or a cheque deposit.";
   }
+  // FW1-05b: a till cash payment reaches the bank only by its lodgement, so it is never a PAYMENT target.
+  if (lower.includes("taken in a till session")) {
+    return "That payment was taken in by the till, so it reaches the bank only with its lodgement. Match the lodgement's deposit line, not the payment alone.";
+  }
   if (lower.includes("that journal is not posted")) return "That journal is not posted yet, so it cannot explain a bank line.";
   if (lower.includes("that journal does not touch this bank account")) return "That journal does not move this bank account, so it cannot explain this line.";
   const journalApart = /that journal moves this bank account by (-?\d+) cents and the line is (-?\d+) cents/i.exec(message);
