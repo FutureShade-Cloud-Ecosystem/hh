@@ -65,10 +65,12 @@ export function depositSentence(option: PaymentOption | null): string {
  */
 export function cashOnDemandPosture(
   options: readonly PaymentOption[],
-  termsDays: number,
-  creditLimitCents: number,
+  cashOnDemand: boolean | undefined,
 ): string | null {
-  if (termsDays > 0 || creditLimitCents <= 0) return null;
+  // UX-97 round 2: the core states the posture as its own field (a payment rule, present whatever the
+  // account position policy says). The till no longer infers it from the terms and the credit limit,
+  // which a clerk the policy refuses is never sent.
+  if (cashOnDemand !== true) return null;
   if (options.some((o) => o.shape === 'ALL_ON_ACCOUNT')) return null;
   return 'Cash On Demand: pay before release';
 }

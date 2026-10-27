@@ -130,7 +130,12 @@ func (s *StaffService) ConvertQuote(ctx context.Context, idOrNo string, opt Conv
 	}
 	// THE conversion, the same function, with the same arguments, as the contractor door. The only
 	// difference is the actor stamped on the history row.
-	return runConvert(ctx, s.convertStore(), s.audit, customerID, quoteID, caller.UserID, opt)
+	res, err := runConvert(ctx, s.convertStore(), s.audit, customerID, quoteID, caller.UserID, opt)
+	var cb ErrCreditBlocked
+	if errors.As(err, &cb) && !s.positionAllowed(ctx, branchID) {
+		return ConvertResult{}, cb.withPositionWithheld()
+	}
+	return res, err
 }
 
 // convertStore narrows this service's store to the conversion seam. staffStore embeds convertStore, so

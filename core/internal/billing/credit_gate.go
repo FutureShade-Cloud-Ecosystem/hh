@@ -113,6 +113,7 @@ type CreditHold struct {
 	OverrideUntil  *time.Time `json:"override_until,omitempty"`
 	OverrideReason string     `json:"override_reason,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
+	HomeBranchID   string     `json:"-"`
 }
 
 // AgingRow is one account's AR aging, the input to the auto-hold decision AND the month-end aging
@@ -193,6 +194,7 @@ type CreditService struct {
 	// unwired and the admin surface renders the setting read-only, rather than offering a control that
 	// would fail.
 	autoHold autoHoldStore
+	position AccountPositionReader
 }
 
 // NewCreditService builds the service over a store (the billing Repository in production).
@@ -209,7 +211,23 @@ func NewCreditService(store creditStore) *CreditService {
 	if ah, ok := store.(autoHoldStore); ok {
 		s.autoHold = ah
 	}
+	if pr, ok := store.(registerPolicyReader); ok {
+		s.position = NewAccountPositionGate(pr)
+	}
 	return s
+}
+
+// WithAccountPosition binds the account position policy reader (UX-97).
+func (s *CreditService) WithAccountPosition(p AccountPositionReader) *CreditService {
+	s.position = p
+	return s
+}
+
+func (s *CreditService) positionAllowed(ctx context.Context, homeBranchID string) bool {
+	if s == nil || s.position == nil {
+		return false
+	}
+	return s.position.AccountPositionAllowed(ctx, homeBranchID)
 }
 
 // WithAudit attaches the audit recorder. Every override and release is recorded through it; a nil
@@ -239,9 +257,19 @@ func (s *CreditService) Aging(ctx context.Context, asOf time.Time, branchID stri
 }
 
 // ListHolds returns credit holds filtered by status ("" = all), for the accounts in the caller's
-// branch reach.
+// branch reach. For a caller the account position policy refuses, any hold reason that names an
+// amount, a limit or a bucket is replaced with words.
 func (s *CreditService) ListHolds(ctx context.Context, status string) ([]CreditHold, error) {
-	return s.store.ListHoldsIn(ctx, status, reachFromContext(ctx))
+	holds, err := s.store.ListHoldsIn(ctx, status, reachFromContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	for i := range holds {
+		if !s.positionAllowed(ctx, holds[i].HomeBranchID) {
+			holds[i].Reason = withholdHoldReason(holds[i].Kind, holds[i].Reason, holds[i].AutoPlaced)
+		}
+	}
+	return holds, nil
 }
 
 // Evaluate is the nightly sweep (registered as the 'ar.credit_hold_sweep' JobFunc, schedule in 0104).
@@ -312,14 +340,44 @@ func evaluateAccount(r AgingRow, pol CreditPolicy) (kind, reason string) {
 		return "", ""
 	}
 	if pol.LimitHoldEnabled && r.CreditLimitCents > 0 && r.TotalCents > r.CreditLimitCents+pol.LimitToleranceCents {
-		return HoldCreditLimit, fmt.Sprintf("open AR %s exceeds the %s credit limit",
-			Money(r.TotalCents), Money(r.CreditLimitCents))
+		return HoldCreditLimit, "open AR exceeds the credit limit"
 	}
 	if pol.AgingHoldEnabled && r.PastBucketCents > pol.AgingThresholdCents {
-		return HoldARAging, fmt.Sprintf("%s of AR is more than %d days past due",
-			Money(r.PastBucketCents), pol.AgingBucketDays)
+		return HoldARAging, "open AR is past due"
 	}
 	return "", ""
+}
+
+// withholdHoldReason ensures a caller refused by the account position policy never receives a hold
+// reason that names an amount, a credit limit or an aging bucket.
+func withholdHoldReason(kind, reason string, autoPlaced bool) string {
+	if !autoPlaced && !holdReasonCarriesPositionFigures(reason) {
+		return reason
+	}
+	switch kind {
+	case HoldCreditLimit:
+		return "open AR exceeds the credit limit"
+	case HoldARAging:
+		return "open AR is past due"
+	case HoldNSF:
+		return "a payment was returned"
+	case HoldCOD:
+		return "COD account with an unpaid balance"
+	default:
+		if holdReasonCarriesPositionFigures(reason) {
+			return "account is on credit hold"
+		}
+		return reason
+	}
+}
+
+func holdReasonCarriesPositionFigures(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '$' || (s[i] >= '0' && s[i] <= '9') {
+			return true
+		}
+	}
+	return false
 }
 
 // Override lets an authorized person permit transacting against a hold that STAYS IN PLACE, until an

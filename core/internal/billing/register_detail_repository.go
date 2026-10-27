@@ -453,6 +453,7 @@ func (r *Repository) WorkspaceHeader(ctx context.Context, customerID string) (Cu
 	var lastPaymentCents int64
 	err = r.pool.QueryRow(ctx,
 		`SELECT c.id::text, c.name, c.account_no::text, c.payment_terms_days, c.credit_limit_cents,
+		        COALESCE(c.home_branch_id::text, ''),
 		        COALESCE(ar.open_cents, 0),
 		        COALESCE(ar.overdue_cents, 0),
 		        EXISTS (SELECT 1 FROM credit_holds ch WHERE ch.customer_id = c.id AND ch.status = 'ACTIVE'),
@@ -484,7 +485,7 @@ func (r *Repository) WorkspaceHeader(ctx context.Context, customerID string) (Cu
 		       ) u
 		   ) ar ON TRUE
 		  WHERE c.id = $1::uuid`, customerID, day, zone.Name()).
-		Scan(&h.CustomerID, &h.Name, &h.AccountNo, &h.TermsDays, &h.CreditLimitCents,
+		Scan(&h.CustomerID, &h.Name, &h.AccountNo, &h.TermsDays, &h.CreditLimitCents, &h.HomeBranchID,
 			&h.OpenCents, &h.OverdueCents, &onHold, &hasOpenDispute,
 			&apName, &apEmail, &apPhone, &lastPaymentAt, &lastPaymentCents)
 	if err != nil {

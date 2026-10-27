@@ -289,6 +289,17 @@ func (s *RegisterService) Register(ctx context.Context, f RegisterFilter) (Regis
 	if err != nil {
 		return RegisterPage{}, err
 	}
+	allowed := accountAllowed(ctx, s.callerFrom, pol.AccountPositionVisibility)
+	if !allowed {
+		// The overdue and past due chips ask for the withheld predicate AS A LIST, so a refused
+		// caller would otherwise read the overdue accounts straight off the filter (row 3172, no
+		// past due flag on any route). Refused in words, the policy-is-the-authority posture, before
+		// the store is asked for anything. The remaining chips filter on stored facts a refused
+		// caller still receives, so they keep answering.
+		if chip := strings.ToUpper(strings.TrimSpace(f.Chip)); chip == StatusOverdue || chip == "PAST_DUE" {
+			return RegisterPage{}, httpx.BadRequestf("the past due view is not shown for your role")
+		}
+	}
 	rows, total, err := s.store.RegisterRows(ctx, asOf, pol.DueSoonDays, f)
 	if err != nil {
 		return RegisterPage{}, err
@@ -297,7 +308,8 @@ func (s *RegisterService) Register(ctx context.Context, f RegisterFilter) (Regis
 	if err != nil {
 		return RegisterPage{}, err
 	}
-	if accountAllowed(ctx, s.callerFrom, pol.AccountPositionVisibility) {
+	page := RegisterPage{Items: rows, Counts: counts, Total: total, AsOf: asOf, PositionWithheld: !allowed}
+	if allowed {
 		// One position per ACCOUNT, not per row: a page of eleven invoices for one contractor asks the
 		// same question eleven times otherwise.
 		seen := map[string]*AccountPosition{}
@@ -313,8 +325,12 @@ func (s *RegisterService) Register(ctx context.Context, f RegisterFilter) (Regis
 			}
 			rows[i].Account = pos
 		}
+	} else {
+		for i := range rows {
+			rows[i].PositionWithheld = true
+		}
 	}
-	return RegisterPage{Items: rows, Counts: counts, Total: total, AsOf: asOf}, nil
+	return page, nil
 }
 
 // Selection sums an explicit selection server-side, the bulk bar's figure.
@@ -429,6 +445,8 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 			return InvoiceDetail{}, err
 		}
 		block.Account = &pos
+	} else {
+		d.PositionWithheld = true
 	}
 	d.Customer = block
 

@@ -889,7 +889,7 @@ paths:
         - name: chip
           in: query
           required: false
-          description: Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit alongside the legacy StatusX strings; old URLs still resolve.
+          description: Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit alongside the legacy StatusX strings; old URLs still resolve. The overdue and past_due chips answer 400 in words for a caller the account position policy refuses.
           schema:
             type: string
             enum:
@@ -1059,7 +1059,7 @@ paths:
       tags:
         - staff-billing
       summary: Download the current register view as CSV
-      description: The same filter and the same figures as the register read. The body is CSV text with a Content-Disposition attachment filename, not JSON; the wire shape is raw text rather than a struct.
+      description: The same filter and the same figures as the register read. The body is CSV text with a Content-Disposition attachment filename, not JSON; the wire shape is raw text rather than a struct. For a caller the account position policy refuses, the Days overdue header and its column are absent and the Status column carries the invoice's stored status.
       x-role: requireStaff
       x-access:
         surfaces:
@@ -17386,7 +17386,7 @@ paths:
       tags:
         - staff-pos
       summary: Read one customer's past-due position for the counter
-      description: "A fact, not a gate, and every case answers distinctly. The standing word names the case: walk_in (no customer_id), clear (nothing past due, no hold), past_due, or on_hold (an active credit hold, whether or not anything is past due). The past-due amount, the oldest aging bucket and the hold flag ride beside it when they apply. A caller the dealer's balance_visibility policy withholds balances from, or whose grants do not reach the branch, is a 403; an unknown customer is a 404; a malformed customer_id is a 400; a read that could not be made (the AR, hold or policy read failed) is a 503. Never an empty 200. Counter Till or Quote Desk at read: the Quote Desk's Convert to Order asks it before it confirms."
+      description: "A fact, not a gate, and every case answers distinctly. The standing word names the case: walk_in (no customer_id), clear (nothing past due, no hold), past_due, on_hold (an active credit hold, whether or not anything is past due), or withheld (round 4: a caller the dealer's balance_visibility policy strips the figures from, whose answer never names a position; clear is a position too). The hold is the same for every caller, decided from the same sources: a withheld caller reads on_hold when the account is on hold, by an active hold row or by aging, and withheld otherwise, and never receives the past-due amount or the aging bucket. The past-due amount, the oldest aging bucket and the hold flag ride beside the word when they apply. A caller whose grants do not reach the branch, or from whom the dealer switched the surface off (HIDDEN), is a 403; an unknown customer is a 404; a malformed customer_id is a 400; a read that could not be made (the AR, hold or policy read failed) is a 503. Never an empty 200. Counter Till or Quote Desk at read: the Quote Desk's Convert to Order asks it before it confirms."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -28995,7 +28995,7 @@ components:
                   credit_limit_cents:
                     type: integer
                     format: int64
-                    description: Present on on_account_not_available, the account's credit line
+                    description: Present on on_account_not_available when the caller holds account position, the account's credit line; absent when the account position policy refuses the caller
                   deposit_cents:
                     type: integer
                     format: int64
@@ -30095,7 +30095,6 @@ components:
         - balance_cents
         - stored_status
         - status
-        - days_overdue
         - account_status
         - disputed
       properties:
@@ -30154,7 +30153,7 @@ components:
             - VOID
         status:
           type: string
-          description: The derived register pill state
+          description: "The derived register pill state. A caller the account position policy refuses receives the invoice's STORED status here instead, never the derived OVERDUE or DUE_SOON: no past due flag reaches a refused caller on any route."
           enum:
             - OPEN
             - DUE_SOON
@@ -30166,6 +30165,7 @@ components:
             - DRAFT
             - VOID
             - CREDIT
+            - FINALIZED
         days_overdue:
           type: integer
           format: int32
@@ -30222,11 +30222,9 @@ components:
           $ref: "#/components/schemas/BillingAccountPosition"
     BillingRegisterCounts:
       type: object
-      description: Counts of the same predicates the chip filters apply, computed over the same rows
+      description: "Counts of the same predicates the chip filters apply, computed over the same rows. A caller the account position policy refuses receives neither overdue nor due_soon: the count of a withheld predicate is the predicate told in numbers. Every other caller receives both keys."
       required:
         - open
-        - due_soon
-        - overdue
         - disputed
         - paid
         - credits
@@ -30237,9 +30235,11 @@ components:
         due_soon:
           type: integer
           format: int32
+          description: Absent for a caller the account position policy refuses
         overdue:
           type: integer
           format: int32
+          description: Absent for a caller the account position policy refuses
         disputed:
           type: integer
           format: int32
@@ -30773,7 +30773,6 @@ components:
         - doc_type
         - stored_status
         - status
-        - days_overdue
         - issue_date
         - due_date
         - branch_id
@@ -30804,6 +30803,7 @@ components:
             - VOID
         status:
           type: string
+          description: The derived pill state. A caller the account position policy refuses receives the invoice's STORED status here instead, never the derived OVERDUE or DUE_SOON.
           enum:
             - OPEN
             - DUE_SOON
@@ -30815,6 +30815,7 @@ components:
             - DRAFT
             - VOID
             - CREDIT
+            - FINALIZED
         days_overdue:
           type: integer
           format: int32
@@ -31825,17 +31826,12 @@ components:
           format: date
     BillingStatement:
       type: object
-      description: "One stored statement: the rendered artefact and the aging figures as they stood at as_of_date, never a re-derived query."
+      description: "One stored statement: the rendered artefact and the aging figures as they stood at as_of_date, never a re-derived query. Aging and closing balance are absent when the dealer's account position policy refuses this caller."
       required:
         - id
         - run_id
         - customer_id
         - as_of_date
-        - current_cents
-        - days_30_cents
-        - days_60_cents
-        - days_90_plus_cents
-        - closing_balance_cents
         - delivery_status
         - created_at
       properties:
@@ -32827,12 +32823,7 @@ components:
         - account_no
         - status
         - terms_days
-        - credit_limit_cents
-        - open_cents
-        - available_credit_cents
-        - overdue_cents
-        - utilization_bps
-        - aging
+        - account_position_withheld
       properties:
         customer_id:
           type: string
@@ -32841,6 +32832,9 @@ components:
           type: string
         account_no:
           type: string
+        account_position_withheld:
+          type: boolean
+          description: True when the dealer's account position policy refuses this caller. The credit limit, open, available, overdue, utilization and aging are then absent entirely (never 0); a screen says so in words. The status badge is operational and stays.
         status:
           type: string
           enum:
@@ -32854,18 +32848,22 @@ components:
         credit_limit_cents:
           type: integer
           format: int64
+          description: Absent when account_position_withheld.
         open_cents:
           type: integer
           format: int64
+          description: Absent when account_position_withheld.
         available_credit_cents:
           type: integer
           format: int64
+          description: Absent when account_position_withheld.
         overdue_cents:
           type: integer
           format: int64
+          description: Absent when account_position_withheld.
         utilization_bps:
           type: integer
-          description: OpenCents * 10000 / CreditLimitCents, basis points of the limit used. A zero limit reads 0; an over-limit account reads 10000+ (the bar reads "over limit" past 10000, an honest answer).
+          description: Absent when account_position_withheld. OpenCents * 10000 / CreditLimitCents, basis points of the limit used. A zero limit reads 0; an over-limit account reads 10000+ (the bar reads "over limit" past 10000, an honest answer).
         primary_ap_contact_name:
           type: string
         primary_ap_contact_email:
@@ -32881,7 +32879,9 @@ components:
           format: int64
           description: Absent when the caller does not hold the payment trail (ruling 87).
         aging:
-          $ref: "#/components/schemas/BillingCustomerWorkspaceAging"
+          description: Absent when account_position_withheld.
+          allOf:
+            - $ref: "#/components/schemas/BillingCustomerWorkspaceAging"
     BillingCustomerWorkspaceAging:
       type: object
       description: The 5-bucket aging breakdown the workspace overview tab opens with. The five buckets sum to OpenCents and the four late buckets sum to OverdueCents; the server checks the sum before returning the payload.
@@ -32919,7 +32919,7 @@ components:
           format: int64
     BillingCustomerWorkspaceInvoice:
       type: object
-      description: One invoice row the workspace invoices tab carries. Three lists reach this shape (open, closed, disputed); the bucket label matches the 5-bucket header.
+      description: One invoice row the workspace invoices tab carries. Three lists reach this shape (open, closed, disputed); the bucket label matches the 5-bucket header. days_overdue and days_overdue_bucket are absent when the dealer's account position policy refuses this caller.
       required:
         - id
         - invoice_no
@@ -32929,8 +32929,6 @@ components:
         - due_date
         - total_cents
         - balance_cents
-        - days_overdue
-        - days_overdue_bucket
         - is_disputed
         - has_open_promise
       properties:
@@ -33042,13 +33040,12 @@ components:
           type: string
     BillingCustomerWorkspaceStatement:
       type: object
-      description: One statement row from ar_statements the workspace statements tab carries. The closing_balance_cents is the figure that went out the door on that date, an immutable artefact per migration 0105.
+      description: One statement row from ar_statements the workspace statements tab carries. The closing_balance_cents is the figure that went out the door on that date, an immutable artefact per migration 0105, and is absent when the dealer's account position policy refuses this caller.
       required:
         - id
         - run_id
         - mode
         - as_of_date
-        - closing_balance_cents
         - delivery_status
         - created_at
       properties:
@@ -33137,7 +33134,7 @@ components:
         balance_after_cents:
           type: integer
           format: int64
-          description: Absent when the caller does not hold the payment trail (ruling 87).
+          description: Absent when the caller does not hold the payment trail (ruling 87) or when the dealer's account position policy refuses this caller.
         branch_id:
           type: string
           format: uuid
@@ -33293,11 +33290,10 @@ components:
           format: date-time
     BillingStatementPreview:
       type: object
-      description: "The C8 statement preview: the statement artefact (the figure that went out the door, 0105) plus the customer's open lines and a 5-bucket aging breakdown. The breakdown reconciles to the penny: sum of the five buckets equals openCents; sum of the four late buckets equals overdueCents. Reconciled is true exactly when both hold."
+      description: "The C8 statement preview: the statement artefact (the figure that went out the door, 0105) plus the customer's open lines and a 5-bucket aging breakdown. The breakdown reconciles to the penny: sum of the five buckets equals openCents; sum of the four late buckets equals overdueCents. Reconciled is true exactly when both hold. Aging is absent when the dealer's account position policy refuses this caller."
       required:
         - statement
         - open_lines
-        - aging
         - reconciled
       properties:
         statement:
@@ -33312,14 +33308,12 @@ components:
           type: boolean
     BillingStatementPreviewLine:
       type: object
-      description: One open invoice on the statement preview. balance_cents is the figure that has to reconcile to the penny; bucket_label is the row's 5-bucket name, derived server-side from days_overdue, never computed in the browser.
+      description: One open invoice on the statement preview. balance_cents is the figure that has to reconcile to the penny; bucket_label is the row's 5-bucket name, derived server-side from days_overdue, never computed in the browser. days_overdue and bucket_label are absent when the dealer's account position policy refuses this caller.
       required:
         - invoice_id
         - invoice_no
         - due_date
         - balance_cents
-        - days_overdue
-        - bucket_label
       properties:
         invoice_id:
           type: string
@@ -34605,15 +34599,14 @@ components:
           type: boolean
     CustomerSearchResult:
       type: object
-      description: "The counter-facing projection the POS picker renders: enough to identify the account and show its credit posture."
+      description: "The counter-facing projection the POS picker renders: enough to identify the account and show its credit posture. The two position figures follow the dealer's account position policy (ar_invoice_policy.account_position_visibility, per branch): they are absent entirely, never 0, for a caller the policy refuses."
       required:
         - id
         - name
         - account_no
         - customer_type
         - payment_terms_days
-        - credit_limit_cents
-        - open_balance_cents
+        - cash_on_demand
       properties:
         id:
           type: string
@@ -34633,16 +34626,24 @@ components:
         payment_terms_days:
           type: integer
           format: int32
+        cash_on_demand:
+          type: boolean
+          description: "The account pays before release: zero day terms with a credit line, the rule the payment options offer pay before release by. A payment rule, not a figure, so it is present under every account position policy."
         credit_limit_cents:
           type: integer
           format: int64
+          description: Absent for a caller the account position policy refuses.
         open_balance_cents:
           type: integer
           format: int64
-          description: The account's current AR balance
+          description: The account's current AR balance. Absent for a caller the account position policy refuses.
+        available_credit_cents:
+          type: integer
+          format: int64
+          description: The core's headroom, the limit minus the open balance and never below zero, so no client subtracts it. Absent for a caller the account position policy refuses.
     CustomerAccount:
       type: object
-      description: The resolved view of a customers row
+      description: "The resolved view of a customers row. On the staff reads the credit limit and balance follow the dealer's account position policy: absent entirely, never 0, for a caller the policy refuses."
       required:
         - customer_id
         - account_no
@@ -34650,10 +34651,9 @@ components:
         - customer_type
         - branch_id
         - payment_terms_days
-        - credit_limit_cents
+        - cash_on_demand
         - on_hold
         - tax_exempt
-        - balance_cents
         - is_active
       properties:
         customer_id:
@@ -34677,9 +34677,13 @@ components:
         payment_terms_days:
           type: integer
           format: int32
+        cash_on_demand:
+          type: boolean
+          description: The account pays before release (zero day terms with a credit line). A payment rule, not a figure, so it is present under every account position policy.
         credit_limit_cents:
           type: integer
           format: int64
+          description: Absent for a caller the account position policy refuses.
         on_hold:
           type: boolean
         tax_exempt:
@@ -34687,7 +34691,11 @@ components:
         balance_cents:
           type: integer
           format: int64
-          description: The account's current AR balance, composed in by the billing read
+          description: The account's current AR balance, composed in by the billing read. Absent for a caller the account position policy refuses.
+        available_credit_cents:
+          type: integer
+          format: int64
+          description: The core's headroom, the limit minus the balance and never below zero, so no client subtracts it. Absent for a caller the account position policy refuses.
         is_active:
           type: boolean
     CustomerCreate:
@@ -47363,7 +47371,7 @@ components:
             $ref: "#/components/schemas/PosHotkey"
     PosAccountStanding:
       type: object
-      description: "One customer's standing, and no more of it than that. The standing word is always present and names the case; the three older fields are present exactly when they were before: past_due_cents and oldest_bucket only when money is past due, on_hold only when true."
+      description: "One customer's standing, and no more of it than that. The standing word is always present and names the case; the three older fields are present exactly when they were before: past_due_cents and oldest_bucket only when money is past due, on_hold only when true. A caller the dealer's balance_visibility policy strips the figures from reads `withheld`, or `on_hold` when the account is on hold, and never receives past_due_cents or oldest_bucket: clear is a position too, and it is withheld along with the money."
       required:
         - standing
       properties:
@@ -47374,6 +47382,7 @@ components:
             - clear
             - past_due
             - on_hold
+            - withheld
         past_due_cents:
           type: integer
           format: int64

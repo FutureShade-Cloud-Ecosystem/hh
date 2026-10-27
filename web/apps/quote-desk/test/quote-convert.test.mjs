@@ -73,6 +73,12 @@ test("the standing states the server's facts and does no arithmetic of its own",
   const late = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, { standing: "past_due", onHold: false, pastDueCents: 45000, oldestBucket: "30" });
   assert.equal(late.gate, "pastdue");
   assert.match(late.gateText, /\$450\.00/);
+  // Round 4 (principal item 206): the withheld word is a case of its own and never reads as clear,
+  // for a caller the dealer's balance policy strips the figures from.
+  const hidden = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, { standing: "withheld", onHold: false, pastDueCents: null, oldestBucket: null });
+  assert.equal(hidden.gate, "server");
+  assert.match(hidden.gateText, /not shown for your role/);
+  assert.doesNotMatch(hidden.gateText, /good standing|clear/i);
   const unread = standingOf({ name: "A", paymentTermsDays: 30, creditLimitCents: 100000, openBalanceCents: 0 }, null);
   assert.equal(unread.gate, "server");
   assert.doesNotMatch(unread.gateText, /good standing|clear/i);

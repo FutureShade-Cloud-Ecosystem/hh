@@ -61,7 +61,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, _ guards.StaffCall
 		h.writeErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	httpx.WriteJSON(w, http.StatusOK, h.svc.AccountForWire(r.Context(), out))
 }
 
 // fenceAccount holds the customer named in the path to the caller's reach by the customer read's own rule
@@ -150,7 +150,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, caller guards.S
 		h.writeErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, acct)
+	httpx.WriteJSON(w, http.StatusCreated, h.svc.AccountForWire(r.Context(), acct))
 }
 
 // updateBillingAddress handles PUT /api/v1/customers/{id}/billing-address, validates +
@@ -171,7 +171,7 @@ func (h *Handler) updateBillingAddress(w http.ResponseWriter, r *http.Request, _
 		h.writeErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, acct)
+	httpx.WriteJSON(w, http.StatusOK, h.svc.AccountForWire(r.Context(), acct))
 }
 
 // writeErr maps service errors: client-input (incl. postal/province validation) → 400;
@@ -230,8 +230,6 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, caller guards.S
 		}
 		return
 	}
-	if out == nil {
-		out = []SearchResult{} // an empty search returns [] not null
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	// An empty search returns [] not null; the figures are on the wire only under the dealer's policy.
+	httpx.WriteJSON(w, http.StatusOK, h.svc.SearchForWire(r.Context(), out, branchID))
 }

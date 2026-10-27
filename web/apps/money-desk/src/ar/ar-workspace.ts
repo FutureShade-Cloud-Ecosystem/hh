@@ -121,6 +121,79 @@ export function lastPaymentFacts(workspace: BillingCustomerWorkspace): LastPayme
   return { kind: "paid", at: h.last_payment_at, cents: h.last_payment_cents ?? 0 };
 }
 
+// ACCOUNT_POSITION_WITHHELD_WORDS is what stands where the credit limit, open balance, available
+// credit, overdue and aging would be when the dealer's account position policy refuses the caller
+// (UX-97). The server leaves every one of those figures out; the screen says so in words, never a
+// "$0.00" that reads as "owes nothing".
+export const ACCOUNT_POSITION_WITHHELD_WORDS = "Not shown for your role";
+
+// AccountPosition is the header's position figures, present together or not at all.
+export interface AccountPosition {
+  readonly credit_limit_cents: number;
+  readonly open_cents: number;
+  readonly available_credit_cents: number;
+  readonly overdue_cents: number;
+  readonly utilization_bps: number;
+  readonly aging: NonNullable<BillingCustomerWorkspace["header"]["aging"]>;
+}
+
+// accountPositionOf returns the position, or undefined when the policy withheld it. Anything short of
+// the whole set counts as withheld: a half set is never rendered as if it were whole.
+export function accountPositionOf(h: BillingCustomerWorkspace["header"]): AccountPosition | undefined {
+  if (h.account_position_withheld) return undefined;
+  if (
+    h.credit_limit_cents == null || h.open_cents == null || h.available_credit_cents == null ||
+    h.overdue_cents == null || h.utilization_bps == null || h.aging == null
+  ) return undefined;
+  return {
+    credit_limit_cents: h.credit_limit_cents,
+    open_cents: h.open_cents,
+    available_credit_cents: h.available_credit_cents,
+    overdue_cents: h.overdue_cents,
+    utilization_bps: h.utilization_bps,
+    aging: h.aging,
+  };
+}
+
+function renderAccountPosition(position: AccountPosition): TemplateResult {
+  const aging = position.aging;
+  const utilization = utilizationClass(position.utilization_bps);
+  const overdueFraction = position.open_cents === 0 ? 0 : Math.min(100, Math.round((position.overdue_cents / position.open_cents) * 100));
+  return html`
+      <div class="ar-workspace-header__aging">
+        <div class="ar-workspace-header__aging-bar" role="img" aria-label="Aging breakdown">
+          <span class="bucket bucket-current" data-cents="${aging.current_cents}" data-label="Current"><span>${formatWorkspaceMoney(aging.current_cents)}</span></span>
+          <span class="bucket bucket-30" data-cents="${aging.days_30_cents}" data-label="1 to 30 days"><span>${formatWorkspaceMoney(aging.days_30_cents)}</span></span>
+          <span class="bucket bucket-60" data-cents="${aging.days_60_cents}" data-label="31 to 60 days"><span>${formatWorkspaceMoney(aging.days_60_cents)}</span></span>
+          <span class="bucket bucket-90" data-cents="${aging.days_90_cents}" data-label="61 to 90 days"><span>${formatWorkspaceMoney(aging.days_90_cents)}</span></span>
+          <span class="bucket bucket-over90" data-cents="${aging.days_90_plus_cents}" data-label="Over 90 days"><span>${formatWorkspaceMoney(aging.days_90_plus_cents)}</span></span>
+        </div>
+        <p class="ar-workspace-header__aging-legend">
+          <span><b>${formatWorkspaceMoney(aging.open_cents)}</b> open</span>
+          <span class="dim">·</span>
+          <span class="overdue">${formatWorkspaceMoney(aging.overdue_cents)} past due</span>
+          <span class="dim">·</span>
+          <span>${overdueFraction}% past terms</span>
+        </p>
+      </div>
+
+      <div class="ar-workspace-header__credit">
+        <div class="credit-row">
+          <span class="label">Credit limit</span>
+          <span class="value">${formatWorkspaceMoney(position.credit_limit_cents)}</span>
+        </div>
+        <div class="credit-bar credit-bar--${utilization}" role="progressbar" aria-valuenow="${Math.min(10000, position.utilization_bps)}" aria-valuemin="0" aria-valuemax="10000">
+          <span class="credit-bar__fill" data-utilization-pct="${Math.min(100, Math.round(position.utilization_bps / 100))}"></span>
+          <span class="credit-bar__text">${Math.round(position.utilization_bps / 100)}% used${utilization === "over" ? " (over limit)" : ""}</span>
+        </div>
+        <div class="credit-row">
+          <span class="label">Available</span>
+          <span class="value">${formatWorkspaceMoney(position.available_credit_cents)}</span>
+        </div>
+      </div>
+  `;
+}
+
 // renderWorkspaceHeader is the top card the S2 desktop and the S2M bottom bar both
 // carry: the customer's name, account code, status badge, credit limit, utilization
 // bar, terms, primary AP contact and the 5-bucket aging row.
@@ -135,9 +208,7 @@ export function renderWorkspaceHeader(
   onTab: (t: WorkspaceTab) => void,
 ): TemplateResult {
   const h = workspace.header;
-  const aging = h.aging;
-  const utilization = utilizationClass(h.utilization_bps);
-  const overdueFraction = h.open_cents === 0 ? 0 : Math.min(100, Math.round((h.overdue_cents / h.open_cents) * 100));
+  const position = accountPositionOf(h);
   return html`
     <header class="ar-workspace-header">
       <div class="ar-workspace-header__name-row">
@@ -162,37 +233,9 @@ export function renderWorkspaceHeader(
         </nav>
       </div>
 
-      <div class="ar-workspace-header__aging">
-        <div class="ar-workspace-header__aging-bar" role="img" aria-label="Aging breakdown">
-          <span class="bucket bucket-current" data-cents="${aging.current_cents}" data-label="Current"><span>${formatWorkspaceMoney(aging.current_cents)}</span></span>
-          <span class="bucket bucket-30" data-cents="${aging.days_30_cents}" data-label="1 to 30 days"><span>${formatWorkspaceMoney(aging.days_30_cents)}</span></span>
-          <span class="bucket bucket-60" data-cents="${aging.days_60_cents}" data-label="31 to 60 days"><span>${formatWorkspaceMoney(aging.days_60_cents)}</span></span>
-          <span class="bucket bucket-90" data-cents="${aging.days_90_cents}" data-label="61 to 90 days"><span>${formatWorkspaceMoney(aging.days_90_cents)}</span></span>
-          <span class="bucket bucket-over90" data-cents="${aging.days_90_plus_cents}" data-label="Over 90 days"><span>${formatWorkspaceMoney(aging.days_90_plus_cents)}</span></span>
-        </div>
-        <p class="ar-workspace-header__aging-legend">
-          <span><b>${formatWorkspaceMoney(aging.open_cents)}</b> open</span>
-          <span class="dim">·</span>
-          <span class="overdue">${formatWorkspaceMoney(aging.overdue_cents)} past due</span>
-          <span class="dim">·</span>
-          <span>${overdueFraction}% past terms</span>
-        </p>
-      </div>
-
-      <div class="ar-workspace-header__credit">
-        <div class="credit-row">
-          <span class="label">Credit limit</span>
-          <span class="value">${formatWorkspaceMoney(h.credit_limit_cents)}</span>
-        </div>
-        <div class="credit-bar credit-bar--${utilization}" role="progressbar" aria-valuenow="${Math.min(10000, h.utilization_bps)}" aria-valuemin="0" aria-valuemax="10000">
-          <span class="credit-bar__fill" data-utilization-pct="${Math.min(100, Math.round(h.utilization_bps / 100))}"></span>
-          <span class="credit-bar__text">${Math.round(h.utilization_bps / 100)}% used${utilization === "over" ? " (over limit)" : ""}</span>
-        </div>
-        <div class="credit-row">
-          <span class="label">Available</span>
-          <span class="value">${formatWorkspaceMoney(h.available_credit_cents)}</span>
-        </div>
-      </div>
+      ${position === undefined
+        ? html`<p class="ar-workspace-header__position-withheld dim" data-account-position-withheld="true">Account position: ${ACCOUNT_POSITION_WITHHELD_WORDS}</p>`
+        : renderAccountPosition(position)}
 
       <dl class="ar-workspace-header__details">
         <div><dt>Primary AP contact</dt>
@@ -233,6 +276,8 @@ export function renderWorkspaceOverview(workspace: BillingCustomerWorkspace): Te
   const open = workspace.invoices_open.length;
   const closed = workspace.invoices_closed.length;
   const disputed = workspace.invoices_disputed.length;
+  const position = accountPositionOf(h);
+  const withheld = html`<p class="dim small" data-account-position-withheld="true">${ACCOUNT_POSITION_WITHHELD_WORDS}</p>`;
   return html`
     <section class="ar-workspace-overview">
       <div class="card-grid">
@@ -243,13 +288,13 @@ export function renderWorkspaceOverview(workspace: BillingCustomerWorkspace): Te
         </article>
         <article class="card">
           <h3>Credit utilisation</h3>
-          <p class="big-number">${Math.round(h.utilization_bps / 100)}%</p>
-          <p class="dim small">${formatWorkspaceMoney(h.open_cents)} of ${formatWorkspaceMoney(h.credit_limit_cents)}</p>
+          ${position === undefined ? withheld : html`<p class="big-number">${Math.round(position.utilization_bps / 100)}%</p>
+          <p class="dim small">${formatWorkspaceMoney(position.open_cents)} of ${formatWorkspaceMoney(position.credit_limit_cents)}</p>`}
         </article>
         <article class="card">
           <h3>Available credit</h3>
-          <p class="big-number">${formatWorkspaceMoney(h.available_credit_cents)}</p>
-          <p class="dim small">after open invoices</p>
+          ${position === undefined ? withheld : html`<p class="big-number">${formatWorkspaceMoney(position.available_credit_cents)}</p>
+          <p class="dim small">after open invoices</p>`}
         </article>
         <article class="card">
           <h3>Last payment</h3>
@@ -262,18 +307,20 @@ export function renderWorkspaceOverview(workspace: BillingCustomerWorkspace): Te
         </article>
       </div>
 
+      ${position === undefined ? nothing : (() => { const aging = position.aging; return html`
       <h3>Bucket breakdown</h3>
       <table class="bucket-table">
         <thead><tr><th>Bucket</th><th class="num">Amount</th></tr></thead>
         <tbody>
-          <tr><td>Current</td><td class="num">${formatWorkspaceMoney(h.aging.current_cents)}</td></tr>
-          <tr><td>1 to 30</td><td class="num">${formatWorkspaceMoney(h.aging.days_30_cents)}</td></tr>
-          <tr><td>31 to 60</td><td class="num">${formatWorkspaceMoney(h.aging.days_60_cents)}</td></tr>
-          <tr><td>61 to 90</td><td class="num">${formatWorkspaceMoney(h.aging.days_90_cents)}</td></tr>
-          <tr><td>91 and over</td><td class="num">${formatWorkspaceMoney(h.aging.days_90_plus_cents)}</td></tr>
-          <tr class="total"><td><b>Open total</b></td><td class="num"><b>${formatWorkspaceMoney(h.aging.open_cents)}</b></td></tr>
+          <tr><td>Current</td><td class="num">${formatWorkspaceMoney(aging.current_cents)}</td></tr>
+          <tr><td>1 to 30</td><td class="num">${formatWorkspaceMoney(aging.days_30_cents)}</td></tr>
+          <tr><td>31 to 60</td><td class="num">${formatWorkspaceMoney(aging.days_60_cents)}</td></tr>
+          <tr><td>61 to 90</td><td class="num">${formatWorkspaceMoney(aging.days_90_cents)}</td></tr>
+          <tr><td>91 and over</td><td class="num">${formatWorkspaceMoney(aging.days_90_plus_cents)}</td></tr>
+          <tr class="total"><td><b>Open total</b></td><td class="num"><b>${formatWorkspaceMoney(aging.open_cents)}</b></td></tr>
         </tbody>
       </table>
+      `; })()}
     </section>
   `;
 }
@@ -292,7 +339,7 @@ export function renderWorkspaceInvoices(workspace: BillingCustomerWorkspace): Te
       <td>${formatWorkspaceDate(inv.due_date)}</td>
       <td class="num">${formatWorkspaceMoney(inv.total_cents)}</td>
       <td class="num">${formatWorkspaceMoney(inv.balance_cents)}</td>
-      <td><span class="bucket-label bucket-${padMsBucketClass(inv.days_overdue_bucket)}">${bucketWord(undefined, inv.days_overdue_bucket)}${inv.days_overdue > 0 ? html` · ${inv.days_overdue}d past due` : nothing}</span></td>
+      <td>${inv.days_overdue_bucket == null ? html`<span class="dim" data-account-position-withheld="true">${ACCOUNT_POSITION_WITHHELD_WORDS}</span>` : html`<span class="bucket-label bucket-${padMsBucketClass(inv.days_overdue_bucket)}">${bucketWord(undefined, inv.days_overdue_bucket)}${(inv.days_overdue ?? 0) > 0 ? html` · ${inv.days_overdue}d past due` : nothing}</span>`}</td>
       <td>${inv.has_open_promise ? html`<span class="badge badge-promise">Promise</span>` : nothing}${inv.is_disputed ? html`<span class="badge badge-dispute">Dispute</span>` : nothing}</td>
     </tr>
   `);
@@ -318,7 +365,7 @@ export function renderWorkspaceInvoices(workspace: BillingCustomerWorkspace): Te
       <td>${formatWorkspaceDate(inv.due_date)}</td>
       <td class="num">${formatWorkspaceMoney(inv.total_cents)}</td>
       <td class="num">${formatWorkspaceMoney(inv.balance_cents)}</td>
-      <td><span class="bucket-label bucket-${padMsBucketClass(inv.days_overdue_bucket)}">${bucketWord(undefined, inv.days_overdue_bucket)}</span></td>
+      <td>${inv.days_overdue_bucket == null ? html`<span class="dim" data-account-position-withheld="true">${ACCOUNT_POSITION_WITHHELD_WORDS}</span>` : html`<span class="bucket-label bucket-${padMsBucketClass(inv.days_overdue_bucket)}">${bucketWord(undefined, inv.days_overdue_bucket)}</span>`}</td>
       <td><span class="badge badge-dispute">Dispute</span></td>
     </tr>
   `);
@@ -445,7 +492,7 @@ export function renderWorkspaceStatements(workspace: BillingCustomerWorkspace): 
       <td>${formatWorkspaceDate(s.as_of_date)}</td>
       <td>${s.mode}</td>
       <td>${s.delivery_status}</td>
-      <td class="num">${formatWorkspaceMoney(s.closing_balance_cents)}</td>
+      <td class="num">${s.closing_balance_cents == null ? html`<span class="dim" data-account-position-withheld="true">${ACCOUNT_POSITION_WITHHELD_WORDS}</span>` : formatWorkspaceMoney(s.closing_balance_cents)}</td>
       <td>${formatWorkspaceDate(s.created_at)}</td>
       <td class="row-actions">
         <button type="button" class="btn btn-secondary small-btn" data-action="statement-preview" data-customer-id="${workspace.header.customer_id}" data-statement-id="${s.id}">Preview</button>
@@ -526,16 +573,19 @@ export function renderWorkspaceSummaryCard(
   onQuickAction: (action: "apply" | "promise" | "remind" | "hold" | "statement" | "note") => void,
 ): TemplateResult {
   const h = workspace.header;
+  const position = accountPositionOf(h);
   const pinned = workspace.notes.find((n) => n.pinned);
   return html`
     <aside class="ar-workspace-summary" aria-label="Account summary and quick actions">
       <h3>Account summary</h3>
       <dl class="summary-dl">
         <dt>Status</dt><dd>${accountStatusBadgeText(h.status)}</dd>
-        <dt>Credit limit</dt><dd>${formatWorkspaceMoney(h.credit_limit_cents)}</dd>
-        <dt>Balance</dt><dd>${formatWorkspaceMoney(h.open_cents)}</dd>
-        <dt>Available</dt><dd>${formatWorkspaceMoney(h.available_credit_cents)}</dd>
-        <dt>Past due</dt><dd>${formatWorkspaceMoney(h.overdue_cents)}</dd>
+        ${position === undefined
+          ? html`<dt>Account position</dt><dd data-account-position-withheld="true">${ACCOUNT_POSITION_WITHHELD_WORDS}</dd>`
+          : html`<dt>Credit limit</dt><dd>${formatWorkspaceMoney(position.credit_limit_cents)}</dd>
+        <dt>Balance</dt><dd>${formatWorkspaceMoney(position.open_cents)}</dd>
+        <dt>Available</dt><dd>${formatWorkspaceMoney(position.available_credit_cents)}</dd>
+        <dt>Past due</dt><dd>${formatWorkspaceMoney(position.overdue_cents)}</dd>`}
         <dt>Last payment</dt><dd>${(() => {
           const lp = lastPaymentFacts(workspace);
           return lp.kind === "withheld" ? WITHHELD_WORDS : lp.kind === "paid" ? formatWorkspaceDate(lp.at) : "None";
@@ -575,22 +625,27 @@ export function renderWorkspaceMobileSummary(
   onMore: () => void,
 ): TemplateResult {
   void onMore;
-  const h = workspace.header;
+  const position = accountPositionOf(workspace.header);
   return html`
     <div class="ar-workspace-mobile-summary" aria-label="Account summary">
       <div class="ar-workspace-mobile-summary__row">
-        <div>
+        ${position === undefined
+          ? html`<div data-account-position-withheld="true">
+          <span class="label">Account position</span>
+          <span class="value">${ACCOUNT_POSITION_WITHHELD_WORDS}</span>
+        </div>`
+          : html`<div>
           <span class="label">Open</span>
-          <span class="value">${formatWorkspaceMoney(h.open_cents)}</span>
+          <span class="value">${formatWorkspaceMoney(position.open_cents)}</span>
         </div>
         <div>
           <span class="label">Available</span>
-          <span class="value">${formatWorkspaceMoney(h.available_credit_cents)}</span>
+          <span class="value">${formatWorkspaceMoney(position.available_credit_cents)}</span>
         </div>
         <div>
           <span class="label">Past due</span>
-          <span class="value overdue">${formatWorkspaceMoney(h.overdue_cents)}</span>
-        </div>
+          <span class="value overdue">${formatWorkspaceMoney(position.overdue_cents)}</span>
+        </div>`}
         <button type="button" class="btn btn-primary" data-action="workspace-mobile-more">More actions</button>
       </div>
     </div>
