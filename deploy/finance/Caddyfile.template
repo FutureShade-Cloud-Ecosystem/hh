@@ -28,6 +28,11 @@
 # Never indexed (the demo box's ruling stands on this box too).
 header X-Robots-Tag "noindex, nofollow"
 
+# The front door's set password page carries a one time recovery secret in
+# its link: no request from the box may carry a Referer, or the secret could
+# reach another server's log.
+header Referrer-Policy "no-referrer"
+
 handle /api/* {
 	reverse_proxy __UPSTREAM__ {
 		header_up X-Forwarded-For "{remote_host}"
