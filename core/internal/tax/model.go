@@ -276,6 +276,11 @@ type ReconReport struct {
 	CollectedCents       int64 `json:"collected_cents"`
 	ReturnTaxCents       int64 `json:"return_tax_cents"`
 	InputTaxCreditsCents int64 `json:"input_tax_cents"`
+	// OpeningBalanceCount and OpeningBalanceHSTCents list the period's documents carrying the
+	// opening balance marker (FROM-PRINCIPAL 177): excluded from CollectedCents, never inferred
+	// from a missing journal, and named here so nothing leaves the report silently.
+	OpeningBalanceCount  int   `json:"opening_balance_count"`
+	OpeningBalanceHSTCents int64 `json:"opening_balance_hst_cents"`
 	GLPayableCents       int64 `json:"gl_payable_cents"` // 2200's movement for the period
 	GLFederalCents       int64 `json:"gl_federal_cents"` // 2201 balance
 	GLOntarioCents       int64 `json:"gl_ontario_cents"` // 2202 balance
@@ -319,11 +324,13 @@ type taxStore interface {
 	InsertSnapshot(ctx context.Context, s Snapshot) (string, error)
 }
 
-// SalesHSTReader reads the tax on the period's sales documents (the collected side of the tie-out).
-// Satisfied by *billing.Repository through a main.go wiring; tax never reads the invoices table
-// directly, the same rule its GL balance read follows (never the views directly).
+// SalesHSTReader reads the tax on the period's sales documents (the collected side of the tie-out),
+// split by the opening balance marker: salesCents counts only this period's documents, and the
+// marked opening balances come back named (count and HST) so the report can list them. Satisfied by
+// *billing.Repository through a main.go wiring; tax never reads the invoices table directly, the
+// same rule its GL balance read follows (never the views directly).
 type SalesHSTReader interface {
-	DocumentSalesHSTCents(ctx context.Context, year, month int, branchID string) (int64, error)
+	DocumentSalesHSTCents(ctx context.Context, year, month int, branchID string) (salesCents int64, openingCount int, openingCents int64, err error)
 }
 
 // BillITCReader reads the input tax credits on the period's posted vendor bills (the 2200 debits side

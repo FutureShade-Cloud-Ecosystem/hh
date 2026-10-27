@@ -57,8 +57,8 @@ func mountedTaxPost(t *testing.T, pool *pgxpool.Pool, caller identity.StaffConte
 // statuses, never on figures.
 type fenceFigures struct{}
 
-func (fenceFigures) DocumentSalesHSTCents(context.Context, int, int, string) (int64, error) {
-	return 0, nil
+func (fenceFigures) DocumentSalesHSTCents(context.Context, int, int, string) (int64, int, int64, error) {
+	return 0, 0, 0, nil
 }
 func (fenceFigures) ReturnHSTCents(context.Context, int, int, string) (int64, error) {
 	return 0, nil

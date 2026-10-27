@@ -30,8 +30,8 @@ type fakeStore struct {
 
 // DocumentSalesHSTCents, ReturnHSTCents and VendorBillITCCents stand in for the billing, pos and
 // purchasing seams (FW1-11): the reconcile reads the period's documents through them, never snapshots.
-func (f *fakeStore) DocumentSalesHSTCents(context.Context, int, int, string) (int64, error) {
-	return f.salesHST, nil
+func (f *fakeStore) DocumentSalesHSTCents(context.Context, int, int, string) (int64, int, int64, error) {
+	return f.salesHST, 0, 0, nil
 }
 
 func (f *fakeStore) ReturnHSTCents(context.Context, int, int, string) (int64, error) {

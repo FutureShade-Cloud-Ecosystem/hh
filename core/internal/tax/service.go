@@ -573,11 +573,13 @@ func (s *Service) reconcile(ctx context.Context, year, month int, branchID strin
 	if s.salesHST == nil {
 		return rep, fmt.Errorf("tax: the sales document HST seam is not wired; the reconcile cannot be computed")
 	}
-	sales, err := s.salesHST.DocumentSalesHSTCents(ctx, year, month, branchID)
+	sales, openingCount, openingCents, err := s.salesHST.DocumentSalesHSTCents(ctx, year, month, branchID)
 	if err != nil {
 		return rep, err
 	}
 	rep.CollectedCents = sales
+	rep.OpeningBalanceCount = openingCount
+	rep.OpeningBalanceHSTCents = openingCents
 	if s.returnHST == nil {
 		return rep, fmt.Errorf("tax: the POS return HST seam is not wired; the reconcile cannot be computed")
 	}

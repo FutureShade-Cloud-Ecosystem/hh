@@ -374,3 +374,135 @@ func TestIntegration_FW1_11_POSReturnThroughRealWriterLandsOnReturnsAndTies(t *t
 			sale.TaxCents, ret.TaxCents, gotCollected, gotReturns, gotGL, gotVariance, ret.TaxCents)
 	}
 }
+
+// Round 2b, PART 3 (FROM-PRINCIPAL 177): a document carrying the opening balance marker is not this
+// period's business. The reconcile must leave it out of collected and name it on the report (count
+// and HST), so wave 2's opening balances are visible without disturbing the tie. The marker is
+// explicit on the invoice, never inferred from a missing journal.
+func TestIntegration_FW1_11_MarkedOpeningInvoiceIsExcludedAndListed(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	now := time.Now()
+	year, month := now.Year(), int(now.Month())
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO fiscal_periods (year, month) VALUES ($1, $2) ON CONFLICT (year, month) DO NOTHING`,
+		year, month); err != nil {
+		t.Fatalf("ensure period %d-%02d: %v", year, month, err)
+	}
+
+	svc := intSvc(t, pool).
+		WithSalesHSTs(billing.NewRepository(pool)).
+		WithReturnHSTs(pos.NewRepository(pool)).
+		WithBillITCs(purchasing.NewRepository(pool)).
+		WithGLBalances(fw11GLBal{svc: gl.NewService(gl.NewRepository(pool))})
+
+	before, err := svc.ReconcileReport(ctx, year, month, fw11TRT)
+	if err != nil {
+		t.Fatalf("baseline reconcile: %v", err)
+	}
+
+	var customerID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM customers LIMIT 1`).Scan(&customerID); err != nil {
+		t.Skipf("no seeded customer: %v", err)
+	}
+	var invID string
+	invNo := fmt.Sprintf("FW11-OPEN-%d", time.Now().UnixNano())
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type, metadata)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE, CURRENT_DATE,
+		        30000, 5000, 35000, 35000, now(), 'INVOICE', '{"opening_balance": true}'::jsonb)
+		RETURNING id::text`,
+		invNo, customerID, fw11TRT).Scan(&invID); err != nil {
+		t.Fatalf("plant the marked opening invoice: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM invoice_lines WHERE invoice_id = $1::uuid`, invID)
+		_, _ = pool.Exec(bg, `DELETE FROM invoices WHERE id = $1::uuid`, invID)
+	})
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO invoice_lines (invoice_id, line_no, description, qty_entered, uom_entered, qty_base,
+		                           unit_price_cents, price_uom, line_total_cents, tax_cents)
+		VALUES ($1::uuid, 1, 'FW11 opening balance line', 1, 'EA', 1, 30000, 'EA', 30000, 5000)`, invID); err != nil {
+		t.Fatalf("plant the marked opening invoice line: %v", err)
+	}
+
+	rep, err := svc.ReconcileReport(ctx, year, month, fw11TRT)
+	if err != nil {
+		t.Fatalf("reconcile with the marked opening invoice: %v", err)
+	}
+	gotCollected := rep.CollectedCents - before.CollectedCents
+	gotGL := rep.GLPayableCents - before.GLPayableCents
+	gotVariance := rep.VarianceCents - before.VarianceCents
+	gotCount := rep.OpeningBalanceCount - before.OpeningBalanceCount
+	gotOpening := rep.OpeningBalanceHSTCents - before.OpeningBalanceHSTCents
+	if gotCount != 1 || gotOpening != 5000 || gotCollected != 0 || gotGL != 0 || gotVariance != 0 {
+		t.Errorf("FW1-11 PART 3 red: a marked opening invoice (tax 5000) must sit outside collected and on the opening balances line, got collected delta = %d, GL delta = %d, variance delta = %d, opening count delta = %d, opening HST delta = %d, want 0, 0, 0, 1, 5000",
+			gotCollected, gotGL, gotVariance, gotCount, gotOpening)
+	}
+}
+
+// Round 2b, PART 3 (FROM-PRINCIPAL 177): the exclusion is the MARKER, never a missing journal. An
+// invoice of this period with no journal of its own (FW1-02's defect class, an unposted document)
+// must still show as a variance, and must not be listed as an opening balance.
+func TestIntegration_FW1_11_UnpostedInvoiceWithoutTheMarkerStillShowsAsVariance(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	now := time.Now()
+	year, month := now.Year(), int(now.Month())
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO fiscal_periods (year, month) VALUES ($1, $2) ON CONFLICT (year, month) DO NOTHING`,
+		year, month); err != nil {
+		t.Fatalf("ensure period %d-%02d: %v", year, month, err)
+	}
+
+	svc := intSvc(t, pool).
+		WithSalesHSTs(billing.NewRepository(pool)).
+		WithReturnHSTs(pos.NewRepository(pool)).
+		WithBillITCs(purchasing.NewRepository(pool)).
+		WithGLBalances(fw11GLBal{svc: gl.NewService(gl.NewRepository(pool))})
+
+	before, err := svc.ReconcileReport(ctx, year, month, fw11TRT)
+	if err != nil {
+		t.Fatalf("baseline reconcile: %v", err)
+	}
+
+	var customerID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM customers LIMIT 1`).Scan(&customerID); err != nil {
+		t.Skipf("no seeded customer: %v", err)
+	}
+	var invID string
+	invNo := fmt.Sprintf("FW11-UNPOSTED-%d", time.Now().UnixNano())
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type, metadata)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE, CURRENT_DATE,
+		        40000, 7000, 47000, 47000, now(), 'INVOICE', '{}'::jsonb)
+		RETURNING id::text`,
+		invNo, customerID, fw11TRT).Scan(&invID); err != nil {
+		t.Fatalf("plant the unposted invoice: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM invoice_lines WHERE invoice_id = $1::uuid`, invID)
+		_, _ = pool.Exec(bg, `DELETE FROM invoices WHERE id = $1::uuid`, invID)
+	})
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO invoice_lines (invoice_id, line_no, description, qty_entered, uom_entered, qty_base,
+		                           unit_price_cents, price_uom, line_total_cents, tax_cents)
+		VALUES ($1::uuid, 1, 'FW11 unposted line', 1, 'EA', 1, 40000, 'EA', 40000, 7000)`, invID); err != nil {
+		t.Fatalf("plant the unposted invoice line: %v", err)
+	}
+
+	rep, err := svc.ReconcileReport(ctx, year, month, fw11TRT)
+	if err != nil {
+		t.Fatalf("reconcile with the unposted invoice: %v", err)
+	}
+	gotVariance := rep.VarianceCents - before.VarianceCents
+	gotCount := rep.OpeningBalanceCount - before.OpeningBalanceCount
+	if gotVariance != -7000 || gotCount != 0 {
+		t.Errorf("FW1-11 PART 3: an unposted invoice with no marker is this period's missing journal, got variance delta = %d and opening count delta = %d, want -7000 and 0",
+			gotVariance, gotCount)
+	}
+}
