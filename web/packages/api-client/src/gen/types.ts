@@ -906,7 +906,25 @@ export type PaymentsHeld = {
   amount_cents: number;
   reversed: boolean;
   applied_cents: number;
+  paid_out_cents: number;
   held_cents: number;
+};
+export type PaymentsPayoutRequest = {
+  kind: "DRAWER" | "BANK" | "WRITE_OFF";
+  amount_cents: number;
+  reason: string;
+  reference?: string;
+  till_session_id?: string;
+  idempotency_key: string;
+};
+export type PaymentsPayout = {
+  payment_id: string;
+  payout_id: string;
+  kind: "DRAWER" | "BANK" | "WRITE_OFF";
+  amount_cents: number;
+  held_before_cents: number;
+  held_after_cents: number;
+  replayed: boolean;
 };
 export type PaymentsReapplyRequest = {
   reason: string;

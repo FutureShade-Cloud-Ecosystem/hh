@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PaymentsHeld, PaymentsReapplication, PaymentsReapplyRequest, PaymentsReversalResult, PaymentsReverseRequest } from "./types.js";
+import type { PaymentsHeld, PaymentsPayout, PaymentsPayoutRequest, PaymentsReapplication, PaymentsReapplyRequest, PaymentsReversalResult, PaymentsReverseRequest } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -19,6 +19,25 @@ export async function paymentsHeldFor(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "paymentsHeldFor",
+  });
+}
+
+// The document also declares success as 201; the client
+// types the lowest declared success code (200).
+export async function paymentsPayOutHeld(
+  client: ApiClient,
+  id: string | number,
+  body: PaymentsPayoutRequest,
+  call?: ApiCallOptions
+): Promise<Result<PaymentsPayout>> {
+  return client.request<PaymentsPayout>({
+    method: "POST",
+    path: "/api/v1/ar/payments/{id}/payout",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "paymentsPayOutHeld",
   });
 }
 
