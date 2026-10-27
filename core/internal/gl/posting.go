@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/jackc/pgx/v5"
@@ -1087,23 +1088,26 @@ func (s *Service) buildTillSessionCompleted(ctx context.Context, payload []byte)
 }
 
 type tillMovementPayload struct {
-	MovementID   string `json:"movement_id"`
-	SessionID    string `json:"session_id"`
-	BranchID     string `json:"branch_id"`
-	MovementType string `json:"movement_type"`
-	Method       string `json:"method"`
-	AmountCents  int64  `json:"amount_cents"`
+	MovementID   string    `json:"movement_id"`
+	SessionID    string    `json:"session_id"`
+	BranchID     string    `json:"branch_id"`
+	MovementType string    `json:"movement_type"`
+	Method       string    `json:"method"`
+	AmountCents  int64     `json:"amount_cents"`
+	OccurredAt   time.Time `json:"occurred_at"`
 }
 
-// buildTillMovementPosted posts a paid in or a paid out movement's journal (FW1-13). The accounts
-// are the till family's own rules (till.session.completed, 0032): undeposited holds the drawer and
-// over_short is the expense account the rules hold, so a paid out debits the expense and credits
-// the drawer, and a paid in is the mirror. The movement names no counter account of its own (the
-// input carries none), so the rules' expense account is the default until a rules row says
-// otherwise. A DROP and a LODGEMENT never reach the outbox from the till: a drop's cash is still
-// undeposited company cash, and a lodgement's DR 1000 / CR 1020 is the bank match's journal
-// (matcher.go), which a record-time twin would double. The defensive post=false for those two
-// keeps a hand-planted outbox row a no-op instead of a wrong book.
+// buildTillMovementPosted posts a till movement's journal (FW1-13). A paid out debits the expense
+// account the till rules hold (over_short) and credits the drawer (undeposited), a paid in is the
+// mirror; the movement names no counter account of its own, so the rules' expense account is the
+// default until a rules row says otherwise. A LODGEMENT is the ruled textbook deposit (FROM-PRINCIPAL
+// 117): DR 1000 Bank, the account the ruling names, / CR 1020 Undeposited Funds, AT LODGEMENT; FW1-05
+// changes the bank match of a lodgement that carries its journal to post nothing, so the pair never
+// books twice, and a lodgement from before this change keeps today's match. The journal is dated at
+// the movement's own instant (the payload's occurred_at), so its period is the house zone's business
+// day of the lodgement, never the consumer's clock; the GL's period filing reads the dealer's zone
+// (insertJournalIn). A drop never reaches the outbox from the till (its cash is still undeposited
+// company cash), and the defensive post=false keeps a hand-planted drop row a no-op.
 func (s *Service) buildTillMovementPosted(ctx context.Context, payload []byte) (journalDraft, bool, error) {
 	var p tillMovementPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -1112,10 +1116,10 @@ func (s *Service) buildTillMovementPosted(ctx context.Context, payload []byte) (
 	if p.MovementID == "" {
 		return journalDraft{}, false, fmt.Errorf("gl: till.movement.posted missing movement_id")
 	}
-	if p.MovementType != "PAID_IN" && p.MovementType != "PAID_OUT" {
+	if p.MovementType != "PAID_IN" && p.MovementType != "PAID_OUT" && p.MovementType != "LODGEMENT" {
 		return journalDraft{}, false, nil
 	}
-	et := "till.session.completed" // the till family's rules; the movement posts to the same two accounts
+	et := "till.session.completed" // the till family's rules; the drawer legs resolve there
 	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
 	if err != nil {
 		return journalDraft{}, false, err
@@ -1128,21 +1132,33 @@ func (s *Service) buildTillMovementPosted(ctx context.Context, payload []byte) (
 	if err != nil {
 		return journalDraft{}, false, err
 	}
-	amt := p.AmountCents
+	occurredAt := p.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = s.clock()
+	}
 	var lines []draftLine
 	memo := p.MovementType + " " + p.Method + " on session " + p.SessionID
-	if p.MovementType == "PAID_OUT" {
-		lines = []draftLine{dr(expenseCode, amt, memo), cr(undCode, amt, "drawer paid out")}
-	} else {
-		lines = []draftLine{dr(undCode, amt, memo), cr(expenseCode, amt, "drawer paid in")}
+	var title string
+	switch p.MovementType {
+	case "PAID_OUT":
+		title = "Till movement PAID_OUT"
+		lines = []draftLine{dr(expenseCode, p.AmountCents, memo), cr(undCode, p.AmountCents, "drawer paid out")}
+	case "PAID_IN":
+		title = "Till movement PAID_IN"
+		lines = []draftLine{dr(undCode, p.AmountCents, memo), cr(expenseCode, p.AmountCents, "drawer paid in")}
+	default:
+		title = "Till lodgement"
+		// Bank is the ruled account (FROM-PRINCIPAL 117 names 1000 Bank flatly); a rules row may
+		// carry a per dealer bank code one day, and this literal is where it swaps in.
+		lines = []draftLine{dr("1000", p.AmountCents, memo), cr(undCode, p.AmountCents, "lodged to the bank")}
 	}
 	return journalDraft{
 		Source:         SourceAdjustment,
 		SourceRefID:    p.MovementID,
 		IdempotencyKey: "till.movement.posted:" + p.MovementID,
-		Memo:           "Till movement " + p.MovementType,
+		Memo:           title,
 		BranchID:       p.BranchID,
-		OccurredAt:     s.clock(),
+		OccurredAt:     occurredAt,
 		Lines:          lines,
 	}, true, nil
 }

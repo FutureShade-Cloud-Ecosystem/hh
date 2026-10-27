@@ -334,16 +334,18 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 		return clientErr(409, "till: movements require an OPEN session")
 	}
 	var movementID string
-	if err := tx.QueryRow(ctx, insertMovementSQL+` RETURNING id`,
-		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy)).Scan(&movementID); err != nil {
+	var movementAt time.Time
+	if err := tx.QueryRow(ctx, insertMovementSQL+` RETURNING id, created_at`,
+		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy)).Scan(&movementID, &movementAt); err != nil {
 		return fmt.Errorf("till: insert movement: %w", err)
 	}
-	// Transactional outbox, the session close's own rail (till.session.completed, 0032): a paid in or
-	// a paid out carries its GL facts in the SAME tx as the row, so the journal posts exactly once.
-	// A DROP and a LODGEMENT deliberately emit nothing: a drop's cash is still the dealer's
-	// undeposited cash, only out of the drawer, and a lodgement's DR 1000 / CR 1020 is the bank
-	// match's journal (posting it here too would count every matched deposit twice).
-	if m.MovementType == MovementPaidIn || m.MovementType == MovementPaidOut {
+	// Transactional outbox, the session close's own rail (till.session.completed, 0032): a paid in, a
+	// paid out or a lodgement carries its GL facts in the SAME tx as the row, so the journal posts
+	// exactly once. The lodgement's journal is the ruled one (FROM-PRINCIPAL 117): DR 1000 / CR 1020 at
+	// lodgement, and FW1-05's match of a lodgement that carries it posts nothing, so the pair never
+	// books twice. A DROP deliberately emits nothing: the cash is still the dealer's undeposited cash,
+	// only out of the drawer.
+	if m.MovementType == MovementPaidIn || m.MovementType == MovementPaidOut || m.MovementType == MovementLodgement {
 		payload, err := json.Marshal(map[string]any{
 			"movement_id":   movementID,
 			"session_id":    m.TillSessionID,
@@ -351,6 +353,7 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 			"movement_type": m.MovementType,
 			"method":        m.Method,
 			"amount_cents":  m.AmountCents,
+			"occurred_at":   movementAt,
 		})
 		if err != nil {
 			return fmt.Errorf("till: marshal movement posted: %w", err)
