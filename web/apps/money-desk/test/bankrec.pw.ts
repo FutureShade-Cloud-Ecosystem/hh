@@ -748,6 +748,20 @@ test("set the starting point lists the ledger's bank entries to tick, shows the 
   await expect(panel.locator("[data-cutover-form]")).toBeVisible();
   await expect(page.locator("[data-field='br-cutover-date']")).toHaveValue(cutoverDay().iso);
   await expect(page.locator("[data-field='br-cutover-balance']")).toHaveValue("25,000.00");
+  // The tick answers the model, not only the press: unticking rides out the repaints the preview's reload
+  // makes, and the recorded point's own ticks come back checked with no press at all, because the account
+  // switch refills them from the recorded outstanding ids.
+  await rowLabel.locator("[data-cutover-tick]").uncheck();
+  await expect(rowLabel.locator("[data-cutover-tick]")).not.toBeChecked();
+  await expect(result).toContainText("Nothing is ticked as still outstanding");
+  await expect(result.locator("[data-cutover-difference]")).toContainText("$25.00");
+  await page.locator("[data-account-id]").filter({ hasText: FUEL_CARD }).click();
+  await expect(panel.locator("[data-cutover-recorded]")).toHaveCount(0);
+  await page.locator("[data-account-id]").filter({ hasText: OPERATING }).click();
+  const refilledRow = panel.locator("[data-cutover-entries] li").filter({ hasText: "Till over/short" });
+  await expect(refilledRow.locator("[data-cutover-tick]")).toBeChecked();
+  await expect(result.locator("[data-cutover-ticked]")).toContainText("Till over/short");
+  await expect(result.locator("[data-cutover-difference]")).toContainText("reconciles");
 });
 
 test("once a month has signed off the recorded starting point is shown and cannot change", async ({ page, request }) => {
