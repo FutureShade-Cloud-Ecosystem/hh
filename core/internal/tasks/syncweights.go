@@ -58,26 +58,108 @@ type WeightSyncStore struct {
 	pool   *pgxpool.Pool
 	orders OrderReader
 	link   identity.UserIDLinker
+	// orgOrders is the org held order read (UX-81c), taken from the order seam when it implements it, which the
+	// composition root's adapter does. staff and branchOrg are the caller's branch reach, the pick door's seams.
+	orgOrders OrgOrderReader
+	staff     identity.SyncStaffResolver
+	branchOrg BranchOrgReader
 }
 
 // NewWeightSyncStore wires the adapter.
 func NewWeightSyncStore(pool *pgxpool.Pool, orders OrderReader, link identity.UserIDLinker) *WeightSyncStore {
-	return &WeightSyncStore{pool: pool, orders: orders, link: link}
+	s := &WeightSyncStore{pool: pool, orders: orders, link: link}
+	s.orgOrders, _ = orders.(OrgOrderReader)
+	return s
+}
+
+// WithStaffAuthority wires the branch fence's authority seam, the pick door's (SyncStore.WithStaffAuthority).
+func (s *WeightSyncStore) WithStaffAuthority(r identity.SyncStaffResolver) *WeightSyncStore {
+	s.staff = r
+	return s
+}
+
+// WithBranchOrgReader wires the branch to org seam the caller's reach is bounded by (UX-81c).
+func (s *WeightSyncStore) WithBranchOrgReader(r BranchOrgReader) *WeightSyncStore {
+	s.branchOrg = r
+	return s
+}
+
+// OrgScoped reports whether the create's order read is held to the caller's org and its reach is wired, the leg the
+// composition root's boot check pins (UX-81c), as SyncStore.OrgScoped does for the pick door.
+func (s *WeightSyncStore) OrgScoped() bool {
+	return s.orgOrders != nil && s.staff != nil && s.branchOrg != nil
+}
+
+// orderBrief reads the order for a create under the caller's org when the seam can: a foreign order is the same
+// ErrUnknownOrder as a missing one, and an empty org reads nothing.
+func (s *WeightSyncStore) orderBrief(ctx context.Context, orgID, orderID string) (OrderBrief, error) {
+	if s.orgOrders != nil {
+		if orgID == "" {
+			return OrderBrief{}, ErrUnknownOrder
+		}
+		return s.orgOrders.OrderBriefInOrg(ctx, orgID, orderID)
+	}
+	return s.orders.OrderBrief(ctx, orderID)
+}
+
+// heldToReach answers ErrRowNotFound for a task on a branch the caller does not reach, exactly the answer a missing
+// task gets (UX-81c round 2): the weights scope held a task to the caller's org only, so a scoped caller of one branch
+// wrote to, and deleted, another branch's weight task. An unwired authority fences nothing, as the create; an
+// unreadable one is the plain retryable error.
+func (s *WeightSyncStore) heldToReach(ctx context.Context, f sync.ScopeFilter, branch string) error {
+	if s.staff == nil {
+		return nil
+	}
+	reach, err := s.callerReaches(ctx, f, branch)
+	if err != nil {
+		return err
+	}
+	if !reach {
+		return sync.ErrRowNotFound
+	}
+	return nil
+}
+
+// callerReaches is the pick door's rule over the same seams, never a second copy of it (SyncStore.callerReaches).
+func (s *WeightSyncStore) callerReaches(ctx context.Context, f sync.ScopeFilter, branch string) (bool, error) {
+	return (&SyncStore{staff: s.staff, branchOrg: s.branchOrg}).callerReaches(ctx, f, branch)
 }
 
 // Pull returns the page of NEED_WEIGHT task changes past since, live rows
 // and tombstones in seq order, at most limit rows total, under the org
-// predicate.
+// predicate and the caller's branch reach.
 func (s *WeightSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
 	where, args, ok := weightScopePredicate(f)
 	if !ok {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
 	}
+	// The branch reach clause is the pick scope's pull rule (SyncStore.pullReach), part of the query so the page
+	// fills with the rows the caller reaches and `seq > since` stays exact (UX-81c round 3). GLOBAL adds no clause,
+	// and a task with no branch is no scoped caller's. An unwired authority fences nothing, as the create.
+	reachSQL := ""
+	var branches []string
+	if s.staff != nil {
+		var reach bool
+		var err error
+		branches, reach, err = (&SyncStore{staff: s.staff}).pullReach(ctx, f)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !reach {
+			return []sync.Entity{}, []sync.Tombstone{}, nil
+		}
+		if branches != nil {
+			reachSQL = " AND branch_id = ANY($4::uuid[])"
+		}
+	}
 	q := fmt.Sprintf(`SELECT %s FROM tasks
-		WHERE %s AND seq IS NOT NULL AND seq > $2
+		WHERE %s AND seq IS NOT NULL AND seq > $2%s
 		ORDER BY seq ASC
-		LIMIT $3`, syncColumns, where)
+		LIMIT $3`, syncColumns, where, reachSQL)
 	args = append(args, since, limit)
+	if branches != nil {
+		args = append(args, branches)
+	}
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("tasks: weight sync pull: %w", err)
@@ -128,12 +210,19 @@ func (s *WeightSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, k
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("tasks: weight sync find applied: %w", err)
 	}
+	// A replay never answers for a row the caller cannot pull (UX-81d): the key's row is out of reach,
+	// so it is not "applied" for this caller, the same answer an absent key gets (the pick scope's
+	// fence, 567 round 2).
+	if reach, err := s.callerReaches(ctx, f, r.task.BranchID); err != nil || !reach {
+		return sync.RowState{}, false, err
+	}
 	rs, err := rowStateOf(r)
 	return rs, true, err
 }
 
 // Load reads one NEED_WEIGHT row by id under the org predicate; a row
-// outside the caller's org is the same as an absent one.
+// outside the caller's org, or on a branch outside the caller's reach, is the
+// same as an absent one.
 func (s *WeightSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	return s.load(ctx, s.pool, f, id)
 }
@@ -162,6 +251,12 @@ func (s *WeightSyncStore) load(ctx context.Context, db weightQuerier, f sync.Sco
 	}
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("tasks: weight sync load: %w", err)
+	}
+	if err := s.heldToReach(ctx, f, r.task.BranchID); err != nil {
+		if errors.Is(err, sync.ErrRowNotFound) {
+			return sync.RowState{}, false, nil
+		}
+		return sync.RowState{}, false, err
 	}
 	rs, err := rowStateOf(r)
 	return rs, true, err
@@ -223,9 +318,22 @@ func (s *WeightSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key st
 	if s.orders == nil {
 		return sync.RowState{}, fmt.Errorf("tasks: order reader not configured: %w", sync.ErrOpRefused)
 	}
-	ob, err := s.orders.OrderBrief(ctx, orderID)
+	// The order is read under the caller's org (UX-81c): another org's order is an unknown order here.
+	ob, err := s.orderBrief(ctx, f.OrgID, orderID)
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("tasks: %w: %v", sync.ErrOpRefused, err)
+	}
+	// A weight request is created only on a branch the caller reaches, by the pick door's rule. An order out of
+	// reach is refused with exactly the words an unknown order gets. An unreadable authority is no verdict on the
+	// order: the plain error fails the push, which the device retries.
+	if s.staff != nil {
+		reach, err := s.callerReaches(ctx, f, ob.BranchID)
+		if err != nil {
+			return sync.RowState{}, err
+		}
+		if !reach {
+			return sync.RowState{}, fmt.Errorf("tasks: %w: %v", sync.ErrOpRefused, ErrUnknownOrder)
+		}
 	}
 	// Priority is HIGH, always, exactly as RequestWeight rules: somebody
 	// is waiting on this number. The birth row is not negotiable through
@@ -349,15 +457,18 @@ func (s *WeightSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var from, fromUOM string
+	var from, fromUOM, branch string
 	if err := tx.QueryRow(ctx,
-		`SELECT status, COALESCE(weight_uom, '') FROM tasks
+		`SELECT status, COALESCE(weight_uom, ''), COALESCE(branch_id::text, '') FROM tasks
 		 WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'NEED_WEIGHT' AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&from, &fromUOM); err != nil {
+		id, f.OrgID).Scan(&from, &fromUOM, &branch); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("tasks: lock %q for weight sync write: %w", id, err)
+	}
+	if err := s.heldToReach(ctx, f, branch); err != nil {
+		return sync.RowState{}, err
 	}
 
 	var r syncRow
@@ -482,6 +593,19 @@ func (s *WeightSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, ke
 		return sync.RowState{}, fmt.Errorf("tasks: begin weight sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var branch string
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(branch_id::text, '') FROM tasks
+		 WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'NEED_WEIGHT' AND deleted_at IS NULL FOR UPDATE`,
+		id, f.OrgID).Scan(&branch); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return sync.RowState{}, sync.ErrRowNotFound
+		}
+		return sync.RowState{}, fmt.Errorf("tasks: lock %q for weight sync delete: %w", id, err)
+	}
+	if err := s.heldToReach(ctx, f, branch); err != nil {
+		return sync.RowState{}, err
+	}
 	seq, err := allocateScopeSeqTx(ctx, tx, weightsSeqScope)
 	if err != nil {
 		return sync.RowState{}, err

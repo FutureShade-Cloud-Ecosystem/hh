@@ -297,3 +297,20 @@ export function tieWords(inTie: boolean, ageDays: number): string {
 export function bisSourceWord(source: string): string {
   return source === "BOTH" ? "In both books" : source === "ERP_ONLY" ? "Only in this ledger" : source === "BISTRACK_ONLY" ? "Only in the legacy import" : source;
 }
+
+/** The two counts the posting queue's banner reads, in words; an empty queue shows nothing. */
+export interface PostingQueueCounts {
+  readonly waiting: number;
+  readonly dead: number;
+}
+
+/** The banner's sentence: what is stuck, in the count's own words, and who lists it. */
+export function postingQueueBannerWords(counts: PostingQueueCounts): string {
+  if (counts.waiting <= 0 && counts.dead <= 0) return "";
+  if (counts.waiting <= 0) {
+    return `${counts.dead === 1 ? "1 journal failed" : `${counts.dead} journals failed`} to post and ${counts.dead === 1 ? "is" : "are"} set aside. The posting queue lists them for the Financial Controller.`;
+  }
+  const waiting = counts.waiting === 1 ? "1 journal is waiting to post" : `${counts.waiting} journals are waiting to post`;
+  const dead = counts.dead <= 0 ? "" : ` and ${counts.dead === 1 ? "1 has" : `${counts.dead} have`} failed and ${counts.dead === 1 ? "is" : "are"} set aside`;
+  return `${waiting}${dead}. The posting queue lists them for the Financial Controller.`;
+}
