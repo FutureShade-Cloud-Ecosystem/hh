@@ -1,4 +1,4 @@
--- 04XX — the lodgement's deposit slip: the link table from a LODGEMENT movement to the payments it
+-- 0441: the lodgement's deposit slip: the link table from a LODGEMENT movement to the payments it
 -- banked (FROM-PRINCIPAL 128 P1-2: a new lodgement names its payments when it is made, so the bank
 -- match never guesses which payments a deposit carries). Owner module: internal/till. THE NUMBER IS A
 -- PLACEHOLDER: this file lands on the branch only when the principal names the migration number
