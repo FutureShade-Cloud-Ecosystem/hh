@@ -593,7 +593,10 @@ func TestIntegration_FW1_04_SignOffRefusedWhenClearingJournalReversedAndDirectRe
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM users LIMIT 1`).Scan(&userID); err != nil {
 		t.Fatalf("select user: %v", err)
 	}
-	staffCtx := identity.ContextWithStaff(ctx, identity.StaffContext{UserID: userID})
+	// A caller that reaches the journal's books: the merged clearing journal's branch is the consolidated
+	// one (no branch), so the sign in must be dealer wide to get past the reach fence and pin the owner
+	// refusal ("posted by the bank reconciliation module") and not the reach refusal.
+	staffCtx := identity.ContextWithStaff(ctx, identity.StaffContext{UserID: userID, Scope: identity.ScopeGlobal})
 	if _, err := glSvc.ReverseJournal(staffCtx, m.JournalID); err == nil || !strings.Contains(err.Error(), "bank reconciliation") {
 		t.Fatalf("expected direct reversal of bankrec clearing journal to be refused, got %v", err)
 	}
