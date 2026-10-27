@@ -1342,12 +1342,22 @@ func (w *fw1Walk) assertWalkMonthAndNextYearPeriodsOpen(t fw1TB) {
 	}
 }
 
-// 8. Year end close opens the next year and leaves the closed year's income statement unchanged.
+// 8. The walk's own year has not ended, so its year end close is refused (FW1-09b), and the close
+// of the year BEFORE the walk's own, which has ended, keeps that year's income statement unchanged
+// with the walk's own year's periods in place (FROM-PRINCIPAL 159).
 func (w *fw1Walk) assertYearEndClose(t fw1TB) {
+	// The walk's own year is still running: closing it would seal the months still ahead, so the
+	// close is refused until the year's last day has passed in the dealer's zone. Red until FW1-09
+	// lands: the refusal does not exist yet.
+	if _, err := w.money.glSvc.CloseYear(fw1StaffCtx(context.Background()), w.year, "FW1 walk, the running year's close must be refused"); err == nil {
+		t.Errorf("the year end close of the walk's own year %d succeeded but the year has not ended (want refused)", w.year)
+	}
+	// The year before the walk's own has ended; its close must not move its income statement.
+	closedYear := w.year - 1
 	income := func() map[string]int64 {
 		out := map[string]int64{}
 		rows, err := w.pool.Query(context.Background(), `
-			SELECT account_code, SUM(amount_cents) FROM v_income_statement WHERE fiscal_year = $1 GROUP BY account_code`, w.year)
+			SELECT account_code, SUM(amount_cents) FROM v_income_statement WHERE fiscal_year = $1 GROUP BY account_code`, closedYear)
 		if err != nil {
 			t.Fatalf("the income statement read: %v", err)
 		}
@@ -1363,8 +1373,8 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 		return out
 	}
 	before := income()
-	if _, err := w.money.glSvc.CloseYear(fw1StaffCtx(context.Background()), w.year, "FW1 walk year end close"); err != nil {
-		t.Fatalf("the year end close: %v", err)
+	if _, err := w.money.glSvc.CloseYear(fw1StaffCtx(context.Background()), closedYear, "FW1 walk year end close"); err != nil {
+		t.Fatalf("the year end close of %d: %v", closedYear, err)
 	}
 	after := income()
 	for code, amt := range before {
@@ -1373,12 +1383,13 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 				code, fw1Dollars(amt), fw1Dollars(after[code]), byDollars(after[code]-amt))
 		}
 	}
-	var nextYear int
-	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM fiscal_periods WHERE year = $1`, w.year+1).Scan(&nextYear); err != nil {
-		t.Fatalf("the next year read: %v", err)
+	// The next year is then the walk's own year, so its periods exist.
+	var walkYear int
+	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM fiscal_periods WHERE year = $1`, w.year).Scan(&walkYear); err != nil {
+		t.Fatalf("the walk year period read: %v", err)
 	}
-	if nextYear == 0 {
-		t.Errorf("the year end close opened no %d fiscal periods: posting into the next year is refused for want of a period", w.year+1)
+	if walkYear == 0 {
+		t.Errorf("the year end close of %d left the walk's own year %d without fiscal periods: posting into the walk year is refused for want of a period", closedYear, w.year)
 	}
 }
 
