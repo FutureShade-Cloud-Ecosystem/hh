@@ -195,6 +195,10 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 		"PostJournal":           true,
 		"PostJournalTx":         true,
 		"PostCreditMemoJournal": true,
+		"CreateJournal":         true,
+		"ReverseJournal":        true,
+		"RunRecurring":          true,
+		"CloseYear":             true,
 	}
 	payloadBranchTopics := []string{
 		"payment.bounced",
@@ -214,26 +218,35 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 		payloadTopicSet[tp] = true
 	}
 
+	type parsedFile struct {
+		rel     string
+		pkgDir  string
+		pkgName string
+		ast     *ast.File
+	}
+
 	fset := token.NewFileSet()
-	var discovered []fw1FoundSite
+	var files []parsedFile
+	dirConsts := make(map[string]map[string]string)
+	pkgConsts := make(map[string]map[string]string)
 
 	for _, sub := range []string{"cmd", "internal"} {
 		root := filepath.Join(coreRoot, sub)
+		if _, statErr := os.Stat(root); os.IsNotExist(statErr) {
+			continue
+		}
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
+			}
+			if d.IsDir() {
+				return nil
 			}
 			relFromCore, rerr := filepath.Rel(coreRoot, path)
 			if rerr != nil {
 				return rerr
 			}
 			rel := filepath.ToSlash(filepath.Join("core", relFromCore))
-			if d.IsDir() {
-				if rel == "core/internal/gl" || strings.HasPrefix(rel, "core/internal/gl/") {
-					return filepath.SkipDir
-				}
-				return nil
-			}
 			if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {
 				return nil
 			}
@@ -241,76 +254,174 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 			if perr != nil {
 				return fmt.Errorf("parse %s: %w", rel, perr)
 			}
+			pkgDir := filepath.ToSlash(filepath.Dir(rel))
+			pkgName := fileAST.Name.Name
+			files = append(files, parsedFile{
+				rel:     rel,
+				pkgDir:  pkgDir,
+				pkgName: pkgName,
+				ast:     fileAST,
+			})
+			if dirConsts[pkgDir] == nil {
+				dirConsts[pkgDir] = make(map[string]string)
+			}
+			if pkgConsts[pkgName] == nil {
+				pkgConsts[pkgName] = make(map[string]string)
+			}
 			for _, decl := range fileAST.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if !ok || fn.Body == nil {
+				gd, ok := decl.(*ast.GenDecl)
+				if !ok || gd.Tok != token.CONST {
 					continue
 				}
-				fnName := fw1FormatFuncName(fn)
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					call, ok := n.(*ast.CallExpr)
+				for _, spec := range gd.Specs {
+					vs, ok := spec.(*ast.ValueSpec)
 					if !ok {
-						return true
+						continue
 					}
-					switch fun := call.Fun.(type) {
-					case *ast.SelectorExpr:
-						name := fun.Sel.Name
-						if writerCalls[name] {
-							line := fset.Position(fun.Sel.Pos()).Line
-							key := rel + "|" + fnName + "|" + name
-							discovered = append(discovered, fw1FoundSite{
-								key: key, file: rel, fn: fnName, kind: name, line: line,
-							})
-							return true
+					for i, name := range vs.Names {
+						if i >= len(vs.Values) {
+							continue
 						}
-						if name == "EmitEvent" && len(call.Args) >= 3 {
-							if tp, ok := fw1StringLiteral(call.Args[2]); ok && payloadTopicSet[tp] {
-								line := fset.Position(fun.Sel.Pos()).Line
-								kind := "emit:" + tp
-								key := rel + "|" + fnName + "|" + kind
-								discovered = append(discovered, fw1FoundSite{
-									key: key, file: rel, fn: fnName, kind: kind, line: line,
-								})
-							}
-							return true
-						}
-						if name == "Exec" || name == "QueryRow" {
-							for _, arg := range call.Args {
-								s, ok := fw1StringLiteral(arg)
-								if !ok || !strings.Contains(s, "INSERT INTO events_outbox") {
-									continue
-								}
-								for _, tp := range payloadBranchTopics {
-									if strings.Contains(s, "'"+tp+"'") || strings.Contains(s, `"`+tp+`"`) {
-										line := fset.Position(fun.Sel.Pos()).Line
-										kind := "emit:" + tp
-										key := rel + "|" + fnName + "|" + kind
-										discovered = append(discovered, fw1FoundSite{
-											key: key, file: rel, fn: fnName, kind: kind, line: line,
-										})
-									}
-								}
-							}
-						}
-					case *ast.Ident:
-						if fun.Name == "emitOutbox" && len(call.Args) >= 3 {
-							if tp, ok := fw1StringLiteral(call.Args[2]); ok && payloadTopicSet[tp] {
-								line := fset.Position(fun.Pos()).Line
-								kind := "emit:" + tp
-								key := rel + "|" + fnName + "|" + kind
-								discovered = append(discovered, fw1FoundSite{
-									key: key, file: rel, fn: fnName, kind: kind, line: line,
-								})
-							}
+						if s, ok := fw1StringLiteral(vs.Values[i]); ok {
+							dirConsts[pkgDir][name.Name] = s
+							pkgConsts[pkgName][name.Name] = s
 						}
 					}
-					return true
-				})
+				}
 			}
 			return nil
 		})
 		if err != nil {
 			return nil, fmt.Errorf("walking %s: %w", root, err)
+		}
+	}
+
+	resolveString := func(pf parsedFile, e ast.Expr) (string, bool) {
+		if s, ok := fw1StringLiteral(e); ok {
+			return s, true
+		}
+		switch v := e.(type) {
+		case *ast.Ident:
+			if v.Obj != nil && v.Obj.Kind != ast.Con {
+				return "", false
+			}
+			if s, ok := dirConsts[pf.pkgDir][v.Name]; ok {
+				return s, true
+			}
+		case *ast.SelectorExpr:
+			pkgIdent, ok := v.X.(*ast.Ident)
+			if !ok {
+				return "", false
+			}
+			if m, ok := pkgConsts[pkgIdent.Name]; ok {
+				if s, ok := m[v.Sel.Name]; ok {
+					return s, true
+				}
+			}
+			for _, imp := range pf.ast.Imports {
+				if imp.Name != nil && imp.Name.Name == pkgIdent.Name {
+					if impPath, err := strconv.Unquote(imp.Path.Value); err == nil {
+						basePkg := filepath.Base(impPath)
+						if m, ok := pkgConsts[basePkg]; ok {
+							if s, ok := m[v.Sel.Name]; ok {
+								return s, true
+							}
+						}
+					}
+				}
+			}
+		}
+		return "", false
+	}
+
+	var discovered []fw1FoundSite
+	for _, pf := range files {
+		if pf.rel == "core/internal/gl" || strings.HasPrefix(pf.rel, "core/internal/gl/") {
+			continue
+		}
+		for _, decl := range pf.ast.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			fnName := fw1FormatFuncName(fn)
+			recordOutboxCall := func(callName string, pos token.Pos, args []ast.Expr) {
+				line := fset.Position(pos).Line
+				if len(args) >= 3 {
+					if tp, ok := resolveString(pf, args[2]); ok {
+						if payloadTopicSet[tp] {
+							kind := "emit:" + tp
+							key := pf.rel + "|" + fnName + "|" + kind
+							discovered = append(discovered, fw1FoundSite{
+								key: key, file: pf.rel, fn: fnName, kind: kind, line: line,
+							})
+						}
+						return
+					}
+				}
+				kind := "dynamic-topic:" + callName
+				key := pf.rel + "|" + fnName + "|" + kind
+				discovered = append(discovered, fw1FoundSite{
+					key: key, file: pf.rel, fn: fnName, kind: kind, line: line,
+				})
+			}
+
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if sel, ok := n.(*ast.SelectorExpr); ok {
+					name := sel.Sel.Name
+					if writerCalls[name] {
+						line := fset.Position(sel.Sel.Pos()).Line
+						key := pf.rel + "|" + fnName + "|" + name
+						discovered = append(discovered, fw1FoundSite{
+							key: key, file: pf.rel, fn: fnName, kind: name, line: line,
+						})
+					}
+				}
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				switch fun := call.Fun.(type) {
+				case *ast.SelectorExpr:
+					name := fun.Sel.Name
+					if name == "EmitEvent" || name == "EnqueueTx" || name == "emitOutbox" {
+						recordOutboxCall(name, fun.Sel.Pos(), call.Args)
+						return true
+					}
+					if name == "Exec" || name == "QueryRow" {
+						for argIdx, arg := range call.Args {
+							sqlStr, ok := resolveString(pf, arg)
+							if !ok || !strings.Contains(strings.ToUpper(sqlStr), "INSERT INTO EVENTS_OUTBOX") {
+								continue
+							}
+							line := fset.Position(fun.Sel.Pos()).Line
+							tp, resolved := fw1ExtractOutboxSQLTopic(sqlStr, call.Args[argIdx+1:], func(e ast.Expr) (string, bool) {
+								return resolveString(pf, e)
+							})
+							if resolved {
+								if payloadTopicSet[tp] {
+									kind := "emit:" + tp
+									key := pf.rel + "|" + fnName + "|" + kind
+									discovered = append(discovered, fw1FoundSite{
+										key: key, file: pf.rel, fn: fnName, kind: kind, line: line,
+									})
+								}
+							} else {
+								kind := "dynamic-topic:INSERT INTO events_outbox"
+								key := pf.rel + "|" + fnName + "|" + kind
+								discovered = append(discovered, fw1FoundSite{
+									key: key, file: pf.rel, fn: fnName, kind: kind, line: line,
+								})
+							}
+						}
+					}
+				case *ast.Ident:
+					if fun.Name == "emitOutbox" {
+						recordOutboxCall("emitOutbox", fun.Pos(), call.Args)
+					}
+				}
+				return true
+			})
 		}
 	}
 
@@ -334,22 +445,88 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 		tableByKey[key] = entry
 	}
 
-	foundKeys := make(map[string]bool, len(discovered))
+	foundCounts := make(map[string]int, len(discovered))
 	for _, site := range discovered {
-		foundKeys[site.key] = true
+		foundCounts[site.key]++
 		if _, ok := tableByKey[site.key]; !ok {
 			errs = append(errs, fmt.Sprintf("UNLISTED non-GL journal writer / payload-branch emitter at %s:%d: func=%s kind=%s (add to fw1NonGLJournalWriterCallSites with its branch source)",
 				site.file, site.line, site.fn, site.kind))
+		} else if foundCounts[site.key] > 1 {
+			errs = append(errs, fmt.Sprintf("DUPLICATE call site in same function at %s:%d: func=%s kind=%s (found %d occurrences, table lists 1)",
+				site.file, site.line, site.fn, site.kind, foundCounts[site.key]))
 		}
 	}
 
 	for key, entry := range tableByKey {
-		if !foundKeys[key] {
+		if foundCounts[key] == 0 {
 			errs = append(errs, fmt.Sprintf("STALE entry in fw1NonGLJournalWriterCallSites not found in source tree: file=%s func=%s kind=%s",
 				entry.File, entry.Func, entry.Kind))
 		}
 	}
 	return errs, nil
+}
+
+func fw1ExtractOutboxSQLTopic(sqlStr string, extraArgs []ast.Expr, resolve func(ast.Expr) (string, bool)) (string, bool) {
+	upper := strings.ToUpper(sqlStr)
+	idx := strings.Index(upper, "INSERT INTO EVENTS_OUTBOX")
+	if idx < 0 {
+		return "", false
+	}
+	rest := sqlStr[idx+len("INSERT INTO EVENTS_OUTBOX"):]
+	restUpper := upper[idx+len("INSERT INTO EVENTS_OUTBOX"):]
+	valIdx := strings.Index(restUpper, "VALUES")
+	if valIdx < 0 {
+		return "", false
+	}
+	colsPart := rest[:valIdx]
+	valsPart := rest[valIdx+len("VALUES"):]
+
+	topicColIdx := 0
+	if openCol := strings.IndexByte(colsPart, '('); openCol >= 0 {
+		if closeCol := strings.IndexByte(colsPart[openCol+1:], ')'); closeCol >= 0 {
+			cols := strings.Split(colsPart[openCol+1:openCol+1+closeCol], ",")
+			foundCol := false
+			for i, c := range cols {
+				if strings.EqualFold(strings.TrimSpace(c), "topic") {
+					topicColIdx = i
+					foundCol = true
+					break
+				}
+			}
+			if !foundCol {
+				return "", false
+			}
+		}
+	}
+
+	openVal := strings.IndexByte(valsPart, '(')
+	if openVal < 0 {
+		return "", false
+	}
+	closeVal := strings.IndexByte(valsPart[openVal+1:], ')')
+	if closeVal < 0 {
+		return "", false
+	}
+	vals := strings.Split(valsPart[openVal+1:openVal+1+closeVal], ",")
+	if topicColIdx >= len(vals) {
+		return "", false
+	}
+	rawVal := strings.TrimSpace(vals[topicColIdx])
+	if len(rawVal) >= 2 && ((rawVal[0] == '\'' && rawVal[len(rawVal)-1] == '\'') || (rawVal[0] == '"' && rawVal[len(rawVal)-1] == '"')) {
+		return rawVal[1 : len(rawVal)-1], true
+	}
+	if strings.HasPrefix(rawVal, "$") {
+		paramStr := strings.TrimPrefix(rawVal, "$")
+		if colonIdx := strings.IndexByte(paramStr, ':'); colonIdx >= 0 {
+			paramStr = paramStr[:colonIdx]
+		}
+		paramNum, err := strconv.Atoi(strings.TrimSpace(paramStr))
+		if err != nil || paramNum < 1 || paramNum > len(extraArgs) {
+			return "", false
+		}
+		return resolve(extraArgs[paramNum-1])
+	}
+	return "", false
 }
 
 func fw1FormatFuncName(fn *ast.FuncDecl) string {

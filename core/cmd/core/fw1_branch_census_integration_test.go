@@ -16,52 +16,14 @@ package main
 // 2. How the non-GL module writer paths and outbox emitters are pinned here:
 //    Every caller outside core/internal/gl that reaches a journal (inventory,
 //    transfer, invcount, purchasing, landedcost, lien, warranty, billing credit
-//    memo issue and repost, bankrec, the cmd/core wire adapters, and every
-//    outbox emitter whose payload carries a branch) is listed in the table
-//    below and in fw1NonGLJournalWriterCallSites (fw1_branch_census_red.go),
-//    guarded by the static AST scan TestFW1NonGLJournalWriterCallSitesComplete
-//    (fw1_branch_census_red_test.go) so no new or moved writer can appear
-//    unnoticed. FW1-08b drives the real module doors.
-//
-// 3. Complete table of non-GL journal writer call sites and payload-branch emitters:
-//
-//    | File                                       | Enclosing function                           | Call / emitted topic          | Where branch_id comes from today                                                                                 |
-//    |--------------------------------------------|----------------------------------------------|-------------------------------|------------------------------------------------------------------------------------------------------------------|
-//    | core/cmd/core/tops_adapters.go             | (w6cCreditMemoPoster).PostCreditMemoJournal  | PostExternal                  | in.BranchID from billing.CreditMemoJournal.BranchID                                                              |
-//    | core/cmd/core/wire_money.go                | (invGLPoster).PostJournal                    | PostExternal                  | in.BranchID from inventory.GLJournal.BranchID                                                                    |
-//    | core/cmd/core/wire_operations.go           | (glPosterAdapter).PostJournal                | PostExternal                  | in.BranchID from bankrec gl.ExternalJournal.BranchID                                                             |
-//    | core/cmd/core/wire_operations.go           | (lienGLPoster).PostJournal                   | PostExternal                  | in.BranchID from lien.GLJournal.BranchID                                                                         |
-//    | core/cmd/core/wire_operations.go           | (invcountGLPoster).PostJournal               | PostExternal                  | in.BranchID from invcount.GLJournal.BranchID                                                                     |
-//    | core/cmd/core/wire_operations.go           | (landedGLPoster).PostJournal                 | PostExternal                  | in.BranchID from landedcost.GLJournal.BranchID                                                                   |
-//    | core/cmd/core/wire_operations.go           | (landedGLPoster).PostJournalTx               | PostExternalTx                | in.BranchID from landedcost.GLJournal.BranchID                                                                   |
-//    | core/cmd/core/wire_operations.go           | (warrantyGLPoster).PostJournal               | PostExternal                  | in.BranchID from warranty.GLJournal.BranchID                                                                     |
-//    | core/cmd/core/wire_operations.go           | (w4cGLPoster).PostJournal                    | PostExternal                  | in.BranchID from purchasing.GLJournal.BranchID                                                                   |
-//    | core/cmd/core/wire_operations.go           | (w4cGLPoster).PostJournalTx                  | PostExternalTx                | in.BranchID from purchasing.GLJournal.BranchID                                                                   |
-//    | core/internal/bankrec/service.go           | (*Service).persistProposal                   | PostJournal                   | prop.Journal.BranchID (CandidatePayment.BranchID for PAYMENT; Lodgement.BranchID for LODGEMENT)                  |
-//    | core/internal/bankrec/service.go           | (*Service).ManualMatch                       | PostJournal                   | manualJournal passes empty BranchID today (RED, owned by FW1-05)                                                 |
-//    | core/internal/bankrec/service.go           | (*Service).UnmatchReach                      | PostJournal                   | reversalJournal sets no BranchID today (RED, owned by FW1-05)                                                    |
-//    | core/internal/billing/credit_memo.go       | (*InvoiceWriter).IssueCreditMemo             | PostCreditMemoJournal         | in.BranchID (refused when empty at credit_memo.go:290)                                                           |
-//    | core/internal/billing/credit_memo_repost.go| (*InvoiceWriter).repostAll                   | PostCreditMemoJournal         | r.BranchID from invoices.branch_id (NOT NULL)                                                                    |
-//    | core/internal/invcount/service.go          | postSheetGL                                  | PostJournal                   | sheet.BranchID from count_sheets.branch_id (NOT NULL, refused when empty by authorizeBranch)                     |
-//    | core/internal/inventory/service.go         | (*Service).applyReceipt                      | emit:po.received              | in.BranchID on po.received outbox payload                                                                        |
-//    | core/internal/inventory/service.go         | (*Service).postPOReceived                    | PostJournal                   | p.BranchID from po.received outbox payload emitted at inventory/service.go:179                                   |
-//    | core/internal/inventory/service.go         | (*Service).postInventoryAdjusted             | PostJournal                   | p.BranchID from inventory.adjusted outbox payload (no producer in Go or SQL today)                               |
-//    | core/internal/inventory/transfer.go        | (*Service).postTransferLeg                   | PostJournal                   | p.BranchID (from_branch_id on ship, to_branch_id on receive; two-branch transfer question is FW1-07)             |
-//    | core/internal/landedcost/service.go        | (*Service).postJournal                       | PostJournal                   | lc.BranchID from landed_costs.branch_id (NOT NULL)                                                               |
-//    | core/internal/landedcost/service.go        | (*Service).postJournalTx                     | PostJournalTx                 | lc.BranchID from landed_costs.branch_id (NOT NULL)                                                               |
-//    | core/internal/lien/service.go              | (*Service).releaseHoldback                   | PostJournal                   | job.BranchID from lien_jobs.branch_id (NOT NULL)                                                                 |
-//    | core/internal/payments/reversal.go         | (*Repository).ReversePayment                 | emit:payment.reversed         | orig.BranchID from payments.branch_id (NOT NULL) in payment.reversed outbox payload                              |
-//    | core/internal/payments/reversal.go         | (*Repository).ReapplyHeld                    | emit:payment.reapplied        | p.BranchID from payments.branch_id (NOT NULL) in payment.reapplied outbox payload                                |
-//    | core/internal/pos/returns.go               | (*Service).commitReturnTx                    | emit:order.returned           | ret.BranchID from pos_returns.branch_id (NOT NULL) in order.returned outbox payload                              |
-//    | core/internal/pos/returns.go               | (*Service).commitReturnTx                    | emit:pos.return.written_off   | ret.BranchID from pos_returns.branch_id (NOT NULL) in pos.return.written_off outbox payload                      |
-//    | core/internal/pos/returns.go               | (*Service).commitReturnTx                    | emit:pos.return.committed     | ret.BranchID from pos_returns.branch_id (NOT NULL) in pos.return.committed outbox payload                        |
-//    | core/internal/pos/service.go               | (*Service).saleInTx                          | emit:order.fulfilled          | ord.BranchID from orders.branch_id (NOT NULL) in order.fulfilled outbox payload                                  |
-//    | core/internal/pos/service.go               | (*Service).saleInTx                          | emit:tax.relief.assessed      | in.BranchID on sale/order (buildTaxRelief in gl/posting.go:248-297 sets no BranchID today; RED, owned by FW1-08b)|
-//    | core/internal/purchasing/service.go        | (*Service).postBillJournal                   | PostJournalTx                 | bill.BranchID from purchasing_bills.branch_id (NOT NULL)                                                         |
-//    | core/internal/till/repository.go           | (*Repository).SetCompleted                   | emit:till.session.completed   | s.BranchID from till_sessions.branch_id (NOT NULL) in till.session.completed outbox payload                      |
-//    | core/internal/till/repository.go           | (*Repository).MarkNSF                        | emit:payment.bounced          | res.BranchID from payments.branch_id (NOT NULL) in payment.bounced outbox payload                                |
-//    | core/internal/warranty/moneypath.go        | (*Service).runGLPath                         | PostJournal                   | claim.BranchID from warranty_claims.branch_id (NOT NULL) via buildJournal                                        |
-//    | core/internal/warranty/moneypath.go        | (*Service).fallbackToGL                      | PostJournal                   | claim.BranchID from warranty_claims.branch_id (NOT NULL) via buildJournal                                        |
+//    memo issue and repost, bankrec, the cmd/core wire adapters, every outbox
+//    emitter whose payload carries a branch, and every dynamic-topic outbox
+//    helper) is listed in fw1NonGLJournalWriterCallSites in
+//    core/cmd/core/fw1_branch_census_red.go (the single source of truth for
+//    that table) and guarded by the static AST scan
+//    TestFW1NonGLJournalWriterCallSitesComplete in
+//    core/cmd/core/fw1_branch_census_red_test.go so no new or moved writer can
+//    appear unnoticed. FW1-08b drives the real module doors.
 
 import (
 	"context"
