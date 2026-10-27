@@ -389,7 +389,6 @@ func (s *Service) WithDrawerReader(r TillDrawerReader) *Service { s.drawers = r;
 // WithQueueReader injects the outbox seam the close pre flight's waiting/dead lettered check reads (FW1-09b).
 func (s *Service) WithQueueReader(r OutboxQueueReader) *Service { s.queue = r; return s }
 
-
 // WithTaxSplitReader injects the pos tax-split seam.
 func (s *Service) WithTaxSplitReader(r TaxSplitReader) *Service { s.taxSplits = r; return s }
 
