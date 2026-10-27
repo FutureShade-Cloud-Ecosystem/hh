@@ -571,7 +571,10 @@ export const warrantyStyles = css`
   .row-tiles.three {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-  .tile {
+  /* Scoped to the warranty views' own row tiles. Unscoped, this rule painted its white
+     fallback background around every strip tile on the landing in charcoal
+     (VISUAL-PR608-argon, finding 1). */
+  .row-tiles .tile {
     border: 1px solid var(--mh-frame, #d6d8de);
     border-radius: 8px;
     padding: 14px 16px;
@@ -721,12 +724,9 @@ export const warrantyStyles = css`
   .drawer-grid.two {
     grid-template-columns: 1.4fr 1fr;
   }
-  .claim-card {
-    border: 1px solid var(--mh-frame, #d6d8de);
-    border-radius: 8px;
-    padding: 14px 16px;
-    background: var(--mh-bg, #fff);
-  }
+  /* The duplicate claim-card box rule that stood here hardcoded a white background and
+     fought the token block above, white-on-white in charcoal (VISUAL-PR608-argon, finding 8).
+     The token block owns the card; only the claim rows' layout lives here. */
   .claim-card .claim-rows {
     display: grid;
     grid-template-columns: max-content 1fr;
@@ -737,12 +737,12 @@ export const warrantyStyles = css`
     display: contents;
   }
   .claim-card .claim-row > span:first-child {
-    color: var(--mh-fg-mute, #6b6f78);
+    color: var(--hh-text-dim);
     font-size: 13px;
   }
   .claim-card .claim-row > span:last-child {
     font-size: 14px;
-    color: var(--mh-fg, #15171a);
+    color: var(--hh-text);
   }
   .photo-row {
     display: flex;

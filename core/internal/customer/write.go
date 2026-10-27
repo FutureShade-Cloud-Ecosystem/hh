@@ -17,12 +17,17 @@ import (
 // CreateInput is the staff create-customer payload. billing_address is optional; when
 // supplied it is validated + normalized (province → ISO code, postal → "A1A 1A1") before
 // insert. account_no + name are required.
+//
+// PaymentTermsDays is a pointer because absence and zero are different accounts: nil (the
+// field left off, how the Counter Till's and Quote Desk's pickers create) means the 30 day
+// default, the column's own default and the vendor create's; 0 SENT means Cash On Demand on
+// purpose. The two cannot share one int, or a picker's omission reads as COD.
 type CreateInput struct {
 	AccountNo        string         `json:"account_no"`
 	Name             string         `json:"name"`
 	CustomerType     string         `json:"customer_type"`
 	HomeBranchID     string         `json:"home_branch_id"`
-	PaymentTermsDays int            `json:"payment_terms_days"`
+	PaymentTermsDays *int           `json:"payment_terms_days"`
 	CreditLimitCents int64          `json:"credit_limit_cents"`
 	TaxExempt        bool           `json:"tax_exempt"`
 	BillingAddress   map[string]any `json:"billing_address"`
@@ -66,7 +71,13 @@ func (s *Service) CreateCustomer(ctx context.Context, in CreateInput) (Account, 
 	if !validCustomerType(in.CustomerType) {
 		return Account{}, httpx.BadRequestf("invalid customer_type %q", in.CustomerType)
 	}
-	if in.PaymentTermsDays < 0 {
+	// defaultTermsDays is the account's terms when the create says nothing: 30, the column's
+	// own default and the vendor create's. 0 sent is Cash On Demand and is kept as 0.
+	const defaultTermsDays = 30
+	if in.PaymentTermsDays == nil {
+		terms := defaultTermsDays
+		in.PaymentTermsDays = &terms
+	} else if *in.PaymentTermsDays < 0 {
 		return Account{}, httpx.BadRequestf("payment_terms_days must be >= 0")
 	}
 	if in.CreditLimitCents < 0 {
