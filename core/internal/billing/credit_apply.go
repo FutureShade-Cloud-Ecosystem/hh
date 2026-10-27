@@ -33,9 +33,12 @@ package billing
 //     invoice's id. source_type 'invoice' is LOAD-BEARING (credit_memo.go's rule): the row mirrors a
 //     document balance that already moved on the invoices arm, and a non-invoice tag would count the
 //     same money twice and break the 1100 tie-out by exactly the application.
-//   · A MEMO credit gets ONE mirror row: txn_type CREDIT_MEMO, source_type 'invoice', source_ref_id
+//   · A MEMO credit gets ONE mirror row: txn_type ADJUSTMENT, source_type 'invoice', source_ref_id
 //     the memo's id, amount POSITIVE (the credit shrinking is money owed again). Same rule: the memo
-//     document's own balance moved on the invoices arm.
+//     document's own balance moved on the invoices arm. The type is ADJUSTMENT, not CREDIT_MEMO,
+//     ON PURPOSE (S6 P1-4): 626's past date rebuild keeps an invoice tagged row only when its
+//     txn_type differs from the document's own doc_type, so a CREDIT_MEMO tagged row on a
+//     CREDIT_MEMO document would drop out of a past date's aging by exactly the application.
 //   · An ACCOUNT credit gets ONE offsetting row INSIDE ITS OWN GROUP: the anchor row's txn_type,
 //     source_type and source_ref_id, amount POSITIVE. That is the NSF fee payment's spelling
 //     (payments' applyAllocations): the aging groups non-invoice rows by (source_type,
@@ -543,7 +546,7 @@ VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
 		if _, err := tx.Exec(ctx, `
 INSERT INTO customer_transactions
   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
-VALUES ($1::uuid, 'CREDIT_MEMO', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
+VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
 			in.CustomerID, in.AmountCents, runningAR, in.CreditID, invBranch, "credit memo applied: "+memWords, now); err != nil {
 			return CreditApplication{}, fmt.Errorf("credit apply: the memo's subledger row: %w", err)
 		}
@@ -841,7 +844,7 @@ SELECT customer_id, 'ADJUSTMENT', $2, $3, 'invoice', id::uuid, branch_id, $4, $5
 		if _, err := tx.Exec(ctx, `
 INSERT INTO customer_transactions
   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
-SELECT customer_id, 'CREDIT_MEMO', $2, $3, 'invoice', id::uuid, branch_id, $4, $5
+SELECT customer_id, 'ADJUSTMENT', $2, $3, 'invoice', id::uuid, branch_id, $4, $5
   FROM invoices WHERE id = $1::uuid`,
 			record.CreditID, -amount, runningAR, "credit memo restored: "+in.Reason, now); err != nil {
 			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: the memo's restore row: %w", err)
