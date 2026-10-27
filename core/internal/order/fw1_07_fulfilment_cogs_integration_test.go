@@ -89,9 +89,10 @@ func TestFW1_07_FulfilmentRelievesStockAndPostsCOGS(t *testing.T) {
 	t.Cleanup(func() {
 		c := context.Background()
 		for _, id := range orderIDs {
-			key := "order.fulfilled:" + id
-			_, _ = pool.Exec(c, `DELETE FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id = j.id AND j.idempotency_key = $1`, key)
-			_, _ = pool.Exec(c, `DELETE FROM gl_journals WHERE idempotency_key = $1`, key)
+			// Round 2c: a group fulfilment's journal key carries the group id after the
+			// order id, so the cleanup matches the whole prefix (both key shapes).
+			_, _ = pool.Exec(c, `DELETE FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id = j.id AND j.idempotency_key LIKE 'order.fulfilled:'||$1||'%'`, id)
+			_, _ = pool.Exec(c, `DELETE FROM gl_journals WHERE idempotency_key LIKE 'order.fulfilled:'||$1||'%'`, id)
 			_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE topic = 'order.fulfilled' AND payload->>'order_id' = $1`, id)
 			_, _ = pool.Exec(c, `DELETE FROM stock_moves WHERE source_ref_id = $1::uuid`, id)
 			_, _ = pool.Exec(c, `DELETE FROM shipment_groups WHERE order_id = $1`, id)
@@ -168,7 +169,9 @@ func TestFW1_07_FulfilmentRelievesStockAndPostsCOGS(t *testing.T) {
 			 WHERE j.idempotency_key IN ($1, $2, $3) AND a.code = $4`,
 			"order.fulfilled:"+deliveredOrderID,
 			"order.fulfilled:"+collectLaterOrderID,
-			"order.fulfilled:"+codOrderID,
+			// Round 2c: the COD order fulfils through its ship group, so its journal key is
+			// group scoped (S3's P1-3).
+			"order.fulfilled:"+codOrderID+":"+grpID,
 			accountCode,
 		).Scan(&net); err != nil {
 			t.Fatalf("glNet %s: %v", accountCode, err)

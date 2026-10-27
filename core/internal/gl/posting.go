@@ -620,6 +620,7 @@ func (s *Service) buildPaymentPaidOut(ctx context.Context, payload []byte) (jour
 type orderFulfilledPayload struct {
 	OrderID  string `json:"order_id"`
 	BranchID string `json:"branch_id"`
+	GroupID  string `json:"group_id"`
 	Lines    []struct {
 		ProductID  string  `json:"product_id"`
 		QtyBase    float64 `json:"qty_base"`
@@ -697,10 +698,20 @@ func (s *Service) buildOrderFulfilled(ctx context.Context, payload []byte) (jour
 	if err != nil {
 		return journalDraft{}, false, err
 	}
+	// Round 2c (S3's P1-3): the group's relief emits the group's id on the payload, so the
+	// journal's idempotency key is the GROUP's own. Keyed by the order alone, a second group
+	// of the same order lands on the first group's key and its COGS is dropped as a
+	// duplicate: the second truck's cost never reaches the books. An event with no group (an
+	// old row, or its replay) keeps the order wide key, so it stays idempotent with the
+	// journal it already created.
+	key := "order.fulfilled:" + p.OrderID
+	if p.GroupID != "" {
+		key = key + ":" + p.GroupID
+	}
 	return journalDraft{
 		Source:         SourceFulfillment,
 		SourceRefID:    p.OrderID,
-		IdempotencyKey: "order.fulfilled:" + p.OrderID,
+		IdempotencyKey: key,
 		Memo:           "COGS on fulfillment",
 		BranchID:       p.BranchID,
 		OccurredAt:     s.clock(),
