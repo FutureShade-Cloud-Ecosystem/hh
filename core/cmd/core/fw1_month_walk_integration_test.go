@@ -100,6 +100,10 @@ type fw1Walk struct {
 	depositInTransitCents  int64
 	statementBalanceCents  int64
 	bankAccountID          string
+	lodgedChequePaymentID  string
+	lodgedChequeInvoiceID  string
+	lodgedChequeMovementID string
+	lodgedChequeCents      int64
 
 	nullBranchLines int // snapshot taken before the year end close posts its own lines
 	seededInvoiceID []string
@@ -582,6 +586,36 @@ func TestFW1MonthWalk(t *testing.T) {
 	w.ok("cheque bounced", http.MethodPost, "/api/v1/ar/payments/"+chequeAns.PaymentID+"/nsf", map[string]any{"reason": "NSF, drawer's bank refused"})
 	w.drain()
 
+	// Beside the desk cheque (CHQ-101, never lodged through a till lodgement): a cheque payment
+	// taken on the Trenton drawer, lodged through a till lodgement (posting DR 1000 / CR 1020 dated
+	// by its business day in the house zone and marking the payment DEPOSITED in the same
+	// transaction under FW1-13), and then bounced BEFORE the bank match (FROM-PRINCIPAL 120).
+	lodgedChequeSale := w.sale("cheque taken on till TRT", map[string]any{
+		"idempotency_key": "88a20000-0000-4000-8000-0000000000b7", "branch_id": fw1TRT, "till_session_id": w.tillTRT,
+		"customer_id": w.cust["CUST-1003"], "tender": "CHEQUE", "sale_type": "COLLECT_LATER",
+		"lines": []map[string]any{{"product_id": w.prod["DBS-GATOR-SAND"], "qty_entered": 2, "uom_entered": "BAG"}},
+	})
+	w.drain()
+	w.lodgedChequePaymentID, _ = lodgedChequeSale["payment_id"].(string)
+	w.lodgedChequeInvoiceID, _ = lodgedChequeSale["invoice_id"].(string)
+	if w.lodgedChequePaymentID == "" || w.lodgedChequeInvoiceID == "" {
+		t.Fatalf("cheque taken on till TRT returned no payment_id or invoice_id: %v", lodgedChequeSale)
+	}
+	if err := w.pool.QueryRow(ctx, `SELECT amount_cents FROM payments WHERE id = $1`, w.lodgedChequePaymentID).Scan(&w.lodgedChequeCents); err != nil {
+		t.Fatalf("reading lodged cheque payment amount: %v", err)
+	}
+	w.ok("till cheque lodgement TRT", http.MethodPost, "/api/v1/till/sessions/"+w.tillTRT+"/movements", map[string]any{
+		"movement_type": "LODGEMENT", "method": "CHEQUE", "amount_cents": w.lodgedChequeCents,
+		"reason": "fw1 walk cheque lodgement", "reference": "DEP-TRT-CHQ-1",
+		"payment_ids": []string{w.lodgedChequePaymentID},
+	})
+	w.drain()
+	w.lodgedChequeMovementID = w.one(`SELECT id::text FROM till_movements WHERE reference = 'DEP-TRT-CHQ-1' ORDER BY id LIMIT 1`)
+	w.ok("lodged cheque bounced before match", http.MethodPost, "/api/v1/ar/payments/"+w.lodgedChequePaymentID+"/nsf", map[string]any{
+		"reason": "NSF after lodgement, before bank match",
+	})
+	w.drain()
+
 	// A reversal and a re-application of held money: Frontenac pays $2,000.00 of the seeded
 	// open invoice, the payment is reversed (the money holds in 2310), then re-applied.
 	seedInv := w.one(`SELECT id::text FROM invoices WHERE invoice_no = 'INV-2026-0002'`)
@@ -989,16 +1023,21 @@ func (w *fw1Walk) assertHSTTies(t fw1TB) {
 // 5. The bank month signs off at a zero difference computed from balances at month end, with
 // the outstanding items listed.
 //
-// THE LODGEMENT RULE (FROM-PRINCIPAL 117), binding: the textbook bank reconciliation:
+// THE LODGEMENT RULE (FROM-PRINCIPAL 117 and 120), binding: the textbook bank reconciliation:
 //   - Lodgement: a till lodgement posts DR 1000 Bank / CR 1020 Undeposited Funds AT LODGEMENT,
-//     dated by its business day in the house zone. FW1-13 owns this.
-//   - Match: the bank match of that deposit line matches the lodgement journal and posts NOTHING.
-//     Its undo reverses nothing. FW1-05 owns this.
+//     dated by its business day in the house zone, and marks the lodged payments DEPOSITED in the
+//     same transaction. FW1-13 owns this.
+//   - Bounce between lodgement and match: a DEPOSITED payment's bounce credits 1000 (not 1020),
+//     so a cheque lodged then bounced before the bank match credits 1000 and leaves AR and 1000
+//     tying afterwards.
+//   - Match: the bank match of that deposit line matches the lodgement journal and posts NOTHING,
+//     and does not mark DEPOSITED again. Its undo reverses nothing. FW1-05 (or FW1-13 per FP 132)
+//     owns this.
 //   - Deposits in transit: a lodgement in 1000 that is not yet on a statement is a deposit in
 //     transit, listed on the reconciliation as a reconciling item. FW1-04 owns this.
 //   - Older lodgements: a lodgement from before this change has no lodgement journal, so it keeps
-//     today's match, which posts 1020 to 1000. Nothing is booked twice on a box with history.
-//     Each owner tests the old case beside the new one.
+//     today's match, which marks DEPOSITED and posts 1020 to 1000. Nothing is booked twice on a
+//     box with history. Each owner tests the old case beside the new one.
 func (w *fw1Walk) assertTillLodgementPostsAtLodgement(t fw1TB) {
 	ctx := context.Background()
 	rows, err := w.pool.Query(ctx, `
@@ -1031,8 +1070,10 @@ func (w *fw1Walk) assertTillLodgementPostsAtLodgement(t fw1TB) {
 		if err := w.pool.QueryRow(ctx, `
 			SELECT count(*)
 			  FROM gl_journals j
+			  JOIN fiscal_periods fp ON fp.id = j.period_id
 			 WHERE j.status = 'POSTED'
 			   AND j.source_ref_id = $1::uuid
+			   AND fp.year = $3 AND fp.month = $4
 			   AND COALESCE(j.idempotency_key, '') NOT LIKE 'bankrec:%'
 			   AND EXISTS (
 			       SELECT 1 FROM gl_journal_lines dl
@@ -1043,13 +1084,76 @@ func (w *fw1Walk) assertTillLodgementPostsAtLodgement(t fw1TB) {
 			       SELECT 1 FROM gl_journal_lines cl
 			         JOIN gl_accounts ca ON ca.id = cl.account_id
 			        WHERE cl.journal_id = j.id AND ca.code = '1020' AND cl.credit_cents = $2
-			   )`, l.id, l.amount).Scan(&posted); err != nil {
+			   )`, l.id, l.amount, w.year, w.month).Scan(&posted); err != nil {
 			t.Fatalf("the lodgement journal read for %s: %v", l.ref, err)
 		}
 		if posted != 1 {
-			t.Errorf("till lodgement %s (%s) posted %d DR 1000 / CR 1020 journals at lodgement (want 1)",
-				l.ref, fw1Dollars(l.amount), posted)
+			t.Errorf("till lodgement %s (%s) posted %d DR 1000 / CR 1020 journals dated in %04d-%02d at lodgement (want 1)",
+				l.ref, fw1Dollars(l.amount), posted, w.year, w.month)
 		}
+	}
+
+	// The cheque lodged through DEP-TRT-CHQ-1 and then bounced BEFORE the bank match:
+	// 1. Because the lodgement marks its payment DEPOSITED in the same transaction as the DR 1000 /
+	//    CR 1020 lodgement journal, the bounce must credit 1000 (not 1020).
+	// 2. Afterwards, 1000 ties (the lodgement's DR 1000 and the bounce's CR 1000 net to $0.00) and
+	//    AR ties to GL 1100 for the cheque's reopened invoice and NSF fee.
+	var bounceCr1000, bounceCr1020 int64
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(l.credit_cents) FILTER (WHERE a.code = '1000'), 0),
+		       COALESCE(SUM(l.credit_cents) FILTER (WHERE a.code = '1020'), 0)
+		  FROM gl_journal_lines l
+		  JOIN gl_journals j ON j.id = l.journal_id
+		  JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE j.status = 'POSTED'
+		   AND j.idempotency_key = $1`, "payment.bounced:"+w.lodgedChequePaymentID).Scan(&bounceCr1000, &bounceCr1020); err != nil {
+		t.Fatalf("reading the lodged cheque bounce journal legs: %v", err)
+	}
+	if bounceCr1000 != w.lodgedChequeCents || bounceCr1020 != 0 {
+		t.Errorf("lodged cheque DEP-TRT-CHQ-1 (%s) bounced before bank match credited 1000 %s and 1020 %s (want CR 1000 %s and CR 1020 $0.00)",
+			fw1Dollars(w.lodgedChequeCents), fw1Dollars(bounceCr1000), fw1Dollars(bounceCr1020), fw1Dollars(w.lodgedChequeCents))
+	}
+	var lodgDr1000 int64
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(l.debit_cents), 0)
+		  FROM gl_journal_lines l
+		  JOIN gl_journals j ON j.id = l.journal_id
+		  JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE j.status = 'POSTED'
+		   AND j.source_ref_id = $1::uuid
+		   AND COALESCE(j.idempotency_key, '') NOT LIKE 'bankrec:%'
+		   AND a.code = '1000'`, w.lodgedChequeMovementID).Scan(&lodgDr1000); err != nil {
+		t.Fatalf("reading the lodged cheque lodgement 1000 debit: %v", err)
+	}
+	if lodgDr1000 != w.lodgedChequeCents || bounceCr1000 != w.lodgedChequeCents || lodgDr1000-bounceCr1000 != 0 {
+		t.Errorf("GL 1000 does not tie after lodged cheque DEP-TRT-CHQ-1 bounced before match: lodgement DR 1000 %s (want %s) less bounce CR 1000 %s (want %s) leaves %s (want $0.00)",
+			fw1Dollars(lodgDr1000), fw1Dollars(w.lodgedChequeCents),
+			fw1Dollars(bounceCr1000), fw1Dollars(w.lodgedChequeCents),
+			byDollars(lodgDr1000-bounceCr1000))
+	}
+	var chequeGL1100, chequeOpenAR int64
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(COALESCE(l.debit_cents, 0) - COALESCE(l.credit_cents, 0)), 0)
+		  FROM gl_journal_lines l
+		  JOIN gl_journals j ON j.id = l.journal_id
+		  JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE j.status = 'POSTED'
+		   AND a.code = '1100'
+		   AND j.idempotency_key IN ($1, $2, $3)`,
+		"ar.invoice.finalized:"+w.lodgedChequeInvoiceID,
+		"payment.received:"+w.lodgedChequePaymentID,
+		"payment.bounced:"+w.lodgedChequePaymentID).Scan(&chequeGL1100); err != nil {
+		t.Fatalf("reading GL 1100 movement for lodged cheque: %v", err)
+	}
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE((SELECT balance_cents FROM invoices WHERE id = $1::uuid), 0)
+		     + COALESCE((SELECT SUM(fee_cents) FROM payment_nsf WHERE payment_id = $2::uuid), 0)`,
+		w.lodgedChequeInvoiceID, w.lodgedChequePaymentID).Scan(&chequeOpenAR); err != nil {
+		t.Fatalf("reading open AR for lodged cheque: %v", err)
+	}
+	if chequeGL1100 != chequeOpenAR {
+		t.Errorf("AR (%s) and GL 1100 (%s) do not tie after lodged cheque DEP-TRT-CHQ-1 bounced before match (%s)",
+			fw1Dollars(chequeOpenAR), fw1Dollars(chequeGL1100), byDollars(chequeOpenAR-chequeGL1100))
 	}
 }
 
@@ -1083,12 +1187,13 @@ func (w *fw1Walk) assertBankMonth(t fw1TB) {
 		SELECT COALESCE(SUM(tm.amount_cents), 0)
 		  FROM till_movements tm
 		 WHERE tm.movement_type = 'LODGEMENT'
+		   AND tm.id <> $1::uuid
 		   AND NOT EXISTS (
 		       SELECT 1 FROM bank_matches bm
 		        WHERE bm.target_type = 'LODGEMENT'
 		          AND bm.target_ref_id = tm.id
 		          AND bm.unmatched_at IS NULL
-		   )`).Scan(&depositInTransit); err != nil {
+		   )`, w.lodgedChequeMovementID).Scan(&depositInTransit); err != nil {
 		t.Fatalf("the deposits in transit read: %v", err)
 	}
 	if err := w.pool.QueryRow(ctx, `
@@ -1099,6 +1204,7 @@ func (w *fw1Walk) assertBankMonth(t fw1TB) {
 		 WHERE a.code = '1000'
 		   AND j.status = 'POSTED'
 		   AND COALESCE(l.credit_cents, 0) > 0
+		   AND COALESCE(j.idempotency_key, '') NOT LIKE 'payment.bounced:%'
 		   AND NOT EXISTS (
 		       SELECT 1 FROM bank_matches bm
 		        WHERE (bm.journal_id = j.id OR (bm.target_type = 'JOURNAL' AND bm.target_ref_id = j.id))
