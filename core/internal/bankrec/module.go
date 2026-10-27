@@ -25,6 +25,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -79,6 +80,11 @@ type JournalMatchFact struct {
 
 type JournalSource interface {
 	JournalForBank(ctx context.Context, journalID, glAccountCode string) (gl.BankJournalFacts, bool, error)
+
+	// JournalClearingAccount answers the account a journal credited, so an unmatch mirrors the clearing
+	// journal the match actually posted by its own journal_id (PR 632 round 4) instead of recomputing the
+	// account from today's tender rule.
+	JournalClearingAccount(ctx context.Context, journalID string) (string, bool, error)
 }
 
 // JournalKeyReader answers which of the given idempotency keys already name a journal. Satisfied by
@@ -92,6 +98,13 @@ type JournalKeyReader interface {
 // *gl.Service.PostExternal. bankrec passes Source "ADJUSTMENT" (the 0007 CHECK set).
 type JournalPoster interface {
 	PostJournal(ctx context.Context, in gl.ExternalJournal) (string, error)
+}
+
+// JournalPosterTx is an optional extension of JournalPoster that posts the clearing or reversal
+// journal inside the caller's open pgx.Tx so the bank match and its GL journal commit or roll back
+// atomically in one transaction (FW1-05).
+type JournalPosterTx interface {
+	PostJournalTx(ctx context.Context, tx pgx.Tx, in gl.ExternalJournal) (string, error)
 }
 
 // GLBalanceReader reads a GL account balance for the variance check. Satisfied by a main.go adapter over

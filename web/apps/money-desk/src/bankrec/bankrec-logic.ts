@@ -261,6 +261,25 @@ export function refusalWords(action: string, message: string, status: number): s
   if (lodgementApart !== null) {
     return `That lodgement is ${formatMoney(Number(lodgementApart[1]))} and the line is ${formatMoney(Number(lodgementApart[2]))}, so it does not explain the line. Pick the lodgement for the same amount.`;
   }
+  // FW1-05: a hand match checks the payment's amount, the line's sign, and the tender.
+  const paymentApart = /that payment is for (-?\d+) cents and the line is (-?\d+) cents/i.exec(message);
+  if (paymentApart !== null) {
+    return `That payment is ${formatMoney(Number(paymentApart[1]))} and the line is ${formatMoney(Number(paymentApart[2]))}, so it does not explain the line. Pick the payment for the line's amount.`;
+  }
+  const matchApart = /the match is for (-?\d+) cents and the statement line is for (-?\d+) cents/i.exec(message);
+  if (matchApart !== null) {
+    return `The match was typed for ${formatMoney(Number(matchApart[1]))} and the line is ${formatMoney(Number(matchApart[2]))}. Leave the amount out, or type the line's own.`;
+  }
+  if (lower.includes("only a deposit (a positive line)")) {
+    return "Only a deposit (money in) can be matched to a payment; this line reads money out.";
+  }
+  if (lower.includes("cannot be matched by hand")) {
+    return "That payment's tender cannot be matched by hand; match a card, a cash, a cheque or an EFT deposit.";
+  }
+  // FW1-05b: a till cash payment reaches the bank only by its lodgement, so it is never a PAYMENT target.
+  if (lower.includes("taken in a till session")) {
+    return "That payment was taken in by the till, so it reaches the bank only with its lodgement. Match the lodgement's deposit line, not the payment alone.";
+  }
   if (lower.includes("that journal is not posted")) return "That journal is not posted yet, so it cannot explain a bank line.";
   if (lower.includes("that journal does not touch this bank account")) return "That journal does not move this bank account, so it cannot explain this line.";
   const journalApart = /that journal moves this bank account by (-?\d+) cents and the line is (-?\d+) cents/i.exec(message);

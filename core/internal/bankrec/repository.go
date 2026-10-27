@@ -17,6 +17,15 @@ import (
 
 var errNoDB = errors.New("bankrec: database not configured")
 
+// Begin opens a transaction on the bankrec pool for the service's one transaction writers (FW1-05): the
+// match and its clearing journal, and the unmatch and its reversal, commit or roll back together.
+func (r *Repository) Begin(ctx context.Context) (pgx.Tx, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	return r.pool.Begin(ctx)
+}
+
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
@@ -233,7 +242,10 @@ func (r *Repository) InsertImportAudit(ctx context.Context, tx pgx.Tx, accountID
 }
 
 // ImportLines persists parsed lines idempotently and records the IMPORTED audit, all in one tx. Returns the
-// import id + counts. The UNIQUE(bank_account_id, dedupe_hash) index makes a re-import a no-op (AC1).
+// import id + counts. The UNIQUE(bank_account_id, dedupe_hash, line_ordinal) index (migration 0442) makes a
+// re-import a no-op (AC1) while keeping byte identical lines of ONE file apart: line_ordinal is the line's
+// one based position within its file, so a re-import collides line for line (same ordinal, same hash) but
+// the second of two identical rows in one fresh file takes the next ordinal and lands (FW1-05).
 func (r *Repository) ImportLines(ctx context.Context, accountID, profileID, filename string, lines []RawStatementLine, importedBy string) (importID string, inserted int, err error) {
 	if r.pool == nil {
 		return "", 0, errNoDB
@@ -266,13 +278,13 @@ func (r *Repository) ImportLines(ctx context.Context, accountID, profileID, file
 	if err != nil {
 		return "", 0, err
 	}
-	for _, l := range lines {
+	for i, l := range lines {
 		tag, ierr := tx.Exec(ctx, `
 			INSERT INTO bank_statement_lines
-			  (bank_account_id, import_id, txn_date, description, reference, amount_cents, dedupe_hash, status)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'UNMATCHED')
-			ON CONFLICT (bank_account_id, dedupe_hash) DO NOTHING`,
-			accountID, importID, l.TxnDate, l.Description, l.Reference, l.AmountCents, l.DedupeHash)
+			  (bank_account_id, import_id, txn_date, description, reference, amount_cents, dedupe_hash, line_ordinal, status)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'UNMATCHED')
+			ON CONFLICT (bank_account_id, dedupe_hash, line_ordinal) DO NOTHING`,
+			accountID, importID, l.TxnDate, l.Description, l.Reference, l.AmountCents, l.DedupeHash, i+1)
 		if ierr != nil {
 			return "", 0, fmt.Errorf("bankrec: insert line: %w", ierr)
 		}
@@ -442,6 +454,37 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 		return "", fmt.Errorf("bankrec: begin match: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	id, _, err := r.PersistMatchReachTx(ctx, tx, m, claimPaymentIDs, reach)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("bankrec: commit match: %w", err)
+	}
+	return id, nil
+}
+
+// MatchPaymentFact is what bankrec read about one claimed payment under its row lock in the match's own
+// transaction (FW1-05): the branch, the tender method and the gross amount, the facts a hand match checks
+// (amount and method) and the facts its clearing journal needs (branch and method). InTillSession says the
+// payment was taken in a till session (FW1-05b): a till CASH payment reaches the bank only by its lodgement,
+// so it is never a PAYMENT target.
+type MatchPaymentFact struct {
+	PaymentID     string
+	BranchID      string
+	Method        string
+	AmountCents   int64
+	InTillSession bool
+}
+
+// PersistMatchReachTx is the claim body of PersistMatchReach on the CALLER's transaction (FW1-05: the match
+// and its clearing journal share one transaction, so the service opens the tx, claims here, posts through
+// the JournalPosterTx arm, and commits once). Same guards, same locks, same order as PersistMatchReach. It
+// returns the facts of the claimed payments, read under the same lock, for the caller's checks and journal.
+func (r *Repository) PersistMatchReachTx(ctx context.Context, tx pgx.Tx, m Match, claimPaymentIDs []string, reach func(branchID string) bool) (string, []MatchPaymentFact, error) {
+	if reach == nil {
+		return "", nil, errNoReach
+	}
 
 	// The lock order of every bankrec writer (LOCK-ORDER.md): the reconciliation row of the line's month FOR SHARE and
 	// the shared advisory key FIRST, before the line UPDATE and before any payment row. A line inside a COMPLETED month
@@ -453,57 +496,57 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 		`SELECT bank_account_id::text, EXTRACT(YEAR FROM txn_date)::int, EXTRACT(MONTH FROM txn_date)::int FROM bank_statement_lines WHERE id::text = $1`,
 		m.StatementLineID).Scan(&lineAcct, &lineYear, &lineMonth)
 	if lerr0 != nil && !errors.Is(lerr0, pgx.ErrNoRows) {
-		return "", fmt.Errorf("bankrec: read the line to match: %w", lerr0)
+		return "", nil, fmt.Errorf("bankrec: read the line to match: %w", lerr0)
 	}
 	if lerr0 == nil {
 		status, lkerr := lockReconMonthShared(ctx, tx, lineAcct, lineYear, lineMonth)
 		if lkerr != nil {
-			return "", lkerr
+			return "", nil, lkerr
 		}
 		if status == ReconCompleted {
-			return "", errMonthCompleted
+			return "", nil, errMonthCompleted
 		}
 	}
 
 	tag, err := tx.Exec(ctx,
 		`UPDATE bank_statement_lines SET status = 'MATCHED' WHERE id = $1 AND status = 'UNMATCHED'`, m.StatementLineID)
 	if err != nil {
-		return "", fmt.Errorf("bankrec: mark line matched: %w", err)
+		return "", nil, fmt.Errorf("bankrec: mark line matched: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return "", conflict("bankrec: statement line %s is not UNMATCHED", m.StatementLineID)
+		return "", nil, conflict("bankrec: statement line %s is not UNMATCHED", m.StatementLineID)
 	}
 	if m.TargetType == TargetJournal && m.TargetRefID != "" {
 		// A journal explains one line: bank_matches has no unique index for JOURNAL targets (0036 covers PAYMENT and
 		// LODGEMENT only), so a transaction lock on the journal id serialises the check and the insert.
 		if _, lerr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "bankrec-journal|"+strings.ToLower(m.TargetRefID)); lerr != nil {
-			return "", fmt.Errorf("bankrec: journal lock: %w", lerr)
+			return "", nil, fmt.Errorf("bankrec: journal lock: %w", lerr)
 		}
 		var held bool
 		if qerr := tx.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM bank_matches WHERE unmatched_at IS NULL
 			                 AND ((target_type = 'JOURNAL' AND target_ref_id::text = $1) OR journal_id::text = $1))`,
 			strings.ToLower(m.TargetRefID)).Scan(&held); qerr != nil {
-			return "", fmt.Errorf("bankrec: journal live match: %w", qerr)
+			return "", nil, fmt.Errorf("bankrec: journal live match: %w", qerr)
 		}
 		if held {
-			return "", conflict("bankrec: that journal already explains another statement line")
+			return "", nil, conflict("bankrec: that journal already explains another statement line")
 		}
 	}
+	// The ids the claim may touch: all of them, or only those the caller reaches. A hidden id is never
+	// updated and never named. Hoisted so the claimed facts read at the tail sees the same set.
+	var claimable []string
 	if len(claimPaymentIDs) > 0 {
 		// The named payment rows first, ascending (the payments module's own lock, LOCK-ORDER.md): the
 		// UPDATE below takes the payments counter on its first row, and must not hold it while it waits
 		// for another row a reversal holds.
 		if lerr := payments.LockPaymentRowsTx(ctx, tx, claimPaymentIDs); lerr != nil {
-			return "", fmt.Errorf("bankrec: lock payments: %w", lerr)
+			return "", nil, fmt.Errorf("bankrec: lock payments: %w", lerr)
 		}
-		// The ids the claim may touch: all of them, or only those the caller reaches. A hidden id is never
-		// updated and never named.
-		claimable := claimPaymentIDs
 		hidden := map[string]bool{}
 		branches, berr := payments.PaymentBranchesTx(ctx, tx, claimPaymentIDs)
 		if berr != nil {
-			return "", fmt.Errorf("bankrec: read the payment branches: %w", berr)
+			return "", nil, fmt.Errorf("bankrec: read the payment branches: %w", berr)
 		}
 		claimable = nil
 		for _, pid := range claimPaymentIDs {
@@ -527,20 +570,20 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 			 RETURNING id::text`,
 			claimable, m.StatementLineID)
 		if cerr != nil {
-			return "", fmt.Errorf("bankrec: claim payment: %w", cerr)
+			return "", nil, fmt.Errorf("bankrec: claim payment: %w", cerr)
 		}
 		moved := map[string]bool{}
 		for rows.Next() {
 			var pid string
 			if serr := rows.Scan(&pid); serr != nil {
 				rows.Close()
-				return "", fmt.Errorf("bankrec: claim payment: %w", serr)
+				return "", nil, fmt.Errorf("bankrec: claim payment: %w", serr)
 			}
 			moved[strings.ToLower(pid)] = true
 		}
 		rows.Close()
 		if rerr := rows.Err(); rerr != nil {
-			return "", fmt.Errorf("bankrec: claim payment: %w", rerr)
+			return "", nil, fmt.Errorf("bankrec: claim payment: %w", rerr)
 		}
 		var unmoved []string
 		for _, pid := range claimPaymentIDs {
@@ -567,7 +610,7 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 			}
 			numbers, nerr := payments.PaymentNumbersTx(ctx, tx, visible)
 			if nerr != nil {
-				return "", fmt.Errorf("bankrec: read the refused payment numbers: %w", nerr)
+				return "", nil, fmt.Errorf("bankrec: read the refused payment numbers: %w", nerr)
 			}
 			labels := make([]string, 0, len(unmoved))
 			for _, pid := range unmoved {
@@ -577,7 +620,7 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 				}
 				labels = append(labels, payments.PaymentLabel(numbers, pid))
 			}
-			return "", conflict("bankrec: payment already claimed, reversed or not RECEIVED: %s (claimed %d of %d)",
+			return "", nil, conflict("bankrec: payment already claimed, reversed or not RECEIVED: %s (claimed %d of %d)",
 				strings.Join(labels, ", "), len(moved), len(claimPaymentIDs))
 		}
 	}
@@ -590,14 +633,31 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 		nullStr(m.JournalID), m.AmountCents, nullStr(m.MatchedBy)).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return "", conflict("bankrec: line %s / target %s already has a live match", m.StatementLineID, m.TargetRefID)
+			return "", nil, conflict("bankrec: line %s / target %s already has a live match", m.StatementLineID, m.TargetRefID)
 		}
-		return "", fmt.Errorf("bankrec: insert match: %w", err)
+		return "", nil, fmt.Errorf("bankrec: insert match: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return "", fmt.Errorf("bankrec: commit match: %w", err)
+	// The facts of what the claim moved, read under the same lock, for the caller's amount and method
+	// checks and its clearing journal (FW1-05).
+	var claimed []MatchPaymentFact
+	if len(claimable) > 0 {
+		facts, ferr := payments.PaymentFactsTx(ctx, tx, claimable)
+		if ferr != nil {
+			return "", nil, ferr
+		}
+		for _, pid := range claimable {
+			if f, ok := facts[strings.ToLower(pid)]; ok {
+				claimed = append(claimed, MatchPaymentFact{
+					PaymentID:     pid,
+					BranchID:      f.BranchID,
+					Method:        f.Method,
+					AmountCents:   f.AmountCents,
+					InTillSession: f.InTillSession,
+				})
+			}
+		}
 	}
-	return id, nil
+	return id, claimed, nil
 }
 
 // SetMatchJournal writes the posted clearing journal id back onto a match row (the journal is posted after the
@@ -610,6 +670,19 @@ func (r *Repository) SetMatchJournal(ctx context.Context, matchID, journalID str
 		return nil
 	}
 	if _, err := r.pool.Exec(ctx,
+		`UPDATE bank_matches SET journal_id = $2 WHERE id = $1`, matchID, journalID); err != nil {
+		return fmt.Errorf("bankrec: set match journal: %w", err)
+	}
+	return nil
+}
+
+// SetMatchJournalTx is SetMatchJournal on the caller's transaction (FW1-05: the journal id lands inside the
+// match's own transaction so a roll back leaves no journal-less match row).
+func (r *Repository) SetMatchJournalTx(ctx context.Context, tx pgx.Tx, matchID, journalID string) error {
+	if journalID == "" {
+		return nil
+	}
+	if _, err := tx.Exec(ctx,
 		`UPDATE bank_matches SET journal_id = $2 WHERE id = $1`, matchID, journalID); err != nil {
 		return fmt.Errorf("bankrec: set match journal: %w", err)
 	}
@@ -703,6 +776,25 @@ func (r *Repository) MatchLineDate(ctx context.Context, matchID string) (time.Ti
 	return d, true, nil
 }
 
+// UnmatchFacts is what an unmatch read about the match it just reversed, all under its own transaction
+// (FW1-05): the target the reversal mirrors, the line amount it moved, the fee the original clearing
+// journal booked (the claimed payment's gross less the line, with the rule's own fee account), the branch
+// the reversing journal carries, and the clearing account the original credited (the tender's, P1-B
+// round 2), which the reversal debits.
+type UnmatchFacts struct {
+	TargetType      string
+	TargetRef       string
+	AmountCents     int64
+	FeeCents        int64
+	FeeAccountCode  string
+	BranchID        string
+	ClearingAccount string
+	// JournalID is the clearing journal the match itself posted (bank_matches.journal_id): the reversal
+	// mirrors THAT journal's credit account, which an older arm may have booked on another account than
+	// today's tender rule names (PR 632 round 4). Empty for a match that posted no journal.
+	JournalID string
+}
+
 // UnmatchReach is Unmatch with both of its fences, in ONE body under ONE payment row lock: the caller's branch reach
 // (SF-2g round 2) and the refusal of a reversed payment (SF-2d round 2). For a PAYMENT target, inside the transaction
 // and before anything is written: the live match's target is read, the payment row is taken (payments.LockPaymentRowsTx,
@@ -723,6 +815,24 @@ func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, r
 		return "", "", 0, fmt.Errorf("bankrec: begin unmatch: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	facts, err := r.UnmatchReachTx(ctx, tx, matchID, userID, reach)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", "", 0, fmt.Errorf("bankrec: commit unmatch: %w", err)
+	}
+	return facts.TargetType, facts.TargetRef, facts.AmountCents, nil
+}
+
+// UnmatchReachTx is the unmatch body on the CALLER's transaction (FW1-05: the unmatch and its reversing
+// journal share one transaction, so the service opens the tx, unmatches here, posts the reversal through
+// the JournalPosterTx arm, and commits once). Same guards, same locks, same order as UnmatchReach.
+func (r *Repository) UnmatchReachTx(ctx context.Context, tx pgx.Tx, matchID, userID string, reach func(branchID string) bool) (UnmatchFacts, error) {
+	var out UnmatchFacts
+	if reach == nil {
+		return out, errNoReach
+	}
 
 	// The lock order of every bankrec writer (LOCK-ORDER.md, SF-2j round 2): the reconciliation row of the line's month
 	// FOR SHARE and the shared form of completion's advisory key FIRST, then the payment row, then the match, the line
@@ -730,21 +840,21 @@ func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, r
 	// no lock yet.
 	var peekType, peekRef, recAcct string
 	var recYear, recMonth int
-	err = tx.QueryRow(ctx,
+	err := tx.QueryRow(ctx,
 		`SELECT m.target_type, COALESCE(m.target_ref_id::text, ''), l.bank_account_id::text,
 		        EXTRACT(YEAR FROM l.txn_date)::int, EXTRACT(MONTH FROM l.txn_date)::int
 		   FROM bank_matches m JOIN bank_statement_lines l ON l.id = m.statement_line_id
 		  WHERE m.id::text = $1 AND m.unmatched_at IS NULL`,
 		matchID).Scan(&peekType, &peekRef, &recAcct, &recYear, &recMonth)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", 0, conflict("bankrec: match %s is not live (already unmatched)", matchID)
+		return out, conflict("bankrec: match %s is not live (already unmatched)", matchID)
 	}
 	if err != nil {
-		return "", "", 0, fmt.Errorf("bankrec: read the match to unmatch: %w", err)
+		return out, fmt.Errorf("bankrec: read the match to unmatch: %w", err)
 	}
 	recStatus, rerr0 := lockReconMonthShared(ctx, tx, recAcct, recYear, recMonth)
 	if rerr0 != nil {
-		return "", "", 0, rerr0
+		return out, rerr0
 	}
 
 	// One body for all the fences, under the ONE payment row lock (SF-2g round 2 and SF-2d round 2): the payment row
@@ -755,29 +865,29 @@ func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, r
 	// is checked, so a caller out of reach learns nothing about a month it cannot see.
 	if peekType == TargetPayment && peekRef != "" {
 		if lerr := payments.LockPaymentRowsTx(ctx, tx, []string{peekRef}); lerr != nil {
-			return "", "", 0, fmt.Errorf("bankrec: lock payment: %w", lerr)
+			return out, fmt.Errorf("bankrec: lock payment: %w", lerr)
 		}
 		branches, berr := payments.PaymentBranchesTx(ctx, tx, []string{peekRef})
 		if berr != nil {
-			return "", "", 0, fmt.Errorf("bankrec: read the payment branch: %w", berr)
+			return out, fmt.Errorf("bankrec: read the payment branch: %w", berr)
 		}
 		if b, ok := branches[strings.ToLower(peekRef)]; !ok || !reach(b) {
-			return "", "", 0, conflict("bankrec: match %s is not live (already unmatched)", matchID)
+			return out, conflict("bankrec: match %s is not live (already unmatched)", matchID)
 		}
 	}
 	if recStatus == ReconCompleted {
-		return "", "", 0, conflict("bankrec: that match sits in %d-%02d, which is already reconciled and completed, so it cannot be unmatched", recYear, recMonth)
+		return out, conflict("bankrec: that match sits in %d-%02d, which is already reconciled and completed, so it cannot be unmatched", recYear, recMonth)
 	}
 	if peekType == TargetPayment && peekRef != "" {
 		reversed, method, rerr := payments.PaymentReversedTx(ctx, tx, peekRef)
 		if rerr != nil {
-			return "", "", 0, rerr
+			return out, rerr
 		}
 		// A reversed CARD may be unmatched (SF-2d round 7, S3's P2): the unmatch only moves Dr 1000 / Cr 1010 back,
 		// the card is claimable again (round 4) and 2310 is untouched, so a wrong match can be corrected. Every
 		// other reversed tender can never be claimed again, so its bank line could not be explained again.
 		if reversed && method != "CARD" {
-			return "", "", 0, conflict("bankrec: this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again")
+			return out, conflict("bankrec: this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again")
 		}
 	}
 
@@ -785,39 +895,81 @@ func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, r
 	err = tx.QueryRow(ctx,
 		`UPDATE bank_matches SET unmatched_at = now(), unmatched_by = $2
 		 WHERE id = $1 AND unmatched_at IS NULL
-		 RETURNING statement_line_id::text, target_type, COALESCE(target_ref_id::text, ''), amount_cents`,
-		matchID, nullStr(userID)).Scan(&lineID, &targetType, &targetRef, &amount)
+		 RETURNING statement_line_id::text, target_type, COALESCE(target_ref_id::text, ''), amount_cents,
+		           COALESCE(journal_id::text, '')`,
+		matchID, nullStr(userID)).Scan(&lineID, &out.TargetType, &out.TargetRef, &out.AmountCents, &out.JournalID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", 0, conflict("bankrec: match %s is not live (already unmatched)", matchID)
+		return out, conflict("bankrec: match %s is not live (already unmatched)", matchID)
 	}
 	if err != nil {
-		return "", "", 0, fmt.Errorf("bankrec: unmatch: %w", err)
+		return out, fmt.Errorf("bankrec: unmatch: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE bank_statement_lines SET status = 'UNMATCHED' WHERE id = $1 AND status = 'MATCHED'`, lineID); err != nil {
-		return "", "", 0, fmt.Errorf("bankrec: revert line: %w", err)
+		return out, fmt.Errorf("bankrec: revert line: %w", err)
 	}
-	if targetType == TargetPayment && targetRef != "" {
+	if out.TargetType == TargetPayment && out.TargetRef != "" {
 		if _, err := tx.Exec(ctx,
 			`UPDATE payments SET status = 'RECEIVED', updated_at = now()
-			 WHERE id = $1::uuid AND status = 'DEPOSITED'`, targetRef); err != nil {
-			return "", "", 0, fmt.Errorf("bankrec: release payment: %w", err)
+			 WHERE id = $1::uuid AND status = 'DEPOSITED'`, out.TargetRef); err != nil {
+			return out, fmt.Errorf("bankrec: release payment: %w", err)
+		}
+		// The payment's own facts for the reversal (FW1-05 items 3 and 4): the original clearing journal
+		// booked the claimed payment's GROSS out of 1010 and the remainder (gross less the line) to the fee
+		// account, so the reversal mirrors the gross, un books the fee, and carries the payment's branch.
+		// The payment row is still under this transaction's lock. A row that is gone leaves fee 0 and an
+		// empty branch, and the mirror falls back to the line amount only.
+		pf, ferr := payments.PaymentFactsTx(ctx, tx, []string{out.TargetRef})
+		if ferr != nil {
+			return out, ferr
+		}
+		if f, ok := pf[strings.ToLower(out.TargetRef)]; ok {
+			out.BranchID = f.BranchID
+			// The method names the clearing account only as the FALLBACK for a match that posted no
+			// journal (an older match row): the mirror of the match's own journal happens in the service
+			// through the GL seam, by facts.JournalID (PR 632 round 4, S4's P2-1).
+			if clearing, cok := clearingAccountForMethod(f.Method); cok {
+				out.ClearingAccount = clearing
+			}
+			if f.AmountCents > out.AmountCents {
+				out.FeeCents = f.AmountCents - out.AmountCents
+				feeAcct, ferr := r.matchFeeAccountTx(ctx, tx, matchID)
+				if ferr != nil {
+					return out, ferr
+				}
+				out.FeeAccountCode = feeAcct
+			}
 		}
 	}
-	if targetType == TargetLodgement && lineID != "" {
+	if out.TargetType == TargetLodgement && lineID != "" {
 		if _, err := tx.Exec(ctx,
 			`UPDATE payments
 			    SET status = 'RECEIVED',
 			        metadata = metadata - 'bank_statement_line_id',
 			        updated_at = now()
 			  WHERE metadata->>'bank_statement_line_id' = $1 AND status = 'DEPOSITED'`, lineID); err != nil {
-			return "", "", 0, fmt.Errorf("bankrec: release lodged payment: %w", err)
+			return out, fmt.Errorf("bankrec: release lodged payment: %w", err)
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return "", "", 0, fmt.Errorf("bankrec: commit unmatch: %w", err)
+	return out, nil
+}
+
+// matchFeeAccountTx reads the fee account of the exact rule version a match fired under (its row is kept
+// even after the rule is superseded), defaulting to 6300 exactly as the proposal builder does, so the
+// unmatch's reversal mirrors the original clearing journal's fee leg (FW1-05 item 3).
+func (r *Repository) matchFeeAccountTx(ctx context.Context, tx pgx.Tx, matchID string) (string, error) {
+	var feeAcct string
+	err := tx.QueryRow(ctx, `
+		SELECT COALESCE(br.spec->>'fee_account_code', '')
+		  FROM bank_matches m LEFT JOIN bank_match_rules br ON br.id = m.rule_id
+		 WHERE m.id::text = $1`, matchID).Scan(&feeAcct)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("bankrec: read the match rule's fee account: %w", err)
 	}
-	return targetType, targetRef, amount, nil
+	if feeAcct == "" {
+		feeAcct = "6300"
+	}
+	return feeAcct, nil
 }
 
 func absInt64(n int64) int64 {
