@@ -298,7 +298,8 @@ func TestFW113LodgementJournalIsDatedByItsBusinessDay(t *testing.T) {
 		t.Skipf("no seeded fiscal periods: %v", err)
 	}
 	day := time.Date(year, 7, 31, 23, 30, 0, 0, time.FixedZone("EDT", -4*3600))
-	movementID := "mj-dated-" + fmt.Sprint(os.Getpid())
+	// A fixed UUID: the journal's source_ref_id is a uuid column, as every real movement id is.
+	movementID := "00000000-0000-4000-8000-0000000d47ed"
 	payload, err := json.Marshal(map[string]any{
 		"movement_id":   movementID,
 		"session_id":    w.sessionID,
