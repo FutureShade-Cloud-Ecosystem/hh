@@ -174,7 +174,9 @@ Without a core, a local stub serves the mint in the contract's shape
     npm run dev
 
 The dev server proxies `/api` to the stub (`FD_STUB_PORT`, default 4927) and
-serves the app on `FD_APP_PORT` (default 4926).
+serves the app on `FD_APP_PORT` (default 4926). The stub itself takes
+`FD_STUB_PORT` from the environment with no default of its own; start it with
+the same value the dev server is given.
 
 ## Tests
 

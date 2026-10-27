@@ -46,7 +46,15 @@
 // Till's stub mints, so both apps' validations read the same answers.
 import { createServer } from "node:http";
 
-const port = Number(process.env.FD_STUB_PORT ?? 4927);
+// The port is the caller's choice and there is no default here: every suite
+// (the two Playwright configs and the console harness) hands a free one over,
+// so a second suite on the same machine can never collide with a fixed
+// number (RULES-S4 addendum 7).
+const port = Number(process.env.FD_STUB_PORT);
+if (!Number.isInteger(port) || port <= 0) {
+  process.stderr.write("demo stub: set FD_STUB_PORT to a free port before starting it\n");
+  process.exit(1);
+}
 
 // The flow table as the front door offers it: the live roles whose screens
 // this box serves, with the labels the cards carry and the role each minted
