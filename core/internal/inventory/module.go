@@ -203,6 +203,12 @@ func (s *Service) UnitCostCents(ctx context.Context, productID string, qtyBase f
 	return s.unitCost(ctx, productID, qtyBase)
 }
 
+// BranchUnitCostCents returns the branch weighted-average cost extended over qtyBase,
+// satisfying gl.BranchCostBasis so the stock move and the GL journal share one cost basis.
+func (s *Service) BranchUnitCostCents(ctx context.Context, productID, branchID string, qtyBase float64) (int64, bool, error) {
+	return s.branchUnitCost(ctx, productID, branchID, qtyBase)
+}
+
 // DecrementForSaleTx decrements stock for a fulfilled sale inside the caller's tx, satisfying the pos
 // StockDecrementer seam. SCAFFOLD: no-op returning nil, identical to pos.NoopStock, so a POS sale still
 // commits unchanged. W6-INVCORE fills the real SHIP moves for a COLLECT_NOW sale (DELIVERED/COLLECT_LATER →

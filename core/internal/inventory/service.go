@@ -43,6 +43,18 @@ func (s *Service) unitCost(ctx context.Context, productID string, qtyBase float6
 	return v, true, err
 }
 
+func (s *Service) branchUnitCost(ctx context.Context, productID, branchID string, qtyBase float64) (int64, bool, error) {
+	if branchID == "" {
+		return s.unitCost(ctx, productID, qtyBase)
+	}
+	avg, found, err := s.db().BranchCostCents(ctx, productID, branchID)
+	if err != nil || !found {
+		return 0, false, err
+	}
+	v, err := qtyTimesCents(qtyBase, avg)
+	return v, true, err
+}
+
 // - PO receiving -
 
 // applyReceipt is the shared receiving core. requested==nil receives every outstanding unit; a non-nil map

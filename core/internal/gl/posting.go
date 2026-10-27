@@ -565,6 +565,18 @@ type orderFulfilledPayload struct {
 	} `json:"lines"`
 }
 
+func (s *Service) resolveLineCost(ctx context.Context, productID, branchID string, qtyBase float64) (int64, bool, error) {
+	if s.costBasis == nil {
+		return 0, false, nil
+	}
+	if branchID != "" {
+		if bcb, ok := s.costBasis.(BranchCostBasis); ok {
+			return bcb.BranchUnitCostCents(ctx, productID, branchID, qtyBase)
+		}
+	}
+	return s.costBasis.UnitCostCents(ctx, productID, qtyBase)
+}
+
 func (s *Service) buildOrderFulfilled(ctx context.Context, payload []byte) (journalDraft, bool, error) {
 	var p orderFulfilledPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -586,7 +598,7 @@ func (s *Service) buildOrderFulfilled(ctx context.Context, payload []byte) (jour
 	}
 	var total int64
 	for _, ln := range p.Lines {
-		cost, found, err := s.costBasis.UnitCostCents(ctx, ln.ProductID, ln.QtyBase)
+		cost, found, err := s.resolveLineCost(ctx, ln.ProductID, p.BranchID, ln.QtyBase)
 		if err != nil {
 			return journalDraft{}, false, err
 		}
@@ -958,7 +970,7 @@ func (s *Service) buildOrderReturned(ctx context.Context, payload []byte) (journ
 	}
 	var total int64
 	for _, ln := range p.Lines {
-		cost, found, err := s.costBasis.UnitCostCents(ctx, ln.ProductID, ln.QtyBase)
+		cost, found, err := s.resolveLineCost(ctx, ln.ProductID, p.BranchID, ln.QtyBase)
 		if err != nil {
 			return journalDraft{}, false, err
 		}
@@ -1010,7 +1022,7 @@ func (s *Service) buildPosReturnWrittenOff(ctx context.Context, payload []byte) 
 	}
 	var total int64
 	for _, ln := range p.Lines {
-		cost, found, err := s.costBasis.UnitCostCents(ctx, ln.ProductID, ln.QtyBase)
+		cost, found, err := s.resolveLineCost(ctx, ln.ProductID, p.BranchID, ln.QtyBase)
 		if err != nil {
 			return journalDraft{}, false, err
 		}
