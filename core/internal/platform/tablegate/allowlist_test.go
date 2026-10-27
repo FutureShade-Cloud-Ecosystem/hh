@@ -129,6 +129,17 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "billing",
+		file:   "core/internal/billing/credit_apply.go",
+		tables: []string{},
+		writes: []string{"scope_sequences"},
+		// FW1-12b: the apply and the reversal move the invoice's balance
+		// through creditFeedSeqCTE, the invoices feed counter every balance
+		// move draws beside its write, so the payer's device sees the
+		// change on its invoices feed.
+		reason: "the credit application door's balance moves draw the invoices feed seq through the 0213 allocator (creditFeedSeqCTE, the settle's own posture); its own invoices and customer_transactions rows are billing's",
+	},
+	{
+		module: "billing",
 		file:   "core/internal/billing/credit_memo_repost.go",
 		tables: []string{"gl_journals"},
 		// DIB-429: the sweep finds credit-memo journals whose inline post
