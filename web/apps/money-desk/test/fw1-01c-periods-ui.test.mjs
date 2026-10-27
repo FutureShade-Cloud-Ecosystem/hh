@@ -110,7 +110,7 @@ test("a reader's Periods tab carries neither control", () => {
 });
 
 test("the open year refusal names the Financial Controller, in dealer words", () => {
-  const words = logic.refusalWords("open-year", "gl: only the Financial Controller may reopen a closed period", 403);
+  const words = logic.refusalWords("open-year", "gl: only the Financial Controller may open the next fiscal year", 403);
   assert.ok(words.includes("Financial Controller"), words);
   assert.ok(!words.includes("General Manager"), words);
   assert.ok(!words.includes("Forbidden"), words);
