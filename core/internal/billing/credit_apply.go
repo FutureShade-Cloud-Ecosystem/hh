@@ -1211,7 +1211,11 @@ SELECT customer_id, 'ADJUSTMENT', $2, $3, 'invoice', id::uuid, branch_id, $4, $5
 // each group with the AGING's kinds (creditGroupTxnTypes), so the desk offers exactly what the
 // door will take and the figure it shows is the figure the aging reads for that group. A group in
 // any other family is not a credit the customer holds and is not offered, and a group the aging
-// reads as zero is not open and is not offered either.
+// reads as zero is not open and is not offered either. The ROW the offer names is the group's
+// FIRST NEGATIVE row (M3's P3-3), the door's own anchor rule (lockCreditGroupAnchor): the first
+// row by time can be a row the door may not name, a write off, and the desk was offering the very
+// id the door refuses. A group that is offered at all (its sum is negative) always has a negative
+// row, so the anchor id is never empty.
 func (r *Repository) OpenCreditsFor(ctx context.Context, customerID, branchID string) ([]OpenCreditSummary, error) {
 	if r.pool == nil {
 		return nil, errNoDB
@@ -1242,9 +1246,9 @@ SELECT id::text, invoice_no::text, COALESCE(metadata->>'reason', ''), issue_date
 	}
 
 	acctRows, err := r.pool.Query(ctx, `
-SELECT (ARRAY_AGG(id::text ORDER BY occurred_at ASC, id ASC))[1] AS anchor_id,
+SELECT (ARRAY_AGG(id::text ORDER BY occurred_at ASC, id ASC) FILTER (WHERE amount_cents < 0))[1] AS anchor_id,
        COALESCE(source_type, '') AS src_type,
-       COALESCE((ARRAY_AGG(memo ORDER BY occurred_at ASC, id ASC))[1], '') AS anchor_memo,
+       COALESCE((ARRAY_AGG(memo ORDER BY occurred_at ASC, id ASC) FILTER (WHERE amount_cents < 0))[1], '') AS anchor_memo,
        MIN(occurred_at) AS issued_at,
        -COALESCE(SUM(amount_cents) FILTER (WHERE amount_cents < 0), 0) AS orig_cents,
        -SUM(amount_cents) AS open_cents
