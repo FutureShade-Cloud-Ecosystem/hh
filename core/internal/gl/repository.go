@@ -1111,6 +1111,14 @@ func (r *Repository) OpenNextFiscalYear(ctx context.Context, now time.Time, requ
 	if existing >= 12 {
 		return 0, clientErr(409, "gl: %d is already open", checkYear)
 	}
+	// Round 4 (S2's round 3 P3): a named year missing BETWEEN the books' first year and the house
+	// year is a hole in the fiscal calendar, not a year the early open can make. It passed the
+	// first-year check above and fell through to a silent 200 with the cap year; refuse it in the
+	// same shape, before any write, so no audit row names an open that did not happen. A missing
+	// year AFTER the house year is the early open's own work (house + 1, or the cap), never a hole.
+	if requestedYear > 0 && checkYear <= house && existing == 0 {
+		return 0, clientErr(409, "gl: %d is missing from the books; only the next year can be opened here", checkYear)
+	}
 	if err := r.ensureThroughTx(ctx, tx, house, target); err != nil {
 		return 0, err
 	}
