@@ -31,8 +31,10 @@
 // The DOM shim must be installed before any LitElement subclass is defined
 // (Node has no HTMLElement of its own); the side-effect import orderings here
 // and in the test helper are the contract, and the class definitions below
-// depend on it.
-import '@lit-labs/ssr/lib/install-global-dom-shim.js';
+// depend on it. The guard's import IS that install: it captures the
+// process's fetch, runs the shim's own install, and puts the fetch back, in
+// one synchronous body nothing can slip between.
+import './lit-dom-fetch-guard.js';
 import { render } from '@lit-labs/ssr';
 import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';
 import { readFileSync } from 'node:fs';

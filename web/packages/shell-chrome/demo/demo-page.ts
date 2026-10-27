@@ -22,7 +22,7 @@
 // markup of this page and in the package's tests; a shell wires them in
 // code, as the README's wiring section records.
 
-import '@lit-labs/ssr/lib/install-global-dom-shim.js';
+import '@hardscapehouse/design-system/src/lit-dom-fetch-guard.js';
 import { render } from '@lit-labs/ssr';
 import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';
 import { readFileSync } from 'node:fs';
