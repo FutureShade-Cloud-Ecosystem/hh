@@ -402,6 +402,31 @@ func TestFW1MonthWalk(t *testing.T) {
 			t.Fatalf("the opening AR journal for %s: %v", o.branch, err)
 		}
 	}
+	// Load the seeded opening AR into the customer_transactions subledger alongside the GL 1100
+	// opening journals (one INVOICE row per seeded open invoice, matching ReceivablesLoadWriter).
+	if _, err := w.pool.Exec(ctx, `
+		INSERT INTO customer_transactions (
+		    customer_id, txn_type, amount_cents, balance_after,
+		    source_type, source_ref_id, branch_id, memo, occurred_at
+		)
+		SELECT
+		    i.customer_id,
+		    'INVOICE',
+		    i.balance_cents,
+		    SUM(i.balance_cents) OVER (
+		        PARTITION BY i.customer_id
+		        ORDER BY COALESCE(i.finalized_at, i.created_at), i.id
+		    ),
+		    'invoice',
+		    i.id,
+		    i.branch_id,
+		    'Opening AR invoice ' || i.invoice_no,
+		    COALESCE(i.finalized_at, i.created_at)
+		FROM invoices i
+		WHERE i.status IN ('FINALIZED', 'PARTIALLY_PAID') AND i.balance_cents > 0
+		ORDER BY COALESCE(i.finalized_at, i.created_at), i.id`); err != nil {
+		t.Fatalf("the opening AR customer_transactions load: %v", err)
+	}
 	stockValue := func(branch string) int64 {
 		var c int64
 		if err := w.pool.QueryRow(ctx, `
