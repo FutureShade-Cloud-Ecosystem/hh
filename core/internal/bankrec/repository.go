@@ -814,7 +814,8 @@ func (r *Repository) ApproveNewRuleVersion(ctx context.Context, in RuleInput, ap
 
 // - reconciliations -
 
-// UpsertReconciliation opens/updates the monthly reconciliation with the computed balances + variance.
+// UpsertReconciliation opens the monthly reconciliation with the computed balances + variance. An open with 0 sets
+// statement_balance_derived TRUE, and an open with a typed figure sets it FALSE, always.
 func (r *Repository) UpsertReconciliation(ctx context.Context, rec Reconciliation) (Reconciliation, error) {
 	if r.pool == nil {
 		return Reconciliation{}, errNoDB
@@ -824,18 +825,7 @@ func (r *Repository) UpsertReconciliation(ctx context.Context, rec Reconciliatio
 		  (bank_account_id, year, month, statement_balance_cents, statement_balance_derived, gl_balance_cents, variance_cents, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'OPEN')
 		ON CONFLICT (bank_account_id, year, month) DO UPDATE SET
-		  statement_balance_derived = CASE
-		    WHEN EXCLUDED.statement_balance_derived THEN TRUE
-		    WHEN bank_reconciliations.statement_balance_derived
-		     AND EXCLUDED.statement_balance_cents = bank_reconciliations.statement_balance_cents
-		     AND EXCLUDED.statement_balance_cents <> (
-		       SELECT COALESCE(SUM(amount_cents), 0) FROM bank_statement_lines
-		        WHERE bank_account_id = bank_reconciliations.bank_account_id
-		          AND EXTRACT(YEAR FROM txn_date) = bank_reconciliations.year
-		          AND EXTRACT(MONTH FROM txn_date) = bank_reconciliations.month
-		     ) THEN TRUE
-		    ELSE FALSE
-		  END,
+		  statement_balance_derived = EXCLUDED.statement_balance_derived,
 		  statement_balance_cents = EXCLUDED.statement_balance_cents,
 		  gl_balance_cents = EXCLUDED.gl_balance_cents,
 		  variance_cents = EXCLUDED.variance_cents,
@@ -851,6 +841,49 @@ func (r *Repository) UpsertReconciliation(ctx context.Context, rec Reconciliatio
 	}
 	if err != nil {
 		return Reconciliation{}, fmt.Errorf("bankrec: upsert reconciliation: %w", err)
+	}
+	return rec, nil
+}
+
+// RefreshReconciliation refreshes an existing OPEN reconciliation in place: it keeps statement_balance_derived and any
+// stated closing balance, re-derives statement_balance_cents from the month's lines when derived is TRUE, and updates
+// gl_balance_cents and variance_cents.
+func (r *Repository) RefreshReconciliation(ctx context.Context, accountID string, year, month int, glBalanceCents int64) (Reconciliation, error) {
+	if r.pool == nil {
+		return Reconciliation{}, errNoDB
+	}
+	var rec Reconciliation
+	err := r.pool.QueryRow(ctx, `
+		WITH line_sum AS (
+			SELECT COALESCE(SUM(amount_cents), 0)::bigint AS net
+			  FROM bank_statement_lines
+			 WHERE bank_account_id = $1::uuid
+			   AND EXTRACT(YEAR FROM txn_date) = $2
+			   AND EXTRACT(MONTH FROM txn_date) = $3
+		)
+		UPDATE bank_reconciliations br
+		   SET statement_balance_cents = CASE WHEN br.statement_balance_derived THEN ls.net ELSE br.statement_balance_cents END,
+		       gl_balance_cents = $4::bigint,
+		       variance_cents = (CASE WHEN br.statement_balance_derived THEN ls.net ELSE br.statement_balance_cents END) - $4::bigint,
+		       updated_at = now()
+		  FROM line_sum ls
+		 WHERE br.bank_account_id = $1::uuid AND br.year = $2 AND br.month = $3 AND br.status = 'OPEN'
+		RETURNING br.id::text, br.bank_account_id::text, br.year, br.month, br.statement_balance_cents,
+		          br.statement_balance_derived, br.gl_balance_cents, br.variance_cents, br.status, br.completed_at`,
+		accountID, year, month, glBalanceCents).
+		Scan(&rec.ID, &rec.BankAccountID, &rec.Year, &rec.Month, &rec.StatementBalanceCents,
+			&rec.StatementBalanceDerived, &rec.GLBalanceCents, &rec.VarianceCents, &rec.Status, &rec.CompletedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var status string
+		if serr := r.pool.QueryRow(ctx,
+			`SELECT status FROM bank_reconciliations WHERE bank_account_id = $1::uuid AND year = $2 AND month = $3`,
+			accountID, year, month).Scan(&status); serr == nil && status == ReconCompleted {
+			return Reconciliation{}, conflict("bankrec: reconciliation for %d-%02d is already COMPLETED", year, month)
+		}
+		return Reconciliation{}, errNotFound
+	}
+	if err != nil {
+		return Reconciliation{}, fmt.Errorf("bankrec: refresh reconciliation: %w", err)
 	}
 	return rec, nil
 }

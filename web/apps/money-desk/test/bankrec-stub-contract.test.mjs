@@ -378,18 +378,14 @@ test("a month signs off only with no unmatched line and a zero variance, in the 
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000003" });
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: fee.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000004" });
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
-  // Every line is matched but the stored variance is still the old snapshot.
-  const snapshot = await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`);
-  refused(snapshot, 422, "must be zero)");
-  assert.match(snapshot.json.error, /^cannot complete, variance is \d+ cents \(must be zero\)$/);
-  const refreshed = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING })).json;
-  assert.equal(refreshed.variance_cents, 0);
-  // The ledger moves after the refresh (a posting to the bank account): the core recomputes at completion and refuses.
+  // Every line is matched; the recomputed variance at completion decides (not the stale stored snapshot, P3-3).
+  // When the ledger moves after the matches, the recomputed variance refuses in dollars.
   await fetch(`${base}/_stub/post-to-bank`, { method: "POST", body: JSON.stringify({ cents: -10_000 }) });
   const moved = await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`);
   refused(moved, 422, "the statement reads");
   assert.match(moved.json.error, /^cannot complete, the statement reads \$[\d,]+\.\d{2} and the ledger reads \$[\d,]+\.\d{2} \(\$100\.00 apart\); they must agree/);
   await fetch(`${base}/_stub/post-to-bank`, { method: "POST", body: JSON.stringify({ cents: 10_000 }) });
+  // Even without refreshing first, once the recomputed variance is zero the month signs off (P3-3).
   const signed = await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`);
   assert.equal(signed.status, 200);
   holds("BankRecReconciliation", signed.json);
@@ -397,6 +393,7 @@ test("a month signs off only with no unmatched line and a zero variance, in the 
   assert.ok(typeof signed.json.completed_at === "string");
   refused(await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`), 409, "is already COMPLETED");
   refused(await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING }), 409, "is already COMPLETED");
+  refused(await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, refresh: true }), 409, "is already COMPLETED");
   refused(await ctl("POST", "/api/v1/bankrec/reconciliations/not-a-uuid/complete"), 404, "not found");
 });
 
@@ -456,6 +453,10 @@ test("a derived month in the stub recomputes its statement balance from the line
   const derived = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: 0 })).json;
   assert.equal(derived.statement_balance_cents, 675_575);
   assert.equal(derived.variance_cents, 0);
+  // Probe A: refreshing before the late import (takes no figure) keeps the month derived.
+  const preRefreshed = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, refresh: true });
+  assert.equal(preRefreshed.status, 201);
+  assert.equal(preRefreshed.json.statement_balance_cents, 675_575);
   // Import a late +$1,000.00 line into the month and match it to an existing journal (so the ledger stays at $6,755.75).
   await ctl("POST", "/api/v1/bankrec/imports", {
     bank_account_id: IDS.operating,
@@ -465,13 +466,25 @@ test("a derived month in the stub recomputes its statement balance from the line
   });
   const late = await lineByRef("LATE JOURNAL LINE");
   assert.equal((await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: late.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000099" })).status, 201);
-  // Refreshing with the stored figure keeps the month derived, and completion recomputes the statement from the lines ($7,755.75 vs $6,755.75, $1,000.00 apart).
-  await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: derived.statement_balance_cents });
+  // Completion after the pre-import refresh still re-derives the statement from the lines ($7,755.75 vs $6,755.75, $1,000.00 apart).
   const staleDerived = await ctl("POST", `/api/v1/bankrec/reconciliations/${derived.id}/complete`);
   refused(staleDerived, 422, "the statement reads");
   assert.equal(
     staleDerived.json.error,
     "cannot complete, the statement reads $7,755.75 and the ledger reads $6,755.75 ($1,000.00 apart); they must agree, refresh the figures and match what is open",
+  );
+  // Refreshing after the late import updates the derived statement balance to $7,755.75.
+  const postRefreshed = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, refresh: true });
+  assert.equal(postRefreshed.json.statement_balance_cents, 775_575);
+  // Probe B: opening again with a typed statement balance ($6,755.75) sets derived to FALSE, so completion refuses against a $7,755.75 ledger.
+  const typedAgain = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: 675_575 });
+  assert.equal(typedAgain.json.statement_balance_cents, 675_575);
+  await fetch(`${base}/_stub/post-to-bank`, { method: "POST", body: JSON.stringify({ cents: 100_000 }) });
+  const probeB = await ctl("POST", `/api/v1/bankrec/reconciliations/${derived.id}/complete`);
+  refused(probeB, 422, "the statement reads");
+  assert.equal(
+    probeB.json.error,
+    "cannot complete, the statement reads $6,755.75 and the ledger reads $7,755.75 ($1,000.00 apart); they must agree, refresh the figures and match what is open",
   );
 
   // A completed month is skipped by autoMatch.

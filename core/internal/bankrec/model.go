@@ -186,12 +186,14 @@ type RuleInput struct {
 	Priority int            `json:"priority"`
 }
 
-// ReconInput opens (prepares) a monthly reconciliation: it computes the GL balance + variance.
+// ReconInput opens (prepares) a monthly reconciliation, or refreshes an existing open reconciliation in place when
+// Refresh is true without changing its stored derived flag or stated closing balance.
 type ReconInput struct {
 	BankAccountID         string `json:"bank_account_id"`
 	Year                  int    `json:"year"`
 	Month                 int    `json:"month"`
 	StatementBalanceCents int64  `json:"statement_balance_cents"`
+	Refresh               bool   `json:"refresh,omitempty"`
 }
 
 // - error taxonomy (mirrors internal/till) -

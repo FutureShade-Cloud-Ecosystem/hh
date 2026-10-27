@@ -539,20 +539,27 @@ export function createBankrecWorld() {
     if (!(input.month >= 1 && input.month <= 12) || !(input.year >= 2000)) return clientError(400, "valid year and month (1-12) are required");
     const account = world.accounts.find((a) => a.id === input.bank_account_id);
     if (account === undefined) return clientError(404, "not found");
-    // The core stores the month's line net when the typed balance is zero: its placeholder default.
     const netNow = monthNet(account.id, input.year, input.month);
-    const derived = !input.statement_balance_cents;
-    const statement = derived ? netNow : input.statement_balance_cents;
     // Only the operating account has a ledger balance in this world; the cards are tracking only.
     const gl = account.gl_account_code === "1000" ? world.glCents : 0;
     const existing = world.recons.find((r) => r.bank_account_id === account.id && r.year === input.year && r.month === input.month);
     if (existing !== undefined && existing.status === "COMPLETED") {
       return clientError(409, `reconciliation for ${input.year}-${pad(input.month)} is already COMPLETED`);
     }
+    if (input.refresh === true) {
+      if (existing === undefined) return clientError(404, "not found");
+      const statement = existing.statement_balance_derived ? netNow : existing.statement_balance_cents;
+      existing.statement_balance_cents = statement;
+      existing.gl_balance_cents = gl;
+      existing.variance_cents = statement - gl;
+      return { status: 201, body: reconView(existing) };
+    }
+    // The core stores the month's line net when the typed balance is zero: its placeholder default.
+    // The derived flag comes from the act: an open with 0 sets it TRUE, an open with a typed figure sets it FALSE, always.
+    const derived = !input.statement_balance_cents;
+    const statement = derived ? netNow : input.statement_balance_cents;
     const target = existing ?? { id: uuid("b5", world.nextRecon++), bank_account_id: account.id, year: input.year, month: input.month, status: "OPEN" };
-    target.statement_balance_derived =
-      derived ||
-      Boolean(existing?.statement_balance_derived && statement === existing.statement_balance_cents && statement !== netNow);
+    target.statement_balance_derived = derived;
     target.statement_balance_cents = statement;
     target.gl_balance_cents = gl;
     target.variance_cents = statement - gl;
@@ -570,8 +577,7 @@ export function createBankrecWorld() {
       (l) => l.bank_account_id === rec.bank_account_id && l.status === "UNMATCHED" && Number(l.txn_date.slice(0, 4)) === rec.year && Number(l.txn_date.slice(5, 7)) === rec.month,
     ).length;
     if (unmatched > 0) return clientError(422, `cannot complete, ${unmatched} UNMATCHED line(s) remain for ${rec.year}-${pad(rec.month)}`);
-    if (rec.variance_cents !== 0) return clientError(422, `cannot complete, variance is ${rec.variance_cents} cents (must be zero)`);
-    // SF-2s: the core recomputes the ledger (and a derived statement balance from the lines) at completion.
+    // SF-2s: the core recomputes the ledger (and a derived statement balance from the lines) at completion; the recomputed variance alone decides.
     const stmt = rec.statement_balance_derived ? monthNet(rec.bank_account_id, rec.year, rec.month) : rec.statement_balance_cents;
     const account = world.accounts.find((a) => a.id === rec.bank_account_id);
     const ledger = account !== undefined && account.gl_account_code === "1000" ? world.glCents : 0;
