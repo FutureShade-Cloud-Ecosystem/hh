@@ -652,7 +652,7 @@ export function createGlWorld() {
     if (m === "POST" && path === "/api/v1/gl/periods/open-year") {
       const refused = gate(caller, "admin");
       if (refused !== null) return refused;
-      if (caller.role !== "FINANCIAL_CONTROLLER") return say(403, "gl: only the Financial Controller may reopen a closed period");
+      if (caller.role !== "FINANCIAL_CONTROLLER") return say(403, "gl: only the Financial Controller may open the next fiscal year");
       if (String(body.reason ?? "").trim() === "") return say(422, "gl: a reason is required");
       const latest = world.periods.reduce((top, p) => Math.max(top, p.year), 0);
       if (latest === 0) return say(409, "gl: no fiscal period exists to roll forward from");

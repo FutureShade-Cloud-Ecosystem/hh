@@ -197,7 +197,7 @@ func (s *Service) OpenFiscalYear(ctx context.Context, requestedYear int, reason 
 		return YearOpenResult{}, err
 	}
 	if caller.RoleCode != controllerRole {
-		return YearOpenResult{}, errNotController
+		return YearOpenResult{}, errNotControllerOpenYear
 	}
 	if strings.TrimSpace(reason) == "" {
 		return YearOpenResult{}, errReasonRequired
