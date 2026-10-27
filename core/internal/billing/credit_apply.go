@@ -1217,10 +1217,13 @@ SELECT customer_id, 'ADJUSTMENT', $2, $3, 'invoice', id::uuid, branch_id, $4, $5
 // door will take and the figure it shows is the figure the aging reads for that group. A group in
 // any other family is not a credit the customer holds and is not offered, and a group the aging
 // reads as zero is not open and is not offered either. The ROW the offer names is the group's
-// FIRST NEGATIVE row (M3's P3-3), the door's own anchor rule (lockCreditGroupAnchor): the first
-// row by time can be a row the door may not name, a write off, and the desk was offering the very
-// id the door refuses. A group that is offered at all (its sum is negative) always has a negative
-// row, so the anchor id is never empty.
+// first negative row OF A KIND THE DOOR WILL NAME (M3's P3-3, then M3's P3-4): the door's own
+// anchor rule gives the row its time shape, and the door's named row rule (creditRowTxnTypes)
+// gives it its kind, so the desk never offers a write off, a row the door refuses. The first row
+// by time can be a row the door may not name, and the desk was offering the very id the door
+// refuses. A group whose only negative rows are write offs holds nothing the door can take, so it
+// is not offered at all, never offered with a null id: the HAVING demands a door named negative
+// row before the group is offered, and that row is the anchor.
 func (r *Repository) OpenCreditsFor(ctx context.Context, customerID, branchID string) ([]OpenCreditSummary, error) {
 	if r.pool == nil {
 		return nil, errNoDB
@@ -1251,9 +1254,9 @@ SELECT id::text, invoice_no::text, COALESCE(metadata->>'reason', ''), issue_date
 	}
 
 	acctRows, err := r.pool.Query(ctx, `
-SELECT (ARRAY_AGG(id::text ORDER BY occurred_at ASC, id ASC) FILTER (WHERE amount_cents < 0))[1] AS anchor_id,
+SELECT (ARRAY_AGG(id::text ORDER BY occurred_at ASC, id ASC) FILTER (WHERE amount_cents < 0 AND txn_type = ANY($5::text[])))[1] AS anchor_id,
        COALESCE(source_type, '') AS src_type,
-       COALESCE((ARRAY_AGG(memo ORDER BY occurred_at ASC, id ASC) FILTER (WHERE amount_cents < 0))[1], '') AS anchor_memo,
+       COALESCE((ARRAY_AGG(memo ORDER BY occurred_at ASC, id ASC) FILTER (WHERE amount_cents < 0 AND txn_type = ANY($5::text[])))[1], '') AS anchor_memo,
        MIN(occurred_at) AS issued_at,
        -COALESCE(SUM(amount_cents) FILTER (WHERE amount_cents < 0), 0) AS orig_cents,
        -SUM(amount_cents) AS open_cents
@@ -1264,7 +1267,8 @@ SELECT (ARRAY_AGG(id::text ORDER BY occurred_at ASC, id ASC) FILTER (WHERE amoun
    AND txn_type = ANY($4::text[])
  GROUP BY COALESCE(source_type, ''), COALESCE(source_ref_id, id)
 HAVING SUM(amount_cents) < 0
- ORDER BY MIN(occurred_at) ASC`, customerID, branchID, creditAccountFamilies, creditGroupTxnTypes)
+   AND count(*) FILTER (WHERE amount_cents < 0 AND txn_type = ANY($5::text[])) > 0
+ ORDER BY MIN(occurred_at) ASC`, customerID, branchID, creditAccountFamilies, creditGroupTxnTypes, creditRowTxnTypes)
 	if err != nil {
 		return nil, fmt.Errorf("credit apply: list open account credits: %w", err)
 	}
