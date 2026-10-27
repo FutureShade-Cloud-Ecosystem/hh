@@ -128,7 +128,7 @@ test("a moment reads as the days since it, from elapsed time and never a guessed
 
 // ---- an invoice: send, dispute, a payment reversal -----------------------------------------------------------------
 
-import { disputeCheck, disputeOutcomeWord, disputeReasonWord, payoutCheck, payoutWords, reapplyCheck, reapplyWords, reversalCheck, reversalWords, sendInvoiceWords } from "../src/ar/office-logic.ts";
+import { applyCreditCheck, applyCreditWords, disputeCheck, disputeOutcomeWord, disputeReasonWord, payoutCheck, payoutWords, reapplyCheck, reapplyWords, reversalCheck, reversalWords, reverseCreditAppCheck, reverseCreditAppWords, sendInvoiceWords } from "../src/ar/office-logic.ts";
 
 test("a dispute is checked before it is sent: a reason, an amount in dollars, never above the balance", () => {
   assert.deepEqual(disputeCheck({ reason: "DAMAGED", amountText: "100.00", note: " Cracked pallets ", balanceCents: 96_000 }), { ok: true, reason: "DAMAGED", amountCents: 10_000, note: "Cracked pallets" });
@@ -191,6 +191,54 @@ test("a pay out says what left and what is still held, in the dollars the server
   assert.equal(payoutWords(done, "PAY-0101"), "$10.00 of payment PAY-0101 is handed back from the drawer. $15.00 is still held for this payment.");
   assert.equal(payoutWords({ ...done, kind: "BANK", amount_cents: 2500, held_after_cents: 0 }, "PAY-0101"), "$25.00 of payment PAY-0101 is paid by cheque or transfer. Nothing is held for this payment now.");
   assert.equal(payoutWords({ ...done, kind: "WRITE_OFF" }, "PAY-0101"), "$10.00 of payment PAY-0101 is written off against the count's shortage. $15.00 is still held for this payment.");
+});
+
+test("applying and reversing a credit are checked before they are sent, and read back in the server's dollars", () => {
+  const ok = { creditKind: "MEMO", creditId: "cm-1", invoiceId: "inv-1", amountText: "100.00", reason: " Apply open memo ", creditOpenCents: 25000, invoiceBalanceCents: 96000 };
+  assert.deepEqual(applyCreditCheck(ok), { ok: true, creditKind: "MEMO", creditId: "cm-1", invoiceId: "inv-1", amountCents: 10000, reason: "Apply open memo" });
+  assert.match(applyCreditCheck({ ...ok, creditKind: "OTHER" }).words, /Choose the credit/);
+  assert.match(applyCreditCheck({ ...ok, invoiceId: "" }).words, /Choose the invoice/);
+  assert.match(applyCreditCheck({ ...ok, amountText: " " }).words, /Enter the amount to apply/);
+  assert.match(applyCreditCheck({ ...ok, amountText: "0" }).words, /more than zero/);
+  assert.equal(applyCreditCheck({ ...ok, amountText: "250.01" }).words, "That is more than the $250.00 open on this credit.");
+  assert.equal(applyCreditCheck({ ...ok, amountText: "200.00", invoiceBalanceCents: 15000 }).words, "That is more than the invoice's open balance of $150.00.");
+  assert.match(applyCreditCheck({ ...ok, reason: " " }).words, /Enter why the credit is being applied/);
+
+  const applied = {
+    application_id: "a",
+    credit_kind: "MEMO",
+    credit_id: "cm",
+    invoice_id: "i",
+    invoice_no: "INV-1002",
+    applied_cents: 10000,
+    credit_open_after_cents: 15000,
+    lines: [{ invoice_id: "i", invoice_no: "INV-1002", applied_cents: 10000, outcome: "PART", balance_after_cents: 86000 }],
+    replayed: false,
+  };
+  assert.equal(applyCreditWords(applied, "CM-0001"), "$100.00 of credit memo CM-0001 is applied to invoice INV-1002. $150.00 is still open on CM-0001.");
+  assert.equal(
+    applyCreditWords({ ...applied, credit_kind: "ACCOUNT", applied_cents: 15000, credit_open_after_cents: 0 }, "AC-0001"),
+    "$150.00 of account credit AC-0001 is applied to invoice INV-1002. Nothing is left open on AC-0001 now.",
+  );
+
+  assert.deepEqual(reverseCreditAppCheck(" Applied to wrong invoice "), { ok: true, reason: "Applied to wrong invoice" });
+  assert.match(reverseCreditAppCheck(" ").words, /Enter why the credit application is being reversed/);
+  assert.equal(
+    reverseCreditAppWords(
+      {
+        application_id: "a",
+        invoice_id: "i",
+        invoice_no: "INV-1002",
+        restored_cents: 10000,
+        invoice_balance_after_cents: 96000,
+        credit_open_after_cents: 25000,
+        lines: [{ invoice_id: "i", invoice_no: "INV-1002", applied_cents: 10000, outcome: "PART", balance_after_cents: 96000 }],
+        replayed: false,
+      },
+      "CM-0001",
+    ),
+    "Credit application of $100.00 is reversed on invoice INV-1002. $250.00 is open on CM-0001 again.",
+  );
 });
 
 test("a sent invoice says it went through the messaging sink, and a replay says nothing new went", () => {

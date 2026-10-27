@@ -370,6 +370,12 @@ func (s *RegisterService) header(ctx context.Context, invoiceID string) (Invoice
 	return h, nil
 }
 
+// invoiceCreditsStore is the optional credit-application read seam on registerStore (*Repository).
+type invoiceCreditsStore interface {
+	OpenCreditsFor(ctx context.Context, customerID, branchID string) ([]OpenCreditSummary, error)
+	CreditApplicationsFor(ctx context.Context, invoiceID string) ([]CreditApplicationView, error)
+}
+
 // Detail assembles the right-hand panel. withPayments says whether the timeline carries the PAYMENT
 // entries (payment number, method, amount and who applied it): they are the payment trail ruling 87
 // holds to money desk WORK, so the caller who asks for them is one the payment trail reader (below)
@@ -401,6 +407,28 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 		}
 		for _, sl := range slices {
 			applied += sl.AmountCents
+		}
+	}
+	// The account's open credits are an ACCOUNT level figure, so they are read only for a caller the
+	// account position policy allows (633's rule, S6 P1-1): a refused caller receives no open_credits
+	// at all, not an empty list. The document's own credit_applications are this invoice's own acts
+	// and stay for every caller who may read the document.
+	accountOK := accountAllowed(ctx, s.callerFrom, pol.AccountPositionVisibility)
+	var openCredits []OpenCreditSummary
+	var creditApps []CreditApplicationView
+	if cs, ok := s.store.(invoiceCreditsStore); ok {
+		if accountOK {
+			if openCredits, err = cs.OpenCreditsFor(ctx, h.CustomerID, h.BranchID); err != nil {
+				return InvoiceDetail{}, err
+			}
+		}
+		if creditApps, err = cs.CreditApplicationsFor(ctx, invoiceID); err != nil {
+			return InvoiceDetail{}, err
+		}
+		for _, ca := range creditApps {
+			if !ca.Reversed {
+				applied += ca.AmountCents
+			}
 		}
 	}
 	block, onHold, accountDisputed, err := s.store.CustomerBlockFor(ctx, h.CustomerID)
@@ -436,7 +464,7 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 		IssueDate: h.IssueDate, DueDate: h.DueDate, BranchID: h.BranchID,
 		OrderID: h.OrderID, OrderNo: orderNo, CustomerPO: customerPO, Salesperson: salesperson,
 		Lines: lines, Activity: activity, ReminderTones: pol.ReminderTones,
-		LastContactAt: lastContact, AsOf: asOf,
+		LastContactAt: lastContact, OpenCredits: openCredits, CreditApplications: creditApps, AsOf: asOf,
 	}
 	openDispute := hasDispute && dispute.Status == "OPEN"
 	zone, err := houseday.Resolve(ctx, s.zone)
@@ -448,7 +476,7 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 	}, asOf, pol.DueSoonDays)
 
 	block.AccountStatus = accountStatusFor(onHold, accountDisputed, h.BalanceCents)
-	if accountAllowed(ctx, s.callerFrom, pol.AccountPositionVisibility) {
+	if accountOK {
 		pos, err := s.store.AccountPositionFor(ctx, asOf, h.CustomerID)
 		if err != nil {
 			return InvoiceDetail{}, err
