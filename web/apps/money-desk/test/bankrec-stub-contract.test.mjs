@@ -507,9 +507,29 @@ test("a derived month in the stub recomputes its statement balance from the line
 
 test("FW1-04: outstanding items adjust the bank balance, sign off before month end or with no statement lines is refused, and the reconciliation report fits the contract", async () => {
   await reset();
-  // Sign off before month end (2087-12) is refused in the core's words.
+  // Sign off before month end (2087-12) is refused in the core's words, naming the first day to sign off.
   const futureRec = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: 2087, month: 12, statement_balance_cents: CLOSING })).json;
-  refused(await ctl("POST", `/api/v1/bankrec/reconciliations/${futureRec.id}/complete`), 422, "has not reached month end yet");
+  const futureComplete = await ctl("POST", `/api/v1/bankrec/reconciliations/${futureRec.id}/complete`);
+  refused(futureComplete, 422, "has not reached month end yet");
+  assert.ok(futureComplete.json.error.includes("first day to sign off is 2088-01-01"));
+
+  // RBC CSV import refuses USD-only and empty-amount rows in the core's words.
+  const usdImp = await ctl("POST", "/api/v1/bankrec/imports", {
+    bank_account_id: IDS.operating,
+    profile_code: "rbc-default",
+    filename: "rbc-usd.csv",
+    content: "Account Type,Account Number,Transaction Date,Cheque Number,Description 1,Description 2,CAD$,USD$\nChequing,00123-1002345,05/12/2023,,WIRE FROM US CLIENT,INV 8841,,250.00\n",
+  });
+  assert.equal(usdImp.status, 422);
+  assert.ok(usdImp.json.error.includes("is not supported on a CAD statement import"));
+  const emptyAmtImp = await ctl("POST", "/api/v1/bankrec/imports", {
+    bank_account_id: IDS.operating,
+    profile_code: "rbc-default",
+    filename: "rbc-empty.csv",
+    content: `Date,Description,Amount,Reference\n${period}-14,BLANK AMOUNT ROW,,REF-BLANK\n`,
+  });
+  assert.equal(emptyAmtImp.status, 422);
+  assert.ok(emptyAmtImp.json.error.includes("missing amount"));
 
   // Sign off on an earlier closed month with no imported statement lines is refused.
   await reset();
@@ -521,7 +541,7 @@ test("FW1-04: outstanding items adjust the bank balance, sign off before month e
   await fetch(`${base}/_stub/outstanding-items`, {
     method: "POST",
     body: JSON.stringify({
-      deposits_in_transit: [{ journal_id: "7a1e0000-0000-4000-9000-000000000081", posted_at: `${period}-28T12:00:00Z`, memo: "May deposit in transit", amount_cents: 30_000 }],
+      deposits_in_transit: [{ journal_id: "7a1e0000-0000-4000-9000-000000000081", posted_at: `${period}-28T12:00:00Z`, memo: "Month-end deposit in transit", amount_cents: 30_000 }],
       outstanding_cheques: [{ journal_id: "7a1e0000-0000-4000-9000-000000000082", posted_at: `${period}-29T12:00:00Z`, memo: "Cheque 1044 to vendor", amount_cents: 12_000 }],
     }),
   });

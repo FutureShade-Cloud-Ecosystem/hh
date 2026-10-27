@@ -33,6 +33,8 @@ export interface BankrecHost {
   readonly setField: (name: string, value: string) => void;
   /** Brings the first element matching the selector into view in the desk's render root. */
   readonly reveal: (selector: string) => void;
+  readonly userId?: () => string;
+  readonly userName?: () => string;
 }
 
 /** The month before today: the month a statement just closed, from the host's own clock. */
@@ -776,6 +778,8 @@ export class BankrecDesk {
       busy: this.#busy,
       error: this.#error,
       notice: this.#notice,
+      userId: this.#host.userId?.() ?? "",
+      userName: this.#host.userName?.() ?? "",
     };
     return html`${renderBankrec(model)}`;
   }

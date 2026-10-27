@@ -255,6 +255,14 @@ export function createBankrecWorld() {
     const header = readRow();
     if (header === null) return { error: "bankrec: read csv header: EOF" };
     const idx = new Map(header.map((h, n) => [h.trim(), n]));
+    if (profile === "rbc-default" && !idx.has(mapping.date) && idx.has("Transaction Date") && idx.has("CAD$")) {
+      mapping.date = "Transaction Date";
+      mapping.desc = "Description 1";
+      mapping.desc2 = "Description 2";
+      mapping.amount = "CAD$";
+      mapping.ref = "Description 2";
+      mapping.cheque = "Cheque Number";
+    }
     for (const col of [mapping.date, mapping.amount]) {
       if (!idx.has(col)) return { error: `bankrec: csv is missing the mapped column "${col}"` };
     }
@@ -266,13 +274,29 @@ export function createBankrecWorld() {
       if (rec.every((f) => f.trim() === "")) continue;
       const field = (col) => (idx.has(col) ? (rec[idx.get(col)] ?? "").trim() : "");
       const dateText = field(mapping.date);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText) || Number.isNaN(Date.parse(`${dateText}T00:00:00Z`))) {
+      let isoDate = dateText;
+      const slash = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(dateText);
+      if (slash !== null) {
+        isoDate = `${slash[3]}-${pad(Number(slash[1]))}-${pad(Number(slash[2]))}`;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate) || Number.isNaN(Date.parse(`${isoDate}T00:00:00Z`))) {
         return { error: `bankrec: csv row ${rowNo - 1}: bad date "${dateText}" (want "2006-01-02"): parsing time "${dateText}" as "2006-01-02": cannot parse "${dateText}" as "2006"` };
       }
+      if (idx.has("USD$") && field("USD$") !== "") {
+        return { error: `bankrec: csv row ${rowNo - 1}: USD amount "${field("USD$")}" is not supported on a CAD statement import` };
+      }
       const amountText = field(mapping.amount);
+      if (amountText === "") {
+        return { error: `bankrec: csv row ${rowNo - 1}: missing amount` };
+      }
       const cents = parseCents(amountText);
       if (cents === null) return { error: `bankrec: csv row ${rowNo - 1}: bad amount "${amountText}": not a number: "${amountText}"` };
-      rows.push({ date: dateText, description: field(mapping.desc), reference: field(mapping.ref), amount_cents: cents });
+      const desc1 = field(mapping.desc);
+      const desc2 = mapping.desc2 ? field(mapping.desc2) : "";
+      const description = desc2 ? (desc1 ? `${desc1} ${desc2}` : desc2) : desc1;
+      const cheque = mapping.cheque ? field(mapping.cheque) : "";
+      const reference = cheque || field(mapping.ref);
+      rows.push({ date: isoDate, description, reference, amount_cents: cents });
     }
     return { rows };
   }
@@ -593,10 +617,13 @@ export function createBankrecWorld() {
     const rec = world.recons.find((r) => r.id === id);
     if (rec === undefined) return clientError(404, "not found");
     if (rec.status === "COMPLETED") return clientError(409, `reconciliation ${id} is already COMPLETED`);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Toronto" });
     const monthEnd = new Date(Date.UTC(rec.year, rec.month, 0)).toISOString().slice(0, 10);
-    if (today < monthEnd) {
-      return clientError(422, `cannot complete, ${rec.year}-${pad(rec.month)} has not reached month end yet (month end is ${monthEnd})`);
+    const nextY = rec.month === 12 ? rec.year + 1 : rec.year;
+    const nextM = rec.month === 12 ? 1 : rec.month + 1;
+    const firstSignOffDay = `${nextY}-${pad(nextM)}-01`;
+    if (today <= monthEnd) {
+      return clientError(422, `cannot complete, ${rec.year}-${pad(rec.month)} has not reached month end yet (month end is ${monthEnd}; first day to sign off is ${firstSignOffDay})`);
     }
     const unmatched = world.lines.filter(
       (l) => l.bank_account_id === rec.bank_account_id && l.status === "UNMATCHED" && Number(l.txn_date.slice(0, 4)) === rec.year && Number(l.txn_date.slice(5, 7)) === rec.month,

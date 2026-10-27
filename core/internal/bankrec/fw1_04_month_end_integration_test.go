@@ -857,12 +857,12 @@ func TestIntegration_FW1_04_ChronologicalSignOffOrderAndStatementContinuity(t *t
 }
 
 // Round 2 (item 2.1, ruled, both halves): a reconciliation starting point per bank account (cut-over).
-// 1. S5's probe: GL 1000 opening balance $5,000.00 dated the last day of March 2022 on no statement, an April deposit
-//    of $100.00 on the April statement and matched, and April's real closing balance typed ($5,100.00) signs off at
-//    zero with the opening balance absent from the outstanding lists.
-// 2. Confirmed outstanding list at cut-over: an entry on the confirmed list stays outstanding, and one on or before
-//    cut-over not on the list never appears.
-// 3. Audited (BANKREC_CUTOVER), Financial Controller only, and refused once a later month has signed off.
+//  1. S5's probe: GL 1000 opening balance $5,000.00 dated the last day of March 2022 on no statement, an April deposit
+//     of $100.00 on the April statement and matched, and April's real closing balance typed ($5,100.00) signs off at
+//     zero with the opening balance absent from the outstanding lists.
+//  2. Confirmed outstanding list at cut-over: an entry on the confirmed list stays outstanding, and one on or before
+//     cut-over not on the list never appears.
+//  3. Audited (BANKREC_CUTOVER), Financial Controller only, and refused once a later month has signed off.
 func TestIntegration_FW1_04_CutoverStartingPointAndConfirmedOutstanding(t *testing.T) {
 	pool := intPool(t)
 	cleanTables(t, pool)
