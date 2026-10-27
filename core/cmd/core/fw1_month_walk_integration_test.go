@@ -1278,13 +1278,13 @@ func (w *fw1Walk) assertBranchOnEveryLine(t fw1TB) {
 	if w.nullBranchLines != 0 {
 		t.Errorf("%d posted journal lines carry no branch (the GL side of the tie is the lines without a branch)", w.nullBranchLines)
 	}
-	cons, err := w.money.glSvc.TrialBalance(context.Background(), w.year, w.month, "")
+	cons, err := w.money.glSvc.TrialBalance(fw1StaffCtx(context.Background()), w.year, w.month, "")
 	if err != nil {
 		t.Fatalf("the consolidated trial balance: %v", err)
 	}
 	var sumDebit, sumCredit int64
 	for _, b := range []string{fw1TRT, fw1KGN} {
-		tb, err := w.money.glSvc.TrialBalance(context.Background(), w.year, w.month, b)
+		tb, err := w.money.glSvc.TrialBalance(fw1StaffCtx(context.Background()), w.year, w.month, b)
 		if err != nil {
 			t.Fatalf("the %s trial balance: %v", b, err)
 		}
