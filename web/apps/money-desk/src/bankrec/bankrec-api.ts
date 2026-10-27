@@ -113,6 +113,10 @@ export class BankrecApi {
     return staffBankrec.bankrecOpenReconciliation(this.#client, { bank_account_id: accountId, year, month, statement_balance_cents: statementBalanceCents });
   }
 
+  refreshReconciliation(accountId: string, year: number, month: number): Promise<Result<BankRecReconciliation>> {
+    return staffBankrec.bankrecOpenReconciliation(this.#client, { bank_account_id: accountId, year, month, refresh: true });
+  }
+
   completeReconciliation(id: string): Promise<Result<BankRecReconciliation>> {
     return staffBankrec.bankrecCompleteReconciliation(this.#client, id);
   }

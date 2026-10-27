@@ -645,6 +645,54 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  # --- gl: the posting queue (FW1-02) ----------------------------------------
+  /api/v1/gl/posting-queue:
+    get:
+      operationId: glListPostingQueue
+      tags: [staff-gl]
+      summary: List every GL event waiting or dead lettered
+      description: >-
+        The Financial Controller's read of the posting queue: each posted
+        topic's outbox event that is still waiting or has dead lettered, with
+        its topic, its document, its last error and its attempts.
+      x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The waiting and dead lettered GL events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlPostingQueuePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/gl/posting-queue/count:
+    get:
+      operationId: glPostingQueueCount
+      tags: [staff-gl]
+      summary: The waiting and dead lettered counts for the posting queue
+      description: >-
+        The two counts the Money Desk's banner reads. No documents travel
+        with them.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The two counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlPostingQueueCounts"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   # --- gl: policy and parity export ------------------------------------------
   /api/v1/gl/policy:
     get:
@@ -1682,6 +1730,34 @@ components:
           items: { $ref: "#/components/schemas/GlPeriod" }
         next_cursor: { type: [string, "null"] }
         limit: { type: integer, format: int32 }
+    GlPostingQueueEvent:
+      type: object
+      description: One GL event waiting or dead lettered
+      required: [event_id, topic, document, status, attempts, last_error, occurred_at]
+      properties:
+        event_id: { type: string, format: uuid }
+        topic: { type: string }
+        document: { type: string }
+        status:
+          type: string
+          enum: [PENDING, DEAD]
+        attempts: { type: integer, format: int32 }
+        last_error: { type: string }
+        occurred_at: { type: string, format: date-time }
+    GlPostingQueuePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GlPostingQueueEvent" }
+    GlPostingQueueCounts:
+      type: object
+      description: The waiting and dead lettered counts the Money Desk's banner reads
+      required: [waiting, dead]
+      properties:
+        waiting: { type: integer, format: int32 }
+        dead: { type: integer, format: int32 }
     GlReasonBody:
       type: object
       properties:
@@ -2192,13 +2268,19 @@ components:
           format: date-time
     BankRecReconInput:
       type: object
-      description: Opens a reconciliation by computing the GL balance and the variance against the statement balance
-      required: [bank_account_id, year, month, statement_balance_cents]
+      description: Opens a reconciliation by computing the GL balance and the variance against the statement balance, or refreshes an open reconciliation in place when refresh is true
+      required: [bank_account_id, year, month]
       properties:
         bank_account_id: { type: string, format: uuid }
         year: { type: integer, format: int32 }
         month: { type: integer, format: int32, minimum: 1, maximum: 12 }
         statement_balance_cents: { type: integer, format: int64 }
+        refresh:
+          type: boolean
+          description: >-
+            When true, refreshes an open reconciliation in place without
+            changing its stored derived flag or stated closing balance. Takes
+            no statement_balance_cents figure.
     BankRecReconciliationList:
       type: array
       description: >-

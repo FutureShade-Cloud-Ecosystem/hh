@@ -10,7 +10,7 @@
 // and trial balance screens.
 import { html, nothing, type TemplateResult } from "lit";
 import type { Branch, GlJournal, GlTrialBalanceResult, IdentityApproval } from "@hardscapehouse/api-client";
-import { approvalKind, approvalTitle, canDecide, detailWords, entryLabel, floorFigures, floorWords, journalTone, journalWord, monthWord } from "./gl-logic.js";
+import { approvalKind, approvalTitle, canDecide, detailWords, entryLabel, floorFigures, floorWords, journalTone, journalWord, monthWord, systemJournalNote } from "./gl-logic.js";
 import { formatMoney } from "./gl-money.js";
 import { chartView, checksView, composerView, confirmFor, linesTable, periodsView, policyView, recurringView, type BooksModel } from "./gl-books.js";
 
@@ -34,6 +34,7 @@ export interface GlModel {
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
+  readonly postingQueueWords: string;
   readonly books: BooksModel;
 }
 
@@ -277,6 +278,9 @@ function journalActions(model: GlModel, journal: GlJournal): TemplateResult {
   const request = model.approvals.find((a) => a.subject_ref === journal.id);
   const draft = journal.status === "DRAFT";
   const own = request !== undefined && !canDecide(request, model.userId);
+  // A journal a module posted is refused by the server (FW1-09a), so the panel says who owns it instead
+  // of offering a press that cannot go through.
+  const systemNote = systemJournalNote(journal);
   return html`
     <div class="gl-actions gl-actions-spaced">
       ${draft && request !== undefined
@@ -286,7 +290,7 @@ function journalActions(model: GlModel, journal: GlJournal): TemplateResult {
         ? html`<button type="button" class="btn btn-primary" data-action="gl-approve-route" data-id=${journal.id} ?disabled=${model.busy}>Approve here</button>`
         : nothing}
       ${draft ? html`<button type="button" class="btn btn-secondary" data-action="gl-void" data-id=${journal.id} ?disabled=${model.busy}>Void</button>` : nothing}
-      ${journal.status === "POSTED" ? html`<button type="button" class="btn btn-secondary" data-action="gl-reverse" data-id=${journal.id} ?disabled=${model.busy}>Reverse</button>` : nothing}
+      ${journal.status === "POSTED" && systemNote === "" ? html`<button type="button" class="btn btn-secondary" data-action="gl-reverse" data-id=${journal.id} ?disabled=${model.busy}>Reverse</button>` : nothing}
     </div>
     ${draft && request !== undefined
       ? html`<p class="gl-note">${own ? "You made this journal, so you cannot approve it. Another approver posts it." : "Approving posts it as filed. The maker cannot approve their own."}</p>`
@@ -294,7 +298,8 @@ function journalActions(model: GlModel, journal: GlJournal): TemplateResult {
     ${draft && request === undefined
       ? html`<p class="gl-note">This draft has no approval request in the queue. The server says whether it can post from here.</p>`
       : nothing}
-    ${journal.status === "POSTED" ? html`<p class="gl-note">A posted journal is corrected with a reversing journal. Reverse asks you to confirm first.</p>` : nothing}
+    ${systemNote !== "" ? html`<p class="gl-note" data-system-note>${systemNote}</p>` : nothing}
+    ${journal.status === "POSTED" && systemNote === "" ? html`<p class="gl-note">A posted journal is corrected with a reversing journal. Reverse asks you to confirm first.</p>` : nothing}
   `;
 }
 
@@ -445,6 +450,7 @@ export function renderGl(model: GlModel): TemplateResult {
       <h1>${head.title}</h1>
       <p class="gl-dim">${head.line}</p>
     </div>
+    ${model.postingQueueWords !== "" ? html`<p class="gl-alert gl-alert-error" role="alert" data-posting-queue>${model.postingQueueWords}</p>` : nothing}
     ${tabs(model)} ${messages(model)}
     ${model.tab === "approvals"
       ? approvalsView(model)

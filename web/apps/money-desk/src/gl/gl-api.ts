@@ -31,6 +31,7 @@ import {
   type GlJournalCreate,
   type GlPeriod,
   type GlPolicy,
+  type GlPostingQueueCounts,
   type GlRecurringTemplate,
   type GlTieoutState,
   type GlTrialBalanceResult,
@@ -182,6 +183,11 @@ export class GlApi {
   /** The receivables subledger against account 1100, for every branch or one. */
   tieOut(branchId = ""): Promise<Result<GlTieoutState[]>> {
     return this.#items("tie out", (cursor) => staffGl.glTieOut(this.#client, { limit: 100, ...(branchId === "" ? {} : { branch_id: branchId }), ...(cursor === undefined ? {} : { cursor }) }));
+  }
+
+  /** The posting queue's two counts (waiting, dead lettered), the banner's figures. */
+  async postingQueueCount(): Promise<Result<GlPostingQueueCounts>> {
+    return staffGl.glPostingQueueCount(this.#client);
   }
 
   /**

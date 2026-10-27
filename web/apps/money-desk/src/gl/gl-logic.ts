@@ -135,6 +135,58 @@ export function unknownWords(action: string): string {
   return `The answer to ${what} was lost, so it may or may not have been saved. Reload and look at the register before you press again.`;
 }
 
+// ---- the ledger's own guards (FW1-09a) -------------------------------------------------------------
+
+/** The facts of one journal the panel needs to say who posted it. */
+export interface SystemJournalFacts {
+  readonly status: string;
+  readonly source: string;
+  readonly reverses_journal_id?: string;
+  readonly idempotency_key?: string;
+}
+
+const SOURCE_OWNER: Record<string, string> = {
+  INVOICE: "the invoicing module",
+  PAYMENT: "the payments module",
+  FULFILLMENT: "the fulfilment module",
+  PO_RECEIPT: "the purchasing module",
+  CLOSING: "the year end close",
+};
+
+// Several writers share ADJUSTMENT, so the idempotency key's prefix names the writer, as the core's own
+// refusal does. Keep in step with the core's systemJournalOwner.
+const KEY_OWNER: readonly (readonly [string, string])[] = [
+  ["bankrec:", "the bank reconciliation module"],
+  ["landedcost.", "the landed cost module"],
+  ["holdback-release:", "the holdback module"],
+  ["till.session.completed:", "the till module"],
+];
+
+/**
+ * "" when a person posted the journal, so the ledger offers Reverse; otherwise the words the panel
+ * carries instead: who posted it, and where its correction belongs. The server refuses those reversals
+ * (FW1-09a), so the button is never offered where the answer would be a refusal.
+ */
+export function systemJournalNote(journal: SystemJournalFacts): string {
+  if (journal.status !== "POSTED" || journal.source === "MANUAL") return "";
+  if (journal.reverses_journal_id !== undefined && journal.reverses_journal_id !== "") {
+    return "This journal is itself a reversal. A reversal cannot be reversed.";
+  }
+  let owner = "another module";
+  const bySource = SOURCE_OWNER[journal.source];
+  if (bySource !== undefined) {
+    owner = bySource;
+  } else {
+    for (const [prefix, name] of KEY_OWNER) {
+      if ((journal.idempotency_key ?? "").startsWith(prefix)) {
+        owner = name;
+        break;
+      }
+    }
+  }
+  return `Posted by ${owner}, not by a person here. To undo it, correct it where it came from; it cannot be reversed from the ledger.`;
+}
+
 /**
  * A refusal in words. The role gate answers a walled route with its shared
  * "Forbidden" body, which tells a person nothing, so the app names who may
@@ -173,6 +225,21 @@ export function refusalWords(action: string, message: string, status: number): s
       return `${sentence(message)} Add the period before posting into it.`;
     }
     if (lower.includes("reason is required")) return "A reason is required. Say why, and try again.";
+    // The ledger's own guards, in the core's words (FW1-09a), said the way a dealer reads them.
+    if (lower.includes("is itself a reversal")) {
+      return "This journal is itself a reversal, and a reversal cannot be reversed. Nothing was posted.";
+    }
+    const owner = lower.match(/was posted by (.+), not by a person in the ledger/);
+    if (owner !== null) {
+      return `This journal was posted by ${owner[1]}, not here. To undo it, correct it where it came from; nothing was reversed.`;
+    }
+    if (lower.includes("was already reversed")) {
+      return "This journal was already reversed. A journal can be reversed once, so nothing was posted.";
+    }
+    const rules = lower.match(/the posting rules (.+?) need it/);
+    if (rules !== null) {
+      return `This account carries automated postings (${rules[1]}). Deactivating it would stop those postings, so nothing was changed.`;
+    }
   }
   if (status === 403) {
     return "That is for the Financial Controller or the General Manager.";
@@ -345,4 +412,21 @@ export function tieWords(inTie: boolean, ageDays: number): string {
 /** The legacy import line source in words (the wire word names the first dealer's system; the screen does not). */
 export function bisSourceWord(source: string): string {
   return source === "BOTH" ? "In both books" : source === "ERP_ONLY" ? "Only in this ledger" : source === "BISTRACK_ONLY" ? "Only in the legacy import" : source;
+}
+
+/** The two counts the posting queue's banner reads, in words; an empty queue shows nothing. */
+export interface PostingQueueCounts {
+  readonly waiting: number;
+  readonly dead: number;
+}
+
+/** The banner's sentence: what is stuck, in the count's own words, and who lists it. */
+export function postingQueueBannerWords(counts: PostingQueueCounts): string {
+  if (counts.waiting <= 0 && counts.dead <= 0) return "";
+  if (counts.waiting <= 0) {
+    return `${counts.dead === 1 ? "1 journal failed" : `${counts.dead} journals failed`} to post and ${counts.dead === 1 ? "is" : "are"} set aside. The posting queue lists them for the Financial Controller.`;
+  }
+  const waiting = counts.waiting === 1 ? "1 journal is waiting to post" : `${counts.waiting} journals are waiting to post`;
+  const dead = counts.dead <= 0 ? "" : ` and ${counts.dead === 1 ? "1 has" : `${counts.dead} have`} failed and ${counts.dead === 1 ? "is" : "are"} set aside`;
+  return `${waiting}${dead}. The posting queue lists them for the Financial Controller.`;
 }

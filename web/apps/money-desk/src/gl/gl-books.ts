@@ -182,7 +182,7 @@ function closeYearConfirm(frame: Frame, year: number): TemplateResult {
       <ul class="gl-changes" aria-label="What changes">
         <li>One closing journal posts: every revenue and expense account of ${year} is flattened and the net income, or loss, moves to account 3900 Retained Earnings.</li>
         <li>Every open period of ${year} is closed.</li>
-        <li>The net income is the server's figure and shows after the close. Reopening a period does not undo the closing journal: reverse it from the register.</li>
+        <li>The net income is the server's figure and shows after the close. Reopening a period does not undo the closing journal, and a closing journal has no undo from the register.</li>
       </ul>
       <label class="gl-field">Reason (optional)
         <textarea data-field="reason" rows="2" aria-label="Reason for closing the year"></textarea>
