@@ -4,9 +4,10 @@ package main
 // FINANCE-BOX-SPEC-r1, sections 3 and 8). It applies the embedded dibbits
 // seed to a fresh, empty database the one time the finance box first boots,
 // records box_kind=finance in system_settings through the settings module,
-// and leaves the seed's users with no usable password through the identity
-// module, so the seeded world cannot be signed into with the seed's well
-// known demo password. core seed itself is never the answer here: it refuses
+// and leaves the fresh world with no usable password through the identity
+// module (every staff hash and every portal hash, the seed's logins and the
+// migrations' demonstration logins alike), so the seeded world cannot be
+// signed into with any known password. core seed itself is never the answer
 // outside dev, and an unset APP_ENV would count as dev and plant tier 1
 // admins with a usable password. finance-seed refuses unless the box says
 // the finance statement in full:
@@ -80,8 +81,8 @@ func financeSeedRole(getenv func(string) string) error {
 	defer pool.Close()
 
 	// The database guards, both reads, before anything writes.
-	var seeded bool
-	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)`, financeSeedGuardEmail).Scan(&seeded); err != nil {
+	seeded, err := identity.HasUser(ctx, pool, financeSeedGuardEmail)
+	if err != nil {
 		return fmt.Errorf("finance-seed: guard check failed: %w", err)
 	}
 	if seeded {
@@ -116,11 +117,7 @@ func financeSeedRole(getenv func(string) string) error {
 		return fmt.Errorf("finance-seed: commit: %w", err)
 	}
 
-	var products, customers int
-	_ = pool.QueryRow(ctx, `SELECT count(*) FROM products WHERE sku LIKE 'DBS-%'`).Scan(&products)
-	_ = pool.QueryRow(ctx, `SELECT count(*) FROM customers WHERE account_no LIKE 'CUST-%'`).Scan(&customers)
 	log.Info("finance-seed: the Dibbits seed world is loaded",
-		"products", products, "customers", customers,
 		"box_kind", boxKindFinance,
 		"staff_passwords_cleared", creds.StaffCleared, "portal_passwords_cleared", creds.PortalCleared)
 	return nil

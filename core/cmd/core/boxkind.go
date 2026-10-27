@@ -26,12 +26,10 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
@@ -97,20 +95,16 @@ func financeBoxDatabaseGuard(ctx context.Context, pool *pgxpool.Pool) error {
 }
 
 // financeBoxDatabaseEmpty reports whether the database has nothing in it
-// yet: no migration has ever been applied. A database without the
-// bookkeeping table is empty by definition; the guard must never treat a
-// migrated world as empty because the query failed.
+// yet: no migration has ever been applied. The bookkeeping read is the
+// migrate runner's own (roles_oneshot.go), so the guard never spells the
+// query itself; the guard must never treat a migrated world as empty
+// because the query failed.
 func financeBoxDatabaseEmpty(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
-	var count int
-	err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&count)
+	_, present, err := MigrationsAppliedCount(ctx, pool)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "42P01" {
-			return true, nil
-		}
 		return false, err
 	}
-	return count == 0, nil
+	return !present, nil
 }
 
 // financeBoxCheckRole is the entrypoint's pre-migrate check on a non empty

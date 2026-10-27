@@ -3,11 +3,11 @@ package identity
 // DisableSeedCredentials, the finance seed's password leg (the deploy spec
 // FINANCE-BOX-SPEC-r1, section 3). Passwords in this tree are stored as
 // bcrypt hashes: staff in users.password_hash, portal in
-// portal_users.password_hash. The dibbits demo seed plants both with a
-// known demo hash, so a finance seeded world must leave those rows with no
-// usable password: NULL, the same spelling the INVITED staff state carries.
-// This file owns the statement; cmd/core calls the seam, never SQL of its
-// own.
+// portal_users.password_hash. A fresh finance world has no real user, so the
+// clear is deliberately blanket: every staff hash NULLed, every portal hash
+// on the no-password marker, so the seed's logins AND the migrations'
+// demonstration logins end usable by no password. This file owns the
+// statements; cmd/core calls the seam, never SQL of its own.
 
 import (
 	"context"
@@ -50,7 +50,7 @@ func TestDisableSeedCredentials_RefusesNilDatabase(t *testing.T) {
 	}
 }
 
-func TestDisableSeedCredentials_ClearsTheSeedUsersOnBothTables(t *testing.T) {
+func TestDisableSeedCredentials_ClearsEveryCredentialOnBothTables(t *testing.T) {
 	fake := &seedCredFake{tags: []pgconn.CommandTag{
 		pgconn.NewCommandTag("UPDATE 6"),
 		pgconn.NewCommandTag("UPDATE 1"),
@@ -70,34 +70,23 @@ func TestDisableSeedCredentials_ClearsTheSeedUsersOnBothTables(t *testing.T) {
 			t.Fatalf("statement %d must rewrite the password hash on %s, got: %s", i, table, fake.sqls[i])
 		}
 	}
+	// The statements are blanket: no id list, no email, no other key names
+	// rows. A demonstration login the migrations planted must be cleared by
+	// the same statement that clears the seed's own logins, so a planted
+	// credential can never survive for want of a list entry.
+	if len(fake.args[0]) != 0 {
+		t.Fatalf("the staff statement must be blanket, carrying no arguments, got: %v", fake.args[0])
+	}
 	if !strings.Contains(fake.sqls[0], "password_hash = NULL") {
 		t.Fatalf("the staff statement must NULL the hash (the INVITED spelling), got: %s", fake.sqls[0])
 	}
-	if !strings.Contains(fake.sqls[1], "password_hash = $2") {
-		t.Fatalf("the portal statement must rewrite the hash through the marker parameter, got: %s", fake.sqls[1])
+	if !strings.Contains(fake.sqls[0], "password_hash IS NOT NULL") {
+		t.Fatalf("the staff statement must touch only rows that hold a hash (idempotency), got: %s", fake.sqls[0])
 	}
-	if len(fake.args[1]) != 2 || fake.args[1][0] != seedPortalUserID || fake.args[1][1] != portalNoPassword {
-		t.Fatalf("the portal statement must carry the seed portal id and the %q marker, got: %v", portalNoPassword, fake.args[1])
+	if len(fake.args[1]) != 1 || fake.args[1][0] != portalNoPassword {
+		t.Fatalf("the portal statement must carry only the %q marker, got: %v", portalNoPassword, fake.args[1])
 	}
-	// The staff statement must name every seed id, so a seed user can never
-	// keep a usable password while its neighbour loses theirs.
-	if len(fake.args[0]) != 1 {
-		t.Fatalf("the staff statement takes the id list as one argument, got %v", fake.args[0])
-	}
-	ids, ok := fake.args[0][0].([]string)
-	if !ok {
-		t.Fatalf("the staff statement's argument must be the id list, got %T", fake.args[0][0])
-	}
-	if len(ids) != len(seedStaffIDs) {
-		t.Fatalf("the statement must name all %d seed staff ids, got %d", len(seedStaffIDs), len(ids))
-	}
-	seen := map[string]bool{}
-	for _, id := range ids {
-		seen[id] = true
-	}
-	for _, want := range seedStaffIDs {
-		if !seen[want] {
-			t.Fatalf("the id list is missing the seed id %s", want)
-		}
+	if !strings.Contains(fake.sqls[1], "password_hash <> $1") {
+		t.Fatalf("the portal statement must touch only rows off the marker (idempotency), got: %s", fake.sqls[1])
 	}
 }

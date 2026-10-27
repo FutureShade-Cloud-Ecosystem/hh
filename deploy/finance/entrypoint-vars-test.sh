@@ -106,6 +106,54 @@ for leg in 'HH_BOX_KIND demo' 'APP_ENV production' 'CORE_SIGNIN_MODE demo'; do
 	esac
 done
 
+# The database name pair legs. The signing key file is pointed at a path
+# that does not exist in every leg, so a run that gets past the pair check
+# stops at the key step naming it: the pair verdict is readable from which
+# name the refusal carries.
+PAIR_KEY='CORE_SESSION_SIGNING_KEY_FILE=/nonexistent/session.pem'
+
+# Both set and different: refused, naming the pair, never a value.
+if out="$(run_box 'CORE_DATABASE_URL=postgres://other:other@127.0.0.1:2/other' "$PAIR_KEY" --)"; then
+	fail "with the database names set to different targets the entrypoint started"
+else
+	pass "with the database names set to different targets the entrypoint exits non zero"
+fi
+case "$out" in
+	*"DATABASE_URL"*"and"*"CORE_DATABASE_URL"*) pass "the refusal names the pair" ;;
+	*) fail "the refusal does not name the pair: $out" ;;
+esac
+case "$out" in
+	*"postgres://"*) fail "the refusal prints a value: $out" ;;
+	*) pass "the refusal prints no value" ;;
+esac
+case "$out" in
+	*"migrate"*|*"listening"*|*"finance-seed"*) fail "the entrypoint went past the checks with a differing pair: $out" ;;
+	*) pass "the entrypoint stopped at the pair check" ;;
+esac
+
+# Only DATABASE_URL set: accepted. The run reaches the signing key step
+# (its refusal names that file, not the pair).
+if out="$(run_box "$PAIR_KEY" --)"; then
+	fail "the acceptance leg ran to the end (the key refusal was expected): $out"
+fi
+case "$out" in
+	*"different targets"*) fail "a differing pair was blamed where only DATABASE_URL was set: $out" ;;
+	*) pass "only DATABASE_URL set is accepted at the pair check" ;;
+esac
+case "$out" in
+	*"CORE_SESSION_SIGNING_KEY_FILE"*) pass "the run got past the pair check to the key step" ;;
+	*) fail "the run did not reach the key step: $out" ;;
+esac
+
+# Both set and equal: accepted too.
+if out="$(run_box 'CORE_DATABASE_URL=postgres://unused:unused@127.0.0.1:1/unused' "$PAIR_KEY" --)"; then
+	fail "the equal pair leg ran to the end (the key refusal was expected): $out"
+fi
+case "$out" in
+	*"different targets"*) fail "an equal pair was refused: $out" ;;
+	*) pass "both database names set to the same target are accepted" ;;
+esac
+
 if [ "$FAILURES" -ne 0 ]; then
 	echo "$FAILURES failure(s)"
 	exit 1

@@ -11,11 +11,15 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
@@ -111,6 +115,25 @@ func migrateRole(getenv func(string) string) error {
 	}
 	log.Info("migrations complete")
 	return nil
+}
+
+// MigrationsAppliedCount reads the database's migration bookkeeping the way
+// migrate itself reads it: how many applied versions schema_migrations
+// records, and whether the bookkeeping table exists at all. An absent table
+// answers (0, false, nil): no migration was ever applied. The read lives
+// beside the runner that owns the table, so the bookkeeping has one reader
+// in this package; the finance box's boot guard is its caller.
+func MigrationsAppliedCount(ctx context.Context, pool *pgxpool.Pool) (int, bool, error) {
+	var count int
+	err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&count)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P01" {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	return count, true, nil
 }
 
 // seedRole folds the pin's cmd/seed behaviour: the representative demo

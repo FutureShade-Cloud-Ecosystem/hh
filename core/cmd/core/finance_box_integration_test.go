@@ -147,6 +147,36 @@ func TestIntegration_FinanceBoxBootsThroughTheWiring(t *testing.T) {
 	graph.pool.Close()
 }
 
+func TestIntegration_DemoseedRefusesTheFinanceBox(t *testing.T) {
+	t.Setenv("APP_ENV", "staging")
+	f, err := os.CreateTemp(t.TempDir(), "demoseed-out")
+	if err != nil {
+		t.Fatalf("temp output: %v", err)
+	}
+	defer f.Close()
+
+	// The environment leg: the box statement alone refuses the role, before
+	// it resolves a database or anything else. A finance box is never
+	// demoseed territory, whatever database it could name.
+	unsetForTest(t, "DATABASE_URL")
+	unsetForTest(t, "CORE_DATABASE_URL")
+	err = demoseedRole([]string{"-plan"}, f, financeBoxGetenv(map[string]string{"HH_BOX_KIND": "finance"}))
+	if err == nil || !strings.Contains(err.Error(), envBoxKind) {
+		t.Fatalf("demoseed must refuse a finance box on the box statement alone, naming HH_BOX_KIND, got %v", err)
+	}
+
+	// The database leg: a database whose box_kind is finance refuses the
+	// role through the settings seam, before the plan reads a branch or
+	// writes a row.
+	unsetForTest(t, "HH_BOX_KIND")
+	pool, dsn := freshMigratedBoxDB(t, "demoseedfin")
+	writeBoxKindForTest(t, context.Background(), pool, "finance")
+	err = demoseedRole([]string{"-plan"}, f, financeBoxGetenv(map[string]string{"CORE_DATABASE_URL": dsn}))
+	if err == nil || !strings.Contains(err.Error(), settings.KeyBoxKind) {
+		t.Fatalf("demoseed must refuse a finance marked database, naming box_kind, got %v", err)
+	}
+}
+
 // -- helpers ---------------------------------------------------------------------------------------
 
 // freshMigratedBoxDB builds a database the way the migrate role does: every
