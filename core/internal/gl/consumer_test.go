@@ -315,8 +315,9 @@ func TestAC14_TillOverShort(t *testing.T) {
 }
 
 // FW1-13, the till movement journals: a paid out debits the expense account the till rules hold and
-// credits the drawer; a paid in is the mirror; a drop and a lodgement book nothing at record time (a
-// lodgement's DR 1000 / CR 1020 is the bank match's journal).
+// credits the drawer; a paid in is the mirror; and a lodgement posts DR 1000 Bank / CR 1020
+// Undeposited Funds AT LODGEMENT (FROM-PRINCIPAL 117; FW1-05's match of a lodgement that carries its
+// journal posts nothing, so the pair never books twice). A drop books nothing.
 func TestTillMovementPostedLegs(t *testing.T) {
 	ctx := context.Background()
 
@@ -346,7 +347,7 @@ func TestTillMovementPostedLegs(t *testing.T) {
 	wantLeg(t, dIn, "1020", 4567, 0)
 	wantLeg(t, dIn, "6350", 0, 4567)
 
-	// A lodgement row that reaches the topic anyway books nothing.
+	// Lodgement $20 → DR 1000 / CR 1020 at lodgement.
 	fL := newFakeStore()
 	lSvc := newTestService(fL)
 	if err := lSvc.consume(ctx, ev("till.movement.posted", map[string]any{
@@ -355,8 +356,24 @@ func TestTillMovementPostedLegs(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("lodgement consume: %v", err)
 	}
-	if len(fL.journals) != 0 {
-		t.Fatalf("a lodgement must not book at record time, got %d journals", len(fL.journals))
+	dL := fL.lastInserted()
+	if dL == nil {
+		t.Fatalf("a lodgement posts no journal at lodgement")
+	}
+	wantLeg(t, dL, "1000", 2000, 0)
+	wantLeg(t, dL, "1020", 0, 2000)
+
+	// A drop row that reaches the topic anyway books nothing.
+	fD := newFakeStore()
+	dSvc := newTestService(fD)
+	if err := dSvc.consume(ctx, ev("till.movement.posted", map[string]any{
+		"movement_id": "m4", "session_id": "s1", "branch_id": "b1",
+		"movement_type": "DROP", "method": "CASH", "amount_cents": 2000,
+	})); err != nil {
+		t.Fatalf("drop consume: %v", err)
+	}
+	if len(fD.journals) != 0 {
+		t.Fatalf("a drop must not book a journal, got %d", len(fD.journals))
 	}
 }
 

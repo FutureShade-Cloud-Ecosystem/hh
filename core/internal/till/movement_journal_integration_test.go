@@ -18,16 +18,28 @@ package till_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// glPosterOver posts bankrec's clearing journals through the real GL service, the same
+// adapter shape the payments walk's tests use.
+type glPosterOver struct{ svc *gl.Service }
+
+func (a glPosterOver) PostJournal(ctx context.Context, in gl.ExternalJournal) (string, error) {
+	return a.svc.PostExternal(ctx, in)
+}
 
 func mjPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -159,6 +171,32 @@ func (w *mjWorld) legs(idempotencyKey string) map[string][2]int64 {
 	return out
 }
 
+// statementLine seeds one unmatched bank statement line for a lodgement match, the same shape the
+// payments walk's legs use, cleaned up by exact id.
+func (w *mjWorld) statementLine(cents int64) string {
+	w.t.Helper()
+	ctx := context.Background()
+	var acct string
+	if err := w.pool.QueryRow(ctx, `SELECT id::text FROM bank_accounts WHERE gl_account_code = '1000'`).Scan(&acct); err != nil {
+		w.t.Skipf("no seeded bank account: %v", err)
+	}
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	ref := "MJ-" + fmt.Sprint(os.Getpid())
+	var id string
+	if err := w.pool.QueryRow(ctx, `
+		INSERT INTO bank_statement_lines (bank_account_id, txn_date, description, reference, amount_cents, dedupe_hash, status)
+		VALUES ($1, $2, 'FW1-13 OLD LODGEMENT', $3, $4, $5, 'UNMATCHED') RETURNING id::text`,
+		acct, day, ref, cents, bankrec.DedupeHash(day, cents, "FW1-13 OLD LODGEMENT", ref)).Scan(&id); err != nil {
+		w.t.Fatalf("seed statement line: %v", err)
+	}
+	w.t.Cleanup(func() {
+		c := context.Background()
+		_, _ = w.pool.Exec(c, `DELETE FROM bank_matches WHERE statement_line_id = $1::uuid`, id)
+		_, _ = w.pool.Exec(c, `DELETE FROM bank_statement_lines WHERE id = $1::uuid`, id)
+	})
+	return id
+}
+
 // TestFW113PaidOutPostsItsJournal is the brief's red leg: a paid out moves the drawer's expected
 // cash and its journal (DR the rules' expense account, CR 1020) posts through the outbox exactly once.
 func TestFW113PaidOutPostsItsJournal(t *testing.T) {
@@ -221,14 +259,136 @@ func TestFW113PaidInMirrorsThePaidOut(t *testing.T) {
 	}
 }
 
-// TestFW113LodgementMeetsBankrecs1020: the lodgement's DR 1000 / CR 1020 is the bank match's
-// journal and must not also post at record time, or every matched deposit counts twice.
-func TestFW113LodgementMeetsBankrecs1020(t *testing.T) {
+// TestFW113LodgementPostsItsJournalAtLodgement is the ruled lodgement (FROM-PRINCIPAL 117, 120): the
+// lodgement posts DR 1000 Bank / CR 1020 Undeposited Funds at lodgement, through the outbox, once.
+// Round 1's pin held the opposite (book nothing at record time, the match posts it); the principal's
+// ruling overrules that reading, and FW1-05 makes the match of a lodgement that carries its journal
+// post nothing, so the pair never books twice.
+func TestFW113LodgementPostsItsJournalAtLodgement(t *testing.T) {
 	w := newMJWorld(t)
-	id := w.record("LODGEMENT", 20_00)
+	amount := int64(20_00)
+	id := w.record("LODGEMENT", amount)
 
 	w.drain()
-	if legs := w.legs("till.movement.posted:" + id); len(legs) != 0 {
-		t.Fatalf("a lodgement booked a second journal at record time; its bank leg is the match's: got %v", legs)
+	legs := w.legs("till.movement.posted:" + id)
+	if len(legs) == 0 {
+		t.Fatalf("a lodgement posts no journal at lodgement: no gl_journals row for idempotency_key till.movement.posted:%s", id)
+	}
+	bank, ok := legs["1000"]
+	if !ok || bank[0] != amount || bank[1] != 0 {
+		t.Fatalf("the lodgement's bank leg is wrong: want DR 1000 %d, got %v", amount, legs)
+	}
+	undeposited, ok := legs["1020"]
+	if !ok || undeposited[0] != 0 || undeposited[1] != amount {
+		t.Fatalf("the lodgement's undeposited leg is wrong: want CR 1020 %d, got %v", amount, legs)
+	}
+}
+
+// TestFW113LodgementJournalIsDatedByItsBusinessDay: the journal's instant is the movement's own, so
+// its period is the house zone's business day of the lodgement, never the outbox consumer's clock. A
+// Toronto late evening sits in the UTC next day, and the books must keep the dealer's day.
+func TestFW113LodgementJournalIsDatedByItsBusinessDay(t *testing.T) {
+	w := newMJWorld(t)
+	ctx := context.Background()
+
+	// The house zone's late evening on the last day of a 31 day month of the newest seeded year:
+	// 23:30 in America/Toronto is past midnight UTC, so a server-zone date would file next month.
+	var year int
+	if err := w.pool.QueryRow(ctx, `SELECT max(year) FROM fiscal_periods`).Scan(&year); err != nil {
+		t.Skipf("no seeded fiscal periods: %v", err)
+	}
+	day := time.Date(year, 7, 31, 23, 30, 0, 0, time.FixedZone("EDT", -4*3600))
+	movementID := "mj-dated-" + fmt.Sprint(os.Getpid())
+	payload, err := json.Marshal(map[string]any{
+		"movement_id":   movementID,
+		"session_id":    w.sessionID,
+		"branch_id":     w.branchID,
+		"movement_type": "LODGEMENT",
+		"method":        "CASH",
+		"amount_cents":  5_00,
+		"occurred_at":   day.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("marshal the dated payload: %v", err)
+	}
+	if _, err := w.pool.Exec(ctx,
+		`INSERT INTO events_outbox (topic, payload, occurred_at) VALUES ('till.movement.posted', $1, $2)`,
+		payload, day.UTC()); err != nil {
+		t.Fatalf("seed the outbox row: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = w.pool.Exec(c, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE idempotency_key = $1)`, "till.movement.posted:"+movementID)
+		_, _ = w.pool.Exec(c, `DELETE FROM gl_journals WHERE idempotency_key = $1`, "till.movement.posted:"+movementID)
+		_, _ = w.pool.Exec(c, `DELETE FROM events_outbox WHERE topic = 'till.movement.posted' AND payload->>'movement_id' = $1`, movementID)
+	})
+
+	// The consumer's own clock is a month later; the journal must still carry the movement's instant.
+	w.drain()
+
+	var postedAt time.Time
+	var fy, fm int
+	err = w.pool.QueryRow(ctx, `
+		SELECT j.posted_at, j.fiscal_year, fp.month
+		  FROM gl_journals j
+		  JOIN fiscal_periods fp ON fp.id = j.period_id
+		 WHERE j.idempotency_key = $1`, "till.movement.posted:"+movementID).Scan(&postedAt, &fy, &fm)
+	if err != nil {
+		t.Fatalf("a lodgement journal dated by its business day: no journal for %s: %v", movementID, err)
+	}
+	if !postedAt.Equal(day.UTC()) {
+		t.Fatalf("the lodgement journal is dated %s, want the movement's own instant %s", postedAt, day.UTC())
+	}
+	if fy != day.In(houseday.Location()).Year() || fm != int(day.In(houseday.Location()).Month()) {
+		t.Fatalf("the lodgement journal filed to %04d-%02d, want the house zone's day %04d-%02d", fy, fm,
+			day.In(houseday.Location()).Year(), day.In(houseday.Location()).Month())
+	}
+}
+
+// TestFW113OldLodgementKeepsTodaysMatch is the box-with-history leg (FROM-PRINCIPAL 117): a lodgement
+// from before this change has no lodgement journal, and its bank match keeps today's path, posting
+// DR 1000 / CR 1020 itself. Nothing is booked twice.
+func TestFW113OldLodgementKeepsTodaysMatch(t *testing.T) {
+	w := newMJWorld(t)
+	ctx := context.Background()
+
+	// A pre-change lodgement: the movement row lands without the round-trip, so no outbox row and no
+	// journal exist for it, exactly a box with history.
+	var oldID string
+	if err := w.pool.QueryRow(ctx, `
+		INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reference, created_by)
+		VALUES ($1::uuid, 'LODGEMENT', 'CASH', 15_00, 'pre change drop', 'OLD-SLIP', NULL)
+		RETURNING id::text`, w.sessionID).Scan(&oldID); err != nil {
+		t.Fatalf("seed the old lodgement: %v", err)
+	}
+
+	var n int
+	if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM gl_journals WHERE source_ref_id::text = $1`, oldID).Scan(&n); err != nil {
+		t.Fatalf("count the old lodgement's journals: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("the old lodgement already carries %d journals; the leg wants a pre-change row", n)
+	}
+
+	// Today's match: the statement line pairs the lodgement and the clearing journal posts.
+	line := w.statementLine(15_00)
+	bank := bankrec.NewService(bankrec.NewRepository(w.pool)).
+		WithJournalPoster(glPosterOver{gl.NewService(gl.NewRepository(w.pool)).WithPaymentReader(till.NewRepository(w.pool))}).
+		WithLodgements(till.NewRepository(w.pool))
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{
+		Mode: "manual", StatementLineID: line, TargetType: bankrec.TargetLodgement,
+		TargetRefID: oldID, AmountCents: 15_00, CanAccessBranch: bankrec.AllBranches,
+	}, w.userID)
+	if err != nil {
+		t.Fatalf("the old lodgement's match: %v", err)
+	}
+
+	legs := w.legs("bankrec:match:" + m.ID)
+	bankLegs, ok := legs["1000"]
+	if !ok || bankLegs[0] != 15_00 {
+		t.Fatalf("the old lodgement's match posted no bank leg: got %v", legs)
+	}
+	if undeposited := legs["1020"]; undeposited[1] != 15_00 {
+		t.Fatalf("the old lodgement's match posted no undeposited credit: got %v", legs)
 	}
 }
