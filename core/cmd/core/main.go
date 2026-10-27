@@ -55,7 +55,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: core <serve|worker|migrate|seed|demoseed|assist-billing-export> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: core <serve|worker|migrate|seed|demoseed|assist-billing-export|finance-user> [flags]")
 		os.Exit(2)
 	}
 	// Demo-only roles (the demo build's serve, the demo one-shots) answer
@@ -89,6 +89,11 @@ func main() {
 	case "assist-billing-export":
 		if err := assistBillingExportRole(os.Args[2:], os.Stdout, os.Stderr, os.Getenv); err != nil {
 			fmt.Fprintln(os.Stderr, "core: assist-billing-export:", err)
+			os.Exit(1)
+		}
+	case "finance-user":
+		if err := financeUserRole(os.Args[2:], os.Stdout, os.Stderr, os.Getenv); err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 	case "demoseed":

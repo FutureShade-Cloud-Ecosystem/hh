@@ -59,12 +59,13 @@ type finConsole struct {
 	srv      *httptest.Server
 	accounts map[string]finPerson // jwt -> the account it answers
 	people   map[string]finPerson // platform id -> the person
+	sessions map[string]string    // platform id -> the session id its JWTs name
 	sessSeq  int
 }
 
 func newFinConsole(t *testing.T, people ...finPerson) *finConsole {
 	t.Helper()
-	fc := &finConsole{accounts: map[string]finPerson{}, people: map[string]finPerson{}}
+	fc := &finConsole{accounts: map[string]finPerson{}, people: map[string]finPerson{}, sessions: map[string]string{}}
 	for _, p := range people {
 		fc.people[p.platformID] = p
 	}
@@ -97,13 +98,13 @@ func (fc *finConsole) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprintf(w, `{"total":1,"memberships":[{"teamId":%q,"userId":%q}]}`, "org-"+finOrgSlug, id)
 	case strings.HasPrefix(r.URL.Path, "/users/") && strings.HasSuffix(r.URL.Path, "/sessions"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/users/"), "/sessions")
 		fc.mu.Lock()
-		fc.sessSeq++
-		seq := fc.sessSeq
+		sessID := fc.sessions[id]
 		fc.mu.Unlock()
 		created := time.Now().Add(-10 * time.Minute).UTC().Format("2006-01-02T15:04:05.000+00:00")
 		fmt.Fprintf(w, `{"total":1,"sessions":[{"$id":%q,"$createdAt":%q,"provider":"email"}]}`,
-			fmt.Sprintf("fin-sess-%d", seq), created)
+			sessID, created)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
@@ -121,6 +122,7 @@ func (fc *finConsole) jwt(p finPerson) string {
 	sig := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("fin-signature-%d-%d", seq, time.Now().UnixNano())))
 	tok := seg(`{"alg":"HS256","typ":"JWT"}`) + "." + seg(payload) + "." + sig
 	fc.accounts[tok] = p
+	fc.sessions[p.platformID] = fmt.Sprintf("fin-sess-%d", seq)
 	return tok
 }
 
@@ -203,7 +205,9 @@ func TestIntegration_FinanceUser(t *testing.T) {
 	if err := settings.WriteBoxKindTx(ctx, pool, "finance"); err != nil {
 		t.Fatalf("marking the box: %v", err)
 	}
-	refuse("a role off the list", provisionA[:len(provisionA)-2], nil, "role")
+	offRole := append([]string{}, provisionA...)
+	offRole[len(offRole)-1] = "driver"
+	refuse("a role off the list", offRole, nil, "role")
 	offList := append([]string{}, provisionA...)
 	offList[1] = "someone-else@example.invalid"
 	refuse("an email off the allow list", offList, nil, "allow list")
