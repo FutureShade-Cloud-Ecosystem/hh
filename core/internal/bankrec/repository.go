@@ -671,6 +671,16 @@ func (r *Repository) UnmatchReach(ctx context.Context, matchID, userID string, r
 			return "", "", 0, fmt.Errorf("bankrec: release payment: %w", err)
 		}
 	}
+	if targetType == TargetLodgement && lineID != "" {
+		if _, err := tx.Exec(ctx,
+			`UPDATE payments
+			    SET status = 'RECEIVED',
+			        metadata = metadata - 'bank_statement_line_id',
+			        updated_at = now()
+			  WHERE metadata->>'bank_statement_line_id' = $1 AND status = 'DEPOSITED'`, lineID); err != nil {
+			return "", "", 0, fmt.Errorf("bankrec: release lodged payment: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", "", 0, fmt.Errorf("bankrec: commit unmatch: %w", err)
 	}

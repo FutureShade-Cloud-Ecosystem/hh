@@ -84,12 +84,37 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 		return nil, err
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT t.occurred_at, t.txn_type, t.amount_cents, COALESCE(i.invoice_no::text, ''), COALESCE(t.memo,'')
-		   FROM customer_transactions t
-		   LEFT JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
-		  WHERE t.customer_id = $1::uuid AND (t.occurred_at AT TIME ZONE $4::text)::date <= $2::date
-		    AND ($3::uuid[] IS NULL OR t.branch_id = ANY($3::uuid[]))
-		  ORDER BY t.occurred_at, t.created_at`, customerID, houseClockIn(zone, asOf), reach.SQLArg(), zone.Name())
+		`WITH activity AS (
+			SELECT t.occurred_at, t.created_at, t.txn_type, t.amount_cents,
+			       COALESCE(i.invoice_no::text, '') AS invoice_no, COALESCE(t.memo,'') AS memo
+			  FROM customer_transactions t
+			  LEFT JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
+			 WHERE t.customer_id = $1::uuid AND (t.occurred_at AT TIME ZONE $4::text)::date <= $2::date
+			   AND ($3::uuid[] IS NULL OR t.branch_id = ANY($3::uuid[]))
+			UNION ALL
+			SELECT (i.issue_date::timestamp AT TIME ZONE $4::text) AS occurred_at,
+			       i.created_at,
+			       i.doc_type AS txn_type,
+			       i.total_cents AS amount_cents,
+			       i.invoice_no::text AS invoice_no,
+			       i.invoice_no::text AS memo
+			  FROM invoices i
+			 WHERE i.customer_id = $1::uuid
+			   AND i.status IN ('FINALIZED', 'PARTIALLY_PAID')
+			   AND i.balance_cents <> 0
+			   AND i.issue_date <= $2::date
+			   AND ($3::uuid[] IS NULL OR i.branch_id = ANY($3::uuid[]))
+			   AND NOT EXISTS (
+			       SELECT 1 FROM customer_transactions ct
+			        WHERE ct.customer_id = i.customer_id
+			          AND ct.source_type = 'invoice'
+			          AND ct.source_ref_id = i.id
+			          AND ct.txn_type IN ('INVOICE', 'CREDIT_MEMO')
+			   )
+		)
+		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo
+		  FROM activity
+		 ORDER BY occurred_at, created_at`, customerID, houseClockIn(zone, asOf), reach.SQLArg(), zone.Name())
 	if err != nil {
 		return nil, fmt.Errorf("billing: statement lines: %w", err)
 	}
@@ -439,15 +464,37 @@ func (r *Repository) PreviewLines(ctx context.Context, customerID string, asOf t
 	if r.pool == nil {
 		return nil, errNoDB
 	}
+	zone, err := r.zoneFor(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT i.id::text, i.invoice_no::text, i.due_date, i.balance_cents,
-		        GREATEST(0, (($2::date - i.due_date))::int)
-		   FROM invoices i
-		  WHERE i.customer_id = $1::uuid
-		    AND i.status IN ('FINALIZED','PARTIALLY_PAID')
-		    AND i.balance_cents > 0
-		    AND i.doc_type = 'INVOICE'
-		  ORDER BY i.due_date ASC, i.id::text ASC`, customerID, asOf)
+		`WITH open_lines AS (
+			SELECT i.id::text AS doc_id,
+			       i.invoice_no::text AS doc_no,
+			       i.due_date,
+			       i.balance_cents,
+			       GREATEST(0, (($2::date - i.due_date))::int) AS days_overdue
+			  FROM invoices i
+			 WHERE i.customer_id = $1::uuid
+			   AND i.status IN ('FINALIZED','PARTIALLY_PAID')
+			   AND i.balance_cents <> 0
+			UNION ALL
+			SELECT COALESCE(ct.source_ref_id, ct.id)::text AS doc_id,
+			       COALESCE(NULLIF(MIN(ct.memo), ''), MIN(ct.txn_type)) AS doc_no,
+			       MIN((ct.occurred_at AT TIME ZONE $3::text)::date) AS due_date,
+			       SUM(ct.amount_cents) AS balance_cents,
+			       GREATEST(0, (($2::date - MIN((ct.occurred_at AT TIME ZONE $3::text)::date)))::int) AS days_overdue
+			  FROM customer_transactions ct
+			 WHERE ct.customer_id = $1::uuid
+			   AND ct.txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')
+			   AND ct.source_type <> 'invoice'
+			 GROUP BY ct.source_type, COALESCE(ct.source_ref_id, ct.id)
+			HAVING SUM(ct.amount_cents) <> 0
+		)
+		SELECT doc_id, doc_no, due_date, balance_cents, days_overdue
+		  FROM open_lines
+		 ORDER BY due_date ASC, doc_id ASC`, customerID, houseClockIn(zone, asOf), zone.Name())
 	if err != nil {
 		return nil, fmt.Errorf("billing: list statement preview lines: %w", err)
 	}
@@ -472,25 +519,37 @@ func (r *Repository) PreviewAging(ctx context.Context, customerID string) (State
 	if r.pool == nil {
 		return StatementPreviewAging{}, errNoDB
 	}
-	now, err := r.clockAt(ctx, time.Now())
+	zone, err := r.zoneFor(ctx)
 	if err != nil {
 		return StatementPreviewAging{}, err
 	}
-	today := now.Format("2006-01-02")
+	today := houseClockIn(zone, time.Now()).Format("2006-01-02")
 	var a StatementPreviewAging
 	err = r.pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(CASE WHEN ($2::date - due_date) <= 0 THEN balance_cents ELSE 0 END), 0),
-		        COALESCE(SUM(CASE WHEN ($2::date - due_date) BETWEEN 1 AND 30 THEN balance_cents ELSE 0 END), 0),
-		        COALESCE(SUM(CASE WHEN ($2::date - due_date) BETWEEN 31 AND 60 THEN balance_cents ELSE 0 END), 0),
-		        COALESCE(SUM(CASE WHEN ($2::date - due_date) BETWEEN 61 AND 90 THEN balance_cents ELSE 0 END), 0),
-		        COALESCE(SUM(CASE WHEN ($2::date - due_date) > 90 THEN balance_cents ELSE 0 END), 0),
-		        COALESCE(SUM(balance_cents), 0),
-		        COALESCE(SUM(CASE WHEN ($2::date - due_date) > 0 THEN balance_cents ELSE 0 END), 0)
-		   FROM invoices
-		  WHERE customer_id = $1::uuid
-		    AND status IN ('FINALIZED','PARTIALLY_PAID')
-		    AND balance_cents > 0
-		    AND doc_type = 'INVOICE'`, customerID, today).
+		`WITH open_ar AS (
+			SELECT balance_cents, due_date
+			  FROM invoices
+			 WHERE customer_id = $1::uuid
+			   AND status IN ('FINALIZED','PARTIALLY_PAID')
+			   AND balance_cents <> 0
+			UNION ALL
+			SELECT SUM(amount_cents) AS balance_cents,
+			       MIN((occurred_at AT TIME ZONE $3::text)::date) AS due_date
+			  FROM customer_transactions
+			 WHERE customer_id = $1::uuid
+			   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')
+			   AND source_type <> 'invoice'
+			 GROUP BY source_type, COALESCE(source_ref_id, id)
+			HAVING SUM(amount_cents) <> 0
+		)
+		SELECT COALESCE(SUM(CASE WHEN ($2::date - due_date) <= 0 THEN balance_cents ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN ($2::date - due_date) BETWEEN 1 AND 30 THEN balance_cents ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN ($2::date - due_date) BETWEEN 31 AND 60 THEN balance_cents ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN ($2::date - due_date) BETWEEN 61 AND 90 THEN balance_cents ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN ($2::date - due_date) > 90 THEN balance_cents ELSE 0 END), 0),
+		       COALESCE(SUM(balance_cents), 0),
+		       COALESCE(SUM(CASE WHEN ($2::date - due_date) > 0 THEN balance_cents ELSE 0 END), 0)
+		  FROM open_ar`, customerID, today, zone.Name()).
 		Scan(&a.CurrentCents, &a.Days30Cents, &a.Days60Cents, &a.Days90Cents, &a.Days90PlusCents,
 			&a.OpenCents, &a.OverdueCents)
 	if err != nil {

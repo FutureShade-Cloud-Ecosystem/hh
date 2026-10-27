@@ -294,38 +294,38 @@ func TestIntegration_PaymentVoid_RefusesTheActsItMustNotTouch(t *testing.T) {
 func TestIntegration_PaymentVoid_TheVoidedFeeCountsPaidNoMore(t *testing.T) {
 	w := newReversalGLWorld(t)
 	ctx := context.Background()
-	orig := w.registerReceipt("CHEQUE", 10_000)
+	bounced := w.registerReceipt("CHEQUE", 10_000)
 	w.drain()
 
-	// The fee, and the settle's own trail: the fee row and the ADJUSTMENT the paying receipt carries
-	// (PR 622's shape, which this tree's void reads and gives back).
+	// The bounced cheque's fee row and its open ADJUSTMENT on the customer's ledger (PR 622's shape).
 	var nsfID string
 	if err := w.r.obs.QueryRow(ctx,
 		`INSERT INTO payment_nsf (payment_id, customer_id, reason, fee_cents, fee_taxable)
 		 VALUES ($1::uuid, $2::uuid, 'cheque returned NSF', 4500, false) RETURNING id::text`,
-		orig, w.r.custID).Scan(&nsfID); err != nil {
+		bounced, w.r.custID).Scan(&nsfID); err != nil {
 		t.Fatalf("insert the nsf fee: %v", err)
 	}
-	payTheFee := func(paymentID string) {
-		if _, err := w.r.obs.Exec(ctx,
-			`UPDATE payments
-			    SET metadata = metadata || jsonb_build_object('nsf_fee_allocations', jsonb_build_object($2::text, 4500::bigint))
-			  WHERE id = $1::uuid`, paymentID, nsfID); err != nil {
-			t.Fatalf("stamp the fee allocation: %v", err)
-		}
-		if _, err := w.r.obs.Exec(ctx,
-			`INSERT INTO customer_transactions
-			   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
-			 SELECT p.customer_id, 'ADJUSTMENT', -4500, 0, 'payment_nsf', n.id, p.branch_id, 'NSF fee payment'
-			   FROM payment_nsf n JOIN payments p ON p.id = n.payment_id WHERE n.id = $1::uuid`, nsfID); err != nil {
-			t.Fatalf("the settle's fee row: %v", err)
-		}
+	if _, err := w.r.obs.Exec(ctx,
+		`INSERT INTO customer_transactions
+		   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+		 SELECT p.customer_id, 'ADJUSTMENT', 4500, 4500, 'payment_nsf', n.id, p.branch_id, 'NSF fee'
+		   FROM payment_nsf n JOIN payments p ON p.id = n.payment_id WHERE n.id = $1::uuid`, nsfID); err != nil {
+		t.Fatalf("insert the nsf fee ledger row: %v", err)
 	}
-	payTheFee(orig)
 
 	repo := payments.NewRepository(w.r.pool)
+	first, err := repo.ApplyReceived(ctx, payments.ApplyRequest{
+		CustomerID: w.r.custID, Method: "CHEQUE", Reference: "VOID-FEE-1",
+		IdempotencyKey: "void-fee-1-" + nsfID, ReceivedBy: w.r.userID,
+		InvoiceIDs: []string{nsfID}, AmountCents: 4_500,
+	})
+	if err != nil {
+		t.Fatalf("pay the fee the first time through ApplyReceived: %v", err)
+	}
+	w.drain()
+
 	if _, err := repo.VoidPayment(ctx, payments.VoidInput{
-		PaymentID: orig, Reason: "keyed against the wrong figures", ActorID: w.r.userID, IsManager: true,
+		PaymentID: first.PaymentID, Reason: "keyed against the wrong figures", ActorID: w.r.userID, IsManager: true,
 	}, time.Now(), houseday.DefaultZone()); err != nil {
 		t.Fatalf("void: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestIntegration_PaymentVoid_TheVoidedFeeCountsPaidNoMore(t *testing.T) {
 	// The move: the voided receipt carries the fee under voided_nsf_fee_allocations, and
 	// nsf_fee_allocations is gone from it.
 	var meta map[string]any
-	if err := w.r.obs.QueryRow(ctx, `SELECT metadata FROM payments WHERE id = $1::uuid`, orig).Scan(&meta); err != nil {
+	if err := w.r.obs.QueryRow(ctx, `SELECT metadata FROM payments WHERE id = $1::uuid`, first.PaymentID).Scan(&meta); err != nil {
 		t.Fatalf("read the voided receipt: %v", err)
 	}
 	if _, ok := meta["nsf_fee_allocations"]; ok {
@@ -344,9 +344,20 @@ func TestIntegration_PaymentVoid_TheVoidedFeeCountsPaidNoMore(t *testing.T) {
 		t.Fatalf("the voided receipt carries no voided_nsf_fee_allocations for the fee: what the receipt paid is lost from the history (%v)", meta["voided_nsf_fee_allocations"])
 	}
 
-	// Pay the fee again: a second receipt with the same fee in its own map, the settle's own shape.
-	again := w.registerReceipt("CASH", 4_500)
-	payTheFee(again)
+	// Pay the fee again through real ApplyReceived: because VoidPayment moved the first receipt's
+	// map to voided_nsf_fee_allocations, the fee is open again and ApplyReceived accepts the second
+	// payment against it.
+	second, err := repo.ApplyReceived(ctx, payments.ApplyRequest{
+		CustomerID: w.r.custID, Method: "CASH", Reference: "VOID-FEE-2",
+		IdempotencyKey: "void-fee-2-" + nsfID, ReceivedBy: w.r.userID,
+		InvoiceIDs: []string{nsfID}, AmountCents: 4_500,
+	})
+	if err != nil {
+		t.Fatalf("pay the fee again through ApplyReceived after voiding the first receipt: %v", err)
+	}
+	if second.AppliedCents != 4_500 {
+		t.Fatalf("second ApplyReceived applied %d, want 4500", second.AppliedCents)
+	}
 	w.drain()
 
 	// The fee the pay path counts (622's own expression: every payment's map except reversed,

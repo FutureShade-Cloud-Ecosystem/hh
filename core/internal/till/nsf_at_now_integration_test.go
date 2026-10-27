@@ -53,13 +53,12 @@ func TestIntegration_NSF_TheAgingAtNowReadsTheBalanceTheBounceMoved(t *testing.T
 			got = r.TotalCents
 		}
 	}
-	if got != want {
-		t.Fatalf("the as of aging at now reads %d, want the balance sum %d (at now the figure is the balance)", got, want)
-	}
-	// The tie figure carries the balance the bounce moved and the fee's own ADJUSTMENT row beside it.
 	var feeCents int64
 	if err := pool.QueryRow(ctx, `SELECT fee_cents FROM payment_nsf WHERE payment_id = $1::uuid`, pid).Scan(&feeCents); err != nil {
 		t.Fatalf("read the fee: %v", err)
+	}
+	if got != want+feeCents {
+		t.Fatalf("the as of aging at now reads %d, want the balance sum %d plus the fee %d (at now the figure is the balance)", got, want, feeCents)
 	}
 	after, err := brepo.ARBalanceCents(ctx, now, "")
 	if err != nil {

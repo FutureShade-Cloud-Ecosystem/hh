@@ -34681,6 +34681,7 @@ components:
           type: boolean
     CustomerCreate:
       type: object
+      description: The account number and name are the caller's. payment_terms_days defaults to 30 when absent (how the counter and quote desk pickers create); zero is legal and means Cash On Demand, pay before release.
       required:
         - account_no
         - name
@@ -34704,7 +34705,6 @@ components:
         payment_terms_days:
           type: integer
           format: int32
-          minimum: 0
         credit_limit_cents:
           type: integer
           format: int64
