@@ -533,3 +533,52 @@ func TestIntegration_Payout_DrawerNamesAClosedSessionIsRefused(t *testing.T) {
 		t.Errorf("the OPEN drawer pay out of the same payment was refused: %v", err)
 	}
 }
+
+// (10) A DRAWER pay out naming an OPEN session at another branch is refused in words, with nothing written (PR 606
+// round 3, S4 4.2).
+func TestIntegration_Payout_DrawerNamesAnotherBranchsOpenSessionIsRefused(t *testing.T) {
+	w := newReversalGLWorld(t)
+	home := w.openSession()
+	orig := w.registerReceipt("CASH", 10_000)
+	w.inSession(home, orig)
+	w.drain()
+	w.reverse(orig)
+	var other string
+	if err := w.r.obs.QueryRow(context.Background(),
+		`SELECT id::text FROM locations WHERE loc_type = 'BRANCH' AND id <> $1::uuid AND code IN ('TRT','KGN') LIMIT 1`, w.r.branchID).Scan(&other); err != nil {
+		t.Fatalf("another branch: %v", err)
+	}
+	foreign, err := till.NewRepository(w.r.pool).OpenSession(context.Background(), till.TillSession{
+		BranchID: other, Station: "S4P" + w.r.suffix, OpenedBy: w.r.userID, BlindClose: true}, nil)
+	if err != nil {
+		t.Fatalf("open the foreign drawer: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		for _, q := range []string{
+			`DELETE FROM payment_payouts WHERE till_session_id = $1::uuid`,
+			`DELETE FROM till_movements WHERE till_session_id = $1::uuid`,
+			`DELETE FROM till_sessions WHERE id = $1::uuid`,
+		} {
+			if _, err := w.r.obs.Exec(c, q, foreign); err != nil {
+				t.Errorf("cleanup foreign drawer %s: %v", foreign, err)
+			}
+		}
+	})
+	w.cleanupPayouts()
+	repo := w.payoutRepo()
+	before := w.payoutState(orig)
+	if _, err := w.payOut(repo, orig, payments.PayoutDrawer, 1_000, func(in *payments.PayoutInput) { in.TillSessionID = foreign }); err == nil || !strings.Contains(err.Error(), "belongs to another branch than the payment") {
+		t.Errorf("a drawer pay out naming another branch's OPEN session answered %v, want it refused in words about another branch", err)
+	}
+	if after := w.payoutState(orig); after != before {
+		t.Errorf("the refused foreign drawer pay out wrote: before %+v after %+v", before, after)
+	}
+	var foreignMoves int
+	if err := w.r.obs.QueryRow(context.Background(), `SELECT count(*) FROM till_movements WHERE till_session_id = $1::uuid AND movement_type = 'PAID_OUT'`, foreign).Scan(&foreignMoves); err != nil || foreignMoves != 0 {
+		t.Errorf("the foreign drawer carries %d paid out movements (err=%v), want 0", foreignMoves, err)
+	}
+	if _, err := w.payOut(repo, orig, payments.PayoutDrawer, 1_000, func(in *payments.PayoutInput) { in.TillSessionID = home }); err != nil {
+		t.Errorf("the home branch OPEN drawer pay out of the same payment was refused: %v", err)
+	}
+}
