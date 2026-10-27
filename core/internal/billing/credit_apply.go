@@ -56,10 +56,12 @@ package billing
 //
 // -- THE LOCKS -------------------------------------------------------------------------------------
 // The one money lock order (payments/LOCK-ORDER.md) as the reapply walks it: the named invoice rows
-// FOR NO KEY UPDATE in ascending id order, every one before the first balance move draws the
-// invoices counter. No payments counter is drawn: nothing here stamps a payments row. An ACCOUNT
-// credit's anchor customer_transactions row is taken FOR UPDATE after the invoice rows; nothing else
-// in the codebase locks that table's rows.
+// FOR NO KEY UPDATE in ascending id order, then an ACCOUNT credit's group anchor row FOR UPDATE
+// (lockCreditGroupAnchor, the one helper both doors call), and only then the first balance move's
+// draw of the invoices counter. No payments counter is drawn: nothing here stamps a payments row.
+// The anchor before the counter in BOTH doors is what keeps a staged reversal and apply of one
+// group from deadlocking (SQLSTATE 40P01, round 4): the reversal once drew the counter first and
+// the apply took the group first, so each could hold what the other needed.
 
 import (
 	"context"
@@ -424,29 +426,16 @@ SELECT COALESCE(source_type, ''), COALESCE(source_ref_id, id)::text, COALESCE(br
 		if in.CanAccessBranch != nil && !in.CanAccessBranch(creditBranch) {
 			return CreditApplication{}, NoSuchCreditError{CreditID: in.CreditID}
 		}
-		// The named row resolves to the group's FIRST NEGATIVE row, and that row is the lock every
-		// writer of the group queues on (S6 P2-1): two requests naming two different rows of one
-		// group must not each hold a different lock and read the same open figure. A group with no
-		// negative row left holds nothing open.
-		var anchorHold int
-		err = tx.QueryRow(ctx, `
-SELECT 1
-  FROM customer_transactions
- WHERE customer_id = $1::uuid
-   AND COALESCE(source_type, '') = $2
-   AND COALESCE(source_ref_id, id) = $3::uuid
-   AND COALESCE(branch_id::text, '') = $4
-   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')
-   AND amount_cents < 0
- ORDER BY occurred_at ASC, id ASC
- LIMIT 1
-   FOR UPDATE`,
-			in.CustomerID, groupSourceType, groupRef, creditBranch).Scan(&anchorHold)
+		// The anchor step is the shared helper's (round 4): the group's FIRST NEGATIVE row is
+		// the lock every writer of the group queues on (S6 P2-1), and it is taken here, before
+		// this door's counter draw below. No negative row left means the group holds nothing
+		// open.
+		anchorFound, err := lockCreditGroupAnchor(ctx, tx, in.CustomerID, groupSourceType, groupRef, creditBranch)
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return CreditApplication{}, CreditApplicationNotOpen
-			}
 			return CreditApplication{}, fmt.Errorf("credit apply: resolve the credit's anchor: %w", err)
+		}
+		if !anchorFound {
+			return CreditApplication{}, CreditApplicationNotOpen
 		}
 		if err := tx.QueryRow(ctx, `
 SELECT COALESCE(SUM(amount_cents), 0)
@@ -642,6 +631,45 @@ const creditFeedSeqCTE = `WITH iseq AS (
 	RETURNING next_value
 ) `
 
+// lockCreditGroupAnchor is the one anchor step both doors of an ACCOUNT credit share (round 4).
+//
+// THE ORDER RULE: every writer of a credit's group resolves and locks the group's ANCHOR ROW, the
+// group's FIRST NEGATIVE row (ORDER BY occurred_at ASC, id ASC, FOR UPDATE), BEFORE it draws the
+// invoices feed counter, and no door draws the counter while the group is still unlocked. The
+// apply once took the group first and the reversal drew the counter first, so a staged reversal
+// and apply of one group could each hold what the other needed and one answered SQLSTATE 40P01,
+// the books right and the door a raw 400. One shared helper, called before either door's counter
+// draw, is what keeps the order from drifting. WRITE_OFF stays out of the type list on purpose: a
+// write off is never value the customer holds (S6 P3), so it is no part of a credit group and
+// never the anchor.
+//
+// It answers found = false when the group holds no negative row left. The apply reads that as the
+// group holding nothing open and refuses (CreditApplicationNotOpen); the reversal keeps its
+// answer of today, the restore completed and creditOpenAfter reported at the sum as it stands,
+// because a reversal undoes an act of the past and does not judge the group's open figure.
+func lockCreditGroupAnchor(ctx context.Context, tx pgx.Tx, customerID, sourceType, groupRef, branchID string) (bool, error) {
+	var one int
+	err := tx.QueryRow(ctx, `
+SELECT 1
+  FROM customer_transactions
+ WHERE customer_id = $1::uuid
+   AND COALESCE(source_type, '') = $2
+   AND COALESCE(source_ref_id, id) = $3::uuid
+   AND COALESCE(branch_id::text, '') = $4
+   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')
+   AND amount_cents < 0
+ ORDER BY occurred_at ASC, id ASC
+ LIMIT 1
+   FOR UPDATE`, customerID, sourceType, groupRef, branchID).Scan(&one)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // -- the reversal ---------------------------------------------------------------------------------
 
 // ReverseCreditApplicationInput is one reversal request.
@@ -764,6 +792,28 @@ SELECT invoice_no::text, customer_id::text, total_cents, balance_cents, holdback
 	}
 	amount := record.AmountCents
 
+	// ACCOUNT: the group's identity and the anchor lock come BEFORE the counter (round 4, the
+	// shared helper both doors call). The record names one row of the group; the anchor is the
+	// group's first negative row, whatever row the record names. No negative row left keeps the
+	// reversal's answer of today: the restore completes and creditOpenAfter reports the sum as
+	// it stands.
+	isAccount := record.CreditKind == CreditKindAccount
+	var groupSourceType, groupRef, groupBranch string
+	if isAccount {
+		if err := tx.QueryRow(ctx, `
+SELECT COALESCE(source_type, ''), COALESCE(source_ref_id, id)::text, COALESCE(branch_id::text, '')
+  FROM customer_transactions WHERE id = $1::uuid FOR UPDATE`, record.CreditID).
+			Scan(&groupSourceType, &groupRef, &groupBranch); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return CreditApplicationReversed{}, NoSuchCreditError{CreditID: record.CreditID}
+			}
+			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: read the account credit: %w", err)
+		}
+		if _, err := lockCreditGroupAnchor(ctx, tx, invCust, groupSourceType, groupRef, groupBranch); err != nil {
+			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: resolve the credit's anchor: %w", err)
+		}
+	}
+
 	// Restore the invoice side.
 	after := invBalance + amount
 	if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
@@ -802,21 +852,20 @@ UPDATE invoices
 			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: restore the memo: %w", err)
 		}
 	case CreditKindAccount:
-		var anchorType, anchorRef string
+		// The group's sum, read under the anchor lock the door took before the counter: no
+		// other writer of the group can sit between the anchor and its commit, so this is the
+		// committed state, not a raced one.
 		var anchorSum int64
 		if err := tx.QueryRow(ctx, `
-SELECT COALESCE(a.source_type, ''), COALESCE(a.source_ref_id, a.id)::text,
-	       (SELECT COALESCE(SUM(g.amount_cents), 0) FROM customer_transactions g
-	         WHERE g.customer_id = a.customer_id
-	           AND COALESCE(g.source_type, '') = COALESCE(a.source_type, '')
-	           AND COALESCE(g.source_ref_id, g.id) = COALESCE(a.source_ref_id, a.id)
-	           AND COALESCE(g.branch_id::text, '') = COALESCE(a.branch_id::text, '')
-	           AND g.txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO'))
-  FROM customer_transactions a WHERE a.id = $1::uuid FOR UPDATE`, record.CreditID).Scan(&anchorType, &anchorRef, &anchorSum); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return CreditApplicationReversed{}, NoSuchCreditError{CreditID: record.CreditID}
-			}
-			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: read the account credit: %w", err)
+SELECT COALESCE(SUM(amount_cents), 0)
+  FROM customer_transactions
+ WHERE customer_id = $1::uuid
+   AND COALESCE(source_type, '') = $2
+   AND COALESCE(source_ref_id, id) = $3::uuid
+   AND COALESCE(branch_id::text, '') = $4
+   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')`,
+			invCust, groupSourceType, groupRef, groupBranch).Scan(&anchorSum); err != nil {
+			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: read the credit's group: %w", err)
 		}
 		creditOpenAfter = -anchorSum + amount
 		runningBefore, err := customerRunningAR(ctx, tx, invCust)

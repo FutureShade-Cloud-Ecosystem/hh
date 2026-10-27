@@ -638,12 +638,16 @@ func TestIntegration_FW1_12b_TwoAppliesNamingDifferentRowsOfOneGroupCannotBothPa
 	}
 }
 
-// TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce pins the residual the round 2
-// report named: an application's record names the row its request named, and that row can be the
-// group's offsetting row, so the reversal locks that row instead of the group's anchor. Two
-// concurrent reversals of two applications of one ACCOUNT group would then hold two different
-// locks and read the group's sum from the same pre commit state, exactly the shape P2-1 raced the
-// apply door with.
+// TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce pins the exactly once restore
+// under concurrency: two concurrent reversals of two applications of one ACCOUNT group, the two
+// records sitting on two different invoices and naming two different rows of the group, must both
+// answer, restore each side exactly once, and leave the group's sum at what a serial pair gives.
+//
+// What it pins as of round 4: both reversals take the group's anchor through the shared helper
+// BEFORE either draws the counter, so the pair serializes on the anchor whatever rows the records
+// name, and the pre commit sum read the round 2 report feared cannot happen. Round 3 measured
+// this leg green before that order existed (the counter first draw serialized the pair then);
+// the anchor serializes it now, and the leg must hold either way.
 //
 // The race is staged the P2-1 leg's own deterministic way: two applications of one group, the
 // first recorded against the group's original row and the second against the offsetting row, the
