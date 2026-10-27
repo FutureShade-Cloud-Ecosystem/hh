@@ -672,6 +672,10 @@ test("a month with a deposit in transit and an outstanding cheque shows the reco
 
   const shotsDir = process.env["FW1_04_SHOTS_DIR"];
   if (shotsDir) {
+    // The starting point form shows filled, as the Controller meets it: the entries listed, the result below.
+    await page.locator("[data-field='br-cutover-date']").fill(cutoverDay().iso);
+    await page.locator("[data-field='br-cutover-balance']").fill("25,000.00");
+    await expect(page.locator("[data-cutover-entries] li")).toHaveCount(3);
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.evaluate(() => document.documentElement.removeAttribute("data-theme"));
     await page.screenshot({ path: `${shotsDir}/bankrec-month-end-1440x900-charcoal.png`, fullPage: true });
