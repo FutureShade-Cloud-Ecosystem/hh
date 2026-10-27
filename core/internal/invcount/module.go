@@ -1,6 +1,6 @@
 // Package invcount is the W6 A-15 Inventory Counts module: snapshot-frozen cycle counts, variance valued at
 // weighted-average, reason codes with per-reason GL mapping + maker-checker, and the monthly inventory→GL
-// reconciliation (lazy current-month run-once). It owns the 0040 count_* + inventory_recon_runs tables and
+// reconciliation (kept per period and branch, re-runnable). It owns the 0040 count_* + inventory_recon_runs tables and
 // posts variance adjustments through the inventory seam + the reason-coded GL rule. Depends on INV-CORE.
 //
 // SCAFFOLD STATUS: exported types, the frozen consumer-declared seams, and the service signatures are frozen;
@@ -131,8 +131,8 @@ func (s *Service) PostSheet(ctx context.Context, sheetID string) error {
 	return postCountedSheet(ctx, s.store(), s.stock, s.gl, s.rules, sheetID)
 }
 
-// ReconcileMonth runs the lazy inventory→GL recon (run-once per period+branch) and returns the tie delta
-// (subledger − GL 1200). A second call for the same period returns the same run unchanged. Fenced to the
+// ReconcileMonth runs the lazy inventory→GL recon (kept per period and branch, re-runnable: the
+// latest run stands) and returns the tie delta (subledger − GL 1200 through the period). Fenced to the
 // caller's branch reach (FW1-10, the DIB-390 rule every count-sheet transition already carries): the
 // recon takes a REQUIRED branch, which the caller must reach. FROZEN signature.
 func (s *Service) ReconcileMonth(ctx context.Context, year, month int, branchID string) (int64, error) {

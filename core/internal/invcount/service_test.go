@@ -351,7 +351,7 @@ func TestPostCountedSheet_MakerCheckerGate(t *testing.T) {
 	}
 }
 
-func TestReconcileMonth_LazyRunOnce(t *testing.T) {
+func TestReconcileMonth_KeptPerPeriodAndReRunnable(t *testing.T) {
 	st := newFakeStore()
 	stock := &fakeStock{snaps: []Snapshot{
 		{ProductID: "p1", OnHandBase: 100, AvgCostCents: 350}, // 35000
@@ -373,7 +373,7 @@ func TestReconcileMonth_LazyRunOnce(t *testing.T) {
 		t.Fatalf("inserts = %d, want 1", st.inserts)
 	}
 
-	// second call for the same period: run-once → no new insert, same row
+	// second call for the same period: the same row is upserted, its identity stands
 	r2, err := reconcileMonth(context.Background(), st, stock, glBal, "u1", 2026, 7, "br1")
 	if err != nil {
 		t.Fatal(err)

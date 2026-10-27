@@ -388,14 +388,18 @@ test("the reconciliation needs a year, ties out one month and is off in the othe
   const tied = await ctl("GET", `/api/v1/tax/recon?year=${prior.year}&month=${prior.month}`);
   assert.equal(tied.status, 200);
   holds("TaxReconReport", tied.json);
-  assert.equal(tied.json.collected_cents, RECON.tiedCents);
+  assert.equal(tied.json.collected_cents, RECON.tiedCollectedCents);
+  assert.equal(tied.json.input_tax_cents, RECON.tiedITCsCents);
   assert.equal(tied.json.variance_cents, 0);
   assert.equal(tied.json.tied_out, true);
   const off = await ctl("GET", `/api/v1/tax/recon?year=${older.year}&month=${older.month}`);
   holds("TaxReconReport", off.json);
-  assert.equal(off.json.variance_cents, RECON.olderLedgerCents - RECON.olderCollectedCents);
+  assert.equal(off.json.variance_cents, RECON.olderLedgerCents - (RECON.olderCollectedCents - RECON.olderITCsCents));
   assert.equal(off.json.tied_out, false);
-  assert.ok(coreSource.includes("rep.VarianceCents = rep.GLPayableCents - rep.CollectedCents"), "the core's variance is no longer the ledger less the collected tax");
+  assert.ok(
+    coreSource.includes("rep.VarianceCents = rep.GLPayableCents - (rep.CollectedCents - rep.InputTaxCreditsCents)"),
+    "the core's variance no longer nets the documents against the ledger's month movement",
+  );
   const empty = await ctl("GET", "/api/v1/tax/recon?year=1999&month=1");
   assert.equal(empty.json.collected_cents, 0);
   assert.equal(empty.json.tied_out, true);

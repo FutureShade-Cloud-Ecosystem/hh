@@ -1626,9 +1626,10 @@ components:
     TaxReconReport:
       type: object
       description: >-
-        The HST reconciliation: collected tax on the decision side tied to
-        the GL liability account balances for the period.
-      required: [year, month, collected_cents, gl_payable_cents, gl_federal_cents, gl_ontario_cents, variance_cents, tied_out]
+        The HST reconciliation (FW1-11): the month's documents on both sides,
+        sales HST collected and vendor bill input tax credits shown apart,
+        netted against the GL 2200 movement for the same period.
+      required: [year, month, collected_cents, input_tax_cents, gl_payable_cents, gl_federal_cents, gl_ontario_cents, variance_cents, tied_out]
       properties:
         year: { type: integer, format: int32 }
         month: { type: integer, format: int32 }
@@ -1636,11 +1637,15 @@ components:
         collected_cents:
           type: integer
           format: int64
-          description: Sum of net-collected tax on the decision side
+          description: Sales tax on the period's documents (invoices less credit memos)
+        input_tax_cents:
+          type: integer
+          format: int64
+          description: Input tax credits on the period's posted vendor bills
         gl_payable_cents:
           type: integer
           format: int64
-          description: The GL payable account balance
+          description: The GL 2200 movement for the period (credits less debits)
         gl_federal_cents:
           type: integer
           format: int64
@@ -1652,5 +1657,5 @@ components:
         variance_cents:
           type: integer
           format: int64
-          description: Payable balance minus collected; zero means tied out
+          description: The GL movement minus the documents' net (collected less input tax); zero means tied out
         tied_out: { type: boolean }

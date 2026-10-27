@@ -3028,6 +3028,7 @@ export type TaxReconReport = {
   month: number;
   branch_id?: string;
   collected_cents: number;
+  input_tax_cents: number;
   gl_payable_cents: number;
   gl_federal_cents: number;
   gl_ontario_cents: number;

@@ -153,7 +153,7 @@ test("a read-only role is refused the new sheet in words that name who may", asy
   await expect(page.locator("[data-error]")).toContainText("look but not touch");
 });
 
-test("the recon reads the run, its history and the negative stock; a second look runs nothing twice", async ({ page, request }) => {
+test("the recon reads the run, its history and the negative stock; a second look re-runs it", async ({ page, request }) => {
   await openCounts(page, request, "recon");
   await page.locator('[data-field="recon-branch"]').selectOption({ label: "Point Loma yard" });
   await page.getByRole("button", { name: "Run the tie-out" }).click();

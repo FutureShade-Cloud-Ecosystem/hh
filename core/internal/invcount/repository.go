@@ -345,8 +345,8 @@ func (r *Repository) GetReconRun(ctx context.Context, year, month int, branchID 
 	return rr, true, nil
 }
 
-// InsertReconRun inserts the period run; on a unique-index collision (a concurrent run-once winner) it returns
-// the existing row instead, the lazy run-once convergence.
+// InsertReconRun upserts the period run (FW1-11: a period re-runs, the latest run stands); two
+// concurrent runs converge on the same row.
 func (r *Repository) InsertReconRun(ctx context.Context, in ReconRun) (ReconRun, error) {
 	if r.pool == nil {
 		return ReconRun{}, errNoDB

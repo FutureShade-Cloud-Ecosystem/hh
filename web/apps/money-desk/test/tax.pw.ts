@@ -398,23 +398,26 @@ test("the reconciliation ties out one month, is off in another in words, and hol
   await expect(page.locator("[data-field='tx-r-month'] option:checked")).toHaveText(prior.words.split(" ")[0] ?? "");
   await page.getByRole("button", { name: "Reconcile", exact: true }).click();
   const result = page.locator("[data-recon-result]");
+  // FW1-11: the two document sides ride apart, and the ledger's month movement nets them.
   await expect(result.locator("[data-collected]")).toHaveText("$4,823.75");
-  await expect(result.locator("[data-ledger]")).toHaveText("$4,823.75");
+  await expect(result.locator("[data-input-tax]")).toHaveText("$873.00");
+  await expect(result.locator("[data-ledger]")).toHaveText("$3,950.75");
   await expect(result).toContainText("Tied out");
-  await expect(page.locator("[data-recon-words]")).toContainText(`${prior.words}: The ledger holds the tax the sales collected.`);
+  await expect(page.locator("[data-recon-words]")).toContainText(`${prior.words}: The ledger's month movement equals the month's documents: sales tax collected less the tax on vendor bills.`);
   // The month before that is off, and the direction is in words.
   await page.getByRole("textbox", { name: "Year", exact: true }).fill(String(older.year));
   await page.locator("[data-field='tx-r-month']").selectOption({ index: older.month });
   await page.getByRole("button", { name: "Reconcile", exact: true }).click();
   await expect(result.locator("[data-collected]")).toHaveText("$3,912.50");
+  await expect(result.locator("[data-input-tax]")).toHaveText("$815.00");
   await expect(result.locator("[data-ledger]")).toHaveText("$3,899.00");
-  await expect(result).toContainText("Off by $13.50");
-  await expect(page.locator("[data-recon-words]")).toContainText(`${older.words}: The ledger holds less tax than the sales collected.`);
+  await expect(result).toContainText("Off by $801.50");
+  await expect(page.locator("[data-recon-words]")).toContainText(`${older.words}: The ledger's month movement holds more tax than the month's documents booked: sales tax collected less the tax on vendor bills.`);
   // A whole year with nothing in it is tied out at zero, not a blank.
   await page.getByRole("textbox", { name: "Year", exact: true }).fill("1999");
   await page.locator("[data-field='tx-r-month']").selectOption({ label: "Whole year" });
   await page.getByRole("button", { name: "Reconcile", exact: true }).click();
-  await expect(page.locator("[data-recon-words]")).toContainText("1999: The ledger holds the tax the sales collected.");
+  await expect(page.locator("[data-recon-words]")).toContainText("1999: The ledger's month movement equals the month's documents: sales tax collected less the tax on vendor bills.");
   await expect(result.locator("[data-collected]")).toHaveText("$0.00");
   // A year that is not a year is held.
   await page.getByRole("textbox", { name: "Year", exact: true }).fill("99");

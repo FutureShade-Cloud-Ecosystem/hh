@@ -3589,6 +3589,7 @@ type TaxReconReport struct {
 	Month          int32   `json:"month"`
 	BranchId       *string `json:"branch_id,omitempty"`
 	CollectedCents int64   `json:"collected_cents"`
+	InputTaxCents  int64   `json:"input_tax_cents"`
 	GlPayableCents int64   `json:"gl_payable_cents"`
 	GlFederalCents int64   `json:"gl_federal_cents"`
 	GlOntarioCents int64   `json:"gl_ontario_cents"`
