@@ -42,7 +42,10 @@ var fw1BranchCensusWriters = []string{
 }
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
-// item ("FW1-05" for bankrec paths, "FW1-08b" for the others).
+// item ("FW1-05" for bankrec paths, "FW1-08b" for the others). year_end_close
+// left this map with the FW1-09b merge: the year end closes each branch's
+// results in its own closing journal, every leg under its branch stamp, so it
+// no longer leaves a NULL branch_id line (the census STALE SKIP caught it).
 var fw1BranchCensusRed = map[string]string{
 	"bankrec_manual_match_payment":      "FW1-05",
 	"bankrec_manual_match_lodgement":    "FW1-05",
@@ -52,7 +55,6 @@ var fw1BranchCensusRed = map[string]string{
 	"reverse_journal_without_branch":    "FW1-08b",
 	"recurring_journal_run":             "FW1-08b",
 	"outbox_tax_relief_assessed":        "FW1-08b",
-	"year_end_close":                    "FW1-08b",
 }
 
 // fw1NonGLWriterSite identifies a non-GL journal writer call site or outbox
