@@ -642,6 +642,11 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	if reversed {
 		return nsfReverseResult{}, errPaymentReversed
 	}
+	// A bounce undoes a live receipt: a reversing entry, a voided desk receipt (FW1-06b) or a refund row has
+	// nothing to give back, and reinstating its invoices would post money that never arrived.
+	if status != "RECEIVED" && status != "DEPOSITED" {
+		return nsfReverseResult{}, errPaymentNotBounceable
+	}
 	// Capture whether the receipt had already settled to the bank (DEPOSITED) BEFORE we flip it to BOUNCED.
 	// The GL payment.bounced consumer needs this to reverse the right leg: DEPOSITED → bank 1000, else the
 	// still-undeposited 1020. It cannot be recovered from PaymentReader after the flip, so it rides the event.

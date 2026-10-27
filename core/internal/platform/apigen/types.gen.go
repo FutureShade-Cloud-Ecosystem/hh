@@ -1084,6 +1084,21 @@ type PaymentsReversalResult struct {
 	ReopenedInvoices  []string `json:"reopened_invoices"`
 }
 
+type PaymentsVoidRequest struct {
+	Reason string `json:"reason"`
+}
+
+type PaymentsVoidResult struct {
+	Label            string    `json:"label"`
+	PaymentId        string    `json:"payment_id"`
+	PaymentNo        string    `json:"payment_no"`
+	AmountCents      int64     `json:"amount_cents"`
+	Reason           string    `json:"reason"`
+	VoidedAt         time.Time `json:"voided_at"`
+	ReopenedInvoices []string  `json:"reopened_invoices"`
+	HeldCents        int64     `json:"held_cents"`
+}
+
 type PaymentsHeld struct {
 	PaymentId    string `json:"payment_id"`
 	PaymentNo    string `json:"payment_no"`

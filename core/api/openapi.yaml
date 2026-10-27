@@ -2745,6 +2745,48 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/ar/payments/{id}/void:
+    post:
+      operationId: paymentsVoidPayment
+      tags:
+        - staff-payments
+      summary: Void a mis-keyed desk receipt as never taken
+      description: "A receipt keyed against the wrong figures, caught on the dealer day it was taken, is undone as never taken: the receipt's allocations go, its invoices re-open at their full balances, and the GL books the receipt's own legs mirrored, so no money is held in 2310. A deposited, bounced, refunded or already voided payment is refused, as is a receipt from an earlier dealer day: those undos are a reversal's business. A payment taken on a till session is refused too, the drawer count owns that undo."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentsVoidRequest"
+      responses:
+        "201":
+          description: The void as recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentsVoidResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: The void is not wired on this server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/ar/payments/{id}/reapply:
     post:
       operationId: paymentsReapplyHeld
@@ -32596,6 +32638,54 @@ components:
           items:
             type: string
             format: uuid
+    PaymentsVoidRequest:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          description: Mandatory; a void without a reason is refused
+    PaymentsVoidResult:
+      type: object
+      description: "The void of a mis-keyed desk receipt. Nothing is held: the money never left the building."
+      required:
+        - label
+        - payment_id
+        - payment_no
+        - amount_cents
+        - reason
+        - voided_at
+        - reopened_invoices
+        - held_cents
+      properties:
+        label:
+          type: string
+          enum:
+            - VOID
+        payment_id:
+          type: string
+          format: uuid
+        payment_no:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        reason:
+          type: string
+        voided_at:
+          type: string
+          format: date-time
+        reopened_invoices:
+          type: array
+          description: The invoices the receipt had settled, open again at their full balances
+          items:
+            type: string
+            format: uuid
+        held_cents:
+          type: integer
+          format: int64
+          description: Always zero; the void is not a reversal and holds nothing in 2310
     PaymentsHeld:
       type: object
       required:

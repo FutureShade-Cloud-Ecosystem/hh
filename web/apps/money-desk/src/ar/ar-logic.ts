@@ -465,6 +465,12 @@ export function canLiftHolds(roleCode: string): boolean {
   return roleCode === "financial_controller" || roleCode === "general_manager";
 }
 
+/** The true void of a mis-keyed receipt is a manager act, the same pair the lift hold gate trusts (FW1-06b). The
+ * server re-refuses: this only hides the button from roles the route would turn away. */
+export function canVoidReceipt(roleCode: string): boolean {
+  return canLiftHolds(roleCode);
+}
+
 export function paymentReferenceRequired(method: string): boolean {
   return ["CHEQUE", "EFT", "WIRE"].includes(method.trim().toUpperCase());
 }

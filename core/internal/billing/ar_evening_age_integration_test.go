@@ -120,7 +120,7 @@ func TestIntegrationEveningAge_TieOutBalanceCountsAnInvoiceIssuedOnTheExplicitDa
 	n := ns(t)
 	cust := seedCustomer(t, pool, n)
 
-	const day, nextDay = "2031-03-10", "2031-03-11"
+	const day, nextDay = "1990-03-10", "1990-03-11"
 	asOf, err := houseday.EndOfDay(day)
 	if err != nil {
 		t.Fatal(err)

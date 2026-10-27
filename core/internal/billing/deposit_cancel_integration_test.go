@@ -43,8 +43,29 @@ func seedDepositOrderAt(t *testing.T, pool *pgxpool.Pool, tag string, balance in
 		orderID, balance, dep); err != nil {
 		t.Fatalf("set the deposit balance: %v", err)
 	}
+	// The paid part carries the dated act it owes, the receipt the desk would
+	// have taken for it: the as of rebuild (the aging and the 1100 tie figure)
+	// reconstructs a document's balance from the acts that moved it, so a hand
+	// set balance with no act behind it reads as still owed. The same reason
+	// the seed plants the receipt that settled the paid demo invoice.
+	if paid := 4_000 - balance; paid > 0 {
+		var payID string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, branch_id)
+			 VALUES (nextval('payment_no_seq')::text, $1::uuid, 'CHEQUE', $2, 'RECEIVED', $3::uuid)
+			 RETURNING id::text`, cust, paid, trentonBranch).Scan(&payID); err != nil {
+			t.Fatalf("seed the paid part's receipt: %v", err)
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents, created_at)
+			 VALUES ($1::uuid, $2::uuid, $3, now())`, payID, dep, paid); err != nil {
+			t.Fatalf("seed the paid part's allocation: %v", err)
+		}
+	}
 	t.Cleanup(func() {
 		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id::text = $1`, dep)
+		_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id::text = $1`, cust)
 		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE source_ref_id::text = $1`, dep)
 		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE (payload->>'invoice_id')::uuid = $1::uuid`, dep)
 		_, _ = pool.Exec(c, `DELETE FROM audit_log WHERE entity_id::text = $1`, dep)
