@@ -13,7 +13,8 @@ import {
   landingNeedsFrom,
 
 } from "../src/manager-api.ts";
-import { renderKpiCard, renderDeliveriesCard, renderNeedsYouCard } from "../src/views.ts";
+import { renderC10Landing, renderKpiCard, renderDeliveriesCard, renderLanding, renderNeedsYouCard } from "../src/views.ts";
+import { UNSOURCED_NEEDS } from "../src/manager-logic.ts";
 
 
 function flattenTemplate(value) {
@@ -202,8 +203,7 @@ test("the stops card counts the dispatch board's own runs and stops, under its o
   assert.equal(none, null);
 });
 
-test("the needs card ranks the caller's pending approvals by the money at stake", () => {
-  const rows = [
+test("the needs card ranks the caller's pending approvals by the money at stake", () => {  const rows = [
     {
       id: "ap-1", branch_id: "b-trt", policy_type: "MARGIN_BELOW_MINIMUM",
       detail: "Quote Q-2041 line 2 is below the margin floor", subject_ref: "", amount_cents: 7_714_6, status: "PENDING",
@@ -236,4 +236,45 @@ test("the needs card ranks the caller's pending approvals by the money at stake"
   assert.doesNotMatch(markup, /Fieldstone|RT-1017/);
 
   assert.deepEqual(landingNeedsFrom([]), []);
+});
+
+// FROM-PRINCIPAL 158 round 6, P2-2 and P2-3: the glance strip holds a today
+// figure, an all time rate and a standing balance, so its heading says what
+// the strip is, and the page carries one Today heading only (the bento's).
+test("the glance strip is headed At a glance, and no second Today heading rides under it", () => {
+  const kpis = landingKpisFrom(CORE_TILES, BRANCH_NAMES);
+  const markup = flattenTemplate(renderC10Landing("combined", kpis, null, []));
+  assert.match(markup, />At a glance</);
+  assert.doesNotMatch(markup, />Today</);
+  // The section's own name follows its heading: no scope the strip cannot keep.
+  assert.match(markup, /aria-label="Branch figures at a glance"/);
+});
+
+// FROM-PRINCIPAL 158 round 6, P2-1: the foot under a real figure names what is
+// missing (the trend the original's tiles carried), never the figure's own
+// availability. The hero, the open orders stat and the by branch bars all sit
+// on the same coming arm of the tile foot.
+test("a tile with a real figure and nowhere to open names the missing trend, never the figure", () => {
+  const widgets = [
+    { widget_key: "hero.deliveries", shape: "stat", measure: "deliveries.today", split: "none", range: "today", size: "M", title: "Deliveries today", position: 1, visible: true, label: "", kind: "count", module: "dispatch", span_cols: 6, span_rows: 1 },
+    { widget_key: "orders.open", shape: "stat", measure: "orders.open", split: "none", range: "now", size: "M", title: "Open orders", position: 2, visible: true, label: "", kind: "count", module: "order", span_cols: 3, span_rows: 1 },
+    { widget_key: "sales.by.branch", shape: "bars", measure: "sales.today", split: "branch", range: "today", size: "M", title: "Sales by branch", position: 3, visible: true, label: "", kind: "money_cents", module: "order", span_cols: 6, span_rows: 1 },
+  ];
+  const data = new Map([
+    ["hero.deliveries", { key: "hero.deliveries", state: "ok", total: 14, points: [], note: "", range: "today" }],
+    ["orders.open", { key: "orders.open", state: "ok", total: 12, points: [], note: "", range: "now" }],
+    ["sales.by.branch", { key: "sales.by.branch", state: "ok", total: 900, points: [{ label: "Trenton", number: 500 }, { label: "Kingston", number: 400 }], note: "", range: "today" }],
+  ]);
+  const markup = flattenTemplate(renderLanding({
+    phase: "ready", profile: "", source: "", roleLabel: "",
+    widgets, data, needs: null, error: "",
+    canOpenReporting: false, unsourcedNeeds: UNSOURCED_NEEDS,
+  }));
+  // The figures are real and drawn first.
+  assert.match(markup, />14</);
+  assert.match(markup, />12</);
+  assert.match(markup, /Trenton/);
+  // The foot says what is missing, never that the figure is unavailable.
+  assert.match(markup, /No trend yet/);
+  assert.doesNotMatch(markup, /Not available yet/);
 });

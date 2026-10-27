@@ -61,13 +61,13 @@ test("the pick queue board draws a labelled bar per status, the count at the rig
   await expect(first.locator(".value")).toHaveText("8");
 });
 
-test("a card links to the live app that owns it, and only a source with no app says it is not here", async ({ page }) => {
+test("a card links to the live app that owns it, and a source with no app names the missing trend", async ({ page }) => {
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   const hero = page.locator("[data-widget='hero.deliveries']");
-  await expect(hero.locator(".tile-foot")).toHaveText("Not available yet");
+  await expect(hero.locator(".tile-foot")).toHaveText("No trend yet");
   await expect(hero.locator(".tile-foot")).toBeVisible();
-  await expect(page.locator("[data-widget='orders.open'] .tile-foot")).toHaveText("Not available yet");
+  await expect(page.locator("[data-widget='orders.open'] .tile-foot")).toHaveText("No trend yet");
   // Pick queue and Queue depth are the yard's (Yard Pick); Open claims is this app's Warranty view.
   const footLinks = page.locator(".tile-foot button");
   await expect(footLinks).toHaveCount(3);
@@ -105,6 +105,9 @@ test("the TODAY money cards carry the core's figures, and a measure with no core
   await page.goto("/");
   const kpis = page.locator("[data-test='c10-today-kpis']");
   await expect(kpis).toBeVisible();
+  // P2-2: the strip mixes a today figure, an all time rate and a standing balance,
+  // so its heading says what the strip is, and the page keeps one Today heading.
+  await expect(kpis.locator("h2")).toHaveText("At a glance");
 
   // The stub's viz answer: sales 123456 cents today, margin 3180 bps all time,
   // AR 9624000 cents open of which 3494000 is past its due day. Every figure
