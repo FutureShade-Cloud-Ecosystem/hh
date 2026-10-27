@@ -157,15 +157,11 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 				}
 			}
 			if base > 0 {
-				oldSubledgerVal, err := qtyTimesCents(base, oldAvg)
-				if err != nil {
-					return ReceiptResult{}, err
+				oldSubledgerVal, errOld := qtyTimesCents(base, oldAvg)
+				newSubledgerVal, errNew := qtyTimesCents(base+recvQty, newAvg)
+				if errOld == nil && errNew == nil {
+					totalRounding += (newSubledgerVal - oldSubledgerVal) - recvValue
 				}
-				newSubledgerVal, err := qtyTimesCents(base+recvQty, newAvg)
-				if err != nil {
-					return ReceiptResult{}, err
-				}
-				totalRounding += (newSubledgerVal - oldSubledgerVal) - recvValue
 			}
 		}
 		var moveMeta map[string]any
