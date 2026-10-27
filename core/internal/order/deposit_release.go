@@ -43,6 +43,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // DepositReleaser is billing's seam: it reads the order's live SUPPLIER_DEPOSIT
@@ -167,4 +170,27 @@ func (r *Repository) DeliveredOrderIDs(ctx context.Context, orderIDs []string) (
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// DeliveredAt answers the delivery stamp MarkDelivered recorded on one order:
+// when the goods left, found=false when the stamp is absent (round 2's gl
+// DeliveryReader, the deposit release's date). An unparsable stamp reads as
+// not found, the release then taking the processing time.
+func (r *Repository) DeliveredAt(ctx context.Context, orderID string) (time.Time, bool, error) {
+	if r.pool == nil {
+		return time.Time{}, false, errNoDB
+	}
+	var stamp *string
+	if err := r.pool.QueryRow(ctx,
+		`SELECT metadata->>'delivered_at' FROM orders WHERE id = $1 AND metadata ? 'delivered_at'`, orderID).Scan(&stamp); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, fmt.Errorf("order: delivered at %s: %w", orderID, err)
+	}
+	at, perr := time.Parse(time.RFC3339Nano, *stamp)
+	if perr != nil {
+		return time.Time{}, false, nil
+	}
+	return at, true, nil
 }

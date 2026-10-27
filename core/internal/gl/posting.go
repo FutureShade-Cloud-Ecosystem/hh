@@ -673,13 +673,25 @@ func (s *Service) buildDepositReleased(ctx context.Context, payload []byte) (jou
 	if err != nil {
 		return journalDraft{}, false, err
 	}
+	// Round 2 (S2 P1-2): the release's document is the DELIVERY, not the deposit taken months
+	// earlier, so the journal is dated by the delivery fact MarkDelivered records (or the clock when
+	// the stamp is absent or the seam unwired). Dated by the deposit's finalization it moved revenue
+	// into an already reported month with nothing showing it moved. When the delivery's month is
+	// closed the store still files the journal into the earliest open month at or after it, late
+	// posted, never refusing.
+	at := s.clock()
+	if p.OrderID != "" && s.delivery != nil {
+		if deliveredAt, found, derr := s.delivery.DeliveredAt(ctx, p.OrderID); derr == nil && found && !deliveredAt.IsZero() {
+			at = deliveredAt
+		}
+	}
 	return journalDraft{
 		Source:         SourceInvoice,
 		SourceRefID:    p.InvoiceID,
 		IdempotencyKey: "deposit.released:" + p.InvoiceID,
 		Memo:           "Deposit released " + a.InvoiceNo,
 		BranchID:       a.BranchID,
-		OccurredAt:     s.clock(),
+		OccurredAt:     at,
 		Lines: []draftLine{
 			dr(depCode, a.TotalCents, "customer deposit released"),
 			cr(revCode, a.TotalCents, "revenue"),
@@ -1119,6 +1131,12 @@ func (s *Service) externalDraft(in ExternalJournal) (journalDraft, error) {
 	for _, l := range in.Lines {
 		lines = append(lines, draftLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo})
 	}
+	at := s.clock()
+	// FW1-01: a caller-built journal takes its document's date when the caller knows one (bankrec
+	// dates a clearing journal by its statement line); the clock is only the fallback.
+	if !in.DocumentDate.IsZero() {
+		at = in.DocumentDate
+	}
 	draft := journalDraft{
 		Source:         source,
 		SourceRefID:    in.SourceRefID,
@@ -1126,7 +1144,7 @@ func (s *Service) externalDraft(in ExternalJournal) (journalDraft, error) {
 		Memo:           in.Memo,
 		BranchID:       in.BranchID,
 		Status:         StatusPosted,
-		OccurredAt:     s.clock(),
+		OccurredAt:     at,
 		Lines:          lines,
 	}
 	// Reject any leg carrying a negative debit or credit BEFORE the DB does. A negative debit leg (e.g. a
