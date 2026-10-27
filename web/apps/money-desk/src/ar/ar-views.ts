@@ -48,6 +48,14 @@ export type RightMode = "receive" | "invoice" | "promise";
 export type PayMethod = "CHEQUE" | "EFT" | "CARD" | "CASH";
 export type WorkChoice = "replacement" | "promise" | "reminder";
 
+/**
+ * The credit memo form (FW1-12): which invoice the credit is against, or nothing for a credit on the
+ * account itself. The amount and the reason are read from the form's own fields when it is sent.
+ */
+export interface CreditForm {
+  readonly invoiceId: string | null;
+}
+
 export interface AccountModel {
   readonly customerId: string;
   readonly name: string;
@@ -105,6 +113,8 @@ export interface DeskModel {
   readonly holdPanel: "about" | "lift" | "place-later";
   readonly liftChoice: "lift" | "override";
   readonly account: AccountModel | null;
+  /** The credit memo form, when it is open; null when it is not. */
+  readonly credit: CreditForm | null;
   readonly office: OfficeModel;
   readonly busy: boolean;
   readonly error: string;
@@ -718,6 +728,30 @@ export function renderHolds(model: DeskModel): TemplateResult {
 
 // ---- an account --------------------------------------------------------------------------------
 
+/**
+ * The credit memo form (FW1-12): how much to credit and why, then one press that raises it.
+ *
+ * It is the Reverse form's shape on purpose: an inline row of fields and the press, with nothing else
+ * to learn. The reason is asked for because the server asks for it: a credit with no stated reason
+ * cannot be explained to the customer, to the Controller, or to whoever reads the file in a year.
+ *
+ * The form says what the credit is AGAINST, in words: the one invoice it names, or the account. A
+ * credit against the account and a credit against one invoice are different credits, and the person
+ * pressing the button must be able to see which one they are about to give.
+ */
+function creditForm(model: DeskModel, account: AccountModel): TemplateResult {
+  const invoice = model.credit === null ? undefined : account.invoices.find((r) => r.id === model.credit?.invoiceId);
+  return html`
+    <div class="credit-form" data-credit-form>
+      <p class="dim small" data-credit-target>${invoice === undefined ? "On the account" : `Against invoice ${invoice.invoice_no}`}</p>
+      <label><span class="visually-hidden">How much to credit</span><input type="text" data-field="credit-amount" placeholder="How much to credit" autocomplete="off" /></label>
+      <label><span class="visually-hidden">Why the customer is credited</span><input type="text" data-field="credit-reason" placeholder="Why the customer is credited" autocomplete="off" /></label>
+      <button type="button" class="btn btn-danger small-btn" data-action="credit-confirm" ?disabled=${model.busy}>Issue the credit</button>
+      <button type="button" class="btn btn-secondary small-btn" data-action="credit-cancel">Cancel</button>
+    </div>
+  `;
+}
+
 function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
   // Drafts and voids are not owed and not settled: they are never listed here, so never picked.
   const paid = account.invoices.filter((r) => r.stored_status === "PAID").sort((x, y) => y.due_date.localeCompare(x.due_date));
@@ -757,7 +791,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
               const applied = split.get(r.id);
               return html`
                 <tr data-invoice-row class="${paidRow ? "dimrow" : ""}" aria-current="${account.selectedInvoiceId === r.id ? "true" : "false"}">
-                  <td><button type="button" class="link-row" data-action="open-invoice" data-invoice-id="${r.id}"><span class="who">${r.invoice_no}</span></button><span class="dim small">${r.order_no ?? ""}</span></td>
+                  <td><button type="button" class="link-row" data-action="open-invoice" data-invoice-id="${r.id}"><span class="who">${r.invoice_no}</span></button><span class="dim small">${r.order_no ?? ""}</span>${paidRow ? nothing : html`<br /><button type="button" class="link small" data-action="credit-start" data-invoice-id="${r.id}">Credit</button>`}</td>
                   <td class="nowrap">${relativeDay(r.issue_date, model.asOf)}</td>
                   <td class="nowrap ${r.days_overdue > 0 && !paidRow ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
                   <td><span class="marks">${rowMarks(r).map(markPill)}</span></td>
@@ -972,9 +1006,11 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
         <button type="button" class="btn btn-secondary" data-action="remind-account" data-customer-id="${account.customerId}" ?disabled=${!overdueOnAccount}>Remind</button>
         ${overdueOnAccount || account.invoicesState !== "ready" ? nothing : html`<span id="remind-why" class="dim small">Nothing on this account is overdue.</span>`}
         <button type="button" class="btn btn-secondary" data-action="promise-panel">Record a promise</button>
+        <button type="button" class="btn btn-secondary" data-action="credit-start">Issue a credit</button>
         ${hold === undefined ? nothing : html`<button type="button" class="btn btn-secondary" data-action="ask-lift">Ask to lift the hold</button>`}
       </div>
     </div>
+    ${model.credit !== null ? creditForm(model, account) : nothing}
     <nav class="tabs" aria-label="Account views">
       <button type="button" class="tab" data-action="sub" data-choice="invoices" aria-current="${account.sub === "invoices" ? "true" : "false"}">Open invoices</button>
       <button type="button" class="tab" data-action="sub" data-choice="statement" aria-current="${account.sub === "statement" ? "true" : "false"}">Statement</button>

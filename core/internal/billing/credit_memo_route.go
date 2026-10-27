@@ -1,0 +1,796 @@
+package billing
+
+// credit_memo_route.go: THE ROUTE THAT ISSUES A CREDIT MEMO, for finance.
+//
+// -- WHAT THIS IS, IN ONE PARAGRAPH ------------------------------------------------------------------
+// A credit memo is money leaving the company. Until this route existed the only way to raise one was
+// the warranty adapter (core/cmd/core/tops_adapters.go:1183), so a credit a manager agreed to give a
+// customer had no door of its own: the only records of it were a customer's good memory and the
+// absence of a document. The audit called this out as AR-05, "No waiver or reversal of a posted
+// finance charge", with the evidence "credit_memo.go:201 has one caller".
+//
+// -- THE RULES, AND WHY EACH IS HERE -----------------------------------------------------------------
+//  1. MANAGER OR CONTROLLER ONLY. A credit is a management act, not a counter act. It is money the
+//     dealer chose to give back, and the person who gives it away should be somebody who can be asked
+//     about it. RequireManager answers exactly that: a tier 1 or tier 2 role passes, and the Financial
+//     Controller is tier 1, so "manager or Controller" is one gate and not two.
+//  2. A REASON, ALWAYS. A credit with no stated reason is a number that cannot be explained to the
+//     customer, to the Controller, or to whoever reads the file in a year. The reason rides the memo's
+//     own description line, the AR subledger row's memo, and the audit row, so there is one phrase and
+//     it appears everywhere it is read.
+//  3. A GL ACCOUNT THE POSTING RULES ALLOW. The credit books against the revenue account the posting
+//     rules resolve for that branch (gl's posting_rules, branch override first). The caller may name
+//     the account, and when they do it must be the one the rules allow, because a hard-coded account
+//     in a request body is a second, stale copy of a configurable fact, and a credit that lands in an
+//     account nobody chose is worse than no credit at all.
+//  4. IDEMPOTENT BY KEY. A retry that mints a second credit is a real loss, not an untidy table. The
+//     writer's own rule (billing/credit_memo.go, an empty key is refused) stands behind this one, and
+//     the route derives a key when the caller supplies none, so a double click on the Money Desk
+//     button raises ONE credit.
+//
+// -- THE APPROVAL RAIL ABOVE THE THRESHOLD ----------------------------------------------------------
+// gl_policy.je_approval_threshold_cents is the branch's maker-checker threshold, and gl's own rule is
+// the one this route copies: BELOW the threshold the entry posts, AT OR ABOVE it a second person has
+// to sign it (gl/journal.go, CreateJournal).
+//
+// A parked credit memo moves NO money at all. The memo document is written as a DRAFT (the AR balance
+// only counts FINALIZED and PARTIALLY_PAID rows), its reversing journal is written as a DRAFT journal,
+// and an approval request is filed against that parked journal in the approvals queue that already
+// exists (permission_approval_requests, the same queue and the same JE_OVER_THRESHOLD policy the
+// ledger's own parked journals use). The memo document, the parked journal and the approval request
+// are written in ONE transaction, so a half-parked credit cannot exist.
+//
+// When the Controller approves the parked journal, the memo document is finalized and the journal is
+// posted on that decision's own transaction, so the credit reaches the subledger and the ledger
+// together or not at all.
+//
+// The threshold of ZERO means NO RAIL, not "park everything": gl's derivedStatus reads a zero
+// threshold as "no approval rail at all" (gl/journal.go), and this route reads it the same way, so an
+// unconfigured branch credits the way it did yesterday instead of freezing on a number nobody set.
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/moneyutil"
+)
+
+// -- the seams --------------------------------------------------------------------------------------
+
+// CreditMemoJournalKeyPrefix marks the reversing journal of a credit memo.
+//
+// It is the one thing the composition root can read to tell a parked credit memo's journal from any
+// other journal: the key is the memo's own, so the prefix and the memo's id travel together. The
+// approvals rail hands the decider a journal id and nothing else, so without this the approve half
+// would not know it had a memo to finalize.
+const CreditMemoJournalKeyPrefix = "ar.credit_memo.issued:"
+
+// CreditMemoThresholdReader reads the branch's maker-checker threshold. It is gl's policy read
+// (gl_policy.je_approval_threshold_cents, the org default with a branch override), bound by the
+// composition root. Nil means NO RAIL: every credit posts, which is what a deployment that has not
+// wired the policy yet should do, and the opposite of silently parking everything.
+type CreditMemoThresholdReader interface {
+	CreditMemoThresholdCents(ctx context.Context, branchID string) (int64, error)
+}
+
+// CreditMemoPostingRules resolves the accounts a credit memo may book against at a branch, keyed by
+// the roles billing names (ar, revenue, tax). It is gl's posting_rules read, bound by the composition
+// root. Nil is refused: a credit with no account is not a credit.
+type CreditMemoPostingRules interface {
+	CreditMemoAccounts(ctx context.Context, branchID string) (map[string]string, error)
+}
+
+// CreditMemoParkRequest is everything the park needs, already decided by billing.
+type CreditMemoParkRequest struct {
+	// Memo is the writer's own input, so the parked document is written by the same code that
+	// writes a posted one.
+	Memo CreditMemoInput
+	// AmountCents is the credit's total, the figure the approver reads.
+	AmountCents int64
+	// RequestedBy is the person who asked for the credit. They cannot approve it: four eyes.
+	RequestedBy string
+	// Reason is the phrase the approver reads.
+	Reason string
+}
+
+// CreditMemoParked names what a park produced.
+type CreditMemoParked struct {
+	CreditMemoID string
+	CreditMemoNo string
+	JournalID    string
+	ApprovalID   string
+}
+
+// CreditMemoParker holds an over-threshold credit memo: the memo document, its parked reversing
+// journal and the approval request, in ONE transaction. The composition root implements it over the
+// three modules that own those rows, because no module may write another's table.
+type CreditMemoParker interface {
+	ParkCreditMemo(ctx context.Context, in CreditMemoParkRequest) (CreditMemoParked, error)
+}
+
+// -- the request and the answer ----------------------------------------------------------------------
+
+// CreditMemoRouteRequest is the body of POST /api/v1/ar/credit-memos.
+//
+// AmountCents is a POSITIVE magnitude; the sign is billing's business, never the caller's (the same
+// rule billing/credit_memo.go states). Against an invoice, zero means "the whole of what is left".
+type CreditMemoRouteRequest struct {
+	CustomerID string `json:"customer_id"`
+	BranchID   string `json:"branch_id"`
+	// InvoiceID names the one invoice this credit is against. Empty is a STANDALONE credit: the
+	// customer gets credit on the account and it is not tied to a document.
+	InvoiceID   string `json:"invoice_id"`
+	AmountCents int64  `json:"amount_cents"`
+	Reason      string `json:"reason"`
+	// GLAccount is the account the credit books against. Empty means the posting rules' own revenue
+	// account for that branch; naming one that the rules do not allow is refused.
+	GLAccount string `json:"gl_account"`
+	// IdempotencyKey makes a retry safe. Empty means the route derives one from the request, so a
+	// double click raises one credit and not two.
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+// The states a credit can be in when the route answers.
+const (
+	// CreditMemoIssued means the credit is a document and its journal is posted.
+	CreditMemoIssued = "ISSUED"
+	// CreditMemoAwaitingApproval means the credit is parked: no money has moved and a second
+	// person has to sign it.
+	CreditMemoAwaitingApproval = "AWAITING_APPROVAL"
+)
+
+// CreditMemoRouteResult is what the route answers with.
+type CreditMemoRouteResult struct {
+	Status        string `json:"status"`
+	CreditMemoID  string `json:"credit_memo_id"`
+	CreditMemoNo  string `json:"credit_memo_no"`
+	CustomerID    string `json:"customer_id"`
+	BranchID      string `json:"branch_id"`
+	InvoiceID     string `json:"invoice_id,omitempty"`
+	SubtotalCents int64  `json:"subtotal_cents"`
+	TaxCents      int64  `json:"tax_cents"`
+	TotalCents    int64  `json:"total_cents"`
+	GLAccount     string `json:"gl_account"`
+	Reason        string `json:"reason"`
+	// ApprovalID names the approval request when the credit is parked.
+	ApprovalID string `json:"approval_id,omitempty"`
+	// GLJournalID is the journal that carries the credit into the ledger. It is empty while the
+	// credit is parked, and the message says so in words.
+	GLJournalID string `json:"gl_journal_id,omitempty"`
+	// Reused is true when the idempotency key named a credit that already exists.
+	Reused  bool   `json:"reused"`
+	Message string `json:"message"`
+}
+
+// -- the service -------------------------------------------------------------------------------------
+
+// ActCreditMemoIssue is the audit verb for a credit memo this route raises. audit_log has no CHECK on
+// action, so this is free to add, and it is a constant so a typo cannot split one act into two in the
+// trail.
+const ActCreditMemoIssue = "CREDIT_MEMO_ISSUE"
+
+// CreditMemoService issues credit memos for finance.
+type CreditMemoService struct {
+	w         *InvoiceWriter
+	threshold CreditMemoThresholdReader
+	rules     CreditMemoPostingRules
+	parker    CreditMemoParker
+	audit     audit.Recorder
+	log       *slog.Logger
+	now       func() time.Time
+}
+
+// NewCreditMemoService builds the service over the invoice writer, which owns the pool, the tax
+// assessor, the poster and the clock the writer's own path uses.
+func NewCreditMemoService(w *InvoiceWriter, log *slog.Logger) *CreditMemoService {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &CreditMemoService{w: w, log: log, now: time.Now}
+}
+
+// WithThreshold binds the threshold reader. Nil means no rail: every credit posts.
+func (s *CreditMemoService) WithThreshold(r CreditMemoThresholdReader) *CreditMemoService {
+	s.threshold = r
+	return s
+}
+
+// WithPostingRules binds the posting-rules reader. Nil is refused at the door.
+func (s *CreditMemoService) WithPostingRules(r CreditMemoPostingRules) *CreditMemoService {
+	s.rules = r
+	return s
+}
+
+// WithParker binds the park seam. Nil means an over-threshold credit cannot be parked and is
+// refused, never issued without its approval.
+func (s *CreditMemoService) WithParker(p CreditMemoParker) *CreditMemoService {
+	s.parker = p
+	return s
+}
+
+// WithAudit binds the recorder. Every credit this route raises is stamped.
+func (s *CreditMemoService) WithAudit(r audit.Recorder) *CreditMemoService {
+	s.audit = r
+	return s
+}
+
+// WithClock overrides the clock (tests).
+func (s *CreditMemoService) WithClock(now func() time.Time) *CreditMemoService {
+	if now != nil {
+		s.now = now
+	}
+	return s
+}
+
+// Issue raises a credit memo: standalone against the account, or against one invoice, capped at what
+// that invoice has left (the SF-2e cap the writer enforces).
+//
+// The order of the checks matters and is the order a reader should expect: the reason, the customer,
+// the branch, the amount, the account, and only then the money. A caller who sent a request with no
+// reason learns that before anything else, because a reason is the one field whose absence makes the
+// credit unexplainable afterwards.
+func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteRequest) (CreditMemoRouteResult, error) {
+	if s.w == nil || s.w.pool == nil {
+		return CreditMemoRouteResult{}, errNoDB
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("a credit needs a reason")
+	}
+	customerID := strings.TrimSpace(req.CustomerID)
+	if customerID == "" {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("a credit needs a customer")
+	}
+	branchID := strings.TrimSpace(req.BranchID)
+	if branchID == "" {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("a credit needs a branch")
+	}
+	if req.AmountCents < 0 {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("a credit amount is a positive magnitude; the sign is billing's")
+	}
+	if s.rules == nil {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("the posting rules are not wired; no credit can be booked")
+	}
+	accounts, err := s.rules.CreditMemoAccounts(ctx, branchID)
+	if err != nil {
+		return CreditMemoRouteResult{}, err
+	}
+	revenue := accounts[RoleRevenue]
+	if revenue == "" {
+		// Refused, not guessed. A credit posted to an account nobody chose is worse than no credit:
+		// the books look complete and are wrong.
+		return CreditMemoRouteResult{}, httpx.BadRequestf("the posting rules for this branch have no revenue account, so a credit cannot be booked")
+	}
+	named := strings.TrimSpace(req.GLAccount)
+	if named != "" && named != revenue {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("the posting rules for this branch credit account %s, not %s", revenue, named)
+	}
+
+	in := CreditMemoInput{
+		CustomerID:        customerID,
+		BranchID:          branchID,
+		ReversesInvoiceID: strings.TrimSpace(req.InvoiceID),
+		AmountCents:       req.AmountCents,
+		Memo:              reason,
+		IdempotencyKey:    s.creditMemoKey(ctx, req, reason),
+		SourceKind:        SourceOrder,
+	}
+
+	// THE IDEMPOTENCY KEY, CHECKED FIRST. A retry is answered with the credit the key already named,
+	// before anything else is read, because the plan's own cap would otherwise refuse the retry:
+	// the first attempt already took the room the second was going to plan against. Answering "nothing
+	// left to credit" to a double click would be true about the invoice and wrong about the credit.
+	if existing, found, err := s.w.creditMemoByKey(ctx, in.IdempotencyKey); err != nil {
+		return CreditMemoRouteResult{}, err
+	} else if found {
+		return s.reusedResult(existing, revenue, reason), nil
+	}
+
+	// The plan is resolved BEFORE the threshold is read, because the threshold is read against the
+	// credit's TOTAL, tax included, and the total is what the plan holds.
+	plan, err := s.w.planCreditMemo(ctx, s.w.pool, in)
+	if err != nil {
+		return CreditMemoRouteResult{}, err
+	}
+	if plan.subtotal == 0 && plan.tax == 0 {
+		return CreditMemoRouteResult{}, ErrNothingToInvoice
+	}
+	total := plan.subtotal + plan.tax
+
+	// THE THRESHOLD. Read the branch's own row, the org default under it, exactly as gl reads it.
+	threshold := int64(0)
+	if s.threshold != nil {
+		threshold, err = s.threshold.CreditMemoThresholdCents(ctx, branchID)
+		if err != nil {
+			return CreditMemoRouteResult{}, err
+		}
+	}
+	if threshold > 0 && total >= threshold {
+		return s.park(ctx, in, plan, accounts, total, reason)
+	}
+
+	doc, err := s.w.IssueCreditMemo(ctx, in)
+	if err != nil {
+		return CreditMemoRouteResult{}, err
+	}
+	s.record(ctx, doc, in, total, revenue, reason)
+	return CreditMemoRouteResult{
+		Status:        CreditMemoIssued,
+		CreditMemoID:  doc.InvoiceID,
+		CreditMemoNo:  doc.InvoiceNo,
+		CustomerID:    doc.CustomerID,
+		BranchID:      doc.BranchID,
+		InvoiceID:     doc.ReversesInvoiceID,
+		SubtotalCents: -plan.subtotal,
+		TaxCents:      -plan.tax,
+		TotalCents:    -total,
+		GLAccount:     revenue,
+		Reason:        reason,
+		GLJournalID:   doc.GLJournalID,
+		Reused:        doc.Reused,
+		Message:       creditIssuedWords(doc.InvoiceNo, total),
+	}, nil
+}
+
+// park holds an over-threshold credit: the memo document, the parked reversing journal and the
+// approval request, all in one transaction, and NOTHING that moves money.
+func (s *CreditMemoService) park(ctx context.Context, in CreditMemoInput, plan creditPlan, accounts map[string]string, total int64, reason string) (CreditMemoRouteResult, error) {
+	if s.parker == nil {
+		// Fail closed. An over-threshold credit with nowhere to park is NOT a credit, and issuing
+		// it anyway would move money past the rail the dealer set.
+		return CreditMemoRouteResult{}, httpx.BadRequestf("this credit is over the approval threshold and the approval rail is not wired, so nothing was issued")
+	}
+	parked, err := s.parker.ParkCreditMemo(ctx, CreditMemoParkRequest{
+		Memo:        in,
+		AmountCents: total,
+		RequestedBy: identity.StaffUserIDFromContext(ctx),
+		Reason:      reason,
+	})
+	if err != nil {
+		return CreditMemoRouteResult{}, err
+	}
+	s.record(ctx, InvoiceDoc{InvoiceID: parked.CreditMemoID, InvoiceNo: parked.CreditMemoNo, CustomerID: in.CustomerID, BranchID: in.BranchID}, in, total, accounts[RoleRevenue], reason)
+	return CreditMemoRouteResult{
+		Status:        CreditMemoAwaitingApproval,
+		CreditMemoID:  parked.CreditMemoID,
+		CreditMemoNo:  parked.CreditMemoNo,
+		CustomerID:    in.CustomerID,
+		BranchID:      in.BranchID,
+		InvoiceID:     in.ReversesInvoiceID,
+		SubtotalCents: -plan.subtotal,
+		TaxCents:      -plan.tax,
+		TotalCents:    -total,
+		GLAccount:     accounts[RoleRevenue],
+		Reason:        reason,
+		ApprovalID:    parked.ApprovalID,
+		Message:       creditAwaitingWords(total),
+	}, nil
+}
+
+// CreditMemoJournalLine is one resolved leg of the reversing entry: an account code and a positive
+// magnitude on one side. Billing resolves the roles into codes (see CreditMemoJournalLines), so the
+// adapter that parks the journal never decides an account.
+type CreditMemoJournalLine struct {
+	AccountCode string
+	DebitCents  int64
+	CreditCents int64
+	Memo        string
+}
+
+// reusedResult answers a retry with the credit the key already named.
+func (s *CreditMemoService) reusedResult(doc InvoiceDoc, account, reason string) CreditMemoRouteResult {
+	status := CreditMemoIssued
+	message := creditIssuedWords(doc.InvoiceNo, -doc.TotalCents)
+	if doc.Status == "DRAFT" {
+		// A parked credit: it is still waiting for its approval, and the retry must say so rather
+		// than claim a credit that has not moved.
+		status = CreditMemoAwaitingApproval
+		message = creditAwaitingWords(-doc.TotalCents)
+	}
+	return CreditMemoRouteResult{
+		Status:        status,
+		CreditMemoID:  doc.InvoiceID,
+		CreditMemoNo:  doc.InvoiceNo,
+		CustomerID:    doc.CustomerID,
+		BranchID:      doc.BranchID,
+		InvoiceID:     doc.ReversesInvoiceID,
+		SubtotalCents: doc.SubtotalCents,
+		TaxCents:      doc.TaxCents,
+		TotalCents:    doc.TotalCents,
+		GLAccount:     account,
+		Reason:        reason,
+		GLJournalID:   doc.GLJournalID,
+		Reused:        true,
+		Message:       message,
+	}
+}
+
+// creditMemoByKey finds the credit an idempotency key already raised.
+func (w *InvoiceWriter) creditMemoByKey(ctx context.Context, key string) (InvoiceDoc, bool, error) {
+	if key == "" {
+		return InvoiceDoc{}, false, nil
+	}
+	var (
+		doc      InvoiceDoc
+		reverses string
+	)
+	err := w.pool.QueryRow(ctx, `
+	SELECT id::text, invoice_no::text, customer_id::text, branch_id::text, status,
+	       subtotal_cents, tax_cents, total_cents, balance_cents,
+	       COALESCE(reverses_invoice_id::text,'')
+	  FROM invoices WHERE idempotency_key = $1 AND doc_type = 'CREDIT_MEMO'`, key).
+		Scan(&doc.InvoiceID, &doc.InvoiceNo, &doc.CustomerID, &doc.BranchID, &doc.Status,
+			&doc.SubtotalCents, &doc.TaxCents, &doc.TotalCents, &doc.BalanceCents, &reverses)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return InvoiceDoc{}, false, nil
+		}
+		return InvoiceDoc{}, false, fmt.Errorf("billing: read the credit memo this key named: %w", err)
+	}
+	doc.DocType = DocCreditMemo
+	doc.ReversesInvoiceID = reverses
+	return doc, true, nil
+}
+
+// CreditMemoJournalLines resolves the reversing entry's ROLES into account codes, using the accounts
+// the posting rules resolved for that branch.
+//
+// A role with no account is REFUSED, never guessed. The reversing entry's whole discipline is that
+// the sides swap and the amounts stay positive; an entry with a leg missing is not a smaller credit,
+// it is a wrong one.
+func CreditMemoJournalLines(j CreditMemoJournal, accounts map[string]string) ([]CreditMemoJournalLine, error) {
+	legs := j.ReversingLegs()
+	out := make([]CreditMemoJournalLine, 0, len(legs))
+	for _, leg := range legs {
+		code := accounts[leg.Role]
+		if code == "" {
+			return nil, httpx.BadRequestf("the posting rules for this branch have no %q account, so this credit cannot be booked", leg.Role)
+		}
+		out = append(out, CreditMemoJournalLine{
+			AccountCode: code,
+			DebitCents:  leg.DebitCents,
+			CreditCents: leg.CreditCents,
+			Memo:        leg.Memo,
+		})
+	}
+	return out, nil
+}
+
+// creditMemoKey derives the idempotency key when the caller supplies none, so a double click on the
+// Money Desk button raises ONE credit.
+//
+// The key is built from the request's own facts and the dealer's house day: the same credit, asked
+// for twice in one day, is one credit. A different amount, a different invoice or a different reason
+// is a different credit, and gets its own key. The caller may always supply its own key, which is
+// what a form that holds one across a retry does.
+func (s *CreditMemoService) creditMemoKey(ctx context.Context, req CreditMemoRouteRequest, reason string) string {
+	if k := strings.TrimSpace(req.IdempotencyKey); k != "" {
+		return k
+	}
+	day := s.houseDay(ctx)
+	seed := strings.Join([]string{
+		day, req.BranchID, req.CustomerID, strings.TrimSpace(req.InvoiceID),
+		fmt.Sprintf("%d", req.AmountCents), reason,
+	}, "|")
+	sum := sha256.Sum256([]byte(seed))
+	return "credit-memo:" + hex.EncodeToString(sum[:])
+}
+
+// houseDay is the dealer's own day, the same zone the writer dates its documents in. A credit asked
+// for at eleven at night and one asked for the next morning are different credits; two asked for in
+// the same minute are the same one.
+func (s *CreditMemoService) houseDay(ctx context.Context) string {
+	zone, err := houseday.Resolve(ctx, s.w.zone)
+	if err != nil {
+		return s.now().UTC().Format("2006-01-02")
+	}
+	return zone.Today(s.now)
+}
+
+// record stamps the trail. A credit with no audit row is a credit nobody can be asked about, which
+// is the whole reason the route is manager-gated in the first place.
+func (s *CreditMemoService) record(ctx context.Context, doc InvoiceDoc, in CreditMemoInput, total int64, account, reason string) {
+	if s.audit == nil {
+		return
+	}
+	_ = s.audit.Record(ctx, audit.SensitiveAccess{
+		Action:     ActCreditMemoIssue,
+		EntityType: "credit_memo",
+		EntityID:   doc.InvoiceID,
+		ActorID:    identity.StaffUserIDFromContext(ctx),
+		BranchID:   in.BranchID,
+		Purpose:    "CREDIT_MEMO",
+		Reason:     reason,
+		Extra: map[string]any{
+			"customer_id": in.CustomerID,
+			"invoice_id":  in.ReversesInvoiceID,
+			"total_cents": total,
+			"gl_account":  account,
+			"credit_memo": doc.InvoiceNo,
+		},
+	})
+}
+
+// creditIssuedWords is what a person reads when the credit is a document.
+func creditIssuedWords(no string, total int64) string {
+	return "Credit memo " + no + " for " + Money(total) + " is issued."
+}
+
+// creditAwaitingWords is what a person reads when the credit is parked.
+func creditAwaitingWords(total int64) string {
+	return "This credit of " + Money(total) + " is over the approval threshold. Nothing has moved yet: a second person has to approve it before the customer is credited."
+}
+
+// -- the handler --------------------------------------------------------------------------------------
+
+// CreditMemoRouteHandler serves the credit memo route.
+type CreditMemoRouteHandler struct {
+	svc      *CreditMemoService
+	userLink identity.UserIDLinker
+}
+
+// NewCreditMemoRouteHandler wires the handler.
+func NewCreditMemoRouteHandler(svc *CreditMemoService) *CreditMemoRouteHandler {
+	return &CreditMemoRouteHandler{svc: svc}
+}
+
+// WithUserLinker sets the users.id linker the stamp carries. Nil is legal: the stamp is
+// authority-only.
+func (h *CreditMemoRouteHandler) WithUserLinker(link identity.UserIDLinker) *CreditMemoRouteHandler {
+	h.userLink = link
+	return h
+}
+
+// RegisterRoutes self-registers the credit memo route.
+//
+// The gate is RequireManager, and it is the gate the plan named: a manager or the Controller, and
+// nobody else. A counter clerk cannot credit an account, and a Controller can.
+func (h *CreditMemoRouteHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("POST /api/v1/ar/credit-memos", g.RequireManager(h.staff(h.issue)))
+}
+
+// staff stamps the bridged staff context onto the request, the same bridge every other billing
+// handler uses.
+func (h *CreditMemoRouteHandler) staff(next guards.StaffHandler) guards.StaffHandler {
+	return func(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+		next(w, identity.StampRequest(r, caller, h.userLink), caller)
+	}
+}
+
+// issue is the route body.
+func (h *CreditMemoRouteHandler) issue(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var body CreditMemoRouteRequest
+	if err := decode(r, &body); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	res, err := h.svc.Issue(r.Context(), body)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if res.Status == CreditMemoAwaitingApproval {
+		httpx.WriteJSON(w, http.StatusAccepted, res)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, res)
+}
+
+// writeErr maps a refusal to its status, the same taxonomy the register's door uses.
+func (h *CreditMemoRouteHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
+	var bad httpx.BadRequestError
+	var sd *SupplierDepositNotCreditable
+	switch {
+	case errors.As(err, &bad):
+		httpx.Error(w, http.StatusBadRequest, bad.Error())
+	case errors.As(err, &sd):
+		httpx.ErrorWith(w, http.StatusConflict, SupplierDepositNotCreditableWords,
+			map[string]any{"code": SupplierDepositNotCreditableCode})
+	case errors.Is(err, ErrNothingToInvoice):
+		httpx.Error(w, http.StatusBadRequest, "there is nothing to credit")
+	case errors.Is(err, errNoDB):
+		httpx.Error(w, http.StatusServiceUnavailable, "the database is not configured")
+	default:
+		httpx.Error(w, http.StatusInternalServerError, err.Error())
+	}
+}
+
+// -- the parked document's own writer ----------------------------------------------------------------
+
+// ParkCreditMemoTx writes a parked credit memo on the CALLER's transaction: the header and the
+// negated lines, as a DRAFT, with NO AR subledger row and NO journal.
+//
+// The status is the point. The AR balance counts only FINALIZED and PARTIALLY_PAID rows
+// (billing/gl_seam.go), so a DRAFT memo moves no money: the customer's balance does not change, the
+// aging does not move, and the ledger is not touched. The memo becomes money only when it is
+// finalized, which happens on the approval's own transaction.
+//
+// Its balance is zero while it waits, not its negative total: a credit that is not yet a credit has
+// no balance to collect.
+//
+// The plan is resolved HERE, on the caller's transaction, for the same reason the writer resolves it
+// there: the invoice's remainder is read under the transaction's lock, so a credit cannot be planned
+// against an amount another credit has already taken. The reversing journal comes back with the
+// document, so the composition root parks both without doing any arithmetic.
+func (w *InvoiceWriter) ParkCreditMemoTx(ctx context.Context, tx pgx.Tx, in CreditMemoInput) (InvoiceDoc, CreditMemoJournal, error) {
+	if tx == nil {
+		return InvoiceDoc{}, CreditMemoJournal{}, errNoDB
+	}
+	plan, err := w.planCreditMemo(ctx, tx, in)
+	if err != nil {
+		return InvoiceDoc{}, CreditMemoJournal{}, err
+	}
+	customerID, branchID := in.CustomerID, in.BranchID
+	if customerID == "" || branchID == "" {
+		if err := tx.QueryRow(ctx,
+			`SELECT customer_id::text, branch_id::text FROM invoices WHERE id = $1`,
+			in.ReversesInvoiceID).Scan(&customerID, &branchID); err != nil {
+			return InvoiceDoc{}, CreditMemoJournal{}, httpx.BadRequestf("a credit memo needs a customer and a branch")
+		}
+	}
+	sourceKind := in.SourceKind
+	if sourceKind == "" {
+		sourceKind = SourceOrder
+	}
+	zone, err := houseday.Resolve(ctx, w.zone)
+	if err != nil {
+		return InvoiceDoc{}, CreditMemoJournal{}, err
+	}
+	issueDate := zone.Today(w.now)
+	total := plan.subtotal + plan.tax
+	orgID, oerr := branchOrgID(ctx, tx, branchID)
+	if oerr != nil {
+		return InvoiceDoc{}, CreditMemoJournal{}, oerr
+	}
+	var id, no string
+	err = tx.QueryRow(ctx, `
+	INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
+	                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
+	                      doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id, org_id)
+	VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $3, 'DRAFT', $4, $4,
+	        $5, $6, $7, 0, NULL,
+	        'CREDIT_MEMO', $8, $9, FALSE, $10,
+	        $11)
+	RETURNING id::text, invoice_no`,
+		customerID, nullUUID(in.OrderID), branchID, issueDate,
+		-plan.subtotal, -plan.tax, -total,
+		sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID), orgID,
+	).Scan(&id, &no)
+	if err != nil {
+		return InvoiceDoc{}, CreditMemoJournal{}, fmt.Errorf("insert parked credit memo: %w", err)
+	}
+	perLineTax := make([]int64, len(plan.lines))
+	if plan.tax != 0 {
+		weights := make([]int64, len(plan.lines))
+		for i, l := range plan.lines {
+			weights[i] = l.LineTotalCents
+		}
+		perLineTax = moneyutil.AllocateLargestRemainder(plan.tax, weights)
+	}
+	for i, l := range plan.lines {
+		if _, err := tx.Exec(ctx, `
+		INSERT INTO invoice_lines (invoice_id, line_no, order_line_id, product_id, description, qty_entered,
+		                           uom_entered, qty_base, unit_price_cents, price_uom, line_total_cents, tax_cents)
+		VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8::numeric, $9, $10, $11, $12)`,
+			id, i+1, nullUUID(l.OrderLineID), nullUUID(l.ProductID), l.Description,
+			l.QtyEntered, l.UOMEntered, l.QtyBase,
+			l.UnitPriceCents, l.PriceUOM, -l.LineTotalCents, -perLineTax[i]); err != nil {
+			return InvoiceDoc{}, CreditMemoJournal{}, fmt.Errorf("insert parked credit memo line %d: %w", i+1, err)
+		}
+	}
+	doc := InvoiceDoc{
+		InvoiceID: id, InvoiceNo: no, DocType: DocCreditMemo,
+		CustomerID: customerID, OrderID: in.OrderID, BranchID: branchID,
+		Status: "DRAFT", DueDate: issueDate,
+		SubtotalCents: -plan.subtotal, TaxCents: -plan.tax,
+		TotalCents: -total, BalanceCents: 0,
+		ReversesInvoiceID: in.ReversesInvoiceID, ClosesOrder: false,
+	}
+	journal := CreditMemoJournal{
+		CreditMemoID:   id,
+		CreditMemoNo:   no,
+		BranchID:       branchID,
+		IdempotencyKey: creditMemoJournalKey(id),
+		Memo:           "Credit memo awaiting approval: " + in.Memo,
+		OccurredAt:     w.now(),
+		ARCents:        total,
+		RevenueCents:   plan.subtotal,
+		TaxCents:       plan.tax,
+	}
+	return doc, journal, nil
+}
+
+// FinalizeParkedCreditMemoTx turns a parked credit memo into money, on the CALLER's transaction: the
+// memo is FINALIZED and its AR subledger row is written.
+//
+// It is the approve half of the rail: the decision that approves the parked journal also finalizes
+// the memo, on that decision's own transaction, so the customer is credited and the ledger is posted
+// together or not at all.
+//
+// A memo that is not parked (already finalized, or void) is refused, so a double approval cannot
+// credit the customer twice.
+func (w *InvoiceWriter) FinalizeParkedCreditMemoTx(ctx context.Context, tx pgx.Tx, memoID string) error {
+	if tx == nil {
+		return errNoDB
+	}
+	var (
+		no            string
+		total         int64
+		subtotal      int64
+		tax           int64
+		customerID    string
+		branchID      string
+		reverses      string
+		sourceKind    string
+		orderID       string
+		currentStatus string
+	)
+	err := tx.QueryRow(ctx, `
+	SELECT invoice_no::text, -total_cents, -subtotal_cents, -tax_cents,
+	       customer_id::text, branch_id::text, COALESCE(reverses_invoice_id::text,''),
+	       source_kind, COALESCE(order_id::text,''), status
+	  FROM invoices WHERE id = $1 AND doc_type = 'CREDIT_MEMO'`, memoID).
+		Scan(&no, &total, &subtotal, &tax, &customerID, &branchID, &reverses, &sourceKind, &orderID, &currentStatus)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return httpx.BadRequestf("no such credit memo to finalize")
+		}
+		return fmt.Errorf("billing: read parked credit memo: %w", err)
+	}
+	if currentStatus != "DRAFT" {
+		return httpx.BadRequestf("credit memo %s is %s, not a parked credit waiting for approval", no, currentStatus)
+	}
+	// THE CAP, RE-READ AT APPROVAL TIME. A credit that was planned against an invoice's remainder may
+	// find that remainder gone: another credit took it while this one waited for a signature. The
+	// approval then fails, the request stays PENDING, and the approver can refuse it instead of
+	// crediting more than the invoice has left.
+	if reverses != "" {
+		var open int64
+		if err := tx.QueryRow(ctx,
+			`SELECT COALESCE(balance_cents,0) FROM invoices WHERE id = $1`, reverses).Scan(&open); err != nil {
+			if err == pgx.ErrNoRows {
+				return httpx.BadRequestf("the invoice this credit was planned against is gone")
+			}
+			return fmt.Errorf("billing: read the reversed invoice's balance: %w", err)
+		}
+		if total > open {
+			return httpx.BadRequestf("that invoice has %s left and this credit is %s", Money(open), Money(total))
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+	UPDATE invoices SET status = 'FINALIZED', balance_cents = -$2, finalized_at = now()
+	 WHERE id = $1 AND status = 'DRAFT'`, memoID, total); err != nil {
+		return fmt.Errorf("billing: finalize parked credit memo: %w", err)
+	}
+	var open int64
+	if err := tx.QueryRow(ctx, `
+	SELECT COALESCE(SUM(balance_cents),0) FROM invoices
+	  WHERE customer_id = $1 AND status IN ('FINALIZED','PARTIALLY_PAID')`, customerID).Scan(&open); err != nil {
+		return fmt.Errorf("billing: read open balance: %w", err)
+	}
+	// source_type='invoice' is LOAD-BEARING, the same rule the writer states: a memo tagged anything
+	// else would be counted twice by the 1100 tie-out, once as the document's negative balance and
+	// once as a standalone adjustment.
+	if _, err := tx.Exec(ctx, `
+	INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type,
+	                                   source_ref_id, branch_id, memo, occurred_at)
+	VALUES ($1, 'CREDIT_MEMO', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
+		customerID, -total, open, memoID, branchID, "Credit memo "+no); err != nil {
+		return fmt.Errorf("billing: insert AR subledger row for the parked credit memo: %w", err)
+	}
+	return nil
+}

@@ -165,6 +165,11 @@ const receivablesStyles = css`
   input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
   .two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-12); margin-bottom: var(--hh-s-8); }
   .inline-form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--hh-s-8); align-items: end; }
+  /* The credit memo form (FW1-12): the amount, the reason and the press. It has its own grid because the
+     Reverse form's three columns do not hold a second field, and the reason is not optional. The target
+     line says what the credit is against, in words, on its own row. */
+  .credit-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: var(--hh-s-8); align-items: end; margin: var(--hh-s-12) 0; }
+  .credit-form [data-credit-target] { grid-column: 1 / -1; margin: 0; }
   .alloc { list-style: none; margin: var(--hh-s-8) 0; padding: 0; }
   .alloc li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--hh-s-8); padding: var(--hh-s-8) 0; border-bottom: 1px solid var(--hh-line); font-variant-numeric: tabular-nums; }
   .applied { font-size: 15px; display: flex; justify-content: space-between; margin: var(--hh-s-8) 0 var(--hh-s-12); padding-top: var(--hh-s-8); border-top: 2px solid var(--hh-text); font-size: 16px; font-variant-numeric: tabular-nums; }
@@ -270,7 +275,7 @@ const receivablesStyles = css`
     table.holdtbl td.act { text-align: start; }
     .holdbtns { display: flex; }
     .desk { padding: var(--hh-s-16) var(--hh-s-12) var(--hh-s-40); }
-    .two, .inline-form { grid-template-columns: minmax(0, 1fr); }
+    .two, .inline-form, .credit-form { grid-template-columns: minmax(0, 1fr); }
     .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .tile { padding: var(--hh-s-16); }
     .tile-figure { font-size: 24px; }

@@ -14,10 +14,10 @@ import { html, type TemplateResult } from "lit";
 import type { BillingCustomerWorkspace, BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
-import { canLiftHolds, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
+import { canLiftHolds, creditCheck, creditWords, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import { OfficeDesk, type OfficeHost } from "./office-desk.js";
-import { sweepWords } from "./office-logic.js";
+import { AttemptKeys, sweepWords } from "./office-logic.js";
 import {
   renderAccount,
   renderHolds,
@@ -31,6 +31,7 @@ import {
   shownInvoiceIds,
   type AccountModel,
   type BouncedWork,
+  type CreditForm,
   type DeskModel,
   type PayMethod,
   type RegisterFilter,
@@ -96,6 +97,14 @@ export class ArDesk {
   #error = "";
   #notice = "";
   #fillPending = false;
+
+  // The credit memo form (FW1-12): which invoice the credit is against, or nothing for a credit on the
+  // account itself. The amount and the reason are read from the form fields when the credit is sent.
+  #credit: CreditForm | null = null;
+
+  // One key per credit attempt. It is minted when the form opens and sent again on every retry, so a
+  // double press on Issue the credit raises ONE credit. It ends when the server answers.
+  readonly #creditKeys = new AttemptKeys(newKey);
 
   // One pending payment per account: the key is minted when the payment is first sent and sent again for every
   // retry, whatever the form now says (a corrected cheque number, another method, a changed amount, other
@@ -322,6 +331,22 @@ export class ArDesk {
         return true;
       case "promise-panel":
         this.#setRight("promise");
+        return true;
+      case "credit-start": {
+        // The credit is against one invoice, or against the account itself when the press named none.
+        const invoiceId = attr("data-invoice-id");
+        this.#credit = { invoiceId: invoiceId === "" ? null : invoiceId };
+        this.#clearMessages();
+        this.#host.repaint();
+        return true;
+      }
+      case "credit-cancel":
+        this.#credit = null;
+        this.#clearMessages();
+        this.#host.repaint();
+        return true;
+      case "credit-confirm":
+        void this.#issueCredit();
         return true;
       case "method":
         if (this.#account !== null) this.#account = { ...this.#account, method: choice as PayMethod };
@@ -857,6 +882,63 @@ export class ArDesk {
     this.#host.repaint();
   }
 
+  /**
+   * Issues the credit the form describes.
+   *
+   * The server decides everything that is money: the tax, the cap against what the invoice has left,
+   * the account the credit books against, and whether the credit parks for a second pair of eyes. The
+   * desk says the reason and the amount, and then says what the server said, in the server's own words.
+   *
+   * The key is held across retries, so a double press raises ONE credit: the second press carries the
+   * key the first press minted, and the server answers with the credit that key already named.
+   */
+  async #issueCredit(): Promise<void> {
+    const account = this.#account;
+    const form = this.#credit;
+    if (account === null || form === null || this.#busy) return;
+    const check = creditCheck({ amountText: this.#host.field("credit-amount"), reason: this.#host.field("credit-reason") });
+    if (!check.ok) return this.#stop(check.words);
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const attempt = `${account.customerId}:${form.invoiceId ?? "account"}`;
+    const key = this.#creditKeys.keyFor(attempt);
+    const branchId = this.#creditBranch(form.invoiceId);
+    const result = await this.#api.issueCreditMemo({
+      customer_id: account.customerId,
+      branch_id: branchId,
+      invoice_id: form.invoiceId ?? undefined,
+      amount_cents: check.amountCents,
+      reason: check.reason,
+      idempotency_key: key,
+    });
+    this.#busy = false;
+    if (!result.ok) {
+      this.#fail("credit", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    // The server answered: the attempt is over and its key ends.
+    this.#creditKeys.settle(attempt);
+    this.#credit = null;
+    this.#notice = creditWords(result.value);
+    this.#host.reveal("[data-notice]");
+    await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
+    this.#host.repaint();
+  }
+
+  /**
+   * The branch a credit belongs to: the invoice's own branch, or the account's branch, which is the
+   * branch its open invoices are on. A dealer with branches has no "somewhere" to post a credit to.
+   */
+  #creditBranch(invoiceId: string | null): string {
+    const rows = this.#account?.invoices ?? [];
+    const row = invoiceId === null ? rows[0] : rows.find((r) => r.id === invoiceId);
+    if (row !== undefined) return row.branch_id;
+    return this.#branches[0]?.id ?? "";
+  }
+
   /** Clears the apply form after a payment is resolved; the server's balances are what show now. */
   #endApplyForm(): void {
     this.#previewGeneration += 1;
@@ -1292,6 +1374,7 @@ export class ArDesk {
       holdPanel: this.#holdPanel,
       liftChoice: this.#liftChoice,
       account: this.#account,
+      credit: this.#credit,
       office: this.#office.model(),
       busy: this.#busy,
       error: this.#error,

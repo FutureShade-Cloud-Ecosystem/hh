@@ -23,6 +23,8 @@ import {
   type BillingARWorklistResponse,
   type BillingCreateHoldRequest,
   type BillingCreditHold,
+  type BillingCreditMemoInput,
+  type BillingCreditMemoResult,
   type BillingCreditHoldPage,
   type BillingCustomerWorkspace,
   type BillingInvoiceDetail,
@@ -233,5 +235,13 @@ export class ArApi {
   // a drift makes the panel refuse to render.
   statementPreview(customerId: string, statementId: string): Promise<Result<BillingStatementPreview>> {
     return staffBilling.billingGetStatementPreview(this.#client, customerId, statementId);
+  }
+
+  // Issue a credit memo (FW1-12): the money the dealer gives back, against the
+  // account or against one invoice. Manager-gated on the server; the key makes a
+  // double press one credit and not two. The server decides the tax, the cap and
+  // whether the credit parks for a second pair of eyes.
+  issueCreditMemo(input: BillingCreditMemoInput): Promise<Result<BillingCreditMemoResult>> {
+    return staffBilling.billingIssueCreditMemo(this.#client, input);
   }
 }

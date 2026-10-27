@@ -208,6 +208,44 @@ export function pickCeilingWords(picked: number): string {
 
 export type PromiseCheck = { ok: true; promisedCents: number } | { ok: false; words: string };
 
+// ---- the credit memo (FW1-12) ---------------------------------------------------------------------
+
+export type CreditCheck = { ok: true; amountCents: number; reason: string } | { ok: false; words: string };
+
+/**
+ * The credit's own checks, said before the request is sent.
+ *
+ * A reason is REQUIRED and is asked for first: a credit with no stated reason cannot be explained to
+ * the customer, to the Controller, or to whoever reads the file in a year, so the desk asks before it
+ * asks about the money.
+ *
+ * The amount is a positive magnitude and the sign is the server's business, the same rule the core
+ * states. Against one invoice the cap is the server's too: the desk does not compute what an invoice
+ * has left, it asks.
+ */
+export function creditCheck(input: { amountText: string; reason: string }): CreditCheck {
+  const reason = input.reason.trim();
+  if (reason === "") return { ok: false, words: "Enter why the customer is being credited, such as the goods came back." };
+  if (input.amountText.trim() === "") return { ok: false, words: "Enter the amount to credit, such as 100.00." };
+  const cents = parseAmountToCents(input.amountText);
+  if (cents === null) return { ok: false, words: "Enter the amount as dollars and cents, such as 100.00." };
+  if (cents === 0) return { ok: false, words: "The amount must be more than zero." };
+  return { ok: true, amountCents: cents, reason };
+}
+
+/**
+ * What the credit did, in the desk's own words.
+ *
+ * AWAITING_APPROVAL says plainly that nothing has moved: a credit parked for a second pair of eyes is
+ * not a credit yet, and telling the desk it is one would be a lie the customer would later see undone.
+ */
+export function creditWords(result: { status: string; credit_memo_no: string; total_cents: number; message: string }): string {
+  if (result.status === "AWAITING_APPROVAL") {
+    return `Credit memo ${result.credit_memo_no} for ${formatMoney(Math.abs(result.total_cents))} is waiting for a second pair of eyes. No money has moved yet.`;
+  }
+  return `Credit memo ${result.credit_memo_no} for ${formatMoney(Math.abs(result.total_cents))} is issued.`;
+}
+
 export function validatePromise(input: { amountText: string; date: string; by: string; note: string; balanceCents: number }): PromiseCheck {
   if (input.amountText.trim() === "") return { ok: false, words: "Enter the amount promised, such as 100.00." };
   const cents = parseAmountToCents(input.amountText);

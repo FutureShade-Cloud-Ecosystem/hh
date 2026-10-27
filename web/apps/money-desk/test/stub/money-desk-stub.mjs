@@ -1517,6 +1517,55 @@ async function handle(req, res) {
     return send(res, 200, { count: picked.length, balance_cents: picked.reduce((t, i) => t + i.balance_cents, 0) });
   }
 
+  // The credit memo route (core/internal/billing/credit_memo_route.go): the money the dealer gives back.
+  // The core's own order of checks: the reason, the customer, the branch, the amount, the account the
+  // posting rules allow, and the idempotency key. The same key answers with the same credit, so a
+  // double press raises one credit and not two.
+  if (method === "POST" && path === "/api/v1/ar/credit-memos") {
+    const body = await readBody(req);
+    if (body === null) return refuse(res, 400, "the request body must be JSON");
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    if (reason === "") return refuse(res, 400, "a credit needs a reason");
+    const customerId = typeof body.customer_id === "string" ? body.customer_id.trim() : "";
+    if (customerId === "") return refuse(res, 400, "a credit needs a customer");
+    const branchId = typeof body.branch_id === "string" ? body.branch_id.trim() : "";
+    if (branchId === "") return refuse(res, 400, "a credit needs a branch");
+    const amount = typeof body.amount_cents === "number" ? Math.trunc(body.amount_cents) : 0;
+    if (amount <= 0) return refuse(res, 400, "the amount must be more than zero");
+    const key = typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : "";
+    if (key === "") return refuse(res, 400, "a credit needs an idempotency key");
+    const named = typeof body.gl_account === "string" ? body.gl_account.trim() : "";
+    if (named !== "" && named !== "4000") return refuse(res, 400, `the posting rules for this branch credit account 4000, not ${named}`);
+    const invoiceId = typeof body.invoice_id === "string" ? body.invoice_id.trim() : "";
+    if (invoiceId !== "") {
+      const invoice = invById(invoiceId);
+      if (!invoice) return refuse(res, 400, "no such invoice to reverse");
+      if (invoice.customer_id !== customerId) return refuse(res, 400, "the credit memo's customer must match the invoice it reverses");
+      if (amount > invoice.balance_cents) return refuse(res, 400, `a credit memo cannot be more than invoice ${invoice.invoice_no} has left to credit`);
+    }
+    // The replay: the same key answers with the same credit, which is what a double press is.
+    const held = world.keys.get(`credit:${key}`);
+    if (held !== undefined) return send(res, 200, { ...held, reused: true });
+    const tax = Math.round((amount * 13) / 100);
+    const credit = {
+      status: "ISSUED",
+      credit_memo_id: uuid("c", 1),
+      credit_memo_no: "#CM-9001",
+      customer_id: customerId,
+      branch_id: branchId,
+      invoice_id: invoiceId === "" ? undefined : invoiceId,
+      subtotal_cents: -amount,
+      tax_cents: -tax,
+      total_cents: -(amount + tax),
+      gl_account: "4000",
+      reason,
+      reused: false,
+      message: `Credit memo #CM-9001 for $${((amount + tax) / 100).toFixed(2)} is issued.`,
+    };
+    world.keys.set(`credit:${key}`, credit);
+    return send(res, 201, credit);
+  }
+
   if (method === "POST" && path === "/api/v1/ar/register/reminders") {
     const body = await readBody(req);
     if (!Array.isArray(body?.invoice_ids) || body.invoice_ids.length === 0) return refuse(res, 400, "choose at least one invoice to chase");

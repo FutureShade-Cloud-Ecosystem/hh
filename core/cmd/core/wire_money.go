@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
@@ -122,7 +123,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
 		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
 	gl.NewHandler(glSvc, log).WithZone(newDealerZone(pool)).WithLegacyImport(settings.NewDealerConfigReader(pool)).WithUserLinker(link).RegisterRoutes(r, g)
-	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
+	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc, memos: billing.NewInvoiceWriter(pool)})
 
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
@@ -330,9 +331,32 @@ func (a jeStateAdapter) JournalApprovalState(ctx context.Context, journalID stri
 // ApproveJournalTx: a rail-approve posts the journal inside the decision
 // transaction, translating gl's typed refusals into the rail's client-error
 // taxonomy (carried verbatim from the pin's adapter belt).
-type jeDeciderAdapter struct{ svc *gl.Service }
+//
+// It carries one more job, and it is the credit memo's other half. A parked credit memo's reversing
+// journal and the memo document itself are two halves of one credit, so they are posted together: the
+// memo document is finalized on the decision's own transaction, right before the journal is posted, so
+// the customer is credited and the ledger moves together or not at all. The journal's idempotency key
+// is what says this is a credit memo's journal and not any other journal, because the rail hands the
+// decider a journal id and nothing else.
+type jeDeciderAdapter struct {
+	svc *gl.Service
+	// memos finalizes the parked memo document. Nil means a parked credit memo cannot be approved,
+	// and the approval fails rather than posting a journal for a credit nobody received.
+	memos *billing.InvoiceWriter
+}
 
 func (a jeDeciderAdapter) ApproveJournalTx(ctx context.Context, tx pgx.Tx, journalID, deciderID string) error {
+	if a.memos != nil {
+		j, err := a.svc.GetJournal(ctx, journalID)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(j.IdempotencyKey, billing.CreditMemoJournalKeyPrefix) {
+			if err := a.memos.FinalizeParkedCreditMemoTx(ctx, tx, j.SourceRefID); err != nil {
+				return err
+			}
+		}
+	}
 	if err := a.svc.ApproveJournalTx(ctx, tx, journalID, deciderID); err != nil {
 		if st, ok := gl.ErrorHTTPStatus(err); ok {
 			return identity.NewClientError(st, err.Error())
