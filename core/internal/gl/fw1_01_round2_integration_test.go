@@ -18,16 +18,10 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// fw1Delivery answers one fixed delivery stamp.
-type fw1Delivery struct{ at time.Time }
-
-func (f fw1Delivery) DeliveredAt(_ context.Context, _ string) (time.Time, bool, error) {
-	return f.at, true, nil
-}
 
 // fw1AuditTx captures in-transaction audit rows, and can be made to fail.
 type fw1AuditTx struct {
@@ -98,20 +92,21 @@ func fw1ReleaseMonth(t *testing.T, pool *pgxpool.Pool, invoiceID string) (int, i
 	return y, m, posted
 }
 
-// TestIntegration_FW1_01R2_DepositReleaseDatedByTheDelivery is P1-2's red: a
-// deposit finalized 2026-02-10 (February open) and DELIVERED 2026-06-15 posts
-// as February revenue today. After the fix the release is dated by the
-// delivery (the fact MarkDelivered records) and posts in June.
+// TestIntegration_FW1_01R2_DepositReleaseDatedByTheDelivery is P1-2's and
+// P2-A's red: a deposit finalized 2026-02-10 (February open), DELIVERED
+// 2026-06-15, and swept when the service clock stands in July (2026-07-01)
+// must post in June (the delivery's month) through the real order.Repository
+// DeliveryReader, never in February (finalization) or July (processing time).
 func TestIntegration_FW1_01R2_DepositReleaseDatedByTheDelivery(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
 	fw1EnsureHouseYear(t, pool, 2026)
 	loc := houseday.DefaultZone().Location()
-	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, loc)
+	clockAt := time.Date(2026, 7, 1, 12, 0, 0, 0, loc)
 	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt).
 		WithInvoiceReader(seedInvoiceReader{pool: pool}).
-		WithDeliveryReader(fw1Delivery{at: clockAt})
+		WithDeliveryReader(order.NewRepository(pool))
 	dep := fw1PlantDeposit(t, pool, time.Date(2026, 2, 10, 12, 0, 0, 0, loc))
 	var orderID string
 	if err := pool.QueryRow(ctx, `SELECT order_id::text FROM invoices WHERE id=$1::uuid`, dep).Scan(&orderID); err != nil {
@@ -122,12 +117,18 @@ func TestIntegration_FW1_01R2_DepositReleaseDatedByTheDelivery(t *testing.T) {
 		_, _ = pool.Exec(ctx, `DELETE FROM gl_journals WHERE idempotency_key=$1`, "deposit.released:"+dep)
 	})
 
+	// Stamp the delivery on the real order row in the Postgres now()::text form
+	// for 2026-06-15, while the service clock stands at 2026-07-01.
+	if _, err := pool.Exec(ctx,
+		`UPDATE orders SET metadata = jsonb_build_object('delivered_at', '2026-06-15 16:00:00.123456+00') WHERE id = $1`, orderID); err != nil {
+		t.Fatalf("plant delivered_at stamp: %v", err)
+	}
 	if err := svc.consume(ctx, ev("deposit.released", map[string]any{"invoice_id": dep, "order_id": orderID})); err != nil {
 		t.Fatalf("the release consume: %v", err)
 	}
 	y, m, posted := fw1ReleaseMonth(t, pool, dep)
 	if y != 2026 || m != 6 {
-		t.Fatalf("the release posts in %04d-%02d, want 2026-06 (the delivery's month, never the deposit finalization's)", y, m)
+		t.Fatalf("the release posts in %04d-%02d, want 2026-06 (the delivery's month, never the deposit finalization's or the processing clock's)", y, m)
 	}
 	if posted == nil || posted.In(loc).Format("2006-01-02") != "2026-06-15" {
 		t.Fatalf("the release carries posted_at %v, want the delivery date 2026-06-15", posted)
