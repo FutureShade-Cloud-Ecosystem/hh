@@ -81,21 +81,21 @@ test('the button names the deposit in dollars', () => {
 // "Credit available $5,000.00", a figure with no meaning for an account that pays before release;
 // the card says the posture instead, and a credit account keeps its figure.
 test('the Cash On Demand posture replaces the credit figure only for the Cash On Demand account', () => {
-  assert.equal(cashOnDemandPosture(cod, 0, 500000), 'Cash On Demand: pay before release');
+  // The core states the posture as its own field (cash_on_demand); the till infers nothing from a limit.
+  assert.equal(cashOnDemandPosture(cod, true), 'Cash On Demand: pay before release');
   // The branch switch off (pay in full now only) does not make the figure honest again: the
   // account is still the pay before release account.
-  assert.equal(cashOnDemandPosture([{ shape: 'PAY_IN_FULL_NOW' }], 0, 500000), 'Cash On Demand: pay before release');
+  assert.equal(cashOnDemandPosture([{ shape: 'PAY_IN_FULL_NOW' }], true), 'Cash On Demand: pay before release');
   // Before the preview answers, the same account: the posture, never the figure.
-  assert.equal(cashOnDemandPosture([], 0, 500000), 'Cash On Demand: pay before release');
-  // A credit account keeps its figure (the server offers the on account shape).
-  assert.equal(cashOnDemandPosture(credit, 30, 500000), null);
-  // A held credit account is offered the pay before release shapes, and it is still a credit
-  // account: its figure shows and the hold tag carries the hold.
-  assert.equal(cashOnDemandPosture(cod, 15, 200000), null);
-  // An on account shape offered means the account transacts as credit, whatever the terms read.
-  assert.equal(cashOnDemandPosture(credit, 0, 500000), null);
-  // No line: the card's "No credit line" line, not the posture.
-  assert.equal(cashOnDemandPosture(cod, 0, 0), null);
+  assert.equal(cashOnDemandPosture([], true), 'Cash On Demand: pay before release');
+  // A credit account keeps its figure.
+  assert.equal(cashOnDemandPosture(credit, false), null);
+  // A held credit account is offered the pay before release shapes, and it is still a credit account.
+  assert.equal(cashOnDemandPosture(cod, false), null);
+  // An on account shape offered means the account transacts as credit, whatever the field reads.
+  assert.equal(cashOnDemandPosture(credit, true), null);
+  // A read that did not state the field says nothing: never a posture guessed from terms or a limit.
+  assert.equal(cashOnDemandPosture(cod, undefined), null);
 });
 
 test('the ring facts: credit rides ACCOUNT, pay before release rides COD with the waiting fulfilment', () => {

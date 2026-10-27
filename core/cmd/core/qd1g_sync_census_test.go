@@ -500,6 +500,8 @@ type qd1gDoor struct {
 // and touch no row): a reason, not a leg.
 var qd1gNotDoor = map[string]map[string]string{
 	"quotes": {"WithNow": "pins the expiry clock of the store; takes no caller, reads and writes no row"},
+	"approvals": {"WithJEDecider": "attaches the withdrawal bridge the store voids a withdrawn credit memo's park with; " +
+		"takes no caller, reads and writes no row"},
 }
 
 func qd1gDoors() map[string]map[string]qd1gDoor {

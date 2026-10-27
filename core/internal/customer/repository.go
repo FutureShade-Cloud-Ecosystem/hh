@@ -45,6 +45,25 @@ type Repository struct {
 
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
 
+// CustomerHomeBranch answers the account's home branch ("" when the account carries none) and whether
+// the account exists: the one fact another module needs to hold the account to an org, through the
+// branches module's own org read. The module's own table, read only.
+func (r *Repository) CustomerHomeBranch(ctx context.Context, customerID string) (string, bool, error) {
+	if r.pool == nil {
+		return "", false, errNoDB
+	}
+	var home string
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(home_branch_id::text, '') FROM customers WHERE id = $1::uuid`, customerID).Scan(&home)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("customer: read the account's home branch: %w", err)
+	}
+	return home, true, nil
+}
+
 func scanAccount(row interface {
 	Scan(dest ...any) error
 }) (Account, error) {
@@ -118,7 +137,8 @@ func (r *Repository) SearchAccountsScoped(ctx context.Context, q string, limit i
 SELECT c.id::text, c.name, c.account_no::text, c.customer_type,
        c.payment_terms_days, c.credit_limit_cents,
        COALESCE((SELECT t.balance_after FROM customer_transactions t
-                  WHERE t.customer_id = c.id ORDER BY t.occurred_at DESC LIMIT 1), 0)
+                  WHERE t.customer_id = c.id ORDER BY t.occurred_at DESC LIMIT 1), 0),
+       c.home_branch_id IS NULL
   FROM customers c
  WHERE c.is_active
    AND (c.name ILIKE '%' || $1 || '%' ESCAPE '\' OR c.account_no::text ILIKE '%' || $1 || '%' ESCAPE '\')
@@ -139,7 +159,7 @@ SELECT c.id::text, c.name, c.account_no::text, c.customer_type,
 		var s SearchResult
 		if err := rows.Scan(
 			&s.ID, &s.Name, &s.AccountNo, &s.CustomerType,
-			&s.PaymentTermsDays, &s.CreditLimitCents, &s.OpenBalanceCents,
+			&s.PaymentTermsDays, &s.CreditLimitCents, &s.OpenBalanceCents, &s.Unhomed,
 		); err != nil {
 			return nil, err
 		}
@@ -206,6 +226,11 @@ func (r *Repository) InsertCustomer(ctx context.Context, in CreateInput) (Accoun
 	if in.HomeBranchID != "" {
 		homeBranch = in.HomeBranchID
 	}
+	// terms is never nil here: the service defaulted an absent field to 30 before this ran.
+	var terms int
+	if in.PaymentTermsDays != nil {
+		terms = *in.PaymentTermsDays
+	}
 	var id string
 	err = r.pool.QueryRow(ctx, `
 		INSERT INTO customers (account_no, name, customer_type, home_branch_id,
@@ -213,7 +238,7 @@ func (r *Repository) InsertCustomer(ctx context.Context, in CreateInput) (Accoun
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id::text`,
 		in.AccountNo, in.Name, in.CustomerType, homeBranch,
-		in.PaymentTermsDays, in.CreditLimitCents, in.TaxExempt, addr).Scan(&id)
+		terms, in.CreditLimitCents, in.TaxExempt, addr).Scan(&id)
 	if err != nil {
 		// account_no is CITEXT NOT NULL UNIQUE (migration 0006). A collision is a client
 		// error (the account number is already taken), not a server fault: return the

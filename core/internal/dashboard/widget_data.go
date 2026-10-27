@@ -196,9 +196,9 @@ func (s *Service) WidgetDataFor(ctx context.Context, scope Scope, keys []string)
 					"widget", w.Key, "measure", w.Measure, "split", w.Split, "err", err)
 				return
 			}
-			total := TotalOf(pts)
+			total := s.totalFor(ctx, meta[idx].Kind, p, sc, pts)
 			d.State, d.Points, d.Note = StateOK, pts, ""
-			d.Total = &total
+			d.Total = total
 		}(i, p)
 	}
 	wg.Wait()

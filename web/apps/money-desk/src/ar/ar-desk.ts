@@ -14,10 +14,10 @@ import { html, type TemplateResult } from "lit";
 import type { BillingCustomerWorkspace, BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
-import { canLiftHolds, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
+import { canLiftHolds, creditCheck, creditWords, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import { OfficeDesk, type OfficeHost } from "./office-desk.js";
-import { sweepWords } from "./office-logic.js";
+import { AttemptKeys, sweepWords } from "./office-logic.js";
 import {
   renderAccount,
   renderHolds,
@@ -31,6 +31,7 @@ import {
   shownInvoiceIds,
   type AccountModel,
   type BouncedWork,
+  type CreditForm,
   type DeskModel,
   type PayMethod,
   type RegisterFilter,
@@ -96,6 +97,14 @@ export class ArDesk {
   #error = "";
   #notice = "";
   #fillPending = false;
+
+  // The credit memo form (FW1-12): which invoice the credit is against, or nothing for a credit on the
+  // account itself. The amount and the reason are read from the form fields when the credit is sent.
+  #credit: CreditForm | null = null;
+
+  // One key per credit attempt. It is minted when the form opens and sent again on every retry, so a
+  // double press on Issue the credit raises ONE credit. It ends when the server answers.
+  readonly #creditKeys = new AttemptKeys(newKey);
 
   // One pending payment per account: the key is minted when the payment is first sent and sent again for every
   // retry, whatever the form now says (a corrected cheque number, another method, a changed amount, other
@@ -306,12 +315,16 @@ export class ArDesk {
       case "sub":
         if (this.#account !== null) this.#account = { ...this.#account, sub: choice === "statement" ? "statement" : choice === "contacts" ? "contacts" : "invoices" };
         if (choice === "contacts" && this.#account !== null) void this.#office.ensureContact(this.#account.customerId);
+        // A credit belongs to the view it was opened in: changing tab closes the form.
+        this.#credit = null;
         this.#clearMessages();
         this.#host.repaint();
         this.#afterFill();
         return true;
       case "invoice-scope":
         if (this.#account !== null) this.#account = { ...this.#account, showAll: choice === "all" };
+        // Narrowing the list can take away the row the credit is open on, so the form closes too.
+        this.#credit = null;
         this.#host.repaint();
         return true;
       case "open-invoice":
@@ -322,6 +335,29 @@ export class ArDesk {
         return true;
       case "promise-panel":
         this.#setRight("promise");
+        return true;
+      case "credit-start": {
+        // The credit is against one invoice, or against the account itself when the press named none.
+        const invoiceId = attr("data-invoice-id");
+        const id = invoiceId === "" ? null : invoiceId;
+        this.#credit = { invoiceId: id, amountText: "", thresholdCents: null, quote: null, quoteError: "" };
+        this.#clearMessages();
+        this.#host.repaint();
+        // The form says what the approval rail will do, so it needs the branch's own threshold.
+        void this.#readCreditThreshold(id);
+        // The form says what the credit comes to and how much room the invoice has left, so it asks
+        // the core for the quote: the cap is the core's, never a number typed into the desk.
+        this.#scheduleCreditQuote(0);
+        return true;
+      }
+      case "credit-cancel":
+        this.#credit = null;
+        this.#creditQuoteGeneration += 1;
+        this.#clearMessages();
+        this.#host.repaint();
+        return true;
+      case "credit-confirm":
+        void this.#issueCredit();
         return true;
       case "method":
         if (this.#account !== null) this.#account = { ...this.#account, method: choice as PayMethod };
@@ -546,6 +582,16 @@ export class ArDesk {
       this.#host.repaint();
       return;
     }
+    if (this.#credit !== null && control.getAttribute("data-field") === "credit-amount") {
+      // The form says what the credit will do as it is typed: an amount at or over the threshold
+      // waits for a second pair of eyes, and the manager reads that before the press. It also says
+      // what the credit COMES TO, tax included, which is the core's own arithmetic: the desk asks
+      // the core and shows what it says.
+      this.#credit = { ...this.#credit, amountText: (control as HTMLInputElement).value };
+      this.#scheduleCreditQuote();
+      this.#host.repaint();
+      return;
+    }
     if (account === null) return;
     if (control.getAttribute("data-field") === "receive-amount") {
       this.#account = { ...account, amountText: (control as HTMLInputElement).value };
@@ -642,6 +688,8 @@ export class ArDesk {
     const row = this.#aging.find((a) => a.customer_id === customerId);
     this.#clearMessages();
     this.#work = null;
+    // A credit belongs to the account it was opened on.
+    this.#credit = null;
     this.#tab = "receivables";
     this.#account = {
       customerId,
@@ -857,6 +905,136 @@ export class ArDesk {
     this.#host.repaint();
   }
 
+  /**
+   * Issues the credit the form describes.
+   *
+   * The server decides everything that is money: the tax, the cap against what the invoice has left,
+   * the account the credit books against, and whether the credit parks for a second pair of eyes. The
+   * desk says the reason and the amount, and then says what the server said, in the server's own words.
+   *
+   * The key is held across retries, so a double press raises ONE credit: the second press carries the
+   * key the first press minted, and the server answers with the credit that key already named.
+   */
+  async #issueCredit(): Promise<void> {
+    const account = this.#account;
+    const form = this.#credit;
+    if (account === null || form === null || this.#busy) return;
+    const check = creditCheck({ amountText: this.#host.field("credit-amount"), reason: this.#host.field("credit-reason") });
+    if (!check.ok) return this.#stop(check.words);
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const attempt = `${account.customerId}:${form.invoiceId ?? "account"}`;
+    const key = this.#creditKeys.keyFor(attempt);
+    const branchId = this.#creditBranch(form.invoiceId);
+    const result = await this.#api.issueCreditMemo({
+      customer_id: account.customerId,
+      branch_id: branchId,
+      invoice_id: form.invoiceId ?? undefined,
+      amount_cents: check.amountCents,
+      reason: check.reason,
+      idempotency_key: key,
+    });
+    this.#busy = false;
+    if (!result.ok) {
+      this.#fail("credit", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    // The server answered: the attempt is over and its key ends.
+    this.#creditKeys.settle(attempt);
+    this.#credit = null;
+    this.#notice = creditWords(result.value);
+    this.#host.reveal("[data-notice]");
+    await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
+    this.#host.repaint();
+  }
+
+  /**
+   * What the credit comes to, and how much room the invoice has left, asked of the core.
+   *
+   * The cap the core holds the amount to is the invoice's REMAINING SUBTOTAL, before tax: the
+   * balance with tax that the desk used to show was a different number, and a confident one. So the
+   * desk asks the core and shows what the core says, and it asks again as the amount is typed,
+   * because the tax is pro-rated from what is left and only the core does that arithmetic.
+   *
+   * A read that fails leaves the quote unknown and the desk says nothing about the amount rather
+   * than guess; the server still decides the credit.
+   */
+  #creditQuoteTimer: ReturnType<typeof setTimeout> | undefined;
+  #creditQuoteGeneration = 0;
+
+  #scheduleCreditQuote(delayMs = 300): void {
+    if (this.#creditQuoteTimer !== undefined) clearTimeout(this.#creditQuoteTimer);
+    this.#creditQuoteTimer = setTimeout(() => void this.#askCreditQuote(), delayMs);
+  }
+
+  async #askCreditQuote(): Promise<void> {
+    const form = this.#credit;
+    const account = this.#account;
+    if (form === null || account === null || form.invoiceId === null) return;
+    const branchId = this.#creditBranch(form.invoiceId);
+    if (branchId === "") return;
+    const cents = parseAmountToCents(form.amountText);
+    const amountCents = cents === null ? 0 : cents;
+    const generation = ++this.#creditQuoteGeneration;
+    const answer = await this.#api.quoteCreditMemo({
+      customerId: account.customerId,
+      branchId,
+      invoiceId: form.invoiceId,
+      amountCents,
+    });
+    // The form may have closed, or moved to another credit, or the amount moved on, while the read
+    // was in flight: a stale answer never overwrites a newer one.
+    const now = this.#credit;
+    if (generation !== this.#creditQuoteGeneration || now === null || now.invoiceId !== form.invoiceId) return;
+    if (!answer.ok) {
+      this.#credit = { ...now, quote: now.quote, quoteError: refusalWords("credit", answer.error, answer.status) };
+      this.#host.repaint();
+      return;
+    }
+    this.#credit = {
+      ...now,
+      quote: {
+        remainingSubtotalCents: answer.value.remaining_subtotal_cents,
+        remainingTotalCents: answer.value.remaining_total_cents,
+        message: answer.value.message,
+      },
+      quoteError: "",
+    };
+    this.#host.repaint();
+  }
+
+  /**
+   * The branch's maker-checker threshold, read from the server the way the route reads it.
+   *
+   * The form says what the rail will do to this credit BEFORE the press, and that sentence needs the
+   * branch's own number. A read that fails leaves the number unknown: the desk then says nothing
+   * about the rail rather than guess, and the server still decides.
+   */
+  async #readCreditThreshold(invoiceId: string | null): Promise<void> {
+    const branchId = this.#creditBranch(invoiceId);
+    if (branchId === "") return;
+    const thresholdCents = await this.#api.creditApprovalThreshold(branchId);
+    const form = this.#credit;
+    // The form may have closed, or moved to another credit, while the read was in flight.
+    if (form === null || form.invoiceId !== invoiceId) return;
+    this.#credit = { ...form, thresholdCents };
+    this.#host.repaint();
+  }
+
+  /**
+   * The branch a credit belongs to: the invoice's own branch, or the account's branch, which is the
+   * branch its open invoices are on. A dealer with branches has no "somewhere" to post a credit to.
+   */
+  #creditBranch(invoiceId: string | null): string {
+    const rows = this.#account?.invoices ?? [];
+    const row = invoiceId === null ? rows[0] : rows.find((r) => r.id === invoiceId);
+    if (row !== undefined) return row.branch_id;
+    return this.#branches[0]?.id ?? "";
+  }
+
   /** Clears the apply form after a payment is resolved; the server's balances are what show now. */
   #endApplyForm(): void {
     this.#previewGeneration += 1;
@@ -972,7 +1150,7 @@ export class ArDesk {
       this.#host.repaint();
       return;
     }
-    const overdue = register.value.items.filter((r) => r.days_overdue > 0 && isUnpaidInvoice(r)).map((r) => r.id);
+    const overdue = register.value.items.filter((r) => (r.days_overdue ?? 0) > 0 && isUnpaidInvoice(r)).map((r) => r.id);
     if (overdue.length === 0) {
       this.#busy = false;
       this.#error = "Nothing on this account is overdue, so there is nothing to chase.";
@@ -1177,8 +1355,11 @@ export class ArDesk {
       this.#host.repaint();
       return;
     }
+    const closing1 = preview.value.statement.closing_balance_cents;
     this.#notice = preview.value.reconciled
-      ? `Statement preview is balanced to the penny. Closing balance: ${formatWorkspaceMoney(preview.value.statement.closing_balance_cents)}.`
+      ? closing1 == null
+        ? "Statement preview is balanced to the penny. Closing balance: Not shown for your role."
+        : `Statement preview is balanced to the penny. Closing balance: ${formatWorkspaceMoney(closing1)}.`
       : "Statement preview's totals do not reconcile; flag a controller.";
     this.#host.repaint();
   }
@@ -1198,8 +1379,11 @@ export class ArDesk {
       this.#host.repaint();
       return;
     }
+    const closing2 = preview.value.statement.closing_balance_cents;
     this.#notice = preview.value.reconciled
-      ? `Statement preview is balanced to the penny. Closing balance: ${formatWorkspaceMoney(preview.value.statement.closing_balance_cents)}.`
+      ? closing2 == null
+        ? "Statement preview is balanced to the penny. Closing balance: Not shown for your role."
+        : `Statement preview is balanced to the penny. Closing balance: ${formatWorkspaceMoney(closing2)}.`
       : "Statement preview's totals do not reconcile; flag a controller.";
     this.#host.repaint();
   }
@@ -1224,7 +1408,7 @@ export class ArDesk {
     const result = await this.#api.sendPaylink({
       customer_id: customerId,
       invoice_id: null,
-      amount_cents: amount > 0 ? amount : null,
+      amount_cents: amount != null && amount > 0 ? amount : null,
       channel: "EMAIL",
       recipient,
     });
@@ -1258,7 +1442,7 @@ export class ArDesk {
     // URL pattern the core builds is /paylink/{token}. We render the URL the same way the
     // handler builds it, so the URL on the paste is the URL a Send would have produced.
     const amount = preview.value.statement.closing_balance_cents;
-    const url = `/paylink/${deterministicPaylinkToken(customerId, null, amount > 0 ? amount : null, "EMAIL")}`;
+    const url = `/paylink/${deterministicPaylinkToken(customerId, null, amount != null && amount > 0 ? amount : null, "EMAIL")}`;
     const copied = this.#host.copy ? this.#host.copy(url) : false;
     if (copied) this.#notice = `Paylink URL copied: ${url}`;
     else this.#notice = `Paylink URL: ${url} (clipboard unavailable; copy by hand)`;
@@ -1292,6 +1476,7 @@ export class ArDesk {
       holdPanel: this.#holdPanel,
       liftChoice: this.#liftChoice,
       account: this.#account,
+      credit: this.#credit,
       office: this.#office.model(),
       busy: this.#busy,
       error: this.#error,

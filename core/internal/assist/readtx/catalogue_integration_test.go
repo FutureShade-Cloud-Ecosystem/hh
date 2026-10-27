@@ -66,6 +66,7 @@ var viewOwnerColumns = map[string][]string{
 	"public.invoices":               {"balance_cents", "branch_id", "customer_id", "doc_type", "due_date", "holdback_cents", "id", "invoice_no", "issue_date", "order_id", "status", "subtotal_cents", "tax_cents", "total_cents"},                                                                   // slice 7a
 	"public.payments":               {"amount_cents", "branch_id", "customer_id", "id", "method", "payment_no", "received_at", "status"},                                                                                                                                                             // slice 7a
 	"public.payment_allocations":    {"amount_cents", "created_at", "invoice_id", "payment_id"},                                                                                                                                                                                                      // slice 7a
+	"public.customer_transactions":  {"amount_cents", "branch_id", "customer_id", "id", "occurred_at", "source_ref_id", "source_type", "txn_type"},                                                                                                                                                   // 0444: the aging view's non-invoice arm
 	"public.delivery_runs":          {"branch_id", "completed_at", "dispatched_at", "driver_id", "id", "run_no", "scheduled_date", "status", "truck_id"},                                                                                                                                             // slice 7b
 	"public.delivery_stops":         {"address_line", "branch_id", "city", "contact_name", "contact_phone", "delivered_at", "failure_reason", "id", "order_id", "postal_code", "run_id", "scheduled_date", "status", "stop_no", "time_window"},                                                       // slice 7b
 	"public.dispatch_trucks":        {"code", "id"},                                                                                                                                                                                                                                                  // slice 7b
@@ -137,6 +138,9 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 			}
 			if schema+"."+name == "ai.dealer_day" {
 				want = roles.ZoneReader // slice 7a: the dealer's day, owned by the role that can read the one setting
+			}
+			if schema+"."+name == "ai.dealer_zone" {
+				want = roles.ZoneReader // 0444: the dealer's zone for the aging view's non-invoice age dates, the same shape as the day
 			}
 			if owner != want {
 				add("%s %s.%s is owned by %s, want %s", q.kind, schema, name, owner, want)
@@ -405,6 +409,8 @@ func catalogueViolations(ctx context.Context, conn *pgx.Conn, roles Roles, exten
 			// reader as ai.claims() is (a function in a view runs with the caller's privilege); the zone reader that
 			// owns it runs the settings module's zone rule and the one citext function its key comparison needs.
 			(role == roles.Reader && schema == "ai" && fn == "dealer_day" && args == "") ||
+			// 0444: the dealer's zone for the aging view's non-invoice age dates, granted and pinned as the day is.
+			(role == roles.Reader && schema == "ai" && fn == "dealer_zone" && args == "") ||
 			(role == roles.ZoneReader && schema == "public" && fn == "settings_business_zone" && args == "") ||
 			(role == roles.ZoneReader && fn == "citext_eq" && args == "citext, citext")
 		if !ok {

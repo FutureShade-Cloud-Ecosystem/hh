@@ -286,8 +286,8 @@ export type BillingRegisterRow = {
   balance_cents: number;
   holdback_cents?: number;
   stored_status: "DRAFT" | "FINALIZED" | "PARTIALLY_PAID" | "PAID" | "VOID";
-  status: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT";
-  days_overdue: number;
+  status: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT" | "FINALIZED";
+  days_overdue?: number;
   bucket_label?: "" | "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
   bucket_key?: "" | "CURRENT" | "1_30" | "31_60" | "61_90" | "90_PLUS";
   account_status: "CURRENT" | "CREDIT_APPROVED" | "CREDIT_HOLD" | "UNDER_REVIEW";
@@ -300,8 +300,8 @@ export type BillingRegisterRow = {
 };
 export type BillingRegisterCounts = {
   open: number;
-  due_soon: number;
-  overdue: number;
+  due_soon?: number;
+  overdue?: number;
   disputed: number;
   paid: number;
   credits: number;
@@ -461,8 +461,8 @@ export type BillingInvoiceDetail = {
   invoice_no: string;
   doc_type: "INVOICE" | "CREDIT_MEMO";
   stored_status: "DRAFT" | "FINALIZED" | "PARTIALLY_PAID" | "PAID" | "VOID";
-  status: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT";
-  days_overdue: number;
+  status: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT" | "FINALIZED";
+  days_overdue?: number;
   issue_date: string;
   due_date: string;
   branch_id: string;
@@ -535,6 +535,48 @@ export type BillingReceiptResult = {
   balance_cents: number;
   status: "RECEIVED" | "DEPOSITED" | "BOUNCED" | "REFUNDED" | "VOID" | "PENDING";
   replayed: boolean;
+};
+export type BillingCreditMemoInput = {
+  customer_id: string;
+  branch_id: string;
+  invoice_id?: string;
+  amount_cents: number;
+  reason: string;
+  gl_account?: string;
+  idempotency_key?: string;
+};
+export type BillingCreditMemoQuoteInput = {
+  customer_id: string;
+  branch_id: string;
+  invoice_id: string;
+  amount_cents?: number;
+};
+export type BillingCreditMemoQuote = {
+  invoice_id: string;
+  remaining_subtotal_cents: number;
+  remaining_tax_cents: number;
+  remaining_total_cents: number;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  message: string;
+};
+export type BillingCreditMemoResult = {
+  status: "ISSUED" | "AWAITING_APPROVAL";
+  credit_memo_id: string;
+  credit_memo_no: string;
+  customer_id: string;
+  branch_id: string;
+  invoice_id?: string;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  gl_account: string;
+  reason: string;
+  approval_id?: string;
+  gl_journal_id?: string;
+  reused?: boolean;
+  message: string;
 };
 export type BillingApplyPaymentInput = {
   customer_id: string;
@@ -702,11 +744,11 @@ export type BillingStatement = {
   customer_id: string;
   customer_name?: string;
   as_of_date: string;
-  current_cents: number;
-  days_30_cents: number;
-  days_60_cents: number;
-  days_90_plus_cents: number;
-  closing_balance_cents: number;
+  current_cents?: number;
+  days_30_cents?: number;
+  days_60_cents?: number;
+  days_90_plus_cents?: number;
+  closing_balance_cents?: number;
   html?: string;
   delivery_status: "NOT_QUEUED" | "QUEUED" | "SENT" | "FAILED";
   created_at: string;
@@ -972,19 +1014,20 @@ export type BillingCustomerWorkspaceHeader = {
   customer_id: string;
   name: string;
   account_no: string;
+  account_position_withheld: boolean;
   status: "CURRENT" | "CREDIT_APPROVED" | "CREDIT_HOLD" | "UNDER_REVIEW";
   terms_days: number;
-  credit_limit_cents: number;
-  open_cents: number;
-  available_credit_cents: number;
-  overdue_cents: number;
-  utilization_bps: number;
+  credit_limit_cents?: number;
+  open_cents?: number;
+  available_credit_cents?: number;
+  overdue_cents?: number;
+  utilization_bps?: number;
   primary_ap_contact_name?: string;
   primary_ap_contact_email?: string;
   primary_ap_contact_phone?: string;
   last_payment_at?: string;
   last_payment_cents?: number;
-  aging: BillingCustomerWorkspaceAging;
+  aging?: BillingCustomerWorkspaceAging;
 };
 export type BillingCustomerWorkspaceAging = {
   current_cents: number;
@@ -1004,8 +1047,8 @@ export type BillingCustomerWorkspaceInvoice = {
   due_date: string;
   total_cents: number;
   balance_cents: number;
-  days_overdue: number;
-  days_overdue_bucket: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+  days_overdue?: number;
+  days_overdue_bucket?: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
   is_disputed: boolean;
   has_open_promise: boolean;
 };
@@ -1031,7 +1074,7 @@ export type BillingCustomerWorkspaceStatement = {
   run_id: string;
   mode: "MASS" | "INTERIM";
   as_of_date: string;
-  closing_balance_cents: number;
+  closing_balance_cents?: number;
   delivery_status: "NOT_QUEUED" | "QUEUED" | "SENT" | "FAILED";
   created_at: string;
 };
@@ -1093,7 +1136,7 @@ export type BillingSendPaylinkResult = {
 export type BillingStatementPreview = {
   statement: BillingStatement;
   open_lines: BillingStatementPreviewLine[];
-  aging: BillingStatementPreviewAging;
+  aging?: BillingStatementPreviewAging;
   reconciled: boolean;
 };
 export type BillingStatementPreviewLine = {
@@ -1101,8 +1144,8 @@ export type BillingStatementPreviewLine = {
   invoice_no: string;
   due_date: string;
   balance_cents: number;
-  days_overdue: number;
-  bucket_label: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+  days_overdue?: number;
+  bucket_label?: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
 };
 export type BillingStatementPreviewAging = {
   current_cents: number;
@@ -1507,8 +1550,10 @@ export type CustomerSearchResult = {
   account_no: string;
   customer_type: "CONTRACTOR" | "RETAIL" | "BUILDER" | "GOVERNMENT" | "INTERNAL";
   payment_terms_days: number;
-  credit_limit_cents: number;
-  open_balance_cents: number;
+  cash_on_demand: boolean;
+  credit_limit_cents?: number;
+  open_balance_cents?: number;
+  available_credit_cents?: number;
 };
 export type CustomerAccount = {
   customer_id: string;
@@ -1517,10 +1562,12 @@ export type CustomerAccount = {
   customer_type: "CONTRACTOR" | "RETAIL" | "BUILDER" | "GOVERNMENT" | "INTERNAL";
   branch_id: string;
   payment_terms_days: number;
-  credit_limit_cents: number;
+  cash_on_demand: boolean;
+  credit_limit_cents?: number;
   on_hold: boolean;
   tax_exempt: boolean;
-  balance_cents: number;
+  balance_cents?: number;
+  available_credit_cents?: number;
   is_active: boolean;
 };
 export type CustomerCreate = {
@@ -5018,7 +5065,7 @@ export type PosHotkeys = {
   keys: PosHotkey[];
 };
 export type PosAccountStanding = {
-  standing: "walk_in" | "clear" | "past_due" | "on_hold";
+  standing: "walk_in" | "clear" | "past_due" | "on_hold" | "withheld";
   past_due_cents?: number;
   oldest_bucket?: "30" | "60" | "90+";
   on_hold?: boolean;

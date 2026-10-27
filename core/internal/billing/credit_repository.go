@@ -88,10 +88,10 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 // auto-hold rule read this same query, so the number an operator argues about is the number the
 // machine used.
 //
-// It reads open invoice balances only (FINALIZED / PARTIALLY_PAID). Non-invoice AR movements (NSF
-// fees, adjustments) are deliberately excluded from the BUCKETS because they have no due date to age
-// from; they are still visible in the tie-out via ARBalanceCents, which is the figure that has to
-// reconcile to the GL.
+// It unions open invoice balances (FINALIZED / PARTIALLY_PAID) with non-invoice AR movements in
+// customer_transactions (NSF fees, adjustments, standalone credits and write-offs, grouped by
+// source_ref_id so a paid NSF fee nets to zero on its original date), so the aging grand total ties
+// to ARBalanceCents and GL 1100 inception to date.
 //
 // The five C8 bucket columns (Current, Days30, Days60, Days60To90, Days90Plus) are mutually
 // exclusive at every day boundary, by construction: the upper bound of one band is exactly one
@@ -99,6 +99,20 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 // operator's aging summary, so a band total of 30 in the screen matches 30 in the rule and 30 in
 // the register's per-row bucket_label derivation, all from one expression.
 const agingSelect = `
+	WITH open_ar AS (
+		SELECT i.customer_id, i.branch_id, i.balance_cents, i.due_date
+		  FROM invoices i
+		 WHERE i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.balance_cents <> 0
+		UNION ALL
+		SELECT ct.customer_id, ct.branch_id,
+		       SUM(ct.amount_cents) AS balance_cents,
+		       MIN((ct.occurred_at AT TIME ZONE $5::text)::date) AS due_date
+		  FROM customer_transactions ct
+		 WHERE ct.txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')
+		   AND ct.source_type <> 'invoice'
+		 GROUP BY ct.customer_id, ct.branch_id, ct.source_type, COALESCE(ct.source_ref_id, ct.id)
+		HAVING SUM(ct.amount_cents) <> 0
+	)
 	SELECT c.id::text, c.name, c.account_no::text, COALESCE(c.home_branch_id::text,''),
 	       c.payment_terms_days, c.credit_limit_cents,
 	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date <= i.due_date), 0),
@@ -111,7 +125,7 @@ const agingSelect = `
 	       EXISTS (SELECT 1 FROM credit_holds h WHERE h.customer_id = c.id AND h.status = 'ACTIVE'),
 	       COALESCE((SELECT h.hold_kind FROM credit_holds h WHERE h.customer_id = c.id AND h.status = 'ACTIVE' LIMIT 1), '')
 	  FROM customers c
-	  JOIN invoices i ON i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')
+	  JOIN open_ar i ON i.customer_id = c.id
 	 WHERE ($3 = '' OR i.branch_id = $3::uuid)
 	   AND ($4::uuid[] IS NULL OR i.branch_id = ANY($4::uuid[]))
 	 GROUP BY c.id, c.name, c.account_no, c.home_branch_id, c.payment_terms_days, c.credit_limit_cents
@@ -133,11 +147,12 @@ func (r *Repository) AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays
 	if bucketDays <= 0 {
 		bucketDays = 60
 	}
-	day, err := r.clockAt(ctx, asOf)
+	zone, err := r.zoneFor(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.pool.Query(ctx, agingSelect, day, bucketDays, branchID, reach.SQLArg())
+	day := houseClockIn(zone, asOf)
+	rows, err := r.pool.Query(ctx, agingSelect, day, bucketDays, branchID, reach.SQLArg(), zone.Name())
 	if err != nil {
 		return nil, fmt.Errorf("billing: aging rows: %w", err)
 	}
@@ -208,13 +223,13 @@ func (r *Repository) PlaceHold(ctx context.Context, customerID, kind, reason, pl
 }
 
 // holdColumns is the canonical hold SELECT list.
-const holdColumns = `h.id::text, h.customer_id::text, COALESCE(c.name,''), h.status, h.hold_kind,
+const holdColumns = `h.id::text, h.customer_id::text, COALESCE(c.name,''), COALESCE(c.home_branch_id::text,''), h.status, h.hold_kind,
 	h.auto_placed, h.reason, h.override_until, h.override_reason, h.created_at`
 
 func scanHold(row pgx.Row) (CreditHold, error) {
 	var h CreditHold
 	var until *time.Time
-	if err := row.Scan(&h.ID, &h.CustomerID, &h.CustomerName, &h.Status, &h.Kind,
+	if err := row.Scan(&h.ID, &h.CustomerID, &h.CustomerName, &h.HomeBranchID, &h.Status, &h.Kind,
 		&h.AutoPlaced, &h.Reason, &until, &h.OverrideReason, &h.CreatedAt); err != nil {
 		return CreditHold{}, err
 	}

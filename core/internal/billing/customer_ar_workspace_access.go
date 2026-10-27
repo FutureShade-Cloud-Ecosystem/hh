@@ -83,3 +83,24 @@ func (h *WorkspaceHandler) holdsTrail(ctx context.Context, platformUserID, orgID
 	}
 	return h.trail.HoldsPaymentTrail(ctx, platformUserID, orgID)
 }
+
+// AccountPositionReader says whether the caller may receive the account position of an account homed
+// to a branch (AccountPositionGate, the register's own rule).
+type AccountPositionReader interface {
+	AccountPositionAllowed(ctx context.Context, branchID string) bool
+}
+
+// WithAccountPosition binds the account position policy. Unbound, the workspace withholds the
+// credit limit, open, available, overdue, utilization and aging from every caller.
+func (h *WorkspaceHandler) WithAccountPosition(p AccountPositionReader) *WorkspaceHandler {
+	h.position = p
+	return h
+}
+
+// positionAllowed asks the policy; false also when none is bound.
+func (h *WorkspaceHandler) positionAllowed(ctx context.Context, branchID string) bool {
+	if h.position == nil {
+		return false
+	}
+	return h.position.AccountPositionAllowed(ctx, branchID)
+}

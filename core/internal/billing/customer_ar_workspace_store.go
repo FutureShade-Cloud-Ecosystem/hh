@@ -29,6 +29,7 @@ package billing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -43,8 +44,9 @@ import (
 // code, status badge, credit limit, utilization bar, terms, primary AP contact, last payment
 // and the 5-bucket aging that opens with it.
 //
-// OpenCents is the same figure CustomerAging opens with (TotalCents, every open invoice balance,
-// current and late). The workspace does not re-sum it, by the same rule the file header opens
+// OpenCents is the same figure CustomerAging opens with (TotalCents, the same union the aging
+// reads: every open invoice balance plus the grouped non invoice AR rows, current and late). The
+// workspace does not re-sum it, by the same rule the file header opens
 // with. AvailableCreditCents is the same CreditLimitCents - OpenCents computation the account
 // position card on the invoice detail carries, deliberately: the workspace account card and
 // the invoice detail account card cannot quote different available figures for the same
@@ -70,6 +72,38 @@ type CustomerWorkspaceHeader struct {
 	LastPaymentAt         *time.Time             `json:"last_payment_at,omitempty"`
 	LastPaymentCents      int64                  `json:"last_payment_cents,omitempty"`
 	Aging                 CustomerWorkspaceAging `json:"aging"`
+
+	// HomeBranchID is the customer's home branch, which picks the policy row the account position
+	// is gated by. Never on the wire.
+	HomeBranchID string `json:"-"`
+	// PositionWithheld is set by the handler when the dealer's account position policy refuses this
+	// caller. MarshalJSON then leaves the limit, open, available, overdue, utilization and aging keys
+	// off the wire entirely (byte absent, never 0) and says so in account_position_withheld.
+	PositionWithheld bool `json:"-"`
+}
+
+// MarshalJSON writes the header, leaving the account position figures off the wire when the policy
+// refused the caller. The embedded alias carries every other field; the shallower pointer fields
+// below shadow the figures (encoding/json takes the shallowest name) and are nil, so omitted, when
+// withheld.
+func (h CustomerWorkspaceHeader) MarshalJSON() ([]byte, error) {
+	type plain CustomerWorkspaceHeader
+	w := struct {
+		plain
+		CreditLimitCents     *int64                  `json:"credit_limit_cents,omitempty"`
+		OpenCents            *int64                  `json:"open_cents,omitempty"`
+		AvailableCreditCents *int64                  `json:"available_credit_cents,omitempty"`
+		OverdueCents         *int64                  `json:"overdue_cents,omitempty"`
+		UtilizationBps       *int                    `json:"utilization_bps,omitempty"`
+		Aging                *CustomerWorkspaceAging `json:"aging,omitempty"`
+		Withheld             bool                    `json:"account_position_withheld"`
+	}{plain: plain(h), Withheld: h.PositionWithheld}
+	if !h.PositionWithheld {
+		w.CreditLimitCents, w.OpenCents = &h.CreditLimitCents, &h.OpenCents
+		w.AvailableCreditCents, w.OverdueCents = &h.AvailableCreditCents, &h.OverdueCents
+		w.UtilizationBps, w.Aging = &h.UtilizationBps, &h.Aging
+	}
+	return json.Marshal(w)
 }
 
 // CustomerWorkspaceAging is the 5-bucket breakdown the Overview tab opens with. It is the
@@ -117,6 +151,26 @@ type CustomerWorkspaceInvoice struct {
 	DaysOverdueBucket string    `json:"days_overdue_bucket"`
 	IsDisputed        bool      `json:"is_disputed"`
 	HasOpenPromise    bool      `json:"has_open_promise"`
+
+	// PositionWithheld is set by the handler when the dealer's account position policy refuses this
+	// caller. MarshalJSON then leaves days_overdue and days_overdue_bucket off the wire while keeping
+	// the invoice's own document figures.
+	PositionWithheld bool `json:"-"`
+}
+
+// MarshalJSON writes the workspace invoice row, omitting the past-due aging fields when the
+// caller is refused by the account position policy.
+func (inv CustomerWorkspaceInvoice) MarshalJSON() ([]byte, error) {
+	type plain CustomerWorkspaceInvoice
+	w := struct {
+		plain
+		DaysOverdue       *int    `json:"days_overdue,omitempty"`
+		DaysOverdueBucket *string `json:"days_overdue_bucket,omitempty"`
+	}{plain: plain(inv)}
+	if !inv.PositionWithheld {
+		w.DaysOverdue, w.DaysOverdueBucket = &inv.DaysOverdue, &inv.DaysOverdueBucket
+	}
+	return json.Marshal(w)
 }
 
 // CustomerWorkspacePayment is one payment the Payments & Credits tab carries, with the
@@ -160,6 +214,24 @@ type CustomerWorkspaceStatement struct {
 	ClosingBalanceCents int64     `json:"closing_balance_cents"`
 	DeliveryStatus      string    `json:"delivery_status"` // NOT_QUEUED / QUEUED / SENT / FAILED
 	CreatedAt           time.Time `json:"created_at"`
+
+	// PositionWithheld is set by the handler when the dealer's account position policy refuses this
+	// caller. MarshalJSON then omits closing_balance_cents from the wire.
+	PositionWithheld bool `json:"-"`
+}
+
+// MarshalJSON writes the statement row, omitting closing_balance_cents when the caller is refused
+// by the account position policy.
+func (s CustomerWorkspaceStatement) MarshalJSON() ([]byte, error) {
+	type plain CustomerWorkspaceStatement
+	w := struct {
+		plain
+		ClosingBalanceCents *int64 `json:"closing_balance_cents,omitempty"`
+	}{plain: plain(s)}
+	if !s.PositionWithheld {
+		w.ClosingBalanceCents = &s.ClosingBalanceCents
+	}
+	return json.Marshal(w)
 }
 
 // CustomerWorkspaceNote is one customer_ar_notes row, the Activity tab's note list. The

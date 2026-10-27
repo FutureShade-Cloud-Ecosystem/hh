@@ -151,6 +151,7 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 		WithUserLinker(h.userLink).
 		WithPaymentTrail(h.paymentTrail).
 		WithCustomerReach(h.customerReach).
+		WithAccountPosition(billing.NewAccountPositionGate(repo)).
 		RegisterRoutes(r, g)
 
 	// -- the C8 S3 + S4 + S3M surface (manual hold, paylink, statement preview) ---------------------
@@ -159,7 +160,11 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 	// (caller_stamp_workspacehandler.go's pattern), and the same composition seam this
 	// module already owns. Mounted from this seam for the same reason the register is:
 	// cmd/server/main.go is off limits to a lane.
-	billing.NewC8S3S4Handler(repo, h.log).WithUserLinker(h.userLink).WithCustomerReach(h.customerReach).RegisterRoutes(r, g)
+	billing.NewC8S3S4Handler(repo, h.log).
+		WithUserLinker(h.userLink).
+		WithCustomerReach(h.customerReach).
+		WithAccountPosition(billing.NewAccountPositionGate(repo)).
+		RegisterRoutes(r, g)
 }
 
 // registerPool resolves the pgx pool behind this service's repository, or nil in scaffold mode.

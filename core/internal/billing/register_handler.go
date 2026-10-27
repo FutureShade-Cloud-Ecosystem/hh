@@ -254,6 +254,24 @@ func (h *RegisterHandler) export(w http.ResponseWriter, r *http.Request, caller 
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="receivables.csv"`)
 	var b strings.Builder
+	if page.PositionWithheld {
+		// A refused caller's export carries the invoice's own document figures and the STORED
+		// status. The derived past due state has no column and no Days overdue header, the CSV
+		// twin of the row marshaller's byte absence (row 3172).
+		b.WriteString("Invoice,Customer,Account,Order,Customer PO,Issued,Due,Status,Total,Balance\n")
+		for _, v := range items {
+			b.WriteString(strings.Join([]string{
+				csvCell(v.InvoiceNo), csvCell(v.CustomerName), csvCell(v.AccountNo),
+				csvCell(v.OrderNo), csvCell(v.CustomerPO),
+				v.IssueDate.Format("2006-01-02"), v.DueDate.Format("2006-01-02"),
+				csvCell(v.StoredStatus),
+				centsCell(v.TotalCents), centsCell(v.BalanceCents),
+			}, ","))
+			b.WriteString("\n")
+		}
+		_, _ = w.Write([]byte(b.String()))
+		return
+	}
 	b.WriteString("Invoice,Customer,Account,Order,Customer PO,Issued,Due,Status,Days overdue,Total,Balance\n")
 	for _, v := range items {
 		b.WriteString(strings.Join([]string{
