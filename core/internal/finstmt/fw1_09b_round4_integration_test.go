@@ -29,6 +29,13 @@ func TestIntegration_FW1_09bR4_TheBalanceSheetCarriesItsEarnings(t *testing.T) {
 	// shared fixture's unclosed P&L is in the same ledger), so the proof is
 	// the DELTA: the year's $700.00 of income lifts the retained earnings to
 	// date line by exactly $700.00, and the books balance before and after.
+	// The report year's periods exist BEFORE the baseline is read, the same order round 5 gave AC2
+	// and AC7: the carried history (0439) then stands behind both reads equally, and the proof stays
+	// the fixture's own delta. Without it the baseline reads an EMPTY sheet (no 3092 period yet, so
+	// the view has no row for the year) while the second read carries the whole ledger inception to
+	// date, and the assets delta below measures the books' net assets below the report year (every
+	// other package's leftovers) instead of this year's own 700.
+	ensureStmtPeriods(t, pool, next)
 	base, err := svc.BalanceSheetReportFor(ctx, next, "")
 	if err != nil {
 		t.Fatal(err)
