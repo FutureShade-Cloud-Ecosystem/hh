@@ -331,6 +331,14 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	dealer.Set(cfg.DealerName)
 	log := slog.Default()
 
+	// The finance box statement's environment legs run before anything else
+	// configuration shaped: a copy that says HH_BOX_KIND=finance refuses a
+	// non staging env or a live payment rail before any connection, file or
+	// listener. The database leg runs once the pool exists, below.
+	if err := financeBoxBootGuard(getenv, cfg, nil); err != nil {
+		return nil, err
+	}
+
 	auth, err := loadServeConfig(getenv)
 	if err != nil {
 		return nil, err
@@ -383,6 +391,14 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	// the same pool with one attached; the traced pool stays test-only).
 	pool, err := authz.NewPgxPoolWithTracer(context.Background(), auth.databaseURL, nil)
 	if err != nil {
+		return nil, err
+	}
+
+	// The finance box statement's database leg: a copy that says
+	// HH_BOX_KIND=finance refuses a non empty database its own seed did not
+	// mark, before any wiring. The refusal closes the pool before returning.
+	if err := financeBoxDatabaseGuard(context.Background(), pool); err != nil {
+		pool.Close()
 		return nil, err
 	}
 

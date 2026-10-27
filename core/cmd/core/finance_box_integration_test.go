@@ -16,6 +16,8 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -68,8 +70,7 @@ func TestIntegration_FinanceBoxRefusesLivePortalRail(t *testing.T) {
 }
 
 func TestIntegration_FinanceBoxRefusesNonEmptyDatabaseWithoutBoxKind(t *testing.T) {
-	ctx := context.Background()
-	pool := freshMigratedDB(t, "finboxnokind")
+	pool := freshMigratedBoxDB(t, "finboxnokind")
 	cfg := financeStagingConfig(t)
 
 	err := financeBoxBootGuard(financeBoxGetenv(map[string]string{"HH_BOX_KIND": "finance"}), cfg, pool)
@@ -80,7 +81,7 @@ func TestIntegration_FinanceBoxRefusesNonEmptyDatabaseWithoutBoxKind(t *testing.
 
 func TestIntegration_FinanceBoxRefusesAnotherBoxKind(t *testing.T) {
 	ctx := context.Background()
-	pool := freshMigratedDB(t, "finboxdemo")
+	pool := freshMigratedBoxDB(t, "finboxdemo")
 	writeBoxKindForTest(t, ctx, pool, "demo")
 	cfg := financeStagingConfig(t)
 
@@ -101,7 +102,7 @@ func TestIntegration_FinanceBoxPassesOnEmptyDatabase(t *testing.T) {
 
 func TestIntegration_FinanceBoxPassesOnFinanceSeededDatabase(t *testing.T) {
 	ctx := context.Background()
-	pool := freshMigratedDB(t, "finboxok")
+	pool := freshMigratedBoxDB(t, "finboxok")
 	writeBoxKindForTest(t, ctx, pool, "finance")
 	cfg := financeStagingConfig(t)
 
@@ -147,6 +148,74 @@ func TestIntegration_FinanceBoxBootsThroughTheWiring(t *testing.T) {
 }
 
 // -- helpers ---------------------------------------------------------------------------------------
+
+// freshMigratedBoxDB builds a database the way the migrate role does: every
+// migration file applied in order, each recorded in schema_migrations (the
+// demoseed suite's helper applies the files without the bookkeeping, which
+// would read as an empty database to the guard).
+func freshMigratedBoxDB(t *testing.T, suffix string) *pgxpool.Pool {
+	t.Helper()
+	base, ok := os.LookupEnv("DATABASE_URL")
+	if !ok {
+		t.Skip("DATABASE_URL is unset, the finance box guard tests need a Postgres to build a database on")
+	}
+	name := "finbox_it_" + suffix
+	adminDSN, testDSN := swapDatabase(base, "postgres"), swapDatabase(base, name)
+
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("connecting to the admin database: %v", err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)"); err != nil {
+		t.Fatalf("dropping %s: %v", name, err)
+	}
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		t.Fatalf("creating %s: %v", name, err)
+	}
+
+	pool, err := pgxpool.New(ctx, testDSN)
+	if err != nil {
+		t.Fatalf("connecting to %s: %v", name, err)
+	}
+	t.Cleanup(pool.Close)
+
+	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version TEXT PRIMARY KEY,
+		applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`); err != nil {
+		t.Fatalf("bookkeeping table: %v", err)
+	}
+	files, err := filepath.Glob(filepath.Join("..", "..", "db", "migrations", "*.sql"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no migrations found (err=%v)", err)
+	}
+	sort.Strings(files)
+	for _, f := range files {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading %s: %v", f, err)
+		}
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin %s: %v", f, err)
+		}
+		if _, err := tx.Exec(ctx, string(body)); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("applying %s: %v", f, err)
+		}
+		version := strings.TrimSuffix(filepath.Base(f), ".sql")
+		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES($1)`, version); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("recording %s: %v", f, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatalf("commit %s: %v", f, err)
+		}
+	}
+	return pool
+}
 
 // freshEmptyDB creates a database with no migrations applied at all: the
 // guard's empty leg territory.
