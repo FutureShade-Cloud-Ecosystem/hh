@@ -224,7 +224,7 @@ export function relativeStamp(stamp: string, nowMs: number): string {
 
 // ---- an invoice: send, dispute, a payment reversal ------------------------------------------------------------------
 
-import type { BillingReminderResult, PaymentsReversalResult } from "@hardscapehouse/api-client";
+import type { BillingReminderResult, PaymentsReversalResult, PaymentsVoidResult } from "@hardscapehouse/api-client";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 
 export function sendInvoiceWords(result: BillingReminderResult): string {
@@ -300,6 +300,21 @@ export function reversalWords(result: PaymentsReversalResult, paymentNo: string)
   const n = result.reopened_invoices.length;
   const kind = result.label === "VOID" ? "a void, the same day" : "a reversal";
   return `Payment ${paymentNo} is reversed as ${kind}. ${formatMoney(result.amount_cents)} is owing again on ${n} ${n === 1 ? "invoice" : "invoices"}.`;
+}
+
+export type VoidCheck = { ok: true; reason: string } | { ok: false; words: string };
+
+/** The true void's own check, apart from the reversal's: the receipt is undone as never taken (FW1-06b). */
+export function voidCheck(reason: string): VoidCheck {
+  const trimmed = reason.trim();
+  if (trimmed === "") return { ok: false, words: "Enter why the receipt is being voided, such as keyed for the wrong amount." };
+  return { ok: true, reason: trimmed };
+}
+
+/** What a void undid, from the server's own answer: the receipt never happened and nothing is held. */
+export function voidWords(result: PaymentsVoidResult, paymentNo: string): string {
+  const n = result.reopened_invoices.length;
+  return `Payment ${paymentNo} is voided as never received. ${formatMoney(result.amount_cents)} is owing again on ${n} ${n === 1 ? "invoice" : "invoices"}, and nothing is held for the customer.`;
 }
 
 export type ReapplyCheck = { ok: true; invoiceId: string; amountCents: number; reason: string } | { ok: false; words: string };

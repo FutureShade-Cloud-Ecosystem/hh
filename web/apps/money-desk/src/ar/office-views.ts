@@ -402,6 +402,14 @@ export function renderReverse(om: OfficeModel, payment: { payment_id: string; pa
   return html`<button type="button" class="btn btn-secondary small-btn" data-action="reverse-start" data-payment-id="${payment.payment_id}">Reverse</button>`;
 }
 
+/** The true void's inline form, or its start button, for one receipt row: a mis-keyed receipt undone as never taken (FW1-06b). */
+export function renderVoid(om: OfficeModel, payment: { payment_id: string; payment_no: string }): TemplateResult {
+  if (om.voiding === payment.payment_id) {
+    return html`<span class="inline-form"><label><span class="visually-hidden">Why it is voided</span><input type="text" data-field="void-reason" placeholder="Why it is voided, such as keyed for the wrong amount" autocomplete="off" /></label><button type="button" class="btn btn-danger small-btn" data-action="void-confirm" data-payment-id="${payment.payment_id}" data-payment-no="${payment.payment_no}" ?disabled=${om.busy}>Confirm voided</button><button type="button" class="btn btn-secondary small-btn" data-action="void-cancel">Cancel</button></span>`;
+  }
+  return html`<button type="button" class="btn btn-secondary small-btn" data-action="void-start" data-payment-id="${payment.payment_id}">Void</button>`;
+}
+
 /**
  * The re-application's form for a reversed payment's row: the money the core still holds for it, the open invoice it
  * goes on, how much and why. It follows the Reverse form above it (the same inline form, the same buttons, the same

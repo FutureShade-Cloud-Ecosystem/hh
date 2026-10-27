@@ -1341,6 +1341,8 @@ async function handle(req, res) {
     if (p.status === "BOUNCED") return refuse(res, 409, "payment already marked BOUNCED");
     // A payment is reversed or bounced, never both (SF-2d round 7).
     if (p.reversed === true) return refuse(res, 409, "this payment was reversed, so it cannot be marked bounced (a payment is reversed or bounced, never both)");
+    // A bounce undoes a live receipt: a voided desk receipt (FW1-06b) or a refund row has nothing to give back.
+    if (p.status !== "RECEIVED" && p.status !== "DEPOSITED") return refuse(res, 409, "till: only a received or deposited payment can be marked bounced");
     p.status = "BOUNCED";
     p.fee_cents = officeWorld.state().nsf.fee_cents;
     p.reason = String(body.reason ?? "");

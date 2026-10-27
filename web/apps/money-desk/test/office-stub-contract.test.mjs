@@ -298,6 +298,32 @@ test("a payment is reversed once, reopens what it paid, and is refused in the co
   refused(await call("POST", `/api/v1/ar/payments/${paid.json.payment_id}/nsf`, { reason: "Returned" }), 409, "this payment was reversed, so it cannot be marked bounced");
 });
 
+test("a mis-keyed receipt is voided as never taken, with nothing held (FW1-06b)", async () => {
+  await reset();
+  const inv = await invoiceOf("INV-1002");
+  const paid = await call("POST", `/api/v1/ar/register/invoices/${inv.id}/payments`, { method: "CHEQUE", amount_cents: 2500, reference: "r", idempotency_key: "vd-1" });
+  const path = `/api/v1/ar/payments/${paid.json.payment_id}/void`;
+  refused(await call("POST", path, { reason: "" }), 400, "payments: a void reason is required");
+  refused(await call("POST", "/api/v1/ar/payments/nope/void", { reason: "Keyed in error" }), 404, "payment not found");
+  const voided = await call("POST", path, { reason: "Keyed for the wrong amount" });
+  assert.equal(voided.status, 201);
+  holds("PaymentsVoidResult", voided.json);
+  assert.equal(voided.json.amount_cents, 2500);
+  assert.equal(voided.json.label, "VOID");
+  assert.equal(voided.json.held_cents, 0, "the void holds nothing in 2310: the receipt never happened");
+  assert.equal(typeof voided.json.voided_at, "string");
+  assert.deepEqual(voided.json.reopened_invoices, [inv.id]);
+  assert.equal((await invoiceOf("INV-1002")).balance_cents, inv.balance_cents, "the balance is what it was before the payment");
+  refused(await call("POST", path, { reason: "again" }), 400, "only a received receipt that has not been deposited can be voided");
+  assert.ok(coreSource.includes("it was reversed, and the reversal owns the undo"));
+  // The voided receipt's allocation is gone, so the settlement list no longer carries the row.
+  const list = await call("GET", `/api/v1/ar/invoices/${inv.id}/payments`);
+  holds("TillInvoicePayments", list.json);
+  assert.ok(!list.json.items.some((p) => p.payment_id === paid.json.payment_id), "the voided receipt is not on the invoice's payments list");
+  // A voided receipt cannot be bounced either: the bounce undoes a live receipt, and this one never happened.
+  refused(await call("POST", `/api/v1/ar/payments/${paid.json.payment_id}/nsf`, { reason: "Returned" }), 409, "till: only a received or deposited payment can be marked bounced");
+});
+
 test("a reversed payment's held money is read, applied to an invoice, replayed once and refused in the core's words", async () => {
   await reset();
   const inv = await invoiceOf("INV-1002");

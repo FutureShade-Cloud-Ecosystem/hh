@@ -34,6 +34,8 @@ import {
   reminderResultWords,
   reversalCheck,
   reversalWords,
+  voidCheck,
+  voidWords,
   SAVED_NOTICE,
   sendInvoiceWords,
   validateApContact,
@@ -114,6 +116,8 @@ export interface OfficeModel {
   readonly document: DocumentView;
   /** The payment being reversed, waiting on a reason. */
   readonly reversing: string | null;
+  /** The mis-keyed receipt being voided as never taken, waiting on a reason (FW1-06b). */
+  readonly voiding: string | null;
   /** The reversed payment whose held money is being put on an invoice, with the figure the core holds for it. */
   readonly reapplying: ReapplyView | null;
   readonly accounts: readonly BillingAgingRow[];
@@ -169,6 +173,7 @@ export class OfficeDesk {
   /** The invoice document's HTML, held until the next paint can mount it. */
   #documentHtml: string | null = null;
   #reversing: string | null = null;
+  #voiding: string | null = null;
   #reapplying: ReapplyView | null = null;
   /** The account whose name field the next paint must fill from its contact. */
   #fillContactFor: string | null = null;
@@ -191,6 +196,7 @@ export class OfficeDesk {
       invoiceMode: this.#invoiceMode,
       document: this.#document,
       reversing: this.#reversing,
+      voiding: this.#voiding,
       reapplying: this.#reapplying,
       accounts: this.#host.accounts(),
       policy: this.#host.policy(),
@@ -479,6 +485,7 @@ export class OfficeDesk {
     this.#document = { phase: "none" };
     this.#documentHtml = null;
     this.#reversing = null;
+    this.#voiding = null;
     this.#reapplying = null;
   }
 
@@ -587,6 +594,28 @@ export class OfficeDesk {
     }
     this.#reversing = null;
     this.#host.notice(reversalWords(result.value, paymentNo));
+    this.#host.reveal("[data-notice]");
+    await Promise.all([this.#host.reloadAccount(), this.#host.reloadBook()]);
+    this.#host.repaint();
+  }
+
+  /** Undoes a mis-keyed receipt as never taken (FW1-06b): manager only, the same dealer day, nothing held. */
+  async #voidPayment(paymentId: string, paymentNo: string): Promise<void> {
+    if (this.#busy) return;
+    const check = voidCheck(this.#host.field("void-reason"));
+    if (!check.ok) return this.#stop(check.words);
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.voidPayment(paymentId, check.reason);
+    this.#busy = false;
+    if (!result.ok) {
+      this.#fail("void", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    this.#voiding = null;
+    this.#host.notice(voidWords(result.value, paymentNo));
     this.#host.reveal("[data-notice]");
     await Promise.all([this.#host.reloadAccount(), this.#host.reloadBook()]);
     this.#host.repaint();
@@ -742,6 +771,17 @@ export class OfficeDesk {
         return true;
       case "reverse-confirm":
         void this.#reversePayment(attr("data-payment-id"), attr("data-payment-no"));
+        return true;
+      case "void-start":
+        this.#voiding = attr("data-payment-id");
+        this.#host.repaint();
+        return true;
+      case "void-cancel":
+        this.#voiding = null;
+        this.#host.repaint();
+        return true;
+      case "void-confirm":
+        void this.#voidPayment(attr("data-payment-id"), attr("data-payment-no"));
         return true;
       case "reapply-start":
         void this.#startReapply(attr("data-payment-id"), attr("data-invoice-id"), attr("data-balance-cents") === "" ? null : Number(attr("data-balance-cents")));

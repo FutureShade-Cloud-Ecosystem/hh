@@ -51,7 +51,7 @@ test("how a statement goes reads from its delivery word, never from the AP conta
 
 // ---- reminders and the paper path ----------------------------------------------------------------------------------
 
-import { channelWord, paperResolveCheck, recipientWords, reminderPreview, reminderResultWords, reminderRunWords, sendStatusWord } from "../src/ar/office-logic.ts";
+import { channelWord, paperResolveCheck, recipientWords, reminderPreview, reminderResultWords, reminderRunWords, sendStatusWord, voidCheck, voidWords } from "../src/ar/office-logic.ts";
 
 const POLICY = { aging_warn_days: 60, aging_escalate_days: 90, reminder_cadence_days: 7, reminder_max_per_cycle: 3, black_hole_window_days: 45, black_hole_min_sends: 3, reminder_email_enabled: true, reminder_sms_enabled: false, untagged_fallback: "CONFIRM", ar_tier: "PRO" };
 const TAGGED = { tagged: true, contact: { customer_id: "c", contact_name: "Accounts payable desk", email: "ap@x.invalid", phone: "" } };
@@ -256,4 +256,16 @@ test("the credit sweep says what it did, and when it only reported", () => {
   assert.equal(sweepWords({ evaluated: 5, placed: 0, would_hold: 1, dry_run: true }), "The sweep checked 5 accounts. It would hold 1 and placed none, because automatic holds are off.");
   assert.equal(sweepWords({ evaluated: 5, placed: 0, would_hold: 3, dry_run: true }), "The sweep checked 5 accounts. It would hold 3 and placed none, because automatic holds are off.");
   assert.equal(sweepWords({ evaluated: 5, placed: 0, would_hold: 0, dry_run: true }), "The sweep checked 5 accounts. It would hold none and placed none, because automatic holds are off.");
+});
+
+test("the true void says what it undid, and a reason is required (FW1-06b)", () => {
+  assert.equal(voidCheck(" keyed for the wrong amount ").ok, true);
+  const refusedReason = voidCheck("   ");
+  assert.equal(refusedReason.ok, false);
+  assert.match(refusedReason.words, /why the receipt is being voided/);
+  const words = voidWords({ label: "VOID", payment_id: "p", payment_no: "PAY-0007", amount_cents: 25000, reason: "keyed for the wrong amount", voided_at: "2026-01-01T00:00:00Z", reopened_invoices: ["i1", "i2"], held_cents: 0 }, "PAY-0007");
+  assert.match(words, /PAY-0007 is voided as never received/);
+  assert.match(words, /\$250\.00 is owing again on 2 invoices/);
+  assert.match(words, /nothing is held for the customer/);
+  assert.ok(!/2310/.test(words), "the ledger account is bookkeeping, not the operator's words");
 });
