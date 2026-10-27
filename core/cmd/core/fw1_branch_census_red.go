@@ -268,19 +268,19 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		File:         "core/internal/pos/returns.go",
 		Func:         "(*Service).commitReturnTx",
 		Kind:         "emit:order.returned",
-		BranchSource: "oc.BranchID from original order (orders.branch_id, NOT NULL) in order.returned outbox payload today; changes in FW1-08b (FROM-PRINCIPAL 137: return posts to pos_returns.branch_id where rung)",
+		BranchSource: "retRow.BranchID from pos_returns.branch_id (branch where return is rung, FROM-PRINCIPAL 137) in order.returned outbox payload",
 	},
 	{
 		File:         "core/internal/pos/returns.go",
 		Func:         "(*Service).commitReturnTx",
 		Kind:         "emit:pos.return.written_off",
-		BranchSource: "oc.BranchID from original order (orders.branch_id, NOT NULL) in pos.return.written_off outbox payload today; changes in FW1-08b (FROM-PRINCIPAL 137: return posts to pos_returns.branch_id where rung)",
+		BranchSource: "retRow.BranchID from pos_returns.branch_id (branch where return is rung, FROM-PRINCIPAL 137) in pos.return.written_off outbox payload",
 	},
 	{
 		File:         "core/internal/pos/returns.go",
 		Func:         "(*Service).commitReturnTx",
 		Kind:         "emit:pos.return.committed",
-		BranchSource: "oc.BranchID from original order (orders.branch_id, NOT NULL) in pos.return.committed outbox payload today; changes in FW1-08b (FROM-PRINCIPAL 137: return posts to pos_returns.branch_id where rung)",
+		BranchSource: "retRow.BranchID from pos_returns.branch_id (branch where return is rung, FROM-PRINCIPAL 137) in pos.return.committed outbox payload",
 	},
 	{
 		File:         "core/internal/pos/service.go",
