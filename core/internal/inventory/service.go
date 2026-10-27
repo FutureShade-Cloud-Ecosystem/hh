@@ -76,6 +76,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 	usd := hdr.Currency == "USD"
 
 	var totalValue int64
+	var totalRounding int64
 	linesRecvd := 0
 	allFull := true
 	type evLine struct {
@@ -155,6 +156,17 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 					return ReceiptResult{}, err
 				}
 			}
+			if base > 0 {
+				oldSubledgerVal, err := qtyTimesCents(base, oldAvg)
+				if err != nil {
+					return ReceiptResult{}, err
+				}
+				newSubledgerVal, err := qtyTimesCents(base+recvQty, newAvg)
+				if err != nil {
+					return ReceiptResult{}, err
+				}
+				totalRounding += (newSubledgerVal - oldSubledgerVal) - recvValue
+			}
 		}
 		var moveMeta map[string]any
 		if len(provMoves) > 0 {
@@ -222,7 +234,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 	}
 	if err := s.db().EmitEvent(ctx, tx, "po.received", map[string]any{
 		"po_id": poID, "receipt_id": receiptID, "branch_id": hdr.BranchID,
-		"value_cents": totalValue, "lines": eventLines, "true_ups": trueUps,
+		"value_cents": totalValue, "rounding_cents": totalRounding, "lines": eventLines, "true_ups": trueUps,
 	}); err != nil {
 		return ReceiptResult{}, err
 	}
@@ -423,11 +435,12 @@ type poTrueUpLine struct {
 }
 
 type poReceivedPayload struct {
-	POID       string         `json:"po_id"`
-	ReceiptID  string         `json:"receipt_id"`
-	BranchID   string         `json:"branch_id"`
-	ValueCents int64          `json:"value_cents"`
-	TrueUps    []poTrueUpLine `json:"true_ups"`
+	POID          string         `json:"po_id"`
+	ReceiptID     string         `json:"receipt_id"`
+	BranchID      string         `json:"branch_id"`
+	ValueCents    int64          `json:"value_cents"`
+	RoundingCents int64          `json:"rounding_cents"`
+	TrueUps       []poTrueUpLine `json:"true_ups"`
 }
 
 // postPOReceived posts the GRNI journal for a receipt: DR 1200 Inventory / CR 2150 Received-Not-Invoiced, both
@@ -440,7 +453,7 @@ func (s *Service) postPOReceived(ctx context.Context, payload []byte) error {
 	if p.ReceiptID == "" {
 		return fmt.Errorf("inventory: po.received missing receipt_id")
 	}
-	if p.ValueCents == 0 && len(p.TrueUps) == 0 {
+	if p.ValueCents == 0 && p.RoundingCents == 0 && len(p.TrueUps) == 0 {
 		return nil
 	}
 	if s.gl == nil {
@@ -468,6 +481,38 @@ func (s *Service) postPOReceived(ctx context.Context, payload []byte) error {
 				{AccountCode: invCode, DebitCents: p.ValueCents, Memo: "inventory received"},
 				{AccountCode: apCode, CreditCents: p.ValueCents, Memo: "received not invoiced"},
 			},
+		}); err != nil {
+			return err
+		}
+	}
+	if p.RoundingCents != 0 {
+		expCode, err := s.rules.ResolveRule(ctx, "inventory.adjusted", "expense", p.BranchID)
+		if err != nil || expCode == "" {
+			expCode = "5200"
+		}
+		amt := p.RoundingCents
+		if amt < 0 {
+			amt = -amt
+		}
+		var lines []GLLine
+		if p.RoundingCents > 0 {
+			lines = []GLLine{
+				{AccountCode: invCode, DebitCents: amt, Memo: "WAC integer-cent rounding"},
+				{AccountCode: expCode, CreditCents: amt, Memo: "WAC integer-cent rounding"},
+			}
+		} else {
+			lines = []GLLine{
+				{AccountCode: expCode, DebitCents: amt, Memo: "WAC integer-cent rounding"},
+				{AccountCode: invCode, CreditCents: amt, Memo: "WAC integer-cent rounding"},
+			}
+		}
+		if _, err := s.gl.PostJournal(ctx, GLJournal{
+			Source:         "ADJUSTMENT",
+			SourceRefID:    p.ReceiptID,
+			IdempotencyKey: "po.received.rounding:" + p.ReceiptID,
+			Memo:           "WAC integer-cent rounding on PO receipt",
+			BranchID:       p.BranchID,
+			Lines:          lines,
 		}); err != nil {
 			return err
 		}
