@@ -284,3 +284,82 @@ func TestIntegration_PaymentVoid_RefusesTheActsItMustNotTouch(t *testing.T) {
 		t.Errorf("a void with no reason answers %v, want ErrVoidReasonRequired", err)
 	}
 }
+
+// R2-P1-2 (ruled, FROM-PRINCIPAL 174): the void moves the fee's allocation map to
+// voided_nsf_fee_allocations in the same statement that stamps VOID, so 622's pay path expression
+// (it counts every payment's nsf_fee_allocations except reversed, reversing and BOUNCED ones, and
+// leaves VOID in) sees a voided receipt's fee no more, and the history keeps what the receipt paid.
+// The leg: void a fee paying receipt, then pay the fee again; the fee the pay path counts is the
+// new receipt's own part only.
+func TestIntegration_PaymentVoid_TheVoidedFeeCountsPaidNoMore(t *testing.T) {
+	w := newReversalGLWorld(t)
+	ctx := context.Background()
+	orig := w.registerReceipt("CHEQUE", 10_000)
+	w.drain()
+
+	// The fee, and the settle's own trail: the fee row and the ADJUSTMENT the paying receipt carries
+	// (PR 622's shape, which this tree's void reads and gives back).
+	var nsfID string
+	if err := w.r.obs.QueryRow(ctx,
+		`INSERT INTO payment_nsf (payment_id, customer_id, reason, fee_cents, fee_taxable)
+		 VALUES ($1::uuid, $2::uuid, 'cheque returned NSF', 4500, false) RETURNING id::text`,
+		orig, w.r.custID).Scan(&nsfID); err != nil {
+		t.Fatalf("insert the nsf fee: %v", err)
+	}
+	payTheFee := func(paymentID string) {
+		if _, err := w.r.obs.Exec(ctx,
+			`UPDATE payments
+			    SET metadata = metadata || jsonb_build_object('nsf_fee_allocations', jsonb_build_object($2::text, 4500::bigint))
+			  WHERE id = $1::uuid`, paymentID, nsfID); err != nil {
+			t.Fatalf("stamp the fee allocation: %v", err)
+		}
+		if _, err := w.r.obs.Exec(ctx,
+			`INSERT INTO customer_transactions
+			   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+			 SELECT p.customer_id, 'ADJUSTMENT', -4500, 0, 'payment_nsf', n.id, p.branch_id, 'NSF fee payment'
+			   FROM payment_nsf n JOIN payments p ON p.id = n.payment_id WHERE n.id = $1::uuid`, nsfID); err != nil {
+			t.Fatalf("the settle's fee row: %v", err)
+		}
+	}
+	payTheFee(orig)
+
+	repo := payments.NewRepository(w.r.pool)
+	if _, err := repo.VoidPayment(ctx, payments.VoidInput{
+		PaymentID: orig, Reason: "keyed against the wrong figures", ActorID: w.r.userID, IsManager: true,
+	}, time.Now(), houseday.DefaultZone()); err != nil {
+		t.Fatalf("void: %v", err)
+	}
+
+	// The move: the voided receipt carries the fee under voided_nsf_fee_allocations, and
+	// nsf_fee_allocations is gone from it.
+	var meta map[string]any
+	if err := w.r.obs.QueryRow(ctx, `SELECT metadata FROM payments WHERE id = $1::uuid`, orig).Scan(&meta); err != nil {
+		t.Fatalf("read the voided receipt: %v", err)
+	}
+	if _, ok := meta["nsf_fee_allocations"]; ok {
+		t.Fatalf("the voided receipt still carries nsf_fee_allocations (%v): the pay path counts a fee that was given back", meta["nsf_fee_allocations"])
+	}
+	voided, ok := meta["voided_nsf_fee_allocations"].(map[string]any)
+	if !ok || voided[nsfID] == nil {
+		t.Fatalf("the voided receipt carries no voided_nsf_fee_allocations for the fee: what the receipt paid is lost from the history (%v)", meta["voided_nsf_fee_allocations"])
+	}
+
+	// Pay the fee again: a second receipt with the same fee in its own map, the settle's own shape.
+	again := w.registerReceipt("CHEQUE", 4_500)
+	payTheFee(again)
+
+	// The fee the pay path counts (622's own expression: every payment's map except reversed,
+	// reversing and BOUNCED) is the second receipt's part only.
+	var paid int64
+	if err := w.r.obs.QueryRow(ctx,
+		`SELECT COALESCE(SUM((p.metadata->'nsf_fee_allocations'->>$2::text)::bigint), 0)
+		   FROM payments p
+		  WHERE p.customer_id = $1::uuid
+		    AND p.reversed_at IS NULL AND p.reverses_payment_id IS NULL AND p.status <> 'BOUNCED'`,
+		w.r.custID, nsfID).Scan(&paid); err != nil {
+		t.Fatalf("read the fee the pay path counts: %v", err)
+	}
+	if paid != 4_500 {
+		t.Fatalf("the fee the pay path counts paid is %d, want the second receipt's 4500 only: a voided receipt's fee must not stand in the way of paying it again", paid)
+	}
+}
