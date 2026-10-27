@@ -596,6 +596,14 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 		if f.AmountCents != line.AmountCents {
 			return gl.ExternalJournal{}, false, unprocessable("bankrec: that payment is for %d cents and the line is %d cents, so it does not explain the line", f.AmountCents, line.AmountCents)
 		}
+		// FW1-05b (S4's P1): a CASH payment taken in a till session reaches the bank only by its lodgement
+		// (the lodgement journal debited 1000 at lodgement), so it is never a PAYMENT target; a slipless
+		// cash lodgement leaves its payments RECEIVED and matching one alone would hold the cash in 1000
+		// twice. Refused in words; the claim rolls back, so nothing is written. An office receipt (no till
+		// session) stays matchable.
+		if f.InTillSession && f.Method == "CASH" {
+			return gl.ExternalJournal{}, false, unprocessable("bankrec: that payment was taken in a till session, so it reaches the bank only by its lodgement; match the lodgement's deposit line, not the payment")
+		}
 		j, ok := manualJournal(line, in.TargetType, f.Method, f.BranchID, false)
 		if !ok {
 			return gl.ExternalJournal{}, false, unprocessable("bankrec: a %s payment cannot be matched by hand; match a card, a cash or a cheque deposit", f.Method)

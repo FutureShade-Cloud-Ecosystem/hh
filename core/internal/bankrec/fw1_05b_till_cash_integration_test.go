@@ -11,6 +11,7 @@ package bankrec
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -48,10 +49,13 @@ func TestIntegration_FW1_05b_TillCashPaymentIsNeverAPaymentTarget(t *testing.T) 
 	var sessionID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO till_sessions (branch_id, station, status, opened_by)
-		VALUES ($1::uuid, 'FW105B', 'OPEN', $2::uuid) RETURNING id::text`, branch, userID).Scan(&sessionID); err != nil {
+		VALUES ($1::uuid, $2, 'OPEN', $3::uuid) RETURNING id::text`, branch, fmt.Sprintf("FW105B-%d", time.Now().UnixNano()), userID).Scan(&sessionID); err != nil {
 		t.Fatalf("till session: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM till_sessions WHERE id = $1::uuid`, sessionID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM till_movements WHERE till_session_id = $1::uuid`, sessionID)
+		_, _ = pool.Exec(ctx, `DELETE FROM till_sessions WHERE id = $1::uuid`, sessionID)
+	})
 
 	const amount = int64(3300)
 	payID := "87057702-0000-4000-8000-000000055551"

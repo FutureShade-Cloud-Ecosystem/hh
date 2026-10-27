@@ -466,12 +466,15 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 
 // MatchPaymentFact is what bankrec read about one claimed payment under its row lock in the match's own
 // transaction (FW1-05): the branch, the tender method and the gross amount, the facts a hand match checks
-// (amount and method) and the facts its clearing journal needs (branch and method).
+// (amount and method) and the facts its clearing journal needs (branch and method). InTillSession says the
+// payment was taken in a till session (FW1-05b): a till CASH payment reaches the bank only by its lodgement,
+// so it is never a PAYMENT target.
 type MatchPaymentFact struct {
-	PaymentID   string
-	BranchID    string
-	Method      string
-	AmountCents int64
+	PaymentID     string
+	BranchID      string
+	Method        string
+	AmountCents   int64
+	InTillSession bool
 }
 
 // PersistMatchReachTx is the claim body of PersistMatchReach on the CALLER's transaction (FW1-05: the match
@@ -645,10 +648,11 @@ func (r *Repository) PersistMatchReachTx(ctx context.Context, tx pgx.Tx, m Match
 		for _, pid := range claimable {
 			if f, ok := facts[strings.ToLower(pid)]; ok {
 				claimed = append(claimed, MatchPaymentFact{
-					PaymentID:   pid,
-					BranchID:    f.BranchID,
-					Method:      f.Method,
-					AmountCents: f.AmountCents,
+					PaymentID:     pid,
+					BranchID:      f.BranchID,
+					Method:        f.Method,
+					AmountCents:   f.AmountCents,
+					InTillSession: f.InTillSession,
 				})
 			}
 		}

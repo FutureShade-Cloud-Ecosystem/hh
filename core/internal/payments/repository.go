@@ -964,21 +964,25 @@ func PaymentBranchesTx(ctx context.Context, tx pgx.Tx, ids []string) (map[string
 	return out, rows.Err()
 }
 
-// PaymentMatchFact holds the branch, tender method, and gross amount of a payment row read under LockPaymentRowsTx.
+// PaymentMatchFact holds the branch, tender method, gross amount, and till session presence of a payment row read
+// under LockPaymentRowsTx. InTillSession says the payment was taken in a till session (FW1-05b): a till cash
+// payment reaches the bank only by its lodgement, so it can never be matched alone as a PAYMENT target.
 type PaymentMatchFact struct {
-	BranchID    string
-	Method      string
-	AmountCents int64
+	BranchID      string
+	Method        string
+	AmountCents   int64
+	InTillSession bool
 }
 
-// PaymentFactsTx returns the branch, tender method, and gross amount of each named payment, keyed by the lowercased
-// id (an id with no row is absent). Call it on the caller's transaction after LockPaymentRowsTx has locked the rows.
+// PaymentFactsTx returns the branch, tender method, gross amount, and till session presence of each named payment,
+// keyed by the lowercased id (an id with no row is absent). Call it on the caller's transaction after
+// LockPaymentRowsTx has locked the rows.
 func PaymentFactsTx(ctx context.Context, tx pgx.Tx, ids []string) (map[string]PaymentMatchFact, error) {
 	out := map[string]PaymentMatchFact{}
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := tx.Query(ctx, `SELECT id::text, branch_id::text, method, amount_cents FROM payments WHERE id = ANY($1::uuid[])`, ids)
+	rows, err := tx.Query(ctx, `SELECT id::text, branch_id::text, method, amount_cents, till_session_id IS NOT NULL FROM payments WHERE id = ANY($1::uuid[])`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("payments: read the payment match facts: %w", err)
 	}
@@ -986,7 +990,7 @@ func PaymentFactsTx(ctx context.Context, tx pgx.Tx, ids []string) (map[string]Pa
 	for rows.Next() {
 		var id string
 		var f PaymentMatchFact
-		if err := rows.Scan(&id, &f.BranchID, &f.Method, &f.AmountCents); err != nil {
+		if err := rows.Scan(&id, &f.BranchID, &f.Method, &f.AmountCents, &f.InTillSession); err != nil {
 			return nil, fmt.Errorf("payments: read the payment match facts: %w", err)
 		}
 		out[strings.ToLower(id)] = f
