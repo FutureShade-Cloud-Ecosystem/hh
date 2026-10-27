@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // finEnvUsersVar is the one name the box's finance user list lives in.
@@ -239,4 +240,83 @@ func TestIntegration_FinanceUserApplyFromEnvRefusesABadEntry(t *testing.T) {
 	if !strings.Contains(err.Error(), finEnvUsersVar) {
 		t.Fatalf("the refusal must name %s, got %v", finEnvUsersVar, err)
 	}
+}
+
+// The box read's P1 and P2 on the boot apply (reviews/BOXUSERS-K3-r1.md):
+// emptying the list must revoke the last person, but only when the
+// entrypoint says the list was set and empty (--empty-list-revokes-all); a
+// hand run with no list still refuses. A platform id listed twice is refused
+// before anything is written, naming the repeated entry by its email only.
+func TestIntegration_FinanceUserApplyEmptyListAndDuplicates(t *testing.T) {
+	ctx := context.Background()
+	pool, dsn := freshMigratedBoxDB(t, "finuseremp")
+	t.Setenv("APP_ENV", "staging")
+	if err := financeSeedRole(mapGetenv(financeSeedEnv(dsn))); err != nil {
+		t.Fatalf("finance-seed: %v", err)
+	}
+	lastEmail := "fin-last-person@example.invalid"
+	last := finEnvEntry(lastEmail, "fin-console-user-last", "Last Person", "financial_controller")
+	if err, out := finApply(t, finApplyEnv(dsn, []string{lastEmail}, last)); err != nil {
+		t.Fatalf("apply with one entry: %v (%s)", err, out)
+	}
+
+	// A duplicate platform id refuses, and nothing is written.
+	dupEmail := "fin-duplicate@example.invalid"
+	dup := finEnvEntry(dupEmail, "fin-console-user-last", "Duplicate", "payables_receivables")
+	var before int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	err, out := finApply(t, finApplyEnv(dsn, []string{lastEmail, dupEmail}, last+";"+dup))
+	if err == nil || !strings.Contains(err.Error(), dupEmail) || strings.Contains(err.Error(), "fin-console-user-last") {
+		t.Fatalf("a repeated platform id must refuse naming the repeated entry's email only, got %v (%s)", err, out)
+	}
+	var after int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("a refused list must write nothing: audit rows %d before, %d after", before, after)
+	}
+
+	// The same person listed twice with two roles refuses too, rather than
+	// the last entry silently winning.
+	twice := finEnvEntry(lastEmail, "fin-console-user-last", "Last Person", "payables_receivables")
+	if err, out := finApply(t, finApplyEnv(dsn, []string{lastEmail}, last+";"+twice)); err == nil || !strings.Contains(err.Error(), lastEmail) || strings.Contains(err.Error(), "fin-console-user-last") {
+		t.Fatalf("a platform id listed twice must refuse naming its email only, got %v (%s)", err, out)
+	}
+	if roles := finLiveGrantRoles(t, ctx, pool, finOrgID(t, ctx, pool), "fin-console-user-last"); len(roles) != 1 || roles[0] != "financial_controller" {
+		t.Fatalf("a refused list must leave the person's role as it was, got %v", roles)
+	}
+
+	// The emptied list without the entrypoint's word still refuses.
+	emptyEnv := finApplyEnv(dsn, nil, "")
+	if err, _ := finApply(t, emptyEnv); err == nil {
+		t.Fatal("an empty list without --empty-list-revokes-all must refuse")
+	}
+	// With it, the last person is revoked.
+	out2 := &bytes.Buffer{}
+	if err := financeUserRole([]string{"--apply-from-env", "--empty-list-revokes-all"}, out2, out2, mapGetenv(emptyEnv)); err != nil {
+		t.Fatalf("an emptied list with --empty-list-revokes-all must apply: %v (%s)", err, out2.String())
+	}
+	if !strings.Contains(out2.String(), "applied=0") || !strings.Contains(out2.String(), "revoked=1") {
+		t.Fatalf("the emptied list must revoke the last person: %q", out2.String())
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM users WHERE platform_user_id = $1`, "fin-console-user-last").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "DEACTIVATED" {
+		t.Fatalf("the last person must be DEACTIVATED, got %q", status)
+	}
+}
+
+// finOrgID resolves the finance box's org anchor id.
+func finOrgID(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM org WHERE slug = $1`, finOrgSlug).Scan(&id); err != nil {
+		t.Fatalf("the org anchor: %v", err)
+	}
+	return id
 }
