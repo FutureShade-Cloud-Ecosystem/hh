@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
+import { houseDayOffset } from "./house-day.mjs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -140,8 +141,6 @@ export function forbidden(res) {
   assert.equal(res.json.error, "Forbidden");
 }
 
-export const later = (days) => {
-  const at = new Date();
-  at.setUTCDate(at.getUTCDate() + days);
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
-};
+// The offset counts the house zone's own calendar days, never UTC days: the
+// UTC reading drifts by one across the zone's DST change (test/house-day.mjs).
+export const later = (days) => houseDayOffset(days);
