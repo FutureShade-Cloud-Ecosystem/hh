@@ -25,7 +25,7 @@ export async function bankrecListAccounts(
 export async function bankrecCutoverPreview(
   client: ApiClient,
   id: string | number,
-  opts: { date: string },
+  opts: { date: string; statement_cents?: number; ticked?: string },
   call?: ApiCallOptions
 ): Promise<Result<BankRecCutoverPreview>> {
   return client.request<BankRecCutoverPreview>({

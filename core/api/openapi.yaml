@@ -9176,6 +9176,19 @@ paths:
           schema:
             type: string
             format: date
+        - name: statement_cents
+          in: query
+          required: false
+          description: The statement balance typed on the form, in cents. When present the answer carries the difference between it and the balance the book makes with the ticked entries, and whether it reconciles.
+          schema:
+            type: integer
+            format: int64
+        - name: ticked
+          in: query
+          required: false
+          description: Comma separated journal ids of the entries the form ticks as still outstanding at cut over
+          schema:
+            type: string
       responses:
         "200":
           description: The entries and the book balance at that date
@@ -38960,6 +38973,13 @@ components:
           description: The posted entries on the account's GL code on or before the cut over date, oldest first
           items:
             $ref: "#/components/schemas/BankRecCutoverPreviewEntry"
+        difference_cents:
+          type: integer
+          format: int64
+          description: "Present only when the read carried statement_cents: the typed statement balance less the balance the book makes with the ticked entries (the book balance less ticked outstanding cheques plus ticked deposits in transit). A starting point must reconcile, so this must be zero."
+        reconciles:
+          type: boolean
+          description: Present only when the read carried statement_cents; true when difference_cents is zero
     BankRecCutoverPreviewEntry:
       type: object
       description: One posted ledger entry on the bank's GL code, at its signed net on that code

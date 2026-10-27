@@ -1039,10 +1039,11 @@ func TestIntegration_FW1_04_CutoverStartingPointAndConfirmedOutstanding(t *testi
 	}
 
 	// Guard: once a later month (2022-04) has signed off, recording or changing cut-over at 2022-03-31 is refused.
+	// The balance reconciles (the book at the cut over date is $5,000.00), so the conflict is what answers.
 	if _, err := svc.RecordCutover(ctrlCtx, CutoverInput{
 		BankAccountID:                acct,
 		CutoverDate:                  "2022-03-31",
-		OpeningStatementBalanceCents: 400000,
+		OpeningStatementBalanceCents: 500000,
 	}); err == nil || !strings.Contains(err.Error(), "already completed") {
 		t.Fatalf("expected cutover refusal once a later month has signed off, got %v", err)
 	}
@@ -1166,6 +1167,21 @@ func TestIntegration_FW1_04_CutoverRouteLegs(t *testing.T) {
 	controller := identityPkg.StaffAuthority{RoleID: "financial_controller", Tier: identityPkg.TierLeadership, Scope: identityPkg.ScopeGlobal}
 	payRec := identityPkg.StaffAuthority{RoleID: "payables_receivables", Tier: identityPkg.TierManager, Scope: identityPkg.ScopeGlobal}
 
+	// The ledger carries the go live opening from before the cut over date, so the starting point reconciles
+	// (round 4): the book at 2022-03-31 is $5,000.00 and the recorded statement balance is the same.
+	if _, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-r3-route-open",
+		Source:         "ADJUSTMENT",
+		Memo:           "opening balance at go live",
+		DocumentDate:   time.Date(year, 3, 31, 12, 0, 0, 0, time.UTC),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 500000, Memo: "opening balance"},
+			{AccountCode: "3900", CreditCents: 500000, Memo: "retained earnings"},
+		},
+	}); err != nil {
+		t.Fatalf("post opening balance: %v", err)
+	}
+
 	body := `{"cutover_date":"2022-03-31","opening_statement_balance_cents":500000}`
 	// The General Manager and the Money Desk work role are refused at the door.
 	if code := post(gm, body); code != http.StatusForbidden {
@@ -1201,21 +1217,8 @@ func TestIntegration_FW1_04_CutoverRouteLegs(t *testing.T) {
 		t.Errorf("BANKREC_CUTOVER audit rows = %d, want %d", postAudit, preAudit+1)
 	}
 
-	// Once a later month (2022-04) has signed off, recording through the door is refused 409.
-	// The ledger carries the cut over balance for real (the March opening journal), so April's own
-	// figures tie and it can sign off.
-	if _, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
-		IdempotencyKey: "fw104-r3-route-open",
-		Source:         "ADJUSTMENT",
-		Memo:           "opening balance at go live",
-		DocumentDate:   time.Date(year, 3, 31, 12, 0, 0, 0, time.UTC),
-		Lines: []gl.ExternalLine{
-			{AccountCode: "1000", DebitCents: 500000, Memo: "opening balance"},
-			{AccountCode: "3900", CreditCents: 500000, Memo: "retained earnings"},
-		},
-	}); err != nil {
-		t.Fatalf("post opening balance: %v", err)
-	}
+	// Once a later month (2022-04) has signed off, recording through the door is refused 409. April's own
+	// figures tie against the opening already in the ledger, so it can sign off.
 	depJID, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
 		IdempotencyKey: "fw104-r3-route-apr-dep",
 		Source:         "ADJUSTMENT",
@@ -1242,7 +1245,8 @@ func TestIntegration_FW1_04_CutoverRouteLegs(t *testing.T) {
 	if _, err := svc.CompleteReconciliation(ctx, recApr.ID, userID); err != nil {
 		t.Fatalf("sign off april: %v", err)
 	}
-	if code := post(controller, `{"cutover_date":"2022-03-31","opening_statement_balance_cents":400000}`); code != http.StatusConflict {
+	// The body reconciles (the book at 2022-03-31 is $5,000.00), so the conflict is what answers.
+	if code := post(controller, `{"cutover_date":"2022-03-31","opening_statement_balance_cents":500000}`); code != http.StatusConflict {
 		t.Errorf("controller POST cutover after a later month signed off status = %d, want 409 Conflict", code)
 	}
 }

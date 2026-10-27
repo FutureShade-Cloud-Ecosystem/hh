@@ -2726,6 +2726,8 @@ export type BankRecCutoverInput = {
 export type BankRecCutoverPreview = {
   book_balance_cents: number;
   entries?: BankRecCutoverPreviewEntry[];
+  difference_cents?: number;
+  reconciles?: boolean;
 };
 export type BankRecCutoverPreviewEntry = {
   journal_id: string;

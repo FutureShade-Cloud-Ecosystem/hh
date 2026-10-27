@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,7 +50,20 @@ func (h *Handler) recordCutover(w http.ResponseWriter, r *http.Request, caller g
 // cutoverPreview answers the starting point form's read: the ledger's entries on or before the cut over
 // date, and the book balance their net makes. A read, so Money Desk work or above.
 func (h *Handler) cutoverPreview(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	out, err := h.svc.CutoverPreview(r.Context(), r.PathValue("id"), r.URL.Query().Get("date"))
+	var statement *int64
+	if raw := r.URL.Query().Get("statement_cents"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, "bankrec: statement_cents must be a whole number of cents")
+			return
+		}
+		statement = &parsed
+	}
+	var ticked []string
+	if raw := r.URL.Query().Get("ticked"); raw != "" {
+		ticked = strings.Split(raw, ",")
+	}
+	out, err := h.svc.CutoverPreview(r.Context(), r.PathValue("id"), r.URL.Query().Get("date"), statement, ticked)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

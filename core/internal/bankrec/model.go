@@ -236,6 +236,10 @@ type CutoverInput struct {
 type CutoverPreview struct {
 	BookBalanceCents int64                 `json:"book_balance_cents"`
 	Entries          []CutoverPreviewEntry `json:"entries,omitempty"`
+	// Present only when the read carried a statement balance (round 4): the difference between the typed
+	// statement balance and the balance the book makes with the ticked entries, zero when it reconciles.
+	DifferenceCents *int64 `json:"difference_cents,omitempty"`
+	Reconciles      *bool  `json:"reconciles,omitempty"`
 }
 
 // CutoverPreviewEntry is one posted ledger entry on the bank's GL code, at its signed net on that code.
