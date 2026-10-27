@@ -410,7 +410,7 @@ SELECT balance_cents, COALESCE(org_id::text, ''), branch_id::text
 SELECT COALESCE(source_type, ''), COALESCE(source_ref_id, id)::text, COALESCE(branch_id::text, '')
   FROM customer_transactions
  WHERE id = $1::uuid AND customer_id = $2::uuid AND COALESCE(source_type, '') <> 'invoice'
-   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')
+   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')
    FOR UPDATE`,
 			in.CreditID, in.CustomerID).Scan(&groupSourceType, &groupRef, &creditBranch)
 		if err != nil {
@@ -436,7 +436,7 @@ SELECT 1
    AND COALESCE(source_type, '') = $2
    AND COALESCE(source_ref_id, id) = $3::uuid
    AND COALESCE(branch_id::text, '') = $4
-   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')
+   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')
    AND amount_cents < 0
  ORDER BY occurred_at ASC, id ASC
  LIMIT 1
@@ -455,7 +455,7 @@ SELECT COALESCE(SUM(amount_cents), 0)
    AND COALESCE(source_type, '') = $2
    AND COALESCE(source_ref_id, id) = $3::uuid
    AND COALESCE(branch_id::text, '') = $4
-   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')`,
+   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')`,
 			in.CustomerID, groupSourceType, groupRef, creditBranch).Scan(&creditOpen); err != nil {
 			return CreditApplication{}, fmt.Errorf("credit apply: read the credit's group: %w", err)
 		}
@@ -779,12 +779,19 @@ UPDATE invoices
 	switch record.CreditKind {
 	case CreditKindMemo:
 		var memoBalance int64
-		if err := tx.QueryRow(ctx, `SELECT balance_cents FROM invoices WHERE id = $1::uuid AND customer_id = $2::uuid FOR NO KEY UPDATE`,
-			record.CreditID, invCust).Scan(&memoBalance); err != nil {
+		var memoStatus string
+		if err := tx.QueryRow(ctx, `SELECT balance_cents, status FROM invoices WHERE id = $1::uuid AND customer_id = $2::uuid FOR NO KEY UPDATE`,
+			record.CreditID, invCust).Scan(&memoBalance, &memoStatus); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return CreditApplicationReversed{}, NoSuchCreditError{CreditID: record.CreditID}
 			}
 			return CreditApplicationReversed{}, fmt.Errorf("credit reverse: read the memo: %w", err)
+		}
+		// The reversal checks the memo's status (S6 P3): a memo VOIDED after its application stays
+		// VOID, so the restore is refused rather than bringing the memo back FINALIZED.
+		if memoStatus == "VOID" {
+			return CreditApplicationReversed{}, httpx.BadRequestf(
+				"credit memo %s is void, its application cannot be reversed", record.CreditID)
 		}
 		creditOpenAfter = -memoBalance + amount
 		if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
@@ -799,12 +806,12 @@ UPDATE invoices
 		var anchorSum int64
 		if err := tx.QueryRow(ctx, `
 SELECT COALESCE(a.source_type, ''), COALESCE(a.source_ref_id, a.id)::text,
-       (SELECT COALESCE(SUM(g.amount_cents), 0) FROM customer_transactions g
-         WHERE g.customer_id = a.customer_id
-           AND COALESCE(g.source_type, '') = COALESCE(a.source_type, '')
-           AND COALESCE(g.source_ref_id, g.id) = COALESCE(a.source_ref_id, a.id)
-           AND COALESCE(g.branch_id::text, '') = COALESCE(a.branch_id::text, '')
-           AND g.txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF'))
+	       (SELECT COALESCE(SUM(g.amount_cents), 0) FROM customer_transactions g
+	         WHERE g.customer_id = a.customer_id
+	           AND COALESCE(g.source_type, '') = COALESCE(a.source_type, '')
+	           AND COALESCE(g.source_ref_id, g.id) = COALESCE(a.source_ref_id, a.id)
+	           AND COALESCE(g.branch_id::text, '') = COALESCE(a.branch_id::text, '')
+	           AND g.txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO'))
   FROM customer_transactions a WHERE a.id = $1::uuid FOR UPDATE`, record.CreditID).Scan(&anchorType, &anchorRef, &anchorSum); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return CreditApplicationReversed{}, NoSuchCreditError{CreditID: record.CreditID}
@@ -916,7 +923,7 @@ SELECT (ARRAY_AGG(id::text ORDER BY occurred_at ASC, id ASC))[1] AS anchor_id,
  WHERE customer_id = $1::uuid
    AND COALESCE(branch_id::text, '') = $2
    AND COALESCE(source_type, '') <> 'invoice'
-   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')
+   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')
  GROUP BY COALESCE(source_type, ''), COALESCE(source_ref_id, id)
 HAVING SUM(amount_cents) < 0
  ORDER BY MIN(occurred_at) ASC`, customerID, branchID)
