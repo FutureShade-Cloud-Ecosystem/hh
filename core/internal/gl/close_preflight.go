@@ -61,7 +61,7 @@ func (s *Service) runClosePreFlight(ctx context.Context, year, month int) []stri
 		}
 	}
 	if s.drawers != nil {
-		if n, err := s.drawers.OpenDrawersInMonth(ctx, year, month); err != nil {
+		if n, err := s.drawers.OpenDrawers(ctx, time.Date(year, time.Month(month), 1, 0, 0, 0, 0, zone.Location()), time.Date(year, time.Month(month), 1, 0, 0, 0, 0, zone.Location()).AddDate(0, 1, 0)); err != nil {
 			fails = append(fails, fmt.Sprintf("the till drawers could not be read (%v)", err))
 		} else if n > 0 {
 			fails = append(fails, fmt.Sprintf("%d till drawer%s still open for this month", n, plural(n)))

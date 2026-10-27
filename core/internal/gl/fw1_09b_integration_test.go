@@ -177,8 +177,8 @@ type fw1Drawers struct {
 	n           int
 }
 
-func (f fw1Drawers) OpenDrawersInMonth(_ context.Context, year, month int) (int, error) {
-	if year == f.year && month == f.month {
+func (f fw1Drawers) OpenDrawers(_ context.Context, from, _ time.Time) (int, error) {
+	if from.UTC().Year() == f.year && int(from.UTC().Month()) == f.month {
 		return f.n, nil
 	}
 	return 0, nil

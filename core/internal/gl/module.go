@@ -168,9 +168,10 @@ type StockValueReader interface {
 }
 
 // TillDrawerReader is the till side of the close pre flight: how many till sessions opened in the
-// month stand OPEN still. Satisfied by till.Repository, wired in cmd/core.
+// month window stand OPEN still. The window is the pre flight's to compute (the dealer's zone); the
+// reader only queries. Satisfied by till.Repository, wired in cmd/core.
 type TillDrawerReader interface {
-	OpenDrawersInMonth(ctx context.Context, year, month int) (int, error)
+	OpenDrawers(ctx context.Context, from, to time.Time) (int, error)
 }
 
 // OutboxQueueReader is the outbox side of the close pre flight: posting events for the month that are
