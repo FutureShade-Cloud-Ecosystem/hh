@@ -100,10 +100,36 @@ func (s *Service) ListJournals(ctx context.Context, f JournalFilter) ([]Journal,
 	return js, nil
 }
 
-func (s *Service) GetJournal(ctx context.Context, id string) (Journal, error) {
+// GetJournal is fenced to the caller's branch reach (FW1-10), the same rule ListJournals carries
+// (DIB-392): a journal posted at a branch the caller cannot reach answers as MISSING, never 403,
+// because an id is an existence oracle and the list already hides these rows. A journal with no
+// branch is the consolidated books (until FW1-08 stamps every line, branch money sits in such
+// journals), so it reads by id only by a dealer wide caller, the trial balance rule.
+// journalAnswered reads a just-written journal back through the STORE, never through the fenced read,
+// so an answer never contradicts a committed write (615 round 2, P2-2): the caller just wrote this
+// row, and a refused-looking answer for a landed write is the contradiction S2 named. The write
+// fences themselves (SECURITY-SOD gap 19) are a named item's, FW1-09b.
+func (s *Service) journalAnswered(ctx context.Context, id string) (Journal, error) {
 	j, err := s.store.GetJournal(ctx, id)
 	if err != nil {
 		return Journal{}, err
+	}
+	j.DerivedStatus = derivedStatus(j.Status, j.TotalCents(), s.thresholdFor(ctx, j.BranchID))
+	return j, nil
+}
+
+// GetJournal is the fenced READ route. Writers answer through journalAnswered.
+func (s *Service) GetJournal(ctx context.Context, id string) (Journal, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return Journal{}, err
+	}
+	j, err := s.store.GetJournal(ctx, id)
+	if err != nil {
+		return Journal{}, err
+	}
+	if !caller.CanAccessBranch(j.BranchID) {
+		return Journal{}, errNotFound
 	}
 	j.DerivedStatus = derivedStatus(j.Status, j.TotalCents(), s.thresholdFor(ctx, j.BranchID))
 	return j, nil
@@ -195,7 +221,7 @@ func (s *Service) CreateJournal(ctx context.Context, in CreateJournalInput) (Jou
 		if notify != nil {
 			notify(ctx)
 		}
-		return s.GetJournal(ctx, id)
+		return s.journalAnswered(ctx, id)
 	}
 	if draft.BranchID == "" {
 		ho, herr := s.store.HeadOfficeBranchID(ctx)
@@ -208,7 +234,7 @@ func (s *Service) CreateJournal(ctx context.Context, in CreateJournalInput) (Jou
 	if err != nil {
 		return Journal{}, err
 	}
-	return s.GetJournal(ctx, id)
+	return s.journalAnswered(ctx, id)
 }
 
 // ApproveJournal is the checker half of maker-checker: a manager other than the creator (four-eyes) approves a
@@ -366,7 +392,7 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 		}
 		return Journal{}, err
 	}
-	return s.GetJournal(ctx, newID)
+	return s.journalAnswered(ctx, newID)
 }
 
 func alreadyReversedErr(entryNo int) error {
@@ -457,7 +483,7 @@ func (s *Service) RunRecurring(ctx context.Context, id string) (Journal, error) 
 	if err != nil {
 		return Journal{}, err
 	}
-	return s.GetJournal(ctx, id)
+	return s.journalAnswered(ctx, id)
 }
 
 // - derived maker-checker status -
