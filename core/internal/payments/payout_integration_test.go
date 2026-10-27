@@ -505,3 +505,31 @@ func TestIntegration_Payout_AWriteOffIsCashOnly(t *testing.T) {
 		t.Errorf("the cash write off of the same short session was refused: %v", err)
 	}
 }
+
+// (9) A DRAWER pay out naming a CLOSED session is refused in words, with nothing written (PR 606 round 3, S4 4.1).
+func TestIntegration_Payout_DrawerNamesAClosedSessionIsRefused(t *testing.T) {
+	w := newReversalGLWorld(t)
+	closed := w.openSession()
+	orig := w.registerReceipt("CASH", 10_000)
+	w.inSession(closed, orig)
+	w.drain()
+	w.reverse(orig)
+	w.closeSession(closed, 0)
+	open := w.openSession()
+	w.cleanupPayouts()
+	repo := w.payoutRepo()
+	before := w.payoutState(orig)
+	if _, err := w.payOut(repo, orig, payments.PayoutDrawer, 1_000, func(in *payments.PayoutInput) { in.TillSessionID = closed }); err == nil || !strings.Contains(err.Error(), "needs an OPEN drawer, and this session is CLOSED") {
+		t.Errorf("a drawer pay out naming a CLOSED session answered %v, want it refused in words about an OPEN drawer", err)
+	}
+	if after := w.payoutState(orig); after != before {
+		t.Errorf("the refused CLOSED drawer pay out wrote: before %+v after %+v", before, after)
+	}
+	var closedMoves int
+	if err := w.r.obs.QueryRow(context.Background(), `SELECT count(*) FROM till_movements WHERE till_session_id = $1::uuid AND movement_type = 'PAID_OUT'`, closed).Scan(&closedMoves); err != nil || closedMoves != 0 {
+		t.Errorf("the CLOSED drawer carries %d paid out movements (err=%v), want 0", closedMoves, err)
+	}
+	if _, err := w.payOut(repo, orig, payments.PayoutDrawer, 1_000, func(in *payments.PayoutInput) { in.TillSessionID = open }); err != nil {
+		t.Errorf("the OPEN drawer pay out of the same payment was refused: %v", err)
+	}
+}
