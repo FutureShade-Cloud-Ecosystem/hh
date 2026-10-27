@@ -45,7 +45,6 @@ var fw1BranchCensusWriters = []string{
 // item ("FW1-05" for bankrec paths, "FW1-08b" for the others).
 var fw1BranchCensusRed = map[string]string{
 	"bankrec_manual_match_payment":      "FW1-05",
-	"bankrec_manual_match_lodgement":    "FW1-05",
 	"bankrec_unmatch_reversal":          "FW1-05",
 	"migration_0056_0221_setup_entries": "FW1-08b",
 	"manual_journal_without_branch":     "FW1-08b",
@@ -154,7 +153,7 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		File:         "core/internal/bankrec/service.go",
 		Func:         "(*Service).ManualMatch",
 		Kind:         "PostJournal",
-		BranchSource: "manualJournal passes empty BranchID today (RED, owned by FW1-05)",
+		BranchSource: "manualJournal stamps the LODGEMENT path from the till's lodgement facts (FW1-06a) and passes empty BranchID for PAYMENT today (RED, owned by FW1-05)",
 	},
 	{
 		File:         "core/internal/bankrec/service.go",
