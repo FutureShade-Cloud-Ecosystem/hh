@@ -44,12 +44,13 @@ func (r *Repository) InvoiceForGL(ctx context.Context, invoiceID string) (gl.Inv
 // an instant and not a day.
 //
 // The invoice arm carries each document's balance AT the as-of instant ($3). At an as of on the
-// CURRENT house day it reads balance_cents, the inception to date figure, so the tie-out moves with
-// every balance move; only a PAST date rebuilds, the same reconstruction the aging's agingSelect
-// runs, so the tie-out at a past date compares what was owed then with the GL at that date and the
-// aging's grand total ties to this figure by construction: an invoice paid after the as-of date is
-// still owed at it, an invoice issued after it is not on the books at it, and a document settled by
-// the instant nets to zero. PAID documents are read only for that as-of balance.
+// CURRENT house day it reads balance_cents, the inception to date figure, every open document on
+// the books (the issue cut is a past date's cut), so the tie-out moves with every balance move;
+// only a PAST date rebuilds, the same reconstruction the aging's agingSelect runs, so the tie-out
+// at a past date compares what was owed then with the GL at that date and the aging's grand total
+// ties to this figure by construction: an invoice paid after the as-of date is still owed at it, an
+// invoice issued after it is not on the books at it, and a document settled by the instant nets to
+// zero. PAID documents are read only for that as-of balance.
 func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchID string) (int64, error) {
 	if r.pool == nil {
 		return 0, errNoDB
@@ -79,7 +80,7 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 		                   END AS bal
 		       FROM invoices i
 		      WHERE i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
-		        AND i.issue_date <= $1
+		        AND ($4::bool OR i.issue_date <= $1)
 		        AND ($2 = '' OR i.branch_id = $2::uuid)) b
 		      WHERE b.bal <> 0)
 		 + (SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions

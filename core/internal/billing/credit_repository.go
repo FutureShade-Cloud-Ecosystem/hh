@@ -100,21 +100,22 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 // the register's per-row bucket_label derivation, all from one expression.
 //
 // The balance each document carries is the one it carried AT the as-of instant ($5, the instant the
-// handler resolved), not today's: a document is on the books from its issue day ($1, the house day
-// of the as-of), and what came off it afterwards does not come off its as-of figure. At an as of on
-// the CURRENT house day ($6) the figure IS the balance: balance_cents is the inception to date
-// figure, so today's aging, today's sweep and today's statement run read it directly and no writer
-// can move a balance without today's figures moving with it. Only a PAST date rebuilds from the
-// dated acts that moved the balance: every real allocation dated by the instant is a payment
-// received by then, a reversing payment's contra allocation gives its share back, a re-application
-// dated by the instant is money applied by then, and the dated ledger rows tagged to the document
-// itself (a credit offset, a deposit close, a write off) move it by their signed amounts. An
-// invoice paid after the as-of date therefore still ages here at its full total, and an invoice
-// issued after it is not on the books at it. What was settled by the instant nets to zero, so only
-// a document open at the date survives the HAVING, whatever its status is today. One honesty note:
-// a bounce deletes its payment's allocation rows, so a cheque that was good at the as-of date and
-// bounced afterwards shows as owed at that date; the payment's per-invoice split is unrecoverable
-// once those rows are gone.
+// handler resolved), not today's. At an as of on the CURRENT house day ($6) the figure IS the
+// balance: balance_cents is the inception to date figure, every open document on the books is read
+// (the issue cut is a past date's cut; a document issued ahead of the house day by the zone's own
+// reading of the seed is on the books at now), so today's aging, today's sweep and today's
+// statement run read it directly and no writer can move a balance without today's figures moving
+// with it. Only a PAST date rebuilds from the dated acts that moved the balance, and only there is
+// a document on the books from its issue day ($1, the house day of the as-of): every real
+// allocation dated by the instant is a payment received by then, a reversing payment's contra
+// allocation gives its share back, a re-application dated by the instant is money applied by then,
+// and the dated ledger rows tagged to the document itself (a credit offset, a deposit close, a
+// write off) move it by their signed amounts. An invoice paid after the as-of date therefore still
+// ages here at its full total, and an invoice issued after it is not on the books at it. What was
+// settled by the instant nets to zero, so only a document open at the date survives the HAVING,
+// whatever its status is today. One honesty note: a bounce deletes its payment's allocation rows,
+// so a cheque that was good at the as-of date and bounced afterwards shows as owed at that date;
+// the payment's per-invoice split is unrecoverable once those rows are gone.
 //
 // What this costs (S6's P3, measured with EXPLAIN on a migrated database): the three rebuild arms
 // are index-backed lookups per document (idx_cust_txn_source on the ledger rows, the
@@ -138,11 +139,11 @@ const agingSelect = `
 	       COALESCE(SUM(b.bal) FILTER (WHERE $1::date > i.due_date + $2::int), 0),
 	       EXISTS (SELECT 1 FROM credit_holds h WHERE h.customer_id = c.id AND h.status = 'ACTIVE'),
 	       COALESCE((SELECT h.hold_kind FROM credit_holds h WHERE h.customer_id = c.id AND h.status = 'ACTIVE' LIMIT 1), '')
-	FROM customers c
-	  JOIN invoices i ON i.customer_id = c.id
-	                  AND i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
-	                  AND i.issue_date <= $1::date
-	  JOIN LATERAL (
+FROM customers c
+  JOIN invoices i ON i.customer_id = c.id
+                  AND i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
+                  AND ($6::bool OR i.issue_date <= $1::date)
+  JOIN LATERAL (
 	       SELECT CASE WHEN $6::bool THEN i.balance_cents
 	                   ELSE i.total_cents
 	                        + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
