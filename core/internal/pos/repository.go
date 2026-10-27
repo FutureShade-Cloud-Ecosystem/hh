@@ -335,8 +335,9 @@ func (r *Repository) InsertOrder(ctx context.Context, tx pgx.Tx, o orderRow) (st
 	const q = `
 INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, requested_date,
                     subtotal_cents, tax_cents, total_cents, created_by, metadata,
-                    po_job_ref, salesperson_id, job_address, job_reference)
-VALUES (next_order_no($2), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    po_job_ref, salesperson_id, job_address, job_reference, org_id)
+VALUES (next_order_no($2), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+        (SELECT l.org_id FROM locations l WHERE l.id = $2))
 RETURNING id::text, order_no`
 	var id, no string
 	err = tx.QueryRow(ctx, q, o.CustomerID, o.BranchID, o.Status, o.Fulfillment, nullStr(o.RequestedDate),

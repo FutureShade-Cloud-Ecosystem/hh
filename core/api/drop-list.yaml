@@ -18,6 +18,8 @@ drops:
 additions:
   - route: "GET /api/v1/inventory/controller-exceptions"
     reason: "FW1-07 round 2 (ruling 82.4): the Controller's pre receipt exceptions read, the fallback and provisional sales listed where a Controller can read them; the ERP had no such list."
+  - route: "POST /api/v1/gl/periods/open-year"
+    reason: "FW1-01: the Controller's early open of the next fiscal year, audit stamped with a reason; the ERP seeded years by hand and had no route that created one."
   - route: "GET /api/v1/gl/posting-queue"
     reason: "FW1-02: the Financial Controller's read of GL events waiting or dead lettered (topic, document, last error, attempts); the ERP posted journals inline and had no outbox to watch."
   - route: "GET /api/v1/gl/posting-queue/count"
