@@ -54,3 +54,20 @@ var fw1BranchCensusRed = map[string]string{
 	"outbox_tax_relief_assessed":        "FW1-08b",
 	"year_end_close":                    "FW1-08b",
 }
+
+// fw1NonGLWriterSite identifies a non-GL journal writer call site or outbox
+// emitter whose payload carries a branch, together with where its branch_id
+// comes from at source.
+type fw1NonGLWriterSite struct {
+	File         string
+	Func         string
+	Kind         string
+	BranchSource string
+}
+
+// fw1NonGLJournalWriterCallSites lists every non-GL journal writer call site
+// (PostExternal, PostExternalTx, PostJournal, PostJournalTx,
+// PostCreditMemoJournal) and every emitter of an outbox topic whose payload
+// carries a branch outside core/internal/gl. Guarded by
+// TestFW1NonGLJournalWriterCallSitesComplete.
+var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{}
