@@ -131,6 +131,10 @@ test("the core's refusals read in words that say what to do, and a walled route 
     refusalWords("complete", "cannot complete, variance is 586050 cents (must be zero)", 422),
     "Not signed off: the statement and the ledger are $5,860.50 apart, and they must agree. Match the open lines, then refresh the figures.",
   );
+  assert.equal(
+    refusalWords("complete", "cannot complete, the statement reads $700.00 and the ledger reads $600.00 ($100.00 apart); they must agree, refresh the figures and match what is open", 422),
+    "Not signed off: the statement reads $700.00 and the ledger reads $600.00, $100.00 apart, and they must agree. Something was posted or imported since the month was opened: refresh the figures, then match what is open.",
+  );
   assert.equal(refusalWords("complete", "cannot complete, variance is -4500 cents (must be zero)", 422), "Not signed off: the statement and the ledger are $45.00 apart, and they must agree. Match the open lines, then refresh the figures.");
   assert.equal(refusalWords("complete", "reconciliation abc is already COMPLETED", 409), "That month is already signed off.");
   assert.equal(refusalWords("open", "reconciliation for 2031-06 is already COMPLETED", 409), "June 2031 is already signed off for this account, so its figures no longer change.");

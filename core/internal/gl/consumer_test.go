@@ -262,6 +262,7 @@ func healthyRules() []RuleRef {
 		"payment.bounced":        {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
 		"payment.reversed":       {"ar", "refund_payable"},
 		"payment.reapplied":      {"ar", "refund_payable"},
+		"payment.paid_out":       {"refund_payable", "drawer", "bank", "card_clearing", "write_off"},
 		"till.session.completed": {"over_short", "undeposited"},
 		"order.fulfilled":        {"cogs", "inventory"},
 		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
@@ -459,6 +460,63 @@ func TestPaymentReapplied_IsAPostedTopicWithRequiredRules(t *testing.T) {
 		f.activeRules = without
 		if err := svc.ValidatePostingRules(context.Background()); err == nil {
 			t.Fatalf("a missing payment.reapplied/%s rule must fail validation", role)
+		}
+	}
+}
+
+// SF-2m and SF-2n: a pay out of held money is Dr 2310 / Cr the account the act moved, named by the payload's credit
+// role; one journal per act however often the event is delivered; a payload naming no known account is refused.
+func TestPaymentPaidOutLegs(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct{ role, code string }{{"drawer", "1020"}, {"bank", "1000"}, {"card_clearing", "1010"}, {"write_off", "6350"}} {
+		f := newFakeStore()
+		svc := newTestService(f)
+		payload := map[string]any{"payout_id": "po-" + c.role, "payment_id": "orig1", "amount_cents": 4000, "kind": "K", "credit_role": c.role, "branch_id": "b1"}
+		for i := 0; i < 2; i++ {
+			if err := svc.consume(ctx, ev("payment.paid_out", payload)); err != nil {
+				t.Fatalf("%s: consume: %v", c.role, err)
+			}
+		}
+		d := f.lastInserted()
+		wantLeg(t, d, "2310", 4000, 0)
+		wantLeg(t, d, c.code, 0, 4000)
+		if !d.balanced() || d.IdempotencyKey != "payment.paid_out:po-"+c.role || d.BranchID != "b1" || len(f.journals) != 1 {
+			t.Fatalf("%s: balanced %v key %q branch %q journals %d", c.role, d.balanced(), d.IdempotencyKey, d.BranchID, len(f.journals))
+		}
+	}
+	for _, bad := range []map[string]any{
+		{"payment_id": "o", "amount_cents": 1, "credit_role": "bank"},
+		{"payout_id": "p", "amount_cents": 1, "credit_role": "bank"},
+		{"payout_id": "p", "payment_id": "o", "credit_role": "bank"},
+		{"payout_id": "p", "payment_id": "o", "amount_cents": 1, "credit_role": "ar"},
+		{"payout_id": "p", "payment_id": "o", "amount_cents": 1},
+	} {
+		if err := newTestService(newFakeStore()).consume(ctx, ev("payment.paid_out", bad)); err == nil {
+			t.Fatalf("a malformed pay out %v was acked", bad)
+		}
+	}
+}
+
+func TestPaymentPaidOut_IsAPostedTopicWithRequiredRules(t *testing.T) {
+	found := false
+	for _, topic := range PostedTopics {
+		found = found || topic == "payment.paid_out"
+	}
+	if !found {
+		t.Fatal("payment.paid_out must be a topic the posting consumer owns")
+	}
+	for _, role := range []string{"refund_payable", "drawer", "bank", "card_clearing", "write_off"} {
+		f := newFakeStore()
+		var without []RuleRef
+		for _, r := range healthyRules() {
+			if r.EventType == "payment.paid_out" && r.LineRole == role {
+				continue
+			}
+			without = append(without, r)
+		}
+		f.activeRules = without
+		if err := newTestService(f).ValidatePostingRules(context.Background()); err == nil {
+			t.Fatalf("a missing payment.paid_out/%s rule must fail validation", role)
 		}
 	}
 }

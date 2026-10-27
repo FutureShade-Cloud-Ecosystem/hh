@@ -979,6 +979,11 @@ async function handle(req, res) {
     parkedApplyMs = Math.max(0, Number(body?.ms ?? 0));
     return send(res, 200, { ok: true, parkedApplyMs });
   }
+  if (method === "POST" && path === "/_stub/post-to-bank") {
+    const body = await readBody(req);
+    const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
+    return send(res, answer.status, answer.body);
+  }
   if (method === "POST" && path === "/_stub/reverse-payment") {
     const body = await readBody(req);
     const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
@@ -999,6 +1004,11 @@ async function handle(req, res) {
     return send(res, 200, { token: mintToken(account.user_id), user: account, flow: body.flow });
   }
   if (method === "GET" && path === "/api/v1/branches") return send(res, 200, BRANCHES);
+  if (method === "POST" && path === "/_stub/posting-queue") {
+    const body = await readBody(req);
+    const answer = glWorld.handle(req, url, JSON.stringify(body ?? {}));
+    return send(res, answer.status, answer.body);
+  }
   if (method === "POST" && path === "/_stub/legacy-import") {
     const body = await readBody(req);
     const answer = glWorld.handle(req, url, JSON.stringify(body ?? {}));

@@ -432,7 +432,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithInvoiceReader(billingRepo).
 		WithARSubledger(billingRepo).
 		WithTaxSplitReader(posRepo).
-		WithPaymentReader(ops.tillRepo)
+		WithPaymentReader(ops.tillRepo).
+		WithDeliveryReader(orderRepo)
 
 	// A-04 finstmt: read-only statements over the 0034 views. The DIB-510
 	// receivables register mounts from here (billing's register handler,

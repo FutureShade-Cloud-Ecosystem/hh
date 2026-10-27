@@ -22,7 +22,7 @@ import type { Result } from "@hardscapehouse/api-client";
 import type { GlApi } from "./gl-api.js";
 import type { BooksModel, Confirm, Review, Section } from "./gl-books.js";
 import { branchChoices } from "./gl-books.js";
-import { canDecide, checkDraft, periodName, refusalWords, type DraftLine } from "./gl-logic.js";
+import { canDecide, checkDraft, periodName, postingQueueBannerWords, refusalWords, type DraftLine } from "./gl-logic.js";
 import { formatMoney, parseAmountToCents } from "./gl-money.js";
 import { renderGl, tabsFor, type GlModel, type GlTab, type JournalFilter } from "./gl-views.js";
 
@@ -75,6 +75,7 @@ export class GlDesk {
   #busy = false;
   #error = "";
   #notice = "";
+  #postingQueueWords = "";
   // The books: each part is read the first time its tab opens, and reread after a change to it.
   #chart: Section<GlAccount[]> = idle([]);
   #recurring: Section<GlRecurringTemplate[]> = idle([]);
@@ -104,12 +105,13 @@ export class GlDesk {
     this.#phase = "loading";
     this.#host.repaint();
     const controller = this.#mode === "controller";
-    const [approvals, journals, trial, branches, legacyImport] = await Promise.all([
+    const [approvals, journals, trial, branches, legacyImport, postingQueue] = await Promise.all([
       controller ? this.#api.pendingApprovals() : Promise.resolve<Result<IdentityApproval[]>>({ ok: true, value: [] }),
       this.#api.journals(),
       this.#api.trialBalance(this.#trialBranch, this.#trialYear, this.#trialMonth),
       this.#api.branches(),
       this.#api.legacyImportSource(),
+      this.#api.postingQueueCount(),
     ]);
     if (!approvals.ok) {
       this.#phase = "error";
@@ -129,6 +131,11 @@ export class GlDesk {
     if (trial.ok) this.#trialYear = trial.value.fiscal_year;
     this.#branches = branches.ok ? branches.value : [];
     this.#legacyImport = legacyImport;
+    // The posting queue's banner: a count that is not zero says journals are
+    // stuck (waiting or dead lettered) and the whole ledger is out of step
+    // until they post. A refused count never blocks the desk; the banner
+    // simply does not show.
+    this.#postingQueueWords = postingQueue.ok ? postingQueueBannerWords(postingQueue.value) : "";
     // The ledger's own refusals are said, not hidden, but they never hide the queue.
     this.#error = !journals.ok
       ? refusalWords("journals", journals.error, journals.status ?? 0)
@@ -731,6 +738,7 @@ export class GlDesk {
       busy: this.#busy,
       error: this.#error,
       notice: this.#notice,
+      postingQueueWords: this.#postingQueueWords,
       books,
     };
     return html`${renderGl(model)}`;
