@@ -350,6 +350,37 @@ func TestIntegration_MatchReach_ALodgementTargetIsFencedToReach(t *testing.T) {
 	}
 }
 
+// The match's answer carries the lodgement's PaymentsUnresolved fact (R2-P2-1): a manual match to a
+// lodgement whose covered payments could not be resolved answers payments_unresolved=true, so the
+// reconciliation screen (FW1-05) can show the lodgement as unresolved.
+func TestIntegration_MatchAnswer_CarriesPaymentsUnresolved(t *testing.T) {
+	w := newReachWorld(t)
+	d := time.Now().UTC().Truncate(24 * time.Hour)
+	const unresLodg = "33333309-3333-4333-8333-333333333309"
+	w.lodg.open = []Lodgement{
+		{MovementID: unresLodg, BranchID: w.branchA, AmountCents: 5000, Reference: "LDG-UNRES", OccurredAt: d, PaymentsUnresolved: true},
+	}
+	line := w.lodgementLine(t, unresLodg)
+	code, body := w.post(w.callerAB, map[string]any{"mode": "manual", "statement_line_id": line, "target_type": "LODGEMENT", "target_ref_id": unresLodg, "amount_cents": 5000})
+	if code != http.StatusCreated {
+		t.Fatalf("the match answered %d %s", code, body)
+	}
+	if !strings.Contains(body, `"payments_unresolved":true`) {
+		t.Fatalf("the match answer does not carry payments_unresolved=true: %s", body)
+	}
+	// A resolved lodgement answers false, in so many words.
+	const resLodg = "33333310-3333-4333-8333-333333333310"
+	w.lodg.open = append(w.lodg.open, Lodgement{MovementID: resLodg, BranchID: w.branchA, AmountCents: 5000, Reference: "LDG-RES", OccurredAt: d})
+	line2 := w.lodgementLine(t, resLodg)
+	code, body = w.post(w.callerAB, map[string]any{"mode": "manual", "statement_line_id": line2, "target_type": "LODGEMENT", "target_ref_id": resLodg, "amount_cents": 5000})
+	if code != http.StatusCreated {
+		t.Fatalf("the control match answered %d %s", code, body)
+	}
+	if !strings.Contains(body, `"payments_unresolved":false`) {
+		t.Fatalf("the control answer does not carry payments_unresolved=false: %s", body)
+	}
+}
+
 // (d) The auto arm's lodgement candidates are cut to the caller's reach.
 func TestIntegration_MatchReach_AnAutoMatchByABranchManagerSkipsAnotherBranchsLodgements(t *testing.T) {
 	w := newReachWorld(t)

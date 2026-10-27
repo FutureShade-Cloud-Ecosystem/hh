@@ -45,11 +45,10 @@ var fw1BranchCensusWriters = []string{
 }
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
-// item (the three bankrec paths left are FW1-05's).
+// item (the two bankrec paths left are FW1-05's).
 var fw1BranchCensusRed = map[string]string{
-	"bankrec_manual_match_payment":   "FW1-05",
-	"bankrec_manual_match_lodgement": "FW1-05",
-	"bankrec_unmatch_reversal":       "FW1-05",
+	"bankrec_manual_match_payment": "FW1-05",
+	"bankrec_unmatch_reversal":     "FW1-05",
 }
 
 // fw1NonGLWriterSite identifies a non-GL journal writer call site or outbox
@@ -163,7 +162,7 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		File:         "core/internal/bankrec/service.go",
 		Func:         "(*Service).ManualMatch",
 		Kind:         "PostJournal",
-		BranchSource: "manualJournal passes empty BranchID today (RED, owned by FW1-05)",
+		BranchSource: "manualJournal stamps the LODGEMENT path from the till's lodgement facts (FW1-06a) and passes empty BranchID for PAYMENT today (RED, owned by FW1-05)",
 	},
 	{
 		File:         "core/internal/bankrec/service.go",
