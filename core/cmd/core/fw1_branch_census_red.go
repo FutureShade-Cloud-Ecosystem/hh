@@ -2,7 +2,9 @@ package main
 
 // fw1_branch_census_red.go records the gl_journal_lines writers that still
 // leave branch_id NULL on main, together with the wave 1 item that owns
-// stamping each path (FW1-05 for bankrec paths, FW1-08b for the others).
+// stamping each path (FW1-05 for the bankrec paths; FW1-08b's own paths, the
+// Go writers and the 0056/0221 setup entries, are stamped and gone from the
+// map).
 //
 // Each owner item deletes its own entries from fw1BranchCensusRed in the PR
 // that stamps those writers. TestFW1JournalLinesCarryBranch runs every writer
@@ -42,12 +44,11 @@ var fw1BranchCensusWriters = []string{
 }
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
-// item ("FW1-05" for bankrec paths, "FW1-08b" for the others).
+// item (the three bankrec paths left are FW1-05's).
 var fw1BranchCensusRed = map[string]string{
-	"bankrec_manual_match_payment":      "FW1-05",
-	"bankrec_manual_match_lodgement":    "FW1-05",
-	"bankrec_unmatch_reversal":          "FW1-05",
-	"migration_0056_0221_setup_entries": "FW1-08b",
+	"bankrec_manual_match_payment":   "FW1-05",
+	"bankrec_manual_match_lodgement": "FW1-05",
+	"bankrec_unmatch_reversal":       "FW1-05",
 }
 
 // fw1NonGLWriterSite identifies a non-GL journal writer call site or outbox
