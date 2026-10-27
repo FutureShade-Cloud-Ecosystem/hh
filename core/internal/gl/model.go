@@ -133,6 +133,17 @@ type TrialBalanceRow struct {
 	BalanceCents  int64  `json:"balance_cents"` // net debit (Σdebit − Σcredit)
 }
 
+// PLBranchRow is one account's P&L net for a fiscal year under one branch stamp ("" = company level),
+// the year end's per branch input (FW1-08b).
+type PLBranchRow struct {
+	AccountCode   string
+	AccountName   string
+	AccountType   string
+	NormalBalance string
+	BranchID      string
+	NetDebitCents int64
+}
+
 // TieoutState is a subledger tie-out result with the persisted first-seen discrepancy age (0032 gl_tieout_state).
 type TieoutState struct {
 	Subledger      string     `json:"subledger"`
@@ -152,6 +163,7 @@ type RecurringTemplate struct {
 	ID       string             `json:"id"`
 	Name     string             `json:"name"`
 	Memo     string             `json:"memo"`
+	BranchID string             `json:"-"`
 	Schedule string             `json:"schedule"`
 	NextRun  string             `json:"next_run,omitempty"`
 	IsActive bool               `json:"is_active"`
