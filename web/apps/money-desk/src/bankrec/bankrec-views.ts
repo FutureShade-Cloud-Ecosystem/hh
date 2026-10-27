@@ -118,23 +118,18 @@ function recordedOf(account: BankRecAccount | undefined): { date: string; balanc
 }
 
 /**
- * Whether the starting point section is closed, and the month that closed it. With a recorded point, the core
- * refuses a re-record once the cut over month or any later month has signed off. With none recorded, a signed
- * off month means the go live moment has passed: any cut over date at or before the signed off month is refused,
- * so the section says plainly that it can no longer be set rather than offering a save the server would refuse.
+ * Whether the starting point section is closed, and the month that closed it. Once any month on the account has
+ * signed off (FROM-PRINCIPAL 183, S5 R3.3), the core refuses any cut-over, new or changed: a recorded point is
+ * shown as it is, and with none recorded the section says plainly that it can no longer be set, with no form
+ * and no Save.
  */
-function lockedOf(account: BankRecAccount | undefined, recons: readonly BankRecReconciliation[]): { locked: boolean; closedBy: { year: number; month: number } | null } {
+function lockedOf(recons: readonly BankRecReconciliation[]): { locked: boolean; closedBy: { year: number; month: number } | null } {
   const completed = recons.filter((r) => r.status === "COMPLETED");
-  const last = completed.reduce<{ year: number; month: number } | null>(
-    (acc, r) => (acc === null || r.year > acc.year || (r.year === acc.year && r.month > acc.month) ? { year: r.year, month: r.month } : acc),
+  const first = completed.reduce<{ year: number; month: number } | null>(
+    (acc, r) => (acc === null || r.year < acc.year || (r.year === acc.year && r.month < acc.month) ? { year: r.year, month: r.month } : acc),
     null,
   );
-  const recorded = recordedOf(account);
-  if (recorded === null) return { locked: last !== null, closedBy: last };
-  const year = Number(recorded.date.slice(0, 4));
-  const month = Number(recorded.date.slice(5, 7));
-  const closedBy = completed.find((r) => r.year > year || (r.year === year && r.month >= month));
-  return { locked: closedBy !== undefined, closedBy: closedBy === undefined ? null : { year: closedBy.year, month: closedBy.month } };
+  return { locked: first !== null, closedBy: first };
 }
 
 /** The posted ledger entries on the account's GL code on or before the typed cut over date, oldest first: the core's preview read, never a desk computation. */
@@ -168,7 +163,7 @@ function cutoverRecordedView(model: BankrecModel): TemplateResult {
 function cutoverPanel(model: BankrecModel): TemplateResult {
   const account = accountOf(model);
   if (account === undefined) return html`${nothing}`;
-  const { locked, closedBy } = lockedOf(account, model.recons);
+  const { locked, closedBy } = lockedOf(model.recons);
   const recorded = recordedOf(account);
   return html`
     <section class="br-panel" aria-label="Set the starting point" data-cutover>
@@ -177,7 +172,7 @@ function cutoverPanel(model: BankrecModel): TemplateResult {
         ? html`<p class="br-dim">The point reconciliation starts from: the day the dealer's books moved onto this ledger, and the statement balance on that day. Entries on or before it are not outstanding items unless they are ticked.</p>`
         : nothing}
       ${recorded === null && locked
-        ? html`<p class="br-note" data-cutover-closed>The starting point can no longer be set: ${closedBy === null ? "a month has signed off" : periodWords(closedBy.year, closedBy.month)} has signed off, and this account's months already reconcile. A starting point belongs before the months being reconciled.</p>`
+        ? html`<p class="br-note" data-cutover-closed>${closedBy === null ? "A month" : periodWords(closedBy.year, closedBy.month)} has signed off, so this account reconciles from its signed off months; a starting point can no longer be set.</p>`
         : nothing}
       ${cutoverRecordedView(model)}
       ${locked

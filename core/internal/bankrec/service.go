@@ -47,6 +47,12 @@ func (s *Service) RecordCutover(ctx context.Context, in CutoverInput) (BankAccou
 	if err != nil {
 		return BankAccount{}, err
 	}
+	if completedY, completedM, done, cerr := s.repo.FirstCompletedMonth(ctx, acct.ID); cerr != nil {
+		return BankAccount{}, cerr
+	} else if done {
+		return BankAccount{}, conflict("bankrec: cannot record cut-over at %s because month %d-%02d is already completed",
+			in.CutoverDate, completedY, completedM)
+	}
 	if err := s.checkCutoverReconciles(ctx, acct, in); err != nil {
 		return BankAccount{}, err
 	}
@@ -60,10 +66,29 @@ func (s *Service) RecordCutover(ctx context.Context, in CutoverInput) (BankAccou
 	return recored, nil
 }
 
-// checkCutoverReconciles is round 4's P1 (FROM-PRINCIPAL 181): a starting point must reconcile. The statement
-// balance on the cut over date must equal the book balance less the ticked outstanding cheques plus the ticked
-// deposits in transit, that is, the book balance at that date less the net of the ticked entries. Anything else
-// plants a wrong opening in every later month, so the server refuses it in the desk's words, naming the difference.
+type asOfBalanceReader interface {
+	GLBalanceAsOfCents(ctx context.Context, accountCode string, asOf time.Time, branchID string) (int64, error)
+}
+
+func (s *Service) bookBalanceAsOf(ctx context.Context, glAccountCode string, asOf time.Time, entries []gl.BankBookEntry) (int64, error) {
+	if ar, ok := s.balances.(asOfBalanceReader); ok {
+		return ar.GLBalanceAsOfCents(ctx, glAccountCode, asOf, "")
+	}
+	if ar, ok := s.journals.(asOfBalanceReader); ok {
+		return ar.GLBalanceAsOfCents(ctx, glAccountCode, asOf, "")
+	}
+	var sum int64
+	for _, e := range entries {
+		sum += e.NetCents
+	}
+	return sum, nil
+}
+
+// checkCutoverReconciles is round 4's P1 (FROM-PRINCIPAL 181 and 183): a starting point must reconcile. The
+// statement balance on the cut over date must equal the ledger's own book balance at that date less the ticked
+// outstanding cheques plus the ticked deposits in transit, that is, the ledger balance less the net of the
+// ticked entries. Anything else plants a wrong opening in every later month, so the server refuses it in the
+// desk's words, naming the difference.
 func (s *Service) checkCutoverReconciles(ctx context.Context, acct BankAccount, in CutoverInput) error {
 	br, ok := s.journals.(bankBookEntryReader)
 	if s.journals == nil || !ok {
@@ -77,7 +102,12 @@ func (s *Service) checkCutoverReconciles(ctx context.Context, acct BankAccount, 
 	if err != nil {
 		return badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", in.CutoverDate)
 	}
-	entries, err := br.BankAccountEntriesAsOf(ctx, acct.GLAccountCode, day.AddDate(0, 0, 1).Add(-time.Nanosecond))
+	asOf := day.AddDate(0, 0, 1).Add(-time.Nanosecond)
+	entries, err := br.BankAccountEntriesAsOf(ctx, acct.GLAccountCode, asOf)
+	if err != nil {
+		return err
+	}
+	book, err := s.bookBalanceAsOf(ctx, acct.GLAccountCode, asOf, entries)
 	if err != nil {
 		return err
 	}
@@ -85,9 +115,8 @@ func (s *Service) checkCutoverReconciles(ctx context.Context, acct BankAccount, 
 	for _, id := range in.OutstandingJournalIDs {
 		confirmed[id] = true
 	}
-	var book, tickedNet int64
+	var tickedNet int64
 	for _, e := range entries {
-		book += e.NetCents
 		if confirmed[e.JournalID] || (e.SourceRefID != "" && confirmed[e.SourceRefID]) {
 			tickedNet += e.NetCents
 		}
@@ -103,11 +132,11 @@ func (s *Service) checkCutoverReconciles(ctx context.Context, acct BankAccount, 
 	return nil
 }
 
-// CutoverPreview answers the starting point form's read (FW1-04 round 3): the ledger's entries on the account's
-// GL code on or before the cut over date (the same read the reconciliation's outstanding lists draw from), with
-// the book balance their net makes at that date. When the read carries the form's typed statement balance and its
-// ticked entries (round 4), the answer also carries the difference between them and whether it reconciles, so the
-// desk shows the server's difference and never computes one of its own.
+// CutoverPreview answers the starting point form's read (FW1-04 round 3 and round 4): the ledger's entries on
+// the account's GL code on or before the cut over date (the same read the reconciliation's outstanding lists
+// draw from), with the ledger's own book balance at that date. When the read carries the form's typed statement
+// balance and its ticked entries (round 4), the answer also carries the difference between them and whether it
+// reconciles, so the desk shows the server's difference and never computes one of its own.
 func (s *Service) CutoverPreview(ctx context.Context, accountID, date string, statementCents *int64, ticked []string) (CutoverPreview, error) {
 	acct, err := s.repo.GetAccount(ctx, accountID)
 	if err != nil {
@@ -128,7 +157,12 @@ func (s *Service) CutoverPreview(ctx context.Context, accountID, date string, st
 	if err != nil {
 		return CutoverPreview{}, badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", date)
 	}
-	entries, err := br.BankAccountEntriesAsOf(ctx, acct.GLAccountCode, day.AddDate(0, 0, 1).Add(-time.Nanosecond))
+	asOf := day.AddDate(0, 0, 1).Add(-time.Nanosecond)
+	entries, err := br.BankAccountEntriesAsOf(ctx, acct.GLAccountCode, asOf)
+	if err != nil {
+		return CutoverPreview{}, err
+	}
+	book, err := s.bookBalanceAsOf(ctx, acct.GLAccountCode, asOf, entries)
 	if err != nil {
 		return CutoverPreview{}, err
 	}
@@ -136,7 +170,7 @@ func (s *Service) CutoverPreview(ctx context.Context, accountID, date string, st
 	for _, id := range ticked {
 		confirmed[id] = true
 	}
-	out := CutoverPreview{BookBalanceCents: 0}
+	out := CutoverPreview{BookBalanceCents: book}
 	var tickedNet int64
 	for _, e := range entries {
 		out.Entries = append(out.Entries, CutoverPreviewEntry{
@@ -145,7 +179,6 @@ func (s *Service) CutoverPreview(ctx context.Context, accountID, date string, st
 			Memo:        e.Memo,
 			AmountCents: e.NetCents,
 		})
-		out.BookBalanceCents += e.NetCents
 		if confirmed[e.JournalID] || (e.SourceRefID != "" && confirmed[e.SourceRefID]) {
 			tickedNet += e.NetCents
 		}

@@ -103,12 +103,13 @@ export const bankrecStyles = css`
   /* The starting point form (round 4): two fields stacked, one row per entry with the checkbox leading it as
      its label and the whole row as the tap target, and figures that never wrap mid number. */
   .br-form-stack { grid-template-columns: 1fr; }
-  .br-tick-row { display: flex; align-items: center; gap: var(--hh-s-12); min-height: 44px; padding: var(--hh-s-4) 0; cursor: pointer; }
-  .br-tick-row input[type="checkbox"] { width: 18px; height: 18px; flex: none; accent-color: var(--hh-accent); }
+  label.br-tick-row { display: flex; align-items: center; gap: var(--hh-s-12); min-height: 44px; padding: var(--hh-s-4) 0; font-size: 14px; font-weight: 400; color: var(--hh-text); cursor: pointer; }
+  .br-tick-row input[type="checkbox"] { width: 18px; height: 18px; min-height: 18px; margin: 0; padding: 0; flex: none; accent-color: var(--hh-accent); }
   .br-tick-date { flex: none; color: var(--hh-text-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .br-tick-memo { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .br-tick-amount { flex: none; font-weight: 700; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  [data-cutover-result] dd { white-space: nowrap; font-variant-numeric: tabular-nums; overflow-wrap: normal; }
+  [data-cutover-result] .br-facts { grid-template-columns: minmax(0, 1fr) auto; gap: var(--hh-s-6) var(--hh-s-12); align-items: center; }
+  [data-cutover-result] dd { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; overflow-wrap: normal; }
 
   @media (max-width: 900px) {
     .br-split, .br-split-month { grid-template-columns: minmax(0, 1fr); }

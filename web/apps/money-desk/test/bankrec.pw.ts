@@ -685,6 +685,7 @@ test("a month with a deposit in transit and an outstanding cheque shows the reco
     await page.screenshot({ path: `${shotsDir}/bankrec-month-end-390x844-charcoal.png`, fullPage: true });
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
     await page.screenshot({ path: `${shotsDir}/bankrec-month-end-390x844-light.png`, fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 720 });
   }
 
   await page.locator("[data-recon-id]").getByRole("button", { name: "Sign off" }).click();

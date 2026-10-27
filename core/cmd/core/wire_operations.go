@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/attachments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
@@ -830,6 +831,10 @@ func (a glBalanceAdapter) GLBalanceCents(ctx context.Context, accountCode string
 
 func (a glBalanceAdapter) GLClosingBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
 	return a.svc.GLClosingBalanceCents(ctx, accountCode, year, month, branchID)
+}
+
+func (a glBalanceAdapter) GLBalanceAsOfCents(ctx context.Context, accountCode string, asOf time.Time, branchID string) (int64, error) {
+	return a.svc.GLBalanceAsOfCents(ctx, accountCode, asOf, branchID)
 }
 
 // lienGLPoster satisfies lien.GLPoster over glSvc.PostExternal (the

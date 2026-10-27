@@ -623,6 +623,14 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
     }
     const account = world.accounts.find((a) => a.id === accountId);
     if (account === undefined) return clientError(404, "not found");
+    // Once any month on the account has signed off, any cut-over (new or changed) is refused in words naming
+    // that month (round 4, FROM-PRINCIPAL 183).
+    const done = world.recons
+      .filter((r) => r.bank_account_id === account.id && r.status === "COMPLETED")
+      .sort((a, b) => a.year - b.year || a.month - b.month)[0];
+    if (done !== undefined) {
+      return clientError(409, `bankrec: cannot record cut-over at ${input.cutover_date} because month ${done.year}-${pad(done.month)} is already completed`);
+    }
     // A starting point must reconcile (round 4): the statement balance is the book less ticked outstanding
     // cheques plus ticked deposits in transit, the book balance at the date less the net of the ticked entries.
     {
@@ -632,14 +640,6 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
         const size = `${apart < 0 ? "-" : ""}$${String(Math.floor(apart / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${pad(apart % 100)}`;
         return clientError(422, `bankrec: cannot record cut-over at ${input.cutover_date}: the statement and the book differ by ${size}; tick the items still outstanding at cut over, or check the date and balance`);
       }
-    }
-    const year = Number(input.cutover_date.slice(0, 4));
-    const month = Number(input.cutover_date.slice(5, 7));
-    const done = world.recons
-      .filter((r) => r.bank_account_id === account.id && r.status === "COMPLETED" && (r.year > year || (r.year === year && r.month >= month)))
-      .sort((a, b) => a.year - b.year || a.month - b.month)[0];
-    if (done !== undefined) {
-      return clientError(409, `bankrec: cannot record cut-over at ${input.cutover_date} because month ${done.year}-${pad(done.month)} is already completed`);
     }
     account.cutover_date = input.cutover_date;
     account.cutover_statement_balance_cents = Number(input.opening_statement_balance_cents) || 0;

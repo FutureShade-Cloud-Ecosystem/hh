@@ -427,6 +427,13 @@ func (s *Service) GLClosingBalanceCents(ctx context.Context, accountCode string,
 	return s.glClosingBalanceCents(ctx, accountCode, year, month, branchID)
 }
 
+// GLBalanceAsOfCents returns the cumulative balance of an account through asOf across all fiscal years,
+// read through AccountBalanceAsOf (FW1-04 round 4). Bank reconciliation's cut-over starting point reads
+// the ledger's own balance at the cut-over date through this seam rather than summing the uncleared entry list.
+func (s *Service) GLBalanceAsOfCents(ctx context.Context, accountCode string, asOf time.Time, branchID string) (int64, error) {
+	return s.glBalanceAsOfCents(ctx, accountCode, asOf, branchID)
+}
+
 // BankAccountEntriesAsOf returns the POSTED, unreversed book entries on a bank GL account through asOf (FW1-04).
 func (s *Service) BankAccountEntriesAsOf(ctx context.Context, glAccountCode string, asOf time.Time) ([]BankBookEntry, error) {
 	return s.store.BankAccountEntriesAsOf(ctx, glAccountCode, asOf)
