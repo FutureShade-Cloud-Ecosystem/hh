@@ -32,7 +32,9 @@ package payments
 // The money the receipt took is the whole receipt, fee included: a receipt that settled an NSF fee
 // carries the fee in its metadata (PR 622's nsf_fee_allocations), and the void gives the fee back
 // beside the invoices, so the subledger nets to zero over the receipt and its void (S6's P2-4, the
-// sequencing with PR 622).
+// sequencing with PR 622). The same stamp moves the fee's map to voided_nsf_fee_allocations, so
+// 622's pay path counts a voided receipt's fee no more and the fee can be paid again (S6's
+// R2-P1-2), while the history keeps what the receipt paid.
 
 import (
 	"context"
@@ -289,7 +291,11 @@ UPDATE invoices
 
 	// Stamp the original. The reason and the actor ride the metadata, the reversal's columns are
 	// not written, and the stamp draws a fresh payments feed seq: a payment the desk lists as
-	// VOID is a change the payer's cached row must see.
+	// VOID is a change the payer's cached row must see. The fee's allocation map moves to
+	// voided_nsf_fee_allocations in this same statement (R2-P1-2, ruled): 622's pay path counts
+	// every payment's nsf_fee_allocations except reversed, reversing and BOUNCED ones, so a map
+	// left behind would count the fee paid on a receipt that never happened and stand in the way
+	// of paying it again; under its voided key the history of what the receipt paid stays.
 	stamp, err := json.Marshal(map[string]any{
 		"void_reason": in.Reason,
 		"voided_by":   in.ActorID,
@@ -300,7 +306,11 @@ UPDATE invoices
 	}
 	if _, err := tx.Exec(ctx, paymentsFeedSeqCTE+`
 		UPDATE payments SET status = 'VOID',
-		                    metadata = metadata || $2::jsonb,
+		                    metadata = (metadata - 'nsf_fee_allocations')
+		                               || CASE WHEN metadata ? 'nsf_fee_allocations'
+		                                       THEN jsonb_build_object('voided_nsf_fee_allocations', metadata->'nsf_fee_allocations')
+		                                       ELSE '{}'::jsonb END
+		                               || $2::jsonb,
 		                    updated_at = now(),
 		                    seq = (SELECT next_value FROM pseq)
 		  WHERE id = $1::uuid`, in.PaymentID, string(stamp)); err != nil {
