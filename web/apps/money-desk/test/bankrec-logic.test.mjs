@@ -197,6 +197,35 @@ test("the core's refusals read in words that say what to do, and a walled route 
   assert.equal(refusalWords("load", "internal error", 500), "The bank reconciliation service did not answer. Reload to try again.");
   assert.equal(refusalWords("load", "", 0), "The bank reconciliation service did not answer. Reload to try again.");
   assert.equal(refusalWords("open", "valid year and month (1-12) are required", 400), "Valid year and month (1-12) are required.");
+  // FW1-04: month-end sign-off guards in bookkeeper words.
+  assert.equal(
+    refusalWords("complete", "bankrec: cannot complete, 2087-12 has not reached month end yet (month end is 2087-12-31)", 422),
+    "Not signed off: December 2087 has not reached month end yet (Dec 31, 2087). Wait until the month has ended before signing it off.",
+  );
+  assert.equal(
+    refusalWords("complete", "bankrec: cannot complete, no statement lines have been imported for 2031-05", 422),
+    "Not signed off: no statement lines have been imported for May 2031. Import the bank statement for that month first.",
+  );
+  assert.equal(
+    refusalWords("complete", 'bankrec: cannot complete, the clearing journal for "MAY SETTLEMENT REV" has been reversed in the ledger', 422),
+    'Not signed off: the clearing journal for "MAY SETTLEMENT REV" was reversed in the ledger. Undo the match and match the line again.',
+  );
+  assert.equal(
+    refusalWords("complete", "bankrec: cannot complete, an earlier month (2031-04) is still open; sign off months in chronological order", 422),
+    "Not signed off: April 2031 is still open. Sign off the earlier month first.",
+  );
+  assert.equal(
+    refusalWords("complete", "bankrec: cannot complete, a later month (2031-06) is already completed; months must be signed off in chronological order", 422),
+    "Not signed off: June 2031 is already signed off. Earlier months cannot be signed off after a later month.",
+  );
+  assert.equal(
+    refusalWords(
+      "complete",
+      "bankrec: cannot complete, the statement closing balance ($1,500.00) does not equal the prior month's closing balance ($1,000.00) plus this month's statement lines ($400.00 = $1,400.00)",
+      422,
+    ),
+    "Not signed off: the statement closing balance ($1,500.00) does not continue from the prior month's closing balance ($1,000.00) plus this month's lines ($400.00, expected $1,400.00). Check the closing balance and the imported lines.",
+  );
 });
 
 test("a failed import says what the file lacked in words a bookkeeper can act on", () => {

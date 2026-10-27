@@ -622,3 +622,63 @@ test("the tabs and the controls work from the keyboard, and focus is visible", a
   await page.keyboard.press("Enter");
   await expect(page.locator("[data-line-panel]")).toBeVisible();
 });
+
+test("a month with a deposit in transit and an outstanding cheque shows the reconciliation report and signs off at zero variance", async ({ page, request }) => {
+  await openBank(page, request);
+  await request.post("/_stub/outstanding-items", {
+    data: {
+      deposits_in_transit: [{ journal_id: "7a1e0000-0000-4000-9000-000000000081", posted_at: `${monthDay(28)}T12:00:00Z`, memo: "May deposit in transit", amount_cents: 30_000 }],
+      outstanding_cheques: [{ journal_id: "7a1e0000-0000-4000-9000-000000000082", posted_at: `${monthDay(29)}T12:00:00Z`, memo: "Cheque 1044 to vendor", amount_cents: 12_000 }],
+    },
+  });
+  await request.post("/_stub/post-to-bank", { data: { cents: 18_000 } });
+  await tab(page, "match");
+  await page.getByRole("button", { name: "Run auto match" }).click();
+  for (const [text, how] of [
+    ["WIRE FROM CONTRACTOR", "payment"],
+    ["CHEQUE DEPOSIT", "cheque"],
+    ["MONTHLY SERVICE FEE", "fee"],
+  ] as const) {
+    await chooseLine(page, text);
+    const panel = page.locator("[data-line-panel]");
+    if (how === "payment") {
+      await panel.getByRole("textbox", { name: "Payment id" }).fill(WIRE_PAYMENT);
+    } else {
+      await panel.getByRole("radio", { name: /Journal/ }).click();
+      await panel.getByRole("combobox", { name: "Journal" }).selectOption({ label: how === "fee" ? FEE_JOURNAL : CHEQUE_JOURNAL });
+    }
+    await panel.getByRole("button", { name: "Match line" }).click();
+    await expect(page.locator("[data-notice]")).toContainText("Matched.");
+  }
+  await tab(page, "accounts");
+  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);
+  await page.getByRole("button", { name: "Open month" }).click();
+  const report = page.locator("[data-recon-report]");
+  await expect(report.locator("[data-report-statement]")).toHaveText("$25,255.75");
+  await expect(report.locator("[data-report-dit]")).toHaveText("$300.00");
+  await expect(report.locator("[data-report-oc]")).toHaveText("$120.00");
+  await expect(report.locator("[data-report-adjusted]")).toHaveText("$25,435.75");
+  await expect(report.locator("[data-report-gl]")).toHaveText("$25,435.75");
+  await expect(report.locator("[data-report-matched]")).toHaveText("7");
+  await expect(report.locator("[data-dit-list]")).toContainText("May deposit in transit · $300.00");
+  await expect(report.locator("[data-oc-list]")).toContainText("Cheque 1044 to vendor · $120.00");
+  await page.locator("[data-recon-id]").getByRole("button", { name: "Sign off" }).click();
+  await page.getByRole("button", { name: "Confirm sign off" }).click();
+  await expect(report).toContainText("Signed off");
+  await expect(report.locator("[data-report-completed-at]")).toBeVisible();
+
+  const shotsDir = process.env["FW1_04_SHOTS_DIR"];
+  if (shotsDir) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.evaluate(() => document.documentElement.removeAttribute("data-theme"));
+    await page.screenshot({ path: `${shotsDir}/bankrec-month-end-1440x900-charcoal.png`, fullPage: true });
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+    await page.screenshot({ path: `${shotsDir}/bankrec-month-end-1440x900-light.png`, fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => document.documentElement.removeAttribute("data-theme"));
+    await page.screenshot({ path: `${shotsDir}/bankrec-month-end-390x844-charcoal.png`, fullPage: true });
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+    await page.screenshot({ path: `${shotsDir}/bankrec-month-end-390x844-light.png`, fullPage: true });
+  }
+});
+

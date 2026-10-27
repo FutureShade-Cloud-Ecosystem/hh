@@ -21,6 +21,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identityPkg "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -255,6 +256,13 @@ func TestIntegration_FW1_04_AMonthWithOneDepositInTransitAndOneOutstandingCheque
 	if done.Status != ReconCompleted || done.VarianceCents != 0 {
 		t.Errorf("Leg 2: completed row = %+v, want COMPLETED with variance 0", done)
 	}
+	if done.DepositsInTransitCents != 30000 || done.OutstandingChequesCents != 12000 || done.AdjustedBankBalanceCents != 158000 || done.MatchedLinesCount != 1 {
+		t.Errorf("Leg 2: report figures = DIT %d OC %d Adjusted %d Matched %d, want 30000 12000 158000 1",
+			done.DepositsInTransitCents, done.OutstandingChequesCents, done.AdjustedBankBalanceCents, done.MatchedLinesCount)
+	}
+	if len(done.DepositsInTransit) != 1 || len(done.OutstandingCheques) != 1 {
+		t.Errorf("Leg 2: report lists = %d DIT, %d OC; want 1 and 1", len(done.DepositsInTransit), len(done.OutstandingCheques))
+	}
 }
 
 // Leg 3: Sign-off before month end (e.g. for a month that has not reached month end yet) is accepted today and must be refused.
@@ -384,4 +392,408 @@ func TestIntegration_FW1_04_BankReadsRefusedForCounterAndBranchStaff(t *testing.
 		}
 	}
 }
+
+// Item 2 closed-month rule: a match on a statement line in a closed GL month lands through FW1-01's rule
+// (into the earliest open period, keeping the line's date on posted_at, marked late_posted), never refused.
+func TestIntegration_FW1_04_MatchInClosedGLMonthLandsInEarliestOpenPeriodMarkedLatePosted(t *testing.T) {
+	pool := intPool(t)
+	cleanTables(t, pool)
+	acct := rbcAccountID(t, pool)
+	branch := aBranch(t, pool)
+	ctx := context.Background()
+
+	const year = 2023
+	may18 := time.Date(year, 5, 18, 0, 0, 0, 0, time.UTC)
+	june10 := time.Date(year, 6, 10, 14, 0, 0, 0, time.UTC)
+	fw104CleanYear(t, pool, acct, year)
+	fw104EnsurePeriods(t, pool, year, may18)
+	t.Cleanup(func() { fw104CleanYear(t, pool, acct, year) })
+
+	// Close 2023-01 through 2023-05 in fiscal_periods so 2023-06 is the earliest open period.
+	if _, err := pool.Exec(ctx, `UPDATE fiscal_periods SET status = 'CLOSED', closed_at = $1 WHERE year = $2 AND month <= 5`, june10, year); err != nil {
+		t.Fatalf("close periods 1..5: %v", err)
+	}
+
+	const payID = "87040009-0000-4000-8000-000000000009"
+	insertPayment(t, pool, payID, branch, "CARD", "GTW-FW104-CLSM", 42000)
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM payments WHERE id = $1::uuid`, payID) })
+
+	lineID := fw104InsertLineAt(t, pool, acct, may18, "MAY CARD IN CLOSED GL MONTH", "GTW-FW104-CLSM", 42000)
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	paySeam := &fakePayments{cands: []CandidatePayment{{PaymentID: payID, BranchID: branch, GatewayRef: "GTW-FW104-CLSM", AmountCents: 42000, ReceivedAt: may18}}}
+	svc := NewService(NewRepository(pool)).
+		WithPayments(paySeam).
+		WithJournals(glSvc).
+		WithJournalPoster(fw104GLPoster{svc: glSvc, clock: func() time.Time { return june10 }}).
+		WithGLBalances(glSvc)
+
+	m, err := svc.ManualMatch(ctx, MatchInput{
+		Mode: "manual", StatementLineID: lineID, TargetType: TargetPayment, TargetRefID: payID, AmountCents: 42000, CanAccessBranch: AllBranches,
+	}, "")
+	if err != nil {
+		t.Fatalf("match on statement line in closed GL month was refused: %v", err)
+	}
+	j, err := glSvc.GetJournal(ctx, m.JournalID)
+	if err != nil {
+		t.Fatalf("get clearing journal: %v", err)
+	}
+	var filedMonth int
+	if err := pool.QueryRow(ctx, `SELECT month FROM fiscal_periods WHERE id = $1::uuid`, j.PeriodID).Scan(&filedMonth); err != nil {
+		t.Fatalf("read period month: %v", err)
+	}
+	if filedMonth != 6 {
+		t.Errorf("clearing journal for closed-month May line filed into month %d, want 6", filedMonth)
+	}
+	if j.PostedAt.UTC().Month() != time.May || j.PostedAt.UTC().Day() != 18 {
+		t.Errorf("clearing journal posted_at = %v, want May 18", j.PostedAt.UTC())
+	}
+	if !j.LatePosted {
+		t.Errorf("clearing journal LatePosted = false, want true when May GL period was closed")
+	}
+}
+
+// Item 3 (FROM-PRINCIPAL 117): The Lodgement Rule, testing the new lodgement case (a lodgement in 1000 not yet on a
+// statement is a deposit in transit, and a new lodgement matched on a statement clears without booking 1020->1000 a
+// second time) beside the older lodgement case (a lodgement from before this change has no lodgement journal, so it
+// keeps today's match posting 1020->1000).
+func TestIntegration_FW1_04_LodgementRuleNewInTransitAndClearedBesideOlderLodgement(t *testing.T) {
+	pool := intPool(t)
+	cleanTables(t, pool)
+	acct := rbcAccountID(t, pool)
+	branch := aBranch(t, pool)
+	ctx := context.Background()
+
+	const year = 2023
+	may10 := time.Date(year, 5, 10, 0, 0, 0, 0, time.UTC)
+	may20 := time.Date(year, 5, 20, 0, 0, 0, 0, time.UTC)
+	may30 := time.Date(year, 5, 30, 12, 0, 0, 0, time.UTC)
+	june05 := time.Date(year, 6, 5, 14, 0, 0, 0, time.UTC)
+	fw104CleanYear(t, pool, acct, year)
+	fw104EnsurePeriods(t, pool, year, may10)
+	t.Cleanup(func() { fw104CleanYear(t, pool, acct, year) })
+
+	const (
+		oldMoveID        = "87040011-0000-4000-8000-000000000011" // Older lodgement: no journal in 1000 before match ($250.00)
+		newClearedMoveID = "87040012-0000-4000-8000-000000000012" // New lodgement: DR 1000 / CR 1020 at lodgement ($400.00), on May statement
+		newTransitMoveID = "87040013-0000-4000-8000-000000000013" // New lodgement: DR 1000 / CR 1020 at lodgement ($300.00), in transit at May end
+	)
+
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	// Book the two new lodgements at lodgement time (DR 1000 / CR 1020, SourceRefID = movementID).
+	if _, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "till.movement.posted:" + newClearedMoveID,
+		Source:         "ADJUSTMENT",
+		SourceRefID:    newClearedMoveID,
+		Memo:           "Till lodgement " + newClearedMoveID[:8],
+		BranchID:       branch,
+		DocumentDate:   may20.Add(12 * time.Hour),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 40000, Memo: "bank lodgement"},
+			{AccountCode: "1020", CreditCents: 40000, Memo: "undeposited funds"},
+		},
+	}); err != nil {
+		t.Fatalf("post new cleared lodgement journal: %v", err)
+	}
+	if _, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "till.movement.posted:" + newTransitMoveID,
+		Source:         "ADJUSTMENT",
+		SourceRefID:    newTransitMoveID,
+		Memo:           "Till lodgement in transit " + newTransitMoveID[:8],
+		BranchID:       branch,
+		DocumentDate:   may30,
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 30000, Memo: "bank lodgement in transit"},
+			{AccountCode: "1020", CreditCents: 30000, Memo: "undeposited funds"},
+		},
+	}); err != nil {
+		t.Fatalf("post new transit lodgement journal: %v", err)
+	}
+
+	// May bank statement has two deposit lines: $250.00 for oldMoveID and $400.00 for newClearedMoveID.
+	// newTransitMoveID ($300.00) is NOT on the May statement (deposit in transit).
+	oldLine := fw104InsertLineAt(t, pool, acct, may10, "MAY OLD LODGEMENT DEPOSIT", "LODG-OLD", 25000)
+	newLine := fw104InsertLineAt(t, pool, acct, may20, "MAY NEW LODGEMENT DEPOSIT", "LODG-NEW", 40000)
+
+	lodgSeam := &fakeLodgements{
+		open: []Lodgement{
+			{MovementID: oldMoveID, BranchID: branch, AmountCents: 25000, Reference: "LODG-OLD", OccurredAt: may10},
+			{MovementID: newClearedMoveID, BranchID: branch, AmountCents: 40000, Reference: "LODG-NEW", OccurredAt: may20},
+			{MovementID: newTransitMoveID, BranchID: branch, AmountCents: 30000, Reference: "LODG-TRN", OccurredAt: may30},
+		},
+	}
+	svc := NewService(NewRepository(pool)).
+		WithLodgements(lodgSeam).
+		WithJournals(glSvc).
+		WithJournalPoster(fw104GLPoster{svc: glSvc, clock: func() time.Time { return june05 }}).
+		WithGLBalances(glSvc)
+
+	// Match the older lodgement ($250.00): it has no lodgement journal, so it must post DR 1000 / CR 1020 once.
+	oldMatch, err := svc.ManualMatch(ctx, MatchInput{
+		Mode: "manual", StatementLineID: oldLine, TargetType: TargetLodgement, TargetRefID: oldMoveID, AmountCents: 25000, CanAccessBranch: AllBranches,
+	}, "")
+	if err != nil {
+		t.Fatalf("match older lodgement: %v", err)
+	}
+	if oldMatch.JournalID == "" {
+		t.Errorf("older lodgement match posted no clearing journal")
+	}
+
+	// Match the new lodgement ($400.00): it already has its DR 1000 / CR 1020 journal, so matching it must NOT book
+	// a second 1020 -> 1000 journal, and must mark the 1000 entry cleared.
+	if _, err := svc.ManualMatch(ctx, MatchInput{
+		Mode: "manual", StatementLineID: newLine, TargetType: TargetLodgement, TargetRefID: newClearedMoveID, AmountCents: 40000, CanAccessBranch: AllBranches,
+	}, ""); err != nil {
+		t.Fatalf("match new cleared lodgement: %v", err)
+	}
+
+	// May statement closing balance is $650.00 ($250.00 + $400.00).
+	// Deposits in transit at May 31 must be $300.00 (only newTransitMoveID).
+	// GL 1000 closing balance at May 31 must be $950.00 ($250.00 + $400.00 + $300.00), nothing booked twice.
+	mayRec, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: acct, Year: year, Month: 5, StatementBalanceCents: 65000})
+	if err != nil {
+		t.Fatalf("open may: %v", err)
+	}
+	if mayRec.DepositsInTransitCents != 30000 || len(mayRec.DepositsInTransit) != 1 {
+		t.Errorf("May DepositsInTransitCents = %d (count %d), want 30000 (count 1 for newTransitMoveID)",
+			mayRec.DepositsInTransitCents, len(mayRec.DepositsInTransit))
+	}
+	if mayRec.GLBalanceCents != 95000 || mayRec.AdjustedBankBalanceCents != 95000 || mayRec.VarianceCents != 0 {
+		t.Errorf("May GL=%d Adjusted=%d Variance=%d, want 95000, 95000, 0",
+			mayRec.GLBalanceCents, mayRec.AdjustedBankBalanceCents, mayRec.VarianceCents)
+	}
+	doneMay, err := svc.CompleteReconciliation(ctx, mayRec.ID, "")
+	if err != nil {
+		t.Fatalf("complete may with older + new cleared + new in-transit lodgements: %v", err)
+	}
+	if doneMay.Status != ReconCompleted || doneMay.VarianceCents != 0 {
+		t.Errorf("completed May = %+v, want COMPLETED with variance 0", doneMay)
+	}
+}
+
+// Item 4b: Sign-off is refused when no statement lines are loaded in the month for a BANK account.
+func TestIntegration_FW1_04_SignOffWithNoStatementLinesIsRefused(t *testing.T) {
+	pool := intPool(t)
+	cleanTables(t, pool)
+	acct := rbcAccountID(t, pool)
+	ctx := context.Background()
+
+	const year = 2023
+	may10 := time.Date(year, 5, 10, 0, 0, 0, 0, time.UTC)
+	fw104CleanYear(t, pool, acct, year)
+	fw104EnsurePeriods(t, pool, year, may10)
+	t.Cleanup(func() { fw104CleanYear(t, pool, acct, year) })
+
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	svc := NewService(NewRepository(pool)).
+		WithJournals(glSvc).
+		WithJournalPoster(fw104GLPoster{svc: glSvc, clock: func() time.Time { return may10 }}).
+		WithGLBalances(glSvc)
+
+	rec, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: acct, Year: year, Month: 5, StatementBalanceCents: 0})
+	if err != nil {
+		t.Fatalf("open empty may: %v", err)
+	}
+	_, err = svc.CompleteReconciliation(ctx, rec.ID, "")
+	if err == nil || !strings.Contains(err.Error(), "no statement lines") {
+		t.Fatalf("expected refusal for no statement lines loaded, got %v", err)
+	}
+}
+
+// Item 4c: Direct reversal of a bankrec clearing journal in the Ledger is refused, and if a clearing journal is
+// reversed in the database, sign-off refuses to complete the month.
+func TestIntegration_FW1_04_SignOffRefusedWhenClearingJournalReversedAndDirectReversalRefused(t *testing.T) {
+	pool := intPool(t)
+	cleanTables(t, pool)
+	acct := rbcAccountID(t, pool)
+	branch := aBranch(t, pool)
+	ctx := context.Background()
+
+	const year = 2023
+	may15 := time.Date(year, 5, 15, 0, 0, 0, 0, time.UTC)
+	fw104CleanYear(t, pool, acct, year)
+	fw104EnsurePeriods(t, pool, year, may15)
+	t.Cleanup(func() { fw104CleanYear(t, pool, acct, year) })
+
+	const payID = "87040002-0000-4000-8000-000000000002"
+	insertPayment(t, pool, payID, branch, "CARD", "GTW-FW104-REV", 75000)
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM payments WHERE id = $1::uuid`, payID) })
+
+	lineID := fw104InsertLineAt(t, pool, acct, may15, "MAY SETTLEMENT REV", "GTW-FW104-REV", 75000)
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	paySeam := &fakePayments{cands: []CandidatePayment{{PaymentID: payID, BranchID: branch, GatewayRef: "GTW-FW104-REV", AmountCents: 75000, ReceivedAt: may15}}}
+	svc := NewService(NewRepository(pool)).
+		WithPayments(paySeam).
+		WithJournals(glSvc).
+		WithJournalPoster(fw104GLPoster{svc: glSvc, clock: func() time.Time { return may15 }}).
+		WithGLBalances(glSvc)
+
+	m, err := svc.ManualMatch(ctx, MatchInput{
+		Mode: "manual", StatementLineID: lineID, TargetType: TargetPayment, TargetRefID: payID, AmountCents: 75000, CanAccessBranch: AllBranches,
+	}, "")
+	if err != nil {
+		t.Fatalf("manual match: %v", err)
+	}
+	// Direct reversal through gl.Service.ReverseJournal must be refused because the clearing journal belongs to bankrec.
+	var userID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("select user: %v", err)
+	}
+	staffCtx := identity.ContextWithStaff(ctx, identity.StaffContext{UserID: userID})
+	if _, err := glSvc.ReverseJournal(staffCtx, m.JournalID); err == nil || !strings.Contains(err.Error(), "bank reconciliation") {
+		t.Fatalf("expected direct reversal of bankrec clearing journal to be refused, got %v", err)
+	}
+	// If the clearing journal is reversed at the storage layer (another journal links to it via reverses_journal_id), sign-off must refuse.
+	rec, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: acct, Year: year, Month: 5, StatementBalanceCents: 75000})
+	if err != nil {
+		t.Fatalf("open may: %v", err)
+	}
+	revID, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-rev-sim",
+		Source:         "ADJUSTMENT",
+		Memo:           "simulated reversal",
+		DocumentDate:   may15,
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1010", DebitCents: 75000, Memo: "reverse clearing"},
+			{AccountCode: "1000", CreditCents: 75000, Memo: "reverse bank"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post simulated reversal: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE gl_journals SET reverses_journal_id = $1::uuid WHERE id = $2::uuid`, m.JournalID, revID); err != nil {
+		t.Fatalf("link simulated reversal: %v", err)
+	}
+	if _, err := svc.CompleteReconciliation(ctx, rec.ID, ""); err == nil || !strings.Contains(err.Error(), "clearing journal") {
+		t.Fatalf("expected sign-off refusal when clearing journal is reversed, got %v", err)
+	}
+}
+
+// Item 4d: Chronological sign-off order (cannot sign off a later month while an earlier month is OPEN, cannot sign off
+// an earlier month after a later month is COMPLETED) and prior-month closing to current-month closing statement
+// continuity.
+func TestIntegration_FW1_04_ChronologicalSignOffOrderAndStatementContinuity(t *testing.T) {
+	pool := intPool(t)
+	cleanTables(t, pool)
+	acct := rbcAccountID(t, pool)
+	ctx := context.Background()
+
+	const year = 2023
+	apr10 := time.Date(year, 4, 10, 0, 0, 0, 0, time.UTC)
+	may10 := time.Date(year, 5, 10, 0, 0, 0, 0, time.UTC)
+	fw104CleanYear(t, pool, acct, year)
+	fw104EnsurePeriods(t, pool, year, apr10)
+	t.Cleanup(func() { fw104CleanYear(t, pool, acct, year) })
+
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	aprJ, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-4d-apr",
+		Source:         "ADJUSTMENT",
+		Memo:           "April deposit",
+		DocumentDate:   apr10.Add(12 * time.Hour),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 100000, Memo: "bank"},
+			{AccountCode: "4950", CreditCents: 100000, Memo: "offset"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post apr journal: %v", err)
+	}
+	mayJ, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-4d-may",
+		Source:         "ADJUSTMENT",
+		Memo:           "May deposit",
+		DocumentDate:   may10.Add(12 * time.Hour),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 40000, Memo: "bank"},
+			{AccountCode: "4950", CreditCents: 40000, Memo: "offset"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post may journal: %v", err)
+	}
+	aprLine := fw104InsertLineAt(t, pool, acct, apr10, "APR DEPOSIT", "APR-4D", 100000)
+	mayLine := fw104InsertLineAt(t, pool, acct, may10, "MAY DEPOSIT", "MAY-4D", 40000)
+
+	svc := NewService(NewRepository(pool)).
+		WithJournals(glSvc).
+		WithJournalPoster(fw104GLPoster{svc: glSvc, clock: func() time.Time { return may10 }}).
+		WithGLBalances(glSvc)
+
+	if _, err := svc.ManualMatch(ctx, MatchInput{
+		Mode: "manual", StatementLineID: aprLine, TargetType: TargetJournal, TargetRefID: aprJ, AmountCents: 100000, CanAccessBranch: AllBranches,
+	}, ""); err != nil {
+		t.Fatalf("match apr: %v", err)
+	}
+	if _, err := svc.ManualMatch(ctx, MatchInput{
+		Mode: "manual", StatementLineID: mayLine, TargetType: TargetJournal, TargetRefID: mayJ, AmountCents: 40000, CanAccessBranch: AllBranches,
+	}, ""); err != nil {
+		t.Fatalf("match may: %v", err)
+	}
+
+	aprRec, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: acct, Year: year, Month: 4, StatementBalanceCents: 100000})
+	if err != nil {
+		t.Fatalf("open apr: %v", err)
+	}
+	mayRec, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: acct, Year: year, Month: 5, StatementBalanceCents: 140000})
+	if err != nil {
+		t.Fatalf("open may: %v", err)
+	}
+	// Attempting to complete May while April is still OPEN must be refused.
+	if _, err := svc.CompleteReconciliation(ctx, mayRec.ID, ""); err == nil || !strings.Contains(err.Error(), "2023-04") {
+		t.Fatalf("expected refusal when completing May while April is still open, got %v", err)
+	}
+	// Complete April first.
+	if _, err := svc.CompleteReconciliation(ctx, aprRec.ID, ""); err != nil {
+		t.Fatalf("complete apr: %v", err)
+	}
+	// If May is opened with a closing balance ($1,500.00) that does not continue from April's closing ($1,000.00) plus May's lines ($400.00 = $1,400.00), sign-off must be refused.
+	badMay, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: acct, Year: year, Month: 5, StatementBalanceCents: 150000})
+	if err != nil {
+		t.Fatalf("reopen may with broken continuity: %v", err)
+	}
+	if _, err := svc.CompleteReconciliation(ctx, badMay.ID, ""); err == nil || !strings.Contains(err.Error(), "prior month") {
+		t.Fatalf("expected continuity refusal when May closing balance does not continue from April, got %v", err)
+	}
+	// Restore May's closing balance to $1,400.00 (140,000 cents): now May carries OpeningBalanceCents = 100000 and completes cleanly.
+	mayRec, err = svc.OpenReconciliation(ctx, ReconInput{BankAccountID: acct, Year: year, Month: 5, StatementBalanceCents: 140000})
+	if err != nil {
+		t.Fatalf("reopen may with valid continuity: %v", err)
+	}
+	doneMay, err := svc.CompleteReconciliation(ctx, mayRec.ID, "")
+	if err != nil {
+		t.Fatalf("complete may after apr: %v", err)
+	}
+	if doneMay.OpeningBalanceCents == nil || *doneMay.OpeningBalanceCents != 100000 {
+		t.Errorf("completed May OpeningBalanceCents = %v, want 100000", doneMay.OpeningBalanceCents)
+	}
+	// Attempting to open and complete an earlier month (March 2023) after April and May are COMPLETED must be refused.
+	mar10 := time.Date(year, 3, 10, 0, 0, 0, 0, time.UTC)
+	marLine := fw104InsertLineAt(t, pool, acct, mar10, "MAR DEPOSIT", "MAR-4D", 10000)
+	marJ, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-4d-mar",
+		Source:         "ADJUSTMENT",
+		Memo:           "March deposit",
+		DocumentDate:   mar10.Add(12 * time.Hour),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 10000, Memo: "bank"},
+			{AccountCode: "4950", CreditCents: 10000, Memo: "offset"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post mar journal: %v", err)
+	}
+	if _, err := svc.ManualMatch(ctx, MatchInput{
+		Mode: "manual", StatementLineID: marLine, TargetType: TargetJournal, TargetRefID: marJ, AmountCents: 10000, CanAccessBranch: AllBranches,
+	}, ""); err != nil {
+		t.Fatalf("match mar: %v", err)
+	}
+	marRec, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: acct, Year: year, Month: 3, StatementBalanceCents: 10000})
+	if err != nil {
+		t.Fatalf("open mar: %v", err)
+	}
+	if _, err := svc.CompleteReconciliation(ctx, marRec.ID, ""); err == nil || !strings.Contains(err.Error(), "already completed") {
+		t.Fatalf("expected refusal when completing March after April/May are completed, got %v", err)
+	}
+}
+
 

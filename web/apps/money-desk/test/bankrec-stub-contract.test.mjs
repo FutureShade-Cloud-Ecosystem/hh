@@ -505,3 +505,47 @@ test("a derived month in the stub recomputes its statement balance from the line
   assert.deepEqual([autoClosed.json.matched, autoClosed.json.unmatched], [0, 1]);
 });
 
+test("FW1-04: outstanding items adjust the bank balance, sign off before month end or with no statement lines is refused, and the reconciliation report fits the contract", async () => {
+  await reset();
+  // Sign off before month end (2087-12) is refused in the core's words.
+  const futureRec = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: 2087, month: 12, statement_balance_cents: CLOSING })).json;
+  refused(await ctl("POST", `/api/v1/bankrec/reconciliations/${futureRec.id}/complete`), 422, "has not reached month end yet");
+
+  // Sign off on an earlier closed month with no imported statement lines is refused.
+  await reset();
+  const emptyRec = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: 2021, month: 5, statement_balance_cents: 0 })).json;
+  refused(await ctl("POST", `/api/v1/bankrec/reconciliations/${emptyRec.id}/complete`), 422, "no statement lines have been imported for");
+
+  // Outstanding items: 1 deposit in transit (+$300.00) and 1 outstanding cheque (-$120.00) adjust the bank balance by +$180.00.
+  await reset();
+  await fetch(`${base}/_stub/outstanding-items`, {
+    method: "POST",
+    body: JSON.stringify({
+      deposits_in_transit: [{ journal_id: "7a1e0000-0000-4000-9000-000000000081", posted_at: `${period}-28T12:00:00Z`, memo: "May deposit in transit", amount_cents: 30_000 }],
+      outstanding_cheques: [{ journal_id: "7a1e0000-0000-4000-9000-000000000082", posted_at: `${period}-29T12:00:00Z`, memo: "Cheque 1044 to vendor", amount_cents: 12_000 }],
+    }),
+  });
+  await fetch(`${base}/_stub/post-to-bank`, { method: "POST", body: JSON.stringify({ cents: 18_000 }) });
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });
+  const wire = await lineByRef("WIRE FROM CONTRACTOR");
+  const cheque = await lineByRef("CHEQUE DEPOSIT");
+  const fee = await lineByRef("MONTHLY SERVICE FEE");
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000003" });
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: fee.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000004" });
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
+  const opened = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING });
+  assert.equal(opened.status, 201);
+  holds("BankRecReconciliation", opened.json);
+  assert.equal(opened.json.deposits_in_transit_cents, 30_000);
+  assert.equal(opened.json.outstanding_cheques_cents, 12_000);
+  assert.equal(opened.json.adjusted_bank_balance_cents, CLOSING + 18_000);
+  assert.equal(opened.json.variance_cents, 0);
+  const done = await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.json.id}/complete`);
+  assert.equal(done.status, 200);
+  holds("BankRecReconciliation", done.json);
+  assert.equal(done.json.matched_lines_count, 7);
+  assert.equal(done.json.deposits_in_transit.length, 1);
+  assert.equal(done.json.outstanding_cheques.length, 1);
+});
+
+

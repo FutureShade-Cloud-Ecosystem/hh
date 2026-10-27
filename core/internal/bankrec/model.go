@@ -131,18 +131,37 @@ type Match struct {
 	UnmatchedAt     *time.Time `json:"unmatched_at,omitempty"`
 }
 
-// Reconciliation is one monthly per-account reconciliation (0033 bank_reconciliations).
+// OutstandingItem is one book entry in the bank GL account posted on or before month end that has not
+// cleared a statement line on or before month end (a deposit in transit when AmountCents > 0, or an
+// outstanding cheque/withdrawal when AmountCents > 0 in OutstandingCheques, FW1-04).
+type OutstandingItem struct {
+	JournalID   string    `json:"journal_id"`
+	PostedAt    time.Time `json:"posted_at"`
+	Memo        string    `json:"memo"`
+	AmountCents int64     `json:"amount_cents"`
+}
+
+// Reconciliation is one monthly per-account reconciliation (0033 bank_reconciliations) and its
+// month-end reconciliation report (FW1-04).
 type Reconciliation struct {
-	ID                      string     `json:"id"`
-	BankAccountID           string     `json:"bank_account_id"`
-	Year                    int        `json:"year"`
-	Month                   int        `json:"month"`
-	StatementBalanceCents   int64      `json:"statement_balance_cents"`
-	StatementBalanceDerived bool       `json:"-"`
-	GLBalanceCents          int64      `json:"gl_balance_cents"`
-	VarianceCents           int64      `json:"variance_cents"`
-	Status                  string     `json:"status"`
-	CompletedAt             *time.Time `json:"completed_at,omitempty"`
+	ID                       string            `json:"id"`
+	BankAccountID            string            `json:"bank_account_id"`
+	Year                     int               `json:"year"`
+	Month                    int               `json:"month"`
+	OpeningBalanceCents      *int64            `json:"opening_balance_cents,omitempty"`
+	StatementBalanceCents    int64             `json:"statement_balance_cents"`
+	StatementBalanceDerived  bool              `json:"-"`
+	DepositsInTransitCents   int64             `json:"deposits_in_transit_cents"`
+	OutstandingChequesCents  int64             `json:"outstanding_cheques_cents"`
+	AdjustedBankBalanceCents int64             `json:"adjusted_bank_balance_cents"`
+	GLBalanceCents           int64             `json:"gl_balance_cents"`
+	VarianceCents            int64             `json:"variance_cents"`
+	MatchedLinesCount        int               `json:"matched_lines_count"`
+	DepositsInTransit        []OutstandingItem `json:"deposits_in_transit,omitempty"`
+	OutstandingCheques       []OutstandingItem `json:"outstanding_cheques,omitempty"`
+	Status                   string            `json:"status"`
+	CompletedBy              *string           `json:"completed_by,omitempty"`
+	CompletedAt              *time.Time        `json:"completed_at,omitempty"`
 }
 
 // - inputs (request bodies) -
