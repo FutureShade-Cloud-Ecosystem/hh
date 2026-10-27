@@ -1,4 +1,4 @@
--- 04XX_bankrec_line_ordinal.sql
+-- 0442_bankrec_line_ordinal.sql
 -- FW1-05: Bank matching integrity.
 -- 1. Keep identical statement lines in a single import file apart by adding line_ordinal
 --    to bank_statement_lines and scoping uniqueness to (bank_account_id, dedupe_hash, line_ordinal).
