@@ -177,6 +177,8 @@ type AuditTxRecorder interface {
 
 // StockValueReader is the stock ledger side of the close pre flight's 1200 tie check. Satisfied by
 // inventory.Service.SnapshotOnHand summed (the weighted average on-hand value), wired in cmd/core.
+// The branch id is the filter: the pre flight reads the COMPANY (an empty branch id), so the reader
+// answers with the consolidated value, and a named branch answers with that branch's (FW1-09d).
 type StockValueReader interface {
 	StockValueCents(ctx context.Context, branchID string) (int64, error)
 }

@@ -430,10 +430,22 @@ func (a invGLPoster) PostJournal(ctx context.Context, in inventory.GLJournal) (s
 // glStockValueAdapter satisfies gl's close pre flight stock seam over the
 // inventory snapshot (FW1-09b): the stock ledger side of the 1200 tie check,
 // the weighted average value of everything on hand.
+//
+// An empty branch id means the COMPANY, the way gl's other consolidated reads read it (the 1200 balance
+// and the AR balance both take an empty branch id for the whole book). The consolidated value is ONE
+// read over every branch (inventory's own consolidated snapshot), not a read per branch: the pre flight
+// compares the company's stock against the company's 1200, so the two sides have to be on one basis and
+// the read must not fan out (FW1-09d).
 type glStockValueAdapter struct{ svc *inventory.Service }
 
 func (a glStockValueAdapter) StockValueCents(ctx context.Context, branchID string) (int64, error) {
-	snaps, err := a.svc.SnapshotOnHand(ctx, branchID)
+	var snaps []inventory.CountSnapshot
+	var err error
+	if branchID == "" {
+		snaps, err = a.svc.SnapshotOnHandAll(ctx)
+	} else {
+		snaps, err = a.svc.SnapshotOnHand(ctx, branchID)
+	}
 	if err != nil {
 		return 0, err
 	}

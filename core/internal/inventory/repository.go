@@ -605,6 +605,38 @@ func (r *Repository) SnapshotOnHand(ctx context.Context, tx pgx.Tx, branchID str
 	return out, rows.Err()
 }
 
+// SnapshotOnHandAll is SnapshotOnHand across EVERY branch: the same freeze basis (on hand plus the
+// branch's weighted average cost) read in ONE statement over the whole company, for the caller that
+// needs the consolidated stock value rather than one branch's. The branch-scoped read above answers
+// for the branch it is given, and this one answers for every branch, so a consolidated reader never
+// fans out into a read per branch (and never has to know the branches). A caller holding a transaction
+// passes it so the read rides that connection; nil reads through the pool.
+func (r *Repository) SnapshotOnHandAll(ctx context.Context, tx pgx.Tx) ([]CountSnapshot, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.q(tx).Query(ctx, `
+		SELECT sb.product_id::text, sb.location_id::text, sb.on_hand_base,
+		       COALESCE(pbc.avg_unit_cost_cents, 0)
+		FROM stock_balances sb
+		LEFT JOIN product_branch_costs pbc
+		       ON pbc.product_id = sb.product_id AND pbc.branch_id = sb.branch_id
+		ORDER BY sb.branch_id, sb.product_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CountSnapshot
+	for rows.Next() {
+		var s CountSnapshot
+		if err := rows.Scan(&s.ProductID, &s.LocationID, &s.OnHandBase, &s.AvgCostCents); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // ReceivedLinesForPO returns the received lines of a PO for landed-cost allocation (extended CAD value =
 // received_base × unit_cost_cents; special-buy flagged off metadata). weight = received_base × per-unit kg.
 func (r *Repository) ReceivedLinesForPO(ctx context.Context, poID string) ([]ReceivedLine, error) {
