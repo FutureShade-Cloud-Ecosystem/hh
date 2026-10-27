@@ -293,6 +293,109 @@ func TestParity_EveryAgingRowFollowsTheAgingScreensOwnRead(t *testing.T) {
 	}
 }
 
+// An account whose only open AR is an NSF fee used to answer two different figures: the view read
+// open invoices only, so the assistant said nothing was owed while the aging screen showed the fee.
+// The leg plants its own fee the way till's MarkNSF writes it (the bounced payment, the payment_nsf
+// record, the counted ADJUSTMENT row with source payment_nsf), for a customer with no open invoice,
+// so it never depends on what another package left behind, and then the view and the screen must
+// answer the same figure. A manager of another branch sees it on neither side.
+func TestParity_AnAccountWhoseOnlyOpenARIsAnNSFFeeShowsTheSameFigure(t *testing.T) {
+	r := newARRig(t)
+	ctx := testsupport.Ctx(t)
+	var cust string
+	if err := r.env.Admin.QueryRow(ctx, `INSERT INTO customers (account_no, name) VALUES ($1, $2) RETURNING id::text`,
+		"S7A-"+r.w.tag+"F", "Planted Fee Customer "+r.w.tag).Scan(&cust); err != nil {
+		t.Fatal(err)
+	}
+	var payID string
+	if err := r.env.Admin.QueryRow(ctx, `INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, branch_id, gateway_ref, payment_token)
+		VALUES ($1, $2::uuid, 'CHEQUE', 20000, 'BOUNCED', $3::uuid, 'gw-secret-fee', 'tok-secret-fee') RETURNING id::text`,
+		fmt.Sprintf("PAY-S7A-%s-fee", r.w.tag), cust, r.w.a).Scan(&payID); err != nil {
+		t.Fatal(err)
+	}
+	var nsfID string
+	if err := r.env.Admin.QueryRow(ctx, `INSERT INTO payment_nsf (payment_id, customer_id, reason, fee_cents, fee_taxable, recorded_by)
+		VALUES ($1::uuid, $2::uuid, 'insufficient funds', 4500, false, NULL) RETURNING id::text`, payID, cust).Scan(&nsfID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.env.Admin.Exec(ctx, `INSERT INTO customer_transactions
+		(customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+		VALUES ($1::uuid, 'ADJUSTMENT', 4500, 4500, 'payment_nsf', $2::uuid, $3::uuid, 'NSF fee')`,
+		cust, nsfID, r.w.a); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		c, err := pgx.Connect(context.Background(), r.env.AdminURL)
+		if err != nil {
+			return
+		}
+		defer c.Close(context.Background())
+		_, _ = c.Exec(context.Background(), `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, cust)
+		_, _ = c.Exec(context.Background(), `DELETE FROM payment_nsf WHERE id = $1::uuid`, nsfID)
+		_, _ = c.Exec(context.Background(), `DELETE FROM payments WHERE id = $1::uuid`, payID)
+		_, _ = c.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, cust)
+	})
+	var global, atB arCaller
+	for _, c := range r.cs {
+		switch c.name {
+		case "global with trail":
+			global = c
+		case "manager at b with trail":
+			atB = c
+		}
+	}
+	type bands struct{ cur, d30, d60, d90, d90p, open int64 }
+	figure := func(t *testing.T, c arCaller) (bands, bool) {
+		t.Helper()
+		_, claims := r.claimsFor(t, c)
+		var got bands
+		found := false
+		r.run(t, claims, `SELECT current_cents, days_1_30_cents, days_31_60_cents, days_61_90_cents, days_90_plus_cents, open_cents
+			FROM ai.ar_aging WHERE customer_id = '`+cust+`'`, func(rs pgx.Rows) error {
+			found = true
+			return rs.Scan(&got.cur, &got.d30, &got.d60, &got.d90, &got.d90p, &got.open)
+		})
+		return got, found
+	}
+	got, found := figure(t, global)
+	octx := identity.ContextWithStaff(ctx, global.sc)
+	screen, err := r.cred.Aging(octx, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want bands
+	inScreen := false
+	for _, a := range screen {
+		if a.CustomerID == cust {
+			inScreen = true
+			want = bands{a.CurrentCents, a.Days30Cents, a.Days60Cents, a.Days60To90Cents, a.Days90PlusCents, a.TotalCents}
+		}
+	}
+	if !inScreen {
+		t.Fatalf("the aging screen does not show the planted fee: the leg is broken")
+	}
+	if !found {
+		t.Fatalf("the aging screen shows the fee (open %d) and the view returns no row for the account", want.open)
+	}
+	if got != want {
+		t.Errorf("account %s differs: view %+v, screen %+v", cust, got, want)
+	}
+	gotB, foundB := figure(t, atB)
+	if foundB {
+		t.Errorf("a branch b manager reads the branch a fee through the view: %+v", gotB)
+	}
+	octxB := identity.ContextWithStaff(ctx, atB.sc)
+	screenB, err := r.cred.Aging(octxB, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range screenB {
+		if a.CustomerID == cust {
+			t.Errorf("a branch b manager reads the branch a fee on the screen: open %d", a.TotalCents)
+		}
+	}
+}
+
 // -- payments -------------------------------------------------------------------------------------------
 
 func TestParity_EveryPaymentFollowsThePaymentTrailRoutes(t *testing.T) {

@@ -170,11 +170,9 @@ func TestSale_SplitTender_TwoCapturedLegs_ComposesPaidInvoice(t *testing.T) {
 	if allocated != harnessTotal {
 		t.Fatalf("allocations sum to %d, want the sale total %d", allocated, harnessTotal)
 	}
-	// No INVOICE subledger row: nothing was ever receivable.
-	for _, ct := range h.store.custTxns {
-		if ct.TxnType == "INVOICE" {
-			t.Fatalf("a fully-captured split must not book an AR INVOICE row: %+v", h.store.custTxns)
-		}
+	// The subledger follows the journal (Ruling 128 P1-3): INVOICE (+total) then one PAYMENT (-leg) per capture, netting to 0.
+	if len(h.store.custTxns) != 3 || h.store.custTxns[0].TxnType != "INVOICE" || h.store.custTxns[1].TxnType != "PAYMENT" || h.store.custTxns[2].TxnType != "PAYMENT" {
+		t.Fatalf("a fully-captured split must book INVOICE then two PAYMENT rows: %+v", h.store.custTxns)
 	}
 	// One payment.received per leg, the GL sees N ordinary tenders and needs no new posting rule.
 	received := 0

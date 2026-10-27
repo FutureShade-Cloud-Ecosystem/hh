@@ -231,6 +231,8 @@ func (s *Service) markLodgementsWithJournals(ctx context.Context, lodg []Lodgeme
 	for i := range lodg {
 		if posted[lodgementJournalKey+lodg[i].MovementID] {
 			lodg[i].CarriesJournal = true
+			lodg[i].PaymentIDs = nil
+			lodg[i].PaymentsUnresolved = false
 		}
 	}
 	return nil
@@ -250,6 +252,8 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 		RuleID:          prop.Rule.ID,
 		AmountCents:     prop.Line.AmountCents,
 		MatchedBy:       matchedBy,
+		// A lodgement whose covered payments could not be resolved says so on the answer (R2-P2-1).
+		PaymentsUnresolved: prop.PaymentsUnresolved,
 	}
 	// Where the match is written, a LODGEMENT target is fenced again (the candidates were cut already).
 	if prop.TargetType == TargetLodgement {
@@ -312,8 +316,9 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 		AmountCents:     amount,
 		MatchedBy:       matchedBy,
 	}
-	// A PAYMENT target is claimed in the same tx (RECEIVED→DEPOSITED); LODGEMENT/JOURNAL/GROUP claim nothing.
+	// A PAYMENT or LODGEMENT target claims its RECEIVED payment(s) in the same tx (RECEIVED to DEPOSITED).
 	var claim []string
+	var journalBranchID string
 	if in.TargetType == TargetPayment && in.TargetRefID != "" {
 		claim = []string{in.TargetRefID}
 	}
@@ -340,8 +345,14 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 		if facts.AmountCents != line.AmountCents {
 			return Match{}, unprocessable("bankrec: that lodgement is for %d cents and the line is %d cents, so it does not explain the line", facts.AmountCents, line.AmountCents)
 		}
+		journalBranchID = facts.BranchID
 		if carriesJournal, err = s.carriesOwnJournal(ctx, in.TargetRefID, facts.CarriesJournal); err != nil {
 			return Match{}, err
+		}
+		if !carriesJournal {
+			claim = facts.PaymentIDs
+			// The lodgement's own answer-time fact rides the answer (R2-P2-1).
+			m.PaymentsUnresolved = facts.PaymentsUnresolved
 		}
 	case TargetJournal:
 		if jerr := s.checkJournalTarget(ctx, line, in); jerr != nil {
@@ -354,7 +365,7 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	}
 	m.ID = id
 	// Post the clearing journal AFTER the match is claimed (a rejected duplicate posts none), keyed on match id.
-	if journal, post := manualJournal(line, in.TargetType, "", carriesJournal); post && s.poster != nil {
+	if journal, post := manualJournal(line, in.TargetType, journalBranchID, carriesJournal); post && s.poster != nil {
 		journal.IdempotencyKey = clearingKey(id)
 		journalID, perr := s.poster.PostJournal(ctx, journal)
 		if perr != nil {

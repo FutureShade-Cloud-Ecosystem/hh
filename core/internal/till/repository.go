@@ -737,10 +737,12 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	var res nsfReverseResult
 	var status string
 	var reversed bool
+	var nsfAllocJSON []byte
 	err = tx.QueryRow(ctx,
-		`SELECT COALESCE(customer_id::text, ''), branch_id::text, method, status, amount_cents, reversed_at IS NOT NULL
+		`SELECT COALESCE(customer_id::text, ''), branch_id::text, method, status, amount_cents, reversed_at IS NOT NULL,
+		        COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb)
 		 FROM payments WHERE id = $1 FOR UPDATE`, in.PaymentID,
-	).Scan(&res.CustomerID, &res.BranchID, &res.Method, &status, &res.AmountCents, &reversed)
+	).Scan(&res.CustomerID, &res.BranchID, &res.Method, &status, &res.AmountCents, &reversed, &nsfAllocJSON)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nsfReverseResult{}, errNotFound
 	}
@@ -814,6 +816,21 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 			return nsfReverseResult{}, fmt.Errorf("till: lock invoice %s: %w", id, err)
 		}
 	}
+	nsfAllocs := map[string]int64{}
+	_ = json.Unmarshal(nsfAllocJSON, &nsfAllocs)
+	nsfFeeIDs := make([]string, 0, len(nsfAllocs))
+	for id, amt := range nsfAllocs {
+		if amt > 0 {
+			nsfFeeIDs = append(nsfFeeIDs, id)
+		}
+	}
+	slices.Sort(nsfFeeIDs)
+	for _, id := range nsfFeeIDs {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM payment_nsf WHERE id = $1::uuid FOR NO KEY UPDATE`, id); err != nil {
+			return nsfReverseResult{}, fmt.Errorf("till: lock nsf fee %s: %w", id, err)
+		}
+	}
+	var invReversedCents int64
 	for _, a := range allocs {
 		// The re-open stamps the invoices feed seq beside the move
 		// (the settle's own posture in the payments module): a bounced
@@ -835,8 +852,12 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 			 WHERE id = $1`, a.inv, a.amt); err != nil {
 			return nsfReverseResult{}, fmt.Errorf("till: reopen invoice: %w", err)
 		}
+		invReversedCents += a.amt
 		res.ReversedCents += a.amt
 		res.ReopenedInvoices++
+	}
+	for _, id := range nsfFeeIDs {
+		res.ReversedCents += nsfAllocs[id]
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM payment_allocations WHERE payment_id = $1`, in.PaymentID); err != nil {
 		return nsfReverseResult{}, fmt.Errorf("till: reverse allocations: %w", err)
@@ -867,14 +888,26 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 		// Reversal-of-cash ledger row, recorded for the customer subledger history but EXCLUDED from the AR
 		// aging/tie-out union (source_type='invoice'), because the reopened invoice balances already carry
 		// the restored AR (no double count). This mirrors how the original negative PAYMENT row is excluded.
-		if res.ReversedCents > 0 {
+		if invReversedCents > 0 {
 			if _, err := tx.Exec(ctx,
 				`INSERT INTO customer_transactions
 				   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
 				 VALUES ($1, 'NSF', $2, $3, 'invoice', $4, $5, $6)`,
-				res.CustomerID, res.ReversedCents, arAfter, in.PaymentID, nullStr(res.BranchID),
-				fmt.Sprintf("NSF reversal of payment %s (%d cents returned to AR)", in.PaymentID, res.ReversedCents)); err != nil {
+				res.CustomerID, invReversedCents, arAfter, in.PaymentID, nullStr(res.BranchID),
+				fmt.Sprintf("NSF reversal of payment %s (%d cents returned to AR)", in.PaymentID, invReversedCents)); err != nil {
 				return nsfReverseResult{}, fmt.Errorf("till: insert reversal txn: %w", err)
+			}
+		}
+		for _, origNSFID := range nsfFeeIDs {
+			feeAmt := nsfAllocs[origNSFID]
+			arAfter += feeAmt
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO customer_transactions
+				   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+				 VALUES ($1, 'ADJUSTMENT', $2, $3, 'payment_nsf', $4, $5, $6)`,
+				res.CustomerID, feeAmt, arAfter, origNSFID, nullStr(res.BranchID),
+				"NSF reversal: "+in.Reason); err != nil {
+				return nsfReverseResult{}, fmt.Errorf("till: insert nsf fee reversal txn: %w", err)
 			}
 		}
 		// Fee ADJUSTMENT row, COUNTED non-invoice AR (the customer now owes the NSF fee).

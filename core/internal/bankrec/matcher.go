@@ -17,8 +17,11 @@ type proposal struct {
 	TargetRef  string
 	Rule       MatchRule
 	PaymentIDs []string
-	FeeCents   int64
-	Journal    gl.ExternalJournal
+	// PaymentsUnresolved is the lodgement's own answer-time fact (R2-P2-1), carried onto the
+	// persisted match so the answer tells the desk the lodgement's payments are unresolved.
+	PaymentsUnresolved bool
+	FeeCents           int64
+	Journal            gl.ExternalJournal
 	// ConfirmsOnly says the match posts NO journal: the target already carries its own (a lodgement
 	// that journaled at lodgement, FROM-PRINCIPAL 117). The match then only confirms the line, so the
 	// deposit is booked once. An older lodgement keeps today's match, which posts the clearing journal.
@@ -179,6 +182,8 @@ func buildLodgementProposal(line StatementLine, rule MatchRule, l Lodgement) pro
 		p.ConfirmsOnly = true
 		return p
 	}
+	p.PaymentIDs = l.PaymentIDs
+	p.PaymentsUnresolved = l.PaymentsUnresolved
 	p.Journal = gl.ExternalJournal{
 		Source:         "ADJUSTMENT",
 		SourceRefID:    line.ID,

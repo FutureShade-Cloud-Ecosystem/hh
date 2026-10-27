@@ -49,10 +49,14 @@ type LodgementSource interface {
 	LodgementFacts(ctx context.Context, movementID string) (LodgementFact, bool, error)
 }
 
-// LodgementFact is the branch and amount of one lodgement.
+// LodgementFact is the branch, amount and covered payment ids of one lodgement.
+// PaymentsUnresolved is true when the lodgement carries a positive amount whose
+// underlying session/method payments could not be uniquely resolved.
 type LodgementFact struct {
-	BranchID    string
-	AmountCents int64
+	BranchID           string
+	AmountCents        int64
+	PaymentIDs         []string
+	PaymentsUnresolved bool
 	// CarriesJournal says the lodgement carries its own journal, so its bank match only confirms
 	// the line and posts nothing (FROM-PRINCIPAL 117 and 120). An older lodgement keeps today's
 	// match, which posts the clearing journal.
@@ -110,11 +114,13 @@ type CandidatePayment struct {
 
 // Lodgement is one open cash/cheque banking movement offered to the matcher.
 type Lodgement struct {
-	MovementID  string
-	BranchID    string
-	AmountCents int64
-	Reference   string
-	OccurredAt  time.Time
+	MovementID         string
+	BranchID           string
+	AmountCents        int64
+	Reference          string
+	OccurredAt         time.Time
+	PaymentIDs         []string
+	PaymentsUnresolved bool
 	// CarriesJournal says the lodgement carries its own journal: the till posted DR 1000 / CR 1020
 	// AT LODGEMENT (FROM-PRINCIPAL 117). Its bank match then only confirms the line and posts
 	// nothing, so the deposit is never booked twice. A lodgement from before this change has no
