@@ -188,25 +188,6 @@ func (h *Handler) pendingFulfilment(w http.ResponseWriter, r *http.Request, _ gu
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"pending": rows})
 }
 
-// GET /api/v1/inventory/controller-exceptions?branch_id=, lists pre-receipt sales posted at fallback cost
-// awaiting true-up at the product's first receipt at the branch (ruling 82.4).
-func (h *Handler) controllerExceptions(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
-	branchID, err := branchIDParam(r)
-	if err != nil {
-		h.writeErr(w, r, err)
-		return
-	}
-	rows, err := h.svc.ControllerExceptions(r.Context(), branchID)
-	if err != nil {
-		h.writeErr(w, r, err)
-		return
-	}
-	if rows == nil {
-		rows = []PreReceiptException{}
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"exceptions": rows})
-}
-
 // POST /api/v1/inventory/receive, receive a PO (all outstanding, or explicit per-line qtys; over-receipt 409).
 func (h *Handler) receive(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
 	var req ReceiveRequest

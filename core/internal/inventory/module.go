@@ -338,7 +338,6 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/inventory/on-hand", g.RequireStaff(h.staff(h.onHand)))
 	r.Handle("GET /api/v1/inventory/moves", g.RequireStaff(h.staff(h.moves)))
 	r.Handle("GET /api/v1/inventory/pending-fulfilment", g.RequireStaff(h.staff(h.pendingFulfilment)))
-	r.Handle("GET /api/v1/inventory/controller-exceptions", g.RequireStaff(h.staff(h.controllerExceptions)))
 	r.Handle("POST /api/v1/inventory/receive", g.RequireManager(h.staff(h.receive)))
 
 	// - DIB-472 · the transit-days config behind the transfer eta pre-fill -
