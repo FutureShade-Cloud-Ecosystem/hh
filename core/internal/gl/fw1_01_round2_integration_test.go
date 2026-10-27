@@ -18,16 +18,10 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// fw1Delivery answers one fixed delivery stamp.
-type fw1Delivery struct{ at time.Time }
-
-func (f fw1Delivery) DeliveredAt(_ context.Context, _ string) (time.Time, bool, error) {
-	return f.at, true, nil
-}
 
 // fw1AuditTx captures in-transaction audit rows, and can be made to fail.
 type fw1AuditTx struct {
@@ -61,6 +55,29 @@ func fw1ScrubYear(t *testing.T, pool *pgxpool.Pool, years ...int) {
 	}
 }
 
+// fw1EnsureHouseYear makes sure a leg's house year holds all twelve OPEN months.
+func fw1EnsureHouseYear(t *testing.T, pool *pgxpool.Pool, year int) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO fiscal_periods (year, month, status)
+		SELECT $1, m, 'OPEN' FROM generate_series(1, 12) AS m
+		ON CONFLICT (year, month) DO UPDATE SET status = 'OPEN', closed_at = NULL, closed_by = NULL`, year); err != nil {
+		t.Fatalf("ensure house year %d: %v", year, err)
+	}
+}
+
+// fw1PlantFuturePeriod plants one far future period row (the shape finstmt's
+// integration suite leaves in the shared CI database) and scrubs it on cleanup.
+func fw1PlantFuturePeriod(t *testing.T, pool *pgxpool.Pool, year int) {
+	t.Helper()
+	fw1ScrubYear(t, pool, year)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, year) })
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO fiscal_periods (year, month, status) VALUES ($1, 1, 'OPEN') ON CONFLICT (year, month) DO NOTHING`, year); err != nil {
+		t.Fatalf("plant future period %d: %v", year, err)
+	}
+}
+
 // fw1ReleaseMonth reads the release journal's filed period (year, month) and posted_at.
 func fw1ReleaseMonth(t *testing.T, pool *pgxpool.Pool, invoiceID string) (int, int, *time.Time) {
 	t.Helper()
@@ -75,19 +92,22 @@ func fw1ReleaseMonth(t *testing.T, pool *pgxpool.Pool, invoiceID string) (int, i
 	return y, m, posted
 }
 
-// TestIntegration_FW1_01R2_DepositReleaseDatedByTheDelivery is P1-2's red: a
-// deposit finalized 2026-02-10 (February open) and DELIVERED 2026-06-15 posts
-// as February revenue today. After the fix the release is dated by the
-// delivery (the fact MarkDelivered records) and posts in June.
+// TestIntegration_FW1_01R2_DepositReleaseDatedByTheDelivery is P1-2's and
+// P2-A's red: a deposit finalized 2026-02-10 (February open), DELIVERED
+// 2026-06-15, and swept when the service clock stands in July (2026-07-01)
+// must post in June (the delivery's month) through the real order.Repository
+// DeliveryReader, never in February (finalization) or July (processing time).
 func TestIntegration_FW1_01R2_DepositReleaseDatedByTheDelivery(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
-	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	fw1EnsureHouseYear(t, pool, 2026)
+	loc := houseday.DefaultZone().Location()
+	clockAt := time.Date(2026, 7, 1, 12, 0, 0, 0, loc)
 	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt).
 		WithInvoiceReader(seedInvoiceReader{pool: pool}).
-		WithDeliveryReader(fw1Delivery{at: clockAt})
-	dep := fw1PlantDeposit(t, pool, time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC))
+		WithDeliveryReader(order.NewRepository(pool))
+	dep := fw1PlantDeposit(t, pool, time.Date(2026, 2, 10, 12, 0, 0, 0, loc))
 	var orderID string
 	if err := pool.QueryRow(ctx, `SELECT order_id::text FROM invoices WHERE id=$1::uuid`, dep).Scan(&orderID); err != nil {
 		t.Fatalf("read the deposit's order: %v", err)
@@ -97,14 +117,20 @@ func TestIntegration_FW1_01R2_DepositReleaseDatedByTheDelivery(t *testing.T) {
 		_, _ = pool.Exec(ctx, `DELETE FROM gl_journals WHERE idempotency_key=$1`, "deposit.released:"+dep)
 	})
 
+	// Stamp the delivery on the real order row in the Postgres now()::text form
+	// for 2026-06-15, while the service clock stands at 2026-07-01.
+	if _, err := pool.Exec(ctx,
+		`UPDATE orders SET metadata = jsonb_build_object('delivered_at', '2026-06-15 16:00:00.123456+00') WHERE id = $1`, orderID); err != nil {
+		t.Fatalf("plant delivered_at stamp: %v", err)
+	}
 	if err := svc.consume(ctx, ev("deposit.released", map[string]any{"invoice_id": dep, "order_id": orderID})); err != nil {
 		t.Fatalf("the release consume: %v", err)
 	}
 	y, m, posted := fw1ReleaseMonth(t, pool, dep)
 	if y != 2026 || m != 6 {
-		t.Fatalf("the release posts in %04d-%02d, want 2026-06 (the delivery's month, never the deposit finalization's)", y, m)
+		t.Fatalf("the release posts in %04d-%02d, want 2026-06 (the delivery's month, never the deposit finalization's or the processing clock's)", y, m)
 	}
-	if posted == nil || posted.UTC().Format("2006-01-02") != "2026-06-15" {
+	if posted == nil || posted.In(loc).Format("2006-01-02") != "2026-06-15" {
 		t.Fatalf("the release carries posted_at %v, want the delivery date 2026-06-15", posted)
 	}
 }
@@ -187,16 +213,18 @@ func TestIntegration_FW1_01R2_NeverCreatesAPastYear(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
 	user := aUser(t, pool)
+	fw1EnsureHouseYear(t, pool, 2026)
 	fw1ScrubYear(t, pool, 2025)
 	t.Cleanup(func() { fw1ScrubYear(t, pool, 2025) })
-	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	loc := houseday.DefaultZone().Location()
+	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, loc)
 	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt)
 
 	id, _, err := svc.store.InsertJournal(ctx, journalDraft{
 		Source:     SourceAdjustment,
 		Memo:       "FW1-01 round 2 past document",
 		Status:     StatusPosted,
-		OccurredAt: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
+		OccurredAt: time.Date(2025, 6, 15, 12, 0, 0, 0, loc),
 		Lines: []draftLine{
 			{AccountCode: "1000", DebitCents: 700, Memo: "bank"},
 			{AccountCode: "1020", CreditCents: 700, Memo: "undeposited"},
@@ -227,7 +255,7 @@ func TestIntegration_FW1_01R2_NeverCreatesAPastYear(t *testing.T) {
 	if fy != 2026 || fm != 1 {
 		t.Fatalf("the past dated journal filed in %04d-%02d, want 2026-01 (the earliest open month at or after its document's)", fy, fm)
 	}
-	if posted == nil || posted.UTC().Format("2006-01-02") != "2025-06-15" {
+	if posted == nil || posted.In(loc).Format("2006-01-02") != "2025-06-15" {
 		t.Fatalf("the journal carries posted_at %v, want its document date 2025-06-15 kept", posted)
 	}
 }
@@ -243,13 +271,18 @@ func TestIntegration_FW1_01R2_AsOfReadsUseTheFiledPeriod(t *testing.T) {
 	pool := intPool(t)
 	user := aUser(t, pool)
 	ensurePeriods(t, pool, 2085)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, time.Date(2085, 7, 1, 12, 0, 0, 0, time.UTC))
+	loc := houseday.DefaultZone().Location()
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, time.Date(2085, 7, 1, 12, 0, 0, 0, loc))
 	if _, err := svc.ClosePeriod(ctx, periodID(t, pool, 2085, 5), "round 2 closed May"); err != nil {
 		t.Fatalf("close May 2085: %v", err)
 	}
-	post := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2085, 7, 1, 12, 0, 0, 0, time.UTC)).
+	post := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(2085, 7, 1, 12, 0, 0, 0, loc)).
 		WithInvoiceReader(seedInvoiceReader{pool: pool})
-	dep := fw1PlantDeposit(t, pool, time.Date(2085, 5, 10, 12, 0, 0, 0, time.UTC))
+	base, _, err := post.store.AccountBalanceAsOf(ctx, "1100", time.Date(2085, 5, 1, 0, 0, 0, 0, loc), "")
+	if err != nil {
+		t.Fatalf("baseline 1100: %v", err)
+	}
+	dep := fw1PlantDeposit(t, pool, time.Date(2085, 5, 10, 12, 0, 0, 0, loc))
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id=j.id AND j.idempotency_key=$1`, "ar.invoice.finalized:"+dep)
 		_, _ = pool.Exec(ctx, `DELETE FROM gl_journals WHERE idempotency_key=$1`, "ar.invoice.finalized:"+dep)
@@ -273,15 +306,15 @@ func TestIntegration_FW1_01R2_AsOfReadsUseTheFiledPeriod(t *testing.T) {
 		if err != nil {
 			t.Fatalf("as of %s: %v", at, err)
 		}
-		return gl
+		return gl - base
 	}
-	if got := asOf(time.Date(2085, 5, 31, 23, 59, 59, 0, time.UTC)); got != 0 {
+	if got := asOf(time.Date(2085, 5, 31, 23, 59, 59, 0, loc)); got != 0 {
 		t.Fatalf("May's as of 1100 holds %d after May closed; a closed month's figures are final", got)
 	}
-	if got := asOf(time.Date(2085, 6, 30, 23, 59, 59, 0, time.UTC)); got != 0 {
+	if got := asOf(time.Date(2085, 6, 30, 23, 59, 59, 0, loc)); got != 0 {
 		t.Fatalf("June's as of 1100 holds %d; the journal was filed in June, not dated into May", got)
 	}
-	if got := asOf(time.Date(2085, 7, 31, 23, 59, 59, 0, time.UTC)); got != 4000 {
+	if got := asOf(time.Date(2085, 7, 31, 23, 59, 59, 0, loc)); got != 4000 {
 		t.Fatalf("July's as of 1100 holds %d, want 4000 (the late journal shows from its filed period's end on)", got)
 	}
 }
@@ -299,7 +332,7 @@ func TestIntegration_FW1_01R2_OpenYearAuditInTheYearsTransaction(t *testing.T) {
 	target, beyond := house+1, house+2
 	fw1ScrubYear(t, pool, target, beyond)
 	t.Cleanup(func() { fw1ScrubYear(t, pool, target, beyond) })
-	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(house, 6, 15, 12, 0, 0, 0, time.UTC))
+	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(house, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location()))
 
 	years := func(year int) int {
 		t.Helper()

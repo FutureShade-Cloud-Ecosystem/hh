@@ -681,7 +681,11 @@ func (s *Service) buildDepositReleased(ctx context.Context, payload []byte) (jou
 	// posted, never refusing.
 	at := s.clock()
 	if p.OrderID != "" && s.delivery != nil {
-		if deliveredAt, found, derr := s.delivery.DeliveredAt(ctx, p.OrderID); derr == nil && found && !deliveredAt.IsZero() {
+		deliveredAt, found, derr := s.delivery.DeliveredAt(ctx, p.OrderID)
+		if derr != nil {
+			return journalDraft{}, false, fmt.Errorf("gl: read delivery date for order %s: %w", p.OrderID, derr)
+		}
+		if found && !deliveredAt.IsZero() {
 			at = deliveredAt
 		}
 	}
