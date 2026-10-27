@@ -47,6 +47,7 @@ func fw1GuardReadAccounts(ctx context.Context, pool *pgxpool.Pool) (map[string]f
 func TestMain(m *testing.M) {
 	url := os.Getenv("DATABASE_URL")
 	var before map[string]fw1GuardAccount
+	var beforeErr error
 	if url != "" {
 		pool, err := pgxpool.New(context.Background(), url)
 		if err == nil {
@@ -54,34 +55,47 @@ func TestMain(m *testing.M) {
 			pool.Close()
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "gl seed guard: the before snapshot could not be read (%v); the guard cannot watch this run\n", err)
+			beforeErr = err
 			before = nil
 		}
 	}
 	code := m.Run()
-	if url != "" && before != nil {
-		pool, err := pgxpool.New(context.Background(), url)
-		var after map[string]fw1GuardAccount
-		if err == nil {
-			after, err = fw1GuardReadAccounts(context.Background(), pool)
-			pool.Close()
-		}
+	if url != "" {
 		switch {
-		case err != nil:
-			fmt.Fprintf(os.Stderr, "gl seed guard: the after snapshot could not be read (%v)\n", err)
+		case beforeErr != nil:
+			// The guard could not watch this run: it does not know what was there before, so it
+			// cannot say what the package's tests changed, and a run it cannot watch must not pass
+			// (round 7, S3's round 6 P3: the old guard warned and let the package through).
+			fmt.Fprintf(os.Stderr, "gl seed guard: the before snapshot could not be read (%v); the guard cannot watch this run, so the package fails\n", beforeErr)
 			code = 1
-		default:
-			for acct, want := range before {
-				got, ok := after[acct]
-				switch {
-				case !ok:
-					fmt.Fprintf(os.Stderr, "gl seed guard: gl_account %s (%s) is missing after the package's tests\n", acct, want.name)
-					code = 1
-				case got != want:
-					fmt.Fprintf(os.Stderr, "gl seed guard: gl_account %s (%s) changed: was (%s, %s, %s, active=%t), now (%s, %s, %s, active=%t)\n",
-						acct, want.name, want.acctTyp, want.normal, want.name, want.active,
-						got.acctTyp, got.normal, got.name, got.active)
-					code = 1
+		case before != nil:
+			pool, err := pgxpool.New(context.Background(), url)
+			var after map[string]fw1GuardAccount
+			if err == nil {
+				after, err = fw1GuardReadAccounts(context.Background(), pool)
+				pool.Close()
+			}
+			switch {
+			case err != nil:
+				fmt.Fprintf(os.Stderr, "gl seed guard: the after snapshot could not be read (%v)\n", err)
+				code = 1
+			default:
+				for acct, want := range before {
+					got, ok := after[acct]
+					switch {
+					case !ok:
+						fmt.Fprintf(os.Stderr, "gl seed guard: gl_account %s (%s) is missing after the package's tests\n", acct, want.name)
+						code = 1
+					case got != want:
+						// The account's kind leads the line (its OLD type, the field a reader needs
+						// first), and every field of both sides is named, so nothing in the line can
+						// be read as another field (round 7, S3's round 6 P3: the old line printed
+						// the old name where it meant the old type).
+						fmt.Fprintf(os.Stderr, "gl seed guard: gl_account %s (%s) changed: was (type %s, normal %s, name %s, active=%t), now (type %s, normal %s, name %s, active=%t)\n",
+							acct, want.acctTyp, want.acctTyp, want.normal, want.name, want.active,
+							got.acctTyp, got.normal, got.name, got.active)
+						code = 1
+					}
 				}
 			}
 		}

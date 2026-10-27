@@ -257,6 +257,84 @@ func TestIntegration_AC2_BalanceSheetInvariant(t *testing.T) {
 
 // -- AC3 branch-sum == consolidated -------------------------------------------
 
+// fw1PNLRow is one branch's own year: its net income and its 4000 revenue, as the view carries
+// them. The unbranched rows (a journal with no branch) are a row of their own.
+type fw1PNLRow struct {
+	netIncome   int64
+	revenue4000 int64
+}
+
+// fw1PNLByBranch reads the income statement view for a fiscal year, per branch: the branches that
+// carry rows, and the unbranched rows' own share.
+func fw1PNLByBranch(t *testing.T, pool *pgxpool.Pool, year int) (map[string]fw1PNLRow, fw1PNLRow) {
+	t.Helper()
+	ctx := context.Background()
+	rows, err := pool.Query(ctx,
+		`SELECT branch_id::text,
+		        SUM(CASE WHEN account_type = 'REVENUE' THEN amount_cents ELSE -amount_cents END),
+		        COALESCE(SUM(amount_cents) FILTER (WHERE account_code = '4000'), 0)
+		   FROM v_income_statement
+		  WHERE fiscal_year = $1
+		  GROUP BY branch_id`, year)
+	if err != nil {
+		t.Fatalf("read the income statement's branches: %v", err)
+	}
+	defer rows.Close()
+	byBranch := map[string]fw1PNLRow{}
+	var unbranched fw1PNLRow
+	for rows.Next() {
+		var id *string
+		var r fw1PNLRow
+		if err := rows.Scan(&id, &r.netIncome, &r.revenue4000); err != nil {
+			t.Fatalf("scan the income statement's branches: %v", err)
+		}
+		if id == nil {
+			unbranched.netIncome += r.netIncome
+			unbranched.revenue4000 += r.revenue4000
+			continue
+		}
+		byBranch[*id] = r
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read the income statement's branches: %v", err)
+	}
+	return byBranch, unbranched
+}
+
+// fw1ARByBranch reads the 1100 (accounts receivable) balance every branch carries in a fiscal
+// year, and the balance the unbranched rows carry.
+func fw1ARByBranch(t *testing.T, pool *pgxpool.Pool, year int) (map[string]int64, int64) {
+	t.Helper()
+	ctx := context.Background()
+	rows, err := pool.Query(ctx,
+		`SELECT branch_id::text, SUM(amount_cents)
+		   FROM v_balance_sheet
+		  WHERE fiscal_year = $1 AND account_code = '1100'
+		  GROUP BY branch_id`, year)
+	if err != nil {
+		t.Fatalf("read the balance sheet's branches: %v", err)
+	}
+	defer rows.Close()
+	byBranch := map[string]int64{}
+	var unbranched int64
+	for rows.Next() {
+		var id *string
+		var cents int64
+		if err := rows.Scan(&id, &cents); err != nil {
+			t.Fatalf("scan the balance sheet's branches: %v", err)
+		}
+		if id == nil {
+			unbranched += cents
+			continue
+		}
+		byBranch[*id] = cents
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read the balance sheet's branches: %v", err)
+	}
+	return byBranch, unbranched
+}
+
 func TestIntegration_AC3_BranchSumEqualsConsolidated(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
@@ -281,22 +359,59 @@ func TestIntegration_AC3_BranchSumEqualsConsolidated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if trt.NetIncomeCents+kgn.NetIncomeCents != con.NetIncomeCents {
-		t.Fatalf("branch sum %d != consolidated %d", trt.NetIncomeCents+kgn.NetIncomeCents, con.NetIncomeCents)
+	// The fixture's own branches, exactly as they were seeded. These are the fixture's own rows and
+	// no other package's: the year 2103 is this leg's alone.
+	if trt.RevenueCents != 600_000 || trt.ExpenseCents != 200_000 || trt.NetIncomeCents != 400_000 {
+		t.Fatalf("Trenton's own year reads rev=%d exp=%d ni=%d, want 600000/200000/400000",
+			trt.RevenueCents, trt.ExpenseCents, trt.NetIncomeCents)
 	}
-	if con.RevenueCents != 1_000_000 || con.ExpenseCents != 300_000 {
-		t.Fatalf("consolidated rev/exp wrong: rev=%d exp=%d", con.RevenueCents, con.ExpenseCents)
+	if kgn.RevenueCents != 400_000 || kgn.ExpenseCents != 100_000 || kgn.NetIncomeCents != 300_000 {
+		t.Fatalf("Kingston's own year reads rev=%d exp=%d ni=%d, want 400000/100000/300000",
+			kgn.RevenueCents, kgn.ExpenseCents, kgn.NetIncomeCents)
 	}
-	// per-account additivity too
-	if amount(trt.Revenue, "4000")+amount(kgn.Revenue, "4000") != amount(con.Revenue, "4000") {
-		t.Fatal("per-account branch sum != consolidated for 4000")
+
+	// THE TRUE RULE (round 7, S3's round 6 finding): the sum over EVERY branch with a balance, plus
+	// any unbranched row, equals the consolidated figure. The consolidated figure IS that sum, so
+	// the leg holds on a shared gate database, where another package's own branch carries its own
+	// 1100, and it still says the branches add up to the company. No baseline: a baseline would
+	// prove the fixture's own movement and hide the very thing this leg is about.
+	pnlByBranch, unbranchedPNL := fw1PNLByBranch(t, pool, yr)
+	var niSum, revSum int64
+	for branch := range pnlByBranch {
+		rep, err := svc.IncomeStatementReportFor(ctx, yr, 0, branch)
+		if err != nil {
+			t.Fatalf("branch %s income statement: %v", branch, err)
+		}
+		niSum += rep.NetIncomeCents
+		revSum += amount(rep.Revenue, "4000")
 	}
-	// balance sheet consolidation likewise
-	bTrt, _ := svc.BalanceSheet(ctx, yr, trenton)
-	bKgn, _ := svc.BalanceSheet(ctx, yr, kingston)
-	bCon, _ := svc.BalanceSheet(ctx, yr, "")
-	if amount(bTrt, "1100")+amount(bKgn, "1100") != amount(bCon, "1100") {
-		t.Fatal("balance sheet 1100 branch sum != consolidated")
+	niSum += unbranchedPNL.netIncome
+	revSum += unbranchedPNL.revenue4000
+	if niSum != con.NetIncomeCents {
+		t.Fatalf("income statement branch sum %d != consolidated %d", niSum, con.NetIncomeCents)
+	}
+	// Per account, the same rule.
+	if revSum != amount(con.Revenue, "4000") {
+		t.Fatalf("revenue 4000 branch sum %d != consolidated %d", revSum, amount(con.Revenue, "4000"))
+	}
+
+	// The balance sheet, the same rule on 1100.
+	arByBranch, unbranchedAR := fw1ARByBranch(t, pool, yr)
+	var arSum int64
+	for branch := range arByBranch {
+		rows, err := svc.BalanceSheet(ctx, yr, branch)
+		if err != nil {
+			t.Fatalf("branch %s balance sheet: %v", branch, err)
+		}
+		arSum += amount(rows, "1100")
+	}
+	arSum += unbranchedAR
+	bCon, err := svc.BalanceSheet(ctx, yr, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if arSum != amount(bCon, "1100") {
+		t.Fatalf("balance sheet 1100 branch sum %d != consolidated %d", arSum, amount(bCon, "1100"))
 	}
 }
 
