@@ -55,12 +55,14 @@ func TestIntegrationPosPolicyHistory_DealerDefaultSaveIsReadable(t *testing.T) {
 	}
 
 	// Move ONE knob, at the org-default scope, the branch_id NULL row 0043 seeds.
+	// balance_visibility was the knob here until UX-97 item 208 retired it; margin_visibility is
+	// the same kind of move.
 	next := before
 	next.BranchID = ""
-	if next.BalanceVisibility == "HIDDEN" {
-		next.BalanceVisibility = "ALL_STAFF"
+	if next.MarginVisibility == "HIDDEN" {
+		next.MarginVisibility = "MANAGER_UP"
 	} else {
-		next.BalanceVisibility = "HIDDEN"
+		next.MarginVisibility = "HIDDEN"
 	}
 	if _, err := svc.UpdatePolicy(callerCtx, next); err != nil {
 		t.Fatalf("save the policy: %v", err)
@@ -78,8 +80,10 @@ func TestIntegrationPosPolicyHistory_DealerDefaultSaveIsReadable(t *testing.T) {
 	}
 
 	got := rowsAfter[0] // newest first
-	if got.Field != "balance_visibility" {
-		t.Fatalf("newest row is %q, want balance_visibility", got.Field)
+	// balance_visibility was the knob this leg moved until UX-97 item 208 retired it into the
+	// account position policy; margin_visibility is the same kind of move now.
+	if got.Field != "margin_visibility" {
+		t.Fatalf("newest row is %q, want margin_visibility", got.Field)
 	}
 	if got.Before == "" || got.After == "" {
 		t.Fatalf("the persisted row lost a value: before=%q after=%q, audit's Extra allowlist is "+

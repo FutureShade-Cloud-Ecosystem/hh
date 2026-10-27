@@ -461,7 +461,6 @@ function buildPosPolicy() {
     workspace_arrangement: "LOOKUP_LEFT",
     lookup_presentation: "CARDS",
     margin_visibility: "MANAGER_UP",
-    balance_visibility: "ALL_STAFF",
     quick_chip_set: [],
   };
 }
@@ -541,10 +540,6 @@ function validatePosPolicy(b) {
   if (margin !== "" && margin !== "MANAGER_UP" && margin !== "ALL_STAFF" && margin !== "HIDDEN") {
     return "pos: margin_visibility must be MANAGER_UP, ALL_STAFF or HIDDEN";
   }
-  const balance = String(b.balance_visibility ?? "ALL_STAFF");
-  if (balance !== "" && balance !== "ALL_STAFF" && balance !== "MANAGER_UP" && balance !== "HIDDEN") {
-    return "pos: balance_visibility must be ALL_STAFF, MANAGER_UP or HIDDEN";
-  }
   const chips = Array.isArray(b.quick_chip_set) ? b.quick_chip_set : [];
   if (chips.length > 8) {
     return "pos: quick_chip_set holds at most 8 categories";
@@ -564,7 +559,6 @@ function normalizePosPolicy(b) {
     workspace_arrangement: String(b.workspace_arrangement ?? "") === "" ? "LOOKUP_LEFT" : String(b.workspace_arrangement),
     lookup_presentation: String(b.lookup_presentation ?? "") === "" ? "CARDS" : String(b.lookup_presentation),
     margin_visibility: String(b.margin_visibility ?? "") === "" ? "MANAGER_UP" : String(b.margin_visibility),
-    balance_visibility: String(b.balance_visibility ?? "") === "" ? "ALL_STAFF" : String(b.balance_visibility),
     quick_chip_set: Array.isArray(b.quick_chip_set) ? b.quick_chip_set : [],
   };
 }
