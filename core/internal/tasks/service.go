@@ -165,6 +165,37 @@ func (s *Service) WithLogger(l *slog.Logger) *Service {
 	return s
 }
 
+// briefForCreate reads the order a task create names, held to the caller (UX-81 round 4, round 3, and UX-81c for the
+// weight door): the order is read under the caller's org, so another org's order is an unknown order, the same 422
+// "order not found", and an order outside the caller's branch reach is the same error, telling the caller nothing
+// about an order on another branch. A nil reach is a system caller with no staff reach to hold.
+func (s *Service) briefForCreate(ctx context.Context, orgID, orderID string, reach func(branch string) (bool, error)) (OrderBrief, error) {
+	var ob OrderBrief
+	var err error
+	if s.orgOrders != nil {
+		// An empty org reads nothing (UX-81 round 5): the unscoped read is for a seam with no org held read only.
+		if orgID == "" {
+			return OrderBrief{}, ErrUnknownOrder
+		}
+		ob, err = s.orgOrders.OrderBriefInOrg(ctx, orgID, orderID)
+	} else {
+		ob, err = s.orders.OrderBrief(ctx, orderID)
+	}
+	if err != nil {
+		return OrderBrief{}, err
+	}
+	if reach != nil {
+		ok, err := reach(ob.BranchID)
+		if err != nil {
+			return OrderBrief{}, fmt.Errorf("%w: %v", ErrReachUnavailable, err)
+		}
+		if !ok {
+			return OrderBrief{}, ErrUnknownOrder
+		}
+	}
+	return ob, nil
+}
+
 // CreateFromOrder creates a QUEUED PICK task from an order id. It validates the order exists (via the
 // OrderReader, unknown order → ErrUnknownOrder), copies the order's branch onto the task, persists the
 // task + its birth audit row (one tx, in the store), then posts a "task created" EVENT into chat
@@ -183,32 +214,9 @@ func (s *Service) CreateFromOrder(ctx context.Context, in CreateInput) (Task, er
 	if s.orders == nil {
 		return Task{}, errNotConfigured
 	}
-	// The order is read under the caller's org (UX-81 round 4): another org's order is an unknown order, the
-	// same 422 "order not found", so a GLOBAL caller of one org cannot create a pick on another org's order.
-	var ob OrderBrief
-	var err error
-	if s.orgOrders != nil {
-		// An empty org reads nothing (UX-81 round 5): the unscoped read is for a seam with no org held read only.
-		if in.OrgID == "" {
-			return Task{}, ErrUnknownOrder
-		}
-		ob, err = s.orgOrders.OrderBriefInOrg(ctx, in.OrgID, in.OrderID)
-	} else {
-		ob, err = s.orders.OrderBrief(ctx, in.OrderID)
-	}
+	ob, err := s.briefForCreate(ctx, in.OrgID, in.OrderID, in.Reach)
 	if err != nil {
 		return Task{}, err // ErrUnknownOrder (or a transport error), surfaced as-is
-	}
-	// An order outside the caller's branch reach is an unknown order to it (UX-81 round 3): the same error, so
-	// the same 422 "order not found", tells the caller nothing about an order on another branch.
-	if in.Reach != nil {
-		reach, err := in.Reach(ob.BranchID)
-		if err != nil {
-			return Task{}, fmt.Errorf("%w: %v", ErrReachUnavailable, err)
-		}
-		if !reach {
-			return Task{}, ErrUnknownOrder
-		}
 	}
 	// A pick is never born with no branch (UX-81 round 2): the repository would write a NULL for an empty
 	// branch, and a branchless pick belongs to no yard.

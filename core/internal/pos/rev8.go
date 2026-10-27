@@ -166,7 +166,18 @@ func (s *Service) MarginGlance(ctx context.Context, in MarginGlanceInput) (Margi
 	// Customer type for the revenue derivation, the same posture the terminal's reprice sends.
 	customerType := strings.TrimSpace(in.CustomerType)
 	if in.CustomerID != "" {
-		if cust, err := s.store.ReadCustomer(ctx, in.CustomerID); err == nil && cust.CustomerType != "" {
+		// A glance prices a NEW document at the account's type, so it is held to the customer wall like the
+		// sale it previews (customerFor's ruling): an account the caller cannot reach answers 404 "customer not
+		// found", the same as an id that is no account.
+		caller, err := s.caller(ctx)
+		if err != nil {
+			return MarginGlance{}, err
+		}
+		cust, err := s.customerFor(ctx, caller, in.CustomerID)
+		if err != nil {
+			return MarginGlance{}, err
+		}
+		if cust.CustomerType != "" {
 			customerType = cust.CustomerType
 		}
 	}

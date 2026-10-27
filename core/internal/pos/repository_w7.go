@@ -291,7 +291,7 @@ func (r *Repository) ReturnOrderContextTx(ctx context.Context, tx pgx.Tx, orderI
 func (r *Repository) ReadCustomerTx(ctx context.Context, tx pgx.Tx, customerID string) (customerRec, error) {
 	var c customerRec
 	err := tx.QueryRow(ctx, readCustomerQuery, customerID).Scan(
-		&c.ID, &c.CustomerType, &c.PaymentTermsDays, &c.CreditLimitCents, &c.OpenBalanceCents,
+		&c.ID, &c.CustomerType, &c.PaymentTermsDays, &c.CreditLimitCents, &c.OpenBalanceCents, &c.HomeBranchID,
 	)
 	return c, err
 }

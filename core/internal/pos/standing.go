@@ -188,7 +188,7 @@ func (s *Service) Standing(ctx context.Context, in AccountStandingInput) (Accoun
 		return AccountStanding{}, errors.Join(ErrStandingUnavailable, err)
 	}
 	if !exists {
-		return AccountStanding{}, clientErr(http.StatusNotFound, "pos: no such customer account")
+		return AccountStanding{}, errCustomerNotFound // the one customer answer (customerFor): unreachable and unknown alike
 	}
 	due, err := s.aging.CustomerAging(ctx, in.CustomerID)
 	if err != nil {

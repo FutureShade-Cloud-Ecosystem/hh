@@ -77,12 +77,17 @@ func (h *Handler) WithPaymentTrail(t billing.PaymentTrailReader) *Handler {
 	return h
 }
 
-// WithCustomerReach binds the customer reach rule the account workspace is held to. Unbound, the
-// workspace answers not found for every customer.
+// WithCustomerReach binds the customer module's reach rule every customer taking door here is held to: the
+// account workspace and its notes (UX-93), the statement preview, the payment policy, the hold and the
+// paylink (UX-89). Unbound, the workspace answers not found for every customer and boot refuses
+// (CustomerReachWired).
 func (h *Handler) WithCustomerReach(r billing.WorkspaceReach) *Handler {
 	h.customerReach = r
 	return h
 }
+
+// CustomerReachWired reports whether the customer reach rule is bound.
+func (h *Handler) CustomerReachWired() bool { return h.customerReach != nil }
 
 // WithRegisterTaxLabel binds the dealer's tax word seam (platform/taxwords) for the register's printed
 // invoice. Unbound is the Ontario dealer's "HST".
@@ -112,6 +117,9 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 	svc := billing.NewRegisterService(repo).
 		WithZone(h.zone).
 		WithMoney(billing.NewPaymentsReceiptWriter(payments.NewRepository(pool))).
+		// The money a reversal held and a manager put on an invoice (SF-2r): the payments module owns the table, so the
+		// register's Applied figure and timeline read it through this seam.
+		WithReapplied(billing.NewPaymentsReappliedReader(payments.NewRepository(pool))).
 		// The SHIPPED statement generator (billing/statements.go), the same one the month-end run
 		// drives. The bulk bar produces statements; it does not compose them.
 		WithStatements(billing.NewStatementService(repo).WithZone(h.zone))
@@ -127,7 +135,7 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 	// Walk change 8 S5/S6/S8: promises list, account payment policy, reminder rules + enrol/exempt.
 	// Lives here because cmd/server/main.go is off limits to a lane and the same pool backs it;
 	// see c8walk_handler.go's header for why these handlers are in finstmt and not in billing.
-	NewC8WalkHandler(pool, h.log).RegisterC8WalkRoutes(r, g)
+	NewC8WalkHandler(pool, h.log).WithUserLinker(h.userLink).WithCustomerReach(h.customerReach).RegisterC8WalkRoutes(r, g)
 
 	// -- the customer account workspace (Change 8 S2 + S2M) ----------------------------------------
 	// Mounted from this composition seam for the same reason the register is: cmd/server/main.go
@@ -151,7 +159,7 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 	// (caller_stamp_workspacehandler.go's pattern), and the same composition seam this
 	// module already owns. Mounted from this seam for the same reason the register is:
 	// cmd/server/main.go is off limits to a lane.
-	billing.NewC8S3S4Handler(repo, h.log).WithUserLinker(h.userLink).RegisterRoutes(r, g)
+	billing.NewC8S3S4Handler(repo, h.log).WithUserLinker(h.userLink).WithCustomerReach(h.customerReach).RegisterRoutes(r, g)
 }
 
 // registerPool resolves the pgx pool behind this service's repository, or nil in scaffold mode.

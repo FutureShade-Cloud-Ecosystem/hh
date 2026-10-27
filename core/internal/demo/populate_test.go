@@ -308,10 +308,11 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if counts.UsersLinked != 27 || counts.UsersUnlinked != 7 {
 		t.Errorf("linked %d / unlinked %d users, want the 13 demo role accounts and the 14 sign in personas linked and the 7 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	// 28 grants: the 13 of the role accounts (nine branch scoped, four
-	// global) and 15 of the personas (ten branch scoped, five global).
-	if counts.StaffGrants != 28 || counts.StaffGrantsBranch != 19 || counts.StaffGrantsGlobal != 9 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the role accounts' 13 and the personas' 15", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	// 29 grants: the 13 of the role accounts (nine branch scoped, four
+	// global) and 16 of the personas (eleven branch scoped, five global: the
+	// logistics manager holds a second branch grant at Kingston).
+	if counts.StaffGrants != 29 || counts.StaffGrantsBranch != 20 || counts.StaffGrantsGlobal != 9 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the role accounts' 13 and the personas' 16", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -355,20 +356,25 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	assertRoleAccount(t, ctx, pool, yardUserID, yardEmail, yardDisplayName, "YARD_TEAM", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, driverUserID, driverEmail, driverDisplayName, "DRIVERS", kingstonBranchID)
 	assertRoleAccount(t, ctx, pool, dispatchUserID, dispatchEmail, dispatchDisplayName, "LOGISTICS_MANAGER", trentonBranchID)
-	for _, p := range []struct{ id, branch string }{
-		{yardUserID, trentonBranchID},
-		{driverUserID, kingstonBranchID},
-		{dispatchUserID, trentonBranchID},
+	for _, p := range []struct {
+		id       string
+		branches []string
+	}{
+		{yardUserID, []string{trentonBranchID}},
+		{driverUserID, []string{kingstonBranchID}},
+		// The dispatch persona works both yards: the driver's runs are Kingston's and dispatch is
+		// gated on the run's branch.
+		{dispatchUserID, []string{trentonBranchID, kingstonBranchID}},
 	} {
 		var live, atOwn int
 		if err := pool.QueryRow(ctx, `
-			SELECT count(*), count(*) FILTER (WHERE branch_id = $2::uuid)
+			SELECT count(*), count(*) FILTER (WHERE branch_id = ANY($2::uuid[]))
 			  FROM user_branch_grants WHERE user_id = $1::uuid AND deleted_at IS NULL`,
-			p.id, p.branch).Scan(&live, &atOwn); err != nil {
+			p.id, p.branches).Scan(&live, &atOwn); err != nil {
 			t.Fatalf("persona branch grants: %v", err)
 		}
-		if live != 1 || atOwn != 1 {
-			t.Errorf("persona %s holds %d live branch grant(s) (%d at its own), want exactly its own branch", p.id, live, atOwn)
+		if live != len(p.branches) || atOwn != len(p.branches) {
+			t.Errorf("persona %s holds %d live branch grant(s) (%d at its own), want exactly its own %d", p.id, live, atOwn, len(p.branches))
 		}
 	}
 	// The real-domain planted rows are inactive, renamed, re-addressed on

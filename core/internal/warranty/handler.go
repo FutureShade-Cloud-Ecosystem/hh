@@ -6,6 +6,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"net/http"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/customerwall"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -113,6 +114,9 @@ func (h *Handler) getClaim(w http.ResponseWriter, r *http.Request, caller guards
 func (h *Handler) createClaim(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in ClaimInput
 	if !h.decode(w, r, &in) {
+		return
+	}
+	if !customerwall.Fence(w, r, h.reach, in.CustomerID) {
 		return
 	}
 	c, err := h.svc.CreateClaim(r.Context(), in)
