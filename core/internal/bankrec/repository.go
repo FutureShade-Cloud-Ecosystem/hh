@@ -754,12 +754,16 @@ func (r *Repository) MatchLineDate(ctx context.Context, matchID string) (time.Ti
 }
 
 // UnmatchFacts is what an unmatch read about the match it just reversed, all under its own transaction
-// (FW1-05): the target the reversal mirrors, the line amount it moved, and later rounds add the fee and
-// branch facts the reversing journal needs.
+// (FW1-05): the target the reversal mirrors, the line amount it moved, the fee the original clearing
+// journal booked (the claimed payment's gross less the line, with the rule's own fee account), and the
+// branch the reversing journal carries.
 type UnmatchFacts struct {
-	TargetType  string
-	TargetRef   string
-	AmountCents int64
+	TargetType     string
+	TargetRef      string
+	AmountCents    int64
+	FeeCents       int64
+	FeeAccountCode string
+	BranchID       string
 }
 
 // UnmatchReach is Unmatch with both of its fences, in ONE body under ONE payment row lock: the caller's branch reach
@@ -880,8 +884,46 @@ func (r *Repository) UnmatchReachTx(ctx context.Context, tx pgx.Tx, matchID, use
 			 WHERE id = $1::uuid AND status = 'DEPOSITED'`, out.TargetRef); err != nil {
 			return out, fmt.Errorf("bankrec: release payment: %w", err)
 		}
+		// The payment's own facts for the reversal (FW1-05 items 3 and 4): the original clearing journal
+		// booked the claimed payment's GROSS out of 1010 and the remainder (gross less the line) to the fee
+		// account, so the reversal mirrors the gross, un books the fee, and carries the payment's branch.
+		// The payment row is still under this transaction's lock. A row that is gone leaves fee 0 and an
+		// empty branch, and the mirror falls back to the line amount only.
+		pf, ferr := payments.PaymentFactsTx(ctx, tx, []string{out.TargetRef})
+		if ferr != nil {
+			return out, ferr
+		}
+		if f, ok := pf[strings.ToLower(out.TargetRef)]; ok {
+			out.BranchID = f.BranchID
+			if f.AmountCents > out.AmountCents {
+				out.FeeCents = f.AmountCents - out.AmountCents
+				feeAcct, ferr := r.matchFeeAccountTx(ctx, tx, matchID)
+				if ferr != nil {
+					return out, ferr
+				}
+				out.FeeAccountCode = feeAcct
+			}
+		}
 	}
 	return out, nil
+}
+
+// matchFeeAccountTx reads the fee account of the exact rule version a match fired under (its row is kept
+// even after the rule is superseded), defaulting to 6300 exactly as the proposal builder does, so the
+// unmatch's reversal mirrors the original clearing journal's fee leg (FW1-05 item 3).
+func (r *Repository) matchFeeAccountTx(ctx context.Context, tx pgx.Tx, matchID string) (string, error) {
+	var feeAcct string
+	err := tx.QueryRow(ctx, `
+		SELECT COALESCE(br.spec->>'fee_account_code', '')
+		  FROM bank_matches m LEFT JOIN bank_match_rules br ON br.id = m.rule_id
+		 WHERE m.id::text = $1`, matchID).Scan(&feeAcct)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("bankrec: read the match rule's fee account: %w", err)
+	}
+	if feeAcct == "" {
+		feeAcct = "6300"
+	}
+	return feeAcct, nil
 }
 
 func absInt64(n int64) int64 {

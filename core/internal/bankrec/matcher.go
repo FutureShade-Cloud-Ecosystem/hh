@@ -245,16 +245,26 @@ func statementDocDate(txnDate time.Time) time.Time {
 	return txnDate.UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
 }
 
-// reversalJournal builds the offsetting clearing journal an unmatch posts: it swaps the original DR/CR legs by
-// target type so the net GL effect of the match returns to zero. Keyed on unmatchKey(matchID) (distinct from
-// the clearing key). GROUP/JOURNAL targets posted no clearing journal, so they have nothing to reverse.
-func reversalJournal(matchID, targetType string, amount int64) (gl.ExternalJournal, bool) {
+// reversalJournal builds the offsetting clearing journal an unmatch posts: it mirrors the ORIGINAL clearing
+// journal's legs, swapped, so the net GL effect of the match returns to zero (FW1-05 item 3). A payment
+// settlement's original was DR 1000 net [+ DR fee fee] / CR 1010 gross, so the reversal is DR 1010 gross /
+// CR 1000 net [+ CR fee fee]; a lodgement's original was DR 1000 / CR 1020, so its reversal is DR 1020 /
+// CR 1000. Keyed on unmatchKey(matchID) (distinct from the clearing key). GROUP/JOURNAL targets posted no
+// clearing journal, so they have nothing to reverse.
+func reversalJournal(matchID, targetType string, amount, feeCents int64, feeAccount string) (gl.ExternalJournal, bool) {
 	var lines []gl.ExternalLine
 	switch targetType {
-	case TargetPayment: // original DR1000/CR1010 → reverse DR1010/CR1000
+	case TargetPayment:
+		gross := amount + feeCents
 		lines = []gl.ExternalLine{
-			{AccountCode: AcctCardClearing, DebitCents: amount, Memo: "reverse card settlement (unmatch)"},
+			{AccountCode: AcctCardClearing, DebitCents: gross, Memo: "reverse card settlement (unmatch)"},
 			{AccountCode: AcctBank, CreditCents: amount, Memo: "reverse bank deposit (unmatch)"},
+		}
+		if feeCents > 0 {
+			if feeAccount == "" {
+				feeAccount = "6300"
+			}
+			lines = append(lines, gl.ExternalLine{AccountCode: feeAccount, CreditCents: feeCents, Memo: "reverse card processing fee (unmatch)"})
 		}
 	case TargetLodgement: // original DR1000/CR1020 → reverse DR1020/CR1000
 		lines = []gl.ExternalLine{

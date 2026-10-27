@@ -716,9 +716,9 @@ func (s *Service) recheckJournalMatches(glCode string) func(ctx context.Context,
 // releases any claimed payment back to RECEIVED (all in one tx), and posts a REVERSING clearing journal under
 // a NEW idempotency key (unmatchKey) that cancels the original legs, so the GL no longer carries a phantom
 // clearing entry and a corrective re-match books its own fresh journal (never reusing the stale line key).
-// NOTE: the reversal mirrors the target-type clearing legs by amount (PAYMENT: DR1010/CR1000; LODGEMENT:
-// DR1020/CR1000), which is exact for gateway/lodgement matches; a fuzzy fee-split match leaves its 6300 fee
-// residue for a controller adjustment (documented, fee is not carried on the match row).
+// The reversal mirrors the original clearing journal's legs, the fee leg included (FW1-05 item 3): the
+// unmatch reads the claimed payment's gross and the match rule's fee account under the same lock and swaps
+// every leg back, so a fuzzy fee-split match un books its 6300 fee instead of leaving a residue.
 //
 // It is fenced to the caller's branch reach (SF-2g round 2). A match whose target is a payment or a
 // lodgement outside the reach answers exactly as a match that is not live, with nothing written. A nil reach REFUSES
@@ -762,7 +762,7 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 		return err
 	}
 	if s.poster != nil && facts.AmountCents > 0 && !skipLodgementReversal {
-		if rev, ok := reversalJournal(matchID, facts.TargetType, facts.AmountCents); ok {
+		if rev, ok := reversalJournal(matchID, facts.TargetType, facts.AmountCents, facts.FeeCents, facts.FeeAccountCode); ok {
 			if hasLineDate {
 				rev.DocumentDate = statementDocDate(lineDate)
 			}
