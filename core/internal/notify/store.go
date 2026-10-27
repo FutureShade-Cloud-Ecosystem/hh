@@ -112,9 +112,9 @@ func (s *PgOutboxStore) processOne(ctx context.Context, settle func(context.Cont
 
 // QueueRow is one outbox row still undelivered: waiting (PENDING) or dead
 // lettered (DEAD), the FW1-02 posting queue's read. Document is the payload's
-// own naming of the money document it carries (invoice_id, payment_id or
-// order_id), so a reader can say which invoice or payment a stuck journal
-// belongs to without parsing the payload.
+// own naming of the money document it carries (invoice_id, payment_id,
+// order_id, return_id or session_id), so a reader can say which document a
+// stuck journal belongs to without parsing the payload.
 type QueueRow struct {
 	EventID    string
 	Topic      string
@@ -133,7 +133,7 @@ func (s *PgOutboxStore) WaitingOrDead(ctx context.Context, topics []string, limi
 	}
 	rows, err := s.pool.Query(ctx, `
 SELECT event_id::text, topic,
-       COALESCE(payload->>'invoice_id', payload->>'payment_id', payload->>'order_id', ''),
+       COALESCE(payload->>'invoice_id', payload->>'payment_id', payload->>'order_id', payload->>'return_id', payload->>'session_id', ''),
        status, attempts, last_error, occurred_at
   FROM events_outbox
  WHERE status IN ('PENDING','DEAD') AND topic = ANY($1::text[])
@@ -154,15 +154,23 @@ SELECT event_id::text, topic,
 	return out, rows.Err()
 }
 
+// WaitingBannerThreshold is how long a PENDING outbox row with zero failed
+// attempts may wait for the worker's next drain before the Money Desk banner
+// counts it as stuck: a fresh event on a healthy system raises no alert.
+const WaitingBannerThreshold = 5 * time.Minute
+
 // WaitingOrDeadCounts returns how many rows for the named topics are waiting
-// and how many are dead lettered. A nil pool answers zeroes.
+// (failed at least once, or older than WaitingBannerThreshold) and how many are
+// dead lettered. A nil pool answers zeroes.
 func (s *PgOutboxStore) WaitingOrDeadCounts(ctx context.Context, topics []string) (waiting, dead int, err error) {
 	if s.pool == nil || len(topics) == 0 {
 		return 0, 0, nil
 	}
+	cutoff := time.Now().Add(-WaitingBannerThreshold)
 	if err := s.pool.QueryRow(ctx, `
-SELECT COUNT(*) FILTER (WHERE status = 'PENDING'), COUNT(*) FILTER (WHERE status = 'DEAD')
-  FROM events_outbox WHERE topic = ANY($1::text[])`, topics).Scan(&waiting, &dead); err != nil {
+SELECT COUNT(*) FILTER (WHERE status = 'PENDING' AND (attempts > 0 OR occurred_at <= $2)),
+       COUNT(*) FILTER (WHERE status = 'DEAD')
+  FROM events_outbox WHERE topic = ANY($1::text[])`, topics, cutoff).Scan(&waiting, &dead); err != nil {
 		return 0, 0, fmt.Errorf("notify: queue counts: %w", err)
 	}
 	return waiting, dead, nil

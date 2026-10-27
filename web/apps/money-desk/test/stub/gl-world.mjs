@@ -521,10 +521,13 @@ export function createGlWorld() {
     }
     if (m === "GET" && path === "/api/v1/gl/posting-queue/count") {
       const refused = gate(caller, "read");
-      return refused ?? {
+      if (refused !== null) return refused;
+      if (!caller.global) return say(403, "gl: caller cannot access this branch");
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      return {
         status: 200,
         body: {
-          waiting: world.postingQueue.filter((r) => r.status === "PENDING").length,
+          waiting: world.postingQueue.filter((r) => r.status === "PENDING" && ((r.attempts ?? 0) > 0 || Date.parse(r.occurred_at ?? "") <= cutoff)).length,
           dead: world.postingQueue.filter((r) => r.status === "DEAD").length,
         },
       };

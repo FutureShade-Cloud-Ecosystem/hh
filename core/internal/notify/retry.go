@@ -20,6 +20,8 @@ import (
 // Dead letter retry tuning. The base wait is the first gap between requeue
 // passes; each pass that requeued rows doubles the wait for the next pass up
 // to the cap, and a pass that requeued nothing puts the wait back to base.
+// The backoff is one schedule across the loop's topic list rather than per row,
+// so one permanently refused journal holds the next pass at up to deadRetryCap.
 const (
 	deadRetryBase = time.Minute
 	deadRetryCap  = 30 * time.Minute
