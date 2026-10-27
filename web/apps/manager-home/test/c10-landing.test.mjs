@@ -109,7 +109,7 @@ test("a card the core cannot answer says Not connected yet, with no figure", () 
   assert.equal(tilesAbsent[0].connected, false);
 });
 
-test("the deliveries card counts the dispatch board's own runs and stops", () => {
+test("the stops card counts the dispatch board's own runs and stops, under its own words", () => {
   const branches = [
     { id: "b-trt", code: "TRT", name: "Trenton" },
     { id: "b-kgn", code: "KGN", name: "Kingston" },
@@ -124,7 +124,7 @@ test("the deliveries card counts the dispatch board's own runs and stops", () =>
     }],
     stops: stops.map((s, i) => ({
       id: `s-${runId}-${i}`, run_id: `r-${runId}`, stop_no: i + 1,
-      status: s.delivered ? "DELIVERED" : s.enRoute ? "EN_ROUTE" : "READY",
+      status: s.delivered ? "DELIVERED" : s.enRoute ? "EN_ROUTE" : s.cancelled ? "CANCELLED" : "READY",
       loaded_at: "2026-10-26T10:00:00Z",
       en_route_at: s.enRoute || s.delivered ? "2026-10-26T11:40:00Z" : null,
       delivered_at: s.delivered ? "2026-10-26T12:40:00Z" : null,
@@ -134,9 +134,11 @@ test("the deliveries card counts the dispatch board's own runs and stops", () =>
   });
   const deliveries = landingDeliveriesFrom(branches, [
     board("TRT-1", "b-trt", [{ delivered: true, enRoute: false }, { delivered: false, enRoute: true }, { delivered: false, enRoute: false }]),
-    board("KGN-2", "b-kgn", [{ delivered: false, enRoute: true }, { delivered: false, enRoute: false }]),
+    board("KGN-2", "b-kgn", [{ delivered: false, enRoute: true }, { delivered: false, enRoute: false }, { cancelled: true, enRoute: false }]),
   ]);
   assert.notEqual(deliveries, null);
+  // A cancelled stop is not a stop the day still holds: the core's own measure excludes
+  // CANCELLED, and the card counts the board the same way.
   assert.equal(deliveries.count, 5);
   assert.deepEqual(
     deliveries.branches.map((b) => `${b.label} ${b.count}`),
@@ -148,6 +150,10 @@ test("the deliveries card counts the dispatch board's own runs and stops", () =>
   const markup = flattenTemplate(renderDeliveriesCard(deliveries, "combined"));
   assert.match(markup, />5</);
   assert.match(markup, /TRT-1 Trenton/);
+  // FROM-PRINCIPAL 127: the hero's deliveries.today measure counts the day's stops still to
+  // do, this card counts the day's whole book of stops. Different measures never share words.
+  assert.match(markup, /Stops today/);
+  assert.doesNotMatch(markup, /Deliveries today/);
   // No invented run, no borrowed count.
   assert.doesNotMatch(markup, /R1|left 6:40 AM/);
 

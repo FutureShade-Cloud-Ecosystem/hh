@@ -128,15 +128,28 @@ test("the TODAY money cards carry the core's figures, and a measure with no core
   await expect(sales.locator(".kpi-branch-value").first()).toHaveText("$1,234.56");
 });
 
-test("the deliveries card counts the dispatch board's own runs, and the needs card ranks the caller's approvals", async ({ page }) => {
+test("the stops card counts the dispatch board's own stops under its own words, beside the hero's remaining count", async ({ page }) => {
   await page.addInitScript(managerHandoff);
   await page.goto("/");
-  const deliveries = page.locator("[data-test='c10-deliveries-today']");
-  await expect(deliveries).toBeVisible();
-  await expect(deliveries.locator(".deliveries-count")).toHaveText(/^\d+$/);
-  await expect(deliveries.locator(".deliveries-summary")).toContainText(/done, \d+ on the road/);
-  const firstRun = deliveries.locator(".run").first();
+  // FROM-PRINCIPAL 127: the hero's deliveries.today measure counts the day's stops still to do
+  // (DELIVERED and CANCELLED excluded); the C10 card counts the day's whole book of stops off the
+  // dispatch board. Different measures must not share one heading: the card says Stops today.
+  const stops = page.locator("[data-test='c10-deliveries-today']");
+  await expect(stops).toBeVisible();
+  await expect(stops.locator("h2")).toHaveText("Stops today");
+  await expect(stops).not.toContainText("Deliveries today");
+  await expect(stops.locator(".deliveries-count")).toHaveText(/^\d+$/);
+  await expect(stops.locator(".deliveries-summary")).toContainText(/done, \d+ on the road/);
+  const firstRun = stops.locator(".run").first();
   await expect(firstRun.locator(".run-id")).not.toHaveText("");
+
+  // The hero beside it keeps its own measure and its own words, and the two numbers are free to
+  // differ: 14 remaining against the stub board's 8, same seed, both the core's own answers.
+  const hero = page.locator("[data-widget='hero.deliveries']");
+  await expect(hero.locator(".figure")).toHaveText("14");
+  await expect(hero.locator(".card-title")).toHaveText("Deliveries today");
+  const stopsCount = Number(await stops.locator(".deliveries-count").textContent());
+  expect(stopsCount).not.toBe(Number(await hero.locator(".figure").textContent()));
 
   const needs = page.locator("[data-test='c10-needs-stake']");
   await expect(needs).toBeVisible();
