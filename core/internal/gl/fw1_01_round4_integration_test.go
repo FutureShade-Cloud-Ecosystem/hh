@@ -337,3 +337,53 @@ func TestIntegration_FW1_01R4_GapYearIsRefusedInWords(t *testing.T) {
 		}
 	}
 }
+
+// TestIntegration_FW1_01R4_TheCoresRefusalWords pins the core's own refusal
+// words at the handler (S2's round 3 P3: the open's word has no gl leg, only
+// the stub's and the screen's were pinned). A non Controller asking for the
+// early open is refused with the open's own word, never the reopen's; a non
+// Controller reopen keeps the reopen's word.
+func TestIntegration_FW1_01R4_TheCoresRefusalWords(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	user := aUser(t, pool)
+	fw1EnsureHouseYear(t, pool, 2026)
+	fw1ScrubYear(t, pool, 2027, 2028)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, 2027, 2028) })
+	fw1PlantFuturePeriod(t, pool, 2109)
+	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location())
+	manager := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt)
+	h := NewHandler(manager, nil)
+
+	post := func(path, id, body string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		if id != "" {
+			// The direct call carries the path value the router would (pathID reads it).
+			rec.SetPathValue("id", id)
+		}
+		rsp := httptest.NewRecorder()
+		if path == "/api/v1/gl/periods/open-year" {
+			h.openYear(rsp, rec, guards.StaffCaller{})
+		} else {
+			h.reopenPeriod(rsp, rec, guards.StaffCaller{})
+		}
+		return rsp.Code, rsp.Body.String()
+	}
+
+	code, body := post("/api/v1/gl/periods/open-year", "", `{"reason":"a manager asks"}`)
+	if code != http.StatusForbidden || !strings.Contains(body, "only the Financial Controller may open the next fiscal year") {
+		t.Fatalf("a non Controller open answered %d %s, want 403 'only the Financial Controller may open the next fiscal year'", code, body)
+	}
+	if strings.Contains(body, "reopen a closed period") {
+		t.Fatalf("the open's refusal speaks of reopening: %s", body)
+	}
+	var periodID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year = 2026 AND month = 8`).Scan(&periodID); err != nil {
+		t.Fatal(err)
+	}
+	code, body = post("/api/v1/gl/periods/{id}/reopen", periodID, `{"reason":"a manager asks"}`)
+	if code != http.StatusForbidden || !strings.Contains(body, "only the Financial Controller may reopen a closed period") {
+		t.Fatalf("a non Controller reopen answered %d %s, want 403 'only the Financial Controller may reopen a closed period'", code, body)
+	}
+}
