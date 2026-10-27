@@ -102,7 +102,7 @@ test("a Remind run says sent, recorded for retry, or nothing sent and why (FW1-0
   assert.match(failed.notice, /1 was not sent: nothing went out, send it again from the desk/);
   const allFailed = reminderRunWords({ sent: 0, replayed: 0, tone: "FRIENDLY", skipped: { "INV-1": "delivery failed, nothing went out; send it again from the desk: transport unreachable" } });
   assert.equal(allFailed.sent, false);
-  assert.match(allFailed.notice, /No reminder was sent: delivery failed, nothing went out/);
+  assert.match(allFailed.notice, /No reminder went out: delivery failed, nothing went out/);
   assert.match(allFailed.notice, /send it again from the desk/);
   const replayedOnly = reminderRunWords({ sent: 0, replayed: 2, tone: "FRIENDLY", skipped: {} });
   assert.equal(replayedOnly.sent, false);
@@ -196,7 +196,14 @@ test("a pay out says what left and what is still held, in the dollars the server
 test("a sent invoice says it went through the messaging sink, and a replay says nothing new went", () => {
   assert.equal(sendInvoiceWords({ sent: 1, replayed: 0, tone: "" }), "The invoice went to the account's contact through the messaging sink.");
   assert.equal(sendInvoiceWords({ sent: 0, replayed: 1, tone: "" }), "That invoice was already sent on this key, so nothing new went.");
-  assert.match(sendInvoiceWords({ sent: 1, replayed: 0, tone: "", skipped: { "INV-1": "recorded, but delivery failed: x" } }), /was recorded, but did not go: nothing left the building/);
+  // A delivery that did not go is named by the server's own reason, and never as a recorded send:
+  // there is no queue behind the desk, so nothing was recorded either (FW1-06b round 2, S6's P2-2).
+  const failed = sendInvoiceWords({ sent: 0, replayed: 0, tone: "", skipped: { "INV-1": "delivery failed, nothing went out; send it again from the desk: transport unreachable" } });
+  assert.match(failed, /The invoice did not go: delivery failed, nothing went out/);
+  assert.match(failed, /send it again from the desk/);
+  assert.ok(!/recorded/.test(failed), failed);
+  const unwired = sendInvoiceWords({ sent: 0, replayed: 0, tone: "", skipped: { "INV-1": "no email transport is wired on this deployment, nothing was sent" } });
+  assert.match(unwired, /The invoice did not go: no email transport is wired on this deployment/);
 });
 
 // ---- settings and the extra hold reads -------------------------------------------------------------------------------

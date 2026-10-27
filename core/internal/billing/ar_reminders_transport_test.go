@@ -75,7 +75,6 @@ func TestSendReminder_AFailedDeliveryRecordsNothingAndIsNotCountedAsSent(t *test
 	}
 }
 
-
 // S6's P2-1: the invoice Send button sits beside Remind and answered "1 sent" on the same unwired
 // deployment, and when the transport refused. The same rule as the Remind run holds here.
 func TestSendInvoice_NeverSaysSentWhenNoTransportIsWired(t *testing.T) {
@@ -138,5 +137,77 @@ func TestSendInvoice_AnAcceptedDeliveryCountsAsSent(t *testing.T) {
 	}
 	if len(store.sends) != 1 {
 		t.Fatalf("an accepted send records %d rows, want the one", len(store.sends))
+	}
+}
+
+// countingSender counts what it was asked to deliver, so a leg can see a second message.
+type countingSender struct{ n int }
+
+func (c *countingSender) SendInvoiceMessage(context.Context, string, string, string) error {
+	c.n++
+	return nil
+}
+
+// The same key twice must deliver ONE message. The desk retries the same key when an answer was
+// lost, and a customer who receives the same email twice is a relationship cost this system's whole
+// collections cadence exists to avoid (the register's own note on the delivery log).
+func TestSendInvoice_AReplayOfTheSameKeyNeverDeliversASecondMessage(t *testing.T) {
+	store := &fakeRegisterStore{
+		policy: RegisterPolicy{AccountPositionVisibility: VisibilityManagerUp, DueSoonDays: 7,
+			ReminderTones: []string{ToneFriendly}},
+		header: InvoiceHeaderFacts{ID: "i1", InvoiceNo: "INV-1", CustomerID: "c1", BalanceCents: 5000},
+	}
+	sender := &countingSender{}
+	svc := newFakeService(t, store, time.Now()).WithSender(sender)
+	first, err := svc.SendInvoice(context.Background(), "i1", "send-key")
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if first.Sent != 1 {
+		t.Fatalf("the first send says %d sent, want 1", first.Sent)
+	}
+	second, err := svc.SendInvoice(context.Background(), "i1", "send-key")
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if second.Replayed != 1 || second.Sent != 0 {
+		t.Fatalf("a replay says sent=%d replayed=%d, want sent 0 and replayed 1", second.Sent, second.Replayed)
+	}
+	if sender.n != 1 {
+		t.Fatalf("a replay delivered %d messages, want 1: the customer is chased twice for one action", sender.n)
+	}
+	if len(store.sends) != 1 {
+		t.Fatalf("a replay records %d delivery rows, want the one", len(store.sends))
+	}
+}
+
+func TestSendReminder_AReplayOfTheSameKeyNeverDeliversASecondMessage(t *testing.T) {
+	store := &fakeRegisterStore{
+		policy: RegisterPolicy{AccountPositionVisibility: VisibilityManagerUp, DueSoonDays: 7,
+			ReminderTones: []string{ToneFriendly}},
+		header: InvoiceHeaderFacts{ID: "i1", InvoiceNo: "INV-1", CustomerID: "c1", BalanceCents: 5000},
+	}
+	sender := &countingSender{}
+	svc := newFakeService(t, store, time.Now()).WithSender(sender)
+	in := ReminderInput{InvoiceIDs: []string{"i1"}, Tone: ToneFriendly, IdempotencyKey: "k"}
+	first, err := svc.SendReminder(context.Background(), in)
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if first.Sent != 1 {
+		t.Fatalf("the first run says %d sent, want 1", first.Sent)
+	}
+	second, err := svc.SendReminder(context.Background(), in)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if second.Replayed != 1 || second.Sent != 0 {
+		t.Fatalf("a replay says sent=%d replayed=%d, want sent 0 and replayed 1", second.Sent, second.Replayed)
+	}
+	if sender.n != 1 {
+		t.Fatalf("a replay delivered %d messages, want 1: the customer is chased twice for one action", sender.n)
+	}
+	if len(store.sends) != 1 {
+		t.Fatalf("a replay records %d delivery rows, want the one", len(store.sends))
 	}
 }

@@ -324,6 +324,14 @@ test("a mis-keyed receipt is voided as never taken, with nothing held (FW1-06b)"
   refused(await call("POST", `/api/v1/ar/payments/${paid.json.payment_id}/nsf`, { reason: "Returned" }), 409, "till: only a received or deposited payment can be marked bounced");
 });
 
+test("a card charge the processor captured is refused a void, in the core's words (FW1-06b round 2)", async () => {
+  await reset();
+  // The processor has the money, so the undo is a refund through the processor, not a void as never
+  // received: the void would owe the customer again while the settlement lands (S6's P2-3).
+  refused(await call("POST", "/api/v1/ar/payments/c0000000-0000-4000-8000-000000000002/void", { reason: "Keyed in error" }), 400, "the processor captured this card charge");
+  assert.ok(coreSource.includes("the processor captured this card charge"), "the core refuses a captured charge in these words");
+});
+
 test("a reversed payment's held money is read, applied to an invoice, replayed once and refused in the core's words", async () => {
   await reset();
   const inv = await invoiceOf("INV-1002");

@@ -274,6 +274,25 @@ function reset(kind = "full") {
   };
   world.payments.push(bounced);
 
+  // A card charge the processor captured (the portal's own payment, FW1-06b round 2, S6's P2-3): the
+  // money is at the processor, so its undo is a refund through the processor and a void as never
+  // received would owe the customer again while the settlement lands. It sits on no desk account and
+  // carries no allocation, so no desk list reads it: only the void route finds it, by its id.
+  const captured = {
+    id: uuid("c", 2),
+    no: "PAY-0002",
+    acct: 9,
+    method: "CARD",
+    gateway_ref: "pi_capture_0002",
+    amount_cents: 120_000,
+    status: "RECEIVED",
+    reason: "",
+    received_at: NOW_ISO(),
+    bounced_at: "",
+    allocations: [],
+  };
+  world.payments.push(captured);
+
   // Walk change 8 S5: seed a couple of cross-account promises so the Promises tab has live rows.
   world.promises.push({
     id: uuid("p", 1),

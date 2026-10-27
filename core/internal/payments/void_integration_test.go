@@ -115,6 +115,78 @@ func TestIntegration_PaymentVoid_UndoesTheReceiptWithNo2310Hold(t *testing.T) {
 	}
 }
 
+// A receipt that also settled an NSF fee: the void gives the fee back too. A void that moved 1100
+// by the receipt's whole amount while the fee stayed paid in the subledger would leave the fee
+// charged on a receipt that never happened (S6's P2-4, the sequencing with PR 622).
+func TestIntegration_PaymentVoid_UndoesTheNSFFeeItSettled(t *testing.T) {
+	w := newReversalGLWorld(t)
+	ctx := context.Background()
+	orig := w.registerReceipt("CHEQUE", 10_000)
+	inv := w.invoiceOf(orig)
+	w.drain()
+
+	// The fee the receipt settled, and the subledger row the settle wrote for it: the fee is part of
+	// the receipt's money, taken off the customer when the receipt paid it (PR 622's own row: an
+	// ADJUSTMENT against the fee, negative, because it reduces what the customer owes).
+	var nsfID string
+	if err := w.r.obs.QueryRow(ctx,
+		`INSERT INTO payment_nsf (payment_id, customer_id, reason, fee_cents, fee_taxable)
+		 VALUES ($1::uuid, $2::uuid, 'cheque returned NSF', 4500, false) RETURNING id::text`,
+		orig, w.r.custID).Scan(&nsfID); err != nil {
+		t.Fatalf("insert the nsf fee: %v", err)
+	}
+	if _, err := w.r.obs.Exec(ctx,
+		`UPDATE payments
+		    SET metadata = metadata || jsonb_build_object('nsf_fee_allocations', jsonb_build_object($2::text, 4500::bigint))
+		  WHERE id = $1::uuid`, orig, nsfID); err != nil {
+		t.Fatalf("stamp the fee allocation: %v", err)
+	}
+	if _, err := w.r.obs.Exec(ctx,
+		`INSERT INTO customer_transactions
+		   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+		 SELECT p.customer_id, 'ADJUSTMENT', -4500, 0, 'payment_nsf', n.id, p.branch_id, 'NSF fee payment'
+		   FROM payment_nsf n JOIN payments p ON p.id = n.payment_id WHERE n.id = $1::uuid`, nsfID); err != nil {
+		t.Fatalf("the settle's fee row: %v", err)
+	}
+
+	repo := payments.NewRepository(w.r.pool)
+	if _, err := repo.VoidPayment(ctx, payments.VoidInput{
+		PaymentID: orig, Reason: "keyed against the wrong figures", ActorID: w.r.userID, IsManager: true,
+	}, time.Now(), houseday.DefaultZone()); err != nil {
+		t.Fatalf("void: %v", err)
+	}
+
+	// The fee is open again: its own subledger group nets to zero over the settle and the void.
+	var feeNet int64
+	if err := w.r.obs.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
+		  WHERE customer_id = $1::uuid AND source_type = 'payment_nsf' AND source_ref_id = $2::uuid`,
+		w.r.custID, nsfID).Scan(&feeNet); err != nil {
+		t.Fatalf("read the fee's subledger: %v", err)
+	}
+	if feeNet != 0 {
+		t.Fatalf("the fee's subledger rows net %d, want 0 (the void gives the fee back)", feeNet)
+	}
+	// The invoice is open again at its full balance, and the receipt's payment rows net to zero.
+	var bal int64
+	var invStatus string
+	if err := w.r.obs.QueryRow(ctx,
+		`SELECT balance_cents, status FROM invoices WHERE id = $1::uuid`, inv).Scan(&bal, &invStatus); err != nil {
+		t.Fatalf("read the invoice: %v", err)
+	}
+	if bal != 1_000_000 || invStatus != "FINALIZED" {
+		t.Fatalf("the invoice reads %s/%d after the void, want FINALIZED/1000000", invStatus, bal)
+	}
+	// Nothing is held in 2310 for the voided receipt, fee or not.
+	held, err := repo.HeldFor(ctx, orig, nil)
+	if err != nil {
+		t.Fatalf("held read: %v", err)
+	}
+	if held.HeldCents != 0 {
+		t.Fatalf("a voided receipt holds %d cents, want 0: the money never left the building", held.HeldCents)
+	}
+}
+
 func TestIntegration_PaymentVoid_RefusesTheActsItMustNotTouch(t *testing.T) {
 	ctx := context.Background()
 	w := newReversalGLWorld(t)
