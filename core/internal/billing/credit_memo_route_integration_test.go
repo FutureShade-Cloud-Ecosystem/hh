@@ -178,7 +178,11 @@ func TestIntegration_CreditMemoRoute_TheCreditReachesTheSubledgerTheLedgerAndThe
 	w := NewInvoiceWriter(pool).WithCreditMemoPoster(poster)
 	svc := NewCreditMemoService(w, slog.Default()).
 		WithPostingRules(creditMemoFixedRules{accounts: creditMemoRules}).
-		WithThreshold(creditMemoFixedThreshold{cents: 0}) // no rail: the credit posts
+		WithThreshold(creditMemoFixedThreshold{cents: 0}).
+		WithBranchOrg(cmFixedBranchOrgs{trentonBranch: cmNorthOrgID, kingstonBranch: cmNorthOrgID}).
+		WithCustomerHome(cmFixedHomes{cust: trentonBranch}). // no rail: the credit posts
+		WithBranchOrg(cmFixedBranchOrgs{trentonBranch: cmNorthOrgID, kingstonBranch: cmNorthOrgID}).
+		WithCustomerHome(cmFixedHomes{cust: trentonBranch})
 
 	// The AR control account's balance before the credit, so the ledger leg is a movement and not a
 	// reading of whatever was there.
@@ -302,7 +306,9 @@ func TestIntegration_CreditMemoRoute_OverTheThresholdNothingMoves(t *testing.T) 
 		WithPostingRules(creditMemoFixedRules{accounts: creditMemoRules}).
 		// Under a cent: every credit parks.
 		WithThreshold(creditMemoFixedThreshold{cents: 1}).
-		WithParker(spy)
+		WithParker(spy).
+		WithBranchOrg(cmFixedBranchOrgs{trentonBranch: cmNorthOrgID, kingstonBranch: cmNorthOrgID}).
+		WithCustomerHome(cmFixedHomes{cust: trentonBranch})
 
 	res, err := svc.Issue(ctx, CreditMemoRouteRequest{
 		CustomerID:  cust,
@@ -373,7 +379,9 @@ func TestIntegration_CreditMemoRoute_TheSameKeyRaisesOneCredit(t *testing.T) {
 	w := NewInvoiceWriter(pool).WithCreditMemoPoster(poster)
 	svc := NewCreditMemoService(w, slog.Default()).
 		WithPostingRules(creditMemoFixedRules{accounts: creditMemoRules}).
-		WithThreshold(creditMemoFixedThreshold{cents: 0})
+		WithThreshold(creditMemoFixedThreshold{cents: 0}).
+		WithBranchOrg(cmFixedBranchOrgs{trentonBranch: cmNorthOrgID, kingstonBranch: cmNorthOrgID}).
+		WithCustomerHome(cmFixedHomes{cust: trentonBranch})
 
 	req := CreditMemoRouteRequest{
 		CustomerID:  cust,
@@ -421,7 +429,9 @@ func TestIntegration_CreditMemoRoute_AReasonIsRequired(t *testing.T) {
 	w := NewInvoiceWriter(pool)
 	svc := NewCreditMemoService(w, slog.Default()).
 		WithPostingRules(creditMemoFixedRules{accounts: creditMemoRules}).
-		WithThreshold(creditMemoFixedThreshold{cents: 0})
+		WithThreshold(creditMemoFixedThreshold{cents: 0}).
+		WithBranchOrg(cmFixedBranchOrgs{trentonBranch: cmNorthOrgID, kingstonBranch: cmNorthOrgID}).
+		WithCustomerHome(cmFixedHomes{cust: trentonBranch})
 
 	_, err := svc.Issue(ctx, CreditMemoRouteRequest{
 		CustomerID:  cust,
@@ -461,7 +471,9 @@ func TestIntegration_CreditMemoRoute_AnAccountThePostingRulesDoNotAllowIsRefused
 	w := NewInvoiceWriter(pool)
 	svc := NewCreditMemoService(w, slog.Default()).
 		WithPostingRules(creditMemoFixedRules{accounts: creditMemoRules}).
-		WithThreshold(creditMemoFixedThreshold{cents: 0})
+		WithThreshold(creditMemoFixedThreshold{cents: 0}).
+		WithBranchOrg(cmFixedBranchOrgs{trentonBranch: cmNorthOrgID, kingstonBranch: cmNorthOrgID}).
+		WithCustomerHome(cmFixedHomes{cust: trentonBranch})
 
 	_, err := svc.Issue(ctx, CreditMemoRouteRequest{
 		CustomerID:  cust,

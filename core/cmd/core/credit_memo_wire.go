@@ -21,6 +21,8 @@ import (
 	"log/slog"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -137,6 +139,10 @@ func newCreditMemoHandler(pool *pgxpool.Pool, w *billing.InvoiceWriter, glSvc *g
 		WithThreshold(creditMemoThresholdAdapter{rules: rules}).
 		WithParker(creditMemoParkerAdapter{
 			pool: pool, w: w, gl: glSvc, rules: rules, approvals: approvals,
-		})
+		}).
+		// The fence's org reads are the owning modules' own: the branches module answers whether a
+		// branch is the caller org's, and the customer module answers the account's home branch.
+		WithBranchOrg(branches.NewRepository(pool)).
+		WithCustomerHome(customer.NewRepository(pool))
 	return billing.NewCreditMemoRouteHandler(svc)
 }

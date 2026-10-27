@@ -210,6 +210,12 @@ func (s *WeightSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, k
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("tasks: weight sync find applied: %w", err)
 	}
+	// A replay never answers for a row the caller cannot pull (UX-81d): the key's row is out of reach,
+	// so it is not "applied" for this caller, the same answer an absent key gets (the pick scope's
+	// fence, 567 round 2).
+	if reach, err := s.callerReaches(ctx, f, r.task.BranchID); err != nil || !reach {
+		return sync.RowState{}, false, err
+	}
 	rs, err := rowStateOf(r)
 	return rs, true, err
 }

@@ -94,6 +94,20 @@ type CreditMemoPostingRules interface {
 	CreditMemoAccounts(ctx context.Context, branchID string) (map[string]string, error)
 }
 
+// CreditMemoBranchOrg is the branches module's own read: does this branch belong to this org. The
+// fence holds the filing branch and the customer's home branch to the caller's org through it, so no
+// billing SQL names the locations table.
+type CreditMemoBranchOrg interface {
+	BranchInOrg(ctx context.Context, orgID, branchID string) (bool, error)
+}
+
+// CreditMemoCustomerHome is the customer module's own read: the account's home branch, and whether
+// the account exists. The org the account belongs to is its home branch's, through the branches read
+// above; no billing SQL names the customers table.
+type CreditMemoCustomerHome interface {
+	CustomerHomeBranch(ctx context.Context, customerID string) (string, bool, error)
+}
+
 // CreditMemoParkRequest is everything the park needs, already decided by billing.
 type CreditMemoParkRequest struct {
 	// Memo is the writer's own input, so the parked document is written by the same code that
@@ -185,13 +199,15 @@ const ActCreditMemoIssue = "CREDIT_MEMO_ISSUE"
 
 // CreditMemoService issues credit memos for finance.
 type CreditMemoService struct {
-	w         *InvoiceWriter
-	threshold CreditMemoThresholdReader
-	rules     CreditMemoPostingRules
-	parker    CreditMemoParker
-	audit     audit.Recorder
-	log       *slog.Logger
-	now       func() time.Time
+	w            *InvoiceWriter
+	threshold    CreditMemoThresholdReader
+	rules        CreditMemoPostingRules
+	parker       CreditMemoParker
+	branchOrgs   CreditMemoBranchOrg
+	customerHoms CreditMemoCustomerHome
+	audit        audit.Recorder
+	log          *slog.Logger
+	now          func() time.Time
 }
 
 // NewCreditMemoService builds the service over the invoice writer, which owns the pool, the tax
@@ -219,6 +235,19 @@ func (s *CreditMemoService) WithPostingRules(r CreditMemoPostingRules) *CreditMe
 // refused, never issued without its approval.
 func (s *CreditMemoService) WithParker(p CreditMemoParker) *CreditMemoService {
 	s.parker = p
+	return s
+}
+
+// WithBranchOrg binds the branches module's org read. Nil is refused at the door: the fence fails
+// closed, it never guesses an org.
+func (s *CreditMemoService) WithBranchOrg(r CreditMemoBranchOrg) *CreditMemoService {
+	s.branchOrgs = r
+	return s
+}
+
+// WithCustomerHome binds the customer module's home-branch read. Nil is refused at the door.
+func (s *CreditMemoService) WithCustomerHome(r CreditMemoCustomerHome) *CreditMemoService {
+	s.customerHoms = r
 	return s
 }
 
@@ -282,17 +311,22 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 		return CreditMemoRouteResult{}, httpx.BadRequestf("a credit amount is a positive magnitude; the sign is billing's")
 	}
 	// THE FENCE. A credit is filed at a branch the caller reaches, in the org the caller is signed
-	// into; a GLOBAL caller is bounded to its org (UX-81). Fail closed on a caller with no org at all.
+	// into; a GLOBAL caller is bounded to its org (UX-81). Fail closed on a caller with no org at all,
+	// and on a seam that is not wired: the fence never guesses an org.
 	if caller.OrgID == "" {
 		return CreditMemoRouteResult{}, httpx.BadRequestf("the caller's organization is missing, so no credit can be issued")
+	}
+	if s.branchOrgs == nil || s.customerHoms == nil {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("the credit's organization fence is not wired, so no credit can be issued")
 	}
 	if !caller.reaches(branchID) {
 		return CreditMemoRouteResult{}, httpx.BadRequestf("that branch is not yours to credit")
 	}
-	// Against an invoice, the invoice names the facts: a body branch that differs from the invoice's
-	// is refused, and an invoice at a branch the caller does not reach, or of another org, answers
-	// exactly as a missing invoice answers, so a caller cannot read a ledger's shape out of the
-	// refusals. A missing row falls through to the plan, which refuses in the same words.
+	// Against an invoice, the invoice names the facts (billing's own table): a body branch that
+	// differs from the invoice's is refused, and an invoice at a branch the caller does not reach, or
+	// of another org, answers exactly as a missing invoice answers, so a caller cannot read a ledger's
+	// shape out of the refusals. A missing row falls through to the plan, which refuses in the same
+	// words.
 	if invoiceID := strings.TrimSpace(req.InvoiceID); invoiceID != "" {
 		var invBranch, invOrg *string
 		if err := s.w.pool.QueryRow(ctx,
@@ -308,27 +342,31 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 			return CreditMemoRouteResult{}, err
 		}
 	}
-	var branchOrg *string
-	if err := s.w.pool.QueryRow(ctx,
-		`SELECT org_id::text FROM locations WHERE id = $1::uuid`, branchID).Scan(&branchOrg); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return CreditMemoRouteResult{}, httpx.BadRequestf("no such branch to credit at")
-		}
+	// The branch and the customer are held to the caller's org through the owning modules' own reads:
+	// the branches module answers whether the filing branch is the org's, and the customer module
+	// answers the account's home branch, whose org is the account's.
+	inOrg, err := s.branchOrgs.BranchInOrg(ctx, caller.OrgID, branchID)
+	if err != nil {
 		return CreditMemoRouteResult{}, err
 	}
-	if branchOrg == nil || *branchOrg != caller.OrgID {
+	if !inOrg {
 		return CreditMemoRouteResult{}, httpx.BadRequestf("that branch is not in your organization")
 	}
-	var custOrg *string
-	if err := s.w.pool.QueryRow(ctx, `
-		SELECT l.org_id::text FROM customers c JOIN locations l ON l.id = c.home_branch_id
-		 WHERE c.id = $1::uuid`, customerID).Scan(&custOrg); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return CreditMemoRouteResult{}, httpx.BadRequestf("no such customer to credit")
-		}
+	home, found, err := s.customerHoms.CustomerHomeBranch(ctx, customerID)
+	if err != nil {
 		return CreditMemoRouteResult{}, err
 	}
-	if custOrg == nil || *custOrg != caller.OrgID {
+	if !found {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("no such customer to credit")
+	}
+	if home == "" {
+		return CreditMemoRouteResult{}, httpx.BadRequestf("that customer has no home branch, so its organization cannot be checked")
+	}
+	custInOrg, err := s.branchOrgs.BranchInOrg(ctx, caller.OrgID, home)
+	if err != nil {
+		return CreditMemoRouteResult{}, err
+	}
+	if !custInOrg {
 		return CreditMemoRouteResult{}, httpx.BadRequestf("that customer is not in your organization")
 	}
 	if s.rules == nil {

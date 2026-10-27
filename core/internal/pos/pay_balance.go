@@ -539,6 +539,18 @@ func (s *Service) PayBalanceTake(ctx context.Context, in PayBalanceTakeInput) (P
 				return serr
 			}
 		}
+		// The receipt event a Money Desk payment emits, in the take's own
+		// transaction: AllocateToInvoiceTx stays silent by design (the caller
+		// whose tender wrote the payment owns the event), so without this the
+		// subledger clears while GL 1100 keeps holding the receivable. The
+		// consumer resolves every fact through the payment row, so the
+		// payload needs only the payment id and its method.
+		if err := s.store.EmitEvent(ctx, tx, "payment.received", map[string]any{
+			"payment_id": res.PaymentID, "order_id": facts.OrderID,
+			"amount_cents": balance, "method": in.Method, "gateway_ref": res.GatewayRef,
+		}); err != nil {
+			return err
+		}
 		// The hold's own reading, on this transaction, after the money moved:
 		// the answer's release, still owed and held figures are these, never
 		// hard coded.

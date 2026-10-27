@@ -110,11 +110,32 @@ func cmNorthGlobalCaller() CreditMemoCaller {
 	return CreditMemoCaller{OrgID: cmNorthOrgID, Scope: identity.ScopeGlobal, Branches: map[string]bool{}}
 }
 
-func cmRoundRoute(t *testing.T, pool *pgxpool.Pool, threshold int64) *CreditMemoService {
+// cmFixedBranchOrgs answers the branches module's read from a fixed branch to org map.
+type cmFixedBranchOrgs map[string]string
+
+func (m cmFixedBranchOrgs) BranchInOrg(_ context.Context, orgID, branchID string) (bool, error) {
+	return orgID != "" && m[branchID] == orgID, nil
+}
+
+// cmFixedHomes answers the customer module's read from a fixed customer to home branch map.
+type cmFixedHomes map[string]string
+
+func (m cmFixedHomes) CustomerHomeBranch(_ context.Context, customerID string) (string, bool, error) {
+	home, ok := m[customerID]
+	return home, ok, nil
+}
+
+// cmRoundRoute builds the route over the fixed rules and threshold, with the fence's two reads
+// answered from the fixture maps. The leg registers each customer's home in the returned map.
+func cmRoundRoute(t *testing.T, pool *pgxpool.Pool, threshold int64) (*CreditMemoService, cmFixedHomes) {
 	t.Helper()
-	return NewCreditMemoService(NewInvoiceWriter(pool), slog.Default()).
+	homes := cmFixedHomes{}
+	svc := NewCreditMemoService(NewInvoiceWriter(pool), slog.Default()).
 		WithPostingRules(creditMemoFixedRules{accounts: creditMemoRules}).
-		WithThreshold(creditMemoFixedThreshold{cents: threshold})
+		WithThreshold(creditMemoFixedThreshold{cents: threshold}).
+		WithBranchOrg(cmFixedBranchOrgs{trentonBranch: cmNorthOrgID, kingstonBranch: cmNorthOrgID, cmSouthBranchID: cmSouthOrgID}).
+		WithCustomerHome(homes)
+	return svc, homes
 }
 
 // TestIntegration_CreditMemoRound_TheParkPlansUnderTheReversalLock is S3's probe 1 as a leg.
@@ -204,7 +225,8 @@ func TestIntegration_CreditMemoRound_AnInvoiceAtAnotherBranchAnswersNotFound(t *
 		total: 113_000, balance: 113_000, finalized: true, branch: kingstonBranch,
 	})
 	cmStampInvoiceOrg(t, pool, inv)
-	svc := cmRoundRoute(t, pool, 0)
+	svc, homes := cmRoundRoute(t, pool, 0)
+	homes[cust] = trentonBranch
 
 	_, err := svc.Issue(ctx, CreditMemoRouteRequest{
 		CustomerID: cust, BranchID: trentonBranch, InvoiceID: inv,
@@ -235,7 +257,8 @@ func TestIntegration_CreditMemoRound_AnInvoiceAtAnotherOrgAnswersNotFound(t *tes
 		total: 113_000, balance: 113_000, finalized: true, branch: cmSouthBranchID,
 	})
 	cmStampInvoiceOrg(t, pool, inv)
-	svc := cmRoundRoute(t, pool, 0)
+	svc, homes := cmRoundRoute(t, pool, 0)
+	homes[cust] = cmSouthBranchID
 
 	_, err := svc.Issue(ctx, CreditMemoRouteRequest{
 		CustomerID: cust, BranchID: cmSouthBranchID, InvoiceID: inv,
@@ -260,7 +283,8 @@ func TestIntegration_CreditMemoRound_ABranchOutOfReachIsRefused(t *testing.T) {
 	tag := ns(t)
 	plantCreditMemoOrgs(t, pool)
 	cust := seedCustomerAt(t, pool, tag, kingstonBranch)
-	svc := cmRoundRoute(t, pool, 0)
+	svc, homes := cmRoundRoute(t, pool, 0)
+	homes[cust] = kingstonBranch
 
 	_, err := svc.Issue(ctx, CreditMemoRouteRequest{
 		CustomerID: cust, BranchID: kingstonBranch,
@@ -286,7 +310,8 @@ func TestIntegration_CreditMemoRound_ABranchOfAnotherOrgIsRefused(t *testing.T) 
 	tag := ns(t)
 	plantCreditMemoOrgs(t, pool)
 	cust := seedCustomerAt(t, pool, tag, cmSouthBranchID)
-	svc := cmRoundRoute(t, pool, 0)
+	svc, homes := cmRoundRoute(t, pool, 0)
+	homes[cust] = cmSouthBranchID
 
 	_, err := svc.Issue(ctx, CreditMemoRouteRequest{
 		CustomerID: cust, BranchID: cmSouthBranchID,
@@ -318,7 +343,8 @@ func TestIntegration_CreditMemoRound_TheSameKeyOnADifferentBodyConflicts(t *test
 		total: 113_000, balance: 113_000, finalized: true,
 	})
 	cmStampInvoiceOrg(t, pool, inv)
-	svc := cmRoundRoute(t, pool, 0)
+	svc, homes := cmRoundRoute(t, pool, 0)
+	homes[cust] = trentonBranch
 
 	if _, err := svc.Issue(ctx, CreditMemoRouteRequest{
 		CustomerID: cust, BranchID: trentonBranch, InvoiceID: inv,

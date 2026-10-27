@@ -24,6 +24,7 @@ import {
   type BillingReminderSendPage,
   type BillingStatementRunResult,
   type PaymentsHeld,
+  type PaymentsPayout,
   type PaymentsReapplication,
   type PaymentsReversalResult,
   type Result,
@@ -130,6 +131,17 @@ export class OfficeApi {
       reason: input.reason,
       idempotency_key: input.key,
       allocations: [{ invoice_id: input.invoiceId, amount_cents: input.amountCents }],
+    });
+  }
+
+  /** Takes held money out of 2310 by the act that moves it: cash from the drawer, a cheque or transfer, or a write off. */
+  payOutHeld(paymentId: string, input: { kind: "DRAWER" | "BANK" | "WRITE_OFF"; amountCents: number; reason: string; reference: string; key: string }): Promise<Result<PaymentsPayout>> {
+    return staffPayments.paymentsPayOutHeld(this.#client, paymentId, {
+      kind: input.kind,
+      amount_cents: input.amountCents,
+      reason: input.reason,
+      reference: input.reference,
+      idempotency_key: input.key,
     });
   }
 
