@@ -889,7 +889,7 @@ func (r *Repository) maxSeededYearTx(ctx context.Context, tx pgx.Tx) (int, error
 // EnsureNextFiscalYear creates the fiscal year AFTER the latest that exists, idempotently, and answers
 // the year it made sure of. Called at worker start on every box (the year exists ahead of need) and by
 // the posting path's own boundary leg, so a box that never opens the Controller action still rolls forward.
-func (r *Repository) EnsureNextFiscalYear(ctx context.Context) (int, error) {
+func (r *Repository) EnsureNextFiscalYear(ctx context.Context, now time.Time) (int, error) {
 	if r.pool == nil {
 		return 0, errNoDB
 	}
@@ -911,6 +911,20 @@ func (r *Repository) EnsureNextFiscalYear(ctx context.Context) (int, error) {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("gl: commit ensure next fiscal year: %w", err)
+	}
+	return next, nil
+}
+
+// OpenNextFiscalYear is the Controller's early open (round 2 carries the audit into this transaction).
+func (r *Repository) OpenNextFiscalYear(ctx context.Context, now time.Time, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
+	next, err := r.EnsureNextFiscalYear(ctx, now)
+	if err != nil {
+		return 0, err
+	}
+	if record != nil {
+		if err := record(ctx, nil, next); err != nil {
+			return 0, err
+		}
 	}
 	return next, nil
 }

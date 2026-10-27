@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/jackc/pgx/v5"
 )
 
 // actGLPeriodReopen is the sensitive-access action stamped on a Controller reopen (the recorded compensating
@@ -106,10 +107,10 @@ type YearOpenResult struct {
 	FiscalYear int `json:"fiscal_year"`
 }
 
-// EnsureNextFiscalYear idempotently creates the fiscal year after the latest that exists. The worker calls
-// it at start on every box, so the next year exists ahead of need without anyone acting.
+// EnsureNextFiscalYear idempotently makes sure the year after the current house year exists. The worker
+// calls it at start on every box, so the next year exists ahead of need without anyone acting.
 func (s *Service) EnsureNextFiscalYear(ctx context.Context) (YearOpenResult, error) {
-	year, err := s.store.EnsureNextFiscalYear(ctx)
+	year, err := s.store.EnsureNextFiscalYear(ctx, s.now())
 	if err != nil {
 		return YearOpenResult{}, err
 	}
@@ -130,22 +131,25 @@ func (s *Service) OpenNextFiscalYear(ctx context.Context, reason string) (YearOp
 	if strings.TrimSpace(reason) == "" {
 		return YearOpenResult{}, errReasonRequired
 	}
-	res, err := s.EnsureNextFiscalYear(ctx)
+	// Round 2 (S2 P2-4): the audit row is recorded INSIDE the year's transaction, so it commits or
+	// rolls back with the year it opens; a failed audit leaves no year behind. Unwired, nothing is
+	// recorded (the guards above still hold).
+	year, err := s.store.OpenNextFiscalYear(ctx, s.now(), func(ctx context.Context, tx pgx.Tx, year int) error {
+		if s.auditTx == nil {
+			return nil
+		}
+		return s.auditTx.RecordTx(ctx, tx, audit.SensitiveAccess{
+			Action:     actGLFiscalYearOpen,
+			EntityType: "gl.period",
+			EntityID:   fmt.Sprintf("fiscal_year:%d", year),
+			ActorID:    caller.UserID,
+			Reason:     reason,
+		})
+	})
 	if err != nil {
 		return YearOpenResult{}, err
 	}
-	if s.audit != nil {
-		if aerr := s.audit.Record(ctx, audit.SensitiveAccess{
-			Action:     actGLFiscalYearOpen,
-			EntityType: "gl.period",
-			EntityID:   fmt.Sprintf("fiscal_year:%d", res.FiscalYear),
-			ActorID:    caller.UserID,
-			Reason:     reason,
-		}); aerr != nil {
-			return YearOpenResult{}, fmt.Errorf("gl: audit open fiscal year: %w", aerr)
-		}
-	}
-	return res, nil
+	return YearOpenResult{FiscalYear: year}, nil
 }
 
 // ClosePeriod seals a fiscal period (OPEN → CLOSED) and logs the override. A reason is optional on close (it
