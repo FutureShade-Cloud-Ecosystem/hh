@@ -345,16 +345,30 @@ func (r *Repository) GetReconRun(ctx context.Context, year, month int, branchID 
 	return rr, true, nil
 }
 
-// InsertReconRun inserts the period run; on a unique-index collision (a concurrent run-once winner) it returns
-// the existing row instead, the lazy run-once convergence.
+// InsertReconRun upserts the period run (FW1-11: a period re-runs, the latest run stands); two
+// concurrent runs converge on the same row.
 func (r *Repository) InsertReconRun(ctx context.Context, in ReconRun) (ReconRun, error) {
 	if r.pool == nil {
 		return ReconRun{}, errNoDB
 	}
-	rr, err := scanRecon(r.pool.QueryRow(ctx, `INSERT INTO inventory_recon_runs
+	// FW1-11: a period re-runs. The row is UPSERTED, so a correction in the month is never hidden
+	// behind the first run's frozen figures: the latest run stands, one row per period and branch.
+	// The table's unique rules are two PARTIAL indexes (a NULL branch row and one row per named
+	// branch), so the conflict target carries the index's own predicate, one arm per shape.
+	const upsert = `INSERT INTO inventory_recon_runs
 		(branch_id, fiscal_year, month, subledger_cents, gl_1200_cents, delta_cents, status, run_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING `+reconCols,
+		ON CONFLICT %s DO UPDATE
+		SET subledger_cents = EXCLUDED.subledger_cents, gl_1200_cents = EXCLUDED.gl_1200_cents,
+		    delta_cents = EXCLUDED.delta_cents, status = EXCLUDED.status, run_by = EXCLUDED.run_by,
+		    created_at = now()
+		RETURNING ` + reconCols
+	conflictTarget := `(fiscal_year, month, branch_id) WHERE branch_id IS NOT NULL`
+	if in.BranchID == "" {
+		conflictTarget = `(fiscal_year, month) WHERE branch_id IS NULL`
+	}
+	rr, err := scanRecon(r.pool.QueryRow(ctx,
+		fmt.Sprintf(upsert, conflictTarget),
 		nullStr(in.BranchID), in.FiscalYear, in.Month, in.SubledgerCents, in.GL1200Cents, in.DeltaCents, in.Status, nullStr(in.RunBy)))
 	if err != nil {
 		if isUniqueViolation(err) {

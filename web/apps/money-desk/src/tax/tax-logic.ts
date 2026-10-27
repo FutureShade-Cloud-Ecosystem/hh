@@ -144,12 +144,12 @@ export interface VarianceView {
  * collected. Zero is tied out. The direction is said in words so the number is never read alone.
  */
 export function varianceWords(varianceCents: number): VarianceView {
-  if (varianceCents === 0) return { word: "Tied out", tone: "good", detail: "The ledger holds the tax the sales collected." };
+  if (varianceCents === 0) return { word: "Tied out", tone: "good", detail: "The ledger's month movement equals the month's documents: sales tax collected less the tax on vendor bills." };
   const size = formatMoney(Math.abs(varianceCents));
   return {
     word: `Off by ${size}`,
     tone: "stop",
-    detail: varianceCents > 0 ? "The ledger holds more tax than the sales collected." : "The ledger holds less tax than the sales collected.",
+    detail: varianceCents > 0 ? "The ledger's month movement holds more tax than the month's documents booked: sales tax collected less the tax on vendor bills." : "The ledger's month movement holds less tax than the month's documents booked: sales tax collected less the tax on vendor bills.",
   };
 }
 
