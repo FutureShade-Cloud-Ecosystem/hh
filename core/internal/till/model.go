@@ -257,6 +257,13 @@ type RefundInput struct {
 	GatewayRef     string // CARD only, the reversal's processor ref
 	Reference      string // return_no, lands on the movement (audit trail on the drawer)
 	IdempotencyKey string // replay-safe (distinct from the original sale's key)
+
+	// At is the CALLER's own instant for the return (the pos module reads its clock once for the
+	// whole return). One clock rules the transaction (FW1-13b): the REFUNDED payments row and the
+	// drawer movement that follows it both date from it, so the drawer's date read and the return's
+	// own date read never name two different days. Zero means the caller named none, and the till's
+	// own clock rules the transaction instead.
+	At time.Time
 }
 
 // RefundResult carries the persisted REFUNDED payments-row id.
@@ -425,11 +432,18 @@ type PaymentRow struct {
 	IdempotencyKey  string
 	OfflineCaptured bool
 	SignatureRef    string
+
+	// CreatedAt is the instant the row is dated with. The POS return's rail carries the CALLER's own
+	// instant here, so the row and the drawer movement beside it carry one instant (one clock rules
+	// the transaction, FW1-13b). Zero means the caller named none, and the column default stands.
+	CreatedAt time.Time
 }
 
 // MovementRow is one till_movements insert (paid-in/out/drop/lodgement). A lodgement carries the
 // deposit slip's named payment ids; the repository writes the slip's link rows and the DEPOSITED
-// marks in the movement's own transaction.
+// marks in the movement's own transaction. CreatedAt is the service clock's instant, which rules
+// the whole transaction (FW1-13b): the movement row, the slip's link rows and the journal the
+// outbox carries all date from it, never from the created_at column default.
 type MovementRow struct {
 	TillSessionID string
 	MovementType  string
@@ -438,6 +452,7 @@ type MovementRow struct {
 	Reason        string
 	Reference     string
 	CreatedBy     string
+	CreatedAt     time.Time
 	PaymentIDs    []string
 }
 
@@ -521,6 +536,9 @@ type nsfReverseInput struct {
 	FeeTaxable     bool
 	FeeAccountCode string
 	AutoHold       bool
+	// At is the service clock's instant, which rules the bounce's transaction (FW1-13b): the
+	// payment_nsf row and the journal the payment.bounced payload carries date from it.
+	At time.Time
 }
 
 // nsfReverseResult is what the atomic NSF tx reports back.
