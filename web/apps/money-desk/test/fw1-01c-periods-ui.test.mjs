@@ -41,6 +41,9 @@ function model(over = {}) {
     chart: { phase: "ready", value: [], error: "" },
     recurring: { phase: "ready", value: [], error: "" },
     periods: { phase: "ready", value: PERIODS, error: "" },
+    // The core read's answer: the year the Controller's open can still make sure of, 0 when none
+    // can. The screen offers exactly this year and computes no year of its own (S2 P2-1, RULED).
+    nextOpenableYear: 2028,
     latePosted: { phase: "ready", value: [], error: "" },
     policy: { phase: "idle", value: null, error: "" },
     tie: { phase: "idle", value: [], error: "" },
@@ -77,10 +80,17 @@ function markup(node) {
   return String(node);
 }
 
-test("the Controller's Periods tab carries the control that opens the next fiscal year", () => {
+test("the Controller's Periods tab offers exactly the year the core's read answers", () => {
   const view = markup(books.periodsView(frame()));
   assert.ok(view.includes('data-action="gl-open-year"'), "the open year control is not on the Periods tab");
-  assert.ok(view.includes("Open fiscal year 2027"), "the control does not say what it opens");
+  assert.ok(view.includes("Open fiscal year 2028"), "the control does not name the year the core's read answers");
+  assert.ok(!view.includes("Open fiscal year 2027"), "the control still computes a year of its own (latest + 1)");
+});
+
+test("when the core's read answers none, the open year control is not drawn", () => {
+  const view = markup(books.periodsView(frame({ books: model({ nextOpenableYear: 0 }) })));
+  assert.ok(!view.includes('data-action="gl-open-year"'), "the control is drawn with no year left to open");
+  assert.ok(!view.includes("Open the next fiscal year"), "the control speaks of a next year without naming it");
 });
 
 test("the Controller's Periods tab carries the late posted list, each journal with its document date, the month it landed in and a way to the journal", () => {

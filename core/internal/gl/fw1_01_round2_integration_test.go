@@ -13,6 +13,7 @@ package gl
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -362,5 +363,36 @@ func TestIntegration_FW1_01R2_OpenYearAuditInTheYearsTransaction(t *testing.T) {
 	}
 	if good.recorded[0].EntityID != "fiscal_year:2028" {
 		t.Fatalf("the audit names %q, want fiscal_year:2028 (the open's target, one beyond the roll forward's)", good.recorded[0].EntityID)
+	}
+}
+
+// TestIntegration_FW1_01R2_OpenAtTheCapIsRefusedInWords is the S2 round's
+// P2-1 red (RULED, FROM-PRINCIPAL 182): with the cap year (the house year + 2)
+// already open, a further open is refused in words, never answered with a
+// silent 200 no op. The screen offers the open only while the core's own read
+// answers a year, so a stale press must read a refusal naming the year, not a
+// success that would make the notice name another year than the button did.
+func TestIntegration_FW1_01R2_OpenAtTheCapIsRefusedInWords(t *testing.T) {
+	pool := intPool(t)
+	user := aUser(t, pool)
+	fw1EnsureHouseYear(t, pool, 2026)
+	fw1ScrubYear(t, pool, 2027, 2028, 2029)
+	t.Cleanup(func() { fw1ScrubYear(t, pool, 2027, 2028, 2029) })
+	clockAt := time.Date(2026, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location())
+	worker := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, clockAt)
+	controller := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, clockAt)
+
+	if _, err := worker.EnsureNextFiscalYear(context.Background()); err != nil {
+		t.Fatalf("the boot roll forward: %v", err)
+	}
+	if _, err := controller.OpenNextFiscalYear(context.Background(), "FW1-01 round 3 early open"); err != nil {
+		t.Fatalf("the controller open: %v", err)
+	}
+	_, err := controller.OpenNextFiscalYear(context.Background(), "FW1-01 round 3 repeat at the cap")
+	if err == nil {
+		t.Fatal("the open at the cap answered 200; the ruling refuses it in words (fiscal year 2028 is already open)")
+	}
+	if !strings.Contains(err.Error(), "already open") {
+		t.Fatalf("the refusal reads %q, want words naming the year that is already open", err)
 	}
 }

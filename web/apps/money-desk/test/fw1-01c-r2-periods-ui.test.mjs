@@ -41,6 +41,9 @@ function booksModel(over = {}) {
     chart: { phase: "ready", value: [], error: "" },
     recurring: { phase: "ready", value: [], error: "" },
     periods: { phase: "ready", value: PERIODS, error: "" },
+    // The core read's answer: the year the Controller's open can still make sure of, 0 when none
+    // can. The control and its review name this year and compute no year of their own (S2 P2-1).
+    nextOpenableYear: 2028,
     latePosted: { phase: "ready", value: [], error: "" },
     policy: { phase: "idle", value: null, error: "" },
     tie: { phase: "idle", value: [], error: "" },
@@ -84,17 +87,24 @@ function glModel(over = {}) {
   };
 }
 
-test("the open year control names the fiscal year it opens", () => {
+test("the open year control names the fiscal year the core's read answers", () => {
   const view = markup(books.periodsView(frame()));
-  assert.ok(view.includes("Open fiscal year 2027"), "the control does not name the year it opens");
+  assert.ok(view.includes("Open fiscal year 2028"), "the control does not name the year the core's read answers");
+  assert.ok(!view.includes("Open fiscal year 2027"), "the control still computes the year as latest + 1");
   assert.ok(!view.includes("Open the next fiscal year"), "the control still speaks of a next year without naming it");
+});
+
+test("when the core's read answers none, neither the control nor its review is drawn", () => {
+  const view = markup(books.periodsView(frame({ books: booksModel({ nextOpenableYear: 0, confirm: { kind: "open-year" } }) })));
+  assert.ok(!view.includes('data-action="gl-open-year"'), "the control is drawn with no year left to open");
+  assert.ok(!view.includes("Open fiscal year"), "a review for the open is drawn with no year left to open");
 });
 
 test("the open year review names the fiscal year, on its heading, its bullets and its press", () => {
   const view = markup(books.periodsView(frame({ books: booksModel({ confirm: { kind: "open-year" } }) })));
-  assert.ok(view.includes("Open fiscal year 2027?"), "the review heading does not name the year");
-  assert.ok(view.includes("twelve monthly periods of fiscal year 2027"), "the review does not say what opens");
-  assert.ok(view.includes("Open fiscal year 2027</button>"), "the review's own press does not name the year");
+  assert.ok(view.includes("Open fiscal year 2028?"), "the review heading does not name the year");
+  assert.ok(view.includes("twelve monthly periods of fiscal year 2028"), "the review does not say what opens");
+  assert.ok(view.includes("Open fiscal year 2028</button>"), "the review's own press does not name the year");
 });
 
 test("the line under the tab's heading names the new controls", () => {
