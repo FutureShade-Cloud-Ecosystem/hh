@@ -12,6 +12,7 @@ package pos
 import (
 	"context"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -60,6 +61,10 @@ func (FlatHSTAssessor) AssessSale(_ context.Context, in TaxQuoteInput) (QuoteRes
 // nothing; INV-CORE swaps in the real impl via Service.WithStock (a main.go adapter over *inventory.Service).
 type StockDecrementer interface {
 	DecrementForSaleTx(ctx context.Context, tx pgx.Tx, in StockDecrementInput) error
+	// DecrementForSaleValuesTx is the decrement answering each line's own move
+	// value (round 2, S3's P1): the ring's order.fulfilled event carries those
+	// values, so the COGS journal posts the value that moved.
+	DecrementForSaleValuesTx(ctx context.Context, tx pgx.Tx, in StockDecrementInput) ([]inventory.ShipLineValue, error)
 }
 
 // StockDecrementInput is the decrement request for one fulfilled sale (COLLECT_NOW only at W6).
@@ -81,3 +86,8 @@ type NoopStock struct{}
 
 // DecrementForSaleTx does nothing (identical to gl.NoopCostBasis's dormancy on the inventory side). FROZEN.
 func (NoopStock) DecrementForSaleTx(context.Context, pgx.Tx, StockDecrementInput) error { return nil }
+
+// DecrementForSaleValuesTx answers no values (nothing moved).
+func (NoopStock) DecrementForSaleValuesTx(context.Context, pgx.Tx, StockDecrementInput) ([]inventory.ShipLineValue, error) {
+	return nil, nil
+}

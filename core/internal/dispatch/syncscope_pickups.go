@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -64,11 +65,20 @@ type TenantOrderReader interface {
 
 // PickupsSyncStore is the pickups Store over will_call_pickups.
 type PickupsSyncStore struct {
-	pool     *pgxpool.Pool
-	orders   TenantOrderReader
-	sig      SignatureCapturer
-	pickHold PickHoldGate
-	link     pickupsLinker
+	pool           *pgxpool.Pool
+	orders         TenantOrderReader
+	sig            SignatureCapturer
+	pickHold       PickHoldGate
+	link           pickupsLinker
+	orderFulfiller OrderFulfiller
+}
+
+// WithOrderFulfiller binds the order fulfilment hook so an offline pickup
+// confirmation advances the order, relieves stock, and posts COGS identically
+// to the online ConfirmByToken path.
+func (s *PickupsSyncStore) WithOrderFulfiller(f OrderFulfiller) *PickupsSyncStore {
+	s.orderFulfiller = f
+	return s
 }
 
 // NewPickupsSyncStore wires the adapter: the tenant order seam, the
@@ -459,8 +469,25 @@ func (s *PickupsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, ke
 		`INSERT INTO will_call_pickup_events (pickup_id, event) VALUES ($1, 'CONFIRM')`, id); err != nil {
 		return sync.RowState{}, fmt.Errorf("dispatch: pickups confirm event: %w", err)
 	}
+	// Round 2 (S3's P2): the order's fulfilment rides THIS transaction. The goods left the yard
+	// in the customer's hands, so the order's status, its holds and its stock relief commit with
+	// the collection, or not at all. A fulfilment after the commit, with its error discarded,
+	// could leave a delivered order with no stock relief and no COGS and nothing to retry.
+	if s.orderFulfiller != nil && r.pickup.OrderID != "" {
+		if err := s.orderFulfiller.MarkFulfilledTx(ctx, tx, r.pickup.OrderID, "willcall:"+id); err != nil {
+			return sync.RowState{}, fmt.Errorf("dispatch: the pickup's order fulfilment: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return sync.RowState{}, fmt.Errorf("dispatch: commit pickups write: %w", err)
+	}
+	// The delivery record and the deposit release ride BESIDE the status move, never inside it
+	// (the order module's own posture): this call is the healing path, and its failures are
+	// logged loudly rather than swallowed.
+	if s.orderFulfiller != nil && r.pickup.OrderID != "" {
+		if err := s.orderFulfiller.MarkFulfilled(ctx, r.pickup.OrderID, "willcall:"+id); err != nil {
+			slog.Default().Warn("dispatch: pickup order advance declined", "order_id", r.pickup.OrderID, "pickup_id", id, "err", err)
+		}
 	}
 	return pickupRowStateOf(r)
 }

@@ -701,14 +701,28 @@ func (s *Service) buildPaymentPaidOut(ctx context.Context, payload []byte) (jour
 type orderFulfilledPayload struct {
 	OrderID  string `json:"order_id"`
 	BranchID string `json:"branch_id"`
+	GroupID  string `json:"group_id"`
 	Lines    []struct {
-		ProductID string  `json:"product_id"`
-		QtyBase   float64 `json:"qty_base"`
+		ProductID  string  `json:"product_id"`
+		QtyBase    float64 `json:"qty_base"`
+		ValueCents *int64  `json:"value_cents"`
 	} `json:"lines"`
 	// OccurredAt is the order's own date (the sale that fulfilled it), carried by
 	// the POS that rung it (FW1-01b). Zero means the emitter carried none, and the
 	// journal falls back to the clock.
 	OccurredAt time.Time `json:"occurred_at"`
+}
+
+func (s *Service) resolveLineCost(ctx context.Context, productID, branchID string, qtyBase float64) (int64, bool, error) {
+	if s.costBasis == nil {
+		return 0, false, nil
+	}
+	if branchID != "" {
+		if bcb, ok := s.costBasis.(BranchCostBasis); ok {
+			return bcb.BranchUnitCostCents(ctx, productID, branchID, qtyBase)
+		}
+	}
+	return s.costBasis.UnitCostCents(ctx, productID, qtyBase)
 }
 
 func (s *Service) buildOrderFulfilled(ctx context.Context, payload []byte) (journalDraft, bool, error) {
@@ -732,9 +746,17 @@ func (s *Service) buildOrderFulfilled(ctx context.Context, payload []byte) (jour
 	}
 	var total int64
 	for _, ln := range p.Lines {
-		cost, found, err := s.costBasis.UnitCostCents(ctx, ln.ProductID, ln.QtyBase)
-		if err != nil {
-			return journalDraft{}, false, err
+		// Round 2 (S3's P1): the event's own move value is the journal's figure;
+		// the average only answers an old row with no value.
+		cost, found := int64(0), false
+		if ln.ValueCents != nil {
+			cost, found = *ln.ValueCents, true
+		} else {
+			var rerr error
+			cost, found, rerr = s.resolveLineCost(ctx, ln.ProductID, p.BranchID, ln.QtyBase)
+			if rerr != nil {
+				return journalDraft{}, false, rerr
+			}
 		}
 		if found {
 			total += cost
@@ -761,10 +783,20 @@ func (s *Service) buildOrderFulfilled(ctx context.Context, payload []byte) (jour
 	if err != nil {
 		return journalDraft{}, false, err
 	}
+	// Round 2c (S3's P1-3): the group's relief emits the group's id on the payload, so the
+	// journal's idempotency key is the GROUP's own. Keyed by the order alone, a second group
+	// of the same order lands on the first group's key and its COGS is dropped as a
+	// duplicate: the second truck's cost never reaches the books. An event with no group (an
+	// old row, or its replay) keeps the order wide key, so it stays idempotent with the
+	// journal it already created.
+	key := "order.fulfilled:" + p.OrderID
+	if p.GroupID != "" {
+		key = key + ":" + p.GroupID
+	}
 	return journalDraft{
 		Source:         SourceFulfillment,
 		SourceRefID:    p.OrderID,
-		IdempotencyKey: "order.fulfilled:" + p.OrderID,
+		IdempotencyKey: key,
 		Memo:           "COGS on fulfillment",
 		BranchID:       p.BranchID,
 		// FW1-01b: the order's own date, not the processing day.
@@ -1115,8 +1147,9 @@ type orderReturnedPayload struct {
 	ReturnID string `json:"return_id"`
 	BranchID string `json:"branch_id"`
 	Lines    []struct {
-		ProductID string  `json:"product_id"`
-		QtyBase   float64 `json:"qty_base"`
+		ProductID  string  `json:"product_id"`
+		QtyBase    float64 `json:"qty_base"`
+		ValueCents *int64  `json:"value_cents"`
 	} `json:"lines"`
 	// OccurredAt is the return's own date, carried by the POS that rang the return
 	// (FW1-01b). Zero means the emitter carried none, and the journal falls back to
@@ -1140,9 +1173,17 @@ func (s *Service) buildOrderReturned(ctx context.Context, payload []byte) (journ
 	}
 	var total int64
 	for _, ln := range p.Lines {
-		cost, found, err := s.costBasis.UnitCostCents(ctx, ln.ProductID, ln.QtyBase)
-		if err != nil {
-			return journalDraft{}, false, err
+		// Round 2 (S3's P1): the event's own move value is the journal's figure;
+		// the average only answers an old row with no value.
+		cost, found := int64(0), false
+		if ln.ValueCents != nil {
+			cost, found = *ln.ValueCents, true
+		} else {
+			var rerr error
+			cost, found, rerr = s.resolveLineCost(ctx, ln.ProductID, p.BranchID, ln.QtyBase)
+			if rerr != nil {
+				return journalDraft{}, false, rerr
+			}
 		}
 		if found {
 			total += cost
@@ -1193,9 +1234,17 @@ func (s *Service) buildPosReturnWrittenOff(ctx context.Context, payload []byte) 
 	}
 	var total int64
 	for _, ln := range p.Lines {
-		cost, found, err := s.costBasis.UnitCostCents(ctx, ln.ProductID, ln.QtyBase)
-		if err != nil {
-			return journalDraft{}, false, err
+		// Round 2 (S3's P1): the event's own move value is the journal's figure;
+		// the average only answers an old row with no value.
+		cost, found := int64(0), false
+		if ln.ValueCents != nil {
+			cost, found = *ln.ValueCents, true
+		} else {
+			var rerr error
+			cost, found, rerr = s.resolveLineCost(ctx, ln.ProductID, p.BranchID, ln.QtyBase)
+			if rerr != nil {
+				return journalDraft{}, false, rerr
+			}
 		}
 		if found {
 			total += cost

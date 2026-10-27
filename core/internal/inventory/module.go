@@ -23,6 +23,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"log/slog"
+	"math"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
@@ -123,10 +124,23 @@ type GLPoster interface {
 	PostJournal(ctx context.Context, in GLJournal) (string, error)
 }
 
+// GLPosterTx is an optional extension of GLPoster that posts a journal inside the caller's transaction
+// so a stock transfer move and its journal commit or roll back atomically.
+type GLPosterTx interface {
+	GLPoster
+	PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error)
+}
+
 // RuleResolver resolves a posting-rule role to an account code (satisfied by a main.go adapter over
 // *gl.Service.ResolveRule). INV-CORE resolves the 1200 inventory leg through this.
 type RuleResolver interface {
 	ResolveRule(ctx context.Context, eventType, lineRole, branchID string) (string, error)
+}
+
+// RuleResolverTx is an optional extension of RuleResolver that resolves a rule on the caller's transaction.
+type RuleResolverTx interface {
+	RuleResolver
+	ResolveRuleTx(ctx context.Context, tx pgx.Tx, eventType, lineRole, branchID string) (string, error)
 }
 
 // GLJournal + GLLine mirror gl.ExternalJournal by value so inventory does not import gl's service internals.
@@ -203,11 +217,33 @@ func (s *Service) UnitCostCents(ctx context.Context, productID string, qtyBase f
 	return s.unitCost(ctx, productID, qtyBase)
 }
 
+// BranchUnitCostCents returns the branch weighted-average cost extended over qtyBase,
+// satisfying gl.BranchCostBasis so the stock move and the GL journal share one cost basis.
+func (s *Service) BranchUnitCostCents(ctx context.Context, productID, branchID string, qtyBase float64) (int64, bool, error) {
+	return s.branchUnitCost(ctx, productID, branchID, qtyBase)
+}
+
 // DecrementForSaleTx decrements stock for a fulfilled sale inside the caller's tx, satisfying the pos
 // StockDecrementer seam. SCAFFOLD: no-op returning nil, identical to pos.NoopStock, so a POS sale still
 // commits unchanged. W6-INVCORE fills the real SHIP moves for a COLLECT_NOW sale (DELIVERED/COLLECT_LATER →
 // zero moves, listed on pending-fulfilment). FROZEN signature.
 func (s *Service) DecrementForSaleTx(ctx context.Context, tx pgx.Tx, in DecrementInput) error {
+	_, err := s.decrementForSale(ctx, tx, in)
+	return err
+}
+
+// ShipLineValue is one sale line's own move value, the figure the ring's
+// order.fulfilled event carries so the COGS journal posts the value that
+// moved (round 2, S3's P1).
+type ShipLineValue struct {
+	ProductID  string  `json:"product_id"`
+	QtyBase    float64 `json:"qty_base"`
+	ValueCents int64   `json:"value_cents"`
+}
+
+// DecrementForSaleValuesTx is DecrementForSaleTx answering each line's own
+// move value. The ring's emit reads these, never a re-read average.
+func (s *Service) DecrementForSaleValuesTx(ctx context.Context, tx pgx.Tx, in DecrementInput) ([]ShipLineValue, error) {
 	return s.decrementForSale(ctx, tx, in)
 }
 
@@ -219,11 +255,85 @@ func (s *Service) RestockForReturnTx(ctx context.Context, tx pgx.Tx, in RestockI
 	return s.restockForReturn(ctx, tx, in)
 }
 
+// ReturnMoveValuesTx answers the return's RETURN moves' per line values, the
+// figure the order.returned event carries (round 2, S3's P1).
+func (s *Service) ReturnMoveValuesTx(ctx context.Context, tx pgx.Tx, returnID string) ([]ShipLineValue, error) {
+	querier := interface {
+		Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	}(tx)
+	if querier == nil {
+		if s.repo == nil || s.repo.pool == nil {
+			return nil, nil
+		}
+		querier = s.repo.pool
+	}
+	rows, err := querier.Query(ctx, `
+		SELECT product_id::text, qty_base::float8, value_cents
+		  FROM stock_moves
+		 WHERE source_type = 'pos_return' AND source_ref_id = $1::uuid AND move_type = 'RETURN'`, returnID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]ShipLineValue, 0, 4)
+	for rows.Next() {
+		var v ShipLineValue
+		if err := rows.Scan(&v.ProductID, &v.QtyBase, &v.ValueCents); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// ShippedValueForOrderLineTx answers the value the ORIGINAL SALE moved for one order line, the
+// figure the write off path posts (round 2, S3's P1).
+//
+// THE GOODS WERE WRITTEN OFF, NOT MOVED, so there is no move of their own to read. The value they
+// carry now is the value they left the shelf with when they were sold: the sale's own SHIP move
+// value for that line. A re-read average would answer a different question (what the goods cost
+// today) and would answer it differently for every line of one note.
+//
+// THE SHARE, NOT THE WHOLE MOVE. A move of four units for four hundred cents answers two units for
+// two hundred cents, so a partial write off is not booked at the whole line's cost.
+//
+// NOT FOUND IS AN ANSWER, NOT A FAILURE: an order that never moved the line (an old row, or goods
+// that never left the shelf) has no sale value, and the caller falls back to the average.
+func (s *Service) ShippedValueForOrderLineTx(ctx context.Context, tx pgx.Tx, orderID, productID string, qtyBase float64) (ShipLineValue, bool, error) {
+	if s.repo == nil || s.repo.pool == nil || orderID == "" || productID == "" {
+		return ShipLineValue{}, false, nil
+	}
+	var out ShipLineValue
+	var moveQty float64
+	err := tx.QueryRow(ctx, `
+		SELECT product_id::text, qty_base::float8, value_cents
+		  FROM stock_moves
+		 WHERE source_ref_id = $1::uuid AND product_id = $2::uuid AND move_type = 'SHIP'
+		 ORDER BY created_at
+		 LIMIT 1`, orderID, productID).Scan(&out.ProductID, &moveQty, &out.ValueCents)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ShipLineValue{}, false, nil
+		}
+		return ShipLineValue{}, false, err
+	}
+	if moveQty <= 0 {
+		return ShipLineValue{}, false, nil
+	}
+	out.QtyBase = qtyBase
+	out.ValueCents = int64(math.Round(float64(out.ValueCents) * qtyBase / moveQty))
+	return out, true, nil
+}
+
 // - domain surface (errNotImplemented stubs, INV-CORE fills) -
 
 // ReceivePOTx posts the RECEIPT moves + GRNI (DR 1200 / CR 2150) for a PO receipt inside the caller's tx, and
 // maintains the weighted-average cost. FROZEN signature; INV-CORE fills the body.
 func (s *Service) ReceivePOTx(ctx context.Context, tx pgx.Tx, poID string) error {
+	if tx == nil && s.repo != nil && s.repo.pool != nil {
+		_, err := s.receive(ctx, ReceiveRequest{POID: poID})
+		return err
+	}
 	_, err := s.applyReceipt(ctx, tx, poID, nil, "")
 	return err
 }
@@ -236,6 +346,71 @@ func (s *Service) OnHandFor(ctx context.Context, productID string) ([]OnHand, er
 // PendingFulfilments lists the COLLECT_LATER/DELIVERED lines that recorded no stock move (the DX-01 gap).
 func (s *Service) PendingFulfilments(ctx context.Context, branchID string) ([]PendingFulfilment, error) {
 	return s.db().PendingFulfilments(ctx, branchID)
+}
+
+// PreReceiptException is a Controller exception row for a sale fulfilled before the product's
+// first receipt at the branch (ruling 82.4: posted at fallback cost and awaiting true-up at first receipt).
+type PreReceiptException struct {
+	MoveID                   string  `json:"move_id"`
+	OrderID                  string  `json:"order_id"`
+	ProductID                string  `json:"product_id"`
+	BranchID                 string  `json:"branch_id"`
+	QtyBase                  float64 `json:"qty_base"`
+	ProvisionalUnitCostCents int64   `json:"provisional_unit_cost_cents"`
+	ProvisionalValueCents    int64   `json:"provisional_value_cents"`
+	FallbackSource           string  `json:"fallback_source"`
+	OccurredAt               string  `json:"occurred_at"`
+}
+
+// ControllerExceptions lists pre-receipt sales that were posted at a fallback cost and have not yet
+// been trued up by a subsequent receipt at that branch.
+func (s *Service) ControllerExceptions(ctx context.Context, branchID string) ([]PreReceiptException, error) {
+	return s.db().PreReceiptExceptions(ctx, branchID)
+}
+
+// ControllerExceptionsInOrg lists pre-receipt sales posted at a fallback cost and not yet trued up,
+// fenced to the caller's org first and then to the caller's branch reach (round 3, FROM-PRINCIPAL 184).
+// GLOBAL means every branch of the caller's own org, never another org's; a named branch outside the
+// caller's org answers not-found, and a named branch inside the org but outside a scoped caller's
+// reach answers forbidden.
+func (s *Service) ControllerExceptionsInOrg(ctx context.Context, orgID string, reach BranchReach, branchID string) ([]PreReceiptException, error) {
+	if orgID == "" {
+		return nil, badReq("inventory: the caller's org is required")
+	}
+	if branchID != "" {
+		in, err := s.BranchInOrg(ctx, orgID, branchID)
+		if err != nil {
+			return nil, err
+		}
+		if !in {
+			return nil, errNotFound
+		}
+		if _, err := fenceNamedBranch(reach, branchID); err != nil {
+			return nil, err
+		}
+		return s.db().PreReceiptExceptions(ctx, branchID)
+	}
+	if reach.reachesNothing() {
+		return []PreReceiptException{}, nil
+	}
+	orgBranches, err := s.repo.OrgBranchIDs(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	if !reach.Global {
+		granted := make(map[string]bool, len(reach.BranchIDs))
+		for _, b := range reach.BranchIDs {
+			granted[b] = true
+		}
+		filtered := orgBranches[:0]
+		for _, b := range orgBranches {
+			if granted[b] {
+				filtered = append(filtered, b)
+			}
+		}
+		orgBranches = filtered
+	}
+	return s.repo.PreReceiptExceptionsForBranches(ctx, orgBranches)
 }
 
 // - posting consumer registration -
@@ -295,6 +470,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/inventory/on-hand", g.RequireStaff(h.staff(h.onHand)))
 	r.Handle("GET /api/v1/inventory/moves", g.RequireStaff(h.staff(h.moves)))
 	r.Handle("GET /api/v1/inventory/pending-fulfilment", g.RequireStaff(h.staff(h.pendingFulfilment)))
+	// Round 2 (S3's P2): the Controller's pre receipt exceptions read (ruling 82.4). Manager gated on
+	// top of the branch fence the service applies.
+	r.Handle("GET /api/v1/inventory/controller-exceptions", g.RequireManager(h.staff(h.controllerExceptions)))
 	r.Handle("POST /api/v1/inventory/receive", g.RequireManager(h.staff(h.receive)))
 
 	// - DIB-472 · the transit-days config behind the transfer eta pre-fill -
