@@ -317,15 +317,14 @@ func (r *Repository) PreReceiptExceptions(ctx context.Context, branchID string) 
 	return r.queryPreReceiptExceptions(ctx, nil, branchID, "")
 }
 
-// PreReceiptExceptionsInOrg lists untrued provisional pre-receipt sales held to the caller's org
-// first and then to the caller's branch reach (round 3, FROM-PRINCIPAL 184). A GLOBAL caller
-// reaches every branch of its own org, never another org's; a scoped caller reaches only the
-// branches of its own org in reach.
-func (r *Repository) PreReceiptExceptionsInOrg(ctx context.Context, orgID, branchID string, reach BranchReach) ([]PreReceiptException, error) {
+// PreReceiptExceptionsForBranches lists untrued provisional pre-receipt sales across the given
+// branch ids (round 3, FROM-PRINCIPAL 184). An empty branch slice returns an empty slice without
+// querying.
+func (r *Repository) PreReceiptExceptionsForBranches(ctx context.Context, branchIDs []string) ([]PreReceiptException, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
-	if reach.reachesNothing() {
+	if len(branchIDs) == 0 {
 		return []PreReceiptException{}, nil
 	}
 	rows, err := r.pool.Query(ctx, `
@@ -334,12 +333,9 @@ func (r *Repository) PreReceiptExceptionsInOrg(ctx context.Context, orgID, branc
 		       COALESCE(sm.metadata->>'fallback_source', 'LAST_KNOWN_COST'),
 		       to_char(sm.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		  FROM stock_moves sm
-		  JOIN locations l ON l.id = sm.branch_id AND l.loc_type = 'BRANCH'
 		 WHERE sm.move_type = 'SHIP'
 		   AND COALESCE(sm.metadata->>'provisional_cost', 'false') = 'true'
-		   AND l.org_id = $1::uuid
-		   AND ($2 = '' OR sm.branch_id = $2::uuid)
-		   AND ($3::uuid[] IS NULL OR sm.branch_id = ANY($3::uuid[]))
+		   AND sm.branch_id = ANY($1::uuid[])
 		   AND NOT EXISTS (
 		       SELECT 1 FROM stock_moves rec
 		        WHERE rec.product_id = sm.product_id
@@ -347,7 +343,7 @@ func (r *Repository) PreReceiptExceptionsInOrg(ctx context.Context, orgID, branc
 		          AND rec.move_type = 'RECEIPT'
 		          AND rec.metadata->'trued_up_move_ids' ? sm.id::text
 		   )
-		 ORDER BY sm.occurred_at ASC, sm.id ASC`, orgID, branchID, reach.branchFilter())
+		 ORDER BY sm.occurred_at ASC, sm.id ASC`, branchIDs)
 	if err != nil {
 		return nil, err
 	}

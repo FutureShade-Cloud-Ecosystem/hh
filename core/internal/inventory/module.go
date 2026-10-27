@@ -388,11 +388,29 @@ func (s *Service) ControllerExceptionsInOrg(ctx context.Context, orgID string, r
 		if _, err := fenceNamedBranch(reach, branchID); err != nil {
 			return nil, err
 		}
+		return s.db().PreReceiptExceptions(ctx, branchID)
 	}
 	if reach.reachesNothing() {
 		return []PreReceiptException{}, nil
 	}
-	return s.repo.PreReceiptExceptionsInOrg(ctx, orgID, branchID, reach)
+	orgBranches, err := s.repo.OrgBranchIDs(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	if !reach.Global {
+		granted := make(map[string]bool, len(reach.BranchIDs))
+		for _, b := range reach.BranchIDs {
+			granted[b] = true
+		}
+		filtered := orgBranches[:0]
+		for _, b := range orgBranches {
+			if granted[b] {
+				filtered = append(filtered, b)
+			}
+		}
+		orgBranches = filtered
+	}
+	return s.repo.PreReceiptExceptionsForBranches(ctx, orgBranches)
 }
 
 // - posting consumer registration -
