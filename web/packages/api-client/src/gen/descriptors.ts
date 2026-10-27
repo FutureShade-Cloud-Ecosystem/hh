@@ -413,7 +413,7 @@ export const SCHEMA_DESCRIPTORS = {
   "BankRecRuleInput": {"k":"object","req":["code","name","spec","priority"],"props":{"code":{"k":"string"},"name":{"k":"string"},"spec":{"k":"ref","name":"BankRecRuleSpec"},"priority":{"k":"integer"}}},
   "BankRecMatchRuleList": {"k":"array","of":{"k":"ref","name":"BankRecMatchRule"}},
   "BankRecReconciliation": {"k":"object","req":["id","bank_account_id","year","month","statement_balance_cents","gl_balance_cents","variance_cents","status"],"props":{"id":{"k":"string"},"bank_account_id":{"k":"string"},"year":{"k":"integer"},"month":{"k":"integer"},"statement_balance_cents":{"k":"integer"},"gl_balance_cents":{"k":"integer"},"variance_cents":{"k":"integer"},"status":{"k":"lit","v":["OPEN","COMPLETED"]},"completed_at":{"k":"union","of":[{"k":"string"},{"k":"null"}]}}},
-  "BankRecReconInput": {"k":"object","req":["bank_account_id","year","month","statement_balance_cents"],"props":{"bank_account_id":{"k":"string"},"year":{"k":"integer"},"month":{"k":"integer","minimum":1,"maximum":12},"statement_balance_cents":{"k":"integer"}}},
+  "BankRecReconInput": {"k":"object","req":["bank_account_id","year","month"],"props":{"bank_account_id":{"k":"string"},"year":{"k":"integer"},"month":{"k":"integer","minimum":1,"maximum":12},"statement_balance_cents":{"k":"integer"},"refresh":{"k":"boolean"}}},
   "BankRecReconciliationList": {"k":"array","of":{"k":"ref","name":"BankRecReconciliation"}},
   "IdentityPing": {"k":"object","req":["module","status"],"props":{"module":{"k":"string"},"status":{"k":"string"}}},
   "SessionJwkSet": {"k":"object","req":["keys"],"props":{"keys":{"k":"array","of":{"k":"ref","name":"SessionJwk"}}}},
