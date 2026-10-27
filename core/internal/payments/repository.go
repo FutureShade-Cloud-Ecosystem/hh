@@ -858,6 +858,36 @@ func PaymentBranchesTx(ctx context.Context, tx pgx.Tx, ids []string) (map[string
 	return out, rows.Err()
 }
 
+// PaymentMatchFact holds the branch, tender method, and gross amount of a payment row read under LockPaymentRowsTx.
+type PaymentMatchFact struct {
+	BranchID    string
+	Method      string
+	AmountCents int64
+}
+
+// PaymentFactsTx returns the branch, tender method, and gross amount of each named payment, keyed by the lowercased
+// id (an id with no row is absent). Call it on the caller's transaction after LockPaymentRowsTx has locked the rows.
+func PaymentFactsTx(ctx context.Context, tx pgx.Tx, ids []string) (map[string]PaymentMatchFact, error) {
+	out := map[string]PaymentMatchFact{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := tx.Query(ctx, `SELECT id::text, branch_id::text, method, amount_cents FROM payments WHERE id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("payments: read the payment match facts: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var f PaymentMatchFact
+		if err := rows.Scan(&id, &f.BranchID, &f.Method, &f.AmountCents); err != nil {
+			return nil, fmt.Errorf("payments: read the payment match facts: %w", err)
+		}
+		out[strings.ToLower(id)] = f
+	}
+	return out, rows.Err()
+}
+
 // PaymentNumbersTx returns payment_no for a set of payment ids, keyed by the lower cased id. It is UNFENCED: it
 // answers for any id it is given, whatever branch the payment belongs to. Call it only with ids the caller's own
 // write has already named AND held to the caller's reach (bankrec's match fences its payment targets to the caller's

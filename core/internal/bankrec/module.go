@@ -79,6 +79,13 @@ type JournalPoster interface {
 	PostJournal(ctx context.Context, in gl.ExternalJournal) (string, error)
 }
 
+// JournalPosterTx is an optional extension of JournalPoster that posts the clearing or reversal
+// journal inside the caller's open pgx.Tx so the bank match and its GL journal commit or roll back
+// atomically in one transaction (FW1-05).
+type JournalPosterTx interface {
+	PostJournalTx(ctx context.Context, tx pgx.Tx, in gl.ExternalJournal) (string, error)
+}
+
 // GLBalanceReader reads a GL account balance for the variance check. Satisfied by a main.go adapter over
 // *gl.Service.GLBalanceCents, bankrec never reads the 0034 views directly.
 type GLBalanceReader interface {
