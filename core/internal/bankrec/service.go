@@ -213,19 +213,25 @@ func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to
 // persistAndJournal claims a match and, when the poster can post on the caller's transaction (JournalPosterTx),
 // posts its clearing journal inside the SAME transaction, so the match and its journal commit or roll back
 // together (FW1-05): a refused journal leaves the line UNMATCHED and the payment RECEIVED, and a refused
-// match posts nothing. A poster without the transaction arm keeps the historical two step order, the match
-// first, then the journal (the claim's guards still run before any post, so a rejected duplicate posts none).
-func (s *Service) persistAndJournal(ctx context.Context, m Match, claim []string, reach func(string) bool, journal gl.ExternalJournal, post bool) (Match, error) {
+// match posts nothing. The journal is built by journalFn AFTER the claim, so a hand match can check the
+// claimed payment's facts (amount, method) under the same lock and book its clearing journal by tender. A
+// poster without the transaction arm keeps the historical two step order, the match first, then the journal
+// (the claim's guards still run before any post, so a rejected duplicate posts none).
+func (s *Service) persistAndJournal(ctx context.Context, m Match, claim []string, reach func(string) bool, journalFn func(claimed []MatchPaymentFact) (gl.ExternalJournal, bool, error)) (Match, error) {
 	tx, err := s.repo.Begin(ctx)
 	if err != nil {
 		return Match{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	id, err := s.repo.PersistMatchReachTx(ctx, tx, m, claim, reach)
+	id, claimed, err := s.repo.PersistMatchReachTx(ctx, tx, m, claim, reach)
 	if err != nil {
 		return Match{}, err
 	}
 	m.ID = id
+	journal, post, jerr := journalFn(claimed)
+	if jerr != nil {
+		return Match{}, jerr
+	}
 	if post && s.poster != nil {
 		journal.IdempotencyKey = clearingKey(id)
 		if pt, ok := s.poster.(JournalPosterTx); ok {
@@ -288,7 +294,9 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 			skipLodgementClearing = true
 		}
 	}
-	return s.persistAndJournal(ctx, m, prop.PaymentIDs, reach, prop.Journal, !skipLodgementClearing)
+	return s.persistAndJournal(ctx, m, prop.PaymentIDs, reach, func([]MatchPaymentFact) (gl.ExternalJournal, bool, error) {
+		return prop.Journal, !skipLodgementClearing, nil
+	})
 }
 
 // ManualMatch pairs a statement line to a target by hand (method MANUAL), posting the matching clearing
@@ -315,6 +323,15 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	amount := in.AmountCents
 	if amount == 0 {
 		amount = line.AmountCents
+	}
+	// FW1-05 item 1: a match by hand states what it pairs. A caller supplied amount that disagrees with the
+	// statement line is refused (the journal posts the line's amount, never the caller's), and only a
+	// positive (deposit) line can be matched to a payment: a withdrawal line explains no receipt.
+	if in.AmountCents != 0 && in.AmountCents != line.AmountCents {
+		return Match{}, unprocessable("bankrec: the match is for %d cents and the statement line is for %d cents, so it does not explain the line", in.AmountCents, line.AmountCents)
+	}
+	if in.TargetType == TargetPayment && line.AmountCents <= 0 {
+		return Match{}, unprocessable("bankrec: only a deposit (a positive line) can be matched to a payment; this line reads %d cents", line.AmountCents)
 	}
 	m := Match{
 		StatementLineID: line.ID,
@@ -362,8 +379,28 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 			return Match{}, jerr
 		}
 	}
-	journal, wantPost := manualJournal(line, in.TargetType, lodgBranch)
-	mOut, err := s.persistAndJournal(ctx, m, claim, in.CanAccessBranch, journal, wantPost && !skipLodgementClearing)
+	// FW1-05 item 1: the journal is built after the claim, from the claimed payment's own facts read under
+	// its row lock: a hand match checks the payment's amount against the line, and books the clearing
+	// account its tender names (1010 card, 1020 cash and cheque).
+	journalFn := func(claimed []MatchPaymentFact) (gl.ExternalJournal, bool, error) {
+		if in.TargetType != TargetPayment {
+			j, ok := manualJournal(line, in.TargetType, "", lodgBranch)
+			return j, ok && !skipLodgementClearing, nil
+		}
+		if len(claimed) != 1 {
+			return gl.ExternalJournal{}, false, conflict("bankrec: payment already claimed, reversed or not RECEIVED (claimed %d of %d)", len(claimed), len(claim))
+		}
+		f := claimed[0]
+		if f.AmountCents != line.AmountCents {
+			return gl.ExternalJournal{}, false, unprocessable("bankrec: that payment is for %d cents and the line is %d cents, so it does not explain the line", f.AmountCents, line.AmountCents)
+		}
+		j, ok := manualJournal(line, in.TargetType, f.Method, f.BranchID)
+		if !ok {
+			return gl.ExternalJournal{}, false, unprocessable("bankrec: a %s payment cannot be matched by hand; match a card, a cash or a cheque deposit", f.Method)
+		}
+		return j, true, nil
+	}
+	mOut, err := s.persistAndJournal(ctx, m, claim, in.CanAccessBranch, journalFn)
 	if err != nil {
 		return Match{}, err
 	}

@@ -181,18 +181,30 @@ func buildLodgementProposal(line StatementLine, rule MatchRule, l Lodgement) pro
 	}
 }
 
-// manualJournal builds the clearing journal for a MANUAL pairing by target type (mirrors the auto legs). A
-// GROUP or JOURNAL target posts no new journal (the journal already exists / is a manual grouping header).
-func manualJournal(line StatementLine, targetType, branchID string) (gl.ExternalJournal, bool) {
+// manualJournal builds the clearing journal for a MANUAL pairing by target type and, for a payment, by its
+// tender method (FW1-05 item 1): a card settlement clears 1010 (card processor clearing), a cash or cheque
+// deposit clears 1020 (undeposited funds); any other tender refuses. A GROUP or JOURNAL target posts no new
+// journal (the journal already exists / is a manual grouping header).
+func manualJournal(line StatementLine, targetType, method, branchID string) (gl.ExternalJournal, bool) {
 	switch targetType {
 	case TargetPayment:
+		clearing, ok := clearingAccountForMethod(method)
+		if !ok {
+			return gl.ExternalJournal{}, false
+		}
+		depositMemo := "bank deposit (card settlement)"
+		clearMemo := "clear card settlement"
+		if clearing == AcctUndeposited {
+			depositMemo = "bank deposit (cash or cheque)"
+			clearMemo = "clear undeposited funds"
+		}
 		return gl.ExternalJournal{
 			Source: "ADJUSTMENT", SourceRefID: line.ID, IdempotencyKey: journalKey(line.ID),
-			Memo: "bankrec manual card settlement " + line.Reference, BranchID: branchID,
+			Memo: "bankrec manual deposit " + line.Reference, BranchID: branchID,
 			DocumentDate: statementDocDate(line.TxnDate),
 			Lines: []gl.ExternalLine{
-				{AccountCode: AcctBank, DebitCents: line.AmountCents, Memo: "bank deposit (card settlement)"},
-				{AccountCode: AcctCardClearing, CreditCents: line.AmountCents, Memo: "clear card settlement"},
+				{AccountCode: AcctBank, DebitCents: line.AmountCents, Memo: depositMemo},
+				{AccountCode: clearing, CreditCents: line.AmountCents, Memo: clearMemo},
 			},
 		}, true
 	case TargetLodgement:
@@ -208,6 +220,19 @@ func manualJournal(line StatementLine, targetType, branchID string) (gl.External
 	default:
 		return gl.ExternalJournal{}, false
 	}
+}
+
+// clearingAccountForMethod names the clearing account a deposit of this tender clears through (FW1-05
+// item 1): a card settlement clears through 1010, cash and a cheque through 1020. Every other tender
+// answers false: a hand match of it is refused in words.
+func clearingAccountForMethod(method string) (string, bool) {
+	switch method {
+	case "CARD":
+		return AcctCardClearing, true
+	case "CASH", "CHEQUE":
+		return AcctUndeposited, true
+	}
+	return "", false
 }
 
 // statementDocDate converts a statement line's calendar date (stored as UTC midnight in bank_statement_lines)

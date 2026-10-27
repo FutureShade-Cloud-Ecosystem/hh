@@ -435,7 +435,7 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 		return "", fmt.Errorf("bankrec: begin match: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	id, err := r.PersistMatchReachTx(ctx, tx, m, claimPaymentIDs, reach)
+	id, _, err := r.PersistMatchReachTx(ctx, tx, m, claimPaymentIDs, reach)
 	if err != nil {
 		return "", err
 	}
@@ -445,12 +445,23 @@ func (r *Repository) PersistMatchReach(ctx context.Context, m Match, claimPaymen
 	return id, nil
 }
 
+// MatchPaymentFact is what bankrec read about one claimed payment under its row lock in the match's own
+// transaction (FW1-05): the branch, the tender method and the gross amount, the facts a hand match checks
+// (amount and method) and the facts its clearing journal needs (branch and method).
+type MatchPaymentFact struct {
+	PaymentID   string
+	BranchID    string
+	Method      string
+	AmountCents int64
+}
+
 // PersistMatchReachTx is the claim body of PersistMatchReach on the CALLER's transaction (FW1-05: the match
 // and its clearing journal share one transaction, so the service opens the tx, claims here, posts through
-// the JournalPosterTx arm, and commits once). Same guards, same locks, same order as PersistMatchReach.
-func (r *Repository) PersistMatchReachTx(ctx context.Context, tx pgx.Tx, m Match, claimPaymentIDs []string, reach func(branchID string) bool) (string, error) {
+// the JournalPosterTx arm, and commits once). Same guards, same locks, same order as PersistMatchReach. It
+// returns the facts of the claimed payments, read under the same lock, for the caller's checks and journal.
+func (r *Repository) PersistMatchReachTx(ctx context.Context, tx pgx.Tx, m Match, claimPaymentIDs []string, reach func(branchID string) bool) (string, []MatchPaymentFact, error) {
 	if reach == nil {
-		return "", errNoReach
+		return "", nil, errNoReach
 	}
 
 	// The lock order of every bankrec writer (LOCK-ORDER.md): the reconciliation row of the line's month FOR SHARE and
@@ -463,57 +474,57 @@ func (r *Repository) PersistMatchReachTx(ctx context.Context, tx pgx.Tx, m Match
 		`SELECT bank_account_id::text, EXTRACT(YEAR FROM txn_date)::int, EXTRACT(MONTH FROM txn_date)::int FROM bank_statement_lines WHERE id::text = $1`,
 		m.StatementLineID).Scan(&lineAcct, &lineYear, &lineMonth)
 	if lerr0 != nil && !errors.Is(lerr0, pgx.ErrNoRows) {
-		return "", fmt.Errorf("bankrec: read the line to match: %w", lerr0)
+		return "", nil, fmt.Errorf("bankrec: read the line to match: %w", lerr0)
 	}
 	if lerr0 == nil {
 		status, lkerr := lockReconMonthShared(ctx, tx, lineAcct, lineYear, lineMonth)
 		if lkerr != nil {
-			return "", lkerr
+			return "", nil, lkerr
 		}
 		if status == ReconCompleted {
-			return "", errMonthCompleted
+			return "", nil, errMonthCompleted
 		}
 	}
 
 	tag, err := tx.Exec(ctx,
 		`UPDATE bank_statement_lines SET status = 'MATCHED' WHERE id = $1 AND status = 'UNMATCHED'`, m.StatementLineID)
 	if err != nil {
-		return "", fmt.Errorf("bankrec: mark line matched: %w", err)
+		return "", nil, fmt.Errorf("bankrec: mark line matched: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return "", conflict("bankrec: statement line %s is not UNMATCHED", m.StatementLineID)
+		return "", nil, conflict("bankrec: statement line %s is not UNMATCHED", m.StatementLineID)
 	}
 	if m.TargetType == TargetJournal && m.TargetRefID != "" {
 		// A journal explains one line: bank_matches has no unique index for JOURNAL targets (0036 covers PAYMENT and
 		// LODGEMENT only), so a transaction lock on the journal id serialises the check and the insert.
 		if _, lerr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "bankrec-journal|"+strings.ToLower(m.TargetRefID)); lerr != nil {
-			return "", fmt.Errorf("bankrec: journal lock: %w", lerr)
+			return "", nil, fmt.Errorf("bankrec: journal lock: %w", lerr)
 		}
 		var held bool
 		if qerr := tx.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM bank_matches WHERE unmatched_at IS NULL
 			                 AND ((target_type = 'JOURNAL' AND target_ref_id::text = $1) OR journal_id::text = $1))`,
 			strings.ToLower(m.TargetRefID)).Scan(&held); qerr != nil {
-			return "", fmt.Errorf("bankrec: journal live match: %w", qerr)
+			return "", nil, fmt.Errorf("bankrec: journal live match: %w", qerr)
 		}
 		if held {
-			return "", conflict("bankrec: that journal already explains another statement line")
+			return "", nil, conflict("bankrec: that journal already explains another statement line")
 		}
 	}
+	// The ids the claim may touch: all of them, or only those the caller reaches. A hidden id is never
+	// updated and never named. Hoisted so the claimed facts read at the tail sees the same set.
+	var claimable []string
 	if len(claimPaymentIDs) > 0 {
 		// The named payment rows first, ascending (the payments module's own lock, LOCK-ORDER.md): the
 		// UPDATE below takes the payments counter on its first row, and must not hold it while it waits
 		// for another row a reversal holds.
 		if lerr := payments.LockPaymentRowsTx(ctx, tx, claimPaymentIDs); lerr != nil {
-			return "", fmt.Errorf("bankrec: lock payments: %w", lerr)
+			return "", nil, fmt.Errorf("bankrec: lock payments: %w", lerr)
 		}
-		// The ids the claim may touch: all of them, or only those the caller reaches. A hidden id is never
-		// updated and never named.
-		claimable := claimPaymentIDs
 		hidden := map[string]bool{}
 		branches, berr := payments.PaymentBranchesTx(ctx, tx, claimPaymentIDs)
 		if berr != nil {
-			return "", fmt.Errorf("bankrec: read the payment branches: %w", berr)
+			return "", nil, fmt.Errorf("bankrec: read the payment branches: %w", berr)
 		}
 		claimable = nil
 		for _, pid := range claimPaymentIDs {
@@ -537,20 +548,20 @@ func (r *Repository) PersistMatchReachTx(ctx context.Context, tx pgx.Tx, m Match
 			 RETURNING id::text`,
 			claimable, m.StatementLineID)
 		if cerr != nil {
-			return "", fmt.Errorf("bankrec: claim payment: %w", cerr)
+			return "", nil, fmt.Errorf("bankrec: claim payment: %w", cerr)
 		}
 		moved := map[string]bool{}
 		for rows.Next() {
 			var pid string
 			if serr := rows.Scan(&pid); serr != nil {
 				rows.Close()
-				return "", fmt.Errorf("bankrec: claim payment: %w", serr)
+				return "", nil, fmt.Errorf("bankrec: claim payment: %w", serr)
 			}
 			moved[strings.ToLower(pid)] = true
 		}
 		rows.Close()
 		if rerr := rows.Err(); rerr != nil {
-			return "", fmt.Errorf("bankrec: claim payment: %w", rerr)
+			return "", nil, fmt.Errorf("bankrec: claim payment: %w", rerr)
 		}
 		var unmoved []string
 		for _, pid := range claimPaymentIDs {
@@ -577,7 +588,7 @@ func (r *Repository) PersistMatchReachTx(ctx context.Context, tx pgx.Tx, m Match
 			}
 			numbers, nerr := payments.PaymentNumbersTx(ctx, tx, visible)
 			if nerr != nil {
-				return "", fmt.Errorf("bankrec: read the refused payment numbers: %w", nerr)
+				return "", nil, fmt.Errorf("bankrec: read the refused payment numbers: %w", nerr)
 			}
 			labels := make([]string, 0, len(unmoved))
 			for _, pid := range unmoved {
@@ -587,7 +598,7 @@ func (r *Repository) PersistMatchReachTx(ctx context.Context, tx pgx.Tx, m Match
 				}
 				labels = append(labels, payments.PaymentLabel(numbers, pid))
 			}
-			return "", conflict("bankrec: payment already claimed, reversed or not RECEIVED: %s (claimed %d of %d)",
+			return "", nil, conflict("bankrec: payment already claimed, reversed or not RECEIVED: %s (claimed %d of %d)",
 				strings.Join(labels, ", "), len(moved), len(claimPaymentIDs))
 		}
 	}
@@ -600,11 +611,30 @@ func (r *Repository) PersistMatchReachTx(ctx context.Context, tx pgx.Tx, m Match
 		nullStr(m.JournalID), m.AmountCents, nullStr(m.MatchedBy)).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return "", conflict("bankrec: line %s / target %s already has a live match", m.StatementLineID, m.TargetRefID)
+			return "", nil, conflict("bankrec: line %s / target %s already has a live match", m.StatementLineID, m.TargetRefID)
 		}
-		return "", fmt.Errorf("bankrec: insert match: %w", err)
+		return "", nil, fmt.Errorf("bankrec: insert match: %w", err)
 	}
-	return id, nil
+	// The facts of what the claim moved, read under the same lock, for the caller's amount and method
+	// checks and its clearing journal (FW1-05).
+	var claimed []MatchPaymentFact
+	if len(claimable) > 0 {
+		facts, ferr := payments.PaymentFactsTx(ctx, tx, claimable)
+		if ferr != nil {
+			return "", nil, ferr
+		}
+		for _, pid := range claimable {
+			if f, ok := facts[strings.ToLower(pid)]; ok {
+				claimed = append(claimed, MatchPaymentFact{
+					PaymentID:   pid,
+					BranchID:    f.BranchID,
+					Method:      f.Method,
+					AmountCents: f.AmountCents,
+				})
+			}
+		}
+	}
+	return id, claimed, nil
 }
 
 // SetMatchJournal writes the posted clearing journal id back onto a match row (the journal is posted after the
