@@ -275,6 +275,16 @@ func approvalScopePredicate(f sync.ScopeFilter) (string, []any, bool) {
 type ApprovalsSyncStore struct {
 	pool *pgxpool.Pool
 	link UserIDLinker
+	// jeDecider bridges a JE withdrawal (FW1-12a's core round): a withdrawn credit memo's park is
+	// voided on the withdrawal's own transaction, so the tombstone and the void commit together. Nil
+	// leaves the shipped behavior, a tombstone alone.
+	jeDecider JEDecider
+}
+
+// WithJEDecider attaches the withdrawal bridge. Chainable.
+func (s *ApprovalsSyncStore) WithJEDecider(d JEDecider) *ApprovalsSyncStore {
+	s.jeDecider = d
+	return s
 }
 
 // NewApprovalsSyncStore wires the adapter; a nil linker leaves actor
@@ -895,13 +905,14 @@ func (s *ApprovalsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id,
 		return sync.RowState{}, fmt.Errorf("identity: begin approvals sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var fromRequester string
+	var fromRequester, policy, subjectRef string
 	var consumed bool
 	err = tx.QueryRow(ctx, `
-		SELECT a.requested_by::text, (a.data->>'used') IS NOT NULL FROM permission_approval_requests a
+		SELECT a.requested_by::text, (a.data->>'used') IS NOT NULL, a.policy_type::text, COALESCE(a.subject_ref, '')
+		  FROM permission_approval_requests a
 		 WHERE a.id = $1::uuid AND a.deleted_at IS NULL
 		   AND EXISTS (SELECT 1 FROM locations l WHERE l.id = a.branch_id AND l.org_id = $2::uuid)
-		 FOR UPDATE OF a`, id, f.OrgID).Scan(&fromRequester, &consumed)
+		 FOR UPDATE OF a`, id, f.OrgID).Scan(&fromRequester, &consumed, &policy, &subjectRef)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
@@ -913,6 +924,14 @@ func (s *ApprovalsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id,
 	}
 	if consumed {
 		return sync.RowState{}, fmt.Errorf("identity: a used up approval is a record, not withdrawable: %w", sync.ErrOpRefused)
+	}
+	// The withdrawal bridge (FW1-12a's core round): a withdrawn credit memo's park is voided on this
+	// same transaction, so the tombstone and the void commit together and the invoice's room frees
+	// with the withdrawal. The adapter no-ops for a journal that is not a credit memo's.
+	if policy == string(PolicyJEThreshold) && subjectRef != "" && s.jeDecider != nil {
+		if err := s.jeDecider.RejectJournalTx(ctx, tx, subjectRef, writer); err != nil {
+			return sync.RowState{}, fmt.Errorf("identity: void the withdrawn credit memo's park: %w", err)
+		}
 	}
 	seq, err := allocateApprovalsSeqTx(ctx, tx)
 	if err != nil {

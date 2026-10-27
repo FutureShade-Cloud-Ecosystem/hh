@@ -276,6 +276,9 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 		"CloseYear":      true,
 		"PostExternal":   true,
 		"PostExternalTx": true,
+		// ParkExternalJournalTx is the parked journal a credit memo waits on
+		// (FW1-12a): it reaches the journal insert path, so it is a writer.
+		"ParkExternalJournalTx": true,
 	}
 	writerCalls := map[string]bool{
 		"PostExternal":          true,
@@ -283,6 +286,7 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 		"PostJournal":           true,
 		"PostJournalTx":         true,
 		"PostCreditMemoJournal": true,
+		"ParkExternalJournalTx": true,
 		"CreateJournal":         true,
 		"ReverseJournal":        true,
 		"RunRecurring":          true,

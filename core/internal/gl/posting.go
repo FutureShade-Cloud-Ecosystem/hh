@@ -254,7 +254,14 @@ func (s *Service) buildPaymentReceived(ctx context.Context, payload []byte) (jou
 }
 
 type taxReliefPayload struct {
-	OrderID string `json:"order_id"`
+	OrderID  string `json:"order_id"`
+	BranchID string `json:"branch_id"`
+}
+
+// TaxSplitBranchReader resolves the order's branch when a replayed or legacy
+// tax.relief.assessed payload carries no branch_id (FW1-08b). Satisfied by *order.Repository.OrderBranch.
+type TaxSplitBranchReader interface {
+	OrderBranch(ctx context.Context, orderID string) (string, error)
 }
 
 func (s *Service) buildTaxRelief(ctx context.Context, payload []byte) (journalDraft, bool, error) {
@@ -280,8 +287,31 @@ func (s *Service) buildTaxRelief(ctx context.Context, payload []byte) (journalDr
 	if !found || onCredit == 0 {
 		return journalDraft{}, false, nil
 	}
+	branchID := p.BranchID
+	if branchID == "" {
+		if br, ok := s.delivery.(TaxSplitBranchReader); ok {
+			b, berr := br.OrderBranch(ctx, p.OrderID)
+			if berr != nil {
+				return journalDraft{}, false, berr
+			}
+			branchID = b
+		} else if br, ok := s.taxSplits.(TaxSplitBranchReader); ok {
+			b, berr := br.OrderBranch(ctx, p.OrderID)
+			if berr != nil {
+				return journalDraft{}, false, berr
+			}
+			branchID = b
+		}
+	}
+	if branchID == "" {
+		ho, herr := s.store.HeadOfficeBranchID(ctx)
+		if herr != nil {
+			return journalDraft{}, false, herr
+		}
+		branchID = ho
+	}
 	et := "tax.relief.assessed"
-	rules, err := s.store.PostingAccounts(ctx, et, "")
+	rules, err := s.store.PostingAccounts(ctx, et, branchID)
 	if err != nil {
 		return journalDraft{}, false, err
 	}
@@ -303,6 +333,7 @@ func (s *Service) buildTaxRelief(ctx context.Context, payload []byte) (journalDr
 		SourceRefID:    p.OrderID,
 		IdempotencyKey: "tax.relief.assessed:" + p.OrderID,
 		Memo:           memo,
+		BranchID:       branchID,
 		OccurredAt:     s.clock(),
 		Lines:          lines,
 	}, true, nil
