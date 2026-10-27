@@ -269,6 +269,14 @@ func fw1HasErrorContaining(errs []string, sub string) bool {
 }
 
 func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string, error) {
+	expectedGLServiceWriters := map[string]bool{
+		"CreateJournal":  true,
+		"ReverseJournal": true,
+		"RunRecurring":   true,
+		"CloseYear":      true,
+		"PostExternal":   true,
+		"PostExternalTx": true,
+	}
 	writerCalls := map[string]bool{
 		"PostExternal":          true,
 		"PostExternalTx":        true,
@@ -279,6 +287,9 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 		"ReverseJournal":        true,
 		"RunRecurring":          true,
 		"CloseYear":             true,
+		"InsertJournal":         true,
+		"InsertJournalTx":       true,
+		"InsertParkedJournal":   true,
 	}
 	payloadBranchTopics := []string{
 		"payment.bounced",
@@ -307,8 +318,11 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 
 	fset := token.NewFileSet()
 	var files []parsedFile
+	var glFiles []parsedFile
 	dirConsts := make(map[string]map[string]string)
 	pkgConsts := make(map[string]map[string]string)
+	dirConstExprs := make(map[string]map[string]ast.Expr)
+	pkgConstExprs := make(map[string]map[string]ast.Expr)
 
 	for _, sub := range []string{"cmd", "internal"} {
 		root := filepath.Join(coreRoot, sub)
@@ -336,17 +350,23 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 			}
 			pkgDir := filepath.ToSlash(filepath.Dir(rel))
 			pkgName := fileAST.Name.Name
-			files = append(files, parsedFile{
+			pf := parsedFile{
 				rel:     rel,
 				pkgDir:  pkgDir,
 				pkgName: pkgName,
 				ast:     fileAST,
-			})
+			}
+			files = append(files, pf)
+			if rel == "core/internal/gl" || strings.HasPrefix(rel, "core/internal/gl/") {
+				glFiles = append(glFiles, pf)
+			}
 			if dirConsts[pkgDir] == nil {
 				dirConsts[pkgDir] = make(map[string]string)
+				dirConstExprs[pkgDir] = make(map[string]ast.Expr)
 			}
 			if pkgConsts[pkgName] == nil {
 				pkgConsts[pkgName] = make(map[string]string)
+				pkgConstExprs[pkgName] = make(map[string]ast.Expr)
 			}
 			for _, decl := range fileAST.Decls {
 				gd, ok := decl.(*ast.GenDecl)
@@ -362,6 +382,8 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 						if i >= len(vs.Values) {
 							continue
 						}
+						dirConstExprs[pkgDir][name.Name] = vs.Values[i]
+						pkgConstExprs[pkgName][name.Name] = vs.Values[i]
 						if s, ok := fw1StringLiteral(vs.Values[i]); ok {
 							dirConsts[pkgDir][name.Name] = s
 							pkgConsts[pkgName][name.Name] = s
@@ -376,11 +398,22 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 		}
 	}
 
-	resolveString := func(pf parsedFile, e ast.Expr) (string, bool) {
+	var resolveString func(pf parsedFile, e ast.Expr) (string, bool)
+	resolveString = func(pf parsedFile, e ast.Expr) (string, bool) {
 		if s, ok := fw1StringLiteral(e); ok {
 			return s, true
 		}
 		switch v := e.(type) {
+		case *ast.ParenExpr:
+			return resolveString(pf, v.X)
+		case *ast.BinaryExpr:
+			if v.Op == token.ADD {
+				lx, okX := resolveString(pf, v.X)
+				ly, okY := resolveString(pf, v.Y)
+				if okX && okY {
+					return lx + ly, true
+				}
+			}
 		case *ast.Ident:
 			if v.Obj != nil && v.Obj.Kind != ast.Con {
 				return "", false
@@ -412,6 +445,133 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 			}
 		}
 		return "", false
+	}
+
+	// Fold multi-part const expressions (such as const B = A + "suffix").
+	for pass := 0; pass < 3; pass++ {
+		for _, pf := range files {
+			for _, decl := range pf.ast.Decls {
+				gd, ok := decl.(*ast.GenDecl)
+				if !ok || gd.Tok != token.CONST {
+					continue
+				}
+				for _, spec := range gd.Specs {
+					vs, ok := spec.(*ast.ValueSpec)
+					if !ok {
+						continue
+					}
+					for i, name := range vs.Names {
+						if i >= len(vs.Values) {
+							continue
+						}
+						if s, ok := resolveString(pf, vs.Values[i]); ok {
+							dirConsts[pf.pkgDir][name.Name] = s
+							pkgConsts[pf.pkgName][name.Name] = s
+						}
+					}
+				}
+			}
+		}
+	}
+
+	var errs []string
+
+	// Derive the exported gl.Service writer method set from core/internal/gl itself.
+	if len(glFiles) > 0 {
+		glReachesInsert := map[string]bool{
+			"InsertJournal":       true,
+			"InsertJournalTx":     true,
+			"InsertParkedJournal": true,
+			"postExternal":        true,
+			"postExternalTx":      true,
+			"insertJournalIn":     true,
+		}
+		glDispatcherMethods := map[string]bool{
+			"consume":                 true,
+			"postEvent":               true,
+			"RegisterPostingHandlers": true,
+		}
+		var serviceMethods []*ast.FuncDecl
+		for _, pf := range glFiles {
+			for _, decl := range pf.ast.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil || fn.Recv == nil || len(fn.Recv.List) == 0 {
+					continue
+				}
+				recvType := fw1FormatExpr(fn.Recv.List[0].Type)
+				if recvType == "Service" || recvType == "*Service" {
+					if !glDispatcherMethods[fn.Name.Name] {
+						serviceMethods = append(serviceMethods, fn)
+					}
+				}
+			}
+		}
+		changed := true
+		for changed {
+			changed = false
+			for _, fn := range serviceMethods {
+				if glReachesInsert[fn.Name.Name] {
+					continue
+				}
+				reaches := false
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					if sel, ok := n.(*ast.SelectorExpr); ok && glReachesInsert[sel.Sel.Name] {
+						reaches = true
+						return false
+					}
+					return true
+				})
+				if reaches {
+					glReachesInsert[fn.Name.Name] = true
+					changed = true
+				}
+			}
+		}
+		derivedGLServiceWriters := make(map[string]bool)
+		for _, fn := range serviceMethods {
+			name := fn.Name.Name
+			if ast.IsExported(name) && glReachesInsert[name] {
+				derivedGLServiceWriters[name] = true
+				writerCalls[name] = true
+				if !expectedGLServiceWriters[name] {
+					errs = append(errs, fmt.Sprintf("UNLISTED exported gl.Service writer method %s in core/internal/gl reaches journal insert path (add to expectedGLServiceWriters, writerCalls, and TestFW1JournalLinesCarryBranch)", name))
+				}
+			}
+		}
+		for name := range expectedGLServiceWriters {
+			if !derivedGLServiceWriters[name] {
+				errs = append(errs, fmt.Sprintf("STALE expectedGLServiceWriters entry %s no longer reaches journal insert path in core/internal/gl", name))
+			}
+		}
+	}
+
+	recordedOutboxLits := make(map[*ast.BasicLit]bool)
+	var markExprLits func(pf parsedFile, e ast.Expr)
+	markExprLits = func(pf parsedFile, e ast.Expr) {
+		if e == nil {
+			return
+		}
+		ast.Inspect(e, func(n ast.Node) bool {
+			switch v := n.(type) {
+			case *ast.BasicLit:
+				recordedOutboxLits[v] = true
+			case *ast.Ident:
+				if v.Obj == nil || v.Obj.Kind == ast.Con {
+					if ce, ok := dirConstExprs[pf.pkgDir][v.Name]; ok && ce != e {
+						markExprLits(pf, ce)
+					}
+				}
+			case *ast.SelectorExpr:
+				if pkgIdent, ok := v.X.(*ast.Ident); ok {
+					if m, ok := pkgConstExprs[pkgIdent.Name]; ok {
+						if ce, ok := m[v.Sel.Name]; ok && ce != e {
+							markExprLits(pf, ce)
+						}
+					}
+				}
+			}
+			return true
+		})
 	}
 
 	var discovered []fw1FoundSite
@@ -474,6 +634,7 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 							if !ok || !strings.Contains(strings.ToUpper(sqlStr), "INSERT INTO EVENTS_OUTBOX") {
 								continue
 							}
+							markExprLits(pf, arg)
 							line := fset.Position(fun.Sel.Pos()).Line
 							tp, resolved := fw1ExtractOutboxSQLTopic(sqlStr, call.Args[argIdx+1:], func(e ast.Expr) (string, bool) {
 								return resolveString(pf, e)
@@ -503,6 +664,26 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 				return true
 			})
 		}
+
+		if pf.rel != "core/cmd/core/fw1_branch_census_red.go" {
+			ast.Inspect(pf.ast, func(n ast.Node) bool {
+				lit, ok := n.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING || recordedOutboxLits[lit] {
+					return true
+				}
+				s, err := strconv.Unquote(lit.Value)
+				if err != nil || !strings.Contains(strings.ToLower(s), "events_outbox") {
+					return true
+				}
+				if (pf.rel == "core/internal/notify/store.go" || pf.rel == "core/internal/notify/requeue.go") &&
+					!strings.Contains(strings.ToUpper(s), "INSERT") {
+					return true
+				}
+				errs = append(errs, fmt.Sprintf("UNRECORDED events_outbox string literal at %s:%d: %q was not recorded by the outbox AST scanner",
+					pf.rel, fset.Position(lit.Pos()).Line, s))
+				return true
+			})
+		}
 	}
 
 	sort.Slice(discovered, func(i, j int) bool {
@@ -512,7 +693,6 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 		return discovered[i].line < discovered[j].line
 	})
 
-	var errs []string
 	tableByKey := make(map[string]fw1NonGLWriterSite, len(table))
 	for _, entry := range table {
 		key := entry.File + "|" + entry.Func + "|" + entry.Kind

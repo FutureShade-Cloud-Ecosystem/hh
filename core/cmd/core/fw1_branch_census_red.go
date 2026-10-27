@@ -82,7 +82,7 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		File:         "core/cmd/core/tops_adapters.go",
 		Func:         "(w5cStatementQueue).EnqueueTx",
 		Kind:         "dynamic-topic:EnqueueTx",
-		BranchSource: "adapter forwarding billing statement notice outbox (ar.statement.notice) to messagingprovider.Outbox.EnqueueTx; no GL journal consumer",
+		BranchSource: "adapter forwarding billing.StatementNoticeQueue (StatementNoticeTopic = sms.ar.notice) to messagingprovider.Outbox.EnqueueTx; no GL journal consumer",
 	},
 	{
 		File:         "core/cmd/core/tops_adapters.go",
@@ -184,7 +184,7 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		File:         "core/internal/billing/statement_outbox.go",
 		Func:         "(statementNoticeOutbox).EnqueueStatementTx",
 		Kind:         "dynamic-topic:EnqueueTx",
-		BranchSource: "emits o.topic (TopicStatementNotice = ar.statement.notice); notification topic with no GL journal consumer",
+		BranchSource: "emits o.topic (StatementNoticeTopic = sms.ar.notice at billing/statement_outbox.go:51, set at :90); notification topic with no GL journal consumer",
 	},
 	{
 		File:         "core/internal/invcount/service.go",
