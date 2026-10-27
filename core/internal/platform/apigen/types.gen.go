@@ -3201,15 +3201,24 @@ type FinStmtSchedulePage struct {
 }
 
 type BankRecAccount struct {
-	Id             string `json:"id"`
-	Name           string `json:"name"`
-	AccountType    string `json:"account_type"`
-	GlAccountCode  string `json:"gl_account_code"`
-	Institution    string `json:"institution"`
-	Last4          string `json:"last4"`
-	IsActive       bool   `json:"is_active"`
-	TrackingOnly   bool   `json:"tracking_only"`
-	UnmatchedLines int32  `json:"unmatched_lines"`
+	Id                           string    `json:"id"`
+	Name                         string    `json:"name"`
+	AccountType                  string    `json:"account_type"`
+	GlAccountCode                string    `json:"gl_account_code"`
+	Institution                  string    `json:"institution"`
+	Last4                        string    `json:"last4"`
+	IsActive                     bool      `json:"is_active"`
+	TrackingOnly                 bool      `json:"tracking_only"`
+	UnmatchedLines               int32     `json:"unmatched_lines"`
+	CutoverDate                  *string   `json:"cutover_date,omitempty"`
+	CutoverStatementBalanceCents *int64    `json:"cutover_statement_balance_cents,omitempty"`
+	CutoverOutstandingJournalIds *[]string `json:"cutover_outstanding_journal_ids,omitempty"`
+}
+
+type BankRecCutoverInput struct {
+	CutoverDate                  string    `json:"cutover_date"`
+	OpeningStatementBalanceCents int64     `json:"opening_statement_balance_cents"`
+	OutstandingJournalIds        *[]string `json:"outstanding_journal_ids,omitempty"`
 }
 
 type BankRecAccountList []BankRecAccount

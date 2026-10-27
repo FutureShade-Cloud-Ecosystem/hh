@@ -2714,6 +2714,14 @@ export type BankRecAccount = {
   is_active: boolean;
   tracking_only: boolean;
   unmatched_lines: number;
+  cutover_date?: string | null;
+  cutover_statement_balance_cents?: number | null;
+  cutover_outstanding_journal_ids?: string[];
+};
+export type BankRecCutoverInput = {
+  cutover_date: string;
+  opening_statement_balance_cents: number;
+  outstanding_journal_ids?: string[];
 };
 export type BankRecAccountList = BankRecAccount[];
 export type BankRecStatementLine = {

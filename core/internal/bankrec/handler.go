@@ -29,6 +29,23 @@ func (h *Handler) accounts(w http.ResponseWriter, r *http.Request, caller guards
 	httpx.WriteJSON(w, http.StatusOK, accts)
 }
 
+// recordCutover is the Controller's door to RecordCutover (FW1-04 round 3): the account id rides the path,
+// the cut over date, the statement balance on that date and the confirmed outstanding list ride the body.
+// The service keeps the Financial Controller check.
+func (h *Handler) recordCutover(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in CutoverInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	in.BankAccountID = r.PathValue("id")
+	acct, err := h.svc.RecordCutover(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, acct)
+}
+
 func (h *Handler) createImport(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in ImportInput
 	if !decodeJSON(w, r, &in) {

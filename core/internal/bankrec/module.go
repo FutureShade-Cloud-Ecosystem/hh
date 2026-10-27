@@ -216,9 +216,10 @@ func (h *Handler) requireMoneyDeskWork(g *guards.Guards, next guards.StaffHandle
 }
 
 // RegisterRoutes self-registers the bankrec routes. reads are Money Desk work or above; import/match are RequireManager;
-// rule approval + reconciliation completion are RequireAdmin. Signature is FROZEN across the W5 handlers.
+// rule approval, reconciliation completion and the cut over are RequireAdmin. Signature is FROZEN across the W5 handlers.
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/bankrec/accounts", h.requireMoneyDeskWork(g, h.staff(h.accounts)))
+	r.Handle("POST /api/v1/bankrec/accounts/{id}/cutover", g.RequireAdmin(h.staff(h.recordCutover)))
 	r.Handle("POST /api/v1/bankrec/imports", g.RequireManager(h.staff(h.createImport)))
 	r.Handle("GET /api/v1/bankrec/lines", h.requireMoneyDeskWork(g, h.staff(h.lines)))
 	r.Handle("GET /api/v1/bankrec/matches", h.requireMoneyDeskWork(g, h.staff(h.matchHistory)))

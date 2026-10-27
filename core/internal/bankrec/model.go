@@ -57,18 +57,20 @@ const (
 // BankAccount is one seeded real bank/card account bound to its GL code (0033 bank_accounts). CREDIT_CARD
 // accounts (Corporate Visa 2110-2117) are TRACKING-ONLY at W5, no Visa spend is booked.
 type BankAccount struct {
-	ID                           string   `json:"id"`
-	Name                         string   `json:"name"`
-	AccountType                  string   `json:"account_type"`
-	GLAccountCode                string   `json:"gl_account_code"`
-	Institution                  string   `json:"institution"`
-	Last4                        string   `json:"last4"`
-	IsActive                     bool     `json:"is_active"`
-	TrackingOnly                 bool     `json:"tracking_only"` // true for CREDIT_CARD at W5
-	UnmatchedLines               int      `json:"unmatched_lines"`
-	CutoverDate                  *string  `json:"-"`
-	CutoverStatementBalanceCents *int64   `json:"-"`
-	CutoverOutstandingJournalIDs []string `json:"-"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	AccountType    string `json:"account_type"`
+	GLAccountCode  string `json:"gl_account_code"`
+	Institution    string `json:"institution"`
+	Last4          string `json:"last4"`
+	IsActive       bool   `json:"is_active"`
+	TrackingOnly   bool   `json:"tracking_only"` // true for CREDIT_CARD at W5
+	UnmatchedLines int    `json:"unmatched_lines"`
+	// The recorded reconciliation starting point (cut over, FW1-04): nil/empty until the Financial
+	// Controller records it through the cutover route.
+	CutoverDate                  *string  `json:"cutover_date,omitempty"`
+	CutoverStatementBalanceCents *int64   `json:"cutover_statement_balance_cents,omitempty"`
+	CutoverOutstandingJournalIDs []string `json:"cutover_outstanding_journal_ids,omitempty"`
 }
 
 // StatementLine is one parsed bank line (0033 bank_statement_lines). AmountCents is signed (+credit/−debit).

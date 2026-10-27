@@ -1191,6 +1191,20 @@ func TestIntegration_FW1_04_CutoverRouteLegs(t *testing.T) {
 	}
 
 	// Once a later month (2022-04) has signed off, recording through the door is refused 409.
+	// The ledger carries the cut over balance for real (the March opening journal), so April's own
+	// figures tie and it can sign off.
+	if _, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		IdempotencyKey: "fw104-r3-route-open",
+		Source:         "ADJUSTMENT",
+		Memo:           "opening balance at go live",
+		DocumentDate:   time.Date(year, 3, 31, 12, 0, 0, 0, time.UTC),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 500000, Memo: "opening balance"},
+			{AccountCode: "3900", CreditCents: 500000, Memo: "retained earnings"},
+		},
+	}); err != nil {
+		t.Fatalf("post opening balance: %v", err)
+	}
 	depJID, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
 		IdempotencyKey: "fw104-r3-route-apr-dep",
 		Source:         "ADJUSTMENT",

@@ -119,6 +119,7 @@ var Routes = []Route{
 	{Method: "POST", Path: "/api/v1/auth/persona", OperationID: "identityPersona", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "POST", Path: "/api/v1/auth/sign-out", OperationID: "identitySignOut", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/v1/bankrec/accounts", OperationID: "bankrecListAccounts", Tag: "staff-bankrec", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "work", List: ""},
+	{Method: "POST", Path: "/api/v1/bankrec/accounts/{id}/cutover", OperationID: "bankrecRecordCutover", Tag: "staff-bankrec", XRole: "requireAdmin", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "admin", List: ""},
 	{Method: "POST", Path: "/api/v1/bankrec/imports", OperationID: "bankrecCreateImport", Tag: "staff-bankrec", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
 	{Method: "GET", Path: "/api/v1/bankrec/lines", OperationID: "bankrecListLines", Tag: "staff-bankrec", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "work", List: ""},
 	{Method: "POST", Path: "/api/v1/bankrec/match", OperationID: "bankrecMatch", Tag: "staff-bankrec", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
