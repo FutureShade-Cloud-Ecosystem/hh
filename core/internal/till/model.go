@@ -459,6 +459,20 @@ type SessionDetail struct {
 	TillSession
 	Tenders   []TenderTotal `json:"tenders"`
 	Movements []Movement    `json:"movements"`
+	// SlipCandidates are the drawer's unlodged cheques: the RECEIVED cheques on this session that no
+	// lodgement has named yet (FROM-PRINCIPAL 166 P1-1). The close lists them, each ticked by
+	// default, and the drawer unticks the ones this lodgement does not carry.
+	SlipCandidates []SlipCandidate `json:"slip_candidates"`
+}
+
+// SlipCandidate is one payment the drawer may put on a lodgement's slip: a RECEIVED, unreversed payment
+// on this session that no lodgement has named yet.
+type SlipCandidate struct {
+	PaymentID   string `json:"payment_id"`
+	PaymentNo   string `json:"payment_no"`
+	AmountCents int64  `json:"amount_cents"`
+	Method      string `json:"method"`
+	Reference   string `json:"reference"`
 }
 
 func abs64(x int64) int64 {

@@ -72,6 +72,13 @@ type JournalSource interface {
 	JournalForBank(ctx context.Context, journalID, glAccountCode string) (gl.BankJournalFacts, bool, error)
 }
 
+// JournalKeyReader answers which of the given idempotency keys already name a journal. Satisfied by
+// *gl.Service.JournalKeysExist (the GL's own keyed existence read). bankrec never reads gl_journals
+// itself: it asks the GL, which owns the table.
+type JournalKeyReader interface {
+	JournalKeysExist(ctx context.Context, keys []string) ([]string, error)
+}
+
 // JournalPoster posts a clearing journal through the GL provider. Satisfied by a main.go adapter over
 // *gl.Service.PostExternal. bankrec passes Source "ADJUSTMENT" (the 0007 CHECK set).
 type JournalPoster interface {
@@ -147,15 +154,16 @@ func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: po
 
 // Service is the bankrec domain seam. Sibling seams are injected via the With* builder options.
 type Service struct {
-	repo       *Repository
-	payments   PaymentSource
-	lodgements LodgementSource
-	journals   JournalSource
-	poster     JournalPoster
-	balances   GLBalanceReader
-	source     StatementSource
-	audit      audit.Recorder
-	log        *slog.Logger
+	repo        *Repository
+	payments    PaymentSource
+	lodgements  LodgementSource
+	journals    JournalSource
+	journalKeys JournalKeyReader
+	poster      JournalPoster
+	balances    GLBalanceReader
+	source      StatementSource
+	audit       audit.Recorder
+	log         *slog.Logger
 }
 
 // NewService wires the repository. Optional deps are injected via the With* methods.
@@ -168,6 +176,10 @@ func (s *Service) WithPayments(p PaymentSource) *Service { s.payments = p; retur
 
 // WithJournals injects the GL journal seam a manual JOURNAL match reads (SF-2j). Unwired, a JOURNAL target is refused.
 func (s *Service) WithJournals(j JournalSource) *Service { s.journals = j; return s }
+
+// WithJournalKeys injects the GL's keyed journal existence read, which names the lodgement's own journal
+// (FROM-PRINCIPAL 117 and 120). Unwired, the match falls back to the till's own facts.
+func (s *Service) WithJournalKeys(j JournalKeyReader) *Service { s.journalKeys = j; return s }
 
 // WithLodgements injects the till open-lodgement seam.
 func (s *Service) WithLodgements(l LodgementSource) *Service { s.lodgements = l; return s }

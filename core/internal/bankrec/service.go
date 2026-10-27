@@ -150,6 +150,11 @@ func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to
 		}
 		lodg = kept
 	}
+	// A lodgement whose own journal has posted is only confirmed by its match (FROM-PRINCIPAL 117 and
+	// 120), so the candidates carry the fact before the matcher pairs them.
+	if err := s.markLodgementsWithJournals(ctx, lodg); err != nil {
+		return MatchSummary{}, err
+	}
 
 	summary := MatchSummary{}
 	for _, line := range lines {
@@ -176,6 +181,59 @@ func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to
 		}
 	}
 	return summary, nil
+}
+
+// lodgementJournalKey is the idempotency key the till's movement journal carries, so the GL's keyed
+// existence read can name the lodgement's own journal (core/internal/gl/posting.go, the builder's key).
+const lodgementJournalKey = "till.movement.posted:"
+
+// carriesOwnJournal says whether a lodgement carries its OWN journal, the fact the match needs
+// (FROM-PRINCIPAL 117 and 120): a lodgement that journaled at lodgement is only CONFIRMED by its match,
+// which posts nothing, or the deposit is booked twice.
+//
+// The till's seam answers what the till knows (the slip's link rows, or the emission that carries the
+// journal). The GL's seam answers whether the journal itself has posted. The rule does NOT rest on the
+// outbox alone: an outbox row can be archived, and the journal that names the lodgement cannot.
+func (s *Service) carriesOwnJournal(ctx context.Context, movementID string, tillSays bool) (bool, error) {
+	if tillSays || movementID == "" || s.journalKeys == nil {
+		return tillSays, nil
+	}
+	found, err := s.journalKeys.JournalKeysExist(ctx, []string{lodgementJournalKey + movementID})
+	if err != nil {
+		return false, err
+	}
+	return len(found) > 0, nil
+}
+
+// markLodgementsWithJournals marks the candidates whose own journal has posted, so the matcher confirms
+// them instead of posting a second journal for the same deposit.
+func (s *Service) markLodgementsWithJournals(ctx context.Context, lodg []Lodgement) error {
+	if s.journalKeys == nil || len(lodg) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(lodg))
+	for _, l := range lodg {
+		if !l.CarriesJournal {
+			keys = append(keys, lodgementJournalKey+l.MovementID)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	found, err := s.journalKeys.JournalKeysExist(ctx, keys)
+	if err != nil {
+		return err
+	}
+	posted := make(map[string]bool, len(found))
+	for _, k := range found {
+		posted[k] = true
+	}
+	for i := range lodg {
+		if posted[lodgementJournalKey+lodg[i].MovementID] {
+			lodg[i].CarriesJournal = true
+		}
+	}
+	return nil
 }
 
 // persistProposal claims the match (flip line + claim payment + insert match row atomically), THEN posts the
@@ -282,7 +340,9 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 		if facts.AmountCents != line.AmountCents {
 			return Match{}, unprocessable("bankrec: that lodgement is for %d cents and the line is %d cents, so it does not explain the line", facts.AmountCents, line.AmountCents)
 		}
-		carriesJournal = facts.CarriesJournal
+		if carriesJournal, err = s.carriesOwnJournal(ctx, in.TargetRefID, facts.CarriesJournal); err != nil {
+			return Match{}, err
+		}
 	case TargetJournal:
 		if jerr := s.checkJournalTarget(ctx, line, in); jerr != nil {
 			return Match{}, jerr
@@ -472,10 +532,14 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 	// (FROM-PRINCIPAL 117 and 120), so its undo reverses nothing either.
 	carriesJournal := false
 	if targetType == TargetLodgement {
-		if facts, found, ferr := s.lodgementFacts(ctx, targetRef); ferr != nil {
+		facts, found, ferr := s.lodgementFacts(ctx, targetRef)
+		if ferr != nil {
 			return ferr
-		} else if found {
-			carriesJournal = facts.CarriesJournal
+		}
+		if found {
+			if carriesJournal, ferr = s.carriesOwnJournal(ctx, targetRef, facts.CarriesJournal); ferr != nil {
+				return ferr
+			}
 		}
 	}
 	if s.poster != nil && amount > 0 {

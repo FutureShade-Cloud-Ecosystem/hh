@@ -382,8 +382,8 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 			"movement_type": m.MovementType,
 			"method":        m.Method,
 			"amount_cents":  m.AmountCents,
-			"reason":        m.Reason,
 			"occurred_at":   movementAt,
+			"reason":        m.Reason,
 		})
 		if err != nil {
 			return fmt.Errorf("till: marshal movement posted: %w", err)
@@ -429,6 +429,36 @@ func (r *Repository) PaymentsForSlip(ctx context.Context, sessionID, method stri
 	return out, rows.Err()
 }
 
+// SlipCandidates reads the drawer's unlodged payments of a method: the RECEIVED, unreversed payments on
+// this session that no lodgement has named yet (0441's link rows), so the drawer can tick the ones the
+// lodgement carries. The order is the drawer's own: the oldest first.
+func (r *Repository) SlipCandidates(ctx context.Context, sessionID, method string) ([]SlipCandidate, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT p.id::text, p.payment_no::text, p.amount_cents, p.method,
+		        COALESCE(NULLIF(p.gateway_ref, ''), p.payment_no::text)
+		   FROM payments p
+		  WHERE p.till_session_id = $1::uuid AND p.method = $2
+		    AND p.status = 'RECEIVED' AND p.reversed_at IS NULL
+		    AND NOT EXISTS (SELECT 1 FROM till_lodgement_payments lp WHERE lp.payment_id = p.id)
+		  ORDER BY p.received_at, p.id`, sessionID, method)
+	if err != nil {
+		return nil, fmt.Errorf("till: slip candidates: %w", err)
+	}
+	defer rows.Close()
+	var out []SlipCandidate
+	for rows.Next() {
+		var c SlipCandidate
+		if err := rows.Scan(&c.PaymentID, &c.PaymentNo, &c.AmountCents, &c.Method, &c.Reference); err != nil {
+			return nil, fmt.Errorf("till: scan slip candidate: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // InsertMovementTx is InsertMovement inside the CALLER'S tx (the POS return path, the PAID_OUT
 // cash-refund movement must commit or roll back with the return it belongs to).
 func (r *Repository) InsertMovementTx(ctx context.Context, tx pgx.Tx, m MovementRow) error {
@@ -440,13 +470,24 @@ func (r *Repository) InsertMovementTx(ctx context.Context, tx pgx.Tx, m Movement
 	return nil
 }
 
+// ExpectedTenders reads the drawer's received money per tender method: the RECEIVED payments, plus the
+// payments a lodgement's deposit slip carried.
+//
+// A slip-lodgement's payments are DEPOSITED now (the bank's fact: they are in the deposit, and a bounce
+// of one credits 1000). But the DRAWER received them and the lodgement is the drawer's own statement that
+// it banked them, so they stay in the drawer's in-term and the lodgement takes them out of it, ONCE.
+// Leaving them out of the in-term (the DEPOSITED status alone) takes the same money out twice - the
+// slip's mark and the lodgement - and the drawer reads short by the whole slip.
 func (r *Repository) ExpectedTenders(ctx context.Context, sessionID string) (map[string]int64, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT method, COALESCE(SUM(amount_cents), 0) FROM payments
-		 WHERE till_session_id = $1 AND status = 'RECEIVED' GROUP BY method`, sessionID)
+		 WHERE till_session_id = $1
+		   AND (status = 'RECEIVED' OR EXISTS (
+		         SELECT 1 FROM till_lodgement_payments lp WHERE lp.payment_id = payments.id))
+		 GROUP BY method`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("till: expected tenders: %w", err)
 	}

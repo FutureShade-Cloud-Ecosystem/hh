@@ -1776,6 +1776,7 @@ function tillSessionDetail(row) {
     blind_close: false,
     tenders: [],
     movements: row.movements ?? [],
+    slip_candidates: row.slipCandidates ?? [],
   };
 }
 
@@ -2382,6 +2383,12 @@ const server = createServer(async (request, response) => {
         expectedByMethod: {},
         lodgedByMethod: {},
         movements: [],
+        // The drawer's unlodged cheques (FROM-PRINCIPAL 166 P1-1): the demo world holds two on the
+        // drawer, so the close's slip has something to show.
+        slipCandidates: [
+          { payment_id: "8f4c1e22-demo-cheque-0001", payment_no: "CHQ-1042", amount_cents: 30000, method: "CHEQUE", reference: "CHQ-1042" },
+          { payment_id: "8f4c1e22-demo-cheque-0002", payment_no: "CHQ-1043", amount_cents: 1250, method: "CHEQUE", reference: "CHQ-1043" },
+        ],
         counted: null,
         closing_float_cents: 0,
       };
@@ -2436,6 +2443,23 @@ const server = createServer(async (request, response) => {
         return;
       }
       const method = typeof parsed.method === "string" && parsed.method !== "" ? parsed.method : "CASH";
+      const slip = Array.isArray(parsed.payment_ids) ? parsed.payment_ids.filter((id) => typeof id === "string") : [];
+      // A cheque lodgement must name its cheques (FROM-PRINCIPAL 166 P1-1): the demo answers the core's
+      // own refusal, in the core's words.
+      if (type === "LODGEMENT" && method === "CHEQUE" && slip.length === 0) {
+        respondJson(response, 422, { error: `till: Tick the cheques in this lodgement; they come to $0.00, the lodgement says $${(parsed.amount_cents / 100).toFixed(2)}.` });
+        return;
+      }
+      const slipSum = slip.reduce((sum, id) => {
+        const hit = (row.slipCandidates ?? []).find((c) => c.payment_id === id);
+        return sum + (hit ? hit.amount_cents : 0);
+      }, 0);
+      if (type === "LODGEMENT" && method === "CHEQUE" && slipSum !== parsed.amount_cents) {
+        respondJson(response, 422, { error: `till: Tick the cheques in this lodgement; they come to $${(slipSum / 100).toFixed(2)}, the lodgement says $${(parsed.amount_cents / 100).toFixed(2)}.` });
+        return;
+      }
+      // The lodged cheques leave the drawer's list: they are on the slip now.
+      row.slipCandidates = (row.slipCandidates ?? []).filter((c) => !slip.includes(c.payment_id));
       row.movements.push({
         movement_type: type,
         method,

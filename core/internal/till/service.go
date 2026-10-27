@@ -55,6 +55,10 @@ type tillStore interface {
 	// amount, the status and whether a reversal has stamped it, for the ids named, on this session and
 	// this method only.
 	PaymentsForSlip(ctx context.Context, sessionID, method string, ids []string) ([]SlipPayment, error)
+	// SlipCandidates reads the drawer's unlodged payments of a method: the RECEIVED, unreversed payments
+	// on this session that no lodgement has named yet, so the close can tick the ones it is lodging
+	// (FROM-PRINCIPAL 166 P1-1).
+	SlipCandidates(ctx context.Context, sessionID, method string) ([]SlipCandidate, error)
 
 	// - W5 A-05: NSF + credit holds + declined-attempt log -
 	// PaymentNSFContext resolves the finance facts of a payment for the NSF decision (non-tx read).
@@ -539,13 +543,17 @@ func (s *Service) recordMovement(ctx context.Context, in MovementInput, mt strin
 	if method == "" {
 		method = MethodCash
 	}
-	// The deposit slip (FROM-PRINCIPAL 128): a lodgement may name its payments, and when it does the
-	// slip must add up. Every name is on this drawer, this method, still RECEIVED and not reversed,
+	// The deposit slip (FROM-PRINCIPAL 128 and 166 P1-1): a lodgement may name its payments, and when it
+	// does the slip must add up. Every name is on this drawer, this method, still RECEIVED and not reversed,
 	// no name appears twice, and the names sum to the slip's amount: a partial slip is refused, never
 	// claimed. The names ride the movement row, and the link rows and the DEPOSITED marks commit in
 	// the movement's own transaction (FROM-PRINCIPAL 120).
+	//
+	// A CHEQUE lodgement MUST name its cheques: a cheque bounces, so the deposit has to say which payments
+	// it carries, or the bounce credits the wrong account (1020 instead of 1000). A CASH lodgement may go
+	// without a slip (cash does not bounce), and a cash slip that is sent is kept.
 	var slip []string
-	if mt == MovementLodgement && len(in.PaymentIDs) > 0 {
+	if mt == MovementLodgement && (len(in.PaymentIDs) > 0 || method != MethodCash) {
 		slip, err = s.validateSlip(ctx, sess, method, in)
 		if err != nil {
 			return err
@@ -591,9 +599,32 @@ func (s *Service) validateSlip(ctx context.Context, sess TillSession, method str
 		sum += p.AmountCents
 	}
 	if sum != in.AmountCents {
-		return nil, unprocessable("till: the slip's payments sum to %d, not the lodgement's %d", sum, in.AmountCents)
+		// The drawer's words (FROM-PRINCIPAL 166 P1-1): the slip is a list of ticks, and a slip that does
+		// not add up is refused in the words the close screen shows, not in cents.
+		return nil, unprocessable("%s", slipRefusalWords(method, sum, in.AmountCents))
 	}
 	return in.PaymentIDs, nil
+}
+
+// slipRefusalWords is the sentence the drawer reads when the slip does not add up: the cheques come to
+// one amount and the lodgement says another. A missing slip reads as nothing ticked ($0.00).
+func slipRefusalWords(method string, slipSum, lodgementCents int64) string {
+	noun := "payments"
+	if method == MethodCheque {
+		noun = "cheques"
+	}
+	return fmt.Sprintf("till: Tick the %s in this lodgement; they come to %s, the lodgement says %s.",
+		noun, moneyCents(slipSum), moneyCents(lodgementCents))
+}
+
+// moneyCents renders cents for a drawer-facing message.
+func moneyCents(cents int64) string {
+	sign := ""
+	if cents < 0 {
+		sign = "-"
+		cents = -cents
+	}
+	return fmt.Sprintf("%s$%d.%02d", sign, cents/100, cents%100)
 }
 
 // CountTill records the BLIND per-tender actuals (+ optional CLOSE denominations) and transitions the
@@ -866,7 +897,16 @@ func (s *Service) GetSession(ctx context.Context, id string) (SessionDetail, err
 			tenders[i].VarianceCents = tenders[i].ActualCents - exp
 		}
 	}
-	return SessionDetail{TillSession: sess, Tenders: tenders, Movements: movements}, nil
+	// The drawer's unlodged cheques: the close lists them for the lodgement's slip (FROM-PRINCIPAL 166
+	// P1-1). A cash lodgement needs none, so only the cheques are listed.
+	candidates, err := s.store.SlipCandidates(ctx, sess.ID, MethodCheque)
+	if err != nil {
+		return SessionDetail{}, err
+	}
+	if candidates == nil {
+		candidates = []SlipCandidate{}
+	}
+	return SessionDetail{TillSession: sess, Tenders: tenders, Movements: movements, SlipCandidates: candidates}, nil
 }
 
 // Policy returns the branch variance threshold + close grain.

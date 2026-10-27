@@ -13,7 +13,8 @@
 // asks for it.
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { api } from '@hardscapehouse/pos-kit/src/ported/ports.js';
+import { api, sumSlipCents } from '@hardscapehouse/pos-kit/src/ported/ports.js';
+import { plainDollars } from '@hardscapehouse/pos-kit/src/ported/_money-format.js'; // HH note: the display spelling lives in the named helper (CLOSURE.md)
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import { ModalFocus } from '@hardscapehouse/pos-kit/src/ported/modal-focus.js';
 import { rowStripe } from './styles/row-stripe.js';
@@ -47,6 +48,14 @@ interface MovementRow {
   amount_cents: number;
   reason?: string;
   reference?: string;
+}
+
+interface SlipCandidate {
+  payment_id: string;
+  payment_no: string;
+  amount_cents: number;
+  method: string;
+  reference: string;
 }
 
 interface TillPolicy {
@@ -227,6 +236,67 @@ export class HosTillClose extends LitElement {
       border-color: var(--hos-safety-red);
       color: var(--hos-safety-red);
     }
+    .slip {
+      margin-top: 12px;
+      border: 1px solid var(--hos-line);
+      border-radius: var(--hos-radius-control);
+      padding: 10px 12px;
+    }
+    .slip.empty {
+      color: var(--hos-text-dim);
+      font-size: 12px;
+    }
+    .slip-head {
+      font-size: 12px;
+      color: var(--hos-text-dim);
+      margin-bottom: 6px;
+    }
+    .slip-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      padding: 4px 0;
+      margin: 0;
+      cursor: pointer;
+    }
+    /* The tick is a tick, not a text field: the component's own input rule gives
+       every input the full width, which would push the cheque's number out of
+       the row and centre the box. The tick keeps its own size. */
+    .slip-row input[type='checkbox'] {
+      flex: none;
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      padding: 0;
+      accent-color: var(--hos-stone-amber);
+    }
+    .slip-no {
+      flex: 1 1 auto;
+      min-width: 0;
+      font-family: var(--hos-font-mono);
+      font-size: 12px;
+      color: var(--hos-text);
+      text-transform: none;
+      letter-spacing: normal;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .slip-amt {
+      font-family: var(--hos-font-mono);
+      text-align: right;
+      white-space: nowrap;
+      min-width: 72px;
+    }
+    .slip-sum {
+      display: flex;
+      justify-content: space-between;
+      border-top: 1px solid var(--hos-line);
+      margin-top: 6px;
+      padding-top: 6px;
+      font-size: 12px;
+    }
     .moves {
       margin-top: 10px;
       font-size: 12px;
@@ -313,6 +383,13 @@ export class HosTillClose extends LitElement {
   @state() private moveType = 'DROP';
   @state() private moveAmount = '';
   @state() private moveReason = '';
+  // A lodgement's method: cash banks without a slip, a cheque lodgement names the cheques it carries
+  // (FROM-PRINCIPAL 166 P1-1: a cheque bounces, so the deposit has to say which payments it holds).
+  @state() private moveMethod = 'CASH';
+  // The drawer's unlodged cheques and the ticks on them: every cheque starts ticked, and the drawer
+  // unticks the ones this lodgement does not carry.
+  @state() private slipCandidates: SlipCandidate[] = [];
+  @state() private slipTicked: Record<string, boolean> = {};
 
   // blind count form: the cash by denomination, the cheques by hand
   @state() private denomQty: Record<number, string> = {};
@@ -333,6 +410,55 @@ export class HosTillClose extends LitElement {
     this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true }));
   }
 
+  protected firstUpdated(): void {
+    void this.loadSessionDetail();
+  }
+
+  /** The session detail carries the drawer's unlodged cheques, the slip's raw material. */
+  private async loadSessionDetail(): Promise<void> {
+    const res = await api(`/api/v1/till/sessions/${this.sessionId}`);
+    if (!res.ok) return;
+    const detail = (await res.json()) as { movements?: MovementRow[]; slip_candidates?: SlipCandidate[] };
+    this.movements = detail.movements ?? [];
+    this.slipCandidates = detail.slip_candidates ?? [];
+    const ticked: Record<string, boolean> = {};
+    for (const c of this.slipCandidates) ticked[c.payment_id] = true;
+    this.slipTicked = ticked;
+  }
+
+  /** The money the ticked cheques come to: the slip's own sum, in the seam. */
+  private slipSum(): number {
+    return sumSlipCents(this.slipCandidates.filter((c) => this.slipTicked[c.payment_id] === true).map((c) => c.amount_cents));
+  }
+
+  /** The ids of the ticked cheques: the slip this lodgement carries. */
+  private slipIds(): string[] {
+    return this.slipCandidates.filter((c) => this.slipTicked[c.payment_id] === true).map((c) => c.payment_id);
+  }
+
+  /** A tick changes the slip, so the slip's sum is the lodgement's amount. */
+  private toggleTick(paymentID: string, on: boolean): void {
+    this.slipTicked = { ...this.slipTicked, [paymentID]: on };
+    this.moveAmount = plainDollars(this.slipSum());
+  }
+
+  /** The method changes: a cheque lodgement carries a slip, a cash one does not. */
+  private setMoveMethod(value: string): void {
+    this.moveMethod = value;
+    if (value === 'CHEQUE') {
+      this.moveAmount = plainDollars(this.slipSum());
+    }
+  }
+
+  /** The type changes, so the method starts over on cash: only a lodgement carries a slip. */
+  private setMoveType(value: string): void {
+    this.moveType = value;
+    this.moveMethod = 'CASH';
+    if (value === 'LODGEMENT' && this.slipCandidates.length > 0) {
+      this.moveAmount = plainDollars(this.slipSum());
+    }
+  }
+
   private denomSum(): number {
     return DENOMINATIONS.reduce((sum, d) => sum + Math.round(parseFloat(this.denomQty[d] || '0') || 0) * d, 0);
   }
@@ -348,9 +474,10 @@ export class HosTillClose extends LitElement {
         method: 'POST',
         body: JSON.stringify({
           movement_type: this.moveType,
-          method: 'CASH',
+          method: this.moveMethod,
           amount_cents: amount,
           reason: this.moveReason,
+          payment_ids: this.moveType === 'LODGEMENT' ? this.slipIds() : [],
         }),
       });
       if (!res.ok) throw new Error(((await res.json()) as { error?: string }).error ?? `HTTP ${res.status}`);
@@ -427,6 +554,39 @@ export class HosTillClose extends LitElement {
     }
   }
 
+  /**
+   * The slip: the drawer's unlodged cheques, each ticked by default. The drawer unticks the ones
+   * this lodgement does not carry, and the ticked sum is the lodgement's amount.
+   */
+  private slipList() {
+    if (this.slipCandidates.length === 0) {
+      return html`<div class="slip empty" data-testid="movement-slip">No cheques on this drawer.</div>`;
+    }
+    return html`
+      <div class="slip" data-testid="movement-slip">
+        <div class="slip-head">Cheques on this drawer</div>
+        ${this.slipCandidates.map(
+          (c) => html`
+            <label class="slip-row">
+              <input
+                type="checkbox"
+                data-testid="slip-tick"
+                .checked=${this.slipTicked[c.payment_id] === true}
+                @change=${(e: Event) => this.toggleTick(c.payment_id, (e.target as HTMLInputElement).checked)}
+              />
+              <span class="slip-no">${c.reference || c.payment_no}</span>
+              <span class="slip-amt">${formatMoney(c.amount_cents)}</span>
+            </label>
+          `,
+        )}
+        <div class="slip-sum">
+          <span>Ticked</span>
+          <span data-testid="slip-sum">${formatMoney(this.slipSum())}</span>
+        </div>
+      </div>
+    `;
+  }
+
   private movementsStep() {
     return html`
       <div class="row">
@@ -436,7 +596,7 @@ export class HosTillClose extends LitElement {
             data-testid="movement-type"
             .value=${this.moveType}
             title="Drop: to the safe for a later bank run · Lodgement: already banked · Paid in: non-sale cash added · Paid out: expense cash removed"
-            @change=${(e: Event) => (this.moveType = (e.target as HTMLSelectElement).value)}
+            @change=${(e: Event) => this.setMoveType((e.target as HTMLSelectElement).value)}
           >
             <option value="DROP">Drop · to safe, for the bank</option>
             <option value="LODGEMENT">Lodgement · banked</option>
@@ -455,7 +615,24 @@ export class HosTillClose extends LitElement {
             @input=${(e: Event) => (this.moveAmount = (e.target as HTMLInputElement).value)}
           />
         </div>
+        ${this.moveType === 'LODGEMENT'
+          ? html`
+              <div>
+                <label>Method</label>
+                <select
+                  data-testid="movement-method"
+                  .value=${this.moveMethod}
+                  title="Cash banks without a slip. A cheque lodgement names the cheques it carries."
+                  @change=${(e: Event) => this.setMoveMethod((e.target as HTMLSelectElement).value)}
+                >
+                  <option value="CASH">Cash</option>
+                  <option value="CHEQUE">Cheque</option>
+                </select>
+              </div>
+            `
+          : nothing}
       </div>
+      ${this.moveType === 'LODGEMENT' && this.moveMethod === 'CHEQUE' ? this.slipList() : nothing}
       <label>Reason</label>
       <input
         data-testid="movement-reason"
