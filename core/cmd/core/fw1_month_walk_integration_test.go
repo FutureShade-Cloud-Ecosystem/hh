@@ -1333,6 +1333,12 @@ func (w *fw1Walk) assertWalkMonthAndNextYearPeriodsOpen(t fw1TB) {
 	if walkPeriod == 0 {
 		t.Errorf("the walk month %04d-%02d has no OPEN fiscal period", w.year, w.month)
 	}
+	// What the box does: the worker runs the roll forward at boot (cmd/core/worker.go,
+	// glSvc.EnsureNextFiscalYear), so the year after the current house year exists, all twelve
+	// months OPEN, ahead of need and without anyone acting. The walk runs it here before it counts.
+	if _, err := w.money.glSvc.EnsureNextFiscalYear(context.Background()); err != nil {
+		t.Fatalf("the boot roll forward: %v", err)
+	}
 	var nextYear int
 	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM fiscal_periods WHERE year = $1 AND status = 'OPEN'`, w.year+1).Scan(&nextYear); err != nil {
 		t.Fatalf("the next year period read: %v", err)

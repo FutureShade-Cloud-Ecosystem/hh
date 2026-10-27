@@ -15,6 +15,5 @@ var fw1WalkRed = map[string]string{
 	"every_journal_line_carries_a_branch_and_branch_trial_balances_sum": "FW1-08",
 	"stock_value_ties_to_GL_1200":                                       "FW1-07",
 	"till_lodgement_posts_bank_1000_at_lodgement":                       "FW1-13",
-	"walk_month_and_next_year_periods_open":                             "FW1-01",
 	"year_end_close_opens_next_year_and_keeps_income_statement":         "FW1-09",
 }
