@@ -255,6 +255,7 @@ func (s *Service) prepareReturnAcross(ctx context.Context, in ReturnAcrossInput)
 		childIn := ReturnInput{
 			IdempotencyKey: noteChildKey(in.IdempotencyKey, o.OrderID),
 			OrderID:        o.OrderID,
+			BranchID:       in.BranchID,
 			Lines:          o.Lines,
 			RefundMethod:   in.RefundMethod,
 			Reason:         in.Reason,
@@ -380,7 +381,7 @@ func (s *Service) returnAcrossFailed(ctx context.Context, plan *returnAcrossPlan
 		// commits) and the money asked for, the single path's own audit discipline.
 		s.record(ctx, audit.SensitiveAccess{
 			Action: auditActionRefundApprovalRefused, EntityType: "pos.return_note", EntityID: plan.in.CustomerID,
-			ActorID: plan.actor, BranchID: plan.children[0].oc.BranchID, Purpose: "POS_RETURN",
+			ActorID: plan.actor, BranchID: plan.children[0].returnBranchID(), Purpose: "POS_RETURN",
 			Reason: refundApprovalRequiredError,
 			Extra:  map[string]any{"amount_cents": refusal.RefundCents},
 		})
@@ -485,7 +486,7 @@ func (s *Service) stageCardReturnAcrossInTx(ctx context.Context, tx pgx.Tx, plan
 			return ReturnNote{}, false, false, cerr
 		}
 		existing, stored, err := s.store.StageCardRefundAttemptTx(ctx, tx, cardRefundFact{
-			RefundKey: "refund:" + child.in.IdempotencyKey, OrderID: child.oc.OrderID, BranchID: child.oc.BranchID,
+			RefundKey: "refund:" + child.in.IdempotencyKey, OrderID: child.oc.OrderID, BranchID: child.returnBranchID(),
 			CustomerID: child.oc.CustomerID, GatewayRef: child.oc.GatewayRef, AmountCents: cardCents,
 			InitiatedBy: child.actor,
 		})
@@ -546,7 +547,7 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 	// ahead of this body (swap.go), one pass, so the body adds none there and the swap's pre-lock
 	// stays the one call the review leg pins.
 	if !in.swap {
-		if err := s.lockRestockRowsTx(ctx, tx, ordered[0].oc.BranchID, noteRestockProducts(plan)); err != nil {
+		if err := s.lockRestockRowsTx(ctx, tx, ordered[0].returnBranchID(), noteRestockProducts(plan)); err != nil {
 			return ReturnNote{}, false, false, err
 		}
 	}
@@ -658,7 +659,7 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 
 	// The note header ahead of its children: every child's row carries the note's id.
 	noteID, noteNo, ierr := s.store.InsertReturnNote(ctx, tx, returnNoteRow{
-		CustomerID: in.CustomerID, BranchID: first.oc.BranchID, RefundMethod: in.RefundMethod,
+		CustomerID: in.CustomerID, BranchID: first.returnBranchID(), RefundMethod: in.RefundMethod,
 		SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: noteTotal,
 		Reason: in.Reason, IdempotencyKey: in.IdempotencyKey, CreatedBy: plan.actor,
 	})
@@ -667,7 +668,7 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 	}
 
 	out := ReturnNote{
-		NoteID: noteID, NoteNo: noteNo, CustomerID: in.CustomerID, BranchID: first.oc.BranchID,
+		NoteID: noteID, NoteNo: noteNo, CustomerID: in.CustomerID, BranchID: first.returnBranchID(),
 		RefundMethod: in.RefundMethod, SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: noteTotal,
 		Returns: []Return{},
 	}

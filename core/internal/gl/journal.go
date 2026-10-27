@@ -223,6 +223,13 @@ func (s *Service) CreateJournal(ctx context.Context, in CreateJournalInput) (Jou
 		}
 		return s.journalAnswered(ctx, id)
 	}
+	if draft.BranchID == "" {
+		ho, herr := s.store.HeadOfficeBranchID(ctx)
+		if herr != nil {
+			return Journal{}, herr
+		}
+		draft.BranchID = ho
+	}
 	id, _, err := s.store.InsertJournal(ctx, draft)
 	if err != nil {
 		return Journal{}, err
@@ -357,10 +364,18 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 			Memo:        "reversal",
 		})
 	}
+	branchID := orig.BranchID
+	if branchID == "" {
+		ho, herr := s.store.HeadOfficeBranchID(ctx)
+		if herr != nil {
+			return Journal{}, herr
+		}
+		branchID = ho
+	}
 	draft := journalDraft{
 		Source:            SourceAdjustment,
 		Memo:              fmt.Sprintf("Reversal of entry #%d", orig.EntryNo),
-		BranchID:          orig.BranchID,
+		BranchID:          branchID,
 		Status:            StatusPosted,
 		ReversesJournalID: orig.ID,
 		CreatedBy:         caller.UserID,
@@ -445,11 +460,21 @@ func (s *Service) RunRecurring(ctx context.Context, id string) (Journal, error) 
 	}
 	// SourceRefID carries the template's id: the only MANUAL journals with a source ref are recurring runs, and
 	// the approve route reads it to name the template when it refuses an over-threshold run (ruling 108).
+	// FW1-08b (ruling 82.3): the run lands in its template's branch when set, else the head office branch.
+	branch := tpl.BranchID
+	if branch == "" {
+		var berr error
+		branch, berr = s.store.HeadOfficeBranchID(ctx)
+		if berr != nil {
+			return Journal{}, berr
+		}
+	}
 	draft := journalDraft{
 		Source:      SourceManual,
 		SourceRefID: tpl.ID,
 		Memo:        memo,
 		Status:      StatusDraft,
+		BranchID:    branch,
 		CreatedBy:   caller.UserID,
 		OccurredAt:  s.clock(),
 		Lines:       lines,
