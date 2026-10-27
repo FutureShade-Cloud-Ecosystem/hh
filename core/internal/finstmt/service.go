@@ -418,7 +418,12 @@ func normalizeRecipients(raw string) string { return strings.Join(splitRecipient
 // -- audit stamping (best-effort export access trail) -------------------------
 
 // recordExport stamps a report-export access on the A-21 trail when an auditor is wired. Best-effort:
-// an audit failure never blocks delivering the (read-only) statement.
+// an audit failure never blocks delivering the (read-only) statement. Round 4 (S2's round 3 P1):
+// audit_log.entity_id is a uuid column (0013), so the row carries NO entity (the empty id is what
+// lands NULL in the column) and the report name and format ride the allowlisted Extra keys; the old
+// report-name entity failed every real insert with SQLSTATE 22P02, so no export was ever audited. A
+// failed audit still never blocks the export, but it is logged at Error with the report named, not
+// dropped at Warn.
 func (s *Service) recordExport(ctx context.Context, report, format, actorID, branchID string) {
 	if s.audit == nil {
 		return
@@ -426,13 +431,13 @@ func (s *Service) recordExport(ctx context.Context, report, format, actorID, bra
 	err := s.audit.Record(ctx, audit.SensitiveAccess{
 		Action:     "FINSTMT_EXPORT",
 		EntityType: "finstmt.report",
-		EntityID:   report,
+		EntityID:   "",
 		ActorID:    actorID,
 		BranchID:   branchID,
 		Purpose:    "STATEMENT_EXPORT",
-		Extra:      map[string]any{"format": format},
+		Extra:      map[string]any{"report": report, "format": format},
 	})
 	if err != nil {
-		s.log.Warn("finstmt: export audit record failed", "report", report, "err", err)
+		s.log.Error("finstmt: export audit record failed, the export is not on the trail", "report", report, "err", err)
 	}
 }

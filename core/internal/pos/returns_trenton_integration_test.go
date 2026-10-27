@@ -898,14 +898,14 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 	// would curate it, a change the dealer never made.
 	var codEnabled, chipsEnabled bool
 	var restockingFee, splitPct int
-	var notes, linePres, workspaceArr, lookupPres, marginVis, chips, balanceVis string
+	var notes, linePres, workspaceArr, lookupPres, marginVis, chips string
 	if err := s.pool.QueryRow(context.Background(), `
 		SELECT cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled,
 		       workspace_split_pct, workspace_arrangement, lookup_presentation, margin_visibility,
-		       COALESCE(quick_chip_set, ''), balance_visibility
+		       COALESCE(quick_chip_set, '')
 		  FROM pos_policy WHERE branch_id IS NULL`).
 		Scan(&codEnabled, &restockingFee, &notes, &linePres, &chipsEnabled, &splitPct,
-			&workspaceArr, &lookupPres, &marginVis, &chips, &balanceVis); err != nil {
+			&workspaceArr, &lookupPres, &marginVis, &chips); err != nil {
 		t.Fatalf("the org policy row is missing: %v", err)
 	}
 	if marginVis != MarginVisibilityManagerUp {
@@ -917,14 +917,16 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 	// cannot leave the org row clobbered behind it. The cleanup puts the
 	// WHOLE captured row back through the same admin route and then
 	// compares the whole row against the capture, not the visibility word
-	// alone.
+	// alone. balance_visibility is the retired 0181 column (UX-97 item 208):
+	// no write touches it anymore, so it is no part of the row the restore
+	// contract covers.
 	t.Cleanup(func() {
 		rsp := s.do(http.MethodPut, "/api/v1/pos/policy", s.bearer(trentonAdminSub), "", PosPolicy{
 			CODEnabled: codEnabled, RestockingFeeBps: restockingFee, Notes: notes,
 			LinePresentation: linePres, QuickChipsEnabled: chipsEnabled,
 			WorkspaceSplitPct: splitPct, WorkspaceArrangement: workspaceArr,
 			LookupPresentation: lookupPres, MarginVisibility: marginVis,
-			QuickChipSet: splitChipSet(chips), BalanceVisibility: balanceVis,
+			QuickChipSet: splitChipSet(chips),
 		})
 		if rsp.Code != http.StatusOK {
 			t.Errorf("the policy restore must answer, got %d: %s", rsp.Code, rsp.Body.String())
@@ -932,24 +934,24 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 		}
 		var gotCod, gotChipsEnabled bool
 		var gotFee, gotSplit int
-		var gotNotes, gotLinePres, gotArr, gotLookup, gotVis, gotChips, gotBalance string
+		var gotNotes, gotLinePres, gotArr, gotLookup, gotVis, gotChips string
 		if err := s.pool.QueryRow(context.Background(), `
 			SELECT cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled,
 			       workspace_split_pct, workspace_arrangement, lookup_presentation, margin_visibility,
-			       COALESCE(quick_chip_set, ''), balance_visibility
+			       COALESCE(quick_chip_set, '')
 			  FROM pos_policy WHERE branch_id IS NULL`).
 			Scan(&gotCod, &gotFee, &gotNotes, &gotLinePres, &gotChipsEnabled, &gotSplit,
-				&gotArr, &gotLookup, &gotVis, &gotChips, &gotBalance); err != nil {
+				&gotArr, &gotLookup, &gotVis, &gotChips); err != nil {
 			t.Errorf("the org policy row went missing: %v", err)
 			return
 		}
 		if gotCod != codEnabled || gotFee != restockingFee || gotNotes != notes ||
 			gotLinePres != linePres || gotChipsEnabled != chipsEnabled || gotSplit != splitPct ||
 			gotArr != workspaceArr || gotLookup != lookupPres || gotVis != marginVis ||
-			gotChips != chips || gotBalance != balanceVis {
-			t.Errorf("the org policy row must be left as it was found: cod=%v fee=%d notes=%q line=%q chipsEnabled=%v split=%d arr=%q lookup=%q vis=%q chips=%q balance=%q",
+			gotChips != chips {
+			t.Errorf("the org policy row must be left as it was found: cod=%v fee=%d notes=%q line=%q chipsEnabled=%v split=%d arr=%q lookup=%q vis=%q chips=%q",
 				gotCod, gotFee, gotNotes, gotLinePres, gotChipsEnabled, gotSplit,
-				gotArr, gotLookup, gotVis, gotChips, gotBalance)
+				gotArr, gotLookup, gotVis, gotChips)
 		}
 	})
 

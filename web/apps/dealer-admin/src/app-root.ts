@@ -216,7 +216,6 @@ const emptySettingsModel = (): SettingsModel => ({
     lookupPresentation: "CARDS",
     arrangement: "LOOKUP_LEFT",
     marginVisibility: "MANAGER_UP",
-    balanceVisibility: "ALL_STAFF",
     supplierDepositCancel: "CREDIT_BACK",
     history: [],
     historyPhase: "loading",
@@ -369,6 +368,13 @@ export class DealerAdminApp extends HHElement {
   // Which surface of this app shows. The registry names them.
   #surface = SURFACES[0].id;
 
+  // The left list's fold on a phone (UX-104): the section's own work comes
+  // first, so the list waits folded behind the Settings control until it is
+  // asked for, and choosing a section folds it again. The desk widths never
+  // fold it, and the fold lives in the sheet, so this flag changes nothing
+  // there.
+  #surfaceListOpen = false;
+
   // The staff surface's state.
   #staff: StaffModel = emptyStaffModel();
 
@@ -423,12 +429,20 @@ export class DealerAdminApp extends HHElement {
       this.#pressTheme();
       return;
     }
+    if (action === "toggle-surface-list") {
+      this.#surfaceListOpen = !this.#surfaceListOpen;
+      this.requestUpdate();
+      return;
+    }
     if (action === "open-surface") {
       let surface = control?.getAttribute("data-surface") ?? "";
       if (surface === "roles") surface = "role-config";
       if (surface === "sign-in") surface = "sign-in-methods";
       if (isSurfaceId(surface)) {
         this.#surface = surface;
+        // A section chosen from the folded list folds it again (UX-104), so
+        // the section's own work shows under the control.
+        this.#surfaceListOpen = false;
         // A surface loads its own reads the first time it is opened.
         if (surface === "hotkeys" && this.#hotkeys.phase === "loading") void this.#loadHotkeys();
         if (surface === "audit" && this.#audit.phase === "loading") void this.#loadAudit();
@@ -696,7 +710,6 @@ export class DealerAdminApp extends HHElement {
       "policy-lookup": "lookupPresentation",
       "policy-arrangement": "arrangement",
       "policy-margin": "marginVisibility",
-      "policy-balance": "balanceVisibility",
     };
     const policyKey = policySelects[action];
     if (policyKey !== undefined) {
@@ -963,7 +976,6 @@ export class DealerAdminApp extends HHElement {
       "policy-lookup": s.policy.lookupPresentation,
       "policy-arrangement": s.policy.arrangement,
       "policy-margin": s.policy.marginVisibility,
-      "policy-balance": s.policy.balanceVisibility,
       "tour-chapter": s.tour.editChapter,
       "tour-step": s.tour.editStep,
       "tour-line": s.tour.editLine,
@@ -1534,7 +1546,6 @@ export class DealerAdminApp extends HHElement {
         lookupPresentation: p.lookup_presentation,
         arrangement: p.workspace_arrangement,
         marginVisibility: p.margin_visibility,
-        balanceVisibility: p.balance_visibility,
         supplierDepositCancel: p.supplier_deposit_cancel,
       });
     }
@@ -1614,7 +1625,6 @@ export class DealerAdminApp extends HHElement {
       workspace_arrangement: s.arrangement,
       lookup_presentation: s.lookupPresentation,
       margin_visibility: s.marginVisibility,
-      balance_visibility: s.balanceVisibility,
       supplier_deposit_cancel: s.supplierDepositCancel,
       quick_chip_set: chipsOf(s.chips),
     });
@@ -1644,7 +1654,6 @@ export class DealerAdminApp extends HHElement {
         lookupPresentation: p.lookup_presentation,
         arrangement: p.workspace_arrangement,
         marginVisibility: p.margin_visibility,
-        balanceVisibility: p.balance_visibility,
         supplierDepositCancel: p.supplier_deposit_cancel,
       };
     } else {
@@ -2145,10 +2154,27 @@ export class DealerAdminApp extends HHElement {
     return html`<button type="button" class="btn btn-secondary" data-action="theme" data-testid="theme-control">${label}</button>`;
   }
 
+  // The phone's own control for the left list (UX-104): a native button, so
+  // keyboard and touch arrive the same way, 44px tall in the sheet, and
+  // aria-expanded with aria-controls announcing the folded list to a screen
+  // reader. The desk widths hide it in the sheet.
+  private renderSurfaceListControl(): TemplateResult {
+    return html`
+      <button
+        type="button"
+        class="surface-list-toggle"
+        data-action="toggle-surface-list"
+        aria-expanded=${this.#surfaceListOpen ? "true" : "false"}
+        aria-controls="surface-list"
+        data-testid="surface-list-toggle"
+      >Settings</button>
+    `;
+  }
+
   // The app's own left list: grouped navigation rail per Change 11 boards.
   private renderSurfaceList(): TemplateResult {
     return html`
-      <nav class="surface-list" aria-label="Dealer Admin surfaces">
+      <nav id="surface-list" class="surface-list" aria-label="Dealer Admin surfaces">
         ${SURFACE_GROUPS.map(
           (group) => html`
             <div class="nav-group">
@@ -2198,7 +2224,8 @@ export class DealerAdminApp extends HHElement {
     return html`
       ${this.#framed ? nothing : html`<hh-shell-header data-testid="framed-band"></hh-shell-header>`}
       <main>
-        <div class="app-body">
+        <div class="app-body ${this.#surfaceListOpen ? "list-open" : ""}">
+          ${this.renderSurfaceListControl()}
           ${this.renderSurfaceList()}
           <div class="surface-work">${this.renderWork()}</div>
         </div>

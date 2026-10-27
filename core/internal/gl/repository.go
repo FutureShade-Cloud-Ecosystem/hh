@@ -410,6 +410,7 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 			}
 		case y > maxYear:
 			// A date beyond the next year refuses, deliberate.
+			return "", false, clientErr(422, "gl: no fiscal period for %04d-%02d: a date more than one year past the books' latest year is refused", y, m)
 		default:
 			// Round 2 (S2 P2-2): never create a PAST year. A document dated before the books' first
 			// period (or in a gap with no row) files late into the earliest open month at or after
@@ -950,6 +951,18 @@ func (r *Repository) ensureFiscalYearTx(ctx context.Context, tx pgx.Tx, year int
 	return nil
 }
 
+// FiscalPeriodIDTx answers one period's id read on the caller's transaction (the open year's audit
+// reads the opened year's January period id on the year's own transaction, so the id it names is
+// the one this transaction just made sure of).
+func (r *Repository) FiscalPeriodIDTx(ctx context.Context, tx pgx.Tx, year, month int) (string, error) {
+	var id string
+	if err := tx.QueryRow(ctx,
+		`SELECT id::text FROM fiscal_periods WHERE year = $1 AND month = $2`, year, month).Scan(&id); err != nil {
+		return "", fmt.Errorf("gl: read period %d-%02d: %w", year, month, err)
+	}
+	return id, nil
+}
+
 // earliestOpenPeriodTx answers the earliest OPEN fiscal period AT OR AFTER the document's (year, month)
 // on tx (round 1b, FROM-PRINCIPAL 96: a stray earlier open month, one a controller left open behind a
 // closed month, never catches the late journal), creating the next fiscal year first when no open month
@@ -1062,6 +1075,39 @@ func (r *Repository) EnsureNextFiscalYear(ctx context.Context, now time.Time) (i
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("gl: commit ensure next fiscal year: %w", err)
+	}
+	return target, nil
+}
+
+// NextOpenableFiscalYear answers the next fiscal year the Financial Controller can open early
+// (house year + 2 when not yet open), or 0 when the cap year is already open (S2 round, P2-1).
+func (r *Repository) NextOpenableFiscalYear(ctx context.Context, now time.Time) (int, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("gl: begin next openable fiscal year: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	max, err := r.maxSeededYearTx(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	if max == 0 {
+		return 0, nil
+	}
+	house, err := r.houseYearTx(ctx, tx, now)
+	if err != nil {
+		return 0, err
+	}
+	target := house + 2
+	var existing int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year = $1`, target).Scan(&existing); err != nil {
+		return 0, fmt.Errorf("gl: count fiscal periods for %d: %w", target, err)
+	}
+	if existing >= 12 {
+		return 0, nil
 	}
 	return target, nil
 }
@@ -1214,9 +1260,11 @@ func (r *Repository) HouseYearEnded(ctx context.Context, year int, now time.Time
 }
 
 // OpenNextFiscalYear is the Controller's early open: at most one year beyond the roll forward's
-// target (house year + 2), a repeat a no op, and the record callback runs INSIDE the year's
-// transaction so the audit row commits or rolls back with the year it opens (round 2, S2 P2-4).
-func (r *Repository) OpenNextFiscalYear(ctx context.Context, now time.Time, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
+// target (house year + 2), refusing in words when the year is already open, past the cap, or
+// before the books' first year, and running the record callback INSIDE the year's transaction so
+// the audit row commits or rolls back with the year it opens (round 2 S2 P2-4, S2 round P2-1,
+// round 3 S2 P2-1).
+func (r *Repository) OpenNextFiscalYear(ctx context.Context, now time.Time, requestedYear int, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
 	if r.pool == nil {
 		return 0, errNoDB
 	}
@@ -1237,6 +1285,39 @@ func (r *Repository) OpenNextFiscalYear(ctx context.Context, now time.Time, reco
 		return 0, err
 	}
 	target := house + 2
+	if requestedYear > target {
+		return 0, clientErr(409, "gl: %d is too far ahead; the next year that can open is %d", requestedYear, target)
+	}
+	checkYear := target
+	if requestedYear > 0 && requestedYear < target {
+		checkYear = requestedYear
+		// Round 3 (S2 P2-1): a named year before the books' first year has no periods of its
+		// own, so the count below reads 0 and the open fell through to a silent 200 with the
+		// cap year, auditing an open that did not happen. Refuse it in words instead, before
+		// any write: the record callback never runs, so no audit row is left behind.
+		var firstYear int
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(MIN(year), 0) FROM fiscal_periods`).Scan(&firstYear); err != nil {
+			return 0, fmt.Errorf("gl: read the books' first year: %w", err)
+		}
+		if firstYear > 0 && checkYear < firstYear {
+			return 0, clientErr(409, "gl: %d is before the books' first year; only the next year can be opened here", checkYear)
+		}
+	}
+	var existing int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM fiscal_periods WHERE year = $1`, checkYear).Scan(&existing); err != nil {
+		return 0, fmt.Errorf("gl: count fiscal periods for %d: %w", checkYear, err)
+	}
+	if existing >= 12 {
+		return 0, clientErr(409, "gl: %d is already open", checkYear)
+	}
+	// Round 4 (S2's round 3 P3): a named year missing BETWEEN the books' first year and the house
+	// year is a hole in the fiscal calendar, not a year the early open can make. It passed the
+	// first-year check above and fell through to a silent 200 with the cap year; refuse it in the
+	// same shape, before any write, so no audit row names an open that did not happen. A missing
+	// year AFTER the house year is the early open's own work (house + 1, or the cap), never a hole.
+	if requestedYear > 0 && checkYear <= house && existing == 0 {
+		return 0, clientErr(409, "gl: %d is missing from the books; only the next year can be opened here", checkYear)
+	}
 	if err := r.ensureThroughTx(ctx, tx, house, target); err != nil {
 		return 0, err
 	}

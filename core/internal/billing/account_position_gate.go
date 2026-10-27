@@ -10,9 +10,14 @@ package billing
 
 import (
 	"context"
+	"errors"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
+
+// errGateUnwired is the answer an unwired gate's visibility read gives: a wiring fault the caller
+// is told about, never a guessed word.
+var errGateUnwired = errors.New("billing: the account position gate is not wired")
 
 // registerPolicyReader is the one store read the gate needs. Real impl: *Repository.
 type registerPolicyReader interface {
@@ -42,4 +47,20 @@ func (g *AccountPositionGate) AccountPositionAllowed(ctx context.Context, branch
 		return false
 	}
 	return accountAllowed(ctx, g.callerFrom, pol.AccountPositionVisibility)
+}
+
+// AccountPositionVisibility answers the branch's account position visibility word (the dealer
+// default when branchID is empty or has no row of its own), so a caller of the gate can tell the
+// dealer's switch-off (HIDDEN: the surface is off for everyone) from a caller the policy refuses.
+// UX-97 item 208 makes this word the till's standing surface switch too, the one decider. An
+// unreadable policy is an error, never a guess.
+func (g *AccountPositionGate) AccountPositionVisibility(ctx context.Context, branchID string) (string, error) {
+	if g == nil || g.policy == nil {
+		return "", errGateUnwired
+	}
+	pol, err := g.policy.RegisterPolicyFor(ctx, branchID)
+	if err != nil {
+		return "", err
+	}
+	return pol.AccountPositionVisibility, nil
 }

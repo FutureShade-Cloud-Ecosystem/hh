@@ -57,6 +57,10 @@ type glStore interface {
 	// - periods -
 	ListPeriods(ctx context.Context) ([]Period, error)
 	GetPeriod(ctx context.Context, id string) (Period, error)
+	// FiscalPeriodIDTx answers one period's id read on the caller's transaction, the seam the open
+	// year's audit takes to name the opened year's January period (round 4, S2's P1: the audit row
+	// must carry a uuid; the year itself rides Extra).
+	FiscalPeriodIDTx(ctx context.Context, tx pgx.Tx, year, month int) (string, error)
 	ClosePeriod(ctx context.Context, id, actorID, reason string) (Period, error)
 	ReopenPeriod(ctx context.Context, id, actorID, reason string) (Period, error)
 	ClosePeriodsForYear(ctx context.Context, year int, actorID, reason string) error
@@ -65,6 +69,9 @@ type glStore interface {
 	// at start on every box; the posting path covers the boundary itself; the Controller's early open
 	// is OpenNextFiscalYear below, at most one year beyond.
 	EnsureNextFiscalYear(ctx context.Context, now time.Time) (int, error)
+	// NextOpenableFiscalYear answers the next fiscal year the Financial Controller may open early
+	// (house year + 2 when not yet open), or 0 when the cap year is already open (S2 round, P2-1).
+	NextOpenableFiscalYear(ctx context.Context, now time.Time) (int, error)
 	// HouseYearEnded answers whether the year's last day has passed in the dealer's zone: the year end
 	// close is refused until it has (FW1-09b, the lead's Ask 2).
 	HouseYearEnded(ctx context.Context, year int, now time.Time) (bool, error)
@@ -86,9 +93,10 @@ type glStore interface {
 	// zone the posting path files months by (round 4, S3's P2).
 	BusinessZone(ctx context.Context) (houseday.Zone, error)
 	// OpenNextFiscalYear is the Controller's early open: at most one year beyond the roll forward's
-	// target, the record callback run INSIDE the year's transaction so the audit row commits or rolls
-	// back with the year it opens (round 2, S2 P2-4).
-	OpenNextFiscalYear(ctx context.Context, now time.Time, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error)
+	// target, refusing in words when the year is already open or past the cap, and running the record
+	// callback INSIDE the year's transaction so the audit row commits or rolls back with the year it
+	// opens (round 2 S2 P2-4, S2 round P2-1).
+	OpenNextFiscalYear(ctx context.Context, now time.Time, requestedYear int, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error)
 
 	// HeadOfficeBranchID answers the head office branch the company level lines
 	// stamp (ruling 82.3): defaults to Trenton (TRT) and reads gl_policy.

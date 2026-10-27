@@ -2591,6 +2591,7 @@ export type GlPeriod = {
 };
 export type GlPeriodPage = {
   items: GlPeriod[];
+  next_openable_year?: number;
   next_cursor?: string | null;
   limit?: number;
 };
@@ -2614,6 +2615,7 @@ export type GlReasonBody = {
   reason?: string;
 };
 export type GlPeriodReopenBody = {
+  year?: number;
   reason: string;
 };
 export type GlCloseYearBody = {
@@ -5166,7 +5168,6 @@ export type PosPolicy = {
   workspace_arrangement: "LOOKUP_LEFT" | "SALE_LEFT";
   lookup_presentation: "CARDS" | "ROWS";
   margin_visibility: "MANAGER_UP" | "ALL_STAFF" | "HIDDEN";
-  balance_visibility: "ALL_STAFF" | "MANAGER_UP" | "HIDDEN";
   supplier_deposit_cancel: "CREDIT_BACK" | "KEPT";
   quick_chip_set?: string[];
 };

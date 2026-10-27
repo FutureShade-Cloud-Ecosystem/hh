@@ -58,7 +58,6 @@ export interface PolicySection {
   readonly lookupPresentation: string;
   readonly arrangement: string;
   readonly marginVisibility: string;
-  readonly balanceVisibility: string;
   /** Carried whole through a save so a write never resets the dealer default; the surface has no control for it yet. */
   readonly supplierDepositCancel: string;
   readonly history: readonly PolicyChange[];
@@ -246,14 +245,6 @@ function renderPolicy(s: PolicySection): TemplateResult {
                 <select class="select" data-action="policy-margin" data-field="policy-margin" ?disabled=${s.busy}>
                   <option value="MANAGER_UP">Managers and above</option>
                   <option value="ALL_STAFF">Everyone</option>
-                  <option value="HIDDEN">Hidden</option>
-                </select>
-              </label>
-              <label class="field">
-                <span class="field-label">Past due balance, seen by</span>
-                <select class="select" data-action="policy-balance" data-field="policy-balance" ?disabled=${s.busy}>
-                  <option value="ALL_STAFF">Everyone</option>
-                  <option value="MANAGER_UP">Managers and above</option>
                   <option value="HIDDEN">Hidden</option>
                 </select>
               </label>
