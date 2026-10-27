@@ -183,42 +183,38 @@ test("applying and reversing a credit are checked before they are sent, and read
 
   const applied = {
     application_id: "a",
-    customer_id: "c",
     credit_kind: "MEMO",
     credit_id: "cm",
-    credit_no: "CM-0001",
     invoice_id: "i",
     invoice_no: "INV-1002",
     applied_cents: 10000,
-    credit_before_cents: 25000,
-    credit_after_cents: 15000,
-    invoice_balance_before_cents: 96000,
-    invoice_balance_after_cents: 86000,
-    outcome: "PART",
-    journal_entry_id: "j",
+    credit_open_after_cents: 15000,
+    lines: [{ invoice_id: "i", invoice_no: "INV-1002", applied_cents: 10000, outcome: "PART", balance_after_cents: 86000 }],
     replayed: false,
   };
-  assert.equal(applyCreditWords(applied), "$100.00 of credit memo CM-0001 is applied to invoice INV-1002. $150.00 is still open on CM-0001.");
-  assert.equal(applyCreditWords({ ...applied, credit_kind: "ACCOUNT", credit_no: "AC-0001", applied_cents: 15000, credit_after_cents: 0 }), "$150.00 of account credit AC-0001 is applied to invoice INV-1002. Nothing is left open on AC-0001 now.");
+  assert.equal(applyCreditWords(applied, "CM-0001"), "$100.00 of credit memo CM-0001 is applied to invoice INV-1002. $150.00 is still open on CM-0001.");
+  assert.equal(
+    applyCreditWords({ ...applied, credit_kind: "ACCOUNT", applied_cents: 15000, credit_open_after_cents: 0 }, "AC-0001"),
+    "$150.00 of account credit AC-0001 is applied to invoice INV-1002. Nothing is left open on AC-0001 now.",
+  );
 
   assert.deepEqual(reverseCreditAppCheck(" Applied to wrong invoice "), { ok: true, reason: "Applied to wrong invoice" });
   assert.match(reverseCreditAppCheck(" ").words, /Enter why the credit application is being reversed/);
   assert.equal(
-    reverseCreditAppWords({
-      application_id: "a",
-      reversal_id: "r",
-      credit_kind: "MEMO",
-      credit_id: "cm",
-      credit_no: "CM-0001",
-      invoice_id: "i",
-      invoice_no: "INV-1002",
-      amount_cents: 10000,
-      credit_open_cents: 25000,
-      invoice_balance_cents: 96000,
-      reason: "Wrong invoice",
-      journal_entry_id: "j",
-    }),
-    "Credit application of $100.00 from CM-0001 is reversed on invoice INV-1002. $250.00 is open on CM-0001 again.",
+    reverseCreditAppWords(
+      {
+        application_id: "a",
+        invoice_id: "i",
+        invoice_no: "INV-1002",
+        restored_cents: 10000,
+        invoice_balance_after_cents: 96000,
+        credit_open_after_cents: 25000,
+        lines: [{ invoice_id: "i", invoice_no: "INV-1002", applied_cents: 10000, outcome: "PART", balance_after_cents: 96000 }],
+        replayed: false,
+      },
+      "CM-0001",
+    ),
+    "Credit application of $100.00 is reversed on invoice INV-1002. $250.00 is open on CM-0001 again.",
   );
 });
 

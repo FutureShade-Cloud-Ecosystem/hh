@@ -443,6 +443,95 @@ test("on a phone the invoice's dispute form and the reversal fit the screen", as
   await noSidewaysScroll(page);
 });
 
+// ---- credits on an invoice: open credit memos and account credits applied to later invoices (FW1-12b) ----
+
+test("an open credit memo is applied to the invoice, refused beyond what either side holds, and undone by a reversal", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openInvoice(page, "Granite Edge Landscaping (demo)", "INV-1002");
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$960.00");
+  // The account's open credits are on the invoice panel; no application is on the invoice yet.
+  await expect(page.locator("[data-open-credit-row]", { hasText: "CM-0001" })).toContainText("$250.00 open");
+  await expect(page.locator("[data-open-credit-row]", { hasText: "AC-0001" })).toContainText("$150.00 open");
+  await expect(page.locator("[data-credit-apps-empty]")).toHaveText("No credit has been applied to this invoice yet.");
+
+  await page.locator("[data-open-credit-row]", { hasText: "CM-0001" }).getByRole("button", { name: "Apply credit" }).click();
+  await expect(page.locator("[data-credit-apply-form]")).toContainText("$250.00 is open on credit memo CM-0001.");
+  // The panel's own invoice is picked to start with; the account's other open invoice can be picked instead.
+  await expect(page.locator("[data-credit-apply-invoices] button[aria-pressed='true']")).toContainText("INV-1002");
+  const other = page.locator("[data-credit-apply-invoices] button", { hasText: "INV-1001" });
+  await other.click();
+  await expect(other).toHaveAttribute("aria-pressed", "true");
+  await page.locator("[data-credit-apply-invoices] button", { hasText: "INV-1002" }).click();
+  await noSidewaysScroll(page);
+  // Checked before anything is sent.
+  await page.getByRole("button", { name: "Apply to invoice" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("Enter the amount to apply, such as 100.00.");
+  await page.locator("[data-field='credit-apply-amount']").fill("0");
+  await page.getByRole("button", { name: "Apply to invoice" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("The amount must be more than zero.");
+  await page.locator("[data-field='credit-apply-amount']").fill("250.01");
+  await page.getByRole("button", { name: "Apply to invoice" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("That is more than the $250.00 open on this credit.");
+  await page.locator("[data-field='credit-apply-amount']").fill("100.00");
+  await page.getByRole("button", { name: "Apply to invoice" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("Enter why the credit is being applied, such as applying open credit memo to balance.");
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$960.00", "a refused apply moves nothing");
+
+  // A part, and the server's balance follows it.
+  await page.locator("[data-field='credit-apply-reason']").fill("Applying open credit memo to balance");
+  await page.getByRole("button", { name: "Apply to invoice" }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("$100.00 of credit memo CM-0001 is applied to invoice INV-1002. $150.00 is still open on CM-0001.");
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$860.00");
+  const applied = page.locator("[data-credit-app-row]", { hasText: "CM-0001" });
+  await expect(applied).toContainText("$100.00");
+  await expect(applied).toContainText("Applied");
+  await expect(page.locator("[data-open-credit-row]", { hasText: "CM-0001" })).toContainText("$150.00 open");
+
+  // Undone only by a reversal that restores both sides.
+  applied.getByRole("button", { name: "Reverse credit" }).click();
+  await page.getByRole("button", { name: "Confirm reverse credit" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("Enter why the credit application is being reversed, such as applied to the wrong invoice.");
+  await page.locator("[data-field='credit-reverse-reason']").fill("Applied to the wrong invoice");
+  await page.getByRole("button", { name: "Confirm reverse credit" }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("Credit application of $100.00 is reversed on invoice INV-1002. $250.00 is open on CM-0001 again.");
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$960.00");
+  await expect(page.locator("[data-credit-app-row]", { hasText: "CM-0001" })).toContainText("Reversed");
+  await expect(page.locator("[data-credit-app-row]", { hasText: "CM-0001" }).getByRole("button", { name: "Reverse credit" })).toHaveCount(0);
+  await expect(page.locator("[data-open-credit-row]", { hasText: "CM-0001" })).toContainText("$250.00 open");
+});
+
+test("an unapplied account credit is applied in full, and leaves the open credits when nothing is left on it", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openInvoice(page, "Granite Edge Landscaping (demo)", "INV-1002");
+  await page.locator("[data-open-credit-row]", { hasText: "AC-0001" }).getByRole("button", { name: "Apply credit" }).click();
+  await expect(page.locator("[data-credit-apply-form]")).toContainText("$150.00 is open on account credit AC-0001.");
+  await page.getByRole("button", { name: "Use full $150.00" }).click();
+  await expect(page.locator("[data-field='credit-apply-amount']")).toHaveValue("150.00");
+  await page.locator("[data-field='credit-apply-reason']").fill("Unapplied overpayment credit on account");
+  await page.getByRole("button", { name: "Apply to invoice" }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("$150.00 of account credit AC-0001 is applied to invoice INV-1002. Nothing is left open on AC-0001 now.");
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$810.00");
+  await expect(page.locator("[data-open-credit-row]", { hasText: "AC-0001" })).toHaveCount(0);
+  await expect(page.locator("[data-open-credit-row]", { hasText: "CM-0001" })).toContainText("$250.00 open");
+  await expect(page.locator("[data-credit-app-row]", { hasText: "AC-0001" })).toContainText("Applied");
+});
+
+test("on a phone the credit apply form and the credit reversal fit the screen", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDesk(page, request);
+  await openInvoice(page, "Granite Edge Landscaping (demo)", "INV-1002");
+  await page.locator("[data-open-credit-row]", { hasText: "CM-0001" }).getByRole("button", { name: "Apply credit" }).click();
+  await expect(page.locator("[data-credit-apply-form]")).toBeVisible();
+  await noSidewaysScroll(page);
+  await page.locator("[data-field='credit-apply-amount']").fill("100.00");
+  await page.locator("[data-field='credit-apply-reason']").fill("Applying open credit memo to balance");
+  await page.getByRole("button", { name: "Apply to invoice" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("is applied to invoice INV-1002");
+  await page.locator("[data-credit-app-row]").getByRole("button", { name: "Reverse credit" }).click();
+  await expect(page.locator("[data-credit-reverse-form]")).toBeVisible();
+  await noSidewaysScroll(page);
+});
+
 // ---- settings, holds a returned payment placed, and the dispatch gate -------------------------------------------------------
 
 test("Payables and Receivables reads the rules, and every change is held and says who may make it", async ({ page, request }) => {

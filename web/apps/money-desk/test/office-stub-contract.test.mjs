@@ -566,9 +566,9 @@ test("open credit memos and account credits show on the invoice detail, apply on
   assert.equal(detailBefore.status, 200);
   holds("BillingInvoiceDetail", detailBefore.json);
   assert.equal(detailBefore.json.open_credits.length, 2, "Granite Edge carries one open credit memo and one unapplied account credit");
-  const memo = detailBefore.json.open_credits.find((c) => c.kind === "MEMO");
-  const acctCredit = detailBefore.json.open_credits.find((c) => c.kind === "ACCOUNT");
-  assert.deepEqual([memo.credit_no, memo.open_cents, acctCredit.credit_no, acctCredit.open_cents], ["CM-0001", 25000, "AC-0001", 15000]);
+  const memo = detailBefore.json.open_credits.find((c) => c.credit_kind === "MEMO");
+  const acctCredit = detailBefore.json.open_credits.find((c) => c.credit_kind === "ACCOUNT");
+  assert.deepEqual([memo.reference, memo.open_cents, acctCredit.reference, acctCredit.open_cents], ["CM-0001", 25000, "AC-0001", 15000]);
 
   const applyPath = "/api/v1/ar/credits/apply";
   const reversePath = "/api/v1/ar/credits/applications/reverse";
@@ -583,35 +583,36 @@ test("open credit memos and account credits show on the invoice detail, apply on
   });
 
   // Validation and refusal sentences in the core's exact words.
-  refused(await call("POST", applyPath, { ...baseBody("ca-1", "MEMO", memo.id, 1000), reason: " " }), 400, "billing: a reason is required");
-  refused(await call("POST", applyPath, { ...baseBody("", "MEMO", memo.id, 1000) }), 400, "applying a credit needs an idempotency key");
-  refused(await call("POST", applyPath, { ...baseBody("ca-2", "COUPON", memo.id, 1000) }), 400, "credit_kind must be MEMO or ACCOUNT");
-  refused(await call("POST", applyPath, { ...baseBody("ca-3", "MEMO", memo.id, 0) }), 400, "the amount applied must be greater than zero");
-  refused(await call("POST", applyPath, { ...baseBody("ca-4", "MEMO", memo.id, 25001) }), 400, "that is more than it holds");
+  refused(await call("POST", applyPath, { ...baseBody("ca-1", "MEMO", memo.credit_id, 1000), reason: " " }), 400, "billing: a reason is required");
+  refused(await call("POST", applyPath, { ...baseBody("", "MEMO", memo.credit_id, 1000) }), 400, "applying a credit needs an idempotency key");
+  refused(await call("POST", applyPath, { ...baseBody("ca-2", "COUPON", memo.credit_id, 1000) }), 400, "credit_kind must be");
+  refused(await call("POST", applyPath, { ...baseBody("ca-3", "MEMO", memo.credit_id, 0) }), 400, "the amount applied must be greater than zero");
+  refused(await call("POST", applyPath, { ...baseBody("ca-4", "MEMO", memo.credit_id, 25001) }), 400, "that is more than it holds");
   refused(await call("POST", applyPath, { ...baseBody("ca-5", "MEMO", "00000000-0000-4000-8000-0000000000cc", 1000) }), 404, "credit not found");
 
   // Apply part of the credit memo.
-  const firstMemo = await call("POST", applyPath, baseBody("ca-6", "MEMO", memo.id, 10000));
+  const firstMemo = await call("POST", applyPath, baseBody("ca-6", "MEMO", memo.credit_id, 10000));
   assert.equal(firstMemo.status, 201);
   holds("BillingCreditApplication", firstMemo.json);
+  assert.deepEqual(firstMemo.json.credit_kind, "MEMO");
   assert.deepEqual(
-    [firstMemo.json.applied_cents, firstMemo.json.credit_before_cents, firstMemo.json.credit_after_cents, firstMemo.json.invoice_balance_after_cents, firstMemo.json.replayed],
-    [10000, 25000, 15000, inv.balance_cents - 10000, false],
+    [firstMemo.json.applied_cents, firstMemo.json.credit_open_after_cents, firstMemo.json.lines[0].invoice_no, firstMemo.json.lines[0].balance_after_cents, firstMemo.json.replayed],
+    [10000, 15000, "INV-1002", inv.balance_cents - 10000, false],
   );
 
   // Idempotent replay with same key and body returns 200 and writes nothing; same key with different amount is 409.
-  const replay = await call("POST", applyPath, baseBody("ca-6", "MEMO", memo.id, 10000));
+  const replay = await call("POST", applyPath, baseBody("ca-6", "MEMO", memo.credit_id, 10000));
   assert.equal(replay.status, 200);
   holds("BillingCreditApplication", replay.json);
   assert.deepEqual([replay.json.replayed, replay.json.application_id], [true, firstMemo.json.application_id]);
-  refused(await call("POST", applyPath, baseBody("ca-6", "MEMO", memo.id, 5000)), 409, "that idempotency key already applied a credit differently; use a new key");
+  refused(await call("POST", applyPath, baseBody("ca-6", "MEMO", memo.credit_id, 5000)), 409, "that idempotency key already applied a credit differently; use a new key");
 
   // Apply the full unapplied account credit (15,000 cents).
-  const firstAcct = await call("POST", applyPath, baseBody("ca-7", "ACCOUNT", acctCredit.id, 15000));
+  const firstAcct = await call("POST", applyPath, baseBody("ca-7", "ACCOUNT", acctCredit.credit_id, 15000));
   assert.equal(firstAcct.status, 201);
   holds("BillingCreditApplication", firstAcct.json);
-  assert.deepEqual([firstAcct.json.applied_cents, firstAcct.json.credit_after_cents], [15000, 0]);
-  refused(await call("POST", applyPath, baseBody("ca-8", "ACCOUNT", acctCredit.id, 100)), 409, "billing: that credit has nothing left to apply");
+  assert.deepEqual([firstAcct.json.applied_cents, firstAcct.json.credit_open_after_cents], [15000, 0]);
+  refused(await call("POST", applyPath, baseBody("ca-8", "ACCOUNT", acctCredit.credit_id, 100)), 409, "billing: that credit has nothing left to apply");
 
   // Detail now reflects 1 remaining open credit (CM-0001 with 15,000 open) and 2 credit applications.
   const detailMid = await call("GET", `/api/v1/ar/register/invoices/${inv.id}`);
@@ -619,12 +620,19 @@ test("open credit memos and account credits show on the invoice detail, apply on
   assert.equal(detailMid.json.open_credits.length, 1);
   assert.equal(detailMid.json.open_credits[0].open_cents, 15000);
   assert.equal(detailMid.json.credit_applications.length, 2);
+  assert.deepEqual(detailMid.json.credit_applications.map((a) => [a.credit_reference, a.reversed]), [["CM-0001", false], ["AC-0001", false]]);
 
   // Reverse the credit memo application.
   refused(await call("POST", reversePath, { invoice_id: inv.id, application_id: firstMemo.json.application_id, reason: " " }), 400, "billing: a reason is required");
   const rev = await call("POST", reversePath, { invoice_id: inv.id, application_id: firstMemo.json.application_id, reason: "Applied to the wrong invoice" });
   assert.equal(rev.status, 201);
   holds("BillingCreditApplicationReversed", rev.json);
-  assert.deepEqual([rev.json.amount_cents, rev.json.credit_open_cents, rev.json.invoice_balance_cents], [10000, 25000, inv.balance_cents - 15000]);
+  assert.deepEqual([rev.json.restored_cents, rev.json.credit_open_after_cents, rev.json.invoice_balance_after_cents], [10000, 25000, inv.balance_cents - 15000]);
   refused(await call("POST", reversePath, { invoice_id: inv.id, application_id: firstMemo.json.application_id, reason: "Again" }), 409, "billing: that application has already been reversed");
+
+  // The reversed application reads back reversed, with its reversal reason.
+  const detailAfter = await call("GET", `/api/v1/ar/register/invoices/${inv.id}`);
+  holds("BillingInvoiceDetail", detailAfter.json);
+  const reversedRow = detailAfter.json.credit_applications.find((a) => a.application_id === firstMemo.json.application_id);
+  assert.deepEqual([reversedRow.reversed, reversedRow.reversal_reason], [true, "Applied to the wrong invoice"]);
 });
