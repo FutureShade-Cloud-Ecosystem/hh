@@ -759,6 +759,12 @@ type depositCancelledPayload struct {
 	// closed rest against the receivable.
 	PaidCents   int64 `json:"paid_cents"`
 	ClosedCents int64 `json:"closed_cents"`
+	// OccurredAt is the CANCEL's own instant, the moment the liability left the books, carried
+	// by the settlement that made it (FW1-01b round 2, S3's P1). The deposit's own finalization
+	// is an EARLIER document and never dates this journal: a deposit taken in January and cancelled
+	// in March books in March, the month the cancel happened. Zero means the settlement carried
+	// none, and the journal falls back to the clock.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // buildDepositCancelled posts the exit of a supplier deposit whose special
@@ -857,9 +863,11 @@ func (s *Service) buildDepositCancelled(ctx context.Context, payload []byte) (jo
 		IdempotencyKey: "deposit.cancelled:" + p.InvoiceID,
 		Memo:           memo,
 		BranchID:       a.BranchID,
-		// FW1-01b: the deposit document's own date (its finalization), the same date
-		// the release carries, not the processing day.
-		OccurredAt: a.FinalizedAt,
+		// FW1-01b round 2 (S3's P1): the CANCEL's own instant, the act this journal books. The
+		// deposit's finalization is an earlier document and never dates it: dated by the
+		// finalization, a deposit taken in January and cancelled in March moved money out of a
+		// month already reported with nothing showing it moved.
+		OccurredAt: p.OccurredAt,
 		Lines:      lines,
 	}, true, nil
 }

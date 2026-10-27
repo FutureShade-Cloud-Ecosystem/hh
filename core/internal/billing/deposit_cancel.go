@@ -58,6 +58,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -103,6 +104,10 @@ func (w *InvoiceWriter) CancelOrderDeposits(ctx context.Context, tx pgx.Tx, orde
 		return 0, errNoDB
 	}
 	settled := 0
+	// The cancel's OWN instant, read once so every document the cancel settles carries the same
+	// date: one cancel is one act, and the ledger books it in the month the cancel happened, not
+	// in the month the deposit was taken months earlier (FW1-01b round 2, S3's P1).
+	cancelAt := w.nowOrClock()
 	settle := func(ctx context.Context, q pgx.Tx) error {
 		ids, err := depositDocumentIDs(ctx, q, orderID)
 		if err != nil {
@@ -126,7 +131,7 @@ func (w *InvoiceWriter) CancelOrderDeposits(ctx context.Context, tx pgx.Tx, orde
 			}
 		}
 		for _, id := range sorted {
-			if err := w.settleDepositDocument(ctx, q, orderID, id, disposition, reason); err != nil {
+			if err := w.settleDepositDocument(ctx, q, orderID, id, disposition, reason, cancelAt); err != nil {
 				return fmt.Errorf("deposit document %s: %w", id, err)
 			}
 			settled++
@@ -163,7 +168,7 @@ type depositCancelDoc struct {
 // the voided document. Without the lock the overwrite below swallowed a
 // payment that committed between the read and the write. The lock order is
 // unchanged: the caller's order row first, then this invoice row.
-func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, orderID, invoiceID, disposition, reason string) error {
+func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, orderID, invoiceID, disposition, reason string, cancelAt time.Time) error {
 	var d depositCancelDoc
 	err := tx.QueryRow(ctx, `
 		SELECT id::text, invoice_no::text, customer_id::text, branch_id::text, total_cents, balance_cents
@@ -252,10 +257,12 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 
 	// sub item 3's booking: the GL event, one per settled document, on the
 	// same transaction, so the journal can never lag the settlement it
-	// belongs to.
+	// belongs to. The event carries the cancel's own instant (occurred_at), so
+	// the ledger dates the cancel by the cancel and never by the deposit's
+	// finalization, which is an earlier document (FW1-01b round 2, S3's P1).
 	if err := emitOutbox(ctx, tx, DepositCancelledTopic, map[string]any{
 		"invoice_id": d.id, "order_id": orderID, "disposition": disposition,
-		"paid_cents": paid, "closed_cents": closed,
+		"paid_cents": paid, "closed_cents": closed, "occurred_at": cancelAt,
 	}); err != nil {
 		return err
 	}

@@ -359,6 +359,16 @@ func (w *InvoiceWriter) WithClock(now func() time.Time) *InvoiceWriter {
 	return w
 }
 
+// nowOrClock is the writer's clock, falling back to the wall clock when a harness built the writer
+// literally and left the clock nil. The same nil-tolerant shape the POS's nowOrClock has, so a
+// caller never has to nil-check the clock before asking for the instant.
+func (w *InvoiceWriter) nowOrClock() time.Time {
+	if w.now == nil {
+		return time.Now()
+	}
+	return w.now()
+}
+
 func (w *InvoiceWriter) assessor() TaxAssessor {
 	if w.tax == nil {
 		return FlatHSTAssessor{}
