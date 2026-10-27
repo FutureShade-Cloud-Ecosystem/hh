@@ -512,10 +512,15 @@ func (s *Service) ApproveRule(ctx context.Context, in RuleInput, approvedBy stri
 
 // - reconciliation -
 
-// OpenReconciliation prepares (or refreshes) the monthly reconciliation: it reads the GL balance through the
-// GLBalanceReader seam (never the 0034 views directly) and computes the variance against the statement
-// balance (the caller's real closing balance, or the month's line net as a placeholder default).
+// OpenReconciliation prepares (or refreshes when in.Refresh is true) the monthly reconciliation: it reads the GL
+// balance through the GLBalanceReader seam (never the 0034 views directly) and computes the variance against the
+// statement balance (the caller's real closing balance, or the month's line net as a placeholder default when opened
+// with zero). The derived flag comes from the act (an open with zero sets it TRUE, an open with a typed figure sets it
+// FALSE, and a refresh keeps the stored flag and stated figure).
 func (s *Service) OpenReconciliation(ctx context.Context, in ReconInput) (Reconciliation, error) {
+	if in.Refresh {
+		return s.RefreshReconciliation(ctx, in.BankAccountID, in.Year, in.Month)
+	}
 	if in.BankAccountID == "" {
 		return Reconciliation{}, badRequest("bankrec: bank_account_id is required")
 	}
@@ -550,13 +555,35 @@ func (s *Service) OpenReconciliation(ctx context.Context, in ReconInput) (Reconc
 	})
 }
 
+// RefreshReconciliation re-reads the ledger (and the month's lines when the reconciliation was opened with a derived
+// balance) in place while keeping the stored derived flag and any stated closing balance. Takes no figure.
+func (s *Service) RefreshReconciliation(ctx context.Context, bankAccountID string, year, month int) (Reconciliation, error) {
+	if bankAccountID == "" {
+		return Reconciliation{}, badRequest("bankrec: bank_account_id is required")
+	}
+	if month < 1 || month > 12 || year < 2000 {
+		return Reconciliation{}, badRequest("bankrec: valid year and month (1-12) are required")
+	}
+	acct, err := s.repo.GetAccount(ctx, bankAccountID)
+	if err != nil {
+		return Reconciliation{}, err
+	}
+	var glBal int64
+	if s.balances != nil {
+		if glBal, err = s.balances.GLBalanceCents(ctx, acct.GLAccountCode, year, month, ""); err != nil {
+			return Reconciliation{}, err
+		}
+	}
+	return s.repo.RefreshReconciliation(ctx, acct.ID, year, month, glBal)
+}
+
 // Reconciliations lists reconciliations (optionally scoped to an account).
 func (s *Service) Reconciliations(ctx context.Context, accountID string) ([]Reconciliation, error) {
 	return s.repo.ListReconciliations(ctx, accountID)
 }
 
 // CompleteReconciliation signs off a monthly reconciliation. Guards (AC7): the account must have ZERO
-// UNMATCHED lines in the month AND zero variance. On success it flips COMPLETED and emits
+// UNMATCHED lines in the month AND zero recomputed variance. On success it flips COMPLETED and emits
 // bank.recon.completed in the same tx.
 func (s *Service) CompleteReconciliation(ctx context.Context, id, completedBy string) (Reconciliation, error) {
 	if id == "" {
@@ -582,9 +609,6 @@ func (s *Service) CompleteReconciliation(ctx context.Context, id, completedBy st
 	}
 	if unmatched > 0 {
 		return Reconciliation{}, unprocessable("bankrec: cannot complete, %d UNMATCHED line(s) remain for %d-%02d", unmatched, rec.Year, rec.Month)
-	}
-	if rec.VarianceCents != 0 {
-		return Reconciliation{}, unprocessable("bankrec: cannot complete, variance is %d cents (must be zero)", rec.VarianceCents)
 	}
 	acct, err := s.repo.GetAccount(ctx, rec.BankAccountID)
 	if err != nil {

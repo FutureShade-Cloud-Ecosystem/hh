@@ -136,11 +136,14 @@ func TestIntegration_ReconVariance_ADerivedBalanceStaysDerivedAfterARefresh(t *t
 	if code, body := w.post(w.callerAB, w.manualOf(late, "JOURNAL", w.plantJournal(t, "sf2s-p21-l-"+itoa(time.Now().UnixNano()), "", "POSTED", []jl{{"1000", 1234, 0}, {"4950", 0, 1234}}), 1234)); code != http.StatusCreated {
 		t.Fatalf("setup: %d %s", code, body)
 	}
-	// Refresh the month with the stored derived figure (or with 0): the derived flag must hold, so completion
-	// re-derives from the lines ($512.34) and refuses while the ledger matches only the old figure ($500.00).
-	refreshed, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m, StatementBalanceCents: rec.StatementBalanceCents})
+	// Refresh the month with Refresh: true (takes no figure): the derived flag must hold and the statement figure
+	// updates from the lines ($512.34), so completion refuses while the ledger matches only the old figure ($500.00).
+	refreshed, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m, Refresh: true})
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
+	}
+	if !refreshed.StatementBalanceDerived || refreshed.StatementBalanceCents != 51234 {
+		t.Errorf("refresh: derived=%v statement=%d, want true and 51234", refreshed.StatementBalanceDerived, refreshed.StatementBalanceCents)
 	}
 	_, err = svc.CompleteReconciliation(ctx, refreshed.ID, "")
 	t.Logf("complete after late import and refresh: %v", err)
@@ -149,18 +152,6 @@ func TestIntegration_ReconVariance_ADerivedBalanceStaysDerivedAfterARefresh(t *t
 	}
 	if !strings.Contains(err.Error(), "$512.34") || !strings.Contains(err.Error(), "$500.00") {
 		t.Errorf("the refusal %q does not name the statement $512.34 and the ledger $500.00", err.Error())
-	}
-	// Refreshing with 0 (what the desk's Refresh figures sends for a derived month) keeps the flag TRUE and updates
-	// the stored statement figure to $512.34; completion still refuses while the ledger is $500.00.
-	refreshedZero, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m})
-	if err != nil {
-		t.Fatalf("refresh with zero: %v", err)
-	}
-	if !refreshedZero.StatementBalanceDerived || refreshedZero.StatementBalanceCents != 51234 {
-		t.Errorf("refresh with zero: derived=%v statement=%d, want true and 51234", refreshedZero.StatementBalanceDerived, refreshedZero.StatementBalanceCents)
-	}
-	if _, err := svc.CompleteReconciliation(ctx, refreshedZero.ID, ""); err == nil {
-		t.Fatalf("completion succeeded after refresh with zero while ledger is $500.00 and statement is $512.34")
 	}
 	// A fresh open with a typed closing balance sets statement_balance_derived FALSE.
 	stated, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m, StatementBalanceCents: 51234})
@@ -265,8 +256,8 @@ func TestIntegration_ReconVariance_ProbeA_ARefreshBeforeLateImportKeepsDerivedFl
 	t.Cleanup(func() {
 		_, _ = w.pool.Exec(context.Background(), `DELETE FROM bank_reconciliations WHERE id = $1::uuid`, rec.ID)
 	})
-	// Refresh before the late import: the lines are unchanged ($500.00), and the derived flag must stay TRUE.
-	refreshed, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m, StatementBalanceCents: rec.StatementBalanceCents})
+	// Refresh before the late import: takes no figure, the lines are unchanged ($500.00), and the derived flag must stay TRUE.
+	refreshed, err := svc.OpenReconciliation(ctx, ReconInput{BankAccountID: w.account, Year: y, Month: m, Refresh: true})
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
