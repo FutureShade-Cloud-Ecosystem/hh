@@ -37,3 +37,11 @@ test("the exit test proves the served image carries config.json with mode demo",
   assert.match(exitTest, /config\.json/);
   assert.match(exitTest, /"mode":"demo"|mode.*demo/);
 });
+
+test("the Caddyfile sends the referrer policy for the set password page's secret", () => {
+  // The set password page's link carries a one time secret in its query, and
+  // the demo copy's site level header is the layer that keeps it out of every
+  // Referer. The line can be dropped or lost to a regeneration, and the
+  // browser gates would stay green, so the template is read back here.
+  assert.match(caddy, /^header Referrer-Policy "no-referrer"$/m);
+});

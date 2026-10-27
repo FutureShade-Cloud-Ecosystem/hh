@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 
 const appsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "apps");
 const proKitDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "pro-kit");
+const frontDoorDir = join(appsDir, "front-door");
 const EPHEMERAL_LOW = 32768;
 
 function consoleConfigFor(app) {
@@ -62,25 +63,32 @@ test("every app's console legs take their five ports below the ephemeral range, 
   }
 });
 
-test("the pro-kit free-port band does not overlap the console bases 28170..28189", () => {
-  // The free-port probe skips only a port that is bound at that instant, so a Pro Playwright config handed
+test("every free-port band stays clear of the console bases 28170..28189 and of the ephemeral range", () => {
+  // The free-port probe skips only a port that is bound at that instant, so a Playwright config handed
   // a port from inside a console base block collides with the console leg the moment that leg binds: the
-  // exact EADDRINUSE flake the probe exists to remove. The guard reads the band constants from the module's
-  // text (the band is a pair of literals, not a computed export) and asserts the whole band sits clear of
-  // every console base block; a band overlapping 28170..28189 fails here.
-  const src = readFileSync(join(proKitDir, "test-stub", "free-port.mjs"), "utf8");
-  const low = /const BAND_LOW = (\d+);/.exec(src);
-  const high = /const BAND_HIGH = (\d+);/.exec(src);
-  assert.ok(low, "free-port.mjs names its BAND_LOW literal");
-  assert.ok(high, "free-port.mjs names its BAND_HIGH literal");
-  const bandLow = Number(low[1]);
-  const bandHigh = Number(high[1]);
-  assert.ok(bandLow <= bandHigh, "the band is not inverted");
-  assert.ok(
-    bandHigh < 28170 || bandLow > 28189,
-    `the free-port band ${bandLow}..${bandHigh} overlaps the console bases 28170..28189`,
-  );
-  assert.ok(bandHigh < EPHEMERAL_LOW, `the band's top ${bandHigh} sits inside the ephemeral range`);
+  // exact EADDRINUSE flake the probe exists to remove. The guard reads each band's constants from the
+  // module's text (the band is a pair of literals, not a computed export) and asserts the whole band sits
+  // clear of every console base block; a band overlapping 28170..28189 fails here. The front door carries
+  // its own copy of the helper (the app does not depend on the Pro kit), so its copy is guarded here too.
+  const helpers = [
+    { path: join(proKitDir, "test-stub", "free-port.mjs"), label: "pro-kit/test-stub/free-port.mjs" },
+    { path: join(frontDoorDir, "test", "free-ports.ts"), label: "front-door/test/free-ports.ts" },
+  ];
+  for (const { path, label } of helpers) {
+    const src = readFileSync(path, "utf8");
+    const low = /const BAND_LOW = (\d+);/.exec(src);
+    const high = /const BAND_HIGH = (\d+);/.exec(src);
+    assert.ok(low, `${label} names its BAND_LOW literal`);
+    assert.ok(high, `${label} names its BAND_HIGH literal`);
+    const bandLow = Number(low[1]);
+    const bandHigh = Number(high[1]);
+    assert.ok(bandLow <= bandHigh, `the ${label} band is not inverted`);
+    assert.ok(
+      bandHigh < 28170 || bandLow > 28189,
+      `the ${label} free-port band ${bandLow}..${bandHigh} overlaps the console bases 28170..28189`,
+    );
+    assert.ok(bandHigh < EPHEMERAL_LOW, `the ${label} band's top ${bandHigh} sits inside the ephemeral range`);
+  }
 });
 
 test("the firstPort regex accepts TS numeric separator underscores, parsed as plain integers", () => {
