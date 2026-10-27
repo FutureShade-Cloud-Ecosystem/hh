@@ -607,6 +607,13 @@ func (s *Service) computeReconFigures(
 			}
 		}
 	}
+	if acct.AccountType == AccountCreditCard {
+		// A credit card's book balance is credit normal, and the GL seam answers a credit normal account
+		// credit positive (what the dealer owes), while the card statement's signed balance is debit
+		// positive (a purchase reads negative). Negate the ledger read so the variance compares one signed
+		// space and a tracked card reconciles at zero (FW1-05 item 7).
+		glBal = -glBal
+	}
 
 	var dit []OutstandingItem
 	var oc []OutstandingItem
