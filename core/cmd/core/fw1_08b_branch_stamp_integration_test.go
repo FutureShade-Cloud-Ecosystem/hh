@@ -273,7 +273,7 @@ func TestFW1_08b_HeadOfficePolicyMultiBranchCloseAndCrossBranchReturn(t *testing
 	}
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, subtotal_cents, tax_cents, total_cents, balance_cents, due_date, finalized_at)
-		VALUES ('#INV-FW1-08B-TRT', $1::uuid, $2::uuid, 'PAID', 10000, 1300, 11300, 0, '2026-07-15', now())
+		VALUES ('#INV-FW1-08B-TRT', $1::uuid, $2::uuid, 'PAID', 10000, 1300, 11300, 0, '2026-07-15', '2026-06-15 15:00:00+00'::timestamptz)
 		RETURNING id::text
 	`, customerID, trtBranchID).Scan(&trtInvID); err != nil {
 		t.Fatalf("seed TRT invoice: %v", err)
