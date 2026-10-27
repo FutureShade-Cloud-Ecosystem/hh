@@ -30,8 +30,17 @@ func (w *mjWorld) dayInHouseZone(query string, args ...any) string {
 }
 
 // TestFW113BPinnedClockStampsTheMovementTheBounceAndBothJournals is the red leg. The pinned day is
-// June 15 of the books' FIRST seeded year at noon in the house zone: a month that ended long before
+// 15 April of the books' FIRST seeded year at noon in the house zone: a month that ended long before
 // the run, so the wall clock's day can never stand in for it.
+//
+// The month is April on purpose (the round 1 review's note): the round 1 leg pinned June of the
+// books' first year, and June is the month gl's TestIntegration_M2C1_DemoSeed_RetiredSeedNetsZero
+// reads (it asserts every one of its seven fixture accounts nets to exactly zero in the June
+// inception-to-date), so on a shared database the leg's journals landed in a month another leg
+// judges. April is a month of the same first year that no leg reads (the tie-out legs read June,
+// the walk reads the month the run happens in), so the leg's own journals stay out of everyone
+// else's month. The leg also cleans up every row it writes, the bounce's journal and its event
+// included, so the shared gate database is as it found it.
 func TestFW113BPinnedClockStampsTheMovementTheBounceAndBothJournals(t *testing.T) {
 	w := newMJWorld(t)
 	ctx := context.Background()
@@ -44,7 +53,7 @@ func TestFW113BPinnedClockStampsTheMovementTheBounceAndBothJournals(t *testing.T
 		t.Skipf("no fiscal periods seeded")
 	}
 	zone := houseday.Location()
-	pinned := time.Date(minYear, time.June, 15, 12, 0, 0, 0, zone)
+	pinned := time.Date(minYear, time.April, 15, 12, 0, 0, 0, zone)
 	wantDay := pinned.In(zone).Format("2006-01-02")
 
 	svc := till.NewService(till.NewRepository(w.pool)).WithClock(func() time.Time { return pinned })
@@ -52,6 +61,16 @@ func TestFW113BPinnedClockStampsTheMovementTheBounceAndBothJournals(t *testing.T
 	// The lodgement: a cheque named on its slip, so the movement, the 0441 link rows and the ruled
 	// DR 1000 / CR 1020 journal all land in the one transaction.
 	cheque := w.slipPayment("CHEQUE", 30_00)
+	// The bounce's own rows, cleaned up by their own ids: the bounce's journal and its event would
+	// otherwise stay in the database for every later leg to read.
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = w.pool.Exec(c, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE idempotency_key = $1)`,
+			"payment.bounced:"+cheque)
+		_, _ = w.pool.Exec(c, `DELETE FROM gl_journals WHERE idempotency_key = $1`, "payment.bounced:"+cheque)
+		_, _ = w.pool.Exec(c, `DELETE FROM events_outbox WHERE topic = 'payment.bounced' AND payload->>'payment_id' = $1`, cheque)
+		_, _ = w.pool.Exec(c, `DELETE FROM payment_nsf WHERE payment_id = $1::uuid`, cheque)
+	})
 	if err := svc.Lodge(staffCtx(w.userID, w.branchID), till.MovementInput{
 		TillSessionID: w.sessionID, MovementType: "LODGEMENT", Method: "CHEQUE",
 		AmountCents: 30_00, Reason: "FW1-13b pinned clock slip", PaymentIDs: []string{cheque},
