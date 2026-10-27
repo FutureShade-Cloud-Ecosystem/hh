@@ -155,7 +155,7 @@ func (r *Repository) OpenLodgements(ctx context.Context, from, to time.Time) ([]
 		return nil, errNoDB
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT m.id::text, s.branch_id::text, m.amount_cents, m.reference, m.created_at
+		`SELECT m.id::text, s.branch_id::text, m.till_session_id::text, m.method, m.amount_cents, m.reference, m.created_at
 		 FROM till_movements m
 		 JOIN till_sessions s ON s.id = m.till_session_id
 		 WHERE m.movement_type = 'LODGEMENT' AND m.created_at >= $1 AND m.created_at < $2
@@ -163,37 +163,130 @@ func (r *Repository) OpenLodgements(ctx context.Context, from, to time.Time) ([]
 	if err != nil {
 		return nil, fmt.Errorf("till: open lodgements: %w", err)
 	}
-	defer rows.Close()
-	var out []bankrec.Lodgement
+	type rawLodgement struct {
+		bankrec.Lodgement
+		sessionID string
+		method    string
+	}
+	var raw []rawLodgement
 	for rows.Next() {
-		var l bankrec.Lodgement
-		if err := rows.Scan(&l.MovementID, &l.BranchID, &l.AmountCents, &l.Reference, &l.OccurredAt); err != nil {
+		var rl rawLodgement
+		if err := rows.Scan(&rl.MovementID, &rl.BranchID, &rl.sessionID, &rl.method, &rl.AmountCents, &rl.Reference, &rl.OccurredAt); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("till: scan lodgement: %w", err)
 		}
-		out = append(out, l)
+		raw = append(raw, rl)
 	}
-	return out, rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	used := map[string]bool{}
+	out := make([]bankrec.Lodgement, 0, len(raw))
+	for _, rl := range raw {
+		pids, perr := r.lodgementPaymentIDs(ctx, rl.BranchID, rl.sessionID, rl.method, rl.Reference, rl.AmountCents, used)
+		if perr != nil {
+			return nil, perr
+		}
+		rl.PaymentIDs = pids
+		out = append(out, rl.Lodgement)
+	}
+	return out, nil
 }
 
-// LodgementFacts answers the branch and the amount of one lodgement (a till_movements row of type LODGEMENT), found
-// false when the id is no lodgement or not a uuid. A movement row is never updated or deleted, its branch is its
-// session's and its amount its own, so the facts are immutable.
+// LodgementFacts answers the branch, the amount and the covered RECEIVED payment ids of one lodgement
+// (a till_movements row of type LODGEMENT), found false when the id is no lodgement or not a uuid.
 func (r *Repository) LodgementFacts(ctx context.Context, movementID string) (bankrec.LodgementFact, bool, error) {
 	if r.pool == nil {
 		return bankrec.LodgementFact{}, false, errNoDB
 	}
 	var f bankrec.LodgementFact
+	var sessionID, method, reference string
 	err := r.pool.QueryRow(ctx,
-		`SELECT s.branch_id::text, m.amount_cents
+		`SELECT s.branch_id::text, m.till_session_id::text, m.method, m.amount_cents, m.reference
 		   FROM till_movements m JOIN till_sessions s ON s.id = m.till_session_id
-		  WHERE m.id::text = $1 AND m.movement_type = 'LODGEMENT'`, movementID).Scan(&f.BranchID, &f.AmountCents)
+		  WHERE m.id::text = $1 AND m.movement_type = 'LODGEMENT'`, movementID).
+		Scan(&f.BranchID, &sessionID, &method, &f.AmountCents, &reference)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return bankrec.LodgementFact{}, false, nil
 	}
 	if err != nil {
 		return bankrec.LodgementFact{}, false, fmt.Errorf("till: lodgement facts: %w", err)
 	}
+	pids, perr := r.lodgementPaymentIDs(ctx, f.BranchID, sessionID, method, reference, f.AmountCents, nil)
+	if perr != nil {
+		return bankrec.LodgementFact{}, false, perr
+	}
+	f.PaymentIDs = pids
 	return f, true, nil
+}
+
+// lodgementPaymentIDs resolves the RECEIVED non-card, non-reversed payment row(s) covered by a lodgement
+// movement so bankrec's PersistMatchReach flips them to DEPOSITED when the lodgement clears at the bank.
+func (r *Repository) lodgementPaymentIDs(ctx context.Context, branchID, sessionID, method, reference string, amountCents int64, used map[string]bool) ([]string, error) {
+	if amountCents <= 0 || branchID == "" {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT p.id::text, p.amount_cents
+		   FROM payments p
+		  WHERE p.branch_id = $1::uuid
+		    AND p.status = 'RECEIVED'
+		    AND p.reversed_at IS NULL
+		    AND p.method <> 'CARD'
+		  ORDER BY
+		    (p.till_session_id = $2::uuid) DESC,
+		    (p.method = $3) DESC,
+		    ($4 <> '' AND COALESCE(p.gateway_ref, '') = $4) DESC,
+		    (p.amount_cents = $5) DESC,
+		    p.received_at ASC,
+		    p.id ASC`,
+		branchID, sessionID, method, reference, amountCents)
+	if err != nil {
+		return nil, fmt.Errorf("till: lodgement payments: %w", err)
+	}
+	defer rows.Close()
+	type cand struct {
+		id  string
+		amt int64
+	}
+	var cands []cand
+	for rows.Next() {
+		var c cand
+		if err := rows.Scan(&c.id, &c.amt); err != nil {
+			return nil, fmt.Errorf("till: scan lodgement payment: %w", err)
+		}
+		if used != nil && used[c.id] {
+			continue
+		}
+		cands = append(cands, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, c := range cands {
+		if c.amt == amountCents {
+			if used != nil {
+				used[c.id] = true
+			}
+			return []string{c.id}, nil
+		}
+	}
+	var picked []string
+	rem := amountCents
+	for _, c := range cands {
+		if c.amt > 0 && c.amt <= rem {
+			picked = append(picked, c.id)
+			rem -= c.amt
+			if used != nil {
+				used[c.id] = true
+			}
+			if rem == 0 {
+				break
+			}
+		}
+	}
+	return picked, nil
 }
 
 // PaymentForGL resolves the finance facts of a payment so the GL posting consumer can branch-stamp the
@@ -204,12 +297,17 @@ func (r *Repository) PaymentForGL(ctx context.Context, paymentID string) (gl.Pay
 		return gl.PaymentFacts{}, errNoDB
 	}
 	var f gl.PaymentFacts
+	var banked bool
 	err := r.pool.QueryRow(ctx,
-		`SELECT branch_id::text, COALESCE(customer_id::text, ''), method, status, amount_cents
+		`SELECT branch_id::text, COALESCE(customer_id::text, ''), method, status, amount_cents,
+		        COALESCE(metadata->>'bank_statement_line_id', '') <> ''
 		 FROM payments WHERE id = $1`, paymentID,
-	).Scan(&f.BranchID, &f.CustomerID, &f.Method, &f.Status, &f.AmountCents)
+	).Scan(&f.BranchID, &f.CustomerID, &f.Method, &f.Status, &f.AmountCents, &banked)
 	if err != nil {
 		return gl.PaymentFacts{}, fmt.Errorf("till: payment for gl %q: %w", paymentID, err)
+	}
+	if f.Status == "BOUNCED" && banked {
+		f.Status = "DEPOSITED"
 	}
 	return f, nil
 }

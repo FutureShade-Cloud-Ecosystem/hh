@@ -165,6 +165,7 @@ func buildLodgementProposal(line StatementLine, rule MatchRule, l Lodgement) pro
 		TargetType: TargetLodgement,
 		TargetRef:  l.MovementID,
 		Rule:       rule,
+		PaymentIDs: l.PaymentIDs,
 		Journal: gl.ExternalJournal{
 			Source:         "ADJUSTMENT",
 			SourceRefID:    line.ID,

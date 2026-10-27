@@ -49,10 +49,11 @@ type LodgementSource interface {
 	LodgementFacts(ctx context.Context, movementID string) (LodgementFact, bool, error)
 }
 
-// LodgementFact is the branch and amount of one lodgement.
+// LodgementFact is the branch, amount and covered payment ids of one lodgement.
 type LodgementFact struct {
 	BranchID    string
 	AmountCents int64
+	PaymentIDs  []string
 }
 
 // JournalSource reads one journal for a manual JOURNAL match (SF-2j): the GL module's seam, satisfied by
@@ -104,6 +105,7 @@ type Lodgement struct {
 	AmountCents int64
 	Reference   string
 	OccurredAt  time.Time
+	PaymentIDs  []string
 }
 
 // ImportProfile is the column-mapping profile a StatementSource parses under (0033 bank_import_profiles).
