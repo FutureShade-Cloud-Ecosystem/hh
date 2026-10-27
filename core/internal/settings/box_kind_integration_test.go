@@ -32,9 +32,21 @@ func TestIntegration_BoxKind_WriteIsLiveAtTheNextRead(t *testing.T) {
 	if err := WriteBoxKindTx(ctx, pool, "not a kind!"); err == nil {
 		t.Fatal("WriteBoxKindTx must refuse a malformed kind on a real database too")
 	}
+	// The refused write must have touched nothing. On a database that already
+	// holds a box kind (the finance seeded gate database) that reads as "the
+	// row is exactly what it was"; on a database without the row it reads as
+	// "still absent". Both spellings are the same assertion.
 	var after []byte
-	if err := pool.QueryRow(ctx, `SELECT value FROM system_settings WHERE key = $1`, KeyBoxKind).Scan(&after); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("the refused write must have touched nothing, found value=%q err=%v", after, err)
+	err := pool.QueryRow(ctx, `SELECT value FROM system_settings WHERE key = $1`, KeyBoxKind).Scan(&after)
+	if hadRow {
+		if err != nil {
+			t.Fatalf("the refused write must have left the existing row in place, got err=%v", err)
+		}
+		if string(after) != string(before) {
+			t.Fatalf("the refused write must have left the existing value unchanged, had %s now %s", before, after)
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("the refused write must have touched nothing on a database without the row, found value=%q err=%v", after, err)
 	}
 
 	tx, err := pool.Begin(ctx)
