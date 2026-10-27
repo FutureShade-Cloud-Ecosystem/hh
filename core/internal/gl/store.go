@@ -65,9 +65,11 @@ type glStore interface {
 	OpenNextFiscalYear(ctx context.Context, now time.Time, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error)
 
 	// HeadOfficeBranchID answers the head office branch the company level lines
-	// stamp (ruling 82.3): Trenton (TRT) until the gl_policy setting and its
-	// Controller-only setter land with the FW1-08b migration.
+	// stamp (ruling 82.3): defaults to Trenton (TRT) and reads gl_policy.
 	HeadOfficeBranchID(ctx context.Context) (string, error)
+	// SetHeadOfficeBranch updates the head office branch setting in gl_policy and runs record
+	// inside the same transaction (ruling 82.3).
+	SetHeadOfficeBranch(ctx context.Context, branchID string, record func(ctx context.Context, tx pgx.Tx) error) error
 
 	// - balances (0034 views) -
 	AccountBalance(ctx context.Context, code string, year, month int, branchID string) (netDebit int64, normalBalance string, err error)

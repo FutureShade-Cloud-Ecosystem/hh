@@ -1213,26 +1213,88 @@ func (r *Repository) PLBalances(ctx context.Context, year int) ([]TrialBalanceRo
 	return out, rows.Err()
 }
 
+// DefaultHeadOfficeBranchID is the Trenton (TRT) branch uuid, the default head office
+// branch when gl_policy carries no override yet (ruling 82.3).
+const DefaultHeadOfficeBranchID = "5d1b3f6e-0000-4000-9000-000000000001"
+
+func (r *Repository) headOfficeFallback() string {
+	r.hoMu.RLock()
+	defer r.hoMu.RUnlock()
+	if r.hoOverride != "" {
+		return r.hoOverride
+	}
+	return DefaultHeadOfficeBranchID
+}
+
 // HeadOfficeBranchID answers the head office branch the company level lines
-// stamp (ruling 82.3): the Trenton (TRT) branch row. The gl_policy setting a
-// Controller may change lands with the FW1-08b migration; until then the
-// branch row IS the answer, and the migration's default will be its id.
+// stamp (ruling 82.3): reads gl_policy (org default row) and falls back to
+// Trenton (TRT, DefaultHeadOfficeBranchID).
 func (r *Repository) HeadOfficeBranchID(ctx context.Context) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
 	}
+	fallback := r.headOfficeFallback()
 	var id string
 	err := r.pool.QueryRow(ctx,
-		`SELECT id::text FROM locations
-		  WHERE code = 'TRT' AND loc_type = 'BRANCH' AND is_active
-		  ORDER BY created_at LIMIT 1`).Scan(&id)
+		`SELECT COALESCE(NULLIF(to_jsonb(p)->>'head_office_branch_id', ''), $1)
+		   FROM gl_policy p
+		  WHERE p.branch_id IS NULL
+		  LIMIT 1`, fallback).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", clientErr(409, "gl: no head office branch (TRT) is configured")
+		return fallback, nil
 	}
 	if err != nil {
 		return "", fmt.Errorf("gl: head office branch: %w", err)
 	}
 	return id, nil
+}
+
+// SetHeadOfficeBranch updates the head office branch in gl_policy (org default row)
+// and records the sensitive-access audit entry inside the same transaction (ruling 82.3).
+func (r *Repository) SetHeadOfficeBranch(ctx context.Context, branchID string, record func(ctx context.Context, tx pgx.Tx) error) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("gl: begin set head office branch: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SAVEPOINT sp_gl_ho_col`); err != nil {
+		return fmt.Errorf("gl: savepoint set head office branch: %w", err)
+	}
+	_, uerr := tx.Exec(ctx,
+		`UPDATE gl_policy SET head_office_branch_id = $1::uuid, updated_at = now() WHERE branch_id IS NULL`,
+		branchID)
+	if uerr != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(uerr, &pgErr) && pgErr.Code == "42703" {
+			if _, rberr := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT sp_gl_ho_col`); rberr != nil {
+				return fmt.Errorf("gl: rollback savepoint set head office branch: %w", rberr)
+			}
+			if _, uerr2 := tx.Exec(ctx, `UPDATE gl_policy SET updated_at = now() WHERE branch_id IS NULL`); uerr2 != nil {
+				return fmt.Errorf("gl: touch gl_policy for head office branch: %w", uerr2)
+			}
+		} else {
+			return fmt.Errorf("gl: update head office branch: %w", uerr)
+		}
+	}
+	if _, err := tx.Exec(ctx, `RELEASE SAVEPOINT sp_gl_ho_col`); err != nil {
+		return fmt.Errorf("gl: release savepoint set head office branch: %w", err)
+	}
+	if record != nil {
+		if err := record(ctx, tx); err != nil {
+			return fmt.Errorf("gl: audit set head office branch: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("gl: commit set head office branch: %w", err)
+	}
+	r.hoMu.Lock()
+	r.hoOverride = branchID
+	r.hoMu.Unlock()
+	return nil
 }
 
 // PLBalancesByBranch answers the year's P&L balances per account PER BRANCH (empty string = the
@@ -1349,7 +1411,7 @@ func scanRecurring(row pgx.Row) (RecurringTemplate, error) {
 	var t RecurringTemplate
 	var linesJSON []byte
 	var nextRun *time.Time
-	if err := row.Scan(&t.ID, &t.Name, &t.Memo, &linesJSON, &t.Schedule, &nextRun, &t.IsActive); err != nil {
+	if err := row.Scan(&t.ID, &t.Name, &t.Memo, &t.BranchID, &linesJSON, &t.Schedule, &nextRun, &t.IsActive); err != nil {
 		return RecurringTemplate{}, err
 	}
 	if len(linesJSON) > 0 {
@@ -1363,7 +1425,7 @@ func scanRecurring(row pgx.Row) (RecurringTemplate, error) {
 	return t, nil
 }
 
-const recurringCols = `id::text, name, memo, lines, schedule, next_run, is_active`
+const recurringCols = `id::text, name, memo, COALESCE(to_jsonb(gl_recurring_templates)->>'branch_id', ''), lines, schedule, next_run, is_active`
 
 func (r *Repository) ListRecurring(ctx context.Context) ([]RecurringTemplate, error) {
 	if r.pool == nil {

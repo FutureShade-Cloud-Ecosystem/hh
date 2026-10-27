@@ -745,8 +745,8 @@ type PickupInput struct {
 // ReturnInput is the idempotent POST /api/v1/pos/returns body.
 type ReturnInput struct {
 	IdempotencyKey string            `json:"idempotency_key"`
-	OrderID        string            `json:"order_id"`           // one of order_id /
-	OrderNo        string            `json:"order_no"`           // order_no identifies the original sale
+	OrderID        string            `json:"order_id"`            // one of order_id /
+	OrderNo        string            `json:"order_no"`            // order_no identifies the original sale
 	BranchID       string            `json:"branch_id,omitempty"` // branch where the return is rung (pos_returns.branch_id)
 	Lines          []ReturnLineInput `json:"lines"`
 	RefundMethod   string            `json:"refund_method"` // CASH | CARD | ACCOUNT_CREDIT

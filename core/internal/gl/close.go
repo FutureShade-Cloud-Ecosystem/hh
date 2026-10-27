@@ -7,6 +7,7 @@ package gl
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,6 +23,10 @@ const actGLPeriodReopen = "GL_PERIOD_REOPEN"
 // fiscal year (the roll forward otherwise happens on its own ahead of need; an early open is deliberate).
 const actGLFiscalYearOpen = "GL_FISCAL_YEAR_OPEN"
 
+// actGLHeadOfficeBranchSet is the sensitive-access action stamped when the Financial Controller
+// changes the head office branch setting in gl_policy (ruling 82.3).
+const actGLHeadOfficeBranchSet = "GL_HEAD_OFFICE_BRANCH_SET"
+
 // controllerRole is the only role permitted to reopen a closed period (the frozen route is RequireAdmin -
 // Tier-1 GLOBAL, and the service narrows it to the Financial Controller specifically).
 const controllerRole = "FINANCIAL_CONTROLLER"
@@ -30,6 +35,48 @@ const controllerRole = "FINANCIAL_CONTROLLER"
 
 func (s *Service) Policy(ctx context.Context, branchID string) (Policy, error) {
 	return s.store.Policy(ctx, branchID)
+}
+
+// HeadOfficeBranchID returns the configured head office branch from gl_policy (defaulting to Trenton, TRT).
+func (s *Service) HeadOfficeBranchID(ctx context.Context) (string, error) {
+	return s.store.HeadOfficeBranchID(ctx)
+}
+
+// SetHeadOfficeBranch updates the head office branch setting in gl_policy (ruling 82.3):
+// narrowed to the Financial Controller, mandatory reason, and audited.
+func (s *Service) SetHeadOfficeBranch(ctx context.Context, branchID, reason string) error {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return err
+	}
+	if caller.RoleCode != controllerRole {
+		return errNotController
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return errReasonRequired
+	}
+	branchID = strings.TrimSpace(branchID)
+	if branchID == "" {
+		return badReq("gl: branch_id is required")
+	}
+	return s.store.SetHeadOfficeBranch(ctx, branchID, func(ctx context.Context, tx pgx.Tx) error {
+		sa := audit.SensitiveAccess{
+			Action:     actGLHeadOfficeBranchSet,
+			EntityType: "gl.policy",
+			EntityID:   branchID,
+			ActorID:    caller.UserID,
+			BranchID:   branchID,
+			Reason:     reason,
+		}
+		if s.auditTx != nil && tx != nil {
+			return s.auditTx.RecordTx(ctx, tx, sa)
+		}
+		if s.audit != nil {
+			return s.audit.Record(ctx, sa)
+		}
+		return nil
+	})
 }
 
 // - trial balance -
@@ -219,35 +266,102 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	if reason == "" {
 		reason = fmt.Sprintf("year-end close FY%d", year)
 	}
-	pls, err := s.store.PLBalances(ctx, year)
+	plsByBranch, err := s.store.PLBalancesByBranch(ctx, year)
 	if err != nil {
 		return YearCloseResult{}, err
 	}
-	var lines []draftLine
-	var totalND int64 // Σ net_debit across P&L = −(net income)
-	for _, r := range pls {
-		nd := r.BalanceCents
-		if nd == 0 {
+	if len(plsByBranch) == 0 {
+		pls, perr := s.store.PLBalances(ctx, year)
+		if perr != nil {
+			return YearCloseResult{}, perr
+		}
+		for _, r := range pls {
+			plsByBranch = append(plsByBranch, PLBranchRow{
+				AccountCode:   r.AccountCode,
+				AccountName:   r.AccountName,
+				AccountType:   r.AccountType,
+				NormalBalance: r.NormalBalance,
+				BranchID:      "",
+				NetDebitCents: r.BalanceCents,
+			})
+		}
+	}
+
+	var headOffice string
+	byBranch := map[string]map[string]int64{}
+	for _, r := range plsByBranch {
+		if r.NetDebitCents == 0 {
 			continue
 		}
-		if nd > 0 {
-			lines = append(lines, cr(r.AccountCode, nd, "close to retained earnings"))
-		} else {
-			lines = append(lines, dr(r.AccountCode, -nd, "close to retained earnings"))
+		branchID := r.BranchID
+		if branchID == "" {
+			if headOffice == "" {
+				ho, herr := s.store.HeadOfficeBranchID(ctx)
+				if herr != nil {
+					return YearCloseResult{}, herr
+				}
+				headOffice = ho
+			}
+			branchID = headOffice
 		}
-		totalND += nd
+		if byBranch[branchID] == nil {
+			byBranch[branchID] = map[string]int64{}
+		}
+		byBranch[branchID][r.AccountCode] += r.NetDebitCents
 	}
-	res := YearCloseResult{FiscalYear: year, NetIncomeCents: -totalND}
-	if len(lines) > 0 {
-		// The 3900 offset makes the closing entry balance: reversing lines net −totalND, so 3900 nets +totalND.
-		if totalND > 0 {
-			lines = append(lines, dr(RetainedEarningsCode, totalND, "net loss to retained earnings"))
-		} else if totalND < 0 {
-			lines = append(lines, cr(RetainedEarningsCode, -totalND, "net income to retained earnings"))
+
+	branchIDs := make([]string, 0, len(byBranch))
+	for b := range byBranch {
+		branchIDs = append(branchIDs, b)
+	}
+	sort.Slice(branchIDs, func(i, j int) bool {
+		if branchIDs[i] == headOffice && branchIDs[j] != headOffice {
+			return true
+		}
+		if branchIDs[j] == headOffice && branchIDs[i] != headOffice {
+			return false
+		}
+		return branchIDs[i] < branchIDs[j]
+	})
+
+	var totalND int64 // Σ net_debit across P&L = −(net income)
+	res := YearCloseResult{FiscalYear: year}
+	for _, branchID := range branchIDs {
+		acctMap := byBranch[branchID]
+		codes := make([]string, 0, len(acctMap))
+		for c := range acctMap {
+			codes = append(codes, c)
+		}
+		sort.Strings(codes)
+
+		var lines []draftLine
+		var branchND int64
+		for _, code := range codes {
+			nd := acctMap[code]
+			if nd == 0 {
+				continue
+			}
+			if nd > 0 {
+				lines = append(lines, cr(code, nd, "close to retained earnings"))
+			} else {
+				lines = append(lines, dr(code, -nd, "close to retained earnings"))
+			}
+			branchND += nd
+			totalND += nd
+		}
+		if len(lines) == 0 {
+			continue
+		}
+		// The 3900 offset makes the closing entry balance: reversing lines net −branchND, so 3900 nets +branchND.
+		if branchND > 0 {
+			lines = append(lines, dr(RetainedEarningsCode, branchND, "net loss to retained earnings"))
+		} else if branchND < 0 {
+			lines = append(lines, cr(RetainedEarningsCode, -branchND, "net income to retained earnings"))
 		}
 		draft := journalDraft{
 			Source:     SourceClosing,
 			Memo:       fmt.Sprintf("Year-end close FY%d", year),
+			BranchID:   branchID,
 			Status:     StatusPosted,
 			CreatedBy:  caller.UserID,
 			OccurredAt: time.Date(year, 12, 31, 12, 0, 0, 0, time.UTC),
@@ -257,8 +371,11 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 		if err != nil {
 			return YearCloseResult{}, err
 		}
-		res.ClosingJournalID = id
+		if res.ClosingJournalID == "" {
+			res.ClosingJournalID = id
+		}
 	}
+	res.NetIncomeCents = -totalND
 	if err := s.store.ClosePeriodsForYear(ctx, year, caller.UserID, reason); err != nil {
 		return YearCloseResult{}, err
 	}
