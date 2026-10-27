@@ -147,11 +147,12 @@ docker run -d --name "$PG_NAME" --network "$NET" \
 	-p "127.0.0.1:$PG_PORT:5432" \
 	-e POSTGRES_PASSWORD=hardscape postgres:16-alpine >/dev/null
 probes=0
-# A real query, not pg_isready: the image's init phase runs a temporary
-# server on the socket that pg_isready accepts, and a drop or create raced
-# into that window dies with the temp server. A SELECT only answers when the
-# server that will serve the build is up.
-until [ "$(docker exec "$PG_NAME" psql -U postgres -tAc 'SELECT 1' 2>/dev/null)" = "1" ]; do
+# A real query over TCP, the transport the world build itself uses: the
+# image's init phase runs a temporary server that answers the unix socket
+# (a socket probe is answered by it, and a drop or create or a TCP build
+# raced into that window dies with the temp server), and that server never
+# listens on TCP. Only the server that will serve the build answers here.
+until [ "$(docker exec -e PGPASSWORD=hardscape "$PG_NAME" psql -h 127.0.0.1 -U postgres -tAc 'SELECT 1' 2>/dev/null)" = "1" ]; do
 	probes=$((probes + 1))
 	[ "$probes" -lt 60 ] || {
 		fail "the throwaway Postgres never answered"
