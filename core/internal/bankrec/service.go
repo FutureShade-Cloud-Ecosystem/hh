@@ -53,6 +53,46 @@ func (s *Service) RecordCutover(ctx context.Context, in CutoverInput) (BankAccou
 	return acct, nil
 }
 
+// CutoverPreview answers the starting point form's read (FW1-04 round 3): the ledger's entries on the account's
+// GL code on or before the cut over date (the same read the reconciliation's outstanding lists draw from), with
+// the book balance their net makes at that date. The desk formats these figures; it computes none of its own.
+func (s *Service) CutoverPreview(ctx context.Context, accountID, date string) (CutoverPreview, error) {
+	acct, err := s.repo.GetAccount(ctx, accountID)
+	if err != nil {
+		return CutoverPreview{}, err
+	}
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		return CutoverPreview{}, badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", date)
+	}
+	br, ok := s.journals.(bankBookEntryReader)
+	if s.journals == nil || !ok {
+		return CutoverPreview{}, unprocessable("bankrec: the ledger's entries cannot be read on this box")
+	}
+	zone, zerr := houseday.Resolve(ctx, s.zone)
+	if zerr != nil {
+		zone = houseday.DefaultZone()
+	}
+	day, err := time.ParseInLocation("2006-01-02", date, zone.Location())
+	if err != nil {
+		return CutoverPreview{}, badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", date)
+	}
+	entries, err := br.BankAccountEntriesAsOf(ctx, acct.GLAccountCode, day.AddDate(0, 0, 1).Add(-time.Nanosecond))
+	if err != nil {
+		return CutoverPreview{}, err
+	}
+	out := CutoverPreview{BookBalanceCents: 0}
+	for _, e := range entries {
+		out.Entries = append(out.Entries, CutoverPreviewEntry{
+			JournalID:   e.JournalID,
+			PostedAt:    e.PostedAt,
+			Memo:        e.Memo,
+			AmountCents: e.NetCents,
+		})
+		out.BookBalanceCents += e.NetCents
+	}
+	return out, nil
+}
+
 // Import parses a statement export under a profile, dedupes it into bank_statement_lines, and records an
 // IMPORTED (or FAILED) audit. Re-importing the same file inserts 0 new lines (AC1). The parser is pluggable:
 // an injected StatementSource wins; otherwise the built-in CSV parser is used (AC8).

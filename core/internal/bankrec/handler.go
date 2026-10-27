@@ -46,6 +46,17 @@ func (h *Handler) recordCutover(w http.ResponseWriter, r *http.Request, caller g
 	httpx.WriteJSON(w, http.StatusOK, acct)
 }
 
+// cutoverPreview answers the starting point form's read: the ledger's entries on or before the cut over
+// date, and the book balance their net makes. A read, so Money Desk work or above.
+func (h *Handler) cutoverPreview(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	out, err := h.svc.CutoverPreview(r.Context(), r.PathValue("id"), r.URL.Query().Get("date"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
 func (h *Handler) createImport(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in ImportInput
 	if !decodeJSON(w, r, &in) {

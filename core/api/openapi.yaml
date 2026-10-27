@@ -9150,6 +9150,47 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/v1/bankrec/accounts/{id}/cutover:
+    get:
+      operationId: bankrecCutoverPreview
+      tags:
+        - staff-bankrec
+      summary: Read the ledger's entries on or before a cut over date, and the book balance they make
+      description: "The starting point form's read: the posted ledger entries on the account's GL code on or before the given date, with the book balance their net makes at that date. The same read the reconciliation's outstanding lists draw from, so what the Controller sees here is what the reconciliation will hold."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: date
+          in: query
+          required: true
+          description: The cut over date, written YYYY-MM-DD
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: The entries and the book balance at that date
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecCutoverPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     post:
       operationId: bankrecRecordCutover
       tags:
@@ -38904,6 +38945,42 @@ components:
           items:
             type: string
             format: uuid
+    BankRecCutoverPreview:
+      type: object
+      description: The ledger's entries on the account's GL code on or before a cut over date, and the book balance their net makes at that date. The starting point form reads this and formats it; it computes no figure of its own.
+      required:
+        - book_balance_cents
+      properties:
+        book_balance_cents:
+          type: integer
+          format: int64
+          description: The signed net of every listed entry, the ledger's balance at the cut over date
+        entries:
+          type: array
+          description: The posted entries on the account's GL code on or before the cut over date, oldest first
+          items:
+            $ref: "#/components/schemas/BankRecCutoverPreviewEntry"
+    BankRecCutoverPreviewEntry:
+      type: object
+      description: One posted ledger entry on the bank's GL code, at its signed net on that code
+      required:
+        - journal_id
+        - posted_at
+        - memo
+        - amount_cents
+      properties:
+        journal_id:
+          type: string
+          format: uuid
+        posted_at:
+          type: string
+          format: date-time
+        memo:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+          description: Signed net on the bank's GL code (a deposit positive, a payment negative)
     BankRecAccountList:
       type: array
       description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."

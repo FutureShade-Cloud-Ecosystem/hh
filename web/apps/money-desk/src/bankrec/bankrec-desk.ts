@@ -12,7 +12,7 @@
 // Form fields carry data-field names; the host's input and change listeners hand them to input() and change(),
 // which keep the typed values in the desk so a repaint, or a move to another tab, never loses them.
 import { html, type TemplateResult } from "lit";
-import type { BankRecAccount, BankRecMatch, BankRecMatchRule, BankRecReconciliation, BankRecStatementLine, GlJournal } from "@hardscapehouse/api-client";
+import type { BankRecAccount, BankRecCutoverPreview, BankRecMatch, BankRecMatchRule, BankRecReconciliation, BankRecStatementLine, GlJournal } from "@hardscapehouse/api-client";
 import type { BankrecApi, LineStatus, TargetType } from "./bankrec-api.js";
 import {
   dayWords,
@@ -43,6 +43,11 @@ function previousMonth(): { year: number; month: number } {
   const now = new Date();
   const before = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   return { year: before.getFullYear(), month: before.getMonth() + 1 };
+}
+
+/** The ids the current preview read lists, so a tick left from another date is never sent. */
+function listedCutover(preview: BankRecCutoverPreview | null): Set<string> {
+  return new Set((preview?.entries ?? []).map((e) => e.journal_id));
 }
 
 const TEXT_FIELDS = [
@@ -87,6 +92,11 @@ export class BankrecDesk {
   #journalsLoaded = false;
   // The entries the starting point form lists as still outstanding at cut over, journal id to ticked.
   #cutoverTicked: Record<string, boolean> = {};
+  // The core's preview read for the typed cut over date, and the date it answers, so a slow answer for a date
+  // the person has since changed is dropped. The core computes the figures; the desk formats them.
+  #cutoverPreview: BankRecCutoverPreview | null = null;
+  #cutoverPreviewDate = "";
+  #cutoverPreviewLoading = false;
   #rules: BankRecMatchRule[] = [];
   #rulesLoaded = false;
   #linesLoaded = false;
@@ -132,6 +142,7 @@ export class BankrecDesk {
     await this.#loadRecons();
     this.#fillCutoverFrom(this.#accounts.find((a) => a.id === this.#accountId));
     await this.#loadJournals();
+    await this.#loadCutoverPreview();
     this.#phase = "ready";
     this.#loaded = true;
     this.#host.repaint();
@@ -329,7 +340,9 @@ export class BankrecDesk {
     if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) {
       this.#form[name] = control.value;
       // The balance hints and the starting point's entry list and result read the typed text.
-      if (name === "br-balance" || name === "br-cutover-date" || name === "br-cutover-balance") this.#host.repaint();
+      if (name === "br-balance") this.#host.repaint();
+      if (name === "br-cutover-date") void this.#loadCutoverPreview();
+      if (name === "br-cutover-balance") this.#host.repaint();
     }
   }
 
@@ -423,7 +436,39 @@ export class BankrecDesk {
     this.#host.repaint();
     await this.#loadRecons();
     this.#fillCutoverFrom(this.#accounts.find((a) => a.id === id));
+    this.#cutoverPreview = null;
+    await this.#loadCutoverPreview();
     if (this.#tab === "match") await this.#loadLines(false);
+    this.#host.repaint();
+  }
+
+  // ---- the starting point (the Controller's cut over door, round 3) ------------------------------------
+
+  /**
+   * The starting point form's read: the ledger's entries on or before the typed date, and the book balance
+   * they make, answered by the core. The desk formats them; it computes none of its own.
+   */
+  async #loadCutoverPreview(): Promise<void> {
+    const date = (this.#form["br-cutover-date"] ?? "").trim();
+    if (date === "") {
+      this.#cutoverPreview = null;
+      this.#cutoverPreviewDate = "";
+      return;
+    }
+    const account = this.#accounts.find((a) => a.id === this.#accountId);
+    if (account === undefined) return;
+    this.#cutoverPreviewLoading = true;
+    this.#host.repaint();
+    const answer = await this.#api.cutoverPreview(account.id, date);
+    this.#cutoverPreviewLoading = false;
+    if (date !== (this.#form["br-cutover-date"] ?? "").trim() || account.id !== this.#accountId) return;
+    if (!answer.ok) {
+      this.#error = refusalWords("load", answer.error, answer.status ?? 0);
+      this.#host.repaint();
+      return;
+    }
+    this.#cutoverPreview = answer.value;
+    this.#cutoverPreviewDate = date;
     this.#host.repaint();
   }
 
@@ -458,7 +503,7 @@ export class BankrecDesk {
       return;
     }
     const ids = Object.entries(this.#cutoverTicked)
-      .filter(([, on]) => on === true)
+      .filter(([id, on]) => on === true && listedCutover(this.#cutoverPreview).has(id))
       .map(([id]) => id);
     this.#busy = true;
     this.#host.repaint();
@@ -851,7 +896,8 @@ export class BankrecDesk {
       cutoverDateText: this.#form["br-cutover-date"] ?? "",
       cutoverBalanceText: this.#form["br-cutover-balance"] ?? "",
       cutoverTicked: this.#cutoverTicked,
-      journalsLoaded: this.#journalsLoaded,
+      cutoverPreview: this.#cutoverPreview,
+      cutoverPreviewLoading: this.#cutoverPreviewLoading,
     };
     return html`${renderBankrec(model)}`;
   }

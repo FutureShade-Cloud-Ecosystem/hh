@@ -3221,6 +3221,18 @@ type BankRecCutoverInput struct {
 	OutstandingJournalIds        *[]string `json:"outstanding_journal_ids,omitempty"`
 }
 
+type BankRecCutoverPreview struct {
+	BookBalanceCents int64                         `json:"book_balance_cents"`
+	Entries          *[]BankRecCutoverPreviewEntry `json:"entries,omitempty"`
+}
+
+type BankRecCutoverPreviewEntry struct {
+	JournalId   string    `json:"journal_id"`
+	PostedAt    time.Time `json:"posted_at"`
+	Memo        string    `json:"memo"`
+	AmountCents int64     `json:"amount_cents"`
+}
+
 type BankRecAccountList []BankRecAccount
 
 type BankRecStatementLine struct {

@@ -446,6 +446,7 @@ test("the walls: Money Desk work or above reads, counter and branch staff are re
 test("the cut over door: the controller records the starting point on the account, and a signed off later month locks it", async () => {
   await reset();
   const cutPath = `/api/v1/bankrec/accounts/${IDS.operating}/cutover`;
+  const prior = M === 1 ? `${Y - 1}-12` : `${Y}-${String(M - 1).padStart(2, "0")}`;
   // A date the core's words refuse, and an id that is not a journal id.
   refused(await ctl("POST", cutPath, { cutover_date: "not-a-date", opening_statement_balance_cents: 100 }), 400, "cutover_date must be YYYY-MM-DD");
   refused(await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 100, outstanding_journal_ids: ["nope"] }), 400, "invalid outstanding journal id");
@@ -465,6 +466,18 @@ test("the cut over door: the controller records the starting point on the accoun
   const corrected = await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 1_250_075 });
   assert.equal(corrected.status, 200);
   assert.equal(corrected.json.cutover_statement_balance_cents, 1_250_075);
+  // The form's read: the ledger's entries on or before the date and the book balance they make, the core's figures.
+  refused(await ctl("GET", `${cutPath}?date=nope`), 400, "cutover_date must be YYYY-MM-DD");
+  refused(await ctl("GET", cutPath), 400, "cutover_date must be YYYY-MM-DD");
+  const preview = await ctl("GET", `${cutPath}?date=${period}-28`);
+  assert.equal(preview.status, 200);
+  holds("BankRecCutoverPreview", preview.json);
+  assert.equal(preview.json.book_balance_cents, 2_502_500);
+  const memos = preview.json.entries.map((e) => e.memo);
+  assert.deepEqual(memos, ["Opening balances", "Payment received", "Till over/short"]);
+  const before = await ctl("GET", `${cutPath}?date=${prior}-01`);
+  assert.equal(before.status, 200);
+  assert.deepEqual(before.json, { book_balance_cents: 0 });
   // Once the statement month has signed off, recording at the month before it is refused with the core's conflict.
   const wire = await lineByRef("WIRE FROM CONTRACTOR");
   const cheque = await lineByRef("CHEQUE DEPOSIT");
@@ -477,7 +490,6 @@ test("the cut over door: the controller records the starting point on the accoun
   assert.equal((await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, refresh: true })).status, 201);
   const opened = (await ctl("GET", `/api/v1/bankrec/reconciliations?bank_account_id=${IDS.operating}`)).json.find((r) => r.year === Y && r.month === M);
   assert.equal((await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`)).status, 200);
-  const prior = M === 1 ? `${Y - 1}-12` : `${Y}-${String(M - 1).padStart(2, "0")}`;
   refused(await ctl("POST", cutPath, { cutover_date: `${prior}-28`, opening_statement_balance_cents: 1_000_000 }), 409, "cannot record cut-over at");
   refused(await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 1_000_000 }), 409, "is already completed");
 });

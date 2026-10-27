@@ -230,6 +230,22 @@ type CutoverInput struct {
 	OutstandingJournalIDs        []string `json:"outstanding_journal_ids,omitempty"`
 }
 
+// CutoverPreview is the starting point form's read (FW1-04 round 3): the ledger's entries on the account's GL
+// code on or before a cut over date, and the book balance their net makes. The desk formats these; the core
+// computes them, the same read the reconciliation's outstanding lists draw from.
+type CutoverPreview struct {
+	BookBalanceCents int64                 `json:"book_balance_cents"`
+	Entries          []CutoverPreviewEntry `json:"entries,omitempty"`
+}
+
+// CutoverPreviewEntry is one posted ledger entry on the bank's GL code, at its signed net on that code.
+type CutoverPreviewEntry struct {
+	JournalID   string    `json:"journal_id"`
+	PostedAt    time.Time `json:"posted_at"`
+	Memo        string    `json:"memo"`
+	AmountCents int64     `json:"amount_cents"`
+}
+
 // - error taxonomy (mirrors internal/till) -
 type clientError struct {
 	status int

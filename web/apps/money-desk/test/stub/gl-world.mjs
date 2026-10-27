@@ -917,5 +917,8 @@ export function createGlWorld() {
     return books(req, url, path, bodyText, caller);
   }
 
-  return { handle, reset };
+  // The bank reconciliation stub's starting point preview reads the same posted journals the register serves
+  // (round 3): a read only accessor, so the two worlds answer one ledger.
+  const postedJournals = () => world.journals.filter((j) => j.derived_status === "POSTED");
+  return { handle, reset, postedJournals };
 }

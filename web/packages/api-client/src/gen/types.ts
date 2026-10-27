@@ -2723,6 +2723,16 @@ export type BankRecCutoverInput = {
   opening_statement_balance_cents: number;
   outstanding_journal_ids?: string[];
 };
+export type BankRecCutoverPreview = {
+  book_balance_cents: number;
+  entries?: BankRecCutoverPreviewEntry[];
+};
+export type BankRecCutoverPreviewEntry = {
+  journal_id: string;
+  posted_at: string;
+  memo: string;
+  amount_cents: number;
+};
 export type BankRecAccountList = BankRecAccount[];
 export type BankRecStatementLine = {
   id: string;

@@ -18,6 +18,7 @@ import {
   staffGl,
   type ApiClient,
   type BankRecAccount,
+  type BankRecCutoverPreview,
   type BankRecImportResult,
   type BankRecMatch,
   type BankRecMatchRule,
@@ -131,6 +132,14 @@ export class BankrecApi {
       opening_statement_balance_cents: balanceCents,
       ...(outstandingJournalIds.length === 0 ? {} : { outstanding_journal_ids: outstandingJournalIds }),
     });
+  }
+
+  /**
+   * The starting point form's read: the ledger's entries on or before the cut over date and the book balance
+   * they make, answered by the core so the desk formats figures and never computes them.
+   */
+  cutoverPreview(accountId: string, date: string): Promise<Result<BankRecCutoverPreview>> {
+    return staffBankrec.bankrecCutoverPreview(this.#client, accountId, { date });
   }
 
   /** The posted journals a statement line can be paired to; the ledger's own register, read only. */

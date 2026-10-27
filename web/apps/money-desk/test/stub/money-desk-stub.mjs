@@ -21,8 +21,9 @@ import { createAssistWorld } from "./assist-world.mjs";
 const glWorld = createGlWorld();
 // The statements slice's world (periods, the five statements, aging, saved packs), answered by its own module.
 const finstmtWorld = createFinstmtWorld();
-// The bank reconciliation slice's world (accounts, statement lines, matches, rules, months), answered by its own module.
-const bankrecWorld = createBankrecWorld();
+// The bank reconciliation slice's world (accounts, statement lines, matches, rules, months), answered by its own
+// module; its starting point preview reads the ledger's posted journals from the ledger world, one ledger.
+const bankrecWorld = createBankrecWorld({ ledgerPosted: glWorld.postedJournals });
 // The tax administration slice's world (rates, profiles, config, evidence, recompute, recon), answered by its own module.
 const taxWorld = createTaxWorld();
 // The liens and compliance slice's world (jobs, the holdback ledger, documents, the calendar, the roster), answered by its own module.

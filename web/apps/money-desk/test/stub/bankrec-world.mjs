@@ -128,7 +128,7 @@ const withinDays = (a, b, days) => Math.abs(dayOf(a) - dayOf(b)) <= days * 86_40
 
 const clientError = (status, message) => ({ status, body: { error: message } });
 
-export function createBankrecWorld() {
+export function createBankrecWorld({ ledgerPosted = null } = {}) {
   let world = fresh();
   const reset = () => {
     world = fresh();
@@ -637,6 +637,29 @@ export function createBankrecWorld() {
     return { status: 200, body: accountView(account) };
   }
 
+  // The starting point form's read (round 3): the ledger's entries on the account's GL code on or before the
+  // date, and the book balance their net makes, computed from the same posted journals the register serves.
+  function cutoverPreview(accountId, url) {
+    const date = url.searchParams.get("date") ?? "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return clientError(400, `bankrec: cutover_date must be YYYY-MM-DD, got ${JSON.stringify(date)}`);
+    }
+    const account = world.accounts.find((a) => a.id === accountId);
+    if (account === undefined) return clientError(404, "not found");
+    const rows = (typeof ledgerPosted === "function" ? ledgerPosted() : [])
+      .flatMap((j) =>
+        j.lines
+          .filter((l) => l.account_code === account.gl_account_code)
+          .map((l) => ({ journal: j, net: l.debit_cents - l.credit_cents })),
+      )
+      .filter((e) => e.net !== 0 && (e.journal.posted_at ?? "").slice(0, 10) <= date)
+      .sort((a, b) => (a.journal.posted_at < b.journal.posted_at ? -1 : 1));
+    const entries = rows.map(({ journal, net }) => ({ journal_id: journal.id, posted_at: journal.posted_at, memo: journal.memo, amount_cents: net }));
+    // The core omits an empty entry list (omitempty); the stub mirrors it.
+    const body = { book_balance_cents: entries.reduce((s, e) => s + e.amount_cents, 0), ...(entries.length > 0 ? { entries } : {}) };
+    return { status: 200, body };
+  }
+
   function completeReconciliation(id, caller) {    if (!id) return clientError(400, "reconciliation id is required");
     if (!UUID.test(id)) return clientError(404, "not found");
     const rec = world.recons.find((r) => r.id === id);
@@ -741,6 +764,10 @@ export function createBankrecWorld() {
     switch (route) {
       case "GET /api/v1/bankrec/accounts":
         return { status: 200, body: world.accounts.map(accountView) };
+      case "GET /api/v1/bankrec/accounts/{id}/cutover": {
+        const accountId = path.split("/")[5] ?? "";
+        return cutoverPreview(accountId, url);
+      }
       case "POST /api/v1/bankrec/accounts/{id}/cutover": {
         const accountId = path.split("/")[5] ?? "";
         return recordCutover(accountId, input);
