@@ -24,9 +24,8 @@ export default defineConfig({
     // The set password page's link carries a one time secret in its query. No
     // request the browser makes from that page may carry a Referer, or the
     // secret reaches another server's log. The dev server's own header stands
-    // in for the deployed copy's Caddyfile line, which is the policy's home:
-    // a meta tag in the document is parsed after the browser has already begun
-    // fetching the page's own modules, so it governs too little.
+    // in for the deployed copy's Caddyfile line: the document's meta tag is
+    // the page's own layer, and the header is the layer the server controls.
     headers: { "Referrer-Policy": "no-referrer" },
     proxy: {
       "/api": {

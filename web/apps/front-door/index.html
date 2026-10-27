@@ -2,12 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <!-- The page's own referrer policy, in the document as a second line of
-         defence behind the response header the deployed copy carries (the
-         header is the policy's real home: the browser begins fetching the
-         page's own modules before a meta tag late in the head is parsed). The
-         set password page's link carries a one time secret in its query, and
-         no Referer may carry it anywhere. -->
+    <!-- The page's own referrer policy, in the document beside the response
+         header the deployed copy carries. Both layers stay: a meta tag is
+         each browser's own read and not a guarantee across engines, while the
+         header is the layer the server controls. On this page as built, in
+         the browser the gates use, the meta alone already held, because it
+         sits before the module script and the stylesheet in document order.
+         The set password page's link carries a one time secret in its query,
+         and no Referer may carry it anywhere. -->
     <meta name="referrer" content="no-referrer" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sign in</title>

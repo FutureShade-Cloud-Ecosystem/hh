@@ -45,10 +45,9 @@ header X-Robots-Tag "noindex, nofollow"
 
 # The set password page's link carries a one time secret in its query, and no
 # request the browser makes from that page may carry a Referer, or the secret
-# reaches another server's log. The header is the policy's home: a meta tag in
-# the document is parsed after the browser has already begun fetching the
-# page's own modules, so it governs too little. The finance copy's Caddyfile
-# needs the same line.
+# reaches another server's log. The header is the layer the server controls,
+# beside the page's own meta tag: a meta tag is each browser's own read, not a
+# guarantee across engines. The finance copy's Caddyfile needs the same line.
 header Referrer-Policy "no-referrer"
 
 handle /api/v1/demo/* {

@@ -223,8 +223,8 @@ test("the secret goes to the console and to nowhere else", async ({ page, baseUR
 
 test("the page shows the rule, and the policy is carried by the response header", async ({ page }) => {
   const response = await page.goto(LINK);
-  // The header is the policy's home: a meta tag in the document is parsed
-  // after the browser has begun fetching the page's own modules.
+  // The header is the layer the server controls, beside the document's own
+  // meta tag, which on this page sits before its module script and stylesheet.
   expect(response?.headers()["referrer-policy"]).toBe("no-referrer");
   const meta = await page.evaluate(() => document.querySelector('meta[name="referrer"]')?.getAttribute("content") ?? "");
   expect(meta).toBe("no-referrer");

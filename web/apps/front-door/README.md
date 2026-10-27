@@ -143,10 +143,12 @@ no sign in.
   history or in a referrer the page hands on.
 - **The secret leaves in no Referer either.** The document sets
   `<meta name="referrer" content="no-referrer">`, and the response header
-  `Referrer-Policy: no-referrer` carries the policy for real: the browser
-  begins fetching the page's own modules before a meta tag in the head is
-  parsed, so the header is the policy's home. The demo box's Caddyfile sends
-  it, and any other copy must too.
+  `Referrer-Policy: no-referrer` carries the same policy. Both layers stay:
+  a meta tag is each browser's own read and not a guarantee across engines,
+  while the header is the layer the server controls. On this page as built,
+  in the browser the gates use, the meta alone already held, because it sits
+  before the module script and the stylesheet in document order. The demo
+  box's Caddyfile sends the header, and any other copy must too.
 - The two entries must match and the password must be eight characters or more
   (FB Console's own minimum) before anything is sent: the console is never
   asked to refuse what the page can see by itself. The field at fault is
