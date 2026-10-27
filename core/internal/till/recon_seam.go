@@ -184,11 +184,12 @@ func (r *Repository) OpenLodgements(ctx context.Context, from, to time.Time) ([]
 	used := map[string]bool{}
 	out := make([]bankrec.Lodgement, 0, len(raw))
 	for _, rl := range raw {
-		pids, perr := r.lodgementPaymentIDs(ctx, rl.BranchID, rl.sessionID, rl.method, rl.Reference, rl.AmountCents, used)
+		pids, unresolved, perr := r.lodgementPaymentIDs(ctx, rl.BranchID, rl.sessionID, rl.method, rl.AmountCents, used)
 		if perr != nil {
 			return nil, perr
 		}
 		rl.PaymentIDs = pids
+		rl.PaymentsUnresolved = unresolved
 		out = append(out, rl.Lodgement)
 	}
 	return out, nil
@@ -201,49 +202,52 @@ func (r *Repository) LodgementFacts(ctx context.Context, movementID string) (ban
 		return bankrec.LodgementFact{}, false, errNoDB
 	}
 	var f bankrec.LodgementFact
-	var sessionID, method, reference string
+	var sessionID, method string
 	err := r.pool.QueryRow(ctx,
-		`SELECT s.branch_id::text, m.till_session_id::text, m.method, m.amount_cents, m.reference
+		`SELECT s.branch_id::text, m.till_session_id::text, m.method, m.amount_cents
 		   FROM till_movements m JOIN till_sessions s ON s.id = m.till_session_id
 		  WHERE m.id::text = $1 AND m.movement_type = 'LODGEMENT'`, movementID).
-		Scan(&f.BranchID, &sessionID, &method, &f.AmountCents, &reference)
+		Scan(&f.BranchID, &sessionID, &method, &f.AmountCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return bankrec.LodgementFact{}, false, nil
 	}
 	if err != nil {
 		return bankrec.LodgementFact{}, false, fmt.Errorf("till: lodgement facts: %w", err)
 	}
-	pids, perr := r.lodgementPaymentIDs(ctx, f.BranchID, sessionID, method, reference, f.AmountCents, nil)
+	pids, unresolved, perr := r.lodgementPaymentIDs(ctx, f.BranchID, sessionID, method, f.AmountCents, nil)
 	if perr != nil {
 		return bankrec.LodgementFact{}, false, perr
 	}
 	f.PaymentIDs = pids
+	f.PaymentsUnresolved = unresolved
 	return f, true, nil
 }
 
 // lodgementPaymentIDs resolves the RECEIVED non-card, non-reversed payment row(s) covered by a lodgement
 // movement so bankrec's PersistMatchReach flips them to DEPOSITED when the lodgement clears at the bank.
-func (r *Repository) lodgementPaymentIDs(ctx context.Context, branchID, sessionID, method, reference string, amountCents int64, used map[string]bool) ([]string, error) {
-	if amountCents <= 0 || branchID == "" {
-		return nil, nil
+// Ruling 128 (P1-2): claim only payments from the lodgement's own till_session_id and method, and only
+// when exactly one subset of those payments sums to amountCents; never claim a partial set, another
+// session's payment, or another method's payment, and report unresolved when no unique set matches.
+func (r *Repository) lodgementPaymentIDs(ctx context.Context, branchID, sessionID, method string, amountCents int64, used map[string]bool) ([]string, bool, error) {
+	if amountCents <= 0 {
+		return nil, false, nil
+	}
+	if branchID == "" || sessionID == "" || method == "" {
+		return nil, true, nil
 	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT p.id::text, p.amount_cents
 		   FROM payments p
 		  WHERE p.branch_id = $1::uuid
+		    AND p.till_session_id = $2::uuid
+		    AND p.method = $3
 		    AND p.status = 'RECEIVED'
 		    AND p.reversed_at IS NULL
 		    AND p.method <> 'CARD'
-		  ORDER BY
-		    (p.till_session_id = $2::uuid) DESC,
-		    (p.method = $3) DESC,
-		    ($4 <> '' AND COALESCE(p.gateway_ref, '') = $4) DESC,
-		    (p.amount_cents = $5) DESC,
-		    p.received_at ASC,
-		    p.id ASC`,
-		branchID, sessionID, method, reference, amountCents)
+		  ORDER BY p.received_at ASC, p.id ASC`,
+		branchID, sessionID, method)
 	if err != nil {
-		return nil, fmt.Errorf("till: lodgement payments: %w", err)
+		return nil, false, fmt.Errorf("till: lodgement payments: %w", err)
 	}
 	defer rows.Close()
 	type cand struct {
@@ -254,39 +258,62 @@ func (r *Repository) lodgementPaymentIDs(ctx context.Context, branchID, sessionI
 	for rows.Next() {
 		var c cand
 		if err := rows.Scan(&c.id, &c.amt); err != nil {
-			return nil, fmt.Errorf("till: scan lodgement payment: %w", err)
+			return nil, false, fmt.Errorf("till: scan lodgement payment: %w", err)
 		}
 		if used != nil && used[c.id] {
+			continue
+		}
+		if c.amt <= 0 || c.amt > amountCents {
 			continue
 		}
 		cands = append(cands, c)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	for _, c := range cands {
-		if c.amt == amountCents {
-			if used != nil {
-				used[c.id] = true
+
+	suffixSum := make([]int64, len(cands)+1)
+	for i := len(cands) - 1; i >= 0; i-- {
+		suffixSum[i] = suffixSum[i+1] + cands[i].amt
+	}
+	var uniqueMatch []string
+	var cur []string
+	matches := 0
+	var dfs func(idx int, rem int64)
+	dfs = func(idx int, rem int64) {
+		if matches > 1 {
+			return
+		}
+		if rem == 0 {
+			matches++
+			if matches == 1 {
+				uniqueMatch = append([]string(nil), cur...)
 			}
-			return []string{c.id}, nil
+			return
+		}
+		if idx >= len(cands) || suffixSum[idx] < rem {
+			return
+		}
+		if cands[idx].amt <= rem {
+			cur = append(cur, cands[idx].id)
+			dfs(idx+1, rem-cands[idx].amt)
+			cur = cur[:len(cur)-1]
+			if matches > 1 {
+				return
+			}
+		}
+		dfs(idx+1, rem)
+	}
+	dfs(0, amountCents)
+	if matches != 1 {
+		return nil, true, nil
+	}
+	if used != nil {
+		for _, id := range uniqueMatch {
+			used[id] = true
 		}
 	}
-	var picked []string
-	rem := amountCents
-	for _, c := range cands {
-		if c.amt > 0 && c.amt <= rem {
-			picked = append(picked, c.id)
-			rem -= c.amt
-			if used != nil {
-				used[c.id] = true
-			}
-			if rem == 0 {
-				break
-			}
-		}
-	}
-	return picked, nil
+	return uniqueMatch, false, nil
 }
 
 // PaymentForGL resolves the finance facts of a payment so the GL posting consumer can branch-stamp the
