@@ -210,11 +210,11 @@ func TestIntegration_FW1_09bR3_PeriodAndAccountWritesNeedDealerWide(t *testing.T
 	}
 
 	// ACCOUNT deactivate: the chart of accounts is dealer wide. The leg plants
-	// an account of its own, so no fixture's drafts can stand in the way.
-	code := "9999"
-	if _, err := pool.Exec(ctx, `DELETE FROM gl_accounts WHERE code=$1`, code); err != nil {
-		t.Fatal(err)
-	}
+	// an account of its own, so no fixture's drafts can stand in the way. The
+	// code carries the test prefix and no migration uses it, and the leg never
+	// deletes or alters a seeded account: 9999 Suspense is the seed's own (0007)
+	// and 619's paid in and paid out post to it (round 6).
+	code := "R3TEST1"
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM gl_accounts WHERE code=$1`, code)
 	})
