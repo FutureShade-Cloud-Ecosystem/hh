@@ -171,16 +171,16 @@ export class GlApi {
     return this.#items("tie out", (cursor) => staffGl.glTieOut(this.#client, { limit: 100, ...(branchId === "" ? {} : { branch_id: branchId }), ...(cursor === undefined ? {} : { cursor }) }));
   }
 
-  /**
-   * The legacy system this dealer imports from, read from the money-desk surface config. "" when the
-   * dealer names none, and "" when the read fails: the legacy import check stays off rather than
-   * drawn for a dealer that may not have one.
-   */
   /** The posting queue's two counts (waiting, dead lettered), the banner's figures. */
   async postingQueueCount(): Promise<Result<GlPostingQueueCounts>> {
     return staffGl.glPostingQueueCount(this.#client);
   }
 
+  /**
+   * The legacy system this dealer imports from, read from the money-desk surface config. "" when the
+   * dealer names none, and "" when the read fails: the legacy import check stays off rather than
+   * drawn for a dealer that may not have one.
+   */
   async legacyImportSource(): Promise<string> {
     const config = await staffSettings.settingsGetSurfaceConfig(this.#client, "money-desk", {});
     // The dealer's business day zone rides on this read; the desk's day words follow it.
