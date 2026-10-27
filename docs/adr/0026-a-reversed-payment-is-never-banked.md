@@ -115,3 +115,20 @@ customer, Dr 2310 / Cr AR.
    also counts a reversing row's contra allocation as negative, so a payment and its reversal net to zero (summed
    plainly it read twice the payment). The statement and the customer activity read the subledger row and already show
    a slice.
+9. **Held money also leaves by a pay out or a write off (SF-2m, SF-2n, migration 0435).** The held figure is the reversed
+   amount less re-applications and less every row of `payment_payouts`; one guard function sums both tables under the
+   payment row, so a pay out and a re-application racing on one payment cannot together exceed it.
+   - **Drawer:** Dr 2310 / Cr 1020 with a PAID_OUT movement the till writes through its seam on the payments transaction
+     (the till stays the sole writer of `till_movements`), so the drawer's expected cash falls with the books. The cash
+     leaves the OPEN drawer of the payment's branch; named, or the branch's one open drawer, and refused in words for none
+     or more than one (the Money Desk cannot name a drawer).
+   - **Bank:** Dr 2310 / Cr 1000 for a cheque or transfer written to the customer, the reference required.
+   - **Write off (SF-2n):** Dr 2310 / Cr 6350, only once the payment's till session is CLOSED with a shortage, never more
+     than the shortage the session's other write offs have not covered. The close already posted Dr 6350 / Cr 1020 for the
+     cash that left unrecorded, so the write off nets 6350 back to zero and clears the liability.
+   - **GL:** one `payment.paid_out` topic, one journal per act, the credit account named by the payload's role (drawer,
+     bank, card clearing, write off) against rules seeded by 0435.
+   - **The card arm** credits 1010 `card_clearing` for both a void before settlement and a refund after (ruling 74.2): a
+     processor nets a refund from a later settlement, so the bank line arrives smaller and the match explains it through
+     1010, and crediting 1000 would double count. A processor that debits the bank on its own line is UNSUPPORTED until a
+     dealer needs it.

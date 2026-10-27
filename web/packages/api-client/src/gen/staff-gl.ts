@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { GlAccount, GlAccountCreate, GlAccountPage, GlBisTrackTieoutReport, GlCloseYearBody, GlExportBody, GlExportResult, GlJournal, GlJournalCreate, GlJournalPage, GlPeriod, GlPeriodPage, GlPeriodReopenBody, GlPolicy, GlReasonBody, GlRecurringTemplatePage, GlTieoutStatePage, GlTrialBalanceResult, GlYearCloseResult, GlYearOpenResult } from "./types.js";
+import type { GlAccount, GlAccountCreate, GlAccountPage, GlBisTrackTieoutReport, GlCloseYearBody, GlExportBody, GlExportResult, GlJournal, GlJournalCreate, GlJournalPage, GlPeriod, GlPeriodPage, GlPeriodReopenBody, GlPolicy, GlPostingQueueCounts, GlPostingQueuePage, GlReasonBody, GlRecurringTemplatePage, GlTieoutStatePage, GlTrialBalanceResult, GlYearCloseResult, GlYearOpenResult } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -248,6 +248,32 @@ export async function glGetPolicy(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "glGetPolicy",
+  });
+}
+
+export async function glListPostingQueue(
+  client: ApiClient,
+  call?: ApiCallOptions
+): Promise<Result<GlPostingQueuePage>> {
+  return client.request<GlPostingQueuePage>({
+    method: "GET",
+    path: "/api/v1/gl/posting-queue",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "glListPostingQueue",
+  });
+}
+
+export async function glPostingQueueCount(
+  client: ApiClient,
+  call?: ApiCallOptions
+): Promise<Result<GlPostingQueueCounts>> {
+  return client.request<GlPostingQueueCounts>({
+    method: "GET",
+    path: "/api/v1/gl/posting-queue/count",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "glPostingQueueCount",
   });
 }
 

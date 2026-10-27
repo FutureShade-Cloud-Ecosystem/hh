@@ -142,6 +142,13 @@ func worker(getenv func(string) string) error {
 		log.Info("worker: next fiscal year ensured", "fiscal_year", res.FiscalYear)
 	}
 
+	// FW1-02: the dead letter retry. The dispatcher dead letters a GL event
+	// whose journal is refused five times; this loop brings such rows back on
+	// a schedule with backoff, so a refusal that gets fixed is retried without
+	// a restart. It shares the events claim store (an idempotent UPDATE, no
+	// claim held).
+	go notify.NewDeadLetterRetry(claims.events, gl.PostedTopics, log).Run(ctx)
+
 	// 1 · OUT-OF-BAND NOTIFICATION RUNS ON ITS OWN DISPATCHER, DELIBERATELY
 	// (the pin's two-dispatcher separation rationale, D37's verbatim
 	// carry): events_outbox claims by STATUS alone, so a new topic on the

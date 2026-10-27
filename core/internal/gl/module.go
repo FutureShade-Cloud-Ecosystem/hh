@@ -254,6 +254,7 @@ type Service struct {
 	approvalChecker ApprovalStateChecker // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
 	delivery        DeliveryReader       // round 2: the delivery fact the deposit release's date reads
 	auditTx         AuditTxRecorder      // round 2: the open year's audit, in the year's transaction
+	queue           OutboxQueue          // the outbox's waiting/dead read, the posting queue's rows (nil-able: unwired, the queue reads refuse)
 	log             *slog.Logger
 	now             func() time.Time
 	callerFrom      func(context.Context) (identity.StaffContext, bool)
@@ -468,6 +469,7 @@ var PostedTopics = []string{
 	"payment.bounced",
 	"payment.reversed",
 	"payment.reapplied",
+	"payment.paid_out",
 	"order.fulfilled",
 	"bank.recon.completed",
 	"till.session.completed",
@@ -559,6 +561,10 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/gl/periods/{id}/reopen", g.RequireAdmin(h.staff(h.reopenPeriod)))
 	r.Handle("POST /api/v1/gl/periods/close-year", g.RequireAdmin(h.staff(h.closeYear)))
 	r.Handle("POST /api/v1/gl/periods/open-year", g.RequireAdmin(h.staff(h.openYear)))
+	// The posting queue: the Controller's list of journals waiting or dead
+	// lettered, and the two counts the Money Desk's banner reads.
+	r.Handle("GET /api/v1/gl/posting-queue", g.RequireAdmin(h.staff(h.listPostingQueue)))
+	r.Handle("GET /api/v1/gl/posting-queue/count", g.RequireManager(h.staff(h.postingQueueCounts)))
 	// Policy + export
 	r.Handle("GET /api/v1/gl/policy", g.RequireManager(h.staff(h.policy)))
 	r.Handle("POST /api/v1/gl/export", g.RequireAdmin(h.staff(h.export)))

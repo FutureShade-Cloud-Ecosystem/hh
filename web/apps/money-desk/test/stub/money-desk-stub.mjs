@@ -1009,6 +1009,11 @@ async function handle(req, res) {
     return send(res, 200, { token: mintToken(account.user_id), user: account, flow: body.flow });
   }
   if (method === "GET" && path === "/api/v1/branches") return send(res, 200, BRANCHES);
+  if (method === "POST" && path === "/_stub/posting-queue") {
+    const body = await readBody(req);
+    const answer = glWorld.handle(req, url, JSON.stringify(body ?? {}));
+    return send(res, answer.status, answer.body);
+  }
   if (method === "POST" && path === "/_stub/legacy-import") {
     const body = await readBody(req);
     const answer = glWorld.handle(req, url, JSON.stringify(body ?? {}));
