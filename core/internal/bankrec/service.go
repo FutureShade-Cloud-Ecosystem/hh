@@ -291,6 +291,18 @@ func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to
 	if err != nil {
 		return MatchSummary{}, err
 	}
+	// FW1-05b (S4's P2): the auto candidates pair only on the BANK account the lodgement journals into
+	// (1000); a CREDIT_CARD account's lines are left unmatched for a hand JOURNAL match, and the run
+	// writes nothing.
+	if len(lines) > 0 {
+		acct, aerr := s.repo.GetAccount(ctx, accountID)
+		if aerr != nil {
+			return MatchSummary{}, aerr
+		}
+		if acct.AccountType != AccountBank || acct.GLAccountCode != AcctBank {
+			return MatchSummary{Unmatched: len(lines)}, nil
+		}
+	}
 	rules, err := s.repo.ApprovedRules(ctx)
 	if err != nil {
 		return MatchSummary{}, err
@@ -529,6 +541,20 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 	}
 	if in.TargetType == TargetPayment && line.AmountCents <= 0 {
 		return Match{}, unprocessable("bankrec: only a deposit (a positive line) can be matched to a payment; this line reads %d cents", line.AmountCents)
+	}
+	// FW1-05b (S4's P2): a LODGEMENT or PAYMENT target matches only a BANK account whose GL code is the
+	// lodgement journal's debit account (1000): the till journals DR 1000 / CR 1020 at lodgement, so only
+	// that account's lines explain a payment or a lodgement. A CREDIT_CARD line (2110 to 2115) matched to
+	// one would debit the card account and credit 1020 a second time while 1000 keeps the deposit: refused
+	// in words, nothing written. JOURNAL and GROUP targets keep their own rules.
+	if in.TargetType == TargetPayment || in.TargetType == TargetLodgement {
+		acct, aerr := s.repo.GetAccount(ctx, line.BankAccountID)
+		if aerr != nil {
+			return Match{}, aerr
+		}
+		if acct.AccountType != AccountBank || acct.GLAccountCode != AcctBank {
+			return Match{}, unprocessable("bankrec: a payment or a lodgement matches only a line on the bank account the lodgement journals into (%s); this line sits on %s (%s)", AcctBank, acct.GLAccountCode, acct.AccountType)
+		}
 	}
 	m := Match{
 		StatementLineID: line.ID,
