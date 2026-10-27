@@ -1189,3 +1189,119 @@ func TestFW113OldNoLinkLodgementNextToNewSlipLodgementInOneStatement(t *testing.
 		t.Fatalf("ambiguous older lodgement claimed %d of 2 cheques; want both still RECEIVED", 2-stillReceived)
 	}
 }
+
+// TestFW113ManualMatchOfSlipLodgementClaimsNothing pins the manual arm (reviewer S4's read of
+// PR 619, M4) through the real ManualMatch: a slip lodgement carries its own journal, so a MANUAL
+// match of its deposit line posts no journal, claims nothing, and an unlodged RECEIVED cheque of
+// the same amount on the same session stays RECEIVED. The auto arm's leg above cannot see this
+// path: without the two manual gates in bankrec/service.go (the claim gated on not carrying a
+// journal, and manualJournal's carries journal argument) a manual match of a slip lodgement would
+// rescan the session's RECEIVED cheques and could claim the unlodged cheque of the same amount.
+func TestFW113ManualMatchOfSlipLodgementClaimsNothing(t *testing.T) {
+	w := newMJWorld(t)
+	ctx := context.Background()
+
+	var acct string
+	if err := w.pool.QueryRow(ctx, `SELECT id::text FROM bank_accounts WHERE gl_account_code = '1000'`).Scan(&acct); err != nil {
+		t.Skipf("no seeded bank account: %v", err)
+	}
+
+	// Same session, two $45.00 cheques: one named on the slip (DEPOSITED at lodgement), the other
+	// left in the drawer, RECEIVED, at exactly the slip's amount.
+	lodgedCheque := w.slipPayment("CHEQUE", 45_00)
+	unlodgedCheque := w.slipPayment("CHEQUE", 45_00)
+
+	ref := fmt.Sprintf("MJ-MANUAL-SLIP-%d", time.Now().UnixNano())
+	if err := w.svc.Lodge(staffCtx(w.userID, w.branchID), till.MovementInput{
+		TillSessionID: w.sessionID,
+		MovementType:  "LODGEMENT",
+		Method:        "CHEQUE",
+		AmountCents:   45_00,
+		Reason:        "FW1-13 manual match slip",
+		Reference:     ref,
+		PaymentIDs:    []string{lodgedCheque},
+	}); err != nil {
+		t.Fatalf("lodge the cheque with its slip: %v", err)
+	}
+	var lodgID string
+	if err := w.pool.QueryRow(ctx,
+		`SELECT id::text FROM till_movements WHERE till_session_id = $1::uuid AND reference = $2`,
+		w.sessionID, ref).Scan(&lodgID); err != nil {
+		t.Fatalf("find the slip lodgement: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = w.pool.Exec(context.Background(), `DELETE FROM till_lodgement_payments WHERE till_movement_id = $1::uuid`, lodgID)
+	})
+	w.drain()
+
+	day := w.privateDay()
+	var lineID string
+	if err := w.pool.QueryRow(ctx, `
+		INSERT INTO bank_statement_lines (bank_account_id, txn_date, description, reference, amount_cents, dedupe_hash, status)
+		VALUES ($1::uuid, $2, 'FW1-13 MANUAL DEPOSIT', $3, 4500, $4, 'UNMATCHED')
+		RETURNING id::text`,
+		acct, day, ref, bankrec.DedupeHash(day, 45_00, "FW1-13 MANUAL DEPOSIT", ref)).Scan(&lineID); err != nil {
+		t.Fatalf("seed the statement line: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = w.pool.Exec(c, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE source_ref_id = $1::uuid)`, lineID)
+		_, _ = w.pool.Exec(c, `DELETE FROM gl_journals WHERE source_ref_id = $1::uuid`, lineID)
+		_, _ = w.pool.Exec(c, `DELETE FROM bank_matches WHERE statement_line_id = $1::uuid`, lineID)
+		_, _ = w.pool.Exec(c, `DELETE FROM bank_statement_lines WHERE id = $1::uuid`, lineID)
+	})
+
+	glSvc := gl.NewService(gl.NewRepository(w.pool)).WithPaymentReader(till.NewRepository(w.pool))
+	bank := bankrec.NewService(bankrec.NewRepository(w.pool)).
+		WithPayments(till.NewRepository(w.pool)).
+		WithLodgements(till.NewRepository(w.pool)).
+		WithJournalKeys(glSvc).
+		WithJournalPoster(glPosterOver{glSvc})
+
+	m, err := bank.ManualMatch(ctx, bankrec.MatchInput{
+		StatementLineID: lineID,
+		TargetType:      bankrec.TargetLodgement,
+		TargetRefID:     lodgID,
+		CanAccessBranch: func(b string) bool { return b == w.branchID },
+	}, w.userID)
+	if err != nil {
+		t.Fatalf("manual match of the slip lodgement: %v", err)
+	}
+
+	// Posts no journal: the lodgement carried its own DR 1000 / CR 1020 at lodgement, so the match
+	// only confirms the line.
+	if m.JournalID != "" {
+		t.Fatalf("the manual match of a slip lodgement posted journal %s; want confirm only", m.JournalID)
+	}
+	if legs := w.legs("bankrec:match:" + m.ID); len(legs) != 0 {
+		t.Fatalf("the manual match of a slip lodgement posted a second journal: %v", legs)
+	}
+	if m.PaymentsUnresolved {
+		t.Fatalf("the manual match of a slip lodgement answers PaymentsUnresolved; want false")
+	}
+
+	// Claims nothing: the drawer's other cheque of the same amount stays RECEIVED with no statement
+	// line, and the slip's own cheque keeps its lodgement-time DEPOSITED with no statement line.
+	var status, stmtLine string
+	if err := w.pool.QueryRow(ctx,
+		`SELECT status, COALESCE(metadata->>'bank_statement_line_id', '') FROM payments WHERE id = $1::uuid`,
+		unlodgedCheque).Scan(&status, &stmtLine); err != nil {
+		t.Fatalf("read the unlodged cheque: %v", err)
+	}
+	if status != "RECEIVED" || stmtLine != "" {
+		t.Fatalf("the unlodged cheque is %s claimed by line %q; want RECEIVED with no statement claim", status, stmtLine)
+	}
+	if err := w.pool.QueryRow(ctx,
+		`SELECT status, COALESCE(metadata->>'bank_statement_line_id', '') FROM payments WHERE id = $1::uuid`,
+		lodgedCheque).Scan(&status, &stmtLine); err != nil {
+		t.Fatalf("read the lodged cheque: %v", err)
+	}
+	if status != "DEPOSITED" || stmtLine != "" {
+		t.Fatalf("the lodged cheque is %s claimed by line %q; want DEPOSITED from the lodgement with no statement claim", status, stmtLine)
+	}
+
+	// And the slip's own lodgement journal is still the deposit's only DR 1000.
+	if bankLeg := w.legs("till.movement.posted:" + lodgID)["1000"]; bankLeg[0] != 45_00 {
+		t.Fatalf("the slip lodgement did not keep its lodgement-time DR 1000 journal: %v", w.legs("till.movement.posted:"+lodgID))
+	}
+}
