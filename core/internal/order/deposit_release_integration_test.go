@@ -46,7 +46,7 @@ func TestIntegration_DepositRelease_TheRingTheBeatAndTheFulfilment(t *testing.T)
 		 WHERE p.is_active AND p.base_uom = 'SF' LIMIT 1`).Scan(&productID); err != nil {
 		t.Skipf("no seeded SF-priceable product: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations LIMIT 1`).Scan(&branchID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'TRT' LIMIT 1`).Scan(&branchID); err != nil {
 		t.Skipf("no seeded branch: %v", err)
 	}
 	var user string
