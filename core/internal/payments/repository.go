@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -295,8 +296,10 @@ func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in Appl
 	if in.BranchIDs != nil {
 		reach = in.BranchIDs
 	}
+	seenIDs := make(map[string]bool, len(ids))
 	rows := make([]applyInvoiceRow, 0, len(ids))
 	for _, id := range ids {
+		seenIDs[id] = true
 		var row applyInvoiceRow
 		err := tx.QueryRow(ctx, `
 			SELECT id::text, invoice_no, customer_id::text, branch_id::text, status::text,
@@ -308,7 +311,15 @@ func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in Appl
 			Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
 				&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, NoSuchInvoiceError{InvoiceID: id}
+			nsfRow, found, nsfErr := lockApplyNSFFeeByIDTx(ctx, tx, id, in.CustomerID, reach)
+			if nsfErr != nil {
+				return nil, nsfErr
+			}
+			if !found {
+				return nil, NoSuchInvoiceError{InvoiceID: id}
+			}
+			rows = append(rows, nsfRow)
+			continue
 		}
 		if err != nil {
 			return nil, fmt.Errorf("apply: lock invoice %q: %w", id, err)
@@ -319,7 +330,103 @@ func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in Appl
 		}
 		rows = append(rows, row)
 	}
+	if len(rows) > 0 && oneBranchPerPayment(rows) == nil {
+		var namedCap int64
+		for _, r := range rows {
+			p := r.BalanceCents - r.HoldbackCents
+			if p > 0 {
+				namedCap += p
+			}
+		}
+		if in.AmountCents > namedCap {
+			extra, err := lockOpenNSFFeesForCustomerBranchTx(ctx, tx, in.CustomerID, rows[0].BranchID, seenIDs, rows)
+			if err != nil {
+				return nil, err
+			}
+			rows = append(rows, extra...)
+		}
+	}
 	return rows, nil
+}
+
+const openNSFFeeRemainingExpr = `
+n.fee_cents - COALESCE((
+	SELECT SUM((p2.metadata->'nsf_fee_allocations'->>n.id::text)::bigint)
+	  FROM payments p2
+	 WHERE p2.customer_id = $2::uuid
+	   AND p2.reversed_at IS NULL
+	   AND p2.reverses_payment_id IS NULL
+	   AND p2.status <> 'BOUNCED'
+	   AND (p2.metadata->'nsf_fee_allocations'->>n.id::text) IS NOT NULL
+), 0)`
+
+func lockApplyNSFFeeByIDTx(ctx context.Context, tx pgx.Tx, id, customerID string, reach []string) (applyInvoiceRow, bool, error) {
+	var row applyInvoiceRow
+	err := tx.QueryRow(ctx, `
+		SELECT n.id::text, 'NSF-FEE', COALESCE(n.customer_id, bp.customer_id)::text, bp.branch_id::text,
+		       n.created_at, `+openNSFFeeRemainingExpr+`
+		  FROM payment_nsf n
+		  JOIN payments bp ON bp.id = n.payment_id
+		 WHERE n.id = $1::uuid
+		   AND COALESCE(n.customer_id, bp.customer_id) = $2::uuid
+		   AND ($3::text[] IS NULL OR bp.branch_id = ANY($3::uuid[]))
+		   FOR NO KEY UPDATE OF n`, id, customerID, reach).
+		Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.IssueDate, &row.BalanceCents)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return applyInvoiceRow{}, false, nil
+	}
+	if err != nil {
+		return applyInvoiceRow{}, false, fmt.Errorf("apply: lock nsf fee %q: %w", id, err)
+	}
+	if row.BalanceCents <= 0 {
+		return applyInvoiceRow{}, true, httpx.BadRequestf("NSF fee %s is not open; a payment applies to a finalized or partially paid invoice", id)
+	}
+	row.Status = "FINALIZED"
+	row.DueDate = row.IssueDate
+	row.IsNSFFee = true
+	return row, true, nil
+}
+
+func lockOpenNSFFeesForCustomerBranchTx(ctx context.Context, tx pgx.Tx, customerID, branchID string, seen map[string]bool, existing []applyInvoiceRow) ([]applyInvoiceRow, error) {
+	maxIssue := existing[0].IssueDate
+	for _, r := range existing[1:] {
+		if r.IssueDate.After(maxIssue) {
+			maxIssue = r.IssueDate
+		}
+	}
+	qRows, err := tx.Query(ctx, `
+		SELECT n.id::text, COALESCE(n.customer_id, bp.customer_id)::text, bp.branch_id::text,
+		       n.created_at, `+openNSFFeeRemainingExpr+`
+		  FROM payment_nsf n
+		  JOIN payments bp ON bp.id = n.payment_id
+		 WHERE COALESCE(n.customer_id, bp.customer_id) = $2::uuid
+		   AND bp.branch_id = $1::uuid
+		   AND n.fee_cents > 0
+		 ORDER BY n.id
+		   FOR NO KEY UPDATE OF n`, branchID, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("apply: lock open nsf fees: %w", err)
+	}
+	defer qRows.Close()
+	var out []applyInvoiceRow
+	for qRows.Next() {
+		var row applyInvoiceRow
+		if err := qRows.Scan(&row.InvoiceID, &row.CustomerID, &row.BranchID, &row.IssueDate, &row.BalanceCents); err != nil {
+			return nil, fmt.Errorf("apply: scan open nsf fee: %w", err)
+		}
+		if seen[row.InvoiceID] || row.BalanceCents <= 0 {
+			continue
+		}
+		row.InvoiceNo = "NSF-FEE"
+		row.Status = "FINALIZED"
+		if !row.IssueDate.After(maxIssue) {
+			row.IssueDate = maxIssue.Add(time.Nanosecond)
+		}
+		row.DueDate = row.IssueDate
+		row.IsNSFFee = true
+		out = append(out, row)
+	}
+	return out, qRows.Err()
 }
 
 // branchInReach answers whether a branch is in a scoped caller's reach list.
@@ -371,11 +478,21 @@ func (r *Repository) readApplyInvoices(ctx context.Context, in ApplyRequest) ([]
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("apply preview: read invoices: %w", err)
 	}
+	seenIDs := make(map[string]bool, len(ids))
 	ordered := make([]applyInvoiceRow, 0, len(ids))
 	for _, id := range ids {
+		seenIDs[id] = true
 		row, ok := found[id]
 		if !ok {
-			return nil, NoSuchInvoiceError{InvoiceID: id}
+			nsfRow, nsfFound, nsfErr := r.readApplyNSFFeeByID(ctx, id, in.CustomerID, reach)
+			if nsfErr != nil {
+				return nil, nsfErr
+			}
+			if !nsfFound {
+				return nil, NoSuchInvoiceError{InvoiceID: id}
+			}
+			ordered = append(ordered, nsfRow)
+			continue
 		}
 		if row.Status != "FINALIZED" && row.Status != "PARTIALLY_PAID" {
 			return nil, httpx.BadRequestf("invoice %s (%s) is not open; a payment applies to a finalized or partially paid invoice",
@@ -383,7 +500,90 @@ func (r *Repository) readApplyInvoices(ctx context.Context, in ApplyRequest) ([]
 		}
 		ordered = append(ordered, row)
 	}
+	if len(ordered) > 0 && oneBranchPerPayment(ordered) == nil {
+		var namedCap int64
+		for _, r := range ordered {
+			p := r.BalanceCents - r.HoldbackCents
+			if p > 0 {
+				namedCap += p
+			}
+		}
+		if in.AmountCents > namedCap {
+			extra, err := r.readOpenNSFFeesForCustomerBranch(ctx, in.CustomerID, ordered[0].BranchID, seenIDs, ordered)
+			if err != nil {
+				return nil, err
+			}
+			ordered = append(ordered, extra...)
+		}
+	}
 	return ordered, nil
+}
+
+func (r *Repository) readApplyNSFFeeByID(ctx context.Context, id, customerID string, reach []string) (applyInvoiceRow, bool, error) {
+	var row applyInvoiceRow
+	err := r.pool.QueryRow(ctx, `
+		SELECT n.id::text, 'NSF-FEE', COALESCE(n.customer_id, bp.customer_id)::text, bp.branch_id::text,
+		       n.created_at, `+openNSFFeeRemainingExpr+`
+		  FROM payment_nsf n
+		  JOIN payments bp ON bp.id = n.payment_id
+		 WHERE n.id = $1::uuid
+		   AND COALESCE(n.customer_id, bp.customer_id) = $2::uuid
+		   AND ($3::text[] IS NULL OR bp.branch_id = ANY($3::uuid[]))`, id, customerID, reach).
+		Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.IssueDate, &row.BalanceCents)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return applyInvoiceRow{}, false, nil
+	}
+	if err != nil {
+		return applyInvoiceRow{}, false, fmt.Errorf("apply preview: read nsf fee %q: %w", id, err)
+	}
+	if row.BalanceCents <= 0 {
+		return applyInvoiceRow{}, true, httpx.BadRequestf("NSF fee %s is not open; a payment applies to a finalized or partially paid invoice", id)
+	}
+	row.Status = "FINALIZED"
+	row.DueDate = row.IssueDate
+	row.IsNSFFee = true
+	return row, true, nil
+}
+
+func (r *Repository) readOpenNSFFeesForCustomerBranch(ctx context.Context, customerID, branchID string, seen map[string]bool, existing []applyInvoiceRow) ([]applyInvoiceRow, error) {
+	maxIssue := existing[0].IssueDate
+	for _, r := range existing[1:] {
+		if r.IssueDate.After(maxIssue) {
+			maxIssue = r.IssueDate
+		}
+	}
+	qRows, err := r.pool.Query(ctx, `
+		SELECT n.id::text, COALESCE(n.customer_id, bp.customer_id)::text, bp.branch_id::text,
+		       n.created_at, `+openNSFFeeRemainingExpr+`
+		  FROM payment_nsf n
+		  JOIN payments bp ON bp.id = n.payment_id
+		 WHERE COALESCE(n.customer_id, bp.customer_id) = $2::uuid
+		   AND bp.branch_id = $1::uuid
+		   AND n.fee_cents > 0
+		 ORDER BY n.id`, branchID, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("apply preview: read open nsf fees: %w", err)
+	}
+	defer qRows.Close()
+	var out []applyInvoiceRow
+	for qRows.Next() {
+		var row applyInvoiceRow
+		if err := qRows.Scan(&row.InvoiceID, &row.CustomerID, &row.BranchID, &row.IssueDate, &row.BalanceCents); err != nil {
+			return nil, fmt.Errorf("apply preview: scan open nsf fee: %w", err)
+		}
+		if seen[row.InvoiceID] || row.BalanceCents <= 0 {
+			continue
+		}
+		row.InvoiceNo = "NSF-FEE"
+		row.Status = "FINALIZED"
+		if !row.IssueDate.After(maxIssue) {
+			row.IssueDate = maxIssue.Add(time.Nanosecond)
+		}
+		row.DueDate = row.IssueDate
+		row.IsNSFFee = true
+		out = append(out, row)
+	}
+	return out, qRows.Err()
 }
 
 // replayAnswer rebuilds the split answer for a key that already posted: the stored payment with
@@ -411,12 +611,16 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 	// list, which is exactly what the per invoice settle names.
 	var storedRef string
 	var storedNamed []string
+	var nsfAllocJSON []byte
 	if err := r.pool.QueryRow(ctx, `
 		SELECT COALESCE(metadata->>'reference', ''),
-		       ARRAY(SELECT jsonb_array_elements_text(COALESCE(metadata->'invoice_ids', '[]'::jsonb)))
-		  FROM payments WHERE id = $1::uuid`, p.ID).Scan(&storedRef, &storedNamed); err != nil {
+		       ARRAY(SELECT jsonb_array_elements_text(COALESCE(metadata->'invoice_ids', '[]'::jsonb))),
+		       COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb)
+		  FROM payments WHERE id = $1::uuid`, p.ID).Scan(&storedRef, &storedNamed, &nsfAllocJSON); err != nil {
 		return ApplyAnswer{}, fmt.Errorf("apply: replay read payment body: %w", err)
 	}
+	nsfAllocs := map[string]int64{}
+	_ = json.Unmarshal(nsfAllocJSON, &nsfAllocs)
 	if len(storedNamed) == 0 {
 		for _, a := range p.Allocations {
 			storedNamed = append(storedNamed, a.InvoiceID)
@@ -426,6 +630,10 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 	for _, a := range p.Allocations {
 		appliedBy[a.InvoiceID] += a.AmountCents
 		ans.AppliedCents += a.AmountCents
+	}
+	for nsfID, amt := range nsfAllocs {
+		appliedBy[nsfID] += amt
+		ans.AppliedCents += amt
 	}
 	ids := make([]string, 0, len(appliedBy))
 	for id := range appliedBy {
@@ -440,7 +648,25 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 			  FROM invoices WHERE id = $1::uuid`, id).
 			Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
 				&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents)
-		if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = r.pool.QueryRow(ctx, `
+				SELECT n.id::text, 'NSF-FEE', COALESCE(n.customer_id, bp.customer_id)::text, bp.branch_id::text,
+				       n.created_at, `+openNSFFeeRemainingExpr+`
+				  FROM payment_nsf n
+				  JOIN payments bp ON bp.id = n.payment_id
+				 WHERE n.id = $1::uuid`, id, p.CustomerID).
+				Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.IssueDate, &row.BalanceCents)
+			if err != nil {
+				return ApplyAnswer{}, fmt.Errorf("apply: replay read nsf fee %q: %w", id, err)
+			}
+			row.DueDate = row.IssueDate
+			row.IsNSFFee = true
+			if row.BalanceCents <= 0 {
+				row.Status = "PAID"
+			} else {
+				row.Status = "PARTIALLY_PAID"
+			}
+		} else if err != nil {
 			return ApplyAnswer{}, fmt.Errorf("apply: replay read invoice %q: %w", id, err)
 		}
 		if in.BranchIDs != nil && !branchInReach(in.BranchIDs, row.BranchID) {
@@ -946,6 +1172,31 @@ func lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Al
 	var total int64
 	var branchID string
 	for _, a := range allocs {
+		if a.IsNSFFee {
+			var remaining int64
+			var nsfBranch string
+			err := tx.QueryRow(ctx, `
+				SELECT `+openNSFFeeRemainingExpr+`, bp.branch_id::text
+				  FROM payment_nsf n
+				  JOIN payments bp ON bp.id = n.payment_id
+				 WHERE n.id = $1::uuid AND COALESCE(n.customer_id, bp.customer_id) = $2::uuid
+				   FOR NO KEY UPDATE OF n`,
+				a.InvoiceID, customerID).Scan(&remaining, &nsfBranch)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return 0, "", ErrNotFound
+				}
+				return 0, "", fmt.Errorf("pay: lock nsf fee %q: %w", a.InvoiceID, err)
+			}
+			if a.AmountCents <= 0 || a.AmountCents > remaining {
+				return 0, "", httpx.BadRequestf("NSF fee %q balance changed; refresh and retry", a.InvoiceID)
+			}
+			total += a.AmountCents
+			if branchID == "" {
+				branchID = nsfBranch
+			}
+			continue
+		}
 		var balance, holdback int64
 		var invBranch string
 		err := tx.QueryRow(ctx,
@@ -987,8 +1238,40 @@ func applyAllocations(ctx context.Context, tx pgx.Tx, p *Payment, customerID, me
 		customerID).Scan(&runningAR); err != nil {
 		return fmt.Errorf("pay: read AR balance: %w", err)
 	}
+	var openNSF int64
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(GREATEST(`+openNSFFeeRemainingExpr+`, 0)), 0)
+		  FROM payment_nsf n
+		  JOIN payments bp ON bp.id = n.payment_id
+		 WHERE COALESCE(n.customer_id, bp.customer_id) = $2::uuid
+		   AND ($1::text = '' OR bp.branch_id IS NOT NULL)`,
+		"", customerID).Scan(&openNSF); err != nil {
+		return fmt.Errorf("pay: read open NSF fee balance: %w", err)
+	}
+	runningAR += openNSF
 
 	for _, a := range allocs {
+		if a.IsNSFFee {
+			if _, err := tx.Exec(ctx, `
+				UPDATE payments
+				   SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+				         'nsf_fee_allocations',
+				         COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb) || jsonb_build_object($2::text, $3::bigint)
+				       )
+				 WHERE id = $1::uuid`,
+				p.ID, a.InvoiceID, a.AmountCents); err != nil {
+				return fmt.Errorf("pay: stamp nsf fee allocation: %w", err)
+			}
+			runningAR -= a.AmountCents
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO customer_transactions
+					(customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+				 VALUES ($1, 'ADJUSTMENT', $2, $3, 'payment_nsf', $4, $5, 'NSF fee payment')`,
+				customerID, -a.AmountCents, runningAR, a.InvoiceID, branchID); err != nil {
+				return fmt.Errorf("pay: insert nsf fee subledger txn: %w", err)
+			}
+			continue
+		}
 		// RETURNING created_at only (Q-044): the response echoes the persisted allocation
 		// timestamp; the write itself is unchanged (a portal payment has no staff allocator).
 		var by any
