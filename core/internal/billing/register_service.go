@@ -345,6 +345,12 @@ func (s *RegisterService) header(ctx context.Context, invoiceID string) (Invoice
 	return h, nil
 }
 
+// invoiceCreditsStore is the optional credit-application read seam on registerStore (*Repository).
+type invoiceCreditsStore interface {
+	OpenCreditsFor(ctx context.Context, customerID, branchID string) ([]OpenCreditSummary, error)
+	CreditApplicationsFor(ctx context.Context, invoiceID string) ([]CreditApplicationView, error)
+}
+
 // Detail assembles the right-hand panel. withPayments says whether the timeline carries the PAYMENT
 // entries (payment number, method, amount and who applied it): they are the payment trail ruling 87
 // holds to money desk WORK, so the caller who asks for them is one the payment trail reader (below)
@@ -376,6 +382,21 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 		}
 		for _, sl := range slices {
 			applied += sl.AmountCents
+		}
+	}
+	var openCredits []OpenCreditSummary
+	var creditApps []CreditApplicationView
+	if cs, ok := s.store.(invoiceCreditsStore); ok {
+		if openCredits, err = cs.OpenCreditsFor(ctx, h.CustomerID, h.BranchID); err != nil {
+			return InvoiceDetail{}, err
+		}
+		if creditApps, err = cs.CreditApplicationsFor(ctx, invoiceID); err != nil {
+			return InvoiceDetail{}, err
+		}
+		for _, ca := range creditApps {
+			if !ca.Reversed {
+				applied += ca.AmountCents
+			}
 		}
 	}
 	block, onHold, accountDisputed, err := s.store.CustomerBlockFor(ctx, h.CustomerID)
@@ -411,7 +432,7 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 		IssueDate: h.IssueDate, DueDate: h.DueDate, BranchID: h.BranchID,
 		OrderID: h.OrderID, OrderNo: orderNo, CustomerPO: customerPO, Salesperson: salesperson,
 		Lines: lines, Activity: activity, ReminderTones: pol.ReminderTones,
-		LastContactAt: lastContact, AsOf: asOf,
+		LastContactAt: lastContact, OpenCredits: openCredits, CreditApplications: creditApps, AsOf: asOf,
 	}
 	openDispute := hasDispute && dispute.Status == "OPEN"
 	zone, err := houseday.Resolve(ctx, s.zone)

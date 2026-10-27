@@ -370,6 +370,34 @@ type DisputeView struct {
 	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
 }
 
+// OpenCreditSummary is one open credit memo (MEMO) or unapplied account credit (ACCOUNT)
+// on the customer's account at this invoice's branch, ready to apply from the receivables desk.
+type OpenCreditSummary struct {
+	CreditKind  string    `json:"credit_kind"`
+	CreditID    string    `json:"credit_id"`
+	Reference   string    `json:"reference"`
+	Memo        string    `json:"memo,omitempty"`
+	IssuedAt    time.Time `json:"issued_at"`
+	AmountCents int64     `json:"amount_cents"`
+	OpenCents   int64     `json:"open_cents"`
+}
+
+// CreditApplicationView is one credit application recorded on an invoice, active or reversed.
+type CreditApplicationView struct {
+	ApplicationID   string `json:"application_id"`
+	CreditKind      string `json:"credit_kind"`
+	CreditID        string `json:"credit_id"`
+	CreditReference string `json:"credit_reference,omitempty"`
+	AmountCents     int64  `json:"amount_cents"`
+	Reason          string `json:"reason"`
+	AppliedBy       string `json:"applied_by,omitempty"`
+	AppliedAt       string `json:"applied_at"`
+	Reversed        bool   `json:"reversed"`
+	ReversalReason  string `json:"reversal_reason,omitempty"`
+	ReversedBy      string `json:"reversed_by,omitempty"`
+	ReversedAt      string `json:"reversed_at,omitempty"`
+}
+
 // InvoiceDetail is the whole right-hand panel in one read. One read rather than six because the
 // panel is one thing an operator opens, and six round trips is six chances for the panel to render
 // half a document.
@@ -397,8 +425,10 @@ type InvoiceDetail struct {
 	// Tones the caller may actually send, per policy. The screen offers exactly these.
 	ReminderTones []string `json:"reminder_tones"`
 	// LastContactAt is the most recent send to this ACCOUNT (not this invoice), the cooldown fact.
-	LastContactAt *time.Time `json:"last_contact_at,omitempty"`
-	AsOf          time.Time  `json:"as_of"`
+	LastContactAt      *time.Time              `json:"last_contact_at,omitempty"`
+	OpenCredits        []OpenCreditSummary     `json:"open_credits,omitempty"`
+	CreditApplications []CreditApplicationView `json:"credit_applications,omitempty"`
+	AsOf               time.Time               `json:"as_of"`
 }
 
 // -- writes -------------------------------------------------------------------------------------

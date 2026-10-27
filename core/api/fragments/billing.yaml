@@ -392,6 +392,76 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/ar/credits/apply:
+    post:
+      operationId: billingApplyCredit
+      tags: [staff-billing]
+      summary: Apply an open credit memo or unapplied account credit to a later invoice of the same customer
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingApplyCreditInput"
+      responses:
+        "200":
+          description: Replayed application result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditApplication"
+        "201":
+          description: Credit applied to invoice
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditApplication"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ar/credits/applications/reverse:
+    post:
+      operationId: billingReverseCreditApplication
+      tags: [staff-billing]
+      summary: Reverse a credit application on an invoice and restore both the invoice balance and the credit
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingReverseCreditApplicationInput"
+      responses:
+        "200":
+          description: Replayed reversal result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditApplicationReversed"
+        "201":
+          description: Credit application reversed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditApplicationReversed"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /api/v1/ar/register/invoices/{id}/send:
     post:
       operationId: billingSendInvoice
@@ -2533,7 +2603,158 @@ components:
           type: [string, "null"]
           format: date-time
           description: The most recent send to this account, the cooldown fact
+        open_credits:
+          type: array
+          items: { $ref: "#/components/schemas/BillingOpenCreditSummary" }
+        credit_applications:
+          type: array
+          items: { $ref: "#/components/schemas/BillingCreditApplicationView" }
         as_of: { type: string, format: date-time }
+
+    BillingOpenCreditSummary:
+      type: object
+      required:
+        - credit_kind
+        - credit_id
+        - reference
+        - issued_at
+        - amount_cents
+        - open_cents
+      properties:
+        credit_kind:
+          type: string
+          enum: [MEMO, ACCOUNT]
+        credit_id: { type: string, format: uuid }
+        reference: { type: string }
+        memo: { type: string }
+        issued_at: { type: string, format: date-time }
+        amount_cents: { type: integer, format: int64 }
+        open_cents: { type: integer, format: int64 }
+
+    BillingCreditApplicationView:
+      type: object
+      required:
+        - application_id
+        - credit_kind
+        - credit_id
+        - amount_cents
+        - reason
+        - applied_at
+        - reversed
+      properties:
+        application_id: { type: string, format: uuid }
+        credit_kind:
+          type: string
+          enum: [MEMO, ACCOUNT]
+        credit_id: { type: string, format: uuid }
+        credit_reference: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        reason: { type: string }
+        applied_by: { type: string }
+        applied_at: { type: string }
+        reversed: { type: boolean }
+        reversal_reason: { type: string }
+        reversed_by: { type: string }
+        reversed_at: { type: string }
+
+    BillingApplyCreditInput:
+      type: object
+      required:
+        - customer_id
+        - credit_kind
+        - credit_id
+        - invoice_id
+        - amount_cents
+        - reason
+        - idempotency_key
+      properties:
+        customer_id: { type: string, format: uuid }
+        credit_kind:
+          type: string
+          enum: [MEMO, ACCOUNT]
+        credit_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        amount_cents: { type: integer, format: int64 }
+        reason: { type: string }
+        idempotency_key: { type: string }
+
+    BillingCreditApplicationLine:
+      type: object
+      required:
+        - invoice_id
+        - invoice_no
+        - applied_cents
+        - outcome
+        - balance_after_cents
+      properties:
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        applied_cents: { type: integer, format: int64 }
+        outcome:
+          type: string
+          enum: [CLOSES, PART]
+        balance_after_cents: { type: integer, format: int64 }
+
+    BillingCreditApplication:
+      type: object
+      required:
+        - application_id
+        - credit_kind
+        - credit_id
+        - invoice_id
+        - invoice_no
+        - applied_cents
+        - credit_open_after_cents
+        - lines
+        - replayed
+      properties:
+        application_id: { type: string, format: uuid }
+        credit_kind:
+          type: string
+          enum: [MEMO, ACCOUNT]
+        credit_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        applied_cents: { type: integer, format: int64 }
+        credit_open_after_cents: { type: integer, format: int64 }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/BillingCreditApplicationLine" }
+        replayed: { type: boolean }
+
+    BillingReverseCreditApplicationInput:
+      type: object
+      required:
+        - invoice_id
+        - application_id
+        - reason
+      properties:
+        invoice_id: { type: string, format: uuid }
+        application_id: { type: string, format: uuid }
+        reason: { type: string }
+
+    BillingCreditApplicationReversed:
+      type: object
+      required:
+        - application_id
+        - invoice_id
+        - invoice_no
+        - restored_cents
+        - invoice_balance_after_cents
+        - credit_open_after_cents
+        - lines
+        - replayed
+      properties:
+        application_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        restored_cents: { type: integer, format: int64 }
+        invoice_balance_after_cents: { type: integer, format: int64 }
+        credit_open_after_cents: { type: integer, format: int64 }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/BillingCreditApplicationLine" }
+        replayed: { type: boolean }
 
     # --- the collections worklist ------------------------------------------------
     BillingARWorklistRow:

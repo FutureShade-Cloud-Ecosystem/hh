@@ -264,3 +264,7 @@ additions:
     reason: "SF-2l: what a reversed payment still holds in 2310 (amount less what was re-applied), the figure the desk's re-application form shows; the ERP reversal held nothing and had no such read; no ERP source route."
   - route: "POST /api/v1/ar/payments/{id}/payout"
     reason: "SF-2m and SF-2n: a manager takes the money a reversed payment holds out of 2310 by the act that moves it (cash from the drawer, a bank cheque or transfer, or a write off after the count), capped at the held figure, idempotent by key; the ERP reversal held nothing; no ERP source route."
+  - route: "POST /api/v1/ar/credits/apply"
+    reason: "FW1-12b: a manager applies an open credit memo (MEMO) or an unapplied account credit (ACCOUNT) to a later open invoice of the same customer at the same branch, capped at the smaller open amount, idempotent by key; the ERP had no credit application route; no ERP source route."
+  - route: "POST /api/v1/ar/credits/applications/reverse"
+    reason: "FW1-12b: a manager reverses a credit application on an invoice with a reason, restoring both the invoice balance and the credit open amount in one transaction; the ERP had no credit application reversal route; no ERP source route."

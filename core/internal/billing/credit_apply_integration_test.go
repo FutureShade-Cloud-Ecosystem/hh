@@ -4,10 +4,16 @@ package billing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
 // TestIntegration_FW1_12b_ApplyCreditMemoAndAccountCredit_TiesTo1100AndReverses
@@ -344,5 +350,97 @@ func TestIntegration_FW1_12b_RefusalsLeaveNothingApplied(t *testing.T) {
 	var conflictErr CreditApplicationConflictError
 	if _, err := applySvc.Apply(ctx, spentDiff, true); !errors.As(err, &conflictErr) {
 		t.Fatalf("spent key with different body err = %v, want CreditApplicationConflictError", err)
+	}
+}
+
+// TestIntegration_FW1_12b_HandlerAndDetailRoundTrip verifies CreditApplyHandler
+// over HTTP and RegisterService.Detail surfacing open_credits and credit_applications.
+func TestIntegration_FW1_12b_HandlerAndDetailRoundTrip(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	applySvc := NewCreditApplyService(repo)
+	handler := NewCreditApplyHandler(applySvc, nil)
+	regSvc := NewRegisterService(repo)
+	ctx := context.Background()
+	n := ns(t)
+
+	custID := seedCustomer(t, pool, n+"-HD")
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+	})
+
+	issue := time.Now().UTC().AddDate(0, 0, -2).Format("2006-01-02")
+	due := time.Now().UTC().AddDate(0, 0, 28).Format("2006-01-02")
+	var memoID, invID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $4::date, -6000, 0, -6000, -6000, now(), 'CREDIT_MEMO')
+		RETURNING id::text`,
+		n+"-HD-CM", custID, trentonBranch, issue).Scan(&memoID); err != nil {
+		t.Fatalf("seed memo: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $5::date, 15000, 0, 15000, 15000, now(), 'INVOICE')
+		RETURNING id::text`,
+		n+"-HD-INV", custID, trentonBranch, issue, due).Scan(&invID); err != nil {
+		t.Fatalf("seed inv: %v", err)
+	}
+
+	mgrCtx := identity.ContextWithStaff(ctx, applyGlobalCaller())
+	detailBefore, err := regSvc.Detail(mgrCtx, invID, true)
+	if err != nil {
+		t.Fatalf("detail before: %v", err)
+	}
+	if len(detailBefore.OpenCredits) != 1 || detailBefore.OpenCredits[0].CreditID != memoID || detailBefore.OpenCredits[0].OpenCents != 6000 {
+		t.Fatalf("detail before OpenCredits = %+v, want 1 memo with 6000 open", detailBefore.OpenCredits)
+	}
+
+	rawApply, _ := json.Marshal(map[string]any{
+		"customer_id":     custID,
+		"credit_kind":     "MEMO",
+		"credit_id":       memoID,
+		"invoice_id":      invID,
+		"amount_cents":    4000,
+		"reason":          "Apply credit memo on desk",
+		"idempotency_key": n + "-hd-k1",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ar/credits/apply", strings.NewReader(string(rawApply))).WithContext(mgrCtx)
+	rec := httptest.NewRecorder()
+	handler.apply(rec, req, guards.StaffCaller{})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("handler apply status = %d body = %s, want 201", rec.Code, rec.Body.String())
+	}
+	var appRes CreditApplication
+	if err := json.Unmarshal(rec.Body.Bytes(), &appRes); err != nil {
+		t.Fatalf("decode apply response: %v", err)
+	}
+
+	detailAfter, err := regSvc.Detail(mgrCtx, invID, true)
+	if err != nil {
+		t.Fatalf("detail after: %v", err)
+	}
+	if len(detailAfter.OpenCredits) != 1 || detailAfter.OpenCredits[0].OpenCents != 2000 {
+		t.Fatalf("detail after OpenCredits = %+v, want 2000 remaining", detailAfter.OpenCredits)
+	}
+	if len(detailAfter.CreditApplications) != 1 || detailAfter.CreditApplications[0].ApplicationID != appRes.ApplicationID || detailAfter.CreditApplications[0].Reversed {
+		t.Fatalf("detail after CreditApplications = %+v", detailAfter.CreditApplications)
+	}
+
+	rawRev, _ := json.Marshal(map[string]any{
+		"invoice_id":     invID,
+		"application_id": appRes.ApplicationID,
+		"reason":         "Undo from desk",
+	})
+	reqRev := httptest.NewRequest(http.MethodPost, "/api/v1/ar/credits/applications/reverse", strings.NewReader(string(rawRev))).WithContext(mgrCtx)
+	recRev := httptest.NewRecorder()
+	handler.reverse(recRev, reqRev, guards.StaffCaller{})
+	if recRev.Code != http.StatusCreated {
+		t.Fatalf("handler reverse status = %d body = %s, want 201", recRev.Code, recRev.Body.String())
 	}
 }
