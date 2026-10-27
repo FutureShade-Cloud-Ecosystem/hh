@@ -171,21 +171,9 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 	},
 	{
 		File:         "core/internal/bankrec/service.go",
-		Func:         "(*Service).persistAndJournal",
-		Kind:         "PostJournal",
-		BranchSource: "the two step order for a poster without the transaction arm; the same journalFn branch source",
-	},
-	{
-		File:         "core/internal/bankrec/service.go",
 		Func:         "(*Service).UnmatchReach",
 		Kind:         "PostJournalTx",
 		BranchSource: "reversalJournal carries the claimed payment's branch, or the lodgement's from the till's append only facts (FW1-05 item 4)",
-	},
-	{
-		File:         "core/internal/bankrec/service.go",
-		Func:         "(*Service).UnmatchReach",
-		Kind:         "PostJournal",
-		BranchSource: "the two step order for a poster without the transaction arm; reversalJournal carries the claimed payment's branch, or the lodgement's from the till's append only facts (FW1-05 item 4)",
 	},
 	{
 		File:         "core/internal/billing/credit_memo.go",

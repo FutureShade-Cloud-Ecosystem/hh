@@ -1408,38 +1408,6 @@ func (r *Repository) BankAccountEntriesAsOf(ctx context.Context, code string, as
 	return out, rows.Err()
 }
 
-// LodgementJournalForBank answers whether a till lodgement movement already has a POSTED, unreversed book
-// journal touching glAccountCode (FROM-PRINCIPAL 117).
-func (r *Repository) LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error) {
-	if r.pool == nil {
-		return "", false, errNoDB
-	}
-	var jid string
-	err := r.pool.QueryRow(ctx, `
-		SELECT j.id::text
-		  FROM gl_journals j
-		  JOIN gl_journal_lines l ON l.journal_id = j.id
-		  JOIN gl_accounts a      ON a.id = l.account_id
-		 WHERE j.source_ref_id::text = $1
-		   AND a.code = $2
-		   AND j.status = 'POSTED'
-		   AND j.reverses_journal_id IS NULL
-		   AND j.idempotency_key NOT LIKE 'bankrec:%'
-		   AND NOT EXISTS (
-		       SELECT 1 FROM gl_journals rev
-		        WHERE rev.reverses_journal_id = j.id
-		          AND rev.status = 'POSTED'
-		   )
-	LIMIT 1`, movementID, glAccountCode).Scan(&jid)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("gl: lodgement journal for bank: %w", err)
-	}
-	return jid, true, nil
-}
-
 // AccountBalanceThrough sums the POSTED net-debit of an account over every fiscal period up to and
 // including (year, month), by period grain (FW1-11): the cumulative figure a balance tie-out reads
 // against a subledger valued as of the period end. It reads the same 0034 view the period reads do,

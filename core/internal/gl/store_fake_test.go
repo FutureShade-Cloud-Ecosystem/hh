@@ -345,9 +345,6 @@ func (f *fakeStore) AccountBalanceAsOf(_ context.Context, _ string, at time.Time
 func (f *fakeStore) BankAccountEntriesAsOf(_ context.Context, _ string, _ time.Time) ([]BankBookEntry, error) {
 	return nil, nil
 }
-func (f *fakeStore) LodgementJournalForBank(_ context.Context, _, _ string) (string, bool, error) {
-	return "", false, nil
-}
 func (f *fakeStore) TrialBalance(_ context.Context, _, _ int, _ string) ([]TrialBalanceRow, error) {
 	return f.tbRows, nil
 }

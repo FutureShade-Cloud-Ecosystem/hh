@@ -727,10 +727,6 @@ func (s *Service) clock() time.Time {
 	return s.now()
 }
 
-type lodgementJournalReader interface {
-	LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error)
-}
-
 // reconFigures holds the output of the single shared reconciliation computation (FW1-04) used by
 // OpenReconciliation, RefreshReconciliation, CompleteReconciliation, and Reconciliations.
 type reconFigures struct {
