@@ -16,7 +16,7 @@ package main
 // each item deletes its own line when its assertion goes green. A second test guards the map:
 // every key must name a real subtest, so a stale skip line fails.
 //
-// The walk carries two months (the split frame, FROM-PRINCIPAL 169): the TRADING month is the
+// The walk carries two months (the split frame, FROM-PRINCIPAL 209 and 221): the TRADING month is the
 // current, still running month in the house zone, and the BANK month is the last ended month,
 // because a bank month signs off only once it has ended (a running month's sign off is refused).
 // AR_aging_ties_to_GL_1100, customer_statement_equals_aging_and_subledger,
