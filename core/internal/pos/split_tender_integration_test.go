@@ -314,7 +314,7 @@ func TestIntegration_LookupSales_BranchFence(t *testing.T) {
 
 	// A second branch to be excluded by.
 	var otherBranch string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE id <> $1 LIMIT 1`, branchID).Scan(&otherBranch); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'KGN' AND id <> $1 LIMIT 1`, branchID).Scan(&otherBranch); err != nil {
 		if err == pgx.ErrNoRows {
 			t.Skip("only one branch seeded, nothing to fence against")
 		}

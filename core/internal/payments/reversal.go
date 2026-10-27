@@ -46,6 +46,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -397,6 +398,7 @@ type reversalStore interface {
 type ReverseService struct {
 	store   reversalStore
 	reapply reapplyStore // SF-2l: the same repository, when the store carries it (reapply.go)
+	payout  payoutStore  // SF-2m: likewise (payout.go)
 	audit   audit.Recorder
 	clock   func() time.Time
 }
@@ -406,6 +408,9 @@ func NewReverseService(store reversalStore) *ReverseService {
 	svc := &ReverseService{store: store, clock: time.Now}
 	if rs, ok := store.(reapplyStore); ok {
 		svc.reapply = rs
+	}
+	if ps, ok := store.(payoutStore); ok {
+		svc.payout = ps
 	}
 	return svc
 }
@@ -494,12 +499,12 @@ func (r *Repository) ReapplyHeld(ctx context.Context, in ReapplyInput, now time.
 		return Reapplication{}, ErrNotFound
 	}
 
-	var taken int64
-	if err := tx.QueryRow(ctx,
-		`SELECT COALESCE(SUM(amount_cents), 0) FROM payment_reapplications WHERE payment_id = $1::uuid`,
-		in.PaymentID).Scan(&taken); err != nil {
+	// What has already left 2310: re-applications and every kind of payout (SF-2m), one figure.
+	reappliedCents, paidOutCents, err := outOfHeldTx(ctx, tx, in.PaymentID)
+	if err != nil {
 		return Reapplication{}, fmt.Errorf("reapply: read applied: %w", err)
 	}
+	taken := reappliedCents + paidOutCents
 
 	// The replay is judged under the payment row lock, so a twin that committed while this request waited on the row is
 	// already visible: the same key and the same body answers the first result and writes nothing.
@@ -700,9 +705,10 @@ func (r *Repository) HeldFor(ctx context.Context, paymentID string, canAccessBra
 	err = r.pool.QueryRow(ctx,
 		`SELECT p.id::text, p.payment_no::text, p.amount_cents, p.branch_id::text, p.reversed_at,
 		        p.reverses_payment_id IS NOT NULL, p.customer_id IS NOT NULL,
-		        COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra WHERE ra.payment_id = p.id), 0)
+		        COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra WHERE ra.payment_id = p.id), 0),
+		        COALESCE((SELECT SUM(po.amount_cents) FROM payment_payouts po WHERE po.payment_id = p.id), 0)
 		   FROM payments p WHERE p.id = $1::uuid`, pid.String()).
-		Scan(&h.PaymentID, &h.PaymentNo, &h.AmountCents, &branchID, &reversedAt, &reversing, &hasAccount, &h.AppliedCents)
+		Scan(&h.PaymentID, &h.PaymentNo, &h.AmountCents, &branchID, &reversedAt, &reversing, &hasAccount, &h.AppliedCents, &h.PaidOutCents)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return HeldFigure{}, ErrNotFound
@@ -714,7 +720,183 @@ func (r *Repository) HeldFor(ctx context.Context, paymentID string, canAccessBra
 	}
 	h.Reversed = reversedAt != nil
 	if h.Reversed && !reversing && hasAccount {
-		h.HeldCents = h.AmountCents - h.AppliedCents
+		h.HeldCents = h.AmountCents - h.AppliedCents - h.PaidOutCents
 	}
 	return h, nil
+}
+
+// outOfHeldTx reads, on the caller's transaction (which holds the payment row), what has left a payment's 2310: the
+// money re-applied to invoices and the money paid out or written off.
+func outOfHeldTx(ctx context.Context, tx pgx.Tx, paymentID string) (reapplied, paidOut int64, err error) {
+	err = tx.QueryRow(ctx,
+		`SELECT COALESCE((SELECT SUM(amount_cents) FROM payment_reapplications WHERE payment_id = $1::uuid), 0),
+		        COALESCE((SELECT SUM(amount_cents) FROM payment_payouts WHERE payment_id = $1::uuid), 0)`,
+		paymentID).Scan(&reapplied, &paidOut)
+	return reapplied, paidOut, err
+}
+
+// WithTill binds the till's side of the drawer pay out and the write off. Without it those two kinds are refused.
+func (r *Repository) WithTill(t TillSeam) *Repository { r.till = t; return r }
+
+// PayOutHeld takes held money out of 2310 by the act that moves it (payout.go states the rules). ONE transaction: the
+// payment row FOR UPDATE first (the lock a reversal, a bounce and a re-application take), every judgement under it and
+// before the first write, then for a drawer pay out the till's PAID_OUT movement on its own session row (FOR SHARE, the
+// SF-2j rule), the payout row and one payment.paid_out outbox row for the GL.
+func (r *Repository) PayOutHeld(ctx context.Context, in PayoutInput, now time.Time) (Payout, error) {
+	if r.pool == nil {
+		return Payout{}, errNoDB
+	}
+	in, err := validatePayout(in)
+	if err != nil {
+		return Payout{}, err
+	}
+	pid, err := uuid.Parse(strings.TrimSpace(in.PaymentID))
+	if err != nil {
+		return Payout{}, httpx.BadRequestf("payment id must be a uuid")
+	}
+	in.PaymentID = pid.String()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Payout{}, fmt.Errorf("payout: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var (
+		customerID, method, branchID, tillSession string
+		amount                                    int64
+		reversedAt                                *time.Time
+		isItselfAReversal                         bool
+	)
+	err = tx.QueryRow(ctx,
+		`SELECT COALESCE(customer_id::text,''), method, branch_id::text, amount_cents, reversed_at,
+		        reverses_payment_id IS NOT NULL, COALESCE(till_session_id::text,'')
+		   FROM payments WHERE id = $1::uuid FOR UPDATE`, in.PaymentID).
+		Scan(&customerID, &method, &branchID, &amount, &reversedAt, &isItselfAReversal, &tillSession)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Payout{}, ErrNotFound
+		}
+		return Payout{}, fmt.Errorf("payout: lock payment: %w", err)
+	}
+	if in.CanAccessBranch != nil && !in.CanAccessBranch(branchID) {
+		return Payout{}, ErrNotFound
+	}
+	reapplied, paidOut, err := outOfHeldTx(ctx, tx, in.PaymentID)
+	if err != nil {
+		return Payout{}, fmt.Errorf("payout: read what has left: %w", err)
+	}
+	held := amount - reapplied - paidOut
+
+	// A replay is judged under the payment row: the same key and body answers the first result.
+	var (
+		prevID, prevKind, prevPayment string
+		prevAmount                    int64
+	)
+	switch err := tx.QueryRow(ctx,
+		`SELECT id::text, kind, payment_id::text, amount_cents FROM payment_payouts WHERE idempotency_key = $1`, in.IdempotencyKey).
+		Scan(&prevID, &prevKind, &prevPayment, &prevAmount); {
+	case err == nil:
+		if prevPayment != in.PaymentID || prevKind != in.Kind || prevAmount != in.AmountCents {
+			return Payout{}, ReplayConflictError{Msg: "that idempotency key already paid out held money differently; use a new key"}
+		}
+		return Payout{PaymentID: in.PaymentID, PayoutID: prevID, Kind: prevKind, AmountCents: prevAmount,
+			HeldBeforeCents: held + prevAmount, HeldAfterCents: held, Replayed: true}, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return Payout{}, fmt.Errorf("payout: read the key: %w", err)
+	}
+
+	switch {
+	case isItselfAReversal:
+		return Payout{}, fmt.Errorf("%w: it is itself a reversing entry, the money is held for the payment it reversed", ErrNotReapplicable)
+	case reversedAt == nil:
+		return Payout{}, fmt.Errorf("%w: it has not been reversed", ErrNotReapplicable)
+	case customerID == "":
+		return Payout{}, fmt.Errorf("%w: it has no account to hold the money for", ErrNotReapplicable)
+	}
+	if in.AmountCents > held {
+		return Payout{}, fmt.Errorf("%w (%d cents held, %d asked for)", ErrReapplyOverHeld, held, in.AmountCents)
+	}
+
+	var sessionForRow any
+	switch in.Kind {
+	case PayoutDrawer:
+		if r.till == nil {
+			return Payout{}, errors.New("payments: the drawer pay out is not wired")
+		}
+		landedOn, err := r.till.PayOutHeldMoney(ctx, tx, DrawerPaidOut{
+			SessionID: strings.TrimSpace(in.TillSessionID), BranchID: branchID, AmountCents: in.AmountCents, Reason: in.Reason, Reference: in.Reference,
+		})
+		if err != nil {
+			return Payout{}, err
+		}
+		sessionForRow = landedOn
+	case PayoutWriteOff:
+		if r.till == nil {
+			return Payout{}, errors.New("payments: the write off is not wired")
+		}
+		if tillSession == "" {
+			return Payout{}, fmt.Errorf("%w: this payment was not rung through a till session, so there is no count to cover a write off", ErrPayoutNotAllowed)
+		}
+		// The shortage the close posts is counted CASH less expected CASH, so only a cash payment's held money can be
+		// written off against it: a cheque's or card's money was never in the drawer (PR 606 round 2, S3's P2).
+		if method != "CASH" {
+			return Payout{}, fmt.Errorf("%w: a write off is cash that left the drawer unrecorded, and this payment was taken by %s, whose money was never in the drawer", ErrPayoutNotAllowed, method)
+		}
+		// The session row FOR UPDATE, not FOR SHARE: the sum of the session's earlier write offs below must be read
+		// under the row, or two write offs of one session each read the other's sum as zero and together exceed the
+		// shortage (PR 606 round 2, S3's P1). The payment row above is already held, so the order stays.
+		count, err := r.till.SessionCountForWriteOffTx(ctx, tx, tillSession)
+		if err != nil {
+			return Payout{}, err
+		}
+		if count.Status != "CLOSED" {
+			return Payout{}, fmt.Errorf("%w: the till count for this payment's session is not complete yet, write it off after the count has posted the shortage", ErrPayoutNotAllowed)
+		}
+		if count.OverShortCents >= 0 {
+			return Payout{}, fmt.Errorf("%w: the count for this payment's session found no shortage to write it off against", ErrPayoutNotAllowed)
+		}
+		// The shortage is the session's: what its other payments' write offs already took comes off it.
+		var written int64
+		if err := tx.QueryRow(ctx,
+			`SELECT COALESCE(SUM(po.amount_cents), 0) FROM payment_payouts po JOIN payments p ON p.id = po.payment_id
+			  WHERE po.kind = 'WRITE_OFF' AND p.till_session_id = $1::uuid`, tillSession).Scan(&written); err != nil {
+			return Payout{}, fmt.Errorf("payout: read the session's write offs: %w", err)
+		}
+		if left := -count.OverShortCents - written; in.AmountCents > left {
+			return Payout{}, fmt.Errorf("%w: the count's shortage still to be covered is %d cents, %d asked for", ErrPayoutNotAllowed, max(left, 0), in.AmountCents)
+		}
+		sessionForRow = tillSession
+	}
+
+	var payoutID string
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO payment_payouts (payment_id, customer_id, branch_id, kind, amount_cents, reason, reference, till_session_id, applied_by, idempotency_key)
+		 VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8::uuid, $9::uuid, $10) RETURNING id::text`,
+		in.PaymentID, customerID, branchID, in.Kind, in.AmountCents, in.Reason, in.Reference, sessionForRow, nullableUUID(in.ActorID),
+		in.IdempotencyKey).Scan(&payoutID); err != nil {
+		return Payout{}, fmt.Errorf("payout: record: %w", err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"payout_id":    payoutID,
+		"payment_id":   in.PaymentID,
+		"customer_id":  customerID,
+		"branch_id":    branchID,
+		"amount_cents": in.AmountCents,
+		"kind":         in.Kind,
+		"credit_role":  creditRole(in.Kind),
+		"method":       method,
+		"reason":       in.Reason,
+		"reference":    in.Reference,
+	})
+	if err != nil {
+		return Payout{}, fmt.Errorf("payout: marshal payment.paid_out: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO events_outbox (topic, payload) VALUES ('payment.paid_out', $1)`, payload); err != nil {
+		return Payout{}, fmt.Errorf("payout: emit payment.paid_out: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Payout{}, fmt.Errorf("payout: commit: %w", err)
+	}
+	return Payout{PaymentID: in.PaymentID, PayoutID: payoutID, Kind: in.Kind, AmountCents: in.AmountCents,
+		HeldBeforeCents: held, HeldAfterCents: held - in.AmountCents}, nil
 }

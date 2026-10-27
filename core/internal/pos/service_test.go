@@ -618,6 +618,10 @@ func (f *fakeStore) MarkCardRefundsBooked(_ context.Context, keys []string) erro
 	return nil
 }
 
+func (f *fakeStore) MarkCardRefundsBookedTx(ctx context.Context, _ pgx.Tx, keys []string) error {
+	return f.MarkCardRefundsBooked(ctx, keys)
+}
+
 // StageCardRefundAttemptTx mirrors the real staging statement's semantics
 // (repository_w7.go): an UNBOOKED attempt with its ref answers the ref and the
 // processor's own amount, but only when the restaged fact is the SAME refund
