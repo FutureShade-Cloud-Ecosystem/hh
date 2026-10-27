@@ -407,7 +407,9 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	// The finance box statement's database leg: a copy that says
 	// HH_BOX_KIND=finance refuses a non empty database its own seed did not
 	// mark, before any wiring. The refusal closes the pool before returning.
-	if err := financeBoxDatabaseGuard(context.Background(), pool); err != nil {
+	// The guard re-runs the environment legs (they are cheap and refuse
+	// before anything else when the box statement is wrong).
+	if err := financeBoxBootGuard(getenv, cfg, pool); err != nil {
 		pool.Close()
 		return nil, err
 	}

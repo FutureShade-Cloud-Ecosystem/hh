@@ -118,6 +118,9 @@ func financeBoxDatabaseEmpty(ctx context.Context, pool *pgxpool.Pool) (bool, err
 // environment states the finance box and the database answers
 // box_kind=finance, so the box migrates only a database it seeded.
 func financeBoxCheckRole(getenv func(string) string) error {
+	if strings.TrimSpace(getenv(envBoxKind)) != boxKindFinance {
+		return fmt.Errorf("finance-box-check: refusing to run: %s must be %s (this check guards the finance box's database and answers the finance statement alone)", envBoxKind, boxKindFinance)
+	}
 	cfg := config.Load()
 	if err := financeBoxBootGuard(getenv, cfg, nil); err != nil {
 		return fmt.Errorf("finance-box-check: %w", err)
