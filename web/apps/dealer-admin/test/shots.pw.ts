@@ -63,7 +63,7 @@ for (const size of SIZES) {
       await take(page, "staff", theme, size.width);
       await openSection(page, "pricing", ".pr-board-pill");
       await take(page, "pricing", theme, size.width);
-      await openSection(page, "printing", '[data-test="print-count"]');
+      await openSection(page, "printing", '[data-test="print-idle"]');
       await take(page, "printing", theme, size.width);
     });
   }
