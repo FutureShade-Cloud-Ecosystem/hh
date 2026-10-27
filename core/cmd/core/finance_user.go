@@ -193,7 +193,7 @@ func financeUserProvision(ctx context.Context, pool *pgxpool.Pool, stdout io.Wri
 	if err != nil {
 		return fmt.Errorf("finance-user: the org anchor: %w", err)
 	}
-	userID, userWritten, err := identity.EnsureStaffUser(ctx, tx, orgID, platformUserID, email, displayName)
+	userID, userWritten, adopted, err := identity.AdoptOrEnsureStaffUser(ctx, tx, orgID, platformUserID, email, displayName)
 	if err != nil {
 		return fmt.Errorf("finance-user: the staff user: %w", err)
 	}
@@ -221,7 +221,7 @@ func financeUserProvision(ctx context.Context, pool *pgxpool.Pool, stdout io.Wri
 			EntityID:   userID,
 			ActorID:    userID,
 			Purpose:    "FINANCE_BOX_ACCESS",
-			Extra:      map[string]any{"status": "provisioned"},
+			Extra:      map[string]any{"status": provisionStatus(adopted)},
 		}); err != nil {
 			return fmt.Errorf("finance-user: the audit row: %w", err)
 		}
@@ -434,9 +434,12 @@ func financeUserApplyFromEnv(ctx context.Context, pool *pgxpool.Pool, stdout io.
 	}
 	var applied []appliedPerson
 	for _, e := range entries {
-		userID, written, err := identity.EnsureStaffUser(ctx, tx, orgID, e.platformUserID, e.email, e.displayName)
+		userID, written, adopted, err := identity.AdoptOrEnsureStaffUser(ctx, tx, orgID, e.platformUserID, e.email, e.displayName)
 		if errors.Is(err, identity.ErrStaffEmailTaken) {
 			return fmt.Errorf("finance-user: the entry for %s holds an email that belongs to another platform user", e.email)
+		}
+		if errors.Is(err, identity.ErrStaffAdoptHeld) {
+			return fmt.Errorf("finance-user: the entry for %s names a platform user that already holds another staff row", e.email)
 		}
 		if err != nil {
 			return fmt.Errorf("finance-user: the staff user: %w", err)
@@ -445,6 +448,13 @@ func financeUserApplyFromEnv(ctx context.Context, pool *pgxpool.Pool, stdout io.
 		if err != nil {
 			return fmt.Errorf("finance-user: the staff grant: %w", err)
 		}
+		// The grants converge to the listed role, as the one-shot's do: the
+		// roles the entry does not name are soft deleted in the same
+		// transaction, so an adopted or edited entry holds exactly one role.
+		_, demoted, err := identity.RevokeStaffGrantsExcept(ctx, tx, orgID, e.platformUserID, e.role)
+		if err != nil {
+			return fmt.Errorf("finance-user: the grant demotion: %w", err)
+		}
 		grantID, ok, err := identity.StaffGrantID(ctx, tx, orgID, e.platformUserID, e.role)
 		if err != nil || !ok {
 			return errors.New("finance-user: the staff grant was not found after it was ensured")
@@ -452,14 +462,14 @@ func financeUserApplyFromEnv(ctx context.Context, pool *pgxpool.Pool, stdout io.
 		// The audit row says the person's access was established, so it is
 		// written when the row or the grant changed and not when the person
 		// was already linked: a boot with the same list changes nothing.
-		if written || inserted {
+		if written || inserted || demoted {
 			if err := svc.RecordTx(ctx, tx, audit.SensitiveAccess{
 				Action:     "STAFF_PROVISION",
 				EntityType: "identity.staff_user",
 				EntityID:   userID,
 				ActorID:    userID,
 				Purpose:    "FINANCE_BOX_ACCESS",
-				Extra:      map[string]any{"status": "provisioned"},
+				Extra:      map[string]any{"status": provisionStatus(adopted)},
 			}); err != nil {
 				return fmt.Errorf("finance-user: the audit row: %w", err)
 			}
@@ -530,4 +540,14 @@ func financeUserApplyFromEnv(ctx context.Context, pool *pgxpool.Pool, stdout io.
 	}
 	fmt.Fprintf(stdout, "applied=%d revoked=%d\n", len(applied), len(revoked))
 	return nil
+}
+
+// provisionStatus is the audit row's status word for a provision: an
+// adopted row says it linked an unlinked seeded staff row (FROM-PRINCIPAL
+// 36), so the trail tells a seeded identity taken over from a new one.
+func provisionStatus(adopted bool) string {
+	if adopted {
+		return "linked an unlinked seeded staff row"
+	}
+	return "provisioned"
 }
