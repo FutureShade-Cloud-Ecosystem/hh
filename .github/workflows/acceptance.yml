@@ -71,6 +71,9 @@ jobs:
       ACC_FD_PG_PORT: '5671'
       ACC_FD_APP_PORT: '5672'
       ACC_FD_CORE_PORT: '5673'
+      # The sign in mode the demo core requires at boot (the entrypoint
+      # refuses to start without it): the box is the demo build.
+      CORE_SIGNIN_MODE: demo
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -144,10 +147,14 @@ jobs:
               docker run -d --name "$ACC_NAME-box" --network host \
               -e DATABASE_URL -e PORT -e CORE_INTERNAL_PORT -e PAYMENT_VAULT_KEY \
               -e HH_ACCEPTANCE_SIGN_KEY_ID -e HH_ACCEPTANCE_SIGN_KEY -e DEMO_GATE_BCRYPT_HASH \
+              -e CORE_SIGNIN_MODE \
               "$ACC_IMAGE" >/dev/null
             probes=0
             while [ "$probes" -lt 150 ]; do
               if curl -sf "$ACC_BOX_URL/healthz" >/dev/null 2>&1; then return 0; fi
+              # A refused boot never comes back: stop the wait at once and
+              # show the log tail the failure path keeps.
+              [ "$(docker inspect -f '{{.State.Running}}' "$ACC_NAME-box" 2>/dev/null)" = "true" ] || break
               probes=$((probes + 1))
               sleep 2
             done
@@ -244,8 +251,11 @@ jobs:
           . "$RUNNER_TEMP/acc-lib.sh"
           fresh_box acc_counter_till || { echo "counter-till|advisory|FAIL" >> "$ACC_VERDICTS"; echo "VERDICT counter-till: FAIL (advisory, the box did not start)"; exit 0; }
           suite_counter_till() {
+            # The Julian sale's line id: the demo world renames the base
+            # world's -KGN- orders to -JUL- (Kingston becomes Julian), so the
+            # number is the renamed one.
             kgn_line="$(psql "$ACC_PG_URL/acc_counter_till?sslmode=disable" -tAc \
-              "SELECT ol.id::text FROM order_lines ol JOIN orders o ON o.id = ol.order_id WHERE o.order_no = 'DEMO-KGN-S01' LIMIT 1" | tr -d '[:space:]')" || return 1
+              "SELECT ol.id::text FROM order_lines ol JOIN orders o ON o.id = ol.order_id WHERE o.order_no = 'DEMO-JUL-S01' LIMIT 1" | tr -d '[:space:]')" || return 1
             CT_IMAGE_URL="$ACC_BOX_URL" CT_GATE_PHRASE="$ACC_PHRASE" CT_SHOT_DIR="$ACC_OUT/counter-till/shots" CT_KGN_LINE="$kgn_line" \
               pw counter-till counter-till --config test/acceptance.config.ts --grep-invert restart
           }

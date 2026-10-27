@@ -75,7 +75,9 @@ func (w *reversalGLWorld) lodgeAndMatch(session, method string, cents int64) (ma
 	w.r.t.Helper()
 	ctx := context.Background()
 	repo := till.NewRepository(w.r.pool)
-	if err := repo.InsertMovement(ctx, till.MovementRow{TillSessionID: session, MovementType: "LODGEMENT", Method: method, AmountCents: cents, Reason: "walk", Reference: "WALK-SLIP", CreatedBy: w.r.userID}); err != nil {
+	// CreatedAt: time.Now() is the column default this seed used to ride; the walk reads the row
+	// back by created_at DESC.
+	if err := repo.InsertMovement(ctx, till.MovementRow{TillSessionID: session, MovementType: "LODGEMENT", Method: method, AmountCents: cents, Reason: "walk", Reference: "WALK-SLIP", CreatedBy: w.r.userID, CreatedAt: time.Now()}); err != nil {
 		w.r.t.Fatalf("lodgement: %v", err)
 	}
 	if err := w.r.obs.QueryRow(ctx, `SELECT id::text FROM till_movements WHERE till_session_id = $1::uuid AND movement_type = 'LODGEMENT' ORDER BY created_at DESC LIMIT 1`, session).Scan(&movement); err != nil {

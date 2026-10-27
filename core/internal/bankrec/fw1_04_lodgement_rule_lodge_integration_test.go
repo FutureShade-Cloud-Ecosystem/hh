@@ -31,6 +31,7 @@ import (
 	staffcontext "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -136,6 +137,15 @@ func (p lodgeLegPoster) PostJournal(ctx context.Context, ext gl.ExternalJournal)
 		ext.DocumentDate = p.clock()
 	}
 	return p.svc.PostExternal(ctx, ext)
+}
+
+// PostJournalTx is the transaction arm (FW1-05, FROM-PRINCIPAL 232): every poster bankrec is served gains
+// it, so the match and its clearing journal commit or roll back together and no leg posts in two steps.
+func (p lodgeLegPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, ext gl.ExternalJournal) (string, error) {
+	if ext.DocumentDate.IsZero() && p.clock != nil {
+		ext.DocumentDate = p.clock()
+	}
+	return p.svc.PostExternalTx(ctx, tx, ext)
 }
 
 func lodgeLegStaffCtx(userID, branchID string) context.Context {

@@ -33,9 +33,13 @@ func TestIntegration_ReversedCard_AWrongMatchCanBeUndoneAndMatchedAgain(t *testi
 	orig := w.receipt("CARD", 10_000)
 	w.drain()
 	rev := w.reverse(orig)
-	wrong, right := w.r.statementLine(10_001), w.r.statementLine(10_000)
+	line := w.r.statementLine(10_000)
 	bank := w.bankSvc()
-	m1, err := w.matchPayment(t, bank, wrong, orig)
+	// The wrong match: a deposit of a REVERSED card should not be booked without a look, but a hand match
+	// cannot tell, so it books, and the point of the leg is that a wrong booking undoes and the line can be
+	// matched again. The one cent wrong amount this leg once used is refused at match time now (FW1-05
+	// item 1 checks the claimed payment's amount against the line), so the wrongness is the booking itself.
+	m1, err := w.matchPayment(t, bank, line, orig)
 	if err != nil {
 		t.Fatalf("the (wrong) match of the reversed card: %v", err)
 	}
@@ -45,17 +49,17 @@ func TestIntegration_ReversedCard_AWrongMatchCanBeUndoneAndMatchedAgain(t *testi
 	}
 	var payStatus, lineStatus string
 	_ = w.r.obs.QueryRow(ctx, `SELECT status FROM payments WHERE id = $1::uuid`, orig).Scan(&payStatus)
-	_ = w.r.obs.QueryRow(ctx, `SELECT status FROM bank_statement_lines WHERE id = $1::uuid`, wrong).Scan(&lineStatus)
+	_ = w.r.obs.QueryRow(ctx, `SELECT status FROM bank_statement_lines WHERE id = $1::uuid`, line).Scan(&lineStatus)
 	if payStatus != "RECEIVED" || lineStatus != "UNMATCHED" {
 		t.Errorf("after the undo: payment %s, line %s; want RECEIVED and UNMATCHED", payStatus, lineStatus)
 	}
-	m2, err := w.matchPayment(t, bank, right, orig)
+	m2, err := w.matchPayment(t, bank, line, orig)
 	if err != nil {
 		t.Fatalf("the corrective match of the reversed card: %v", err)
 	}
 	keys = append(keys, "bankrec:match:"+m2.ID)
-	w.cleanupJournals(keys, []string{wrong, right})
-	wantNets(t, "reversed card: wrong match, undo, right match", w.walkNets(keys, []string{wrong, right}),
+	w.cleanupJournals(keys, []string{line})
+	wantNets(t, "reversed card: wrong match, undo, right match", w.walkNets(keys, []string{line}),
 		map[string]int64{"1000": 10_000, "1010": 0, "1100": 0, "2310": -10_000})
 }
 

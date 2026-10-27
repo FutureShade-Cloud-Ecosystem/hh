@@ -11,7 +11,9 @@ func approvedRules() []MatchRule {
 	return []MatchRule{
 		{ID: "r-gw", Code: "gateway-ref-exact", Priority: 10, Status: RuleApproved, Kind: KindGatewayRefExact, Target: TargetPayment, ToleranceCents: 0},
 		{ID: "r-lodge", Code: "lodgement-ref-exact", Priority: 20, Status: RuleApproved, Kind: KindLodgementRefExact, Target: TargetLodgement, ToleranceCents: 0},
-		{ID: "r-run", Code: "run-settlement-fuzzy", Priority: 30, Status: RuleApproved, Kind: KindDescriptorFuzzy, Target: TargetPayment, DescriptorILike: "%RUN%", DateWindowDays: 3, AllowFeeSplit: true, FeeAccountCode: "6300"},
+		// The seeded rule's spec (migration 0442 bounds it): a fuzzy settlement's fee is only a fee within
+		// the tolerance (FROM-PRINCIPAL 84).
+		{ID: "r-run", Code: "run-settlement-fuzzy", Priority: 30, Status: RuleApproved, Kind: KindDescriptorFuzzy, Target: TargetPayment, DescriptorILike: "%RUN%", DateWindowDays: 3, AllowFeeSplit: true, ToleranceCents: 5000, FeeAccountCode: "6300"},
 	}
 }
 
@@ -193,7 +195,8 @@ func TestMatch_RunSettlementFeeSplit(t *testing.T) {
 	}
 }
 
-// A RUN line outside the date window does not match; a debit line never auto-matches.
+// A RUN line outside the date window does not match; a debit line never auto-matches; a shortfall beyond
+// the rule's tolerance never books as a fee (FROM-PRINCIPAL 84).
 func TestMatch_WindowAndSign(t *testing.T) {
 	line := StatementLine{ID: "L4", Status: LineUnmatched, AmountCents: 98000, Description: "RUN BATCH", TxnDate: refDate}
 	far := []CandidatePayment{{PaymentID: "P", AmountCents: 100000, ReceivedAt: refDate.AddDate(0, 0, 10)}}
@@ -203,6 +206,12 @@ func TestMatch_WindowAndSign(t *testing.T) {
 	debit := StatementLine{ID: "L5", Status: LineUnmatched, AmountCents: -4500, Description: "SERVICE FEE", TxnDate: refDate}
 	if _, ok := matchLine(debit, approvedRules(), nil, nil); ok {
 		t.Fatal("a debit line must not auto-match")
+	}
+
+	shortLine := StatementLine{ID: "L6", Status: LineUnmatched, AmountCents: 489000, Description: "RUN BATCH SETTLEMENT", TxnDate: refDate}
+	short := []CandidatePayment{{PaymentID: "P10", AmountCents: 600000, ReceivedAt: refDate}}
+	if _, ok := matchLine(shortLine, approvedRules(), short, nil); ok {
+		t.Fatal("a $1,110.00 shortfall on a $6,000.00 payment must not auto match as a fee (tolerance 5000)")
 	}
 }
 
