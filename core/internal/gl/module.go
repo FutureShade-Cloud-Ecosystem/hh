@@ -529,14 +529,6 @@ func (s *Service) BankAccountEntriesAsOf(ctx context.Context, glAccountCode stri
 	return s.store.BankAccountEntriesAsOf(ctx, glAccountCode, asOf)
 }
 
-// LodgementJournalForBank answers whether a till lodgement movement already has a POSTED, unreversed book
-// journal touching glAccountCode (FROM-PRINCIPAL 117): a new lodgement with a lodgement journal in 1000 does
-// not post a second 1020 -> 1000 clearing journal on match, whereas an older lodgement with no lodgement
-// journal keeps today's match.
-func (s *Service) LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error) {
-	return s.store.LodgementJournalForBank(ctx, movementID, glAccountCode)
-}
-
 // GLBalanceThroughCents returns an account's balance THROUGH a period (every period up to and
 // including year/month, cumulative), natural orientation. Additive provider read (FW1-11): the
 // inventory tie-out reads 1200's balance as of a period end, where the frozen GLBalanceCents keeps

@@ -78,7 +78,10 @@ random_hex() {
 # signing keys seal the populate's world and the serve that reads it, and
 # both database variables carry the one DSN (the entrypoint's own discipline:
 # the serve role reads CORE_DATABASE_URL and every one-shot reads
-# DATABASE_URL, derived from each other so they cannot drift).
+# DATABASE_URL, derived from each other so they cannot drift). The walk
+# mints every flow in one burst from one address, so the core reads the
+# testers' copy's own allowance knob at its cap (the product caps it at 20;
+# the default burst allowance is 5 and the walk holds 13 mints).
 VAULT="$(random_hex 32)"
 SIGN="$(random_hex 32)"
 # The core reads its migration and seed files relative to its own tree (the
@@ -93,6 +96,7 @@ run_core() {
 				PAYMENT_VAULT_KEY="$VAULT" \
 				HH_ACCEPTANCE_SIGN_KEY_ID=d2-fd-exit \
 				HH_ACCEPTANCE_SIGN_KEY="$SIGN" \
+				HH_DEMO_MINT_VISITOR_ALLOWANCE=20 \
 				"$CORE_BIN" "$@"
 	)
 }
@@ -143,11 +147,12 @@ docker run -d --name "$PG_NAME" --network "$NET" \
 	-p "127.0.0.1:$PG_PORT:5432" \
 	-e POSTGRES_PASSWORD=hardscape postgres:16-alpine >/dev/null
 probes=0
-# A real query, not pg_isready: the image's init phase runs a temporary
-# server on the socket that pg_isready accepts, and a drop or create raced
-# into that window dies with the temp server. A SELECT only answers when the
-# server that will serve the build is up.
-until [ "$(docker exec "$PG_NAME" psql -U postgres -tAc 'SELECT 1' 2>/dev/null)" = "1" ]; do
+# A real query over TCP, the transport the world build itself uses: the
+# image's init phase runs a temporary server that answers the unix socket
+# (a socket probe is answered by it, and a drop or create or a TCP build
+# raced into that window dies with the temp server), and that server never
+# listens on TCP. Only the server that will serve the build answers here.
+until [ "$(docker exec -e PGPASSWORD=hardscape "$PG_NAME" psql -h 127.0.0.1 -U postgres -tAc 'SELECT 1' 2>/dev/null)" = "1" ]; do
 	probes=$((probes + 1))
 	[ "$probes" -lt 60 ] || {
 		fail "the throwaway Postgres never answered"
@@ -180,6 +185,7 @@ echo "== the core serving the mint routes"
 			PAYMENT_VAULT_KEY="$VAULT" \
 			HH_ACCEPTANCE_SIGN_KEY_ID=d2-fd-exit \
 			HH_ACCEPTANCE_SIGN_KEY="$SIGN" \
+			HH_DEMO_MINT_VISITOR_ALLOWANCE=20 \
 			exec "$CORE_BIN" serve
 ) >"$CORE_LOG" 2>&1 &
 CORE_PID=$!
