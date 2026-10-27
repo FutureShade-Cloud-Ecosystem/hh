@@ -409,8 +409,9 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 	anchor := finPerson{platformID: "fin-fix-anchor", email: "fin-fix-anchor@example.invalid", name: "Fix Anchor", member: true}
 	general := finPerson{platformID: "fin-fix-general", email: "fin-fix-general@example.invalid", name: "Fix General", member: true}
 	nameless := finPerson{platformID: "fin-fix-nameless", email: "fin-fix-nameless@example.invalid", name: "Fix Nameless", member: true}
-	addresses := []string{victim.email, other.email, multi.email, gone.email, anchor.email, general.email, nameless.email}
-	console := newFinConsole(t, victim, other)
+	demotee := finPerson{platformID: "fin-fix-demotee", email: "fin-fix-demotee@example.invalid", name: "Fix Demotee", member: true}
+	addresses := []string{victim.email, other.email, multi.email, gone.email, anchor.email, general.email, nameless.email, demotee.email}
+	console := newFinConsole(t, victim, other, demotee)
 	env := func(over map[string]string) func(string) string { return finEnvFor(dsn, addresses, over) }
 
 	// The production exchange wiring, FB Console faked over HTTP only: the
@@ -448,10 +449,12 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildExchange: %v", err)
 	}
-	signIn := func(p finPerson) int {
+	signIn := func(p finPerson) (int, map[string]any) {
 		t.Helper()
 		rec := finSignIn(exch, p, console.jwt(p))
-		return rec.Code
+		var body map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		return rec.Code, body
 	}
 
 	// The org anchor of the box, as the seed would name it, and the id the
@@ -491,7 +494,7 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 		if err == nil {
 			t.Fatalf("a revoke naming another person's email must refuse, got nil (out %q)", out.String())
 		}
-		if code := signIn(victim); code != http.StatusOK {
+		if code, _ := signIn(victim); code != http.StatusOK {
 			t.Fatalf("the victim after the refused revoke: status %d, want 200 (log %s)", code, logBuf.String())
 		}
 		if n := finLiveGrants(t, ctx, pool, orgID, victim.platformID); n != 1 {
@@ -601,6 +604,39 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 		}
 		if name != "Anchor As Named" {
 			t.Fatalf("the anchor's name = %q, want the name it already had", name)
+		}
+	})
+
+	t.Run("a provision with another role demotes the old grant", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		if err := financeUserRole(provisionArgs(demotee, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("provisioning the controller: %v (out %q)", err, out.String())
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, demotee.platformID); n != 1 {
+			t.Fatalf("after the first provision the person holds %d live grants, want 1", n)
+		}
+		// The edited entry names payables_receivables: the controller grant
+		// must go in the same transaction, or the person keeps the tier 1
+		// role the entry no longer names and an edit can never demote.
+		out.Reset()
+		if err := financeUserRole(provisionArgs(demotee, "payables_receivables"), out, out, env(nil)); err != nil {
+			t.Fatalf("provisioning the payables role: %v (out %q)", err, out.String())
+		}
+		if n := finLiveGrants(t, ctx, pool, orgID, demotee.platformID); n != 1 {
+			t.Fatalf("after the edited provision the person holds %d live grants, want 1, the new one", n)
+		}
+		roles := finLiveGrantRoles(t, ctx, pool, orgID, demotee.platformID)
+		if len(roles) != 1 || roles[0] != "payables_receivables" {
+			t.Fatalf("after the edited provision the person holds %v, want payables_receivables only", roles)
+		}
+		// The exchange resolves the role the entry names now.
+		code, body := signIn(demotee)
+		if code != http.StatusOK {
+			t.Fatalf("the demoted person's sign in: status %d, want 200 (log %s)", code, logBuf.String())
+		}
+		user, _ := body["user"].(map[string]any)
+		if user["role_code"] != "payables_receivables" {
+			t.Fatalf("the demoted person's role = %v, want payables_receivables", user["role_code"])
 		}
 	})
 }
