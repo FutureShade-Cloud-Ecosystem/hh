@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -120,12 +119,12 @@ func TestIntegration_JournalTx_RefusalLeavesTheCallerUsable(t *testing.T) {
 	if _, err := svc.PostExternalTx(ctx, tx, journalTxExt(okKey)); err != nil {
 		t.Fatalf("first post: %v", err)
 	}
-	// Refused: a CLOSED period, and an unknown account (a statement that does not abort on its own).
+	// Refused: an unknown account (a statement that does not abort on its own). A closed period no
+	// longer refuses a system journal through the tx (FW1-01, ruling 82.2: it posts into the
+	// earliest open month instead), so the savepoint rollback proof rides the account refusal.
 	closedSvc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager},
 		time.Date(journalTxYear, 3, 15, 12, 0, 0, 0, time.UTC))
-	if _, err := closedSvc.PostExternalTx(ctx, tx, journalTxExt(okKey+"-closed")); err == nil || !strings.Contains(err.Error(), "CLOSED") {
-		t.Fatalf("closed period through tx = %v, want a CLOSED refusal", err)
-	}
+	_ = closedSvc
 	bad := journalTxExt(okKey + "-acct")
 	bad.Lines[0].AccountCode = "no-such-account"
 	if _, err := svc.PostExternalTx(ctx, tx, bad); err == nil {

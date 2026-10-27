@@ -218,6 +218,17 @@ func (h *Handler) listJournals(w http.ResponseWriter, r *http.Request, _ guards.
 		httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
 		return
 	}
+	// FW1-01: late_posted=true lists the journals posted past a closed month into a later open
+	// one, the Controller's late posted list. Absent reads both.
+	var late *bool
+	if v := r.URL.Query().Get("late_posted"); v != "" {
+		if v != "true" && v != "false" {
+			httpx.Error(w, http.StatusBadRequest, "late_posted must be true or false")
+			return
+		}
+		b := v == "true"
+		late = &b
+	}
 	f := JournalFilter{
 		Status:           r.URL.Query().Get("status"),
 		BranchID:         branchID,
@@ -228,6 +239,7 @@ func (h *Handler) listJournals(w http.ResponseWriter, r *http.Request, _ guards.
 		AfterCursor:      ok && p.Cursor != "",
 		CursorFiscalYear: fy,
 		CursorEntryNo:    en,
+		LatePosted:       late,
 	}
 	js, err := h.svc.ListJournals(r.Context(), f)
 	if err != nil {
@@ -454,6 +466,31 @@ func (h *Handler) legacyImportEnabled(w http.ResponseWriter, r *http.Request) bo
 
 // - periods -
 
+// listPostingQueue answers the Financial Controller's read of every GL event
+// waiting or dead lettered, with its topic, its document, its last error and
+// its attempts.
+func (h *Handler) listPostingQueue(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	rows, err := h.svc.PostingQueue(r.Context())
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if rows == nil {
+		rows = []PostingQueueRow{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": rows})
+}
+
+// postingQueueCounts answers the two counts the Money Desk's banner reads.
+func (h *Handler) postingQueueCounts(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	counts, err := h.svc.PostingQueueCounts(r.Context())
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, counts)
+}
+
 func (h *Handler) listPeriods(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
 	ps, err := h.svc.ListPeriods(r.Context())
 	if err != nil {
@@ -515,6 +552,19 @@ func (h *Handler) closeYear(w http.ResponseWriter, r *http.Request, _ guards.Sta
 		return
 	}
 	res, err := h.svc.CloseYear(r.Context(), b.Year, b.Reason)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) openYear(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	var b reasonBody
+	if !decodeJSON(w, r, &b) {
+		return
+	}
+	res, err := h.svc.OpenNextFiscalYear(r.Context(), b.Reason)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

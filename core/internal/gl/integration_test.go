@@ -161,12 +161,18 @@ func TestIntegration_AC1_ClosedPeriodBlocked(t *testing.T) {
 	}
 	at := time.Date(2097, 6, 15, 12, 0, 0, 0, time.UTC)
 	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at)
-	_, err := svc.PostExternal(ctx, ExternalJournal{
-		Source: SourceAdjustment, IdempotencyKey: fmt.Sprintf("closed-%d", time.Now().UnixNano()),
-		Lines: []ExternalLine{{AccountCode: "1000", DebitCents: 100}, {AccountCode: "1020", CreditCents: 100}},
+	// FW1-01, ruling 82.2: a SYSTEM journal (PostExternal) is never refused for a closed month any
+	// more, it posts into the earliest open month late posted (the FW1-01 legs cover that); the
+	// refusal that survives is the MANUAL journal into the closed month, which this leg now proves.
+	_, err := svc.CreateJournal(ctx, CreateJournalInput{
+		Memo: "AC1 manual into a closed month",
+		Lines: []JournalLineInput{
+			{AccountCode: "1000", DebitCents: 100, Memo: "bank"},
+			{AccountCode: "1020", CreditCents: 100, Memo: "undeposited"},
+		},
 	})
 	if err == nil || !strings.Contains(err.Error(), "CLOSED") {
-		t.Fatalf("posting into a closed period must fail with a CLOSED error, got %v", err)
+		t.Fatalf("a manual journal into a closed period must fail with a CLOSED error, got %v", err)
 	}
 }
 

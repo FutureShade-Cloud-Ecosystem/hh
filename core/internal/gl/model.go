@@ -87,6 +87,11 @@ type Journal struct {
 	CreatedBy         string        `json:"created_by,omitempty"`
 	CreatedAt         time.Time     `json:"created_at"`
 	Lines             []JournalLine `json:"lines"`
+	// LatePosted, derived on read (FW1-01, ruling 82.2): the journal's document date does not
+	// fall in its own period's month, the closed month it was posted past into the earliest open
+	// one. A system journal is never refused for a closed month; this marker is what the
+	// Controller's late posted list reads.
+	LatePosted bool `json:"late_posted"`
 }
 
 // TotalCents is the journal's debit total (== credit total when balanced), the maker-checker gate reads it.
@@ -217,6 +222,9 @@ type JournalFilter struct {
 	AfterCursor      bool
 	CursorFiscalYear int
 	CursorEntryNo    int
+	// LatePosted, when set, filters to journals posted past a closed month into a later open one
+	// (the Controller's late posted list). Nil reads both.
+	LatePosted *bool
 }
 
 // - internal posting draft (the shared persist path: manual create, outbox consumer, PostExternal) -
@@ -280,14 +288,16 @@ func clientErr(status int, format string, a ...any) error {
 }
 
 var (
-	errNotFound      = clientError{status: http.StatusNotFound, msg: "gl: not found"}
-	errNoDB          = clientError{status: http.StatusServiceUnavailable, msg: "gl: database not configured"}
-	errUnauthorized  = clientError{status: http.StatusUnauthorized, msg: "gl: unauthenticated"}
-	errClosedPeriod  = clientError{status: http.StatusConflict, msg: "gl: fiscal period is CLOSED"}
-	errUnbalanced    = clientError{status: http.StatusUnprocessableEntity, msg: "gl: journal is unbalanced (Σdebit ≠ Σcredit)"}
-	errAccountInUse  = clientError{status: http.StatusConflict, msg: "gl: account is referenced by DRAFT journal(s); cannot deactivate"}
-	errFourEyes      = clientError{status: http.StatusForbidden, msg: "gl: an approver must differ from the journal's creator (four-eyes)"}
-	errNotController = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may reopen a closed period"}
+	errNotFound           = clientError{status: http.StatusNotFound, msg: "gl: not found"}
+	errNoDB               = clientError{status: http.StatusServiceUnavailable, msg: "gl: database not configured"}
+	errUnauthorized       = clientError{status: http.StatusUnauthorized, msg: "gl: unauthenticated"}
+	errClosedPeriod       = clientError{status: http.StatusConflict, msg: "gl: fiscal period is CLOSED"}
+	errUnbalanced         = clientError{status: http.StatusUnprocessableEntity, msg: "gl: journal is unbalanced (Σdebit ≠ Σcredit)"}
+	errAccountInUse       = clientError{status: http.StatusConflict, msg: "gl: account is referenced by DRAFT journal(s); cannot deactivate"}
+	errFourEyes           = clientError{status: http.StatusForbidden, msg: "gl: an approver must differ from the journal's creator (four-eyes)"}
+	errNotController      = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may reopen a closed period"}
+	errNotControllerQueue = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may read the posting queue"}
+	errQueueNotWired      = clientError{status: http.StatusServiceUnavailable, msg: "gl: the posting queue is not wired"}
 	// errForbidden is DIB-392's horizontal-read boundary: a manager asking for a branch's (or the whole
 	// org's) ledger that their scope does not reach.
 	errForbidden      = clientError{status: http.StatusForbidden, msg: "gl: caller cannot access this branch"}

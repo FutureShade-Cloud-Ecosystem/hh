@@ -53,7 +53,7 @@ type rowScanner interface{ Scan(dest ...any) error }
 // CreateTask inserts one task (status QUEUED) and its birth task_events row (from_status NULL →
 // to_status QUEUED) in a single tx, returning the persisted task. order_id is required; branch_id /
 // created_by / source_message_id are nullable (empty string → SQL NULL). The row draws a pick_tasks
-// seq and carries the caller's org stamp, so the write is sync-visible from the moment it lands
+// seq and carries the caller's org stamp (the branch's org when the caller names none, UX-95), so the write is sync-visible from the moment it lands
 // (context 4.5: the core owns this write path, unlike the ERP-carried rows 0213 left seq-NULL).
 func (r *Repository) CreateTask(ctx context.Context, in NewTaskInput) (Task, error) {
 	if r.pool == nil {
@@ -71,7 +71,8 @@ func (r *Repository) CreateTask(ctx context.Context, in NewTaskInput) (Task, err
 	}
 	t, err := scanYardTask(tx.QueryRow(ctx, `
 		INSERT INTO tasks (task_type, order_id, order_line_no, branch_id, priority, status, created_by, source, source_message_id, org_id, seq)
-		VALUES ($1, $2::uuid, $3, NULLIF($4,'')::uuid, $5, 'QUEUED', NULLIF($6,'')::uuid, $7, NULLIF($8,'')::uuid, NULLIF($9,'')::uuid, $10)
+		VALUES ($1, $2::uuid, $3, NULLIF($4,'')::uuid, $5, 'QUEUED', NULLIF($6,'')::uuid, $7, NULLIF($8,'')::uuid,
+		        COALESCE(NULLIF($9,'')::uuid, (SELECT l.org_id FROM locations l WHERE l.id = NULLIF($4,'')::uuid)), $10)
 		RETURNING `+yardColumns,
 		in.TaskType, in.OrderID, in.OrderLineNo, in.BranchID, in.Priority, in.CreatedBy, in.Source, in.SourceMessageID, in.OrgID, seq))
 	if err != nil {
@@ -90,8 +91,9 @@ func (r *Repository) CreateTask(ctx context.Context, in NewTaskInput) (Task, err
 }
 
 // taskInOrgSQL is the predicate that holds a tasks row to one dealer org through the row's BRANCH (UX-81 round 6):
-// no writer stamps tasks.org_id on every path (the REST weight request passes none, UX-95 owns that), but every pick
-// task carries a branch, and the branch's locations row carries the org. orgParam names the placeholder ("$2").
+// every writer now stamps tasks.org_id (UX-95; a NULL remains only where the branch carries no org), but this fence
+// stays on the branch because every pick task carries a branch, and the branch's locations row carries the org.
+// orgParam names the placeholder ("$2").
 func taskInOrgSQL(orgParam string) string {
 	return `EXISTS (SELECT 1 FROM locations l WHERE l.id = tasks.branch_id AND l.org_id = ` + orgParam + `::uuid)`
 }
