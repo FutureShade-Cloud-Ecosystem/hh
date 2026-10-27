@@ -45,8 +45,14 @@ How the test holds it:
 | `approvals.Load` | `GET /api/v1/staff/approvals` (the list), at the conflict envelope | The projection of a request travels only to a caller the list would show it to; the engine keeps the id and seq. | `ApprovalsSyncStore.Load`, `readerFor` |
 | `approvals.FindApplied` | none; a replay answers status and seq only | As quotes.FindApplied: applied with the stamped seq, no projection, nothing applied. | `ApprovalsSyncStore.FindApplied`; the engine never reads data on this path |
 
-`SyncStore.WithNow` is the one other exported method. It pins the store's clock for
-tests, takes no caller and touches no row, so it is listed in the test as not a door.
+`SyncStore.WithNow` and `ApprovalsSyncStore.WithJEDecider` are the two exported
+methods that are not doors. `WithNow` pins the store's clock for tests, and
+`WithJEDecider` attaches the bridge that voids a withdrawn credit memo's park on the
+withdrawal's own transaction, so the tombstone and the void commit together. The rule
+that bridge serves is `approvals.Delete`'s, ruled above: the requester withdraws its
+own request, and nobody else, in any state except one whose approval has been
+consumed. Both take no caller and touch no row, so both are listed in the test as not
+a door.
 
 ## 2. The thirteen roles
 

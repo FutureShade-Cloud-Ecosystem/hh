@@ -268,6 +268,12 @@ type creditPlan struct {
 	tax      int64
 	lines    []OrderInvoiceLine // positive magnitudes; negated at insert
 	origNo   string
+	// THE ROOM: what the invoice has left to credit, before tax and with it (SF-2e). A credit
+	// against an invoice is capped at the room, so the room is the figure a person needs to see
+	// before typing an amount; the quote door answers it, and the desk shows it. Zero for a
+	// standalone credit, which has no invoice to have a room.
+	roomSubtotal int64
+	roomTax      int64
 }
 
 // planCreditMemo resolves REVERSAL or ACCOMMODATION into one shape.
@@ -369,6 +375,9 @@ SELECT COALESCE(-SUM(subtotal_cents), 0), COALESCE(-SUM(tax_cents), 0)
 	if remSub <= 0 {
 		return creditPlan{}, httpx.BadRequestf("invoice %s has nothing left to credit: it has already been credited in full", p.origNo)
 	}
+	// THE ROOM, held for whoever asks what is left: the cap the amount is held to, before tax and
+	// with it. A paid invoice still has a room: what has been paid is not what has been credited.
+	p.roomSubtotal, p.roomTax = remSub, remTax
 	if in.AmountCents > remSub {
 		return creditPlan{}, httpx.BadRequestf("a credit memo cannot be more than invoice %s has left to credit: %s before tax (%s with tax) is left",
 			p.origNo, money(remSub), money(remSub+remTax))
@@ -438,6 +447,26 @@ SELECT line_no, COALESCE(order_line_id::text,''), COALESCE(product_id::text,''),
 	return p, nil
 }
 
+// lockForCreditPlan takes the writer's locks on the caller's transaction, in the order
+// internal/payments/LOCK-ORDER.md names: the order row first when the memo carries one, then the
+// invoice the memo reverses, FOR NO KEY UPDATE. Every credit plan reads the invoice's remainder under
+// these locks, so two credits of one invoice cannot both pass the cap (SF-2e), and a parked credit's
+// room is held from the park to the approval. The posted writer and the park share it.
+func lockForCreditPlan(ctx context.Context, tx pgx.Tx, in CreditMemoInput) error {
+	if in.OrderID != "" {
+		// The one lock every writer that bills an order takes first (lockOrder, invoice_writer.go).
+		if err := lockOrder(ctx, tx, in.OrderID); err != nil {
+			return err
+		}
+	}
+	if in.ReversesInvoiceID != "" {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, in.ReversesInvoiceID); err != nil {
+			return fmt.Errorf("lock the invoice the credit memo reverses: %w", err)
+		}
+	}
+	return nil
+}
+
 // insertCreditMemo writes the header, the negated lines and the AR subledger row in ONE transaction.
 func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput, plan creditPlan) (InvoiceDoc, creditPlan, error) {
 	customerID, branchID := in.CustomerID, in.BranchID
@@ -476,16 +505,8 @@ func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput
 		// waits for the invoices counter (the order cancel's settlement, a loader, the POS account credit)
 		// would otherwise cycle against a memo holding the counter while it waits for the row. The memo now
 		// queues behind such a writer instead; it changes no key column of either row.
-		if in.OrderID != "" {
-			// The one lock every writer that bills an order takes first (lockOrder, invoice_writer.go).
-			if err := lockOrder(ctx, tx, in.OrderID); err != nil {
-				return err
-			}
-		}
-		if in.ReversesInvoiceID != "" {
-			if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, in.ReversesInvoiceID); err != nil {
-				return fmt.Errorf("lock the invoice the credit memo reverses: %w", err)
-			}
+		if err := lockForCreditPlan(ctx, tx, in); err != nil {
+			return err
 		}
 		// The cap (SF-2e): a REVERSAL is planned here, under the lock just taken, so the remainder it reads (the
 		// invoice less every memo already linked to it) cannot change before this memo's row is inserted. A second

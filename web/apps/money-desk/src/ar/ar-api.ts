@@ -12,6 +12,7 @@
 import {
   staffBilling,
   staffBranches,
+  staffGl,
   staffTill,
   type ApiClient,
   type BillingAddCustomerNoteInput,
@@ -23,6 +24,9 @@ import {
   type BillingARWorklistResponse,
   type BillingCreateHoldRequest,
   type BillingCreditHold,
+  type BillingCreditMemoInput,
+  type BillingCreditMemoQuote,
+  type BillingCreditMemoResult,
   type BillingCreditHoldPage,
   type BillingCustomerWorkspace,
   type BillingInvoiceDetail,
@@ -233,5 +237,50 @@ export class ArApi {
   // a drift makes the panel refuse to render.
   statementPreview(customerId: string, statementId: string): Promise<Result<BillingStatementPreview>> {
     return staffBilling.billingGetStatementPreview(this.#client, customerId, statementId);
+  }
+
+  // Issue a credit memo (FW1-12): the money the dealer gives back, against the
+  // account or against one invoice. Manager-gated on the server; the key makes a
+  // double press one credit and not two. The server decides the tax, the cap and
+  // whether the credit parks for a second pair of eyes.
+  issueCreditMemo(input: BillingCreditMemoInput): Promise<Result<BillingCreditMemoResult>> {
+    return staffBilling.billingIssueCreditMemo(this.#client, input);
+  }
+
+  /**
+   * What a credit against one invoice would come to, and how much room that invoice has left
+   * (FW1-12 r3): the room before tax and with it, and the credit's own subtotal, tax and total.
+   *
+   * The figures are the SERVER's. The desk never works out a tax and never guesses a cap: the
+   * balance it used to show is what is owed, not what may be credited, and a paid invoice still has
+   * a room. The amount is a positive magnitude before tax, exactly as the credit takes it; zero
+   * prices the whole of what is left.
+   */
+  quoteCreditMemo(input: {
+    customerId: string;
+    branchId: string;
+    invoiceId: string;
+    amountCents: number;
+  }): Promise<Result<BillingCreditMemoQuote>> {
+    return staffBilling.billingQuoteCreditMemo(this.#client, {
+      customer_id: input.customerId,
+      branch_id: input.branchId,
+      invoice_id: input.invoiceId,
+      amount_cents: input.amountCents,
+    });
+  }
+
+  /**
+   * The branch's maker-checker threshold (gl_policy.je_approval_threshold_cents), read the way the
+   * credit route reads it: the branch's own row over the org default, which is the same read
+   * GET /api/v1/gl/policy serves.
+   *
+   * The form needs the number to say what the rail will do BEFORE the press. Null when the read
+   * fails: the desk then says nothing about approval rather than guess, and the server still decides.
+   */
+  async creditApprovalThreshold(branchId: string): Promise<number | null> {
+    const policy = await staffGl.glGetPolicy(this.#client, { branch_id: branchId });
+    if (!policy.ok) return null;
+    return policy.value.je_approval_threshold_cents;
   }
 }
