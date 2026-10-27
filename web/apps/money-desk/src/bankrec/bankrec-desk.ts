@@ -431,13 +431,27 @@ export class BankrecDesk {
       this.#host.repaint();
       return;
     }
-    await this.#writeMonth(when.year, when.month, cents, typed === "" ? false : cents === 0);
+    const typedZero = typed === "" ? false : cents === 0;
+    await this.#writeMonth(when.year, when.month, cents, typedZero);
   }
 
   async #refreshMonth(row: BankRecReconciliation): Promise<void> {
     if (this.#busy) return;
     this.#clearMessages();
-    await this.#writeMonth(row.year, row.month, row.statement_balance_cents, false);
+    this.#busy = true;
+    this.#host.repaint();
+    const answer = await this.#api.refreshReconciliation(this.#accountId, row.year, row.month);
+    this.#busy = false;
+    if (!answer.ok) {
+      this.#error = refusalWords("open", answer.error, answer.status ?? 0);
+      this.#host.repaint();
+      return;
+    }
+    const got = answer.value;
+    const name = periodWords(got.year, got.month);
+    this.#notice = `${name} is open: the difference is worked out against the ledger as it stands now.`;
+    await this.#loadRecons();
+    this.#host.repaint();
   }
 
   async #writeMonth(year: number, month: number, cents: number, typedZero: boolean): Promise<void> {

@@ -153,10 +153,10 @@ func TestServeStartsNoScheduler(t *testing.T) {
 		}
 	}
 
-	// The positive control: the worker starts exactly the five loops.
+	// The positive control: the worker starts exactly the six loops.
 	workerRuns := loopRunSites["worker"]
-	if len(workerRuns) != 5 {
-		t.Fatalf("worker starts %d loop Run sites (%v), want 5 (events dispatcher, sms dispatcher, jobs runner, retention, reconciler)", len(workerRuns), workerRuns)
+	if len(workerRuns) != 6 {
+		t.Fatalf("worker starts %d loop Run sites (%v), want 6 (events dispatcher, dead letter retry, sms dispatcher, jobs runner, retention, reconciler)", len(workerRuns), workerRuns)
 	}
 	// No other function starts a loop.
 	for fn, sites := range loopRunSites {

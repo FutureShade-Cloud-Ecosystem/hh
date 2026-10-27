@@ -235,6 +235,10 @@ test("the chart of accounts answers the contract's page, creates an account and 
   refused(await call(IDS.controller, "POST", "/api/v1/gl/accounts/9999/deactivate"), 404, "gl: not found");
   // 1300 sits on the parked insurance journal, so it cannot be deactivated while that is a draft.
   refused(await call(IDS.controller, "POST", "/api/v1/gl/accounts/1300/deactivate"), 409, "gl: account is referenced by DRAFT journal(s); cannot deactivate");
+  // 1100 is free of drafts, but the seeded posting rules point at it (FW1-09a): the refusal names them.
+  const guarded = await call(IDS.controller, "POST", "/api/v1/gl/accounts/1100/deactivate");
+  refused(guarded, 409, "need it; deactivating it would stop those postings");
+  assert.ok(guarded.json.error.includes("the posting rules invoice.finalized (ar), payment.bounced (ar), payment.received (ar), payment.reversed (ar)"), guarded.json.error);
 });
 
 test("a journal posts below the threshold, parks at or over it, and every refusal is the core's sentence in the core's order", async () => {
@@ -266,15 +270,19 @@ test("a journal posts below the threshold, parks at or over it, and every refusa
 
 test("void, reverse and approve answer the contract's shapes and refuse in the core's words", async () => {
   await reset();
-  const posted = "7a1e0000-0000-4000-9000-000000000004";
+  const posted = IDS.opening;
   const rev = await call(IDS.controller, "POST", `/api/v1/gl/journals/${posted}/reverse`);
   assert.equal(rev.status, 201);
   holds("GlJournal", rev.json);
   assert.equal(rev.json.source, "ADJUSTMENT");
   assert.equal(rev.json.reverses_journal_id, posted);
-  assert.equal(rev.json.memo, "Reversal of entry #4");
+  assert.equal(rev.json.memo, "Reversal of entry #1");
   const original = (await call(IDS.controller, "GET", `/api/v1/gl/journals/${posted}`)).json;
   assert.deepEqual(rev.json.lines.map((l) => [l.account_code, l.debit_cents, l.credit_cents]), original.lines.map((l) => [l.account_code, l.credit_cents, l.debit_cents]));
+  // The guards (FW1-09a): a journal a module posted is not reversed from the ledger and names its module
+  // (the till's journal files under its topic key), and a journal is reversed once.
+  refused(await call(IDS.controller, "POST", `/api/v1/gl/journals/${IDS.till}/reverse`), 409, "not by a person in the ledger; it cannot be reversed from here");
+  refused(await call(IDS.controller, "POST", `/api/v1/gl/journals/${posted}/reverse`), 409, "was already reversed; a journal can be reversed once");
   refused(await call(IDS.controller, "POST", `/api/v1/gl/journals/${IDS.j1}/reverse`), 409, "gl: only a POSTED journal can be reversed");
   refused(await call(IDS.controller, "POST", `/api/v1/gl/journals/${posted}/void`), 409, "gl: only a DRAFT journal can be voided (POSTED journals must be reversed)");
   const voided = await call(IDS.controller, "POST", `/api/v1/gl/journals/${IDS.j2}/void`);
@@ -421,4 +429,58 @@ test("the trial balance takes a month and a year, and a month shows that period'
   const september = (await call(IDS.controller, "GET", "/api/v1/gl/trial-balance?year=2026&month=9")).json;
   assert.equal(september.rows.length, 0);
   refused(await call(IDS.controller, "GET", "/api/v1/gl/trial-balance?branch_id=nope"), 400, "invalid branch_id");
+});
+
+test("the posting queue answers the Controller's list and the banner's counts, and the list is the Controller's alone", async () => {
+  await reset();
+  const empty = await call(IDS.controller, "GET", "/api/v1/gl/posting-queue/count");
+  assert.equal(empty.status, 200);
+  holds("GlPostingQueueCounts", empty.json);
+  assert.deepEqual(empty.json, { waiting: 0, dead: 0 });
+  const items = [
+    {
+      event_id: "d0560000-0000-4000-9000-0000000000f1",
+      topic: "payment.received",
+      document: "d0560000-0000-4000-9000-0000000000f2",
+      status: "PENDING",
+      attempts: 2,
+      last_error: "gl: no fiscal period for 2027-01",
+      occurred_at: "2026-03-12T10:00:00Z",
+    },
+    {
+      event_id: "d0560000-0000-4000-9000-0000000000f3",
+      topic: "ar.invoice.finalized",
+      document: "d0560000-0000-4000-9000-0000000000f4",
+      status: "DEAD",
+      attempts: 5,
+      last_error: "gl: account \"2200\" is inactive; cannot post",
+      occurred_at: "2026-03-12T11:00:00Z",
+    },
+    {
+      event_id: "d0560000-0000-4000-9000-0000000000f5",
+      topic: "payment.received",
+      document: "d0560000-0000-4000-9000-0000000000f6",
+      status: "PENDING",
+      attempts: 0,
+      last_error: "",
+      occurred_at: new Date().toISOString(),
+    },
+  ];
+  const set = await fetch(`${base}/_stub/posting-queue`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) });
+  assert.equal(set.status, 200);
+  const list = await call(IDS.controller, "GET", "/api/v1/gl/posting-queue");
+  assert.equal(list.status, 200);
+  holds("GlPostingQueuePage", list.json);
+  assert.deepEqual(list.json.items, items);
+  const counts = await call(IDS.controller, "GET", "/api/v1/gl/posting-queue/count");
+  assert.equal(counts.status, 200);
+  holds("GlPostingQueueCounts", counts.json);
+  assert.deepEqual(counts.json, { waiting: 1, dead: 1 });
+  refused(await call(IDS.generalManager, "GET", "/api/v1/gl/posting-queue"), 403, "gl: only the Financial Controller may read the posting queue");
+  refused(await call(IDS.manager, "GET", "/api/v1/gl/posting-queue"), 403, "Forbidden");
+  const gmCounts = await call(IDS.generalManager, "GET", "/api/v1/gl/posting-queue/count");
+  assert.equal(gmCounts.status, 200);
+  assert.deepEqual(gmCounts.json, { waiting: 1, dead: 1 });
+  refused(await call(IDS.manager, "GET", "/api/v1/gl/posting-queue/count"), 403, "gl: caller cannot access this branch");
+  await reset();
 });

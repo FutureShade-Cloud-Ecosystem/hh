@@ -16,6 +16,7 @@ export const IDS = {
   controller: "de110000-0000-4000-9000-000000000008",
   sales: "de110000-0000-4000-9000-000000000001",
   manager: "de110000-0000-4000-9000-000000000002",
+  generalManager: "de110000-0000-4000-9000-000000000009",
   pointLoma: "b0000000-0000-4000-8000-000000000001",
   julian: "b0000000-0000-4000-8000-000000000002",
   fr1: "2f6a1c00-0000-4000-9000-0000000000f1",
@@ -24,6 +25,10 @@ export const IDS = {
   freight1: "2f6a1c00-0000-4000-9000-0000000000b1",
   freight2: "2f6a1c00-0000-4000-9000-0000000000b2",
   j1: "7a1e0000-0000-4000-9000-000000000001",
+  // The Opening balances journal carries its own id: sharing j1's made the panel read the draft whenever
+  // the register's JE-0001 button selected it (the id is the lookup key).
+  opening: "7a1e0000-0000-4000-9000-00000000000a",
+  till: "7a1e0000-0000-4000-9000-000000000004",
   j2: "7a1e0000-0000-4000-9000-000000000002",
   payRec: "de110000-0000-4000-9000-000000000007",
   // Period ids carry their month in the last two digits; the stub's clock stands in the ninth.
@@ -49,6 +54,40 @@ const RETAINED_EARNINGS = "3900";
 // The approval threshold the stub's policy row carries: the org default of the core's seed.
 const THRESHOLD_CENTS = 500000;
 const NOW = Date.UTC(2026, 8, 1, 9, 0, 0);
+
+// The seeded posting rules the chart's accounts carry (0007, 0032, 0426), code to its rules as the core
+// prints them (event_type, then line_role). The deactivation refusal reads this.
+const RULES = {
+  "1000": ["payment.bounced (bank)"],
+  "1100": ["invoice.finalized (ar)", "payment.bounced (ar)", "payment.received (ar)", "payment.reversed (ar)"],
+  "1200": ["inventory.adjusted (inventory)", "order.fulfilled (inventory)", "po.received (inventory)"],
+  "4000": ["invoice.finalized (revenue)"],
+  "5000": ["order.fulfilled (cogs)"],
+  "5200": ["inventory.adjusted (expense)"],
+};
+
+// The module behind a journal the ledger did not post, mirroring the core's systemJournalOwner: the source
+// names the module where it can, the idempotency key's prefix where several writers share a source.
+const SOURCE_OWNER = {
+  INVOICE: "the invoicing module",
+  PAYMENT: "the payments module",
+  FULFILLMENT: "the fulfilment module",
+  PO_RECEIPT: "the purchasing module",
+  CLOSING: "the year end close",
+};
+const KEY_OWNER = [
+  ["bankrec:", "the bank reconciliation module"],
+  ["landedcost.", "the landed cost module"],
+  ["holdback-release:", "the holdback module"],
+  ["till.session.completed:", "the till module"],
+];
+function systemOwner(j) {
+  if (SOURCE_OWNER[j.source] !== undefined) return SOURCE_OWNER[j.source];
+  for (const [prefix, owner] of KEY_OWNER) {
+    if ((j.idempotency_key ?? "").startsWith(prefix)) return owner;
+  }
+  return "another module";
+}
 
 const FY = 2026;
 const stamp = (hoursAgo) => new Date(Date.UTC(2026, 8, 1, 9, 0, 0) - hoursAgo * 3_600_000).toISOString();
@@ -182,6 +221,7 @@ function fresh() {
         status: "PENDING",
       },
     ],
+    postingQueue: [],
     journals: [
       journal(IDS.j1, 5, "MANUAL", "Insurance premium paid ahead for the year (demo)", "DRAFT", IDS.pointLoma, IDS.manager, 30, [
         ["1300", 750000, 0],
@@ -194,7 +234,7 @@ function fresh() {
       journal("7a1e0000-0000-4000-9000-000000000004", 4, "ADJUSTMENT", "Till over/short", "POSTED", IDS.pointLoma, IDS.manager, 200, [
         ["1000", 2500, 0],
         ["5200", 0, 2500],
-      ]),
+      ], { idempotency_key: "till.session.completed:s-sept" }),
       journal("7a1e0000-0000-4000-9000-000000000003", 3, "PAYMENT", "Payment received", "POSTED", IDS.pointLoma, null, 300, [
         ["1000", 500000, 0],
         ["1100", 0, 500000],
@@ -203,7 +243,7 @@ function fresh() {
         ["1100", 1200000, 0],
         ["4000", 0, 1200000],
       ]),
-      journal("7a1e0000-0000-4000-9000-000000000001", 1, "MANUAL", "Opening balances", "POSTED", IDS.pointLoma, IDS.manager, 500, [
+      journal(IDS.opening, 1, "MANUAL", "Opening balances", "POSTED", IDS.pointLoma, IDS.manager, 500, [
         ["1000", 2000000, 0],
         ["3000", 0, 2000000],
       ]),
@@ -270,6 +310,7 @@ export function createGlWorld() {
     try {
       const sub = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8")).sub;
       if (sub === IDS.controller) return { id: sub, role: "FINANCIAL_CONTROLLER", tier: 1, global: true, level: "admin" };
+      if (sub === IDS.generalManager) return { id: sub, role: "GENERAL_MANAGER", tier: 1, global: true, level: "admin" };
       if (sub === IDS.payRec) return { id: sub, role: "PAYABLES_RECEIVABLES", tier: 2, global: true, level: "work" };
       if (sub === IDS.manager) return { id: sub, role: "SALES_MANAGER", tier: 2, global: false, level: "read" };
       return { id: sub, role: "INSIDE_SALES", tier: 3, global: false, level: "read" };
@@ -383,6 +424,12 @@ export function createGlWorld() {
       if (account === undefined) return say(404, "gl: not found");
       const inUse = world.journals.some((j) => j.status === "DRAFT" && j.lines.some((l) => l.account_code === account.code));
       if (inUse) return say(409, "gl: account is referenced by DRAFT journal(s); cannot deactivate");
+      // The core refuses an account an active posting rule points at, naming each rule's topic and role
+      // (FW1-09a); the seeded rules are mirrored in RULES below.
+      const rules = RULES[account.code];
+      if (rules !== undefined) {
+        return say(409, `gl: account ${account.code} cannot be deactivated: the posting rules ${rules.join(", ")} need it; deactivating it would stop those postings`);
+      }
       account.is_active = false;
       return { status: 200, body: account };
     }
@@ -446,6 +493,15 @@ export function createGlWorld() {
       }
       if (act[2] === "reverse") {
         if (j.status !== "POSTED") return say(409, `gl: only a POSTED journal can be reversed (status=${j.status})`);
+        // The core's FW1-09a guards, in its order: a module's journal is not reversed from the ledger (a
+        // reversal itself never is), and a journal is reversed once.
+        if (j.source !== "MANUAL") {
+          if (j.reverses_journal_id !== undefined) return say(409, `gl: entry #${j.entry_no} is itself a reversal; a reversal cannot be reversed`);
+          return say(409, `gl: entry #${j.entry_no} was posted by ${systemOwner(j)}, not by a person in the ledger; it cannot be reversed from here`);
+        }
+        if (world.journals.some((x) => x.reverses_journal_id === j.id)) {
+          return say(409, `gl: entry #${j.entry_no} was already reversed; a journal can be reversed once`);
+        }
         const made = insertJournal({
           source: "ADJUSTMENT",
           memo: `Reversal of entry #${j.entry_no}`,
@@ -509,6 +565,26 @@ export function createGlWorld() {
       return made.journal === undefined ? made : { status: 201, body: made.journal };
     }
 
+    // the posting queue (FW1-02): the Controller's list and the banner's counts
+    if (m === "GET" && path === "/api/v1/gl/posting-queue") {
+      const refused = gate(caller, "admin");
+      if (refused !== null) return refused;
+      if (caller.role !== "FINANCIAL_CONTROLLER") return say(403, "gl: only the Financial Controller may read the posting queue");
+      return { status: 200, body: { items: world.postingQueue } };
+    }
+    if (m === "GET" && path === "/api/v1/gl/posting-queue/count") {
+      const refused = gate(caller, "read");
+      if (refused !== null) return refused;
+      if (!caller.global) return say(403, "gl: caller cannot access this branch");
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      return {
+        status: 200,
+        body: {
+          waiting: world.postingQueue.filter((r) => r.status === "PENDING" && ((r.attempts ?? 0) > 0 || Date.parse(r.occurred_at ?? "") <= cutoff)).length,
+          dead: world.postingQueue.filter((r) => r.status === "DEAD").length,
+        },
+      };
+    }
     // periods
     if (m === "GET" && path === "/api/v1/gl/periods") {
       const refused = gate(caller, "read");
@@ -735,6 +811,11 @@ export function createGlWorld() {
     if (req.method === "POST" && path === "/_stub/legacy-import") {
       world.legacyImport = String(JSON.parse(bodyText || "{}").source ?? "");
       return { status: 200, body: { ok: true, source: world.legacyImport } };
+    }
+    if (req.method === "POST" && path === "/_stub/posting-queue") {
+      const asked = JSON.parse(bodyText || "{}");
+      world.postingQueue = Array.isArray(asked.items) ? asked.items : [];
+      return { status: 200, body: { ok: true, count: world.postingQueue.length } };
     }
     if (req.method === "GET" && path === "/api/v1/branches") return { status: 200, body: branches() };
     const caller = callerOf(req);

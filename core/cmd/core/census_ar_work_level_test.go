@@ -33,6 +33,7 @@ func TestCensus_ReceivablesWorkLevelRoutes(t *testing.T) {
 		// SF-2l: applying the money a reversal holds is a manager act, like the reversal itself.
 		{"POST", "/api/v1/ar/payments/{id}/reapply", "manage", "money-desk"},
 		{"GET", "/api/v1/ar/payments/{id}/held", "manage", "money-desk"},
+		{"POST", "/api/v1/ar/payments/{id}/payout", "manage", "money-desk"},
 	}
 	for _, w := range want {
 		found := false
