@@ -105,7 +105,8 @@ test("End Session opens the close: movements, a blind count by denomination, the
   await complete.click();
 
   // The close lands, the wizard says so, and Done resets the till chrome.
-  await expect(page.getByText("Till closed")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Till closed" })).toBeVisible();
+  await expect(page.getByTestId("till-done-step")).toContainText("Till closed and reconciled.");
   await expect(completeCalls).toHaveLength(1);
   await page.getByTestId("till-done").click();
   await expect(dialog).not.toBeVisible();

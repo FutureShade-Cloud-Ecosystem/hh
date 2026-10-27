@@ -1775,7 +1775,7 @@ function tillSessionDetail(row) {
     float_cents: row.float_cents,
     blind_close: false,
     tenders: [],
-    movements: [],
+    movements: row.movements ?? [],
   };
 }
 
@@ -2116,7 +2116,47 @@ const server = createServer(async (request, response) => {
     }
     const sessionId = path.split("/")[5];
     if (sessionId !== DRAWER.session_id) {
-      respondJson(response, 404, { error: "no such till session" });
+      // The counter drawer answers in the core's own shape: expected per
+      // method over the movement vocabulary, the counted actuals after the
+      // blind count, and the cash summary with the float in the math. This
+      // route sits ahead of the counter section, so the caller's grant comes
+      // from the bearer's own account, the same map callerOf reads.
+      const who = callerFromRequest(request);
+      const callerBranchHere = who === null ? undefined : ACCOUNT_BRANCH[who.account.user_id];
+      const row = [...drawers.values()].find((candidate) => candidate.id === sessionId) ?? null;
+      if (row === null) {
+        respondJson(response, 404, { error: "no such till session" });
+        return;
+      }
+      if (row.branch_id !== callerBranchHere) {
+        respondJson(response, 403, { error: "that drawer is not one your grant reaches" });
+        return;
+      }
+      const expected = { CASH: row.float_cents, CHEQUE: 0, CARD: 0, EFT: 0, OTHER: 0 };
+      for (const [method, cents] of Object.entries(row.expectedByMethod)) {
+        expected[method] = (expected[method] ?? 0) + cents;
+      }
+      const countedCash = row.counted?.CASH ?? 0;
+      const perTender = Object.entries(expected)
+        .filter(([method, cents]) => cents !== 0 || (row.counted?.[method] ?? 0) !== 0)
+        .map(([method, cents]) => ({
+          method,
+          expected_cents: cents,
+          actual_cents: row.counted?.[method] ?? 0,
+          variance_cents: (row.counted?.[method] ?? 0) - cents,
+          lodged_cents: row.lodgedByMethod[method] ?? 0,
+        }));
+      respondJson(response, 200, {
+        session_id: row.id,
+        per_tender: perTender,
+        cash: {
+          opening_float_cents: row.float_cents,
+          expected_cents: expected.CASH,
+          counted_cents: countedCash,
+          over_short_cents: countedCash - expected.CASH,
+        },
+        closing_float_cents: row.closing_float_cents,
+      });
       return;
     }
     respondJson(response, 200, {
@@ -2335,6 +2375,15 @@ const server = createServer(async (request, response) => {
         opened_by: caller.userId,
         float_cents: floatCents,
         opened_at: "2026-01-01T00:00:00Z",
+        // FW1-13: the close flow's facts. expectedByMethod holds the drawer
+        // math's per method sums (captured tender legs, then the movements'
+        // deltas), lodgedByMethod the banked sums, movements the drawer
+        // movements in order, counted the posted blind count.
+        expectedByMethod: {},
+        lodgedByMethod: {},
+        movements: [],
+        counted: null,
+        closing_float_cents: 0,
       };
       drawers.set(branchId, row);
       respondJson(response, 201, { id: row.id, status: "OPEN" });
@@ -2354,6 +2403,161 @@ const server = createServer(async (request, response) => {
       return;
     }
     respondJson(response, 200, tillSessionDetail(row));
+    return;
+  }
+
+  // FW1-13: the close flow's routes, in the core's own shapes and words.
+  // POST movements records a drawer movement and moves the expected math with
+  // it (a paid in raises the method's expected, a paid out, a drop and a
+  // lodgement lower it; a lodgement also lands in the lodged sums).
+  const tillMovementMatch = path.match(/^\/api\/v1\/till\/sessions\/([^/]+)\/movements$/);
+  if (request.method === "POST" && tillMovementMatch !== null) {
+    readBody(request, (parsed) => {
+      const row = [...drawers.values()].find((candidate) => candidate.id === tillMovementMatch[1]) ?? null;
+      if (row === null) {
+        respondJson(response, 404, { error: "no such till session" });
+        return;
+      }
+      if (row.branch_id !== callerBranch) {
+        respondJson(response, 403, { error: "that drawer is not one your grant reaches" });
+        return;
+      }
+      if (row.status !== "OPEN") {
+        respondJson(response, 409, { error: "till: movements require an OPEN session" });
+        return;
+      }
+      const type = typeof parsed.movement_type === "string" ? parsed.movement_type : "";
+      if (!["PAID_IN", "PAID_OUT", "DROP", "LODGEMENT"].includes(type)) {
+        respondJson(response, 400, { error: "unknown movement_type" });
+        return;
+      }
+      if (!Number.isInteger(parsed.amount_cents) || parsed.amount_cents <= 0) {
+        respondJson(response, 422, { error: "till: movement amount_cents must be > 0" });
+        return;
+      }
+      const method = typeof parsed.method === "string" && parsed.method !== "" ? parsed.method : "CASH";
+      row.movements.push({
+        movement_type: type,
+        method,
+        amount_cents: parsed.amount_cents,
+        reason: typeof parsed.reason === "string" ? parsed.reason : "",
+        reference: typeof parsed.reference === "string" ? parsed.reference : "",
+      });
+      if (type === "PAID_IN") {
+        row.expectedByMethod[method] = (row.expectedByMethod[method] ?? 0) + parsed.amount_cents;
+      } else {
+        row.expectedByMethod[method] = (row.expectedByMethod[method] ?? 0) - parsed.amount_cents;
+      }
+      if (type === "LODGEMENT") {
+        row.lodgedByMethod[method] = (row.lodgedByMethod[method] ?? 0) + parsed.amount_cents;
+      }
+      respondJson(response, 201, { status: "ok" });
+    });
+    return;
+  }
+
+  // POST count posts the blind count: the session turns COUNTED, the actuals
+  // and the kept float are on record, and the optional denomination tally must
+  // equal the counted cash, the core's own rule.
+  const tillCountMatch = path.match(/^\/api\/v1\/till\/sessions\/([^/]+)\/count$/);
+  if (request.method === "POST" && tillCountMatch !== null) {
+    readBody(request, (parsed) => {
+      const row = [...drawers.values()].find((candidate) => candidate.id === tillCountMatch[1]) ?? null;
+      if (row === null) {
+        respondJson(response, 404, { error: "no such till session" });
+        return;
+      }
+      if (row.branch_id !== callerBranch) {
+        respondJson(response, 403, { error: "that drawer is not one your grant reaches" });
+        return;
+      }
+      if (row.status !== "OPEN") {
+        respondJson(response, 409, { error: "till: only an OPEN session can be counted" });
+        return;
+      }
+      const tenderRows = Array.isArray(parsed.tenders) ? parsed.tenders : [];
+      if (tenderRows.length === 0) {
+        respondJson(response, 422, { error: "till: a count carries the counted cash" });
+        return;
+      }
+      const counted = {};
+      for (const t of tenderRows) {
+        if (t && typeof t.method === "string" && Number.isInteger(t.actual_cents)) counted[t.method] = t.actual_cents;
+      }
+      const denoms = Array.isArray(parsed.closing_denominations) ? parsed.closing_denominations : [];
+      if (denoms.length > 0) {
+        const sum = denoms.reduce((acc, d) => acc + d.denomination_cents * d.quantity, 0);
+        if (sum !== (counted.CASH ?? 0)) {
+          respondJson(response, 422, {
+            error: `till: closing denomination total ${sum} must equal counted cash ${counted.CASH ?? 0}`,
+          });
+          return;
+        }
+      }
+      row.counted = counted;
+      row.closing_float_cents = typeof parsed.closing_float_cents === "number" ? parsed.closing_float_cents : 0;
+      row.status = "COUNTED";
+      respondJson(response, 200, { status: "COUNTED" });
+    });
+    return;
+  }
+
+  // POST complete closes a COUNTED session, with the core's own manager gate:
+  // the demo branch has no till_policy row, so the conservative default
+  // threshold of zero holds and any variance needs a manager's note.
+  const tillCompleteMatch = path.match(/^\/api\/v1\/till\/sessions\/([^/]+)\/complete$/);
+  if (request.method === "POST" && tillCompleteMatch !== null) {
+    readBody(request, (parsed) => {
+      const row = [...drawers.values()].find((candidate) => candidate.id === tillCompleteMatch[1]) ?? null;
+      if (row === null) {
+        respondJson(response, 404, { error: "no such till session" });
+        return;
+      }
+      if (row.branch_id !== callerBranch) {
+        respondJson(response, 403, { error: "that drawer is not one your grant reaches" });
+        return;
+      }
+      if (row.status !== "COUNTED") {
+        respondJson(response, 409, { error: `till: session ${row.id} is ${row.status}, not COUNTED` });
+        return;
+      }
+      const expectedCash = row.float_cents + (row.expectedByMethod.CASH ?? 0);
+      const overShort = (row.counted?.CASH ?? 0) - expectedCash;
+      const overThreshold = Math.abs(overShort) > 0;
+      if (overThreshold) {
+        const who = callerFromRequest(request);
+        const isManager = who !== null && typeof who.account?.tier === "number" && who.account.tier <= 2;
+        if (!isManager) {
+          respondJson(response, 403, {
+            error: `manager sign-off required for a $${(Math.abs(overShort) / 100).toFixed(2)} variance`,
+          });
+          return;
+        }
+        if (typeof parsed.override_notes !== "string" || parsed.override_notes.trim() === "") {
+          respondJson(response, 422, { error: "till: override_notes required for an over-threshold close" });
+          return;
+        }
+      }
+      drawers.delete(row.branch_id);
+      respondJson(response, 200, { status: "CLOSED" });
+    });
+    return;
+  }
+
+  // GET policy answers the demo dealer's policy: no row, so the core's
+  // conservative default (any variance routes to a manager).
+  if (request.method === "GET" && path === "/api/v1/till/policy") {
+    const branchId = url.searchParams.get("branch_id") ?? "";
+    if (branchId !== "" && branchId !== callerBranch) {
+      respondJson(response, 403, { error: "till: caller cannot access that branch's policy" });
+      return;
+    }
+    respondJson(response, 200, {
+      branch_id: branchId !== "" ? branchId : callerBranch,
+      variance_threshold_cents: 0,
+      close_grain: "SESSION",
+      require_blind_close: true,
+    });
     return;
   }
 
@@ -3025,6 +3229,13 @@ const server = createServer(async (request, response) => {
         discounts: discounted.discounts.length > 0 ? discounted.discounts : undefined,
       };
       sales.set(orderId, sale);
+      // FW1-13: every captured tender leg is money the drawer (or its rail)
+      // holds, the same sums the close's Z report counts as expected.
+      if (session && typeof session === "object" && session.expectedByMethod) {
+        for (const leg of tenders) {
+          session.expectedByMethod[leg.method] = (session.expectedByMethod[leg.method] ?? 0) + leg.amount_cents;
+        }
+      }
       if (depositCents > 0 && sale.balance_cents > 0) {
         // A deposit sale owes: it joins the pay balance world, held when it is a pay before release sale.
         addOwing({
@@ -3111,6 +3322,10 @@ const server = createServer(async (request, response) => {
       }
       const paymentId = nextDocNo("pay");
       order.payments.push({ payment_id: paymentId, method: parsed.method, amount_cents: balance });
+      // FW1-13: a collected balance is drawer money too, in the close's math.
+      if (session && typeof session === "object" && session.expectedByMethod) {
+        session.expectedByMethod[parsed.method] = (session.expectedByMethod[parsed.method] ?? 0) + balance;
+      }
       const wasHeld = order.held;
       order.held = false;
       const answer = {
