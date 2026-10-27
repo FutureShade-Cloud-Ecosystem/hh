@@ -5951,7 +5951,6 @@ type PosPolicy struct {
 	WorkspaceArrangement  string    `json:"workspace_arrangement"`
 	LookupPresentation    string    `json:"lookup_presentation"`
 	MarginVisibility      string    `json:"margin_visibility"`
-	BalanceVisibility     string    `json:"balance_visibility"`
 	SupplierDepositCancel string    `json:"supplier_deposit_cancel"`
 	QuickChipSet          *[]string `json:"quick_chip_set,omitempty"`
 }

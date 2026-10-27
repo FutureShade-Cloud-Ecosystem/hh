@@ -366,10 +366,13 @@ type Service struct {
 	// position is the dealer's account position policy gate (ar_invoice_policy.account_position_visibility,
 	// UX-97). Nil fails closed.
 	position PositionGate
-	tender   TenderTaker
-	credit   CreditGate
-	sig      SignatureProvider
-	tax      TaxAssessor
+	// surface is the same policy's visibility word read (standing.go): HIDDEN is the dealer's
+	// switch-off, the standing read's 403 (UX-97 item 208). Nil keeps the surface on.
+	surface PositionSurface
+	tender  TenderTaker
+	credit  CreditGate
+	sig     SignatureProvider
+	tax     TaxAssessor
 	// payInvoicer is the billing writer the Pay balance take raises an
 	// uninvoiced order's invoice through (pay_balance.go), the desk's own
 	// writer. Nil until wired; a take that needs a raise refuses (503) rather

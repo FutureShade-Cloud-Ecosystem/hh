@@ -73,12 +73,10 @@ func (s *Service) UpdatePolicy(ctx context.Context, p PosPolicy) (PosPolicy, err
 		return PosPolicy{}, err
 	}
 	p.MarginVisibility = mv
-	// 0181: the past-due balance gate rides the same admin write, same posture.
-	bv, err := validateBalanceVisibility(p.BalanceVisibility)
-	if err != nil {
-		return PosPolicy{}, err
-	}
-	p.BalanceVisibility = bv
+	// 0181's balance_visibility knob is RETIRED (UX-97 item 208): the dealer's ONE account position
+	// policy decides who sees a customer's balance on every route, the till's standing included.
+	// The field is gone from the policy, so a settings write that still carries the key has it
+	// ignored by the decode, and the column it used to feed keeps its stored value untouched.
 	chips, err := validateQuickChipSet(p.QuickChipSet)
 	if err != nil {
 		return PosPolicy{}, err

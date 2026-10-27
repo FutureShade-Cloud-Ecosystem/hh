@@ -10,7 +10,6 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import { SettingsApi } from "../src/settings-api.js";
 import {
   BRAND_WAITS_WORDS,
-  balanceVisibilityWord,
   counterPolicyRefusalWords,
   chipSetError,
   linePresentationWord,
@@ -63,9 +62,6 @@ test("the visibility and presentation classes render as words, never a raw enum"
   assert.equal(marginVisibilityWord("MANAGER_UP"), "Managers and above");
   assert.equal(marginVisibilityWord("ALL_STAFF"), "Everyone");
   assert.equal(marginVisibilityWord("HIDDEN"), "Hidden");
-  assert.equal(balanceVisibilityWord("ALL_STAFF"), "Everyone");
-  assert.equal(balanceVisibilityWord("MANAGER_UP"), "Managers and above");
-  assert.equal(balanceVisibilityWord("HIDDEN"), "Hidden");
   assert.equal(linePresentationWord("LINES"), "Lines");
   assert.equal(linePresentationWord("CARDS"), "Cards");
   assert.equal(workspaceArrangementWord("LOOKUP_LEFT"), "Lookup on the left, the sale on the right");
@@ -146,7 +142,6 @@ test("the counter policy read and write ride the pos policy route", async () => 
       workspace_arrangement: "LOOKUP_LEFT",
       lookup_presentation: "CARDS",
       margin_visibility: "MANAGER_UP",
-      balance_visibility: "ALL_STAFF",
       quick_chip_set: ["Pavers"],
     },
   });

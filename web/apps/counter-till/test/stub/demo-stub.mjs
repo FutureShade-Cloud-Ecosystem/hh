@@ -3766,7 +3766,6 @@ const server = createServer(async (request, response) => {
       // through the cost and margin configuration): the SURFACE's refusal is
       // the thing under test, not the glance's.
       margin_visibility: "MANAGER_UP",
-      balance_visibility: "ALL_STAFF",
       // The cancelled special order's deposit disposition: the ruling's default.
       supplier_deposit_cancel: "CREDIT_BACK",
       quick_chip_set: ["Pavers", "Sand and base", "Walls"],

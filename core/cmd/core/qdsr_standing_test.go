@@ -220,7 +220,9 @@ func TestQDSRAccountStandingAnswersEveryCaseDistinctly(t *testing.T) {
 	// ONE BRANCH RULE (UX-97 item 208): the standing decides at the ACCOUNT's home branch, the
 	// dealer default for an unhomed account, exactly as the customer by-id read decides, so the
 	// till cannot contradict the customer read one screen over. An ALL_STAFF row at the till's
-	// own branch must not admit the clerk to an account whose own policy refuses them.
+	// own branch must not admit the clerk to an account whose own policy (here the dealer
+	// default, MANAGER_UP again) refuses them.
+	setPositionPolicy("MANAGER_UP")
 	setNorthAPolicy("ALL_STAFF")
 	code, body = qdsrGet(t, fx, sales, base+"&customer_id="+qdsrUnhomedPastDueID)
 	if u := qdsrJSON(t, code, body); u["standing"] != "withheld" || strings.TrimSpace(body) != `{"standing":"withheld"}` {

@@ -1280,19 +1280,22 @@ func (a posAgingAdapter) CustomerAging(ctx context.Context, customerID string) (
 // posAccountAdapter answers the counter's standing read whether an account exists FOR THIS CALLER,
 // through the customer module's by-id read, so the standing read stands behind the same reach fence
 // (the caller's branches, unhomed accounts visible, a global caller unfenced). An account the caller
-// cannot reach answers false exactly as an id nobody has, so the read's 404 carries no existence
-// signal and the hold and past-due figures behind it are never read for it. The caller is the
-// guard-stamped staff context on the request, never a request field.
+// cannot reach answers found=false exactly as an id nobody has, so the read's 404 carries no
+// existence signal and the hold and past-due figures behind it are never read for it. The branch
+// the read answers back is the account's home branch ("" unhomed): the standing decides the
+// position policy there, the account's own branch, exactly as the by-id read does (UX-97 item 208,
+// the one branch rule). The caller is the guard-stamped staff context on the request, never a
+// request field.
 type posAccountAdapter struct{ svc *customer.Service }
 
-func (a posAccountAdapter) AccountExists(ctx context.Context, customerID string) (bool, error) {
-	_, err := a.svc.GetAccount(ctx, customerID)
+func (a posAccountAdapter) AccountHomeBranch(ctx context.Context, customerID string) (string, bool, error) {
+	acc, err := a.svc.GetAccount(ctx, customerID)
 	switch {
 	case err == nil:
-		return true, nil
+		return acc.BranchID, true, nil
 	case errors.Is(err, customer.ErrNotFound):
-		return false, nil
+		return "", false, nil
 	default:
-		return false, err
+		return "", false, err
 	}
 }

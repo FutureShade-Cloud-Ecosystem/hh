@@ -40,13 +40,6 @@ export function marginVisibilityWord(v: string): string {
   return v;
 }
 
-export function balanceVisibilityWord(v: string): string {
-  if (v === "ALL_STAFF") return "Everyone";
-  if (v === "MANAGER_UP") return "Managers and above";
-  if (v === "HIDDEN") return "Hidden";
-  return v;
-}
-
 export function workspaceArrangementWord(v: string): string {
   if (v === "LOOKUP_LEFT") return "Lookup on the left, the sale on the right";
   if (v === "SALE_LEFT") return "Sale on the left, the lookup on the right";

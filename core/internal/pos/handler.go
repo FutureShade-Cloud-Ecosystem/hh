@@ -67,7 +67,8 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// The counter's key roster (dealer-configurable presentation curation, see hotkeys.go).
 	r.Handle("GET /api/v1/pos/hotkeys", g.RequireStaff(h.staff(h.hotkeys)))
 	// The Customer step's past-due FACT. requireStaff because the counter person is exactly who was
-	// asked to raise it; the dealer's balance_visibility gate decides what the bytes carry.
+	// asked to raise it; the dealer's account position policy decides what the bytes carry
+	// (UX-97 item 208: the one gate every staff read answers to).
 	r.Handle("GET /api/v1/pos/account-standing", g.RequireStaff(h.staff(h.accountStanding)))
 	// DIB-502 (rev-8 item 8): the suggested add-ons read, requireStaff; empty is an ordinary answer.
 	r.Handle("GET /api/v1/pos/addon-suggestions", g.RequireStaff(h.staff(h.addonSuggestions)))

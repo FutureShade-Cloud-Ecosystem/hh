@@ -7,10 +7,10 @@ package pos
 //
 // It did not. Before this, `DISPATCH_POLICY_CHANGED` was the ONLY `*_POLICY_CHANGED` action in the
 // program: the dispatch rules recorded who changed them and the counter rules did not, even though
-// pos_policy carries the two knobs with the sharpest consequences in the module, margin_visibility
-// and balance_visibility, which decide who may RECEIVE a dealer's own position and a customer's
-// past-due balance. A visibility gate that can be moved with no record of who moved it is a gate
-// with an untraceable off switch.
+// pos_policy carries the knobs with the sharpest consequences in the module, margin_visibility and
+// (until UX-97 item 208 retired it into the account position policy) balance_visibility, which
+// decided who may RECEIVE a dealer's own position and a customer's past-due balance. A visibility
+// gate that can be moved with no record of who moved it is a gate with an untraceable off switch.
 //
 // -- IT READS THE AUDIT TRAIL RATHER THAN A TABLE OF ITS OWN -------------------------------------
 //
@@ -148,7 +148,8 @@ func posPolicyChanges(before, after PosPolicy) []PolicyChange {
 	add("workspace_arrangement", before.WorkspaceArrangement, after.WorkspaceArrangement)
 	add("lookup_presentation", before.LookupPresentation, after.LookupPresentation)
 	add("margin_visibility", before.MarginVisibility, after.MarginVisibility)
-	add("balance_visibility", before.BalanceVisibility, after.BalanceVisibility)
+	// balance_visibility is the retired 0181 knob (UX-97 item 208): the account position policy
+	// decides the customer's balance surface now, so the diff stops naming it.
 	add("supplier_deposit_cancel", before.SupplierDepositCancel, after.SupplierDepositCancel)
 	add("quick_chip_set", strings.Join(before.QuickChipSet, ", "), strings.Join(after.QuickChipSet, ", "))
 	return out

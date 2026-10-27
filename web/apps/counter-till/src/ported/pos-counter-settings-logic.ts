@@ -39,7 +39,6 @@ export const POS_RULE_WORDS: Readonly<Record<string, string>> = Object.freeze({
   workspace_arrangement: 'Which panel opens on the left',
   lookup_presentation: 'How lookup results paint',
   margin_visibility: 'Who sees margin and profit',
-  balance_visibility: "Who sees a customer's past-due balance",
   quick_chip_set: 'The curated quick categories',
   counter_layout: 'Which counter a till opens on',
   supplier_deposit_cancel: "A cancelled special order's supplier deposit",
@@ -82,11 +81,9 @@ const ARRANGEMENT_WORDS: Readonly<Record<string, string>> = Object.freeze({
 });
 
 /**
- * The visibility vocabulary, shared by margin_visibility (0170) and balance_visibility (0181).
- *
- * ONE IDEA, TWO KNOBS: deliberately, and the server says so where it declares them: "a dealer
- * configuring the counter meets ONE idea about visibility, not two". Their DEFAULTS differ because
- * they protect opposite things; their words must not.
+ * The visibility vocabulary of margin_visibility (0170): who may receive the dealer's own margin
+ * and profit fields. A customer's past-due balance is NOT this vocabulary's business any more
+ * (UX-97 item 208): the dealer's ONE account position policy decides that on every route.
  */
 const VISIBILITY_WORDS: Readonly<Record<string, string>> = Object.freeze({
   MANAGER_UP: 'Managers and above',
@@ -104,7 +101,6 @@ export const POS_HISTORY_WORDS: SettingsVocabulary = Object.freeze({
     lookup_presentation: LOOKUP_PRESENTATION_WORDS,
     workspace_arrangement: ARRANGEMENT_WORDS,
     margin_visibility: VISIBILITY_WORDS,
-    balance_visibility: VISIBILITY_WORDS,
     supplier_deposit_cancel: SUPPLIER_DEPOSIT_CANCEL_WORDS,
     // restocking_fee_bps and workspace_split_pct are integers, and a number is already the word for
  // itself. quick_chip_set is a dealer's OWN category names joined by the server: translating a
