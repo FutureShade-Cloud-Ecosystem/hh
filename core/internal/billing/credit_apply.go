@@ -391,24 +391,35 @@ SELECT balance_cents, COALESCE(org_id::text, ''), branch_id::text
 			}
 			return CreditApplication{}, fmt.Errorf("credit apply: read the memo: %w", err)
 		}
+		// The branch reach is judged directly after the row is read, BEFORE the not open judgement
+		// (S6 P1-3): a spent credit at another branch answers the same no such credit as an unknown
+		// one, so the credit's state never leaks across the wall.
+		if in.CanAccessBranch != nil && !in.CanAccessBranch(creditBranch) {
+			return CreditApplication{}, NoSuchCreditError{CreditID: in.CreditID}
+		}
 		if balance >= 0 {
 			return CreditApplication{}, CreditApplicationNotOpen
 		}
 		creditOpen = -balance
 	case CreditKindAccount:
-		var anchorTxnType, anchorSourceType, anchorRef string
+		var groupSourceType, groupRef string
 		err := tx.QueryRow(ctx, `
-SELECT txn_type, COALESCE(source_type, ''), COALESCE(source_ref_id, id)::text, COALESCE(branch_id::text, '')
+SELECT COALESCE(source_type, ''), COALESCE(source_ref_id, id)::text, COALESCE(branch_id::text, '')
   FROM customer_transactions
  WHERE id = $1::uuid AND customer_id = $2::uuid AND COALESCE(source_type, '') <> 'invoice'
    AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')
    FOR UPDATE`,
-			in.CreditID, in.CustomerID).Scan(&anchorTxnType, &anchorSourceType, &anchorRef, &creditBranch)
+			in.CreditID, in.CustomerID).Scan(&groupSourceType, &groupRef, &creditBranch)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return CreditApplication{}, NoSuchCreditError{CreditID: in.CreditID}
 			}
 			return CreditApplication{}, fmt.Errorf("credit apply: read the account credit: %w", err)
+		}
+		// The reach is judged directly after the group's row is read, before any open figure
+		// judgement, the memo case's rule.
+		if in.CanAccessBranch != nil && !in.CanAccessBranch(creditBranch) {
+			return CreditApplication{}, NoSuchCreditError{CreditID: in.CreditID}
 		}
 		if err := tx.QueryRow(ctx, `
 SELECT COALESCE(SUM(amount_cents), 0)
@@ -418,21 +429,16 @@ SELECT COALESCE(SUM(amount_cents), 0)
    AND COALESCE(source_ref_id, id) = $3::uuid
    AND COALESCE(branch_id::text, '') = $4
    AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')`,
-			in.CustomerID, anchorSourceType, anchorRef, creditBranch).Scan(&creditOpen); err != nil {
+			in.CustomerID, groupSourceType, groupRef, creditBranch).Scan(&creditOpen); err != nil {
 			return CreditApplication{}, fmt.Errorf("credit apply: read the credit's group: %w", err)
 		}
 		if creditOpen >= 0 {
 			return CreditApplication{}, CreditApplicationNotOpen
 		}
 		creditOpen = -creditOpen
-		_ = anchorTxnType
 	}
 	if in.OrgID != "" && creditOrg != "" && creditOrg != in.OrgID {
 		return CreditApplication{}, httpx.BadRequestf("that credit belongs to another org")
-	}
-
-	if in.CanAccessBranch != nil && !in.CanAccessBranch(creditBranch) {
-		return CreditApplication{}, NoSuchCreditError{CreditID: in.CreditID}
 	}
 	if creditBranch != invBranch {
 		return CreditApplication{}, httpx.BadRequestf(
