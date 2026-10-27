@@ -172,30 +172,17 @@ func (h *Handler) moves(w http.ResponseWriter, r *http.Request, _ guards.StaffCa
 // the list is written as `[]` rather than JSON null, because "no pending lines" and "this field was
 // not populated" are different facts and a client must not have to guess which one it got.
 // controllerExceptions lists the pre receipt sales posted at a fallback (or
-// provisional $0.00) cost and not yet trued up (round 2, S3's P2): the
-// Controller's list ruling 82.4 asks for. Manager gated, branch fenced (the
-// service holds the branch reach rule).
+// provisional $0.00) cost and not yet trued up (round 2, S3's P2; round 3 org
+// + branch reach fence, FROM-PRINCIPAL 184): the Controller's list ruling 82.4
+// asks for. Manager gated, fenced to the caller's org first and then by branch
+// reach for a scoped caller.
 func (h *Handler) controllerExceptions(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	branchID, err := branchIDParam(r)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
-	// Round 2 (S3's P2): branch fenced. A scoped caller reads only a branch
-	// they reach, and their own scoped reach when they name none; a global
-	// caller reads any branch or the consolidated list.
-	if string(caller.Scope) != string(identity.ScopeGlobal) {
-		if branchID == "" {
-			if len(caller.Branches) > 0 {
-				branchID = caller.Branches[0]
-			}
-		}
-		if !caller.CanAccessBranch(branchID) {
-			httpx.Error(w, http.StatusForbidden, "inventory: this read reaches books your sign in does not cover")
-			return
-		}
-	}
-	rows, err := h.svc.ControllerExceptions(r.Context(), branchID)
+	rows, err := h.svc.ControllerExceptionsInOrg(r.Context(), caller.OrgID, reachFromRequest(r), branchID)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

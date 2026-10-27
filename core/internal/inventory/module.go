@@ -368,6 +368,33 @@ func (s *Service) ControllerExceptions(ctx context.Context, branchID string) ([]
 	return s.db().PreReceiptExceptions(ctx, branchID)
 }
 
+// ControllerExceptionsInOrg lists pre-receipt sales posted at a fallback cost and not yet trued up,
+// fenced to the caller's org first and then to the caller's branch reach (round 3, FROM-PRINCIPAL 184).
+// GLOBAL means every branch of the caller's own org, never another org's; a named branch outside the
+// caller's org answers not-found, and a named branch inside the org but outside a scoped caller's
+// reach answers forbidden.
+func (s *Service) ControllerExceptionsInOrg(ctx context.Context, orgID string, reach BranchReach, branchID string) ([]PreReceiptException, error) {
+	if orgID == "" {
+		return nil, badReq("inventory: the caller's org is required")
+	}
+	if branchID != "" {
+		in, err := s.BranchInOrg(ctx, orgID, branchID)
+		if err != nil {
+			return nil, err
+		}
+		if !in {
+			return nil, errNotFound
+		}
+		if _, err := fenceNamedBranch(reach, branchID); err != nil {
+			return nil, err
+		}
+	}
+	if reach.reachesNothing() {
+		return []PreReceiptException{}, nil
+	}
+	return s.repo.PreReceiptExceptionsInOrg(ctx, orgID, branchID, reach)
+}
+
 // - posting consumer registration -
 
 // InventoryTopics is the frozen set of outbox topics the inventory posting consumer owns. These do NOT overlap

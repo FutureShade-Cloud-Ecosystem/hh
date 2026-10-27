@@ -317,6 +317,56 @@ func (r *Repository) PreReceiptExceptions(ctx context.Context, branchID string) 
 	return r.queryPreReceiptExceptions(ctx, nil, branchID, "")
 }
 
+// PreReceiptExceptionsInOrg lists untrued provisional pre-receipt sales held to the caller's org
+// first and then to the caller's branch reach (round 3, FROM-PRINCIPAL 184). A GLOBAL caller
+// reaches every branch of its own org, never another org's; a scoped caller reaches only the
+// branches of its own org in reach.
+func (r *Repository) PreReceiptExceptionsInOrg(ctx context.Context, orgID, branchID string, reach BranchReach) ([]PreReceiptException, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if reach.reachesNothing() {
+		return []PreReceiptException{}, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT sm.id::text, COALESCE(sm.source_ref_id::text, ''), sm.product_id::text, sm.branch_id::text,
+		       sm.qty_base::float8, COALESCE(sm.unit_cost_cents, 0), COALESCE(sm.value_cents, 0),
+		       COALESCE(sm.metadata->>'fallback_source', 'LAST_KNOWN_COST'),
+		       to_char(sm.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		  FROM stock_moves sm
+		  JOIN locations l ON l.id = sm.branch_id AND l.loc_type = 'BRANCH'
+		 WHERE sm.move_type = 'SHIP'
+		   AND COALESCE(sm.metadata->>'provisional_cost', 'false') = 'true'
+		   AND l.org_id = $1::uuid
+		   AND ($2 = '' OR sm.branch_id = $2::uuid)
+		   AND ($3::uuid[] IS NULL OR sm.branch_id = ANY($3::uuid[]))
+		   AND NOT EXISTS (
+		       SELECT 1 FROM stock_moves rec
+		        WHERE rec.product_id = sm.product_id
+		          AND rec.branch_id = sm.branch_id
+		          AND rec.move_type = 'RECEIPT'
+		          AND rec.metadata->'trued_up_move_ids' ? sm.id::text
+		   )
+		 ORDER BY sm.occurred_at ASC, sm.id ASC`, orgID, branchID, reach.branchFilter())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PreReceiptException
+	for rows.Next() {
+		var ex PreReceiptException
+		if err := rows.Scan(
+			&ex.MoveID, &ex.OrderID, &ex.ProductID, &ex.BranchID,
+			&ex.QtyBase, &ex.ProvisionalUnitCostCents, &ex.ProvisionalValueCents,
+			&ex.FallbackSource, &ex.OccurredAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, ex)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repository) queryPreReceiptExceptions(ctx context.Context, tx pgx.Tx, branchID, productID string) ([]PreReceiptException, error) {
 	rows, err := r.q(tx).Query(ctx, `
 		SELECT sm.id::text, COALESCE(sm.source_ref_id::text, ''), sm.product_id::text, sm.branch_id::text,
