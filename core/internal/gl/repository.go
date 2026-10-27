@@ -1215,6 +1215,56 @@ func (r *Repository) PLBalances(ctx context.Context, year int) ([]TrialBalanceRo
 	return out, rows.Err()
 }
 
+// HeadOfficeBranchID answers the head office branch the company level lines
+// stamp (ruling 82.3): the Trenton (TRT) branch row. The gl_policy setting a
+// Controller may change lands with the FW1-08b migration; until then the
+// branch row IS the answer, and the migration's default will be its id.
+func (r *Repository) HeadOfficeBranchID(ctx context.Context) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var id string
+	err := r.pool.QueryRow(ctx,
+		`SELECT id::text FROM locations
+		  WHERE code = 'TRT' AND loc_type = 'BRANCH' AND is_active
+		  ORDER BY created_at LIMIT 1`).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", clientErr(409, "gl: no head office branch (TRT) is configured")
+	}
+	if err != nil {
+		return "", fmt.Errorf("gl: head office branch: %w", err)
+	}
+	return id, nil
+}
+
+// PLBalancesByBranch answers the year's P&L balances per account PER BRANCH (empty string = the
+// company level rows with no branch stamp), the basis of the year end's per branch closing entry.
+func (r *Repository) PLBalancesByBranch(ctx context.Context, year int) ([]PLBranchRow, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT account_code::text, account_name, account_type, normal_balance,
+		        COALESCE(branch_id::text,''), COALESCE(SUM(net_debit_cents),0)
+		 FROM v_gl_account_balances
+		 WHERE fiscal_year = $1 AND account_type IN ('REVENUE','EXPENSE')
+		 GROUP BY account_code, account_name, account_type, normal_balance, COALESCE(branch_id::text,'')
+		 ORDER BY COALESCE(branch_id::text,''), account_code`, year)
+	if err != nil {
+		return nil, fmt.Errorf("gl: pl balances by branch: %w", err)
+	}
+	defer rows.Close()
+	var out []PLBranchRow
+	for rows.Next() {
+		var row PLBranchRow
+		if err := rows.Scan(&row.AccountCode, &row.AccountName, &row.AccountType, &row.NormalBalance, &row.BranchID, &row.NetDebitCents); err != nil {
+			return nil, fmt.Errorf("gl: scan pl branch row: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 // - tie-out state (first-seen age) -
 
 func (r *Repository) UpsertTieout(ctx context.Context, subledger, accountCode, branchID string, subledgerCents, glCents int64, at time.Time) (TieoutState, error) {

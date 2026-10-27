@@ -346,11 +346,18 @@ func (s *Service) RunRecurring(ctx context.Context, id string) (Journal, error) 
 	}
 	// SourceRefID carries the template's id: the only MANUAL journals with a source ref are recurring runs, and
 	// the approve route reads it to name the template when it refuses an over-threshold run (ruling 108).
+	// FW1-08b (ruling 82.3): the run lands in its template's branch; the template branch column lands
+	// with the FW1-08b migration, so until then every run stamps the head office branch.
+	branch, berr := s.store.HeadOfficeBranchID(ctx)
+	if berr != nil {
+		return Journal{}, berr
+	}
 	draft := journalDraft{
 		Source:      SourceManual,
 		SourceRefID: tpl.ID,
 		Memo:        memo,
 		Status:      StatusDraft,
+		BranchID:    branch,
 		CreatedBy:   caller.UserID,
 		OccurredAt:  s.clock(),
 		Lines:       lines,

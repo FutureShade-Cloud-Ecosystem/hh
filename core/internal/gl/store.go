@@ -64,6 +64,11 @@ type glStore interface {
 	// back with the year it opens (round 2, S2 P2-4).
 	OpenNextFiscalYear(ctx context.Context, now time.Time, record func(ctx context.Context, tx pgx.Tx, year int) error) (int, error)
 
+	// HeadOfficeBranchID answers the head office branch the company level lines
+	// stamp (ruling 82.3): Trenton (TRT) until the gl_policy setting and its
+	// Controller-only setter land with the FW1-08b migration.
+	HeadOfficeBranchID(ctx context.Context) (string, error)
+
 	// - balances (0034 views) -
 	AccountBalance(ctx context.Context, code string, year, month int, branchID string) (netDebit int64, normalBalance string, err error)
 	// AccountBalanceAsOf is the INCEPTION-TO-DATE net-debit of an account across ALL fiscal years, bounded by
@@ -77,6 +82,9 @@ type glStore interface {
 	TrialBalanceAsOf(ctx context.Context, asOf time.Time, branchID string) ([]TrialBalanceRow, error)
 	TrialBalance(ctx context.Context, year, month int, branchID string) ([]TrialBalanceRow, error)
 	PLBalances(ctx context.Context, year int) ([]TrialBalanceRow, error)
+	// PLBalancesByBranch is PLBalances per branch stamp ("" = company level), the year end's per
+	// branch input (FW1-08b/FW1-09b).
+	PLBalancesByBranch(ctx context.Context, year int) ([]PLBranchRow, error)
 
 	// - tie-out state (first-seen age) -
 	UpsertTieout(ctx context.Context, subledger, accountCode, branchID string, subledgerCents, glCents int64, at time.Time) (TieoutState, error)

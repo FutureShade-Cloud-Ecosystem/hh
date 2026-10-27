@@ -293,6 +293,10 @@ func (f *fakeStore) TrialBalanceAsOf(_ context.Context, _ time.Time, _ string) (
 }
 func (f *fakeStore) PLBalances(_ context.Context, _ int) ([]TrialBalanceRow, error) { return nil, nil }
 
+func (f *fakeStore) HeadOfficeBranchID(_ context.Context) (string, error) { return "head-office", nil }
+
+func (f *fakeStore) PLBalancesByBranch(_ context.Context, _ int) ([]PLBranchRow, error) { return nil, nil }
+
 func (f *fakeStore) UpsertTieout(_ context.Context, sub, code, branch string, subC, glC int64, at time.Time) (TieoutState, error) {
 	return TieoutState{Subledger: sub, AccountCode: code, BranchID: branch, SubledgerCents: subC, GLCents: glC, DeltaCents: subC - glC, InTie: subC == glC, LastCheckedAt: at}, nil
 }
