@@ -573,8 +573,12 @@ function readDecisionAnswer(value: unknown): DecisionAnswer | null {
 
 /** The counter's account standing read: the past due position and the hold flag, as the server answers them. */
 export interface AccountStandingRead {
-  /** The server's own word for the account: no account on file, current, past due, or on hold (PR 239). */
-  standing: "walk_in" | "clear" | "past_due" | "on_hold";
+  /**
+   * The server's own word for the account: no account on file, current, past due, on hold, or
+   * withheld (round 4, principal item 206: a caller the dealer's balance policy strips the figures
+   * from, whose answer never names a position).
+   */
+  standing: "walk_in" | "clear" | "past_due" | "on_hold" | "withheld";
   onHold: boolean;
   pastDueCents: number | null;
   oldestBucket: string | null;
@@ -1036,7 +1040,13 @@ export class QdClient {
     const record = result.value as unknown;
     if (!isRecord(record)) return err("the account standing answer is not readable");
     const standing = record["standing"];
-    if (standing !== "walk_in" && standing !== "clear" && standing !== "past_due" && standing !== "on_hold") {
+    if (
+      standing !== "walk_in" &&
+      standing !== "clear" &&
+      standing !== "past_due" &&
+      standing !== "on_hold" &&
+      standing !== "withheld"
+    ) {
       return err("the account standing answer carried no standing");
     }
     return ok({

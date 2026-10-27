@@ -541,15 +541,21 @@ paths:
       description: >-
         A fact, not a gate, and every case answers distinctly. The standing
         word names the case: walk_in (no customer_id), clear (nothing past
-        due, no hold), past_due, or on_hold (an active credit hold, whether or
-        not anything is past due). The past-due amount, the oldest aging
-        bucket and the hold flag ride beside it when they apply. A caller the
-        dealer's balance_visibility policy withholds balances from, or whose
-        grants do not reach the branch, is a 403; an unknown customer is a 404;
-        a malformed customer_id is a 400; a read that could not be made (the
-        AR, hold or policy read failed) is a 503. Never an empty 200. Counter
-        Till or Quote Desk at read: the Quote Desk's Convert to Order asks it
-        before it confirms.
+        due, no hold), past_due, on_hold (an active credit hold, whether or
+        not anything is past due), or withheld (round 4: a caller the
+        dealer's balance_visibility policy strips the figures from, whose
+        answer never names a position; clear is a position too). The hold is
+        the same for every caller, decided from the same sources: a withheld
+        caller reads on_hold when the account is on hold, by an active hold
+        row or by aging, and withheld otherwise, and never receives the
+        past-due amount or the aging bucket. The past-due amount, the oldest
+        aging bucket and the hold flag ride beside the word when they apply.
+        A caller whose grants do not reach the branch, or from whom the
+        dealer switched the surface off (HIDDEN), is a 403; an unknown
+        customer is a 404; a malformed customer_id is a 400; a read that
+        could not be made (the AR, hold or policy read failed) is a 503.
+        Never an empty 200. Counter Till or Quote Desk at read: the Quote
+        Desk's Convert to Order asks it before it confirms.
       x-role: requireStaff
       x-access:
         surfaces: [counter-till, quote-desk]
@@ -2958,11 +2964,15 @@ components:
         word is always present and names the case; the three older fields
         are present exactly when they were before: past_due_cents and
         oldest_bucket only when money is past due, on_hold only when true.
+        A caller the dealer's balance_visibility policy strips the figures
+        from reads `withheld`, or `on_hold` when the account is on hold, and
+        never receives past_due_cents or oldest_bucket: clear is a position
+        too, and it is withheld along with the money.
       required: [standing]
       properties:
         standing:
           type: string
-          enum: [walk_in, clear, past_due, on_hold]
+          enum: [walk_in, clear, past_due, on_hold, withheld]
         past_due_cents: { type: integer, format: int64 }
         oldest_bucket: { type: string, enum: ["30", "60", "90+"] }
         on_hold: { type: boolean, description: "Mirrors the credit gate; enforcement happens at the ring, not here" }

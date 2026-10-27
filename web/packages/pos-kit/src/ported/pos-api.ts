@@ -776,8 +776,12 @@ export async function counterPrices(
  * landing hold takes back is a lie the card must never tell.
  */
 export interface AccountStanding {
-  /** The case word, present exactly when the read was made: the hold state's known-marker. */
-  standing?: 'walk_in' | 'clear' | 'past_due' | 'on_hold';
+  /**
+   * The case word, present exactly when the read was made: the hold state's known-marker.
+   * `withheld` (round 4, principal item 206) is a case of its own: a caller the dealer's balance
+   * policy strips the figures from, whose answer never names a position, clear included.
+   */
+  standing?: 'walk_in' | 'clear' | 'past_due' | 'on_hold' | 'withheld';
   past_due_cents?: number;
   oldest_bucket?: string;
   on_hold?: boolean;

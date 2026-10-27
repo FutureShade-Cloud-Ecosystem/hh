@@ -19,11 +19,13 @@ package pos
 // could not tell "nothing to say" from "could not say". The Quote Desk needs the difference before
 // it lets a quote become an order. The standing word names the case: walk_in (no customer named),
 // clear (an account with nothing past due and no hold), past_due (money past the terms), on_hold
-// (an active credit hold, whether or not anything is past due). A caller the dealer's balance
-// policy refuses is answered WITHOUT its money (round 3 of the UX-97 visual review): the overdue
-// figure and its bucket never enter the bytes, the same field absence the customer position
-// answers with for limit, balance and available, while the hold state and the clear word stay, so
-// the counter can still serve the account safely. A branch the caller does not reach is a 403, an
+// (an active credit hold, whether or not anything is past due), and withheld (round 4, principal
+// item 206: a caller the dealer's balance policy strips the figures from, whose answer never names
+// a position). A caller the policy withholds is answered WITHOUT its money (round 3 of the UX-97
+// visual review): the overdue figure and its bucket never enter the bytes, the same field absence
+// the customer position answers with for limit, balance and available. The hold is the same for
+// every caller, decided from the same sources, the aging-derived flag included, and it is the one
+// case a withheld caller can still read. A branch the caller does not reach is a 403, an
 // account that does not exist a 404, a malformed id a 400, a dealer who switched the surface off
 // a 403, and a read that could not be made an error status: never an empty 200 that reads as
 // "current". The three older fields stay exactly as they were and are present exactly when they
@@ -46,10 +48,11 @@ import (
 
 // The standing words. A closed set, so a client can switch on it.
 const (
-	StandingWalkIn  = "walk_in"
-	StandingClear   = "clear"
-	StandingPastDue = "past_due"
-	StandingOnHold  = "on_hold"
+	StandingWalkIn   = "walk_in"
+	StandingClear    = "clear"
+	StandingPastDue  = "past_due"
+	StandingOnHold   = "on_hold"
+	StandingWithheld = "withheld"
 )
 
 // ErrStandingUnavailable answers a standing read that could not be made: a seam the composition
@@ -179,8 +182,9 @@ type AccountStandingInput struct {
 // does not reach the branch is refused (403) before any account is touched, so a wall refusal
 // never confirms an account exists, and a dealer who switched the surface off is refused with it;
 // then the account itself (400 malformed, 404 unknown); then the facts, any of which failing is a
-// 503. A caller whom the policy strips the figures from still gets the hold state and the clear
-// word, and never the overdue figure or its bucket: those bytes are simply never written.
+// 503. A caller whom the policy strips the figures from still gets the hold state, under the word
+// `withheld` unless the account is on hold, and never the overdue figure or its bucket: those
+// bytes are simply never written.
 func (s *Service) Standing(ctx context.Context, in AccountStandingInput) (AccountStanding, error) {
 	if in.BranchID == "" {
 		return AccountStanding{}, clientErr(http.StatusBadRequest, "pos: branch_id is required")
@@ -216,11 +220,17 @@ func (s *Service) Standing(ctx context.Context, in AccountStandingInput) (Accoun
 		return AccountStanding{}, errors.Join(ErrStandingUnavailable, err)
 	}
 	if gate == balanceFiguresWithheld {
-		// The policy withholds this caller's money: the aging read is never made, so the overdue
-		// figure and its bucket cannot leak, and the answer carries only what serving the account
-		// safely needs, the hold state and the clear word.
-		out := AccountStanding{Standing: StandingClear}
-		if held {
+		// The policy withholds this caller's money, and "clear" is a position like any other: the
+		// answer is `withheld` unless the account is on hold, and the hold is decided from the SAME
+		// sources an admitted caller's is, the aging-derived flag included (round 4, principal item
+		// 206). The aging read runs for that flag alone: no figure and no bucket it returns ever
+		// enters the answer's bytes.
+		due, err := s.aging.CustomerAging(ctx, in.CustomerID)
+		if err != nil {
+			return AccountStanding{}, errors.Join(ErrStandingUnavailable, err)
+		}
+		out := AccountStanding{Standing: StandingWithheld}
+		if held || due.OnHold {
 			out.Standing = StandingOnHold
 			out.OnHold = true
 		}

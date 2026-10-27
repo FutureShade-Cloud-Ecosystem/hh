@@ -2437,8 +2437,10 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (!accountPositionAllowed(request)) {
+      // Round 4 (principal item 206): the withheld word is a case of its own, never "clear" (clear
+      // is a position too), and the hold is the same for every caller.
       const held = customer.on_hold === true;
-      respondJson(response, 200, held ? { standing: "on_hold", on_hold: true } : { standing: "clear" });
+      respondJson(response, 200, held ? { standing: "on_hold", on_hold: true } : { standing: "withheld" });
       return;
     }
     const isBluffside = customer.id === "c-bluffside" || customer.name === "Bluffside Builders";

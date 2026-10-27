@@ -252,13 +252,11 @@ func TestStanding_AllStaffIsTheDefaultBecauseTheCOUNTERAsked(t *testing.T) {
 	}
 }
 
-func TestStanding_ManagerUpPolicy_ClerkGetsNoFigureAndTheAgingIsNeverRead(t *testing.T) {
-	// Round 3 of the UX-97 visual review: the overdue amount is a credit figure, and the dealer's
-	// balance policy withholds it from this caller exactly as the customer position withholds the
-	// limit, the balance and the available. The bytes never carry it, and the aging read is never
-	// even made, so the figure cannot leak through a seam. What the counter still needs to serve
-	// the account safely stays: the hold state and the clear word.
-	h, a := standingHarness(t, behind(), nil)
+func TestStanding_ManagerUpPolicy_APastDueAccountReadsWithheld(t *testing.T) {
+	// Round 4 (principal item 206): "clear" is a position, so a caller the policy withholds figures
+	// from can never read it. A past due account answers `withheld` for this caller, with no figure
+	// key in the bytes.
+	h, _ := standingHarness(t, behind(), nil)
 	p := h.store.policies[""]
 	p.BalanceVisibility = BalanceVisibilityManagerUp
 	h.store.policies[""] = p
@@ -269,18 +267,52 @@ func TestStanding_ManagerUpPolicy_ClerkGetsNoFigureAndTheAgingIsNeverRead(t *tes
 		t.Fatalf("a withheld caller is answered, not refused: %v", err)
 	}
 	raw, _ := json.Marshal(out)
-	if string(raw) != `{"standing":"clear"}` {
-		t.Fatalf("the answer carries the clear word and no money at all: %s", raw)
-	}
-	if len(a.asks) != 0 {
-		t.Fatalf("the figure is never even read for a withheld caller: %v", a.asks)
+	if string(raw) != `{"standing":"withheld"}` {
+		t.Fatalf("a past due account reads withheld with no money in the bytes: %s", raw)
 	}
 }
 
-func TestStanding_ManagerUpPolicy_AWithheldCallerStillHearsTheHold(t *testing.T) {
-	// The hold is not a figure: the counter needs it to serve the account (the card's hold tag and
-	// the check's on hold words ride it), so it stays while the money goes.
-	h, _ := standingHarness(t, behind(), nil)
+func TestStanding_ManagerUpPolicy_AClearAccountAlsoReadsWithheld(t *testing.T) {
+	// Clear is a position too: nothing past due and no hold is exactly what the policy withholds.
+	h, _ := standingHarness(t, PastDue{}, nil)
+	p := h.store.policies[""]
+	p.BalanceVisibility = BalanceVisibilityManagerUp
+	h.store.policies[""] = p
+	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
+	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(out)
+	if string(raw) != `{"standing":"withheld"}` {
+		t.Fatalf("a clear account reads withheld for a withheld caller, never clear: %s", raw)
+	}
+}
+
+func TestStanding_ManagerUpPolicy_AHoldThroughAgingAloneStillReadsOnHold(t *testing.T) {
+	// The hold is the same for every caller: the aging-derived hold flag counts for a withheld
+	// caller exactly as it does for an admitted one, and the figure behind it still never leaves.
+	h, _ := standingHarness(t, PastDue{PastDueCents: 148_23, OldestBucket: "60", OnHold: true}, nil)
+	p := h.store.policies[""]
+	p.BalanceVisibility = BalanceVisibilityManagerUp
+	h.store.policies[""] = p
+	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
+	out, err := h.svc.Standing(context.Background(), AccountStandingInput{BranchID: "branch-trt", CustomerID: standingCust})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(out)
+	if string(raw) != `{"standing":"on_hold","on_hold":true}` {
+		t.Fatalf("an aging-only hold reads on_hold with no money in the bytes: %s", raw)
+	}
+}
+
+func TestStanding_ManagerUpPolicy_AWithheldCallerStillHearsAnActiveHoldRow(t *testing.T) {
+	// The hold read beside the aging still counts on its own: an account with no open invoices
+	// (the aging read drops it) but an active hold row reads on_hold for a withheld caller.
+	h, _ := standingHarness(t, PastDue{}, nil)
 	h.svc.WithHoldReader(&fakeHolds{held: true})
 	p := h.store.policies[""]
 	p.BalanceVisibility = BalanceVisibilityManagerUp
@@ -293,7 +325,7 @@ func TestStanding_ManagerUpPolicy_AWithheldCallerStillHearsTheHold(t *testing.T)
 	}
 	raw, _ := json.Marshal(out)
 	if string(raw) != `{"standing":"on_hold","on_hold":true}` {
-		t.Fatalf("the hold state stays and the money stays gone: %s", raw)
+		t.Fatalf("an active hold row reads on_hold for a withheld caller: %s", raw)
 	}
 }
 
