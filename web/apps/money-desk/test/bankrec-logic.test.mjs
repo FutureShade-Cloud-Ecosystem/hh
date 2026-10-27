@@ -237,6 +237,25 @@ test("the core's refusals read in words that say what to do, and a walled route 
   );
 });
 
+test("the cut over refusals read in words a bookkeeper can act on", () => {
+  assert.equal(
+    refusalWords("cutover", "bankrec: cannot record cut-over at 2031-03-31 because month 2031-04 is already completed", 409),
+    "Not recorded: April 2031 is already signed off, so the starting point cannot change. It stands as it was recorded.",
+  );
+  assert.equal(
+    refusalWords("cutover", "Forbidden", 403),
+    "Recording the starting point is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.",
+  );
+  assert.equal(
+    refusalWords("cutover", "bankrec: only the Financial Controller may record a bank reconciliation cut-over", 403),
+    "Recording the starting point is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.",
+  );
+  assert.equal(
+    refusalWords("cutover", "bankrec: cannot record cut-over at 2031-03-31: the statement and the book differ by $25.00; tick the items still outstanding at cut over, or check the date and balance", 422),
+    "The statement and the book differ by $25.00; tick the items still outstanding at cut over, or check the date and balance.",
+  );
+});
+
 test("a failed import says what the file lacked in words a bookkeeper can act on", () => {
   assert.equal(
     importFailedWords('statement parse failed: bankrec: csv is missing the mapped column "Amount"'),

@@ -3,6 +3,7 @@ package invcount
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -122,7 +123,9 @@ func (f *fakeStore) GetReconRun(_ context.Context, y, m int, b string) (ReconRun
 func (f *fakeStore) InsertReconRun(_ context.Context, in ReconRun) (ReconRun, error) {
 	k := reconKey(in.FiscalYear, in.Month, in.BranchID)
 	if r, ok := f.recon[k]; ok {
-		return r, nil
+		in.ID = r.ID
+		f.recon[k] = in
+		return in, nil
 	}
 	in.ID = "recon-" + k
 	f.recon[k] = in
@@ -183,6 +186,10 @@ func (r fakeRule) ResolveRule(_ context.Context, _, _, _ string) (string, error)
 type fakeGLBal struct{ bal int64 }
 
 func (b fakeGLBal) GLBalanceCents(_ context.Context, _ string, _, _ int, _ string) (int64, error) {
+	return b.bal, nil
+}
+
+func (b fakeGLBal) GLBalanceThroughCents(_ context.Context, _ string, _, _ int, _ string) (int64, error) {
 	return b.bal, nil
 }
 
@@ -347,38 +354,53 @@ func TestPostCountedSheet_MakerCheckerGate(t *testing.T) {
 	}
 }
 
-func TestReconcileMonth_LazyRunOnce(t *testing.T) {
+func TestReconcileMonth_KeptPerPeriodAndReRunnable(t *testing.T) {
 	st := newFakeStore()
 	stock := &fakeStock{snaps: []Snapshot{
 		{ProductID: "p1", OnHandBase: 100, AvgCostCents: 350}, // 35000
 		{ProductID: "p2", OnHandBase: 10, AvgCostCents: 8000}, // 80000
 	}}
 	glBal := fakeGLBal{bal: 115000} // ties exactly → TIED
+	curYear, curMonth := currentYearMonth(time.Now())
 
-	r1, err := reconcileMonth(context.Background(), st, stock, glBal, "u1", 2026, 7, "br1")
+	// Current open month: first run inserts, second run after a stock correction upserts the same row.
+	r1, err := reconcileMonth(context.Background(), st, stock, glBal, "u1", curYear, curMonth, "br1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r1.SubledgerCents != 115000 {
-		t.Errorf("subledger = %d, want 115000", r1.SubledgerCents)
-	}
-	if r1.Status != ReconTied || r1.DeltaCents != 0 {
-		t.Errorf("status = %q delta = %d, want TIED/0", r1.Status, r1.DeltaCents)
+	if r1.SubledgerCents != 115000 || r1.Status != ReconTied || r1.DeltaCents != 0 {
+		t.Errorf("first run = %+v, want 115000/TIED/0", r1)
 	}
 	if st.inserts != 1 {
 		t.Fatalf("inserts = %d, want 1", st.inserts)
 	}
 
-	// second call for the same period: run-once → no new insert, same row
-	r2, err := reconcileMonth(context.Background(), st, stock, glBal, "u1", 2026, 7, "br1")
+	stock.snaps[0].OnHandBase = 110 // subledger moves to 38500 + 80000 = 118500
+	r2, err := reconcileMonth(context.Background(), st, stock, fakeGLBal{bal: 118500}, "u1", curYear, curMonth, "br1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.inserts != 1 {
-		t.Errorf("run-once violated: inserts = %d", st.inserts)
+	if st.inserts != 1 || r2.ID != r1.ID {
+		t.Errorf("current month re-run must upsert the same row: inserts=%d r2.ID=%q r1.ID=%q", st.inserts, r2.ID, r1.ID)
 	}
-	if r2.ID != r1.ID {
-		t.Errorf("run-once returned a different row: %q vs %q", r2.ID, r1.ID)
+	if r2.SubledgerCents != 118500 || r2.GL1200Cents != 118500 || r2.DeltaCents != 0 {
+		t.Errorf("current month re-run = %+v, want updated 118500/118500/0", r2)
+	}
+
+	// Past period: first run records the period's row; a later call after today's stock moves keeps
+	// the past period's row frozen.
+	pastYear := curYear - 1
+	p1, err := reconcileMonth(context.Background(), st, stock, fakeGLBal{bal: 118500}, "u1", pastYear, 7, "br1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stock.snaps[0].OnHandBase = 200
+	p2, err := reconcileMonth(context.Background(), st, stock, fakeGLBal{bal: 118500}, "u1", pastYear, 7, "br1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p2.ID != p1.ID || p2.SubledgerCents != 118500 || p2.DeltaCents != 0 {
+		t.Errorf("past period re-run overwrote frozen row: got %+v, want frozen %+v", p2, p1)
 	}
 }
 

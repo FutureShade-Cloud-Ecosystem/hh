@@ -133,12 +133,14 @@ func (r *Repository) ReversePayment(ctx context.Context, in ReverseInput, now ti
 		receivedAt                           time.Time
 		alreadyReversed                      bool
 		isItselfAReversal                    bool
+		nsfAllocJSON                         []byte
 	)
 	err = tx.QueryRow(ctx,
 		`SELECT COALESCE(customer_id::text,''), method, branch_id::text, status, amount_cents, received_at,
-		        reversed_at IS NOT NULL, reverses_payment_id IS NOT NULL
+		        reversed_at IS NOT NULL, reverses_payment_id IS NOT NULL,
+		        COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb)
 		   FROM payments WHERE id = $1::uuid FOR UPDATE`, in.PaymentID).
-		Scan(&customerID, &method, &branchID, &status, &amount, &receivedAt, &alreadyReversed, &isItselfAReversal)
+		Scan(&customerID, &method, &branchID, &status, &amount, &receivedAt, &alreadyReversed, &isItselfAReversal, &nsfAllocJSON)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Reversal{}, ErrNotFound
@@ -251,15 +253,31 @@ INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, bra
 		}
 	}
 
-	// 3 + 4. Re-open each invoice and mirror the subledger.
+	nsfAllocs := map[string]int64{}
+	_ = json.Unmarshal(nsfAllocJSON, &nsfAllocs)
+	nsfIDs := make([]string, 0, len(nsfAllocs))
+	for id, amt := range nsfAllocs {
+		if amt > 0 {
+			nsfIDs = append(nsfIDs, id)
+		}
+	}
+	slices.Sort(nsfIDs)
+	for _, id := range nsfIDs {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM payment_nsf WHERE id = $1::uuid FOR NO KEY UPDATE`, id); err != nil {
+			return Reversal{}, fmt.Errorf("reverse: lock nsf fee %s: %w", id, err)
+		}
+	}
+
+	// 3 + 4. Re-open each invoice (and any NSF fee this payment settled) and mirror the subledger.
 	var runningAR int64
 	if err := tx.QueryRow(ctx,
 		`SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
-		  WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`, customerID).Scan(&runningAR); err != nil {
+		  WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`,
+		customerID).Scan(&runningAR); err != nil {
 		return Reversal{}, fmt.Errorf("reverse: read AR balance: %w", err)
 	}
 
-	reopened := make([]string, 0, len(allocs))
+	reopened := make([]string, 0, len(allocs)+len(nsfIDs))
 	for _, a := range allocs {
 		// A reversal is a contra ALLOCATION too, so the payment_allocations sum for the invoice still
 		// reconciles against what the invoice believes it has been paid.
@@ -295,6 +313,18 @@ UPDATE invoices
 		}
 		reopened = append(reopened, a.invoiceID)
 	}
+	for _, nsfID := range nsfIDs {
+		feeAmt := nsfAllocs[nsfID]
+		runningAR += feeAmt
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO customer_transactions
+			   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+			 VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'payment_nsf', $4::uuid, $5::uuid, $6)`,
+			customerID, feeAmt, runningAR, nsfID, branchID, "reversal: "+in.Reason); err != nil {
+			return Reversal{}, fmt.Errorf("reverse: insert nsf fee contra subledger txn: %w", err)
+		}
+		reopened = append(reopened, nsfID)
+	}
 
 	// 5. Transactional outbox, in the SAME transaction as the reversal, so the GL books the reversing
 	// journal exactly once, the identical discipline the settle path uses for payment.received.
@@ -312,6 +342,9 @@ UPDATE invoices
 		"original_status":  status,
 		"original_cleared": status == "DEPOSITED",
 		"branch_id":        branchID,
+		// FW1-01b: the reversal's own instant, so the GL books the reversing journal in the month the
+		// reversal happened and not in the month the consumer read the outbox.
+		"occurred_at": now,
 	})
 	if err != nil {
 		return Reversal{}, fmt.Errorf("reverse: marshal payment.reversed: %w", err)
@@ -577,6 +610,9 @@ func (r *Repository) ReapplyHeld(ctx context.Context, in ReapplyInput, now time.
 	for _, t := range targets {
 		invoiceIDs = append(invoiceIDs, t.a.InvoiceID)
 	}
+	// The batch's own instant, the request's own clock reading (the same instant the reversing
+	// journal carries). It rides the event so the GL books the re-application in the month the money
+	// was applied, not the month the consumer read the outbox (FW1-01b).
 	payload, err := json.Marshal(map[string]any{
 		"batch_id":     batchID,
 		"payment_id":   in.PaymentID,
@@ -586,6 +622,7 @@ func (r *Repository) ReapplyHeld(ctx context.Context, in ReapplyInput, now time.
 		"method":       method,
 		"reason":       in.Reason,
 		"invoice_ids":  invoiceIDs,
+		"occurred_at":  now,
 	})
 	if err != nil {
 		return Reapplication{}, fmt.Errorf("reapply: marshal payment.reapplied: %w", err)

@@ -409,25 +409,6 @@ func (r *Repository) InsertSnapshot(ctx context.Context, s Snapshot) (string, er
 	return id, nil
 }
 
-// CollectedHSTCents sums net_collected_cents from the tax-decision snapshots created in a period (the
-// tax-decision side of the HST → GL tie-out). Period-scoped by created_at; org-wide (snapshots carry no
-// branch column in the frozen 0029 schema, branch-scoped recon is deferred, see the worker report).
-func (r *Repository) CollectedHSTCents(ctx context.Context, year, month int) (int64, error) {
-	if r.pool == nil {
-		return 0, errNoDB
-	}
-	var total int64
-	err := r.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(net_collected_cents),0)
-		FROM tax_decision_snapshot
-		WHERE EXTRACT(YEAR FROM created_at) = $1
-		  AND ($2 = 0 OR EXTRACT(MONTH FROM created_at) = $2)`, year, month).Scan(&total)
-	if err != nil {
-		return 0, fmt.Errorf("tax: collected hst: %w", err)
-	}
-	return total, nil
-}
-
 // standardRateOrOntario answers the standard rate a snapshot row is written with: a zero (a caller that
 // carries none) is the Ontario 13 percent, the column's default.
 func standardRateOrOntario(bps int) int {

@@ -142,9 +142,9 @@ func (s *Service) ResolveViz(ctx context.Context, scope Scope, ids []string) []V
 				}
 				return
 			}
-			total := TotalOf(pts)
+			total := s.totalFor(ctx, out[idx].Kind, p, scope, pts)
 			t.State, t.Points, t.Note = StateOK, pts, ""
-			t.Total = &total
+			t.Total = total
 		}(i, p)
 	}
 	wg.Wait()
@@ -163,4 +163,26 @@ func (s *Service) measureSeries(ctx context.Context, p SeriesProvider, scope Sco
 	cctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	return p.Series(cctx, scope, dim)
+}
+
+// totalFor answers a tile's headline total for its measured series.
+//
+// THE BASIS POINT RULE (FROM-PRINCIPAL 132). Counts and money add: two branches' sales and two
+// branches' queues are sums by nature. A RATE does not: two branches at 20% and 50% are not 70%,
+// and not 35% either, the all branches rate is total margin cents over total sales cents across
+// the branches. A rate's points carry no weights, so the sum is unreachable from them; instead the
+// PROVIDER answers its own aggregate when asked for SplitNone (the ungrouped arithmetic over the
+// same scope), and that one number is the tile's total. A provider that implements no aggregate
+// leaves the total nil: the client shows the series without a headline, never a sum of rates.
+func (s *Service) totalFor(ctx context.Context, kind Kind, p SeriesProvider, scope Scope, pts []Point) *int64 {
+	if kind != KindBasisPoints {
+		n := TotalOf(pts)
+		return &n
+	}
+	agg, err := s.measureSeries(ctx, p, scope, SplitNone)
+	if err != nil || len(agg) != 1 {
+		return nil
+	}
+	n := agg[0].Number
+	return &n
 }

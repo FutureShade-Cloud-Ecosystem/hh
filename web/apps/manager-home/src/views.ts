@@ -25,6 +25,7 @@ import type {
   WidgetDatum,
   WidgetView,
 } from "./manager-api.js";
+import { LANDING_NOT_CONNECTED } from "./manager-api.js";
 import {
   APPROVAL_KINDS,
   RESOLUTION_CHOICES,
@@ -79,6 +80,12 @@ export interface LandingModel {
 }
 
 const NOT_HERE = "Not available yet";
+// The tile foot under a REAL figure: the figure is on the card, what the tile
+// has none of is the trend the original's stat tiles carried, so the words
+// name the trend and never the figure's availability (FROM-PRINCIPAL 158,
+// round 6 P2-1). A needs row's not here span keeps NOT_HERE: there the missing
+// thing is the row's own action, which is what the words deny.
+const NO_TREND = "No trend yet";
 
 export function renderLanding(model: LandingModel): TemplateResult {
   if (model.phase === "loading") {
@@ -141,6 +148,9 @@ export function renderC10Landing(
   stakeNeeds: readonly LandingNeedRow[],
 ): TemplateResult | typeof nothing {
   if (kpis.length === 0 && deliveries === null && stakeNeeds.length === 0) return nothing;
+  // P2-2 (FROM-PRINCIPAL 158 round 6): the strip mixes a today figure, an all time rate and a
+  // standing balance, so the heading says what the strip is, and the page keeps one Today heading
+  // (the bento's, P2-3). Each card's own words carry its scope.
   return html`
     <div class="c10-landing" data-test="c10-landing">
       <section class="quick-actions" data-test="c10-quick-actions" aria-label="Quick actions">
@@ -152,12 +162,12 @@ export function renderC10Landing(
           <button type="button" class="qa-pill" data-action="qa-action" data-qa="message-branch">Message a branch</button>
         </div>
       </section>
-      <section class="today-section" data-test="c10-today-kpis" aria-label="Branch figures today">
+      <section class="today-section" data-test="c10-today-kpis" aria-label="Branch figures at a glance">
         <div class="today-head">
-          <h2 class="section-eyebrow">Today</h2>
-          <div class="branch-toggle" role="group" aria-label="Branch scope">
-            <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="combined" aria-pressed=${branchMode === "combined" ? "true" : "false"}>Both branches combined</button>
-            <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="split" aria-pressed=${branchMode === "split" ? "true" : "false"}>Point Loma beside Julian</button>
+          <h2 class="section-eyebrow">At a glance</h2>
+          <div class="branch-toggle" role="group" aria-label="Applies to">
+            <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="combined" aria-pressed=${branchMode === "combined" ? "true" : "false"}>All branches together</button>
+            <button type="button" class="toggle-pill" data-action="toggle-branch" data-mode="split" aria-pressed=${branchMode === "split" ? "true" : "false"}>Branch beside branch</button>
           </div>
         </div>
         <div class="kpi-row kpi-row-${branchMode}">
@@ -171,42 +181,49 @@ export function renderC10Landing(
 }
 
 export function renderKpiCard(kpi: LandingKpi, mode: BranchMode): TemplateResult {
+  if (!kpi.connected) {
+    return html`
+      <article class="kpi-card kpi-card-combined" data-test="kpi-not-connected">
+        <h3 class="kpi-title">${kpi.title}</h3>
+        <p class="kpi-compare">${LANDING_NOT_CONNECTED}</p>
+      </article>
+    `;
+  }
   if (mode === "split") {
+    const rows = kpi.branches.length > 0 ? kpi.branches : [{ label: "All branches", value: kpi.value }];
     return html`
       <article class="kpi-card kpi-card-split">
         <h3 class="kpi-title">${kpi.title}</h3>
-        <div class="kpi-branch">
-          <span class="kpi-branch-label">Point Loma</span>
-          <span class="kpi-branch-value ${kpi.kind}">${kpi.pointLoma.value}</span>
-        </div>
-        <div class="kpi-branch">
-          <span class="kpi-branch-label">Julian</span>
-          <span class="kpi-branch-value ${kpi.kind}">${kpi.julian.value}</span>
-        </div>
+        ${rows.map((branch) => html`
+          <div class="kpi-branch">
+            <span class="kpi-branch-label">${branch.label}</span>
+            <span class="kpi-branch-value ${kpi.kind}">${branch.value}</span>
+          </div>
+        `)}
       </article>
     `;
   }
   return html`
     <article class="kpi-card kpi-card-combined">
       <h3 class="kpi-title">${kpi.title}</h3>
-      <span class="kpi-value ${kpi.kind}">${kpi.combined.value}</span>
-      <p class="kpi-compare">${kpi.combined.compare}</p>
+      <span class="kpi-value ${kpi.kind}">${kpi.value}</span>
+      <p class="kpi-compare">${kpi.note}</p>
     </article>
   `;
 }
 
+// FROM-PRINCIPAL 127: this card and the hero's deliveries.today tile measure different things
+// (the whole book of the day's stops off the dispatch board, against the stops still to do), so
+// they never share one heading. The card says Stops today; the hero tile keeps its own words.
 export function renderDeliveriesCard(d: LandingDeliveries, mode: BranchMode): TemplateResult {
-  const summary = mode === "split"
-    ? `${d.pointLomaCount - 3} from Point Loma, ${d.julianCount} from Julian. 5 done, 6 on the road, 3 still to leave.`
-    : d.summary;
-  const count = mode === "split" ? d.pointLomaCount + d.julianCount - 3 : d.count;
+  void mode;
   return html`
-    <section class="deliveries-card" data-test="c10-deliveries-today" aria-label="Deliveries today">
+    <section class="deliveries-card" data-test="c10-deliveries-today" aria-label="Stops today">
       <div class="deliveries-head">
-        <h2 class="section-eyebrow">Deliveries today</h2>
-        <span class="deliveries-count">${count}</span>
+        <h2 class="section-eyebrow">Stops today</h2>
+        <span class="deliveries-count">${d.count}</span>
       </div>
-      <p class="deliveries-summary">${summary}</p>
+      <p class="deliveries-summary">${d.summary}</p>
       <div class="runs-row">
         ${d.runs.map((run) => html`
           <div class="run">
@@ -317,7 +334,7 @@ function renderWidget(
 
 /**
  * The foot of a card: a link to the live app (or this app's view) that owns the measure, and the
- * honest coming words only where no app exists. A link never carries a figure of its own.
+ * missing trend's words only where no app exists. A link never carries a figure of its own.
  */
 function renderFoot(w: WidgetView, profile: string): TemplateResult {
   const link = widgetLink(w, profile);
@@ -327,7 +344,7 @@ function renderFoot(w: WidgetView, profile: string): TemplateResult {
   if (link.kind === "view") {
     return html`<p class="tile-foot"><button type="button" class="foot-link" data-action="open-view" data-view=${link.view}>Open ${VIEW_TITLE[link.view]}<span class="chev" aria-hidden="true">›</span></button></p>`;
   }
-  return html`<p class="tile-foot">${NOT_HERE}</p>`;
+  return html`<p class="tile-foot">${NO_TREND}</p>`;
 }
 
 /**

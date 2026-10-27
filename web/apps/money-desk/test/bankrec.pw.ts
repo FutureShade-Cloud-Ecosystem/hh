@@ -4,7 +4,7 @@
 // payment or a journal; an undo that is confirmed and keeps its history; a month opened, held until it balances,
 // refused in words while lines are unmatched, then signed off and closed; the rules and a new version; every
 // refusal in words; the loading, empty and failed states; the phone; and the keyboard.
-import { test, expect, openBank, tab, resetStub, controllerHandoff, monthDay, priorMonth, OPERATING, OPERATING_ID, FUEL_CARD, WIRE_PAYMENT, FEE_JOURNAL, CHEQUE_JOURNAL, CLOSING } from "./bankrec-helpers.js";
+import { test, expect, openBank, tab, resetStub, controllerHandoff, monthDay, priorMonth, cutoverDay, OPERATING, OPERATING_ID, FUEL_CARD, WIRE_PAYMENT, FEE_JOURNAL, CHEQUE_JOURNAL, CLOSING } from "./bankrec-helpers.js";
 import { receivablesHandoff } from "./helpers.js";
 
 const row = (page: import("@playwright/test").Page, text: string) => page.locator("[data-line-id]").filter({ hasText: text });
@@ -664,14 +664,17 @@ test("a month with a deposit in transit and an outstanding cheque shows the reco
   await expect(report.locator("[data-report-matched]")).toHaveText("7");
   await expect(report.locator("[data-dit-list]")).toContainText("Month-end deposit in transit · $300.00");
   await expect(report.locator("[data-oc-list]")).toContainText("Cheque 1044 to vendor · $120.00");
-  await page.locator("[data-recon-id]").getByRole("button", { name: "Sign off" }).click();
-  await page.getByRole("button", { name: "Confirm sign off" }).click();
-  await expect(report).toContainText("Signed off");
-  await expect(report.locator("[data-report-completed-by]")).toHaveText("Financial controller (demo)");
-  await expect(report.locator("[data-report-completed-at]")).toBeVisible();
 
   const shotsDir = process.env["FW1_04_SHOTS_DIR"];
   if (shotsDir) {
+    // The starting point form shows filled and reconciled, as the Controller leaves it: the till entry ticked
+    // still outstanding, the difference at nothing, the result below. Before the sign off: once the month is
+    // signed off the section reads the recorded point read only, and that is its own state.
+    await page.locator("[data-field='br-cutover-date']").fill(cutoverDay().iso);
+    await page.locator("[data-field='br-cutover-balance']").fill("25,000.00");
+    await expect(page.locator("[data-cutover-entries] li")).toHaveCount(3);
+    await page.locator("[data-cutover-entries] li").filter({ hasText: "Till over/short" }).locator("[data-cutover-tick]").check();
+    await expect(page.locator("[data-cutover-difference]")).toContainText("reconciles");
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.evaluate(() => document.documentElement.removeAttribute("data-theme"));
     await page.screenshot({ path: `${shotsDir}/bankrec-month-end-1440x900-charcoal.png`, fullPage: true });
@@ -682,6 +685,149 @@ test("a month with a deposit in transit and an outstanding cheque shows the reco
     await page.screenshot({ path: `${shotsDir}/bankrec-month-end-390x844-charcoal.png`, fullPage: true });
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
     await page.screenshot({ path: `${shotsDir}/bankrec-month-end-390x844-light.png`, fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 720 });
   }
+
+  await page.locator("[data-recon-id]").getByRole("button", { name: "Sign off" }).click();
+  await page.getByRole("button", { name: "Confirm sign off" }).click();
+  await expect(report).toContainText("Signed off");
+  await expect(report.locator("[data-report-completed-by]")).toHaveText("Financial controller (demo)");
+  await expect(report.locator("[data-report-completed-at]")).toBeVisible();
 });
 
+
+// Round 3 (FROM-PRINCIPAL 169): the Controller's door to the cut over, on the desk: "Set the starting point".
+test("set the starting point lists the ledger's bank entries to tick, shows the result before saving, and records the point", async ({ page, request }) => {
+  await openBank(page, request);
+  const panel = page.locator("[data-cutover]");
+  await expect(panel).toContainText("Set the starting point");
+  await expect(panel.locator("[data-cutover-recorded]")).toHaveCount(0);
+  // The ledger's entries are listed once the cut over date is typed, none ticked: the go live date is the
+  // day before the statement month starts, so every entry the stub's ledger holds is on or before it.
+  await page.locator("[data-field='br-cutover-date']").fill(cutoverDay().iso);
+  const entries = panel.locator("[data-cutover-entries] li");
+  await expect(entries).toHaveCount(3);
+  await expect(entries.filter({ hasText: "Opening balances" })).toContainText("$20,000.00");
+  await expect(entries.filter({ hasText: "Payment received" })).toContainText("$5,000.00");
+  await expect(panel.locator("[data-cutover-tick]")).toHaveCount(3);
+  for (const box of await panel.locator("[data-cutover-tick]").all()) await expect(box).not.toBeChecked();
+  // The result before saving: the book balance, the statement balance, and nothing ticked yet.
+  await page.locator("[data-field='br-cutover-balance']").fill("25,000.00");
+  const result = panel.locator("[data-cutover-result]");
+  await expect(result).toContainText("What saving will record");
+  await expect(result.locator("[data-cutover-book]")).toHaveText("$25,025.00");
+  await expect(result.locator("[data-cutover-statement]")).toHaveText("$25,000.00");
+  await expect(result).toContainText("Nothing is ticked as still outstanding");
+  // The gap is its own line, the server's figure: $25.00 apart while nothing is ticked.
+  await expect(result.locator("[data-cutover-difference]")).toContainText("$25.00");
+  // Save is refused in words and sends nothing while the difference stands.
+  const sent: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "POST" && r.url().includes("/cutover")) sent.push(r.url());
+  });
+  await panel.getByRole("button", { name: "Save the starting point" }).click();
+  await expect(page.locator("[data-error]")).toContainText("The statement and the book differ by $25.00; tick the items still outstanding at cut over, or check the date and balance");
+  expect(sent).toEqual([]);
+  // Each entry is one row: the checkbox leads it as its label, with the date, the memo and the amount beside it.
+  const tillRow = panel.locator("[data-cutover-entries] li").filter({ hasText: "Till over/short" });
+  const rowLabel = tillRow.locator("label");
+  await expect(rowLabel).toContainText("Till over/short");
+  await expect(rowLabel).toContainText("$25.00");
+  await expect(rowLabel.locator("[data-cutover-tick]")).toHaveCount(1);
+  await rowLabel.locator("[data-cutover-tick]").check();
+  await expect(result.locator("[data-cutover-ticked]")).toContainText("Till over/short");
+  await expect(result.locator("[data-cutover-ticked]")).toContainText("$25.00");
+  await expect(result.locator("[data-cutover-difference]")).toContainText("reconciles");
+  await panel.getByRole("button", { name: "Save the starting point" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("The starting point is recorded");
+  const recorded = panel.locator("[data-cutover-recorded]");
+  await expect(recorded).toContainText(cutoverDay().words);
+  await expect(recorded).toContainText("$25,000.00");
+  await expect(recorded).toContainText("Till over/short");
+  // The form stays, filled with what is recorded: the core takes a correction until a month signs off.
+  await expect(panel.locator("[data-cutover-form]")).toBeVisible();
+  await expect(page.locator("[data-field='br-cutover-date']")).toHaveValue(cutoverDay().iso);
+  await expect(page.locator("[data-field='br-cutover-balance']")).toHaveValue("25,000.00");
+});
+
+test("once a month has signed off the recorded starting point is shown and cannot change", async ({ page, request }) => {
+  await openBank(page, request);
+  const panel = page.locator("[data-cutover]");
+  await page.locator("[data-field='br-cutover-date']").fill(cutoverDay().iso);
+  await page.locator("[data-field='br-cutover-balance']").fill("25,025.00");
+  await panel.getByRole("button", { name: "Save the starting point" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("The starting point is recorded");
+  // Sign the prior month off, exactly as the sign off leg walks it.
+  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);
+  await page.getByRole("button", { name: "Open month" }).click();
+  await tab(page, "match");
+  await page.getByRole("button", { name: "Run auto match" }).click();
+  for (const [text, how] of [
+    ["WIRE FROM CONTRACTOR", "payment"],
+    ["CHEQUE DEPOSIT", "cheque"],
+    ["MONTHLY SERVICE FEE", "fee"],
+  ] as const) {
+    await chooseLine(page, text);
+    const linePanel = page.locator("[data-line-panel]");
+    if (how === "payment") {
+      await linePanel.getByRole("textbox", { name: "Payment id" }).fill(WIRE_PAYMENT);
+    } else {
+      await linePanel.getByRole("radio", { name: /Journal/ }).click();
+      await linePanel.getByRole("combobox", { name: "Journal" }).selectOption({ label: how === "fee" ? FEE_JOURNAL : CHEQUE_JOURNAL });
+    }
+    await linePanel.getByRole("button", { name: "Match line" }).click();
+    await expect(page.locator("[data-notice]")).toContainText("Matched.");
+  }
+  await tab(page, "accounts");
+  await page.locator("[data-recon-id]").getByRole("button", { name: "Refresh figures" }).click();
+  await page.locator("[data-recon-id]").getByRole("button", { name: "Sign off" }).click();
+  await page.getByRole("button", { name: "Confirm sign off" }).click();
+  await expect(page.locator("[data-recon-id]")).toContainText("Signed off");
+  // The recorded point stands, and the form is gone: nothing on the screen can change it.
+  const recorded = page.locator("[data-cutover-recorded]");
+  await expect(recorded).toContainText(cutoverDay().words);
+  await expect(recorded).toContainText("$25,025.00");
+  await expect(page.locator("[data-cutover-form]")).toHaveCount(0);
+  await expect(page.locator("[data-cutover]").getByRole("button", { name: "Save the starting point" })).toHaveCount(0);
+  // A reload shows the same recorded point, still unchangeable.
+  await page.reload();
+  await page.getByRole("button", { name: "Bank reconciliation", exact: true }).click();
+  await expect(page.locator("[data-cutover-recorded]")).toContainText(cutoverDay().words);
+  await expect(page.locator("[data-cutover-form]")).toHaveCount(0);
+});
+
+test("with a month signed off and no starting point recorded, the section says it can no longer be set and offers no save", async ({ page, request }) => {
+  await openBank(page, request);
+  // Sign the prior month off without recording any starting point.
+  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);
+  await page.getByRole("button", { name: "Open month" }).click();
+  await tab(page, "match");
+  await page.getByRole("button", { name: "Run auto match" }).click();
+  for (const [text, how] of [
+    ["WIRE FROM CONTRACTOR", "payment"],
+    ["CHEQUE DEPOSIT", "cheque"],
+    ["MONTHLY SERVICE FEE", "fee"],
+  ] as const) {
+    await chooseLine(page, text);
+    const linePanel = page.locator("[data-line-panel]");
+    if (how === "payment") {
+      await linePanel.getByRole("textbox", { name: "Payment id" }).fill(WIRE_PAYMENT);
+    } else {
+      await linePanel.getByRole("radio", { name: /Journal/ }).click();
+      await linePanel.getByRole("combobox", { name: "Journal" }).selectOption({ label: how === "fee" ? FEE_JOURNAL : CHEQUE_JOURNAL });
+    }
+    await linePanel.getByRole("button", { name: "Match line" }).click();
+    await expect(page.locator("[data-notice]")).toContainText("Matched.");
+  }
+  await tab(page, "accounts");
+  await page.locator("[data-recon-id]").getByRole("button", { name: "Refresh figures" }).click();
+  await page.locator("[data-recon-id]").getByRole("button", { name: "Sign off" }).click();
+  await page.getByRole("button", { name: "Confirm sign off" }).click();
+  await expect(page.locator("[data-recon-id]")).toContainText("Signed off");
+  const section = page.locator("[data-cutover]");
+  await expect(section.locator("[data-cutover-closed]")).toHaveText(
+    `${priorMonth().words} has signed off, so this account reconciles from its signed off months; a starting point can no longer be set.`,
+  );
+  await expect(section.locator("[data-cutover-form]")).toHaveCount(0);
+  await expect(section.getByRole("button", { name: "Save the starting point" })).toHaveCount(0);
+});

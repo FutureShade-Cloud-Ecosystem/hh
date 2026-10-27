@@ -889,7 +889,7 @@ paths:
         - name: chip
           in: query
           required: false
-          description: Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit alongside the legacy StatusX strings; old URLs still resolve.
+          description: Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit alongside the legacy StatusX strings; old URLs still resolve. The overdue, past_due and current chips answer 400 with the past due words for a caller the account position policy refuses (current is the complement of past due, so all less current lists the overdue accounts by subtraction), and the DUE_SOON chip answers 400 with the due soon words for the same caller. A refused caller's status filter offers stored statuses only.
           schema:
             type: string
             enum:
@@ -1059,7 +1059,7 @@ paths:
       tags:
         - staff-billing
       summary: Download the current register view as CSV
-      description: The same filter and the same figures as the register read. The body is CSV text with a Content-Disposition attachment filename, not JSON; the wire shape is raw text rather than a struct.
+      description: The same filter and the same figures as the register read. The body is CSV text with a Content-Disposition attachment filename, not JSON; the wire shape is raw text rather than a struct. For a caller the account position policy refuses, the Days overdue header and its column are absent and the Status column carries the invoice's stored status; the overdue, past_due, current and DUE_SOON chips refuse that caller in words exactly as the register read does.
       x-role: requireStaff
       x-access:
         surfaces:
@@ -1399,6 +1399,82 @@ paths:
                 properties:
                   resolved:
                     type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/ar/credit-memos:
+    post:
+      operationId: billingIssueCreditMemo
+      tags:
+        - staff-billing
+      summary: Issue a credit memo against an account or one invoice
+      description: "Raises a credit memo: money the dealer gives back. Standalone against the account, or against one invoice, capped at what that invoice has left. The reason is required and travels with the document, the AR subledger row and the audit row. The GL account is the one the posting rules allow for that branch. The same idempotency key returns the same credit, so a double click raises one credit and not two. At or above the maker-checker threshold the credit is parked: nothing moves until a second pair of eyes approves it."
+      x-addition: Change 8 credit memos for finance; the ERP raised a credit memo only from the warranty settlement
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreditMemoInput"
+      responses:
+        "201":
+          description: The credit memo is a document and its journal is posted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditMemoResult"
+        "202":
+          description: The credit is parked for approval; no money has moved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditMemoResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/ar/credit-memos/quote:
+    post:
+      operationId: billingQuoteCreditMemo
+      tags:
+        - staff-billing
+      summary: Quote what a credit against an invoice would come to
+      description: "What a credit against one invoice would come to, and how much room that invoice has left to credit. Nothing moves: no document, no journal, no approval. The room is what the invoice has left to credit, before tax and with it; the credit is what the amount comes to, tax included. A paid invoice still has a room: what has been paid is not what has been credited. An amount over the room is refused in the same words the credit itself is refused in, so the cap is the core's and not a second rule somewhere else."
+      x-addition: Change 8 credit memos for finance; the ERP raised a credit memo only from the warranty settlement
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreditMemoQuoteInput"
+      responses:
+        "200":
+          description: The quote, and the room it was taken against
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditMemoQuote"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -9149,6 +9225,107 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/bankrec/accounts/{id}/cutover:
+    get:
+      operationId: bankrecCutoverPreview
+      tags:
+        - staff-bankrec
+      summary: Read the ledger's entries on or before a cut over date, and the book balance they make
+      description: "The starting point form's read: the posted ledger entries on the account's GL code on or before the given date, with the book balance their net makes at that date. The same read the reconciliation's outstanding lists draw from, so what the Controller sees here is what the reconciliation will hold."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: date
+          in: query
+          required: true
+          description: The cut over date, written YYYY-MM-DD
+          schema:
+            type: string
+            format: date
+        - name: statement_cents
+          in: query
+          required: false
+          description: The statement balance typed on the form, in cents. When present the answer carries the difference between it and the balance the book makes with the ticked entries, and whether it reconciles.
+          schema:
+            type: integer
+            format: int64
+        - name: ticked
+          in: query
+          required: false
+          description: Comma separated journal ids of the entries the form ticks as still outstanding at cut over
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The entries and the book balance at that date
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecCutoverPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: bankrecRecordCutover
+      tags:
+        - staff-bankrec
+      summary: Record the account's reconciliation starting point (cut over)
+      description: "Records the reconciliation starting point for one bank account: the cut over date and the statement balance on that date, accepted as reconciled to the book, plus the optional confirmed list of ledger entries on or before that date still outstanding at cut over. Ledger entries on or before the cut over date that are not on that list are never outstanding items. Financial Controller only (the route's admin gate is the door; the service keeps the Controller check), audited as BANKREC_CUTOVER, and refused with a conflict once the cut over month or any later month on the account has signed off."
+      x-role: requireAdmin
+      x-access:
+        surfaces:
+          - money-desk
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BankRecCutoverInput"
+      responses:
+        "200":
+          description: The account with its recorded cut over
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecAccount"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The cut over month or a later month has already signed off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/bankrec/imports:
     post:
       operationId: bankrecCreateImport
@@ -10655,6 +10832,47 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/InventoryMoveList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/inventory/controller-exceptions:
+    get:
+      operationId: inventoryListControllerExceptions
+      tags:
+        - staff-inventory
+      summary: List pre receipt sales posted at a fallback (or provisional) cost, not yet trued up
+      description: "The Controller's pre receipt exceptions read (ruling 82.4). Manager gated, branch fenced: a scoped caller reads only a branch they reach, and their own scoped reach when they name none."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+          - buying-and-stock
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The exceptions list
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - exceptions
+                properties:
+                  exceptions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InventoryPreReceiptException"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -17209,7 +17427,7 @@ paths:
       tags:
         - staff-pos
       summary: Read one customer's past-due position for the counter
-      description: "A fact, not a gate, and every case answers distinctly. The standing word names the case: walk_in (no customer_id), clear (nothing past due, no hold), past_due, or on_hold (an active credit hold, whether or not anything is past due). The past-due amount, the oldest aging bucket and the hold flag ride beside it when they apply. A caller the dealer's balance_visibility policy withholds balances from, or whose grants do not reach the branch, is a 403; an unknown customer is a 404; a malformed customer_id is a 400; a read that could not be made (the AR, hold or policy read failed) is a 503. Never an empty 200. Counter Till or Quote Desk at read: the Quote Desk's Convert to Order asks it before it confirms."
+      description: "A fact, not a gate, and every case answers distinctly. The standing word names the case: walk_in (no customer_id), clear (nothing past due, no hold), past_due, on_hold (an active credit hold, whether or not anything is past due), or withheld (round 4: a caller the dealer's balance_visibility policy strips the figures from, whose answer never names a position; clear is a position too). The hold is the same for every caller, decided from the same sources: a withheld caller reads on_hold when the account is on hold, by an active hold row or by aging, and withheld otherwise, and never receives the past-due amount or the aging bucket. The past-due amount, the oldest aging bucket and the hold flag ride beside the word when they apply. A caller whose grants do not reach the branch, or from whom the dealer switched the surface off (HIDDEN), is a 403; an unknown customer is a 404; a malformed customer_id is a 400; a read that could not be made (the AR, hold or policy read failed) is a 503. Never an empty 200. Counter Till or Quote Desk at read: the Quote Desk's Convert to Order asks it before it confirms."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -28818,7 +29036,7 @@ components:
                   credit_limit_cents:
                     type: integer
                     format: int64
-                    description: Present on on_account_not_available, the account's credit line
+                    description: Present on on_account_not_available when the caller holds account position, the account's credit line; absent when the account position policy refuses the caller
                   deposit_cents:
                     type: integer
                     format: int64
@@ -29918,7 +30136,6 @@ components:
         - balance_cents
         - stored_status
         - status
-        - days_overdue
         - account_status
         - disputed
       properties:
@@ -29977,7 +30194,7 @@ components:
             - VOID
         status:
           type: string
-          description: The derived register pill state
+          description: "The derived register pill state. A caller the account position policy refuses receives the invoice's STORED status here instead, never the derived OVERDUE or DUE_SOON: no past due flag reaches a refused caller on any route."
           enum:
             - OPEN
             - DUE_SOON
@@ -29989,6 +30206,7 @@ components:
             - DRAFT
             - VOID
             - CREDIT
+            - FINALIZED
         days_overdue:
           type: integer
           format: int32
@@ -30045,11 +30263,9 @@ components:
           $ref: "#/components/schemas/BillingAccountPosition"
     BillingRegisterCounts:
       type: object
-      description: Counts of the same predicates the chip filters apply, computed over the same rows
+      description: "Counts of the same predicates the chip filters apply, computed over the same rows. A caller the account position policy refuses receives neither overdue nor due_soon: the count of a withheld predicate is the predicate told in numbers. Every other caller receives both keys."
       required:
         - open
-        - due_soon
-        - overdue
         - disputed
         - paid
         - credits
@@ -30060,9 +30276,11 @@ components:
         due_soon:
           type: integer
           format: int32
+          description: Absent for a caller the account position policy refuses
         overdue:
           type: integer
           format: int32
+          description: Absent for a caller the account position policy refuses
         disputed:
           type: integer
           format: int32
@@ -30596,7 +30814,6 @@ components:
         - doc_type
         - stored_status
         - status
-        - days_overdue
         - issue_date
         - due_date
         - branch_id
@@ -30627,6 +30844,7 @@ components:
             - VOID
         status:
           type: string
+          description: The derived pill state. A caller the account position policy refuses receives the invoice's STORED status here instead, never the derived OVERDUE or DUE_SOON.
           enum:
             - OPEN
             - DUE_SOON
@@ -30638,6 +30856,7 @@ components:
             - DRAFT
             - VOID
             - CREDIT
+            - FINALIZED
         days_overdue:
           type: integer
           format: int32
@@ -30920,6 +31139,165 @@ components:
         replayed:
           type: boolean
           description: True when the idempotency key was already honoured and this request posted nothing
+    BillingCreditMemoInput:
+      type: object
+      description: "One credit the dealer gives back. The amount is a positive magnitude and the sign is the server's business. Against an invoice, zero means the whole of what that invoice has left. The reason is required: a credit with no stated reason cannot be explained to the customer, to the Controller, or to whoever reads the file later."
+      required:
+        - customer_id
+        - branch_id
+        - amount_cents
+        - reason
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+          description: The one invoice this credit is against; absent means a standalone credit on the account
+        amount_cents:
+          type: integer
+          format: int64
+          description: A positive magnitude; zero against an invoice means the whole of what is left
+        reason:
+          type: string
+          description: Why the dealer gives this money back; it travels with the document and the audit row
+        gl_account:
+          type: string
+          description: The account the credit books against; absent means the revenue account the posting rules resolve for that branch, and naming one the posting rules do not allow is refused
+        idempotency_key:
+          type: string
+          description: "Makes a retry safe: the same key returns the same credit. Absent means the server derives one from the request, so a double click raises one credit and not two."
+    BillingCreditMemoQuoteInput:
+      type: object
+      description: "What to quote: the account, the branch the credit would be filed at, the invoice it would be against, and the amount to price. The amount is a positive magnitude, before tax, exactly as the credit takes it; zero prices the whole of what the invoice has left."
+      required:
+        - customer_id
+        - branch_id
+        - invoice_id
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+          description: The one invoice to price the credit against; the room is that invoice's
+        amount_cents:
+          type: integer
+          format: int64
+          description: The amount to price, before tax; absent or zero prices the whole of what the invoice has left
+    BillingCreditMemoQuote:
+      type: object
+      description: "The quote, and the room it was taken against. The room is what the invoice has left to credit: remaining_subtotal_cents before tax and remaining_total_cents with it. The credit is what the amount comes to: subtotal_cents before tax, tax_cents, and total_cents with tax. The figures are the core's arithmetic; a reader never works out a tax."
+      required:
+        - invoice_id
+        - remaining_subtotal_cents
+        - remaining_tax_cents
+        - remaining_total_cents
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+        - message
+      properties:
+        invoice_id:
+          type: string
+          format: uuid
+        remaining_subtotal_cents:
+          type: integer
+          format: int64
+          description: What the invoice has left to credit, before tax
+        remaining_tax_cents:
+          type: integer
+          format: int64
+          description: The tax that is left with it
+        remaining_total_cents:
+          type: integer
+          format: int64
+          description: What the invoice has left to credit, with tax
+        subtotal_cents:
+          type: integer
+          format: int64
+          description: What the amount comes to, before tax
+        tax_cents:
+          type: integer
+          format: int64
+          description: The tax pro-rated from what is left
+        total_cents:
+          type: integer
+          format: int64
+          description: What the amount comes to, with tax
+        message:
+          type: string
+          description: What a person reads under the amount they are typing
+    BillingCreditMemoResult:
+      type: object
+      description: "The credit as it now stands. ISSUED means it is a document and its journal is posted. AWAITING_APPROVAL means it is parked at or above the maker-checker threshold: no money has moved and a second pair of eyes has to approve it."
+      required:
+        - status
+        - credit_memo_id
+        - credit_memo_no
+        - customer_id
+        - branch_id
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+        - gl_account
+        - reason
+        - message
+      properties:
+        status:
+          type: string
+          enum:
+            - ISSUED
+            - AWAITING_APPROVAL
+        credit_memo_id:
+          type: string
+          format: uuid
+        credit_memo_no:
+          type: string
+        customer_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+        gl_account:
+          type: string
+          description: The account the credit booked against
+        reason:
+          type: string
+        approval_id:
+          type: string
+          format: uuid
+          description: The approval request waiting on the parked credit
+        gl_journal_id:
+          type: string
+          format: uuid
+          description: The journal that carries the credit into the ledger
+        reused:
+          type: boolean
+          description: True when the idempotency key named a credit that already exists
+        message:
+          type: string
     BillingApplyPaymentInput:
       type: object
       description: One received payment the server allocates across the named invoices, oldest first. The split is never the caller's to compute.
@@ -31489,17 +31867,12 @@ components:
           format: date
     BillingStatement:
       type: object
-      description: "One stored statement: the rendered artefact and the aging figures as they stood at as_of_date, never a re-derived query."
+      description: "One stored statement: the rendered artefact and the aging figures as they stood at as_of_date, never a re-derived query. Aging and closing balance are absent when the dealer's account position policy refuses this caller."
       required:
         - id
         - run_id
         - customer_id
         - as_of_date
-        - current_cents
-        - days_30_cents
-        - days_60_cents
-        - days_90_plus_cents
-        - closing_balance_cents
         - delivery_status
         - created_at
       properties:
@@ -32491,12 +32864,7 @@ components:
         - account_no
         - status
         - terms_days
-        - credit_limit_cents
-        - open_cents
-        - available_credit_cents
-        - overdue_cents
-        - utilization_bps
-        - aging
+        - account_position_withheld
       properties:
         customer_id:
           type: string
@@ -32505,6 +32873,9 @@ components:
           type: string
         account_no:
           type: string
+        account_position_withheld:
+          type: boolean
+          description: True when the dealer's account position policy refuses this caller. The credit limit, open, available, overdue, utilization and aging are then absent entirely (never 0); a screen says so in words. The status badge is operational and stays.
         status:
           type: string
           enum:
@@ -32518,18 +32889,22 @@ components:
         credit_limit_cents:
           type: integer
           format: int64
+          description: Absent when account_position_withheld.
         open_cents:
           type: integer
           format: int64
+          description: Absent when account_position_withheld.
         available_credit_cents:
           type: integer
           format: int64
+          description: Absent when account_position_withheld.
         overdue_cents:
           type: integer
           format: int64
+          description: Absent when account_position_withheld.
         utilization_bps:
           type: integer
-          description: OpenCents * 10000 / CreditLimitCents, basis points of the limit used. A zero limit reads 0; an over-limit account reads 10000+ (the bar reads "over limit" past 10000, an honest answer).
+          description: Absent when account_position_withheld. OpenCents * 10000 / CreditLimitCents, basis points of the limit used. A zero limit reads 0; an over-limit account reads 10000+ (the bar reads "over limit" past 10000, an honest answer).
         primary_ap_contact_name:
           type: string
         primary_ap_contact_email:
@@ -32545,7 +32920,9 @@ components:
           format: int64
           description: Absent when the caller does not hold the payment trail (ruling 87).
         aging:
-          $ref: "#/components/schemas/BillingCustomerWorkspaceAging"
+          description: Absent when account_position_withheld.
+          allOf:
+            - $ref: "#/components/schemas/BillingCustomerWorkspaceAging"
     BillingCustomerWorkspaceAging:
       type: object
       description: The 5-bucket aging breakdown the workspace overview tab opens with. The five buckets sum to OpenCents and the four late buckets sum to OverdueCents; the server checks the sum before returning the payload.
@@ -32583,7 +32960,7 @@ components:
           format: int64
     BillingCustomerWorkspaceInvoice:
       type: object
-      description: One invoice row the workspace invoices tab carries. Three lists reach this shape (open, closed, disputed); the bucket label matches the 5-bucket header.
+      description: One invoice row the workspace invoices tab carries. Three lists reach this shape (open, closed, disputed); the bucket label matches the 5-bucket header. days_overdue and days_overdue_bucket are absent when the dealer's account position policy refuses this caller.
       required:
         - id
         - invoice_no
@@ -32593,8 +32970,6 @@ components:
         - due_date
         - total_cents
         - balance_cents
-        - days_overdue
-        - days_overdue_bucket
         - is_disputed
         - has_open_promise
       properties:
@@ -32706,13 +33081,12 @@ components:
           type: string
     BillingCustomerWorkspaceStatement:
       type: object
-      description: One statement row from ar_statements the workspace statements tab carries. The closing_balance_cents is the figure that went out the door on that date, an immutable artefact per migration 0105.
+      description: One statement row from ar_statements the workspace statements tab carries. The closing_balance_cents is the figure that went out the door on that date, an immutable artefact per migration 0105, and is absent when the dealer's account position policy refuses this caller.
       required:
         - id
         - run_id
         - mode
         - as_of_date
-        - closing_balance_cents
         - delivery_status
         - created_at
       properties:
@@ -32801,7 +33175,7 @@ components:
         balance_after_cents:
           type: integer
           format: int64
-          description: Absent when the caller does not hold the payment trail (ruling 87).
+          description: Absent when the caller does not hold the payment trail (ruling 87) or when the dealer's account position policy refuses this caller.
         branch_id:
           type: string
           format: uuid
@@ -32957,11 +33331,10 @@ components:
           format: date-time
     BillingStatementPreview:
       type: object
-      description: "The C8 statement preview: the statement artefact (the figure that went out the door, 0105) plus the customer's open lines and a 5-bucket aging breakdown. The breakdown reconciles to the penny: sum of the five buckets equals openCents; sum of the four late buckets equals overdueCents. Reconciled is true exactly when both hold."
+      description: "The C8 statement preview: the statement artefact (the figure that went out the door, 0105) plus the customer's open lines and a 5-bucket aging breakdown. The breakdown reconciles to the penny: sum of the five buckets equals openCents; sum of the four late buckets equals overdueCents. Reconciled is true exactly when both hold. Aging is absent when the dealer's account position policy refuses this caller."
       required:
         - statement
         - open_lines
-        - aging
         - reconciled
       properties:
         statement:
@@ -32976,14 +33349,12 @@ components:
           type: boolean
     BillingStatementPreviewLine:
       type: object
-      description: One open invoice on the statement preview. balance_cents is the figure that has to reconcile to the penny; bucket_label is the row's 5-bucket name, derived server-side from days_overdue, never computed in the browser.
+      description: One open invoice on the statement preview. balance_cents is the figure that has to reconcile to the penny; bucket_label is the row's 5-bucket name, derived server-side from days_overdue, never computed in the browser. days_overdue and bucket_label are absent when the dealer's account position policy refuses this caller.
       required:
         - invoice_id
         - invoice_no
         - due_date
         - balance_cents
-        - days_overdue
-        - bucket_label
       properties:
         invoice_id:
           type: string
@@ -34269,15 +34640,14 @@ components:
           type: boolean
     CustomerSearchResult:
       type: object
-      description: "The counter-facing projection the POS picker renders: enough to identify the account and show its credit posture."
+      description: "The counter-facing projection the POS picker renders: enough to identify the account and show its credit posture. The two position figures follow the dealer's account position policy (ar_invoice_policy.account_position_visibility, per branch): they are absent entirely, never 0, for a caller the policy refuses."
       required:
         - id
         - name
         - account_no
         - customer_type
         - payment_terms_days
-        - credit_limit_cents
-        - open_balance_cents
+        - cash_on_demand
       properties:
         id:
           type: string
@@ -34297,16 +34667,24 @@ components:
         payment_terms_days:
           type: integer
           format: int32
+        cash_on_demand:
+          type: boolean
+          description: "The account pays before release: zero day terms with a credit line, the rule the payment options offer pay before release by. A payment rule, not a figure, so it is present under every account position policy."
         credit_limit_cents:
           type: integer
           format: int64
+          description: Absent for a caller the account position policy refuses.
         open_balance_cents:
           type: integer
           format: int64
-          description: The account's current AR balance
+          description: The account's current AR balance. Absent for a caller the account position policy refuses.
+        available_credit_cents:
+          type: integer
+          format: int64
+          description: The core's headroom, the limit minus the open balance and never below zero, so no client subtracts it. Absent for a caller the account position policy refuses.
     CustomerAccount:
       type: object
-      description: The resolved view of a customers row
+      description: "The resolved view of a customers row. On the staff reads the credit limit and balance follow the dealer's account position policy: absent entirely, never 0, for a caller the policy refuses."
       required:
         - customer_id
         - account_no
@@ -34314,10 +34692,9 @@ components:
         - customer_type
         - branch_id
         - payment_terms_days
-        - credit_limit_cents
+        - cash_on_demand
         - on_hold
         - tax_exempt
-        - balance_cents
         - is_active
       properties:
         customer_id:
@@ -34341,9 +34718,13 @@ components:
         payment_terms_days:
           type: integer
           format: int32
+        cash_on_demand:
+          type: boolean
+          description: The account pays before release (zero day terms with a credit line). A payment rule, not a figure, so it is present under every account position policy.
         credit_limit_cents:
           type: integer
           format: int64
+          description: Absent for a caller the account position policy refuses.
         on_hold:
           type: boolean
         tax_exempt:
@@ -34351,11 +34732,16 @@ components:
         balance_cents:
           type: integer
           format: int64
-          description: The account's current AR balance, composed in by the billing read
+          description: The account's current AR balance, composed in by the billing read. Absent for a caller the account position policy refuses.
+        available_credit_cents:
+          type: integer
+          format: int64
+          description: The core's headroom, the limit minus the balance and never below zero, so no client subtracts it. Absent for a caller the account position policy refuses.
         is_active:
           type: boolean
     CustomerCreate:
       type: object
+      description: The account number and name are the caller's. payment_terms_days defaults to 30 when absent (how the counter and quote desk pickers create); zero is legal and means Cash On Demand, pay before release.
       required:
         - account_no
         - name
@@ -34379,7 +34765,6 @@ components:
         payment_terms_days:
           type: integer
           format: int32
-          minimum: 0
         credit_limit_cents:
           type: integer
           format: int64
@@ -38818,6 +39203,88 @@ components:
         unmatched_lines:
           type: integer
           format: int32
+        cutover_date:
+          type:
+            - string
+            - "null"
+          format: date
+          description: The recorded reconciliation starting point's cut over date, or null when none is recorded
+        cutover_statement_balance_cents:
+          type:
+            - integer
+            - "null"
+          format: int64
+          description: The statement balance on the cut over date, accepted as reconciled to the book
+        cutover_outstanding_journal_ids:
+          type: array
+          description: The confirmed ledger entries on or before the cut over date still outstanding at cut over
+          items:
+            type: string
+            format: uuid
+    BankRecCutoverInput:
+      type: object
+      description: "Records a bank account's reconciliation starting point (cut over): the cut over date and the statement balance on that date, accepted as reconciled to the book, plus the optional confirmed list of ledger entries on or before that date still outstanding at cut over."
+      required:
+        - cutover_date
+        - opening_statement_balance_cents
+      properties:
+        cutover_date:
+          type: string
+          format: date
+          description: The cut over date, written YYYY-MM-DD
+        opening_statement_balance_cents:
+          type: integer
+          format: int64
+          description: The statement balance on the cut over date
+        outstanding_journal_ids:
+          type: array
+          description: The ledger entries (journal ids) on or before the cut over date still outstanding at cut over
+          items:
+            type: string
+            format: uuid
+    BankRecCutoverPreview:
+      type: object
+      description: The ledger's entries on the account's GL code on or before a cut over date, and the book balance their net makes at that date. The starting point form reads this and formats it; it computes no figure of its own.
+      required:
+        - book_balance_cents
+      properties:
+        book_balance_cents:
+          type: integer
+          format: int64
+          description: The signed net of every listed entry, the ledger's balance at the cut over date
+        entries:
+          type: array
+          description: The posted entries on the account's GL code on or before the cut over date, oldest first
+          items:
+            $ref: "#/components/schemas/BankRecCutoverPreviewEntry"
+        difference_cents:
+          type: integer
+          format: int64
+          description: "Present only when the read carried statement_cents: the typed statement balance less the balance the book makes with the ticked entries (the book balance less ticked outstanding cheques plus ticked deposits in transit). A starting point must reconcile, so this must be zero."
+        reconciles:
+          type: boolean
+          description: Present only when the read carried statement_cents; true when difference_cents is zero
+    BankRecCutoverPreviewEntry:
+      type: object
+      description: One posted ledger entry on the bank's GL code, at its signed net on that code
+      required:
+        - journal_id
+        - posted_at
+        - memo
+        - amount_cents
+      properties:
+        journal_id:
+          type: string
+          format: uuid
+        posted_at:
+          type: string
+          format: date-time
+        memo:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+          description: Signed net on the bank's GL code (a deposit positive, a payment negative)
     BankRecAccountList:
       type: array
       description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
@@ -40036,11 +40503,15 @@ components:
           format: int32
     TaxReconReport:
       type: object
-      description: "The HST reconciliation: collected tax on the decision side tied to the GL liability account balances for the period."
+      description: "The HST reconciliation (FW1-11): the month's documents on each line, sales HST collected, tax refunded on POS returns, and vendor bill input tax credits shown apart, netted against the GL 2200 movement for the same period. Documents carrying the opening balance marker sit outside collected and are named on their own line."
       required:
         - year
         - month
         - collected_cents
+        - return_tax_cents
+        - input_tax_cents
+        - opening_balance_count
+        - opening_balance_hst_cents
         - gl_payable_cents
         - gl_federal_cents
         - gl_ontario_cents
@@ -40058,11 +40529,27 @@ components:
         collected_cents:
           type: integer
           format: int64
-          description: Sum of net-collected tax on the decision side
+          description: Sales tax on the period's documents (invoices less credit memos), opening balances excluded
+        return_tax_cents:
+          type: integer
+          format: int64
+          description: Sales tax refunded on the period's committed POS returns
+        input_tax_cents:
+          type: integer
+          format: int64
+          description: Input tax credits on the period's posted vendor bills
+        opening_balance_count:
+          type: integer
+          format: int32
+          description: The period's documents carrying the opening balance marker, excluded from collected
+        opening_balance_hst_cents:
+          type: integer
+          format: int64
+          description: Their HST, named here so nothing leaves the report silently
         gl_payable_cents:
           type: integer
           format: int64
-          description: The GL payable account balance
+          description: The GL 2200 movement for the period (credits less debits)
         gl_federal_cents:
           type: integer
           format: int64
@@ -40074,7 +40561,7 @@ components:
         variance_cents:
           type: integer
           format: int64
-          description: Payable balance minus collected; zero means tied out
+          description: The GL movement minus the documents' net (collected less returns less input tax); zero means tied out
         tied_out:
           type: boolean
     InventoryStockMove:
@@ -41140,6 +41627,44 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/InventoryStockMove"
+    InventoryPreReceiptException:
+      type: object
+      required:
+        - move_id
+        - order_id
+        - product_id
+        - branch_id
+        - qty_base
+        - provisional_unit_cost_cents
+        - provisional_value_cents
+        - fallback_source
+        - occurred_at
+      properties:
+        move_id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        qty_base:
+          type: number
+          format: double
+        provisional_unit_cost_cents:
+          type: integer
+          format: int64
+        provisional_value_cents:
+          type: integer
+          format: int64
+        fallback_source:
+          type: string
+        occurred_at:
+          type: string
     InventoryPendingFulfilmentList:
       type: object
       description: The core writes this list under the key pending, with no cursor and no limit echo. An empty answer is [], never null.
@@ -46945,7 +47470,7 @@ components:
             $ref: "#/components/schemas/PosHotkey"
     PosAccountStanding:
       type: object
-      description: "One customer's standing, and no more of it than that. The standing word is always present and names the case; the three older fields are present exactly when they were before: past_due_cents and oldest_bucket only when money is past due, on_hold only when true."
+      description: "One customer's standing, and no more of it than that. The standing word is always present and names the case; the three older fields are present exactly when they were before: past_due_cents and oldest_bucket only when money is past due, on_hold only when true. A caller the dealer's balance_visibility policy strips the figures from reads `withheld`, or `on_hold` when the account is on hold, and never receives past_due_cents or oldest_bucket: clear is a position too, and it is withheld along with the money."
       required:
         - standing
       properties:
@@ -46956,6 +47481,7 @@ components:
             - clear
             - past_due
             - on_hold
+            - withheld
         past_due_cents:
           type: integer
           format: int64

@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord } from "../src/ar/ar-logic.ts";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, offeredChips, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
 import { houseDay, resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
@@ -166,6 +166,37 @@ test("a register row's marks: the day count is the status word, a promise or a d
   assert.deepEqual(rowMarks({ status: "PAID", days_overdue: 0, disputed: false }), [{ word: "paid", tone: "good", dashed: false }]);
 });
 
+test("a withheld register answers the past due chip in words, and the stored status reads as words, never a past due pill", () => {
+  // The core sends a refused caller no days_overdue and no overdue or due_soon count (UX-97 round 6),
+  // so the desk's past due chip says so instead of quietly summing nothing.
+  const withheld = [{ stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 70000 }];
+  assert.deepEqual(pastDueLine("past_due", withheld), { kind: "withheld" });
+  assert.deepEqual(pastDueLine("all", withheld), { kind: "off" });
+  assert.deepEqual(
+    pastDueLine("past_due", [{ stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 70000, days_overdue: 12 }, { stored_status: "PAID", doc_type: "INVOICE", balance_cents: 0, days_overdue: 0 }]),
+    { kind: "figures", pastDueCount: 1, totalCount: 1, pastDueCents: 70000 },
+  );
+  // The stored status a refused caller now receives in `status` reads as words, and no mark
+  // derives a past due state from its absence.
+  assert.equal(statusWord("FINALIZED"), "On file");
+  assert.equal(statusTone("FINALIZED"), "plain");
+  assert.deepEqual(rowMarks({ status: "FINALIZED", days_overdue: undefined, disputed: false }), [{ word: "on file", tone: "plain", dashed: false }]);
+});
+
+test("a refused caller's filter chips are the stored set: no Current chip offers the overdue list by subtraction", () => {
+  // The core sends a refused caller no day counts (UX-97 round 6) and refuses the current and due
+  // soon chips outright (UX-97 item 220), so the desk offers that caller no Current chip either:
+  // ALL less CURRENT is the overdue list, the past due predicate told backwards. A caller the
+  // policy allows keeps every chip.
+  const clerkRows = [{ stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 70000 }];
+  assert.deepEqual(offeredChips(clerkRows), ["all", "past_due", "on_hold"]);
+  const managerRows = [
+    { stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 70000, days_overdue: 12 },
+    { stored_status: "FINALIZED", doc_type: "INVOICE", balance_cents: 50000, days_overdue: 0 },
+  ];
+  assert.deepEqual(offeredChips(managerRows), ["all", "past_due", "current", "on_hold"]);
+});
+
 test("what the server's split says about an invoice, in the references' words", () => {
   assert.equal(lineWords({ outcome: "CLOSES", stays_open_cents: 0 }), "closes");
   assert.equal(lineWords({ outcome: "PART", stays_open_cents: 747400 }), "part, $7,474.00 stays open");
@@ -319,4 +350,39 @@ test("the money desk surface config read serves the dealer's zone for the day wo
 test("the statement's over band notice says over 60 days, the strip's own word, and never more than", () => {
   assert.equal(STATEMENT_OVERDUE_NOTE, "of this balance is over 60 days past due. Please contact our office to arrange payment.");
   assert.ok(!STATEMENT_OVERDUE_NOTE.includes("more than"));
+});
+
+// -- the credit memo (FW1-12) ------------------------------------------------------------------------
+
+test("a credit is asked for its reason before it is asked for its money", () => {
+  const noReason = creditCheck({ amountText: "100.00", reason: "   " });
+  assert.equal(noReason.ok, false);
+  assert.match(noReason.words, /why the customer is being credited/i);
+  const noAmount = creditCheck({ amountText: "", reason: "The goods came back" });
+  assert.equal(noAmount.ok, false);
+  assert.match(noAmount.words, /how much to credit|amount to credit/i);
+  const notMoney = creditCheck({ amountText: "20.005", reason: "The goods came back" });
+  assert.equal(notMoney.ok, false);
+  assert.match(notMoney.words, /dollars and cents/i);
+  const nothing = creditCheck({ amountText: "0", reason: "The goods came back" });
+  assert.equal(nothing.ok, false);
+  assert.match(nothing.words, /more than zero/i);
+});
+
+test("a credit reads its amount through the decimal string and keeps the reason as typed", () => {
+  const check = creditCheck({ amountText: "19.68", reason: "  The goods came back  " });
+  assert.equal(check.ok, true);
+  assert.equal(check.amountCents, 1968);
+  assert.equal(check.reason, "The goods came back");
+});
+
+test("a parked credit says plainly that no money has moved", () => {
+  const parked = creditWords({ status: "AWAITING_APPROVAL", credit_memo_no: "#CM-7", total_cents: -11300, message: "" });
+  assert.match(parked, /#CM-7/);
+  assert.match(parked, /\$113\.00/);
+  assert.match(parked, /No money has moved yet/i);
+  const issued = creditWords({ status: "ISSUED", credit_memo_no: "#CM-8", total_cents: -5000, message: "" });
+  assert.match(issued, /#CM-8/);
+  assert.match(issued, /\$50\.00/);
+  assert.ok(!/No money has moved/i.test(issued));
 });

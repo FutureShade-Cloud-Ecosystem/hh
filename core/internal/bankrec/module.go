@@ -52,10 +52,14 @@ type LodgementSource interface {
 	LodgementFacts(ctx context.Context, movementID string) (LodgementFact, bool, error)
 }
 
-// LodgementFact is the branch and amount of one lodgement.
+// LodgementFact is the branch, amount and covered payment ids of one lodgement.
+// PaymentsUnresolved is true when the lodgement carries a positive amount whose
+// underlying session/method payments could not be uniquely resolved.
 type LodgementFact struct {
-	BranchID    string
-	AmountCents int64
+	BranchID           string
+	AmountCents        int64
+	PaymentIDs         []string
+	PaymentsUnresolved bool
 }
 
 // JournalSource reads one journal for a manual JOURNAL match (SF-2j): the GL module's seam, satisfied by
@@ -112,11 +116,13 @@ type CandidatePayment struct {
 
 // Lodgement is one open cash/cheque banking movement offered to the matcher.
 type Lodgement struct {
-	MovementID  string
-	BranchID    string
-	AmountCents int64
-	Reference   string
-	OccurredAt  time.Time
+	MovementID         string
+	BranchID           string
+	AmountCents        int64
+	Reference          string
+	OccurredAt         time.Time
+	PaymentIDs         []string
+	PaymentsUnresolved bool
 }
 
 // ImportProfile is the column-mapping profile a StatementSource parses under (0033 bank_import_profiles).
@@ -224,9 +230,11 @@ func (h *Handler) requireMoneyDeskWork(g *guards.Guards, next guards.StaffHandle
 }
 
 // RegisterRoutes self-registers the bankrec routes. reads are Money Desk work or above; import/match are RequireManager;
-// rule approval + reconciliation completion are RequireAdmin. Signature is FROZEN across the W5 handlers.
+// rule approval, reconciliation completion and the cut over are RequireAdmin. Signature is FROZEN across the W5 handlers.
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/bankrec/accounts", h.requireMoneyDeskWork(g, h.staff(h.accounts)))
+	r.Handle("GET /api/v1/bankrec/accounts/{id}/cutover", h.requireMoneyDeskWork(g, h.staff(h.cutoverPreview)))
+	r.Handle("POST /api/v1/bankrec/accounts/{id}/cutover", g.RequireAdmin(h.staff(h.recordCutover)))
 	r.Handle("POST /api/v1/bankrec/imports", g.RequireManager(h.staff(h.createImport)))
 	r.Handle("GET /api/v1/bankrec/lines", h.requireMoneyDeskWork(g, h.staff(h.lines)))
 	r.Handle("GET /api/v1/bankrec/matches", h.requireMoneyDeskWork(g, h.staff(h.matchHistory)))

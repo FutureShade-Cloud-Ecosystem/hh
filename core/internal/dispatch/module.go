@@ -60,6 +60,13 @@ type OrderReader interface {
 // it belongs, with the module that owns the ladder.
 type OrderFulfiller interface {
 	MarkFulfilled(ctx context.Context, orderID, reason string) error
+	// MarkFulfilledTx is MarkFulfilled on the CALLER's transaction (round 2, S3's P2). The
+	// offline pickup's confirm runs the order's fulfilment inside the confirm's own
+	// transaction, so the collection and the order's status, its holds and its stock relief
+	// commit or roll back together. A fulfilment AFTER the commit, with its error discarded,
+	// can leave a delivered order with no stock relief and no COGS: the pickup says collected
+	// and the books say the goods never left.
+	MarkFulfilledTx(ctx context.Context, tx pgx.Tx, orderID, reason string) error
 }
 
 // SignatureCapturer is the DIB-386 typed-name attestation seam. Satisfied by an adapter over

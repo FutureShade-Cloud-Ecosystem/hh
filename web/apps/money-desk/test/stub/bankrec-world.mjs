@@ -128,7 +128,7 @@ const withinDays = (a, b, days) => Math.abs(dayOf(a) - dayOf(b)) <= days * 86_40
 
 const clientError = (status, message) => ({ status, body: { error: message } });
 
-export function createBankrecWorld() {
+export function createBankrecWorld({ ledgerPosted = null } = {}) {
   let world = fresh();
   const reset = () => {
     world = fresh();
@@ -611,8 +611,76 @@ export function createBankrecWorld() {
     return { status: 201, body: reconView(target) };
   }
 
-  function completeReconciliation(id, caller) {
-    if (!id) return clientError(400, "reconciliation id is required");
+  // The Controller's door to the cut over (round 3): the recorded point lands on the account, refused with the
+  // core's conflict once the cut over month or any later month on the account has signed off.
+  function recordCutover(accountId, input) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(input.cutover_date ?? ""))) {
+      return clientError(400, `bankrec: cutover_date must be YYYY-MM-DD, got ${JSON.stringify(input.cutover_date ?? "")}`);
+    }
+    const ids = Array.isArray(input.outstanding_journal_ids) ? input.outstanding_journal_ids : [];
+    for (const id of ids) {
+      if (!UUID.test(String(id))) return clientError(400, `bankrec: invalid outstanding journal id ${JSON.stringify(String(id))}`);
+    }
+    const account = world.accounts.find((a) => a.id === accountId);
+    if (account === undefined) return clientError(404, "not found");
+    // Once any month on the account has signed off, any cut-over (new or changed) is refused in words naming
+    // that month (round 4, FROM-PRINCIPAL 183).
+    const done = world.recons
+      .filter((r) => r.bank_account_id === account.id && r.status === "COMPLETED")
+      .sort((a, b) => a.year - b.year || a.month - b.month)[0];
+    if (done !== undefined) {
+      return clientError(409, `bankrec: cannot record cut-over at ${input.cutover_date} because month ${done.year}-${pad(done.month)} is already completed`);
+    }
+    // A starting point must reconcile (round 4): the statement balance is the book less ticked outstanding
+    // cheques plus ticked deposits in transit, the book balance at the date less the net of the ticked entries.
+    {
+      const preview = cutoverPreview(accountId, new URL(`http://x/?date=${input.cutover_date}&statement_cents=${Number(input.opening_statement_balance_cents) || 0}${(input.outstanding_journal_ids ?? []).length > 0 ? `&ticked=${(input.outstanding_journal_ids ?? []).join(",")}` : ""}`));
+      if (preview.status === 200 && preview.body.reconciles === false) {
+        const apart = Math.abs(preview.body.difference_cents);
+        const size = `${apart < 0 ? "-" : ""}$${String(Math.floor(apart / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${pad(apart % 100)}`;
+        return clientError(422, `bankrec: cannot record cut-over at ${input.cutover_date}: the statement and the book differ by ${size}; tick the items still outstanding at cut over, or check the date and balance`);
+      }
+    }
+    account.cutover_date = input.cutover_date;
+    account.cutover_statement_balance_cents = Number(input.opening_statement_balance_cents) || 0;
+    account.cutover_outstanding_journal_ids = ids.map(String);
+    return { status: 200, body: accountView(account) };
+  }
+
+  // The starting point form's read (round 3): the ledger's entries on the account's GL code on or before the
+  // date, and the book balance their net makes, computed from the same posted journals the register serves.
+  function cutoverPreview(accountId, url) {
+    const date = url.searchParams.get("date") ?? "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return clientError(400, `bankrec: cutover_date must be YYYY-MM-DD, got ${JSON.stringify(date)}`);
+    }
+    const account = world.accounts.find((a) => a.id === accountId);
+    if (account === undefined) return clientError(404, "not found");
+    const rows = (typeof ledgerPosted === "function" ? ledgerPosted() : [])
+      .flatMap((j) =>
+        j.lines
+          .filter((l) => l.account_code === account.gl_account_code)
+          .map((l) => ({ journal: j, net: l.debit_cents - l.credit_cents })),
+      )
+      .filter((e) => e.net !== 0 && (e.journal.posted_at ?? "").slice(0, 10) <= date)
+      .sort((a, b) => (a.journal.posted_at < b.journal.posted_at ? -1 : 1));
+    const entries = rows.map(({ journal, net }) => ({ journal_id: journal.id, posted_at: journal.posted_at, memo: journal.memo, amount_cents: net }));
+    const book = entries.reduce((s, e) => s + e.amount_cents, 0);
+    const body = { book_balance_cents: book, ...(entries.length > 0 ? { entries } : {}) };
+    // With the form's typed balance and ticks, the difference and whether it reconciles ride the answer too.
+    const rawStatement = url.searchParams.get("statement_cents");
+    if (rawStatement !== null && rawStatement !== "") {
+      if (!/^-?\d+$/.test(rawStatement)) return clientError(400, "bankrec: statement_cents must be a whole number of cents");
+      const ticked = new Set((url.searchParams.get("ticked") ?? "").split(",").filter((s) => s !== ""));
+      const tickedNet = entries.filter((e) => ticked.has(e.journal_id)).reduce((s, e) => s + e.amount_cents, 0);
+      const diff = Number(rawStatement) - (book - tickedNet);
+      body.difference_cents = diff;
+      body.reconciles = diff === 0;
+    }
+    return { status: 200, body };
+  }
+
+  function completeReconciliation(id, caller) {    if (!id) return clientError(400, "reconciliation id is required");
     if (!UUID.test(id)) return clientError(404, "not found");
     const rec = world.recons.find((r) => r.id === id);
     if (rec === undefined) return clientError(404, "not found");
@@ -691,10 +759,15 @@ export function createBankrecWorld() {
     }
     if (!path.startsWith("/api/v1/bankrec/")) return null;
     const caller = callerOf(req);
-    const route = `${method} ${path.replace(/\/[0-9a-f-]{36}\/complete$/i, "/{id}/complete")}`;
+    const route = `${method} ${path
+      .replace(/\/[0-9a-f-]{36}\/complete$/i, "/{id}/complete")
+      .replace(/\/[0-9a-f-]{36}\/cutover$/i, "/{id}/cutover")}`;
     // The guards, per route: reads require Money Desk work or above (controller or Payables and Receivables, FROM-PRINCIPAL 111),
-    // writes a manager (tier 1 or 2), rules and sign off an administrator.
-    const admin = route === "POST /api/v1/bankrec/rules" || route === "POST /api/v1/bankrec/reconciliations/{id}/complete";
+    // writes a manager (tier 1 or 2), rules, sign off and the cut over an administrator.
+    const admin =
+      route === "POST /api/v1/bankrec/rules" ||
+      route === "POST /api/v1/bankrec/reconciliations/{id}/complete" ||
+      route === "POST /api/v1/bankrec/accounts/{id}/cutover";
     const manager = admin || ["POST /api/v1/bankrec/imports", "POST /api/v1/bankrec/match", "POST /api/v1/bankrec/unmatch", "POST /api/v1/bankrec/reconciliations"].includes(route);
     const readWork = method === "GET";
     if (admin && caller.tier !== 1) return forbidden();
@@ -711,6 +784,14 @@ export function createBankrecWorld() {
     switch (route) {
       case "GET /api/v1/bankrec/accounts":
         return { status: 200, body: world.accounts.map(accountView) };
+      case "GET /api/v1/bankrec/accounts/{id}/cutover": {
+        const accountId = path.split("/")[5] ?? "";
+        return cutoverPreview(accountId, url);
+      }
+      case "POST /api/v1/bankrec/accounts/{id}/cutover": {
+        const accountId = path.split("/")[5] ?? "";
+        return recordCutover(accountId, input);
+      }
       case "POST /api/v1/bankrec/imports":
         return importStatement(input, caller);
       case "GET /api/v1/bankrec/lines":

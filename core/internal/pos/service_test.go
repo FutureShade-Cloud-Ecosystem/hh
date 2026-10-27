@@ -16,6 +16,7 @@ import (
 	iauth "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
@@ -1293,6 +1294,14 @@ func (r *fakeRestock) RestockForReturnTx(_ context.Context, _ pgx.Tx, in Restock
 	return r.err
 }
 
+func (r *fakeRestock) ReturnMoveValuesTx(context.Context, pgx.Tx, string) ([]inventory.ShipLineValue, error) {
+	return nil, nil
+}
+
+func (r *fakeRestock) ShippedValueForOrderLineTx(context.Context, pgx.Tx, string, string, float64) (inventory.ShipLineValue, bool, error) {
+	return inventory.ShipLineValue{}, false, nil
+}
+
 // fakeCardRefunder is RUN-PAY's reversal rail seam. The tx parameter is the
 // CardRefunder seam's discipline: the rail rides the caller's Return
 // transaction, this fake records the call and moves on.
@@ -1439,6 +1448,7 @@ func newHarness() *harness {
 		// or none calls WithRoleConfig after the harness.
 		roles: testRoleConfig(),
 	}
+	h.svc.WithPositionGate(&fakePosition{vis: "MANAGER_UP", svc: h.svc})
 	return h
 }
 
@@ -1488,8 +1498,8 @@ func TestSale_Cash_ComposesPaidInvoiced(t *testing.T) {
 	if len(h.store.allocations) != 1 {
 		t.Fatalf("want 1 allocation, got %d", len(h.store.allocations))
 	}
-	if len(h.store.custTxns) != 1 || h.store.custTxns[0].TxnType != "PAYMENT" {
-		t.Fatalf("want PAYMENT txn: %+v", h.store.custTxns)
+	if len(h.store.custTxns) != 2 || h.store.custTxns[0].TxnType != "INVOICE" || h.store.custTxns[1].TxnType != "PAYMENT" {
+		t.Fatalf("want INVOICE+PAYMENT txns: %+v", h.store.custTxns)
 	}
 	if out.PaymentID != "pay-1" {
 		t.Fatalf("payment id not surfaced: %q", out.PaymentID)

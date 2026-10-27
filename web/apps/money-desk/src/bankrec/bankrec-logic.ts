@@ -160,9 +160,22 @@ export function refusalWords(action: string, message: string, status: number): s
         return "Signing off a month is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.";
       case "rule":
         return "Approving a match rule is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.";
+      case "cutover":
+        return "Recording the starting point is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.";
       default:
         return "That is for the Financial Controller.";
     }
+  }
+  const cutoverDone = /cannot record cut-over at (\d{4}-\d{2}-\d{2}) because month (\d{4})-(\d{2}) is already completed/i.exec(message);
+  if (cutoverDone !== null) {
+    return `Not recorded: ${periodWords(Number(cutoverDone[2]), Number(cutoverDone[3]))} is already signed off, so the starting point cannot change. It stands as it was recorded.`;
+  }
+  if (lower.includes("only the financial controller may record")) {
+    return "Recording the starting point is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.";
+  }
+  const cutoverGap = /cannot record cut-over at \d{4}-\d{2}-\d{2}: the statement and the book differ by (-?\$[\d,]+\.\d{2})/i.exec(message);
+  if (cutoverGap !== null) {
+    return `The statement and the book differ by ${cutoverGap[1].replace("-", "")}; tick the items still outstanding at cut over, or check the date and balance.`;
   }
   const remain = /cannot complete, (\d+) unmatched line\(s\) remain for (\d{4})-(\d{2})/i.exec(message);
   if (remain !== null) {

@@ -443,6 +443,83 @@ test("the walls: Money Desk work or above reads, counter and branch staff are re
   assert.equal((await call(IDS.payrec, "POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating })).status, 200);
 });
 
+test("the cut over door: the controller records the starting point on the account, and a signed off later month locks it", async () => {
+  await reset();
+  const cutPath = `/api/v1/bankrec/accounts/${IDS.operating}/cutover`;
+  const prior = M === 1 ? `${Y - 1}-12` : `${Y}-${String(M - 1).padStart(2, "0")}`;
+  // A date the core's words refuse, and an id that is not a journal id.
+  refused(await ctl("POST", cutPath, { cutover_date: "not-a-date", opening_statement_balance_cents: 100 }), 400, "cutover_date must be YYYY-MM-DD");
+  refused(await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 100, outstanding_journal_ids: ["nope"] }), 400, "invalid outstanding journal id");
+  // The work role is refused at the admin gate.
+  refused(await call(IDS.payrec, "POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 100 }), 403, "Forbidden");
+  // A starting point that does not reconcile is refused in the desk's words: the book at the date is
+  // $25,025.00 and the ticked till entry ($25.00 still outstanding) lifts the statement it expects to $25,000.00.
+  const tillId = "7a1e0000-0000-4000-9000-000000000004";
+  const gappedRecord = await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 2_500_000 });
+  refused(gappedRecord, 422, "the statement and the book differ by");
+  assert.equal(gappedRecord.json.error, "bankrec: cannot record cut-over at " + `${period}-28` + ": the statement and the book differ by $25.00; tick the items still outstanding at cut over, or check the date and balance");
+  refused(await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 2_400_000, outstanding_journal_ids: [tillId] }), 422, "tick the items still outstanding at cut over, or check the date and balance");
+  // The controller records it: the account read carries the recorded point.
+  const recorded = await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 2_500_000, outstanding_journal_ids: [tillId] });
+  assert.equal(recorded.status, 200);
+  holds("BankRecAccount", recorded.json);
+  assert.equal(recorded.json.cutover_date, `${period}-28`);
+  assert.equal(recorded.json.cutover_statement_balance_cents, 2_500_000);
+  assert.deepEqual(recorded.json.cutover_outstanding_journal_ids, [tillId]);
+  const listed = await ctl("GET", "/api/v1/bankrec/accounts");
+  holds("BankRecAccountList", listed.json);
+  assert.equal(listed.json.find((a) => a.id === IDS.operating).cutover_date, `${period}-28`);
+  // Before any month signs off it can be corrected; the core takes the re-record.
+  const corrected = await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 2_502_500 });
+  assert.equal(corrected.status, 200);
+  assert.equal(corrected.json.cutover_statement_balance_cents, 2_502_500);
+  // The form's read: the ledger's entries on or before the date and the book balance they make, the core's figures.
+  refused(await ctl("GET", `${cutPath}?date=nope`), 400, "cutover_date must be YYYY-MM-DD");
+  refused(await ctl("GET", cutPath), 400, "cutover_date must be YYYY-MM-DD");
+  const preview = await ctl("GET", `${cutPath}?date=${period}-28`);
+  assert.equal(preview.status, 200);
+  holds("BankRecCutoverPreview", preview.json);
+  assert.equal(preview.json.book_balance_cents, 2_502_500);
+  const memos = preview.json.entries.map((e) => e.memo);
+  assert.deepEqual(memos, ["Opening balances", "Payment received", "Till over/short"]);
+  // With the form's typed balance and ticks, the difference and whether it reconciles ride the answer.
+  const gapped = await ctl("GET", `${cutPath}?date=${period}-28&statement_cents=2500000`);
+  assert.equal(gapped.status, 200);
+  assert.equal(gapped.json.difference_cents, -2_500);
+  assert.equal(gapped.json.reconciles, false);
+  const ticked = await ctl("GET", `${cutPath}?date=${period}-28&statement_cents=2500000&ticked=${tillId}`);
+  assert.equal(ticked.status, 200);
+  holds("BankRecCutoverPreview", ticked.json);
+  assert.equal(ticked.json.difference_cents, 0);
+  assert.equal(ticked.json.reconciles, true);
+  refused(await ctl("GET", `${cutPath}?date=${period}-28&statement_cents=nope`), 400, "statement_cents must be a whole number of cents");
+  const before = await ctl("GET", `${cutPath}?date=${prior}-01`);
+  assert.equal(before.status, 200);
+  assert.deepEqual(before.json, { book_balance_cents: 0 });
+  // Once the statement month has signed off, recording at the month before it is refused with the core's conflict.
+  const wire = await lineByRef("WIRE FROM CONTRACTOR");
+  const cheque = await lineByRef("CHEQUE DEPOSIT");
+  const fee = await lineByRef("MONTHLY SERVICE FEE");
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000003" });
+  await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: fee.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000004" });
+  await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING });
+  assert.equal((await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, refresh: true })).status, 201);
+  const opened = (await ctl("GET", `/api/v1/bankrec/reconciliations?bank_account_id=${IDS.operating}`)).json.find((r) => r.year === Y && r.month === M);
+  assert.equal((await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`)).status, 200);
+  // Once any month on the account has signed off, any cut-over (before, in, or after the signed-off month)
+  // is refused with 409 naming that signed-off month (FROM-PRINCIPAL 183).
+  refused(await ctl("POST", cutPath, { cutover_date: `${prior}-28`, opening_statement_balance_cents: 2_502_500 }), 409, "cannot record cut-over at");
+  refused(await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 2_502_500 }), 409, "is already completed");
+  const laterReconciling = await ctl("POST", cutPath, { cutover_date: `${Y + 1}-06-30`, opening_statement_balance_cents: 2_502_500 });
+  refused(laterReconciling, 409, "is already completed");
+  assert.match(laterReconciling.json.error, new RegExp(`month ${period} is already completed`));
+  const laterPenny = await ctl("POST", cutPath, { cutover_date: `${Y + 1}-06-30`, opening_statement_balance_cents: 1 });
+  refused(laterPenny, 409, "is already completed");
+  assert.match(laterPenny.json.error, new RegExp(`month ${period} is already completed`));
+});
+
 test("a derived month in the stub recomputes its statement balance from the lines at completion, and autoMatch skips a completed month", async () => {
   await reset();
   await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });

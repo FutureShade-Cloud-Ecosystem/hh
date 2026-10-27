@@ -261,7 +261,7 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 
 	completed := audit.SensitiveAccess{
 		Action: audit.ActReturnCompleted, EntityType: "pos.return", EntityID: out.ReturnID,
-		ActorID: plan.actor, BranchID: plan.oc.BranchID, Purpose: "POS_RETURN", Reason: in.RefundMethod,
+		ActorID: plan.actor, BranchID: plan.returnBranchID(), Purpose: "POS_RETURN", Reason: in.RefundMethod,
 		Extra: map[string]any{"return_no": out.ReturnNo, "total_cents": out.TotalCents},
 	}
 	if approvedHere {
@@ -297,7 +297,7 @@ func (s *Service) returnFailed(ctx context.Context, plan *returnPlan, err error)
 	if errors.As(err, &refusal) {
 		s.record(ctx, audit.SensitiveAccess{
 			Action: auditActionRefundApprovalRefused, EntityType: "pos.return", EntityID: plan.oc.OrderID,
-			ActorID: plan.actor, BranchID: plan.oc.BranchID, Purpose: "POS_RETURN",
+			ActorID: plan.actor, BranchID: plan.returnBranchID(), Purpose: "POS_RETURN",
 			Reason: refundApprovalRequiredError,
 			Extra:  map[string]any{"amount_cents": refusal.RefundCents},
 		})
@@ -359,7 +359,7 @@ func (s *Service) stageCardReturnInTx(ctx context.Context, tx pgx.Tx, plan *retu
 			return Return{}, false, false, err
 		}
 		existing, stored, err := s.store.StageCardRefundAttemptTx(ctx, tx, cardRefundFact{
-			RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID,
+			RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: plan.returnBranchID(),
 			CustomerID: oc.CustomerID, GatewayRef: oc.GatewayRef, AmountCents: railTotal,
 			InitiatedBy: plan.actor,
 		})
@@ -422,7 +422,7 @@ func (s *Service) dispatchStagedCardRefunds(ctx context.Context, plans []*return
 		}
 		refundKey := "refund:" + p.in.IdempotencyKey
 		fact := cardRefundFact{
-			RefundKey: refundKey, OrderID: p.oc.OrderID, BranchID: p.oc.BranchID,
+			RefundKey: refundKey, OrderID: p.oc.OrderID, BranchID: p.returnBranchID(),
 			CustomerID: p.oc.CustomerID, GatewayRef: p.oc.GatewayRef, AmountCents: p.stagedRailTotal,
 			InitiatedBy: p.actor,
 		}
@@ -549,6 +549,7 @@ type returnPlan struct {
 	paymentNote    string
 	in             ReturnInput
 	oc             returnOrderCtx
+	branchID       string
 	caller         identity.StaffContext
 	actor          string
 	pickupRequired bool
@@ -574,6 +575,18 @@ type returnPlan struct {
 	// takes them, sorted through inventory's own seam, before its first counter draw, so the guard's
 	// own restock set inside the transaction is always a subset of rows already held.
 	restockProducts []string
+}
+
+// returnBranchID answers the branch where the return is rung (pos_returns.branch_id),
+// falling back to the original sale's branch when not separately specified.
+func (p *returnPlan) returnBranchID() string {
+	if p != nil && p.branchID != "" {
+		return p.branchID
+	}
+	if p != nil {
+		return p.oc.BranchID
+	}
+	return ""
 }
 
 // prepareReturn is the return's pre-transaction section, run while no
@@ -658,6 +671,23 @@ func (s *Service) prepareReturn(ctx context.Context, in ReturnInput) (*returnPla
 	plan.caller = caller
 	if err := requireBranchReach(caller, plan.oc.BranchID); err != nil {
 		return nil, err
+	}
+	rungBranch := strings.TrimSpace(in.BranchID)
+	if rungBranch != "" {
+		if err := requireBranchReach(caller, rungBranch); err != nil {
+			return nil, err
+		}
+		plan.branchID = rungBranch
+	} else if in.TillSessionID != "" && s.tender != nil {
+		if sess, serr := s.tender.GetSession(ctx, in.TillSessionID); serr == nil && sess.BranchID != "" {
+			if err := requireBranchReach(caller, sess.BranchID); err != nil {
+				return nil, err
+			}
+			plan.branchID = sess.BranchID
+		}
+	}
+	if plan.branchID == "" {
+		plan.branchID = plan.oc.BranchID
 	}
 	if cached, found, err := s.replayIfAllowed(ctx, in.IdempotencyKey, caller); err != nil {
 		return nil, err
@@ -769,7 +799,7 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	// before any processor refund call, so against either writer the two only queue (the Opus read's
 	// P2-1). The set is the plan's own candidate set, read before the transaction opened; the guard's
 	// restock set inside is a subset of it (the sale's lines are immutable once rung).
-	if err := s.lockRestockRowsTx(ctx, tx, oc.BranchID, plan.restockProducts); err != nil {
+	if err := s.lockRestockRowsTx(ctx, tx, plan.returnBranchID(), plan.restockProducts); err != nil {
 		return Return{}, false, false, err
 	}
 	if !in.railOptional {
@@ -1091,6 +1121,12 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	subtotal, taxTotal := g.subtotal, g.taxTotal
 	total := subtotal + taxTotal
 
+	// FW1-01b: the return's own date, the instant the return was rung. It rides the three GL events
+	// this return emits (the stock reversal, the damage write off and the money-side refund), so the
+	// ledger books them in the day the return happened even when the consumer reads the outbox after
+	// midnight.
+	returnAt := s.nowOrClock()
+
 	// A-06 restocking fee, derived from the ACTUAL committed subtotal (round half-up) so the fee is
 	// exact under partial/capped refunds. fee ≤ subtotal ≤ total by construction (bps ≤ 10000), so the
 	// credited amount (total − fee) can never go negative.
@@ -1114,14 +1150,15 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	}
 
 	// 2. Header first, ux_pos_returns_idem makes a concurrent duplicate abort the whole tx before
-	//    any rail write.
-	returnID, returnNo, ierr := s.store.InsertReturn(ctx, tx, returnRow{
-		OrderID: oc.OrderID, InvoiceID: oc.InvoiceID, CustomerID: oc.CustomerID, BranchID: oc.BranchID,
+	//    any rail write. The return row records the branch where the return is rung (pos_returns.branch_id).
+	retRow := returnRow{
+		OrderID: oc.OrderID, InvoiceID: oc.InvoiceID, CustomerID: oc.CustomerID, BranchID: plan.returnBranchID(),
 		RefundMethod: in.RefundMethod, SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: total,
 		FeeCents: feeCents, Reason: in.Reason, Restock: anyRestock(lines), TillSessionID: in.TillSessionID,
 		PickupRequired: pickupRequired, PickupSite: pickupSite, PickupDate: pickupDate, PickupStatus: pickupStatus,
 		IdempotencyKey: in.IdempotencyKey, CreatedBy: actor, NoteID: noteID, AppliedCents: plan.applied, OffsetCents: plan.offset,
-	})
+	}
+	returnID, returnNo, ierr := s.store.InsertReturn(ctx, tx, retRow)
 	if ierr != nil {
 		return Return{}, ierr
 	}
@@ -1164,7 +1201,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	case in.RefundMethod == RefundCash:
 		res, err := s.tender.RefundTender(ctx, tx, till.RefundInput{
 			TillSessionID: in.TillSessionID, Method: till.MethodCash, AmountCents: railTotal,
-			BranchID: oc.BranchID, CustomerID: oc.CustomerID, Reference: returnNo,
+			BranchID: retRow.BranchID, CustomerID: oc.CustomerID, Reference: returnNo,
 			IdempotencyKey: "refund:" + in.IdempotencyKey,
 		})
 		if err != nil {
@@ -1203,14 +1240,14 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 			// The processor now holds this refund whatever becomes of the transaction: keep the fact so a
 			// rollback leaves a record of it (D4).
 			plan.cardRefunds = append(plan.cardRefunds, cardRefundFact{
-				RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
+				RefundKey: "refund:" + in.IdempotencyKey, OrderID: oc.OrderID, BranchID: retRow.BranchID, CustomerID: oc.CustomerID,
 				GatewayRef: oc.GatewayRef, RefundRef: plan.stagedRefundRef, AmountCents: railTotal,
 				InitiatedBy: plan.actor,
 			})
 		}
 		refundRef := plan.stagedRefundRef
 		res, err := s.tender.RefundTender(ctx, tx, till.RefundInput{
-			Method: till.MethodCard, AmountCents: railTotal, BranchID: oc.BranchID, CustomerID: oc.CustomerID,
+			Method: till.MethodCard, AmountCents: railTotal, BranchID: retRow.BranchID, CustomerID: oc.CustomerID,
 			GatewayRef: refundRef, Reference: returnNo, IdempotencyKey: "refund:" + in.IdempotencyKey,
 		})
 		if err != nil {
@@ -1225,7 +1262,9 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	case in.RefundMethod == RefundAccountCredit:
 		// The restocking fee reduces what the customer's account is credited (total − fee); the fee
 		// itself books through the GL event's fee_cents, never a subledger row.
-		offsetMade, err := s.applyAccountCredit(ctx, tx, oc, railTotal-feeCents, depositDocs)
+		creditOC := oc
+		creditOC.BranchID = retRow.BranchID
+		offsetMade, err := s.applyAccountCredit(ctx, tx, creditOC, railTotal-feeCents, depositDocs)
 		if err != nil {
 			return Return{}, err
 		}
@@ -1263,7 +1302,7 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 			}
 			if terr := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
 				CustomerID: oc.CustomerID, TxnType: "CREDIT_MEMO", AmountCents: -done,
-				BalanceAfter: cust.OpenBalanceCents - done, SourceType: "invoice", SourceRefID: docID, BranchID: oc.BranchID,
+				BalanceAfter: cust.OpenBalanceCents - done, SourceType: "invoice", SourceRefID: docID, BranchID: retRow.BranchID,
 			}); terr != nil {
 				return Return{}, terr
 			}
@@ -1280,21 +1319,59 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	//    goods that never left the shelf move no stock and have no COGS to reverse).
 	if len(stockLines) > 0 {
 		if err := s.restocker().RestockForReturnTx(ctx, tx, RestockInput{
-			ReturnID: returnID, OrderID: oc.OrderID, BranchID: oc.BranchID, ReturnNo: returnNo, Lines: stockLines,
+			ReturnID: returnID, OrderID: oc.OrderID, BranchID: retRow.BranchID, ReturnNo: returnNo, Lines: stockLines,
 		}); err != nil {
 			return Return{}, err
 		}
+		// Round 2 (S3's P1): the event carries the RETURN MOVES' OWN values, so the COGS reversal
+		// posts the value that moved at the restock, not a re-read average at the drain. The
+		// average moves between the return and the drain (a receipt lands in between), and a
+		// journal that re-reads it is a journal that says something else next week.
+		values, verr := s.restocker().ReturnMoveValuesTx(ctx, tx, returnID)
+		if verr != nil {
+			return Return{}, verr
+		}
+		byProduct := map[string]int64{}
+		for _, v := range values {
+			byProduct[v.ProductID] = v.ValueCents
+		}
+		for _, ln := range eventLines {
+			if pid, ok := ln["product_id"].(string); ok {
+				if value, found := byProduct[pid]; found {
+					ln["value_cents"] = value
+				}
+			}
+		}
 		if err := s.store.EmitEvent(ctx, tx, "order.returned", map[string]any{
-			"order_id": oc.OrderID, "return_id": returnID, "branch_id": oc.BranchID, "lines": eventLines,
+			"order_id": oc.OrderID, "return_id": returnID, "branch_id": retRow.BranchID, "lines": eventLines,
+			"occurred_at": returnAt,
 		}); err != nil {
 			return Return{}, err
 		}
 	}
-	//    Damaged goods that came back are written off (Q4): the cost leaves COGS for 5200 at the
-	//    average at posting time.
+	//    Damaged goods that came back are written off (Q4): the cost leaves COGS for 5200.
+	//    Round 2 (S3's P1): the goods were written off, not moved, so they have no move of their own.
+	//    Their cost is the cost they left the shelf with, the ORIGINAL SALE's own moved value for
+	//    that line. A line the sale never moved (an old row) has no such value, and the posting
+	//    falls back to the average, which is what it did before.
 	if len(g.writeOffLines) > 0 {
+		for _, ln := range g.writeOffLines {
+			pid, _ := ln["product_id"].(string)
+			qty, _ := ln["qty_base"].(float64)
+			if pid == "" || qty <= 0 {
+				continue
+			}
+			value, found, verr := s.restocker().ShippedValueForOrderLineTx(ctx, tx, oc.OrderID, pid, qty)
+			if verr != nil {
+				return Return{}, verr
+			}
+			if found {
+				ln["value_cents"] = value.ValueCents
+			}
+		}
 		if err := s.store.EmitEvent(ctx, tx, "pos.return.written_off", map[string]any{
-			"order_id": oc.OrderID, "return_id": returnID, "branch_id": oc.BranchID, "lines": g.writeOffLines,
+			"order_id": oc.OrderID, "return_id": returnID, "branch_id": retRow.BranchID, "lines": g.writeOffLines,
+			"occurred_at": returnAt,
 		}); err != nil {
 			return Return{}, err
 		}
@@ -1318,8 +1395,9 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	committed := map[string]any{
 		"return_id": returnID, "order_id": oc.OrderID, "invoice_id": oc.InvoiceID,
 		"refund_method": in.RefundMethod, "subtotal_cents": subtotal, "tax_cents": taxTotal,
-		"total_cents": total, "fee_cents": feeCents, "branch_id": oc.BranchID,
+		"total_cents": total, "fee_cents": feeCents, "branch_id": retRow.BranchID,
 		"applied_cents": plan.applied, "invoice_offset_cents": plan.offset,
+		"occurred_at": returnAt,
 	}
 	if approvedHere {
 		committed["decided_by"] = approverStaff

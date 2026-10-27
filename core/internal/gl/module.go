@@ -31,6 +31,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -97,12 +98,25 @@ type PaymentFacts struct {
 	Method      string
 	Status      string
 	AmountCents int64
+	// ReceivedAt is the payment's own receipt instant (payments.received_at): the receipt
+	// document's date. FW1-01b: the receipt journal takes this date, not the processing day,
+	// so a receipt taken on the last day of a month and consumed after midnight stays in the
+	// month it was taken. Zero means the seam did not resolve one, and the journal falls back
+	// to the clock.
+	ReceivedAt time.Time
 }
 
 // CostBasis returns the unit cost for a fulfilled line (order.fulfilled → COGS). Dormant at W5: NoopCostBasis
 // returns found=false so the COGS leg is skipped until the W6 inventory module supplies a real cost basis.
 type CostBasis interface {
 	UnitCostCents(ctx context.Context, productID string, qtyBase float64) (int64, bool, error)
+}
+
+// BranchCostBasis is the branch-scoped cost basis seam: it returns the extended cost
+// for a line at its fulfilling branch so the journal uses the same branch weighted-average
+// cost as the stock move.
+type BranchCostBasis interface {
+	BranchUnitCostCents(ctx context.Context, productID, branchID string, qtyBase float64) (int64, bool, error)
 }
 
 // DeadRequeuer re-queues DEAD outbox rows for the named topics (the boot-time replay of pre-W5 rows that
@@ -185,6 +199,11 @@ type ExternalJournal struct {
 	// statement line): the journal posts in that document's month when it is open, and into the
 	// earliest open month, dated by the document and late posted, when it is closed (ruling 82.2).
 	// Zero keeps the clock.
+	//
+	// A document date is a CALENDAR DAY in the dealer's own zone (houseday), the instant that day's
+	// house midnight begins, never midnight at Greenwich: the ledger files a journal by the month of
+	// the instant in the dealer's zone, so a Greenwich midnight (the previous evening in the house
+	// zone) would file a document dated the first of a month into the month before it.
 	DocumentDate time.Time
 }
 
@@ -205,6 +224,11 @@ type Repository struct {
 	// zone is the dealer's business day zone, read ON the posting transaction; nil = the Ontario
 	// dealer's. It decides which fiscal period a posting's instant belongs to.
 	zone ZoneTxSource
+	// hoMu and hoOverride hold an in-process head office branch override before the FW1-08b
+	// migration adds gl_policy.head_office_branch_id; once the column exists, gl_policy is the
+	// authoritative source.
+	hoMu       sync.RWMutex
+	hoOverride string
 }
 
 // ZoneTxSource is the dealer's business day zone read on a caller's open transaction. A journal is
@@ -421,6 +445,13 @@ func (s *Service) GLClosingBalanceCents(ctx context.Context, accountCode string,
 	return s.glClosingBalanceCents(ctx, accountCode, year, month, branchID)
 }
 
+// GLBalanceAsOfCents returns the cumulative balance of an account through asOf across all fiscal years,
+// read through AccountBalanceAsOf (FW1-04 round 4). Bank reconciliation's cut-over starting point reads
+// the ledger's own balance at the cut-over date through this seam rather than summing the uncleared entry list.
+func (s *Service) GLBalanceAsOfCents(ctx context.Context, accountCode string, asOf time.Time, branchID string) (int64, error) {
+	return s.glBalanceAsOfCents(ctx, accountCode, asOf, branchID)
+}
+
 // BankAccountEntriesAsOf returns the POSTED, unreversed book entries on a bank GL account through asOf (FW1-04).
 func (s *Service) BankAccountEntriesAsOf(ctx context.Context, glAccountCode string, asOf time.Time) ([]BankBookEntry, error) {
 	return s.store.BankAccountEntriesAsOf(ctx, glAccountCode, asOf)
@@ -432,6 +463,22 @@ func (s *Service) BankAccountEntriesAsOf(ctx context.Context, glAccountCode stri
 // journal keeps today's match.
 func (s *Service) LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error) {
 	return s.store.LodgementJournalForBank(ctx, movementID, glAccountCode)
+}
+
+// GLBalanceThroughCents returns an account's balance THROUGH a period (every period up to and
+// including year/month, cumulative), natural orientation. Additive provider read (FW1-11): the
+// inventory tie-out reads 1200's balance as of a period end, where the frozen GLBalanceCents keeps
+// answering one period's movement. The same view, so a late posted journal's filed period decides
+// where it lands (the FW1-01 rule, 612).
+func (s *Service) GLBalanceThroughCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	netDebit, normal, err := s.store.AccountBalanceThrough(ctx, accountCode, year, month, branchID)
+	if err != nil {
+		return 0, err
+	}
+	if normal == NormalCredit {
+		return -netDebit, nil
+	}
+	return netDebit, nil
 }
 
 // RegisterPostingHandlers wires the outbox consumer for all eight posted topics onto the dispatcher. Each

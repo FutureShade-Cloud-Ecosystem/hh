@@ -47,6 +47,8 @@ type fakeStore struct {
 	asOfNetDebit  int64             // AccountBalanceAsOf return (the inception-to-date GL side of the tie-out)
 	tbRows        []TrialBalanceRow // TrialBalance / TrialBalanceAsOf return (the ERP side of the BisTrack static tie-out)
 	asOfRows      []TrialBalanceRow // TrialBalanceAsOf override when the test must differ from period-movement tbRows
+	plBranchRows  []PLBranchRow
+	headOffice    string
 	seq           int
 }
 
@@ -59,6 +61,7 @@ func newFakeStore() *fakeStore {
 		journals:      map[string]*Journal{},
 		byKey:         map[string]string{},
 		closedPeriods: map[string]bool{},
+		headOffice:    "head-office",
 	}
 }
 
@@ -222,6 +225,15 @@ func (f *fakeStore) ApproveJournal(_ context.Context, id, approverID string) (Jo
 
 // ApproveJournalTx mirrors ApproveJournal for the atomic approvals-rail path (0075); the fake ignores the
 // tx and enforces the same DRAFT-state + four-eyes guards.
+// VoidJournalTx mirrors VoidJournal for the rail's reject arm; the fake flips a DRAFT to VOID and
+// leaves anything else standing, as the repository does.
+func (f *fakeStore) VoidJournalTx(_ context.Context, _ pgx.Tx, id string) error {
+	if j, ok := f.journals[id]; ok && j.Status == StatusDraft {
+		j.Status = StatusVoid
+	}
+	return nil
+}
+
 func (f *fakeStore) ApproveJournalTx(_ context.Context, _ pgx.Tx, id, approverID string) error {
 	j, ok := f.journals[id]
 	if !ok {
@@ -275,6 +287,10 @@ func (f *fakeStore) ClosePeriodsForYear(_ context.Context, _ int, _, _ string) e
 func (f *fakeStore) AccountBalance(_ context.Context, _ string, _, _ int, _ string) (int64, string, error) {
 	return 0, NormalDebit, nil
 }
+
+func (f *fakeStore) AccountBalanceThrough(_ context.Context, _ string, _, _ int, _ string) (int64, string, error) {
+	return 0, NormalDebit, nil
+}
 func (f *fakeStore) AccountBalanceAsOf(_ context.Context, _ string, at time.Time, _ string) (int64, string, error) {
 	f.asOfSeen = at
 	return f.asOfNetDebit, NormalDebit, nil
@@ -299,6 +315,27 @@ func (f *fakeStore) TrialBalanceAsOf(_ context.Context, _ time.Time, _ string) (
 	return f.tbRows, nil
 }
 func (f *fakeStore) PLBalances(_ context.Context, _ int) ([]TrialBalanceRow, error) { return nil, nil }
+
+func (f *fakeStore) HeadOfficeBranchID(_ context.Context) (string, error) {
+	if f.headOffice != "" {
+		return f.headOffice, nil
+	}
+	return "head-office", nil
+}
+
+func (f *fakeStore) SetHeadOfficeBranch(ctx context.Context, branchID string, record func(ctx context.Context, tx pgx.Tx) error) error {
+	if record != nil {
+		if err := record(ctx, nil); err != nil {
+			return err
+		}
+	}
+	f.headOffice = branchID
+	return nil
+}
+
+func (f *fakeStore) PLBalancesByBranch(_ context.Context, _ int) ([]PLBranchRow, error) {
+	return f.plBranchRows, nil
+}
 
 func (f *fakeStore) UpsertTieout(_ context.Context, sub, code, branch string, subC, glC int64, at time.Time) (TieoutState, error) {
 	return TieoutState{Subledger: sub, AccountCode: code, BranchID: branch, SubledgerCents: subC, GLCents: glC, DeltaCents: subC - glC, InTie: subC == glC, LastCheckedAt: at}, nil

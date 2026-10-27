@@ -77,7 +77,9 @@ export function olderMonth() {
 }
 
 // The tie out the stub holds, in cents: the month before today ties; the month before that is off.
-export const RECON = { tiedCents: 482_375, olderCollectedCents: 391_250, olderLedgerCents: 389_900 };
+// The tied month carries one document marked as an opening balance (FROM-PRINCIPAL 177): it sits
+// outside collected and is named on its own line; the older month carries none.
+export const RECON = { tiedCollectedCents: 482_375, tiedReturnsCents: 12_000, tiedITCsCents: 87_300, tiedOpeningCount: 1, tiedOpeningCents: 18_000, olderCollectedCents: 391_250, olderReturnsCents: 5_000, olderITCsCents: 81_500, olderLedgerCents: 389_900, olderOpeningCount: 0, olderOpeningCents: 0 };
 
 // Go's %q of a string, close enough for the reason codes the tests send (printable ASCII with quotes escaped).
 const goQuote = (s) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -335,15 +337,29 @@ export function createTaxWorld() {
     const prior = taxMonth();
     const older = olderMonth();
     let collected = 0;
+    let returns = 0;
+    let itcs = 0;
     let ledger = 0;
+    let openingCount = 0;
+    let openingCents = 0;
     if (year === prior.year && month === prior.month) {
-      collected = RECON.tiedCents;
-      ledger = RECON.tiedCents;
+      collected = RECON.tiedCollectedCents;
+      returns = RECON.tiedReturnsCents;
+      itcs = RECON.tiedITCsCents;
+      ledger = RECON.tiedCollectedCents - RECON.tiedReturnsCents - RECON.tiedITCsCents;
+      openingCount = RECON.tiedOpeningCount;
+      openingCents = RECON.tiedOpeningCents;
     } else if (year === older.year && month === older.month) {
       collected = RECON.olderCollectedCents;
+      returns = RECON.olderReturnsCents;
+      itcs = RECON.olderITCsCents;
       ledger = RECON.olderLedgerCents;
+      openingCount = RECON.olderOpeningCount;
+      openingCents = RECON.olderOpeningCents;
     }
-    const out = { year, month, collected_cents: collected, gl_payable_cents: ledger, gl_federal_cents: 0, gl_ontario_cents: 0, variance_cents: ledger - collected, tied_out: ledger - collected === 0 };
+    // FW1-11: the three document lines ride apart, and the variance nets them against 2200's movement.
+    const netDocs = collected - returns - itcs;
+    const out = { year, month, collected_cents: collected, return_tax_cents: returns, input_tax_cents: itcs, opening_balance_count: openingCount, opening_balance_hst_cents: openingCents, gl_payable_cents: ledger, gl_federal_cents: 0, gl_ontario_cents: 0, variance_cents: ledger - netDocs, tied_out: ledger - netDocs === 0 };
     const branch = url.searchParams.get("branch_id");
     if (branch) out.branch_id = branch;
     return { status: 200, body: out };

@@ -43,14 +43,153 @@ func (s *Service) RecordCutover(ctx context.Context, in CutoverInput) (BankAccou
 			return BankAccount{}, badRequest("bankrec: invalid outstanding journal id %q", jid)
 		}
 	}
-	acct, err := s.repo.RecordAccountCutover(ctx, in, caller.UserID)
+	acct, err := s.repo.GetAccount(ctx, in.BankAccountID)
 	if err != nil {
 		return BankAccount{}, err
 	}
-	s.recordAudit(ctx, "BANKREC_CUTOVER", "bankrec.account", acct.ID, caller.UserID,
+	if completedY, completedM, done, cerr := s.repo.FirstCompletedMonth(ctx, acct.ID); cerr != nil {
+		return BankAccount{}, cerr
+	} else if done {
+		return BankAccount{}, conflict("bankrec: cannot record cut-over at %s because month %d-%02d is already completed",
+			in.CutoverDate, completedY, completedM)
+	}
+	if err := s.checkCutoverReconciles(ctx, acct, in); err != nil {
+		return BankAccount{}, err
+	}
+	recored, err := s.repo.RecordAccountCutover(ctx, in, caller.UserID)
+	if err != nil {
+		return BankAccount{}, err
+	}
+	s.recordAudit(ctx, "BANKREC_CUTOVER", "bankrec.account", recored.ID, caller.UserID,
 		"record bank reconciliation cut-over",
 		fmt.Sprintf("date=%s balance=%d outstanding=%d", in.CutoverDate, in.OpeningStatementBalanceCents, len(in.OutstandingJournalIDs)))
-	return acct, nil
+	return recored, nil
+}
+
+type asOfBalanceReader interface {
+	GLBalanceAsOfCents(ctx context.Context, accountCode string, asOf time.Time, branchID string) (int64, error)
+}
+
+func (s *Service) bookBalanceAsOf(ctx context.Context, glAccountCode string, asOf time.Time, entries []gl.BankBookEntry) (int64, error) {
+	if ar, ok := s.balances.(asOfBalanceReader); ok {
+		return ar.GLBalanceAsOfCents(ctx, glAccountCode, asOf, "")
+	}
+	if ar, ok := s.journals.(asOfBalanceReader); ok {
+		return ar.GLBalanceAsOfCents(ctx, glAccountCode, asOf, "")
+	}
+	var sum int64
+	for _, e := range entries {
+		sum += e.NetCents
+	}
+	return sum, nil
+}
+
+// checkCutoverReconciles is round 4's P1 (FROM-PRINCIPAL 181 and 183): a starting point must reconcile. The
+// statement balance on the cut over date must equal the ledger's own book balance at that date less the ticked
+// outstanding cheques plus the ticked deposits in transit, that is, the ledger balance less the net of the
+// ticked entries. Anything else plants a wrong opening in every later month, so the server refuses it in the
+// desk's words, naming the difference.
+func (s *Service) checkCutoverReconciles(ctx context.Context, acct BankAccount, in CutoverInput) error {
+	br, ok := s.journals.(bankBookEntryReader)
+	if s.journals == nil || !ok {
+		return unprocessable("bankrec: the ledger's entries cannot be read on this box")
+	}
+	zone, zerr := houseday.Resolve(ctx, s.zone)
+	if zerr != nil {
+		zone = houseday.DefaultZone()
+	}
+	day, err := time.ParseInLocation("2006-01-02", in.CutoverDate, zone.Location())
+	if err != nil {
+		return badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", in.CutoverDate)
+	}
+	asOf := day.AddDate(0, 0, 1).Add(-time.Nanosecond)
+	entries, err := br.BankAccountEntriesAsOf(ctx, acct.GLAccountCode, asOf)
+	if err != nil {
+		return err
+	}
+	book, err := s.bookBalanceAsOf(ctx, acct.GLAccountCode, asOf, entries)
+	if err != nil {
+		return err
+	}
+	confirmed := make(map[string]bool, len(in.OutstandingJournalIDs))
+	for _, id := range in.OutstandingJournalIDs {
+		confirmed[id] = true
+	}
+	var tickedNet int64
+	for _, e := range entries {
+		if confirmed[e.JournalID] || (e.SourceRefID != "" && confirmed[e.SourceRefID]) {
+			tickedNet += e.NetCents
+		}
+	}
+	if diff := in.OpeningStatementBalanceCents - (book - tickedNet); diff != 0 {
+		size := diff
+		if size < 0 {
+			size = -size
+		}
+		return unprocessable("bankrec: cannot record cut-over at %s: the statement and the book differ by %s; tick the items still outstanding at cut over, or check the date and balance",
+			in.CutoverDate, dollars(size))
+	}
+	return nil
+}
+
+// CutoverPreview answers the starting point form's read (FW1-04 round 3 and round 4): the ledger's entries on
+// the account's GL code on or before the cut over date (the same read the reconciliation's outstanding lists
+// draw from), with the ledger's own book balance at that date. When the read carries the form's typed statement
+// balance and its ticked entries (round 4), the answer also carries the difference between them and whether it
+// reconciles, so the desk shows the server's difference and never computes one of its own.
+func (s *Service) CutoverPreview(ctx context.Context, accountID, date string, statementCents *int64, ticked []string) (CutoverPreview, error) {
+	acct, err := s.repo.GetAccount(ctx, accountID)
+	if err != nil {
+		return CutoverPreview{}, err
+	}
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		return CutoverPreview{}, badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", date)
+	}
+	br, ok := s.journals.(bankBookEntryReader)
+	if s.journals == nil || !ok {
+		return CutoverPreview{}, unprocessable("bankrec: the ledger's entries cannot be read on this box")
+	}
+	zone, zerr := houseday.Resolve(ctx, s.zone)
+	if zerr != nil {
+		zone = houseday.DefaultZone()
+	}
+	day, err := time.ParseInLocation("2006-01-02", date, zone.Location())
+	if err != nil {
+		return CutoverPreview{}, badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", date)
+	}
+	asOf := day.AddDate(0, 0, 1).Add(-time.Nanosecond)
+	entries, err := br.BankAccountEntriesAsOf(ctx, acct.GLAccountCode, asOf)
+	if err != nil {
+		return CutoverPreview{}, err
+	}
+	book, err := s.bookBalanceAsOf(ctx, acct.GLAccountCode, asOf, entries)
+	if err != nil {
+		return CutoverPreview{}, err
+	}
+	confirmed := make(map[string]bool, len(ticked))
+	for _, id := range ticked {
+		confirmed[id] = true
+	}
+	out := CutoverPreview{BookBalanceCents: book}
+	var tickedNet int64
+	for _, e := range entries {
+		out.Entries = append(out.Entries, CutoverPreviewEntry{
+			JournalID:   e.JournalID,
+			PostedAt:    e.PostedAt,
+			Memo:        e.Memo,
+			AmountCents: e.NetCents,
+		})
+		if confirmed[e.JournalID] || (e.SourceRefID != "" && confirmed[e.SourceRefID]) {
+			tickedNet += e.NetCents
+		}
+	}
+	if statementCents != nil {
+		diff := *statementCents - (out.BookBalanceCents - tickedNet)
+		out.DifferenceCents = &diff
+		reconciles := diff == 0
+		out.Reconciles = &reconciles
+	}
+	return out, nil
 }
 
 // Import parses a statement export under a profile, dedupes it into bank_statement_lines, and records an
@@ -279,6 +418,8 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 		RuleID:          prop.Rule.ID,
 		AmountCents:     prop.Line.AmountCents,
 		MatchedBy:       matchedBy,
+		// A lodgement whose covered payments could not be resolved says so on the answer (R2-P2-1).
+		PaymentsUnresolved: prop.PaymentsUnresolved,
 	}
 	// Where the match is written, a LODGEMENT target is fenced again (the candidates were cut already).
 	var skipLodgementClearing bool
@@ -341,7 +482,7 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 		AmountCents:     amount,
 		MatchedBy:       matchedBy,
 	}
-	// A PAYMENT target is claimed in the same tx (RECEIVED→DEPOSITED); LODGEMENT/JOURNAL/GROUP claim nothing.
+	// A PAYMENT or LODGEMENT target claims its RECEIVED payment(s) in the same tx (RECEIVED to DEPOSITED).
 	var claim []string
 	if in.TargetType == TargetPayment && in.TargetRefID != "" {
 		claim = []string{in.TargetRefID}
@@ -369,6 +510,9 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 			return Match{}, unprocessable("bankrec: that lodgement is for %d cents and the line is %d cents, so it does not explain the line", facts.AmountCents, line.AmountCents)
 		}
 		lodgBranch = facts.BranchID
+		claim = facts.PaymentIDs
+		// The lodgement's own answer-time fact rides the answer (R2-P2-1).
+		m.PaymentsUnresolved = facts.PaymentsUnresolved
 		if hasJ, jerr := s.hasLodgementJournal(ctx, line.BankAccountID, in.TargetRefID); jerr != nil {
 			return Match{}, jerr
 		} else if hasJ {

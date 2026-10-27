@@ -68,6 +68,13 @@ type ApprovalDecidedNotice struct {
 // typed 403/409 the wire adapter translates via NewClientError so identity surfaces the right status.
 type JEDecider interface {
 	ApproveJournalTx(ctx context.Context, tx pgx.Tx, journalID, deciderID string) error
+
+	// RejectJournalTx bridges a JE_OVER_THRESHOLD decline on the decision's own transaction. The
+	// shipped rule stands for the ledger's own parked journals: a decline bridges nothing, because
+	// voiding a DRAFT journal is the maker's own act. A parked credit memo is not the maker's to
+	// clean up, so the adapter voids its memo document and journal (FW1-12a's core round); a refused
+	// or withdrawn park that stayed DRAFT would hold the invoice's room for good. Idempotent.
+	RejectJournalTx(ctx context.Context, tx pgx.Tx, journalID, deciderID string) error
 }
 
 // FreightDecider bridges a FREIGHT_ABOVE_QUOTE rail decision to the PARKED freight raise dispatch
@@ -150,26 +157,51 @@ type jeTxCreator interface {
 // run AFTER its commit (the cards must not name a request that then rolled back). A store that cannot write on
 // a transaction fails closed.
 func (s *Approvals) FileJEApprovalTx(ctx context.Context, tx pgx.Tx, journalID, branchID string, amountCents int64, requestedBy string) (func(context.Context), error) {
+	_, fan, err := s.fileJEApprovalTx(ctx, tx, journalID, branchID, amountCents, requestedBy,
+		fmt.Sprintf("Journal entry at/over the maker-checker threshold (%d cents) awaiting approval", amountCents))
+	return fan, err
+}
+
+// FileCreditMemoApprovalTx files the SAME request for a parked credit memo, with the credit's own words
+// on the card.
+//
+// The request is still a JE_OVER_THRESHOLD request, because that is what it is: a journal entry at or
+// over the maker-checker threshold, waiting for a second pair of eyes. What changes is the DETAIL, and
+// the detail is what the Controller reads before they sign: "Credit memo #CM-12 for Ada Lovelace,
+// $500.00, goods returned" says what they are approving, where a generic threshold line does not.
+//
+// It files on the caller's transaction for the same reason its sibling does: the request commits or
+// rolls back with the parked journal it is for.
+func (s *Approvals) FileCreditMemoApprovalTx(ctx context.Context, tx pgx.Tx, journalID, branchID string, amountCents int64, requestedBy, detail string) (string, func(context.Context), error) {
+	if detail == "" {
+		detail = fmt.Sprintf("Credit memo at/over the maker-checker threshold (%d cents) awaiting approval", amountCents)
+	}
+	return s.fileJEApprovalTx(ctx, tx, journalID, branchID, amountCents, requestedBy, detail)
+}
+
+// fileJEApprovalTx is the filing both callers share: the request insert on the caller's transaction and
+// the card fan-out the caller runs after its commit.
+func (s *Approvals) fileJEApprovalTx(ctx context.Context, tx pgx.Tx, journalID, branchID string, amountCents int64, requestedBy, detail string) (string, func(context.Context), error) {
 	if requestedBy == "" || branchID == "" {
-		return nil, clientErr(http.StatusBadRequest, "requested_by and branch_id are required")
+		return "", nil, clientErr(http.StatusBadRequest, "requested_by and branch_id are required")
 	}
 	c, ok := s.store.(jeTxCreator)
 	if !ok {
-		return nil, clientErr(http.StatusServiceUnavailable, "the approvals store cannot file a request on this transaction")
+		return "", nil, clientErr(http.StatusServiceUnavailable, "the approvals store cannot file a request on this transaction")
 	}
 	req, err := c.CreateApprovalTx(ctx, tx, ApprovalRequest{
 		RequestedBy: requestedBy,
 		BranchID:    branchID,
 		Policy:      PolicyJEThreshold,
-		Detail:      fmt.Sprintf("Journal entry at/over the maker-checker threshold (%d cents) awaiting approval", amountCents),
+		Detail:      detail,
 		SubjectRef:  journalID,
 		AmountCents: amountCents,
 		Status:      ApprovalPending,
 	})
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	return func(ctx context.Context) { s.notifyApprovalRequested(ctx, req) }, nil
+	return req.ID, func(ctx context.Context) { s.notifyApprovalRequested(ctx, req) }, nil
 }
 
 // JEApprovalState is where a parked journal stands with its JE_OVER_THRESHOLD requests. The words are the

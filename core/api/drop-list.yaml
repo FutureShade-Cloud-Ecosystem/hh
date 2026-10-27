@@ -16,6 +16,12 @@ drops:
     reason: "Not a route: a comment line in order/activity.go:27 quoting an API framing the surface exists to hide. The literal grep cannot tell comments from registrations."
 
 additions:
+  - route: "GET /api/v1/bankrec/accounts/{id}/cutover"
+    reason: "FW1-04 round 3: the starting point form's read of the ledger's entries on or before a cut over date and the book balance they make; the ERP reconciled by hand and had no starting point."
+  - route: "POST /api/v1/bankrec/accounts/{id}/cutover"
+    reason: "FW1-04 round 3: the Financial Controller's door to record a bank account's reconciliation starting point, audited and refused once a later month has signed off; the ERP reconciled by hand and had no starting point."
+  - route: "GET /api/v1/inventory/controller-exceptions"
+    reason: "FW1-07 round 2 (ruling 82.4): the Controller's pre receipt exceptions read, the fallback and provisional sales listed where a Controller can read them; the ERP had no such list."
   - route: "POST /api/v1/gl/periods/open-year"
     reason: "FW1-01: the Controller's early open of the next fiscal year, audit stamped with a reason; the ERP seeded years by hand and had no route that created one."
   - route: "GET /api/v1/gl/posting-queue"
@@ -188,6 +194,10 @@ additions:
     reason: "HH-LOAD-1 load doors: the job upsert as a project record under its customer by legacy key, behind the load doors deployment switch; no ERP source route."
   - route: "POST /api/v1/ar/payments/apply"
     reason: "The received payment the server allocates oldest first across an account's open invoices in one transaction (item 64 Lane A pay): the ERP's per invoice payment route made the caller split one cheque; no ERP source route."
+  - route: "POST /api/v1/ar/credit-memos"
+    reason: "The credit memo door for finance (FW1-12): the credit the dealer gives back, standalone against an account or against one invoice, with a reason, the posting rules' own GL account, a manager or Controller gate, an audit row, an idempotency key, and the maker-checker rail above a threshold. The ERP raised a credit memo only from the warranty settlement, so no ERP source route."
+  - route: "POST /api/v1/ar/credit-memos/quote"
+    reason: "The quote door for finance (FW1-12a): what a credit against one invoice would come to, and how much room that invoice has left to credit, before tax and with it. It raises nothing, and it is the door that answers the desk's cap with the core's own arithmetic. The ERP had no read of what a credit would come to, so no ERP source route."
   - route: "GET /api/v1/quotes/settings-grant"
     reason: "The grant read the Quote Desk asks before it mounts its settings sections (round 14 item 1): whether the caller may read the acceptance settings, read the scope rules and write the quote policy, each answered by the very predicate the refusing route uses; the ERP has no read of the caller's grants; no ERP source route."
   - route: "PUT /api/v1/purchasing/pos/{id}/lines/{lineID}"

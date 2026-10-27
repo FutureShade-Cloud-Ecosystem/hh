@@ -107,14 +107,34 @@ func (r *Repository) GetAccount(ctx context.Context, id string) (BankAccount, er
 	return a, nil
 }
 
+// FirstCompletedMonth returns the earliest completed reconciliation month on a bank account, if any.
+func (r *Repository) FirstCompletedMonth(ctx context.Context, bankAccountID string) (year, month int, found bool, err error) {
+	if r.pool == nil {
+		return 0, 0, false, errNoDB
+	}
+	err = r.pool.QueryRow(ctx, `
+		SELECT year, month
+		  FROM bank_reconciliations
+		 WHERE bank_account_id = $1::uuid
+		   AND status = 'COMPLETED'
+		 ORDER BY year ASC, month ASC
+		 LIMIT 1`, bankAccountID).Scan(&year, &month)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, 0, false, nil
+	}
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("bankrec: check completed months for cutover: %w", err)
+	}
+	return year, month, true, nil
+}
+
 // RecordAccountCutover records the reconciliation starting point for a bank account under its row lock,
-// refusing when the cut-over month or any later month on that account has already signed off (FW1-04 round 2).
+// refusing when any month on that account has already signed off (FW1-04 round 2 + round 4 FROM-PRINCIPAL 183).
 func (r *Repository) RecordAccountCutover(ctx context.Context, in CutoverInput, actorID string) (BankAccount, error) {
 	if r.pool == nil {
 		return BankAccount{}, errNoDB
 	}
-	cutTime, err := time.Parse("2006-01-02", in.CutoverDate)
-	if err != nil {
+	if _, err := time.Parse("2006-01-02", in.CutoverDate); err != nil {
 		return BankAccount{}, badRequest("bankrec: cutover_date must be YYYY-MM-DD, got %q", in.CutoverDate)
 	}
 	tx, err := r.pool.Begin(ctx)
@@ -142,10 +162,9 @@ func (r *Repository) RecordAccountCutover(ctx context.Context, in CutoverInput, 
 		  FROM bank_reconciliations
 		 WHERE bank_account_id = $1::uuid
 		   AND status = 'COMPLETED'
-		   AND (year > $2 OR (year = $2 AND month >= $3))
 		 ORDER BY year ASC, month ASC
 		 LIMIT 1`,
-		in.BankAccountID, cutTime.Year(), int(cutTime.Month())).Scan(&completedY, &completedM)
+		in.BankAccountID).Scan(&completedY, &completedM)
 	if err == nil {
 		return BankAccount{}, conflict("bankrec: cannot record cut-over at %s because month %d-%02d is already completed",
 			in.CutoverDate, completedY, completedM)
@@ -903,6 +922,16 @@ func (r *Repository) UnmatchReachTx(ctx context.Context, tx pgx.Tx, matchID, use
 				}
 				out.FeeAccountCode = feeAcct
 			}
+		}
+	}
+	if out.TargetType == TargetLodgement && lineID != "" {
+		if _, err := tx.Exec(ctx,
+			`UPDATE payments
+			    SET status = 'RECEIVED',
+			        metadata = metadata - 'bank_statement_line_id',
+			        updated_at = now()
+			  WHERE metadata->>'bank_statement_line_id' = $1 AND status = 'DEPOSITED'`, lineID); err != nil {
+			return out, fmt.Errorf("bankrec: release lodged payment: %w", err)
 		}
 	}
 	return out, nil

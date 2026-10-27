@@ -155,7 +155,7 @@ func (r *Repository) OpenLodgements(ctx context.Context, from, to time.Time) ([]
 		return nil, errNoDB
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT m.id::text, s.branch_id::text, m.amount_cents, m.reference, m.created_at
+		`SELECT m.id::text, s.branch_id::text, m.till_session_id::text, m.method, m.amount_cents, m.reference, m.created_at
 		 FROM till_movements m
 		 JOIN till_sessions s ON s.id = m.till_session_id
 		 WHERE m.movement_type = 'LODGEMENT' AND m.created_at >= $1 AND m.created_at < $2
@@ -163,53 +163,198 @@ func (r *Repository) OpenLodgements(ctx context.Context, from, to time.Time) ([]
 	if err != nil {
 		return nil, fmt.Errorf("till: open lodgements: %w", err)
 	}
-	defer rows.Close()
-	var out []bankrec.Lodgement
+	type rawLodgement struct {
+		bankrec.Lodgement
+		sessionID string
+		method    string
+	}
+	var raw []rawLodgement
 	for rows.Next() {
-		var l bankrec.Lodgement
-		if err := rows.Scan(&l.MovementID, &l.BranchID, &l.AmountCents, &l.Reference, &l.OccurredAt); err != nil {
+		var rl rawLodgement
+		if err := rows.Scan(&rl.MovementID, &rl.BranchID, &rl.sessionID, &rl.method, &rl.AmountCents, &rl.Reference, &rl.OccurredAt); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("till: scan lodgement: %w", err)
 		}
-		out = append(out, l)
+		raw = append(raw, rl)
 	}
-	return out, rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	used := map[string]bool{}
+	out := make([]bankrec.Lodgement, 0, len(raw))
+	for _, rl := range raw {
+		pids, unresolved, perr := r.lodgementPaymentIDs(ctx, rl.BranchID, rl.sessionID, rl.method, rl.AmountCents, used)
+		if perr != nil {
+			return nil, perr
+		}
+		rl.PaymentIDs = pids
+		rl.PaymentsUnresolved = unresolved
+		out = append(out, rl.Lodgement)
+	}
+	return out, nil
 }
 
-// LodgementFacts answers the branch and the amount of one lodgement (a till_movements row of type LODGEMENT), found
-// false when the id is no lodgement or not a uuid. A movement row is never updated or deleted, its branch is its
-// session's and its amount its own, so the facts are immutable.
+// LodgementFacts answers the branch, the amount and the covered RECEIVED payment ids of one lodgement
+// (a till_movements row of type LODGEMENT), found false when the id is no lodgement or not a uuid.
 func (r *Repository) LodgementFacts(ctx context.Context, movementID string) (bankrec.LodgementFact, bool, error) {
 	if r.pool == nil {
 		return bankrec.LodgementFact{}, false, errNoDB
 	}
 	var f bankrec.LodgementFact
+	var sessionID, method string
 	err := r.pool.QueryRow(ctx,
-		`SELECT s.branch_id::text, m.amount_cents
+		`SELECT s.branch_id::text, m.till_session_id::text, m.method, m.amount_cents
 		   FROM till_movements m JOIN till_sessions s ON s.id = m.till_session_id
-		  WHERE m.id::text = $1 AND m.movement_type = 'LODGEMENT'`, movementID).Scan(&f.BranchID, &f.AmountCents)
+		  WHERE m.id::text = $1 AND m.movement_type = 'LODGEMENT'`, movementID).
+		Scan(&f.BranchID, &sessionID, &method, &f.AmountCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return bankrec.LodgementFact{}, false, nil
 	}
 	if err != nil {
 		return bankrec.LodgementFact{}, false, fmt.Errorf("till: lodgement facts: %w", err)
 	}
+	pids, unresolved, perr := r.lodgementPaymentIDs(ctx, f.BranchID, sessionID, method, f.AmountCents, nil)
+	if perr != nil {
+		return bankrec.LodgementFact{}, false, perr
+	}
+	f.PaymentIDs = pids
+	f.PaymentsUnresolved = unresolved
 	return f, true, nil
+}
+
+// lodgementPaymentIDs resolves the RECEIVED non-card, non-reversed payment row(s) covered by a lodgement
+// movement so bankrec's PersistMatchReach flips them to DEPOSITED when the lodgement clears at the bank.
+// Ruling 128 (P1-2): claim only payments from the lodgement's own till_session_id and method, and only
+// when exactly one subset of those payments sums to amountCents; never claim a partial set, another
+// session's payment, or another method's payment, and report unresolved when no unique set matches.
+//
+// Ruling 141 (round 3): only CHEQUE lodgements are resolved. A cash lodgement claims nothing and is
+// not called unresolved, because nothing downstream acts on its resolution: cash does not bounce, and
+// a DEPOSITED flag only changes which account a bounce credits. A unique-set search over every cash
+// taking of a busy session is also the exponential walk R2-P1-2 removed.
+//
+// maxLodgementCandidates caps the unique-set search at 20 candidates (about a millisecond at the
+// cap). More than that is marked unresolved rather than searched: 2^n subsets over a session's
+// takings never finishes in the request that asks for it.
+const maxLodgementCandidates = 20
+
+func (r *Repository) lodgementPaymentIDs(ctx context.Context, branchID, sessionID, method string, amountCents int64, used map[string]bool) ([]string, bool, error) {
+	if amountCents <= 0 {
+		return nil, false, nil
+	}
+	if branchID == "" || sessionID == "" || method == "" {
+		return nil, true, nil
+	}
+	if method != "CHEQUE" {
+		return nil, false, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT p.id::text, p.amount_cents
+		   FROM payments p
+		  WHERE p.branch_id = $1::uuid
+		    AND p.till_session_id = $2::uuid
+		    AND p.method = $3
+		    AND p.status = 'RECEIVED'
+		    AND p.reversed_at IS NULL
+		    AND p.method <> 'CARD'
+		  ORDER BY p.received_at ASC, p.id ASC`,
+		branchID, sessionID, method)
+	if err != nil {
+		return nil, false, fmt.Errorf("till: lodgement payments: %w", err)
+	}
+	defer rows.Close()
+	type cand struct {
+		id  string
+		amt int64
+	}
+	var cands []cand
+	for rows.Next() {
+		var c cand
+		if err := rows.Scan(&c.id, &c.amt); err != nil {
+			return nil, false, fmt.Errorf("till: scan lodgement payment: %w", err)
+		}
+		if used != nil && used[c.id] {
+			continue
+		}
+		if c.amt <= 0 || c.amt > amountCents {
+			continue
+		}
+		cands = append(cands, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(cands) > maxLodgementCandidates {
+		return nil, true, nil
+	}
+
+	suffixSum := make([]int64, len(cands)+1)
+	for i := len(cands) - 1; i >= 0; i-- {
+		suffixSum[i] = suffixSum[i+1] + cands[i].amt
+	}
+	var uniqueMatch []string
+	var cur []string
+	matches := 0
+	var dfs func(idx int, rem int64)
+	dfs = func(idx int, rem int64) {
+		if matches > 1 {
+			return
+		}
+		if rem == 0 {
+			matches++
+			if matches == 1 {
+				uniqueMatch = append([]string(nil), cur...)
+			}
+			return
+		}
+		if idx >= len(cands) || suffixSum[idx] < rem {
+			return
+		}
+		if cands[idx].amt <= rem {
+			cur = append(cur, cands[idx].id)
+			dfs(idx+1, rem-cands[idx].amt)
+			cur = cur[:len(cur)-1]
+			if matches > 1 {
+				return
+			}
+		}
+		dfs(idx+1, rem)
+	}
+	dfs(0, amountCents)
+	if matches != 1 {
+		return nil, true, nil
+	}
+	if used != nil {
+		for _, id := range uniqueMatch {
+			used[id] = true
+		}
+	}
+	return uniqueMatch, false, nil
 }
 
 // PaymentForGL resolves the finance facts of a payment so the GL posting consumer can branch-stamp the
 // journal and choose the 1010 (card) / 1020 (cash/cheque undeposited) / 1000 (bank) debit leg. The
 // payment.received outbox payload carries no branch/invoice, so this SELECT is the source of truth.
+// It carries the payment's received_at too (FW1-01b): the receipt document's date, which is the date the
+// GL receipt journal is booked on, so a receipt taken on the last day of a month and consumed after
+// midnight stays in the month it was taken.
 func (r *Repository) PaymentForGL(ctx context.Context, paymentID string) (gl.PaymentFacts, error) {
 	if r.pool == nil {
 		return gl.PaymentFacts{}, errNoDB
 	}
 	var f gl.PaymentFacts
+	var banked bool
 	err := r.pool.QueryRow(ctx,
-		`SELECT branch_id::text, COALESCE(customer_id::text, ''), method, status, amount_cents
+		`SELECT branch_id::text, COALESCE(customer_id::text, ''), method, status, amount_cents, received_at,
+		        COALESCE(metadata->>'bank_statement_line_id', '') <> ''
 		 FROM payments WHERE id = $1`, paymentID,
-	).Scan(&f.BranchID, &f.CustomerID, &f.Method, &f.Status, &f.AmountCents)
+	).Scan(&f.BranchID, &f.CustomerID, &f.Method, &f.Status, &f.AmountCents, &f.ReceivedAt, &banked)
 	if err != nil {
 		return gl.PaymentFacts{}, fmt.Errorf("till: payment for gl %q: %w", paymentID, err)
+	}
+	if f.Status == "BOUNCED" && banked {
+		f.Status = "DEPOSITED"
 	}
 	return f, nil
 }

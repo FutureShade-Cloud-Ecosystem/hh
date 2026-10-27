@@ -124,6 +124,10 @@ export const dealerStyles = css`
     margin: 0 0 var(--hh-s-16);
     font-size: var(--hh-s-16);
   }
+  /* A notice that ends its card adds nothing to the card's own bottom padding. */
+  .card > .notice-line:last-child {
+    margin-bottom: 0;
+  }
   .error-line {
     color: var(--hh-danger);
   }

@@ -57,18 +57,20 @@ const (
 // BankAccount is one seeded real bank/card account bound to its GL code (0033 bank_accounts). CREDIT_CARD
 // accounts (Corporate Visa 2110-2117) are TRACKING-ONLY at W5, no Visa spend is booked.
 type BankAccount struct {
-	ID                           string   `json:"id"`
-	Name                         string   `json:"name"`
-	AccountType                  string   `json:"account_type"`
-	GLAccountCode                string   `json:"gl_account_code"`
-	Institution                  string   `json:"institution"`
-	Last4                        string   `json:"last4"`
-	IsActive                     bool     `json:"is_active"`
-	TrackingOnly                 bool     `json:"tracking_only"` // true for CREDIT_CARD at W5
-	UnmatchedLines               int      `json:"unmatched_lines"`
-	CutoverDate                  *string  `json:"-"`
-	CutoverStatementBalanceCents *int64   `json:"-"`
-	CutoverOutstandingJournalIDs []string `json:"-"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	AccountType    string `json:"account_type"`
+	GLAccountCode  string `json:"gl_account_code"`
+	Institution    string `json:"institution"`
+	Last4          string `json:"last4"`
+	IsActive       bool   `json:"is_active"`
+	TrackingOnly   bool   `json:"tracking_only"` // true for CREDIT_CARD at W5
+	UnmatchedLines int    `json:"unmatched_lines"`
+	// The recorded reconciliation starting point (cut over, FW1-04): nil/empty until the Financial
+	// Controller records it through the cutover route.
+	CutoverDate                  *string  `json:"cutover_date,omitempty"`
+	CutoverStatementBalanceCents *int64   `json:"cutover_statement_balance_cents,omitempty"`
+	CutoverOutstandingJournalIDs []string `json:"cutover_outstanding_journal_ids,omitempty"`
 }
 
 // StatementLine is one parsed bank line (0033 bank_statement_lines). AmountCents is signed (+credit/−debit).
@@ -132,6 +134,11 @@ type Match struct {
 	MatchedBy       string     `json:"matched_by,omitempty"`
 	MatchedAt       time.Time  `json:"matched_at"`
 	UnmatchedAt     *time.Time `json:"unmatched_at,omitempty"`
+	// PaymentsUnresolved rides the match's answer (R2-P2-1): a LODGEMENT target whose covered
+	// payments the till could not uniquely resolve answers true, so the reconciliation screen
+	// (FW1-05) can show the lodgement as unresolved. It is an answer-time fact from the till's
+	// seam, not a bank_matches column; read-back answers of stored rows carry false.
+	PaymentsUnresolved bool `json:"payments_unresolved"`
 }
 
 // OutstandingItem is one book entry in the bank GL account posted on or before month end that has not
@@ -226,6 +233,26 @@ type CutoverInput struct {
 	CutoverDate                  string   `json:"cutover_date"`
 	OpeningStatementBalanceCents int64    `json:"opening_statement_balance_cents"`
 	OutstandingJournalIDs        []string `json:"outstanding_journal_ids,omitempty"`
+}
+
+// CutoverPreview is the starting point form's read (FW1-04 round 3): the ledger's entries on the account's GL
+// code on or before a cut over date, and the book balance their net makes. The desk formats these; the core
+// computes them, the same read the reconciliation's outstanding lists draw from.
+type CutoverPreview struct {
+	BookBalanceCents int64                 `json:"book_balance_cents"`
+	Entries          []CutoverPreviewEntry `json:"entries,omitempty"`
+	// Present only when the read carried a statement balance (round 4): the difference between the typed
+	// statement balance and the balance the book makes with the ticked entries, zero when it reconciles.
+	DifferenceCents *int64 `json:"difference_cents,omitempty"`
+	Reconciles      *bool  `json:"reconciles,omitempty"`
+}
+
+// CutoverPreviewEntry is one posted ledger entry on the bank's GL code, at its signed net on that code.
+type CutoverPreviewEntry struct {
+	JournalID   string    `json:"journal_id"`
+	PostedAt    time.Time `json:"posted_at"`
+	Memo        string    `json:"memo"`
+	AmountCents int64     `json:"amount_cents"`
 }
 
 // - error taxonomy (mirrors internal/till) -
