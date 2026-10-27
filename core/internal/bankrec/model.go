@@ -134,6 +134,11 @@ type Match struct {
 	MatchedBy       string     `json:"matched_by,omitempty"`
 	MatchedAt       time.Time  `json:"matched_at"`
 	UnmatchedAt     *time.Time `json:"unmatched_at,omitempty"`
+	// PaymentsUnresolved rides the match's answer (R2-P2-1): a LODGEMENT target whose covered
+	// payments the till could not uniquely resolve answers true, so the reconciliation screen
+	// (FW1-05) can show the lodgement as unresolved. It is an answer-time fact from the till's
+	// seam, not a bank_matches column; read-back answers of stored rows carry false.
+	PaymentsUnresolved bool `json:"payments_unresolved"`
 }
 
 // OutstandingItem is one book entry in the bank GL account posted on or before month end that has not

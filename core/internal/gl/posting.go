@@ -377,8 +377,14 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 	branch := p.BranchID
 	amount := p.AmountCents
 	method := p.Method
-	// Fall back to the PaymentReader facts for amount/branch/method when the emitter omitted them.
-	if (amount == 0 || branch == "" || method == "") && s.payments != nil {
+	cleared := p.Cleared
+	// Fall back to the PaymentReader facts for amount/branch/method when an older payload omitted them.
+	// Note on cleared (SF-2d round 2): MarkNSF captures p.Cleared under the payment row lock before
+	// flipping payments.status to BOUNCED, so a live bounce always carries p.Cleared on the payload;
+	// the f.Status == "DEPOSITED" check below is a one-way fallback (false -> true only, never
+	// overwriting p.Cleared = true) for synthetic or pre-Cleared events where the row was not yet
+	// flipped to BOUNCED.
+	if (amount == 0 || branch == "" || method == "" || !cleared) && s.payments != nil {
 		if f, err := s.payments.PaymentForGL(ctx, p.PaymentID); err == nil {
 			if amount == 0 {
 				amount = f.AmountCents
@@ -388,6 +394,9 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 			}
 			if method == "" {
 				method = f.Method
+			}
+			if f.Status == "DEPOSITED" {
+				cleared = true
 			}
 		}
 	}
@@ -404,12 +413,12 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 		return journalDraft{}, false, err
 	}
 	// The reversal-credit leg mirrors the account the ORIGINAL receipt debited, keyed off method AND status:
-	//   DEPOSITED (Cleared) → 1000 bank (the receipt had settled) ; else CARD → 1010 card clearing (where a card
-	//   receipt lands first) ; else cash/cheque/EFT → 1020 undeposited funds. A card receipt that bounced before
+	//   DEPOSITED (Cleared) -> 1000 bank (the receipt had settled) ; else CARD -> 1010 card clearing (where a card
+	//   receipt lands first) ; else cash/cheque/EFT -> 1020 undeposited funds. A card receipt that bounced before
 	//   settlement must reverse 1010, NOT 1020 (that was the A-05 defect).
 	bankRole := "undeposited" // reverse the still-undeposited cash/cheque receipt (1020)
 	switch {
-	case p.Cleared:
+	case cleared:
 		bankRole = "bank" // reverse the settled bank credit (1000)
 	case method == "CARD":
 		bankRole = "card_clearing" // reverse the still-clearing card receipt (1010)

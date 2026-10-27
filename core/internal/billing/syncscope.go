@@ -149,6 +149,10 @@ func projectAging(r agingRow) (map[string]any, error) {
 
 // Pull returns the tenant's invoice page past since with the aging
 // projection.
+//
+// A PARKED CREDIT MEMO IS NOT IN THE PAGE. A credit memo that waits for its approval is a DRAFT
+// document, and a draft credit is not yet a credit: no money has moved, so the customer's page must not
+// show it. It arrives on the next pull, once the approval has made it FINALIZED.
 func (s *AgingStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
 	if !f.Tenant || f.TenantID == "" {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
@@ -160,6 +164,7 @@ func (s *AgingStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(
 		`SELECT %s FROM invoices i
 		 WHERE i.customer_id = $1::uuid AND i.seq IS NOT NULL AND i.seq > $2
+		   AND NOT (i.doc_type = 'CREDIT_MEMO' AND i.status = 'DRAFT')
 		 ORDER BY i.seq ASC LIMIT $3`, agingColumnsAt("$4")), f.TenantID, since, limit, zone.Name())
 	if err != nil {
 		return nil, nil, fmt.Errorf("billing: aging pull: %w", err)

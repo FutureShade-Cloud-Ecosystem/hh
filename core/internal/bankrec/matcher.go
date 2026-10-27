@@ -17,8 +17,11 @@ type proposal struct {
 	TargetRef  string
 	Rule       MatchRule
 	PaymentIDs []string
-	FeeCents   int64
-	Journal    gl.ExternalJournal
+	// PaymentsUnresolved is the lodgement's own answer-time fact (R2-P2-1), carried onto the
+	// persisted match so the answer tells the desk the lodgement's payments are unresolved.
+	PaymentsUnresolved bool
+	FeeCents           int64
+	Journal            gl.ExternalJournal
 }
 
 // matchLine runs the APPROVED rules (priority order) against one UNMATCHED credit line and returns the first
@@ -162,10 +165,12 @@ func buildPaymentProposal(line StatementLine, rule MatchRule, p CandidatePayment
 // of undeposited funds) (AC3).
 func buildLodgementProposal(line StatementLine, rule MatchRule, l Lodgement) proposal {
 	return proposal{
-		Line:       line,
-		TargetType: TargetLodgement,
-		TargetRef:  l.MovementID,
-		Rule:       rule,
+		Line:               line,
+		TargetType:         TargetLodgement,
+		TargetRef:          l.MovementID,
+		Rule:               rule,
+		PaymentIDs:         l.PaymentIDs,
+		PaymentsUnresolved: l.PaymentsUnresolved,
 		Journal: gl.ExternalJournal{
 			Source:         "ADJUSTMENT",
 			SourceRefID:    line.ID,

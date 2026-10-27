@@ -47,6 +47,10 @@ type glStore interface {
 	// the approval-decision transaction.
 	ApproveJournalTx(ctx context.Context, tx pgx.Tx, id, approverID string) error
 	VoidJournal(ctx context.Context, id string) (Journal, error)
+	// VoidJournalTx voids a parked DRAFT journal on the caller's transaction (the rail's reject arm,
+	// FW1-12a's core round): a refused or withdrawn credit memo's journal must not hold its room as a
+	// draft forever. A journal that is not a DRAFT is left as it stands (idempotent).
+	VoidJournalTx(ctx context.Context, tx pgx.Tx, id string) error
 
 	// - periods -
 	ListPeriods(ctx context.Context) ([]Period, error)

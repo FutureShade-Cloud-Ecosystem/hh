@@ -310,6 +310,14 @@ func (s *Service) ApproveJournalTx(ctx context.Context, tx pgx.Tx, id, deciderID
 	return s.store.ApproveJournalTx(ctx, tx, id, deciderID)
 }
 
+// VoidJournalTx voids a parked DRAFT journal on the caller's transaction: the rail's reject arm's
+// journal half (FW1-12a's core round). The composition root's bridge voids the parked credit memo's
+// document beside it, both on the decision's own transaction. Idempotent on a journal that is not a
+// DRAFT.
+func (s *Service) VoidJournalTx(ctx context.Context, tx pgx.Tx, id string) error {
+	return s.store.VoidJournalTx(ctx, tx, id)
+}
+
 // VoidJournal voids a DRAFT (a POSTED journal is corrected with a reversing JE, never voided).
 func (s *Service) VoidJournal(ctx context.Context, id string) (Journal, error) {
 	if _, err := s.caller(ctx); err != nil {

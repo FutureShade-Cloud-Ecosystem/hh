@@ -41,14 +41,14 @@ var fw1BranchCensusWriters = []string{
 	"external_credit_memo_poster",
 	"external_post_external_tx",
 	"year_end_close",
+	"parked_credit_memo_journal",
 }
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
-// item (the three bankrec paths left are FW1-05's).
+// item (the two bankrec paths left are FW1-05's).
 var fw1BranchCensusRed = map[string]string{
-	"bankrec_manual_match_payment":   "FW1-05",
-	"bankrec_manual_match_lodgement": "FW1-05",
-	"bankrec_unmatch_reversal":       "FW1-05",
+	"bankrec_manual_match_payment": "FW1-05",
+	"bankrec_unmatch_reversal":     "FW1-05",
 }
 
 // fw1NonGLWriterSite identifies a non-GL journal writer call site or outbox
@@ -68,6 +68,12 @@ type fw1NonGLWriterSite struct {
 // carries a branch, and every dynamic-topic outbox helper outside
 // core/internal/gl. Guarded by TestFW1NonGLJournalWriterCallSitesComplete.
 var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
+	{
+		File:         "core/cmd/core/credit_memo_wire.go",
+		Func:         "(creditMemoParkerAdapter).ParkCreditMemo",
+		Kind:         "ParkExternalJournalTx",
+		BranchSource: "journal.BranchID from billing's parked credit memo journal, the branch the credit was filed at",
+	},
 	{
 		File:         "core/cmd/core/order_events.go",
 		Func:         "(orderChangeEvents).EnqueueTx",
@@ -150,7 +156,7 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		File:         "core/internal/bankrec/service.go",
 		Func:         "(*Service).ManualMatch",
 		Kind:         "PostJournal",
-		BranchSource: "manualJournal passes empty BranchID today (RED, owned by FW1-05)",
+		BranchSource: "manualJournal stamps the LODGEMENT path from the till's lodgement facts (FW1-06a) and passes empty BranchID for PAYMENT today (RED, owned by FW1-05)",
 	},
 	{
 		File:         "core/internal/bankrec/service.go",

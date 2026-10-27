@@ -26,7 +26,7 @@ func TestIntegrationInvoiceWriter_DatesFollowTheDealersZone(t *testing.T) {
 	} {
 		cust := seedCustomer(t, pool, ns(t)+tc.name) // a customer per case: one order key must not replay the other
 		w := NewInvoiceWriter(pool).
-			WithOrderSource(houseDaySource{customer: cust, branch: trentonBranch}).
+			WithOrderSource(houseDaySource{customer: cust, branch: trentonBranch, terms: 30}).
 			WithClock(func() time.Time { return at }).
 			WithZone(tc.src)
 		doc, err := w.InvoiceOrder(ctx, "zone-"+tc.name+"-"+ns(t))

@@ -39,7 +39,7 @@ import { groupDriverRows, idleDriverWords } from "./drivers-logic.js";
 import { rowsForBoard } from "./drivers-api.js";
 import { BuilderApi } from "./builder-api.js";
 import { BuilderDesk } from "./builder-desk.js";
-import { ManagerApi, type BranchRef, type ChangeOrder, type ChangeOrderQueueRow, type NeedsQueue, type QueueEntry, type ReceivingRow, type WidgetDatum } from "./manager-api.js";
+import { ManagerApi, landingKpisFrom, type BranchRef, type ChangeOrder, type ChangeOrderQueueRow, type NeedsQueue, type QueueEntry, type ReceivingRow, type WidgetDatum } from "./manager-api.js";
 import { DriversApi } from "./drivers-api.js";
 import {
   APPROVAL_KINDS,
@@ -862,9 +862,9 @@ export class ManagerHomeApp extends HHElement {
     const [needs, widgets, kpis, deliveries, stakeNeeds] = await Promise.all([
       this.#api.needs(),
       this.#api.widgets(),
-      this.#api.readLandingKpis(branchId),
+      this.#api.readLandingKpis(),
       this.#api.readLandingDeliveries(branchId),
-      this.#api.readLandingNeeds(branchId),
+      this.#api.readLandingNeeds(),
     ]);
     if (!needs.ok || !widgets.ok) {
       const failureError = !needs.ok ? needs.error : !widgets.ok ? widgets.error : "";
@@ -897,7 +897,7 @@ export class ManagerHomeApp extends HHElement {
       canOpenReporting: canOpenReporting(this.#tier),
       unsourcedNeeds: weighed.unsourced,
       branchMode: this.#landing.branchMode ?? "combined",
-      kpis: kpis.ok ? kpis.value : [],
+      kpis: kpis.ok ? kpis.value : landingKpisFrom([]),
       deliveries: deliveries.ok ? deliveries.value : null,
       stakeNeeds: stakeNeeds.ok ? stakeNeeds.value : [],
       notice: "",
