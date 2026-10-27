@@ -14,6 +14,7 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -28,6 +29,13 @@ import (
 func shortageReachDoor(d *shortDoor, has bool, sc identity.StaffContext) *ShortageSyncStore {
 	return NewShortageSyncStore(d.pool, nil).WithStaffAuthority(
 		func(context.Context, string, string) (identity.StaffContext, bool, error) { return sc, has, nil })
+}
+
+// shortageReachDoorWithOrg wires the same door with the branch to org seam the pick and weights doors carry
+// (UX-81 round 5): a GLOBAL caller's reach is every branch of its OWN org, never every branch in the
+// database.
+func shortageReachDoorWithOrg(d *shortDoor, sc identity.StaffContext, org BranchOrgReader) *ShortageSyncStore {
+	return shortageReachDoor(d, true, sc).WithBranchOrgReader(org)
 }
 
 // shortageReachTask births one PICK task in the org on the given branch, through the pick sync create
@@ -50,6 +58,18 @@ func shortageOnTask(t *testing.T, d *shortDoor, taskID, key string) string {
 	res := d.push(apigen.SyncPushOperation{ClientId: key, Op: "create", Payload: appPayload(sid, taskID)})
 	if res[0].Status != "applied" {
 		t.Fatalf("create shortage: %+v", res[0])
+	}
+	return sid
+}
+
+// shortageWithKey creates one shortage on the task under the key given, through the store itself (no
+// engine, no ledger): task_shortages carries no unique index on idempotency_key (0213), so one key can
+// name rows on two branches, the state the find-applied fence has to survive.
+func shortageWithKey(t *testing.T, d *shortDoor, taskID, key string) string {
+	t.Helper()
+	sid := uuid.NewString()
+	if _, err := d.store.Create(context.Background(), d.f, key, appPayload(sid, taskID)); err != nil {
+		t.Fatalf("create shortage under key %s: %v", key, err)
 	}
 	return sid
 }
@@ -178,6 +198,94 @@ func TestShortageSyncFindAppliedHoldsTheCallersBranchReach(t *testing.T) {
 	}
 }
 
+// TestShortageSyncHoldsTheCallersOrgBoundForAGlobalCaller: a GLOBAL caller's reach is every branch of its
+// OWN org, never every branch in the database (UX-81 round 5), the bound the pick and weights doors carry
+// through the branchOrg seam. A shortage whose parent task sits in the caller's own org but on a branch of
+// another org is out of the GLOBAL caller's reach: the key answers not applied and the row answers absent,
+// the same answers an out of reach row gets. A door without the seam runs the org predicate alone, the
+// unwired posture the composition root refuses to boot a door in (BranchOrgWired is the fail fast's leg).
+func TestShortageSyncHoldsTheCallersOrgBoundForAGlobalCaller(t *testing.T) {
+	d := newShortDoor(t)
+	own, foreign := uuid.NewString(), uuid.NewString()
+	taskOwn := shortageReachTask(t, d, own)
+	taskForeign := shortageReachTask(t, d, foreign)
+	keyOwn, keyForeign := uuid.NewString(), uuid.NewString()
+	shortOwn := shortageWithKey(t, d, taskOwn, keyOwn)
+	shortForeign := shortageWithKey(t, d, taskForeign, keyForeign)
+	global := scopedTo(uuid.NewString())
+	global.Scope, global.Tier = identity.ScopeGlobal, identity.TierLeadership
+	// The seam: the caller's own branch is a branch of its own org, the other one belongs to another org.
+	wired := shortageReachDoorWithOrg(d, global, branchesOfOrg{own: {d.org: true}, foreign: {d.other: true}})
+
+	if _, found, err := wired.FindApplied(context.Background(), d.f, keyForeign); err != nil || found {
+		t.Errorf("a GLOBAL caller does not resolve a key on a branch outside its own org: found %v err %v", found, err)
+	}
+	if _, found, err := wired.Load(context.Background(), d.f, shortForeign); err != nil || found {
+		t.Errorf("a GLOBAL caller does not load a shortage on a branch outside its own org: found %v err %v", found, err)
+	}
+	if _, found, err := wired.FindApplied(context.Background(), d.f, keyOwn); err != nil || !found {
+		t.Errorf("a GLOBAL caller still resolves the key on its own org's branch: found %v err %v", found, err)
+	}
+	if _, found, err := wired.Load(context.Background(), d.f, shortOwn); err != nil || !found {
+		t.Errorf("a GLOBAL caller still loads the shortage on its own org's branch: found %v err %v", found, err)
+	}
+	// The unwired posture: without the org bound seam the org predicate alone runs, exactly main's behavior.
+	unwired := shortageReachDoor(d, true, global)
+	if _, found, err := unwired.FindApplied(context.Background(), d.f, keyForeign); err != nil || !found {
+		t.Errorf("a door without the org bound seam keeps the org predicate alone, main's posture: found %v err %v", found, err)
+	}
+}
+
+// TestShortageSyncFindAppliedResolvesAKeyNamingTwoBranchesToTheCallersOwnRow: one key can name shortages
+// on two branches (task_shortages carries no unique index on idempotency_key, 0213), so the find-applied
+// query's unordered LIMIT 1 can land on the other branch's row. The reach clause is in the query (the
+// pick scope's rule, PR 640's shape), so the answer is always the caller's own row: the Trenton device
+// resolves the key to its own shortage and the Kingston device to one of its own, never to the other's.
+func TestShortageSyncFindAppliedResolvesAKeyNamingTwoBranchesToTheCallersOwnRow(t *testing.T) {
+	d := newShortDoor(t)
+	trenton, kingston := uuid.NewString(), uuid.NewString()
+	taskTrenton := shortageReachTask(t, d, trenton)
+	taskKingston := shortageReachTask(t, d, kingston)
+	key := uuid.NewString()
+	// The out of reach rows first: on the tree without the clause the query's unordered LIMIT 1 takes the
+	// row that comes first in the table, which is a row the Trenton device cannot reach. That is what makes
+	// this leg red there.
+	away := shortageWithKey(t, d, taskKingston, key)
+	awayToo := shortageWithKey(t, d, taskKingston, key)
+	shortTrenton := shortageWithKey(t, d, taskTrenton, key)
+	atTrenton := shortageReachDoor(d, true, scopedTo(uuid.NewString(), trenton))
+	atKingston := shortageReachDoor(d, true, scopedTo(uuid.NewString(), kingston))
+
+	row, found, err := atTrenton.FindApplied(context.Background(), d.f, key)
+	if err != nil || !found || row.ID != shortTrenton {
+		t.Errorf("the Trenton device resolves the key to its own shortage: found %v id %q seq %d err %v (own %q, the other branch's %q)",
+			found, row.ID, row.Seq, err, shortTrenton, away)
+	}
+	row, found, err = atKingston.FindApplied(context.Background(), d.f, key)
+	if err != nil || !found || row.ID == shortTrenton || (row.ID != away && row.ID != awayToo) {
+		t.Errorf("the Kingston device resolves the key to one of its own shortages: found %v id %q seq %d err %v (own %q, the other branch's %q)",
+			found, row.ID, row.Seq, err, away, shortTrenton)
+	}
+}
+
+// TestShortageSyncCreateCollisionAnswersRowExistsForAnotherBranchsShortage: the client-chosen id is taken
+// by a shortage on a branch the caller cannot reach. The collision is inside the caller's own org, so it
+// is the caller's own fact and answers ErrRowExists, the pick door's rule (its create's collision probe
+// reads the row under the org predicate alone, syncscope.go's collision arm). A fence that held the probe
+// to the branch reach answered ErrRowNotFound, which is a write-path answer the fence did not owe.
+func TestShortageSyncCreateCollisionAnswersRowExistsForAnotherBranchsShortage(t *testing.T) {
+	d := newShortDoor(t)
+	trenton, kingston := uuid.NewString(), uuid.NewString()
+	taskTrenton := shortageReachTask(t, d, trenton)
+	taskKingston := shortageReachTask(t, d, kingston)
+	taken := shortageWithKey(t, d, taskTrenton, uuid.NewString())
+	atKingston := shortageReachDoor(d, true, scopedTo(uuid.NewString(), kingston))
+	_, err := atKingston.Create(context.Background(), d.f, uuid.NewString(), appPayload(taken, taskKingston))
+	if !errors.Is(err, hhsync.ErrRowExists) {
+		t.Errorf("a taken id answers ErrRowExists, the collision is inside the caller's own org: %v", err)
+	}
+}
+
 // TestShortageSyncEngineReplayOfAnotherBranchsKeyCarriesNothingOfTheRow: the real engine over the real key
 // ledger. A Trenton device applies a report under key K; a Kingston device replaying the very same keyed
 // operation gets nothing of the row: not applied at the dedup (the fence above), so the ledger-bound replay
@@ -215,6 +323,11 @@ func TestShortageSyncEngineReplayOfAnotherBranchsKeyCarriesNothingOfTheRow(t *te
 		t.Fatalf("Kingston's replay failed the push: %v", err)
 	}
 	replay := res.Results[0]
+	// The answer today's tree gives: applied with nothing of the row, the fence's half of the brief's leg.
+	// PR 640's engine gate (a key whose row the caller cannot read answers as an absent key) lands first
+	// and turns this answer into the absent key's rejected, so this assertion is switched then, by the
+	// lead or a later coder (UX-105 round 2, the review's second finding). PR 640's branch is NOT merged
+	// here: this tree carries the fence, and the fence is what makes 640's gate bite here.
 	if replay.Status != "applied" || replay.Seq != nil {
 		t.Errorf("a Kingston replay of Trenton's key answers with nothing of the row: status %q seq %v error %v",
 			replay.Status, replay.Seq, replay.Error)
