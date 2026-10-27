@@ -176,6 +176,43 @@ func RevokeStaffGrants(ctx context.Context, db DBTX, orgID, platformUserID strin
 	return grantIDs, len(grantIDs) > 0, nil
 }
 
+// RevokeStaffGrantsExcept is RevokeStaffGrants with one role kept live:
+// the demote half of a provision. A provision names the one role the
+// person should hold, so the live grants of the roles it does not name go
+// in the same transaction the new grant is written in, and one entry maps
+// to exactly one live role. The kept role is excluded by id, so the grant
+// the same run just ensured is never its own casualty. As with the revoke,
+// the partial unique index keeps the tombstones out of the live set and
+// the history keeps the rows. The ids come back in the order the database
+// hands them out; revoked is false when no other live grant matched.
+func RevokeStaffGrantsExcept(ctx context.Context, db DBTX, orgID, platformUserID, keepRoleID string) (grantIDs []string, revoked bool, err error) {
+	if db == nil {
+		return nil, false, errors.New("identity: a staff grant revocation requires a database handle")
+	}
+	if orgID == "" || platformUserID == "" || keepRoleID == "" {
+		return nil, false, errors.New("identity: a staff grant revocation requires the org, the platform user and the role to keep")
+	}
+	rows, err := db.Query(ctx, `
+		UPDATE staff_role_grant SET deleted_at = now()
+		WHERE org_id = $1 AND platform_user_id = $2 AND deleted_at IS NULL AND role_id <> $3
+		RETURNING id::text`, orgID, platformUserID, keepRoleID)
+	if err != nil {
+		return nil, false, fmt.Errorf("identity: staff grant revocation failed: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var grantID string
+		if err := rows.Scan(&grantID); err != nil {
+			return nil, false, fmt.Errorf("identity: staff grant revocation read failed: %w", err)
+		}
+		grantIDs = append(grantIDs, grantID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("identity: staff grant revocation read failed: %w", err)
+	}
+	return grantIDs, len(grantIDs) > 0, nil
+}
+
 // StaffGrantID reads the id of the person's live grant of one role in the
 // org, the identifier a provisioning caller prints after EnsureStaffGrant.
 // ok is false when no live grant matches.

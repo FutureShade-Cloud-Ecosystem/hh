@@ -536,10 +536,14 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 
 	t.Run("a revoke takes every live grant", func(t *testing.T) {
 		out := &bytes.Buffer{}
-		for _, role := range []string{"financial_controller", "payables_receivables"} {
-			if err := financeUserRole(provisionArgs(multi, role), out, out, env(nil)); err != nil {
-				t.Fatalf("provisioning %s: %v", role, err)
-			}
+		if err := financeUserRole(provisionArgs(multi, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("provisioning: %v", err)
+		}
+		// A live grant from another hand (the carried catalog, say) is the
+		// revoke's to take too: the provision would have demoted it, so
+		// this leg writes it through identity's seam directly.
+		if _, err := identity.EnsureStaffGrant(ctx, pool, orgID, multi.platformID, "payables_receivables", nil); err != nil {
+			t.Fatalf("the second grant: %v", err)
 		}
 		if n := finLiveGrants(t, ctx, pool, orgID, multi.platformID); n != 2 {
 			t.Fatalf("the person holds %d live grants, want 2", n)

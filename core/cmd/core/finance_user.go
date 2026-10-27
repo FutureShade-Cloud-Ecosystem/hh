@@ -146,8 +146,9 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 
 // financeUserProvision makes sure the org anchor exists, keeping the name
 // it already has, then writes the staff users row and the global grant in
-// one transaction, then the audit row, and prints only the users row id
-// and the grant id.
+// one transaction, takes the live grants of the roles the provision does
+// not name so one entry maps to exactly one live role, then the audit
+// row, and prints only the users row id and the grant id.
 func financeUserProvision(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer, getenv func(string) string, email, platformUserID, displayName, role string) error {
 	slug := strings.TrimSpace(getenv(envWebOrg))
 	if slug == "" {
@@ -169,6 +170,13 @@ func financeUserProvision(ctx context.Context, pool *pgxpool.Pool, stdout io.Wri
 	}
 	if _, err := identity.EnsureStaffGrant(ctx, tx, orgID, platformUserID, role, nil); err != nil {
 		return fmt.Errorf("finance-user: the staff grant: %w", err)
+	}
+	// One entry of the finance list maps to exactly one live role: the
+	// grants of the roles this provision does not name go in the same
+	// transaction, so an edited entry demotes instead of stacking, and the
+	// tier 1 role never outlives its entry.
+	if _, _, err := identity.RevokeStaffGrantsExcept(ctx, tx, orgID, platformUserID, role); err != nil {
+		return fmt.Errorf("finance-user: the grant demotion: %w", err)
 	}
 	grantID, ok, err := identity.StaffGrantID(ctx, tx, orgID, platformUserID, role)
 	if err != nil || !ok {
