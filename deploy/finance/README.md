@@ -88,8 +88,9 @@ the variable):
 - `HH_WEB_ORG` - the org slug the browser sends
 - `HH_WEB_CONSOLE_ENDPOINT`, `HH_WEB_CONSOLE_PROJECT_ID` - FB Console for
   the browser
-- `HH_WEB_DEALER_NAME` - the dealer name on screen (the invented dealer,
-  never Dibbits)
+- `HH_WEB_DEALER_NAME` - the dealer name on screen: `Dibbits` (the box
+  runs today's Ontario seed identity; every customer, document and person
+  in its world stays synthetic)
 
 Optional:
 
