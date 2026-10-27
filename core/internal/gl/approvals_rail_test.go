@@ -41,7 +41,9 @@ func (f *fakeApprovalFiler) FileJEApprovalTx(_ context.Context, _ pgx.Tx, journa
 // they can never reach this bridge regardless of amount.)
 func TestCreateJournal_ParkBridge_FiresOnlyOnManualPark(t *testing.T) {
 	ctx := context.Background()
-	maker := identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager}
+	// FW1-10: the journal read after the park is fenced to the caller's branch reach, so the maker
+	// holds the branch it parks at.
+	maker := identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeBranch, Branches: map[string]bool{"b1": true}}
 	over := []JournalLineInput{{AccountCode: "1000", DebitCents: 600000}, {AccountCode: "4000", CreditCents: 600000}}
 
 	// (a) manual, over threshold → parks DRAFT → filer fires once with the journal id + debit total.
