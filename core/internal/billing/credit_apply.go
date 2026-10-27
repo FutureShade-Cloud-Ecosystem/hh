@@ -421,6 +421,30 @@ SELECT COALESCE(source_type, ''), COALESCE(source_ref_id, id)::text, COALESCE(br
 		if in.CanAccessBranch != nil && !in.CanAccessBranch(creditBranch) {
 			return CreditApplication{}, NoSuchCreditError{CreditID: in.CreditID}
 		}
+		// The named row resolves to the group's FIRST NEGATIVE row, and that row is the lock every
+		// writer of the group queues on (S6 P2-1): two requests naming two different rows of one
+		// group must not each hold a different lock and read the same open figure. A group with no
+		// negative row left holds nothing open.
+		var anchorHold int
+		err = tx.QueryRow(ctx, `
+SELECT 1
+  FROM customer_transactions
+ WHERE customer_id = $1::uuid
+   AND COALESCE(source_type, '') = $2
+   AND COALESCE(source_ref_id, id) = $3::uuid
+   AND COALESCE(branch_id::text, '') = $4
+   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')
+   AND amount_cents < 0
+ ORDER BY occurred_at ASC, id ASC
+ LIMIT 1
+   FOR UPDATE`,
+			in.CustomerID, groupSourceType, groupRef, creditBranch).Scan(&anchorHold)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return CreditApplication{}, CreditApplicationNotOpen
+			}
+			return CreditApplication{}, fmt.Errorf("credit apply: resolve the credit's anchor: %w", err)
+		}
 		if err := tx.QueryRow(ctx, `
 SELECT COALESCE(SUM(amount_cents), 0)
   FROM customer_transactions
