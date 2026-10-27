@@ -352,6 +352,27 @@ func (r *Repository) InsertParkedJournal(ctx context.Context, d journalDraft, fi
 // idempotency race and returns the winner's id; found=false falls through to the original error. A
 // created=false, nil-error return means onDup supplied the winner and tx is no longer usable for a commit.
 func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDraft, onDup func() (string, bool)) (string, bool, error) {
+	// PR 621 round 2 (FW1-09a): a reversal locks the original journal row FOR UPDATE inside the insert
+	// transaction before checking whether a reversal already exists and before drawing next_entry_no, so
+	// two concurrent reversals of one journal serialise on the original row and the second is refused in
+	// words without burning an entry number.
+	var reversedEntryNo int
+	if d.ReversesJournalID != "" {
+		if err := tx.QueryRow(ctx, `SELECT entry_no FROM gl_journals WHERE id = $1::uuid FOR UPDATE`, d.ReversesJournalID).Scan(&reversedEntryNo); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", false, errNotFound
+			}
+			return "", false, fmt.Errorf("gl: lock journal for reversal: %w", err)
+		}
+		var reversed bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM gl_journals WHERE reverses_journal_id = $1::uuid)`, d.ReversesJournalID).Scan(&reversed); err != nil {
+			return "", false, fmt.Errorf("gl: read whether the journal was reversed: %w", err)
+		}
+		if reversed {
+			return "", false, alreadyReversedErr(reversedEntryNo)
+		}
+	}
+
 	// THE HOUSE ZONE, not the instant's own. `OccurredAt` defaults to the service clock, so before
 	// this the month a posting landed in was decided by the server's timezone, and on a UTC server
 	// that files a 9pm Ontario sale into tomorrow, and a 9pm sale on the 31st into next month's
@@ -422,6 +443,9 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 			if existing, found := onDup(); found {
 				return existing, false, nil
 			}
+		}
+		if isUniqueViolation(err) && d.ReversesJournalID != "" {
+			return "", false, alreadyReversedErr(reversedEntryNo)
 		}
 		return "", false, fmt.Errorf("gl: insert journal header: %w", err)
 	}

@@ -320,7 +320,7 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 		return Journal{}, err
 	}
 	if reversed {
-		return Journal{}, clientErr(409, "gl: entry #%d was already reversed; a journal can be reversed once", orig.EntryNo)
+		return Journal{}, alreadyReversedErr(orig.EntryNo)
 	}
 	lines := make([]draftLine, 0, len(orig.Lines))
 	for _, l := range orig.Lines {
@@ -341,11 +341,21 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 		OccurredAt:        s.clock(),
 		Lines:             lines,
 	}
+	// InsertJournal locks the original gl_journals row FOR UPDATE inside its transaction before re-checking
+	// reverses_journal_id and drawing next_entry_no (PR 621 round 2), and maps a unique violation on 0440's
+	// partial index to the same refusal, so two concurrent reversals serialise and only one lands.
 	newID, _, err := s.store.InsertJournal(ctx, draft)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return Journal{}, alreadyReversedErr(orig.EntryNo)
+		}
 		return Journal{}, err
 	}
 	return s.GetJournal(ctx, newID)
+}
+
+func alreadyReversedErr(entryNo int) error {
+	return clientErr(409, "gl: entry #%d was already reversed; a journal can be reversed once", entryNo)
 }
 
 // systemJournalOwner names the module behind a journal the ledger did not post, for the reverse route's
