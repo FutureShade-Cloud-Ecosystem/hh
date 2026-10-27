@@ -101,6 +101,7 @@ var demoEnvAllowNames = []string{
 	"DEMO_MODE",
 	"ERP_BASE_URL",
 	"HH_CORE_TEST_DATABASE_URL",
+	"HH_BOX_KIND",
 	"HH_DEMO_MINT_ADDRESS_CEILING",
 	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
 	// The HH_WEB_ names are the web runtime config's public facts, read by
@@ -225,6 +226,7 @@ var envInventoryFixture = []string{
 	"DEALER_NAME",
 	"DEMO_MODE",
 	"ERP_BASE_URL",
+	"HH_BOX_KIND",
 	"HH_DEMO_MINT_ADDRESS_CEILING",
 	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
 	"HH_ACCEPTANCE_SIGN_KEY",
