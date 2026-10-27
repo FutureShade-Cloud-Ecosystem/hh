@@ -265,20 +265,20 @@ type RecomputeResult struct {
 
 // ReconReport ties the collected HST (the tax-decision side) to the GL liability accounts for a period.
 type ReconReport struct {
-	Year    int    `json:"year"`
-	Month   int    `json:"month"`
+	Year     int    `json:"year"`
+	Month    int    `json:"month"`
 	BranchID string `json:"branch_id,omitempty"`
 	// CollectedCents is the sales HST on the period's documents (invoices less credit memos), the
 	// figure the return's line 101 asks for. InputTaxCreditsCents is the tax on the period's posted
 	// vendor bills, shown apart (the return's line 108). The two are netted for the tie against the
 	// GL 2200 movement.
-	CollectedCents       int64  `json:"collected_cents"`
-	InputTaxCreditsCents int64  `json:"input_tax_cents"`
-	GLPayableCents       int64  `json:"gl_payable_cents"` // 2200's movement for the period
-	GLFederalCents       int64  `json:"gl_federal_cents"` // 2201 balance
-	GLOntarioCents       int64  `json:"gl_ontario_cents"` // 2202 balance
-	VarianceCents        int64  `json:"variance_cents"`   // GL 2200 movement − (collected − input tax)
-	TiedOut              bool   `json:"tied_out"`
+	CollectedCents       int64 `json:"collected_cents"`
+	InputTaxCreditsCents int64 `json:"input_tax_cents"`
+	GLPayableCents       int64 `json:"gl_payable_cents"` // 2200's movement for the period
+	GLFederalCents       int64 `json:"gl_federal_cents"` // 2201 balance
+	GLOntarioCents       int64 `json:"gl_ontario_cents"` // 2202 balance
+	VarianceCents        int64 `json:"variance_cents"`   // GL 2200 movement − (collected − input tax)
+	TiedOut              bool  `json:"tied_out"`
 }
 
 // -- evidence-relief eligibility (the tcrd_expiry gate) -----------------------------------------------------
@@ -315,7 +315,6 @@ type taxStore interface {
 	ListW4Snapshots(ctx context.Context, fromDate, toDate string) ([]Snapshot, error)
 	SnapshotExists(ctx context.Context, orderID, orderLineID, ruleVersion string) (bool, error)
 	InsertSnapshot(ctx context.Context, s Snapshot) (string, error)
-
 }
 
 // SalesHSTReader reads the tax on the period's sales documents (the collected side of the tie-out).

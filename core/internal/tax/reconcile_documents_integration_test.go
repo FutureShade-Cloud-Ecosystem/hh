@@ -14,6 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	gl "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -85,13 +88,25 @@ func fw11Post(t *testing.T, pool *pgxpool.Pool, memo string, lines []fw11Line) {
 	})
 }
 
+// fw11GLBal reads the GL side through the real gl service, the provider seam the wiring uses.
+type fw11GLBal struct{ svc *gl.Service }
+
+func (a fw11GLBal) GLBalanceCents(ctx context.Context, code string, year, month int, branchID string) (int64, error) {
+	return a.svc.GLBalanceCents(ctx, code, year, month, branchID)
+}
+
 // The red leg: an ordinary month with a counter sale's invoice and one posted vendor bill shows a false
 // variance today, because the collected side reads relief snapshots (none here) and the GL side nets the
 // bill's input tax credit against the sale's collected tax.
 func TestIntegration_FW1_11_ReconcileReadsTheMonthsDocuments(t *testing.T) {
 	pool := intPool(t)
 	fw11Ensure2091(t, pool)
-	svc := intSvc(t, pool)
+	// The reconcile reads its document sides through the owning modules' seams (billing's invoices,
+	// purchasing's posted bills), wired here over the real repositories the way main.go wires them.
+	svc := intSvc(t, pool).
+		WithSalesHSTs(billing.NewRepository(pool)).
+		WithBillITCs(purchasing.NewRepository(pool)).
+		WithGLBalances(fw11GLBal{svc: gl.NewService(gl.NewRepository(pool))})
 	ctx := context.Background()
 
 	var customerID string
@@ -149,13 +164,17 @@ func TestIntegration_FW1_11_ReconcileReadsTheMonthsDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	// The collected side is the month's documents, not the relief snapshots: 13000 on the sale.
+	// The collected side is the month's documents, not the relief snapshots: 13000 on the sale, the
+	// bill's 3900 shown apart as input tax credits.
 	if rep.CollectedCents != 13000 {
-		t.Errorf("FW1-11 red: the reconcile reads collected %d for an ordinary month's documents, want 13000 (today it reads relief snapshots, which never wrote this month)", rep.CollectedCents)
+		t.Errorf("FW1-11: the reconcile reads collected %d for an ordinary month's documents, want 13000 (it used to read relief snapshots, which never wrote this month)", rep.CollectedCents)
+	}
+	if rep.InputTaxCreditsCents != 3900 {
+		t.Errorf("FW1-11: the reconcile reads input tax credits %d, want 3900 on the posted bill", rep.InputTaxCreditsCents)
 	}
 	// The month ties: 2200's movement (13000 credit less 3900 debit = 9100) against the documents net
 	// (13000 less 3900 of input tax).
 	if rep.VarianceCents != 0 || !rep.TiedOut {
-		t.Errorf("FW1-11 red: an ordinary month shows a false variance of %d (GL %d against %d collected), want a tie", rep.VarianceCents, rep.GLPayableCents, rep.CollectedCents)
+		t.Errorf("FW1-11: an ordinary month shows a variance of %d (GL %d against %d collected less %d of input tax), want a tie", rep.VarianceCents, rep.GLPayableCents, rep.CollectedCents, rep.InputTaxCreditsCents)
 	}
 }

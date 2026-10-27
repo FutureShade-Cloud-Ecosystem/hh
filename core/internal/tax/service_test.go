@@ -15,16 +15,16 @@ import (
 // -- in-memory fakes (no DB) -----------------------------------------------------
 
 type fakeStore struct {
-	rates     map[string]int // "jur|reason" -> bps (effective-agnostic for the unit tests)
-	rateRows  []Rate         // dated rows, what MaxRateInRange honestly resolves (the interval legs)
-	profiles  map[string]StatusCardProfile
-	evidence  map[string]Evidence
-	config    map[string]Config
-	w4        []Snapshot
-	inserted  []Snapshot
-	salesHST  int64 // the period's document tax, what the reconcile reads as collected
-	billITCs  int64 // the period's posted vendor bill tax, shown apart
-	evSeq     int
+	rates    map[string]int // "jur|reason" -> bps (effective-agnostic for the unit tests)
+	rateRows []Rate         // dated rows, what MaxRateInRange honestly resolves (the interval legs)
+	profiles map[string]StatusCardProfile
+	evidence map[string]Evidence
+	config   map[string]Config
+	w4       []Snapshot
+	inserted []Snapshot
+	salesHST int64 // the period's document tax, what the reconcile reads as collected
+	billITCs int64 // the period's posted vendor bill tax, shown apart
+	evSeq    int
 }
 
 // DocumentSalesHSTCents and VendorBillITCCents stand in for the billing and purchasing seams
@@ -158,7 +158,6 @@ func (f *fakeStore) InsertSnapshot(_ context.Context, s Snapshot) (string, error
 	f.inserted = append(f.inserted, s)
 	return s.ID, nil
 }
-
 
 type fakeRecorder struct{ calls []audit.SensitiveAccess }
 
@@ -460,6 +459,8 @@ func TestReconcile_TiesTheMonthsDocumentsToGL(t *testing.T) {
 	f.salesHST = 26_000
 	f.billITCs = 6_000
 	svc, _ := newSvc(f)
+	svc.salesHST = f
+	svc.billITCs = f
 	svc.glBalance = fakeGL{balances: map[string]int64{acctHSTPayable: 20_000, acctHSTFederal: 10_000, acctHSTOntario: 16_000}}
 
 	rep, err := svc.ReconcileReport(context.Background(), 2026, 7, "")
@@ -483,10 +484,10 @@ func TestReconcile_TiesTheMonthsDocumentsToGL(t *testing.T) {
 	if rep2.TiedOut || rep2.VarianceCents != 1_000 {
 		t.Fatalf("expected variance 1000, got %d tied=%v", rep2.VarianceCents, rep2.TiedOut)
 	}
-	f.billITCs = 5_000
+	f.billITCs = 7_000
 	rep3, _ := svc.ReconcileReport(context.Background(), 2026, 7, "")
-	if rep3.TiedOut || rep3.VarianceCents != -4_000 {
-		t.Fatalf("expected variance -4000 after the ITC moves, got %d tied=%v", rep3.VarianceCents, rep3.TiedOut)
+	if rep3.TiedOut || rep3.VarianceCents != 2_000 {
+		t.Fatalf("expected variance 2000 after the ITC moves, got %d tied=%v", rep3.VarianceCents, rep3.TiedOut)
 	}
 }
 
