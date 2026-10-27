@@ -116,9 +116,9 @@ type ApplyCreditInput struct {
 	CustomerID string // the account both the credit and the invoice belong to
 	// CreditKind selects MEMO (a CREDIT_MEMO document, CreditID the invoice id) or ACCOUNT
 	// (a non-invoice subledger row family, CreditID the id of one of its negative rows).
-	CreditKind string
-	CreditID   string
-	InvoiceID  string
+	CreditKind  string
+	CreditID    string
+	InvoiceID   string
 	AmountCents int64
 	Reason      string
 	ActorID     string
@@ -143,15 +143,15 @@ type CreditApplicationLine struct {
 
 // CreditApplication is the answer.
 type CreditApplication struct {
-	ApplicationID     string               `json:"application_id"`
-	CreditKind        string               `json:"credit_kind"`
-	CreditID          string               `json:"credit_id"`
-	InvoiceID         string               `json:"invoice_id"`
-	InvoiceNo         string               `json:"invoice_no"`
-	AppliedCents      int64                `json:"applied_cents"`
-	CreditOpenAfter   int64                `json:"credit_open_after_cents"`
-	Lines             []CreditApplicationLine `json:"lines"`
-	Replayed          bool                 `json:"replayed"`
+	ApplicationID   string                  `json:"application_id"`
+	CreditKind      string                  `json:"credit_kind"`
+	CreditID        string                  `json:"credit_id"`
+	InvoiceID       string                  `json:"invoice_id"`
+	InvoiceNo       string                  `json:"invoice_no"`
+	AppliedCents    int64                   `json:"applied_cents"`
+	CreditOpenAfter int64                   `json:"credit_open_after_cents"`
+	Lines           []CreditApplicationLine `json:"lines"`
+	Replayed        bool                    `json:"replayed"`
 }
 
 // creditApplyClock is the writer's clock seam (tests).
@@ -206,12 +206,12 @@ func (s *CreditApplyService) Apply(ctx context.Context, in ApplyCreditInput, isM
 			Action: ActCreditApplied, EntityType: "invoice", EntityID: in.InvoiceID,
 			ActorID: in.ActorID, Purpose: "CREDIT_APPLY", Reason: in.Reason,
 			Extra: map[string]any{
-				"application_id":  res.ApplicationID,
-				"credit_kind":     in.CreditKind,
-				"credit_id":       in.CreditID,
-				"applied_cents":   res.AppliedCents,
-				"invoice_no":      res.InvoiceNo,
-				"balance_after":   res.Lines[0].BalanceAfterCents,
+				"application_id": res.ApplicationID,
+				"credit_kind":    in.CreditKind,
+				"credit_id":      in.CreditID,
+				"applied_cents":  res.AppliedCents,
+				"invoice_no":     res.InvoiceNo,
+				"balance_after":  res.Lines[0].BalanceAfterCents,
 			},
 		})
 	}
@@ -263,10 +263,10 @@ type creditApplicationRecord struct {
 }
 
 type creditReversalRecord struct {
-	Reason    string `json:"reason"`
+	Reason     string `json:"reason"`
 	ReversedBy string `json:"reversed_by,omitempty"`
 	ReversedAt string `json:"reversed_at"`
-	Key       string `json:"key"`
+	Key        string `json:"key"`
 }
 
 // creditAppMetadata is the metadata envelope the target invoice carries.
