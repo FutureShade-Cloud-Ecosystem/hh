@@ -548,7 +548,9 @@ export const extractTemplates = (source) => {
 // with the file, the line and the specifier: another package of the library's
 // family (lit-element re-exports the same tags), a subpath nobody listed, a
 // new dependency nobody argued for. Adding an entry is a change to the gate
-// that a reviewer sees.
+// that a reviewer sees. Beside the folder lists, IMPORT_ALLOW_FILES carries
+// per file entries: what one named file may import and no other file of its
+// folder, same rule, same lock.
 //
 // The same scan refuses, in every walked file: a call of eval, a call of
 // new Function, and a dynamic import or a require whose argument is not a
@@ -565,7 +567,6 @@ export const IMPORT_ALLOW_LIST = {
   src: {
     '@lit-labs/ssr': ['render'],
     '@lit-labs/ssr-dom-shim/register-css-hook.js': [],
-    '@lit-labs/ssr/lib/dom-shim.js': ['installWindowOnGlobal'],
     '@lit-labs/ssr/lib/render-result.js': ['collectResultSync'],
     './lit-dom-fetch-guard.js': [],
     lit: ['CSSResult', 'CSSResultGroup', 'LitElement', 'PropertyValues', 'TemplateResult', 'css', 'html', 'svg', 'nothing'],
@@ -612,7 +613,7 @@ export const IMPORT_ALLOW_LIST = {
     '../src/lit-dom-fetch-guard.js': [],
     './_lib/cdp.mjs': ['findBrowserBinary', 'launchBrowser'],
     './_lib/color.mjs': ['hexToOklch', 'oklchToHex', 'parseOklch', 'relativeLuminance'],
-    './_lib/positions.mjs': ['ADDRESS_HELPER', 'ALLOWED_PROPERTY_OR_EVENT', 'GATE_FILES', 'IMPORT_ALLOW_LIST', 'auditImports', 'auditSource', 'auditTagUsages', 'dependentPackages', 'everyPackageSource', 'extractTemplates', 'importedSpecifiers', 'refusedBy', 'thisPackageSources'],
+    './_lib/positions.mjs': ['ADDRESS_HELPER', 'ALLOWED_PROPERTY_OR_EVENT', 'GATE_FILES', 'IMPORT_ALLOW_FILES', 'IMPORT_ALLOW_LIST', 'auditImports', 'auditSource', 'auditTagUsages', 'dependentPackages', 'everyPackageSource', 'extractTemplates', 'importedSpecifiers', 'refusedBy', 'thisPackageSources'],
     './_lib/render.mjs': ['renderKit', 'renderTemplate'],
     './_lib/sheet.mjs': ['PALETTE_NAMES', 'contrast', 'declaredPairs', 'definedTokens', 'parseDeclarations', 'palette', 'palettes', 'pkgDir', 'readPkg', 'referencedTokens', 'resolveColor', 'shippedStyleFiles', 'sheetBlocks', 'stripComments'],
     './color.mjs': ['contrast', 'oklchToHex', 'parseOklch'],
@@ -640,6 +641,21 @@ export const IMPORT_ALLOW_LIST = {
     'node:path': ['dirname', 'join'],
     'node:url': ['fileURLToPath'],
     '../src/harness-page.js': ['HARNESS_TITLE', 'buildHarnessPage', 'harnessSheets'],
+  },
+};
+
+// Per file entries: what ONE named file of the package may import, and no
+// other file of its folder. A folder list is folder-wide, so the entry there
+// opens a specifier to every file of the folder at once; the Lit shim's
+// installer function installWindowOnGlobal (whose window carries node-fetch
+// as fetch) must open to exactly one file, the fetch guard, or a second
+// install site could land legally inside src. Keyed by the file's path
+// relative to the package root, judged by the same rule as the folder lists
+// (the specifier AND its names). The gate's lock holds each entry to the
+// named file's actual imports.
+export const IMPORT_ALLOW_FILES = {
+  'src/lit-dom-fetch-guard.ts': {
+    '@lit-labs/ssr/lib/dom-shim.js': ['installWindowOnGlobal'],
   },
 };
 
@@ -727,8 +743,18 @@ export const auditImports = (source, file) => {
     return offences;
   }
   const folder = folderOf(file);
-  const entries = folder === null ? null : IMPORT_ALLOW_LIST[folder];
-  const listName = folder === null ? 'the package root (no folder list covers it)' : `the ${folder} folder's list`;
+  const fileEntries = IMPORT_ALLOW_FILES[file];
+  const folderEntries = folder === null ? {} : IMPORT_ALLOW_LIST[folder];
+  const entries =
+    folder === null && fileEntries === undefined ? null : { ...folderEntries, ...fileEntries };
+  const listName =
+    folder === null
+      ? fileEntries === undefined
+        ? 'the package root (no folder list covers it)'
+        : 'the file\'s own entries'
+      : fileEntries === undefined
+        ? `the ${folder} folder's list`
+        : `the ${folder} folder's list and the file's own entries`;
 
   const refuseSpecifier = (line, spec, statement) => {
     at(

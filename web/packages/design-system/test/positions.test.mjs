@@ -25,7 +25,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
@@ -40,6 +40,7 @@ import {
   dependentPackages,
   GATE_FILES,
   IMPORT_ALLOW_LIST,
+  IMPORT_ALLOW_FILES,
   ALLOWED_PROPERTY_OR_EVENT,
   ADDRESS_HELPER,
 } from './_lib/positions.mjs';
@@ -246,7 +247,6 @@ const LIST_ALLOWED_FIXTURES = [
    [
      "import './lit-dom-fetch-guard.js';",
      "import '@lit-labs/ssr-dom-shim/register-css-hook.js';",
-     "import { installWindowOnGlobal } from '@lit-labs/ssr/lib/dom-shim.js';",
      "import { render } from '@lit-labs/ssr';",
      "import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';",
      "import { CSSResult, type CSSResultGroup, type TemplateResult as Template } from 'lit';",
@@ -260,6 +260,11 @@ const LIST_ALLOWED_FIXTURES = [
      "import { DesignedState, KIT_STATES, STATE_META, KitState, kitShell, stateIndicator, stateStyles } from './state.js';",
      "export { css } from 'lit';",
      "export type { KitState, DesignedState } from './state.js';",
+   ].join('\n')],
+  ["the fetch guard's own imports, under its per file entries", 'src/lit-dom-fetch-guard.ts',
+   [
+     "import '@lit-labs/ssr-dom-shim/register-css-hook.js';",
+     "import { installWindowOnGlobal } from '@lit-labs/ssr/lib/dom-shim.js';",
    ].join('\n')],
   ["the src folder's imports, in a kit subfolder", 'src/kits/fixture.ts',
    [
@@ -359,6 +364,23 @@ test('the import list is exactly what the package imports today, and the tags si
         if (name === 'html' || name === 'svg') {
           assert.equal(spec, 'lit', `the tag ${name} is allowed from lit only: it is on the ${folder}: ${spec} entry`);
         }
+      }
+    }
+  }
+  // The per file entries are held tighter than the folder lists: the named
+  // file itself must import the specifier, with the names, today.
+  for (const [file, table] of Object.entries(IMPORT_ALLOW_FILES)) {
+    const walked = everyPackageSource().find((s) => s.rel === file);
+    assert.ok(walked, `the per file entry names the file ${file}, which the walk does not hold`);
+    const specs = importedSpecifiers(walked.text, walked.rel);
+    for (const [spec, names] of Object.entries(table)) {
+      const record = specs.find((s) => s.spec === spec);
+      assert.ok(record, `the per file entry ${file}: ${spec} is imported by that file no longer: take it off the list`);
+      for (const name of names) {
+        assert.ok(
+          record.names !== null && record.names.includes(name),
+          `the name ${name} on the per file entry ${file}: ${spec} is imported by that file no longer: take it off the entry`,
+        );
       }
     }
   }
@@ -829,22 +851,57 @@ test('the gate files are excluded from the raw-text walks by name, and by no oth
 // ── the shim install inventory: the guard is the one installer ────────────────
 //
 // The Lit server shim's window carries node-fetch as fetch and lands on the
-// global, so in the shared root bun run the first install decides the fetch
-// of every suite after it. The workspace therefore installs the shim only
-// through src/lit-dom-fetch-guard, which captures the process's fetch,
-// installs, and restores, in one synchronous body. This test walks the
-// workspace's packages and apps and refuses any file outside the known list
-// that brings the installer module in, by import, re-export, dynamic import
-// or require, so a site the guard does not cover cannot appear unseen. The
-// list is empty today: a file with a reason to install directly lands here,
-// with the reason, beside the guard in the same review.
+// global, and the install is not idempotent: installWindowOnGlobal guards on
+// globalThis.window === undefined, but the window it copies carries
+// window: undefined, so a second call installs again and writes a fresh
+// node-fetch wrapper over whatever fetch the process has. The workspace
+// therefore installs the shim only through src/lit-dom-fetch-guard, which
+// captures the process's fetch, installs, and restores, in one synchronous
+// body. This test walks the workspace (the web packages, the web apps, the
+// repository's scripts, and web's scripts) and refuses any file outside the
+// known list that brings either install shape in: the installer module
+// (install-global-dom-shim) by import, re-export, dynamic import or require,
+// or the installer function installWindowOnGlobal from anywhere, the shape
+// the guard itself takes through @lit-labs/ssr/lib/dom-shim.js. A dom-shim
+// import whose name list the parser cannot read (a side effect import, a
+// namespace, an unbound require) is refused too: the gate fails closed. A
+// dom-shim import that binds only names that cannot install (getWindow, the
+// shell-chrome stub's) stays allowed. So a site the guard does not cover
+// cannot appear unseen, on either shape. A file with a reason to install
+// directly lands on the known list, with the reason, beside the guard in the
+// same review.
 
-const KNOWN_SHIM_INSTALL_SOURCES = new Set([]);
+const KNOWN_SHIM_INSTALL_SOURCES = new Set([
+  // the one installer the workspace imports: it binds installWindowOnGlobal
+  // from @lit-labs/ssr/lib/dom-shim.js and pairs the install with the
+  // capture and the restore of the process's own fetch
+  'packages/design-system/src/lit-dom-fetch-guard.ts',
+]);
+
+const INSTALLER_SPECIFIER_MARK = 'install-global-dom-shim';
+const INSTALLER_SPECIFIER = '@lit-labs/ssr/lib/dom-shim.js';
+const INSTALLER_NAME = 'installWindowOnGlobal';
+
+const shimInstallOffences = (rel, records) => {
+  const offences = [];
+  if (KNOWN_SHIM_INSTALL_SOURCES.has(rel)) return offences;
+  for (const { spec, names } of records) {
+    if (spec.includes(INSTALLER_SPECIFIER_MARK)) {
+      offences.push(`${rel}: ${spec}`);
+    } else if (spec.includes(INSTALLER_SPECIFIER) && (names === null || names.includes(INSTALLER_NAME))) {
+      offences.push(`${rel}: ${spec} (${names === null ? 'a name list the parser cannot read' : INSTALLER_NAME})`);
+    } else if (names !== null && names.includes(INSTALLER_NAME)) {
+      offences.push(`${rel}: ${spec} (${INSTALLER_NAME})`);
+    }
+  }
+  return offences;
+};
 
 test('only the fetch guard installs the Lit shim, everywhere in the workspace', () => {
   const webRoot = join(PKG, '..', '..');
   const walked = [];
   const visit = (dir, rel) => {
+    if (!existsSync(dir)) return;
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name.startsWith('.')) continue;
       const abs = join(dir, entry.name);
@@ -854,14 +911,12 @@ test('only the fetch guard installs the Lit shim, everywhere in the workspace', 
     }
   };
   for (const group of ['packages', 'apps']) visit(join(webRoot, group), group);
+  visit(join(webRoot, '..', 'scripts'), 'scripts');
+  visit(join(webRoot, 'scripts'), 'web/scripts');
   const offences = [];
   for (const { rel, abs } of walked) {
     const text = readFileSync(abs, 'utf8');
-    for (const { spec } of importedSpecifiers(text, rel)) {
-      if (spec.includes('install-global-dom-shim') && !KNOWN_SHIM_INSTALL_SOURCES.has(rel)) {
-        offences.push(`${rel}: ${spec}`);
-      }
-    }
+    offences.push(...shimInstallOffences(rel, importedSpecifiers(text, rel)));
   }
   assert.deepEqual(offences, []);
 });
