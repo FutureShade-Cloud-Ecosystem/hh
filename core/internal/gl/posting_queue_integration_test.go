@@ -156,4 +156,50 @@ func TestIntegration_PostingQueueCounts_RefusesBranchScopedManager(t *testing.T)
 	}
 }
 
+func TestIntegration_PostingQueue_ExtractsReturnAndSessionDocuments(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	controller := identity.StaffContext{UserID: "5d1b3f6e-0000-4000-9000-0000000000aa", RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}
+
+	at := time.Date(2026, time.March, 12, 10, 0, 0, 0, time.UTC)
+	plant := func(topic, payload string) string {
+		var id string
+		if err := pool.QueryRow(ctx, `
+INSERT INTO events_outbox (topic, payload, status, attempts, last_error, occurred_at)
+VALUES ($1, $2::jsonb, 'DEAD', 5, 'gl: account is inactive; cannot post', $3) RETURNING event_id::text`,
+			topic, payload, at).Scan(&id); err != nil {
+			t.Fatalf("plant outbox row: %v", err)
+		}
+		return id
+	}
+	retEvent := plant("pos.return.committed", `{"return_id":"ret-fw1-02-q"}`)
+	sesEvent := plant("till.session.completed", `{"session_id":"ses-fw1-02-q"}`)
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(),
+			`DELETE FROM events_outbox WHERE event_id = ANY($1::uuid[])`, []string{retEvent, sesEvent}); err != nil {
+			t.Errorf("cleanup outbox rows: %v", err)
+		}
+	})
+
+	svc := NewService(NewRepository(pool)).
+		WithPostingQueue(notify.NewPgOutboxStore(pool)).
+		withCaller(func(context.Context) (identity.StaffContext, bool) { return controller, true })
+
+	rows, err := svc.PostingQueue(ctx)
+	if err != nil {
+		t.Fatalf("the queue read: %v", err)
+	}
+	docs := map[string]string{}
+	for _, r := range rows {
+		docs[r.EventID] = r.Document
+	}
+	if docs[retEvent] != "ret-fw1-02-q" {
+		t.Fatalf("pos.return.committed row document = %q, want %q", docs[retEvent], "ret-fw1-02-q")
+	}
+	if docs[sesEvent] != "ses-fw1-02-q" {
+		t.Fatalf("till.session.completed row document = %q, want %q", docs[sesEvent], "ses-fw1-02-q")
+	}
+}
+
+
 
