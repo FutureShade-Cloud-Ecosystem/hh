@@ -733,7 +733,9 @@ func (r *Repository) FailCardRefundAttempt(ctx context.Context, refundKey, reaso
 // processor refund that transaction made and then rolled back (D4). One row per refund key; a retry
 // that fails again refreshes the row. A row that already carries the processor's own reversal ref
 // keeps that ref and its amount whatever the new fact says (HH-690 round 2, P1-1): the record of
-// what the processor actually refunded is never overwritten.
+// what the processor actually refunded is never overwritten. A row that is already BOOKED is never
+// touched either (UX-102b): a commit that reports an error after it took effect must not turn a
+// booked refund back to UNBOOKED, where the cap would count it twice.
 func (r *Repository) RecordUnbookedCardRefunds(ctx context.Context, facts []cardRefundFact, reason string) error {
 	if r.pool == nil {
 		return errNoPool
@@ -746,7 +748,8 @@ ON CONFLICT (refund_key) DO UPDATE SET status = 'UNBOOKED', last_error = EXCLUDE
        amount_cents = CASE WHEN pos_card_refund_attempts.refund_ref <> '' THEN pos_card_refund_attempts.amount_cents ELSE EXCLUDED.amount_cents END,
        initiated_by = CASE WHEN pos_card_refund_attempts.initiated_by <> ''
                            THEN pos_card_refund_attempts.initiated_by ELSE EXCLUDED.initiated_by END,
-       updated_at = now()`
+       updated_at = now()
+       WHERE pos_card_refund_attempts.status <> 'BOOKED'`
 	for _, f := range facts {
 		if _, err := r.pool.Exec(ctx, q, f.RefundKey, f.OrderID, f.BranchID, f.CustomerID, f.GatewayRef, f.RefundRef, f.AmountCents, reason, f.InitiatedBy); err != nil {
 			return err

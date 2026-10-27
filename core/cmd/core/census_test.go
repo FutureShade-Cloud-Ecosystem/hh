@@ -32,8 +32,8 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	if staff != 681 {
-		t.Fatalf("census staff operations: %d, want the document's 681", staff)
+	if staff != 682 {
+		t.Fatalf("census staff operations: %d, want the document's 682", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }
