@@ -719,16 +719,25 @@ func (s *Service) buildDepositReleased(ctx context.Context, payload []byte) (jou
 	if err != nil {
 		return journalDraft{}, false, err
 	}
-	// FW1-01, ruling 82.2: the release is the deposit document's own journal, so it carries the
-	// document's date (its finalization), not the processing day. When that month is closed the
-	// store posts it into the earliest open month and keeps this date on posted_at, late posted.
+	// Round 2 (S2 P1-2): the release's document is the DELIVERY, not the deposit taken months
+	// earlier, so the journal is dated by the delivery fact MarkDelivered records (or the clock when
+	// the stamp is absent or the seam unwired). Dated by the deposit's finalization it moved revenue
+	// into an already reported month with nothing showing it moved. When the delivery's month is
+	// closed the store still files the journal into the earliest open month at or after it, late
+	// posted, never refusing.
+	at := s.clock()
+	if p.OrderID != "" && s.delivery != nil {
+		if deliveredAt, found, derr := s.delivery.DeliveredAt(ctx, p.OrderID); derr == nil && found && !deliveredAt.IsZero() {
+			at = deliveredAt
+		}
+	}
 	return journalDraft{
 		Source:         SourceInvoice,
 		SourceRefID:    p.InvoiceID,
 		IdempotencyKey: "deposit.released:" + p.InvoiceID,
 		Memo:           "Deposit released " + a.InvoiceNo,
 		BranchID:       a.BranchID,
-		OccurredAt:     a.FinalizedAt,
+		OccurredAt:     at,
 		Lines: []draftLine{
 			dr(depCode, a.TotalCents, "customer deposit released"),
 			cr(revCode, a.TotalCents, "revenue"),
