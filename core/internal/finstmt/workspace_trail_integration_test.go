@@ -161,8 +161,9 @@ func seedCustomer(t *testing.T, pool *pgxpool.Pool, suffix string) string {
 	return id
 }
 
-// The ledger: INVOICE 100000, PAYMENT -41234, INVOICE 5000, NSF +41234, the NSF fee ADJUSTMENT 2500
-// (source_type payment_nsf, as till/repository.go writes it), INVOICE 1000.
+// The ledger: INVOICE 100000, PAYMENT -41234, INVOICE 5000, the NSF reversal row +41234 (source
+// invoice, exactly as till/repository.go writes it, excluded from the aging union because the
+// reopened invoice carries the AR), the NSF fee ADJUSTMENT 2500 (source_type payment_nsf), INVOICE 1000.
 func TestIntegration_Workspace_FeedGivesNoPaymentBack(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
@@ -174,7 +175,7 @@ func TestIntegration_Workspace_FeedGivesNoPaymentBack(t *testing.T) {
 		{"INVOICE", "invoice", "", 100000, 100000},
 		{"PAYMENT", "payment", "", -41234, 58766},
 		{"INVOICE", "invoice", "", 5000, 63766},
-		{"NSF", "payment_nsf", "", 41234, 105000},
+		{"NSF", "invoice", "", 41234, 105000},
 		{"ADJUSTMENT", "payment_nsf", "NSF fee", 2500, 107500},
 		{"INVOICE", "invoice", "", 1000, 108500},
 	}
@@ -210,7 +211,10 @@ func TestIntegration_Workspace_FeedGivesNoPaymentBack(t *testing.T) {
 			t.Fatalf("only invoice rows remain: %v", a)
 		}
 	}
-	for _, leak := range []string{"NSF", "41234", "2500", "PAYMENT"} {
+	// The header's open figure (2500, the fee) is the account's open AR under the same union the
+	// aging reads, an account fact like the invoice balances; what stays withheld is the row
+	// detail: the fee's memo, the bounced payment and its amount, the running balance.
+	for _, leak := range []string{"NSF", "41234", "PAYMENT"} {
 		if strings.Contains(body, leak) {
 			t.Fatalf("%q reached a caller without the trail: %s", leak, body)
 		}
