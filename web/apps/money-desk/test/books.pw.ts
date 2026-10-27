@@ -281,6 +281,8 @@ test("the year end close is a review naming the year, retained earnings and the 
   await expect(confirm).toContainText("Close fiscal year 2026?");
   await expect(confirm).toContainText("3900 Retained Earnings");
   await expect(confirm).toContainText("Every open period of 2026 is closed");
+  await expect(confirm).toContainText("Reopening a period does not undo the closing journal, and a closing journal has no undo from the register.");
+  await expect(confirm).not.toContainText("reverse it from the register");
   await confirm.getByRole("button", { name: "Keep it as it is" }).click();
   await expect(page.getByRole("table", { name: "Periods" }).getByRole("row", { name: /December 2026/ })).toContainText("Open");
   await page.getByRole("button", { name: "Close fiscal year 2026" }).click();
@@ -289,7 +291,10 @@ test("the year end close is a review naming the year, retained earnings and the 
   await expect(page.getByRole("table", { name: "Periods" }).getByRole("row", { name: /December 2026/ })).toContainText("Closed");
   await expect(page.getByRole("button", { name: "Close fiscal year 2026" })).toHaveCount(0);
   await openTab(page, "journals");
-  await expect(page.getByRole("table", { name: "Journal register" }).getByRole("row", { name: /JE-0007/ })).toContainText("Posted");
+  const closingRow = page.getByRole("table", { name: "Journal register" }).getByRole("row", { name: /JE-0007/ });
+  await expect(closingRow).toContainText("Posted");
+  await expect(closingRow).toContainText("posted by year-end close");
+  await expect(closingRow.getByRole("button", { name: /Reverse/ })).toHaveCount(0);
 });
 
 test("the trial balance takes a month, shows that month alone, and the export downloads the rows on screen", async ({ page, request }) => {
