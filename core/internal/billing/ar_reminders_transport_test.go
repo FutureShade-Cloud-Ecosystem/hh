@@ -41,7 +41,9 @@ func TestSendReminder_NeverSaysSentWhenNoTransportIsWired(t *testing.T) {
 // failingSender accepts nothing: every delivery fails at the transport.
 type failingSender struct{ err error }
 
-func (f failingSender) SendInvoiceMessage(context.Context, string, string, string) error { return f.err }
+func (f failingSender) SendInvoiceMessage(context.Context, string, string, string) error {
+	return f.err
+}
 
 func TestSendReminder_AFailedDeliveryIsRecordedForRetryAndNotCountedAsSent(t *testing.T) {
 	store := &fakeRegisterStore{
