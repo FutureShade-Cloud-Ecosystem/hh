@@ -310,11 +310,8 @@ func (r *Repository) ApplyCredit(ctx context.Context, in ApplyCreditInput, now t
 
 	// The two invoice rows (the target, and the memo when the credit is a memo), ascending id, both
 	// before any write: the multi invoice order the settle and the returns walk, so this writer can
-	// never meet another head on.
-	first, second := in.InvoiceID, in.CreditID
-	if in.CreditKind == CreditKindAccount || second == "" || second > first {
-		first, second = first, second // the anchor row is not an invoice; only the target is locked here
-	}
+	// never meet another head on. An ACCOUNT credit's anchor is not an invoice; only the target is
+	// locked here.
 	rowsToLock := []string{in.InvoiceID}
 	if in.CreditKind == CreditKindMemo {
 		rowsToLock = []string{in.InvoiceID, in.CreditID}
@@ -322,7 +319,6 @@ func (r *Repository) ApplyCredit(ctx context.Context, in ApplyCreditInput, now t
 			rowsToLock[0], rowsToLock[1] = rowsToLock[1], rowsToLock[0]
 		}
 	}
-	_ = first
 	for _, id := range rowsToLock {
 		if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, id); err != nil {
 			return CreditApplication{}, fmt.Errorf("credit apply: lock invoice %s: %w", id, err)
