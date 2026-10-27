@@ -39,9 +39,9 @@ func fw107r3Exception(t *testing.T, pool *pgxpool.Pool, branchID string, ref str
 		INSERT INTO stock_moves (product_id, from_location_id, qty_base, qty_entered, uom_entered,
 		                         move_type, unit_cost_cents, value_cents, source_type, source_ref_id,
 		                         branch_id, metadata)
-		VALUES ($1, $2, 2, 2, 'EA', 'SHIP', 900, 1800, 'order', $3, $2,
+		VALUES ($1, $2, 2, 2, 'EA', 'SHIP', 900, 1800, 'order', NULL, $2,
 		        jsonb_build_object('provisional_cost', 'true', 'fallback_source', 'LAST_KNOWN_COST'))`,
-		p, branchID, ref); err != nil {
+		p, branchID); err != nil {
 		t.Fatalf("plant the provisional ship move: %v", err)
 	}
 	return p
@@ -107,6 +107,7 @@ func fw107r3Has(rows []PreReceiptException, product string) bool {
 // the read cannot tell it from a branch that does not exist.
 func TestFW1_07R3_ControllerExceptionsRouteIsFencedToTheCallersOrg(t *testing.T) {
 	pool := intPool(t)
+	dib396LeaseShared(t, pool, dib396StockDriftLease)
 	fw107r3PlantBranchB(t, pool)
 	stampBranchOrgs(t, pool, map[string]string{branch1: ux88OrgA, fw107r3BranchB: ux88OrgB})
 	own := fw107r3Exception(t, pool, branch1, "ORGAREF")
@@ -134,7 +135,7 @@ func TestFW1_07R3_ControllerExceptionsRouteIsFencedToTheCallersOrg(t *testing.T)
 	if code != http.StatusOK {
 		t.Fatalf("the second org's GLOBAL caller answers %d, want 200", code)
 	}
-	if fw107r3Has(rows, own) || fw107r3Has(rows, other) {
+	if fw107r3Has(rows, own) || !fw107r3Has(rows, other) {
 		t.Fatalf("the second org's GLOBAL caller read rows of the first org (%v) or missed its own (%v)", fw107r3Has(rows, own), !fw107r3Has(rows, other))
 	}
 }
@@ -144,6 +145,7 @@ func TestFW1_07R3_ControllerExceptionsRouteIsFencedToTheCallersOrg(t *testing.T)
 // refusal.
 func TestFW1_07R3_BranchScopedManagerSeesOnlyItsBranchesRows(t *testing.T) {
 	pool := intPool(t)
+	dib396LeaseShared(t, pool, dib396StockDriftLease)
 	stampBranchOrgs(t, pool, map[string]string{branch1: ux88OrgA, branch2: ux88OrgA})
 	own := fw107r3Exception(t, pool, branch1, "TRENTREF")
 	second := fw107r3Exception(t, pool, branch2, "KINGSREF")
@@ -173,6 +175,7 @@ func TestFW1_07R3_BranchScopedManagerSeesOnlyItsBranchesRows(t *testing.T) {
 // A clerk is refused the route: the Controller's exceptions list is a manager read.
 func TestFW1_07R3_ClerkIsRefusedTheControllerExceptionsRoute(t *testing.T) {
 	pool := intPool(t)
+	dib396LeaseShared(t, pool, dib396StockDriftLease)
 	stampBranchOrgs(t, pool, map[string]string{branch1: ux88OrgA, branch2: ux88OrgA})
 	fw107r3Exception(t, pool, branch1, "CLERKREF")
 
