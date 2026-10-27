@@ -410,7 +410,8 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 	general := finPerson{platformID: "fin-fix-general", email: "fin-fix-general@example.invalid", name: "Fix General", member: true}
 	nameless := finPerson{platformID: "fin-fix-nameless", email: "fin-fix-nameless@example.invalid", name: "Fix Nameless", member: true}
 	demotee := finPerson{platformID: "fin-fix-demotee", email: "fin-fix-demotee@example.invalid", name: "Fix Demotee", member: true}
-	addresses := []string{victim.email, other.email, multi.email, gone.email, anchor.email, general.email, nameless.email, demotee.email}
+	steady := finPerson{platformID: "fin-fix-steady", email: "fin-fix-steady@example.invalid", name: "Fix Steady", member: true}
+	addresses := []string{victim.email, other.email, multi.email, gone.email, anchor.email, general.email, nameless.email, demotee.email, steady.email}
 	console := newFinConsole(t, victim, other, demotee)
 	env := func(over map[string]string) func(string) string { return finEnvFor(dsn, addresses, over) }
 
@@ -641,6 +642,44 @@ func TestIntegration_FinanceUserFixes(t *testing.T) {
 		user, _ := body["user"].(map[string]any)
 		if user["role_code"] != "payables_receivables" {
 			t.Fatalf("the demoted person's role = %v, want payables_receivables", user["role_code"])
+		}
+	})
+
+	t.Run("a second identical provision writes no audit row", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		if err := financeUserRole(provisionArgs(steady, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("the first provision: %v (out %q)", err, out.String())
+		}
+		var userID string
+		if err := pool.QueryRow(ctx,
+			`SELECT id::text FROM users WHERE platform_user_id = $1`, steady.platformID).Scan(&userID); err != nil {
+			t.Fatal(err)
+		}
+		provisionRows := func() int {
+			t.Helper()
+			var n int
+			if err := pool.QueryRow(ctx,
+				`SELECT count(*) FROM audit_log WHERE action = 'STAFF_PROVISION' AND entity_id = $1`, userID).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			return n
+		}
+		if n := provisionRows(); n != 1 {
+			t.Fatalf("the first provision wrote %d audit rows, want 1", n)
+		}
+		first := out.String()
+		// The boot time reconciler runs the same entry at every boot: a run
+		// where the anchor, the user and the grant all stood still records
+		// nothing, or every boot buries the audit log in noise.
+		out.Reset()
+		if err := financeUserRole(provisionArgs(steady, "financial_controller"), out, out, env(nil)); err != nil {
+			t.Fatalf("the second provision: %v (out %q)", err, out.String())
+		}
+		if out.String() != first {
+			t.Fatalf("the second provision printed %q, want the first run's %q", out.String(), first)
+		}
+		if n := provisionRows(); n != 1 {
+			t.Fatalf("the second identical provision wrote another audit row: %d rows, want 1", n)
 		}
 	})
 }
