@@ -210,11 +210,60 @@ func (s *Service) AutoMatchReach(ctx context.Context, accountID string, from, to
 	return summary, nil
 }
 
+// persistAndJournal claims a match and, when the poster can post on the caller's transaction (JournalPosterTx),
+// posts its clearing journal inside the SAME transaction, so the match and its journal commit or roll back
+// together (FW1-05): a refused journal leaves the line UNMATCHED and the payment RECEIVED, and a refused
+// match posts nothing. A poster without the transaction arm keeps the historical two step order, the match
+// first, then the journal (the claim's guards still run before any post, so a rejected duplicate posts none).
+func (s *Service) persistAndJournal(ctx context.Context, m Match, claim []string, reach func(string) bool, journal gl.ExternalJournal, post bool) (Match, error) {
+	tx, err := s.repo.Begin(ctx)
+	if err != nil {
+		return Match{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	id, err := s.repo.PersistMatchReachTx(ctx, tx, m, claim, reach)
+	if err != nil {
+		return Match{}, err
+	}
+	m.ID = id
+	if post && s.poster != nil {
+		journal.IdempotencyKey = clearingKey(id)
+		if pt, ok := s.poster.(JournalPosterTx); ok {
+			journalID, perr := pt.PostJournalTx(ctx, tx, journal)
+			if perr != nil {
+				return Match{}, perr
+			}
+			m.JournalID = journalID
+			if err := s.repo.SetMatchJournalTx(ctx, tx, id, journalID); err != nil {
+				return Match{}, err
+			}
+		} else {
+			if err := tx.Commit(ctx); err != nil {
+				return Match{}, err
+			}
+			journalID, perr := s.poster.PostJournal(ctx, journal)
+			if perr != nil {
+				return Match{}, perr
+			}
+			m.JournalID = journalID
+			if err := s.repo.SetMatchJournal(ctx, id, journalID); err != nil {
+				return Match{}, err
+			}
+			return m, nil
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Match{}, err
+	}
+	return m, nil
+}
+
 // persistProposal claims the match (flip line + claim payment + insert match row atomically), THEN posts the
 // clearing journal and writes its id back. Ordering is deliberate: PersistMatch's guards (line still
 // UNMATCHED, payment still RECEIVED, no live match on the target) run BEFORE any journal is posted, so a
 // duplicate/racing match is rejected with NO second clearing journal. The journal is keyed on the match id so
-// a corrective re-match posts fresh legs.
+// a corrective re-match posts fresh legs. Since FW1-05 the claim and the post share one transaction whenever
+// the poster can post on the caller's transaction.
 func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy string, reach func(string) bool) (Match, error) {
 	m := Match{
 		StatementLineID: prop.Line.ID,
@@ -239,23 +288,7 @@ func (s *Service) persistProposal(ctx context.Context, prop proposal, matchedBy 
 			skipLodgementClearing = true
 		}
 	}
-	id, err := s.repo.PersistMatchReach(ctx, m, prop.PaymentIDs, reach)
-	if err != nil {
-		return Match{}, err
-	}
-	m.ID = id
-	if s.poster != nil && !skipLodgementClearing {
-		prop.Journal.IdempotencyKey = clearingKey(id)
-		journalID, perr := s.poster.PostJournal(ctx, prop.Journal)
-		if perr != nil {
-			return Match{}, perr
-		}
-		m.JournalID = journalID
-		if err := s.repo.SetMatchJournal(ctx, id, journalID); err != nil {
-			return Match{}, err
-		}
-	}
-	return m, nil
+	return s.persistAndJournal(ctx, m, prop.PaymentIDs, reach, prop.Journal, !skipLodgementClearing)
 }
 
 // ManualMatch pairs a statement line to a target by hand (method MANUAL), posting the matching clearing
@@ -297,6 +330,7 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 		claim = []string{in.TargetRefID}
 	}
 	var skipLodgementClearing bool
+	var lodgBranch string
 	switch in.TargetType {
 	case TargetGroup:
 		// GROUP is a "manual grouping header" (migration 0033, matcher.go) with no member set: nothing resolves
@@ -317,6 +351,7 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 		if facts.AmountCents != line.AmountCents {
 			return Match{}, unprocessable("bankrec: that lodgement is for %d cents and the line is %d cents, so it does not explain the line", facts.AmountCents, line.AmountCents)
 		}
+		lodgBranch = facts.BranchID
 		if hasJ, jerr := s.hasLodgementJournal(ctx, line.BankAccountID, in.TargetRefID); jerr != nil {
 			return Match{}, jerr
 		} else if hasJ {
@@ -327,25 +362,13 @@ func (s *Service) ManualMatch(ctx context.Context, in MatchInput, matchedBy stri
 			return Match{}, jerr
 		}
 	}
-	id, err := s.repo.PersistMatchReach(ctx, m, claim, in.CanAccessBranch)
+	journal, wantPost := manualJournal(line, in.TargetType, lodgBranch)
+	mOut, err := s.persistAndJournal(ctx, m, claim, in.CanAccessBranch, journal, wantPost && !skipLodgementClearing)
 	if err != nil {
 		return Match{}, err
 	}
-	m.ID = id
-	// Post the clearing journal AFTER the match is claimed (a rejected duplicate posts none), keyed on match id.
-	if journal, post := manualJournal(line, in.TargetType, ""); post && s.poster != nil && !skipLodgementClearing {
-		journal.IdempotencyKey = clearingKey(id)
-		journalID, perr := s.poster.PostJournal(ctx, journal)
-		if perr != nil {
-			return Match{}, perr
-		}
-		m.JournalID = journalID
-		if err := s.repo.SetMatchJournal(ctx, id, journalID); err != nil {
-			return Match{}, err
-		}
-	}
 	s.recordAudit(ctx, "BANKREC_MANUAL_MATCH", "bankrec.statement_line", line.ID, matchedBy, "manual match", "")
-	return m, nil
+	return mOut, nil
 }
 
 // lodgementReachable says whether a lodgement exists and sits in a branch the caller reaches, through the till's
@@ -690,19 +713,40 @@ func (s *Service) UnmatchReach(ctx context.Context, matchID, userID string, reac
 			}
 		}
 	}
-	targetType, _, amount, err := s.repo.UnmatchReach(ctx, matchID, userID, reach)
+	// The unmatch and its reversing journal share one transaction (FW1-05): the body runs on the caller's
+	// tx, and when the poster can post on it the reversal posts before the single commit.
+	tx, err := s.repo.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if s.poster != nil && amount > 0 && !skipLodgementReversal {
-		if rev, ok := reversalJournal(matchID, targetType, amount); ok {
+	defer func() { _ = tx.Rollback(ctx) }()
+	facts, err := s.repo.UnmatchReachTx(ctx, tx, matchID, userID, reach)
+	if err != nil {
+		return err
+	}
+	if s.poster != nil && facts.AmountCents > 0 && !skipLodgementReversal {
+		if rev, ok := reversalJournal(matchID, facts.TargetType, facts.AmountCents); ok {
 			if hasLineDate {
 				rev.DocumentDate = statementDocDate(lineDate)
 			}
-			if _, perr := s.poster.PostJournal(ctx, rev); perr != nil {
-				return perr
+			if pt, ok := s.poster.(JournalPosterTx); ok {
+				if _, perr := pt.PostJournalTx(ctx, tx, rev); perr != nil {
+					return perr
+				}
+			} else {
+				if err := tx.Commit(ctx); err != nil {
+					return err
+				}
+				if _, perr := s.poster.PostJournal(ctx, rev); perr != nil {
+					return perr
+				}
+				s.recordAudit(ctx, "BANKREC_UNMATCH", "bankrec.match", matchID, userID, "manual unmatch", "")
+				return nil
 			}
 		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
 	}
 	s.recordAudit(ctx, "BANKREC_UNMATCH", "bankrec.match", matchID, userID, "manual unmatch", "")
 	return nil
