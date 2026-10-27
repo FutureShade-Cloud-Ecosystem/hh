@@ -1,0 +1,90 @@
+# The finance image's Caddy configuration template (the deploy spec
+# FINANCE-BOX-SPEC-r1, sections 2 and 4). The entrypoint substitutes the
+# placeholders and runs Caddy from the adapted file on the container's
+# shared-memory tmpfs, so nothing generated reaches the image's layers, a
+# volume, or anything that outlives the container.
+#
+# Placeholders:
+#   __PORT__      the public port Caddy listens on (the platform's PORT)
+#   __UPSTREAM__  the core's loopback address and port
+#
+# No basic auth gate, by design: the box's own FB Console sign in guards
+# every page and every API call. TLS is the platform's; Caddy runs with
+# auto_https off. /healthz answers unauthenticated for the deploy probe.
+#
+# The forwarded address discipline is the demo template's (W2's review):
+# every proxy leg REPLACES X-Forwarded-For with the remote host Caddy itself
+# saw, so a client-written value never survives the proxy and the chain the
+# core reads is exactly one element. Behind another host edge this collapses
+# every visitor onto the edge's address by design: one bucket shared at the
+# edge is the conservative failure, and a forged chain is never the answer.
+{
+	admin off
+	auto_https off
+}
+
+:__PORT__
+
+# Never indexed (the demo box's ruling stands on this box too).
+header X-Robots-Tag "noindex, nofollow"
+
+handle /api/* {
+	reverse_proxy __UPSTREAM__ {
+		header_up X-Forwarded-For "{remote_host}"
+	}
+}
+
+# The session JWK Set (public halves only): the core serves it in the
+# console sign in mode, and it must not fall to the front door below. The
+# same overwrite discipline as every other proxy leg.
+handle /.well-known/jwks.json {
+	reverse_proxy __UPSTREAM__ {
+		header_up X-Forwarded-For "{remote_host}"
+	}
+}
+
+handle /healthz {
+	reverse_proxy __UPSTREAM__ {
+		header_up X-Forwarded-For "{remote_host}"
+	}
+}
+
+# The app prefixes. Each is its own handle before the catch-all, with one
+# shared root and each prefix's own try_files fallback, so every SPA's
+# history mode rewrite returns that app's index.html and no other's.
+handle /till/* {
+	root * /srv/app
+	try_files {path} /till/index.html
+	encode zstd gzip
+	file_server
+}
+
+handle /money-desk/* {
+	root * /srv/app
+	try_files {path} /money-desk/index.html
+	encode zstd gzip
+	file_server
+}
+
+handle /home/* {
+	root * /srv/app
+	try_files {path} /home/index.html
+	encode zstd gzip
+	file_server
+}
+
+# The front door's runtime configuration: its own exact handle, no
+# try_files, so a file that is missing is a 404 and the page says "missing"
+# and never takes the page's own HTML for a damaged file.
+handle /config.json {
+	root * /srv/app
+	encode zstd gzip
+	file_server
+}
+
+handle {
+	root * /srv/app
+	try_files {path} /index.html
+	encode zstd gzip
+	file_server
+}
