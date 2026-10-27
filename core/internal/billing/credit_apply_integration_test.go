@@ -637,6 +637,228 @@ func TestIntegration_FW1_12b_TwoAppliesNamingDifferentRowsOfOneGroupCannotBothPa
 	}
 }
 
+// TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce pins the residual the round 2
+// report named: an application's record names the row its request named, and that row can be the
+// group's offsetting row, so the reversal locks that row instead of the group's anchor. Two
+// concurrent reversals of two applications of one ACCOUNT group would then hold two different
+// locks and read the group's sum from the same pre commit state, exactly the shape P2-1 raced the
+// apply door with.
+//
+// The race is staged the P2-1 leg's own deterministic way: two applications of one group, the
+// first recorded against the group's original row and the second against the offsetting row, the
+// test's own transaction holding every row of the group while both reversals are launched, the
+// test waiting until pg_stat_activity shows both parked, and only then letting go. What must hold
+// whatever the interleaving: both reversals answer, the group's sum after both is what a serial
+// pair gives (the credit back at its original figure, never below it), each invoice's balance is
+// restored exactly once, and the group carries exactly one restore row per application.
+func TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	applySvc := NewCreditApplyService(repo)
+	ctx := context.Background()
+	n := ns(t)
+
+	custID := seedCustomer(t, pool, n+"-RREV")
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+	})
+
+	issue := time.Now().UTC().AddDate(0, 0, -3).Format("2006-01-02")
+	due := time.Now().UTC().AddDate(0, 0, 27).Format("2006-01-02")
+	var creditID, groupRef, inv1, inv2 string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO customer_transactions
+		  (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+		VALUES ($1::uuid, 'ADJUSTMENT', -10000, 25000, 'order_deposit_cancel', gen_random_uuid(), $2::uuid, 'deposit credit')
+		RETURNING id::text, COALESCE(source_ref_id, id)::text`,
+		custID, trentonBranch).Scan(&creditID, &groupRef); err != nil {
+		t.Fatalf("seed account credit: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $5::date, 10000, 0, 10000, 10000, now(), 'INVOICE')
+		RETURNING id::text`,
+		n+"-INV1", custID, trentonBranch, issue, due).Scan(&inv1); err != nil {
+		t.Fatalf("seed invoice 1: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $5::date, 10000, 0, 10000, 10000, now(), 'INVOICE')
+		RETURNING id::text`,
+		n+"-INV2", custID, trentonBranch, issue, due).Scan(&inv2); err != nil {
+		t.Fatalf("seed invoice 2: %v", err)
+	}
+
+	// A first application of 4000 names the group's original row and leaves the offsetting row
+	// (+4000) inside the group; a second application of the remaining 6000 is recorded against
+	// that offsetting row, the way a hand-built request names it. The group's sum is 0, and the
+	// two records sit on two different invoices naming two different rows of the one group.
+	app1, err := applySvc.Apply(ctx, ApplyCreditInput{
+		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: inv1,
+		AmountCents: 4000, Reason: "first slice", IdempotencyKey: n + "-k-first",
+	}, true)
+	if err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	var offsetID string
+	if err := pool.QueryRow(ctx, `
+		SELECT id::text FROM customer_transactions
+		 WHERE customer_id = $1::uuid AND amount_cents = 4000 AND COALESCE(source_type, '') = 'order_deposit_cancel'
+		 ORDER BY id LIMIT 1`, custID).Scan(&offsetID); err != nil {
+		t.Fatalf("read the offsetting row: %v", err)
+	}
+	app2, err := applySvc.Apply(ctx, ApplyCreditInput{
+		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: offsetID, InvoiceID: inv2,
+		AmountCents: 6000, Reason: "the rest of the credit", IdempotencyKey: n + "-k-second",
+	}, true)
+	if err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+
+	// Hold every row of the group, then launch both reversals.
+	held, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Rollback(ctx) }()
+	var groupRowIDs []string
+	grows, err := pool.Query(ctx, `
+		SELECT id::text FROM customer_transactions
+		 WHERE customer_id = $1::uuid
+		   AND COALESCE(source_type, '') = 'order_deposit_cancel'
+		   AND COALESCE(source_ref_id, id) = $2::uuid
+		   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')`, custID, groupRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for grows.Next() {
+		var id string
+		if err := grows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		groupRowIDs = append(groupRowIDs, id)
+	}
+	if err := grows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	grows.Close()
+	if len(groupRowIDs) != 3 {
+		t.Fatalf("the group holds %d rows, want 3 (the original and the two offsetting rows)", len(groupRowIDs))
+	}
+	if _, err := held.Exec(ctx, `
+		SELECT 1 FROM customer_transactions WHERE id = ANY($1::uuid[]) FOR UPDATE`, groupRowIDs); err != nil {
+		t.Fatalf("hold the group's rows: %v", err)
+	}
+
+	type outcome struct {
+		rev CreditApplicationReversed
+		err error
+	}
+	done := make(chan outcome, 2)
+	race := func(invoice, applicationID, key string) {
+		rev, err := applySvc.Reverse(ctx, ReverseCreditApplicationInput{
+			InvoiceID: invoice, ApplicationID: applicationID, Reason: "undo " + key,
+		}, true)
+		done <- outcome{rev, err}
+	}
+	go race(inv1, app1.ApplicationID, n+"-r-a")
+	go race(inv2, app2.ApplicationID, n+"-r-b")
+
+	// Both must park on a lock before the test lets go: whatever each then reads, the staging is
+	// the same pre commit state for both, whatever the machine's load.
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		var waiting int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity
+			 WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting >= 2 {
+			break
+		}
+		select {
+		case <-done:
+			t.Fatal("a reversal answered without parking on a held lock; the race was not staged")
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the two reversals never both reached a lock wait")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := held.Commit(ctx); err != nil {
+		t.Fatalf("release the group's rows: %v", err)
+	}
+
+	a, b := <-done, <-done
+	for name, o := range map[string]outcome{
+		"the original row's application":   a,
+		"the offsetting row's application": b,
+	} {
+		if o.err != nil {
+			t.Fatalf("reversing %s failed: %v", name, o.err)
+		}
+	}
+
+	// The group's sum after both is what a serial pair gives: the pair moved 10000 out of the
+	// group's original -10000, so restoring both lands it back at exactly -10000. A second
+	// restore of either application would sit below that figure.
+	var groupSum int64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
+		 WHERE customer_id = $1::uuid
+		   AND COALESCE(source_type, '') = 'order_deposit_cancel'
+		   AND COALESCE(source_ref_id, id) = $2::uuid
+		   AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO')`,
+		custID, groupRef).Scan(&groupSum); err != nil {
+		t.Fatalf("read the group's sum: %v", err)
+	}
+	if groupSum != -10000 {
+		t.Fatalf("the group's sum after both reversals = %d, want -10000, the serial pair's figure; a second restore of either application would sit below it", groupSum)
+	}
+
+	// Each invoice's balance is restored exactly once.
+	for name, want := range map[string]struct {
+		invoice string
+		balance int64
+	}{
+		"invoice 1": {inv1, 10000},
+		"invoice 2": {inv2, 10000},
+	} {
+		var balance int64
+		if err := pool.QueryRow(ctx, `SELECT balance_cents FROM invoices WHERE id = $1::uuid`, want.invoice).Scan(&balance); err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if balance != want.balance {
+			t.Fatalf("%s balance after both reversals = %d, want %d", name, balance, want.balance)
+		}
+	}
+
+	// The group carries exactly one restore row per application, one at each amount.
+	var restores, at4000, at6000 int64
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*),
+		       count(*) FILTER (WHERE amount_cents = -4000),
+		       count(*) FILTER (WHERE amount_cents = -6000)
+		  FROM customer_transactions
+		 WHERE customer_id = $1::uuid
+		   AND COALESCE(source_type, '') = 'order_deposit_cancel'
+		   AND COALESCE(source_ref_id, id) = $2::uuid
+		   AND memo LIKE 'credit application reversed%'`,
+		custID, groupRef).Scan(&restores, &at4000, &at6000); err != nil {
+		t.Fatalf("read the restore rows: %v", err)
+	}
+	if restores != 2 || at4000 != 1 || at6000 != 1 {
+		t.Fatalf("the group holds %d restore rows (%d at -4000, %d at -6000), want exactly one per application", restores, at4000, at6000)
+	}
+}
+
 // TestIntegration_FW1_12b_MemoApplicationSurvivesAPastDateAging pins S6's P1-4: the memo side of an
 // application (and its reversal's restore) is a ledger row tagged to the MEMO document itself, so
 // when 626 (FW1-06b) rebuilds a document's balance at a past date from its history, that row must
