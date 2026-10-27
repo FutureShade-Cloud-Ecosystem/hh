@@ -71,6 +71,9 @@ jobs:
       ACC_FD_PG_PORT: '5671'
       ACC_FD_APP_PORT: '5672'
       ACC_FD_CORE_PORT: '5673'
+      # The sign in mode the demo core requires at boot (the entrypoint
+      # refuses to start without it): the box is the demo build.
+      CORE_SIGNIN_MODE: demo
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -144,6 +147,7 @@ jobs:
               docker run -d --name "$ACC_NAME-box" --network host \
               -e DATABASE_URL -e PORT -e CORE_INTERNAL_PORT -e PAYMENT_VAULT_KEY \
               -e HH_ACCEPTANCE_SIGN_KEY_ID -e HH_ACCEPTANCE_SIGN_KEY -e DEMO_GATE_BCRYPT_HASH \
+              -e CORE_SIGNIN_MODE \
               "$ACC_IMAGE" >/dev/null
             probes=0
             while [ "$probes" -lt 150 ]; do
