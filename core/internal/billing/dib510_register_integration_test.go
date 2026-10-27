@@ -342,7 +342,7 @@ func TestRegister_NeverSentMeansOpenedIsAbsentNotFalse(t *testing.T) {
 
 func TestRegister_AccountPositionIsByteAbsentForAFrontlineCaller(t *testing.T) {
 	f := newD510Fixture(t)
-	f.invoice(t, "GATED", "FINALIZED", -10, 250000, 250000, "INVOICE")
+	invID := f.invoice(t, "GATED", "FINALIZED", -10, 250000, 250000, "INVOICE")
 	ctx := context.Background()
 
 	mgr, err := f.service(d510Manager()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Limit: 50})
@@ -353,8 +353,10 @@ func TestRegister_AccountPositionIsByteAbsentForAFrontlineCaller(t *testing.T) {
 		t.Fatal("a manager receives the account position")
 	}
 	mgrJSON, _ := json.Marshal(mgr)
-	if !strings.Contains(string(mgrJSON), "credit_limit_cents") {
-		t.Fatal("the manager payload carries the credit limit")
+	for _, want := range []string{"credit_limit_cents", `"days_overdue"`, `"bucket_label"`, `"bucket_key"`} {
+		if !strings.Contains(string(mgrJSON), want) {
+			t.Fatalf("the manager payload carries %s: %s", want, mgrJSON)
+		}
 	}
 
 	front, err := f.service(d510Frontline()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Limit: 50})
@@ -363,14 +365,152 @@ func TestRegister_AccountPositionIsByteAbsentForAFrontlineCaller(t *testing.T) {
 	}
 	frontJSON, _ := json.Marshal(front)
 	// THE ASSERTION THAT MATTERS: the bytes are not there. Not empty, not zero, not hidden, absent.
-	for _, gated := range []string{"credit_limit_cents", "available_credit_cents", "open_balance_cents", `"account"`} {
+	for _, gated := range []string{"credit_limit_cents", "available_credit_cents", "open_balance_cents", `"account"`, `"days_overdue"`, `"bucket_label"`, `"bucket_key"`} {
 		if strings.Contains(string(frontJSON), gated) {
-			t.Fatalf("a refused caller's payload must not contain %q at all: %s", gated, frontJSON)
+			t.Errorf("a refused caller's register payload must not contain %q at all: %s", gated, frontJSON)
 		}
 	}
 	// The invoice's OWN money still reaches them, the customer holds that document.
-	if front.Items[0].BalanceCents != 250000 {
-		t.Fatalf("an invoice's own balance is never gated, got %d", front.Items[0].BalanceCents)
+	for _, keep := range []string{`"invoice_no"`, `"issue_date"`, `"due_date"`, `"total_cents":250000`, `"balance_cents":250000`} {
+		if !strings.Contains(string(frontJSON), keep) {
+			t.Errorf("register row must keep invoice document figure %s: %s", keep, frontJSON)
+		}
+	}
+
+	// Same rule on the invoice detail route (GET /api/v1/ar/register/invoices/{id}).
+	detailFront, err := f.service(d510Frontline()).Detail(ctx, invID, false)
+	if err != nil {
+		t.Fatalf("invoice detail: %v", err)
+	}
+	detailFrontJSON, _ := json.Marshal(detailFront)
+	for _, gated := range []string{"credit_limit_cents", "available_credit_cents", "open_balance_cents", `"account"`, `"days_overdue"`} {
+		if strings.Contains(string(detailFrontJSON), gated) {
+			t.Errorf("a refused caller's invoice detail payload must not contain %q at all: %s", gated, detailFrontJSON)
+		}
+	}
+	for _, keep := range []string{`"invoice_no"`, `"issue_date"`, `"due_date"`, `"total_cents":250000`, `"balance_cents":250000`} {
+		if !strings.Contains(string(detailFrontJSON), keep) {
+			t.Errorf("invoice detail must keep invoice document figure %s: %s", keep, detailFrontJSON)
+		}
+	}
+}
+
+// TestRegister_ARefusedCallerCarriesTheStoredStatusAndNoPastDueFlags pins round 6 (S5 R5.6, row
+// 3172): the derived OVERDUE and DUE_SOON states and the overdue and due-soon counts are the past
+// due flag told another way, so a caller the account position policy refuses receives the STORED
+// status in `status` and a counts row with no overdue and no due_soon key, on the list route and on
+// the invoice detail alike. The due date and the balance stay, the invoice's own document figures.
+// An allowed manager still receives the derived state and both counts.
+func TestRegister_ARefusedCallerCarriesTheStoredStatusAndNoPastDueFlags(t *testing.T) {
+	f := newD510Fixture(t)
+	ctx := context.Background()
+	invID := f.invoice(t, "LATE", "FINALIZED", -12, 70000, 70000, "INVOICE") // overdue
+	f.invoice(t, "SOON", "FINALIZED", 3, 50000, 50000, "INVOICE")            // due soon
+
+	front, err := f.service(d510Frontline()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Limit: 50})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	frontJSON, _ := json.Marshal(front)
+	for _, gated := range []string{"OVERDUE", "DUE_SOON", `"overdue"`, `"due_soon"`} {
+		if strings.Contains(string(frontJSON), gated) {
+			t.Errorf("a refused clerk's register bytes must not carry %s at all: %s", gated, frontJSON)
+		}
+	}
+	for _, keep := range []string{`"status":"FINALIZED"`, `"stored_status":"FINALIZED"`, `"due_date"`, `"balance_cents":70000`} {
+		if !strings.Contains(string(frontJSON), keep) {
+			t.Errorf("the register row keeps the stored status and the document figures, want %s in %s", keep, frontJSON)
+		}
+	}
+
+	mgr, err := f.service(d510Manager()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Limit: 50})
+	if err != nil {
+		t.Fatalf("manager register: %v", err)
+	}
+	mgrJSON, _ := json.Marshal(mgr)
+	for _, want := range []string{"OVERDUE", "DUE_SOON", `"overdue":1`, `"due_soon":1`} {
+		if !strings.Contains(string(mgrJSON), want) {
+			t.Errorf("an allowed manager still receives %s: %s", want, mgrJSON)
+		}
+	}
+
+	detailFront, err := f.service(d510Frontline()).Detail(ctx, invID, false)
+	if err != nil {
+		t.Fatalf("invoice detail: %v", err)
+	}
+	detailFrontJSON, _ := json.Marshal(detailFront)
+	for _, gated := range []string{"OVERDUE", "DUE_SOON"} {
+		if strings.Contains(string(detailFrontJSON), gated) {
+			t.Errorf("a refused clerk's invoice detail must not carry %s at all: %s", gated, detailFrontJSON)
+		}
+	}
+	if !strings.Contains(string(detailFrontJSON), `"status":"FINALIZED"`) {
+		t.Errorf("the refused detail carries the stored status in status: %s", detailFrontJSON)
+	}
+	detailMgr, err := f.service(d510Manager()).Detail(ctx, invID, false)
+	if err != nil {
+		t.Fatalf("manager detail: %v", err)
+	}
+	if got := detailMgr.Status; got != StatusOverdue {
+		t.Errorf("the manager's derived status for a 12 day late invoice is OVERDUE, got %s", got)
+	}
+}
+
+// TestRegister_ThePastDueChipsRefuseACallerTheGateRefuses pins the filter half of round 6: the
+// overdue and past due chips ask for the withheld predicate AS A LIST, so the service refuses them
+// in words for a caller the account position policy refuses, while the chips that name no derived
+// predicate still answer.
+func TestRegister_ThePastDueChipsRefuseACallerTheGateRefuses(t *testing.T) {
+	f := newD510Fixture(t)
+	f.invoice(t, "LATE", "FINALIZED", -12, 70000, 70000, "INVOICE")
+	ctx := context.Background()
+
+	for _, chip := range []string{StatusOverdue, ChipPastDue, "past_due"} {
+		_, err := f.service(d510Frontline()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Chip: chip, Limit: 50})
+		if err == nil {
+			t.Fatalf("chip %s must refuse a caller the account position policy refuses", chip)
+		}
+	}
+	// The chips that name no past due predicate keep answering the same caller.
+	page, err := f.service(d510Frontline()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Chip: StatusOpen, Limit: 50})
+	if err != nil {
+		t.Fatalf("the open chip still answers a refused caller: %v", err)
+	}
+	if page.Total != 1 {
+		t.Fatalf("the open chip reads the book, got total %d", page.Total)
+	}
+	// And a manager filters by the same chips still.
+	if _, err := f.service(d510Manager()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Chip: StatusOverdue, Limit: 50}); err != nil {
+		t.Fatalf("the overdue chip still answers an allowed manager: %v", err)
+	}
+}
+
+// TestRegister_TheCurrentAndDueSoonChipsRefuseACallerTheGateRefuses pins item 220 (S5 R6 P3): the
+// current chip is the complement of the past due predicate, so ALL less CURRENT lists the overdue
+// accounts by subtraction, and due soon is the one derived predicate left as a server list. A
+// caller the account position policy refuses hears the refusal in words and receives no rows for
+// either, so the refused status filter offers stored statuses only. The manager keeps every chip.
+func TestRegister_TheCurrentAndDueSoonChipsRefuseACallerTheGateRefuses(t *testing.T) {
+	f := newD510Fixture(t)
+	ctx := context.Background()
+	f.invoice(t, "LATE", "FINALIZED", -12, 70000, 70000, "INVOICE") // overdue
+	f.invoice(t, "SOON", "FINALIZED", 3, 50000, 50000, "INVOICE")   // due soon
+
+	for _, chip := range []string{"CURRENT", ChipCurrent, StatusDueSoon, "due_soon"} {
+		_, err := f.service(d510Frontline()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Chip: chip, Limit: 50})
+		if err == nil {
+			t.Fatalf("chip %s must refuse a caller the account position policy refuses", chip)
+		}
+	}
+	// The manager still gets both, one row each.
+	for _, chip := range []string{"CURRENT", StatusDueSoon} {
+		page, err := f.service(d510Manager()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Chip: chip, Limit: 50})
+		if err != nil {
+			t.Fatalf("chip %s must still answer an allowed manager: %v", chip, err)
+		}
+		if page.Total != 1 {
+			t.Fatalf("chip %s reads its one row, got total %d", chip, page.Total)
+		}
 	}
 }
 

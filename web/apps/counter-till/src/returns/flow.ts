@@ -366,6 +366,7 @@ export class ReturnsFlow {
       account_no: "WALK-IN",
       customer_type: "RETAIL",
       payment_terms_days: 0,
+      cash_on_demand: false,
       credit_limit_cents: 0,
       open_balance_cents: 0,
     };

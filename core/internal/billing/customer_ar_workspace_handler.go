@@ -70,6 +70,8 @@ type WorkspaceHandler struct {
 	// customer to the caller's branches (UX-93). Both fail closed when unbound.
 	trail PaymentTrailReader
 	reach WorkspaceReach
+	// position is the dealer's account position policy (UX-97). Unbound, the figures are withheld.
+	position AccountPositionReader
 }
 
 // NewWorkspaceHandler wires the handler. store is required; credit is optional (nil
@@ -165,6 +167,7 @@ func (h *WorkspaceHandler) workspace(w http.ResponseWriter, r *http.Request, cal
 		hdr.LastPaymentAt = nil
 		hdr.LastPaymentCents = 0
 	}
+	hdr.PositionWithheld = !h.positionAllowed(r.Context(), hdr.HomeBranchID)
 	out.Header = hdr
 
 	// The aging field: filled only when a CreditService is wired. The handler does not
@@ -272,6 +275,23 @@ func (h *WorkspaceHandler) workspace(w http.ResponseWriter, r *http.Request, cal
 		}
 		if acts != nil {
 			out.Activity = acts
+		}
+	}
+	if out.Header.PositionWithheld {
+		for i := range out.InvoicesOpen {
+			out.InvoicesOpen[i].PositionWithheld = true
+		}
+		for i := range out.InvoicesClosed {
+			out.InvoicesClosed[i].PositionWithheld = true
+		}
+		for i := range out.InvoicesDisputed {
+			out.InvoicesDisputed[i].PositionWithheld = true
+		}
+		for i := range out.Statements {
+			out.Statements[i].PositionWithheld = true
+		}
+		for i := range out.Activity {
+			out.Activity[i].BalanceLeft = nil
 		}
 	}
 

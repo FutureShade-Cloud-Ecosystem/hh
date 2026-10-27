@@ -51,6 +51,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/procurement"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quoteassist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/reporting"
@@ -217,7 +218,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// named at the registrar.
 	customerRepo := customer.NewRepository(pool)
 	customerSvc := customer.NewService(customerRepo).WithWriter(customerRepo).
-		WithCountry(dealerCountryAdapter{r: settings.NewDealerConfigReader(pool)})
+		WithCountry(dealerCountryAdapter{r: settings.NewDealerConfigReader(pool)}).
+		// UX-97: the dealer's account position policy, the register's own gate.
+		WithPositionGate(billing.NewAccountPositionGate(billing.NewRepository(pool)))
 	customer.NewHandler(customerSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// A-1 branches: the read the ledger claimed VERIFIED and the dashboard's
@@ -447,8 +450,14 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// M5 tax engine, then the W6 scaffold-owner rewire: the POS Sale leaves
 	// its stubs for the real engines (tax, stock, restock, the card
 	// refunder).
+	// FW1-11: the reconcile's document sides read the owning modules' seams (billing's invoices,
+	// pos's committed returns, purchasing's posted bills), the same rule the GL side follows
+	// (never the views directly).
 	taxSvc := newTaxEngine(pool).
 		WithGLBalances(glBalanceAdapter{svc: spine.glSvc}).
+		WithSalesHSTs(billing.NewRepository(pool)).
+		WithReturnHSTs(posRepo).
+		WithBillITCs(purchasing.NewRepository(pool)).
 		WithAudit(auditSvc)
 	tax.NewHandler(taxSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	posSvc.WithTaxAssessor(posTaxAdapter{svc: taxSvc}).
@@ -479,7 +488,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	monthEndHandler.RegisterRoutes(r, g)
 	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc}).
 		WithHoldReader(ops.tillRepo).
-		WithAccountChecker(posAccountAdapter{svc: customerSvc})
+		WithAccountChecker(posAccountAdapter{svc: customerSvc}).
+		WithPositionGate(billing.NewAccountPositionGate(billingRepo))
 
 	arLandingRepo := billing.NewARLandingRepository(pool).WithZone(newDealerZone(pool))
 	arLandingSvc := billing.NewARLandingService(arLandingRepo).

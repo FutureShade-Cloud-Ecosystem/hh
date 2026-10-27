@@ -145,6 +145,55 @@ func TestHH194_FilteredExportCarriesEveryFilteredRow(t *testing.T) {
 		hh194Overdue)
 }
 
+// TestHH194_TheRefusedExportDropsTheDaysOverdueColumn pins round 6 (S5 R5.6): a caller the account
+// position policy refuses receives an export with no Days overdue header and no column under it, and
+// the Status column carries the invoice's STORED status, never the derived OVERDUE. An allowed
+// manager's export keeps the column and the derived state.
+func TestHH194_TheRefusedExportDropsTheDaysOverdueColumn(t *testing.T) {
+	f := newD510Fixture(t)
+	f.invoice(t, "LATE", "FINALIZED", -12, 70000, 70000, "INVOICE")
+	f.invoice(t, "AHEAD", "FINALIZED", 40, 50000, 50000, "INVOICE")
+
+	refused := func() string {
+		t.Helper()
+		h := NewRegisterHandler(f.service(d510Frontline()), NewRepository(f.pool), nil)
+		rec := httptest.NewRecorder()
+		h.export(rec, httptest.NewRequest(http.MethodGet,
+			"/api/v1/ar/register/export?customer_id="+f.customerID, nil), guards.StaffCaller{})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refused export status %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}()
+	if strings.Contains(refused, "Days overdue") {
+		t.Errorf("a refused caller's export names no Days overdue column: %s", refused)
+	}
+	if strings.Contains(refused, "OVERDUE") {
+		t.Errorf("a refused caller's export carries no derived status: %s", refused)
+	}
+	if !strings.Contains(refused, "FINALIZED") {
+		t.Errorf("a refused caller's export carries the stored status: %s", refused)
+	}
+	header := strings.SplitN(refused, "\n", 2)[0]
+	if got := strings.Count(header, ","); got != 9 {
+		t.Fatalf("the refused export header carries ten columns, got %d commas in %q", got, header)
+	}
+
+	h := NewRegisterHandler(f.service(d510Manager()), NewRepository(f.pool), nil)
+	rec := httptest.NewRecorder()
+	h.export(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/ar/register/export?customer_id="+f.customerID, nil), guards.StaffCaller{})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager export status %d: %s", rec.Code, rec.Body.String())
+	}
+	kept := rec.Body.String()
+	for _, want := range []string{"Days overdue", "OVERDUE"} {
+		if !strings.Contains(kept, want) {
+			t.Errorf("an allowed manager's export keeps %s: %s", want, kept)
+		}
+	}
+}
+
 // TestHH194_ExportCarriesEveryRowAcrossTheOtherFilters pins the filters the first two legs do not
 // reach: the search box and the credits toggle, each over more rows than one page holds.
 func TestHH194_ExportCarriesEveryRowAcrossTheOtherFilters(t *testing.T) {

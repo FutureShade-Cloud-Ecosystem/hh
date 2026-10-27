@@ -14,6 +14,7 @@ import {
   autoFillRemainder,
   perLineSavingCents,
   availableCreditCents,
+  serverAvailableCreditCents,
   balanceAfterDepositCents,
   cartSubtotalCents,
   cashTenderedPlan,
@@ -367,4 +368,12 @@ test('availableCreditCents clamps the headroom at zero, never a negative offer',
   assert.equal(availableCreditCents({ credit_limit_cents: 500000, open_balance_cents: 125000 }), 375000);
   assert.equal(availableCreditCents({ credit_limit_cents: 100000, open_balance_cents: 125000 }), 0);
   assert.equal(availableCreditCents({ credit_limit_cents: NaN, open_balance_cents: 0 }), 0);
+});
+
+test('serverAvailableCreditCents reads the core\'s figure and answers null, never zero, when it is absent', () => {
+  assert.equal(serverAvailableCreditCents({ available_credit_cents: 375000 }), 375000);
+  assert.equal(serverAvailableCreditCents({ available_credit_cents: 0 }), 0);
+  assert.equal(serverAvailableCreditCents({}), null);
+  assert.equal(serverAvailableCreditCents({ available_credit_cents: null }), null);
+  assert.equal(serverAvailableCreditCents({ available_credit_cents: NaN }), null);
 });

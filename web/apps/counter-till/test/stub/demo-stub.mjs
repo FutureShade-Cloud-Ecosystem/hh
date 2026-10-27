@@ -1884,16 +1884,41 @@ function workspaceRowFor(userId) {
 // The counter's salesperson roster: the demo accounts, in flow-table order.
 const SALESPEOPLE = Object.values(USERS).map((account) => ({ id: account.user_id, name: account.display_name }));
 
-function customerSearchRow(customer) {
-  return {
+// The dealer's account position policy, as ar_invoice_policy.account_position_visibility holds it:
+// MANAGER_UP (the dealer default), ALL_STAFF or HIDDEN. The stub stands at the core's default, so a
+// Sales clerk is refused and a manager admitted; the other two values are pinned in the core's
+// tests, where a policy row can be set without leaking into parallel legs here.
+const accountPositionPolicy = "MANAGER_UP";
+
+function accountPositionAllowed(request) {
+  if (accountPositionPolicy === "ALL_STAFF") return callerFromRequest(request) !== null;
+  if (accountPositionPolicy === "MANAGER_UP") {
+    const caller = callerFromRequest(request);
+    return caller !== null && caller.account.tier <= 2;
+  }
+  return false; // HIDDEN, and anything unrecognised: fail closed
+}
+
+// The customer search row. The three position figures are present together or ABSENT, never zero,
+// exactly as the core marshals them; the available credit is the core's own (limit less open,
+// floored at zero), so the till never subtracts.
+function customerSearchRow(customer, request) {
+  const row = {
     id: customer.id,
     name: customer.name,
     account_no: customer.account_no,
     customer_type: customer.customer_type,
     payment_terms_days: customer.payment_terms_days,
-    credit_limit_cents: customer.credit_limit_cents,
-    open_balance_cents: customer.open_balance_cents,
+    // The core states the cash on demand posture (zero day terms with a credit line) as its own field,
+    // under every policy: it is a payment rule, not a figure.
+    cash_on_demand: customer.payment_terms_days <= 0 && customer.credit_limit_cents > 0,
   };
+  if (accountPositionAllowed(request)) {
+    row.credit_limit_cents = customer.credit_limit_cents;
+    row.open_balance_cents = customer.open_balance_cents;
+    row.available_credit_cents = Math.max(0, customer.credit_limit_cents - customer.open_balance_cents);
+  }
+  return row;
 }
 
 // The test suite asserts the app sends the demo org on its demo calls, so the
@@ -2614,7 +2639,7 @@ const server = createServer(async (request, response) => {
     }
     const rows = CUSTOMERS.filter(
       (c) => c.name.toLowerCase().includes(q) || c.account_no.toLowerCase().startsWith(q),
-    ).map(customerSearchRow);
+    ).map((c) => customerSearchRow(c, request));
     respondJson(response, 200, rows);
     return;
   }
@@ -2624,10 +2649,14 @@ const server = createServer(async (request, response) => {
   // (Fenwick's) so the three postures a counter meets are all visible: a
   // current account, one past due, and one on hold. The house walk-in has no
   // account and no balance, and the empty answer is the walk-in's answer.
+  // A caller the dealer's balance policy withholds figures from gets the hold
+  // state and the clear word and NO money, the same field absence the core's
+  // standing read answers with (round 3, UX-97 visual review): the overdue
+  // figure and its bucket never enter the bytes for that caller.
   if (request.method === "GET" && path === "/api/v1/pos/account-standing") {
     const customerId = url.searchParams.get("customer_id") ?? "";
     if (customerId === "") {
-      respondJson(response, 200, {});
+      respondJson(response, 200, { standing: "walk_in" });
       return;
     }
     const customer = CUSTOMERS.find((c) => c.id === customerId) ?? null;
@@ -2635,14 +2664,26 @@ const server = createServer(async (request, response) => {
       respondJson(response, 404, { error: "no such customer account" });
       return;
     }
+    const held = customer.on_hold === true;
+    if (!accountPositionAllowed(request)) {
+      // Round 4/5 (principal items 206, 208): the withheld word is a case of its own, never "clear"
+      // (clear is a position too), and the hold is the same for every caller under the one
+      // ar_invoice_policy.account_position_visibility gate.
+      respondJson(response, 200, held ? { standing: "on_hold", on_hold: true } : { standing: "withheld" });
+      return;
+    }
     const isBluffside = customer.id === "c-bluffside" || customer.name === "Bluffside Builders";
     const pastDue = customer.account_no === "C02" ? 41500 : (isBluffside ? 1482000 : 0);
     const bucket = isBluffside ? "61 to 90" : (pastDue > 0 ? "30" : undefined);
-    respondJson(response, 200, {
-      past_due_cents: pastDue,
-      oldest_bucket: bucket,
-      on_hold: customer.on_hold,
-    });
+    const out = {
+      standing: held ? "on_hold" : (pastDue > 0 ? "past_due" : "clear"),
+    };
+    if (pastDue > 0) {
+      out.past_due_cents = pastDue;
+      if (bucket !== undefined) out.oldest_bucket = bucket;
+    }
+    if (held) out.on_hold = true;
+    respondJson(response, 200, out);
     return;
   }
 

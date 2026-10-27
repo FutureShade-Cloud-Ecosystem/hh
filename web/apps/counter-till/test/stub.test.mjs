@@ -157,3 +157,27 @@ test("a held sale under the bound still books: the moved refusals swallow nothin
   assert.equal(answer.body.deposit_cents, 100);
   assert.equal(answer.body.tenders.some((leg) => leg.method === "CASH" && leg.amount_cents === 100), true);
 });
+
+// Round 4 (principal item 206): the standing read answers a caller the dealer's balance policy
+// strips figures from with the word `withheld`, never `clear` (clear is a position too), and the
+// hold is the same for every caller: the held account reads on_hold for this caller as well, with
+// no money key in either answer.
+test("the standing read answers a withheld caller withheld, and the hold the same as anyone", async () => {
+  const get = async (customerId) => {
+    const answer = await fetch(
+      `${base}/api/v1/pos/account-standing?branch_id=${POINT_LOMA}&customer_id=${customerId}`,
+      { headers: { authorization: `Bearer ${bearer}`, "x-org": "hh-demo" } },
+    );
+    return { status: answer.status, body: await answer.json() };
+  };
+  const withheld = await get("c-fenwick");
+  assert.equal(withheld.status, 200);
+  assert.equal(withheld.body.standing, "withheld");
+  assert.equal(withheld.body.past_due_cents, undefined, "the overdue figure never rides the withheld answer");
+  assert.equal(withheld.body.oldest_bucket, undefined);
+  const held = await get("c-harbour");
+  assert.equal(held.status, 200);
+  assert.equal(held.body.standing, "on_hold");
+  assert.equal(held.body.on_hold, true);
+  assert.equal(held.body.past_due_cents, undefined);
+});

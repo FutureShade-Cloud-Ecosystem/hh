@@ -641,13 +641,25 @@ func (r *Repository) SetCompleted(ctx context.Context, sessionID, branchID, comp
 		return errConflict
 	}
 
+	// The session's own business day: the day the drawer was OPENED, which is the day the
+	// over/short belongs to. A count taken after midnight belongs to the trading day the
+	// drawer was opened for, not to the day the count happened, so the date rides the event
+	// and the GL files the over/short journal in the session's business day.
+	var openedAt time.Time
+	if err := tx.QueryRow(ctx, `SELECT opened_at FROM till_sessions WHERE id = $1`, sessionID).Scan(&openedAt); err != nil {
+		return fmt.Errorf("till: read the session's business day: %w", err)
+	}
+
 	// Transactional outbox: emit till.session.completed (over/short facts) in the SAME tx as the close so
-	// the GL over/short journal (6350 / 1020) posts exactly once (W5/A-05 AC9).
+	// the GL over/short journal (6350 / 1020) posts exactly once (W5/A-05 AC9). FW1-01b: the event carries
+	// the session's business day (occurred_at), so the journal is dated by the session and not by the day
+	// the consumer happens to read the outbox.
 	payload, err := json.Marshal(map[string]any{
 		"session_id":       sessionID,
 		"branch_id":        branchID,
 		"over_short_cents": overShortCents,
 		"counted_cents":    countedCashCents,
+		"occurred_at":      openedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("till: marshal session completed: %w", err)
@@ -864,12 +876,15 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	}
 
 	// NSF record, fee captured from policy AT bounce time (a later policy change never rewrites history).
+	// The record's created_at is the bounce's own instant, which rides the event so the GL books the
+	// reversal in the month the bounce happened (FW1-01b).
 	var nsfID string
+	var nsfAt time.Time
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO payment_nsf (payment_id, customer_id, reason, fee_cents, fee_taxable, fee_account_code, recorded_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id::text`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id::text, created_at`,
 		in.PaymentID, nullStr(res.CustomerID), in.Reason, in.FeeCents, in.FeeTaxable, nullStr(in.FeeAccountCode), nullStr(in.ActorID),
-	).Scan(&nsfID); err != nil {
+	).Scan(&nsfID, &nsfAt); err != nil {
 		return nsfReverseResult{}, fmt.Errorf("till: insert nsf: %w", err)
 	}
 
@@ -950,6 +965,7 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 		"fee_taxable":      in.FeeTaxable,
 		"fee_account_code": in.FeeAccountCode,
 		"cleared":          clearedToBank, // true → original receipt had settled to bank 1000; false → still 1020
+		"occurred_at":      nsfAt,         // FW1-01b: the bounce's own instant, not the processing day
 	})
 	if err != nil {
 		return nsfReverseResult{}, fmt.Errorf("till: marshal payment.bounced: %w", err)

@@ -1150,7 +1150,7 @@ export class ArDesk {
       this.#host.repaint();
       return;
     }
-    const overdue = register.value.items.filter((r) => r.days_overdue > 0 && isUnpaidInvoice(r)).map((r) => r.id);
+    const overdue = register.value.items.filter((r) => (r.days_overdue ?? 0) > 0 && isUnpaidInvoice(r)).map((r) => r.id);
     if (overdue.length === 0) {
       this.#busy = false;
       this.#error = "Nothing on this account is overdue, so there is nothing to chase.";
@@ -1355,8 +1355,11 @@ export class ArDesk {
       this.#host.repaint();
       return;
     }
+    const closing1 = preview.value.statement.closing_balance_cents;
     this.#notice = preview.value.reconciled
-      ? `Statement preview is balanced to the penny. Closing balance: ${formatWorkspaceMoney(preview.value.statement.closing_balance_cents)}.`
+      ? closing1 == null
+        ? "Statement preview is balanced to the penny. Closing balance: Not shown for your role."
+        : `Statement preview is balanced to the penny. Closing balance: ${formatWorkspaceMoney(closing1)}.`
       : "Statement preview's totals do not reconcile; flag a controller.";
     this.#host.repaint();
   }
@@ -1376,8 +1379,11 @@ export class ArDesk {
       this.#host.repaint();
       return;
     }
+    const closing2 = preview.value.statement.closing_balance_cents;
     this.#notice = preview.value.reconciled
-      ? `Statement preview is balanced to the penny. Closing balance: ${formatWorkspaceMoney(preview.value.statement.closing_balance_cents)}.`
+      ? closing2 == null
+        ? "Statement preview is balanced to the penny. Closing balance: Not shown for your role."
+        : `Statement preview is balanced to the penny. Closing balance: ${formatWorkspaceMoney(closing2)}.`
       : "Statement preview's totals do not reconcile; flag a controller.";
     this.#host.repaint();
   }
@@ -1402,7 +1408,7 @@ export class ArDesk {
     const result = await this.#api.sendPaylink({
       customer_id: customerId,
       invoice_id: null,
-      amount_cents: amount > 0 ? amount : null,
+      amount_cents: amount != null && amount > 0 ? amount : null,
       channel: "EMAIL",
       recipient,
     });
@@ -1436,7 +1442,7 @@ export class ArDesk {
     // URL pattern the core builds is /paylink/{token}. We render the URL the same way the
     // handler builds it, so the URL on the paste is the URL a Send would have produced.
     const amount = preview.value.statement.closing_balance_cents;
-    const url = `/paylink/${deterministicPaylinkToken(customerId, null, amount > 0 ? amount : null, "EMAIL")}`;
+    const url = `/paylink/${deterministicPaylinkToken(customerId, null, amount != null && amount > 0 ? amount : null, "EMAIL")}`;
     const copied = this.#host.copy ? this.#host.copy(url) : false;
     if (copied) this.#notice = `Paylink URL copied: ${url}`;
     else this.#notice = `Paylink URL: ${url} (clipboard unavailable; copy by hand)`;

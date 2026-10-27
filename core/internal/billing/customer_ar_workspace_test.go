@@ -152,7 +152,7 @@ type workspaceCreditSeam interface {
 // credit seam. nil-credit is the optional case the seam supports (the handler skips
 // the aging field).
 func newWorkspaceHandlerForTest(store *fakeWorkspaceStore, credit workspaceCreditSeam) *WorkspaceHandler {
-	return NewWorkspaceHandler(store, credit, nil).WithPaymentTrail(&fakeTrail{held: true}).WithCustomerReach(&fakeReach{ok: true})
+	return NewWorkspaceHandler(store, credit, nil).WithPaymentTrail(&fakeTrail{held: true}).WithCustomerReach(&fakeReach{ok: true}).WithAccountPosition(fakePosition{allow: true})
 }
 
 // -- reconciliation to the penny ----------------------------------------------------------------

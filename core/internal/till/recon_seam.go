@@ -362,6 +362,9 @@ func (r *Repository) lodgementPaymentIDs(ctx context.Context, branchID, sessionI
 // PaymentForGL resolves the finance facts of a payment so the GL posting consumer can branch-stamp the
 // journal and choose the 1010 (card) / 1020 (cash/cheque undeposited) / 1000 (bank) debit leg. The
 // payment.received outbox payload carries no branch/invoice, so this SELECT is the source of truth.
+// It carries the payment's received_at too (FW1-01b): the receipt document's date, which is the date the
+// GL receipt journal is booked on, so a receipt taken on the last day of a month and consumed after
+// midnight stays in the month it was taken.
 func (r *Repository) PaymentForGL(ctx context.Context, paymentID string) (gl.PaymentFacts, error) {
 	if r.pool == nil {
 		return gl.PaymentFacts{}, errNoDB
@@ -369,10 +372,10 @@ func (r *Repository) PaymentForGL(ctx context.Context, paymentID string) (gl.Pay
 	var f gl.PaymentFacts
 	var banked bool
 	err := r.pool.QueryRow(ctx,
-		`SELECT branch_id::text, COALESCE(customer_id::text, ''), method, status, amount_cents,
+		`SELECT branch_id::text, COALESCE(customer_id::text, ''), method, status, amount_cents, received_at,
 		        COALESCE(metadata->>'bank_statement_line_id', '') <> ''
 		 FROM payments WHERE id = $1`, paymentID,
-	).Scan(&f.BranchID, &f.CustomerID, &f.Method, &f.Status, &f.AmountCents, &banked)
+	).Scan(&f.BranchID, &f.CustomerID, &f.Method, &f.Status, &f.AmountCents, &f.ReceivedAt, &banked)
 	if err != nil {
 		return gl.PaymentFacts{}, fmt.Errorf("till: payment for gl %q: %w", paymentID, err)
 	}
