@@ -45,6 +45,25 @@ type Repository struct {
 
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
 
+// CustomerHomeBranch answers the account's home branch ("" when the account carries none) and whether
+// the account exists: the one fact another module needs to hold the account to an org, through the
+// branches module's own org read. The module's own table, read only.
+func (r *Repository) CustomerHomeBranch(ctx context.Context, customerID string) (string, bool, error) {
+	if r.pool == nil {
+		return "", false, errNoDB
+	}
+	var home string
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(home_branch_id::text, '') FROM customers WHERE id = $1::uuid`, customerID).Scan(&home)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("customer: read the account's home branch: %w", err)
+	}
+	return home, true, nil
+}
+
 func scanAccount(row interface {
 	Scan(dest ...any) error
 }) (Account, error) {
