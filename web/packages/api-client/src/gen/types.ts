@@ -2773,15 +2773,29 @@ export type BankRecRuleInput = {
   priority: number;
 };
 export type BankRecMatchRuleList = BankRecMatchRule[];
+export type BankRecOutstandingItem = {
+  journal_id: string;
+  posted_at: string;
+  memo: string;
+  amount_cents: number;
+};
 export type BankRecReconciliation = {
   id: string;
   bank_account_id: string;
   year: number;
   month: number;
+  opening_balance_cents?: number | null;
   statement_balance_cents: number;
+  deposits_in_transit_cents?: number;
+  outstanding_cheques_cents?: number;
+  adjusted_bank_balance_cents?: number;
   gl_balance_cents: number;
   variance_cents: number;
+  matched_lines_count?: number;
+  deposits_in_transit?: BankRecOutstandingItem[];
+  outstanding_cheques?: BankRecOutstandingItem[];
   status: "OPEN" | "COMPLETED";
+  completed_by?: string | null;
   completed_at?: string | null;
 };
 export type BankRecReconInput = {

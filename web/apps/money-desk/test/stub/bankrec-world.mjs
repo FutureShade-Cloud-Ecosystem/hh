@@ -95,6 +95,8 @@ function fresh() {
       { id: IDS.ruleBatch, code: "run-settlement-fuzzy", name: "Batch settlement, description and date window", priority: 30, version: 1, status: "APPROVED", spec: { kind: "descriptor_fuzzy", target: "PAYMENT", descriptor_ilike: "%RUN%", date_window_days: 3, allow_fee_split: true, fee_account_code: "6300" } },
     ],
     recons: [],
+    depositsInTransit: [],
+    outstandingCheques: [],
     // The ledger side (account 1000): moved by the clearing journals a match posts and the reversal an undo posts.
     glCents: OPENING_CENTS + BOOKED_BEFORE_MATCHING,
     nextMatch: 1,
@@ -169,16 +171,32 @@ export function createBankrecWorld() {
     return out;
   };
   const reconView = (r) => {
+    const acct = world.accounts.find((a) => a.id === r.bank_account_id);
+    const dit = acct?.gl_account_code === "1000" ? world.depositsInTransit : [];
+    const oc = acct?.gl_account_code === "1000" ? world.outstandingCheques : [];
+    const ditCents = dit.reduce((s, x) => s + x.amount_cents, 0);
+    const ocCents = oc.reduce((s, x) => s + x.amount_cents, 0);
+    const matchedCount = world.lines.filter(
+      (l) => l.bank_account_id === r.bank_account_id && l.status === "MATCHED" && Number(l.txn_date.slice(0, 4)) === r.year && Number(l.txn_date.slice(5, 7)) === r.month,
+    ).length;
     const out = {
       id: r.id,
       bank_account_id: r.bank_account_id,
       year: r.year,
       month: r.month,
       statement_balance_cents: r.statement_balance_cents,
+      deposits_in_transit_cents: ditCents,
+      outstanding_cheques_cents: ocCents,
+      adjusted_bank_balance_cents: r.statement_balance_cents + ditCents - ocCents,
       gl_balance_cents: r.gl_balance_cents,
       variance_cents: r.variance_cents,
+      matched_lines_count: matchedCount,
       status: r.status,
     };
+    if (r.opening_balance_cents !== undefined && r.opening_balance_cents !== null) out.opening_balance_cents = r.opening_balance_cents;
+    if (dit.length > 0) out.deposits_in_transit = dit;
+    if (oc.length > 0) out.outstanding_cheques = oc;
+    if (r.completed_by) out.completed_by = r.completed_by;
     if (r.completed_at) out.completed_at = r.completed_at;
     return out;
   };
@@ -542,6 +560,8 @@ export function createBankrecWorld() {
     const netNow = monthNet(account.id, input.year, input.month);
     // Only the operating account has a ledger balance in this world; the cards are tracking only.
     const gl = account.gl_account_code === "1000" ? world.glCents : 0;
+    const ditCents = account.gl_account_code === "1000" ? world.depositsInTransit.reduce((s, x) => s + x.amount_cents, 0) : 0;
+    const ocCents = account.gl_account_code === "1000" ? world.outstandingCheques.reduce((s, x) => s + x.amount_cents, 0) : 0;
     const existing = world.recons.find((r) => r.bank_account_id === account.id && r.year === input.year && r.month === input.month);
     if (existing !== undefined && existing.status === "COMPLETED") {
       return clientError(409, `reconciliation for ${input.year}-${pad(input.month)} is already COMPLETED`);
@@ -551,7 +571,7 @@ export function createBankrecWorld() {
       const statement = existing.statement_balance_derived ? netNow : existing.statement_balance_cents;
       existing.statement_balance_cents = statement;
       existing.gl_balance_cents = gl;
-      existing.variance_cents = statement - gl;
+      existing.variance_cents = statement + ditCents - ocCents - gl;
       return { status: 201, body: reconView(existing) };
     }
     // The core stores the month's line net when the typed balance is zero: its placeholder default.
@@ -562,7 +582,7 @@ export function createBankrecWorld() {
     target.statement_balance_derived = derived;
     target.statement_balance_cents = statement;
     target.gl_balance_cents = gl;
-    target.variance_cents = statement - gl;
+    target.variance_cents = statement + ditCents - ocCents - gl;
     if (existing === undefined) world.recons.push(target);
     return { status: 201, body: reconView(target) };
   }
@@ -573,22 +593,37 @@ export function createBankrecWorld() {
     const rec = world.recons.find((r) => r.id === id);
     if (rec === undefined) return clientError(404, "not found");
     if (rec.status === "COMPLETED") return clientError(409, `reconciliation ${id} is already COMPLETED`);
+    const today = new Date().toISOString().slice(0, 10);
+    const monthEnd = new Date(Date.UTC(rec.year, rec.month, 0)).toISOString().slice(0, 10);
+    if (today < monthEnd) {
+      return clientError(422, `cannot complete, ${rec.year}-${pad(rec.month)} has not reached month end yet (month end is ${monthEnd})`);
+    }
     const unmatched = world.lines.filter(
       (l) => l.bank_account_id === rec.bank_account_id && l.status === "UNMATCHED" && Number(l.txn_date.slice(0, 4)) === rec.year && Number(l.txn_date.slice(5, 7)) === rec.month,
     ).length;
     if (unmatched > 0) return clientError(422, `cannot complete, ${unmatched} UNMATCHED line(s) remain for ${rec.year}-${pad(rec.month)}`);
-    // SF-2s: the core recomputes the ledger (and a derived statement balance from the lines) at completion; the recomputed variance alone decides.
-    const stmt = rec.statement_balance_derived ? monthNet(rec.bank_account_id, rec.year, rec.month) : rec.statement_balance_cents;
     const account = world.accounts.find((a) => a.id === rec.bank_account_id);
+    const totalLines = world.lines.filter(
+      (l) => l.bank_account_id === rec.bank_account_id && Number(l.txn_date.slice(0, 4)) === rec.year && Number(l.txn_date.slice(5, 7)) === rec.month,
+    ).length;
+    if (account?.account_type === "BANK" && totalLines === 0) {
+      return clientError(422, `cannot complete, no statement lines have been imported for ${rec.year}-${pad(rec.month)}`);
+    }
+    // SF-2s + FW1-04: the core recomputes the ledger, outstanding items, and a derived statement balance from the lines at completion.
+    const stmt = rec.statement_balance_derived ? monthNet(rec.bank_account_id, rec.year, rec.month) : rec.statement_balance_cents;
     const ledger = account !== undefined && account.gl_account_code === "1000" ? world.glCents : 0;
-    if (stmt - ledger !== 0) {
-      const apart = Math.abs(stmt - ledger);
+    const ditCents = account !== undefined && account.gl_account_code === "1000" ? world.depositsInTransit.reduce((s, x) => s + x.amount_cents, 0) : 0;
+    const ocCents = account !== undefined && account.gl_account_code === "1000" ? world.outstandingCheques.reduce((s, x) => s + x.amount_cents, 0) : 0;
+    const adjBank = stmt + ditCents - ocCents;
+    if (adjBank - ledger !== 0) {
+      const apart = Math.abs(adjBank - ledger);
       return clientError(422, `cannot complete, the statement reads ${usd(stmt)} and the ledger reads ${usd(ledger)} (${usd(apart)} apart); they must agree, refresh the figures and match what is open`);
     }
     rec.statement_balance_cents = stmt;
     rec.gl_balance_cents = ledger;
-    rec.variance_cents = stmt - ledger;
+    rec.variance_cents = adjBank - ledger;
     rec.status = "COMPLETED";
+    rec.completed_by = caller.id;
     rec.completed_at = stamp();
     return { status: 200, body: reconView(rec) };
   }
@@ -608,6 +643,12 @@ export function createBankrecWorld() {
     // A control the contract test uses to post to the operating account's ledger after a month was opened (SF-2s).
     if (method === "POST" && path === "/_stub/post-to-bank") {
       world.glCents += JSON.parse(bodyText || "{}").cents ?? 0;
+      return { status: 200, body: { ok: true } };
+    }
+    if (method === "POST" && path === "/_stub/outstanding-items") {
+      const input = JSON.parse(bodyText || "{}");
+      world.depositsInTransit = Array.isArray(input.deposits_in_transit) ? input.deposits_in_transit : [];
+      world.outstandingCheques = Array.isArray(input.outstanding_cheques) ? input.outstanding_cheques : [];
       return { status: 200, body: { ok: true } };
     }
     if (method === "POST" && path === "/_stub/reverse-payment") {

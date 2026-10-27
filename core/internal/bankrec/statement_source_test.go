@@ -170,24 +170,25 @@ func TestCSVParse_RBCNativeExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines, err := CSVStatementSource{}.Parse(context.Background(), rbcProfile(), strings.NewReader(string(raw)))
-	if err != nil {
-		t.Fatalf("parse native RBC export under rbc-default: %v", err)
-	}
-	if len(lines) != 4 {
-		t.Fatalf("expected 4 lines, got %d", len(lines))
-	}
-	wantAmounts := []int64{150000, -42000, 98050, -2500}
-	for i, w := range wantAmounts {
-		if lines[i].AmountCents != w {
-			t.Errorf("line %d amount = %d, want %d", i, lines[i].AmountCents, w)
+	for _, prof := range []ImportProfile{DefaultRBCProfile(), rbcProfile()} {
+		lines, err := CSVStatementSource{}.Parse(context.Background(), prof, strings.NewReader(string(raw)))
+		if err != nil {
+			t.Fatalf("parse native RBC export under %s: %v", prof.Code, err)
+		}
+		if len(lines) != 4 {
+			t.Fatalf("%s: expected 4 lines, got %d", prof.Code, len(lines))
+		}
+		wantAmounts := []int64{150000, -42000, 98050, -2500}
+		for i, w := range wantAmounts {
+			if lines[i].AmountCents != w {
+				t.Errorf("%s line %d amount = %d, want %d", prof.Code, i, lines[i].AmountCents, w)
+			}
+		}
+		if lines[0].Description != "E-TRANSFER DEPOSIT HARDWOOD DEPOT INC" || lines[0].Reference != "HARDWOOD DEPOT INC" {
+			t.Errorf("%s line 0 desc=%q ref=%q", prof.Code, lines[0].Description, lines[0].Reference)
+		}
+		if lines[1].Reference != "1042" {
+			t.Errorf("%s line 1 cheque ref = %q, want 1042", prof.Code, lines[1].Reference)
 		}
 	}
-	if lines[0].Description != "E-TRANSFER DEPOSIT HARDWOOD DEPOT INC" || lines[0].Reference != "HARDWOOD DEPOT INC" {
-		t.Errorf("line 0 desc=%q ref=%q", lines[0].Description, lines[0].Reference)
-	}
-	if lines[1].Reference != "1042" {
-		t.Errorf("line 1 cheque ref = %q, want 1042", lines[1].Reference)
-	}
 }
-

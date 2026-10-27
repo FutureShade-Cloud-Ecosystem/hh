@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/jackc/pgx/v5"
@@ -1169,6 +1170,18 @@ func (s *Service) glBalanceCents(ctx context.Context, accountCode string, year, 
 		return 0, err
 	}
 	// Natural orientation: a credit-normal account's balance is the credit surplus (−net_debit).
+	if normal == NormalCredit {
+		return -netDebit, nil
+	}
+	return netDebit, nil
+}
+
+func (s *Service) glClosingBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	asOf := time.Date(year, time.Month(month)+1, 1, 0, 0, 0, 0, houseLocation()).Add(-time.Nanosecond)
+	netDebit, normal, err := s.store.AccountBalanceAsOf(ctx, accountCode, asOf, branchID)
+	if err != nil {
+		return 0, err
+	}
 	if normal == NormalCredit {
 		return -netDebit, nil
 	}

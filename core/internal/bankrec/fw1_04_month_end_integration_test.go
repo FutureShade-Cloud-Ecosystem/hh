@@ -56,12 +56,23 @@ func fw104EnsurePeriods(t *testing.T, pool *pgxpool.Pool, year int, at time.Time
 func fw104CleanYear(t *testing.T, pool *pgxpool.Pool, acct string, year int) {
 	t.Helper()
 	ctx := context.Background()
-	_, _ = pool.Exec(ctx, `DELETE FROM bank_matches WHERE statement_line_id IN (SELECT id FROM bank_statement_lines WHERE bank_account_id = $1::uuid AND EXTRACT(YEAR FROM txn_date) = $2)`, acct, year)
-	_, _ = pool.Exec(ctx, `DELETE FROM bank_statement_lines WHERE bank_account_id = $1::uuid AND EXTRACT(YEAR FROM txn_date) = $2`, acct, year)
-	_, _ = pool.Exec(ctx, `DELETE FROM bank_reconciliations WHERE bank_account_id = $1::uuid AND year = $2`, acct, year)
-	_, _ = pool.Exec(ctx, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE fiscal_year = $1)`, year)
-	_, _ = pool.Exec(ctx, `UPDATE gl_journals SET reverses_journal_id = NULL WHERE fiscal_year = $1`, year)
-	_, _ = pool.Exec(ctx, `DELETE FROM gl_journals WHERE fiscal_year = $1`, year)
+	for _, q := range []struct {
+		sql  string
+		args []any
+	}{
+		{`DELETE FROM bank_matches WHERE statement_line_id IN (SELECT id FROM bank_statement_lines WHERE bank_account_id = $1::uuid AND EXTRACT(YEAR FROM txn_date) = $2)`, []any{acct, year}},
+		{`DELETE FROM bank_matches WHERE journal_id IN (SELECT id FROM gl_journals WHERE fiscal_year = $1)`, []any{year}},
+		{`DELETE FROM bank_matches WHERE target_ref_id IN (SELECT id FROM gl_journals WHERE fiscal_year = $1)`, []any{year}},
+		{`DELETE FROM bank_statement_lines WHERE bank_account_id = $1::uuid AND EXTRACT(YEAR FROM txn_date) = $2`, []any{acct, year}},
+		{`DELETE FROM bank_reconciliations WHERE bank_account_id = $1::uuid AND year = $2`, []any{acct, year}},
+		{`UPDATE gl_journals SET status = 'DRAFT', reverses_journal_id = NULL WHERE fiscal_year = $1 OR reverses_journal_id IN (SELECT id FROM gl_journals WHERE fiscal_year = $1)`, []any{year}},
+		{`DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE fiscal_year = $1)`, []any{year}},
+		{`DELETE FROM gl_journals WHERE fiscal_year = $1`, []any{year}},
+	} {
+		if _, err := pool.Exec(ctx, q.sql, q.args...); err != nil {
+			t.Fatalf("fw104CleanYear(%d) query %q: %v", year, q.sql, err)
+		}
+	}
 }
 
 func fw104InsertLineAt(t *testing.T, pool *pgxpool.Pool, acct string, txnDate time.Time, desc, ref string, cents int64) string {
@@ -795,5 +806,3 @@ func TestIntegration_FW1_04_ChronologicalSignOffOrderAndStatementContinuity(t *t
 		t.Fatalf("expected refusal when completing March after April/May are completed, got %v", err)
 	}
 }
-
-

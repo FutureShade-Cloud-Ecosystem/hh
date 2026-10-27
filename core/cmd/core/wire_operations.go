@@ -158,6 +158,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// A-02 (W5): bank reconciliation over the till repository's payment
 	// and lodgement reads, posting clearing journals through the GL.
 	bankrecSvc := bankrec.NewService(bankrec.NewRepository(pool)).
+		WithZone(newDealerZone(pool)).
 		WithPayments(tillRepo).
 		WithLodgements(tillRepo).
 		WithJournalPoster(glPosterAdapter{svc: spine.glSvc}).
@@ -814,6 +815,10 @@ type glBalanceAdapter struct{ svc *gl.Service }
 
 func (a glBalanceAdapter) GLBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
 	return a.svc.GLBalanceCents(ctx, accountCode, year, month, branchID)
+}
+
+func (a glBalanceAdapter) GLClosingBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	return a.svc.GLClosingBalanceCents(ctx, accountCode, year, month, branchID)
 }
 
 // lienGLPoster satisfies lien.GLPoster over glSvc.PostExternal (the

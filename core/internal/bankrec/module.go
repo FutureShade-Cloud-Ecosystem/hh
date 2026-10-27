@@ -23,6 +23,7 @@ import (
 	identityPkg "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -58,11 +59,14 @@ type LodgementFact struct {
 
 // JournalSource reads one journal for a manual JOURNAL match (SF-2j): the GL module's seam, satisfied by
 // *gl.Service. bankrec never reads gl_journals itself.
-// JournalMatchFact is one live JOURNAL match of a month, for CompleteReconciliation's recheck.
+// JournalMatchFact is one live match of a month that references a journal (either TargetJournal via JournalID or a
+// clearing journal via ClearingJournalID), for CompleteReconciliation's recheck.
 type JournalMatchFact struct {
-	JournalID       string
-	LineDescription string
-	LineAmountCents int64
+	TargetType        string
+	JournalID         string
+	ClearingJournalID string
+	LineDescription   string
+	LineAmountCents   int64
 }
 
 type JournalSource interface {
@@ -147,6 +151,8 @@ type Service struct {
 	balances   GLBalanceReader
 	source     StatementSource
 	audit      audit.Recorder
+	zone       houseday.Source
+	now        func() time.Time
 	log        *slog.Logger
 }
 
@@ -154,6 +160,12 @@ type Service struct {
 func NewService(repo *Repository) *Service {
 	return &Service{repo: repo, log: slog.Default()}
 }
+
+// WithZone injects the dealer's business day zone source (FW1-04). Nil uses the Ontario dealer's default zone.
+func (s *Service) WithZone(src houseday.Source) *Service { s.zone = src; return s }
+
+// WithClock injects a deterministic clock (tests). Nil uses time.Now.
+func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
 
 // WithPayments injects the till unreconciled-card-payment seam (+ MarkDeposited).
 func (s *Service) WithPayments(p PaymentSource) *Service { s.payments = p; return s }

@@ -407,6 +407,7 @@ export const SCHEMA_NAMES: readonly string[] = [
   "BankRecMatchRule",
   "BankRecRuleInput",
   "BankRecMatchRuleList",
+  "BankRecOutstandingItem",
   "BankRecReconciliation",
   "BankRecReconInput",
   "BankRecReconciliationList",

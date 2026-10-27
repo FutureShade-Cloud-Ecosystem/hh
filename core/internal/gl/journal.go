@@ -290,6 +290,9 @@ func (s *Service) ReverseJournal(ctx context.Context, id string) (Journal, error
 	if orig.Status != StatusPosted {
 		return Journal{}, clientErr(409, "gl: only a POSTED journal can be reversed (status=%s)", orig.Status)
 	}
+	if strings.HasPrefix(orig.IdempotencyKey, "bankrec:") {
+		return Journal{}, clientErr(409, "gl: a bank reconciliation clearing journal cannot be reversed here; undo the match in bank reconciliation instead")
+	}
 	lines := make([]draftLine, 0, len(orig.Lines))
 	for _, l := range orig.Lines {
 		lines = append(lines, draftLine{

@@ -152,6 +152,7 @@ func buildPaymentProposal(line StatementLine, rule MatchRule, p CandidatePayment
 			IdempotencyKey: journalKey(line.ID),
 			Memo:           "bankrec card settlement " + line.Reference,
 			BranchID:       p.BranchID,
+			DocumentDate:   statementDocDate(line.TxnDate),
 			Lines:          lines,
 		},
 	}
@@ -171,6 +172,7 @@ func buildLodgementProposal(line StatementLine, rule MatchRule, l Lodgement) pro
 			IdempotencyKey: journalKey(line.ID),
 			Memo:           "bankrec lodgement deposit " + line.Reference,
 			BranchID:       l.BranchID,
+			DocumentDate:   statementDocDate(line.TxnDate),
 			Lines: []gl.ExternalLine{
 				{AccountCode: AcctBank, DebitCents: line.AmountCents, Memo: "bank deposit (lodgement)"},
 				{AccountCode: AcctUndeposited, CreditCents: line.AmountCents, Memo: "clear undeposited funds"},
@@ -187,6 +189,7 @@ func manualJournal(line StatementLine, targetType, branchID string) (gl.External
 		return gl.ExternalJournal{
 			Source: "ADJUSTMENT", SourceRefID: line.ID, IdempotencyKey: journalKey(line.ID),
 			Memo: "bankrec manual card settlement " + line.Reference, BranchID: branchID,
+			DocumentDate: statementDocDate(line.TxnDate),
 			Lines: []gl.ExternalLine{
 				{AccountCode: AcctBank, DebitCents: line.AmountCents, Memo: "bank deposit (card settlement)"},
 				{AccountCode: AcctCardClearing, CreditCents: line.AmountCents, Memo: "clear card settlement"},
@@ -196,6 +199,7 @@ func manualJournal(line StatementLine, targetType, branchID string) (gl.External
 		return gl.ExternalJournal{
 			Source: "ADJUSTMENT", SourceRefID: line.ID, IdempotencyKey: journalKey(line.ID),
 			Memo: "bankrec manual lodgement deposit " + line.Reference, BranchID: branchID,
+			DocumentDate: statementDocDate(line.TxnDate),
 			Lines: []gl.ExternalLine{
 				{AccountCode: AcctBank, DebitCents: line.AmountCents, Memo: "bank deposit (lodgement)"},
 				{AccountCode: AcctUndeposited, CreditCents: line.AmountCents, Memo: "clear undeposited funds"},
@@ -204,6 +208,16 @@ func manualJournal(line StatementLine, targetType, branchID string) (gl.External
 	default:
 		return gl.ExternalJournal{}, false
 	}
+}
+
+// statementDocDate converts a statement line's calendar date (stored as UTC midnight in bank_statement_lines)
+// to 12:00 UTC on that calendar day so the journal lands on the same calendar day in every Canadian time zone
+// (FW1-04).
+func statementDocDate(txnDate time.Time) time.Time {
+	if txnDate.IsZero() {
+		return time.Time{}
+	}
+	return txnDate.UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
 }
 
 // reversalJournal builds the offsetting clearing journal an unmatch posts: it swaps the original DR/CR legs by

@@ -13,6 +13,7 @@ import type { LineStatus, TargetType } from "./bankrec-api.js";
 import {
   accountTypeWord,
   dayWords,
+  isUuid,
   lineAction,
   lineStatusWord,
   lineTone,
@@ -192,6 +193,49 @@ function reconActions(model: BankrecModel, r: BankRecReconciliation): TemplateRe
   `;
 }
 
+function reconReport(r: BankRecReconciliation): TemplateResult {
+  const dit = r.deposits_in_transit ?? [];
+  const oc = r.outstanding_cheques ?? [];
+  const ditCents = r.deposits_in_transit_cents ?? 0;
+  const ocCents = r.outstanding_cheques_cents ?? 0;
+  const adjusted = r.adjusted_bank_balance_cents ?? r.statement_balance_cents;
+  return html`
+    <div class="br-card" data-recon-report=${r.id}>
+      <div class="br-card-top">
+        <strong>Reconciliation report · ${periodWords(r.year, r.month)}</strong>
+        ${pill(reconTone(r.status), reconStatusWord(r.status))}
+      </div>
+      <dl class="br-facts">
+        ${r.opening_balance_cents !== undefined && r.opening_balance_cents !== null
+          ? html`<dt>Opening statement</dt><dd data-report-opening>${formatMoney(r.opening_balance_cents)}</dd>`
+          : nothing}
+        <dt>Closing statement</dt><dd data-report-statement>${formatMoney(r.statement_balance_cents)}</dd>
+        <dt>Deposits in transit</dt><dd data-report-dit>${formatMoney(ditCents)}</dd>
+        <dt>Outstanding cheques</dt><dd data-report-oc>${formatMoney(ocCents)}</dd>
+        <dt>Adjusted bank balance</dt><dd data-report-adjusted>${formatMoney(adjusted)}</dd>
+        <dt>Closing ledger</dt><dd data-report-gl>${formatMoney(r.gl_balance_cents)}</dd>
+        <dt>Matched lines</dt><dd data-report-matched>${r.matched_lines_count ?? 0}</dd>
+        ${r.completed_by !== undefined && r.completed_by !== null && r.completed_by !== ""
+          ? html`<dt>Signed off by</dt><dd data-report-completed-by>${isUuid(r.completed_by) ? "Financial Controller" : r.completed_by}</dd>`
+          : nothing}
+        ${r.completed_at !== undefined && r.completed_at !== null
+          ? html`<dt>Signed off</dt><dd data-report-completed-at>${dayWords(r.completed_at)}</dd>`
+          : nothing}
+      </dl>
+      ${dit.length > 0
+        ? html`<ul class="br-history" aria-label="Deposits in transit" data-dit-list>
+            ${dit.map((item) => html`<li>Deposit in transit · ${dayWords(item.posted_at)} · ${item.memo} · ${formatMoney(item.amount_cents)}</li>`)}
+          </ul>`
+        : nothing}
+      ${oc.length > 0
+        ? html`<ul class="br-history" aria-label="Outstanding cheques" data-oc-list>
+            ${oc.map((item) => html`<li>Outstanding cheque · ${dayWords(item.posted_at)} · ${item.memo} · ${formatMoney(item.amount_cents)}</li>`)}
+          </ul>`
+        : nothing}
+    </div>
+  `;
+}
+
 function reconRows(model: BankrecModel): TemplateResult {
   if (model.recons.length === 0) {
     return html`<div class="br-empty" data-empty-recons><strong>No month is open for this account.</strong><span class="br-dim">Open a month with the closing balance on its statement.</span></div>`;
@@ -228,6 +272,7 @@ function reconRows(model: BankrecModel): TemplateResult {
         </li>`;
       })}
     </ul>
+    ${model.recons.map((r) => reconReport(r))}
   `;
 }
 

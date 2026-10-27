@@ -984,6 +984,11 @@ async function handle(req, res) {
     const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
     return send(res, answer.status, answer.body);
   }
+  if (method === "POST" && path === "/_stub/outstanding-items") {
+    const body = await readBody(req);
+    const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
+    return send(res, answer.status, answer.body);
+  }
   if (method === "POST" && path === "/_stub/reverse-payment") {
     const body = await readBody(req);
     const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));

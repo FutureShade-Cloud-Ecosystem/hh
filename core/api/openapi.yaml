@@ -38928,9 +38928,29 @@ components:
       description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
       items:
         $ref: "#/components/schemas/BankRecMatchRule"
+    BankRecOutstandingItem:
+      type: object
+      description: A book entry in the bank GL account posted on or before month end that has not cleared a statement line on or before month end
+      required:
+        - journal_id
+        - posted_at
+        - memo
+        - amount_cents
+      properties:
+        journal_id:
+          type: string
+          format: uuid
+        posted_at:
+          type: string
+          format: date-time
+        memo:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
     BankRecReconciliation:
       type: object
-      description: One per-account period reconciliation
+      description: One per-account period reconciliation and its month-end reconciliation report figures
       required:
         - id
         - bank_account_id
@@ -38953,7 +38973,21 @@ components:
         month:
           type: integer
           format: int32
+        opening_balance_cents:
+          type:
+            - integer
+            - "null"
+          format: int64
         statement_balance_cents:
+          type: integer
+          format: int64
+        deposits_in_transit_cents:
+          type: integer
+          format: int64
+        outstanding_cheques_cents:
+          type: integer
+          format: int64
+        adjusted_bank_balance_cents:
           type: integer
           format: int64
         gl_balance_cents:
@@ -38962,11 +38996,26 @@ components:
         variance_cents:
           type: integer
           format: int64
+        matched_lines_count:
+          type: integer
+          format: int32
+        deposits_in_transit:
+          type: array
+          items:
+            $ref: "#/components/schemas/BankRecOutstandingItem"
+        outstanding_cheques:
+          type: array
+          items:
+            $ref: "#/components/schemas/BankRecOutstandingItem"
         status:
           type: string
           enum:
             - OPEN
             - COMPLETED
+        completed_by:
+          type:
+            - string
+            - "null"
         completed_at:
           type:
             - string

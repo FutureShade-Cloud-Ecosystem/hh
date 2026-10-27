@@ -413,6 +413,26 @@ func (s *Service) GLBalanceCents(ctx context.Context, accountCode string, year, 
 	return s.glBalanceCents(ctx, accountCode, year, month, branchID)
 }
 
+// GLClosingBalanceCents returns the cumulative closing balance of an account at the end of (year, month)
+// across all fiscal years, read through AccountBalanceAsOf (FW1-04). Bank reconciliation uses this closing
+// balance at month end rather than the single month's movement from GLBalanceCents.
+func (s *Service) GLClosingBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	return s.glClosingBalanceCents(ctx, accountCode, year, month, branchID)
+}
+
+// BankAccountEntriesAsOf returns the POSTED, unreversed book entries on a bank GL account through asOf (FW1-04).
+func (s *Service) BankAccountEntriesAsOf(ctx context.Context, glAccountCode string, asOf time.Time) ([]BankBookEntry, error) {
+	return s.store.BankAccountEntriesAsOf(ctx, glAccountCode, asOf)
+}
+
+// LodgementJournalForBank answers whether a till lodgement movement already has a POSTED, unreversed book
+// journal touching glAccountCode (FROM-PRINCIPAL 117): a new lodgement with a lodgement journal in 1000 does
+// not post a second 1020 -> 1000 clearing journal on match, whereas an older lodgement with no lodgement
+// journal keeps today's match.
+func (s *Service) LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error) {
+	return s.store.LodgementJournalForBank(ctx, movementID, glAccountCode)
+}
+
 // RegisterPostingHandlers wires the outbox consumer for all eight posted topics onto the dispatcher. Each
 // handler resolves posting rules (via the two-name mapping above), builds the journal, and posts it
 // idempotently. FROZEN topic set. This runs once at boot (main.go), so it is also the natural home of the

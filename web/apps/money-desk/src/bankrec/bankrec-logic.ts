@@ -170,6 +170,40 @@ export function refusalWords(action: string, message: string, status: number): s
     const period = periodWords(Number(remain[2]), Number(remain[3]));
     return `Not signed off: ${plural(n, "statement line is", "statement lines are")} still unmatched for ${period}. ${n === 1 ? "Match it" : "Match them"}, or refresh the figures if you just did.`;
   }
+  const beforeEnd = /cannot complete, (\d{4})-(\d{2}) has not reached month end yet \(month end is (\d{4}-\d{2}-\d{2})\)/i.exec(message);
+  if (beforeEnd !== null) {
+    return `Not signed off: ${periodWords(Number(beforeEnd[1]), Number(beforeEnd[2]))} has not reached month end yet (${dayWords(beforeEnd[3])}). Wait until the month has ended before signing it off.`;
+  }
+  const noLines = /cannot complete, no statement lines have been (?:imported|loaded) for (\d{4})-(\d{2})/i.exec(message);
+  if (noLines !== null) {
+    return `Not signed off: no statement lines have been imported for ${periodWords(Number(noLines[1]), Number(noLines[2]))}. Import the bank statement for that month first.`;
+  }
+  const clearingRev = /cannot complete, the clearing journal for "([^"]*)" (?:has been reversed in the ledger|no longer exists in the ledger|is not posted)/i.exec(message);
+  if (clearingRev !== null) {
+    return `Not signed off: the clearing journal for "${clearingRev[1]}" was reversed in the ledger. Undo the match and match the line again.`;
+  }
+  const earlierOpen = /cannot complete, an earlier month \((\d{4})-(\d{2})\) is still open/i.exec(message);
+  if (earlierOpen !== null) {
+    return `Not signed off: ${periodWords(Number(earlierOpen[1]), Number(earlierOpen[2]))} is still open. Sign off the earlier month first.`;
+  }
+  const laterDone = /cannot complete, a later month \((\d{4})-(\d{2})\) is already completed/i.exec(message);
+  if (laterDone !== null) {
+    return `Not signed off: ${periodWords(Number(laterDone[1]), Number(laterDone[2]))} is already signed off. Earlier months cannot be signed off after a later month.`;
+  }
+  const continuity =
+    /cannot complete, the statement closing balance \((-?\$[\d,]+\.\d{2})\) does not equal the prior month's closing balance \((-?\$[\d,]+\.\d{2})\) plus this month's statement lines \((-?\$[\d,]+\.\d{2}) = (-?\$[\d,]+\.\d{2})\)/i.exec(
+      message,
+    );
+  if (continuity !== null) {
+    return `Not signed off: the statement closing balance (${continuity[1]}) does not continue from the prior month's closing balance (${continuity[2]}) plus this month's lines (${continuity[3]}, expected ${continuity[4]}). Check the closing balance and the imported lines.`;
+  }
+  const movedAdjusted =
+    /cannot complete, the adjusted bank balance reads (-?\$[\d,]+\.\d{2}) \(statement (-?\$[\d,]+\.\d{2}), deposits in transit (-?\$[\d,]+\.\d{2}), outstanding cheques (-?\$[\d,]+\.\d{2})\) and the ledger reads (-?\$[\d,]+\.\d{2}) \((-?\$[\d,]+\.\d{2}) apart\)/i.exec(
+      message,
+    );
+  if (movedAdjusted !== null) {
+    return `Not signed off: the adjusted bank balance reads ${movedAdjusted[1]} (statement ${movedAdjusted[2]}, deposits in transit ${movedAdjusted[3]}, outstanding cheques ${movedAdjusted[4]}) and the ledger reads ${movedAdjusted[5]}, ${movedAdjusted[6]} apart, and they must agree. Refresh the figures, then match what is open.`;
+  }
   const moved = /cannot complete, the statement reads (-?\$[\d,]+\.\d{2}) and the ledger reads (-?\$[\d,]+\.\d{2}) \((-?\$[\d,]+\.\d{2}) apart\)/i.exec(message);
   if (moved !== null) {
     return `Not signed off: the statement reads ${moved[1]} and the ledger reads ${moved[2]}, ${moved[3]} apart, and they must agree. Something was posted or imported since the month was opened: refresh the figures, then match what is open.`;

@@ -3281,16 +3281,31 @@ type BankRecRuleInput struct {
 
 type BankRecMatchRuleList []BankRecMatchRule
 
+type BankRecOutstandingItem struct {
+	JournalId   string    `json:"journal_id"`
+	PostedAt    time.Time `json:"posted_at"`
+	Memo        string    `json:"memo"`
+	AmountCents int64     `json:"amount_cents"`
+}
+
 type BankRecReconciliation struct {
-	Id                    string     `json:"id"`
-	BankAccountId         string     `json:"bank_account_id"`
-	Year                  int32      `json:"year"`
-	Month                 int32      `json:"month"`
-	StatementBalanceCents int64      `json:"statement_balance_cents"`
-	GlBalanceCents        int64      `json:"gl_balance_cents"`
-	VarianceCents         int64      `json:"variance_cents"`
-	Status                string     `json:"status"`
-	CompletedAt           *time.Time `json:"completed_at,omitempty"`
+	Id                       string                    `json:"id"`
+	BankAccountId            string                    `json:"bank_account_id"`
+	Year                     int32                     `json:"year"`
+	Month                    int32                     `json:"month"`
+	OpeningBalanceCents      *int64                    `json:"opening_balance_cents,omitempty"`
+	StatementBalanceCents    int64                     `json:"statement_balance_cents"`
+	DepositsInTransitCents   *int64                    `json:"deposits_in_transit_cents,omitempty"`
+	OutstandingChequesCents  *int64                    `json:"outstanding_cheques_cents,omitempty"`
+	AdjustedBankBalanceCents *int64                    `json:"adjusted_bank_balance_cents,omitempty"`
+	GlBalanceCents           int64                     `json:"gl_balance_cents"`
+	VarianceCents            int64                     `json:"variance_cents"`
+	MatchedLinesCount        *int32                    `json:"matched_lines_count,omitempty"`
+	DepositsInTransit        *[]BankRecOutstandingItem `json:"deposits_in_transit,omitempty"`
+	OutstandingCheques       *[]BankRecOutstandingItem `json:"outstanding_cheques,omitempty"`
+	Status                   string                    `json:"status"`
+	CompletedBy              *string                   `json:"completed_by,omitempty"`
+	CompletedAt              *time.Time                `json:"completed_at,omitempty"`
 }
 
 type BankRecReconInput struct {
