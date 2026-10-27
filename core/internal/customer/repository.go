@@ -206,6 +206,11 @@ func (r *Repository) InsertCustomer(ctx context.Context, in CreateInput) (Accoun
 	if in.HomeBranchID != "" {
 		homeBranch = in.HomeBranchID
 	}
+	// terms is never nil here: the service defaulted an absent field to 30 before this ran.
+	var terms int
+	if in.PaymentTermsDays != nil {
+		terms = *in.PaymentTermsDays
+	}
 	var id string
 	err = r.pool.QueryRow(ctx, `
 		INSERT INTO customers (account_no, name, customer_type, home_branch_id,
@@ -213,7 +218,7 @@ func (r *Repository) InsertCustomer(ctx context.Context, in CreateInput) (Accoun
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id::text`,
 		in.AccountNo, in.Name, in.CustomerType, homeBranch,
-		in.PaymentTermsDays, in.CreditLimitCents, in.TaxExempt, addr).Scan(&id)
+		terms, in.CreditLimitCents, in.TaxExempt, addr).Scan(&id)
 	if err != nil {
 		// account_no is CITEXT NOT NULL UNIQUE (migration 0006). A collision is a client
 		// error (the account number is already taken), not a server fault: return the

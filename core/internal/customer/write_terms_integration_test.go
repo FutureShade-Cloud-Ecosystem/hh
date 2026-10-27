@@ -54,11 +54,30 @@ func TestIntegration_CustomerWriteTerms_NilMeansThirty(t *testing.T) {
 }
 
 func TestIntegration_CustomerWriteTerms_ZeroIsKept(t *testing.T) {
+	ctx := context.Background()
 	pool := intPool(t)
-	_ = pool // the explicit zero leg needs the pool once the *int shape lands
+	repo := NewRepository(pool)
+	svc := NewService(repo).WithWriter(repo)
 
-	// PENDING THE *int SHAPE: this leg asserts the explicit zero is kept once the field
-	// distinguishes absent from zero. The red it will guard is a regression to "0 arrives
-	// by omission"; until the field is a *int the nil leg above carries the red.
-	t.Skip("PaymentTermsDays is not yet a *int; the nil leg above carries the red")
+	zero := 0
+	acct, err := svc.CreateCustomer(ctx, CreateInput{
+		AccountNo:        "TERMS-ZERO-" + randSuffix(),
+		Name:             "Cash On Demand By Choice",
+		CustomerType:     "CONTRACTOR",
+		PaymentTermsDays: &zero,
+	})
+	if err != nil {
+		t.Fatalf("create an explicit Cash On Demand account: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1`, acct.CustomerID)
+	})
+	var stored int
+	if err := pool.QueryRow(ctx,
+		`SELECT payment_terms_days FROM customers WHERE id = $1`, acct.CustomerID).Scan(&stored); err != nil {
+		t.Fatalf("read the created account's terms: %v", err)
+	}
+	if stored != 0 {
+		t.Fatalf("an explicit 0 is Cash On Demand by choice and is kept: got %d", stored)
+	}
 }
