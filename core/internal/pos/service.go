@@ -1357,7 +1357,7 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 			return err
 		}
 		if err := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
-			CustomerID: customerID, TxnType: "PAYMENT", AmountCents: c.AmountCents,
+			CustomerID: customerID, TxnType: "PAYMENT", AmountCents: -c.AmountCents,
 			BalanceAfter: running, SourceType: "payment", SourceRefID: c.PaymentID, BranchID: in.BranchID,
 		}); err != nil {
 			return err
