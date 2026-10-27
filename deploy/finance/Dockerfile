@@ -67,6 +67,7 @@ COPY core/db/migrations /srv/core/db/migrations
 COPY deploy/finance/Caddyfile.template /srv/templates/Caddyfile.template
 COPY deploy/finance/entrypoint.sh /usr/local/bin/entrypoint
 COPY deploy/finance/write-web-config.sh /usr/local/bin/write-web-config.sh
+COPY deploy/finance/signin-allow-list.sh /usr/local/bin/signin-allow-list.sh
 RUN chmod 0755 /usr/local/bin/entrypoint
 
 # The migrate role reads db/migrations relative to the working directory
