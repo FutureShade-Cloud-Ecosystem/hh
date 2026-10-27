@@ -214,7 +214,10 @@ func (r *Repository) InsertImportAudit(ctx context.Context, tx pgx.Tx, accountID
 }
 
 // ImportLines persists parsed lines idempotently and records the IMPORTED audit, all in one tx. Returns the
-// import id + counts. The UNIQUE(bank_account_id, dedupe_hash) index makes a re-import a no-op (AC1).
+// import id + counts. The UNIQUE(bank_account_id, dedupe_hash, line_ordinal) index (migration 0442) makes a
+// re-import a no-op (AC1) while keeping byte identical lines of ONE file apart: line_ordinal is the line's
+// one based position within its file, so a re-import collides line for line (same ordinal, same hash) but
+// the second of two identical rows in one fresh file takes the next ordinal and lands (FW1-05).
 func (r *Repository) ImportLines(ctx context.Context, accountID, profileID, filename string, lines []RawStatementLine, importedBy string) (importID string, inserted int, err error) {
 	if r.pool == nil {
 		return "", 0, errNoDB
@@ -247,13 +250,13 @@ func (r *Repository) ImportLines(ctx context.Context, accountID, profileID, file
 	if err != nil {
 		return "", 0, err
 	}
-	for _, l := range lines {
+	for i, l := range lines {
 		tag, ierr := tx.Exec(ctx, `
 			INSERT INTO bank_statement_lines
-			  (bank_account_id, import_id, txn_date, description, reference, amount_cents, dedupe_hash, status)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'UNMATCHED')
-			ON CONFLICT (bank_account_id, dedupe_hash) DO NOTHING`,
-			accountID, importID, l.TxnDate, l.Description, l.Reference, l.AmountCents, l.DedupeHash)
+			  (bank_account_id, import_id, txn_date, description, reference, amount_cents, dedupe_hash, line_ordinal, status)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'UNMATCHED')
+			ON CONFLICT (bank_account_id, dedupe_hash, line_ordinal) DO NOTHING`,
+			accountID, importID, l.TxnDate, l.Description, l.Reference, l.AmountCents, l.DedupeHash, i+1)
 		if ierr != nil {
 			return "", 0, fmt.Errorf("bankrec: insert line: %w", ierr)
 		}
