@@ -46,12 +46,149 @@ func TestFW1BranchCensusRedEmptyOnWaveFinal(t *testing.T) {
 	}
 }
 
+type fw1FoundSite struct {
+	key  string
+	file string
+	fn   string
+	kind string
+	line int
+}
+
 // TestFW1NonGLJournalWriterCallSitesComplete scans the Go source tree outside
 // core/internal/gl for every PostExternal, PostExternalTx, PostJournal,
-// PostJournalTx, and PostCreditMemoJournal call and every emitter of an outbox
-// topic whose payload carries a branch, and fails on any call site not listed
-// in fw1NonGLJournalWriterCallSites or any stale entry in that table.
+// PostJournalTx, PostCreditMemoJournal, CreateJournal, ReverseJournal,
+// RunRecurring, and CloseYear selector and every emitter of an outbox topic
+// whose payload carries a branch (plus any dynamic-topic outbox emitter), and
+// fails on any site not listed in fw1NonGLJournalWriterCallSites or any stale
+// entry in that table.
 func TestFW1NonGLJournalWriterCallSitesComplete(t *testing.T) {
+	coreRoot := filepath.Clean(filepath.Join("..", ".."))
+	errs, err := fw1VerifyNonGLSites(coreRoot, fw1NonGLJournalWriterCallSites)
+	if err != nil {
+		t.Fatalf("scanning %s: %v", coreRoot, err)
+	}
+	for _, e := range errs {
+		t.Error(e)
+	}
+
+	t.Run("dodge_method_value", func(t *testing.T) {
+		tmpRoot := fw1WriteProbeFile(t, `package probe
+
+func (s *Svc) sneakMethodValue() {
+	post := s.gl.PostJournal
+	_, _ = post(nil, nil)
+}
+`)
+		probeErrs, err := fw1VerifyNonGLSites(tmpRoot, nil)
+		if err != nil {
+			t.Fatalf("scan probe: %v", err)
+		}
+		if !fw1HasErrorContaining(probeErrs, "kind=PostJournal") {
+			t.Fatalf("RED dodge probe failed: method-value selector s.gl.PostJournal was not caught by scanner (errors: %v)", probeErrs)
+		}
+	})
+
+	t.Run("dodge_direct_gl_methods", func(t *testing.T) {
+		tmpRoot := fw1WriteProbeFile(t, `package probe
+
+func (s *Svc) sneakDirectGL() {
+	_, _ = s.gl.CreateJournal(nil, nil)
+	_, _ = s.gl.ReverseJournal(nil, nil, nil)
+	_, _ = s.gl.RunRecurring(nil, nil)
+	_, _ = s.gl.CloseYear(nil, nil)
+}
+`)
+		probeErrs, err := fw1VerifyNonGLSites(tmpRoot, nil)
+		if err != nil {
+			t.Fatalf("scan probe: %v", err)
+		}
+		for _, want := range []string{"CreateJournal", "ReverseJournal", "RunRecurring", "CloseYear"} {
+			if !fw1HasErrorContaining(probeErrs, "kind="+want) {
+				t.Fatalf("RED dodge probe failed: direct GL writer %s was not caught by scanner (errors: %v)", want, probeErrs)
+			}
+		}
+	})
+
+	t.Run("dodge_const_topic", func(t *testing.T) {
+		tmpRoot := fw1WriteProbeFile(t, `package probe
+
+const zzS4Topic = "till.session.completed"
+
+func (s *Svc) sneakConstTopic() {
+	_, _ = s.tx.Exec(nil, "INSERT INTO events_outbox (topic, payload) VALUES ($1, '{}')", zzS4Topic)
+	_ = s.repo.EmitEvent(nil, nil, zzS4Topic, nil, nil)
+	_ = emitOutbox(nil, nil, zzS4Topic, nil)
+	_ = s.outbox.EnqueueTx(nil, nil, zzS4Topic, nil, nil)
+}
+`)
+		probeErrs, err := fw1VerifyNonGLSites(tmpRoot, nil)
+		if err != nil {
+			t.Fatalf("scan probe: %v", err)
+		}
+		count := 0
+		for _, e := range probeErrs {
+			if strings.Contains(e, "kind=emit:till.session.completed") {
+				count++
+			}
+		}
+		if count != 4 {
+			t.Fatalf("RED dodge probe failed: expected 4 emit:till.session.completed errors from const topic across Exec/EmitEvent/emitOutbox/EnqueueTx, got %d (errors: %v)", count, probeErrs)
+		}
+	})
+
+	t.Run("dodge_dynamic_topic", func(t *testing.T) {
+		tmpRoot := fw1WriteProbeFile(t, `package probe
+
+func (s *Svc) sneakDynamicTopic(dynTopic string) {
+	_, _ = s.tx.Exec(nil, "INSERT INTO events_outbox (topic, payload) VALUES ($1, $2)", dynTopic, nil)
+	_ = s.repo.EmitEvent(nil, nil, dynTopic, nil, nil)
+	_ = emitOutbox(nil, nil, dynTopic, nil)
+	_ = s.outbox.EnqueueTx(nil, nil, dynTopic, nil, nil)
+}
+`)
+		probeErrs, err := fw1VerifyNonGLSites(tmpRoot, nil)
+		if err != nil {
+			t.Fatalf("scan probe: %v", err)
+		}
+		for _, want := range []string{
+			"kind=dynamic-topic:INSERT INTO events_outbox",
+			"kind=dynamic-topic:EmitEvent",
+			"kind=dynamic-topic:emitOutbox",
+			"kind=dynamic-topic:EnqueueTx",
+		} {
+			if !fw1HasErrorContaining(probeErrs, want) {
+				t.Fatalf("RED dodge probe failed: expected %s from dynamic topic probe, got: %v", want, probeErrs)
+			}
+		}
+	})
+}
+
+func fw1WriteProbeFile(t *testing.T, src string) string {
+	t.Helper()
+	tmpRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpRoot, "cmd"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd: %v", err)
+	}
+	probeDir := filepath.Join(tmpRoot, "internal", "probe")
+	if err := os.MkdirAll(probeDir, 0o755); err != nil {
+		t.Fatalf("mkdir probe: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(probeDir, "probe.go"), []byte(src), 0o644); err != nil {
+		t.Fatalf("write probe.go: %v", err)
+	}
+	return tmpRoot
+}
+
+func fw1HasErrorContaining(errs []string, sub string) bool {
+	for _, e := range errs {
+		if strings.Contains(e, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string, error) {
 	writerCalls := map[string]bool{
 		"PostExternal":          true,
 		"PostExternalTx":        true,
@@ -77,17 +214,8 @@ func TestFW1NonGLJournalWriterCallSitesComplete(t *testing.T) {
 		payloadTopicSet[tp] = true
 	}
 
-	type foundSite struct {
-		key  string
-		file string
-		fn   string
-		kind string
-		line int
-	}
-
-	coreRoot := filepath.Clean(filepath.Join("..", ".."))
 	fset := token.NewFileSet()
-	var discovered []foundSite
+	var discovered []fw1FoundSite
 
 	for _, sub := range []string{"cmd", "internal"} {
 		root := filepath.Join(coreRoot, sub)
@@ -130,7 +258,7 @@ func TestFW1NonGLJournalWriterCallSitesComplete(t *testing.T) {
 						if writerCalls[name] {
 							line := fset.Position(fun.Sel.Pos()).Line
 							key := rel + "|" + fnName + "|" + name
-							discovered = append(discovered, foundSite{
+							discovered = append(discovered, fw1FoundSite{
 								key: key, file: rel, fn: fnName, kind: name, line: line,
 							})
 							return true
@@ -140,7 +268,7 @@ func TestFW1NonGLJournalWriterCallSitesComplete(t *testing.T) {
 								line := fset.Position(fun.Sel.Pos()).Line
 								kind := "emit:" + tp
 								key := rel + "|" + fnName + "|" + kind
-								discovered = append(discovered, foundSite{
+								discovered = append(discovered, fw1FoundSite{
 									key: key, file: rel, fn: fnName, kind: kind, line: line,
 								})
 							}
@@ -157,7 +285,7 @@ func TestFW1NonGLJournalWriterCallSitesComplete(t *testing.T) {
 										line := fset.Position(fun.Sel.Pos()).Line
 										kind := "emit:" + tp
 										key := rel + "|" + fnName + "|" + kind
-										discovered = append(discovered, foundSite{
+										discovered = append(discovered, fw1FoundSite{
 											key: key, file: rel, fn: fnName, kind: kind, line: line,
 										})
 									}
@@ -170,7 +298,7 @@ func TestFW1NonGLJournalWriterCallSitesComplete(t *testing.T) {
 								line := fset.Position(fun.Pos()).Line
 								kind := "emit:" + tp
 								key := rel + "|" + fnName + "|" + kind
-								discovered = append(discovered, foundSite{
+								discovered = append(discovered, fw1FoundSite{
 									key: key, file: rel, fn: fnName, kind: kind, line: line,
 								})
 							}
@@ -182,7 +310,7 @@ func TestFW1NonGLJournalWriterCallSitesComplete(t *testing.T) {
 			return nil
 		})
 		if err != nil {
-			t.Fatalf("walking %s: %v", root, err)
+			return nil, fmt.Errorf("walking %s: %w", root, err)
 		}
 	}
 
@@ -193,14 +321,15 @@ func TestFW1NonGLJournalWriterCallSitesComplete(t *testing.T) {
 		return discovered[i].line < discovered[j].line
 	})
 
-	tableByKey := make(map[string]fw1NonGLWriterSite, len(fw1NonGLJournalWriterCallSites))
-	for _, entry := range fw1NonGLJournalWriterCallSites {
+	var errs []string
+	tableByKey := make(map[string]fw1NonGLWriterSite, len(table))
+	for _, entry := range table {
 		key := entry.File + "|" + entry.Func + "|" + entry.Kind
 		if _, dup := tableByKey[key]; dup {
-			t.Errorf("duplicate entry in fw1NonGLJournalWriterCallSites: %s (%s -> %s)", entry.File, entry.Func, entry.Kind)
+			errs = append(errs, fmt.Sprintf("duplicate entry in fw1NonGLJournalWriterCallSites: %s (%s -> %s)", entry.File, entry.Func, entry.Kind))
 		}
 		if strings.TrimSpace(entry.BranchSource) == "" {
-			t.Errorf("fw1NonGLJournalWriterCallSites entry %s (%s -> %s) has empty BranchSource", entry.File, entry.Func, entry.Kind)
+			errs = append(errs, fmt.Sprintf("fw1NonGLJournalWriterCallSites entry %s (%s -> %s) has empty BranchSource", entry.File, entry.Func, entry.Kind))
 		}
 		tableByKey[key] = entry
 	}
@@ -209,17 +338,18 @@ func TestFW1NonGLJournalWriterCallSitesComplete(t *testing.T) {
 	for _, site := range discovered {
 		foundKeys[site.key] = true
 		if _, ok := tableByKey[site.key]; !ok {
-			t.Errorf("UNLISTED non-GL journal writer / payload-branch emitter at %s:%d: func=%s kind=%s (add to fw1NonGLJournalWriterCallSites with its branch source)",
-				site.file, site.line, site.fn, site.kind)
+			errs = append(errs, fmt.Sprintf("UNLISTED non-GL journal writer / payload-branch emitter at %s:%d: func=%s kind=%s (add to fw1NonGLJournalWriterCallSites with its branch source)",
+				site.file, site.line, site.fn, site.kind))
 		}
 	}
 
 	for key, entry := range tableByKey {
 		if !foundKeys[key] {
-			t.Errorf("STALE entry in fw1NonGLJournalWriterCallSites not found in source tree: file=%s func=%s kind=%s",
-				entry.File, entry.Func, entry.Kind)
+			errs = append(errs, fmt.Sprintf("STALE entry in fw1NonGLJournalWriterCallSites not found in source tree: file=%s func=%s kind=%s",
+				entry.File, entry.Func, entry.Kind))
 		}
 	}
+	return errs, nil
 }
 
 func fw1FormatFuncName(fn *ast.FuncDecl) string {
