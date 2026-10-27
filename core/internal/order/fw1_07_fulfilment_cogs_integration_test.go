@@ -201,4 +201,113 @@ func TestFW1_07_FulfilmentRelievesStockAndPostsCOGS(t *testing.T) {
 	}
 }
 
+func TestFW1_07_ReservationReleasedAsOnHandFalls(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+
+	var branchID, userID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE id = $1`, trentonBranch).Scan(&branchID); err != nil {
+		t.Fatalf("no seeded trenton branch: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("no seeded user: %v", err)
+	}
+
+	suffix := fmt.Sprintf("fw107-res-%d", time.Now().UnixNano())
+	var productID, custID, ordID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO products (sku, name, base_uom, price_uom, weight_per_unit_kg, is_active)
+		VALUES ('SKU-'||$1, 'FW1-07 Reservation Product', 'EA', 'EA', 2.0, true)
+		RETURNING id::text`, suffix).Scan(&productID); err != nil {
+		t.Fatalf("insert product: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO customers (account_no, name)
+		VALUES ('CUST-'||$1, 'FW1-07 Reservation Customer')
+		RETURNING id::text`, suffix).Scan(&custID); err != nil {
+		t.Fatalf("insert customer: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO stock_balances (product_id, branch_id, location_id, on_hand_base, qty_reserved)
+		VALUES ($1, $2, $2, 10, 0)`, productID, branchID); err != nil {
+		t.Fatalf("insert stock_balances: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO product_branch_costs (product_id, branch_id, avg_unit_cost_cents)
+		VALUES ($1, $2, 1000)`, productID, branchID); err != nil {
+		t.Fatalf("insert product_branch_costs: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
+		VALUES ($1, $2, $3, 'DRAFT', 'DELIVERY', 4000, 4000)
+		RETURNING id::text`, "#RES-"+suffix, custID, branchID).Scan(&ordID); err != nil {
+		t.Fatalf("insert order: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO order_lines (order_id, line_no, product_id, description, qty_entered, uom_entered, qty_base, unit_price_cents, price_uom, line_total_cents)
+		VALUES ($1, 1, $2, 'Reserved Line', 4, 'EA', 4, 1000, 'EA', 4000)`, ordID, productID); err != nil {
+		t.Fatalf("insert order_line: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE topic = 'order.fulfilled' AND payload->>'order_id' = $1`, ordID)
+		_, _ = pool.Exec(c, `DELETE FROM stock_moves WHERE source_ref_id = $1::uuid`, ordID)
+		_, _ = pool.Exec(c, `DELETE FROM stock_reservations WHERE source_ref_id = $1`, ordID)
+		_, _ = pool.Exec(c, `DELETE FROM order_lines WHERE order_id = $1`, ordID)
+		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, ordID)
+		_, _ = pool.Exec(c, `DELETE FROM product_branch_costs WHERE product_id = $1`, productID)
+		_, _ = pool.Exec(c, `DELETE FROM stock_balances WHERE product_id = $1`, productID)
+		_, _ = pool.Exec(c, `DELETE FROM products WHERE id = $1`, productID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
+	})
+
+	invSvc := inventory.NewService(inventory.NewRepository(pool))
+	auditSvc := audit.NewService(audit.NewRepository(pool), nil)
+	svc := NewService(NewRepository(pool)).
+		WithAudit(auditSvc).
+		WithAuditTrail(auditSvc).
+		WithStockReserver(w5aInvReserver{svc: invSvc})
+
+	staffCtx := identity.ContextWithStaff(ctx, identity.StaffContext{
+		UserID: userID, RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: "ACTIVE", Branches: map[string]bool{branchID: true},
+	})
+
+	readBalances := func() (onHand, reserved, available float64) {
+		if err := pool.QueryRow(ctx, `
+			SELECT on_hand_base::float8, qty_reserved::float8, (on_hand_base - qty_reserved)::float8
+			  FROM stock_balances WHERE product_id = $1 AND branch_id = $2`, productID, branchID,
+		).Scan(&onHand, &reserved, &available); err != nil {
+			t.Fatalf("read stock_balances: %v", err)
+		}
+		return
+	}
+
+	// Confirm the order: 10 on hand, 4 reserved -> 6 available.
+	if _, err := svc.TransitionManual(staffCtx, ordID, ActionConfirm, ""); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	oh, res, availBeforeDelivery := readBalances()
+	if oh != 10 || res != 4 || availBeforeDelivery != 6 {
+		t.Fatalf("after confirm: on_hand=%.2f reserved=%.2f available=%.2f, want 10/4/6", oh, res, availBeforeDelivery)
+	}
+
+	// Invoice finalizes before delivery (the beat): on_hand has NOT fallen yet, so reservation must stay 4 and available must stay 6.
+	if err := svc.AdvanceFromEvent(ctx, ordID, "INVOICED", "inv-beat"); err != nil {
+		t.Fatalf("advance to INVOICED: %v", err)
+	}
+	ohAfterInv, resAfterInv, availAfterInv := readBalances()
+
+	// Now deliver the order: on_hand falls from 10 to 6 as reservation releases from 4 to 0 -> available stays 6.
+	if err := svc.AdvanceFromDelivery(ctx, ordID, "dispatch:pod-res"); err != nil && !errors.Is(err, ErrIllegalTransition) {
+		t.Fatalf("AdvanceFromDelivery: %v", err)
+	}
+	ohAfterDeliv, resAfterDeliv, availAfterDeliv := readBalances()
+
+	if resAfterInv != 4 || availAfterInv != 6 || ohAfterDeliv != 6 || resAfterDeliv != 0 || availAfterDeliv != availBeforeDelivery {
+		t.Fatalf("reservation must release only as on_hand falls: after INVOICED (before delivery) on_hand=%.2f reserved=%.2f available=%.2f (want 10/4/6); after delivery on_hand=%.2f reserved=%.2f available=%.2f (want 6/0/6)",
+			ohAfterInv, resAfterInv, availAfterInv, ohAfterDeliv, resAfterDeliv, availAfterDeliv)
+	}
+}
+
 func assertOrderFulfilmentHelper(_ *pgxpool.Pool) {}
