@@ -99,6 +99,12 @@ type NoSuchCreditError struct{ CreditID string }
 
 func (e NoSuchCreditError) Error() string { return "billing: no such credit: " + e.CreditID }
 
+// NoSuchInvoiceError names an invoice the request may not apply against: missing, another
+// account's, or outside the caller's branch reach. The route answers it 404.
+type NoSuchInvoiceError struct{ InvoiceID string }
+
+func (e NoSuchInvoiceError) Error() string { return "billing: no such invoice: " + e.InvoiceID }
+
 // CreditApplicationConflictError is the spent-key refusal, 409 like the reapply's.
 type CreditApplicationConflictError struct{ Msg string }
 
