@@ -853,7 +853,6 @@ func (r *Repository) ensureFiscalYearTx(ctx context.Context, tx pgx.Tx, year int
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO fiscal_periods (year, month)
 		 SELECT $1, m FROM generate_series(1,12) AS m
-		 WHERE NOT EXISTS (SELECT 1 FROM fiscal_periods WHERE year = $1)
 		 ON CONFLICT (year, month) DO NOTHING`, year); err != nil {
 		return fmt.Errorf("gl: create fiscal year %d: %w", year, err)
 	}
@@ -926,22 +925,21 @@ func (r *Repository) houseYearTx(ctx context.Context, tx pgx.Tx, now time.Time) 
 	return y, nil
 }
 
-// ensureThroughTx creates the years after the latest that exist, through target, filling any gap
-// (a partial year's missing months included), and answers whether it wrote anything. A target the
-// latest already reaches is a no op.
-func (r *Repository) ensureThroughTx(ctx context.Context, tx pgx.Tx, target int) (bool, error) {
-	max, err := r.maxSeededYearTx(ctx, tx)
-	if err != nil {
-		return false, err
+// ensureThroughTx creates the years from the latest seeded year at or before house through target,
+// filling any gap (a partial year's missing months included, and any gap below a future period row).
+func (r *Repository) ensureThroughTx(ctx context.Context, tx pgx.Tx, house, target int) error {
+	var start int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(year), $1) FROM fiscal_periods WHERE year <= $1`, house,
+	).Scan(&start); err != nil {
+		return fmt.Errorf("gl: read fiscal year through %d: %w", house, err)
 	}
-	wrote := false
-	for y := max + 1; y <= target; y++ {
+	for y := start; y <= target; y++ {
 		if err := r.ensureFiscalYearTx(ctx, tx, y); err != nil {
-			return false, err
+			return err
 		}
-		wrote = true
 	}
-	return wrote, nil
+	return nil
 }
 
 // EnsureNextFiscalYear makes sure the year after the CURRENT HOUSE YEAR exists, idempotently: a
@@ -968,7 +966,7 @@ func (r *Repository) EnsureNextFiscalYear(ctx context.Context, now time.Time) (i
 		return 0, err
 	}
 	target := house + 1
-	if _, err := r.ensureThroughTx(ctx, tx, target); err != nil {
+	if err := r.ensureThroughTx(ctx, tx, house, target); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1001,7 +999,7 @@ func (r *Repository) OpenNextFiscalYear(ctx context.Context, now time.Time, reco
 		return 0, err
 	}
 	target := house + 2
-	if _, err := r.ensureThroughTx(ctx, tx, target); err != nil {
+	if err := r.ensureThroughTx(ctx, tx, house, target); err != nil {
 		return 0, err
 	}
 	if record != nil {
