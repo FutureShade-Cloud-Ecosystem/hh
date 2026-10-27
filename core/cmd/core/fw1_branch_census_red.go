@@ -43,4 +43,14 @@ var fw1BranchCensusWriters = []string{
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
 // item ("FW1-05" for bankrec paths, "FW1-08b" for the others).
-var fw1BranchCensusRed = map[string]string{}
+var fw1BranchCensusRed = map[string]string{
+	"bankrec_manual_match_payment":      "FW1-05",
+	"bankrec_manual_match_lodgement":    "FW1-05",
+	"bankrec_unmatch_reversal":          "FW1-05",
+	"migration_0056_0221_setup_entries": "FW1-08b",
+	"manual_journal_without_branch":     "FW1-08b",
+	"reverse_journal_without_branch":    "FW1-08b",
+	"recurring_journal_run":             "FW1-08b",
+	"outbox_tax_relief_assessed":        "FW1-08b",
+	"year_end_close":                    "FW1-08b",
+}

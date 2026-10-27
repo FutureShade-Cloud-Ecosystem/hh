@@ -21,6 +21,11 @@ func TestFW1BranchCensusRedMapNamesRealWriters(t *testing.T) {
 			t.Errorf("fw1BranchCensusRed[%q] has owner %q, want FW1-05 or FW1-08b", writer, owner)
 		}
 	}
+	// Verify every green writer is absent from fw1BranchCensusRed so adding a
+	// green writer to fw1BranchCensusRed is caught by TestFW1JournalLinesCarryBranch.
+	if fw1BranchCensusRed["manual_journal_with_branch"] != "" {
+		t.Errorf("manual_journal_with_branch already stamps branch_id and must not be in fw1BranchCensusRed")
+	}
 }
 
 func TestFW1BranchCensusRedEmptyOnWaveFinal(t *testing.T) {
