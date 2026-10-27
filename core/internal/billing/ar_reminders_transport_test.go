@@ -1,0 +1,38 @@
+package billing
+
+// ar_reminders_transport_test.go, FW1-06b: Remind never says sent when nothing was sent.
+//
+// AR-08: with no sender bound on the register (production, where no email transport is wired), the
+// send still recorded an EMAIL REMINDER delivery per invoice and counted it in Sent, and the desk
+// told the operator a reminder went out that never left the building. The legs here hold at the
+// service, the layer the desk's words read.
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestSendReminder_NeverSaysSentWhenNoTransportIsWired(t *testing.T) {
+	store := &fakeRegisterStore{
+		policy: RegisterPolicy{AccountPositionVisibility: VisibilityManagerUp, DueSoonDays: 7,
+			ReminderTones: []string{ToneFriendly}},
+		header: InvoiceHeaderFacts{ID: "i1", InvoiceNo: "INV-1", CustomerID: "c1", BalanceCents: 5000},
+	}
+	svc := newFakeService(t, store, time.Now())
+	res, err := svc.SendReminder(context.Background(), ReminderInput{
+		InvoiceIDs: []string{"i1"}, Tone: ToneFriendly, IdempotencyKey: "k"})
+	if err != nil {
+		t.Fatalf("a missing transport is a skip with a reason, not an error: %v", err)
+	}
+	if res.Sent != 0 {
+		t.Fatalf("no transport is wired and the send says %d sent: the desk would tell the operator a reminder went that never left the building", res.Sent)
+	}
+	if !strings.Contains(res.Skipped["INV-1"], "no email transport") {
+		t.Fatalf("the skipped reason must name the missing transport, got %q", res.Skipped["INV-1"])
+	}
+	if len(store.sends) != 0 {
+		t.Fatal("nothing may be recorded as a delivery when nothing was sent")
+	}
+}
