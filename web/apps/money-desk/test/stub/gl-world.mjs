@@ -348,6 +348,14 @@ export function createGlWorld() {
     return b !== "" && !UUID.test(b) ? say(400, "invalid branch_id") : null;
   };
 
+  /** The branch reach fence (FW1-10), the core's ListJournals rule: a branch-scoped caller (the
+   *  Sales manager, Point Loma) must name a branch it holds, and an unnamed branch is the whole
+   *  company's books, a dealer wide caller's read. */
+  const reach = (caller, url) => {
+    if (caller.global) return null;
+    return (url.searchParams.get("branch_id") ?? "") === IDS.pointLoma ? null : say(403, "gl: caller cannot access this branch");
+  };
+
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 
@@ -730,6 +738,8 @@ export function createGlWorld() {
     if (m === "GET" && path === "/api/v1/gl/tie-out") {
       const refused = gate(caller, "read");
       if (refused !== null) return refused;
+      const walled = reach(caller, url);
+      if (walled !== null) return walled;
       const bad = badBranch(url);
       if (bad !== null) return bad;
       const branch = url.searchParams.get("branch_id") ?? "";
@@ -911,6 +921,8 @@ export function createGlWorld() {
       return { status: 200, body: { status: "ok" } };
     }
     if (req.method === "GET" && path === "/api/v1/gl/journals") {
+      const walled = reach(caller, url);
+      if (walled !== null) return walled;
       const wanted = url.searchParams.get("status");
       // The late posted filter, the way the core reads it: true is the Controller's list, false is the
       // rest, and anything else is refused in the core's words.
@@ -919,18 +931,27 @@ export function createGlWorld() {
         return say(400, "late_posted must be true or false");
       }
       const late = lateParam === null || lateParam === "" ? null : lateParam === "true";
+      const at = url.searchParams.get("branch_id") ?? "";
       const rows = [...world.journals]
         .filter((j) => wanted === null || wanted === "" || j.derived_status === wanted)
         .filter((j) => late === null || latePosted(j) === late)
+        .filter((j) => at === "" || j.branch_id === at)
         .sort((a, b) => b.entry_no - a.entry_no);
       return { status: 200, body: { items: rows.map(read), next_cursor: null, limit: 100 } };
     }
     const one = path.match(/^\/api\/v1\/gl\/journals\/([^/]+)$/);
     if (req.method === "GET" && one) {
       const j = world.journals.find((x) => x.id === one[1]);
+      // Out of reach answers as missing (FW1-10): an id is an existence oracle, and the list already
+      // hides these rows.
+      if (j !== undefined && !caller.global && j.branch_id !== IDS.pointLoma) {
+        return { status: 404, body: { error: "not found" } };
+      }
       return j === undefined ? { status: 404, body: { error: "not found" } } : { status: 200, body: read(j) };
     }
     if (req.method === "GET" && path === "/api/v1/gl/trial-balance") {
+      const walled = reach(caller, url);
+      if (walled !== null) return walled;
       const bad = badBranch(url);
       if (bad !== null) return bad;
       const year = Number(url.searchParams.get("year") ?? FY) || FY;

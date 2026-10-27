@@ -237,7 +237,9 @@ func TestIntegration_AC6_TieOutAge(t *testing.T) {
 	// Clean any prior AR/1100 tie-out state so the first-seen timestamp is deterministic.
 	_, _ = pool.Exec(ctx, `DELETE FROM gl_tieout_state WHERE subledger='AR' AND account_code='1100' AND branch_id IS NULL`)
 
-	mgr := identity.StaffContext{UserID: user, RoleCode: "PAYABLES_RECEIVABLES", Tier: identity.TierManager}
+	// FW1-10: the tie-out read is fenced to the caller's branch reach, and this leg asks the
+	// consolidated figure, so the caller is dealer wide.
+	mgr := identity.StaffContext{UserID: user, RoleCode: "PAYABLES_RECEIVABLES", Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 	// The tie-out GL side is now INCEPTION-TO-DATE (all years), so we anchor the fake subledger to the real
 	// as-of GL 1100 balance and perturb it, rather than assuming a far year is empty.
 	asOf := time.Date(2095, 6, 15, 0, 0, 0, 0, time.UTC)
@@ -294,7 +296,9 @@ func TestIntegration_AC6b_TieOutYearBoundary(t *testing.T) {
 	ensurePeriods(t, pool, 2095)
 	_, _ = pool.Exec(ctx, `DELETE FROM gl_tieout_state WHERE subledger='AR' AND account_code='1100' AND branch_id IS NULL`)
 
-	mgr := identity.StaffContext{UserID: user, RoleCode: "PAYABLES_RECEIVABLES", Tier: identity.TierManager}
+	// FW1-10: the tie-out read is fenced to the caller's branch reach, and this leg asks the
+	// consolidated figure, so the caller is dealer wide.
+	mgr := identity.StaffContext{UserID: user, RoleCode: "PAYABLES_RECEIVABLES", Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 	repo := NewRepository(pool)
 	asOf := time.Date(2095, 6, 15, 0, 0, 0, 0, time.UTC)
 
@@ -496,7 +500,9 @@ func TestIntegration_A01_CreateJournalTrialBalanceReconciles(t *testing.T) {
 	user := aUser(t, pool)
 	ensurePeriods(t, pool, 2094)
 	at := time.Date(2094, 6, 15, 12, 0, 0, 0, time.UTC)
-	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}, at)
+	// FW1-10: the trial balance read is fenced to the caller's branch reach, and this leg asks the
+	// consolidated figure, so the caller is dealer wide.
+	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at)
 
 	// $150 (15000c) is well below the seeded $5,000 (500000c) threshold → posts directly, no maker-checker park.
 	j, err := svc.CreateJournal(ctx, CreateJournalInput{

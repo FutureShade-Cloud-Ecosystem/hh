@@ -22,6 +22,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
@@ -29,7 +30,12 @@ import (
 
 func TestApplyReceived_AnEventThatNeverBookedShowsInTheARTieOut(t *testing.T) {
 	pool := journalPool(t)
-	ctx := context.Background()
+	// FW1-10: the tie out is fenced to the caller's branch reach, and this leg reads the consolidated
+	// figure, so the caller is dealer wide.
+	ctx := identity.ContextWithStaff(context.Background(), identity.StaffContext{
+		UserID: "u-fw1-10-seen", RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive,
+	})
 	tag := "SEEN-" + randomHex()
 	var customerID string
 	if err := pool.QueryRow(ctx,
