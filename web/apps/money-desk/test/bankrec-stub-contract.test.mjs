@@ -424,10 +424,14 @@ test("a match explains its line: a group, a lodgement of another amount and a jo
   assert.equal((await lineByRef("WIRE FROM CONTRACTOR")).status, "MATCHED", "a refused undo writes nothing");
 });
 
-test("the walls: any staff reads, a manager imports, matches, undoes and opens a month, only the controller approves a rule and signs off", async () => {
+test("the walls: Money Desk work or above reads, counter and branch staff are refused reads, a manager imports, matches, undoes and opens a month, only the controller approves a rule and signs off", async () => {
   await reset();
-  assert.equal((await call(SALES, "GET", "/api/v1/bankrec/accounts")).status, 200);
-  assert.equal((await call(SALES, "GET", `/api/v1/bankrec/lines?bank_account_id=${IDS.operating}`)).status, 200);
+  refused(await call(SALES, "GET", "/api/v1/bankrec/accounts"), 403, "Forbidden");
+  refused(await call(SALES, "GET", `/api/v1/bankrec/lines?bank_account_id=${IDS.operating}`), 403, "Forbidden");
+  refused(await call(IDS.manager, "GET", "/api/v1/bankrec/accounts"), 403, "Forbidden");
+  refused(await call(IDS.manager, "GET", `/api/v1/bankrec/lines?bank_account_id=${IDS.operating}`), 403, "Forbidden");
+  assert.equal((await call(IDS.payrec, "GET", "/api/v1/bankrec/accounts")).status, 200);
+  assert.equal((await call(IDS.payrec, "GET", `/api/v1/bankrec/lines?bank_account_id=${IDS.operating}`)).status, 200);
   refused(await call(SALES, "POST", "/api/v1/bankrec/imports", { bank_account_id: IDS.operating, content: "x" }), 403, "Forbidden");
   refused(await call(SALES, "POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating }), 403, "Forbidden");
   refused(await call(SALES, "POST", "/api/v1/bankrec/unmatch", { match_id: "x" }), 403, "Forbidden");

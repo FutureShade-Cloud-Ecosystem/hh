@@ -12,11 +12,17 @@ package bankrec
 
 import (
 	"context"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	identityPkg "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -304,3 +310,78 @@ func TestIntegration_FW1_04_SignOffBeforeMonthEndIsRefused(t *testing.T) {
 		t.Errorf("Leg 3: refusal %q does not mention month end", err.Error())
 	}
 }
+
+// TestIntegration_FW1_04_BankReadsRefusedForCounterAndBranchStaff: FROM-PRINCIPAL 111
+// proves that counter staff (inside_sales, tier 3 branch) and branch staff
+// (branch_manager / sales_manager, tier 2 branch) are refused (403 Forbidden) on all
+// five bankrec GET routes (accounts, lines, matches, rules, reconciliations), while
+// Money Desk work or above (payables_receivables, general_manager, financial_controller)
+// are admitted.
+func TestIntegration_FW1_04_BankReadsRefusedForCounterAndBranchStaff(t *testing.T) {
+	pool := intPool(t)
+	cleanTables(t, pool)
+	acct := rbcAccountID(t, pool)
+	branch := aBranch(t, pool)
+	lineID := fw104InsertLineAt(t, pool, acct, time.Date(2023, 5, 10, 0, 0, 0, 0, time.UTC), "PAYROLL WIRE", "PR-111", -500000)
+
+	svc := NewService(NewRepository(pool))
+	h := NewHandler(svc, slog.Default())
+	sg := testkit.NewStaffGuards(t)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, sg.Guards)
+	bearer := sg.Bearer(t)
+
+	routes := []string{
+		"/api/v1/bankrec/accounts",
+		"/api/v1/bankrec/lines?bank_account_id=" + acct,
+		"/api/v1/bankrec/matches?statement_line_id=" + lineID,
+		"/api/v1/bankrec/rules",
+		"/api/v1/bankrec/reconciliations?bank_account_id=" + acct,
+	}
+
+	probe := func(path string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set(authz.HeaderXOrg, testkit.OrgNorthSlug)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	refusedRoles := []struct {
+		name string
+		auth identityPkg.StaffAuthority
+	}{
+		{"counter inside_sales", identityPkg.StaffAuthority{RoleID: "inside_sales", Tier: identityPkg.TierFrontline, Scope: identityPkg.ScopeBranch, Branches: []string{branch}}},
+		{"outside_sales", identityPkg.StaffAuthority{RoleID: "outside_sales", Tier: identityPkg.TierFrontline, Scope: identityPkg.ScopeBranch, Branches: []string{branch}}},
+		{"branch_manager", identityPkg.StaffAuthority{RoleID: "branch_manager", Tier: identityPkg.TierManager, Scope: identityPkg.ScopeBranch, Branches: []string{branch}}},
+		{"sales_manager", identityPkg.StaffAuthority{RoleID: "sales_manager", Tier: identityPkg.TierManager, Scope: identityPkg.ScopeBranch, Branches: []string{branch}}},
+		{"hr", identityPkg.StaffAuthority{RoleID: "hr", Tier: identityPkg.TierLeadership, Scope: identityPkg.ScopeGlobal}},
+	}
+	for _, role := range refusedRoles {
+		sg.SetAuthority(role.auth)
+		for _, path := range routes {
+			if code := probe(path); code != http.StatusForbidden {
+				t.Errorf("%s GET %s status = %d, want 403 Forbidden", role.name, path, code)
+			}
+		}
+	}
+
+	admittedRoles := []struct {
+		name string
+		auth identityPkg.StaffAuthority
+	}{
+		{"payables_receivables (Money Desk work)", identityPkg.StaffAuthority{RoleID: "payables_receivables", Tier: identityPkg.TierManager, Scope: identityPkg.ScopeGlobal}},
+		{"general_manager (Money Desk manage)", identityPkg.StaffAuthority{RoleID: "general_manager", Tier: identityPkg.TierLeadership, Scope: identityPkg.ScopeGlobal}},
+		{"financial_controller (Money Desk admin)", identityPkg.StaffAuthority{RoleID: "financial_controller", Tier: identityPkg.TierLeadership, Scope: identityPkg.ScopeGlobal}},
+	}
+	for _, role := range admittedRoles {
+		sg.SetAuthority(role.auth)
+		for _, path := range routes {
+			if code := probe(path); code != http.StatusOK {
+				t.Errorf("%s GET %s status = %d, want 200 OK", role.name, path, code)
+			}
+		}
+	}
+}
+
