@@ -32,7 +32,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditTargetWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, relativeDay, rowMarks, type Mark, pastDueLine } from "./ar-logic.js";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditTargetWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, offeredChips, relativeDay, rowMarks, type Mark, type RegisterChip, pastDueLine } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
@@ -270,13 +270,15 @@ function tiles(model: DeskModel): TemplateResult {
 // C8 register filter chips. "All" is every open document (excludes PAID), "Past due" is the overdue
 // subset, "Current" is the not-yet-past-due subset, "On hold" is the credit-hold subset. The chip
 // order is the order the screen reads them: All, then the three status slices an operator most
-// often wants to see one at a time.
-const FILTERS: readonly { id: RegisterFilter; word: string }[] = [
-  { id: "all", word: "All" },
-  { id: "past_due", word: "Past due" },
-  { id: "current", word: "Current" },
-  { id: "on_hold", word: "On hold" },
-];
+// often wants to see one at a time. WHICH chips are offered follows the rows the core sent
+// (offeredChips): a caller the account position policy refuses is offered the stored set, never
+// Current.
+const CHIP_WORDS: Record<RegisterChip, string> = {
+  all: "All",
+  past_due: "Past due",
+  current: "Current",
+  on_hold: "On hold",
+};
 
 // isOpenRow is the shared "is this row one we still have to collect on" predicate. Both "all" and
 // "past_due" rely on it: paid invoices never appear, regardless of how late they once were, and
@@ -375,7 +377,7 @@ function register(model: DeskModel): TemplateResult {
       <div class="panel-head">
         <h3>AR register</h3>
         <div class="tools">
-          ${segmented("Register filter", FILTERS, model.filter, "filter")}
+          ${segmented("Register filter", offeredChips(model.rows).map((id) => ({ id, word: CHIP_WORDS[id] })), model.filter, "filter")}
           <button type="button" class="btn btn-secondary small-btn" data-action="download-csv">Download CSV</button>
         </div>
       </div>
