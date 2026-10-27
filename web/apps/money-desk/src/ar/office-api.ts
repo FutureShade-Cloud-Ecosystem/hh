@@ -8,6 +8,8 @@ import {
   type BillingAutoHoldSetting,
   type BillingAccountPaymentPolicy,
   type BillingAccountPaymentPolicyInput,
+  type BillingCreditApplication,
+  type BillingCreditApplicationReversed,
   type BillingDispatchGateResult,
   type BillingDisputeView,
   type BillingLandingPolicy,
@@ -148,6 +150,40 @@ export class OfficeApi {
       reason: input.reason,
       reference: input.reference,
       idempotency_key: input.key,
+    });
+  }
+
+  /** Applies an open credit memo or unapplied account credit to an open invoice of the same customer (FW1-12b). */
+  applyCredit(input: {
+    customerId: string;
+    creditKind: "MEMO" | "ACCOUNT";
+    creditId: string;
+    invoiceId: string;
+    amountCents: number;
+    reason: string;
+    key: string;
+  }): Promise<Result<BillingCreditApplication>> {
+    return staffBilling.billingApplyCredit(this.#client, {
+      customer_id: input.customerId,
+      credit_kind: input.creditKind,
+      credit_id: input.creditId,
+      invoice_id: input.invoiceId,
+      amount_cents: input.amountCents,
+      reason: input.reason,
+      idempotency_key: input.key,
+    });
+  }
+
+  /** Reverses a credit application on an invoice with a reason (FW1-12b). */
+  reverseCreditApplication(input: {
+    invoiceId: string;
+    applicationId: string;
+    reason: string;
+  }): Promise<Result<BillingCreditApplicationReversed>> {
+    return staffBilling.billingReverseCreditApplication(this.#client, {
+      invoice_id: input.invoiceId,
+      application_id: input.applicationId,
+      reason: input.reason,
     });
   }
 
