@@ -1344,12 +1344,47 @@ func (w *fw1Walk) assertWalkMonthAndNextYearPeriodsOpen(t fw1TB) {
 	if walkPeriod == 0 {
 		t.Errorf("the walk month %04d-%02d has no OPEN fiscal period", w.year, w.month)
 	}
+	// What the box does: the worker runs the roll forward at boot (cmd/core/worker.go,
+	// glSvc.EnsureNextFiscalYear), so the year after the current house year exists, all twelve
+	// months OPEN, ahead of need and without anyone acting. The walk runs it here before it counts.
+	if _, err := w.money.glSvc.EnsureNextFiscalYear(context.Background()); err != nil {
+		t.Fatalf("the boot roll forward: %v", err)
+	}
 	var nextYear int
 	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM fiscal_periods WHERE year = $1 AND status = 'OPEN'`, w.year+1).Scan(&nextYear); err != nil {
 		t.Fatalf("the next year period read: %v", err)
 	}
 	if nextYear < 12 {
 		t.Errorf("the fiscal calendar opened %d OPEN periods for next year %d ahead of need (want 12): posting into %d is refused for want of a period", nextYear, w.year+1, w.year+1)
+	}
+	// The promise kept, asserted by a posting and not by a row count alone: a journal dated in the
+	// next year is accepted and lands in an OPEN period of that year. Passing here with PR 612's
+	// maxYear+1 arm in insertJournalIn neutered is accepted, because the boot roll forward above
+	// makes the year and PR 612's own gl leg
+	// (TestIntegration_FW1_01_YearRollForward_PostsOnTheFirstDayAfterTheSeededYear) guards the arm.
+	jid, err := w.money.glSvc.PostExternal(context.Background(), gl.ExternalJournal{
+		Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:next-year-posting:%d", w.year+1),
+		Memo: "the next year roll forward, a posting dated in the next year", BranchID: fw1TRT,
+		DocumentDate: time.Date(w.year+1, time.January, 15, 12, 0, 0, 0, time.UTC),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 100, Memo: "a posting dated in the next year"},
+			{AccountCode: "3000", CreditCents: 100, Memo: "a posting dated in the next year"},
+		},
+	})
+	if err != nil {
+		t.Errorf("a posting dated in %d was refused: %v", w.year+1, err)
+		return
+	}
+	var postedYear, postedMonth int
+	var postedStatus string
+	if err := w.pool.QueryRow(context.Background(), `
+		SELECT fp.year, fp.month, fp.status
+		  FROM gl_journals j JOIN fiscal_periods fp ON fp.id = j.period_id
+		 WHERE j.id = $1`, jid).Scan(&postedYear, &postedMonth, &postedStatus); err != nil {
+		t.Fatalf("the next year posting read: %v", err)
+	}
+	if postedYear != w.year+1 || postedStatus != "OPEN" {
+		t.Errorf("the posting dated in %d landed in %04d-%02d with status %s (want an OPEN period of %d)", w.year+1, postedYear, postedMonth, postedStatus, w.year+1)
 	}
 }
 

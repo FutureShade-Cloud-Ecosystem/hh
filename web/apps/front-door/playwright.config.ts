@@ -4,24 +4,22 @@
 // any test. The acceptance suite has its own config (test/acceptance.config.ts).
 import { defineConfig } from "@playwright/test";
 import { fileURLToPath } from "node:url";
+import { freePorts } from "./test/free-ports.js";
 
 const appDir = fileURLToPath(new URL(".", import.meta.url));
 
-// Ports: hashed per worktree, stable across every process of one run, the same
-// scheme the Counter Till's harness uses. The environment overrides stay for a
-// hand run against chosen ports.
-function portSlot(text: string): number {
-  let hash = 2166136261;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0) % 2048;
-}
-
-const slot = portSlot(appDir) * 2;
-const appPort = process.env.FD_APP_PORT ?? String(24000 + slot);
-const stubPort = process.env.FD_STUB_PORT ?? String(24000 + slot + 1);
+// Ports: two free ones, taken from the system at config load (RULES-S4
+// addendum 7: a test server never pins a port, because a pinned one collides
+// by chance with whatever the system hands out at that moment). Playwright
+// evaluates this config twice, once in the process that starts the web servers
+// and once in the worker that runs the tests, so the environment carries the
+// pair from the first evaluation to the second. The overrides stay for a hand
+// run against chosen ports.
+const [freeApp, freeStub] = await freePorts(2);
+process.env.FD_APP_PORT ??= freeApp;
+process.env.FD_STUB_PORT ??= freeStub;
+const appPort = String(process.env.FD_APP_PORT);
+const stubPort = String(process.env.FD_STUB_PORT);
 
 export default defineConfig({
   testDir: "./test",

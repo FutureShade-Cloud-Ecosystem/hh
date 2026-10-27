@@ -15,6 +15,5 @@ var fw1WalkRed = map[string]string{
 	"AR_aging_ties_to_GL_1100":                                  "FW1-00",
 	"bank_month_signs_off_at_zero_with_outstanding_items":       "FW1-04",
 	"month_close_passes_its_pre_flight_and_seals_the_month":     "FW1-00",
-	"walk_month_and_next_year_periods_open":                     "FW1-01",
 	"year_end_close_opens_next_year_and_keeps_income_statement": "FW1-09",
 }

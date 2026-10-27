@@ -21,6 +21,12 @@ export default defineConfig({
     port: Number(appPort),
     strictPort: true,
     host: "127.0.0.1",
+    // The set password page's link carries a one time secret in its query. No
+    // request the browser makes from that page may carry a Referer, or the
+    // secret reaches another server's log. The dev server's own header stands
+    // in for the deployed copy's Caddyfile line: the document's meta tag is
+    // the page's own layer, and the header is the layer the server controls.
+    headers: { "Referrer-Policy": "no-referrer" },
     proxy: {
       "/api": {
         target: `http://127.0.0.1:${stubPort}`,

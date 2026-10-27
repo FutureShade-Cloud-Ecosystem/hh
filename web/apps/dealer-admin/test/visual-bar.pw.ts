@@ -7,6 +7,9 @@ test("the pricing pills and tabs reach the 44 px touch bar at 390", async ({ pag
   await page.goto("/");
   await page.locator("[data-flow]").first().click();
   await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  // UX-104: on a phone the list waits folded behind the Settings control,
+  // so the journey opens the control first and then chooses Pricing.
+  await page.locator('[data-action="toggle-surface-list"]').click();
   await page.locator('.surface-link[data-surface="pricing"]').click();
   await expect(page.locator('.pr-board-pill[data-tab="payment-terms"]')).toBeVisible();
   for (const sel of [".pr-board-pill", ".pr-tab"]) {
