@@ -328,17 +328,7 @@ func w25Move(t *testing.T, leg *w25Leg, moveAt time.Time) {
 	// (allowed for fixture hygiene) and an INSERT of the same rows, occurred_at
 	// apart. The journal rides the document date, so both sides of the tie cut
 	// the movement at the same instant.
-	mustExec(t, ctx, leg.pool, `
-		WITH gone AS (
-			DELETE FROM stock_moves WHERE source_ref_id = $1::uuid RETURNING *
-		)
-		INSERT INTO stock_moves (id, product_id, from_location_id, to_location_id, qty_base, qty_entered,
-			uom_entered, move_type, unit_cost_cents, value_cents, weight_kg_total, source_type, source_ref_id,
-			reason, actor_id, branch_id, metadata, occurred_at, created_at, bin_code)
-		SELECT id, product_id, from_location_id, to_location_id, qty_base, qty_entered,
-			uom_entered, move_type, unit_cost_cents, value_cents, weight_kg_total, source_type, source_ref_id,
-			reason, actor_id, branch_id, metadata, $2, created_at, bin_code
-		FROM gone`, orderID, moveAt)
+	w25RedateTheMovement(t, leg, orderID, moveAt)
 	// The COGS journal the order.fulfilled consumer posts, through the GL's own
 	// provider path, under the consumer's own idempotency key: the drain below
 	// then acks the event as the duplicate it is.
@@ -351,6 +341,28 @@ func w25Move(t *testing.T, leg *w25Leg, moveAt time.Time) {
 		},
 	})
 	w25Drain(t, leg)
+}
+
+// w25RedateTheMovement gives the movement's own ledger rows the movement's own instant.
+//
+// The ledger is append-only (0037: a posted move is never mutated) and the wall clock cannot
+// reach a leg's year, so a leg re-inserts the rows its own movement wrote with the instant it
+// names: a DELETE (allowed for fixture hygiene) and an INSERT of the same rows, occurred_at
+// apart. Every leg that needs a movement in its own fiscal frame uses this one helper, so the
+// fixture's shape is written down once.
+func w25RedateTheMovement(t *testing.T, leg *w25Leg, sourceRefID string, at time.Time) {
+	t.Helper()
+	mustExec(t, context.Background(), leg.pool, `
+		WITH gone AS (
+			DELETE FROM stock_moves WHERE source_ref_id = $1::uuid RETURNING *
+		)
+		INSERT INTO stock_moves (id, product_id, from_location_id, to_location_id, qty_base, qty_entered,
+			uom_entered, move_type, unit_cost_cents, value_cents, weight_kg_total, source_type, source_ref_id,
+			reason, actor_id, branch_id, metadata, occurred_at, created_at, bin_code)
+		SELECT id, product_id, from_location_id, to_location_id, qty_base, qty_entered,
+			uom_entered, move_type, unit_cost_cents, value_cents, weight_kg_total, source_type, source_ref_id,
+			reason, actor_id, branch_id, metadata, $2, created_at, bin_code
+		FROM gone`, sourceRefID, at)
 }
 
 // w25Close closes one month through the served route, as the Financial

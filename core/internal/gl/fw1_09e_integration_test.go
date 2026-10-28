@@ -242,6 +242,17 @@ func fw109eMove(t *testing.T, pool *pgxpool.Pool, w *fw109eWorld, moveAt time.Ti
 		FROM gone`, orderID, moveAt); err != nil {
 		t.Fatalf("dating the movement's ledger rows: %v", err)
 	}
+	// The event carries the fulfilment's own instant (W2-5 fix r6: one instant per
+	// fulfilment, on the move and on the event), and the leg's fiction needs that instant
+	// on the event too: the wall clock cannot reach the leg's year, so the leg moves the
+	// instant the fulfilment wrote, the same one it gave the ledger rows above. The GL's
+	// consumer then posts the COGS at it, and both sides cut the movement at one instant.
+	if _, err := pool.Exec(ctx, `
+		UPDATE events_outbox
+		   SET payload = jsonb_set(payload, '{occurred_at}', to_jsonb($2::timestamptz), true)
+		 WHERE topic = 'order.fulfilled' AND payload->>'order_id' = $1 AND payload ? 'occurred_at'`, orderID, moveAt); err != nil {
+		t.Fatalf("dating the movement's event: %v", err)
+	}
 	// The GL's own posting consumer takes the event the movement emitted.
 	var eventID string
 	var payload []byte
