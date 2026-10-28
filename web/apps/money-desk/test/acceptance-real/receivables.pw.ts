@@ -7,7 +7,7 @@
 //
 // THE ASSUMPTIONS (the harness interface, W2-4-HARNESS-INTERFACE-r1):
 //   1. asStaff(context, "financial_controller") plants the world's financial
-//      controller's session on the browser context, so page.goto("/") lands
+//      controller's session on the browser context, so page.goto("./") lands
 //      signed in on the real core. The controller lands on the ledger; the
 //      receivables desk is one tap away.
 //   2. coreURL() is the box's base URL. The spec reads the core's own API
@@ -27,7 +27,7 @@ import type { BrowserContext, Page } from "@playwright/test";
 import { asStaff, coreURL } from "./session.js";
 import {
   AR_1100_GL_CENTS,
-  AR_AGING_CARDS,
+  AR_AGING_CARD_IDS,
   AR_CONTROL_ACCOUNT_CODE,
   AR_OPEN_INVOICES,
   AR_PAYMENT_CENTS,
@@ -35,8 +35,8 @@ import {
   AR_REGISTER_CENTS,
   AR_REGISTER_COUNT,
   AR_STATEMENT_CLOSING_CENTS,
+  AR_STATEMENT_BANDS,
   AR_STATEMENT_CUSTOMER_NAME,
-  AR_STATEMENT_STRIP,
   AR_TOTAL_CENTS,
 } from "./world.js";
 
@@ -89,12 +89,14 @@ async function openDesk(page: Page, context: BrowserContext): Promise<CoreCreden
     credentials.org = request.headers()["x-org"] ?? "";
   });
   await asStaff(context, "financial_controller");
-  await page.goto("/");
+  // "./" stays under the config's base URL: the real box serves the desk under /money-desk/, and
+  // "/" would escape to the front door at the origin root (harness.pw.ts navigates the same way).
+  await page.goto("./");
   // The controller lands on the ledger; the receivables desk is one tap away.
   const receivables = page.getByRole("button", { name: "Receivables", exact: true });
   await expect(receivables).toBeVisible({ timeout: 30_000 });
   await receivables.click();
-  await expect(page.locator("[data-card]")).toHaveCount(AR_AGING_CARDS.length);
+  await expect(page.locator("[data-card]")).toHaveCount(AR_AGING_CARD_IDS.length);
   expect(credentials.bearer).not.toBe("");
   return credentials;
 }
@@ -127,6 +129,13 @@ async function corePost<T>(credentials: CoreCredentials, path: string, body: unk
   return (await response.json()) as T;
 }
 
+/** The desk's money text back to cents, from the digits alone: "$10,870.00" reads 1087000. */
+function centsOf(text: string): number {
+  const digits = text.replace(/[^0-9]/g, "");
+  if (digits === "") throw new Error(`no figure in "${text}"`);
+  return (text.trim().startsWith("-") ? -1 : 1) * Number(digits);
+}
+
 /** The register's rows as the screen shows them: the invoice, the account and the balance. */
 async function readRows(page: Page): Promise<{ invoice: string; customer: string; account: string; balance: string }[]> {
   return page.locator("[data-register-row]").evaluateAll((nodes) =>
@@ -147,24 +156,24 @@ async function readRows(page: Page): Promise<{ invoice: string; customer: string
 test("the register carries the world's aging buckets and lists the world's open invoices", async ({ page, context }) => {
   const credentials = await openDesk(page, context);
 
-  // The buckets on the screen are the core's own cards, in the core's own order.
+  // The buckets on the screen are the core's own cards, in the world's order.
   const cards = page.locator("[data-card]");
-  await expect(cards).toHaveCount(AR_AGING_CARDS.length);
-  expect(await cards.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-card") ?? ""))).toEqual(
-    AR_AGING_CARDS.map(([id]) => id),
-  );
-  expect(await page.locator("[data-card] .tile-figure").allTextContents()).toEqual(
-    AR_AGING_CARDS.map(([, cents]) => money(cents)),
-  );
-  for (const [index, [, , accounts]] of AR_AGING_CARDS.entries()) {
-    await expect(cards.nth(index)).toContainText(`${accounts} ${accounts === 1 ? "account" : "accounts"}`);
-  }
+  await expect(cards).toHaveCount(AR_AGING_CARD_IDS.length);
+  expect(await cards.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-card") ?? ""))).toEqual([
+    ...AR_AGING_CARD_IDS,
+  ]);
 
-  // And the core's landing says the same thing about its own cards.
+  // Which card an invoice sits on moves with the clock, so each card's figure and count are held to
+  // the core's own landing, and the cards' SUM to the world's open total, which does not move.
   const landing = await coreRead<CoreLanding>(credentials, "/api/v1/ar/landing");
-  expect(landing.cards.map((card) => [card.id, card.total_cents, card.accounts])).toEqual(
-    AR_AGING_CARDS.map(([id, cents, accounts]) => [id, cents, accounts]),
+  expect(landing.cards.map((card) => card.id)).toEqual([...AR_AGING_CARD_IDS]);
+  expect(landing.cards.reduce((total, card) => total + card.total_cents, 0)).toBe(AR_TOTAL_CENTS);
+  expect(await page.locator("[data-card] .tile-figure").allTextContents()).toEqual(
+    landing.cards.map((card) => money(card.total_cents)),
   );
+  for (const [index, card] of landing.cards.entries()) {
+    await expect(cards.nth(index)).toContainText(`${card.accounts} ${card.accounts === 1 ? "account" : "accounts"}`);
+  }
 
   // The register lists every open invoice of the world, and nothing else.
   await expect(page.locator("[data-register-row]")).toHaveCount(AR_REGISTER_COUNT);
@@ -200,11 +209,13 @@ test("the register carries the world's aging buckets and lists the world's open 
 test("the aging buckets tie to account 1100", async ({ page, context }) => {
   const credentials = await openDesk(page, context);
 
-  // The figures on the screen are the world's card figures, as the register
-  // leg reads them: a blank screen fails here, never a computed world alone.
+  // The total is the SCREEN's own four figures summed, so "the screen's total ties to 1100" is
+  // literally what this leg checks (S4's P3 on round 2). The screen is held to the core's landing
+  // and the sum to the world's open total, so a blank screen and a blank core each fail here.
+  const landing = await coreRead<CoreLanding>(credentials, "/api/v1/ar/landing");
   const figures = await page.locator("[data-card] .tile-figure").allTextContents();
-  expect(figures).toEqual(AR_AGING_CARDS.map(([, cents]) => money(cents)));
-  const shown = AR_AGING_CARDS.reduce((total, [, cents]) => total + cents, 0);
+  expect(figures).toEqual(landing.cards.map((card) => money(card.total_cents)));
+  const shown = figures.reduce((total, figure) => total + centsOf(figure), 0);
   expect(shown).toBe(AR_TOTAL_CENTS);
 
   // The core's own tie-out reads the same subledger, and says what the GL side holds.
@@ -236,19 +247,26 @@ test("a customer statement closes on the world's balance", async ({ page, contex
 
   await expect(page.locator("[data-closing]")).toContainText(money(AR_STATEMENT_CLOSING_CENTS));
   const bands = await page.locator("[data-statement] dl.strip dt").allTextContents();
-  expect(bands).toEqual(AR_STATEMENT_STRIP.map(([band]) => band));
+  expect(bands).toEqual([...AR_STATEMENT_BANDS]);
   const amounts = await page.locator("[data-statement] dl.strip dd").allTextContents();
+
+  // The core's own statement. Which band the balance sits in moves with the clock, so each band on
+  // the screen is held to the core's own band, the bands' sum to the closing balance, and the
+  // closing balance to the world's, which does not move.
+  const statement = await coreRead<{
+    current_cents: number;
+    days_30_cents: number;
+    days_60_cents: number;
+    days_90_plus_cents: number;
+    closing_balance_cents: number;
+  }>(credentials, `/api/v1/ar/customers/${customer}/statement`);
+  expect(statement.closing_balance_cents).toBe(AR_STATEMENT_CLOSING_CENTS);
+  const coreBands = [statement.current_cents, statement.days_30_cents, statement.days_60_cents, statement.days_90_plus_cents];
+  expect(coreBands.reduce((total, band) => total + band, 0)).toBe(statement.closing_balance_cents);
   // The last cell is the closing balance, and it carries the screen reader's
   // label with the figure: the four aging bands are the ones to compare.
-  expect(amounts.slice(0, -1)).toEqual(AR_STATEMENT_STRIP.slice(0, -1).map(([, cents]) => money(cents)));
+  expect(amounts.slice(0, -1)).toEqual(coreBands.map((band) => money(band)));
   expect(amounts[amounts.length - 1]).toContain(money(AR_STATEMENT_CLOSING_CENTS));
-
-  // The core's own statement agrees with what the screen printed.
-  const statement = await coreRead<{ current_cents: number; closing_balance_cents: number }>(
-    credentials,
-    `/api/v1/ar/customers/${customer}/statement`,
-  );
-  expect(statement.closing_balance_cents).toBe(AR_STATEMENT_CLOSING_CENTS);
 });
 
 test("a received payment is applied and the invoice closes", async ({ page, context }) => {

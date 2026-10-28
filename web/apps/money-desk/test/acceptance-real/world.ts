@@ -144,13 +144,13 @@ export const AR_1100_GL_CENTS = 0;
 /** The GL account code the AR aging total ties to: the receivables control account the tie-out reads. */
 export const AR_CONTROL_ACCOUNT_CODE = "1100";
 
-/** The aging cards the landing carries: [card id, total in cents, accounts counted]. */
-export const AR_AGING_CARDS: readonly (readonly [string, number, number])[] = [
-  ["card.escalation", 0, 0],
-  ["card.late", 0, 0],
-  ["card.warn", 0, 0],
-  ["card.current", 1_087_000, 2],
-];
+/**
+ * The aging cards the landing carries, in the core's order. Only the ids are the world's: which
+ * card an invoice sits on moves with the clock (an invoice's due date ages past the run day), so
+ * the specs hold each card's figure to the core's own landing and hold their SUM to AR_TOTAL_CENTS,
+ * which does not move (FROM-PRINCIPAL 389's clock rule).
+ */
+export const AR_AGING_CARD_IDS: readonly string[] = ["card.escalation", "card.late", "card.warn", "card.current"];
 
 /** The open invoices the register lists: [invoice number, balance in cents]. */
 export const AR_OPEN_INVOICES: readonly (readonly [string, number])[] = [
@@ -174,14 +174,12 @@ export const AR_STATEMENT_ACCOUNT_NO = "CUST-1005";
 /** The statement's closing balance in cents: what the account owes after the run. */
 export const AR_STATEMENT_CLOSING_CENTS = 1_017_000;
 
-/** The statement's aging strip: [band, cents], the last band being the total due. */
-export const AR_STATEMENT_STRIP: readonly (readonly [string, number])[] = [
-  ["Current", 1_017_000],
-  ["1 to 30 days", 0],
-  ["31 to 60 days", 0],
-  ["Over 60 days", 0],
-  ["Total due", 1_017_000],
-];
+/**
+ * The statement's aging strip bands, as the desk labels them, the last being the total due. The
+ * split across the bands moves with the clock, so the specs hold each band to the core's own
+ * statement and the total due to AR_STATEMENT_CLOSING_CENTS, which does not move.
+ */
+export const AR_STATEMENT_BANDS: readonly string[] = ["Current", "1 to 30 days", "31 to 60 days", "Over 60 days", "Total due"];
 
 /** The invoice a received payment is applied to, and the payment's amount in cents. */
 export const AR_PAYMENT_INVOICE_NO = "INV-2026-0002";
