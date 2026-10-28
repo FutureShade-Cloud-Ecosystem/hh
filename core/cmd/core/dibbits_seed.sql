@@ -292,16 +292,19 @@ ON CONFLICT DO NOTHING;
 -- event for every invoice with no journal behind it) never saw these rows and no journal of their own
 -- will ever post behind them. An opening balance's HST is not a period's collection, so the tax
 -- reconcile keeps every one of them out of collected and names them on the opening balances line.
--- INV-2026-0001 is PAID and dated the dealer's day (now() AT TIME ZONE 'America/Toronto')::date
+-- INV-2026-0001 is PAID and dated the dealer's day (now() AT TIME ZONE settings_business_zone())::date
 -- less 30, which lands in the walk month on the 31st of a 31-day month: marked, it is still an
 -- opening balance and the reconcile still ties that month. The seed dates its invoices from the
 -- dealer's day, never the session's CURRENT_DATE: the session's day is the UTC day and reads one
--- day ahead of the dealer's day in the evening window (FROM-PRINCIPAL 261, the fixture rule).
+-- day ahead of the dealer's day in the evening window (FROM-PRINCIPAL 261, the fixture rule). The
+-- dealer's day is the DEALER'S, not Ontario's: settings_business_zone() (0394) reads the stored
+-- business_zone key and falls back to America/Toronto, so a dealer outside Ontario is dated in
+-- their own calendar day and not in Ontario's.
 -- The demo pair INV-DEMO-CP03-Q and INV-DEMO-CP03-X (0055) are NOT planted by this seed and carry
 -- real finalize journals of their own, so they stay unmarked.
 INSERT INTO invoices (id, invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, created_by, org_id, metadata) VALUES
- ('19000000-0000-4000-9000-000000000001','INV-2026-0001','c7000000-0000-4000-9000-000000000002','5d1b3f6e-0000-4000-9000-000000000001','PAID', (now() AT TIME ZONE 'America/Toronto')::date - 30, (now() AT TIME ZONE 'America/Toronto')::date, 312500, 40625, 353125, 0,'d7000000-0000-4000-9000-000000000001', (SELECT org_id FROM locations WHERE id = '5d1b3f6e-0000-4000-9000-000000000001'), '{"opening_balance": true}'::jsonb),
- ('19000000-0000-4000-9000-000000000002','INV-2026-0002','c7000000-0000-4000-9000-000000000005','5d1b3f6e-0000-4000-9000-000000000002','FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date - 10, (now() AT TIME ZONE 'America/Toronto')::date + 35, 900000, 117000, 1017000, 1017000,'d7000000-0000-4000-9000-000000000001', (SELECT org_id FROM locations WHERE id = '5d1b3f6e-0000-4000-9000-000000000002'), '{"opening_balance": true}'::jsonb)
+ ('19000000-0000-4000-9000-000000000001','INV-2026-0001','c7000000-0000-4000-9000-000000000002','5d1b3f6e-0000-4000-9000-000000000001','PAID', (now() AT TIME ZONE settings_business_zone())::date - 30, (now() AT TIME ZONE settings_business_zone())::date, 312500, 40625, 353125, 0,'d7000000-0000-4000-9000-000000000001', (SELECT org_id FROM locations WHERE id = '5d1b3f6e-0000-4000-9000-000000000001'), '{"opening_balance": true}'::jsonb),
+ ('19000000-0000-4000-9000-000000000002','INV-2026-0002','c7000000-0000-4000-9000-000000000005','5d1b3f6e-0000-4000-9000-000000000002','FINALIZED', (now() AT TIME ZONE settings_business_zone())::date - 10, (now() AT TIME ZONE settings_business_zone())::date + 35, 900000, 117000, 1017000, 1017000,'d7000000-0000-4000-9000-000000000001', (SELECT org_id FROM locations WHERE id = '5d1b3f6e-0000-4000-9000-000000000002'), '{"opening_balance": true}'::jsonb)
 ON CONFLICT (invoice_no) DO NOTHING;
 INSERT INTO invoice_lines (invoice_id, line_no, product_id, description, qty_entered, uom_entered, qty_base, unit_price_cents, price_uom, line_total_cents) VALUES
  ('19000000-0000-4000-9000-000000000001',1,'a7000000-0000-4000-9000-000000000005','Brussels Block paver',1000,'SF',4100,300,'SF',300000),
