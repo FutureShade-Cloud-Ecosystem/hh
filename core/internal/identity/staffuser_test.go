@@ -83,8 +83,39 @@ func TestIntegration_StaffUser(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1::uuid`, unlinkedID) })
-		if _, _, err := EnsureStaffUser(ctx, pool, orgID, "staffuser-nolink-"+uuid.NewString()[:8], unlinked, "Someone"); !errors.Is(err, ErrStaffEmailTaken) {
-			t.Fatalf("an email held by a row with no platform link must refuse, got %v", err)
+		// The adopt rule (FROM-PRINCIPAL 36): an email whose holder row has no
+		// platform link, as a migration seeds it, is adopted by the listed
+		// platform id: the same row, linked, ACTIVE, in the caller's org.
+		adopter := "staffuser-adopter-" + uuid.NewString()[:8]
+		adoptedID, written, adopted, err := AdoptOrEnsureStaffUser(ctx, pool, orgID, adopter, unlinked, "Adopted")
+		if err != nil {
+			t.Fatalf("an email held by a row with no platform link must be adopted, got %v", err)
+		}
+		if adoptedID != unlinkedID || !written || !adopted {
+			t.Fatalf("the adopt must link the holder row itself: id %s (holder %s), written %v, adopted %v", adoptedID, unlinkedID, written, adopted)
+		}
+		var linked, status, rowOrg string
+		if err := pool.QueryRow(ctx, `SELECT platform_user_id, status, org_id::text FROM users WHERE id = $1::uuid`, unlinkedID).Scan(&linked, &status, &rowOrg); err != nil {
+			t.Fatal(err)
+		}
+		if linked != adopter || status != "ACTIVE" || rowOrg != orgID {
+			t.Fatalf("the adopted row reads platform %q status %q org %q", linked, status, rowOrg)
+		}
+		// A second run converges: nothing written, nothing adopted.
+		if _, written, adopted, err := AdoptOrEnsureStaffUser(ctx, pool, orgID, adopter, unlinked, "Adopted"); err != nil || written || adopted {
+			t.Fatalf("a second run must converge: written %v adopted %v err %v", written, adopted, err)
+		}
+		// A platform id that already holds another row cannot adopt a second one.
+		second := "staffuser-unlinked2-" + uuid.NewString()[:8] + "@example.invalid"
+		var secondID string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO users (email, display_name, status) VALUES ($1, 'No Platform', 'ACTIVE') RETURNING id::text`,
+			second).Scan(&secondID); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1::uuid`, secondID) })
+		if _, _, _, err := AdoptOrEnsureStaffUser(ctx, pool, orgID, adopter, second, "Adopted"); !errors.Is(err, ErrStaffAdoptHeld) {
+			t.Fatalf("a platform id that already holds a row must not adopt another, got %v", err)
 		}
 		// The owner holds its own email, and no other platform subject may take it.
 		email := "staffuser-owner-" + uuid.NewString()[:8] + "@example.invalid"
