@@ -28,6 +28,7 @@ import { asStaff, coreURL } from "./session.js";
 import {
   AR_1100_GL_CENTS,
   AR_AGING_CARDS,
+  AR_CONTROL_ACCOUNT_CODE,
   AR_OPEN_INVOICES,
   AR_PAYMENT_CENTS,
   AR_PAYMENT_INVOICE_NO,
@@ -199,15 +200,16 @@ test("the register carries the world's aging buckets and lists the world's open 
 test("the aging buckets tie to account 1100", async ({ page, context }) => {
   const credentials = await openDesk(page, context);
 
-  // What the screen's buckets add up to is the AR subledger's figure.
+  // The figures on the screen are the world's card figures, as the register
+  // leg reads them: a blank screen fails here, never a computed world alone.
   const figures = await page.locator("[data-card] .tile-figure").allTextContents();
-  expect(figures).toHaveLength(AR_AGING_CARDS.length);
+  expect(figures).toEqual(AR_AGING_CARDS.map(([, cents]) => money(cents)));
   const shown = AR_AGING_CARDS.reduce((total, [, cents]) => total + cents, 0);
   expect(shown).toBe(AR_TOTAL_CENTS);
 
   // The core's own tie-out reads the same subledger, and says what the GL side holds.
   const tieout = await coreRead<CoreTieoutPage>(credentials, "/api/v1/gl/tie-out");
-  const receivables = tieout.items.filter((item) => item.account_code === "1100");
+  const receivables = tieout.items.filter((item) => item.account_code === AR_CONTROL_ACCOUNT_CODE);
   expect(receivables).toHaveLength(1);
   const tie = receivables[0];
   expect(tie.subledger).toBe("AR");

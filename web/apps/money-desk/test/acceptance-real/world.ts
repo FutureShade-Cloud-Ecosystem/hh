@@ -24,6 +24,9 @@ export const AR_TOTAL_CENTS = 1_087_000;
 /** The GL side of the 1100 tie in cents: what account 1100 holds on the same books. */
 export const AR_1100_GL_CENTS = 0;
 
+/** The GL account code the AR aging total ties to: the receivables control account the tie-out reads. */
+export const AR_CONTROL_ACCOUNT_CODE = "1100";
+
 /** The aging cards the landing carries: [card id, total in cents, accounts counted]. */
 export const AR_AGING_CARDS: readonly (readonly [string, number, number])[] = [
   ["card.escalation", 0, 0],
