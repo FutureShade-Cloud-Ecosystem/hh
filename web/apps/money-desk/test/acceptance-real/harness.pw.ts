@@ -3,6 +3,13 @@
 // stub) it must fail, the stub's world is not the core's; run against
 // acceptance-real.config.ts it reads the real core through the real authz.
 //
+// ONE WAY IN. The session comes from session.ts's asStaff and the core's base
+// URL from its coreURL, so every leg signs in the same way and every leg that
+// reads the core reads it at the same address. On the real box the session is
+// the core's own (the real exchange, the console double and the box's
+// provisioned subject); under the stub it is the front door's demo mint. Both
+// are the world's session for the role. Nothing here signs a token.
+//
 // THE SEED'S TRUE FIGURES, PINNED. Today's finance seed (core finance-seed,
 // dibbits_seed.sql) holds a minimal fixture world: the GL's journals and
 // the subledger disagree by construction (the W2-1b world ties by
@@ -34,28 +41,47 @@ const SEED_WORLD = {
 } as const;
 
 import { test, expect, type Page } from "@playwright/test";
+import { asStaff, coreURL } from "./session.js";
 
 const real = (): boolean => process.env.MDREAL_CONFIG === "1";
 
 /**
- * Signs in as the Financial Controller. On the real box the desk at
- * /money-desk/ recovers its own session on load: the console double
- * answers the platform directory, the real exchange runs every gate and
- * mints the core's own staff token, and every later request carries it
- * into the real core's authz. On the stub run the desk's demo mint (the
- * default config serves the app against the stub) lands the controller on
- * the approvals queue.
+ * Signs in as the Financial Controller, the one way in. asStaff puts the
+ * world's own session on the context: on the real box the core minted it (the
+ * real exchange ran every gate against the console double and the box's
+ * provisioned subject), under the stub the front door's demo mint made it.
+ * The desk then reads that session on load.
  */
 async function signInAsController(page: Page): Promise<void> {
-  if (real()) {
-    // "./" stays under this config's baseURL (/money-desk/ on the real box);
-    // "/" would escape to the front door at the origin root.
-    await page.goto("./");
-  } else {
-    await page.goto("/");
-    await page.locator("[data-flow='financial-controller']").click();
-  }
+  await asStaff(page.context(), "financial_controller");
+  // "./" stays under this config's baseURL (/money-desk/ on the real box);
+  // "/" would escape to the front door at the origin root.
+  await page.goto(real() ? "./" : "/");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Approvals", { timeout: 30_000 });
+}
+
+/** The bearer and the org the desk sends, and the trial balance it asked for. */
+interface DeskCalls {
+  readonly bearer: () => string;
+  readonly org: () => string;
+  readonly trialPath: () => string;
+}
+
+/** Watches the desk's own calls, so a leg can read the core the way the desk does. */
+function watchDeskCalls(page: Page): DeskCalls {
+  let bearer = "";
+  let org = "";
+  let trialPath = "";
+  page.on("request", (request) => {
+    const headers = request.headers();
+    if (bearer === "") bearer = headers["authorization"] ?? "";
+    if (org === "") org = headers["x-org"] ?? "";
+    if (trialPath === "" && request.url().includes("/api/v1/gl/trial-balance")) {
+      const asked = new URL(request.url());
+      trialPath = `${asked.pathname}${asked.search}`;
+    }
+  });
+  return { bearer: () => bearer, org: () => org, trialPath: () => trialPath };
 }
 
 test("the harness signs in as the Financial Controller through the real core's authz", async ({ page }) => {
@@ -70,6 +96,7 @@ test("the harness signs in as the Financial Controller through the real core's a
 });
 
 test("the world's month end 1100 balance, read from the real core", async ({ page }) => {
+  const calls = watchDeskCalls(page);
   await signInAsController(page);
   await page.locator("[data-tab-id='trial']").click();
   await expect(page.locator("[data-trial]")).toBeVisible();
@@ -82,6 +109,19 @@ test("the world's month end 1100 balance, read from the real core", async ({ pag
   await expect(row1100).toBeVisible();
   await expect(row1100).toContainText(dollars(SEED_WORLD.gl1100DebitCents));
   await expect(row1100).toContainText(dollars(SEED_WORLD.gl1100CreditCents));
+
+  // The same figure, read from the core itself at coreURL() with the desk's
+  // own bearer and org: the number on the desk is the core's number, not the
+  // desk's own arithmetic. Under the stub the same read lands on the stub's
+  // core, so the comparison holds in either world.
+  const asked = calls.trialPath();
+  expect(asked).not.toBe("");
+  const direct = await page.request.get(`${coreURL()}${asked}`, {
+    headers: { Authorization: calls.bearer(), "X-Org": calls.org() },
+  });
+  expect(direct.status()).toBe(200);
+  const answer = (await direct.json()) as { total_debit_cents?: number };
+  expect(dollars(answer.total_debit_cents ?? 0)).toBe(await page.locator("[data-total-debit]").innerText());
 
   // The same world's receivables, through the same core, on the statements
   // side: the aging's open total and the seeded open invoice. (The
