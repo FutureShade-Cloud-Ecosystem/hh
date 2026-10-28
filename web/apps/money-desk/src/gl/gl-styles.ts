@@ -68,7 +68,10 @@ export const glStyles = css`
   .gl-choice-held::before { border-style: dashed; }
   .gl-choice-title { font-weight: 700; }
   .gl-choice-line { font-size: 14px; color: var(--hh-text-dim); }
-  .gl-choice-held { background: var(--hh-field); color: var(--hh-text-dim); border-style: dashed; }
+  /* The held choice is not offered: the grey triple, the dashed edge kept on
+     the kit's findable line. The words beside it say why it is held. */
+  .gl-choice-held { /* hh-disabled-state: a choice the person cannot take. */
+    background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border-style: dashed; }
   .gl-field { display: grid; gap: var(--hh-s-4); font-size: 14px; color: var(--hh-text-dim); font-weight: 600; margin-bottom: var(--hh-s-12); }
   .gl-field textarea, .gl-field input, .gl-field select { font: inherit; font-size: 16px; padding: var(--hh-s-12); background: var(--hh-field); color: var(--hh-text); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); width: 100%; box-sizing: border-box; min-height: 44px; }
   .gl-field textarea:focus-visible, .gl-field input:focus-visible, .gl-field select:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }

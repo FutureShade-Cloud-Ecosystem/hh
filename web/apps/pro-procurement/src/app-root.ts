@@ -94,7 +94,8 @@ export class ProProcurementApp extends HHElement {
       .result .name { flex: 1; }
       .line-actions { gap: var(--hh-s-8); }
       .result.chosen { border-color: var(--hh-focus-ring); background: var(--hh-widget); font-weight: 600; }
-      .result.off { opacity: 0.55; cursor: not-allowed; }
+      .result.off { /* hh-disabled-state: the unavailable line the selector can only name with a bare class. */
+        background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border-color: var(--hh-disabled-line); opacity: 1; cursor: not-allowed; }
       .facts { display: flex; flex-direction: column; gap: var(--hh-s-8); margin-top: var(--hh-s-12); font-size: 0.875rem; }
       @media (min-width: 64rem) {
         .board-columns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }

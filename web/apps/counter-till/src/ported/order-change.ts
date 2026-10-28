@@ -193,7 +193,10 @@ export class HosOrderChange extends LitElement {
         cursor: pointer;
       }
       button:disabled {
-        opacity: 0.5;
+        background: var(--hh-disabled-fill);
+        border-color: var(--hh-disabled-line);
+        color: var(--hh-disabled-ink);
+        opacity: 1;
         cursor: default;
       }
       button.primary {

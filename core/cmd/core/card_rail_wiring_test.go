@@ -133,6 +133,15 @@ func wiringPool(t *testing.T) *pgxpool.Pool {
 	if err := testkit.VerifyBaseline(context.Background(), testkit.PgxPool(pool)); err != nil {
 		t.Fatalf("wiring baseline: %v", err)
 	}
+	// The kit's rows: the org, the branches, the staff principals and their grants the
+	// composition legs ride. The composition fixture builds them (newCompEnv), so a leg that
+	// opens the scratch database on its own must build them too: a leg must never depend on
+	// another leg's leftovers to find the branch it files at. Without them the kit's own
+	// branch is absent, and a leg that takes "the first location row" finds the demo branch
+	// the migrations plant instead, which carries no org and cannot carry a grant.
+	if err := testkit.Build(context.Background(), testkit.PgxPool(pool)); err != nil {
+		t.Fatalf("wiring kit rows: %v", err)
+	}
 	return pool
 }
 
