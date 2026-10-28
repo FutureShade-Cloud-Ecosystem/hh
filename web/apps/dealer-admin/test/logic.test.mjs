@@ -40,12 +40,15 @@ import {
   ACTION_OPTIONS,
   auditEmptyWords,
   actorWords,
-  entityWords,
   filtersActive,
   isSensitive,
   sinceWire,
   whenWords,
 } from "../src/audit-logic.ts";
+// UX-106 round 4: the new words are read through the namespace, so a name the
+// logic does not carry yet is a red assertion and not a red module load.
+import * as auditLogic from "../src/audit-logic.ts";
+import * as dealerLogic from "../src/dealer-logic.ts";
 
 const ROLES = [
   { code: "GENERAL_MANAGER", name: "General Manager", tier: 1, scope: "GLOBAL" },
@@ -67,6 +70,16 @@ test("the yard is the tail of the dealer's own branch name", () => {
   assert.equal(shortBranch("Gable Landscape Supply - Point Loma"), "Point Loma");
   assert.equal(shortBranch("Gable Landscape Supply - Julian"), "Julian");
   assert.equal(shortBranch("Point Loma"), "Point Loma");
+});
+
+test("a branch reads as its own name, and one the catalog does not know reads as a word", () => {
+  // UX-106 round 4: the audit drawer names the branch through the same lookup
+  // the staff register uses, and a branch the branches route does not know
+  // reads as the house placeholder word, never as its id.
+  const branches = [{ id: "b-plm", code: "PLM", name: "Gable Landscape Supply - Point Loma", is_active: true }];
+  assert.equal(dealerLogic.branchName?.("b-plm", branches), "Point Loma");
+  assert.equal(dealerLogic.branchName?.("b-nope", branches), "Unknown branch");
+  assert.equal(dealerLogic.branchName?.("", branches), "");
 });
 
 test("branch chips name the branches the staff row reaches; an unknown branch reads as a word, never as its id", () => {
@@ -312,10 +325,14 @@ test("the when words read as a person reads a moment", () => {
   assert.equal(whenWords("not-a-date"), "not-a-date");
 });
 
-test("the entity is the type and, when the row carries one, the id", () => {
-  assert.equal(entityWords({ entity_type: "pos.sale", entity_id: "sa1" }), "pos.sale / sa1");
-  assert.equal(entityWords({ entity_type: "pos.sale" }), "pos.sale");
-  assert.equal(entityWords({ entity_type: "" }), "");
+test("the entity reads as a type in words and its own handle, never one string", () => {
+  // UX-106 round 4: the type is words a person reads, the handle is the
+  // record's own, and the two are never glued into one string.
+  assert.equal(auditLogic.entityTypeWords?.({ entity_type: "pos.sale", entity_id: "sa1" }), "pos sale");
+  assert.equal(auditLogic.entityTypeWords?.({ entity_type: "pricing.override" }), "pricing override");
+  assert.equal(auditLogic.entityTypeWords?.({ entity_type: "" }), "");
+  assert.equal(auditLogic.entityIdWords?.({ entity_type: "pos.sale", entity_id: "sa1" }), "sa1");
+  assert.equal(auditLogic.entityIdWords?.({ entity_type: "pos.sale" }), "");
 });
 
 test("empty because of the filters and empty because nothing happened are different sentences", () => {
