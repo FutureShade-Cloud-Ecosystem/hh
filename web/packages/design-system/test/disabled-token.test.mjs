@@ -86,7 +86,14 @@ function blankComments(src) {
  *  block's braces are the block's own and the rule scan reads whole rules.
  *  The newlines inside the interpolation are kept, for the same reason. */
 function stripInterpolations(src) {
-  let out = '';
+  if (!src.includes('${')) return src;
+  // The common shape first: an interpolation with no brace inside it.
+  const blank = (m) => m.replace(/[^\n]/g, ' ');
+  let out = src.replace(/\$\{[^{}]*\}/g, blank);
+  if (!out.includes('${')) return out;
+  // An interpolation with a brace inside it: counted, so the scan still sees
+  // whole rules.
+  let result = '';
   let i = 0;
   while (i < src.length) {
     if (src[i] === '$' && src[i + 1] === '{') {
@@ -95,40 +102,79 @@ function stripInterpolations(src) {
       while (i < src.length && depth > 0) {
         if (src[i] === '{') depth++;
         else if (src[i] === '}') depth--;
-        if (src[i] !== '\n') out += ' ';
-        else out += '\n';
+        if (src[i] !== '\n') result += ' ';
+        else result += '\n';
         i++;
       }
-      out += ' ';
+      result += ' ';
       continue;
     }
-    out += src[i];
+    result += src[i];
     i++;
   }
-  return out;
+  return result;
+}
+
+/** The line a character sits on, from one pass over the file's newlines. The
+ *  scan reads thousands of rules, so the line of a rule must not cost a walk
+ *  over the whole file each time. */
+function lineIndexer(src) {
+  const starts = [0];
+  for (let i = 0; i < src.length; i += 1) {
+    if (src[i] === '\n') starts.push(i + 1);
+  }
+  return (index) => {
+    let low = 0;
+    let high = starts.length - 1;
+    while (low < high) {
+      const mid = (low + high + 1) >> 1;
+      if (starts[mid] <= index) low = mid;
+      else high = mid - 1;
+    }
+    return low + 1;
+  };
 }
 
 /** Every innermost rule block in a source, with the selector the block
  *  belongs to. The selector is the text after the last brace (a rule nested
  *  in an at-rule) and after the last statement break (a rule that follows a
- *  declaration in the same template). */
-function ruleBlocks(src) {
+ *  declaration in the same template).
+ *
+ *  The walk is a single pass over the file's braces. A pattern match per rule
+ *  would re-read the text between the rules over and over, and the tree is
+ *  large enough for that to matter. */
+function ruleBlocks(src, lineAt) {
   const out = [];
-  const re = /([^{}]+)\{([^{}]*)\}/g;
-  let m;
-  while ((m = re.exec(src)) !== null) {
-    const chunk = m[1].split(';').pop() ?? '';
-    let selector = chunk.split('{').pop() ?? '';
-    const tick = selector.lastIndexOf('`');
-    if (tick !== -1) selector = selector.slice(tick + 1);
-    selector = selector.trim();
-    if (selector === '') continue;
-    // The line the SELECTOR starts on, not the line the block's text starts
-    // on: the chunk carries the whitespace and the blanked comment that sit
-    // between the previous rule and this one.
-    const lead = m[1].length - m[1].replace(/^\s+/, '').length;
-    const line = src.slice(0, m.index + lead).split('\n').length;
-    out.push({ selector, body: m[2], line });
+  const open = [];
+  let chunkStart = 0;
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    if (ch === '{') {
+      open.push({ chunkStart, bodyStart: i + 1 });
+      chunkStart = i + 1;
+    } else if (ch === '}') {
+      const rule = open.pop();
+      if (rule === undefined) {
+        chunkStart = i + 1;
+        continue;
+      }
+      const body = src.slice(rule.bodyStart, i);
+      if (!body.includes('{')) {
+        const chunk = src.slice(rule.chunkStart, rule.bodyStart - 1);
+        let selector = (chunk.split(';').pop() ?? '').split('{').pop() ?? '';
+        const tick = selector.lastIndexOf('`');
+        if (tick !== -1) selector = selector.slice(tick + 1);
+        selector = selector.trim();
+        if (selector !== '') {
+          // The line the SELECTOR starts on, not the line the block's text
+          // starts on: the chunk carries the whitespace and the blanked
+          // comment that sit between the previous rule and this one.
+          const lead = rule.bodyStart - 1 - rule.chunkStart - chunk.replace(/^\s+/, '').length;
+          out.push({ selector, body, line: lineAt(rule.chunkStart + lead) });
+        }
+      }
+      chunkStart = i + 1;
+    }
   }
   return out;
 }
@@ -168,11 +214,16 @@ const DISABLED_FILL = 'var(--hh-disabled-fill)';
 const DISABLED_INK = 'var(--hh-disabled-ink)';
 const DISABLED_LINE = 'var(--hh-disabled-line)';
 
-test('no shipped style fades a disabled control, and no disabled rule keeps a fill of its own', () => {
+test('no shipped style fades a disabled control, and no disabled rule keeps a fill of its own', { timeout: 300_000 }, () => {
   const offenders = [];
   for (const rel of webStyleFiles()) {
-    const src = stripInterpolations(blankComments(readFileSync(join(webRoot, rel), 'utf8')));
-    for (const rule of ruleBlocks(src)) {
+    const raw = readFileSync(join(webRoot, rel), 'utf8');
+    // A file that never says "disabled" cannot carry a disabled rule, and the
+    // tree is large: this pre-filter is what keeps the scan inside its budget.
+    if (!/disabled/i.test(raw)) continue;
+    const src = stripInterpolations(blankComments(raw));
+    const lineAt = lineIndexer(src);
+    for (const rule of ruleBlocks(src, lineAt)) {
       if (!isDisabledSelector(rule.selector)) continue;
       const selector = rule.selector.replace(/\s+/g, ' ');
       for (const [prop, value] of declarations(rule.body)) {
