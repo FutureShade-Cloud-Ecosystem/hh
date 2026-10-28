@@ -159,7 +159,7 @@ while read -r DAY_IDX DAY_DATE DAY_YM; do
 		run_scoped "$SHIFT_SEC" seed || exit 1
 	fi
 
-	OUT_LINE="$(run_scoped "$SHIFT_SEC" finworld day --day "$DAY_IDX" --seed "$SEED" --dealer "$DEALER_NAME")" || {
+	OUT_LINE="$(run_scoped "$SHIFT_SEC" finworld day --day "$DAY_IDX" --seed "$SEED" --dealer "$DEALER_NAME" --anchor "$ANCHOR")" || {
 		echo "run.sh: failed on day ${DAY_IDX} (${DAY_DATE})" >&2
 		exit 1
 	}
@@ -185,7 +185,7 @@ echo "run.sh: all days 0..${LAST_DAY_IDX} completed in ${TOTAL_ELAPSED_MS}ms"
 
 # 6. Run tie checks through the final day. Only dump if every tie passes.
 echo "run.sh: running core finworld check --through-day ${LAST_DAY_IDX}..."
-run_scoped "$LAST_SHIFT_SEC" finworld check --through-day "$LAST_DAY_IDX" --seed "$SEED" --dealer "$DEALER_NAME" || {
+run_scoped "$LAST_SHIFT_SEC" finworld check --through-day "$LAST_DAY_IDX" --seed "$SEED" --dealer "$DEALER_NAME" --anchor "$ANCHOR" || {
 	echo "run.sh: tie check failed; skipping pg_dump" >&2
 	exit 1
 }

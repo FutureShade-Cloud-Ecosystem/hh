@@ -379,6 +379,26 @@ func finworldDefaultDealer(getenv func(string) string) string {
 	return "Quarryfen Hardscape Supply"
 }
 
+// finworldDefaultAnchor is the world's own anchor: the twelve months the plan lays out end here.
+const finworldDefaultAnchor = "2026-09"
+
+// finworldParseAnchor parses the --anchor flag's YYYY-MM into the plan's first month.
+func finworldParseAnchor(s string) (*YearMonth, error) {
+	parts := strings.Split(strings.TrimSpace(s), "-")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("anchor %q must be YYYY-MM", s)
+	}
+	year, err := strconv.Atoi(parts[0])
+	if err != nil || year < 1 {
+		return nil, fmt.Errorf("anchor %q must carry a year of digits", s)
+	}
+	month, err := strconv.Atoi(parts[1])
+	if err != nil || month < 1 || month > 12 {
+		return nil, fmt.Errorf("anchor %q must carry a month 1 to 12", s)
+	}
+	return &YearMonth{Year: year, Month: month}, nil
+}
+
 func finworldMain(args []string, stdout, stderr io.Writer, getenv func(string) string) error {
 	if err := finworldCheckEnvGuard(getenv); err != nil {
 		return err
@@ -394,7 +414,12 @@ func finworldMain(args []string, stdout, stderr io.Writer, getenv func(string) s
 		dayIdx := fs.Int("day", -1, "simulated trading day index (0..311)")
 		seed := fs.Uint64("seed", 1, "FinWorldPlan seed")
 		dealer := fs.String("dealer", finworldDefaultDealer(getenv), "dealer name")
+		anchor := fs.String("anchor", finworldDefaultAnchor, "plan anchor year month (YYYY-MM)")
 		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		anchorYM, err := finworldParseAnchor(*anchor)
+		if err != nil {
 			return err
 		}
 		if *dayIdx < 0 {
@@ -411,7 +436,7 @@ func finworldMain(args []string, stdout, stderr io.Writer, getenv func(string) s
 		}
 		defer pool.Close()
 
-		plan, err := FinWorldPlan(*seed, YearMonth{Year: 2026, Month: 9}, *dealer)
+		plan, err := FinWorldPlan(*seed, *anchorYM, *dealer)
 		if err != nil {
 			return fmt.Errorf("FinWorldPlan: %w", err)
 		}
@@ -428,7 +453,12 @@ func finworldMain(args []string, stdout, stderr io.Writer, getenv func(string) s
 		throughDay := fs.Int("through-day", 312, "trading day index to check ties through")
 		seed := fs.Uint64("seed", 1, "FinWorldPlan seed")
 		dealer := fs.String("dealer", finworldDefaultDealer(getenv), "dealer name")
+		anchor := fs.String("anchor", finworldDefaultAnchor, "plan anchor year month (YYYY-MM)")
 		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		anchorYM, err := finworldParseAnchor(*anchor)
+		if err != nil {
 			return err
 		}
 		dsn, err := resolveOneshotDatabaseURL(getenv)
@@ -442,7 +472,7 @@ func finworldMain(args []string, stdout, stderr io.Writer, getenv func(string) s
 		}
 		defer pool.Close()
 
-		plan, err := FinWorldPlan(*seed, YearMonth{Year: 2026, Month: 9}, *dealer)
+		plan, err := FinWorldPlan(*seed, *anchorYM, *dealer)
 		if err != nil {
 			return fmt.Errorf("FinWorldPlan: %w", err)
 		}
@@ -469,10 +499,15 @@ func finworldMain(args []string, stdout, stderr io.Writer, getenv func(string) s
 		fs.SetOutput(stderr)
 		seed := fs.Uint64("seed", 1, "FinWorldPlan seed")
 		dealer := fs.String("dealer", finworldDefaultDealer(getenv), "dealer name")
+		anchor := fs.String("anchor", finworldDefaultAnchor, "plan anchor year month (YYYY-MM)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		plan, err := FinWorldPlan(*seed, YearMonth{Year: 2026, Month: 9}, *dealer)
+		anchorYM, err := finworldParseAnchor(*anchor)
+		if err != nil {
+			return err
+		}
+		plan, err := FinWorldPlan(*seed, *anchorYM, *dealer)
 		if err != nil {
 			return fmt.Errorf("FinWorldPlan: %w", err)
 		}

@@ -28,8 +28,9 @@ func TestFinWorldAnchorFlagBuildsDifferentPlans(t *testing.T) {
 	if june == september {
 		t.Fatalf("a different anchor built the same day list (%d bytes both)", len(june))
 	}
-	if !strings.Contains(june, "2026-07") {
-		t.Fatalf("the 2026-06 anchor's day list carries no 2026-07 day: %s", finworldAnchorFirstLine(june))
+	// The anchor is the world's last month: 2026-06 lays out 2025-07 through 2026-06.
+	if !strings.Contains(june, "2025-07") {
+		t.Fatalf("the 2026-06 anchor's day list carries no 2025-07 day: %s", finworldAnchorFirstLine(june))
 	}
 	if !strings.Contains(september, "2025-10") {
 		t.Fatalf("the 2026-09 anchor's day list carries no 2025-10 day: %s", finworldAnchorFirstLine(september))
