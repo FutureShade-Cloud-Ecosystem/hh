@@ -137,8 +137,9 @@ func MigrationsAppliedCount(ctx context.Context, pool *pgxpool.Pool) (int, bool,
 	return count, true, nil
 }
 
-// UserTableCount counts the tables in every user schema: anything outside
-// pg_catalog and information_schema. It is the shape read beside the
+// UserTableCount counts the relations in every user schema (tables, views,
+// materialized views, foreign tables and sequences): anything outside
+// pg_catalog, information_schema and the toast and temp schemas. It is the shape read beside the
 // bookkeeping read, and it lives here for the same reason: the database's
 // own shape is read in one place, so the finance box's boot guard and the
 // finance box's entrypoint (which asks the core for the shape) can never
@@ -147,8 +148,16 @@ func MigrationsAppliedCount(ctx context.Context, pool *pgxpool.Pool) (int, bool,
 // it instead of claiming it.
 func UserTableCount(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 	var count int
-	err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.tables
-		WHERE table_schema <> 'pg_catalog' AND table_schema <> 'information_schema'`).Scan(&count)
+	// pg_class, not information_schema: information_schema lists only what
+	// the reading role holds a privilege on, so another service's table,
+	// owned by another role with no grant, would be invisible and the
+	// database would read as empty. pg_class is readable by every role.
+	// The box's own bootstrap ownership schema holds no relation.
+	err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		  AND n.nspname NOT LIKE 'pg\_temp\_%' AND n.nspname NOT LIKE 'pg\_toast\_temp\_%'
+		  AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')`).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
