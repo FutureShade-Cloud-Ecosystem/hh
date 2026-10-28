@@ -858,8 +858,9 @@ test('the gate files are excluded from the raw-text walks by name, and by no oth
 // therefore installs the shim only through src/lit-dom-fetch-guard, which
 // captures the process's fetch, installs, and restores, in one synchronous
 // body. This test walks the workspace (the web packages, the web apps, the
-// repository's scripts, and web's scripts) and refuses any file outside the
-// known list that brings either install shape in: the installer module
+// repository's scripts, web's scripts, and the statecharts roots the root
+// bun test also runs) and refuses any file outside the known list that brings
+// either install shape in: the installer module
 // (install-global-dom-shim) by import, re-export, dynamic import or require,
 // or the installer function installWindowOnGlobal from anywhere, the shape
 // the guard itself takes through @lit-labs/ssr/lib/dom-shim.js. A dom-shim
@@ -921,6 +922,12 @@ test('only the fetch guard installs the Lit shim, everywhere in the workspace', 
   for (const group of ['packages', 'apps']) visit(join(webRoot, group), group);
   visit(join(webRoot, '..', 'scripts'), 'scripts');
   visit(join(webRoot, 'scripts'), 'web/scripts');
+  visit(join(webRoot, '..', 'statecharts'), 'statecharts');
+  // The walk must reach every root the canonical root bun test runs; the
+  // statecharts sync machine test is one of its files.
+  for (const mustWalk of ['statecharts/sync/machine.ts', 'statecharts/sync/test/machine.test.mjs']) {
+    assert.ok(walked.some((w) => w.rel === mustWalk), `the pin's walk does not reach ${mustWalk}`);
+  }
   const offences = [];
   for (const { rel, abs } of walked) {
     const text = readFileSync(abs, 'utf8');
