@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -51,11 +52,22 @@ func isInvalidUUID(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "22P02"
 }
 
+// nullStr maps the empty string to SQL NULL, so a caller that named nothing leaves the column at
+// its own default instead of writing an empty value.
 func nullStr(s string) any {
 	if s == "" {
 		return nil
 	}
 	return s
+}
+
+// nullUUID maps the empty id to SQL NULL, so a movement that names no counter reason code writes
+// NULL on the column and still posts to 9999 Suspense (W2-6b).
+func nullUUID(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
 }
 
 // actorUUID returns the actor id when it has a UUID's shape and nil otherwise, so an optional uuid
@@ -387,10 +399,19 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 	if status != StatusOpen {
 		return clientErr(409, "till: movements require an OPEN session")
 	}
+	// Lock and verify the counter account inside the movement's transaction (W2-6b fix round 4, P3-1),
+	// through the till's seam to the chart of accounts, before the movement or its outbox event is
+	// written. DeactivateAccount takes the same lock on the account row in its own transaction, so a
+	// movement recorded concurrently with a deactivate cannot slip through.
+	if m.GLAccountCode != "" && m.CheckAccountTx != nil {
+		if err := m.CheckAccountTx(ctx, tx, m.GLAccountCode); err != nil {
+			return err
+		}
+	}
 	var movementID string
 	var movementAt time.Time
 	if err := tx.QueryRow(ctx, insertMovementSQL+` RETURNING id, created_at`,
-		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy), m.CreatedAt).Scan(&movementID, &movementAt); err != nil {
+		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, nullUUID(m.ReasonCodeID), nullStr(m.GLAccountCode), m.Reference, nullStr(m.CreatedBy), m.CreatedAt).Scan(&movementID, &movementAt); err != nil {
 		return fmt.Errorf("till: insert movement: %w", err)
 	}
 	// The deposit slip's rows and the DEPOSITED marks ride THIS transaction (FROM-PRINCIPAL 120): the
@@ -438,6 +459,14 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 			"amount_cents":  m.AmountCents,
 			"occurred_at":   movementAt,
 			"reason":        m.Reason,
+			// The counter reason code (W2-6b): the list row this movement names. A movement recorded
+			// before the account began travelling with it (W2-6b fix round 3) is posted from that row
+			// at post time, read through the gl's seam, so no gl SQL names a till table.
+			"reason_code_id": nullStr(m.ReasonCodeID),
+			// The account the code pointed at when the movement was recorded (W2-6b fix round 3). The
+			// posting uses the account the movement carries, so a repoint of the code made while this
+			// movement waited never moves the money.
+			"gl_account_code": nullStr(m.GLAccountCode),
 		})
 		if err != nil {
 			return fmt.Errorf("till: marshal movement posted: %w", err)
@@ -453,11 +482,14 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 // insertMovementSQL is the movement INSERT. created_at is written from the service clock the
 // caller passes on the row (one clock rules the transaction, FW1-13b), never the column default:
 // the outbox payload's occurred_at is this row's created_at, and both journal builders date from
-// it. The pool path (InsertMovement) appends RETURNING id for the outbox payload's own key; the
-// in-caller-tx path (InsertMovementTx, the POS return's drawer movement) shares the statement
-// without it and never emits: the return event's journal already carries the drawer credit.
-const insertMovementSQL = `INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reference, created_by, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+// it. gl_account_code is the account the movement's reason code pointed at when the movement was
+// recorded (W2-6b fix round 3): the account travels with the movement, so a repoint of the code
+// never moves a movement that has not posted yet. The pool path (InsertMovement) appends RETURNING
+// id for the outbox payload's own key; the in-caller-tx path (InsertMovementTx, the POS return's
+// drawer movement) shares the statement without it and never emits: the return event's journal
+// already carries the drawer credit.
+const insertMovementSQL = `INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reason_code_id, gl_account_code, reference, created_by, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 
 // PaymentsForSlip reads the named payments for a lodgement's deposit slip validation. The read is
 // fenced to the session and the method: a name that is not on this drawer as this method reads as
@@ -522,7 +554,7 @@ func (r *Repository) InsertMovementTx(ctx context.Context, tx pgx.Tx, m Movement
 		return errNoInstant("movement")
 	}
 	if _, err := tx.Exec(ctx, insertMovementSQL,
-		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, m.Reference, nullStr(m.CreatedBy), m.CreatedAt); err != nil {
+		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, nullUUID(m.ReasonCodeID), nullStr(m.GLAccountCode), m.Reference, nullStr(m.CreatedBy), m.CreatedAt); err != nil {
 		return fmt.Errorf("till: insert movement: %w", err)
 	}
 	return nil
@@ -747,6 +779,156 @@ func (r *Repository) Policy(ctx context.Context, branchID string) (TillPolicy, e
 		return TillPolicy{}, fmt.Errorf("till: policy: %w", err)
 	}
 	return p, nil
+}
+
+// - the counter reason codes (W2-6b, migration 0451) -
+
+// ReasonCodes reads a branch's counter reason code list: the codes the drawer may name, live rows
+// and turned off rows alike, in the order the list shows them.
+func (r *Repository) ReasonCodes(ctx context.Context, branchID string) ([]ReasonCode, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT id::text, branch_id::text, code, label, movement_kind, gl_account_code, active, created_at, updated_at
+		   FROM till_counter_reason_codes
+		  WHERE branch_id = $1
+		  ORDER BY code`, branchID)
+	if err != nil {
+		return nil, fmt.Errorf("till: reason codes: %w", err)
+	}
+	defer rows.Close()
+	out := []ReasonCode{}
+	for rows.Next() {
+		var c ReasonCode
+		if err := rows.Scan(&c.ID, &c.BranchID, &c.Code, &c.Label, &c.MovementKind, &c.GLAccountCode, &c.Active, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("till: scan reason code: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ReasonCodeFor resolves the code a movement names on this branch. found=false is an ordinary
+// answer: the branch does not carry that code (it may be another branch's code, or nobody's).
+func (r *Repository) ReasonCodeFor(ctx context.Context, branchID, code string) (ReasonCode, bool, error) {
+	if r.pool == nil {
+		return ReasonCode{}, false, errNoDB
+	}
+	var c ReasonCode
+	err := r.pool.QueryRow(ctx,
+		`SELECT id::text, branch_id::text, code, label, movement_kind, gl_account_code, active, created_at, updated_at
+		   FROM till_counter_reason_codes
+		  WHERE branch_id = $1 AND code = $2`, branchID, code,
+	).Scan(&c.ID, &c.BranchID, &c.Code, &c.Label, &c.MovementKind, &c.GLAccountCode, &c.Active, &c.CreatedAt, &c.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReasonCode{}, false, nil
+	}
+	if err != nil {
+		return ReasonCode{}, false, fmt.Errorf("till: reason code: %w", err)
+	}
+	return c, true, nil
+}
+
+// ReasonCodeByID reads one row of the list by its id.
+func (r *Repository) ReasonCodeByID(ctx context.Context, id string) (ReasonCode, bool, error) {
+	if r.pool == nil {
+		return ReasonCode{}, false, errNoDB
+	}
+	var c ReasonCode
+	err := r.pool.QueryRow(ctx,
+		`SELECT id::text, branch_id::text, code, label, movement_kind, gl_account_code, active, created_at, updated_at
+		   FROM till_counter_reason_codes
+		  WHERE id = $1`, id,
+	).Scan(&c.ID, &c.BranchID, &c.Code, &c.Label, &c.MovementKind, &c.GLAccountCode, &c.Active, &c.CreatedAt, &c.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
+		return ReasonCode{}, false, nil
+	}
+	if err != nil {
+		return ReasonCode{}, false, fmt.Errorf("till: reason code by id: %w", err)
+	}
+	return c, true, nil
+}
+
+// HasActiveReasonCode reports whether the branch has a live code for that direction. A BOTH code
+// counts for either direction. It answers the rule that a movement with no code stays legal only
+// while the branch has no live code for that kind.
+func (r *Repository) HasActiveReasonCode(ctx context.Context, branchID, movementKind string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var has bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM till_counter_reason_codes
+		    WHERE branch_id = $1 AND active AND (movement_kind = $2 OR movement_kind = 'BOTH'))`,
+		branchID, movementKind).Scan(&has)
+	if err != nil {
+		return false, fmt.Errorf("till: active reason code: %w", err)
+	}
+	return has, nil
+}
+
+// InsertReasonCode adds a code to a branch's list. The branch's own (branch_id, code) is unique, so
+// a code the branch already carries is refused as a conflict rather than quietly doubled.
+func (r *Repository) InsertReasonCode(ctx context.Context, c ReasonCode) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var id string
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO till_counter_reason_codes
+		   (branch_id, code, label, movement_kind, gl_account_code, active, created_at, updated_at)
+		 VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $7)
+		 RETURNING id::text`,
+		c.BranchID, c.Code, c.Label, c.MovementKind, c.GLAccountCode, c.Active, c.CreatedAt).Scan(&id)
+	if isUniqueViolation(err) {
+		return "", clientErr(409, "till: %s is already one of this branch's reason codes", c.Code)
+	}
+	if err != nil {
+		return "", fmt.Errorf("till: insert reason code: %w", err)
+	}
+	return id, nil
+}
+
+// UpdateReasonCode edits the row an edit names and answers how many rows moved (zero means the
+// code is not on the list). The fields the edit does not name keep the value the row carries.
+func (r *Repository) UpdateReasonCode(ctx context.Context, id string, e ReasonCodeEdit, at time.Time) (int, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	var label, kind, account string
+	var active bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT label, movement_kind, gl_account_code, active
+		   FROM till_counter_reason_codes WHERE id = $1`, id,
+	).Scan(&label, &kind, &account, &active)
+	if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("till: read the reason code to edit: %w", err)
+	}
+	if e.Label != nil {
+		label = strings.TrimSpace(*e.Label)
+	}
+	if e.MovementKind != nil {
+		kind = strings.ToUpper(strings.TrimSpace(*e.MovementKind))
+	}
+	if e.GLAccountCode != nil {
+		account = strings.TrimSpace(*e.GLAccountCode)
+	}
+	if e.Active != nil {
+		active = *e.Active
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE till_counter_reason_codes
+		    SET label = $2, movement_kind = $3, gl_account_code = $4, active = $5, updated_at = $6
+		  WHERE id = $1`, id, label, kind, account, active, at)
+	if err != nil {
+		return 0, fmt.Errorf("till: update reason code: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // - W5 A-05: NSF + credit holds + declined-attempt log -
