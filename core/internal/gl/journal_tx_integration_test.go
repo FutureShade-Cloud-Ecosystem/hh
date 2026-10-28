@@ -19,6 +19,7 @@ import (
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -52,44 +53,65 @@ func journalTxCount(t *testing.T, pool *pgxpool.Pool, key string) int {
 	return n
 }
 
+// journalTxIn runs body inside a transaction the leg owns, so the leg's failure path can be
+// exercised on purpose: the failure path is a scope, and what that scope leaves behind is the
+// transaction.
+//
+// FW1-08b part B round 3, item 2 (S4's P1): a leg that fails with the transaction still open holds
+// a pooled connection, the next leg waits for that connection, and the suite hangs to its timeout
+// instead of failing. S4 hit a 1h30m panic on this leg for exactly that reason.
+//
+// The rollback is a defer, so it runs on every way out of the scope: the leg's own explicit
+// rollback, the leg's commit, and the leg's failure (a Fatalf leaves the scope through
+// runtime.Goexit, which unwinds the defer). A rollback after a commit reports the transaction
+// closed, and that answer is ignored.
+func journalTxIn(t *testing.T, ctx context.Context, pool *pgxpool.Pool, body func(tx pgx.Tx)) {
+	t.Helper()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	body(tx)
+}
+
 // The journal commits and rolls back with the caller, and a replay through the transaction dedupes.
 func TestIntegration_JournalTx_CommitsAndRollsBackWithTheCaller(t *testing.T) {
 	ctx := context.Background()
 	pool, svc := journalTxSetup(t)
 	key := fmt.Sprintf("jtx-%d", time.Now().UnixNano())
 
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, err := svc.PostExternalTx(ctx, tx, journalTxExt(key))
-	if err != nil || id == "" {
-		t.Fatalf("post through tx: %q %v", id, err)
-	}
-	if n := journalTxCount(t, pool, key); n != 0 {
-		t.Fatalf("an uncommitted tx journal is visible to another session (%d)", n)
-	}
-	if replay, err := svc.PostExternalTx(ctx, tx, journalTxExt(key)); err != nil || replay != id {
-		t.Fatalf("replay through the same tx = %q %v, want %q", replay, err, id)
-	}
-	if err := tx.Rollback(ctx); err != nil {
-		t.Fatal(err)
-	}
+	var id string
+	journalTxIn(t, ctx, pool, func(tx pgx.Tx) {
+		var err error
+		id, err = svc.PostExternalTx(ctx, tx, journalTxExt(key))
+		if err != nil || id == "" {
+			t.Fatalf("post through tx: %q %v", id, err)
+		}
+		if n := journalTxCount(t, pool, key); n != 0 {
+			t.Fatalf("an uncommitted tx journal is visible to another session (%d)", n)
+		}
+		if replay, err := svc.PostExternalTx(ctx, tx, journalTxExt(key)); err != nil || replay != id {
+			t.Fatalf("replay through the same tx = %q %v, want %q", replay, err, id)
+		}
+		if err := tx.Rollback(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
 	if n := journalTxCount(t, pool, key); n != 0 {
 		t.Fatalf("a rolled back caller left %d journal(s)", n)
 	}
 
-	tx, err = pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, err = svc.PostExternalTx(ctx, tx, journalTxExt(key))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit: %v", err)
-	}
+	journalTxIn(t, ctx, pool, func(tx pgx.Tx) {
+		var err error
+		id, err = svc.PostExternalTx(ctx, tx, journalTxExt(key))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+	})
 	if n := journalTxCount(t, pool, key); n != 1 {
 		t.Fatalf("committed caller left %d journal(s), want 1", n)
 	}
@@ -221,5 +243,31 @@ func TestIntegration_JournalTx_NilTxRefused(t *testing.T) {
 	}
 	if _, err := svc.ResolveRuleTx(context.Background(), nil, "vendor.bill.posted", "ap", ""); !errors.Is(err, errNilTx) {
 		t.Fatalf("nil tx rule read = %v, want errNilTx", err)
+	}
+}
+
+// The leg's failure path leaves no open transaction: an open transaction holds a pooled connection,
+// so the next leg waits for it and a red in the leg hangs the suite to its timeout instead of
+// failing it (FW1-08b part B round 3, item 2).
+func TestIntegration_JournalTx_TheFailurePathLeavesNoOpenTransaction(t *testing.T) {
+	ctx := context.Background()
+	pool, svc := journalTxSetup(t)
+	key := fmt.Sprintf("jtx-failpath-%d", time.Now().UnixNano())
+
+	var tx pgx.Tx
+	journalTxIn(t, ctx, pool, func(outer pgx.Tx) {
+		tx = outer
+		bad := journalTxExt(key)
+		bad.Lines[0].AccountCode = "no-such-account"
+		if _, err := svc.PostExternalTx(ctx, outer, bad); err == nil {
+			t.Error("the unknown account post must be refused")
+		}
+		// The failure path: the leg stops here the way a red leg stops, and it does not roll
+		// the transaction back by hand.
+	})
+	// The failure path must have closed the transaction. Rolling it back again must report it
+	// closed.
+	if err := tx.Rollback(ctx); !errors.Is(err, pgx.ErrTxClosed) {
+		t.Fatalf("the failure path left the transaction open (the rollback said %v): a red in this leg hangs the suite to its timeout instead of failing it", err)
 	}
 }
