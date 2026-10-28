@@ -326,3 +326,176 @@ test("390 px phone layout: pickers fit within the card and a picker inside a car
   expect(check.gridCol).toBe("2");
 });
 
+async function openPricingTabAt390(page: Page, title: string, settle: string): Promise<void> {
+  await page.locator('[data-test="pr-tab-select"]').selectOption({ label: title });
+  await expect(page.locator(settle).first()).toBeVisible();
+}
+
+async function openSurfaceAt390(page: Page, surface: string, settle: string): Promise<void> {
+  const list = page.locator(".surface-list");
+  if (!(await list.isVisible())) {
+    await page.locator('[data-action="toggle-surface-list"]').click();
+    await expect(list).toBeVisible();
+  }
+  await page.locator(`.surface-link[data-surface="${surface}"]`).click();
+  await expect(page.locator(settle).first()).toBeVisible();
+}
+
+async function collectClippedPickerHints(page: Page, stateName: string): Promise<string[]> {
+  return page.evaluate((state) => {
+    const root = document.querySelector("dealer-admin-app")?.shadowRoot;
+    if (!root) return [`${state}: missing dealer-admin-app shadowRoot`];
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return [`${state}: missing 2d canvas context`];
+
+    const measureText = (text: string, cs: CSSStyleDeclaration): number => {
+      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      ctx.letterSpacing = cs.letterSpacing === "normal" ? "0px" : cs.letterSpacing;
+      return ctx.measureText(text).width;
+    };
+
+    const clipped: string[] = [];
+
+    for (const input of root.querySelectorAll<HTMLInputElement>("input[placeholder]")) {
+      const cs = getComputedStyle(input);
+      if (cs.display === "none" || cs.visibility === "hidden") continue;
+      if (input.getBoundingClientRect().width === 0) continue;
+      const placeholder = input.getAttribute("placeholder") ?? "";
+      if (placeholder === "") continue;
+
+      const field =
+        input.getAttribute("data-picker-search") ??
+        input.getAttribute("data-field") ??
+        input.getAttribute("aria-label") ??
+        "input";
+      const padL = Number.parseFloat(cs.paddingLeft) || 0;
+      const padR = Number.parseFloat(cs.paddingRight) || 0;
+      const boxWidth = input.clientWidth - padL - padR;
+      const measured = measureText(placeholder, cs);
+
+      const prevValue = input.value;
+      input.value = placeholder;
+      const scrollWithPlaceholder = input.scrollWidth;
+      input.value = prevValue;
+
+      if (
+        input.scrollWidth > input.clientWidth + 0.5 ||
+        scrollWithPlaceholder > input.clientWidth + 0.5 ||
+        measured > boxWidth + 0.5
+      ) {
+        clipped.push(
+          `${state} | field=${field} | placeholder="${placeholder}" | measured=${Math.round(measured)}px | box=${Math.round(boxWidth)}px | scroll=${scrollWithPlaceholder}px | client=${input.clientWidth}px`,
+        );
+      }
+    }
+
+    for (const current of root.querySelectorAll<HTMLElement>(".hh-entity-picker .picker-current")) {
+      const cs = getComputedStyle(current);
+      if (cs.display === "none" || cs.visibility === "hidden") continue;
+      if (current.getBoundingClientRect().width === 0) continue;
+      if (current.scrollWidth > current.clientWidth + 0.5) {
+        const picker = current.closest(".hh-entity-picker")?.getAttribute("data-picker") ?? "picker";
+        clipped.push(
+          `${state} | picker-current=${picker} | text="${(current.textContent ?? "").trim()}" | scroll=${current.scrollWidth}px | client=${current.clientWidth}px`,
+        );
+      }
+    }
+
+    for (const sel of root.querySelectorAll<HTMLSelectElement>("select.select")) {
+      const cs = getComputedStyle(sel);
+      if (cs.display === "none" || cs.visibility === "hidden") continue;
+      if (sel.getBoundingClientRect().width === 0) continue;
+      const optText = (sel.selectedOptions[0]?.textContent ?? "").trim();
+      if (optText === "") continue;
+      const padL = Number.parseFloat(cs.paddingLeft) || 0;
+      const padR = Number.parseFloat(cs.paddingRight) || 0;
+      const boxWidth = sel.clientWidth - padL - padR;
+      const measured = measureText(optText, cs);
+      if (sel.scrollWidth > sel.clientWidth + 0.5 || measured > boxWidth + 0.5) {
+        const field = sel.getAttribute("data-field") ?? sel.getAttribute("aria-label") ?? "select";
+        clipped.push(
+          `${state} | select=${field} | option="${optText}" | measured=${Math.round(measured)}px | box=${Math.round(boxWidth)}px`,
+        );
+      }
+    }
+
+    return clipped;
+  }, stateName);
+}
+
+test("390 px phone layout: every picker input placeholder and hint fits its box across all views", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signInAsDealerAdmin(page);
+  const clipped: string[] = [];
+
+  await openSurfaceAt390(page, "pricing", '[data-test="pr-margin-count"]');
+
+  // 1. Rules editor
+  await openPricingTabAt390(page, "Rules", '[data-test="pr-rules-count"]');
+  await page.locator('[data-action="pr-rule-edit"]').first().click();
+  await expect(page.locator('[data-test="pr-rule-editor"]')).toBeVisible();
+  clipped.push(...(await collectClippedPickerHints(page, "pricing:rules")));
+
+  // 2. Customer prices
+  await openPricingTabAt390(page, "Customer prices", '[data-test="pr-cust-empty"]');
+  clipped.push(...(await collectClippedPickerHints(page, "pricing:customers")));
+
+  // 3. Quantity breaks editor
+  await openPricingTabAt390(page, "Quantity breaks", '[data-test="pr-breaks-count"]');
+  await page.locator('[data-action="pr-break-edit"]').first().click();
+  await expect(page.locator('[data-test="pr-break-editor"]')).toBeVisible();
+  clipped.push(...(await collectClippedPickerHints(page, "pricing:breaks")));
+
+  // 4. Promotions and clearance editors
+  await openPricingTabAt390(page, "Promotions & clearance", '[data-test="pr-clear-count"]');
+  await page.locator('[data-action="pr-promo-edit"]').first().click();
+  await page.locator('[data-action="pr-clear-edit"]').first().click();
+  await expect(page.locator('[data-test="pr-promo-editor"]')).toBeVisible();
+  await expect(page.locator('[data-test="pr-clear-editor"]')).toBeVisible();
+  clipped.push(...(await collectClippedPickerHints(page, "pricing:promos")));
+
+  // 5. Rebates editor and accrual form
+  await openPricingTabAt390(page, "Rebates", '[data-test="pr-ledger-total"]');
+  await page.locator('[data-action="pr-rebate-edit"]').first().click();
+  await expect(page.locator('[data-test="pr-rebate-editor"]')).toBeVisible();
+  clipped.push(...(await collectClippedPickerHints(page, "pricing:rebates")));
+
+  // 6. Units of measure probe and conversion editor
+  await openPricingTabAt390(page, "Units of measure", '[data-test="pr-uom-count"]');
+  await page.locator('[data-action="pr-uom-edit"]').first().click();
+  await expect(page.locator('[data-test="pr-uom-editor"]')).toBeVisible();
+  clipped.push(...(await collectClippedPickerHints(page, "pricing:uom")));
+
+  // 7. Batches create form
+  await openPricingTabAt390(page, "Batches & imports", '[data-test="pr-profiles-count"]');
+  await page.locator('[data-action="pr-batch-new"]').click();
+  await expect(page.locator('[data-test="pr-batch-create"]')).toBeVisible();
+  clipped.push(...(await collectClippedPickerHints(page, "pricing:batches")));
+
+  // 8. Low margin probe
+  await openPricingTabAt390(page, "Low margin", '[data-test="pr-lm-count"]');
+  clipped.push(...(await collectClippedPickerHints(page, "pricing:lowmargin")));
+
+  // 9. Change log filters
+  await openPricingTabAt390(page, "Change log", '[data-test="pr-log-count"]');
+  clipped.push(...(await collectClippedPickerHints(page, "pricing:changelog")));
+
+  // 10. Audit filters
+  await openSurfaceAt390(page, "audit", '[data-test="audit-count"]');
+  clipped.push(...(await collectClippedPickerHints(page, "audit")));
+
+  // 11. Exports filters
+  await openSurfaceAt390(page, "exports", '[data-action="wb-download"]');
+  clipped.push(...(await collectClippedPickerHints(page, "exports")));
+
+  // 12. Role configuration editor
+  await openSurfaceAt390(page, "role-config", '[data-test="config-roles-count"]');
+  await page.locator('[data-test="config-cell-counter-till-yard"]').click();
+  await expect(page.locator('[data-test="config-editor"]')).toBeVisible();
+  clipped.push(...(await collectClippedPickerHints(page, "role-config")));
+
+  expect(clipped, `picker placeholders or hints clipped at 390 px:\n${clipped.join("\n")}`).toEqual([]);
+});
+
+
