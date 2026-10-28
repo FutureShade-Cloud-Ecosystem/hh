@@ -466,6 +466,28 @@ func (s *ApprovalsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id st
 	return rs, true, nil
 }
 
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// whether a request row the scope's keys can name still exists, for every
+// caller of the org at once. The org predicate alone (the org off the row's
+// branch), tombstone aware (a withdrawn request is gone for everyone), never
+// the reader the caller's Load speaks: the gate may hide a key only for a
+// live row a caller cannot see, and a gone row keeps the bound answer
+// (PR 640's rule).
+func (s *ApprovalsSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || !approvalLooksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM permission_approval_requests a
+		 WHERE a.id = $1::uuid AND a.deleted_at IS NULL
+		   AND EXISTS (SELECT 1 FROM locations l WHERE l.id = a.branch_id AND l.org_id = $2::uuid))`,
+		id, f.OrgID).Scan(&present); err != nil {
+		return false, fmt.Errorf("identity: approvals sync bound entity exists: %w", err)
+	}
+	return present, nil
+}
+
 // approvalCreateFields is the field set a pushed create may declare:
 // the branch the request is filed at, the caller-facing policy, the
 // detail note and the optional subject. The requester is the CALLER's
