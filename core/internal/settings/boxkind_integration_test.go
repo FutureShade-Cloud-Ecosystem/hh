@@ -25,14 +25,29 @@ func TestIntegration_WriteBoxKindOnARealTransaction(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = tx.Rollback(ctx) })
 
+	// The row's state before the refused write, snapshot: a refused write
+	// must leave the mark EXACTLY as it was. On a finance seeded database
+	// the mark is there and says finance (this package's gate database is
+	// one), so absence is not the assertion; unchanged is.
+	var before []byte
+	hadRow := tx.QueryRow(ctx, `SELECT value FROM system_settings WHERE key = $1`, KeyBoxKind).Scan(&before) == nil
+
 	if err := WriteBoxKindTx(ctx, tx, "Finance Box"); err == nil {
 		t.Fatal("a malformed kind must refuse on a real transaction")
 	} else if !strings.Contains(err.Error(), "short lowercase word") {
 		t.Fatalf("a malformed kind must refuse as malformed, got %v", err)
 	}
 	var value []byte
-	if err := tx.QueryRow(ctx, `SELECT value FROM system_settings WHERE key = $1`, KeyBoxKind).Scan(&value); err == nil {
-		t.Fatalf("the refused write left the mark in place: %s", value)
+	afterErr := tx.QueryRow(ctx, `SELECT value FROM system_settings WHERE key = $1`, KeyBoxKind).Scan(&value)
+	if hadRow {
+		if afterErr != nil {
+			t.Fatalf("the refused write removed the mark: %v", afterErr)
+		}
+		if string(value) != string(before) {
+			t.Fatalf("the refused write changed the mark: %q was %q", value, before)
+		}
+	} else if afterErr == nil {
+		t.Fatalf("the refused write left a mark behind: %s", value)
 	}
 	if err := WriteBoxKindTx(ctx, tx, "finance"); err != nil {
 		t.Fatalf("a well shaped kind must write through a real transaction: %v", err)
