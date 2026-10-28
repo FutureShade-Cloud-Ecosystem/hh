@@ -375,7 +375,10 @@ jobs:
           (cd web/apps/money-desk && CI=true PLAYWRIGHT_HTML_OPEN=never \
             PLAYWRIGHT_HTML_REPORT="$MDREAL_STATE/report" \
             npx --no-install playwright test --config test/acceptance-real.config.ts --reporter=list,html \
-            --trace=retain-on-failure --output="$MDREAL_STATE/results")
+            --trace=off --output="$MDREAL_STATE/results")
+          # No traces for this job: a trace of a signed in run carries the box's subject in its
+          # requests, so the artifact check would refuse every red run's upload and the
+          # diagnostics would never leave the runner. Screenshots, the list and the report do.
       - name: Remove the box
         if: always()
         run: bash web/apps/money-desk/test/acceptance-real/box.sh down

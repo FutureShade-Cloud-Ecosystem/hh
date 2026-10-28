@@ -78,7 +78,7 @@ node_bin() {
 }
 
 up() {
-	mkdir -p "$MDREAL_STATE"
+	mkdir -p -m 0700 "$MDREAL_STATE"
 	# The throwaway key, the tester and the state the specs read. Nothing
 	# here is a credential of a real system.
 	"$(node_bin)" --experimental-strip-types "$HERE/session.ts" setup \
