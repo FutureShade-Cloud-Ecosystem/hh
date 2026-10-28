@@ -13,12 +13,14 @@ export const WIRE_PAYMENT = "b9000000-0000-4000-8000-000000000004";
 export const FEE_JOURNAL = "JE-0004 · Till over/short";
 export const CHEQUE_JOURNAL = "JE-0003 · Payment received";
 // The statement's closing balance in the stub world: the balance the ledger holds at the month end, which the
-// GL world carries ($25,025.00: the opening balances, the payment received and the till over/short). A statement
-// that says this agrees with the ledger before any match.
-export const CLOSING = "25,025.00";
-// The ledger's balance once the matching has posted its clearing journals: the GL world's own journals plus the
-// core's postings for the four auto lines and the wire, each line's net on 1000 ($6,160.50 more). A statement
-// that says this agrees with the ledger once the lines are matched.
+// GL world carries ($27,475.50: the opening balances, the payment received, the till over/short, and the till
+// lodgement's OWN journal, DR 1000 / CR 1020, booked at lodgement). A statement that says this agrees with the
+// ledger before any match.
+export const CLOSING = "27,475.50";
+// The ledger's balance once the matching has posted its clearing journals: the ledger's balance before the
+// matching plus the core's postings for the three card lines, the batch and the wire, each line's net on 1000
+// ($3,710.00 more). The lodgement's line moves nothing: it carries its own journal, so its match only confirms
+// it. A statement that says this agrees with the ledger once the lines are matched.
 export const CLOSING_AFTER_MATCHING = "31,185.50";
 // The same balance, less the outstanding items the month carries ($300.00 in transit, $120.00 outstanding), so
 // the adjusted bank balance agrees with the ledger.

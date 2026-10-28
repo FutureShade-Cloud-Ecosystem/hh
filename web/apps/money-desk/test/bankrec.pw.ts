@@ -217,12 +217,13 @@ test("a month opens with the difference in words, sign off is held until it is z
   const month = page.locator("[data-recon-id]");
   await expect(month).toContainText(prior.words);
   await expect(month).toContainText("$31,185.50");
-  await expect(month).toContainText("Off by $6,160.50");
+  await expect(month).toContainText("Off by $3,710.00");
   await expect(month).toContainText("Open");
   await expect(month.getByRole("button", { name: "Sign off" })).toBeDisabled();
   await expect(month.locator("[data-held]")).toContainText("Held: the statement and the ledger must agree first.");
-  // Match what can be matched. The ledger moves with the matching: the four auto lines and the wire post their
-  // clearing journals, each line's net on 1000, so the difference stands until the figures are read again.
+  // Match what can be matched. The ledger moves with the matching: the three card lines, the batch and the wire
+  // post their clearing journals, each line's net on 1000, and the lodgement's line moves nothing (it carries its
+  // own journal), so the difference stands until the figures are read again.
   await tab(page, "match");
   await page.getByRole("button", { name: "Run auto match" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Auto match paired 4 lines");
@@ -231,7 +232,7 @@ test("a month opens with the difference in words, sign off is held until it is z
   await page.locator("[data-line-panel]").getByRole("button", { name: "Match line" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Matched.");
   await tab(page, "accounts");
-  await expect(page.locator("[data-recon-id]")).toContainText("Off by $6,160.50");
+  await expect(page.locator("[data-recon-id]")).toContainText("Off by $3,710.00");
   await page.locator("[data-recon-id]").getByRole("button", { name: "Refresh figures" }).click();
   await expect(page.locator("[data-recon-id]")).toContainText("Balanced");
   // The month is balanced now, and two lines are still unmatched, so the sign off is held for that reason instead.
@@ -576,7 +577,7 @@ test("on a phone the tables give way to cards and no screen scrolls the page sid
   await openBank(page, request);
   const sideways = () => page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(await sideways()).toBe(false);
-  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill("25,255.75");
+  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill("27,244.75");
   await page.getByRole("button", { name: "Open month" }).click();
   await expect(page.locator("[data-recon-card]")).toBeVisible();
   await expect(page.locator("[data-recon-id]")).toBeHidden();

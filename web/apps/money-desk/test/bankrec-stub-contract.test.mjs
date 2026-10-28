@@ -142,12 +142,14 @@ function refused(res, status, fragment) {
 const { year: Y, month: M } = statementMonth();
 const period = `${Y}-${String(M).padStart(2, "0")}`;
 // The statement's closing balance in the stub world: the balance the ledger holds at the month end, read from the
-// ledger's own world ($25,025.00: the opening balances, the payment received and the till over/short). The same
-// figure the cut over form shows for the account.
-const CLOSING = 2_502_500;
-// What the matching moves the ledger by: the four auto lines' nets reach 1000 ($1,280.00, $2,450.50, $980.00 and
-// $1,150.00, the batch's $25.00 fee on its own account) and the wire's $300.00 with it.
-const MATCHING_MOVE = 586_050 + 30_000;
+// ledger's own world ($27,475.50: the opening balances, the payment received, the till over/short, and the till
+// lodgement's OWN journal, DR 1000 / CR 1020, booked at lodgement). The same figure the cut over form shows for the
+// account before the statement month starts.
+const CLOSING = 2_502_500 + 245_050;
+// What the matching moves the ledger by: the three card lines' nets reach 1000 ($1,280.00, $980.00 and $1,150.00,
+// the batch's $25.00 fee on its own account) and the wire's $300.00 with it. The lodgement's line moves nothing: a
+// lodgement that carries its own journal is only confirmed by its match (FROM-PRINCIPAL 117 and 120).
+const MATCHING_MOVE = 128_000 + 98_000 + 115_000 + 30_000;
 // The ledger's balance once the matching has posted those clearing journals: the GL world's own journals plus
 // the move. A statement that says this agrees with the ledger once the lines are matched.
 const CLOSING_AFTER_MATCHING = CLOSING + MATCHING_MOVE;
@@ -255,7 +257,12 @@ test("the auto match pairs the card, lodgement and batch lines by the rules, lea
   assert.deepEqual([run.json.matched, run.json.unmatched], [4, 2]);
   const kinds = run.json.matches.map((m) => `${m.target_type}:${m.method}`).sort();
   assert.deepEqual(kinds, ["LODGEMENT:AUTO", "PAYMENT:AUTO", "PAYMENT:AUTO", "PAYMENT:AUTO"]);
-  assert.ok(run.json.matches.every((m) => typeof m.journal_id === "string" && typeof m.rule_id === "string"));
+  assert.ok(
+    run.json.matches.every(
+      (m) => (m.target_type === "LODGEMENT" ? m.journal_id === undefined : typeof m.journal_id === "string") && typeof m.rule_id === "string",
+    ),
+    "the card and batch matches posted their clearing journals; the lodgement that carries its own journal posts none",
+  );
   const again = await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });
   assert.deepEqual([again.json.matched, again.json.unmatched], [0, 2]);
   const window = await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating, from: "2031-01-01", to: "2031-01-02" });
@@ -268,19 +275,20 @@ test("the auto match pairs the card, lodgement and batch lines by the rules, lea
 test("a match posts its clearing journal into the ledger: 1000 moves by the line's net", async () => {
   await reset();
   const lines = (await ctl("GET", `/api/v1/bankrec/lines?bank_account_id=${IDS.operating}&limit=50`)).json.items;
-  // The ledger before any match: the GL world's own journals, read as the month's closing balance.
+  // The ledger before any match: the GL world's own journals with the till lodgement's own journal among them,
+  // read as the month's closing balance.
   const before = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING })).json;
-  assert.equal(before.gl_balance_cents, 2_502_500, "the ledger before any match is the GL world's own journals");
+  assert.equal(before.gl_balance_cents, CLOSING, "the ledger before any match is the GL world's own journals, the lodgement's own journal among them");
   // The core's rule for the four lines the auto match pairs (core/internal/bankrec/matcher.go): a card settlement
-  // is DR 1000 by the net paid in and CR 1010 by the gross claimed, with the fee on its own account; a cash
-  // lodgement that carries no journal of its own is DR 1000 and CR 1020.
+  // is DR 1000 by the net paid in and CR 1010 by the gross claimed, with the fee on its own account; a lodgement
+  // that carries its own journal (the till posted DR 1000 / CR 1020 at lodgement) is only confirmed by its match.
   const run = await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });
   assert.equal(run.json.matched, 4);
   const afterAuto = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING })).json;
   assert.equal(
     afterAuto.gl_balance_cents,
-    2_502_500 + 128_000 + 245_050 + 98_000 + 115_000,
-    "the four lines' nets reach 1000: $1,280.00, $2,450.50, $980.00 and $1,150.00 (the batch's $25.00 fee is its own account, never 1000's)",
+    CLOSING + 128_000 + 98_000 + 115_000,
+    "the three card lines' nets reach 1000: $1,280.00, $980.00 and $1,150.00 (the batch's $25.00 fee is its own account, never 1000's); the lodgement's line moves nothing",
   );
   // The wire, matched by hand: an EFT receipt clears 1020 (the core's manualJournal).
   const wire = await lineByRef("WIRE FROM CONTRACTOR");
@@ -301,9 +309,107 @@ test("a match posts its clearing journal into the ledger: 1000 moves by the line
     return run.json.matches.find((m) => m.statement_line_id === line.id).journal_id;
   };
   assert.deepEqual(await legs(matched("CARD SETTLEMENT BATCH 0142"), lines.find((l) => l.description === "CARD SETTLEMENT BATCH 0142")), [["1000", 128_000, 0], ["1010", 0, 128_000]]);
-  assert.deepEqual(await legs(matched("CASH LODGEMENT DEPOSIT"), lines.find((l) => l.description === "CASH LODGEMENT DEPOSIT")), [["1000", 245_050, 0], ["1020", 0, 245_050]]);
+  const lodgeLine = lines.find((l) => l.description === "CASH LODGEMENT DEPOSIT");
+  assert.equal(
+    run.json.matches.find((m) => m.statement_line_id === lodgeLine.id).journal_id,
+    undefined,
+    "the carrying lodgement's line confirms with no journal: it was booked at lodgement",
+  );
   assert.deepEqual(await legs(matched("RUN BATCH SETTLEMENT"), lines.find((l) => l.description === "RUN BATCH SETTLEMENT")), [["1000", 115_000, 0], ["6300", 2_500, 0], ["1010", 0, 117_500]]);
   assert.deepEqual(await legs(manual.json.journal_id, wire), [["1000", 30_000, 0], ["1020", 0, 30_000]]);
+});
+
+test("the auto match pairs card payments only: a received non card payment that would pair by amount is left unmatched", async () => {
+  await reset();
+  // A statement line the batch rule would pair with the EFT wire payment by amount: it is dated on the wire
+  // payment's own day, so its fee against the wire's $300.00 would be zero, better than the card batch's $25.00.
+  // The core's auto match reads card payments only (till/recon_seam.go: method = 'CARD' AND status = 'RECEIVED').
+  await ctl("POST", "/api/v1/bankrec/imports", {
+    bank_account_id: IDS.operating,
+    profile_code: "rbc-default",
+    filename: "wire-run.csv",
+    content: `Date,Description,Amount,Reference\n${period}-24,WIRE RUN BATCH,300.00,\n`,
+  });
+  const run = await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });
+  assert.equal(run.status, 200);
+  assert.deepEqual([run.json.matched, run.json.unmatched], [4, 3], "the card lines, the lodgement and the batch pair; the wire's EFT payment is not a candidate");
+  assert.ok(run.json.matches.every((m) => m.target_ref_id !== IDS.paymentWire), "the auto run never claims the non card payment");
+  // The EFT payment is still received, so the hand still matches the wire line to it.
+  const wire = await lineByRef("WIRE FROM CONTRACTOR");
+  const manual = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
+  assert.equal(manual.status, 201, "the non card payment was left for the hand");
+});
+
+test("a clearing journal dated in a closed GL period lands in the earliest open period, marked late, as the core posts it", async () => {
+  await reset();
+  // A statement line dated in a month the stub GL world has closed: its clearing journal's document date falls
+  // in a closed period. The core's posting never refuses a SYSTEM journal for that (ruling 82.2,
+  // fw1_04_month_end_integration_test.go, MatchInClosedGLMonthLandsInEarliestOpenPeriodMarkedLatePosted): it
+  // lands in the earliest open period at or after the date's, keeps the document date, and reads late posted.
+  await ctl("POST", "/api/v1/bankrec/imports", {
+    bank_account_id: IDS.operating,
+    profile_code: "rbc-default",
+    filename: "closed-month.csv",
+    content: "Date,Description,Amount,Reference\n2026-07-20,WIRE FROM CONTRACTOR LATE,150.00,\n",
+  });
+  const late = await lineByRef("WIRE FROM CONTRACTOR LATE");
+  const manual = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: late.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
+  assert.equal(manual.status, 201, "the posting lands late instead of refusing the match");
+  const journal = await ctl("GET", `/api/v1/gl/journals/${manual.json.journal_id}`);
+  assert.equal(journal.status, 200);
+  assert.equal(journal.json.late_posted, true, "dated in a closed month, landed in an open one: the core's late posted marker");
+  assert.deepEqual(journal.json.lines.map((l) => [l.account_code, l.debit_cents, l.credit_cents]), [["1000", 15_000, 0], ["1020", 0, 15_000]]);
+  const periods = (await ctl("GET", "/api/v1/gl/periods")).json.items;
+  const landed = periods.find((p) => p.id === journal.json.period_id);
+  assert.ok(landed !== undefined && landed.status === "OPEN" && landed.month === 8, "the earliest open period at or after the closed one");
+});
+
+test("a lodgement that carries its own journal was booked at lodgement: its match and its undo post nothing", async () => {
+  await reset();
+  const run = await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });
+  assert.equal(run.json.matched, 4);
+  const lodgeMatch = run.json.matches.find((m) => m.target_type === "LODGEMENT");
+  assert.equal(lodgeMatch.journal_id, undefined, "the carrying lodgement's match posts nothing: the deposit was booked once, at lodgement");
+  const afterAuto = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING })).json;
+  assert.equal(
+    afterAuto.gl_balance_cents,
+    CLOSING + 128_000 + 98_000 + 115_000,
+    "1000 moved by the three card lines' nets; the carrying lodgement's line unmoved",
+  );
+  const undone = await ctl("POST", "/api/v1/bankrec/unmatch", { match_id: lodgeMatch.id });
+  assert.equal(undone.status, 200);
+  const afterUndo = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING })).json;
+  assert.equal(afterUndo.gl_balance_cents, CLOSING + 128_000 + 98_000 + 115_000, "the undo reverses nothing: the lodgement's own journal stands");
+  // The lodgement's own journal sits in the ledger from the start, dated on the lodgement's day at 12:00 UTC.
+  const ledger = await ctl("GET", "/api/v1/gl/journals");
+  const own = ledger.json.items.find((j) => j.memo === "Till lodgement");
+  assert.ok(own !== undefined, "the till's lodgement journal is in the ledger before any match");
+  assert.deepEqual(own.lines.map((l) => [l.account_code, l.debit_cents, l.credit_cents]), [["1000", 245_050, 0], ["1020", 0, 245_050]]);
+  assert.equal(own.posted_at, `${period}-05T12:00:00.000Z`);
+});
+
+test("a lodgement from before the rule carries no journal of its own: its match posts DR 1000 / CR 1020 and its undo reverses it", async () => {
+  await reset();
+  const cheque = await lineByRef("CHEQUE DEPOSIT");
+  const paid = await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "LODGEMENT", target_ref_id: IDS.lodgement2 });
+  assert.equal(paid.status, 201);
+  assert.ok(typeof paid.json.journal_id === "string", "the legacy lodgement's match posts its clearing journal");
+  const posted = await ctl("GET", `/api/v1/gl/journals/${paid.json.journal_id}`);
+  assert.deepEqual(posted.json.lines.map((l) => [l.account_code, l.debit_cents, l.credit_cents]), [["1000", 64_025, 0], ["1020", 0, 64_025]]);
+  const after = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING })).json;
+  assert.equal(after.gl_balance_cents, CLOSING + 64_025, "1000 moved by the legacy lodgement's line at its match");
+  const undone = await ctl("POST", "/api/v1/bankrec/unmatch", { match_id: paid.json.id });
+  assert.equal(undone.status, 200);
+  const reversal = (await ctl("GET", "/api/v1/gl/journals")).json.items.find((j) => j.memo === "bankrec unmatch reversal");
+  assert.ok(reversal !== undefined, "the undo posted a reversal");
+  // The core's reversalJournal builds DR 1020 / CR 1000; the stub mirrors the original's legs swapped, so the
+  // same two legs ride in the original's order. The legs are held as a set, sorted by account.
+  assert.deepEqual(
+    [...reversal.lines].sort((a, b) => a.account_code.localeCompare(b.account_code)).map((l) => [l.account_code, l.debit_cents, l.credit_cents]),
+    [["1000", 0, 64_025], ["1020", 64_025, 0]],
+  );
+  const back = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING })).json;
+  assert.equal(back.gl_balance_cents, CLOSING, "the undo returns the ledger to where it was");
 });
 
 test("a manual match pairs a line to a payment or a journal, the refusals come in the core's order, and the history keeps every pairing", async () => {
@@ -417,7 +523,7 @@ test("a month opens with the ledger's balance and the variance, a zero balance i
   // at the month end. The stub keeps no ledger of its own.
   assert.equal(opened.json.gl_balance_cents, CLOSING, "before any match the ledger holds the GL world's own journals");
   assert.equal(opened.json.variance_cents, opened.json.statement_balance_cents - opened.json.gl_balance_cents);
-  assert.equal(opened.json.variance_cents, MATCHING_MOVE, "before any match the ledger lacks the four auto lines and the wire");
+  assert.equal(opened.json.variance_cents, MATCHING_MOVE, "before any match the ledger lacks the three card lines, the batch and the wire");
   // The core's placeholder: a typed zero is replaced by the month's line net.
   const zero = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: 0 });
   assert.equal(zero.json.id, opened.json.id, "opening the same month again refreshes it");
@@ -536,41 +642,42 @@ test("the cut over door: the controller records the starting point on the accoun
   // The work role is refused at the admin gate.
   refused(await call(IDS.payrec, "POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 100 }), 403, "Forbidden");
   // A starting point that does not reconcile is refused in the desk's words: the book at the date is
-  // $25,025.00 and the ticked till entry ($25.00 still outstanding) lifts the statement it expects to $25,000.00.
+  // $27,475.50 (the till lodgement's own journal is among the entries, banked on its own day) and the ticked
+  // till entry ($25.00 still outstanding) lifts the statement it expects to $27,450.50.
   const tillId = "7a1e0000-0000-4000-9000-000000000004";
   const gappedRecord = await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 2_500_000 });
   refused(gappedRecord, 422, "the statement and the book differ by");
-  assert.equal(gappedRecord.json.error, "bankrec: cannot record cut-over at " + `${period}-28` + ": the statement and the book differ by $25.00; tick the items still outstanding at cut over, or check the date and balance");
+  assert.equal(gappedRecord.json.error, "bankrec: cannot record cut-over at " + `${period}-28` + ": the statement and the book differ by $2,475.50; tick the items still outstanding at cut over, or check the date and balance");
   refused(await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 2_400_000, outstanding_journal_ids: [tillId] }), 422, "tick the items still outstanding at cut over, or check the date and balance");
   // The controller records it: the account read carries the recorded point.
-  const recorded = await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 2_500_000, outstanding_journal_ids: [tillId] });
+  const recorded = await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 2_745_050, outstanding_journal_ids: [tillId] });
   assert.equal(recorded.status, 200);
   holds("BankRecAccount", recorded.json);
   assert.equal(recorded.json.cutover_date, `${period}-28`);
-  assert.equal(recorded.json.cutover_statement_balance_cents, 2_500_000);
+  assert.equal(recorded.json.cutover_statement_balance_cents, 2_745_050);
   assert.deepEqual(recorded.json.cutover_outstanding_journal_ids, [tillId]);
   const listed = await ctl("GET", "/api/v1/bankrec/accounts");
   holds("BankRecAccountList", listed.json);
   assert.equal(listed.json.find((a) => a.id === IDS.operating).cutover_date, `${period}-28`);
   // Before any month signs off it can be corrected; the core takes the re-record.
-  const corrected = await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 2_502_500 });
+  const corrected = await ctl("POST", cutPath, { cutover_date: `${period}-28`, opening_statement_balance_cents: 2_747_550 });
   assert.equal(corrected.status, 200);
-  assert.equal(corrected.json.cutover_statement_balance_cents, 2_502_500);
+  assert.equal(corrected.json.cutover_statement_balance_cents, 2_747_550);
   // The form's read: the ledger's entries on or before the date and the book balance they make, the core's figures.
   refused(await ctl("GET", `${cutPath}?date=nope`), 400, "cutover_date must be YYYY-MM-DD");
   refused(await ctl("GET", cutPath), 400, "cutover_date must be YYYY-MM-DD");
   const preview = await ctl("GET", `${cutPath}?date=${period}-28`);
   assert.equal(preview.status, 200);
   holds("BankRecCutoverPreview", preview.json);
-  assert.equal(preview.json.book_balance_cents, 2_502_500);
+  assert.equal(preview.json.book_balance_cents, 2_747_550);
   const memos = preview.json.entries.map((e) => e.memo);
-  assert.deepEqual(memos, ["Opening balances", "Payment received", "Till over/short"]);
+  assert.deepEqual(memos, ["Opening balances", "Payment received", "Till over/short", "Till lodgement"]);
   // With the form's typed balance and ticks, the difference and whether it reconciles ride the answer.
   const gapped = await ctl("GET", `${cutPath}?date=${period}-28&statement_cents=2500000`);
   assert.equal(gapped.status, 200);
-  assert.equal(gapped.json.difference_cents, -2_500);
+  assert.equal(gapped.json.difference_cents, -247_550);
   assert.equal(gapped.json.reconciles, false);
-  const ticked = await ctl("GET", `${cutPath}?date=${period}-28&statement_cents=2500000&ticked=${tillId}`);
+  const ticked = await ctl("GET", `${cutPath}?date=${period}-28&statement_cents=2745050&ticked=${tillId}`);
   assert.equal(ticked.status, 200);
   holds("BankRecCutoverPreview", ticked.json);
   assert.equal(ticked.json.difference_cents, 0);
