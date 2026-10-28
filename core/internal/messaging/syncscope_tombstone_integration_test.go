@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
@@ -117,5 +118,72 @@ func TestMessagesSyncReadsAnswerAWithdrawnMessageAsATombstone(t *testing.T) {
 	}
 	if found {
 		t.Errorf("the refused member resolves the key to the withdrawn post")
+	}
+}
+
+// TestMessagesSyncDeleteOfAWithdrawnPostReportsTheTombstonesSeq: the
+// engine's own tombstone rule reaches this scope now that the load answers a
+// withdrawn post as a tombstone. A delete of a post that is already withdrawn
+// reports the tombstone's seq rather than allocating a second one for the
+// same fact, the answer every scope that answers a tombstone gives. A delete
+// of a LIVE post still refuses: the module's own wall holds.
+func TestMessagesSyncDeleteOfAWithdrawnPostReportsTheTombstonesSeq(t *testing.T) {
+	f := newUX108Fixture(t)
+	ctx := context.Background()
+	sam, _ := ux108Filters()
+
+	engine := sync.NewEngine().WithKeyLedger(sync.NewPgKeyLedger(f.pool))
+	if err := engine.RegisterScope("messages", f.store); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	info, ok := sync.Lookup("messages")
+	if !ok {
+		t.Fatal("messages missing from the registry")
+	}
+
+	// A live post: the module's own wall refuses the delete.
+	live, err := f.store.Create(ctx, sam, uuid.NewString(), map[string]any{
+		"channel_id": ux108Room, "body": "ux108r2: a live post"})
+	if err != nil {
+		t.Fatalf("the trail holder posts in the room: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM msg_messages WHERE id = $1::uuid`, live.ID)
+	})
+	res, err := engine.Push(ctx, info, sam, []apigen.SyncPushOperation{{
+		ClientId: uuid.NewString(), Op: "delete", Payload: map[string]any{"id": live.ID}}})
+	if err != nil {
+		t.Fatalf("the delete of a live post failed the push: %v", err)
+	}
+	if res.Results[0].Status != "rejected" {
+		t.Errorf("a delete of a live post is refused: %+v", res.Results[0])
+	}
+
+	// A withdrawn post: the delete's effect already stands.
+	rs, err := f.store.Create(ctx, sam, uuid.NewString(), map[string]any{
+		"channel_id": ux108Room, "body": "ux108r2: a withdrawn post"})
+	if err != nil {
+		t.Fatalf("the trail holder posts in the room: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM msg_messages WHERE id = $1::uuid`, rs.ID)
+	})
+	if _, err := NewRepository(f.pool).DeleteMessage(ctx, ux108Room, rs.ID); err != nil {
+		t.Fatalf("the author withdraws his own post: %v", err)
+	}
+	var tombSeq int64
+	if err := f.pool.QueryRow(ctx, `SELECT seq FROM msg_messages WHERE id = $1::uuid`, rs.ID).Scan(&tombSeq); err != nil {
+		t.Fatalf("read the tombstone's seq: %v", err)
+	}
+
+	res, err = engine.Push(ctx, info, sam, []apigen.SyncPushOperation{{
+		ClientId: uuid.NewString(), Op: "delete", Payload: map[string]any{"id": rs.ID}}})
+	if err != nil {
+		t.Fatalf("the delete of a withdrawn post failed the push: %v", err)
+	}
+	if res.Results[0].Status != "applied" || res.Results[0].Seq == nil {
+		t.Errorf("a delete of a withdrawn post reports the tombstone's seq: %+v", res.Results[0])
+	} else if *res.Results[0].Seq != tombSeq {
+		t.Errorf("the answer carries the tombstone's seq: got %d want %d", *res.Results[0].Seq, tombSeq)
 	}
 }

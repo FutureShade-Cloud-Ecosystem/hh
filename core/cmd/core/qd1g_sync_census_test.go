@@ -507,20 +507,22 @@ var qd1gNotDoor = map[string]map[string]string{
 func qd1gDoors() map[string]map[string]qd1gDoor {
 	return map[string]map[string]qd1gDoor{
 		"quotes": {
-			"Create":      {"POST /api/v1/quotes", qd1gQuotesCreate},
-			"Write":       {"PATCH /api/v1/quotes/{id}", qd1gQuotesWrite},
-			"Delete":      {"the PATCH ladder, DRAFT only (no REST delete)", qd1gQuotesDelete},
-			"Pull":        {"GET /api/v1/quotes (the list)", qd1gQuotesPull},
-			"Load":        {"GET /api/v1/quotes (the list), by id at the conflict envelope", qd1gQuotesLoad},
-			"FindApplied": {"none: a replay answers status and seq only", qd1gQuotesFindApplied},
+			"Create":            {"POST /api/v1/quotes", qd1gQuotesCreate},
+			"Write":             {"PATCH /api/v1/quotes/{id}", qd1gQuotesWrite},
+			"Delete":            {"the PATCH ladder, DRAFT only (no REST delete)", qd1gQuotesDelete},
+			"Pull":              {"GET /api/v1/quotes (the list)", qd1gQuotesPull},
+			"Load":              {"GET /api/v1/quotes (the list), by id at the conflict envelope", qd1gQuotesLoad},
+			"FindApplied":       {"none: a replay answers status and seq only", qd1gQuotesFindApplied},
+			"BoundEntityExists": {"none: the bound key gate's own existence read", qd1gQuotesBoundEntityExists},
 		},
 		"approvals": {
-			"Create":      {"POST /api/v1/staff/approvals", qd1gApprovalsCreate},
-			"Write":       {"POST /api/v1/staff/approvals/{id}/decide, and the requester's note (no REST twin)", qd1gApprovalsWrite},
-			"Delete":      {"the requester's own withdrawal unless consumed (no REST twin)", qd1gApprovalsDelete},
-			"Pull":        {"GET /api/v1/staff/approvals (the list)", qd1gApprovalsPull},
-			"Load":        {"GET /api/v1/staff/approvals (the list), by id at the conflict envelope", qd1gApprovalsLoad},
-			"FindApplied": {"none: a replay answers status and seq only", qd1gApprovalsFindApplied},
+			"Create":            {"POST /api/v1/staff/approvals", qd1gApprovalsCreate},
+			"Write":             {"POST /api/v1/staff/approvals/{id}/decide, and the requester's note (no REST twin)", qd1gApprovalsWrite},
+			"Delete":            {"the requester's own withdrawal unless consumed (no REST twin)", qd1gApprovalsDelete},
+			"Pull":              {"GET /api/v1/staff/approvals (the list)", qd1gApprovalsPull},
+			"Load":              {"GET /api/v1/staff/approvals (the list), by id at the conflict envelope", qd1gApprovalsLoad},
+			"FindApplied":       {"none: a replay answers status and seq only", qd1gApprovalsFindApplied},
+			"BoundEntityExists": {"none: the bound key gate's own existence read", qd1gApprovalsBoundEntityExists},
 		},
 	}
 }
@@ -679,6 +681,85 @@ func qd1gQuotesFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 			t.Errorf("CENSUS RULE quotes.FindApplied as %s (%s): the replay moved the quote's validity to %s", who.role, k.name, validity)
 		}
 	}
+}
+
+// qd1gBoundExists asks one store's bound key existence read the way the
+// engine's gate asks it: the caller's own filter, the row's id, and nothing
+// else.
+func qd1gBoundExists(t *testing.T, scope string, c *qd1gCensus, who qd1gRole, id string) bool {
+	t.Helper()
+	link := func(ctx context.Context, sub string) (string, bool) {
+		var uid string
+		if err := c.q.pool.QueryRow(ctx,
+			`SELECT id::text FROM users WHERE platform_user_id = $1`, sub).Scan(&uid); err != nil {
+			return "", false
+		}
+		return uid, true
+	}
+	f := syncpkg.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: who.sub}
+	var present bool
+	var err error
+	switch scope {
+	case "quotes":
+		present, err = quote.NewSyncStore(c.q.pool, link).BoundEntityExists(context.Background(), f, id)
+	default:
+		present, err = identity.NewApprovalsSyncStore(c.q.pool, link).BoundEntityExists(context.Background(), f, id)
+	}
+	if err != nil {
+		t.Fatalf("%s BoundEntityExists as %s: %v", scope, who.role, err)
+	}
+	return present
+}
+
+// qd1gQuotesBoundEntityExists: the bound key gate's own existence read. The
+// rule it must match: the row stands for every caller of the org at once. The
+// org predicate alone rides it, never the caller's read rung, so a quote the
+// caller may not read still stands (the gate needs to tell a live row from a
+// row that is gone); a withdrawn quote is gone for everyone; and a quote of
+// another org is never named, so existence never crosses the fence.
+func qd1gQuotesBoundEntityExists(t *testing.T, c *qd1gCensus, who qd1gRole) {
+	// A live quote of the caller's org, owned by a seller the caller is not:
+	// it stands, whatever the caller's read rung says.
+	live, _ := qd1gQuote(t, c, testkit.BranchNorthAID, "SENT", c.seller, "")
+	qd1gMust(t, "quotes.BoundEntityExists", who, "a live quote of the caller's org",
+		qd1gBoundExists(t, "quotes", c, who, live), true)
+
+	// The same quote withdrawn: it is gone for everyone.
+	withdrawn, _ := qd1gQuote(t, c, testkit.BranchNorthAID, "SENT", c.seller, "")
+	if _, err := c.q.pool.Exec(context.Background(),
+		`UPDATE quotes SET deleted_at = now() WHERE id = $1`, withdrawn); err != nil {
+		t.Fatalf("withdraw the planted quote: %v", err)
+	}
+	qd1gMust(t, "quotes.BoundEntityExists", who, "a withdrawn quote of the caller's org",
+		qd1gBoundExists(t, "quotes", c, who, withdrawn), false)
+
+	// A quote of another org: never named.
+	other := qd1gQuoteOfAnotherOrg(t, c)
+	qd1gMust(t, "quotes.BoundEntityExists", who, "a live quote of another org",
+		qd1gBoundExists(t, "quotes", c, who, other), false)
+}
+
+// qd1gQuoteOfAnotherOrg plants one quote of the south org, so the existence
+// read can be asked about a row outside the caller's org.
+func qd1gQuoteOfAnotherOrg(t *testing.T, c *qd1gCensus) string {
+	t.Helper()
+	var id string
+	if err := c.q.pool.QueryRow(context.Background(), `
+		WITH qseq AS (
+			INSERT INTO scope_sequences (scope) VALUES ('quotes')
+			ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+			RETURNING next_value
+		)
+		INSERT INTO quotes (quote_no, customer_id, branch_id, org_id, status, subtotal_cents, tax_cents,
+		                    total_cents, salesperson_id, created_by, seq, idempotency_key)
+		VALUES ('#Q-QD1G-S-' || nextval('quote_no_seq'), $1::uuid, $2::uuid, $3::uuid, 'SENT',
+		        2000, 0, 2000, $4::uuid, $4::uuid, (SELECT next_value FROM qseq), NULL)
+		RETURNING id::text`,
+		testkit.TenantGammaID, testkit.BranchSouthAID, testkit.OrgSouthID, c.seller).Scan(&id); err != nil {
+		t.Fatalf("plant a quote of another org: %v", err)
+	}
+	t.Cleanup(func() { _, _ = c.q.pool.Exec(context.Background(), `DELETE FROM quotes WHERE id = $1`, id) })
+	return id
 }
 
 // ---- approvals legs ------------------------------------------------------
@@ -920,6 +1001,55 @@ func qd1gApprovalsFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 	if err := json.Unmarshal([]byte(body), &resp); err != nil || len(resp.Results) != 1 || resp.Results[0].Status != "applied" {
 		t.Errorf("CENSUS RULE approvals.FindApplied as %s (its own plain request, dedup): the replay did not answer applied: %s", who.role, body)
 	}
+}
+
+// qd1gApprovalsBoundEntityExists: the bound key gate's own existence read.
+// The rule it must match: the card stands for every caller of the org at
+// once. The org alone rides it, the org riding the card's branch, never the
+// pull's reader, so a card the caller may not read still stands (the gate
+// needs to tell a live card from a card that is gone); a withdrawn card is
+// gone for everyone; and a card of another org is never named, so existence
+// never crosses the fence.
+func qd1gApprovalsBoundEntityExists(t *testing.T, c *qd1gCensus, who qd1gRole) {
+	// A live card of the caller's org, filed by a requester the caller is
+	// not: it stands, whatever the pull's reader says.
+	live, _ := qd1gPlain(t, c, c.seller, testkit.BranchNorthAID)
+	qd1gMust(t, "approvals.BoundEntityExists", who, "a live card of the caller's org",
+		qd1gBoundExists(t, "approvals", c, who, live), true)
+
+	// The same card withdrawn: it is gone for everyone.
+	withdrawn, _ := qd1gPlain(t, c, c.seller, testkit.BranchNorthAID)
+	if _, err := c.q.pool.Exec(context.Background(),
+		`UPDATE permission_approval_requests SET deleted_at = now() WHERE id = $1`, withdrawn); err != nil {
+		t.Fatalf("withdraw the planted request: %v", err)
+	}
+	qd1gMust(t, "approvals.BoundEntityExists", who, "a withdrawn card of the caller's org",
+		qd1gBoundExists(t, "approvals", c, who, withdrawn), false)
+
+	// A card of another org: never named.
+	other := qd1gPlainOfAnotherOrg(t, c)
+	qd1gMust(t, "approvals.BoundEntityExists", who, "a live card of another org",
+		qd1gBoundExists(t, "approvals", c, who, other), false)
+}
+
+// qd1gPlainOfAnotherOrg plants one request of the south org, so the existence
+// read can be asked about a row outside the caller's org.
+func qd1gPlainOfAnotherOrg(t *testing.T, c *qd1gCensus) string {
+	t.Helper()
+	marker := "qd1g south " + uuid.NewString()
+	var id string
+	if err := c.q.pool.QueryRow(context.Background(), `
+		INSERT INTO permission_approval_requests
+			(requested_by, branch_id, policy_type, detail, data, status, seq, idempotency_key)
+		VALUES ($1::uuid, $2::uuid, 'CREDIT_LIMIT_EXCEEDED', $3, '{}'::jsonb, 'PENDING', $4, NULL)
+		RETURNING id::text`,
+		c.seller, testkit.BranchSouthAID, marker, c.next()).Scan(&id); err != nil {
+		t.Fatalf("plant a card of another org: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = c.q.pool.Exec(context.Background(), `DELETE FROM permission_approval_requests WHERE id = $1`, id)
+	})
+	return id
 }
 
 // TestQD1G_ApprovalsFindAppliedAnswersOnlyForARequestTheCallerMayRead: the
