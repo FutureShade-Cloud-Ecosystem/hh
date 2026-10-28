@@ -170,6 +170,23 @@ func TestIntegration_W29A_APAging_CompositionRootTieAndRoute(t *testing.T) {
 		t.Fatalf("post bill: %v", err)
 	}
 
+	// Pay 12500 cents of the bill through PayBill, the one sanctioned supplier
+	// payment path since round 2 dropped the external payment read. The payment's
+	// journal carries the key purchasing.bill.payment:<key>.
+	payKey := "w29a:cmd:pay:" + bill.ID
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE idempotency_key = $1)`, "purchasing.bill.payment:"+payKey)
+		_, _ = pool.Exec(bg, `DELETE FROM gl_journals WHERE idempotency_key = $1`, "purchasing.bill.payment:"+payKey)
+	})
+	if _, err := purchasingSvc.PayBill(sCtx, bill.ID, purchasing.PayBillRequest{
+		AmountCents:    12500,
+		Note:           "w29a cmd supplier payment",
+		IdempotencyKey: payKey,
+	}); err != nil {
+		t.Fatalf("pay bill: %v", err)
+	}
+
 	// Attach an open landed cost (8500 cents freight) through the composition-root adapter.
 	lcID, err = (w4cLandedCoster{svc: landedSvc}).CreateAndApply(sCtx, purchasing.LandedCostDraft{
 		POID:         stockDocID,
@@ -185,7 +202,7 @@ func TestIntegration_W29A_APAging_CompositionRootTieAndRoute(t *testing.T) {
 	}
 
 	// Verify GET /api/v1/purchasing/ap-aging ties to GL 2100:
-	// Bill 40000 + open landed cost 8500 = 48500 cents.
+	// Bill 40000 - PayBill payment 12500 + open landed cost 8500 = 36000 cents.
 	sg := testkit.NewStaffGuards(t)
 	sg.SetAuthority(erpidentity.StaffAuthority{
 		RoleID: "CONTROLLER",
@@ -215,7 +232,7 @@ func TestIntegration_W29A_APAging_CompositionRootTieAndRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AccountBalanceAsOf(2100): %v", err)
 	}
-	if page.TotalCents != -glBal || page.TotalCents != 48500 {
-		t.Fatalf("W29A composition tie: page.TotalCents=%d -glBal=%d, want 48500", page.TotalCents, -glBal)
+	if page.TotalCents != -glBal || page.TotalCents != 36000 {
+		t.Fatalf("W29A composition tie: page.TotalCents=%d -glBal=%d, want 36000", page.TotalCents, -glBal)
 	}
 }
