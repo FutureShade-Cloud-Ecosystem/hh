@@ -562,3 +562,26 @@ test("import profile mappings and audit fields read as plain dealer words, never
   assert.equal(pricingLogic.pricingAuditFieldWord?.("margin_floor_bps"), "margin floor");
   assert.equal(pricingLogic.pricingAuditFieldWord?.("margin_target_bps"), "margin target");
 });
+
+test("pricing audit change deltas format basis points as percents, cents as money, and quantities with their units (UX-118 r2)", () => {
+  assert.equal(deltaWords("2000", "1000", "margin_floor_bps"), "20.00% to 10.00%");
+  assert.equal(deltaWords("3500", "3000", "margin_target_bps"), "35.00% to 30.00%");
+  assert.equal(deltaWords("3500", "3000", "target_margin_bps"), "35.00% to 30.00%");
+  assert.equal(deltaWords("2500", "3000", "markup_bps"), "25.00% to 30.00%");
+  assert.equal(deltaWords("1000", "1500", "discount_bps"), "10.00% to 15.00%");
+  assert.equal(deltaWords("200", "300", "rate_bps"), "2.00% to 3.00%");
+  assert.equal(deltaWords(null, "1500", "margin_bps"), "set to 15.00%");
+  assert.equal(deltaWords("480", "420", "price_cents"), "$4.80 to $4.20");
+  assert.equal(deltaWords("250", "150", "discount_cents"), "$2.50 to $1.50");
+  assert.equal(deltaWords("40", "50", "rate_cents_per_unit"), "$0.40 to $0.50");
+  assert.equal(deltaWords("10.000 SF", "25.000 SF", "from_qty"), "10 SF to 25 SF");
+});
+
+test("pricing audit bypass reason maps server enums to plain words and unknown codes to the house placeholder (UX-118 r2)", () => {
+  assert.equal(pricingLogic.bypassReasonWord?.("APPROVED_OVERRIDE"), "Approved override");
+  assert.equal(pricingLogic.bypassReasonWord?.("MANAGER_SCOPE_OVERRIDE"), "Manager override");
+  assert.equal(pricingLogic.bypassReasonWord?.("PRODUCT_POLICY_DISABLED"), "Product margin policy off");
+  assert.equal(pricingLogic.bypassReasonWord?.("CATEGORY_POLICY_DISABLED"), "Category margin policy off");
+  assert.equal(pricingLogic.bypassReasonWord?.("FUTURE_SERVER_CODE"), "Unknown reason");
+  assert.equal(pricingLogic.bypassReasonWord?.(""), "");
+});

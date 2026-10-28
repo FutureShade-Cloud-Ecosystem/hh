@@ -50,11 +50,11 @@ async function openPricingTab(page: Page, tabId: string, title: string, settle: 
   await page.waitForLoadState("networkidle");
 }
 
-async function take(page: Page, name: string, theme: string, width: number): Promise<void> {
+async function take(page: Page, name: string, theme: string, width: number, fullPage = true): Promise<void> {
   mkdirSync(dir, { recursive: true });
   await page.screenshot({
     path: join(dir, `${name}__${theme}-${width}.png`),
-    fullPage: true,
+    fullPage,
     animations: "disabled",
   });
 }
@@ -79,6 +79,8 @@ for (const size of SIZES) {
       await page.locator('[data-action="open-config-editor"]').first().click();
       await expect(page.locator('[data-test="config-editor"]')).toBeVisible();
       await take(page, "roles__grid", theme, size.width);
+      await page.locator('[data-test="config-editor"]').scrollIntoViewIfNeeded();
+      await take(page, "roles__editor", theme, size.width, false);
 
       // 3. Pricing: Quantity breaks editor
       await openSection(page, "pricing", '[data-test="pr-margin-count"]');

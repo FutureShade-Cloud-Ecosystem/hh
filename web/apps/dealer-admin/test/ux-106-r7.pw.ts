@@ -374,7 +374,7 @@ async function measureChips(page: Page, view: string): Promise<Chip[]> {
   }, view);
 }
 
-/** Dealer-facing text audit: checks for banned engine words on the active state. */
+/** Dealer-facing text audit: checks for banned engine words, raw SCREAMING_ENUMs, and bare basis-point figures on the active state. */
 async function measureEngineWords(page: Page, view: string): Promise<string[]> {
   return page.evaluate(
     ({ name, patterns }) => {
@@ -391,12 +391,41 @@ async function measureEngineWords(page: Page, view: string): Promise<string[]> {
           hits.push(`${name} | engine term "${m[0]}"`);
         }
       }
-      if (name === "pricing:batches") {
-        const markupCells = Array.from(work.querySelectorAll('tr[data-profile] td[data-label="Markup"]'));
-        for (const cell of markupCells) {
-          const val = (cell.textContent ?? "").trim();
-          if (/^\d+$/.test(val)) {
-            hits.push(`${name} | bare markup "${val}" with no unit`);
+      // Raw SCREAMING_ENUM (two or more upper-case words joined by an underscore) in visible text (UX-118 r2).
+      const screamingRx = /\b[A-Z]{2,}(?:_[A-Z0-9]{2,})+\b/;
+      const leaves = Array.from(work.querySelectorAll("*")).filter((el) => el.children.length === 0);
+      for (const leaf of leaves) {
+        if (leaf.tagName.toLowerCase() === "option") continue;
+        if (name.startsWith("audit:") && leaf.closest('[data-test="audit-changes"], .audit-table td[data-label="Action"], [data-detail-for]') !== null) {
+          continue;
+        }
+        const cs = getComputedStyle(leaf);
+        if (cs.display === "none" || cs.visibility === "hidden") continue;
+        if (leaf.getBoundingClientRect().width === 0) continue;
+        const leafText = (leaf.textContent ?? "").replace(/\s+/g, " ").trim();
+        const m = leafText.match(screamingRx);
+        if (m !== null) {
+          hits.push(`${name} | raw SCREAMING_ENUM "${m[0]}"`);
+        }
+      }
+      // Bare four-digit basis-point figure with no unit beside a percent field (UX-118 r2).
+      const pctLabelRx = /\b(margin|floor|target|markup|discount|rebate\s+rate|restocking\s+fee)\b/i;
+      const bareBpsRx = /(?<![-\d.$])\b\d{4}\b(?!\s*%|[-\d.])/;
+      for (const row of Array.from(work.querySelectorAll("tbody tr"))) {
+        for (const cell of Array.from(row.querySelectorAll("td[data-label]"))) {
+          const label = cell.getAttribute("data-label") ?? "";
+          const val = (cell.textContent ?? "").replace(/\s+/g, " ").trim();
+          if (pctLabelRx.test(label) && bareBpsRx.test(val)) {
+            hits.push(`${name} | bare basis-point figure "${val}" in "${label}"`);
+          }
+        }
+        const fieldCell = row.querySelector('td[data-label="Field"]');
+        const changeCell = row.querySelector('td[data-label="Change"]');
+        if (fieldCell !== null && changeCell !== null) {
+          const fieldText = (fieldCell.textContent ?? "").replace(/\s+/g, " ").trim();
+          const changeText = (changeCell.textContent ?? "").replace(/\s+/g, " ").trim();
+          if (pctLabelRx.test(fieldText) && bareBpsRx.test(changeText)) {
+            hits.push(`${name} | bare basis-point figure "${changeText}" beside "${fieldText}"`);
           }
         }
       }

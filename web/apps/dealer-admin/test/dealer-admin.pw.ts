@@ -934,9 +934,9 @@ test("the pricing audit and change log tabs: the log, the bypass named, the chan
   await expect(page.locator("[data-test=pr-audit-count]")).toHaveText("2 entries");
   const bypassRow = page.locator('tr[data-audit="0e110000-0000-4000-9000-0000000000a2"]');
   await expect(bypassRow).toContainText("Bypassed");
-  await expect(page.locator('tr[data-audit-reason="0e110000-0000-4000-9000-0000000000a2"]')).toContainText("APPROVED_OVERRIDE");
+  await expect(page.locator('tr[data-audit-reason="0e110000-0000-4000-9000-0000000000a2"]')).toContainText("Approved override");
   const floorRow = page.locator('tr[data-audit="0e110000-0000-4000-9000-0000000000a1"]');
-  await expect(floorRow).toContainText("2000 to 1000");
+  await expect(floorRow).toContainText("20.00% to 10.00%");
 
   // The change log: who moved a retail, from what to what, in which batch.
   await page.locator('.pr-tab[data-tab="changelog"]').click();
