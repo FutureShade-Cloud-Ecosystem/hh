@@ -204,11 +204,16 @@ type StockValueReader interface {
 	StockValueCents(ctx context.Context, branchID string) (int64, error)
 }
 
-// TillDrawerReader is the till side of the close pre flight: how many till sessions opened in the
-// month window stand OPEN still. The window is the pre flight's to compute (the dealer's zone); the
-// reader only queries. Satisfied by till.Repository, wired in cmd/core.
+// TillDrawerReader is the till side of the close pre flight: how many till drawers were opened
+// BY THE MONTH'S END and are NOT YET COMPLETED. The instant is the pre flight's to compute (the
+// first instant of the next month in the dealer's zone, the month's end in the dealer's terms);
+// the reader only queries.
+// A drawer opened in an EARLIER month and not yet completed counts: the month is still waiting on
+// it. A drawer COMPLETED does not count, whenever it was completed: its over or short posted into
+// the business day it was opened for, so the month's books are whole once it is done.
+// Satisfied by till.Repository, wired in cmd/core.
 type TillDrawerReader interface {
-	OpenDrawers(ctx context.Context, from, to time.Time) (int, error)
+	UncompletedDrawersOpenedBefore(ctx context.Context, before time.Time) (int, error)
 }
 
 // CounterAccountReader is the till side of the counter reason codes (W2-6b): the GL account a till
