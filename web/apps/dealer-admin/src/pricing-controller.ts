@@ -30,6 +30,8 @@ import {
   floorNoteLines,
   needsFloorConfirm,
   pricingRefusalWords,
+  pricingViewId,
+  pricingViewTitle,
   pricingWriteError,
   shownProductIds,
 } from "./pricing-logic.js";
@@ -934,6 +936,27 @@ export class PricingController {
   }
 
   /**
+   * The view a navigation control opened, and the reads that view needs the
+   * first time it is opened. UX-106: the phone's one select answers with the
+   * view's own word, and the strip's button answers with its id; both land
+   * here, so the two controls cannot drift apart.
+   */
+  async #openTab(tab: string): Promise<void> {
+    this.setTab(tab);
+    // A tab loads its own reads the first time it is opened.
+    if (tab === "rules" && this.model.rules.phase === "idle") await this.loadRules();
+    if (tab === "breaks" && this.model.breaks.phase === "idle") await this.loadBreaks();
+    if (tab === "promos" && this.model.promos.promotions.phase === "idle") await this.loadPromosTab();
+    if (tab === "rebates" && this.model.rebates.phase === "idle") await this.loadRebates();
+    if (tab === "uom" && this.model.uom.phase === "idle") await this.loadUom();
+    if (tab === "batches" && this.model.batches.phase === "idle") await this.loadBatches();
+    if (tab === "pricefile" && this.model.priceFile.vendorsPhase === "idle") await this.loadPriceFile();
+    if (tab === "lowmargin" && this.model.lowMargin.phase === "idle") await this.loadLowMargin();
+    if (tab === "audit" && this.model.audit.phase === "idle") await this.loadPricingAudit();
+    if (tab === "changelog" && this.model.changeLog.phase === "idle") await this.loadChangeLog();
+  }
+
+  /**
    * A file input's answer: the file read whole, its name riding beside it.
    * The bytes go to the wire as they came; nothing parses them here.
    */
@@ -1133,6 +1156,13 @@ export class PricingController {
 
   /** A select or checkbox answered: the category (by its picker name), or the enforcement flag. */
   change(field: string, value: string): void {
+    // The phone's one navigation control (UX-106): the select answers with the
+    // view's own word, the way the house's other pickers answer.
+    if (field === "tab") {
+      const id = pricingViewId(value);
+      if (id !== "") void this.#openTab(id);
+      return;
+    }
     const editing = this.model.margin.editing;
     if (editing !== null) {
       if (field === "policy-category") {
@@ -1284,6 +1314,8 @@ export class PricingController {
       }
     }
     switch (field) {
+      case "tab":
+        return pricingViewTitle(this.model.tab === "terms" ? "payment-terms" : this.model.tab);
       case "rules-scope":
         return this.model.rules.filters.scope;
       case "rules-type":
@@ -1538,18 +1570,7 @@ export class PricingController {
     switch (action) {
       case "pr-set-tab": {
         const tab = attrs.tab ?? "";
-        this.setTab(tab);
-        // A tab loads its own reads the first time it is opened.
-        if (tab === "rules" && this.model.rules.phase === "idle") await this.loadRules();
-        if (tab === "breaks" && this.model.breaks.phase === "idle") await this.loadBreaks();
-        if (tab === "promos" && this.model.promos.promotions.phase === "idle") await this.loadPromosTab();
-        if (tab === "rebates" && this.model.rebates.phase === "idle") await this.loadRebates();
-        if (tab === "uom" && this.model.uom.phase === "idle") await this.loadUom();
-        if (tab === "batches" && this.model.batches.phase === "idle") await this.loadBatches();
-        if (tab === "pricefile" && this.model.priceFile.vendorsPhase === "idle") await this.loadPriceFile();
-        if (tab === "lowmargin" && this.model.lowMargin.phase === "idle") await this.loadLowMargin();
-        if (tab === "audit" && this.model.audit.phase === "idle") await this.loadPricingAudit();
-        if (tab === "changelog" && this.model.changeLog.phase === "idle") await this.loadChangeLog();
+        await this.#openTab(tab);
         return;
       }
       case "pr-reload-margin":

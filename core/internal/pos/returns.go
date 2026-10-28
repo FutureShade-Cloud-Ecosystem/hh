@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -874,7 +875,8 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	}
 
 	// 2 through 5: the header, the rail, the restock and the events (the shared commit half).
-	out, cerr := s.commitReturnTx(ctx, tx, plan, g, "", approvedHere)
+	// The single return names its own instant, read once for the whole return.
+	out, cerr := s.commitReturnTx(ctx, tx, plan, g, "", approvedHere, s.nowOrClock())
 	if cerr != nil {
 		return Return{}, false, false, cerr
 	}
@@ -1108,7 +1110,12 @@ func priceReturnLine(rl returnableLine, req ReturnLineInput) (returnLineRow, err
 // on the single-order return; a note child carries its note's id. approvedHere rides in from
 // whichever gate judged the return (the single path's per-sale cumulative, the note path's note
 // total): the committed event names the decision it was given.
-func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPlan, g guardedReturn, noteID string, approvedHere bool) (Return, error) {
+//
+// at is the instant the caller decided (FW1-13c): the single return reads its own clock once, and
+// the across-orders note reads it once for the whole note and hands it to every child, so an N-child
+// note carries ONE instant on every row and every event. A caller that names none gets the
+// service's clock.
+func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPlan, g guardedReturn, noteID string, approvedHere bool, at time.Time) (Return, error) {
 	// The plan's facts the write half reads.
 	in := plan.in
 	oc := plan.oc
@@ -1125,7 +1132,15 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 	// this return emits (the stock reversal, the damage write off and the money-side refund), so the
 	// ledger books them in the day the return happened even when the consumer reads the outbox after
 	// midnight.
-	returnAt := s.nowOrClock()
+	//
+	// The caller's instant rules it: the single return reads its clock once, and an across-orders
+	// note reads it once for the whole note and hands it to every child, so every child of one note
+	// carries the same instant (one clock rules the transaction, FW1-13b and FW1-13c). A caller that
+	// names none gets the service's own clock.
+	returnAt := at
+	if returnAt.IsZero() {
+		returnAt = s.nowOrClock()
+	}
 
 	// A-06 restocking fee, derived from the ACTUAL committed subtotal (round half-up) so the fee is
 	// exact under partial/capped refunds. fee ≤ subtotal ≤ total by construction (bps ≤ 10000), so the

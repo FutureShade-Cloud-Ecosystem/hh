@@ -154,6 +154,7 @@ const emptyAuditModel = (): AuditModel => ({
   error: "",
   detail: null,
   trail: null,
+  branches: [],
 });
 
 const emptyRoleConfigModel = (): RoleConfigModel => ({
@@ -2209,7 +2210,9 @@ export class DealerAdminApp extends HHElement {
       if (view !== null) return view;
     }
     if (this.#surface === "hotkeys") return renderHotkeys(this.#hotkeys);
-    if (this.#surface === "audit") return renderAudit(this.#audit);
+    // The trail's drawer names the branch, so it reads the same branches the
+    // staff register names its grant chips from (UX-106 round 4).
+    if (this.#surface === "audit") return renderAudit({ ...this.#audit, branches: this.#staff.branches });
     if (this.#surface === "role-config" || this.#surface === "roles") return renderRoleConfig(this.#roleConfig);
     if (this.#surface === "deployment") return renderSettings(this.#settings);
     if (this.#surface === "warranty") return renderWarranty(this.#warranty);

@@ -209,11 +209,19 @@ func (s *messagesSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter,
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
-	id, seq, found, err := s.repo.syncMessageFindApplied(ctx, uid, key)
+	id, seq, channelID, deleted, found, err := s.repo.syncMessageFindApplied(ctx, uid, key)
 	if err != nil || !found {
 		return sync.RowState{}, found, err
 	}
-	return sync.RowState{ID: id, Seq: seq}, true, nil
+	// The room fence reaches this read the way it reaches Load: a member the
+	// room refuses resolves nothing, or the replayed answer crosses the read
+	// fence the pull holds (UX-108).
+	if !admitsRoom(ctx, s.fence, uid, channelID) {
+		return sync.RowState{}, false, nil
+	}
+	// A withdrawn message answers the tombstone the pull answers: the id and
+	// the seq and no projection (UX-108 round 2).
+	return sync.RowState{ID: id, Seq: seq, Deleted: deleted}, true, nil
 }
 
 func (s *messagesSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
@@ -221,12 +229,20 @@ func (s *messagesSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id str
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
-	row, seq, found, err := s.repo.syncMessageLoad(ctx, uid, id)
+	row, seq, deleted, found, err := s.repo.syncMessageLoad(ctx, uid, id)
 	if err != nil || !found {
 		return sync.RowState{}, found, err
 	}
 	if !admitsRoom(ctx, s.fence, uid, row.ChannelID) {
 		return sync.RowState{}, false, nil
+	}
+	// A withdrawn message answers the tombstone the pull answers: the id and
+	// the seq and no projection (UX-108 round 2). The read path leaked no
+	// body before this (the row drops it), but it answered a live-shaped row
+	// for a message the server has dropped, and the contract a deleted row
+	// carries its seq and no projection was broken for this scope alone.
+	if deleted {
+		return sync.RowState{ID: row.ID, Seq: seq, Deleted: true}, true, nil
 	}
 	data, err := syncProjection(row)
 	if err != nil {
@@ -273,15 +289,24 @@ func (s *messagesSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key 
 	channelID, _ := fields["channel_id"].(string)
 	body, _ := fields["body"].(string)
 	if !admitsRoom(ctx, s.fence, uid, channelID) {
-		return sync.RowState{}, fmt.Errorf("%w: %w", sync.ErrRowNotFound, errNotFound)
+		// The seam's plain refusal, with no module suffix. The engine's
+		// bound key gate answers a key this caller may not read the very
+		// same way (core/internal/sync/engine.go), and a suffix here would
+		// tell the caller a spent key from a free one (UX-108 round 3).
+		return sync.RowState{}, sync.ErrRowNotFound
 	}
 	threadRoot, _ := fields["thread_root_id"].(string)
 	id, seq, err := s.repo.syncMessageCreate(ctx, uid, channelID, body, threadRoot, key)
 	if err != nil {
 		// The module's own not-found (membership, thread root) is the
-		// operation's rejected result, never a fabricated apply.
+		// operation's rejected result, never a fabricated apply, and it
+		// answers the seam's plain words: the bound key gate refuses a key
+		// bound to a row this caller cannot read with the same word, so the
+		// module's suffix never tells the caller a spent key from a free one
+		// (UX-108 round 3). The REST door keeps the module's own words for
+		// the human caller; this door is the machine's.
 		if isRepoNotFound(err) {
-			return sync.RowState{}, fmt.Errorf("%w: %w", sync.ErrRowNotFound, err)
+			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, err
 	}
@@ -396,8 +421,12 @@ func (s *acksSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key stri
 	m, _ := normalizeAckMethod(method)
 	id, seq, err := s.repo.syncAckCreate(ctx, uid, messageID, m, key)
 	if err != nil {
+		// The seam's plain words, as the messages scope's create answers
+		// them: the bound key gate refuses a key bound to a row this caller
+		// cannot read with the same word, so the module's suffix never tells
+		// the caller a spent key from a free one (UX-108 round 3).
 		if isRepoNotFound(err) {
-			return sync.RowState{}, fmt.Errorf("%w: %w", sync.ErrRowNotFound, err)
+			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, err
 	}

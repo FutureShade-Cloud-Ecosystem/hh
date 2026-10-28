@@ -16,6 +16,7 @@
 // validators in the server's own words: the client's copy only spares a
 // round trip, the server's 422 stays the last word.
 import type { RoleRow } from "./dealer-api.js";
+import { UNKNOWN_SHAPE, UNKNOWN_SURFACE } from "./placeholders.js";
 
 // -- the grid's axes ---------------------------------------------------------------------------------
 
@@ -61,12 +62,19 @@ export const CONFIG_SURFACES: readonly ConfigSurface[] = Object.freeze([
   { id: "dealer-admin", word: "Dealer Admin" },
 ]);
 
+/**
+ * A job shape's word, and a surface's word.
+ *
+ * UX-106 round 3: a lookup that misses reads as the house placeholder word.
+ * The stored key must not reach a person as text: a dealer reads
+ * "manager.branch" as a key they cannot use, not as a shape.
+ */
 export function shapeWord(profile: string): string {
-  return JOB_SHAPES.find((s) => s.profile === profile)?.word ?? profile;
+  return JOB_SHAPES.find((s) => s.profile === profile)?.word ?? UNKNOWN_SHAPE;
 }
 
 export function surfaceWord(id: string): string {
-  return CONFIG_SURFACES.find((s) => s.id === id)?.word ?? id;
+  return CONFIG_SURFACES.find((s) => s.id === id)?.word ?? UNKNOWN_SURFACE;
 }
 
 // -- a bounded pool ----------------------------------------------------------------------------------

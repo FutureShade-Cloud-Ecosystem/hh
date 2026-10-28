@@ -277,6 +277,19 @@ export const dealerStyles = css`
     border-style: dashed;
     color: var(--hh-text-dim);
   }
+  /* The neutral chip: the house's own placeholder pill (the design system
+     carries the same class). UX-106 round 3 wears it on a thing the screen
+     cannot name: an unknown branch. It says what it does not know, and it
+     wears no other colour's meaning.
+     UX-106 round 4 (K3 P3): the border takes the design system's own line
+     token, --hh-line, the way the design system's chip-neutral wears it
+     (design-system/src/primitives.ts). It wore --hh-control-line, which is a
+     different token with a different value in both themes, so the claim that
+     the two matched was not exact. */
+  .chip-neutral {
+    color: var(--hh-text-dim);
+    border-color: var(--hh-line);
+  }
 
   /* -- the register's table ---------------------------------------------------------- */
 
@@ -314,6 +327,107 @@ export const dealerStyles = css`
   }
   .dim {
     color: var(--hh-text-dim);
+  }
+
+  /* -- the card row: a table that cannot fit a phone ------------------------------
+     UX-106 round 6: the sweep measured every table on every view the round
+     touches, at 390, in light and in charcoal, and found the ones that
+     scrolled sideways under a cut column. They all take one pattern: under
+     900 px the table's head is gone and each row lays out as a grid of
+     labelled pairs, and each cell names itself through the data-label its
+     own CSS reads. The house's own card-row pattern, the one the margin
+     policy table, the staff register and the audit list already take. The
+     desk widths keep the table.
+
+     The label column is the pattern's one number, and it is a table's own:
+     --cardrow-label-col sets it, and the default is the narrow one the
+     audit list needed, so a long value keeps room to stay whole. */
+  @media (max-width: 900px) {
+    .cardrow-table thead {
+      display: none;
+    }
+    .cardrow-table,
+    .cardrow-table tbody {
+      display: block;
+    }
+    .cardrow-table tr {
+      display: grid;
+      gap: var(--hh-s-8);
+      padding: var(--hh-s-12) 0;
+      border-bottom: 1px solid var(--hh-hairline);
+    }
+    .cardrow-table tbody td {
+      display: grid;
+      grid-template-columns: var(--cardrow-label-col, minmax(76px, 24%)) minmax(0, 1fr);
+      gap: var(--hh-s-8);
+      padding: 0;
+      border: 0;
+      text-align: start;
+      white-space: normal;
+      align-items: start;
+      justify-items: start;
+      overflow-wrap: break-word;
+    }
+    .cardrow-table tbody td::before {
+      content: attr(data-label);
+      color: var(--hh-text-dim);
+      font-size: var(--hh-s-12);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      grid-column: 1;
+      grid-row: 1;
+    }
+    /* The value never runs off the card: a value too long for its column
+       breaks inside its own boundary. */
+    .cardrow-table tbody td > * {
+      min-width: 0;
+      max-width: 100%;
+    }
+    /* Every part of the value reads in the value column. A cell that holds
+       two things (a name and its code, a scope and its detail) would
+       otherwise put the second of them in the label column of the next row. */
+    .cardrow-table tbody td:not(.cardrow-act) > * {
+      grid-column: 2;
+    }
+    /* A chip is a pill: it reads on one line. UX-106 round 7: the clearance
+       chip broke before its last word and took two lines, because this rule
+       let a chip's text wrap. The chip takes the value column's own width,
+       and the sweep reads every chip's text against the column it sits in,
+       so a chip too wide for its column fails the sweep instead of breaking
+       inside the pill. */
+    .cardrow-table tbody td .chip {
+      max-width: 100%;
+      white-space: nowrap;
+    }
+    /* An action cell has no label of its own: its control reads on its own. */
+    .cardrow-table tbody td.cardrow-act {
+      grid-template-columns: none;
+      justify-items: start;
+    }
+    .cardrow-table tbody td.cardrow-act::before {
+      content: none;
+    }
+    /* The row's own head cell is the row's title: the role, the job shape, the
+       record's name. It reads as a name, not as an uppercase column head. */
+    .cardrow-table tbody th[scope="row"] {
+      display: block;
+      font-size: var(--hh-s-16);
+      font-weight: 650;
+      text-transform: none;
+      letter-spacing: normal;
+      text-align: start;
+      color: var(--hh-text);
+    }
+    /* One table's labels are wider than the pattern's default column: the
+       promotions table's own widest word is PROMOTION, which is 81 px. The
+       label column is a table's own number, so that table sets its own.
+       UX-106 round 7: the low margin table's own widest label is CLEARED BY,
+       which is 82 px, and it sets the same wider column, so each of its
+       labels reads on one line beside its value. */
+    .cardrow-table.cardrow-wide {
+      --cardrow-label-col: minmax(92px, 29%);
+    }
   }
 
   /* -- the fields ---------------------------------------------------------------------- */
@@ -565,6 +679,95 @@ export const dealerStyles = css`
     border-color: var(--hh-danger);
   }
 
+  /* The trail's entity: the type in words on its own line, and the record's
+     handle on the next one, under the caption that names it (UX-106 round 4).
+     A handle with no caption reads as a code token that fell out of a
+     formatter, and the type and the handle glued together read as one
+     string. */
+  .audit-entity {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-4);
+    align-items: flex-start;
+  }
+  .audit-entity-type {
+    white-space: nowrap;
+  }
+  .audit-entity-id {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--hh-s-8);
+  }
+  .audit-entity-id .k {
+    color: var(--hh-text-dim);
+  }
+
+  /* -- the audit trail fits a phone ------------------------------------------------
+     UX-106 round 5: the list is five columns and it scrolled sideways under a
+     cut column at 390, so the Entity column ran off the card's right edge and
+     a dealer read half a handle and no entity type at all. The one entity's
+     trail, on the same page, cut its Actor column the same way. Under 900 px
+     each entry is a card row: the house's own card-row pattern, the one the
+     margin policy table and the staff register take. Each cell names itself,
+     so the row reads as labelled pairs with no sideways scroll of a cut
+     column. The desk widths keep the table. */
+  @media (max-width: 900px) {
+    .audit-table thead {
+      display: none;
+    }
+    .audit-table,
+    .audit-table tbody {
+      display: block;
+    }
+    .audit-table tr {
+      display: grid;
+      gap: var(--hh-s-8);
+      padding: var(--hh-s-12) 0;
+      border-bottom: 1px solid var(--hh-hairline);
+    }
+    .audit-table tbody td {
+      display: grid;
+      grid-template-columns: minmax(76px, 24%) minmax(0, 1fr);
+      gap: var(--hh-s-8);
+      padding: 0;
+      border: 0;
+      text-align: start;
+      white-space: normal;
+      align-items: start;
+      justify-items: start;
+    }
+    .audit-table tbody td::before {
+      content: attr(data-label);
+      color: var(--hh-text-dim);
+      font-size: var(--hh-s-12);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    /* The action's chip takes the value column's own width: the longest action
+       the trail carries ("ORDER_STATUS_CHANGED") needs 201 of the 232 px the
+       value column gives it, and a chip is a pill: it reads on one line. */
+    .audit-table tbody td .chip {
+      max-width: 100%;
+      white-space: nowrap;
+    }
+    /* The entity's type and its captioned handle: the handle keeps its own
+       caption and breaks inside the value column, at the id's own dashes,
+       rather than running off the card. */
+    .audit-table tbody td.audit-entity-cell .audit-entity {
+      min-width: 0;
+      max-width: 100%;
+    }
+    .audit-table tbody td.audit-entity-cell .audit-entity-id {
+      min-width: 0;
+      max-width: 100%;
+    }
+    .audit-table tbody td.audit-entity-cell .audit-entity-id .mono {
+      min-width: 0;
+      overflow-wrap: break-word;
+    }
+  }
+
   /* The drawer's pairs flow across the width instead of stranding a column
      of it: the label/value pair is the repeating unit. */
   .detail .kv {
@@ -578,6 +781,14 @@ export const dealerStyles = css`
   }
   .detail .v {
     overflow-wrap: anywhere;
+  }
+  /* UX-106 round 6: at a phone's width one pair is one row. The desk rule's
+     own minimum (a 120 px label and a 240 px value) is wider than the card
+     a phone gives the drawer, so the pairs ran off the card's right edge. */
+  @media (max-width: 900px) {
+    .detail .kv {
+      grid-template-columns: minmax(76px, 24%) minmax(0, 1fr);
+    }
   }
   .detail .changes {
     margin: 0;
@@ -717,8 +928,104 @@ export const dealerStyles = css`
   .staff-last-seen {
     font-size: 13px;
   }
+  /* -- the register's branch values --------------------------------------------------
+     UX-106 round 2: the values sit in one group, so the card row's grid has
+     the label in the first column and the group in the second. A cell with
+     more than one value auto placed the second one under the label, so the
+     yard persona's second branch, "Julian", sat at the card's left edge and
+     read as a label. Inside the group the values wrap on their own line,
+     still inside the value column. */
+  .staff-branches-values {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--hh-s-8);
+    align-items: center;
+  }
+  .staff-branches-values > * {
+    /* The values never squeeze: a pill that shrank would print its words
+       outside its own boundary. */
+    flex: none;
+  }
   .link-out-wrap {
     margin-top: var(--hh-s-8);
+  }
+
+  /* -- the register at a phone's width ------------------------------------------------
+     UX-106: the register is seven columns, and at 390 the table scrolled
+     sideways under a cut column: the role select ran off the card's right
+     edge, so "General Manager" and "Platform Administrator" were cut in half.
+     Under 900 px each staff member is one card: the person, the role select
+     under the name at the card's own width, then the branches, the access,
+     the status and the last sign in as labelled pairs. The house's own
+     card-row pattern (the money desk's register). */
+  @media (max-width: 900px) {
+    .staff-table thead {
+      display: none;
+    }
+    .staff-table,
+    .staff-table tbody {
+      display: block;
+    }
+    .staff-table tr {
+      display: grid;
+      gap: var(--hh-s-8);
+      padding: var(--hh-s-12) 0;
+      border-bottom: 1px solid var(--hh-hairline);
+    }
+    .staff-table tbody td {
+      display: grid;
+      grid-template-columns: minmax(92px, 38%) minmax(0, 1fr);
+      gap: var(--hh-s-8);
+      padding: 0;
+      border: 0;
+      text-align: start;
+      white-space: normal;
+      align-items: start;
+      justify-items: start;
+    }
+    .staff-table tbody td::before {
+      content: attr(data-label);
+      color: var(--hh-text-dim);
+      font-size: var(--hh-s-12);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .staff-table tbody td.staff-person {
+      display: block;
+    }
+    .staff-table tbody td.staff-person::before {
+      content: none;
+    }
+    /* The role select: the label above it, the select under it, the card's
+       own width. The min-width is the whole fix: a select's own minimum is
+       the widest option, which is what ran off the edge. */
+    .staff-table tbody td.staff-role {
+      grid-template-columns: none;
+    }
+    .staff-table tbody td.staff-role .select {
+      width: 100%;
+      max-width: 100%;
+    }
+    .staff-table tbody td.staff-actions {
+      grid-template-columns: none;
+    }
+    .staff-table tbody td.staff-actions::before {
+      content: none;
+    }
+    .staff-table tbody td.staff-actions .link-out-wrap {
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+    /* The branch values: the group takes the value column's own width, and a
+       pill reads on one line, the way every chip in a card row does. */
+    .staff-table tbody td.staff-branches .staff-branches-values {
+      max-width: 100%;
+    }
+    .staff-table tbody td.staff-branches .chip {
+      max-width: 100%;
+      white-space: nowrap;
+    }
   }
   .auth-note {
     margin-bottom: var(--hh-s-16);
@@ -736,6 +1043,16 @@ export const dealerStyles = css`
     border: 1px solid var(--hh-control-line);
     background: transparent;
     color: var(--hh-text);
+  }
+  /* The selected pill of a pair (the invitation type's own toggle): the accent
+     word, the accent boundary and the inset rule, so the chosen one reads as
+     chosen without a fill. UX-106: this mark used to be the pricing board's
+     active pill, and the board is gone; the mark itself is shared. */
+  .pill-selected {
+    color: var(--hh-accent-text);
+    border-color: var(--hh-accent-text);
+    box-shadow: inset 0 -2px 0 var(--hh-accent-text);
+    font-weight: 600;
   }
   .sign-in-method-box {
     margin-top: var(--hh-s-16);
