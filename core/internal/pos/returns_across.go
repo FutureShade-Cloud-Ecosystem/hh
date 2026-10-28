@@ -672,8 +672,13 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 		RefundMethod: in.RefundMethod, SubtotalCents: subtotal, TaxCents: taxTotal, TotalCents: noteTotal,
 		Returns: []Return{},
 	}
+	// The note's own instant, read ONCE for the whole note and handed to every child (one clock
+	// rules the note, FW1-13c): before this the note body read nothing and each child's commit half
+	// read the clock for itself, so an N-child note carried N instants inside one transaction, one
+	// per child, and the rule held per child rather than per note.
+	noteAt := s.nowOrClock()
 	for i, child := range plan.children {
-		ret, cerr := s.commitReturnTx(ctx, tx, child, guards[i], noteID, approvedHere)
+		ret, cerr := s.commitReturnTx(ctx, tx, child, guards[i], noteID, approvedHere, noteAt)
 		if cerr != nil {
 			return ReturnNote{}, false, false, cerr
 		}
