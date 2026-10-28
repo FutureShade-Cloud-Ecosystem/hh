@@ -1060,6 +1060,10 @@ func (s *Service) CreateChannelAttachment(ctx context.Context, c Caller, channel
 }
 
 // MirrorRoomAttachment mirrors an attachment link to msg_attachments.
+//
+// The mirrored row carries the DATABASE's clock, like every other row in
+// msg_attachments: the room's attachment list is ordered by created_at, and one
+// list must carry one clock. The app's stamp is not sent (UX-109).
 func (s *Service) MirrorRoomAttachment(ctx context.Context, channelID string, meta AttachmentMeta, uploadedBy, filename, role string) error {
 	name := filename
 	if name == "" {
@@ -1086,7 +1090,6 @@ func (s *Service) MirrorRoomAttachment(ctx context.Context, channelID string, me
 		SizeBytes:    meta.SizeBytes,
 		Kind:         kind,
 		UploadedBy:   uPtr,
-		CreatedAt:    s.nowFn(),
 	}
 	return s.repo.UpsertChannelAttachmentFromMirror(ctx, channelID, att)
 }

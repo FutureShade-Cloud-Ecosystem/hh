@@ -3238,6 +3238,10 @@ func (r *Repository) InsertChannelAttachment(ctx context.Context, channelID, upl
 }
 
 // UpsertChannelAttachmentFromMirror mirrors an attachment link to msg_attachments.
+//
+// The row's created_at is the DATABASE's clock (now()), the same stamp the direct path writes, so
+// the room's attachment list (ordered by created_at) carries one clock and not two. A caller that
+// holds a real creation time of its own may pass it; the app's clock is never a stamp here (UX-109).
 func (r *Repository) UpsertChannelAttachmentFromMirror(ctx context.Context, channelID string, att MessageAttachment) error {
 	if r.pool == nil {
 		return errNoDB
@@ -3257,9 +3261,9 @@ func (r *Repository) UpsertChannelAttachmentFromMirror(ctx context.Context, chan
 		}
 	}
 
-	createdAt := att.CreatedAt
-	if createdAt.IsZero() {
-		createdAt = time.Now()
+	var createdAt any
+	if !att.CreatedAt.IsZero() {
+		createdAt = att.CreatedAt
 	}
 
 	_, err := r.pool.Exec(ctx, `
@@ -3268,7 +3272,7 @@ func (r *Repository) UpsertChannelAttachmentFromMirror(ctx context.Context, chan
 		) VALUES (
 			$1::uuid, $2::uuid, $3, $4, $5, $6,
 			(SELECT id FROM users WHERE id = $7::uuid),
-			$8
+			COALESCE($8::timestamptz, now())
 		)
 		ON CONFLICT (channel_id, attachment_id) WHERE attachment_id IS NOT NULL
 		DO UPDATE SET filename = EXCLUDED.filename,
