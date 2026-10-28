@@ -571,7 +571,7 @@ function dayWords(iso: string): string {
  */
 export function overrideEmptyWords(asked: boolean): string {
   if (!asked) {
-    return "Type a customer id and load their prices. The customer's own category prices ride over the tier rules for that account alone; an account with none is a system account and prices by its tier.";
+    return "Choose a customer and load their prices. The customer's own category prices ride over the tier rules for that account alone; an account with none is a system account and prices by its tier.";
   }
   return "No category prices for this customer. The account prices by its tier rules; a price here would ride over them for this customer alone.";
 }

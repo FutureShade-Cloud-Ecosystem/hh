@@ -321,7 +321,8 @@ const STATES: readonly State[] = [
         await openPricingView(page, view.title, view.settle);
         if (view.id === "customers") {
           // The customer prices table only lands once a customer is asked for.
-          await page.locator('[data-field="pr-cust-id"]').fill(DEMO_CUSTOMER);
+          await page.locator('[data-picker-search="pr-cust-id"]').fill("Point Loma");
+          await page.locator('[data-action="picker-choose"][data-picker-field="pr-cust-id"]').first().click();
           await page.locator('[data-action="pr-cust-load"]').click();
           await expect(page.locator('[data-test="pr-cust-count"]')).toBeVisible({ timeout: 30_000 });
           await page.waitForLoadState("networkidle");
