@@ -395,13 +395,14 @@ export class FrontDoorApp extends HHElement {
         color: var(--hh-accent-text);
       }
       .card:hover:not(:disabled) .cta,
-      .card:focus-visible .cta,
-      .card.starting .cta {
+      .card:focus-visible .cta {
         text-decoration: underline;
       }
-      /* The starting card's word still says what is in flight, but it is
-         part of a disabled control: it takes the disabled ink, never the
-         brand one. */
+      /* The starting card's word says what is in flight: "Starting..." is the
+         progress, and it is part of a disabled control, so it takes the
+         disabled ink, never the brand one. The underline is a link's own
+         affordance and is not a progress sign, so the refused card does not
+         wear one. */
       .card.starting .cta {
         color: var(--hh-disabled-ink);
       }
@@ -1571,7 +1572,7 @@ export class FrontDoorApp extends HHElement {
         data-action=${options.action}
         data-flow=${options.action === "choose" ? role.flow : nothing}
         data-persona=${options.action === "persona" ? role.flow : nothing}
-        aria-label=${role.label}
+        aria-label=${starting ? `${role.label}, starting` : role.label}
         ?disabled=${options.anyBusy}
       >
         <span class="mark">${drawIcon(iconForId(role.icon), 32)}</span>
@@ -1581,7 +1582,7 @@ export class FrontDoorApp extends HHElement {
           <span class="chips" aria-hidden="true">
             ${role.tiles.map((tile) => html`<span class="chip">${tile.name}</span>`)}
           </span>
-          <span class="cta" aria-hidden="true">${options.verb} ${role.label}</span>
+          <span class="cta" aria-hidden="true">${starting ? "Starting..." : `${options.verb} ${role.label}`}</span>
           ${refusal === undefined ? nothing : html`<span class="refusal">${refusal}</span>`}
         </span>
       </button>
