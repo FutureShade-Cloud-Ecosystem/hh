@@ -27,9 +27,16 @@ function portSlot(text: string): number {
 }
 
 const slot = portSlot(slotInput);
-const stateDir = process.env.MDREAL_STATE ?? join(tmpdir(), "money-desk-acceptance-real");
+// The state directory carries the tree's slot too, so two worktrees beside
+// each other keep two state directories and never read each other's.
+const stateDir = process.env.MDREAL_STATE ?? join(tmpdir(), `money-desk-acceptance-real-${slot}`);
 const boxPort = process.env.MDREAL_BOX_PORT ?? String(27000 + slot * 2);
 const consolePort = process.env.MDREAL_CONSOLE_PORT ?? String(27000 + slot * 2 + 1);
+const pgPort = process.env.MDREAL_PG_PORT ?? String(28000 + slot * 2);
+// The tree's name for its box: the same slot the ports use, or the name the
+// run gives it. The box's containers and network carry it, so one tree's box
+// is never another tree's box.
+const boxName = process.env.MDREAL_NAME ?? `s4-w2-4a-${slot}`;
 process.env.MDREAL_STATE = stateDir;
 // The marker the specs read: this config is the real box, never the stub.
 process.env.MDREAL_CONFIG = "1";
@@ -47,7 +54,11 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: "bash test/acceptance-real/box.sh up",
+    // The box comes up and the holder keeps the webServer process alive for
+    // the whole run: Playwright owns that process until the run ends, and
+    // `box.sh up` alone returns the moment the health answers, which is a
+    // race with Playwright's own probe of the URL.
+    command: "bash test/acceptance-real/box.sh up && bash test/acceptance-real/box.sh hold",
     url: `${boxUrl}/healthz`,
     // CI always starts a fresh box; a developer may keep one up by hand
     // (`box.sh up`) and iterate against it.
@@ -58,6 +69,8 @@ export default defineConfig({
       MDREAL_STATE: stateDir,
       MDREAL_BOX_PORT: boxPort,
       MDREAL_CONSOLE_PORT: consolePort,
+      MDREAL_PG_PORT: pgPort,
+      MDREAL_NAME: boxName,
       ...(process.env.MDREAL_IMAGE === undefined ? {} : { MDREAL_IMAGE: process.env.MDREAL_IMAGE }),
       ...(process.env.MDREAL_NODE === undefined ? {} : { MDREAL_NODE: process.env.MDREAL_NODE }),
       ...(process.env.MDREAL_SUBJECT === undefined ? {} : { MDREAL_SUBJECT: process.env.MDREAL_SUBJECT }),

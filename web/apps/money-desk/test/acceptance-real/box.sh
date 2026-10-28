@@ -8,9 +8,15 @@
 #
 #   bash test/acceptance-real/box.sh up     # start the box, write the state
 #   bash test/acceptance-real/box.sh down   # remove every container
+#   bash test/acceptance-real/box.sh names  # the names this tree's box uses
 #
 # or through Playwright, which runs `box.sh up` as its webServer and the
 # config's globalTeardown runs `box.sh down`.
+#
+# The names carry the tree: the containers and the network are named after the
+# app directory the box belongs to (the same FNV-1a slot the ports use), or
+# after the name the run gives the tree with MDREAL_NAME. Two worktrees beside
+# each other therefore run two boxes with two sets of names.
 #
 # What `up` does, in order:
 #   1. generates the run's throwaway EC P-256 session key and the invented
@@ -28,13 +34,12 @@
 # harness.pw.ts for the world's.
 set -eu
 
-NAME_PG="s4-w2-4a-pg"
-NAME_BOX="s4-w2-4a-box"
-NAME_CONSOLE="s4-w2-4a-console"
-NAME_NET="s4-w2-4a-net"
-
 HERE="$(cd "$(dirname "$0")" && pwd)"
-APP_DIR="$(cd "$HERE/.." && pwd)"
+# The app directory this box belongs to: the Money Desk app itself, two levels
+# up from this script (test/acceptance-real). This is the same string the
+# Playwright config hashes (its own appDir, without the trailing slash), so
+# the slot below is the slot the ports use.
+APP_DIR="$(cd "$HERE/../.." && pwd)"
 
 # Ports and names a run may override. The defaults hash the app directory
 # (the FNV-1a slot the repo's other configs use), so this tree's box never
@@ -43,9 +48,22 @@ APP_DIR="$(cd "$HERE/.." && pwd)"
 SLOT="$("$(command -v node || echo /snap/bin/node)" -e "const p = process.argv[1]; let h = 2166136261; for (let i = 0; i < p.length; i += 1) { h ^= p.charCodeAt(i); h = Math.imul(h, 16777619); } console.log((h >>> 0) % 512)" "$APP_DIR")"
 MDREAL_BOX_PORT="${MDREAL_BOX_PORT:-$((27000 + SLOT * 2))}"
 CONSOLE_PORT="${MDREAL_CONSOLE_PORT:-$((27000 + SLOT * 2 + 1))}"
+MDREAL_PG_PORT="${MDREAL_PG_PORT:-$((28000 + SLOT * 2))}"
 MDREAL_IMAGE="${MDREAL_IMAGE:-s4-w2-4a-finance:latest}"
-MDREAL_STATE="${MDREAL_STATE:-${TMPDIR:-/tmp}/money-desk-acceptance-real}"
+MDREAL_STATE="${MDREAL_STATE:-${TMPDIR:-/tmp}/money-desk-acceptance-real-$SLOT}"
 export MDREAL_STATE
+
+# THE NAMES CARRY THE TREE. A box's containers and its network are named
+# after the tree they belong to, so two worktrees beside each other never
+# reach for the same container: the slot is the same FNV-1a slot the ports
+# use, and a run may name the tree outright with MDREAL_NAME (the Playwright
+# config passes it). Without this, a second tree's `up` would remove the first
+# tree's box, because both asked for the same fixed names.
+NAME_PREFIX="${MDREAL_NAME:-s4-w2-4a-$SLOT}"
+NAME_PG="$NAME_PREFIX-pg"
+NAME_BOX="$NAME_PREFIX-box"
+NAME_CONSOLE="$NAME_PREFIX-console"
+NAME_NET="$NAME_PREFIX-net"
 
 ORG="${MDREAL_ORG:-lakeshore-hardscape}"
 DEALER_NAME="${MDREAL_DEALER_NAME:-Lakeshore Hardscape}"
@@ -75,6 +93,7 @@ up() {
 	docker network rm "$NAME_NET" >/dev/null 2>&1 || true
 	docker network create "$NAME_NET" >/dev/null
 	docker run -d --name "$NAME_PG" --network "$NAME_NET" \
+		-p "127.0.0.1:${MDREAL_PG_PORT}:5432" \
 		-e POSTGRES_PASSWORD="$PG_PASS" \
 		postgres:16-alpine >/dev/null
 	probes=0
@@ -166,6 +185,7 @@ up() {
 		sleep 2
 	done
 	echo "box: up at http://127.0.0.1:${MDREAL_BOX_PORT} (state in ${MDREAL_STATE})"
+	names
 }
 
 down() {
@@ -173,8 +193,27 @@ down() {
 	docker network rm "$NAME_NET" >/dev/null 2>&1 || true
 }
 
+# The webServer holder. Playwright owns its webServer process for the whole
+# run, so that process has to stay alive: `up` returns the moment the health
+# answers, and Playwright's own probe of the URL can land after the script has
+# already gone ("Process from config.webServer exited early"). This waits for
+# the box to go away, or for Playwright to stop the process.
+hold() {
+	while docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$NAME_BOX"; do
+		sleep 5
+	done
+}
+
+# The names this tree's box uses. Two app directories print two sets, so one
+# tree's box can never be another tree's box.
+names() {
+	echo "names: pg=${NAME_PG} box=${NAME_BOX} console=${NAME_CONSOLE} net=${NAME_NET} slot=${SLOT} state=${MDREAL_STATE} pg_port=${MDREAL_PG_PORT}"
+}
+
 case "${1:-}" in
 	up) up ;;
 	down) down ;;
-	*) echo "usage: box.sh up|down" >&2; exit 2 ;;
+	hold) hold ;;
+	names) names ;;
+	*) echo "usage: box.sh up|down|hold|names" >&2; exit 2 ;;
 esac
