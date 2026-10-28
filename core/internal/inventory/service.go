@@ -699,10 +699,12 @@ func (s *Service) exactRowChange(ctx context.Context, tx pgx.Tx, productID, bran
 		return 0, err
 	}
 	var oldSum, newSum int64
+	deltaRowSeen := false
 	for _, r := range rows {
 		after := r.OnHandBase
 		if r.LocationID == deltaLocationID {
 			after += signedDelta
+			deltaRowSeen = true
 		}
 		oldVal, err := qtyTimesCents(r.OnHandBase, avgBeforeEff)
 		if err != nil {
@@ -713,6 +715,18 @@ func (s *Service) exactRowChange(ctx context.Context, tx pgx.Tx, productID, bran
 			return 0, err
 		}
 		oldSum += oldVal
+		newSum += newVal
+	}
+	// A move whose row does not exist yet (a first issue, return, count or transfer out on a
+	// product+branch that never held stock) CREATES the balance row at signedDelta units, and its
+	// exact change runs from nothing: old value 0, new value round(signedDelta x avgAfterEff).
+	// Leaving the created row out read the whole booked value as rounding and demanded a GL
+	// poster for a tie that was never broken (CI run 40743787329, the pos return-values leg).
+	if !deltaRowSeen {
+		newVal, err := qtyTimesCents(signedDelta, avgAfterEff)
+		if err != nil {
+			return 0, err
+		}
 		newSum += newVal
 	}
 	return newSum - oldSum, nil
@@ -748,6 +762,11 @@ type moveRoundingPost struct {
 func (s *Service) postMoveRoundingTx(ctx context.Context, tx pgx.Tx, p moveRoundingPost) error {
 	if p.MoveID == "" {
 		return fmt.Errorf("inventory: %s.rounding missing move id", p.Event)
+	}
+	// A zero rounding books nothing and needs no poster (the postInventoryAdjusted shape for
+	// ValueCents == 0): the poster and rule seams are demanded only once a journal exists to post.
+	if p.RoundingCents == 0 {
+		return nil
 	}
 	if s.gl == nil {
 		return errNoGLPoster
