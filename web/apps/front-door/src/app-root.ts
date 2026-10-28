@@ -1572,7 +1572,8 @@ export class FrontDoorApp extends HHElement {
         data-action=${options.action}
         data-flow=${options.action === "choose" ? role.flow : nothing}
         data-persona=${options.action === "persona" ? role.flow : nothing}
-        aria-label=${starting ? `${role.label}, starting` : role.label}
+        aria-label=${role.label}
+        aria-busy=${starting ? "true" : "false"}
         ?disabled=${options.anyBusy}
       >
         <span class="mark">${drawIcon(iconForId(role.icon), 32)}</span>
