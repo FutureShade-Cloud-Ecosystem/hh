@@ -141,10 +141,10 @@ export interface ConfigItem {
 
 /**
  * A cell's words: what the dealer has curated here, counted by kind, or the
- * plain fact that the surface shows its own registry default.
+ * plain fact that the surface shows its standard view.
  */
 export function cellWords(items: readonly ConfigItem[]): string {
-  if (items.length === 0) return "Registry default";
+  if (items.length === 0) return "Standard view";
   const counts = new Map<string, number>();
   for (const it of items) counts.set(it.kind, (counts.get(it.kind) ?? 0) + 1);
   const parts = [...counts.entries()].map(([kind, n]) => `${n} ${kind}${n === 1 ? "" : "s"}`);

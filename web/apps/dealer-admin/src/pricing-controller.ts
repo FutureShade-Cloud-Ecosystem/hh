@@ -3034,11 +3034,11 @@ export class PricingController {
     const sale = centsFromMoneyInput(accrual.saleInput);
     const cost = centsFromMoneyInput(accrual.costInput);
     if (sale === null || cost === null) {
-      this.#setAccrual({ formError: "Enter the extended sale and cost in dollars; both are the basis the engine reads." });
+      this.#setAccrual({ formError: "Enter the extended sale and cost in dollars." });
       return;
     }
     if (accrual.sourceType !== "ADJUSTMENT" && accrual.sourceId.trim() === "") {
-      this.#setAccrual({ formError: "A sale or an order names its reference; the pair is the idempotency key." });
+      this.#setAccrual({ formError: "Enter the sale or order reference so a duplicate is never counted twice." });
       return;
     }
     this.#setAccrual({ busy: true, formError: "", result: "" });

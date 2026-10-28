@@ -24,6 +24,7 @@ package inventory
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // forceOnHand drives a product's branch on-hand to exactly want by writing the balance delta through the
@@ -172,7 +173,7 @@ func TestWACAdversarial_LandedCostCapitalization_IsOrderDependentByDesign(t *tes
 			t.Fatalf("begin: %v", err)
 		}
 		defer tx.Rollback(ctx)
-		absorbed, err := svc.CapitalizeLandedCostTx(ctx, tx, productID, branch1, freight)
+		absorbed, err := svc.CapitalizeLandedCostTx(ctx, tx, productID, branch1, freight, time.Now(), "")
 		if err != nil {
 			t.Fatalf("capitalize: %v", err)
 		}

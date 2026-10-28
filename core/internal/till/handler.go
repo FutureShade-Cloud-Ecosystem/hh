@@ -48,6 +48,14 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/till/sessions/{id}/complete", g.RequireStaff(h.staff(h.completeSession)))
 	r.Handle("GET /api/v1/till/policy", g.RequireManager(h.staff(h.policy)))
 
+	// The counter reason codes (W2-6b): the branch's list of the codes the drawer names on a paid in
+	// or a paid out, each with the GL account its movement posts to. A branch manager reads and
+	// edits the list (the till's own policy read already sits at the manager gate) and the Financial
+	// Controller passes the same gate and reaches every branch through the branch fence.
+	r.Handle("GET /api/v1/till/reason-codes", g.RequireManager(h.staff(h.listReasonCodes)))
+	r.Handle("POST /api/v1/till/reason-codes", g.RequireManager(h.staff(h.createReasonCode)))
+	r.Handle("PUT /api/v1/till/reason-codes/{id}", g.RequireManager(h.staff(h.editReasonCode)))
+
 	// - W5 A-05: NSF + credit holds + declined-attempt log -
 	// Marking a bounce + editing money policy are manager rights; releasing a credit hold is Tier-1 only
 	// (requireAdmin, threaded in by the W5 scaffold). The bounced/credit-hold reads expose customer
@@ -261,6 +269,47 @@ func (h *Handler) policy(w http.ResponseWriter, r *http.Request, caller guards.S
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, p)
+}
+
+// listReasonCodes, GET /api/v1/till/reason-codes?branch_id=. The branch's list of the codes the
+// drawer may name on a paid in or a paid out, each with the account its movement posts to.
+func (h *Handler) listReasonCodes(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	items, err := h.svc.ListReasonCodes(r.Context(), r.URL.Query().Get("branch_id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// createReasonCode, POST /api/v1/till/reason-codes. A branch manager adds a code to their branch's
+// list: the label the drawer sees, the direction it may name, the account its movement posts to.
+func (h *Handler) createReasonCode(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in ReasonCodeInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	code, err := h.svc.CreateReasonCode(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, code)
+}
+
+// editReasonCode, PUT /api/v1/till/reason-codes/{id}. The fields the body does not name keep the
+// value the row carries, so a code is turned off without restating its label or its account.
+func (h *Handler) editReasonCode(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var e ReasonCodeEdit
+	if !decodeJSON(w, r, &e) {
+		return
+	}
+	code, err := h.svc.EditReasonCode(r.Context(), r.PathValue("id"), e)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, code)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {

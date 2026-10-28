@@ -221,6 +221,11 @@ func (s *InvoicesSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since 
 // column note), so a sync replay resolves through the writer's own
 // convergence instead, and this read answers only a key that is
 // genuinely the row's.
+//
+// The pull's PARKED CREDIT MEMO clause rides the query (UX-112): a
+// parked memo is in no page, so its key resolves nothing here either,
+// the absent row's answer, and the engine never reads a row the pull
+// hides as visible.
 func (s *InvoicesSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
 	where, args, ok := invoiceScopePredicate(f)
 	if !ok {
@@ -228,6 +233,7 @@ func (s *InvoicesSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter,
 	}
 	r, err := scanInvoiceSync(s.pool.QueryRow(ctx, invoiceSyncQuery+`
 		WHERE `+where+` AND i.idempotency_key = $2
+		  AND NOT (i.doc_type = 'CREDIT_MEMO' AND i.status = 'DRAFT')
 		LIMIT 1`, append(args, key)...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
@@ -242,13 +248,19 @@ func (s *InvoicesSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter,
 // Load reads one invoice by id under the caller-class fence; a row
 // outside the fence is the same as an absent one (existence never
 // leaks, the IDOR discipline the payments module's reads share).
+//
+// The pull's PARKED CREDIT MEMO clause rides the query (UX-112): a
+// parked memo is in no page for either caller class, so a Load that
+// named it would tell the caller a row its own pull never sends is
+// there.
 func (s *InvoicesSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	where, args, ok := invoiceScopePredicate(f)
 	if !ok || !invoiceLooksLikeUUID(id) {
 		return sync.RowState{}, false, nil
 	}
 	r, err := scanInvoiceSync(s.pool.QueryRow(ctx, invoiceSyncQuery+`
-		WHERE i.id = $2::uuid AND `+where, append(args, id)...))
+		WHERE i.id = $2::uuid AND `+where+`
+		  AND NOT (i.doc_type = 'CREDIT_MEMO' AND i.status = 'DRAFT')`, append(args, id)...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}

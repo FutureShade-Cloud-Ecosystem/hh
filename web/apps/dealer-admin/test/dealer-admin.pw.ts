@@ -253,7 +253,7 @@ test("the role grid reads every job shape on every surface, and the catalog name
   // saved; the caption carries the core's own sentence about what curation
   // is and is not.
   await expect(page.locator("[data-test^=config-cell-]")).toHaveCount(130);
-  await expect(page.locator("[data-test=config-cell-counter-till-counter]")).toHaveText("Registry default");
+  await expect(page.locator("[data-test=config-cell-counter-till-counter]")).toHaveText("Standard view");
   await expect(page.locator("[data-test=config-caption]")).toContainText("never grants power");
 
   // The catalog groups the dealer's roles under their seeded shapes.
@@ -284,7 +284,7 @@ test("curate one cell, save, and the grid cell counts the row", async ({ page })
   // Reset the kind: the level beneath answers again, and the cell says so.
   await page.locator('[data-action="config-reset-kind"][data-kind="column"]').click();
   await expect(page.locator("[data-test=config-notice]")).toContainText("Reset");
-  await expect(page.locator('[data-test="config-cell-counter-till-yard"]')).toHaveText("Registry default");
+  await expect(page.locator('[data-test="config-cell-counter-till-yard"]')).toHaveText("Standard view");
 });
 
 test("your own view saves to the my-items route and reset brings the dealer's back", async ({ page }) => {
@@ -371,7 +371,7 @@ test("the deployment settings render their four sections, and the brand waits fo
   // the seeded change.
   await expect(page.locator('[data-field="policy-fee"]')).toHaveValue("250");
   await expect(page.locator("[data-test=policy-history]")).toBeVisible();
-  await expect(page.locator("[data-test=policy-history]")).toContainText("restocking_fee_bps");
+  await expect(page.locator("[data-test=policy-history]")).toContainText("restocking fee");
 
   // The walkthrough answers nothing on a fresh dealer: the off words, and
   // the platform gate's calm line in place of the switches.
@@ -934,9 +934,9 @@ test("the pricing audit and change log tabs: the log, the bypass named, the chan
   await expect(page.locator("[data-test=pr-audit-count]")).toHaveText("2 entries");
   const bypassRow = page.locator('tr[data-audit="0e110000-0000-4000-9000-0000000000a2"]');
   await expect(bypassRow).toContainText("Bypassed");
-  await expect(page.locator('tr[data-audit-reason="0e110000-0000-4000-9000-0000000000a2"]')).toContainText("APPROVED_OVERRIDE");
+  await expect(page.locator('tr[data-audit-reason="0e110000-0000-4000-9000-0000000000a2"]')).toContainText("Approved override");
   const floorRow = page.locator('tr[data-audit="0e110000-0000-4000-9000-0000000000a1"]');
-  await expect(floorRow).toContainText("2000 to 1000");
+  await expect(floorRow).toContainText("20.00% to 10.00%");
 
   // The change log: who moved a retail, from what to what, in which batch.
   await page.locator('.pr-tab[data-tab="changelog"]').click();

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -57,6 +58,30 @@ func (s *Service) branchUnitCost(ctx context.Context, productID, branchID string
 
 // - PO receiving -
 
+// movementInstant answers the ONE instant a movement is dated at.
+//
+// IT IS THE TRANSACTION'S OWN CLOCK, read ONCE: Postgres's now() is the transaction's start, the same value every
+// statement in this transaction sees. One read, one instant, for the whole movement.
+//
+// WHY IT MATTERS (W2-5 fix r8, S5's P2-2 and P3-1). The stock ledger's move and the GL's journal book the SAME
+// movement, and a month end reads both sides at one instant. Before this the move took the column default (the
+// row's own now()) and the journal took the DRAIN's clock, the two a drain apart: a receipt in a month's last
+// moment, drained after the month's end, left the stock ledger holding the goods and 1200 not holding them, and
+// the close was refused by the whole receipt. No later month could repair it: the stock side moved in the earlier
+// month, the book side in the later one.
+//
+// Reading the transaction's instant ONCE and stamping it on BOTH the move and the event closes that gap: the event
+// carries the instant, the consumer dates the journals with it, and the journals are posted at the same instant
+// the movement's own transaction owns. A transaction that straddles midnight no longer splits the two either:
+// both sides carry the transaction's own start.
+func (s *Service) movementInstant(ctx context.Context, tx pgx.Tx) (time.Time, error) {
+	at, err := s.db().MovementInstant(ctx, tx)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("inventory: read the movement's instant: %w", err)
+	}
+	return at, nil
+}
+
 // applyReceipt is the shared receiving core. requested==nil receives every outstanding unit; a non-nil map
 // receives exactly the given qty per po_line id (over-receipt-guarded). It writes RECEIPT moves, maintains the
 // weighted-average cost + on-hand balances, advances the PO status, and emits po.received (the GRNI producer).
@@ -74,6 +99,12 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 		return ReceiptResult{}, err
 	}
 	usd := hdr.Currency == "USD"
+	// The receipt's ONE instant (W2-5 fix r8): the move row and the event carry the same instant,
+	// and the consumer dates the receipt's journals with it. Read once, here, before any row is written.
+	at, err := s.movementInstant(ctx, tx)
+	if err != nil {
+		return ReceiptResult{}, err
+	}
 
 	var totalValue int64
 	var totalRounding int64
@@ -149,6 +180,12 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 		}
 		base := math.Max(onHand, 0)
 		newAvg := cadUnit
+		// subledgerDelta is the line's exact change in round(avg x on-hand), the figure the
+		// receipt's GL postings (GRNI, WAC rounding, true-up) sum to; it is stamped on the
+		// move row below so the as-of stock read can unwind the receipt to the cent (W2-5).
+		// An on-hand of zero (or a beyond-grain figure the helpers refused) absorbs exactly
+		// the received value.
+		subledgerDelta := recvValue
 		if len(provMoves) == 0 {
 			if denom := base + recvQty; denom > 0 {
 				newAvg, err = blendAvg(base, oldAvg, recvQty, cadUnit)
@@ -161,6 +198,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 				newSubledgerVal, errNew := qtyTimesCents(base+recvQty, newAvg)
 				if errOld == nil && errNew == nil {
 					totalRounding += (newSubledgerVal - oldSubledgerVal) - recvValue
+					subledgerDelta = newSubledgerVal - oldSubledgerVal
 				}
 			}
 		}
@@ -178,7 +216,16 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 			if err != nil {
 				return ReceiptResult{}, err
 			}
+			// The true-up journal books this delta with its own sign: a positive
+			// delta credited 1200 (the provisionally relieved units cost more
+			// than the fallback held), a negative delta debited it. The stamp is
+			// the figure the receipt's GL postings SUM to (GRNI plus rounding
+			// plus the true-up's signed effect on 1200), so the true-up enters
+			// subtracted: this branch never blends, so its exact subledger delta
+			// is the GRNI minus the true-up delta (W2-5 round 3: the addition
+			// here double-counted the true-up against the books to 2x its size).
 			trueUpDelta := actualSoldValue - provValue
+			subledgerDelta -= trueUpDelta
 			moveMeta = map[string]any{
 				"trued_up_move_ids":   moveIDs,
 				"true_up_delta_cents": trueUpDelta,
@@ -188,6 +235,10 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 				DeltaCents: trueUpDelta,
 			})
 		}
+		if moveMeta == nil {
+			moveMeta = map[string]any{}
+		}
+		moveMeta["wac_value_delta_cents"] = subledgerDelta
 		if err := s.db().UpsertBranchCost(ctx, tx, ln.ProductID, hdr.BranchID, newAvg); err != nil {
 			return ReceiptResult{}, err
 		}
@@ -195,7 +246,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 			ProductID: ln.ProductID, BranchID: hdr.BranchID, ToLocation: hdr.BranchID, UOM: ln.UOM,
 			MoveType: MoveReceipt, QtyBase: recvQty, UnitCostCents: cadUnit, ValueCents: recvValue,
 			SourceType: "po_receipt", SourceRefID: receiptID, Reason: "PO receipt " + hdr.PONo,
-			Metadata: moveMeta,
+			Metadata: moveMeta, OccurredAt: at,
 		}); err != nil {
 			return ReceiptResult{}, err
 		}
@@ -231,6 +282,9 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 	if err := s.db().EmitEvent(ctx, tx, "po.received", map[string]any{
 		"po_id": poID, "receipt_id": receiptID, "branch_id": hdr.BranchID,
 		"value_cents": totalValue, "rounding_cents": totalRounding, "lines": eventLines, "true_ups": trueUps,
+		// The receipt's own instant (W2-5 fix r8): the consumer dates the receipt's journals with
+		// it, so the journal and the move it books carry the same moment.
+		"occurred_at": at,
 	}); err != nil {
 		return ReceiptResult{}, err
 	}
@@ -286,7 +340,10 @@ func (s *Service) decrementForSale(ctx context.Context, tx pgx.Tx, in DecrementI
 		if ln.QtyBase <= 0 {
 			continue
 		}
-		value, err := s.decrementOneShipLine(ctx, tx, in.OrderID, in.BranchID, "pos_sale", "POS COLLECT_NOW sale", ln)
+		// The POS ring's own move keeps the row's default instant (the transaction's clock):
+		// the ring's event already carries the sale's own date, and the ring's transaction
+		// opens and reads that date within the same breath, so the two are one moment.
+		value, err := s.decrementOneShipLine(ctx, tx, in.OrderID, in.BranchID, "pos_sale", "POS COLLECT_NOW sale", ln, time.Time{})
 		if err != nil {
 			return nil, err
 		}
@@ -300,11 +357,17 @@ func (s *Service) decrementForSale(ctx context.Context, tx pgx.Tx, in DecrementI
 // journal posts the value that moved, never a re-read average. A product with no cost at all ships
 // provisionally at $0.00 (round 2, S3's P2): the move is marked, the Controller exceptions list names
 // it, and the first receipt trues it up like any other provisional move.
-func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, branchID, sourceType, reason string, ln SaleLine, extraMeta ...map[string]any) (int64, error) {
+//
+// occurredAt is the instant the move is dated at. The zero value rides the row's own DEFAULT (now(),
+// the transaction's clock); the order's fulfilment passes the instant it read ONCE for the whole
+// fulfilment, so the move and the order.fulfilled event that books it carry the SAME one and the stock
+// ledger and 1200 cannot be found on different sides of a month end (W2-5 fix r6).
+func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, branchID, sourceType, reason string, ln SaleLine, occurredAt time.Time, extraMeta ...map[string]any) (int64, error) {
 	avg, hadCost, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, branchID)
 	if err != nil {
 		return 0, err
 	}
+	oldAvg := avg
 	provMoves, err := s.db().UntruedProvisionalShipMoves(ctx, tx, ln.ProductID, branchID)
 	if err != nil {
 		return 0, err
@@ -318,6 +381,7 @@ func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, 
 			moveMeta[k] = v
 		}
 	}
+	wroteCost := false
 	if !hadCost || avg <= 0 || len(provMoves) > 0 {
 		fallbackCost, source, found, err := s.db().FallbackCost(ctx, tx, ln.ProductID, branchID)
 		if err != nil {
@@ -333,6 +397,7 @@ func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, 
 			if err := s.db().UpsertBranchCost(ctx, tx, ln.ProductID, branchID, avg); err != nil {
 				return 0, err
 			}
+			wroteCost = true
 		} else {
 			// No cost at all: provisional at $0.00, marked and listed (round 2, S3's P2), never a
 			// silent skip.
@@ -347,15 +412,57 @@ func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, 
 	if err != nil {
 		return 0, err
 	}
-	if _, err := s.db().InsertMove(ctx, tx, moveParams{
+	// W2-5 round 5 (S5's P2-1): the move stamps the row's exact change in round(on_hand x avg),
+	// not the rounded movement value_cents carries. 12.38 t at 4510 cents is 55,833.8, held as
+	// 55,834; a 0.04 t sale is 180.4, booked as 180; the row becomes 12.34 t, 55,653.4, held as
+	// 55,653: it moved by 181. The difference is booked as the WAC integer-cent rounding journal
+	// in this same transaction, so the stock ledger and 1200 unwind a stamped SHIP to the cent
+	// at any as-of instant, the PO receipt's rule.
+	avgBeforeEff := int64(0)
+	if hadCost {
+		avgBeforeEff = oldAvg
+	}
+	avgAfterEff := avgBeforeEff
+	if wroteCost {
+		avgAfterEff = avg
+	}
+	change, err := s.exactRowChange(ctx, tx, ln.ProductID, branchID, branchID, -ln.QtyBase, avgBeforeEff, avgAfterEff)
+	if err != nil {
+		return 0, err
+	}
+	if moveMeta == nil {
+		moveMeta = map[string]any{}
+	}
+	moveMeta["wac_value_delta_cents"] = -change
+	moveID, err := s.db().InsertMove(ctx, tx, moveParams{
 		ProductID: ln.ProductID, BranchID: branchID, FromLocation: branchID,
 		MoveType: MoveShip, QtyBase: ln.QtyBase, UnitCostCents: avg, ValueCents: value,
 		SourceType: sourceType, SourceRefID: orderID, Reason: reason,
-		Metadata: moveMeta,
-	}); err != nil {
+		Metadata: moveMeta, OccurredAt: occurredAt,
+	})
+	if err != nil {
 		return 0, err
 	}
-	return value, s.db().UpsertBalanceDelta(ctx, tx, ln.ProductID, branchID, branchID, -ln.QtyBase)
+	if err := s.db().UpsertBalanceDelta(ctx, tx, ln.ProductID, branchID, branchID, -ln.QtyBase); err != nil {
+		return 0, err
+	}
+	if rounding := change + value; rounding != 0 {
+		// An issue that took the provisional fallback cost revalues every unit still on hand
+		// from the old average to the fallback, so its difference is a REVALUATION, not the
+		// rounding of a cent (S5's P3-6). The memo says which one the Controller reads.
+		memo := "WAC integer-cent rounding on stock issue"
+		if wroteCost {
+			memo = "WAC revaluation on the provisional fallback cost at stock issue"
+		}
+		if err := s.postMoveRoundingTx(ctx, tx, moveRoundingPost{
+			Event: "inventory.ship", MoveID: moveID, BranchID: branchID, RoundingCents: rounding,
+			InvEvent: "order.fulfilled", Memo: memo,
+			OccurredAt: occurredAt,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	return value, nil
 }
 
 // FulfilOrderLinesTx relieves on-hand stock for fulfilled order lines and emits
@@ -412,6 +519,31 @@ func (s *Service) HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID
 	return exists, err
 }
 
+// fulfilmentInstant answers the ONE instant a fulfilment is dated at.
+//
+// IT IS THE TRANSACTION'S OWN CLOCK: Postgres's now() is the transaction's start, the same value every
+// statement in this transaction sees. One read, one instant, for the whole fulfilment.
+//
+// WHY IT MATTERS (W2-5 fix r6). The stock ledger's SHIP move and the GL's COGS journal book the SAME
+// sale, and a month end reads both sides at one instant. If the two carry different instants, a month
+// end that falls between them sees the stock relieved and 1200 unrelieved: the close is refused by the
+// whole sale, and no later month can repair it, because the stock side moved in the earlier month and
+// the book side moved in the later one. Before this, the move took the transaction's clock and the
+// journal took the consumer's clock (the drain's), and the two were a drain apart.
+//
+// Reading the transaction's instant ONCE and stamping it on BOTH the move and the event closes that
+// gap: the event carries the instant, the GL's consumer reads it off the payload (the same field the
+// POS ring's sale has always carried), and the journal is posted at that same instant, the one the
+// fulfilment's own transaction owns. A transaction that straddles midnight no longer splits the two
+// either: both sides carry the transaction's own start.
+func (s *Service) fulfilmentInstant(ctx context.Context, tx pgx.Tx) (time.Time, error) {
+	at, err := s.db().MovementInstant(ctx, tx)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("inventory: read the fulfilment's instant: %w", err)
+	}
+	return at, nil
+}
+
 func (s *Service) fulfilLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID, branchID string, productIDs []string, qtys []float64) error {
 	if orderID == "" || branchID == "" || len(productIDs) == 0 || len(productIDs) != len(qtys) {
 		return nil
@@ -438,6 +570,12 @@ func (s *Service) fulfilLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID
 		QtyBase    float64 `json:"qty_base"`
 		ValueCents int64   `json:"value_cents"`
 	}
+	// ONE instant for the whole fulfilment: the transaction's own clock, read once, so every
+	// SHIP move and the event that books them are dated at the same moment (fulfilmentInstant).
+	at, err := s.fulfilmentInstant(ctx, tx)
+	if err != nil {
+		return err
+	}
 	outLines := make([]outboxLine, 0, len(productIDs))
 	for i := range productIDs {
 		pid := productIDs[i]
@@ -452,7 +590,7 @@ func (s *Service) fulfilLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID
 		value, err := s.decrementOneShipLine(ctx, tx, orderID, branchID, "order", "order_fulfilled", SaleLine{
 			ProductID: pid,
 			QtyBase:   qty,
-		}, meta)
+		}, at, meta)
 		if err != nil {
 			return err
 		}
@@ -469,6 +607,10 @@ func (s *Service) fulfilLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID
 		"order_id":  orderID,
 		"branch_id": branchID,
 		"lines":     outLines,
+		// The fulfilment's own instant, the same one the SHIP moves carry: the COGS journal the
+		// consumer posts is dated at it, so the stock ledger and 1200 cut this sale at ONE moment
+		// and a month end cannot find them on different sides of itself (W2-5 fix r6).
+		"occurred_at": at,
 	}
 	if groupID != "" {
 		event["group_id"] = groupID
@@ -491,11 +633,17 @@ func (s *Service) LockStockTx(ctx context.Context, tx pgx.Tx, branchID string, p
 // CURRENT weighted-average unit cost (found=false → cost 0, value 0, the GL side skips quietly the same
 // way), so the average is unchanged; the balance projection gains the qty.
 func (s *Service) restockForReturn(ctx context.Context, tx pgx.Tx, in RestockInput) error {
+	// The return's ONE instant (W2-5 fix r8, S5's P3-1), read once before any row is
+	// written: the RETURN move carries it and the rounding journal is dated with it.
+	at, err := s.movementInstant(ctx, tx)
+	if err != nil {
+		return err
+	}
 	for _, ln := range in.Lines {
 		if ln.QtyBase <= 0 {
 			continue
 		}
-		avg, _, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, in.BranchID)
+		avg, hadCost, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, in.BranchID)
 		if err != nil {
 			return err
 		}
@@ -503,18 +651,184 @@ func (s *Service) restockForReturn(ctx context.Context, tx pgx.Tx, in RestockInp
 		if err != nil {
 			return err
 		}
-		if _, err := s.db().InsertMove(ctx, tx, moveParams{
+		// W2-5 round 5 (S5's P2-1): the RETURN move stamps the row's exact change in
+		// round(on_hand x avg), not the rounded movement; the difference rides the WAC
+		// integer-cent rounding journal in this same transaction, the PO receipt's rule.
+		avgEff := int64(0)
+		if hadCost {
+			avgEff = avg
+		}
+		change, err := s.exactRowChange(ctx, tx, ln.ProductID, in.BranchID, in.BranchID, ln.QtyBase, avgEff, avgEff)
+		if err != nil {
+			return err
+		}
+		moveID, err := s.db().InsertMove(ctx, tx, moveParams{
 			ProductID: ln.ProductID, BranchID: in.BranchID, ToLocation: in.BranchID,
 			MoveType: MoveReturn, QtyBase: ln.QtyBase, UnitCostCents: avg, ValueCents: value,
 			SourceType: "pos_return", SourceRefID: in.ReturnID, Reason: "POS return " + in.ReturnNo,
-		}); err != nil {
+			Metadata:   map[string]any{"wac_value_delta_cents": change},
+			OccurredAt: at,
+		})
+		if err != nil {
 			return err
 		}
 		if err := s.db().UpsertBalanceDelta(ctx, tx, ln.ProductID, in.BranchID, in.BranchID, ln.QtyBase); err != nil {
 			return err
 		}
+		if rounding := change - value; rounding != 0 {
+			if err := s.postMoveRoundingTx(ctx, tx, moveRoundingPost{
+				Event: "inventory.return", MoveID: moveID, BranchID: in.BranchID, RoundingCents: rounding,
+				InvEvent: "order.returned", Memo: "WAC integer-cent rounding on stock return",
+				OccurredAt: at,
+			}); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// - the exact-change stamp + rounding journal every fractional value writer posts (W2-5 round 5) -
+
+// exactRowChange answers the branch's exact change in per-row round(on_hand x avg) across one
+// quantity move of signedDelta at deltaLocationID: the same figure the as-of read's current value
+// is built from (StockValueCents rounds EACH stock_balances row at the branch's weighted average
+// and sums), recomputed with the touched row's on-hand moved and the branch's average at its
+// post-move value. avgBeforeEff and avgAfterEff are the effective per-unit averages the cost row
+// held before and holds after the move (0 when no cost row exists, the valuation the read's
+// COALESCE answers for a missing row), so a writer that also revalues the WAC (the issue's
+// provisional fallback) stamps the revaluation with the move. The quantity move itself stays the
+// caller's job; this reads the row set the caller's own transaction sees, BEFORE the balance
+// delta lands.
+func (s *Service) exactRowChange(ctx context.Context, tx pgx.Tx, productID, branchID, deltaLocationID string, signedDelta float64, avgBeforeEff, avgAfterEff int64) (int64, error) {
+	rows, err := s.db().BalanceRows(ctx, tx, productID, branchID)
+	if err != nil {
+		return 0, err
+	}
+	var oldSum, newSum int64
+	deltaRowSeen := false
+	for _, r := range rows {
+		after := r.OnHandBase
+		if r.LocationID == deltaLocationID {
+			after += signedDelta
+			deltaRowSeen = true
+		}
+		oldVal, err := qtyTimesCents(r.OnHandBase, avgBeforeEff)
+		if err != nil {
+			return 0, err
+		}
+		newVal, err := qtyTimesCents(after, avgAfterEff)
+		if err != nil {
+			return 0, err
+		}
+		oldSum += oldVal
+		newSum += newVal
+	}
+	// A move whose row does not exist yet (a first issue, return, count or transfer out on a
+	// product+branch that never held stock) CREATES the balance row at signedDelta units, and its
+	// exact change runs from nothing: old value 0, new value round(signedDelta x avgAfterEff).
+	// Leaving the created row out read the whole booked value as rounding and demanded a GL
+	// poster for a tie that was never broken (CI run 40743787329, the pos return-values leg).
+	if !deltaRowSeen {
+		newVal, err := qtyTimesCents(signedDelta, avgAfterEff)
+		if err != nil {
+			return 0, err
+		}
+		newSum += newVal
+	}
+	return newSum - oldSum, nil
+}
+
+// moveRoundingPost is the fact set one move's WAC integer-cent rounding journal is built from
+// (W2-5 round 5, S5's P2-1): the signed difference between the row's exact change and the
+// movement's booked value, posted in the move's own transaction through the same journal shape
+// the PO receipt (postPOReceivedRounding) and the transfer receive (postTransferReceivedRoundingTx)
+// post. RoundingCents carries the receipt's sign convention: positive raised 1200, negative
+// lowered it.
+type moveRoundingPost struct {
+	Event         string // the posting-rule event and idempotency-key prefix, one spelling
+	MoveID        string // the move the rounding belongs to: one journal per move
+	BranchID      string
+	RoundingCents int64
+	InvEvent      string // the posting-rule event the inventory leg resolves under
+	Memo          string
+	// OccurredAt is the instant the move it belongs to happened, the one stamped on the move
+	// row (W2-5 fix r8, S5's P3-1). The rounding journal is dated with it, so the journal and
+	// the move it corrects carry the same moment.
+	//
+	// The zero value means "no instant named": the journal falls back to the GL's clock, which
+	// is what every rounding journal did before the field existed.
+	OccurredAt time.Time
+}
+
+// postMoveRoundingTx books the difference between a stamped move's exact row change and its
+// value_cents through the WAC integer-cent rounding journal shape, on the caller's transaction
+// when the poster supports it (the transfer posting convention: the move and its journals are
+// one fate), else on the pool. The idempotency key is the event spelling + ".rounding:" + the
+// move id, so a retry after a failure posts exactly one journal per move.
+func (s *Service) postMoveRoundingTx(ctx context.Context, tx pgx.Tx, p moveRoundingPost) error {
+	if p.MoveID == "" {
+		return fmt.Errorf("inventory: %s.rounding missing move id", p.Event)
+	}
+	// A zero rounding books nothing and needs no poster (the postInventoryAdjusted shape for
+	// ValueCents == 0): the poster and rule seams are demanded only once a journal exists to post.
+	if p.RoundingCents == 0 {
+		return nil
+	}
+	if s.gl == nil {
+		return errNoGLPoster
+	}
+	if s.rules == nil {
+		return errNoRules
+	}
+	invCode, err := s.resolveTransferRule(ctx, tx, p.InvEvent, "inventory", p.BranchID)
+	if err != nil {
+		return err
+	}
+	expCode, err := s.resolveTransferRule(ctx, tx, "inventory.adjusted", "expense", p.BranchID)
+	if err != nil || expCode == "" {
+		expCode = "5200"
+	}
+	amt := p.RoundingCents
+	if amt < 0 {
+		amt = -amt
+	}
+	var lines []GLLine
+	if p.RoundingCents > 0 {
+		lines = []GLLine{
+			{AccountCode: invCode, DebitCents: amt, Memo: "WAC integer-cent rounding"},
+			{AccountCode: expCode, CreditCents: amt, Memo: "WAC integer-cent rounding"},
+		}
+	} else {
+		lines = []GLLine{
+			{AccountCode: expCode, DebitCents: amt, Memo: "WAC integer-cent rounding"},
+			{AccountCode: invCode, CreditCents: amt, Memo: "WAC integer-cent rounding"},
+		}
+	}
+	jr := GLJournal{
+		Source:         "ADJUSTMENT",
+		SourceRefID:    p.MoveID,
+		IdempotencyKey: p.Event + ".rounding:" + p.MoveID,
+		Memo:           p.Memo,
+		BranchID:       p.BranchID,
+		DocumentDate:   p.OccurredAt,
+		Lines:          lines,
+	}
+	if tx != nil {
+		if gp, ok := s.gl.(GLPosterTx); ok {
+			_, err := gp.PostJournalTx(ctx, tx, jr)
+			return err
+		}
+	}
+	return s.postMoveRoundingCommitting(ctx, jr)
+}
+
+// postMoveRoundingCommitting is the move rounding's pool posting path, both arms without a caller
+// transaction. Its own function so the branch census finds one committing writer per function
+// beside the transaction scoped one above.
+func (s *Service) postMoveRoundingCommitting(ctx context.Context, jr GLJournal) error {
+	_, err := s.gl.PostJournal(ctx, jr)
+	return err
 }
 
 // - posting consumers (po.received + inventory.adjusted) -
@@ -531,6 +845,14 @@ type poReceivedPayload struct {
 	ValueCents    int64          `json:"value_cents"`
 	RoundingCents int64          `json:"rounding_cents"`
 	TrueUps       []poTrueUpLine `json:"true_ups"`
+	// OccurredAt is the receipt's OWN instant, the one the receipt's transaction read once and
+	// stamped on the RECEIPT move (W2-5 fix r8, S5's P2-2). Every journal this payload books is
+	// dated with it, so the journal and the move it books carry the same moment and a month end
+	// finds both sides of the receipt on the same side of itself.
+	//
+	// The zero value means "no instant carried": the journals fall back to the GL's clock, which
+	// is what every receipt did before the field existed.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // postPOReceived posts the GRNI journal for a receipt: DR 1200 Inventory / CR 2150 Received-Not-Invoiced, both
@@ -567,6 +889,7 @@ func (s *Service) postPOReceived(ctx context.Context, payload []byte) error {
 			IdempotencyKey: "po.received:" + p.ReceiptID,
 			Memo:           "GRNI on PO receipt",
 			BranchID:       p.BranchID,
+			DocumentDate:   p.OccurredAt,
 			Lines: []GLLine{
 				{AccountCode: invCode, DebitCents: p.ValueCents, Memo: "inventory received"},
 				{AccountCode: apCode, CreditCents: p.ValueCents, Memo: "received not invoiced"},
@@ -621,6 +944,7 @@ func (s *Service) postPOReceivedRounding(ctx context.Context, p poReceivedPayloa
 		IdempotencyKey: "po.received.rounding:" + p.ReceiptID,
 		Memo:           "WAC integer-cent rounding on PO receipt",
 		BranchID:       p.BranchID,
+		DocumentDate:   p.OccurredAt,
 		Lines:          lines,
 	}); err != nil {
 		return err
@@ -658,6 +982,7 @@ func (s *Service) postPOReceivedTrueUp(ctx context.Context, p poReceivedPayload,
 		IdempotencyKey: "pre_receipt_trueup:" + p.ReceiptID + ":" + tu.ProductID,
 		Memo:           "Pre-receipt sale cost true-up on first receipt",
 		BranchID:       p.BranchID,
+		DocumentDate:   p.OccurredAt,
 		Lines:          lines,
 	}); err != nil {
 		return err
@@ -671,6 +996,13 @@ type inventoryAdjustedPayload struct {
 	AccountCode string `json:"account_code"` // reason (expense/contra) leg; "" → resolve the rule default
 	ValueCents  int64  `json:"value_cents"`  // signed: >0 stock found (asset up) / <0 loss (asset down)
 	Memo        string `json:"memo"`
+	// OccurredAt is the instant the counted movement happened, the one the count's own
+	// transaction stamped on the COUNT move (W2-5 fix r8, S5's P3-1). The journal is dated with
+	// it, so the variance journal and the count move that caused it carry the same moment.
+	//
+	// The zero value means "no instant carried": the journal falls back to the GL's clock, which
+	// is what every adjustment did before the field existed.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // postInventoryAdjusted posts a reason-coded stock adjustment: the reason leg (payload account_code, or the
@@ -726,6 +1058,7 @@ func (s *Service) postInventoryAdjusted(ctx context.Context, payload []byte) err
 		IdempotencyKey: "inventory.adjusted:" + p.SourceRefID,
 		Memo:           "inventory adjustment",
 		BranchID:       p.BranchID,
+		DocumentDate:   p.OccurredAt,
 		Lines:          lines,
 	})
 	return err
@@ -734,6 +1067,12 @@ func (s *Service) postInventoryAdjusted(ctx context.Context, payload []byte) err
 // - count + landed seams -
 
 // postCountAdjustment writes the signed COUNT move for a counted variance (A-15). A zero delta books nothing.
+//
+// W2-5 fix round 8 (S5's P3-1): the count reads its transaction's instant ONCE and stamps it on the COUNT
+// move and on the rounding journal it may raise, so the journal and the move it corrects carry the same
+// moment. Before this the move took the column default (the row's own now()) and the journal took the GL's
+// clock, the two apart: a count in a month's last moment, journaled after the month's end, left the two
+// sides of the variance on different sides of the month's end.
 func (s *Service) postCountAdjustment(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, qtyDelta float64, unitCostCents int64, reason string) (string, error) {
 	if math.Abs(qtyDelta) <= qtyEpsilon {
 		return "", nil
@@ -742,25 +1081,66 @@ func (s *Service) postCountAdjustment(ctx context.Context, tx pgx.Tx, productID,
 	if err != nil {
 		return "", err
 	}
+	// The count's ONE instant, read once, before any row is written.
+	at, err := s.movementInstant(ctx, tx)
+	if err != nil {
+		return "", err
+	}
+	// W2-5 round 5 (S5's P2-1): the COUNT move stamps the row's exact change in
+	// round(on_hand x avg), not the rounded movement; the difference rides the WAC
+	// integer-cent rounding journal in this same transaction, the PO receipt's rule.
+	// The count never moves the weighted average, so the effective average is the
+	// cost row's own before and after (0 when none exists, the read's COALESCE).
+	avg, hadCost, err := s.db().GetBranchCost(ctx, tx, productID, branchID)
+	if err != nil {
+		return "", err
+	}
+	avgEff := int64(0)
+	if hadCost {
+		avgEff = avg
+	}
+	change, err := s.exactRowChange(ctx, tx, productID, branchID, locationID, qtyDelta, avgEff, avgEff)
+	if err != nil {
+		return "", err
+	}
 	m := moveParams{
 		ProductID: productID, BranchID: branchID, MoveType: MoveCount,
 		QtyBase: math.Abs(qtyDelta), UnitCostCents: unitCostCents,
 		ValueCents: value,
 		SourceType: "count", Reason: reason,
+		OccurredAt: at,
 	}
 	if qtyDelta > 0 {
 		m.ToLocation = locationID
 	} else {
 		m.FromLocation = locationID
 	}
-	id, err := s.db().InsertMove(ctx, tx, m)
+	stamp := change
+	if qtyDelta < 0 {
+		stamp = -change
+	}
+	m.Metadata = map[string]any{"wac_value_delta_cents": stamp}
+	moveID, err := s.db().InsertMove(ctx, tx, m)
 	if err != nil {
 		return "", err
 	}
 	if err := s.db().UpsertBalanceDelta(ctx, tx, productID, locationID, branchID, qtyDelta); err != nil {
 		return "", err
 	}
-	return id, nil
+	rounding := change - value
+	if qtyDelta < 0 {
+		rounding = change + value
+	}
+	if rounding != 0 {
+		if err := s.postMoveRoundingTx(ctx, tx, moveRoundingPost{
+			Event: "inventory.count", MoveID: moveID, BranchID: branchID, RoundingCents: rounding,
+			InvEvent: "inventory.adjusted", Memo: "WAC integer-cent rounding on stock count",
+			OccurredAt: at,
+		}); err != nil {
+			return "", err
+		}
+	}
+	return moveID, nil
 }
 
 // capitalizeLanded raises the weighted-average cost of a product at a branch by allocatedCadCents worth of
@@ -776,8 +1156,8 @@ func (s *Service) postCountAdjustment(ctx context.Context, tx pgx.Tx, productID,
 // SAME (clamped) newAvg is both upserted and used to derive absorbed, so absorbed == round(newAvg × on-hand) −
 // oldValue exactly, the ledger can never drift from the subledger it mirrors, and the un-absorbed remainder
 // (allocatedCadCents − absorbed) is the only value that falls to COGS.
-func (s *Service) capitalizeLanded(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (int64, error) {
-	absorbed, _, _, err := s.capitalizeLandedSnap(ctx, tx, productID, branchID, allocatedCadCents)
+func (s *Service) capitalizeLanded(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64, at time.Time, sourceRefID string) (int64, error) {
+	absorbed, _, _, err := s.capitalizeLandedSnap(ctx, tx, productID, branchID, allocatedCadCents, at, sourceRefID)
 	return absorbed, err
 }
 
@@ -792,7 +1172,7 @@ func (s *Service) capitalizeLanded(ctx context.Context, tx pgx.Tx, productID, br
 // snapAvg is the TRUE pre-Apply price, NOT the round(oldAvg × on-hand)/on-hand re-derivation the forward math uses -
 // that re-derivation is exactly what the reversal cannot invert once on-hand < 1 quantizes oldValue to 0. Persisting
 // snapAvg and restoring it verbatim on Void is the only cent-exact inverse.
-func (s *Service) capitalizeLandedSnap(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (absorbed int64, snapAvg int64, hadCost bool, err error) {
+func (s *Service) capitalizeLandedSnap(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64, at time.Time, sourceRefID string) (absorbed int64, snapAvg int64, hadCost bool, err error) {
 	if allocatedCadCents == 0 {
 		return 0, 0, false, nil
 	}
@@ -924,9 +1304,36 @@ func (s *Service) capitalizeLandedSnap(ctx context.Context, tx pgx.Tx, productID
 	if err := s.db().UpsertBranchCost(ctx, tx, productID, branchID, newAvg); err != nil {
 		return 0, 0, false, err
 	}
+	// The VALUE move this capitalization books (W2-5B): the exact cents the GL posts to 1200 for it, at the
+	// instant that GL journal carries, so the stock side and 1200 cut the event together.
+	if err := s.bookValueEvent(ctx, tx, productID, branchID, absorbed, at, sourceRefID); err != nil {
+		return 0, 0, false, err
+	}
 	// snapAvg is oldAvg, the exact price BEFORE this capitalization, so a later restoreLandedCost can reproduce it
 	// verbatim. hadCost tells the caller whether that snapshot was a real stored average or the 0 default.
 	return absorbed, oldAvg, hadCost, nil
+}
+
+// bookValueEvent records the VALUE ONLY move (0453, W2-5B) that carries the value a landed-cost
+// capitalization, a retro capitalization or a restore moved: the exact cents the GL posting books for that
+// event, at the instant the event's own GL journal carries. The close pre flight's stock tie unwinds it, so a
+// month that closed before the event excludes it from both sides of the tie and a month that closed after it
+// includes it on both sides. An event that moved no value books no row.
+func (s *Service) bookValueEvent(ctx context.Context, tx pgx.Tx, productID, branchID string, valueCents int64, at time.Time, sourceRefID string) error {
+	if valueCents == 0 {
+		return nil
+	}
+	reason := "landed cost capitalization"
+	if valueCents < 0 {
+		reason = "landed cost reversal"
+	}
+	_, err := s.db().InsertMove(ctx, tx, moveParams{
+		ProductID: productID, BranchID: branchID, MoveType: MoveValue,
+		QtyBase: 0, ValueCents: valueCents,
+		SourceType: "landed_cost", SourceRefID: sourceRefID, Reason: reason,
+		OccurredAt: at,
+	})
+	return err
 }
 
 // restoreLandedCost reverses a landed-cost capitalization on a Void by REMOVING EXACTLY the value Apply capitalized -
@@ -956,7 +1363,7 @@ func (s *Service) capitalizeLandedSnap(ctx context.Context, tx pgx.Tx, productID
 // value exactly on round(snapAvg×onHand), i.e. currentValue − absorbed == round(snapAvg×onHand), because that is by
 // construction what Apply computed absorbed as over this same on-hand. When it holds, restore snapAvg verbatim (drift 0);
 // otherwise on-hand differs, so use the absorbed-based drain.
-func (s *Service) restoreLandedCost(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64) (int64, error) {
+func (s *Service) restoreLandedCost(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64, at time.Time, sourceRefID string) (int64, error) {
 	if snapAvg < 0 {
 		snapAvg = 0 // a stored average is never negative; defend anyway so the restored WAC can never go negative
 	}
@@ -1007,6 +1414,9 @@ func (s *Service) restoreLandedCost(ctx context.Context, tx pgx.Tx, productID, b
 		if err := s.db().UpsertBranchCost(ctx, tx, productID, branchID, snapAvg); err != nil {
 			return 0, err
 		}
+		if err := s.bookValueEvent(ctx, tx, productID, branchID, delta, at, sourceRefID); err != nil {
+			return 0, err
+		}
 		return delta, nil
 	}
 	// On-hand differs (receipt or sale between Apply and Void): remove EXACTLY the capitalized value, no more. Clamp the
@@ -1033,7 +1443,23 @@ func (s *Service) restoreLandedCost(ctx context.Context, tx pgx.Tx, productID, b
 	if !ok {
 		return 0, fmt.Errorf("inventory: realized restore delta for product %s at branch %s exceeds integer cents", productID, branchID)
 	}
+	// Rounding newAvg DOWN realizes up to onHand/2 cents less than `remaining`, so the drain could take more than
+	// Apply absorbed; the caller clamps its CR 1200 at the capitalized total, so the subledger would fall further
+	// than 1200 (W2-5c). Step the WAC up, never past curAvg, until the drain is within absorbed; the shortfall is
+	// an under-reversal the caller already routes to COGS.
+	for delta < -absorbed && newAvg < curAvg {
+		newAvg++
+		if realized, err = qtyTimesCents(onHand, newAvg); err != nil {
+			return 0, err
+		}
+		if delta, ok = subCents(realized, curValue); !ok {
+			return 0, fmt.Errorf("inventory: realized restore delta for product %s at branch %s exceeds integer cents", productID, branchID)
+		}
+	}
 	if err := s.db().UpsertBranchCost(ctx, tx, productID, branchID, newAvg); err != nil {
+		return 0, err
+	}
+	if err := s.bookValueEvent(ctx, tx, productID, branchID, delta, at, sourceRefID); err != nil {
 		return 0, err
 	}
 	return delta, nil

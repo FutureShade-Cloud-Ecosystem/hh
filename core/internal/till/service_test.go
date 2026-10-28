@@ -30,8 +30,10 @@ type fakeStore struct {
 	tenderSnapshots map[string]map[string]int64
 	denoms          map[string][]DenominationCount
 	policies        map[string]TillPolicy
-	seq             int
-	insertCalls     int
+	// reasonCodes is the fake's counter reason code list (W2-6b): the branch's codes in memory.
+	reasonCodes []ReasonCode
+	seq         int
+	insertCalls int
 
 	// - W5 A-05 fake state -
 	nsfPolicy    NSFPolicy              // the effective policy returned by NSFPolicyFor
@@ -445,6 +447,78 @@ func (f *fakeStore) Policy(_ context.Context, branchID string) (TillPolicy, erro
 		return p, nil
 	}
 	return TillPolicy{BranchID: branchID, VarianceThresholdCents: 0, CloseGrain: "SESSION", RequireBlindClose: true}, nil
+}
+
+// - the counter reason codes (W2-6b) -
+//
+// The fake carries a branch's list in memory. A branch with no list answers no live code, so a
+// movement with no code stays legal in the unit tests exactly as it is on a branch that has not
+// turned a code on.
+
+func (f *fakeStore) ReasonCodes(_ context.Context, branchID string) ([]ReasonCode, error) {
+	out := []ReasonCode{}
+	for _, c := range f.reasonCodes {
+		if c.BranchID == branchID {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ReasonCodeFor(_ context.Context, branchID, code string) (ReasonCode, bool, error) {
+	for _, c := range f.reasonCodes {
+		if c.BranchID == branchID && c.Code == code {
+			return c, true, nil
+		}
+	}
+	return ReasonCode{}, false, nil
+}
+
+func (f *fakeStore) ReasonCodeByID(_ context.Context, id string) (ReasonCode, bool, error) {
+	for _, c := range f.reasonCodes {
+		if c.ID == id {
+			return c, true, nil
+		}
+	}
+	return ReasonCode{}, false, nil
+}
+
+func (f *fakeStore) HasActiveReasonCode(_ context.Context, branchID, movementKind string) (bool, error) {
+	for _, c := range f.reasonCodes {
+		if c.BranchID == branchID && c.Active && (c.MovementKind == movementKind || c.MovementKind == ReasonKindBoth) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeStore) InsertReasonCode(_ context.Context, c ReasonCode) (string, error) {
+	c.ID = "rc-" + c.Code
+	f.reasonCodes = append(f.reasonCodes, c)
+	return c.ID, nil
+}
+
+func (f *fakeStore) UpdateReasonCode(_ context.Context, id string, e ReasonCodeEdit, at time.Time) (int, error) {
+	for i, c := range f.reasonCodes {
+		if c.ID != id {
+			continue
+		}
+		if e.Label != nil {
+			f.reasonCodes[i].Label = *e.Label
+		}
+		if e.MovementKind != nil {
+			f.reasonCodes[i].MovementKind = *e.MovementKind
+		}
+		if e.GLAccountCode != nil {
+			f.reasonCodes[i].GLAccountCode = *e.GLAccountCode
+		}
+		if e.Active != nil {
+			f.reasonCodes[i].Active = *e.Active
+		}
+		f.reasonCodes[i].UpdatedAt = at
+		return 1, nil
+	}
+	return 0, nil
 }
 
 // - Q-044 history reads (fake projections over the fake payment map) -

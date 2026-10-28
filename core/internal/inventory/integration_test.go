@@ -19,6 +19,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
@@ -501,7 +502,7 @@ func TestCapitalizeSnapRestore_RoundTripRestoresWAC_DB(t *testing.T) {
 		}
 
 		// Apply: capitalize + capture the snapshot (the value landedcost persists on the allocation row).
-		absorbed, snapAvg, hadCost, err := svc.capitalizeLandedSnap(ctx, nil, p, branch1, c.freight)
+		absorbed, snapAvg, hadCost, err := svc.capitalizeLandedSnap(ctx, nil, p, branch1, c.freight, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: apply: %v", c, err)
 		}
@@ -510,7 +511,7 @@ func TestCapitalizeSnapRestore_RoundTripRestoresWAC_DB(t *testing.T) {
 		}
 
 		// Void: remove exactly `absorbed`; on-hand unchanged since Apply → drift-0 verbatim restore of the snapshot.
-		reversed, err := svc.restoreLandedCost(ctx, nil, p, branch1, snapAvg, absorbed)
+		reversed, err := svc.restoreLandedCost(ctx, nil, p, branch1, snapAvg, absorbed, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: void: %v", c, err)
 		}
@@ -557,7 +558,7 @@ func TestIntegration_A15CountSeam_ValuesVarianceAtPostLandedCostWAC(t *testing.T
 	}
 
 	// DIB-39: absorb $50.00 of freight across the 100 units on hand → WAC 1000 + 5000/100 = 1050.
-	absorbed, err := svc.capitalizeLanded(ctx, nil, p, branch1, 5000)
+	absorbed, err := svc.capitalizeLanded(ctx, nil, p, branch1, 5000, time.Now(), "")
 	if err != nil {
 		t.Fatalf("capitalize landed cost: %v", err)
 	}
