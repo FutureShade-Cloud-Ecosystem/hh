@@ -40,8 +40,8 @@ SELECT j.id::text              AS journal_id,
  ORDER BY j.posted_at, j.id::text;
 ```
 
-That query is the same one the migration runs, so its answer and the migration's refusal always
-agree.
+That query names the same journals and counts the migration's refusal names, so its answer and the
+refusal always agree.
 
 ## What the refusal looks like
 
@@ -91,8 +91,10 @@ SELECT head_office_branch_id::text
  WHERE branch_id IS NULL;
 ```
 
-A box with no branches at all leaves that column NULL, and the head office is then the branch
-whose code is `TRT`, or the earliest branch when the box has none.
+At run time the head office is that column; when it is empty, the live branch whose code is `TRT`;
+and when neither answers, the posting is refused in words. That is `HeadOfficeBranchID` in the GL
+module. "The earliest branch" was only migration 0445's one time backfill of the column, never a run
+time answer.
 
 ## The two cases an operator will meet
 
