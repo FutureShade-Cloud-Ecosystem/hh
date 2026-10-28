@@ -42,6 +42,8 @@ export const IDS = {
 // The stub's chart, code to [name, type]. Normal balance follows the type, as the core's seed has it.
 const CHART = {
   "1000": ["Cash", "ASSET"],
+  "1010": ["Card Settlement Clearing", "ASSET"],
+  "1020": ["Undeposited Funds - Cash In Transit", "ASSET"],
   "1100": ["Accounts Receivable", "ASSET"],
   "1200": ["Inventory", "ASSET"],
   "1300": ["Prepaid Expenses", "ASSET"],
@@ -51,6 +53,7 @@ const CHART = {
   "5000": ["Cost of Goods Sold", "EXPENSE"],
   "3900": ["Retained Earnings", "EQUITY"],
   "5200": ["Inventory Adjustments", "EXPENSE"],
+  "6300": ["Bank Fees", "EXPENSE"],
 };
 const RETAINED_EARNINGS = "3900";
 // The approval threshold the stub's policy row carries: the org default of the core's seed.
@@ -378,9 +381,19 @@ export function createGlWorld() {
   };
   const periodOfNow = () => world.periods.find((p) => p.month === 9);
 
+  /** The fiscal period a journal's document date falls in: the core's posting lands a journal in the month it is
+   *  dated, and marks it late posted when that month is not its period's month. */
+  const periodOfDate = (iso) => {
+    if (typeof iso !== "string" || iso.length < 7) return periodOfNow();
+    const year = Number(iso.slice(0, 4));
+    const month = Number(iso.slice(5, 7));
+    if (year !== FY || !Number.isFinite(month)) return periodOfNow();
+    return world.periods.find((p) => p.month === month) ?? periodOfNow();
+  };
+
   /** The core's repository.InsertJournal checks, in its order: period, then each line's account. */
   function insertJournal(draft) {
-    const period = periodOfNow();
+    const period = periodOfDate(draft.posted_at);
     if (period === undefined) return say(422, "gl: no fiscal period for 2026-09");
     if (period.status === "CLOSED") return say(409, "gl: fiscal period is CLOSED");
     for (const line of draft.lines) {
@@ -401,7 +414,8 @@ export function createGlWorld() {
       memo: draft.memo,
       status: draft.status,
       derived_status: draft.status,
-      ...(draft.status === "POSTED" ? { posted_at: new Date(NOW).toISOString() } : {}),
+      ...(draft.status === "POSTED" ? { posted_at: draft.posted_at ?? new Date(NOW).toISOString() } : {}),
+      ...(draft.idempotency_key ? { idempotency_key: draft.idempotency_key } : {}),
       ...(draft.branch_id ? { branch_id: draft.branch_id } : {}),
       ...(draft.reverses_journal_id ? { reverses_journal_id: draft.reverses_journal_id } : {}),
       created_by: draft.created_by,
@@ -410,8 +424,8 @@ export function createGlWorld() {
         line_no: i + 1,
         account_code: l.account_code,
         account_name: world.accounts.find((a) => a.code === l.account_code).name,
-        debit_cents: l.debit_cents,
-        credit_cents: l.credit_cents,
+        debit_cents: l.debit_cents || 0,
+        credit_cents: l.credit_cents || 0,
         ...(l.memo ? { memo: l.memo } : {}),
       })),
     };
@@ -1008,5 +1022,34 @@ export function createGlWorld() {
   // The bank reconciliation stub's starting point preview reads the same posted journals the register serves
   // (round 3): a read only accessor, so the two worlds answer one ledger.
   const postedJournals = () => world.journals.filter((j) => j.derived_status === "POSTED");
-  return { handle, reset, postedJournals };
+
+  /** Another module's journal, posted the way the core's GL takes an ExternalJournal (core/internal/gl): the
+   *  journal is dated by its document date, it lands in the period that date falls in, and it posts in one step.
+   *  The bank reconciliation module posts its clearing journals this way, so the ledger they move is this one. */
+  function postExternalJournal(draft) {
+    const lines = Array.isArray(draft.lines) ? draft.lines : [];
+    if (lines.length < 2) return say(400, "gl: a journal needs at least two lines");
+    for (const l of lines) {
+      if ((l.debit_cents > 0) === (l.credit_cents > 0)) return say(400, "gl: each line must have exactly one of debit_cents / credit_cents > 0");
+      if (!l.account_code) return say(400, "gl: each line needs an account_code");
+    }
+    const debit = lines.reduce((n, l) => n + (l.debit_cents || 0), 0);
+    const credit = lines.reduce((n, l) => n + (l.credit_cents || 0), 0);
+    if (debit !== credit) return say(422, "gl: journal is unbalanced (Σdebit ≠ Σcredit)");
+    const made = insertJournal({
+      source: draft.source ?? "ADJUSTMENT",
+      source_ref_id: draft.source_ref_id,
+      memo: draft.memo ?? "",
+      status: "POSTED",
+      branch_id: draft.branch_id ?? "",
+      created_by: draft.created_by ?? "",
+      idempotency_key: draft.idempotency_key,
+      posted_at: draft.document_date,
+      lines,
+    });
+    if (made.journal === undefined) return made;
+    return { status: 201, body: read(made.journal) };
+  }
+
+  return { handle, reset, postedJournals, postExternalJournal };
 }
