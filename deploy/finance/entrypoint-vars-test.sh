@@ -106,6 +106,50 @@ for leg in 'HH_BOX_KIND demo' 'APP_ENV production' 'CORE_SIGNIN_MODE demo'; do
 	esac
 done
 
+# The forbidden domain allow list: a non empty CORE_SIGNIN_EMAIL_DOMAINS
+# refuses the boot before any database call, naming the variable and never a
+# value, and no override flag exists. The box's people are exactly the list
+# in HH_FINANCE_USERS, and a domain allow would let a whole domain in past
+# the list. The key file is pointed at a path that does not exist in this
+# leg too, so a run that gets past the domain check stops at the key step:
+# which name the refusal carries says how far the run went.
+DOMAIN_KEY='CORE_SESSION_SIGNING_KEY_FILE=/nonexistent/session.pem'
+if out="$(run_box "$DOMAIN_KEY" 'CORE_SIGNIN_EMAIL_DOMAINS=example.test' --)"; then
+	fail "with CORE_SIGNIN_EMAIL_DOMAINS set the entrypoint started"
+else
+	pass "with CORE_SIGNIN_EMAIL_DOMAINS set the entrypoint exits non zero"
+fi
+case "$out" in
+	*CORE_SIGNIN_EMAIL_DOMAINS*) pass "the refusal names CORE_SIGNIN_EMAIL_DOMAINS" ;;
+	*) fail "the refusal does not name CORE_SIGNIN_EMAIL_DOMAINS: $out" ;;
+esac
+case "$out" in
+	*example.test*) fail "the refusal prints a value: $out" ;;
+	*) pass "the refusal prints no value" ;;
+esac
+case "$out" in
+	*"migrate"*|*"listening"*|*"finance-seed"*) fail "the entrypoint went past the checks with CORE_SIGNIN_EMAIL_DOMAINS set: $out" ;;
+	*) pass "the entrypoint stopped at the domain check" ;;
+esac
+case "$out" in
+	*"CORE_SESSION_SIGNING_KEY_FILE"*) fail "the domain check ran after the signing key step: $out" ;;
+	*) pass "the domain check runs before the signing key step, before any database call" ;;
+esac
+
+# Set and empty carries no domain: accepted, and the run gets past the
+# domain check to the key step.
+if out="$(run_box "$DOMAIN_KEY" 'CORE_SIGNIN_EMAIL_DOMAINS=' --)"; then
+	fail "the set and empty domain leg ran to the end (the key refusal was expected): $out"
+fi
+case "$out" in
+	*CORE_SIGNIN_EMAIL_DOMAINS*) fail "a set and empty CORE_SIGNIN_EMAIL_DOMAINS was refused: $out" ;;
+	*) pass "a set and empty CORE_SIGNIN_EMAIL_DOMAINS is accepted at the domain check" ;;
+esac
+case "$out" in
+	*"CORE_SESSION_SIGNING_KEY_FILE"*) pass "the set and empty run got past the domain check to the key step" ;;
+	*) fail "the set and empty run did not reach the key step: $out" ;;
+esac
+
 # The database name pair legs. The signing key file is pointed at a path
 # that does not exist in every leg, so a run that gets past the pair check
 # stops at the key step naming it: the pair verdict is readable from which
