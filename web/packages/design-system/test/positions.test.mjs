@@ -893,14 +893,23 @@ const DOM_SHIM_MODULE = /(?:^|\/)@lit-labs\/ssr\/lib\/dom-shim(?:\.js)?$/;
 
 const shimInstallOffences = (rel, records) => {
   const offences = [];
-  if (KNOWN_SHIM_INSTALL_SOURCES.has(rel)) return offences;
-  for (const { spec, names } of records) {
-    if (spec.includes(INSTALLER_SPECIFIER_MARK)) {
-      offences.push(`${rel}: ${spec}`);
-    } else if (DOM_SHIM_MODULE.test(spec) && (names === null || names.includes(INSTALLER_NAME))) {
-      offences.push(`${rel}: ${spec} (${names === null ? 'a name list the parser cannot read' : INSTALLER_NAME})`);
-    } else if (names !== null && names.includes(INSTALLER_NAME)) {
-      offences.push(`${rel}: ${spec} (${INSTALLER_NAME})`);
+  const known = KNOWN_SHIM_INSTALL_SOURCES.has(rel);
+  for (const { spec, names, reexported } of records) {
+    if (!known) {
+      if (spec.includes(INSTALLER_SPECIFIER_MARK)) {
+        offences.push(`${rel}: ${spec}`);
+      } else if (DOM_SHIM_MODULE.test(spec) && (names === null || names.includes(INSTALLER_NAME))) {
+        offences.push(`${rel}: ${spec} (${names === null ? 'a name list the parser cannot read' : INSTALLER_NAME})`);
+      } else if (names !== null && names.includes(INSTALLER_NAME)) {
+        offences.push(`${rel}: ${spec} (${INSTALLER_NAME})`);
+      }
+    }
+    // The known list's exemption covers the import that pairs the install
+    // with the capture and the restore of the process's own fetch, not a
+    // re-export of the installer: a re-export would hand the installer name
+    // to any file that imports the guard, with neither gate seeing it.
+    if (reexported.includes(INSTALLER_NAME)) {
+      offences.push(`${rel}: ${spec} (re-exports ${INSTALLER_NAME})`);
     }
   }
   return offences;
@@ -968,5 +977,38 @@ test('the shim inventory pin matches the resolved dom-shim module, not one spell
   for (const [p, why] of quiet) {
     const offences = shimInstallOffences('packages/shell-chrome/src/quiet.ts', importedSpecifiers(p, 'src/quiet.ts'));
     assert.deepEqual(offences, [], `the pin flagged an allowed import (${why}): ${p}`);
+  }
+});
+
+test('the shim inventory pin refuses a re-export of the installer from the exempt file', () => {
+  // The known list exempts the one file whose allowance names the installer,
+  // the fetch guard. The exemption covers the import that pairs the install
+  // with the capture and the restore of the process's own fetch, not a
+  // re-export of the installer: a re-export would hand the installer name to
+  // any file that imports the guard, in a package with no import allow list
+  // of its own, with neither gate seeing it.
+  const guard = 'packages/design-system/src/lit-dom-fetch-guard.ts';
+  const planted = [
+    [`export { installWindowOnGlobal } from '@lit-labs/ssr/lib/dom-shim.js';`, 'a named re-export'],
+    [`export { installWindowOnGlobal as install } from '@lit-labs/ssr/lib/dom-shim.js';`, 'a renamed re-export'],
+    [`export { getWindow, installWindowOnGlobal } from '@lit-labs/ssr/lib/dom-shim.js';`, 'a re-export beside an allowed name'],
+  ];
+  for (const [p, why] of planted) {
+    const offences = shimInstallOffences(guard, importedSpecifiers(p, 'src/lit-dom-fetch-guard.ts'));
+    assert.ok(offences.length >= 1, `the pin missed the planted shape in the exempt file (${why}): ${p}`);
+    assert.ok(
+      offences.some((o) => o.includes('installWindowOnGlobal')),
+      `the refusal must name the installer: got ${JSON.stringify(offences)} for ${why}`,
+    );
+  }
+  // The import the allowance exists for, and an allowed name re-exported,
+  // stay quiet in the exempt file.
+  const quiet = [
+    [`import { installWindowOnGlobal } from '@lit-labs/ssr/lib/dom-shim.js';`, 'the installer import itself'],
+    [`export { getWindow } from '@lit-labs/ssr/lib/dom-shim.js';`, 'a re-export of a name that cannot install'],
+  ];
+  for (const [p, why] of quiet) {
+    const offences = shimInstallOffences(guard, importedSpecifiers(p, 'src/lit-dom-fetch-guard.ts'));
+    assert.deepEqual(offences, [], `the pin flagged the exempt file's allowed shape (${why}): ${p}`);
   }
 });

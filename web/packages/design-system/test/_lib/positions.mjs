@@ -879,10 +879,14 @@ export const auditImports = (source, file) => {
 export const importedSpecifiers = (source, file) => {
   const found = new Map();
   const add = (spec, name) => {
-    const record = found.get(spec) ?? { spec, names: new Set() };
+    const record = found.get(spec) ?? { spec, names: new Set(), reexported: new Set() };
     if (name === null) record.names = null;
     else if (record.names !== null) record.names.add(name);
     found.set(spec, record);
+  };
+  const addReexport = (spec, name) => {
+    add(spec, name);
+    if (name !== null) found.get(spec).reexported.add(name);
   };
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const visit = (node) => {
@@ -899,7 +903,7 @@ export const importedSpecifiers = (source, file) => {
         }
       } else if (!node.exportClause) add(spec, null);
       else if (ts.isNamespaceExport(node.exportClause)) add(spec, null);
-      else for (const e of node.exportClause.elements) add(spec, (e.propertyName ?? e.name).text);
+      else for (const e of node.exportClause.elements) addReexport(spec, (e.propertyName ?? e.name).text);
     }
     if (ts.isCallExpression(node)) {
       const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
@@ -913,7 +917,11 @@ export const importedSpecifiers = (source, file) => {
     node.forEachChild(visit);
   };
   visit(sf);
-  return [...found.values()].map(({ spec, names }) => ({ spec, names: names === null ? null : [...names].sort() }));
+  return [...found.values()].map(({ spec, names, reexported }) => ({
+    spec,
+    names: names === null ? null : [...names].sort(),
+    reexported: [...reexported].sort(),
+  }));
 };
 
 // ── the tag's two places: the parser rule that closes the value flow ────────────
