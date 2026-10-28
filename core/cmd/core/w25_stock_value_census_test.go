@@ -95,3 +95,78 @@ func (s *Svc) sneakOnHandWrite() {
 	}
 	t.Logf("the census caught the planted unpaired on-hand write: %s", w25SiteError(group[0]))
 }
+
+// TestW25_StockValueCensus_AValueWriteIsKindedByItsVerb is the red leg for the value half's kind
+// bug the round 5 report noted: w25WriteMatchKind reads capture group 1 as "the INSERT branch
+// matched", but the alternation sits inside one group, so a matched UPDATE or DELETE also leaves
+// group 1 set and the writer is kinded INSERT. The probe plants one writer per verb and table in a
+// scratch tree and insists each is named SQL:<table>:<verb> with its file and function. On the
+// unfixed pattern every plant is kinded SQL::INSERT, which is the red.
+func TestW25_StockValueCensus_AValueWriteIsKindedByItsVerb(t *testing.T) {
+	coreRoot := t.TempDir()
+	probeDir := filepath.Join(coreRoot, "internal", "probe")
+	if err := os.MkdirAll(probeDir, 0o755); err != nil {
+		t.Fatalf("mkdir probe: %v", err)
+	}
+	src := `package probe
+
+func (s *Svc) sneakValueUpdate() {
+	_, _ = s.tx.Exec(context.Background(), ` + "`" + `
+		UPDATE stock_moves SET value_cents = value_cents + 1 WHERE move_id = $1` + "`" + `, s.id)
+}
+
+func (s *Svc) sneakCostUpdate() {
+	_, _ = s.tx.Exec(context.Background(), ` + "`" + `
+		UPDATE product_branch_costs SET avg_unit_cost_cents = $2 WHERE product_id = $1` + "`" + `, s.pid, s.cents)
+}
+
+func (s *Svc) sneakValueDelete() {
+	_, _ = s.tx.Exec(context.Background(), ` + "`" + `
+		DELETE FROM stock_moves WHERE move_id = $1` + "`" + `, s.id)
+}
+
+func (s *Svc) sneakCostDelete() {
+	_, _ = s.tx.Exec(context.Background(), ` + "`" + `
+		DELETE FROM product_branch_costs WHERE product_id = $1` + "`" + `, s.pid)
+}
+`
+	if err := os.WriteFile(filepath.Join(probeDir, "probe.go"), []byte(src), 0o644); err != nil {
+		t.Fatalf("write probe: %v", err)
+	}
+	result, err := w25RunStockValueCensus(coreRoot)
+	if err != nil {
+		t.Fatalf("scanning the probe tree: %v", err)
+	}
+	want := []struct {
+		key  string
+		file string
+		fn   string
+		kind string
+	}{
+		{"internal/probe/probe.go|(*Svc).sneakValueUpdate|SQL:stock_moves:UPDATE", "internal/probe/probe.go", "(*Svc).sneakValueUpdate", "SQL:stock_moves:UPDATE"},
+		{"internal/probe/probe.go|(*Svc).sneakCostUpdate|SQL:product_branch_costs:UPDATE", "internal/probe/probe.go", "(*Svc).sneakCostUpdate", "SQL:product_branch_costs:UPDATE"},
+		{"internal/probe/probe.go|(*Svc).sneakValueDelete|SQL:stock_moves:DELETE", "internal/probe/probe.go", "(*Svc).sneakValueDelete", "SQL:stock_moves:DELETE"},
+		{"internal/probe/probe.go|(*Svc).sneakCostDelete|SQL:product_branch_costs:DELETE", "internal/probe/probe.go", "(*Svc).sneakCostDelete", "SQL:product_branch_costs:DELETE"},
+	}
+	for _, w := range want {
+		group, found := result.found[w.key]
+		if !found {
+			for key, sites := range result.found {
+				for _, s := range sites {
+					if s.file == w.file && s.fn == w.fn {
+						t.Errorf("RED: the census kinded the planted %s writer as %s (%s)", w.kind, s.kind, key)
+					}
+				}
+			}
+			t.Errorf("RED: the census did not see the planted %s write at %s", w.kind, w.key)
+			continue
+		}
+		s := group[0]
+		if s.file != w.file || s.fn != w.fn || s.kind != w.kind {
+			t.Errorf("planted writer misnamed: got %s:%d %s %s, want file %s function %s kind %s",
+				s.file, s.line, s.fn, s.kind, w.file, w.fn, w.kind)
+			continue
+		}
+		t.Logf("the census named the planted %s writer: %s", w.kind, w25SiteError(s))
+	}
+}
