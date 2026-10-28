@@ -94,15 +94,21 @@ func (r *Repository) EditWindowMinutes(ctx context.Context) (int, error) {
 // messageFactsFor reads one message's walls' facts, bound to its channel: a
 // message id that names no message in THIS channel is errNotFound, the same
 // answer an absent id gives, so no existence leaks across channels.
+//
+// The read carries the DATABASE's clock (clock_timestamp), because the window
+// is measured against the same clock that stamped created_at: the two must be
+// one clock, or an app whose clock runs ahead of the database's closes the
+// window on a message the database says is fresh (UX-109).
 func (r *Repository) messageFactsFor(ctx context.Context, channelID, messageID string) (messageFacts, error) {
 	if r.pool == nil {
 		return messageFacts{}, errNoDB
 	}
 	var f messageFacts
 	err := r.pool.QueryRow(ctx, `
-		SELECT channel_id::text, COALESCE(author_id::text,''), kind, COALESCE(requires_ack, FALSE), created_at, deleted_at
+		SELECT channel_id::text, COALESCE(author_id::text,''), kind, COALESCE(requires_ack, FALSE), created_at, deleted_at,
+		       clock_timestamp()
 		FROM msg_messages WHERE id = $1 AND channel_id = $2`, messageID, channelID).
-		Scan(&f.ChannelID, &f.AuthorID, &f.Kind, &f.RequiresAck, &f.CreatedAt, &f.DeletedAt)
+		Scan(&f.ChannelID, &f.AuthorID, &f.Kind, &f.RequiresAck, &f.CreatedAt, &f.DeletedAt, &f.Now)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return messageFacts{}, errNotFound
@@ -181,7 +187,8 @@ func (r *Repository) DeleteMessage(ctx context.Context, channelID, messageID str
 // message here), the kind wall (a system message is nobody's, an admin
 // included), the forced acknowledgement wall (a notice is never editable
 // once sent), the author wall (the pen is the author's own), the tombstone
-// wall (an edit is not a revival), and the window (the setting's clock).
+// wall (an edit is not a revival), and the window (the setting's clock, read
+// on the DATABASE's clock, the one that stamped the message: UX-109).
 // The body runs the post's own trim and bound, so an edit cannot carry what
 // a post cannot. An edit is not a new message: no realtime fan-out, the
 // change reaches the room through the feed seq and the next poll.
@@ -209,7 +216,7 @@ func (s *Service) EditMessage(ctx context.Context, c Caller, channelID, messageI
 	if err != nil {
 		return Message{}, err
 	}
-	if !editWindowOpen(facts.CreatedAt, mins, s.nowFn()) {
+	if !editWindowOpen(facts.CreatedAt, mins, facts.Now) {
 		return Message{}, ErrEditWindowClosed
 	}
 	body = trimMessageBody(body)
@@ -221,7 +228,8 @@ func (s *Service) EditMessage(ctx context.Context, c Caller, channelID, messageI
 
 // DeleteMessage tombstones the caller's own message under the same walls,
 // minus the tombstone one: deleting a tombstone again is the no-op it reads
-// as, the row answered as it stands. No realtime fan-out, the same as an
+// as, the row answered as it stands. The window is the same window the edit
+// reads, on the same database's clock. No realtime fan-out, the same as an
 // edit.
 func (s *Service) DeleteMessage(ctx context.Context, c Caller, channelID, messageID string) (Message, error) {
 	if err := s.assertMember(ctx, c, channelID); err != nil {
@@ -244,7 +252,7 @@ func (s *Service) DeleteMessage(ctx context.Context, c Caller, channelID, messag
 	if err != nil {
 		return Message{}, err
 	}
-	if facts.DeletedAt == nil && !editWindowOpen(facts.CreatedAt, mins, s.nowFn()) {
+	if facts.DeletedAt == nil && !editWindowOpen(facts.CreatedAt, mins, facts.Now) {
 		return Message{}, ErrEditWindowClosed
 	}
 	// A repeat delete of a tombstone changes nothing (the body is already dropped, deleted_at
