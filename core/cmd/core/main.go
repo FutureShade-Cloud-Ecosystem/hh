@@ -55,7 +55,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: core <serve|worker|migrate|seed|demoseed|assist-billing-export|finance-user> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: core <serve|worker|migrate|seed|finance-seed|finance-box-check|finance-box-state|finance-user|demoseed|assist-billing-export> [flags]")
 		os.Exit(2)
 	}
 	// Demo-only roles (the demo build's serve, the demo one-shots) answer
@@ -86,6 +86,21 @@ func main() {
 			fmt.Fprintln(os.Stderr, "core: seed:", err)
 			os.Exit(1)
 		}
+	case "finance-seed":
+		if err := financeSeedRole(os.Getenv); err != nil {
+			fmt.Fprintln(os.Stderr, "core: finance-seed:", err)
+			os.Exit(1)
+		}
+	case "finance-box-check":
+		if err := financeBoxCheckRole(os.Getenv); err != nil {
+			fmt.Fprintln(os.Stderr, "core: finance-box-check:", err)
+			os.Exit(1)
+		}
+	case "finance-box-state":
+		if err := financeBoxStateRole(os.Getenv); err != nil {
+			fmt.Fprintln(os.Stderr, "core: finance-box-state:", err)
+			os.Exit(1)
+		}
 	case "assist-billing-export":
 		if err := assistBillingExportRole(os.Args[2:], os.Stdout, os.Stderr, os.Getenv); err != nil {
 			fmt.Fprintln(os.Stderr, "core: assist-billing-export:", err)
@@ -105,7 +120,7 @@ func main() {
 		if assistRoleDispatch(role) {
 			return
 		}
-		fmt.Fprintf(os.Stderr, "core: unknown role %q (want serve, worker, migrate, seed, demoseed, assist-billing-export, assist-logins, assist-claims-key or assist-revoke-extension-functions)\n", role)
+		fmt.Fprintf(os.Stderr, "core: unknown role %q (want serve, worker, migrate, seed, finance-seed, finance-box-check, finance-box-state, demoseed, assist-billing-export, assist-logins, assist-claims-key or assist-revoke-extension-functions)\n", role)
 		os.Exit(2)
 	}
 }
@@ -336,6 +351,14 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	dealer.Set(cfg.DealerName)
 	log := slog.Default()
 
+	// The finance box statement's environment legs run before anything else
+	// configuration shaped: a copy that says HH_BOX_KIND=finance refuses a
+	// non staging env or a live payment rail before any connection, file or
+	// listener. The database leg runs once the pool exists, below.
+	if err := financeBoxBootGuard(getenv, cfg, nil); err != nil {
+		return nil, err
+	}
+
 	auth, err := loadServeConfig(getenv)
 	if err != nil {
 		return nil, err
@@ -388,6 +411,16 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	// the same pool with one attached; the traced pool stays test-only).
 	pool, err := authz.NewPgxPoolWithTracer(context.Background(), auth.databaseURL, nil)
 	if err != nil {
+		return nil, err
+	}
+
+	// The finance box statement's database leg: a copy that says
+	// HH_BOX_KIND=finance refuses a non empty database its own seed did not
+	// mark, before any wiring. The refusal closes the pool before returning.
+	// The guard re-runs the environment legs (they are cheap and refuse
+	// before anything else when the box statement is wrong).
+	if err := financeBoxBootGuard(getenv, cfg, pool); err != nil {
+		pool.Close()
 		return nil, err
 	}
 

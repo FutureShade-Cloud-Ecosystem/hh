@@ -322,8 +322,11 @@ var (
 	// errNotControllerOpenYear is the early open's own word (round 3, S2 P2-2): the open is not a
 	// reopen, so its refusal must not speak of reopening a closed period.
 	errNotControllerOpenYear = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may open the next fiscal year"}
-	errNotControllerQueue    = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may read the posting queue"}
-	errQueueNotWired         = clientError{status: http.StatusServiceUnavailable, msg: "gl: the posting queue is not wired"}
+	// errNotControllerCloseYear is the year end close's own word (FW1-09c, FROM-PRINCIPAL 222): the close
+	// seals a whole year, so its refusal names the Controller whose act it is.
+	errNotControllerCloseYear = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may close the fiscal year"}
+	errNotControllerQueue     = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may read the posting queue"}
+	errQueueNotWired          = clientError{status: http.StatusServiceUnavailable, msg: "gl: the posting queue is not wired"}
 	// errForbidden is DIB-392's horizontal-read boundary: a manager asking for a branch's (or the whole
 	// org's) ledger that their scope does not reach.
 	errForbidden      = clientError{status: http.StatusForbidden, msg: "gl: caller cannot access this branch"}

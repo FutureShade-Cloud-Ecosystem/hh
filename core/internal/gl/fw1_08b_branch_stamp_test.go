@@ -167,7 +167,9 @@ func TestFW1_08b_GLWritersStampBranch(t *testing.T) {
 			{AccountCode: "4000", AccountType: "REVENUE", NormalBalance: NormalCredit, BranchID: "branch-kgn", NetDebitCents: -50000},
 			{AccountCode: "5000", AccountType: "EXPENSE", NormalBalance: NormalDebit, BranchID: "branch-kgn", NetDebitCents: 20000},
 		}
-		svc := newTestService(f)
+		// FW1-09c: the year end close is the Financial Controller's, so the caller here is the
+		// Controller (the maker's caller would be refused before anything was written).
+		svc := newTestServiceAs(f, identity.StaffContext{UserID: "u-ctrl", RoleCode: controllerRole, Scope: identity.ScopeGlobal})
 
 		res, err := svc.CloseYear(ctx, 2026, "FY2026 close")
 		if err != nil {
