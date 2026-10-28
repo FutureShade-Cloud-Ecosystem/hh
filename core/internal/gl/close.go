@@ -255,7 +255,7 @@ func (s *Service) ClosePeriod(ctx context.Context, id, reason string) (Period, e
 	if fails := s.runClosePreFlight(ctx, p.Year, p.Month); len(fails) > 0 {
 		caveat := ""
 		if s.stockValue != nil {
-			caveat = " (the stock tie reads today's stock value)"
+			caveat = " (the stock tie reads both sides now: today's stock value against 1200 at the same instant)"
 		}
 		return Period{}, clientErr(409, "gl: period close pre flight failed%s: %s", caveat, strings.Join(fails, "; "))
 	}
@@ -375,7 +375,7 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 		if fails := s.runClosePreFlight(ctx, p.Year, p.Month); len(fails) > 0 {
 			caveat := ""
 			if s.stockValue != nil {
-				caveat = " (the stock tie reads today's stock value)"
+				caveat = " (the stock tie reads both sides now: today's stock value against 1200 at the same instant)"
 			}
 			return YearCloseResult{}, clientErr(409, "gl: year end close pre flight failed for %04d-%02d%s: %s", p.Year, p.Month, caveat, strings.Join(fails, "; "))
 		}
