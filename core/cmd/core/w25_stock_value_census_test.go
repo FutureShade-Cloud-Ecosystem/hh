@@ -96,6 +96,42 @@ func (s *Svc) sneakOnHandWrite() {
 	t.Logf("the census caught the planted unpaired on-hand write: %s", w25SiteError(group[0]))
 }
 
+// TestW25_StockValueCensus_APlantedConstWriterIsCaught is the red leg for S5's P3-5: the scan
+// walked function bodies only, so a writer declared as a package level const string passed the
+// census unnamed. The probe plants such a writer in a scratch tree and insists the scan finds it
+// and names it after the constant itself; on the code before this the scan finds nothing, which
+// is the red.
+func TestW25_StockValueCensus_APlantedConstWriterIsCaught(t *testing.T) {
+	coreRoot := t.TempDir()
+	probeDir := filepath.Join(coreRoot, "internal", "probe")
+	if err := os.MkdirAll(probeDir, 0o755); err != nil {
+		t.Fatalf("mkdir probe: %v", err)
+	}
+	src := `package probe
+
+// sneakConstWrite holds an inventory value writer in a package level constant.
+const sneakConstWrite = ` + "`" + `
+	INSERT INTO stock_moves (product_id, qty_base, value_cents) VALUES ($1, $2, $3)` + "`" + `
+`
+	if err := os.WriteFile(filepath.Join(probeDir, "probe.go"), []byte(src), 0o644); err != nil {
+		t.Fatalf("write probe: %v", err)
+	}
+	result, err := w25RunStockValueCensus(coreRoot)
+	if err != nil {
+		t.Fatalf("scanning the probe tree: %v", err)
+	}
+	key := "internal/probe/probe.go|(const) sneakConstWrite|SQL:stock_moves:INSERT"
+	group, found := result.found[key]
+	if !found {
+		t.Fatalf("RED: the census did not see the planted const writer at %s", key)
+	}
+	s := group[0]
+	if s.file != "internal/probe/probe.go" || s.fn != "(const) sneakConstWrite" || s.kind != "SQL:stock_moves:INSERT" {
+		t.Fatalf("planted const writer misnamed: got %s:%d %s %s", s.file, s.line, s.fn, s.kind)
+	}
+	t.Logf("the census named the planted const writer: %s", w25SiteError(s))
+}
+
 // TestW25_StockValueCensus_AValueWriteIsKindedByItsVerb is the red leg for the value half's kind
 // bug the round 5 report noted: w25WriteMatchKind reads capture group 1 as "the INSERT branch
 // matched", but the alternation sits inside one group, so a matched UPDATE or DELETE also leaves
