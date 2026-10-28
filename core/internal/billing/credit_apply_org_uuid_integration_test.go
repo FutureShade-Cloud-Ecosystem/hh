@@ -52,7 +52,10 @@ func seedOrgLessWorld(t *testing.T, pool *pgxpool.Pool, n, tag string) (custID, 
 	return custID, invID, creditID
 }
 
-// keyRowsFor answers how many key rows the named key string carries.
+// keyRowsFor answers how many key rows the named key string carries, across EVERY org on purpose.
+// AGENTS.md's scoped table rule asks for a scope predicate; these legs drive an org that can never be a
+// row's scope (the empty org, a non uuid org), so no org predicate could match, and the assertion is that
+// the key wrote nothing for any org at all. The cleanup above deletes by the key the same way.
 func keyRowsFor(t *testing.T, pool *pgxpool.Pool, key string) int {
 	t.Helper()
 	ctx := context.Background()

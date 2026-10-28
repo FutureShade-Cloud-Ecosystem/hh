@@ -77,7 +77,10 @@ func ns(t *testing.T) string {
 
 // plantApplyOrg plants one real org row for the apply door's key scope (FW1-12c): the key table's
 // org_id REFERENCES org (id) since 0448, so every application's caller carries a real org's id.
-// The row is removed at test end.
+// The row is removed at test end, and the key rows the applications wrote under it go first: the
+// foreign key refuses the org delete while any of them stands, so an org that outlives its keys
+// is a leaked row and not a cleaned one. The deletes do not swallow their errors: a cleanup that
+// fails in silence is how the leak stayed invisible in the first place.
 func plantApplyOrg(t *testing.T, pool *pgxpool.Pool, tag string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -89,7 +92,12 @@ func plantApplyOrg(t *testing.T, pool *pgxpool.Pool, tag string) string {
 	}
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM org WHERE id = $1::uuid`, id)
+		if _, err := pool.Exec(c, `DELETE FROM credit_application_keys WHERE org_id = $1::uuid`, id); err != nil {
+			t.Errorf("plant the apply org: remove the org's credit application keys: %v", err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM org WHERE id = $1::uuid`, id); err != nil {
+			t.Errorf("plant the apply org: remove the org row: %v", err)
+		}
 	})
 	return id
 }
@@ -107,10 +115,28 @@ func seedCustomer(t *testing.T, pool *pgxpool.Pool, tag string) string {
 	}
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1`, id)
-		_, _ = pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1)`, id)
-		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1`, id)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, id)
+		if _, err := pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1`, id); err != nil {
+			t.Errorf("seed customer %s: remove the customer transactions: %v", tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1)`, id); err != nil {
+			t.Errorf("seed customer %s: remove the invoice lines: %v", tag, err)
+		}
+		// The credit application keys reference the invoices (0447), so they go before the
+		// invoices: the invoice delete is refused by that foreign key while any of them stands.
+		if _, err := pool.Exec(c, `DELETE FROM credit_application_keys WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1)`, id); err != nil {
+			t.Errorf("seed customer %s: remove the credit application keys: %v", tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1`, id); err != nil {
+			t.Errorf("seed customer %s: remove the invoices: %v", tag, err)
+		}
+		// The helper's own word is that it removes the tenant and anything hung off it, and the
+		// orders are hung off it: the customer delete is refused by the order's own foreign key.
+		if _, err := pool.Exec(c, `DELETE FROM orders WHERE customer_id = $1`, id); err != nil {
+			t.Errorf("seed customer %s: remove the orders: %v", tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM customers WHERE id = $1`, id); err != nil {
+			t.Errorf("seed customer %s: remove the customer: %v", tag, err)
+		}
 	})
 	return id
 }
@@ -166,8 +192,17 @@ func seedInvoice(t *testing.T, pool *pgxpool.Pool, customerID, namespace string,
 	}
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id = $1`, id)
-		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE id = $1`, id)
+		// The credit application keys reference this invoice (0447), so they go first: the
+		// invoice delete is refused by that foreign key while any of them stands.
+		if _, err := pool.Exec(c, `DELETE FROM credit_application_keys WHERE invoice_id = $1::uuid`, id); err != nil {
+			t.Errorf("seed invoice %s: remove the invoice's credit application keys: %v", s.no, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id = $1`, id); err != nil {
+			t.Errorf("seed invoice %s: remove the invoice lines: %v", s.no, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM invoices WHERE id = $1`, id); err != nil {
+			t.Errorf("seed invoice %s: remove the invoice: %v", s.no, err)
+		}
 	})
 	return id
 }

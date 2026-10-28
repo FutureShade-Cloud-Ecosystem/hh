@@ -1345,9 +1345,21 @@ func TestIntegration_FW1_12b_AMemoApplyAndItsReversalOfOneInvoiceNeverDeadlockAt
 				custID := seedCustomer(t, pool, tag)
 				t.Cleanup(func() {
 					c := context.Background()
-					_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
-					_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
-					_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+					if _, err := pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID); err != nil {
+						t.Errorf("the deadlock leg %s: remove the customer transactions: %v", tag, err)
+					}
+					// The credit application keys reference the invoices (0447), so they go before
+					// the invoices: the invoice delete is refused by that foreign key while any of
+					// them stands.
+					if _, err := pool.Exec(c, `DELETE FROM credit_application_keys WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, custID); err != nil {
+						t.Errorf("the deadlock leg %s: remove the credit application keys: %v", tag, err)
+					}
+					if _, err := pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID); err != nil {
+						t.Errorf("the deadlock leg %s: remove the invoices: %v", tag, err)
+					}
+					if _, err := pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID); err != nil {
+						t.Errorf("the deadlock leg %s: remove the customer: %v", tag, err)
+					}
 				})
 				applyOrg := plantApplyOrg(t, pool, tag)
 
