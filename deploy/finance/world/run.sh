@@ -29,9 +29,41 @@ mkdir -p "$GOCACHE_DIR" "$FAKETIME_DIR" "$OUT_DIR"
 if [ ! -x "${EG_DIR}/toolchain/bin/go" ]; then
 	echo "run.sh: preparing evening-guard toolchain at ${EG_DIR}..."
 	bash "${REPO_ROOT}/scripts/evening-guard/prepare.sh" "$EG_DIR" || exit 1
-	cp -f "${EG_DIR}/time.go" "${EG_DIR}/toolchain/src/time/time.go" || exit 1
-	cp -f "${EG_DIR}/hh_clockshift.go" "${EG_DIR}/toolchain/src/time/hh_clockshift.go" || exit 1
 fi
+sed -i 's/sec += hhClockShift$/sec += hhClockShift()/' "${EG_DIR}/time.go" || exit 1
+cat > "${EG_DIR}/hh_clockshift.go" <<'G'
+package time
+
+import "syscall"
+
+// hhClockShift returns whole seconds added to the wall clock (never the monotonic clock) of every
+// time.Now, read from HH_CLOCK_SHIFT_SECONDS; zero when unset or unreadable.
+func hhClockShift() int64 {
+	v, ok := syscall.Getenv("HH_CLOCK_SHIFT_SECONDS")
+	if !ok {
+		return 0
+	}
+	var n int64
+	neg := false
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if i == 0 && (c == '-' || c == '+') {
+			neg = c == '-'
+			continue
+		}
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int64(c-'0')
+	}
+	if neg {
+		n = -n
+	}
+	return n
+}
+G
+cp -f "${EG_DIR}/time.go" "${EG_DIR}/toolchain/src/time/time.go" || exit 1
+cp -f "${EG_DIR}/hh_clockshift.go" "${EG_DIR}/toolchain/src/time/hh_clockshift.go" || exit 1
 
 # 3. Build core with -tags finworld using the evening-guard toolchain and overlay.
 BIN_PATH="${EG_DIR}/core-finworld"
@@ -155,6 +187,14 @@ echo "run.sh: all days 0..${LAST_DAY_IDX} completed in ${TOTAL_ELAPSED_MS}ms"
 echo "run.sh: running core finworld check --through-day ${LAST_DAY_IDX}..."
 run_scoped "$LAST_SHIFT_SEC" finworld check --through-day "$LAST_DAY_IDX" --seed "$SEED" --dealer "$DEALER_NAME" || {
 	echo "run.sh: tie check failed; skipping pg_dump" >&2
+	exit 1
+}
+
+echo "run.sh: running core finance-check..."
+systemd-run --user --scope --quiet --expand-environment=no -p MemoryMax=24G \
+	bash -c 'cd "$1" && DATABASE_URL="$2" HH_CLOCK_SHIFT_SECONDS="$3" HH_WEB_DEALER_NAME="$4" HH_BOX_KIND=finance APP_ENV=staging CORE_SIGNIN_MODE=console "$5" finance-check' \
+	_ "${REPO_ROOT}/core" "$DATABASE_URL" "$LAST_SHIFT_SEC" "$DEALER_NAME" "$BIN_PATH" || {
+	echo "run.sh: finance-check failed; skipping pg_dump" >&2
 	exit 1
 }
 

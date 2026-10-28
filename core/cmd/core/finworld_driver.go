@@ -1108,23 +1108,25 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 }
 
 func finworldStampDayTime(ctx context.Context, pool *pgxpool.Pool, docTime time.Time) error {
+	if os.Getenv("HH_CLOCK_SHIFT_SECONDS") != "" {
+		return nil
+	}
 	cutoff := docTime.Add(24 * time.Hour)
 	queries := []string{
-		`UPDATE orders SET created_at = $1, updated_at = $1 WHERE created_at > $2`,
-		`UPDATE invoices SET created_at = $1, finalized_at = CASE WHEN finalized_at IS NOT NULL THEN $1 ELSE NULL END, updated_at = $1 WHERE created_at > $2`,
-		`UPDATE customer_transactions SET occurred_at = $1, created_at = $1 WHERE created_at > $2`,
-		`UPDATE payments SET received_at = $1, created_at = $1, updated_at = $1 WHERE created_at > $2`,
-		`UPDATE payment_allocations SET created_at = $1 WHERE created_at > $2`,
-		`UPDATE payment_reapplications SET created_at = $1 WHERE created_at > $2`,
-		`UPDATE payment_nsf SET bounced_at = $1, created_at = $1 WHERE created_at > $2`,
-		`UPDATE pos_sale SET created_at = $1 WHERE created_at > $2`,
-		`UPDATE pos_returns SET created_at = $1 WHERE created_at > $2`,
-		`UPDATE till_sessions SET opened_at = $1, closed_at = CASE WHEN closed_at IS NOT NULL THEN $1 ELSE NULL END WHERE opened_at > $2`,
-		`UPDATE till_movements SET created_at = $1 WHERE created_at > $2`,
-		`UPDATE purchasing_pos SET created_at = $1, updated_at = $1 WHERE created_at > $2`,
-		`UPDATE purchasing_receipts SET received_at = $1, created_at = $1 WHERE created_at > $2`,
-		`UPDATE purchasing_bills SET posted_at = CASE WHEN posted_at IS NOT NULL THEN $1 ELSE NULL END, created_at = $1, updated_at = $1 WHERE created_at > $2`,
-		`UPDATE inventory_transactions SET created_at = $1 WHERE created_at > $2`,
+		`UPDATE orders SET created_at = $1::timestamptz, updated_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
+		`UPDATE invoices SET created_at = $1::timestamptz, finalized_at = CASE WHEN finalized_at IS NOT NULL THEN $1::timestamptz ELSE NULL END, updated_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
+		`UPDATE customer_transactions SET occurred_at = $1::timestamptz, created_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
+		`UPDATE payments SET received_at = $1::timestamptz, created_at = $1::timestamptz, updated_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
+		`UPDATE payment_allocations SET created_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
+		`UPDATE payment_reapplications SET created_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
+		`UPDATE payment_nsf SET created_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
+		`UPDATE pos_sale SET created_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
+		`UPDATE pos_returns SET created_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
+		`UPDATE till_sessions SET opened_at = $1::timestamptz, closed_at = CASE WHEN closed_at IS NOT NULL THEN $1::timestamptz ELSE NULL END WHERE opened_at > $2::timestamptz`,
+		`UPDATE till_movements SET created_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
+		`UPDATE purchasing_pos SET created_at = $1::timestamptz, updated_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
+		`UPDATE purchasing_receipts SET received_at = $1::timestamptz, created_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
+		`UPDATE purchasing_bills SET posted_at = CASE WHEN posted_at IS NOT NULL THEN $1::timestamptz ELSE NULL END, created_at = $1::timestamptz, updated_at = $1::timestamptz WHERE created_at > $2::timestamptz`,
 	}
 	for _, q := range queries {
 		if _, err := pool.Exec(ctx, q, docTime, cutoff); err != nil {

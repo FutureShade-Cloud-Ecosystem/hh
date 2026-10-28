@@ -729,7 +729,7 @@ func TieOutboxDrained(ctx context.Context, seams TieSeams, _ TieMonth) (TieResul
 // year's profit and loss and left the statement holding it, which is what
 // the before reading held.
 func TieClosedYearIncomeStatementUnchanged(ctx context.Context, seams TieSeams, m TieMonth) (TieResult, error) {
-	after, err := tieIncomeStatement(ctx, seams, m.Year)
+	after, net, err := tieIncomeStatement(ctx, seams, m.Year)
 	if err != nil {
 		return TieResult{}, err
 	}
@@ -751,10 +751,6 @@ func TieClosedYearIncomeStatementUnchanged(ctx context.Context, seams TieSeams, 
 		if err != nil {
 			return TieResult{}, err
 		}
-		var net int64
-		for _, amt := range after {
-			net += amt
-		}
 		variance = abs64(net - swept)
 		if variance != 0 {
 			failures = append(failures, fmt.Sprintf("the closed year %d's income statement holds a net of %s against the %s the close swept to retained earnings (%s)",
@@ -771,26 +767,35 @@ func TieClosedYearIncomeStatementUnchanged(ctx context.Context, seams TieSeams, 
 // tieIncomeStatement reads the closed year's income statement, the same view
 // the walk reads: the statement views exclude the closing journals, so the
 // statement survives the close.
-func tieIncomeStatement(ctx context.Context, seams TieSeams, year int) (map[string]int64, error) {
+func tieIncomeStatement(ctx context.Context, seams TieSeams, year int) (map[string]int64, int64, error) {
 	out := map[string]int64{}
+	var net int64
 	rows, err := seams.Querier.Query(ctx, `
-		SELECT account_code, SUM(amount_cents) FROM v_income_statement WHERE fiscal_year = $1 GROUP BY account_code`, year)
+		SELECT account_code, account_type, SUM(amount_cents)::bigint
+		  FROM v_income_statement
+		 WHERE fiscal_year = $1
+		 GROUP BY account_code, account_type`, year)
 	if err != nil {
-		return nil, fmt.Errorf("the income statement read: %w", err)
+		return nil, 0, fmt.Errorf("the income statement read: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var code string
+		var code, acctType string
 		var amt int64
-		if err := rows.Scan(&code, &amt); err != nil {
-			return nil, err
+		if err := rows.Scan(&code, &acctType, &amt); err != nil {
+			return nil, 0, err
 		}
 		out[code] = amt
+		if acctType == "REVENUE" {
+			net += amt
+		} else {
+			net -= amt
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("the income statement read: %w", err)
+		return nil, 0, fmt.Errorf("the income statement read: %w", err)
 	}
-	return out, nil
+	return out, net, nil
 }
 
 // tieSweptNet reads the net the year's close swept to retained earnings: the
