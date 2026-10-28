@@ -13,7 +13,8 @@
 //
 // The world is invented and small: an operating account and two cards of the demo dealer, seven statement lines
 // in the month before today (dates are cut from the host's own day, so no calendar literal is written), three
-// received card payments, an open cash lodgement, and the three seeded rules.
+// received card payments, an open cash lodgement that carries its own journal (and an older lodgement that
+// carries none), and the three seeded rules.
 
 export const IDS = {
   controller: "de110000-0000-4000-9000-000000000008",
@@ -27,6 +28,7 @@ export const IDS = {
   paymentBatch: "b9000000-0000-4000-8000-000000000003",
   paymentWire: "b9000000-0000-4000-8000-000000000004",
   lodgement1: "b8000000-0000-4000-8000-000000000001",
+  lodgement2: "b8000000-0000-4000-8000-000000000002",
   ruleGateway: "b4000000-0000-4000-8000-000000000001",
   ruleLodgement: "b4000000-0000-4000-8000-000000000002",
   ruleBatch: "b4000000-0000-4000-8000-000000000003",
@@ -87,7 +89,15 @@ function fresh() {
       { id: IDS.paymentBatch, payment_no: "PAY-000103", method: "CARD", gateway_ref: "", amount_cents: 117_500, received: day(11), status: "RECEIVED" },
       { id: IDS.paymentWire, payment_no: "PAY-000104", method: "EFT", gateway_ref: "", amount_cents: 30_000, received: day(24), status: "RECEIVED" },
     ],
-    lodgements: [{ id: IDS.lodgement1, reference: "LODGE-310", amount_cents: 245_050 }],
+    lodgements: [
+      // The cash lodgement the statement carries (LODGE-310): the till posted DR 1000 / CR 1020 AT LODGEMENT
+      // (FROM-PRINCIPAL 117 and 120), so carries_journal is true and its own journal is planted in the ledger
+      // on its own day; its match only confirms the line. LODGE-311 is from before that rule: it carries no
+      // journal, so its match still posts the clearing one (the core's legacy branch). No statement line
+      // carries its reference, so the auto run never pairs it; the hand match covers it.
+      { id: IDS.lodgement1, reference: "LODGE-310", amount_cents: 245_050, carries_journal: true, day: 5 },
+      { id: IDS.lodgement2, reference: "LODGE-311", amount_cents: 64_025, carries_journal: false },
+    ],
     matches: [],
     rules: [
       { id: IDS.ruleGateway, code: "gateway-ref-exact", name: "Card settlement, gateway reference exact", priority: 10, version: 1, status: "APPROVED", spec: { kind: "gateway_ref_exact", target: "PAYMENT", tolerance_cents: 0 } },
@@ -126,11 +136,35 @@ const withinDays = (a, b, days) => Math.abs(dayOf(a) - dayOf(b)) <= days * 86_40
 
 const clientError = (status, message) => ({ status, body: { error: message } });
 
-export function createBankrecWorld({ ledgerPosted = null, postLedger = null } = {}) {
+export function createBankrecWorld({ ledgerPosted = null, postLedger = null, plantLedger = null } = {}) {
   let world = fresh();
   const reset = () => {
     world = fresh();
+    plantLodgementJournals();
   };
+
+  /** A lodgement that carries its own journal (the till posted DR 1000 / CR 1020 AT LODGEMENT, FROM-PRINCIPAL
+   *  117 and 120) has that journal planted in the ledger on its own day, before any match: the deposit is
+   *  booked once, at lodgement, so the match only confirms the line and the undo reverses nothing (the core's
+   *  buildLodgementProposal and reversalJournal). A lodgement from before the rule carries no journal, so
+   *  nothing is planted for it and its match posts the clearing one. */
+  function plantLodgementJournals() {
+    if (typeof plantLedger !== "function") return;
+    const { year, month } = statementMonth();
+    for (const l of world.lodgements) {
+      if (l.carries_journal === false || l.day === undefined) continue;
+      plantLedger({
+        memo: "Till lodgement",
+        idempotency_key: `till.lodgement:${l.reference}`,
+        document_date: `${year}-${pad(month)}-${pad(l.day)}T12:00:00.000Z`,
+        lines: [
+          { account_code: "1000", debit_cents: l.amount_cents, credit_cents: 0, memo: "till lodgement banked" },
+          { account_code: "1020", debit_cents: 0, credit_cents: l.amount_cents, memo: "undeposited funds to bank" },
+        ],
+      });
+    }
+  }
+  plantLodgementJournals();
 
   const callerOf = (req) => {
     const token = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
@@ -229,10 +263,12 @@ export function createBankrecWorld({ ledgerPosted = null, postLedger = null } = 
 
   /** The clearing journal a match posts, the core's rule (core/internal/bankrec/matcher.go): a card settlement is
    *  DR 1000 by the net paid in, DR the fee account by the fee, CR 1010 by the gross claimed; a lodgement that
-   *  carries no journal of its own is DR 1000 and CR 1020; a hand match of a payment clears the tender's own
-   *  account. A target that posts no journal of its own (a journal, a group) has no clearing journal. */
+   *  carries no journal of its own is DR 1000 and CR 1020, while a lodgement that carries its own (the till
+   *  posted at lodgement, FROM-PRINCIPAL 117 and 120) posts nothing, by rule or by hand, the match only
+   *  confirming the line. A target that posts no journal of its own (a journal, a group) has no clearing journal. */
   function clearingJournalFor(line, target) {
     if (target.type === "LODGEMENT") {
+      if (target.lodgement !== undefined && target.lodgement.carries_journal !== false) return null;
       return {
         memo: `bankrec ${target.manual === true ? "manual lodgement deposit" : "lodgement deposit"} ${line.reference}`,
         lines: [
@@ -493,7 +529,9 @@ export function createBankrecWorld({ ledgerPosted = null, postLedger = null } = 
       .filter((l) => l.bank_account_id === input.bank_account_id && l.status === "UNMATCHED" && l.amount_cents > 0 && dayOf(l.txn_date) >= window.from && dayOf(l.txn_date) < window.to)
       .sort((a, b) => (a.txn_date < b.txn_date ? -1 : a.txn_date > b.txn_date ? 1 : a.created_at - b.created_at));
     const rules = world.rules.filter((r) => r.status === "APPROVED").sort((a, b) => a.priority - b.priority);
-    let payments = world.payments.filter((p) => p.status === "RECEIVED");
+    // The core's candidates are card payments only (till/recon_seam.go: method = 'CARD' AND status = 'RECEIVED');
+    // a received cash, cheque or EFT payment waits for the hand.
+    let payments = world.payments.filter((p) => p.status === "RECEIVED" && p.method === "CARD");
     let lodgements = [...world.lodgements];
     const made = [];
     let unmatched = 0;
@@ -627,22 +665,28 @@ export function createBankrecWorld({ ledgerPosted = null, postLedger = null } = 
       matched_at: stamp(),
     };
     // A payment or lodgement match posts its clearing journal into the ledger, the core's rule for the pairing.
+    // A lodgement that carries its own journal (the till posted at lodgement, FROM-PRINCIPAL 117 and 120) is
+    // only confirmed, by hand as by rule: no new journal (the core's manualJournal).
     if (posts) {
       const payment = input.target_type === "PAYMENT" ? world.payments.find((p) => p.id === input.target_ref_id) : undefined;
-      const journal = clearingJournalFor(line, { type: input.target_type, payment, manual: true });
-      if (journal === null) {
+      const lodgement = input.target_type === "LODGEMENT" ? world.lodgements.find((l) => l.id === input.target_ref_id) : undefined;
+      const carrying = lodgement !== undefined && lodgement.carries_journal !== false;
+      const journal = carrying ? null : clearingJournalFor(line, { type: input.target_type, payment, lodgement, manual: true });
+      if (journal === null && !carrying) {
         // The core refuses a hand match of a tender it cannot clear, and writes nothing.
         line.status = "UNMATCHED";
         if (payment !== undefined) payment.status = "RECEIVED";
         return clientError(422, "that tender cannot be cleared by a hand match");
       }
-      const posted = postClearing(line, match, journal);
-      if (posted.error !== undefined) {
-        line.status = "UNMATCHED";
-        if (payment !== undefined) payment.status = "RECEIVED";
-        return clientError(422, posted.error);
+      if (journal !== null) {
+        const posted = postClearing(line, match, journal);
+        if (posted.error !== undefined) {
+          line.status = "UNMATCHED";
+          if (payment !== undefined) payment.status = "RECEIVED";
+          return clientError(422, posted.error);
+        }
+        match.journal_id = posted.id;
       }
-      match.journal_id = posted.id;
     }
     world.matches.push(match);
     return { status: 201, body: matchView(match) };
