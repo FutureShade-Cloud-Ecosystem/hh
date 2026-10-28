@@ -451,6 +451,7 @@ var ownedObjects = map[string]string{
 	"gl_policy":                       "gl",                // 0032_gl_module
 	"gl_recurring_templates":          "gl",                // 0032_gl_module
 	"gl_tieout_state":                 "gl",                // 0032_gl_module
+	"gl_year_end_closes":              "gl",                // 0452_gl_year_end_closes
 	"hhpro_contractor_role_map":       "identity",          // 0215_identity_audit
 	"holdback_ledger":                 "lien",              // 0038_lien_holdback_compliance
 	"inventory_recon_runs":            "invcount",          // 0040_inventory_counts

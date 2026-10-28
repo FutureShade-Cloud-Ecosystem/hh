@@ -24,6 +24,12 @@ import (
 // suite's open periods and the earliest open month at or after the year's end
 // is the leg's own to control. The seeded 2026 books and every sentinel band
 // below the threshold stand.
+//
+// FW1-09g round 2 (K3's P2, FROM-PRINCIPAL 350): the year end marker goes with
+// the year's periods. The marker (gl_year_end_closes) has its own primary key
+// and no foreign key to fiscal_periods, so deleting the periods cannot take it
+// with them, and a marker left behind on a reused box makes the next close of
+// that year answer AlreadyClosed before the leg does any work.
 func fw1ScrubAfter(t *testing.T, pool *pgxpool.Pool, threshold int) {
 	t.Helper()
 	ctx := context.Background()
@@ -31,6 +37,7 @@ func fw1ScrubAfter(t *testing.T, pool *pgxpool.Pool, threshold int) {
 		`DELETE FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id=j.id AND j.fiscal_year > $1`,
 		`DELETE FROM gl_journals WHERE fiscal_year > $1`,
 		`DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE o.period_id=p.id AND p.year > $1`,
+		`DELETE FROM gl_year_end_closes WHERE fiscal_year > $1`,
 		`DELETE FROM fiscal_periods WHERE year > $1`,
 	} {
 		if _, err := pool.Exec(ctx, q, threshold); err != nil {
@@ -66,7 +73,7 @@ func fw1CloseEveryMonth(t *testing.T, pool *pgxpool.Pool, year int, actor string
 	t.Helper()
 	repo := NewRepository(pool)
 	for m := 1; m <= 12; m++ {
-		if _, err := repo.ClosePeriod(context.Background(), periodID(t, pool, year, m), actor, "round 4 month close"); err != nil {
+		if _, err := repo.ClosePeriod(context.Background(), periodID(t, pool, year, m), actor, "round 4 month close", nil); err != nil {
 			t.Fatalf("close %04d-%02d: %v", year, m, err)
 		}
 	}
@@ -154,16 +161,20 @@ func TestIntegration_FW1_09bR4_TheYearEndPostsIntoItsOwnDecemberAndOnceOnly(t *t
 	}
 }
 
-// fw1WindowDrawers answers 3 open drawers for exactly one window, and records
-// the windows it was asked.
+// fw1WindowDrawers answers 3 open drawers for exactly one month, and records
+// the instants it was asked about.
 type fw1WindowDrawers struct {
 	year, month int
-	calls       [][2]time.Time
+	calls       []time.Time
 }
 
-func (f *fw1WindowDrawers) OpenDrawers(_ context.Context, from, to time.Time) (int, error) {
-	f.calls = append(f.calls, [2]time.Time{from, to})
-	if from.UTC().Year() == f.year && int(from.UTC().Month()) == f.month {
+// UncompletedDrawersOpenedBefore answers the drawers opened by the month's end that are not yet
+// completed. The instant is the first instant of the NEXT month, so the month being closed is the
+// month before it.
+func (f *fw1WindowDrawers) UncompletedDrawersOpenedBefore(_ context.Context, before time.Time) (int, error) {
+	f.calls = append(f.calls, before)
+	m := before.AddDate(0, -1, 0)
+	if m.Year() == f.year && int(m.Month()) == f.month {
 		return 3, nil
 	}
 	return 0, nil

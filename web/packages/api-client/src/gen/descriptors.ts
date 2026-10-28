@@ -391,7 +391,7 @@ export const SCHEMA_DESCRIPTORS = {
   "GlPeriodReopenBody": {"k":"object","req":["reason"],"props":{"year":{"k":"integer"},"reason":{"k":"string"}}},
   "GlCloseYearBody": {"k":"object","req":["year","reason"],"props":{"year":{"k":"integer"},"reason":{"k":"string"}}},
   "GlYearOpenResult": {"k":"object","req":["fiscal_year"],"props":{"fiscal_year":{"k":"integer"}}},
-  "GlYearCloseResult": {"k":"object","req":["fiscal_year","net_income_cents","periods_closed"],"props":{"fiscal_year":{"k":"integer"},"closing_journal_id":{"k":"string"},"net_income_cents":{"k":"integer"},"periods_closed":{"k":"boolean"}}},
+  "GlYearCloseResult": {"k":"object","req":["fiscal_year","net_income_cents","periods_closed","already_closed"],"props":{"fiscal_year":{"k":"integer"},"closing_journal_id":{"k":"string"},"net_income_cents":{"k":"integer"},"periods_closed":{"k":"boolean"},"already_closed":{"k":"boolean"}}},
   "GlPolicy": {"k":"object","req":["je_approval_threshold_cents","fiscal_year_start_month","cost_basis_strategy","exclude_special_buys","notes"],"props":{"branch_id":{"k":"string"},"je_approval_threshold_cents":{"k":"integer"},"fiscal_year_start_month":{"k":"integer","minimum":1,"maximum":12},"cost_basis_strategy":{"k":"lit","v":["WEIGHTED_AVG","STANDARD_BUY"]},"exclude_special_buys":{"k":"boolean"},"notes":{"k":"string"}}},
   "GlExportBody": {"k":"object","req":["year","month","branch_id"],"props":{"year":{"k":"integer"},"month":{"k":"integer","minimum":1,"maximum":12},"branch_id":{"k":"string"}}},
   "GlExportResult": {"k":"object","req":["batch_id","format","row_count","is_draft","content"],"props":{"batch_id":{"k":"string"},"format":{"k":"string"},"row_count":{"k":"integer"},"is_draft":{"k":"boolean"},"content":{"k":"string"}}},
