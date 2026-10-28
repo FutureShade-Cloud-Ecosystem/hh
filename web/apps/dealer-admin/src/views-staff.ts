@@ -157,6 +157,11 @@ function renderRegister(model: StaffModel): TemplateResult {
  * value is "nothing" drops the whole attribute, so the branch values were
  * plain text beside "All branches", which is a pill. An empty string keeps
  * the class and reads as the chip alone.
+ *
+ * UX-106 round 3: a branch the catalog does not know is a neutral pill
+ * ("Unknown branch"), not the monospace chip an id used to wear. The word
+ * says what is unknown; the mono said "this is a record id", which is what
+ * the round removed.
  */
 function renderStaffRow(m: StaffMemberRow, model: StaffModel): TemplateResult {
   const chips = branchChips(m.branch_ids, model.branches);
@@ -200,7 +205,7 @@ function renderStaffRow(m: StaffMemberRow, model: StaffModel): TemplateResult {
             ? html`<span class="chip">All branches</span>`
             : chips.length === 0
               ? html`<span class="dim">None</span>`
-              : chips.map((c) => html`<span class="chip ${c.known ? "" : "mono"}">${c.label}</span>`)}
+              : chips.map((c) => html`<span class="chip ${c.known ? "" : "chip-neutral"}">${c.label}</span>`)}
         </span>
       </td>
       <td class="staff-access" data-label="Access"><span class="badge-outline"><strong>${accessWord(m.tier, m.scope)}</strong></span></td>

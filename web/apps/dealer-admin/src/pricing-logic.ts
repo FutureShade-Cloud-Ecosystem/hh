@@ -28,6 +28,7 @@
  */
 
 import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+import { UNKNOWN_CATEGORY, UNKNOWN_VENDOR } from "./placeholders.js";
 
 export interface PricingTab {
   /** The id the strip button, the router line and the tests name. */
@@ -360,14 +361,17 @@ export interface CategoryRow {
 
 /**
  * A category id as a person reads it: the catalog's name when the read
- * knows the id, else the id's own first block. The original mapped its
- * seed ids in a table; HH asks the catalog instead, because a hardcoded
- * id table is one tenant's facts wearing another tenant's screen.
+ * knows the id. The original mapped its seed ids in a table; HH asks the
+ * catalog instead, because a hardcoded id table is one tenant's facts
+ * wearing another tenant's screen.
+ *
+ * UX-106 round 3: a category the catalog does not know reads as the house
+ * placeholder word, never as the id's own first block.
  */
 export function categoryName(id: string, categories: readonly CategoryRow[]): string {
   if (id === "") return "";
   const hit = categories.find((c) => c.id === id);
-  return hit !== undefined ? hit.name : id.slice(0, 8);
+  return hit !== undefined ? hit.name : UNKNOWN_CATEGORY;
 }
 
 /** The category picker's options, active first then retired, each by code order. */
@@ -710,11 +714,16 @@ export function rebateRateWords(program: {
   }
 }
 
-/** A vendor as a person reads it: the name when the read knows it, else the id's block. */
+/**
+ * A vendor as a person reads it: the name when the read knows it.
+ *
+ * UX-106 round 3: a vendor the read does not name reads as the house
+ * placeholder word, never as the id's own first block.
+ */
 export function vendorWords(name: string, vendorId: string): string {
   if (name !== "") return name;
   if (vendorId === "") return "";
-  return vendorId.slice(0, 8);
+  return UNKNOWN_VENDOR;
 }
 
 /** The accrual run's verdict, told from the server's own counts. */

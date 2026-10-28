@@ -7,9 +7,11 @@
 // hardscapeos_dibbits, read only; see PROVENANCE.md). The actor cell's rule
 // carries over with one honest change: the HH core's audit projection
 // carries no resolved name, so the cell shows the actor's role label when
-// the row carries one, else the id's own block, never a blank.
+// the row carries one, and the house placeholder word when it carries only
+// an id, never a blank and never the id's own block (UX-106 round 3).
 
 import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { UNKNOWN_ACTOR } from "./placeholders.js";
 
 /** One audit row as the list projects it. */
 export interface AuditEntryLike {
@@ -72,7 +74,9 @@ export function actorWords(entry: AuditEntryLike): string {
   const role = entry.actor_role ?? "";
   if (role !== "") return role.trim().toLowerCase().replace(/[_.-]+/g, " ").replace(/\s+/g, " ");
   const id = entry.actor_id ?? "";
-  if (id !== "") return id.slice(0, 8);
+  // UX-106 round 3: an actor the trail cannot name reads as the house
+  // placeholder word, never as the id's own first block.
+  if (id !== "") return UNKNOWN_ACTOR;
   return "No actor recorded";
 }
 

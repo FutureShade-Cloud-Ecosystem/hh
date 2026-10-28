@@ -18,6 +18,7 @@ import {
   platformKeycap,
   type PlatformHotkeyView,
 } from "./hotkey-logic.js";
+import { UNKNOWN_SURFACE } from "./placeholders.js";
 
 export interface HotkeysModel {
   readonly phase: "loading" | "ready" | "error";
@@ -88,7 +89,7 @@ function renderRoster(model: HotkeysModel, surface: string, canEdit: boolean): T
   return html`
     <section class="card" data-test=${`hotkeys-roster-${surface}`}>
       <div class="card-head">
-        <h2 class="card-title">${PLATFORM_SURFACE_LABEL[surface] ?? surface}</h2>
+        <h2 class="card-title">${PLATFORM_SURFACE_LABEL[surface] ?? UNKNOWN_SURFACE}</h2>
       </div>
       <p class="card-sub">${PLATFORM_SURFACE_SCOPE[surface] ?? ""}</p>
       ${bound.length === 0 && !canEdit

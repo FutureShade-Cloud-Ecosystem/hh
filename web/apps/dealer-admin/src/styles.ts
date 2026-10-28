@@ -277,6 +277,14 @@ export const dealerStyles = css`
     border-style: dashed;
     color: var(--hh-text-dim);
   }
+  /* The neutral chip: the house's own placeholder pill (the design system
+     carries the same class). UX-106 round 3 wears it on a thing the screen
+     cannot name: an unknown branch. It says what it does not know, and it
+     wears no other colour's meaning. */
+  .chip-neutral {
+    color: var(--hh-text-dim);
+    border-color: var(--hh-control-line);
+  }
 
   /* -- the register's table ---------------------------------------------------------- */
 

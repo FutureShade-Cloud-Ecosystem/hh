@@ -69,6 +69,16 @@ import {
   PRICING_VIEWS,
 } from "./pricing-logic.js";
 import { whenWords } from "./audit-logic.js";
+import {
+  UNKNOWN_ACTOR,
+  UNKNOWN_BATCH,
+  UNKNOWN_BRANCH,
+  UNKNOWN_CATEGORY,
+  UNKNOWN_CUSTOMER,
+  UNKNOWN_ENTITY,
+  UNKNOWN_PRODUCT,
+  UNKNOWN_VIEW,
+} from "./placeholders.js";
 import type { BreakRow, ChangeLogRow, ClearanceRow, LowMarginScanRow as LowMarginScanRowApi, OverrideRow, PricingAuditRow, PromotionRow, RebateRow, RuleRow, UomConversionRow } from "./pricing-api.js";
 type BatchLineRow = Parameters<typeof batchLineWords>[0];
 type PriceFileModel = PricingModel["priceFile"];
@@ -139,7 +149,7 @@ function renderTab(model: PricingModel): TemplateResult {
   if (model.tab === "audit") return renderPricingAudit(model);
   if (model.tab === "changelog") return renderChangeLog(model);
   const tab = PRICING_VIEWS.find((t) => t.id === model.tab);
-  return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
+  return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? UNKNOWN_VIEW)}</p>`;
 }
 
 // FW1-14: this tab was a board of invented figures with no route behind it
@@ -367,11 +377,13 @@ function renderFloorPanel(floor: FloorPanel, confirmAction: string, reviewAction
 
 function ruleDimsWords(rule: { readonly scope: string; readonly customer_id: string; readonly customer_type: string; readonly category_id: string; readonly product_id: string; readonly branch_id: string }, model: PricingModel): string {
   const parts: string[] = [];
-  if (rule.customer_id !== "") parts.push(`customer ${rule.customer_id.slice(0, 8)}`);
+  // UX-106 round 3: a dimension the screen cannot name reads as the house
+  // placeholder word, never as the id's own first block.
+  if (rule.customer_id !== "") parts.push(UNKNOWN_CUSTOMER);
   if (rule.customer_type !== "") parts.push(customerTypeWord(rule.customer_type));
   if (rule.category_id !== "") parts.push(categoryName(rule.category_id, model.categories));
-  if (rule.product_id !== "") parts.push(`product ${rule.product_id.slice(0, 8)}`);
-  if (rule.branch_id !== "") parts.push(`branch ${rule.branch_id.slice(0, 8)}`);
+  if (rule.product_id !== "") parts.push(UNKNOWN_PRODUCT);
+  if (rule.branch_id !== "") parts.push(UNKNOWN_BRANCH);
   return parts.join(" · ");
 }
 
@@ -498,7 +510,7 @@ function renderRuleEditor(model: PricingModel): TemplateResult | typeof nothing 
   const m = model.rules;
   const e = m.editing;
   if (e === null) return nothing;
-  const heading = e.id === "" ? "New rule" : `Rule: ${e.detail === "" ? e.id.slice(0, 8) : e.detail}`;
+  const heading = e.id === "" ? "New rule" : e.detail === "" ? "Rule" : `Rule: ${e.detail}`;
   return html`
     <section class="card" data-test="pr-rule-editor">
       <div class="card-head">
@@ -756,7 +768,7 @@ function renderOverrideEditor(model: PricingModel): TemplateResult | typeof noth
 // -- the quantity breaks tab ---------------------------------------------------------------------------
 
 function breakScopeWords(row: BreakRow, model: PricingModel): string {
-  if (row.product_id !== "") return `product ${row.product_id.slice(0, 8)}`;
+  if (row.product_id !== "") return UNKNOWN_PRODUCT;
   if (row.category_id !== "") return categoryName(row.category_id, model.categories);
   return "unscoped";
 }
@@ -967,9 +979,9 @@ function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing
 // -- the promotions and clearance tab -------------------------------------------------------------------
 
 function promoScopeWords(row: PromotionRow, model: PricingModel): string {
-  if (row.product_id !== "") return `product ${row.product_id.slice(0, 8)}`;
+  if (row.product_id !== "") return UNKNOWN_PRODUCT;
   if (row.category_id !== "") return categoryName(row.category_id, model.categories);
-  if (row.branch_id !== "") return `branch ${row.branch_id.slice(0, 8)}`;
+  if (row.branch_id !== "") return UNKNOWN_BRANCH;
   return "everywhere";
 }
 
@@ -1193,11 +1205,14 @@ function renderClearanceRowView(row: ClearanceRow, model: PricingModel): Templat
   void model;
   const m = model.promos.clearance;
   const confirming = m.confirmingId === row.product_id;
+  // The row names the product it marks: the sku when it has one, else the
+  // name, else the house placeholder. Never the product id's own first block.
+  const productLabel = row.sku !== "" ? row.sku : row.name !== "" ? row.name : UNKNOWN_PRODUCT;
   return html`
     <tr data-clearance=${row.product_id}>
       <td>
-        <div class="person">${row.name === "" ? "Unknown product" : row.name}</div>
-        <div class="mono dim">${row.sku === "" ? row.product_id.slice(0, 8) : row.sku}</div>
+        <div class="person">${row.name === "" ? UNKNOWN_PRODUCT : row.name}</div>
+        ${row.sku === "" ? nothing : html`<div class="mono dim">${row.sku}</div>`}
       </td>
       <td>${row.reason}</td>
       <td class="num" data-test="pr-clear-value">${clearanceValueWords(row)}</td>
@@ -1210,7 +1225,7 @@ function renderClearanceRowView(row: ClearanceRow, model: PricingModel): Templat
             class="btn btn-secondary btn-small"
             data-action="pr-clear-edit"
             data-product=${row.product_id}
-            aria-label=${`Edit the mark on ${row.sku === "" ? row.product_id.slice(0, 8) : row.sku}`}
+            aria-label=${`Edit the mark on ${productLabel}`}
           >
             Edit
           </button>
@@ -1585,8 +1600,8 @@ function renderAccrual(model: PricingModel): TemplateResult {
 
 function uomProductWords(row: UomConversionRow): string {
   if (row.product_sku !== "") return row.product_sku;
-  if (row.product_id !== "") return row.product_id.slice(0, 8);
-  if (row.category_id !== "") return `category ${row.category_id.slice(0, 8)}`;
+  if (row.product_id !== "") return UNKNOWN_PRODUCT;
+  if (row.category_id !== "") return UNKNOWN_CATEGORY;
   return "all products";
 }
 
@@ -1902,10 +1917,13 @@ function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
   if (m === null) return nothing;
   const row = model.batches.openRow;
   const status = row?.status ?? "";
+  // A batch the read has not named yet says "Batch", never the id's own first
+  // block.
+  const batchNo = row?.batch_no ?? "";
   return html`
     <section class="card" data-test="pr-batch-open">
       <div class="card-head">
-        <h2 class="card-title">Batch ${row?.batch_no ?? m.id.slice(0, 8)}</h2>
+        <h2 class="card-title">${batchNo === "" ? "Batch" : `Batch ${batchNo}`}</h2>
         ${row?.effective_date ? html`<span class="chip">effective ${row.effective_date.slice(0, 10)}</span>` : nothing}
         <span class="chip">${batchStatusWord(status)}</span>
         <button type="button" class="btn btn-secondary btn-small" data-action="pr-batch-close">Close</button>
@@ -2396,8 +2414,15 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
 
 // -- the pricing audit tab ---------------------------------------------------------------------------
 
-function auditEntityWords(row: PricingAuditRow): string {
-  return `${row.entity_type} / ${row.entity_id.slice(0, 8)}`;
+/**
+ * The pricing log's entity cell: the core's own type word, and the name the
+ * catalog gives the record. A record the catalog does not know reads as the
+ * house placeholder word, never as the id's own first block.
+ */
+function auditEntityWords(row: PricingAuditRow, model: PricingModel): string {
+  if (row.entity_id === "") return row.entity_type;
+  const name = categoryName(row.entity_id, model.categories);
+  return `${row.entity_type} / ${name === UNKNOWN_CATEGORY ? UNKNOWN_ENTITY : name}`;
 }
 
 export function renderPricingAudit(model: PricingModel): TemplateResult {
@@ -2449,7 +2474,7 @@ export function renderPricingAudit(model: PricingModel): TemplateResult {
                         </tr>
                       </thead>
                       <tbody>
-                        ${m.rows.map((row) => renderPricingAuditRow(row))}
+                        ${m.rows.map((row) => renderPricingAuditRow(row, model))}
                       </tbody>
                     </table>
                   </div>
@@ -2460,17 +2485,17 @@ export function renderPricingAudit(model: PricingModel): TemplateResult {
   `;
 }
 
-function renderPricingAuditRow(row: PricingAuditRow): TemplateResult {
+function renderPricingAuditRow(row: PricingAuditRow, model: PricingModel): TemplateResult {
   const bypass = row.action === "BYPASS";
   const delta = deltaWords(row.old_value === "" ? null : row.old_value, row.new_value === "" ? null : row.new_value);
   return html`
     <tr data-audit=${row.id}>
       <td class="mono dim">${whenWords(row.created_at)}</td>
-      <td class="mono">${auditEntityWords(row)}</td>
+      <td>${auditEntityWords(row, model)}</td>
       <td><span class="chip ${bypass ? "chip-danger" : ""}">${auditActionWord(row.action)}</span></td>
       <td class="dim">${row.field_name === "" ? "-" : row.field_name}</td>
       <td>${delta === "" ? html`<span class="dim">-</span>` : delta}</td>
-      <td class="mono dim">${row.user_id === "" ? "the engine" : row.user_id.slice(0, 8)}</td>
+      <td class="dim">${row.user_id === "" ? "the engine" : UNKNOWN_ACTOR}</td>
     </tr>
     ${bypass && row.bypass_reason !== ""
       ? html`<tr data-audit-reason=${row.id}><td colspan="6"><span class="chip chip-danger">bypass: ${row.bypass_reason}</span></td></tr>`
@@ -2540,13 +2565,13 @@ function renderChangeLogRow(row: ChangeLogRow): TemplateResult {
   return html`
     <tr data-log=${row.id}>
       <td class="mono dim">${whenWords(row.created_at)}</td>
-      <td class="mono">${row.product_id === "" ? "-" : row.product_id.slice(0, 8)}</td>
+      <td class="dim">${row.product_id === "" ? "-" : UNKNOWN_PRODUCT}</td>
       <td>${changeFieldWord(row.field)}</td>
       <td class="num">${moneyWords(row.before_cents)}</td>
       <td class="num">${moneyWords(row.after_cents)}</td>
       <td class="mono dim">${row.effective_date === "" ? "-" : row.effective_date.slice(0, 10)}</td>
-      <td class="mono dim">${row.batch_id === "" ? "-" : row.batch_id.slice(0, 8)}</td>
-      <td class="mono dim">${row.changed_by === "" ? "-" : row.changed_by.slice(0, 8)}</td>
+      <td class="dim">${row.batch_id === "" ? "-" : UNKNOWN_BATCH}</td>
+      <td class="dim">${row.changed_by === "" ? "-" : UNKNOWN_ACTOR}</td>
     </tr>
   `;
 }
