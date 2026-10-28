@@ -103,7 +103,7 @@ func TestIntegration_Workspace_TrailAndReach(t *testing.T) {
 		// body's "as_of" timestamp's nanoseconds as the seeded payment's amount.
 		leaks, err := workspaceTrailLeak(body)
 		if err != nil {
-			t.Fatalf("the body must parse: %v", err)
+			t.Fatalf("the body must be the workspace's JSON: %v", err)
 		}
 		if len(leaks) != 0 {
 			t.Fatalf("payment detail leaked: %v\n%s", leaks, body)
@@ -119,7 +119,7 @@ func TestIntegration_Workspace_TrailAndReach(t *testing.T) {
 			// read as the payment's amount.
 			leaks, err := workspacePaymentLeak(body, trailPaymentCents, trailPaymentMethod)
 			if err != nil {
-				t.Fatalf("the body must parse: %v", err)
+				t.Fatalf("the body must be the workspace's JSON: %v", err)
 			}
 			if len(leaks) != 0 {
 				t.Fatalf("payment detail leaked: %v\n%s", leaks, body)
@@ -231,7 +231,7 @@ func TestIntegration_Workspace_FeedGivesNoPaymentBack(t *testing.T) {
 	// the body's "as_of" timestamp's nanoseconds as the bounced payment's amount.
 	leaks, err := workspacePaymentLeak(body, trailPaymentCents, "NSF", "PAYMENT")
 	if err != nil {
-		t.Fatalf("the body must parse: %v", err)
+		t.Fatalf("the body must be the workspace's JSON: %v", err)
 	}
 	if len(leaks) != 0 {
 		t.Fatalf("%v reached a caller without the trail: %s", leaks, body)

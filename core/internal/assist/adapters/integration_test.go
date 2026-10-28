@@ -383,8 +383,14 @@ func TestIntegration_StockLookupReadsRealBalances(t *testing.T) {
 		t.Fatalf("headline = %q", res.Headline)
 	}
 	// 120 − 20 at Trenton, 40 − 0 at Kingston → 140 available across two branches.
-	if !strings.Contains(res.Headline, "140") || !strings.Contains(res.Headline, "2 branches") {
-		t.Fatalf("headline = %q, want 140 available across 2 branches", res.Headline)
+	//
+	// FLAKE-10: the figure is read from the PARSED rows, and the headline is matched against
+	// the rows' sum as a whole phrase. A bare digit hunt over the headline was answered by the
+	// clock: the fixture's tag is the clock's own nanosecond fraction and the headline prints
+	// the product's NAME and its SKU, so the check stopped guarding the figure and nothing
+	// went red.
+	if leaks := stockHeadlineLeak(res.Headline, res.Items); len(leaks) != 0 {
+		t.Fatalf("headline = %q, want 140 available across 2 branches: %v", res.Headline, leaks)
 	}
 	var trenton *assist.Item
 	for i := range res.Items {
