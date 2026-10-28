@@ -645,6 +645,12 @@ var allowedExtraKeys = map[string]bool{
 	// audit_log.entity_id is a uuid column, so the row is keyed to the opened year's January period
 	// and the year itself rides here, an int like the counts above, never an identifier.
 	"fiscal_year": true,
+	// The gl year end close row (GL_YEAR_END_CLOSE, FW1-09c): the year the Controller sealed and the
+	// reason they gave for it. The reason is the same string the top-level SensitiveAccess.Reason
+	// field carries, so the row holds it once under one key; it is allowlisted here so the Extra
+	// path cannot drop it (a dropped key is a dropped trail) and so the deny-by-default boundary
+	// still redacts it like every other free text value.
+	"reason": true,
 	// The finstmt export row (FINSTMT_EXPORT): which statement was taken and in what shape. report
 	// is the module's own CHECK vocabulary (INCOME_STATEMENT, BALANCE_SHEET, TRIAL_BALANCE,
 	// GL_DETAIL, AR_AGING) and format is csv or xlsx, both code words, never identifiers. The row

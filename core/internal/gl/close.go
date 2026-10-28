@@ -27,8 +27,13 @@ const actGLFiscalYearOpen = "GL_FISCAL_YEAR_OPEN"
 // changes the head office branch setting in gl_policy (ruling 82.3).
 const actGLHeadOfficeBranchSet = "GL_HEAD_OFFICE_BRANCH_SET"
 
+// actGLYearEndClose is the sensitive-access action stamped on the Controller's year end close (the
+// close seals a whole year, so its trail is a recorded row, not only the override rows).
+const actGLYearEndClose = "GL_YEAR_END_CLOSE"
+
 // controllerRole is the only role permitted to reopen a closed period (the frozen route is RequireAdmin -
-// Tier-1 GLOBAL, and the service narrows it to the Financial Controller specifically).
+// Tier-1 GLOBAL, and the service narrows it to the Financial Controller specifically). It is also the
+// only role permitted to open a fiscal year early and to seal a year (FW1-09c, FROM-PRINCIPAL 222).
 const controllerRole = "FINANCIAL_CONTROLLER"
 
 // - policy -
@@ -316,10 +321,17 @@ type YearCloseResult struct {
 // and sweeps the net income (or loss) into 3900 Retained Earnings, then seals all of the year's OPEN periods.
 // After the close the income statement nets to zero and the balance sheet balances with retained earnings
 // carried into equity (AC13).
+//
+// FW1-09c (FROM-PRINCIPAL 222): the year end close is the Financial Controller's, the way the period
+// reopen and the early open are. The route is RequireAdmin (a Tier-1 GLOBAL, the GM among them), so
+// the service narrows it here, before any write, in words.
 func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearCloseResult, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return YearCloseResult{}, err
+	}
+	if caller.RoleCode != controllerRole {
+		return YearCloseResult{}, errNotControllerCloseYear
 	}
 	if reason == "" {
 		reason = fmt.Sprintf("year-end close FY%d", year)
@@ -500,6 +512,28 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	}
 	if err := s.store.ClosePeriodsForYearTx(ctx, tx, year, caller.UserID, reason); err != nil {
 		return YearCloseResult{}, err
+	}
+	// FW1-09c (FROM-PRINCIPAL 222): the close's own audit row rides THIS transaction, so a
+	// refused audit leaves no close behind, the open year's rule (S2's P2-4). The row is
+	// keyed to the closed year's January period, read on this same transaction (audit_log.
+	// entity_id is a uuid column, 0013), so the id it names is the one this close just
+	// sealed; the year and the reason ride Extra. Unwired, nothing is recorded (the role
+	// rule and the close itself still hold).
+	if s.auditTx != nil {
+		periodID, perr := s.store.FiscalPeriodIDTx(ctx, tx, year, 1)
+		if perr != nil {
+			return YearCloseResult{}, perr
+		}
+		if aerr := s.auditTx.RecordTx(ctx, tx, audit.SensitiveAccess{
+			Action:     actGLYearEndClose,
+			EntityType: "gl.period",
+			EntityID:   periodID,
+			ActorID:    caller.UserID,
+			Reason:     reason,
+			Extra:      map[string]any{"fiscal_year": year, "reason": reason},
+		}); aerr != nil {
+			return YearCloseResult{}, fmt.Errorf("gl: audit the year end close: %w", aerr)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return YearCloseResult{}, fmt.Errorf("gl: commit the year end: %w", err)
