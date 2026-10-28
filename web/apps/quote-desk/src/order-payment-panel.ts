@@ -212,14 +212,37 @@ export class QdOrderPayment extends PanelBase {
         border-color: var(--hos-stone-amber, var(--hh-accent));
         color: var(--hos-stone-amber-text, var(--hh-accent-text));
       }
-      /* While a payment is out (or its key is held) the choice is not offered: the tiles say so
-         with the greyed look, EXCEPT the chosen one, whose selection is a fact being carried,
-         not a control being offered: it keeps its ink so the person can see what is in flight. */
-      .tenders button[aria-disabled="true"]:not(.active) {
-        background: transparent;
+      /* While a payment is out (or its key is held) the choice is not offered: every tile
+         says so with the grey triple, the chosen one included. A locked tender is a
+         disabled control, and the settled rule admits no brand colour in a disabled
+         state: the selection it carries is a fact, shown through a heavier grey edge
+         (the house's own disabled line, drawn again inside the border), never through
+         the gold wash. */
+      .tenders button[aria-disabled="true"] {
+        background: var(--hh-disabled-fill);
         border-color: var(--hh-disabled-line);
         color: var(--hh-disabled-ink);
         cursor: not-allowed;
+      }
+      /* The chosen tender keeps its selection visible while locked: a second ring of
+         the disabled line inside the border, the non-brand mark the rule admits. The
+         pair is restated so the rule stands alone: nothing arrives through the
+         cascade. */
+      .tenders button[aria-disabled="true"].active {
+        background: var(--hh-disabled-fill);
+        color: var(--hh-disabled-ink);
+        box-shadow: inset 0 0 0 1px var(--hh-disabled-line);
+      }
+      /* The chosen tender says so with a check, not with a colour. The ring
+         inside the border is a 1 px line at about 1.5 to 1, which is very
+         nearly nothing to look at, so the selection gets a drawn mark: the
+         tick takes the tile's own ink, which is the disabled ink while the
+         panel is locked, and it is out of the way of the name because it is
+         aria-hidden art. */
+      .tenders button .picked {
+        flex: none;
+        font-size: 12px;
+        line-height: 1;
       }
       /* Full height controls on the till's measure: the amount and reference boxes and the Take
          payment action are never smaller than a tile, and the inputs carry the control radius
@@ -1012,6 +1035,9 @@ export class QdOrderPayment extends PanelBase {
             >
               ${TENDER_GLYPH[m]}
               ${m}
+              ${this.fieldsLocked && this.tender === m
+                ? html`<span class="picked" aria-hidden="true">&#10003;</span>`
+                : nothing}
             </button>`,
           )}
         </div>
