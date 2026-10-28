@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -410,6 +412,21 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 
 	// 5c. Bank month signs off at zero with outstanding items (for all closed months through throughDay)
 	{
+		bankrecSvc := bankrec.NewService(bankrec.NewRepository(pool)).
+			WithPayments(till.NewRepository(pool)).
+			WithLodgements(till.NewRepository(pool)).
+			WithJournalPoster(glPosterAdapter{svc: glSvc}).
+			WithGLBalances(glBalanceAdapter{svc: glSvc}).
+			WithJournals(glSvc)
+		allRecs, err := bankrecSvc.Reconciliations(ctx, "")
+		if err != nil {
+			return nil, fmt.Errorf("bankrec Reconciliations: %w", err)
+		}
+		recByYM := make(map[YearMonth]bankrec.Reconciliation, len(allRecs))
+		for _, r := range allRecs {
+			recByYM[YearMonth{Year: r.Year, Month: r.Month}] = r
+		}
+
 		closedMonths := 0
 		badRecs := 0
 		var recSummary string
@@ -423,34 +440,27 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 				continue
 			}
 			closedMonths++
-			var status string
-			var stmtBal, glBal, dit, outChq, variance int64
-			err := pool.QueryRow(ctx, `
-				SELECT status, statement_balance_cents, gl_balance_cents,
-				       deposits_in_transit_cents, outstanding_cheques_cents, variance_cents
-				  FROM bank_reconciliations
-				 WHERE period_year = $1 AND period_month = $2`,
-				mp.YearMonth.Year, mp.YearMonth.Month).Scan(&status, &stmtBal, &glBal, &dit, &outChq, &variance)
-			if err != nil {
+			rec, ok := recByYM[mp.YearMonth]
+			if !ok {
 				badRecs++
 				if recSummary == "" {
-					recSummary = fmt.Sprintf("%s missing bank_reconciliation: %v", mp.YearMonth.String(), err)
+					recSummary = fmt.Sprintf("%s missing bank_reconciliation", mp.YearMonth.String())
 				}
 				continue
 			}
-			adjusted := stmtBal + dit - outChq
-			if status != "COMPLETED" || variance != 0 || adjusted != glBal || dit <= 0 || outChq <= 0 {
+			adjusted := rec.StatementBalanceCents + rec.DepositsInTransitCents - rec.OutstandingChequesCents
+			if rec.Status != "COMPLETED" || rec.VarianceCents != 0 || adjusted != rec.GLBalanceCents || rec.DepositsInTransitCents <= 0 || rec.OutstandingChequesCents <= 0 {
 				badRecs++
 				if recSummary == "" {
 					recSummary = fmt.Sprintf("%s status=%s stmt=%d dit=%d outChq=%d gl=%d var=%d",
-						mp.YearMonth.String(), status, stmtBal, dit, outChq, glBal, variance)
+						mp.YearMonth.String(), rec.Status, rec.StatementBalanceCents, rec.DepositsInTransitCents, rec.OutstandingChequesCents, rec.GLBalanceCents, rec.VarianceCents)
 				}
 			} else if m == 0 || m == 10 {
 				if recSummary != "" {
 					recSummary += "; "
 				}
 				recSummary += fmt.Sprintf("%s COMPLETED stmt=%s + DIT=%s - OutChq=%s = GL=%s (var=$0.00)",
-					mp.YearMonth.String(), finworldDollars(stmtBal), finworldDollars(dit), finworldDollars(outChq), finworldDollars(glBal))
+					mp.YearMonth.String(), finworldDollars(rec.StatementBalanceCents), finworldDollars(rec.DepositsInTransitCents), finworldDollars(rec.OutstandingChequesCents), finworldDollars(rec.GLBalanceCents))
 			}
 		}
 		if recSummary == "" {

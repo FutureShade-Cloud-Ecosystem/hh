@@ -1615,8 +1615,8 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					Lines: []FinWorldJournalLine{
 						{
 							LineNo:      1,
-							AccountCode: "5400",
-							AccountName: "Yard & Delivery Operating Expense",
+							AccountCode: "6200",
+							AccountName: "Utilities",
 							DebitCents:  jAmt,
 							CreditCents: 0,
 							Memo:        "Accrued yard operating expense",

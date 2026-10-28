@@ -36,8 +36,10 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -261,6 +263,7 @@ func newFinWorldHarness(ctx context.Context, pool *pgxpool.Pool) (*finworldHarne
 	money := wireMoney(mux, pool, g, log, "", rcfg)
 	ops := wireOperations(mux, pool, g, log, money, "finworld-fx-ticket", belt.outbox)
 	tops := wireTops(mux, pool, g, log, money, ops, config.Config{PaymentVaultKey: vaultKey}, rcfg, belt)
+	tops.posSvc.WithTaxAssessor(finworldPosTaxAdapter{svc: newTaxEngine(pool)})
 
 	d := notify.NewDispatcher(money.outboxStore, log)
 	portal.RegisterNotificationHandlers(d, tops.notifier, "", log)
@@ -679,8 +682,8 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 		return fmt.Errorf("post opening stock GL KGN: %w", err)
 	}
 
-	// Post opening operating bank balance ($250,000.00 = 25,000,000 cents) on GL 1000 / 3000 and record bank cutover
-	openingBankCents := int64(25000000)
+	// Post opening operating bank balance ($185,000.00 = 18,500,000 cents) on GL 1000 / 3000 and record bank cutover
+	openingBankCents := int64(18500000)
 	if _, err := h.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
 		Source:         "MANUAL",
 		IdempotencyKey: "finworld:opening-bank:TRT",
@@ -975,7 +978,7 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 
 		case FinWorldEventPeriodClose:
 			pc := ev.PeriodClose
-			if err := finworldExecutePeriodClose(ctx, h, pc); err != nil {
+			if err := finworldExecutePeriodClose(ctx, h, pc, loc); err != nil {
 				return fmt.Errorf("%s (%s): %w", ev.EventKey, pc.CloseKey, err)
 			}
 			if err := h.drain(ctx); err != nil {
@@ -998,7 +1001,7 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 
 	// On the last trading day of each month, also run the MASS statement run for that month
 	if day.IsLastOfMonth {
-		if _, err := h.call("statement run "+day.Date, http.MethodPost, "/api/v1/ar/statements/runs", map[string]any{
+		if _, err := h.call("statement run "+day.Date, http.MethodPost, "/api/v1/ar/statement-runs", map[string]any{
 			"mode":  "MASS",
 			"as_of": day.Date,
 		}); err != nil {
@@ -1964,10 +1967,40 @@ func finworldResolveBankMatchTarget(ctx context.Context, pool *pgxpool.Pool, ref
 	}
 }
 
+type finworldPosTaxAdapter struct{ svc *tax.Service }
+
+func (a finworldPosTaxAdapter) AssessSale(ctx context.Context, in pos.TaxQuoteInput) (pos.QuoteResult, error) {
+	q, err := a.svc.AssessSale(ctx, tax.SaleAssessment{
+		BranchID:         in.BranchID,
+		SubtotalCents:    in.SubtotalCents,
+		ReasonCode:       in.ReasonCode,
+		EvidenceAttached: in.ReasonCode == FinWorldTaxReasonReliefFN8,
+	})
+	if err != nil {
+		var unk tax.UnknownReasonError
+		if errors.As(err, &unk) {
+			return pos.QuoteResult{}, fmt.Errorf("%w: %s", pos.ErrUnknownTaxReason, unk.Error())
+		}
+		if errors.Is(err, tax.ErrNoStandardRate) {
+			return pos.QuoteResult{}, pos.ErrTaxRailUnavailable
+		}
+		return pos.QuoteResult{}, err
+	}
+	return pos.QuoteResult{
+		TaxCents:        q.TaxCents,
+		RateBps:         q.RateBps,
+		OnCreditCents:   0,
+		ReasonCode:      q.ReasonCode,
+		Jurisdiction:    q.Jurisdiction,
+		StandardRateBps: q.StandardRateBps,
+	}, nil
+}
+
 func finworldExecutePeriodClose(
 	ctx context.Context,
 	h *finworldHarness,
 	pc *FinWorldPeriodCloseEvent,
+	loc *time.Location,
 ) error {
 	var periodID string
 	if err := h.pool.QueryRow(ctx, `
@@ -1975,6 +2008,25 @@ func finworldExecutePeriodClose(
 		pc.YearMonth.Year, pc.YearMonth.Month).Scan(&periodID); err != nil {
 		return fmt.Errorf("lookup fiscal_period %s: %w", pc.YearMonth.String(), err)
 	}
+	nextMonth := pc.YearMonth.AddMonths(1)
+	nextMonthStart := time.Date(nextMonth.Year, time.Month(nextMonth.Month), 1, 0, 5, 0, 0, loc)
+	prevShift, hadPrev := os.LookupEnv("HH_CLOCK_SHIFT_SECONDS")
+	prevSec, _ := strconv.ParseInt(strings.TrimSpace(prevShift), 10, 64)
+	realNow := time.Now().Unix() - prevSec
+	_ = os.Setenv("HH_CLOCK_SHIFT_SECONDS", strconv.FormatInt(nextMonthStart.Unix()-realNow, 10))
+	prevToken := h.token
+	if tok, err := h.minter.MintAt(finworldStaffSub, 12*time.Hour, time.Now()); err == nil {
+		h.token = tok
+	}
+	defer func() {
+		h.token = prevToken
+		if hadPrev {
+			_ = os.Setenv("HH_CLOCK_SHIFT_SECONDS", prevShift)
+		} else {
+			_ = os.Unsetenv("HH_CLOCK_SHIFT_SECONDS")
+		}
+	}()
+
 	_, err := h.call("close period "+pc.YearMonth.String(), http.MethodPost, "/api/v1/gl/periods/"+periodID+"/close", map[string]any{
 		"reason": "FinWorld month-end close " + pc.YearMonth.String(),
 	})

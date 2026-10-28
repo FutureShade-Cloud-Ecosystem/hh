@@ -49,8 +49,12 @@ func finworldSetDayClock(t *testing.T, ftFile string, target time.Time) int64 {
 	t.Helper()
 	shift := target.Unix() - time.Now().Unix()
 	line := fmt.Sprintf("%+d\n", shift)
-	if err := os.WriteFile(ftFile, []byte(line), 0o644); err != nil {
-		t.Fatalf("write faketime file %s: %v", ftFile, err)
+	tmpFile := ftFile + ".tmp"
+	if err := os.WriteFile(tmpFile, []byte(line), 0o644); err != nil {
+		t.Fatalf("write faketime tmp file %s: %v", tmpFile, err)
+	}
+	if err := os.Rename(tmpFile, ftFile); err != nil {
+		t.Fatalf("rename faketime file %s: %v", ftFile, err)
 	}
 	return shift
 }
@@ -195,4 +199,73 @@ func TestFinWorldDriver_StepA(t *testing.T) {
 	// Assert all ties at the end of Day 1.
 	checkOut := finworldRunSubprocess(t, binPath, dsn, shift1, nil, "finworld", "check", "--through-day", "1")
 	t.Logf("Step A tie check output:\n%s", checkOut)
+}
+
+func TestFinWorldDriver_StepB(t *testing.T) {
+	ctx := context.Background()
+	dsn := finworldTestDSN(t)
+	ftFile := finworldTestFaketimeFile(t)
+	loc := houseday.DefaultZone().Location()
+
+	pool, err := db.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect finworld db: %v", err)
+	}
+	defer pool.Close()
+
+	finworldResetSchema(t, ctx, pool)
+	binPath := finworldBuildBinary(t)
+
+	plan, err := FinWorldPlan(1, YearMonth{Year: 2026, Month: 9}, "Quarryfen Hardscape Supply")
+	if err != nil {
+		t.Fatalf("FinWorldPlan: %v", err)
+	}
+	m0 := plan.Months[0]
+	if len(m0.TradingDays) == 0 {
+		t.Fatalf("month 0 has no trading days")
+	}
+
+	var lastShift int64
+	var lastDayIdx int
+	for _, td := range m0.TradingDays {
+		dayDate, err := time.ParseInLocation("2006-01-02", td.Date, loc)
+		if err != nil {
+			t.Fatalf("parse trading day %s: %v", td.Date, err)
+		}
+		target := time.Date(dayDate.Year(), dayDate.Month(), dayDate.Day(), 12, 0, 0, 0, loc)
+		shift := finworldSetDayClock(t, ftFile, target)
+		if td.TradingDayIndex == 0 {
+			finworldRunSubprocess(t, binPath, dsn, shift, nil, "migrate")
+			finworldRunSubprocess(t, binPath, dsn, shift, nil, "seed")
+		}
+		finworldRunSubprocess(t, binPath, dsn, shift, nil, "finworld", "day", "--day", strconv.Itoa(td.TradingDayIndex))
+		lastShift = shift
+		lastDayIdx = td.TradingDayIndex
+	}
+
+	// Verify 2025-10 fiscal period is CLOSED.
+	var periodStatus string
+	if err := pool.QueryRow(ctx, `SELECT status FROM fiscal_periods WHERE year = 2025 AND month = 10`).Scan(&periodStatus); err != nil {
+		t.Fatalf("query 2025-10 fiscal_period: %v", err)
+	}
+	if periodStatus != "CLOSED" {
+		t.Fatalf("2025-10 fiscal_period status = %q, want CLOSED", periodStatus)
+	}
+
+	// Verify 2025-10 bank reconciliation is COMPLETED with zero variance.
+	var recStatus string
+	var stmtBal, glBal, variance int64
+	if err := pool.QueryRow(ctx, `
+		SELECT status, statement_balance_cents, gl_balance_cents, variance_cents
+		  FROM bank_reconciliations
+		 WHERE year = 2025 AND month = 10`).Scan(&recStatus, &stmtBal, &glBal, &variance); err != nil {
+		t.Fatalf("query 2025-10 bank_reconciliation: %v", err)
+	}
+	if recStatus != "COMPLETED" || variance != 0 || stmtBal == glBal {
+		t.Fatalf("2025-10 bank_reconciliation: status=%s stmt=%d gl=%d var=%d",
+			recStatus, stmtBal, glBal, variance)
+	}
+
+	checkOut := finworldRunSubprocess(t, binPath, dsn, lastShift, nil, "finworld", "check", "--through-day", strconv.Itoa(lastDayIdx))
+	t.Logf("Step B tie check output (through day %d):\n%s", lastDayIdx, checkOut)
 }
