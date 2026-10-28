@@ -195,3 +195,45 @@ func TestFinWorldDriver_LandedCostApplyVoidLeg(t *testing.T) {
 		t.Fatalf("manager landed-cost read refused: %v", err)
 	}
 }
+
+// TestFinWorldDriver_APTieCoversLandedCost pins the AP tie's read: with a landed cost applied and
+// outstanding, GL 2100's credit is the vendor bills less supplier payments PLUS the landed-cost
+// payable, so the tie's subledger read must carry both.
+func TestFinWorldDriver_APTieCoversLandedCost(t *testing.T) {
+	ctx := context.Background()
+	dsn := finworldTestDSN(t)
+
+	pool, err := db.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect finworld db: %v", err)
+	}
+	defer pool.Close()
+
+	finworldResetSchema(t, ctx, pool)
+	binPath := finworldBuildBinary(t)
+	sched := finworldReadLandedCostSchedule(t)
+
+	finworldWalkDays(t, binPath, dsn, sched.FirstApplyDay)
+
+	plan, err := FinWorldPlan(1, YearMonth{Year: 2026, Month: 9}, "Quarryfen Hardscape Supply")
+	if err != nil {
+		t.Fatalf("FinWorldPlan: %v", err)
+	}
+	ties, err := runFinWorldTies(ctx, pool, plan, sched.FirstApplyDay)
+	if err != nil {
+		t.Fatalf("run ties: %v", err)
+	}
+	var ap *FinWorldTieResult
+	for i := range ties {
+		if ties[i].Name == "AP_2100_ties_to_vendor_subledger" {
+			ap = &ties[i]
+		}
+	}
+	if ap == nil {
+		t.Fatalf("tie suite carries no AP_2100_ties_to_vendor_subledger")
+	}
+	if !ap.Passed {
+		t.Fatalf("AP tie refused with a landed cost outstanding: %s", ap.Detail)
+	}
+	t.Logf("AP tie with a landed cost outstanding: %s", ap.Detail)
+}
