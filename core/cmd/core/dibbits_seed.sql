@@ -213,58 +213,6 @@ INSERT INTO portal_users (id, customer_id, email, name, password_hash, role, sta
   '$2a$10$ja7jD99TS1QsOtU.7dVDIu.HwgOK2pBERc60C4IyjMEi49IvR/dGO','account_admin','active')
 ON CONFLICT (email) DO NOTHING;
 
--- ───────────────────────── opening inventory (set-based: TRT ~80% / KGN ~20%) ─────────────────────────
--- Trenton receipt for every stocked product. Qty by stocking unit (pieces vs tonnes
--- vs each/bag), and a believable wholesale unit cost in cents (L-5: opening cost must
--- be non-zero, or valuation/COGS demos show $0). value_cents = qty × unit_cost.
-INSERT INTO stock_moves (product_id, to_location_id, qty_base, qty_entered, uom_entered, move_type, unit_cost_cents, value_cents, branch_id, reason)
-  SELECT p.id, '5d1b3f6e-0000-4000-9000-000000000001',
-         q.qty, q.qty, p.base_uom, 'RECEIPT', q.ucost, q.qty * q.ucost, '5d1b3f6e-0000-4000-9000-000000000001', 'M7 opening balance'
-  FROM products p
-  CROSS JOIN LATERAL (SELECT
-      CASE p.base_uom WHEN 'T' THEN 40 WHEN 'EA' THEN 120 WHEN 'BAG' THEN 200 WHEN 'SF' THEN 1200 ELSE 800 END AS qty,
-      CASE p.base_uom WHEN 'T' THEN 6000 WHEN 'EA' THEN 8000 WHEN 'BAG' THEN 1200 WHEN 'SF' THEN 350 ELSE 2000 END AS ucost) q
-  WHERE p.sku LIKE 'DBS-%';
--- Kingston receipt (~20%) for every product EXCEPT one intentionally left zero-stock (DBS-SIKA-SEALER) to demo transfers.
-INSERT INTO stock_moves (product_id, to_location_id, qty_base, qty_entered, uom_entered, move_type, unit_cost_cents, value_cents, branch_id, reason)
-  SELECT p.id, '5d1b3f6e-0000-4000-9000-000000000002',
-         q.qty, q.qty, p.base_uom, 'RECEIPT', q.ucost, q.qty * q.ucost, '5d1b3f6e-0000-4000-9000-000000000002', 'M7 opening balance'
-  FROM products p
-  CROSS JOIN LATERAL (SELECT
-      CASE p.base_uom WHEN 'T' THEN 10 WHEN 'EA' THEN 30 WHEN 'BAG' THEN 50 WHEN 'SF' THEN 300 ELSE 200 END AS qty,
-      CASE p.base_uom WHEN 'T' THEN 6000 WHEN 'EA' THEN 8000 WHEN 'BAG' THEN 1200 WHEN 'SF' THEN 350 ELSE 2000 END AS ucost) q
-  WHERE p.sku LIKE 'DBS-%' AND p.sku <> 'DBS-SIKA-SEALER';
--- Project balances from the opening moves (no DB trigger exists, app maintains balances).
-INSERT INTO stock_balances (product_id, location_id, branch_id, on_hand_base)
-  SELECT product_id, to_location_id, branch_id, SUM(qty_base)
-  FROM stock_moves WHERE reason = 'M7 opening balance'
-  GROUP BY product_id, to_location_id, branch_id
-ON CONFLICT (product_id, location_id) DO NOTHING;
-
--- DIB-378/C1-a: migration 0058's landed-cost demo fixture sets stock_balances directly (LC-DEMO-PROD-1:
--- 40, LC-DEMO-PROD-2: 60 @ Trenton) so the capitalization has on-hand to absorb into, but writes NO
--- stock_moves to back it, on staging that balance later accretes real moves via receipts/landed-cost
--- applies, but a fresh migrate-then-seed DB has none, so v_stock_balance_drift sees the balance with
--- no ledger (TestGate_StockReconciles_NoNegative / TestIntegration_StockBalanceDrift_IsZero fail).
--- Backfill the matching opening RECEIPT here, qty/cost copied verbatim from 0058's own po_lines
--- (40 @ $30.00, 60 @ $70.00) so the ledger and the projection agree. NEVER edit 0058 itself (staging
--- already applied it). Idempotent (guarded on NOT EXISTS by product+reason); guarded on the products/
--- location existing so this no-ops harmlessly if 0058 skipped (non-Dibbits DB, see its own guard).
-INSERT INTO stock_moves (product_id, to_location_id, qty_base, qty_entered, uom_entered, move_type,
-                          unit_cost_cents, value_cents, branch_id, reason)
-SELECT p.id, l.id, v.qty, v.qty, 'EA', 'RECEIPT', v.ucost, v.qty * v.ucost, l.id,
-       'L8 landed-cost demo opening balance'
-  FROM (VALUES
-    ('d0580000-0000-4000-9000-000000000021'::uuid, 40, 3000), -- LC-DEMO-PROD-1: 40 @ $30.00 (0058 po_line 1)
-    ('d0580000-0000-4000-9000-000000000022'::uuid, 60, 7000)  -- LC-DEMO-PROD-2: 60 @ $70.00 (0058 po_line 2)
-  ) AS v(id, qty, ucost)
-  JOIN products p ON p.id = v.id
-  JOIN locations l ON l.code = 'TRT'
- WHERE NOT EXISTS (
-   SELECT 1 FROM stock_moves sm
-    WHERE sm.product_id = v.id AND sm.reason = 'L8 landed-cost demo opening balance'
- );
-
 -- ───────────────────────── a few in-flight transactions (demo) ─────────────────────────
 -- One open quote
 INSERT INTO quotes (id, quote_no, customer_id, branch_id, status, valid_until, subtotal_cents, tax_cents, total_cents, created_by) VALUES
@@ -717,30 +665,87 @@ INSERT INTO pos_addon_pairings (source_application, suggested_application, rank)
   ('Coping',   'Sealing',  10)
 ON CONFLICT (source_application, suggested_application) DO NOTHING;
 
--- ───────────────────────── opening moves' values meet the books' opening WAC ─────────────────────────
--- W2-5: the close pre flight's stock tie reads the ledger AS OF the month's end, unwinding every
--- movement at the exact figure its GL posting booked (see inventory's StockValueAsOfCents). The
--- M7 opening moves above carried qty x unit_cost, a believable wholesale cost, while the books
--- open the stock at the WAC product_branch_costs holds (planted by item 10's plant above
--- and by demo migrations such as 0065). The ledger and the opening journals the suites post then
--- told two stories, and the as of read answered a residue nobody booked at month ends before the
--- seed. This statement aligns the two: the opening moves are re-inserted with value_cents = the
--- per-row rounded value at the WAC the books open at (unit_cost_cents keeps the wholesale cost the
--- fallback-cost read demos use). DELETE + INSERT, never an UPDATE: stock_moves is append-only
--- (0037). Idempotent: the same rows come back with the same ids, recomputed against the WAC in
--- force at re-seed time.
-WITH gone AS (
-  DELETE FROM stock_moves WHERE reason = 'M7 opening balance' RETURNING *
-)
-INSERT INTO stock_moves (id, product_id, from_location_id, to_location_id, qty_base, qty_entered,
-                         uom_entered, move_type, unit_cost_cents, value_cents, weight_kg_total,
-                         source_type, source_ref_id, reason, actor_id, branch_id, metadata,
-                         occurred_at, created_at, bin_code)
-SELECT g.id, g.product_id, g.from_location_id, g.to_location_id, g.qty_base, g.qty_entered,
-       g.uom_entered, g.move_type, g.unit_cost_cents,
-       ROUND(g.qty_base * COALESCE(pbc.avg_unit_cost_cents, 0))::bigint, g.weight_kg_total,
-       g.source_type, g.source_ref_id, g.reason, g.actor_id, g.branch_id, g.metadata,
-       g.occurred_at, g.created_at, g.bin_code
-  FROM gone g
+-- ───────────────────────── opening inventory, at the value the books open at (set-based: TRT ~80% / KGN ~20%) ─────────────────────────
+-- The stock the books open at. Qty by stocking unit (pieces vs tonnes vs each/bag), and
+-- a believable wholesale unit cost in cents (L-5: opening cost must be non-zero, or
+-- valuation/COGS demos show $0).
+--
+-- value_cents is the value the books OPEN the stock at: the row's own qty at the WAC
+-- product_branch_costs holds, rounded per row. That is the figure the suites post their
+-- opening stock journals at, and the figure the as of read unwinds the ledger to, so the
+-- ledger and the books tell one story instead of two. unit_cost_cents keeps the believable
+-- wholesale cost the fallback-cost read demos read; only value_cents is the WAC.
+--
+-- The WAC is READ from product_branch_costs, never recomputed here: item 10's plant above
+-- and the demo migrations (0065's Brussels and Il Campo at Trenton, 0058's landed-cost pair)
+-- decide what the books open at, and a real cost row always wins over the seed's. This
+-- block therefore runs AFTER that plant, where the WAC is known at INSERT.
+--
+-- The seed's own rows and nobody else's: guarded on NOT EXISTS by product, location and
+-- reason, so a re-seed on a lived in database leaves every existing row exactly as it is.
+-- stock_moves is append only (0037), so the seed never rewrites a ledger row: it opens the
+-- books once.
+INSERT INTO stock_moves (product_id, to_location_id, qty_base, qty_entered, uom_entered, move_type, unit_cost_cents, value_cents, branch_id, reason)
+  SELECT p.id, '5d1b3f6e-0000-4000-9000-000000000001',
+         q.qty, q.qty, p.base_uom, 'RECEIPT', q.ucost,
+         ROUND(q.qty * COALESCE(pbc.avg_unit_cost_cents, 0))::bigint, '5d1b3f6e-0000-4000-9000-000000000001', 'M7 opening balance'
+  FROM products p
+  CROSS JOIN LATERAL (SELECT
+      CASE p.base_uom WHEN 'T' THEN 40 WHEN 'EA' THEN 120 WHEN 'BAG' THEN 200 WHEN 'SF' THEN 1200 ELSE 800 END AS qty,
+      CASE p.base_uom WHEN 'T' THEN 6000 WHEN 'EA' THEN 8000 WHEN 'BAG' THEN 1200 WHEN 'SF' THEN 350 ELSE 2000 END AS ucost) q
   LEFT JOIN product_branch_costs pbc
-         ON pbc.product_id = g.product_id AND pbc.branch_id = g.branch_id;
+         ON pbc.product_id = p.id AND pbc.branch_id = '5d1b3f6e-0000-4000-9000-000000000001'
+ WHERE p.sku LIKE 'DBS-%'
+   AND NOT EXISTS (SELECT 1 FROM stock_moves sm
+                    WHERE sm.product_id = p.id
+                      AND sm.to_location_id = '5d1b3f6e-0000-4000-9000-000000000001'
+                      AND sm.reason = 'M7 opening balance');
+-- Kingston receipt (~20%) for every product EXCEPT one intentionally left zero-stock (DBS-SIKA-SEALER) to demo transfers.
+INSERT INTO stock_moves (product_id, to_location_id, qty_base, qty_entered, uom_entered, move_type, unit_cost_cents, value_cents, branch_id, reason)
+  SELECT p.id, '5d1b3f6e-0000-4000-9000-000000000002',
+         q.qty, q.qty, p.base_uom, 'RECEIPT', q.ucost,
+         ROUND(q.qty * COALESCE(pbc.avg_unit_cost_cents, 0))::bigint, '5d1b3f6e-0000-4000-9000-000000000002', 'M7 opening balance'
+  FROM products p
+  CROSS JOIN LATERAL (SELECT
+      CASE p.base_uom WHEN 'T' THEN 10 WHEN 'EA' THEN 30 WHEN 'BAG' THEN 50 WHEN 'SF' THEN 300 ELSE 200 END AS qty,
+      CASE p.base_uom WHEN 'T' THEN 6000 WHEN 'EA' THEN 8000 WHEN 'BAG' THEN 1200 WHEN 'SF' THEN 350 ELSE 2000 END AS ucost) q
+  LEFT JOIN product_branch_costs pbc
+         ON pbc.product_id = p.id AND pbc.branch_id = '5d1b3f6e-0000-4000-9000-000000000002'
+ WHERE p.sku LIKE 'DBS-%' AND p.sku <> 'DBS-SIKA-SEALER'
+   AND NOT EXISTS (SELECT 1 FROM stock_moves sm
+                    WHERE sm.product_id = p.id
+                      AND sm.to_location_id = '5d1b3f6e-0000-4000-9000-000000000002'
+                      AND sm.reason = 'M7 opening balance');
+-- Project balances from the opening moves (no DB trigger exists, app maintains balances).
+INSERT INTO stock_balances (product_id, location_id, branch_id, on_hand_base)
+  SELECT product_id, to_location_id, branch_id, SUM(qty_base)
+  FROM stock_moves WHERE reason = 'M7 opening balance'
+  GROUP BY product_id, to_location_id, branch_id
+ON CONFLICT (product_id, location_id) DO NOTHING;
+
+-- DIB-378/C1-a: migration 0058's landed-cost demo fixture sets stock_balances directly (LC-DEMO-PROD-1:
+-- 40, LC-DEMO-PROD-2: 60 @ Trenton) so the capitalization has on-hand to absorb into, but writes NO
+-- stock_moves to back it, on staging that balance later accretes real moves via receipts/landed-cost
+-- applies, but a fresh migrate-then-seed DB has none, so v_stock_balance_drift sees the balance with
+-- no ledger (TestGate_StockReconciles_NoNegative / TestIntegration_StockBalanceDrift_IsZero fail).
+-- Backfill the matching opening RECEIPT here, qty/cost copied verbatim from 0058's own po_lines
+-- (40 @ $30.00, 60 @ $70.00) so the ledger and the projection agree. NEVER edit 0058 itself (staging
+-- already applied it). Idempotent (guarded on NOT EXISTS by product+reason); guarded on the products/
+-- location existing so this no-ops harmlessly if 0058 skipped (non-Dibbits DB, see its own guard).
+INSERT INTO stock_moves (product_id, to_location_id, qty_base, qty_entered, uom_entered, move_type,
+                          unit_cost_cents, value_cents, branch_id, reason)
+SELECT p.id, l.id, v.qty, v.qty, 'EA', 'RECEIPT', v.ucost,
+       ROUND(v.qty * COALESCE(pbc.avg_unit_cost_cents, 0))::bigint, l.id,
+       'L8 landed-cost demo opening balance'
+  FROM (VALUES
+    ('d0580000-0000-4000-9000-000000000021'::uuid, 40, 3000), -- LC-DEMO-PROD-1: 40 @ $30.00 (0058 po_line 1)
+    ('d0580000-0000-4000-9000-000000000022'::uuid, 60, 7000)  -- LC-DEMO-PROD-2: 60 @ $70.00 (0058 po_line 2)
+  ) AS v(id, qty, ucost)
+  JOIN products p ON p.id = v.id
+  JOIN locations l ON l.code = 'TRT'
+  LEFT JOIN product_branch_costs pbc ON pbc.product_id = v.id AND pbc.branch_id = l.id
+ WHERE NOT EXISTS (
+   SELECT 1 FROM stock_moves sm
+    WHERE sm.product_id = v.id AND sm.reason = 'L8 landed-cost demo opening balance'
+ );
+
