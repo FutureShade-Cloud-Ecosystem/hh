@@ -232,7 +232,10 @@ test("the statement lines and their matches are the core's, and the desk shows e
     "the world's statement holds a matched line",
   );
   await page.locator(`[data-line-id='${matched.id}']`).getByRole("button").click();
-  const matches = (await coreAnswer(core, "/api/v1/bankrec/matches")) as BankRecMatch[];
+  // The answer for this line's own matches, never another line's: the query rides with the answer.
+  const matches = (await coreAnswer(core, "/api/v1/bankrec/matches", { statement_line_id: matched.id })) as BankRecMatch[];
+  // A matched line carries at least one match, so a blank history and a blank answer cannot agree their way to a pass.
+  expect(matches.length, "the core holds the matched line's own match").toBeGreaterThan(0);
   await expect(page.locator("[data-history] li")).toHaveCount(matches.length);
   for (const match of matches) {
     await expect(page.locator("[data-history]"), "the match's own amount").toContainText(formatMoney(match.amount_cents));
