@@ -236,12 +236,38 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	if !strings.EqualFold(got, expected) {
 		return fmt.Errorf("finance-reset: the dump's sha256 is not the one %s names: nothing was dropped", envFinanceWorldSHA)
 	}
+	// The dump is mapped onto the box's own roles before it is written: the
+	// world's dump carries the build database's assist role names and the
+	// build's migrating role, and the box's database has its own.
+	boxSuffix, restoringRole, err := financeResetBoxRoles(ctx, pool)
+	if err != nil {
+		return err
+	}
+	buildSuffix, err := financeResetBuildSuffix(dump)
+	if err != nil {
+		return err
+	}
+	mapped, err := financeResetMapRoles(dump, buildSuffix, boxSuffix, restoringRole)
+	if err != nil {
+		return err
+	}
+	// The roles the world's grants name have to be there: the box's own
+	// migrate creates them, and a grant to a role that does not exist
+	// refuses the restore.
+	if err := financeResetAssistRolesPresent(ctx, pool, mapped); err != nil {
+		return err
+	}
+	// The box's own role has to be able to hand the world's objects over to
+	// the assist roles: a role may only give an object to a role it can set.
+	if err := financeResetOwnershipPossible(ctx, pool, financeResetOwnerRoles(dump)); err != nil {
+		return err
+	}
 	// The dump is written to disk BEFORE anything is dropped. The file is the
 	// only copy the restore reads, so a write that fails, a disk that is full
 	// or a directory that cannot be made is a refusal with the box still
 	// standing: a reset that drops first and writes second empties the box
 	// and leaves no way back.
-	dumpPath, cleanupDump, err := financeResetWriteDump(financeResetDumpDirectory(getenv), dump)
+	dumpPath, cleanupDump, err := financeResetWriteDump(financeResetDumpDirectory(getenv), mapped)
 	if err != nil {
 		return err
 	}

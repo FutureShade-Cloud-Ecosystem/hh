@@ -199,8 +199,20 @@ systemd-run --user --scope --quiet --expand-environment=no -p MemoryMax=24G \
 }
 
 # 7. Dump the database and compute its sha256.
+#
+# The dump is taken WITHOUT the owner statements: the world's objects belong
+# to the build cluster's roles, and a dump that carries them can only be
+# restored into a cluster that has those roles. The box restores the dump
+# under its own role, and the reset maps the assist role names onto the box
+# database's own suffix before it restores.
+#
+# The owner statements the dump leaves out are appended to it, in the dump's
+# own words: the world's assist owned objects keep their owners on the box,
+# the way the world was built. Without them the world's own migrations that
+# alter those objects would refuse on a restored world.
 DUMP_FILE="${OUT_DIR}/finworld_seed${SEED}_${ANCHOR}.sql"
 SHA_FILE="${DUMP_FILE}.sha256"
 echo "run.sh: all ties passed; writing pg_dump to ${DUMP_FILE}..."
-docker exec "$CONTAINER_NAME" pg_dump -U postgres -d finworld > "$DUMP_FILE" || exit 1
+docker exec "$CONTAINER_NAME" pg_dump -U postgres -d finworld --no-owner > "$DUMP_FILE" || exit 1
+docker exec -i "$CONTAINER_NAME" psql -U postgres -d finworld -tAq < "${REPO_ROOT}/deploy/finance/world/ownership.sql" >> "$DUMP_FILE" || exit 1
 sha256sum "$DUMP_FILE" | tee "$SHA_FILE"
