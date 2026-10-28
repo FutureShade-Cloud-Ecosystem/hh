@@ -23,7 +23,8 @@ type w25StockValueAllowanceEntry struct {
 
 // w25StockValueStamps is the set of writers whose moves are value-stamped: the move carries the exact
 // subledger delta the GL posted (value_cents for SHIP/RETURN/COUNT and simple transfers, or
-// metadata["wac_value_delta_cents"] for PO receipts and transfer receives that revalue the WAC).
+// metadata["wac_value_delta_cents"] for PO receipts and transfer receives that revalue the WAC, or a
+// VALUE move's own signed value_cents for landed cost).
 var w25StockValueStamps = map[string]bool{
 	"internal/inventory/service.go|(*Service).applyReceipt|call:InsertMove":               true,
 	"internal/inventory/service.go|(*Service).applyReceipt|call:UpsertBranchCost":         true,
@@ -34,6 +35,11 @@ var w25StockValueStamps = map[string]bool{
 	"internal/inventory/transfer.go|(*Service).ShipTransferWithETA|call:InsertMove":       true,
 	"internal/inventory/transfer.go|(*Service).ReceiveTransfer|call:InsertMove":           true,
 	"internal/inventory/transfer.go|(*Service).ReceiveTransfer|call:UpsertBranchCost":     true,
+	// Landed cost (W2-5b, 0453): the WAC write is paired with the VALUE move bookValueEvent writes on the
+	// same transaction, at the instant the landed cost's own journal carries.
+	"internal/inventory/service.go|(*Service).capitalizeLandedSnap|call:UpsertBranchCost": true,
+	"internal/inventory/service.go|(*Service).restoreLandedCost|call:UpsertBranchCost":    true,
+	"internal/inventory/service.go|(*Service).bookValueEvent|call:InsertMove":             true,
 }
 
 // w25StockValueAllowance names every writer that is NOT value-stamped and is therefore on the record
@@ -54,14 +60,6 @@ var w25StockValueAllowance = map[string]w25StockValueAllowanceEntry{
 	"db/migrations/0065_dpa3_low_margin_demo.sql|(sql)|SQL:product_branch_costs:INSERT": w25StockValueAllowanceEntry{
 		sites:  2,
 		reason: "demo migration seeds per-branch WAC rows so the low-margin report shows real grade rows on a fresh migrate",
-	},
-	"internal/inventory/service.go|(*Service).capitalizeLandedSnap|call:UpsertBranchCost": w25StockValueAllowanceEntry{
-		sites:  1,
-		reason: "landed-cost Apply revalues the WAC without a stock move; W2-5b will append an inventory valuation event ledger for the as-of read",
-	},
-	"internal/inventory/service.go|(*Service).restoreLandedCost|call:UpsertBranchCost": w25StockValueAllowanceEntry{
-		sites:  3,
-		reason: "landed-cost Void restores the WAC without a stock move; the same unstamped WAC path as Apply, fixed by W2-5b",
 	},
 	w25TestHelperKey: w25StockValueAllowanceEntry{
 		sites:  w25TestHelperSiteCount,
