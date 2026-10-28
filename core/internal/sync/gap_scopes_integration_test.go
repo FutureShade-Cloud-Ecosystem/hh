@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -1047,6 +1048,28 @@ func TestGapInvoicesFenceHoldsThroughTheBranchOrg(t *testing.T) {
 		}
 	}
 	orders := []string{tillOrderID, quoteOrderID, southOrderID, orphanOrder}
+	// The leg mints order numbers at the kit's fixture branches through the
+	// real next_order_no counter, and migration 0087 pre-creates a counter
+	// row for every branch: whatever the counter held before this leg, it
+	// must hold after. Snapshot both branches' rows now; the cleanup
+	// restores a row it found standing and removes only a row proven new.
+	type gapCounterRow struct {
+		lastValue int64
+		updatedAt time.Time
+		existed   bool
+	}
+	counterBefore := map[string]gapCounterRow{}
+	for _, b := range []string{testkit.BranchNorthAID, testkit.BranchSouthAID} {
+		row := gapCounterRow{}
+		err := f.pool.QueryRow(ctx, `SELECT last_value, updated_at FROM order_no_sequences WHERE branch_id = $1::uuid`, b).
+			Scan(&row.lastValue, &row.updatedAt)
+		if err == nil {
+			row.existed = true
+		} else if err != pgx.ErrNoRows {
+			t.Fatalf("snapshot the order counter at %s: %v", b, err)
+		}
+		counterBefore[b] = row
+	}
 	t.Cleanup(func() {
 		c := context.Background()
 		for _, id := range orders {
@@ -1056,6 +1079,42 @@ func TestGapInvoicesFenceHoldsThroughTheBranchOrg(t *testing.T) {
 			_, _ = f.pool.Exec(c, `DELETE FROM orders WHERE id = $1::uuid`, id)
 		}
 		_, _ = f.pool.Exec(c, `DELETE FROM order_no_sequences WHERE branch_id = $1::uuid`, orphanBranch)
+		// The walkthrough minted order numbers at the kit's fixture branches
+		// through the real next_order_no counter. Migration 0087 pre-creates
+		// a counter row for every branch, so the row the leg found standing
+		// it restores with its prior values, and a row proven new (the kit
+		// built the branch after the migration ran) it removes; deleting a
+		// found row would let a later leg restart numbering at 1, and
+		// leaving a new row standing would refuse the kit cleanup's branch
+		// delete on the counter's foreign key.
+		for _, b := range []string{testkit.BranchNorthAID, testkit.BranchSouthAID} {
+			if before := counterBefore[b]; before.existed {
+				_, _ = f.pool.Exec(c, `UPDATE order_no_sequences SET last_value = $2, updated_at = $3 WHERE branch_id = $1::uuid`,
+					b, before.lastValue, before.updatedAt)
+			} else {
+				_, _ = f.pool.Exec(c, `DELETE FROM order_no_sequences WHERE branch_id = $1::uuid`, b)
+			}
+		}
+		// The counter after the leg equals the counter before it: a row the
+		// leg found standing stands again with its prior values, and a row
+		// the leg planted is gone.
+		for _, b := range []string{testkit.BranchNorthAID, testkit.BranchSouthAID} {
+			var lastValue int64
+			var updatedAt time.Time
+			err := f.pool.QueryRow(c, `SELECT last_value, updated_at FROM order_no_sequences WHERE branch_id = $1::uuid`, b).
+				Scan(&lastValue, &updatedAt)
+			before := counterBefore[b]
+			if !before.existed {
+				if err == nil {
+					t.Errorf("the order counter at %s survived the leg though the leg planted it: a later leg restarts numbering at 1", b)
+				}
+				continue
+			}
+			if err != nil || lastValue != before.lastValue || !updatedAt.Equal(before.updatedAt) {
+				t.Errorf("the order counter at %s changed: before last_value=%d, after last_value=%d (read err %v); a later leg restarts numbering wherever this leg left the counter",
+					b, before.lastValue, lastValue, err)
+			}
+		}
 		_, _ = f.pool.Exec(c, `DELETE FROM locations WHERE id = $1::uuid`, orphanBranch)
 	})
 	line := func(lineID, orderID string) {
