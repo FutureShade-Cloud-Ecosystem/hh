@@ -74,6 +74,69 @@ export const pricingStyles = css`
     }
   }
 
+  /* -- the policy table fits a phone ----------------------------------------------
+     UX-106: the third column was cut off at 390 and the table scrolled
+     sideways under it. Under 900 px each policy becomes a card row: the
+     category's word, then the target and the floor as labelled pairs, the
+     enforcement chip, and the row's own Edit. The house's own card-row
+     pattern (the money desk's register): no sideways scroll of a cut column. */
+  @media (max-width: 900px) {
+    .pr-policy-table thead {
+      display: none;
+    }
+    .pr-policy-table,
+    .pr-policy-table tbody {
+      display: block;
+    }
+    .pr-policy-table tr {
+      display: grid;
+      gap: var(--hh-s-4);
+      padding: var(--hh-s-12) 0;
+      border-bottom: 1px solid var(--hh-hairline);
+    }
+    .pr-policy-table tbody td {
+      display: grid;
+      grid-template-columns: minmax(92px, 38%) minmax(0, 1fr);
+      gap: var(--hh-s-8);
+      padding: 0;
+      border: 0;
+      text-align: start;
+      white-space: normal;
+    }
+    .pr-policy-table tbody td::before {
+      content: attr(data-label);
+      color: var(--hh-text-dim);
+      font-size: var(--hh-s-12);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .pr-policy-table tbody td.pr-policy-cat {
+      display: block;
+      font-size: var(--hh-s-16);
+    }
+    .pr-policy-table tbody td.pr-policy-cat::before {
+      content: none;
+    }
+    .pr-policy-table tbody td.pr-policy-num {
+      font-size: var(--hh-s-16);
+      white-space: nowrap;
+    }
+    .pr-policy-table tbody td.pr-policy-enf {
+      justify-items: start;
+    }
+    .pr-policy-table tbody td.pr-policy-enf .chip {
+      white-space: normal;
+    }
+    .pr-policy-table tbody td.pr-policy-act {
+      grid-template-columns: none;
+      justify-items: start;
+    }
+    .pr-policy-table tbody td.pr-policy-act::before {
+      content: none;
+    }
+  }
+
   /* -- the floor warning ---------------------------------------------------------
      A confirmation, not a fault: the danger colour carries the rule and the
      wash at a light mix, the quote desk's own floor list treatment, because

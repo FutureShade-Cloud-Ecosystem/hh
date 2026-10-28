@@ -67,3 +67,28 @@ for (const theme of ["light", "charcoal"] as const) {
     expect(wearing).toBe(1);
   });
 }
+
+// -- 3: no raw id, and a table that fits a phone -----------------------------------
+
+test("the margin policy table shows no raw id, and fits a phone", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page);
+  await openSurface(page, "pricing", "[data-test=pr-margin-count]");
+
+  // The dealer's screen names the category; it never prints its id.
+  const table = page.locator(".pr-policy-table");
+  const text = await table.innerText();
+  expect(text).toContain("Pavers");
+  expect(text).not.toContain("ca7a0000");
+  expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+
+  // The table fits its own box at 390: no sideways scroll under a cut column.
+  const sideways = await page
+    .locator(".tablewrap")
+    .evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(sideways).toBeLessThanOrEqual(0);
+
+  // The whole card fits the card's own width too.
+  const card = await page.locator(".card").first().evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(card).toBeLessThanOrEqual(0);
+});

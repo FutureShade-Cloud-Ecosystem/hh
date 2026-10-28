@@ -196,7 +196,7 @@ function renderPolicies(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-margin-empty">${marginEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="pr-policy-table">
                 <thead>
                   <tr>
                     <th scope="col">Category</th>
@@ -220,22 +220,30 @@ function renderPolicies(model: PricingModel): TemplateResult {
   `;
 }
 
+/**
+ * One policy's row. UX-106: the dealer's screen shows the category's word and
+ * never a raw id; a category the catalog does not know says so, the way the
+ * editor's own chip says it. The phone's card row (the table's own labels in
+ * the data-label attributes) reads the same row without a cut column.
+ */
 function renderPolicyRow(row: { readonly category_id: string; readonly margin_target_bps: number; readonly margin_floor_bps: number; readonly margin_enforcement_disabled: boolean }, model: PricingModel): TemplateResult {
-  const name = categoryName(row.category_id, model.categories);
+  const known = model.categories.some((c) => c.id === row.category_id);
+  const name = known ? categoryName(row.category_id, model.categories) : "a category not in the catalog";
   return html`
     <tr data-category=${row.category_id}>
-      <td>
-        <span class="person">${name}</span>
-        <span class="mono dim">${row.category_id === name ? "" : row.category_id}</span>
+      <td class="pr-policy-cat">
+        ${known
+          ? html`<span class="person">${name}</span>`
+          : html`<span class="chip chip-danger">Not in the catalog</span>`}
       </td>
-      <td class="num" data-test="pr-margin-target">${pctWords(row.margin_target_bps)}</td>
-      <td class="num" data-test="pr-margin-floor">${pctWords(row.margin_floor_bps)}</td>
-      <td>
+      <td class="num pr-policy-num" data-label="Margin target" data-test="pr-margin-target">${pctWords(row.margin_target_bps)}</td>
+      <td class="num pr-policy-num" data-label="Margin floor" data-test="pr-margin-floor">${pctWords(row.margin_floor_bps)}</td>
+      <td class="pr-policy-enf" data-label="Enforcement">
         ${row.margin_enforcement_disabled
           ? html`<span class="chip chip-danger">Off: bypasses are logged</span>`
           : html`<span class="chip">On</span>`}
       </td>
-      <td>
+      <td class="pr-policy-act">
         <button
           type="button"
           class="btn btn-secondary btn-small"
