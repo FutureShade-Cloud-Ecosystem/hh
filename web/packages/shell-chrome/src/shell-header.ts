@@ -372,6 +372,16 @@ const styles = css`
     color: var(--hh-accent-text);
     border-color: var(--hh-accent-text);
   }
+  /* A pinned icon button that is refused is a disabled control, and the
+     pressed rule above outranks the primitive's own disabled rule. The pair
+     is restated in the grey triple, so the pin says nothing in brand
+     colour while it cannot be pressed. */
+  .icon-btn[aria-pressed='true']:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    opacity: 1;
+  }
   .badge {
     position: absolute;
     top: -5px;
