@@ -178,8 +178,8 @@ const (
 	ReasonKindPaidIn = "PAID_IN"
 	// ReasonKindPaidOut is a code a paid out may name.
 	ReasonKindPaidOut = "PAID_OUT"
-	// ReasonKindBoth is a code either direction may name (a customer cash refund correction is
-	// money in when the customer overpays and money out when the till hands it back).
+	// ReasonKindBoth is a code either direction may name (a float counted up is money in and a
+	// float counted down is money out, the way Cash Over/Short carries both).
 	ReasonKindBoth = "BOTH"
 )
 

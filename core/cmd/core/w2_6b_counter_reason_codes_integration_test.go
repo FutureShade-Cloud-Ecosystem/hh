@@ -71,18 +71,17 @@ type w2b6Walk struct {
 func TestW2B6CounterReasonCodes(t *testing.T) {
 	w := newW2B6Walk(t)
 
-	// 1. The starter list the seed gives the branch. Every branch begins with the same four codes,
-	//    each pointing at an account that is already in the chart, and none of them live yet: a
-	//    branch turns a code on through the till's own list API, one branch at a time.
+	// 1. The starter list the seed gives the branch. Every branch begins with the same three codes,
+	//    each pointing at an expense account of its own, and none of them live yet: a branch turns a
+	//    code on through the till's own list API, one branch at a time.
 	items := w.listReasonCodes(w2b6TRT)
-	if len(items) != 4 {
-		t.Fatalf("the seed gave the branch %d reason codes, want 4: %+v", len(items), items)
+	if len(items) != 3 {
+		t.Fatalf("the seed gave the branch %d reason codes, want 3: %+v", len(items), items)
 	}
 	want := map[string]struct{ account, kind string }{
-		"POSTAGE":     {"5100", "PAID_OUT"},
-		"CLEANING":    {"6200", "PAID_OUT"},
-		"STAFF_MEALS": {"6000", "PAID_OUT"},
-		"CASH_REFUND": {"2300", "BOTH"},
+		"POSTAGE":     {"6400", "PAID_OUT"},
+		"CLEANING":    {"6500", "PAID_OUT"},
+		"STAFF_MEALS": {"6600", "PAID_OUT"},
 	}
 	for _, c := range items {
 		w := want[c.Code]
@@ -113,8 +112,8 @@ func TestW2B6CounterReasonCodes(t *testing.T) {
 		t.Fatalf("the postage code is still off after the manager turned it on")
 	}
 
-	// 4. The reason for the item. A paid out with the postage code posts DR 5100 (postage) and
-	//    CR 1020 (undeposited), and nothing at all lands in 9999 Suspense.
+	// 4. The reason for the item. A paid out with the postage code posts DR 6400 (office supplies
+	//    and postage) and CR 1020 (undeposited), and nothing at all lands in 9999 Suspense.
 	session := w.openSession(t, w2b6TRT)
 	w.movement(t, session, map[string]any{
 		"movement_type": "PAID_OUT",
@@ -126,8 +125,8 @@ func TestW2B6CounterReasonCodes(t *testing.T) {
 	w.drain()
 	movement := w.movementID(t, session)
 	legs := w.journalLegs(t, movement)
-	if legs["5100"].Debit != 3000 {
-		t.Errorf("the postage paid out debited 5100 by %d, want 3000: %+v", legs["5100"].Debit, legs)
+	if legs["6400"].Debit != 3000 {
+		t.Errorf("the postage paid out debited 6400 by %d, want 3000: %+v", legs["6400"].Debit, legs)
 	}
 	if legs["1020"].Credit != 3000 {
 		t.Errorf("the postage paid out credited 1020 by %d, want 3000: %+v", legs["1020"].Credit, legs)
