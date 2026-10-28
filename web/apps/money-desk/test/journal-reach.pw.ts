@@ -102,7 +102,7 @@ test("a posted date range reaches an older journal, and changing it starts from 
 test("each register row shows when it posted, and a draft shows Not posted", async ({ page, request }) => {
   await openRegister(page, request);
   const register = page.getByRole("table", { name: "Journal register" });
-  const rowOf = (label: string) => register.locator("tbody tr").filter({ has: register.getByRole("button", { name: label }) });
+  const rowOf = (label: string) => register.locator("tbody tr").filter({ has: page.getByRole("button", { name: label }) });
   // The stub world's stamps read back in the desk's own day words: the July invoice booked in August
   // carries July 18 and the opening balances August 11, the stamp's own day in the house zone.
   await expect(rowOf("JE-0002").locator("[data-posted]")).toHaveText("Jul 18, 2026");
