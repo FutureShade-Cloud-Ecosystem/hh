@@ -427,21 +427,25 @@ func (a invGLPoster) PostJournal(ctx context.Context, in inventory.GLJournal) (s
 	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
 }
 
-// glStockValueAdapter satisfies gl's close pre flight stock seam over the
-// inventory snapshot (FW1-09b): the stock ledger side of the 1200 tie check,
-// the weighted average value of everything on hand.
+// glStockValueAdapter satisfies gl's close pre flight stock seam over inventory
+// (FW1-09b): the stock ledger side of the 1200 tie check, the weighted average
+// value of everything on hand.
+//
+// An empty branch id means the COMPANY, the way gl's other consolidated reads read it (the 1200 balance
+// and the AR balance both take an empty branch id for the whole book). The consolidated value is ONE
+// read over every branch (inventory's own consolidated value), not a read per branch: the pre flight
+// compares the company's stock against the company's 1200, so the two sides have to be on one basis and
+// the read must not fan out (FW1-09d).
+//
+// The figure is integer cents end to end: inventory values the rows in its own statement, in exact
+// NUMERIC, half away from zero per row, and this adapter passes the int64 through. It never multiplies
+// a quantity by a cost in Go - round 1's float64 product truncated 0.29 at 100 cents to 28 and refused
+// a month whose books tied to the cent by -$0.01 (FW1-09d round 2, AGENTS.md "Money is integer cents,
+// computed by the core"). A named branch reads the same statement scoped to that branch.
 type glStockValueAdapter struct{ svc *inventory.Service }
 
 func (a glStockValueAdapter) StockValueCents(ctx context.Context, branchID string) (int64, error) {
-	snaps, err := a.svc.SnapshotOnHand(ctx, branchID)
-	if err != nil {
-		return 0, err
-	}
-	var total int64
-	for _, sn := range snaps {
-		total += int64(sn.OnHandBase * float64(sn.AvgCostCents))
-	}
-	return total, nil
+	return a.svc.StockValueCents(ctx, branchID)
 }
 
 // tillDrawerAdapter satisfies gl's close pre flight drawer seam over the till
