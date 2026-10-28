@@ -297,6 +297,25 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 	return rs, true, nil
 }
 
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// whether a quote row the scope's keys can name still exists, for every
+// caller of the org at once. The org predicate alone, tombstone aware (a
+// withdrawn quote is gone for everyone), never the read rung the caller's
+// Load speaks: the gate may hide a key only for a live row a caller cannot
+// see, and a gone row keeps the bound answer (PR 640's rule).
+func (s *SyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || !looksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM quotes WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL)`,
+		id, f.OrgID).Scan(&present); err != nil {
+		return false, fmt.Errorf("quote: sync bound entity exists: %w", err)
+	}
+	return present, nil
+}
+
 // loadOrgHeld reads one quote under the org predicate alone, the collision
 // probe's read: the row is the caller's own org's fact, whatever branch it
 // sits on, so a client-chosen id taken inside the org answers ErrRowExists
