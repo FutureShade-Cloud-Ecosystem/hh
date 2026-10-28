@@ -399,6 +399,12 @@ export class FrontDoorApp extends HHElement {
       .card.starting .cta {
         text-decoration: underline;
       }
+      /* The starting card's word still says what is in flight, but it is
+         part of a disabled control: it takes the disabled ink, never the
+         brand one. */
+      .card.starting .cta {
+        color: var(--hh-disabled-ink);
+      }
       .chips {
         display: flex;
         flex-wrap: wrap;
