@@ -1013,8 +1013,13 @@ paths:
         absent as_of meaning now. Each vendor row carries its posted bills
         less supplier payments as of the instant, bucketed across the five
         aging buckets, and each open landed-cost payable appears on its own
-        row marked as landed cost. The aging total equals the net credit
-        balance of GL 2100 as of the same instant.
+        row marked as landed cost. A document counts from its posting
+        journal's effective instant, the GL's own late filing rule. The
+        aging is the subledger: it grows only by posted vendor bills and
+        open landed-cost payables, so a 2100 credit that is neither (a
+        MANUAL or ADJUSTMENT accrual, another module's posting) shows as a
+        tie difference against the net credit balance of GL 2100 as of the
+        same instant, never as an aging row.
       x-role: requireManager
       x-access:
         surfaces: [money-desk]

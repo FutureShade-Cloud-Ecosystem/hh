@@ -331,6 +331,12 @@ func (r *Repository) RecordBillPaymentTx(ctx context.Context, tx pgx.Tx, billID,
 }
 
 // APAging computes the open AP aging as of an instant in the dealer's house zone.
+// The aging IS the subledger: it grows only by posted vendor bills and open
+// landed-cost payables, so a 2100 credit that is neither (a MANUAL or ADJUSTMENT
+// accrual, another module's posting) shows as a tie difference against GL 2100's
+// net credit balance at the same instant, never as an aging row (FROM-PRINCIPAL
+// 122, 124, 125). A document counts from its posting journal's effective instant,
+// the GL's own late filing rule, and still ages by its document date.
 func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach) (APAgingPage, error) {
 	zone, err := houseday.Resolve(ctx, s.zone)
 	if err != nil {
