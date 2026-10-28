@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -796,8 +797,8 @@ func (s *Service) postCountAdjustment(ctx context.Context, tx pgx.Tx, productID,
 // SAME (clamped) newAvg is both upserted and used to derive absorbed, so absorbed == round(newAvg × on-hand) −
 // oldValue exactly, the ledger can never drift from the subledger it mirrors, and the un-absorbed remainder
 // (allocatedCadCents − absorbed) is the only value that falls to COGS.
-func (s *Service) capitalizeLanded(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (int64, error) {
-	absorbed, _, _, err := s.capitalizeLandedSnap(ctx, tx, productID, branchID, allocatedCadCents)
+func (s *Service) capitalizeLanded(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64, at time.Time, sourceRefID string) (int64, error) {
+	absorbed, _, _, err := s.capitalizeLandedSnap(ctx, tx, productID, branchID, allocatedCadCents, at, sourceRefID)
 	return absorbed, err
 }
 
@@ -812,7 +813,7 @@ func (s *Service) capitalizeLanded(ctx context.Context, tx pgx.Tx, productID, br
 // snapAvg is the TRUE pre-Apply price, NOT the round(oldAvg × on-hand)/on-hand re-derivation the forward math uses -
 // that re-derivation is exactly what the reversal cannot invert once on-hand < 1 quantizes oldValue to 0. Persisting
 // snapAvg and restoring it verbatim on Void is the only cent-exact inverse.
-func (s *Service) capitalizeLandedSnap(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (absorbed int64, snapAvg int64, hadCost bool, err error) {
+func (s *Service) capitalizeLandedSnap(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64, at time.Time, sourceRefID string) (absorbed int64, snapAvg int64, hadCost bool, err error) {
 	if allocatedCadCents == 0 {
 		return 0, 0, false, nil
 	}
@@ -944,9 +945,36 @@ func (s *Service) capitalizeLandedSnap(ctx context.Context, tx pgx.Tx, productID
 	if err := s.db().UpsertBranchCost(ctx, tx, productID, branchID, newAvg); err != nil {
 		return 0, 0, false, err
 	}
+	// The VALUE move this capitalization books (W2-5B): the exact cents the GL posts to 1200 for it, at the
+	// instant that GL journal carries, so the stock side and 1200 cut the event together.
+	if err := s.bookValueEvent(ctx, tx, productID, branchID, absorbed, at, sourceRefID); err != nil {
+		return 0, 0, false, err
+	}
 	// snapAvg is oldAvg, the exact price BEFORE this capitalization, so a later restoreLandedCost can reproduce it
 	// verbatim. hadCost tells the caller whether that snapshot was a real stored average or the 0 default.
 	return absorbed, oldAvg, hadCost, nil
+}
+
+// bookValueEvent records the VALUE ONLY move (0453, W2-5B) that carries the value a landed-cost
+// capitalization, a retro capitalization or a restore moved: the exact cents the GL posting books for that
+// event, at the instant the event's own GL journal carries. The close pre flight's stock tie unwinds it, so a
+// month that closed before the event excludes it from both sides of the tie and a month that closed after it
+// includes it on both sides. An event that moved no value books no row.
+func (s *Service) bookValueEvent(ctx context.Context, tx pgx.Tx, productID, branchID string, valueCents int64, at time.Time, sourceRefID string) error {
+	if valueCents == 0 {
+		return nil
+	}
+	reason := "landed cost capitalization"
+	if valueCents < 0 {
+		reason = "landed cost reversal"
+	}
+	_, err := s.db().InsertMove(ctx, tx, moveParams{
+		ProductID: productID, BranchID: branchID, MoveType: MoveValue,
+		QtyBase: 0, ValueCents: valueCents,
+		SourceType: "landed_cost", SourceRefID: sourceRefID, Reason: reason,
+		OccurredAt: at,
+	})
+	return err
 }
 
 // restoreLandedCost reverses a landed-cost capitalization on a Void by REMOVING EXACTLY the value Apply capitalized -
@@ -976,7 +1004,7 @@ func (s *Service) capitalizeLandedSnap(ctx context.Context, tx pgx.Tx, productID
 // value exactly on round(snapAvg×onHand), i.e. currentValue − absorbed == round(snapAvg×onHand), because that is by
 // construction what Apply computed absorbed as over this same on-hand. When it holds, restore snapAvg verbatim (drift 0);
 // otherwise on-hand differs, so use the absorbed-based drain.
-func (s *Service) restoreLandedCost(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64) (int64, error) {
+func (s *Service) restoreLandedCost(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64, at time.Time, sourceRefID string) (int64, error) {
 	if snapAvg < 0 {
 		snapAvg = 0 // a stored average is never negative; defend anyway so the restored WAC can never go negative
 	}
@@ -1027,6 +1055,9 @@ func (s *Service) restoreLandedCost(ctx context.Context, tx pgx.Tx, productID, b
 		if err := s.db().UpsertBranchCost(ctx, tx, productID, branchID, snapAvg); err != nil {
 			return 0, err
 		}
+		if err := s.bookValueEvent(ctx, tx, productID, branchID, delta, at, sourceRefID); err != nil {
+			return 0, err
+		}
 		return delta, nil
 	}
 	// On-hand differs (receipt or sale between Apply and Void): remove EXACTLY the capitalized value, no more. Clamp the
@@ -1054,6 +1085,9 @@ func (s *Service) restoreLandedCost(ctx context.Context, tx pgx.Tx, productID, b
 		return 0, fmt.Errorf("inventory: realized restore delta for product %s at branch %s exceeds integer cents", productID, branchID)
 	}
 	if err := s.db().UpsertBranchCost(ctx, tx, productID, branchID, newAvg); err != nil {
+		return 0, err
+	}
+	if err := s.bookValueEvent(ctx, tx, productID, branchID, delta, at, sourceRefID); err != nil {
 		return 0, err
 	}
 	return delta, nil

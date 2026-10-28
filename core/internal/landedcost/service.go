@@ -15,6 +15,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -189,6 +190,11 @@ func (s *Service) apply(ctx context.Context, id string) error {
 	total := lc.totalCadCents()
 	allocs := allocate(total, lc.AllocationBasis, lines, lc.ExcludeSpecialBuys)
 
+	// The event's instant, read ONCE: the stock ledger's value event for this capitalization and the GL
+	// journal for it both carry it, so the stock tie and account 1200 cut the same event at the same instant
+	// (W2-5B).
+	at := s.clock()
+
 	var capTotal, cogsTotal int64
 	var alreadyFinal bool
 	if err := s.repo.WithinTx(ctx, func(tx pgx.Tx) error {
@@ -214,7 +220,7 @@ func (s *Service) apply(ctx context.Context, id string) error {
 			return nil
 		}
 		for _, a := range allocs {
-			absorbed, snapAvg, hadCost, err := s.capitalizeSnap(ctx, tx, a.ProductID, lc.BranchID, a.AllocatedCadCents)
+			absorbed, snapAvg, hadCost, err := s.capitalizeSnap(ctx, tx, a.ProductID, lc.BranchID, a.AllocatedCadCents, at, id)
 			if err != nil {
 				return err
 			}
@@ -248,6 +254,7 @@ func (s *Service) apply(ctx context.Context, id string) error {
 		refID:  id,
 		memo:   "Landed cost capitalized (" + lc.AllocationBasis + ")",
 		branch: lc.BranchID,
+		at:     at,
 		lines:  capitalizeLines(capTotal, cogsTotal),
 	})
 	if err != nil {
@@ -320,6 +327,10 @@ func (s *Service) retroAdjust(ctx context.Context, id string) error {
 		plan[i] = planLine{a: a, onHandCad: onHandCad, soldCad: soldCad}
 	}
 
+	// The event's instant, read ONCE (W2-5B): the stock ledger's value event for this retro-adjustment
+	// and the GL journal for it both carry it.
+	at := s.clock()
+
 	var capTotal, cogsTotal int64
 	var alreadyFinal bool
 	if err := s.repo.WithinTx(ctx, func(tx pgx.Tx) error {
@@ -355,7 +366,7 @@ func (s *Service) retroAdjust(ctx context.Context, id string) error {
 		for _, p := range plan {
 			var absorbed int64
 			if p.onHandCad != 0 {
-				if absorbed, err = s.capitalize(ctx, tx, p.a.ProductID, lc.BranchID, p.onHandCad); err != nil {
+				if absorbed, err = s.capitalize(ctx, tx, p.a.ProductID, lc.BranchID, p.onHandCad, at, id); err != nil {
 					return err
 				}
 			}
@@ -392,6 +403,7 @@ func (s *Service) retroAdjust(ctx context.Context, id string) error {
 		refID:  id,
 		memo:   "Landed cost retro-adjustment (capitalize/sold-through split)",
 		branch: lc.BranchID,
+		at:     at,
 		lines:  lines2,
 	})
 	if err != nil {
@@ -426,6 +438,11 @@ func (s *Service) Void(ctx context.Context, id string) error {
 		capTotal += a.AllocatedCadCents
 		soldTotal += a.SoldThroughCadCents
 	}
+
+	// The event's instant, read ONCE (W2-5B): the stock ledger's value event for this reversal and the GL
+	// journal for it both carry it, so the stock tie and account 1200 cut the same reversal at the same
+	// instant.
+	at := s.clock()
 
 	// The reversing GL 1200 credit MUST be booked from what the subledger ACTUALLY reverses at void time, NOT
 	// from the stored capTotal absorbed at apply (L8 MAJOR). If stock sold between Apply and Void, the reversing
@@ -473,7 +490,7 @@ func (s *Service) Void(ctx context.Context, id string) error {
 				// restoreLandedCost returns the realized subledger delta (negative); accumulate its magnitude as the
 				// CR 1200 leg. It measures against the CURRENT on-hand, so it reverses only value still in stock; the
 				// sold-through portion rolls into the COGS credit below exactly as the negate path did.
-				reversed, err := s.restore(ctx, tx, a.ProductID, lc.BranchID, a.PreApplyAvgUnitCost, a.AllocatedCadCents)
+				reversed, err := s.restore(ctx, tx, a.ProductID, lc.BranchID, a.PreApplyAvgUnitCost, a.AllocatedCadCents, at, id)
 				if err != nil {
 					return err
 				}
@@ -481,7 +498,7 @@ func (s *Service) Void(ctx context.Context, id string) error {
 				continue
 			}
 			// Legacy fallback (rows applied before 0058 carry no snapshot): reverse by negating the absorbed amount.
-			reversed, err := s.capitalize(ctx, tx, a.ProductID, lc.BranchID, -a.AllocatedCadCents)
+			reversed, err := s.capitalize(ctx, tx, a.ProductID, lc.BranchID, -a.AllocatedCadCents, at, id)
 			if err != nil {
 				return err
 			}
@@ -519,6 +536,7 @@ func (s *Service) Void(ctx context.Context, id string) error {
 			refID:  id,
 			memo:   "Landed cost voided",
 			branch: lc.BranchID,
+			at:     at,
 			lines:  rev,
 		})
 		if err != nil {
@@ -547,30 +565,30 @@ func (s *Service) receivedLines(ctx context.Context, poID string) ([]ReceivedLin
 // capitalize applies cadCents of landed cost to a product's weighted-average cost through the inventory seam
 // and returns the value the subledger actually absorbed (see Capitalizer.CapitalizeLandedCostTx). A negative
 // cadCents reverses (Void).
-func (s *Service) capitalize(ctx context.Context, tx pgx.Tx, productID, branchID string, cadCents int64) (int64, error) {
+func (s *Service) capitalize(ctx context.Context, tx pgx.Tx, productID, branchID string, cadCents int64, at time.Time, sourceRefID string) (int64, error) {
 	if s.stock == nil {
 		return 0, clientErr(503, "landedcost: inventory seam not configured")
 	}
-	return s.stock.CapitalizeLandedCostTx(ctx, tx, productID, branchID, cadCents)
+	return s.stock.CapitalizeLandedCostTx(ctx, tx, productID, branchID, cadCents, at, sourceRefID)
 }
 
 // capitalizeSnap is capitalize plus the exact pre-Apply WAC snapshot (and whether a cost row existed) that Apply
 // persists on the allocation row for a cent-exact Void restore (L8 MAJOR).
-func (s *Service) capitalizeSnap(ctx context.Context, tx pgx.Tx, productID, branchID string, cadCents int64) (int64, int64, bool, error) {
+func (s *Service) capitalizeSnap(ctx context.Context, tx pgx.Tx, productID, branchID string, cadCents int64, at time.Time, sourceRefID string) (int64, int64, bool, error) {
 	if s.stock == nil {
 		return 0, 0, false, clientErr(503, "landedcost: inventory seam not configured")
 	}
-	return s.stock.CapitalizeLandedCostSnapTx(ctx, tx, productID, branchID, cadCents)
+	return s.stock.CapitalizeLandedCostSnapTx(ctx, tx, productID, branchID, cadCents, at, sourceRefID)
 }
 
 // restore reverses a capitalization on Void by removing EXACTLY `absorbed` (the value the allocation capitalized at
 // Apply), returning the realized subledger value delta (negative). The GENERAL cent-exact inverse for every intervening
 // scenario; snapAvg drives the drift-0 restore when on-hand is unchanged since Apply (L8 MAJOR).
-func (s *Service) restore(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64) (int64, error) {
+func (s *Service) restore(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64, at time.Time, sourceRefID string) (int64, error) {
 	if s.stock == nil {
 		return 0, clientErr(503, "landedcost: inventory seam not configured")
 	}
-	return s.stock.RestoreLandedCostTx(ctx, tx, productID, branchID, snapAvg, absorbed)
+	return s.stock.RestoreLandedCostTx(ctx, tx, productID, branchID, snapAvg, absorbed, at, sourceRefID)
 }
 
 // glJournal / glLine are the module-internal journal shape the postJournal helper maps onto the frozen
@@ -581,7 +599,10 @@ type glJournal struct {
 	refID  string
 	memo   string
 	branch string
-	lines  []glLine
+	// at is the instant the journal belongs to (W2-5B): the same instant the stock ledger's value event
+	// for the same event carries, so the two sides of the stock tie cut it together.
+	at    time.Time
+	lines []glLine
 }
 
 type glLine struct {
@@ -607,6 +628,7 @@ func (s *Service) postJournal(ctx context.Context, j glJournal) (string, error) 
 		IdempotencyKey: j.key,
 		Memo:           j.memo,
 		BranchID:       j.branch,
+		DocumentDate:   j.at,
 		Lines:          lines,
 	})
 }
@@ -630,6 +652,7 @@ func (s *Service) postJournalTx(ctx context.Context, tx pgx.Tx, j glJournal) (st
 		IdempotencyKey: j.key,
 		Memo:           j.memo,
 		BranchID:       j.branch,
+		DocumentDate:   j.at,
 		Lines:          lines,
 	})
 }

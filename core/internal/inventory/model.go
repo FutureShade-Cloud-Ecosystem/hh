@@ -23,13 +23,18 @@ const (
 	SaleDelivered    = "DELIVERED"
 )
 
-// stock_moves.move_type CHECK set (0005). The seams speak coarse IN/OUT; these are the ledger move types.
+// stock_moves.move_type CHECK set (0005, 0453). The seams speak coarse IN/OUT; these are the ledger move types.
 const (
 	MoveReceipt = "RECEIPT"
 	MoveShip    = "SHIP"
 	MoveCount   = "COUNT"
 	MoveAdjust  = "ADJUST"
 	MoveReturn  = "RETURN"
+	// MoveValue is the VALUE ONLY move (0453): a row that moves NO quantity and names NO location, and
+	// carries the SIGNED value a landed-cost capitalization, retro capitalization or restore moved. The
+	// close pre flight's stock tie unwinds it (W2-5B), so the stock side and account 1200 cut the event at
+	// the same instant. It is the only move type allowed to carry a zero quantity.
+	MoveValue = "VALUE"
 )
 
 // PO status vocabulary (0011 purchase_orders.status CHECK).
@@ -88,7 +93,8 @@ type poLine struct {
 	UnitCostCents int64
 }
 
-// moveParams is one stock_moves row the service composes (CAD; qty_base>0 with direction via from/to).
+// moveParams is one stock_moves row the service composes (CAD; qty_base>0 with direction via from/to, except
+// a VALUE move, which carries no quantity at all and names no location).
 type moveParams struct {
 	ProductID     string
 	BranchID      string
@@ -103,6 +109,10 @@ type moveParams struct {
 	SourceRefID   string
 	Reason        string
 	Metadata      map[string]any
+	// OccurredAt is the instant the move happened. The zero value rides the row's own DEFAULT (now()).
+	// A VALUE move carries the instant its GL journal carries, so the two sides of the stock tie cut the
+	// event together (W2-5B).
+	OccurredAt time.Time
 }
 
 // - persistence seam (store) -

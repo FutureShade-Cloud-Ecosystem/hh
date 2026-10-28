@@ -129,16 +129,18 @@ func (r *Repository) InsertMove(ctx context.Context, tx pgx.Tx, m moveParams) (s
 	const sql = `
 		INSERT INTO stock_moves
 			(product_id, from_location_id, to_location_id, qty_base, qty_entered, uom_entered,
-			 move_type, unit_cost_cents, value_cents, source_type, source_ref_id, reason, branch_id, metadata)
+			 move_type, unit_cost_cents, value_cents, source_type, source_ref_id, reason, branch_id, metadata,
+			 occurred_at)
 		VALUES ($1, $2, $3, $4, $4,
 			COALESCE(NULLIF($5,'')::citext, (SELECT base_uom FROM products WHERE id = $1)),
-			$6, $7, $8, $9, $10, $11, $12, COALESCE($13::jsonb, '{}'::jsonb))
+			$6, $7, $8, $9, $10, $11, $12, COALESCE($13::jsonb, '{}'::jsonb),
+			COALESCE($14::timestamptz, now()))
 		RETURNING id::text`
 	var id string
 	err := r.q(tx).QueryRow(ctx, sql,
 		m.ProductID, nullStr(m.FromLocation), nullStr(m.ToLocation), m.QtyBase, m.UOM,
 		m.MoveType, m.UnitCostCents, m.ValueCents, nullStr(m.SourceType), nullStr(m.SourceRefID),
-		m.Reason, m.BranchID, metaJSON).Scan(&id)
+		m.Reason, m.BranchID, metaJSON, nullTime(m.OccurredAt)).Scan(&id)
 	return id, err
 }
 
@@ -520,14 +522,15 @@ func (r *Repository) RecentMoves(ctx context.Context, productID, branchID string
 		limit = 100
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id::text, product_id::text, branch_id::text, qty_base, uom_entered::text, move_type,
-		       COALESCE(source_type,''), COALESCE(source_ref_id::text,''),
-		       COALESCE(unit_cost_cents,0),
-		       CASE WHEN to_location_id IS NOT NULL AND from_location_id IS NULL THEN 'IN' ELSE 'OUT' END,
-		       to_char(occurred_at, 'YYYY-MM-DD"T"HH24:MI:SSOF')
-		FROM stock_moves
-		WHERE product_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-		ORDER BY occurred_at DESC LIMIT $3`, productID, branchID, limit)
+		SELECT m.id::text, m.product_id::text, m.branch_id::text, m.qty_base, m.uom_entered::text, m.move_type,
+		       COALESCE(m.source_type,''), COALESCE(m.source_ref_id::text,''),
+		       COALESCE(m.unit_cost_cents,0),
+		       CASE WHEN m.move_type = 'VALUE' THEN 'VALUE'
+		            WHEN m.to_location_id IS NOT NULL AND m.from_location_id IS NULL THEN 'IN' ELSE 'OUT' END,
+		       to_char(m.occurred_at, 'YYYY-MM-DD"T"HH24:MI:SSOF')
+		FROM stock_moves m
+		WHERE m.product_id = $1 AND ($2 = '' OR m.branch_id = $2::uuid)
+		ORDER BY m.occurred_at DESC LIMIT $3`, productID, branchID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -657,6 +660,11 @@ func (r *Repository) StockValueCents(ctx context.Context, tx pgx.Tx, branchID st
 // recorded value move nothing. A zero asOf is NOW: no movement is after it. The month close
 // holds no transaction, and the year end's pre flight reads stock on its own connection by
 // design (W2-5, the close pre flight's month-end stock tie).
+//
+// A VALUE move (0453, W2-5B) is the one row that moves NO stock: it carries the SIGNED value a
+// landed-cost capitalization, retro capitalization or restore moved, at the instant its own GL
+// journal carries. It has no location, so the direction a quantity move takes cannot read it; the
+// sign is the value's own, and it is unwound exactly like any other movement.
 func (r *Repository) StockValueAsOfCents(ctx context.Context, tx pgx.Tx, asOf time.Time, branchID string) (int64, error) {
 	if r.pool == nil {
 		return 0, errNoDB
@@ -691,9 +699,12 @@ func (r *Repository) StockValueAsOfCents(ctx context.Context, tx pgx.Tx, asOf ti
 	// booked it at: a positive true-up credited 1200, so the exact figure the books moved is
 	// the GRNI minus the true-up key.
 	err = r.q(tx).QueryRow(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN m.to_location_id IS NOT NULL THEN 1 ELSE -1 END *
-			COALESCE((m.metadata->>'wac_value_delta_cents')::bigint,
-				COALESCE(m.value_cents, 0) - COALESCE((m.metadata->>'true_up_delta_cents')::bigint, 0))), 0)::bigint
+		SELECT COALESCE(SUM(CASE
+			WHEN m.move_type = 'VALUE' THEN COALESCE(m.value_cents, 0)
+			ELSE (CASE WHEN m.to_location_id IS NOT NULL THEN 1 ELSE -1 END) *
+				COALESCE((m.metadata->>'wac_value_delta_cents')::bigint,
+					COALESCE(m.value_cents, 0) - COALESCE((m.metadata->>'true_up_delta_cents')::bigint, 0))
+		  END), 0)::bigint
 		FROM stock_moves m
 		WHERE m.occurred_at > $1 AND ($2 = '' OR m.branch_id = $2::uuid)`, asOf, branchID).Scan(&moved)
 	if err != nil {
