@@ -25,8 +25,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
 
 import {
   auditSource,
@@ -882,14 +883,52 @@ const KNOWN_SHIM_INSTALL_SOURCES = new Set([
 const INSTALLER_SPECIFIER_MARK = 'install-global-dom-shim';
 const INSTALLER_NAME = 'installWindowOnGlobal';
 
-// The resolved module, not one spelling of its path: the bare package
-// subpath with or without the .js extension, and any relative spelling
-// that reaches the same file inside node_modules. The fail-closed branch
-// keys on this, so an extensionless or otherwise respelled specifier
-// cannot walk past the pin in a package with no import allow list of its
-// own. The workspace uses no `#` subpath imports, so no `#` spelling
-// exists to match.
-const DOM_SHIM_MODULE = /(?:^|\/)@lit-labs\/ssr\/lib\/dom-shim(?:\.js)?$/;
+// The resolved module, not one spelling of its path. The check reads the
+// specifier two ways and refuses on either. The spelling leg normalises
+// the specifier (query or hash stripped, trailing slashes dropped, the
+// .js extension dropped, case folded) and matches the package subpath
+// and any relative spelling that reaches the same file inside
+// node_modules; that leg catches spellings the resolver cannot even look
+// up on this filesystem (a query, a trailing slash, a case-folded path
+// on a case-sensitive disk). The resolution leg asks Node's own resolver
+// for the module the importing file would receive and compares its real
+// path with the canonical spelling's real path; that leg catches a copy,
+// a symlink or an aliased install the spelling cannot name. The
+// fail-closed branch keys on this, so an extensionless or otherwise
+// respelled specifier cannot walk past the pin in a package with no
+// import allow list of its own. The workspace uses no `#` subpath
+// imports, so no `#` spelling exists to match.
+const DOM_SHIM_CANONICAL = '@lit-labs/ssr/lib/dom-shim.js';
+const DOM_SHIM_NORMALISED = /(?:^|\/)@lit-labs\/ssr\/lib\/dom-shim$/;
+
+const normaliseModuleSpelling = (spec) => {
+  let s = spec.split(/[?#]/, 1)[0].toLowerCase();
+  while (s.endsWith('/')) s = s.slice(0, -1);
+  if (s.endsWith('.js')) s = s.slice(0, -'.js'.length);
+  return s;
+};
+
+let domShimResolvedPath = null;
+try {
+  domShimResolvedPath = realpathSync(
+    createRequire(join(PKG, 'index.js')).resolve(DOM_SHIM_CANONICAL),
+  ).toLowerCase();
+} catch {
+  domShimResolvedPath = null;
+}
+
+const isDomShimModule = (spec) => {
+  if (DOM_SHIM_NORMALISED.test(normaliseModuleSpelling(spec))) return true;
+  if (domShimResolvedPath === null) return false;
+  try {
+    return (
+      realpathSync(createRequire(join(PKG, 'index.js')).resolve(spec)).toLowerCase() ===
+      domShimResolvedPath
+    );
+  } catch {
+    return false;
+  }
+};
 
 const shimInstallOffences = (rel, records) => {
   const offences = [];
@@ -898,7 +937,7 @@ const shimInstallOffences = (rel, records) => {
     if (!known) {
       if (spec.includes(INSTALLER_SPECIFIER_MARK)) {
         offences.push(`${rel}: ${spec}`);
-      } else if (DOM_SHIM_MODULE.test(spec) && (names === null || names.includes(INSTALLER_NAME))) {
+      } else if (isDomShimModule(spec) && (names === null || names.includes(INSTALLER_NAME))) {
         offences.push(`${rel}: ${spec} (${names === null ? 'a name list the parser cannot read' : INSTALLER_NAME})`);
       } else if (names !== null && names.includes(INSTALLER_NAME)) {
         offences.push(`${rel}: ${spec} (${INSTALLER_NAME})`);
@@ -959,6 +998,9 @@ test('the shim inventory pin matches the resolved dom-shim module, not one spell
     [`import '@lit-labs/ssr/lib/dom-shim';`, 'a side effect import of the extensionless spelling'],
     [`import * as dom from '../../node_modules/@lit-labs/ssr/lib/dom-shim.js';`, 'a relative path into node_modules'],
     [`const dom = require('../../node_modules/@lit-labs/ssr/lib/dom-shim');`, 'a require of a relative path into node_modules'],
+    [`import * as dom from '@lit-labs/ssr/lib/dom-shim.js?raw';`, 'the .js spelling carrying a query'],
+    [`import * as dom from '@lit-labs/ssr/lib/dom-shim/';`, 'the .js spelling with a trailing slash'],
+    [`import * as dom from '@LIT-LABS/SSR/LIB/DOM-SHIM.JS';`, 'the case-folded spelling'],
   ];
   for (const [p, expected] of planted) {
     const offences = shimInstallOffences('packages/shell-chrome/src/plant.ts', importedSpecifiers(p, 'src/plant.ts'));
