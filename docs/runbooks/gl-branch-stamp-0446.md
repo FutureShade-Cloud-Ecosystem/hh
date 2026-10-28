@@ -4,8 +4,13 @@ Migration 0446 makes `gl_journal_lines.branch_id` NOT NULL. It backfills nothing
 
 On a box that still holds a journal line with no branch, the migration's pre check refuses in
 words, names every journal that carries one, and the migrate step fails. FB Deploy keeps the old
-container, the database is unchanged, and the box stays on the version it was already running. No
-line is stamped by the migration and no line is guessed at.
+container: a deploy whose new container fails its health check leaves the previous deploy serving,
+and that has been seen on a box whose boot failed. The database is unchanged, and the box stays on
+the version it was already running. No line is stamped by the migration and no line is guessed at.
+
+A box already past 0446 (on a later migration) still takes it: the migration runner checks each
+version on its own, by whether that version has been applied, not by whether it is newer than the
+newest one applied, so 0446 applies late on such a box.
 
 This runbook is what the operator does next.
 
@@ -45,7 +50,7 @@ The migration's words, on a box whose year end close carried two unstamped lines
 ```
 ERROR:  gl: 2 journal line(s) across 1 journal(s) carry no branch:
   journal 11111111-1111-4111-9111-111111111111 (source CLOSING, dated <YYYY-MM-DD>) carries 2 unstamped line(s)
-stamp each of those lines at its own branch and run this migration again. A pre 629 year end close is not backfilled to the head office and there is no reverse and rerun tool.
+stamp each of those lines at its own branch and run this migration again. A pre 629 year end close is not backfilled to the head office and there is no reverse and rerun tool. See docs/runbooks/gl-branch-stamp-0446.md.
 ```
 
 The count leads. Each journal follows with its id, its source and its date, and the number of
@@ -116,19 +121,14 @@ Before 629 the year end close consolidated the year's result across the branches
 journal, so its lines carry no branch of their own: there is no single branch to take, and the
 migration refuses to backfill them to the head office.
 
-The close journal is owned by the close, and the ledger's reverse route refuses it ("posted by
-the year end close, not by a person in the ledger"), so the reverse and the rerun are done by
-hand, under the Controller:
+There is no hand path that brings such a box to a count of `0`. A CLOSING journal cannot be
+reversed (the ledger's reverse route refuses it: "posted by the year end close, not by a person in
+the ledger"), a reversal would leave the original lines branchless anyway, and nothing voids a
+line. So no hand step is written here in advance.
 
-1. The Controller reverses the pre 629 close by hand: the reversing entry is written against the
-   close journal, at the branch the Controller names, and the close's own lines are voided out of
-   the books.
-2. The Controller reruns the year end close, per branch, so each branch's close journal carries
-   that branch.
-3. The count query above returns `0`, and the migration is run again.
-
-The Controller's own hands, on the box, with the count query's answer in front of them. No step
-of this is done by the migration, and no step of it is done by an automated backfill.
+A box holding such a close stops here. Run the journal query above, and send its answer, quoted,
+to the principal, who rules on that box from its own facts. The box takes 0446 only after that
+ruling.
 
 ## After the lines are stamped
 
@@ -142,7 +142,9 @@ source and its date, so the operator goes back to the two cases above rather tha
 ## The frozen boxes
 
 Frozen boxes (hh-demo-testers and staging) take 0446 only after Colton's CP-1 walk, under this
-runbook, with the count query run first by whoever holds that box's access.
+runbook, with the count query run first by whoever holds that box's access. A frozen box whose
+unstamped lines all sit on ADJUSTMENT journals is worked through the ADJUSTMENT rows of the table
+above; a frozen box that holds a CLOSING journal stops as the year end close section says.
 
 ## The finance box
 

@@ -9,7 +9,8 @@
 --
 -- Nothing is backfilled here. A pre 629 year end close is not backfilled to the head office, and
 -- there is no reverse and rerun tool: the lines are stamped at their own branch by whoever owns
--- that journal, and this migration is run again.
+-- that journal, and this migration is run again. The operator's runbook is
+-- docs/runbooks/gl-branch-stamp-0446.md.
 --
 -- The CHECK is added NOT VALID and then VALIDATEd, so the constraint lands without the long
 -- exclusive lock a validated ADD CONSTRAINT would take, and the VALIDATE is the moment the rule
@@ -54,7 +55,7 @@ BEGIN
              journals::text,
              E'\n',
              detail,
-             E'\nstamp each of those lines at its own branch and run this migration again. A pre 629 year end close is not backfilled to the head office and there is no reverse and rerun tool.');
+             E'\nstamp each of those lines at its own branch and run this migration again. A pre 629 year end close is not backfilled to the head office and there is no reverse and rerun tool. See docs/runbooks/gl-branch-stamp-0446.md.');
 END
 $$;
 
