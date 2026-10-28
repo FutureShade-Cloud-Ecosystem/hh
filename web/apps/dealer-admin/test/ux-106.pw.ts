@@ -92,3 +92,50 @@ test("the margin policy table shows no raw id, and fits a phone", async ({ page 
   const card = await page.locator(".card").first().evaluate((el) => el.scrollWidth - el.clientWidth);
   expect(card).toBeLessThanOrEqual(0);
 });
+
+// -- 4: the staff register at a phone's width -----------------------------------------
+
+test("the staff register's role selects fit their card at 390", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page);
+  const selects = page.locator('select[data-action="assign-role"]');
+  await expect(selects.first()).toBeVisible();
+  const count = await selects.count();
+  expect(count).toBeGreaterThan(0);
+  for (let i = 0; i < count; i += 1) {
+    const select = selects.nth(i);
+    // The select never overflows itself: the words inside it are the words
+    // the dealer reads.
+    const over = await select.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(over, `the role select ${i} overflows itself`).toBeLessThanOrEqual(0);
+    // And it never runs off the card it sits in.
+    const inside = await select.evaluate((el) => {
+      const card = el.closest("section.card");
+      if (card === null) return true;
+      const box = el.getBoundingClientRect();
+      const cardBox = card.getBoundingClientRect();
+      return box.right <= cardBox.right + 1 && box.left >= cardBox.left - 1;
+    });
+    expect(inside, `the role select ${i} runs off its card`).toBe(true);
+  }
+  // The words are whole: the audit found "General Manager" and
+  // "Platform Administr..." cut in half at the card's right edge.
+  await expect(selects.first()).toContainText("General Manager");
+  await expect(page.locator(".staff-table .chip").first()).toBeVisible();
+});
+
+// -- 1: one navigation, and the content on the first screen -----------------------------
+
+test("at 390 the pricing content starts on the first screen", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page);
+  await openSurface(page, "pricing", "[data-test=pr-margin-count]");
+
+  // One navigation control, and the section's own card on the first screen.
+  await expect(page.locator("[data-test=pr-tab-select]")).toBeVisible();
+  await expect(page.locator(".pr-tabs")).toBeHidden();
+  const card = page.locator(".card").first();
+  const box = await card.boundingBox();
+  expect(box?.y ?? 844).toBeLessThan(844);
+  await expect(card.locator("[data-test=pr-margin-count]")).toBeInViewport();
+});

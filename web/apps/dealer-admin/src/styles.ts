@@ -720,6 +720,75 @@ export const dealerStyles = css`
   .link-out-wrap {
     margin-top: var(--hh-s-8);
   }
+
+  /* -- the register at a phone's width ------------------------------------------------
+     UX-106: the register is seven columns, and at 390 the table scrolled
+     sideways under a cut column: the role select ran off the card's right
+     edge, so "General Manager" and "Platform Administrator" were cut in half.
+     Under 900 px each staff member is one card: the person, the role select
+     under the name at the card's own width, then the branches, the access,
+     the status and the last sign in as labelled pairs. The house's own
+     card-row pattern (the money desk's register). */
+  @media (max-width: 900px) {
+    .staff-table thead {
+      display: none;
+    }
+    .staff-table,
+    .staff-table tbody {
+      display: block;
+    }
+    .staff-table tr {
+      display: grid;
+      gap: var(--hh-s-8);
+      padding: var(--hh-s-12) 0;
+      border-bottom: 1px solid var(--hh-hairline);
+    }
+    .staff-table tbody td {
+      display: grid;
+      grid-template-columns: minmax(92px, 38%) minmax(0, 1fr);
+      gap: var(--hh-s-8);
+      padding: 0;
+      border: 0;
+      text-align: start;
+      white-space: normal;
+      align-items: start;
+      justify-items: start;
+    }
+    .staff-table tbody td::before {
+      content: attr(data-label);
+      color: var(--hh-text-dim);
+      font-size: var(--hh-s-12);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .staff-table tbody td.staff-person {
+      display: block;
+    }
+    .staff-table tbody td.staff-person::before {
+      content: none;
+    }
+    /* The role select: the label above it, the select under it, the card's
+       own width. The min-width is the whole fix: a select's own minimum is
+       the widest option, which is what ran off the edge. */
+    .staff-table tbody td.staff-role {
+      grid-template-columns: none;
+    }
+    .staff-table tbody td.staff-role .select {
+      width: 100%;
+      max-width: 100%;
+    }
+    .staff-table tbody td.staff-actions {
+      grid-template-columns: none;
+    }
+    .staff-table tbody td.staff-actions::before {
+      content: none;
+    }
+    .staff-table tbody td.staff-actions .link-out-wrap {
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+  }
   .auth-note {
     margin-bottom: var(--hh-s-16);
   }
