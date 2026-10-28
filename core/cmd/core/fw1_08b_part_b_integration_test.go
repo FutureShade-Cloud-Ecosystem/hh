@@ -156,3 +156,152 @@ func TestFW1_08b_PartB_HeadOfficeFallbackReadsTRTByCode(t *testing.T) {
 		}
 	})
 }
+
+// TestFW1_08b_PartB_Migration0446BranchCheck pins migration 0446 (FROM-PRINCIPAL 162, 176): a
+// CHECK that gl_journal_lines.branch_id is NOT NULL, added NOT VALID then VALIDATEd, whose pre
+// check counts the unstamped lines FIRST and refuses in words naming each branchless journal
+// (its id, source and date), so a box with an old close is never validated blind. The migration
+// backfills nothing: a pre 629 year end close is not backfilled to the head office, and there is
+// no reverse and rerun tool.
+func TestFW1_08b_PartB_Migration0446BranchCheck(t *testing.T) {
+	ctx := context.Background()
+	const checkName = "gl_journal_lines_branch_id_not_null"
+
+	// plantBranchlessJournal inserts one POSTED journal carrying two balanced branchless lines,
+	// the shape a pre 629 year end close left behind, and answers the journal's id.
+	plantBranchlessJournal := func(t *testing.T, pool *pgxpool.Pool) string {
+		t.Helper()
+		mustExec(t, ctx, pool, `
+			INSERT INTO fiscal_periods (year, month, status)
+			SELECT 2026, m, 'OPEN' FROM generate_series(1, 12) AS m
+			ON CONFLICT (year, month) DO NOTHING
+		`)
+		var jid string
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO gl_journals (fiscal_year, entry_no, period_id, source, memo, status, posted_at, idempotency_key)
+			VALUES (2026,
+			        (SELECT COALESCE(MAX(entry_no), 0) + 1 FROM gl_journals WHERE fiscal_year = 2026),
+			        (SELECT id FROM fiscal_periods WHERE year = 2026 AND month = 6),
+			        'MANUAL', 'fw1 08b part b branchless probe', 'POSTED', '2026-06-15 15:00:00+00',
+			        'fw108pb-branchless-' || gen_random_uuid()::text)
+			RETURNING id::text
+		`).Scan(&jid); err != nil {
+			t.Fatalf("plant the branchless journal: %v", err)
+		}
+		mustExec(t, ctx, pool, `
+			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, memo)
+			SELECT $1::uuid, 9001, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), 100, 'probe dr'
+			UNION ALL
+			SELECT $1::uuid, 9002, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), NULL, 'probe cr'
+			 WHERE NOT EXISTS (SELECT 1 FROM gl_journal_lines WHERE journal_id = $1::uuid AND line_no IN (9001, 9002))
+		`, jid)
+		// The credit leg needs its own row: the UNION above inserts the debit twice, so write the
+		// credit explicitly.
+		mustExec(t, ctx, pool, `
+			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, credit_cents, memo)
+			SELECT $1::uuid, 9002, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), 100, 'probe cr'
+		`, jid)
+		var nullLines int
+		if err := pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM gl_journal_lines WHERE journal_id = $1::uuid AND branch_id IS NULL`, jid,
+		).Scan(&nullLines); err != nil {
+			t.Fatalf("count the branchless probe lines: %v", err)
+		}
+		if nullLines != 2 {
+			t.Fatalf("the probe journal carries %d branchless lines, want 2", nullLines)
+		}
+		return jid
+	}
+
+	t.Run("a_fresh_box_carries_the_check_and_refuses_a_branchless_line", func(t *testing.T) {
+		pool := freshMigratedDB(t, "fw108pbchk")
+		var validated bool
+		err := pool.QueryRow(ctx, `
+			SELECT convalidated FROM pg_constraint
+			 WHERE conname = $1 AND conrelid = 'gl_journal_lines'::regclass
+		`, checkName).Scan(&validated)
+		if err != nil {
+			t.Fatalf("migration 0446's CHECK is missing on a fresh box: %v", err)
+		}
+		if !validated {
+			t.Fatal("migration 0446's CHECK landed NOT VALIDATED, want VALIDATEd")
+		}
+		jid := plantBranchlessJournal(t, pool)
+		_, err = pool.Exec(ctx, `
+			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, memo)
+			VALUES ($1::uuid, 9003, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), 100, 'the database must refuse this line')
+		`, jid)
+		if err == nil {
+			t.Fatal("want the database to refuse a journal line with no branch after migration 0446, got <nil>")
+		}
+	})
+
+	t.Run("an_upgraded_seeded_box_validates_clean_and_refuses_a_branchless_line", func(t *testing.T) {
+		pool := freshMigratedDBWithout(t, "fw108pbsd", "0446_gl_branch_stamp.sql")
+		body, err := seedFS.ReadFile("dibbits_seed.sql")
+		if err != nil {
+			t.Fatalf("reading the embedded seed: %v", err)
+		}
+		if _, err := pool.Exec(ctx, string(body)); err != nil {
+			t.Fatalf("applying the seed: %v", err)
+		}
+		var nullLines int
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM gl_journal_lines WHERE branch_id IS NULL`).Scan(&nullLines); err != nil {
+			t.Fatalf("count branchless lines on the seeded box: %v", err)
+		}
+		if nullLines != 0 {
+			t.Fatalf("the seeded box carries %d branchless lines, want 0 before 0446 validates", nullLines)
+		}
+		migration, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", "0446_gl_branch_stamp.sql"))
+		if err != nil {
+			t.Fatalf("read migration 0446: %v", err)
+		}
+		if _, err := pool.Exec(ctx, string(migration)); err != nil {
+			t.Fatalf("apply migration 0446 to the upgraded seeded box: %v", err)
+		}
+		var validated bool
+		if err := pool.QueryRow(ctx, `
+			SELECT convalidated FROM pg_constraint
+			 WHERE conname = $1 AND conrelid = 'gl_journal_lines'::regclass
+		`, checkName).Scan(&validated); err != nil || !validated {
+			t.Fatalf("the CHECK after 0446 on the upgraded seeded box: validated=%v err=%v, want true and no error", validated, err)
+		}
+		jid := plantBranchlessJournal(t, pool)
+		_, err = pool.Exec(ctx, `
+			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, memo)
+			VALUES ($1::uuid, 9003, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), 100, 'the database must refuse this line')
+		`, jid)
+		if err == nil {
+			t.Fatal("want the database to refuse a journal line with no branch after migration 0446, got <nil>")
+		}
+	})
+
+	t.Run("the_pre_check_refuses_naming_each_branchless_journal", func(t *testing.T) {
+		pool := freshMigratedDBWithout(t, "fw108pbref", "0446_gl_branch_stamp.sql")
+		jid := plantBranchlessJournal(t, pool)
+		migration, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", "0446_gl_branch_stamp.sql"))
+		if err != nil {
+			t.Fatalf("read migration 0446: %v", err)
+		}
+		_, applyErr := pool.Exec(ctx, string(migration))
+		if applyErr == nil {
+			t.Fatal("want migration 0446's pre check to refuse a box holding a branchless line, got success")
+		}
+		// The refusal names the branchless journal: its id, its source and its date.
+		for _, want := range []string{jid, "MANUAL", "2026-06-15"} {
+			if !strings.Contains(applyErr.Error(), want) {
+				t.Fatalf("the pre check's refusal does not name %q in: %v", want, applyErr)
+			}
+		}
+		var constraints int
+		if err := pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM pg_constraint
+			 WHERE conname = $1 AND conrelid = 'gl_journal_lines'::regclass
+		`, checkName).Scan(&constraints); err != nil {
+			t.Fatalf("count the CHECK after the refused migration: %v", err)
+		}
+		if constraints != 0 {
+			t.Fatal("the refused migration must leave no CHECK behind")
+		}
+	})
+}
