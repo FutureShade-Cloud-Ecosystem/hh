@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, offeredChips, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, offeredChips, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, reopenedInvoiceNos, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
 import { houseDay, resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
@@ -385,4 +385,29 @@ test("a parked credit says plainly that no money has moved", () => {
   assert.match(issued, /#CM-8/);
   assert.match(issued, /\$50\.00/);
   assert.ok(!/No money has moved/i.test(issued));
+});
+
+test("a bounced payment's reopened list names each invoice once, from the application rows", () => {
+  // One invoice, the application with the reversal the core writes beside it (PR 668):
+  // the invoice reads once, never "INV-X and INV-X".
+  assert.deepEqual(
+    reopenedInvoiceNos([
+      { invoice_no: "INV-1002", amount_cents: 96_000 },
+      { invoice_no: "INV-1002", amount_cents: -96_000 },
+    ]),
+    ["INV-1002"],
+  );
+  // A split across two invoices, each application with its reversal: both named, each once,
+  // in the history rows' own order.
+  assert.deepEqual(
+    reopenedInvoiceNos([
+      { invoice_no: "INV-1001", amount_cents: 48_250 },
+      { invoice_no: "INV-1002", amount_cents: 175 },
+      { invoice_no: "INV-1001", amount_cents: -48_250 },
+      { invoice_no: "INV-1002", amount_cents: -175 },
+    ]),
+    ["INV-1001", "INV-1002"],
+  );
+  // A payment nothing was applied to reopens nothing.
+  assert.deepEqual(reopenedInvoiceNos([]), []);
 });

@@ -589,7 +589,7 @@ func idempotencyKey(customerID string, req PayRequest) string {
 }
 
 // hasDuplicates reports whether ids contains a repeated value (a duplicate would collide on
-// the payment_allocations PK and double-count the balance).
+// the payment_allocations primary key and double-count the balance).
 func hasDuplicates(ids []string) bool {
 	seen := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
