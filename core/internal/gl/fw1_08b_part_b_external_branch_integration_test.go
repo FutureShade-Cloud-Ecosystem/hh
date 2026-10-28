@@ -46,8 +46,10 @@ func TestIntegration_FW1_08b_PartB_AnExternalJournalWithNoBranchStampsTheHeadOff
 	}
 
 	// The provider surface exactly as a bankrec or a landedcost poster calls it: the caller
-	// names no branch, so the service owns the answer.
-	key := fmt.Sprintf("fw1-08b-part-b-external-no-branch-%d", time.Now().UnixNano())
+	// names no branch, so the service owns the answer. The key rides the leg's one pinned clock
+	// (TestSuiteHasNoDatedTimeBombs): the cleanup below removes the journal, so a fixed key
+	// never meets a row from an earlier run.
+	key := fmt.Sprintf("fw1-08b-part-b-external-no-branch-%d", at.UnixNano())
 	id, err := svc.PostExternal(ctx, ExternalJournal{
 		Source:         SourceAdjustment,
 		IdempotencyKey: key,
