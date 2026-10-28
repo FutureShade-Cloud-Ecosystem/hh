@@ -70,7 +70,9 @@ test("the visibility and presentation classes render as words, never a raw enum"
 
 test("the policy history names who changed a knob, or somebody when the trail carries no name", () => {
   assert.equal(policyHistoryWho(""), "somebody");
-  assert.equal(policyHistoryWho("da110000-0000-4000-9000-000000000001"), "da110000");
+  // UX-106 round 3: an actor the trail cannot name reads as a word, never as
+  // the id's own first block.
+  assert.equal(policyHistoryWho("da110000-0000-4000-9000-000000000001"), "Unknown actor");
 });
 
 // -- the refusals --------------------------------------------------------------------------------------
