@@ -304,6 +304,23 @@ func (h *Handler) postBill(w http.ResponseWriter, r *http.Request, caller guards
 	httpx.WriteJSON(w, http.StatusOK, b)
 }
 
+// payBill records a supplier payment against one posted bill. The replay key
+// rides the Idempotency-Key header the way the AR payment doors carry it: one
+// key per press, judged server side, a re-press answering the first payment.
+func (h *Handler) payBill(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in PayBillRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	in.IdempotencyKey = r.Header.Get("Idempotency-Key")
+	b, err := h.svc.PayBill(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, b)
+}
+
 func (h *Handler) apAging(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	q := r.URL.Query()
 	page, err := h.svc.APAgingForCaller(r.Context(), q.Get("as_of"), q.Get("branch_id"))

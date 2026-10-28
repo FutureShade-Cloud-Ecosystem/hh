@@ -414,6 +414,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/purchasing/bills", g.RequireManager(h.staff(h.createBill)))
 	r.Handle("GET /api/v1/purchasing/bills/{id}", g.RequireStaff(h.staff(h.getBill)))
 	r.Handle("POST /api/v1/purchasing/bills/{id}/post", g.RequireManager(h.staff(h.postBill)))
+	// W2-9a round 2. Paying a bill moves money out the door: RequireManager like
+	// the post beside it, and the replay key rides the Idempotency-Key header.
+	r.Handle("POST /api/v1/purchasing/bills/{id}/payments", g.RequireManager(h.staff(h.payBill)))
 	r.Handle("GET /api/v1/purchasing/ap-aging", g.RequireManager(h.staff(h.apAging)))
 
 	r.Handle("GET /api/v1/purchasing/tolerance", g.RequireStaff(h.staff(h.getTolerance)))

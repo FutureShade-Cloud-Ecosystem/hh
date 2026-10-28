@@ -963,6 +963,45 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /api/v1/purchasing/bills/{id}/payments:
+    post:
+      operationId: purchasingPayBill
+      tags: [staff-purchasing]
+      x-addition: "W2-9a round 2: the vendor bill payment door over PayBill; the ERP keyed supplier payments by hand"
+      summary: Record a supplier payment against a posted vendor bill
+      description: >-
+        Idempotent on the required Idempotency-Key header: a re-press under the
+        same key returns the first payment and writes nothing. The payment's
+        journal is dated by paid_at, absent meaning now in the dealer's house
+        zone. A payment over the bill's open balance is refused with nothing
+        written, and a bill outside the caller's branch reach answers the same
+        404 as a missing bill.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingPayBillRequest"
+      responses:
+        "200":
+          description: The bill with its instalments after the payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingBillDetail"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /api/v1/purchasing/ap-aging:
     get:
       operationId: purchasingGetAPAging
@@ -2245,6 +2284,20 @@ components:
         accept_variance:
           type: boolean
           description: The recorded, deliberate acceptance a VARIANCE bill needs to post
+        note: { type: string }
+
+    PurchasingPayBillRequest:
+      type: object
+      required: [amount_cents]
+      properties:
+        amount_cents:
+          type: integer
+          format: int64
+          description: The payment amount in cents; the open balance caps it
+        paid_at:
+          type: string
+          format: date-time
+          description: The payment's own instant; absent means now in the dealer's house zone
         note: { type: string }
 
     PurchasingSetToleranceRequest:
