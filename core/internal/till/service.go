@@ -618,18 +618,23 @@ func (s *Service) recordMovement(ctx context.Context, in MovementInput, mt strin
 	// rows and the journal the outbox carries all date from this instant, never from the created_at
 	// column default, so a pinned clock reaches the books.
 	at := s.now()
+	var checkAccountTx func(ctx context.Context, tx pgx.Tx, code string) error
+	if resolved.AccountCode != "" {
+		checkAccountTx = s.checkAccountPostableTx
+	}
 	return s.store.InsertMovement(ctx, MovementRow{
-		TillSessionID: sess.ID,
-		MovementType:  mt,
-		Method:        method,
-		AmountCents:   in.AmountCents,
-		Reason:        in.Reason,
-		ReasonCodeID:  resolved.ID,
-		GLAccountCode: resolved.AccountCode,
-		Reference:     in.Reference,
-		CreatedBy:     caller.UserID,
-		CreatedAt:     at,
-		PaymentIDs:    slip,
+		TillSessionID:  sess.ID,
+		MovementType:   mt,
+		Method:         method,
+		AmountCents:    in.AmountCents,
+		Reason:         in.Reason,
+		ReasonCodeID:   resolved.ID,
+		GLAccountCode:  resolved.AccountCode,
+		CheckAccountTx: checkAccountTx,
+		Reference:      in.Reference,
+		CreatedBy:      caller.UserID,
+		CreatedAt:      at,
+		PaymentIDs:     slip,
 	})
 }
 

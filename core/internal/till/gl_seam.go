@@ -64,11 +64,28 @@ func (r *Repository) ActiveCounterCodesForAccount(ctx context.Context, accountCo
 	if r.pool == nil {
 		return nil, errNoDB
 	}
+	return activeCounterCodesForAccountOn(ctx, r.pool, accountCode)
+}
+
+// ActiveCounterCodesForAccountTx reads the LIVE counter reason codes that name the account on the
+// caller's transaction (W2-6b fix round 4, P3-1), under the account row's lock.
+func (r *Repository) ActiveCounterCodesForAccountTx(ctx context.Context, tx pgx.Tx, accountCode string) ([]gl.CounterAccountUse, error) {
+	if tx == nil {
+		return r.ActiveCounterCodesForAccount(ctx, accountCode)
+	}
+	return activeCounterCodesForAccountOn(ctx, tx, accountCode)
+}
+
+type counterCodeQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+func activeCounterCodesForAccountOn(ctx context.Context, q counterCodeQuerier, accountCode string) ([]gl.CounterAccountUse, error) {
 	accountCode = strings.TrimSpace(accountCode)
 	if accountCode == "" {
 		return nil, nil
 	}
-	rows, err := r.pool.Query(ctx,
+	rows, err := q.Query(ctx,
 		`SELECT code, branch_id::text
 		   FROM till_counter_reason_codes
 		  WHERE active AND gl_account_code = $1

@@ -513,10 +513,14 @@ type MovementRow struct {
 	// repoint of the code never moves a movement that has not posted yet. Empty means the movement
 	// names no code.
 	GLAccountCode string
-	Reference     string
-	CreatedBy     string
-	CreatedAt     time.Time
-	PaymentIDs    []string
+	// CheckAccountTx locks and verifies GLAccountCode inside the movement's transaction (W2-6b fix
+	// round 4, P3-1), so a movement recorded concurrently with DeactivateAccount cannot slip through
+	// between the deactivate guard's reads and its write.
+	CheckAccountTx func(ctx context.Context, tx pgx.Tx, code string) error
+	Reference      string
+	CreatedBy      string
+	CreatedAt      time.Time
+	PaymentIDs     []string
 }
 
 // SlipPayment is one named payment's read for a lodgement's deposit slip validation.

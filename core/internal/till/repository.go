@@ -399,6 +399,15 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 	if status != StatusOpen {
 		return clientErr(409, "till: movements require an OPEN session")
 	}
+	// Lock and verify the counter account inside the movement's transaction (W2-6b fix round 4, P3-1),
+	// through the till's seam to the chart of accounts, before the movement or its outbox event is
+	// written. DeactivateAccount takes the same lock on the account row in its own transaction, so a
+	// movement recorded concurrently with a deactivate cannot slip through.
+	if m.GLAccountCode != "" && m.CheckAccountTx != nil {
+		if err := m.CheckAccountTx(ctx, tx, m.GLAccountCode); err != nil {
+			return err
+		}
+	}
 	var movementID string
 	var movementAt time.Time
 	if err := tx.QueryRow(ctx, insertMovementSQL+` RETURNING id, created_at`,

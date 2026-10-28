@@ -250,6 +250,9 @@ type CounterAccountUseReader interface {
 	// ActiveCounterCodesForAccount answers the LIVE codes that name the account, with the branch each
 	// sits on. An empty answer means no live code names it, and the account may be retired.
 	ActiveCounterCodesForAccount(ctx context.Context, accountCode string) ([]CounterAccountUse, error)
+	// ActiveCounterCodesForAccountTx reads the LIVE codes on the caller's transaction (W2-6b fix
+	// round 4, P3-1), under the account row's lock.
+	ActiveCounterCodesForAccountTx(ctx context.Context, tx pgx.Tx, accountCode string) ([]CounterAccountUse, error)
 }
 
 // OutboxQueueReader is the outbox side of the close pre flight: posting events for the month that are

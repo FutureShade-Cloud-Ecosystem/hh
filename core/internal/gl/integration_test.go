@@ -23,6 +23,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/logging"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -99,6 +100,7 @@ func svcAt(pool *pgxpool.Pool, caller identity.StaffContext, at time.Time) *Serv
 		// The gl's own integration world carries no till module, so no live counter reason code names
 		// any account and the chart's retire guard (W2-6b fix round 3) has nothing to refuse.
 		WithCounterAccountUses(noLiveCounterCodes{}).
+		WithPostingQueue(notify.NewPgOutboxStore(pool)).
 		withCaller(func(_ context.Context) (identity.StaffContext, bool) { return caller, caller.UserID != "" }).
 		withClock(func() time.Time { return at })
 }

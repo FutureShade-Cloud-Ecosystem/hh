@@ -16,6 +16,8 @@ package till
 import (
 	"context"
 	"net/http"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // AccountPostabilityChecker is the till's consumer side seam: the chart's answer about an account code.
@@ -30,6 +32,10 @@ type AccountPostabilityChecker interface {
 	// inChart is false when the chart holds no account under that code at all. active is false when the
 	// chart holds one that has been turned off. Both false means the code names nowhere.
 	AccountPostable(ctx context.Context, code string) (inChart bool, active bool, err error)
+	// AccountPostableTx reads AccountPostable inside the caller's transaction, locking the account row
+	// (W2-6b fix round 4, P3-1), so a movement recorded concurrently with DeactivateAccount cannot slip
+	// through between the guard's reads and the deactivate's write.
+	AccountPostableTx(ctx context.Context, tx pgx.Tx, code string) (inChart bool, active bool, err error)
 }
 
 // checkAccountPostable refuses a reason code whose account the chart cannot take a posting on: an
@@ -43,6 +49,25 @@ func (s *Service) checkAccountPostable(ctx context.Context, code string) error {
 		return clientErr(http.StatusServiceUnavailable, "till: the chart of accounts is not wired, so the account %s was not checked", code)
 	}
 	inChart, active, err := s.accounts.AccountPostable(ctx, code)
+	if err != nil {
+		return err
+	}
+	if !inChart {
+		return unprocessable("till: the account %s is not in the chart", code)
+	}
+	if !active {
+		return unprocessable("till: the account %s is inactive", code)
+	}
+	return nil
+}
+
+// checkAccountPostableTx runs checkAccountPostable inside the movement's transaction, locking the
+// account row on tx (W2-6b fix round 4, P3-1).
+func (s *Service) checkAccountPostableTx(ctx context.Context, tx pgx.Tx, code string) error {
+	if s.accounts == nil {
+		return clientErr(http.StatusServiceUnavailable, "till: the chart of accounts is not wired, so the account %s was not checked", code)
+	}
+	inChart, active, err := s.accounts.AccountPostableTx(ctx, tx, code)
 	if err != nil {
 		return err
 	}

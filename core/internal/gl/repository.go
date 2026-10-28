@@ -116,7 +116,22 @@ func (r *Repository) ListActiveRules(ctx context.Context) ([]RuleRef, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
-	rows, err := r.pool.Query(ctx,
+	return listActiveRulesOn(ctx, r.pool)
+}
+
+func (r *Repository) ListActiveRulesTx(ctx context.Context, tx pgx.Tx) ([]RuleRef, error) {
+	if tx == nil {
+		return r.ListActiveRules(ctx)
+	}
+	return listActiveRulesOn(ctx, tx)
+}
+
+type ruleQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+func listActiveRulesOn(ctx context.Context, q ruleQuerier) ([]RuleRef, error) {
+	rows, err := q.Query(ctx,
 		`SELECT pr.event_type, pr.line_role, pr.account_code::text,
 		        (a.id IS NOT NULL AND a.is_active) AS ok
 		 FROM posting_rules pr
@@ -182,6 +197,23 @@ func (r *Repository) AccountByCode(ctx context.Context, code string) (Account, b
 	return a, true, nil
 }
 
+// AccountByCodeTx reads the account row on the caller's transaction with FOR UPDATE (W2-6b fix
+// round 4, P3-1), so DeactivateAccount and a till movement's record-time check serialise on the
+// account row.
+func (r *Repository) AccountByCodeTx(ctx context.Context, tx pgx.Tx, code string) (Account, bool, error) {
+	if tx == nil {
+		return r.AccountByCode(ctx, code)
+	}
+	a, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountCols+` FROM gl_accounts WHERE code = $1 FOR UPDATE`, code))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Account{}, false, nil
+	}
+	if err != nil {
+		return Account{}, false, fmt.Errorf("gl: account by code %q: %w", code, err)
+	}
+	return a, true, nil
+}
+
 func (r *Repository) InsertAccount(ctx context.Context, in CreateAccountInput) (Account, error) {
 	if r.pool == nil {
 		return Account{}, errNoDB
@@ -216,11 +248,42 @@ func (r *Repository) DraftLineCountForAccountCode(ctx context.Context, code stri
 	return n, nil
 }
 
+func (r *Repository) DraftLineCountForAccountCodeTx(ctx context.Context, tx pgx.Tx, code string) (int, error) {
+	if tx == nil {
+		return r.DraftLineCountForAccountCode(ctx, code)
+	}
+	var n int
+	err := tx.QueryRow(ctx,
+		`SELECT count(*) FROM gl_journal_lines l
+		 JOIN gl_journals j ON j.id = l.journal_id
+		 JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE a.code = $1 AND j.status = 'DRAFT'`, code).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("gl: draft line count for %q: %w", code, err)
+	}
+	return n, nil
+}
+
 func (r *Repository) SetAccountActive(ctx context.Context, code string, active bool) (Account, error) {
 	if r.pool == nil {
 		return Account{}, errNoDB
 	}
 	a, err := scanAccount(r.pool.QueryRow(ctx,
+		`UPDATE gl_accounts SET is_active = $2, updated_at = now() WHERE code = $1 RETURNING `+accountCols, code, active))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Account{}, errNotFound
+	}
+	if err != nil {
+		return Account{}, fmt.Errorf("gl: set account active: %w", err)
+	}
+	return a, nil
+}
+
+func (r *Repository) SetAccountActiveTx(ctx context.Context, tx pgx.Tx, code string, active bool) (Account, error) {
+	if tx == nil {
+		return r.SetAccountActive(ctx, code, active)
+	}
+	a, err := scanAccount(tx.QueryRow(ctx,
 		`UPDATE gl_accounts SET is_active = $2, updated_at = now() WHERE code = $1 RETURNING `+accountCols, code, active))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Account{}, errNotFound
