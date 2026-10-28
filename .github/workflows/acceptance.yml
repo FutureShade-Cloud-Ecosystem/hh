@@ -379,10 +379,19 @@ jobs:
       - name: Remove the box
         if: always()
         run: bash web/apps/money-desk/test/acceptance-real/box.sh down
-      - name: Upload the report, traces and screenshots of a red run
+      - name: Check the red run's artifact carries no key, state or subject
+        id: artifact_check
         if: failure()
+        run: bash web/apps/money-desk/test/acceptance-real/artifact-check.sh "$MDREAL_STATE/report" "$MDREAL_STATE/results"
+      - name: Upload the report, traces and screenshots of a red run
+        if: failure() && steps.artifact_check.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: money-desk-real-reports
-          path: ${{ runner.temp }}/mdreal-state
+          # The report and the results only. The rest of the state directory
+          # holds the run's private session key and the state that names it:
+          # neither ever leaves the runner.
+          path: |
+            ${{ runner.temp }}/mdreal-state/report
+            ${{ runner.temp }}/mdreal-state/results
           if-no-files-found: ignore
