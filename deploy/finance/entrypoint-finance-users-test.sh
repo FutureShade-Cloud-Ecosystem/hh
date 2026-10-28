@@ -80,6 +80,10 @@ case "$out" in
 	*"$CONTROLLER"*|*"$OTHER"*) fail "the disagreement refusal carries a value: $out" ;;
 	*) pass "the disagreement refusal carries no address" ;;
 esac
+case "$out" in
+	*@*) fail "the disagreement refusal carries an '@': $out" ;;
+	*) pass "the disagreement refusal carries no '@'" ;;
+esac
 
 # An entry of the wrong shape refuses, naming the variable and no value.
 out="$(derive "$CONTROLLER|fin-console-user-a|Financial Controller" unset)"
@@ -90,6 +94,10 @@ esac
 case "$out" in
 	*"$CONTROLLER"*) fail "the malformed entry refusal carries a value: $out" ;;
 	*) pass "the malformed entry refusal carries no address" ;;
+esac
+case "$out" in
+	*@*) fail "the malformed entry refusal carries an '@': $out" ;;
+	*) pass "the malformed entry refusal carries no '@'" ;;
 esac
 
 # No list at all leaves the allow list alone: the entrypoint's required name
@@ -189,6 +197,10 @@ esac
 case "$out" in
 	*"$CONTROLLER"*|*"$OTHER"*) fail "the entrypoint refusal carries a value: $out" ;;
 	*) pass "the entrypoint refusal carries no address" ;;
+esac
+case "$out" in
+	*@*) fail "the entrypoint refusal carries an '@': $out" ;;
+	*) pass "the entrypoint refusal carries no '@'" ;;
 esac
 case "$out" in
 	*"migrate"*|*"listening"*|*"finance-seed"*) fail "the entrypoint went past the checks: $out" ;;

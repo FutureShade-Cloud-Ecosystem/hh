@@ -7,14 +7,13 @@ package main
 // the box carries and the person an operator names are the same rule: a
 // role change demotes the person's other live grants, a run that wrote
 // nothing records no audit row, and a platform id held with another email
-// refuses, naming the entry by its email alone.
+// refuses, naming the entry by its position alone.
 //
 //	Run: DATABASE_URL='postgres://postgres:postgres@127.0.0.1:57743/postgres?sslmode=disable' \
 //	     go test -tags integration ./cmd/core/ -count=1 -run FinanceUserApply
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -136,12 +135,7 @@ func TestIntegration_FinanceUserApplyRefusesAHeldIdWithAnotherEmail(t *testing.T
 	if err == nil {
 		t.Fatal("a platform id held with another email must refuse")
 	}
-	if !strings.Contains(err.Error(), otherEmail) {
-		t.Fatalf("the refusal must name the entry by its email, got %v", err)
-	}
-	if strings.Contains(err.Error(), "fin-console-held-1") || strings.Contains(err.Error(), "Other Person") {
-		t.Fatalf("the refusal must carry the email alone, got %v", err)
-	}
+	finRefusalNamesPositionOnly(t, err, 1)
 
 	// The refusal rolled back: the row still holds the first address.
 	var rowEmail string

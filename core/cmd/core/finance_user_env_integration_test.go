@@ -5,7 +5,7 @@ package main
 // finance_user_env_integration_test.go, the finance box's user list applied
 // from the environment (W2-8): the command reads HH_FINANCE_USERS, provisions
 // every entry and revokes every finance person the list left out, all of it in
-// ONE transaction, and a bad entry refuses naming the entry by its email
+// ONE transaction, and a bad entry refuses naming the entry by its position
 // alone. The box is seeded by core finance-seed, the way the image seeds it.
 //
 //	Run: DATABASE_URL='postgres://postgres:postgres@127.0.0.1:57737/postgres?sslmode=disable' \
@@ -14,6 +14,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -175,7 +176,7 @@ func TestIntegration_FinanceUserApplyFromEnvRefusesABadEntry(t *testing.T) {
 	goodEmail := "fin-good-d@example.invalid"
 	good := finEnvEntry(goodEmail, "fin-console-user-d", "Good Person", "financial_controller")
 
-	// A role off the finance list refuses, naming the entry by its email
+	// A role off the finance list refuses, naming the entry by its position
 	// alone, and the good entry in the same list is rolled back with it.
 	badRole := finEnvEntry("fin-bad-e@example.invalid", "fin-console-user-e", "Bad Person", "general_manager")
 	env := finApplyEnv(dsn, []string{goodEmail, "fin-bad-e@example.invalid"}, good+";"+badRole)
@@ -183,12 +184,7 @@ func TestIntegration_FinanceUserApplyFromEnvRefusesABadEntry(t *testing.T) {
 	if err == nil {
 		t.Fatal("an entry with a role off the finance list must refuse")
 	}
-	if !strings.Contains(err.Error(), "fin-bad-e@example.invalid") {
-		t.Fatalf("the refusal must name the entry by its email, got %v", err)
-	}
-	if strings.Contains(err.Error(), "fin-console-user-e") || strings.Contains(err.Error(), "Bad Person") {
-		t.Fatalf("the refusal must carry the email alone, got %v", err)
-	}
+	finRefusalNamesPositionOnly(t, err, 2)
 	var n int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE platform_user_id = $1`, "fin-console-user-d").Scan(&n); err != nil {
 		t.Fatalf("the rolled back entry: %v", err)
@@ -197,22 +193,20 @@ func TestIntegration_FinanceUserApplyFromEnvRefusesABadEntry(t *testing.T) {
 		t.Fatalf("one transaction means the good entry rolled back with the bad one, found %d rows", n)
 	}
 
-	// An entry of the wrong shape refuses, naming the entry by its email.
+	// An entry of the wrong shape refuses, naming the entry by its position.
 	wrongShape := "fin-shape-f@example.invalid|fin-console-user-f"
 	env = finApplyEnv(dsn, []string{"fin-shape-f@example.invalid"}, wrongShape)
 	err, _ = finApply(t, env)
 	if err == nil {
 		t.Fatal("an entry of the wrong shape must refuse")
 	}
-	if !strings.Contains(err.Error(), "fin-shape-f@example.invalid") {
-		t.Fatalf("the refusal must name the entry by its email, got %v", err)
-	}
+	finRefusalNamesPositionOnly(t, err, 1)
 	if strings.Contains(err.Error(), "fin-console-user-f") {
-		t.Fatalf("the refusal must carry the email alone, got %v", err)
+		t.Fatalf("the refusal must carry the position alone, got %v", err)
 	}
 
 	// An email another platform subject already holds refuses, naming the
-	// entry by its email.
+	// entry by its position.
 	holder := finEnvEntry("fin-held-g@example.invalid", "fin-console-user-g", "Holder Person", "financial_controller")
 	env = finApplyEnv(dsn, []string{"fin-held-g@example.invalid"}, holder)
 	if err, _ := finApply(t, env); err != nil {
@@ -224,11 +218,9 @@ func TestIntegration_FinanceUserApplyFromEnvRefusesABadEntry(t *testing.T) {
 	if err == nil {
 		t.Fatal("an email another platform subject holds must refuse")
 	}
-	if !strings.Contains(err.Error(), "fin-held-g@example.invalid") {
-		t.Fatalf("the refusal must name the entry by its email, got %v", err)
-	}
+	finRefusalNamesPositionOnly(t, err, 1)
 	if strings.Contains(err.Error(), "fin-console-user-h") || strings.Contains(err.Error(), "Other Person") {
-		t.Fatalf("the refusal must carry the email alone, got %v", err)
+		t.Fatalf("the refusal must carry the position alone, got %v", err)
 	}
 
 	// No list at all refuses, naming the variable.
@@ -246,7 +238,7 @@ func TestIntegration_FinanceUserApplyFromEnvRefusesABadEntry(t *testing.T) {
 // emptying the list must revoke the last person, but only when the
 // entrypoint says the list was set and empty (--empty-list-revokes-all); a
 // hand run with no list still refuses. A platform id listed twice is refused
-// before anything is written, naming the repeated entry by its email only.
+// before anything is written, naming the repeated entry by its position only.
 func TestIntegration_FinanceUserApplyEmptyListAndDuplicates(t *testing.T) {
 	ctx := context.Background()
 	pool, dsn := freshMigratedBoxDB(t, "finuseremp")
@@ -268,9 +260,10 @@ func TestIntegration_FinanceUserApplyEmptyListAndDuplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	err, out := finApply(t, finApplyEnv(dsn, []string{lastEmail, dupEmail}, last+";"+dup))
-	if err == nil || !strings.Contains(err.Error(), dupEmail) || strings.Contains(err.Error(), "fin-console-user-last") {
-		t.Fatalf("a repeated platform id must refuse naming the repeated entry's email only, got %v (%s)", err, out)
+	if err == nil || strings.Contains(err.Error(), "fin-console-user-last") {
+		t.Fatalf("a repeated platform id must refuse naming the repeated entry's position only, got %v (%s)", err, out)
 	}
+	finRefusalNamesPositionOnly(t, err, 2)
 	var after int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log`).Scan(&after); err != nil {
 		t.Fatal(err)
@@ -282,9 +275,11 @@ func TestIntegration_FinanceUserApplyEmptyListAndDuplicates(t *testing.T) {
 	// The same person listed twice with two roles refuses too, rather than
 	// the last entry silently winning.
 	twice := finEnvEntry(lastEmail, "fin-console-user-last", "Last Person", "payables_receivables")
-	if err, out := finApply(t, finApplyEnv(dsn, []string{lastEmail}, last+";"+twice)); err == nil || !strings.Contains(err.Error(), lastEmail) || strings.Contains(err.Error(), "fin-console-user-last") {
-		t.Fatalf("a platform id listed twice must refuse naming its email only, got %v (%s)", err, out)
+	err, out = finApply(t, finApplyEnv(dsn, []string{lastEmail}, last+";"+twice))
+	if err == nil || strings.Contains(err.Error(), "fin-console-user-last") {
+		t.Fatalf("a platform id listed twice must refuse naming its position only, got %v (%s)", err, out)
 	}
+	finRefusalNamesPositionOnly(t, err, 2)
 	if roles := finLiveGrantRoles(t, ctx, pool, finOrgID(t, ctx, pool), "fin-console-user-last"); len(roles) != 1 || roles[0] != "financial_controller" {
 		t.Fatalf("a refused list must leave the person's role as it was, got %v", roles)
 	}
@@ -344,6 +339,20 @@ func TestIntegration_FinanceUserEmptyListRevokesOnlyAListTheEnvironmentCarries(t
 	}
 	if n := finLiveGrants(t, ctx, pool, finOrgID(t, ctx, pool), "fin-console-user-unset"); n != 1 {
 		t.Fatalf("the person must keep their grant when the command refuses, got %d live grants", n)
+	}
+}
+
+// finRefusalNamesPositionOnly is the no email rule on the boot apply's
+// refusals (the S3 read's P2 1): every refusal names the entry by its
+// position alone, never any field of it, and carries no '@' at all, because
+// the refusal is the container log and the log is kept and shown.
+func finRefusalNamesPositionOnly(t *testing.T, err error, position int) {
+	t.Helper()
+	if !strings.Contains(err.Error(), fmt.Sprintf("the entry at position %d", position)) {
+		t.Fatalf("the refusal must name the entry at position %d, got %v", position, err)
+	}
+	if strings.Contains(err.Error(), "@") {
+		t.Fatalf("the refusal must carry no address, got %v", err)
 	}
 }
 
