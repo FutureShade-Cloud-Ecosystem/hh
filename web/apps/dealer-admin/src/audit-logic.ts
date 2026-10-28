@@ -7,9 +7,15 @@
 // hardscapeos_dibbits, read only; see PROVENANCE.md). The actor cell's rule
 // carries over with one honest change: the HH core's audit projection
 // carries no resolved name, so the cell shows the actor's role label when
-// the row carries one, else the id's own block, never a blank.
+// the row carries one, and the house placeholder word when it carries only
+// an id, never a blank and never the id's own block (UX-106 round 3).
+// The entity's rule carries over with the second honest change (UX-106 round
+// 4): the type and the id are two things. The type opens out into words, and
+// the id stays whole under a caption that names it, so a dealer never reads
+// one glued string where a name and a handle belong.
 
 import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { UNKNOWN_ACTOR } from "./placeholders.js";
 
 /** One audit row as the list projects it. */
 export interface AuditEntryLike {
@@ -72,7 +78,9 @@ export function actorWords(entry: AuditEntryLike): string {
   const role = entry.actor_role ?? "";
   if (role !== "") return role.trim().toLowerCase().replace(/[_.-]+/g, " ").replace(/\s+/g, " ");
   const id = entry.actor_id ?? "";
-  if (id !== "") return id.slice(0, 8);
+  // UX-106 round 3: an actor the trail cannot name reads as the house
+  // placeholder word, never as the id's own first block.
+  if (id !== "") return UNKNOWN_ACTOR;
   return "No actor recorded";
 }
 
@@ -98,12 +106,34 @@ export function whenWords(iso: string, now: number | null = null): string {
   return `${part("month")} ${part("day")}, ${part("hour")}:${part("minute")} ${part("timeZoneName")}`;
 }
 
-/** The entity cell: the type and, when the row carries one, the id. */
-export function entityWords(entry: AuditEntryLike): string {
-  const type = entry.entity_type ?? "";
-  if (type === "") return "";
-  const id = entry.entity_id ?? "";
-  return id === "" ? type : `${type} / ${id}`;
+/** The closed value opened out into words: the house's own plain reading. */
+function plainly(value: string): string {
+  return value.trim().toLowerCase().replace(/[_.-]+/g, " ").replace(/\s+/g, " ");
+}
+
+/**
+ * The entity's type, as words.
+ *
+ * UX-106 round 4: the type and the id are two things. A cell that glues them
+ * ("pos.sale / 0f00...") makes a dealer read a code token where a name
+ * belongs, and the id loses the caption that says what it is. The type opens
+ * out the way every unknown closed value degrades (actorWords does the same
+ * for a role), so a person reads "pos sale".
+ */
+export function entityTypeWords(entry: AuditEntryLike): string {
+  return plainly(entry.entity_type ?? "");
+}
+
+/**
+ * The entity's own id: the record's handle.
+ *
+ * It stays whole. The trail is the evidence surface, this id is the handle the
+ * drawer's own button opens, and a handle is never blanked by a formatter.
+ * What changed is where it sits: under a caption that names it, in the
+ * monospace an id wears, never glued to the type.
+ */
+export function entityIdWords(entry: AuditEntryLike): string {
+  return (entry.entity_id ?? "").trim();
 }
 
 /** The empty filter set, as the list's own rule names it. */
