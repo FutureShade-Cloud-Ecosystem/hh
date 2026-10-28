@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"testing"
 	"time"
@@ -22,8 +23,6 @@ import (
 func TestFinWorldOpenAPReadPlantedBill(t *testing.T) {
 	ctx := context.Background()
 	dsn := finworldTestDSN(t)
-	loc := houseday.DefaultZone().Location()
-
 	pool, err := db.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatalf("connect finworld db: %v", err)
@@ -32,18 +31,22 @@ func TestFinWorldOpenAPReadPlantedBill(t *testing.T) {
 
 	finworldResetSchema(t, ctx, pool)
 	binPath := finworldBuildBinary(t)
-	day0 := time.Date(2025, time.October, 1, 12, 0, 0, 0, loc)
+	day0 := time.Date(2025, time.October, 1, 12, 0, 0, 0, houseday.DefaultZone().Location())
 	shift0 := finworldSetDayClock(t, finworldTestFaketimeFile(t), day0)
 	finworldRunSubprocess(t, binPath, dsn, shift0, nil, "migrate")
 	finworldRunSubprocess(t, binPath, dsn, shift0, nil, "seed")
+	// Day 0 links the staff and manager subjects to users; without it every route call is a 401.
+	finworldRunSubprocess(t, binPath, dsn, shift0, nil, "finworld", "day", "--day", "0")
 
 	h, err := newFinWorldHarness(ctx, pool)
 	if err != nil {
 		t.Fatalf("harness: %v", err)
 	}
 
-	svc := finworldPurchasingAPComposition(pool)
-	asOf := time.Date(2025, 10, 15, 12, 0, 0, 0, loc)
+	svc := finworldPurchasingComposition(pool, slog.Default(), nil)
+	// The bill's date is a payload column but the payment journal posts at the process clock, so the
+	// as-of instant has to sit past both.
+	asOf := time.Now().Add(time.Minute)
 	openBefore, err := svc.OpenAPCentsAsOf(ctx, asOf)
 	if err != nil {
 		t.Fatalf("open AP read before the plant: %v", err)
