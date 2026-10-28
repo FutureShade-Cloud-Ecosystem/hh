@@ -89,6 +89,15 @@ done
 [ "$CORE_SIGNIN_MODE" = console ] || \
 	fail "CORE_SIGNIN_MODE must be console on the finance box: the default build accepts no other mode"
 
+# The box's people are exactly the list in HH_FINANCE_USERS, and the sign in
+# allow list is derived from that list alone. A domain allow would let a
+# whole domain in past the list, so any non empty CORE_SIGNIN_EMAIL_DOMAINS
+# refuses the boot here, before any database call, naming the variable and
+# never a value. No override flag exists: the list is the only door.
+if [ -n "${CORE_SIGNIN_EMAIL_DOMAINS:-}" ]; then
+	fail "CORE_SIGNIN_EMAIL_DOMAINS must be unset on the finance box: the box's people are exactly the list in HH_FINANCE_USERS, and a domain allow would let a whole domain in past that list, so the boot refuses and no override flag exists"
+fi
+
 # Step 1: one database in both spellings. A differing pair is the operator
 # pointing the box's two readers at two databases: refused here, one line
 # naming the pair and never a value, before anything runs. One set name is
