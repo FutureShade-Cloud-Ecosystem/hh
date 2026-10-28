@@ -213,10 +213,26 @@ export const messagesStyles = css`
   .segs { display: flex; flex-wrap: wrap; gap: var(--hh-s-4); padding: var(--hh-s-4); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-card); background: var(--hh-card); width: fit-content; max-width: 100%; }
   .seg { min-height: 44px; padding: 0 var(--hh-s-16); white-space: nowrap; border-radius: var(--hh-radius-control); background: transparent; color: var(--hh-text); border: 1px solid transparent; }
   .seg[aria-pressed="true"] { background: var(--hh-text); color: var(--hh-page); font-weight: 700; }
+  /* A segment or a switch that is chosen and busy is a disabled control, and
+     the chosen rule above outranks the primitive's own disabled rule: the
+     block would keep a solid ink fill, which is the loudest thing on the
+     sheet. The pair is restated in the grey triple. */
+  .seg[aria-pressed="true"]:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    opacity: 1;
+  }
   .toggle-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); }
   .toggle-row .grow { flex: 1 1 220px; min-width: 0; }
   .switch { min-width: 76px; min-height: 44px; padding: 0 var(--hh-s-16); border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid var(--hh-control-line); font-weight: 600; }
   .switch[aria-pressed="true"] { background: var(--hh-text); color: var(--hh-page); font-weight: 700; }
+  .switch[aria-pressed="true"]:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    opacity: 1;
+  }
 
   .theme-btn { font: inherit; font-size: 13px; padding: 7px 12px; min-height: 0; border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid var(--hh-control-line); cursor: pointer; }
   .theme-btn:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
