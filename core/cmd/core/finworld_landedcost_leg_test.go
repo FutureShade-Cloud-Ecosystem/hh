@@ -106,6 +106,56 @@ func finworldWalkDays(t *testing.T, binPath, dsn string, throughDay int) {
 	}
 }
 
+// finworldDayShift pins the faketime clock to the through day's noon and returns the shift, so a
+// tie check subprocess reads the same simulated moment the day runs left.
+func finworldDayShift(t *testing.T, throughDay int) int64 {
+	t.Helper()
+	loc := houseday.DefaultZone().Location()
+	plan, err := FinWorldPlan(1, YearMonth{Year: 2026, Month: 9}, "Quarryfen Hardscape Supply")
+	if err != nil {
+		t.Fatalf("FinWorldPlan: %v", err)
+	}
+	for _, d := range finworldFlattenDays(plan) {
+		if d.Day.TradingDayIndex != throughDay {
+			continue
+		}
+		dayDate, err := time.ParseInLocation("2006-01-02", d.Day.Date, loc)
+		if err != nil {
+			t.Fatalf("parse trading day %s: %v", d.Day.Date, err)
+		}
+		return finworldSetDayClock(t, finworldTestFaketimeFile(t), time.Date(dayDate.Year(), dayDate.Month(), dayDate.Day(), 12, 0, 0, 0, loc))
+	}
+	t.Fatalf("no trading day %d in the plan", throughDay)
+	return 0
+}
+
+// finworldRunTieCheck runs core finworld check as a subprocess and returns its [PASS]/[FAIL] lines.
+// With allowTieFailure a failing tie reaches the caller instead of failing the test here.
+func finworldRunTieCheck(t *testing.T, binPath, dsn string, throughDay int, allowTieFailure bool) []string {
+	t.Helper()
+	shift := finworldDayShift(t, throughDay)
+	var out string
+	var err error
+	if allowTieFailure {
+		out, err = finworldRunSubprocessAllowErr(binPath, dsn, shift, nil, "finworld", "check", "--through-day", strconv.Itoa(throughDay))
+	} else {
+		out = finworldRunSubprocess(t, binPath, dsn, shift, nil, "finworld", "check", "--through-day", strconv.Itoa(throughDay))
+	}
+	lines := []string{}
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.HasPrefix(ln, "[PASS] ") || strings.HasPrefix(ln, "[FAIL] ") {
+			lines = append(lines, ln)
+		}
+	}
+	if err != nil && !allowTieFailure {
+		t.Fatalf("finworld check --through-day %d failed: %v\n%s", throughDay, err, out)
+	}
+	if len(lines) == 0 {
+		t.Fatalf("finworld check --through-day %d printed no tie lines: %s", throughDay, out)
+	}
+	return lines
+}
+
 func TestFinWorldDriver_LandedCostApplyVoidLeg(t *testing.T) {
 	ctx := context.Background()
 	dsn := finworldTestDSN(t)
@@ -174,6 +224,26 @@ func TestFinWorldDriver_LandedCostApplyVoidLeg(t *testing.T) {
 		t.Fatalf("void journal for %s: DR 2100=%d CR rest=%d, want both %d", sched.FirstVoidOfKey, voidDr2100, voidCr, sched.FirstVoidOfCad)
 	}
 
+	// The tie suite runs over the short world. The posting itself is exact, but the first void
+	// with sales since its apply leaves the stock tie a few cents short on this tree: the landed
+	// cost module clamps the void's CR 1200 at the allocation while the inventory restore's
+	// half-up per-unit quantization can drain up to onHand/2 cents more (the leg's own numbers:
+	// apply 138690 over 603 units, void drains 138840 over 520, clamp books 138690, drift 150).
+	// The stock line is recorded verbatim for the module lane; every other tie must pass.
+	var stockLine string
+	for _, ln := range finworldRunTieCheck(t, binPath, dsn, sched.FirstVoidDay, true) {
+		if strings.HasPrefix(ln, "[FAIL] ") {
+			if !strings.HasPrefix(ln, "[FAIL] stock_value_ties_to_GL_1200") {
+				t.Fatalf("non-stock tie refused on the apply and void leg: %s", ln)
+			}
+			stockLine = ln
+		}
+		t.Log(ln)
+	}
+	if stockLine != "" {
+		t.Logf("the stock tie refused after the void (the module's void clamp, not the posting): %s", stockLine)
+	}
+
 	// The routes are manager guarded: a frontline clerk is refused closed.
 	h, err := newFinWorldHarness(ctx, pool)
 	if err != nil {
@@ -236,4 +306,70 @@ func TestFinWorldDriver_APTieCoversLandedCost(t *testing.T) {
 		t.Fatalf("AP tie refused with a landed cost outstanding: %s", ap.Detail)
 	}
 	t.Logf("AP tie with a landed cost outstanding: %s", ap.Detail)
+}
+
+// TestFinWorldDriver_LandedCostCrossMonthLeg applies a landed cost in the month after its receipt
+// and proves the posting end to end. The tie suite runs with it: on this code, without W2-5b (661),
+// the stock tie reads both of its sides now, so it cannot see an earlier month at all; the leg
+// records its verbatim line either way and refuses only if any other tie fails.
+func TestFinWorldDriver_LandedCostCrossMonthLeg(t *testing.T) {
+	ctx := context.Background()
+	dsn := finworldTestDSN(t)
+
+	pool, err := db.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect finworld db: %v", err)
+	}
+	defer pool.Close()
+
+	finworldResetSchema(t, ctx, pool)
+	binPath := finworldBuildBinary(t)
+	sched := finworldReadLandedCostSchedule(t)
+
+	finworldWalkDays(t, binPath, dsn, sched.CrossMonthDay)
+
+	// The landed cost applied in the month after its receipt: the receipt landed in the plan's
+	// prior month and the document was created in the application month.
+	var lcStatus string
+	var lcCad int64
+	var lcCreatedAt, receiptAt time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT lc.status,
+		       lc.freight_cad_cents + lc.duty_cad_cents + lc.handling_cad_cents,
+		       lc.created_at,
+		       r.received_at
+		  FROM landed_costs lc
+		  JOIN purchase_orders d ON d.id = lc.po_id
+		  JOIN purchasing_pos p ON p.id::text = d.metadata->>'purchasing_po_id'
+		  JOIN purchasing_receipts r ON r.po_id = p.id
+		 WHERE lc.po_ref = $1`, sched.CrossMonthKey).Scan(&lcStatus, &lcCad, &lcCreatedAt, &receiptAt); err != nil {
+		t.Fatalf("read cross-month landed cost %s: %v", sched.CrossMonthKey, err)
+	}
+	if lcStatus != "POSTED" {
+		t.Fatalf("landed cost %s status = %q, want POSTED", sched.CrossMonthKey, lcStatus)
+	}
+	if lcCad != sched.CrossMonthCad {
+		t.Fatalf("landed cost %s cad charge = %d, want %d", sched.CrossMonthKey, lcCad, sched.CrossMonthCad)
+	}
+	receiptMonth := receiptAt.In(houseday.DefaultZone().Location()).Format("2006-01")
+	appliedMonth := lcCreatedAt.In(houseday.DefaultZone().Location()).Format("2006-01")
+	if receiptMonth != sched.CrossReceiptDt[:7] {
+		t.Fatalf("receipt of %s landed %s, want the plan's %s", sched.CrossMonthKey, receiptMonth, sched.CrossReceiptDt[:7])
+	}
+	if appliedMonth <= receiptMonth {
+		t.Fatalf("landed cost %s applied %s, want the month after its receipt %s", sched.CrossMonthKey, appliedMonth, receiptMonth)
+	}
+	t.Logf("landed cost %s: receipt %s, applied %s, charge %d cents", sched.CrossMonthKey, receiptMonth, appliedMonth, lcCad)
+
+	// The tie suite: the stock tie's line is recorded verbatim (661 pending), every other tie must pass.
+	for _, ln := range finworldRunTieCheck(t, binPath, dsn, sched.CrossMonthDay, true) {
+		name := ln
+		if idx := strings.Index(ln, ": "); idx >= 0 {
+			name = ln[len("[PASS] "):idx]
+		}
+		if strings.HasPrefix(ln, "[FAIL] ") && name != "stock_value_ties_to_GL_1200" {
+			t.Fatalf("non-stock tie refused on the cross-month leg: %s", ln)
+		}
+		t.Log(ln)
+	}
 }
