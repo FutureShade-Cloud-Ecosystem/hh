@@ -213,6 +213,13 @@ function declarations(body) {
 const DISABLED_FILL = 'var(--hh-disabled-fill)';
 const DISABLED_INK = 'var(--hh-disabled-ink)';
 const DISABLED_LINE = 'var(--hh-disabled-line)';
+// The house has two positions for a disabled edge, and the token file names
+// both: the base sheet's hairline (--hh-disabled-line, 1.51:1 on the charcoal
+// card) and the kit's own findable edge (--hh-control-line, 3:1 on the card,
+// which is what disabled borders wear in the kit's own style). A local rule
+// that pins a disabled control's findability keeps the findable edge; either
+// is the rule. A brand line is not.
+const CONTROL_LINE = 'var(--hh-control-line)';
 
 test('no shipped style fades a disabled control, and no disabled rule keeps a fill of its own', { timeout: 300_000 }, () => {
   const offenders = [];
@@ -226,7 +233,22 @@ test('no shipped style fades a disabled control, and no disabled rule keeps a fi
     for (const rule of ruleBlocks(src, lineAt)) {
       if (!isDisabledSelector(rule.selector)) continue;
       const selector = rule.selector.replace(/\s+/g, ' ');
-      for (const [prop, value] of declarations(rule.body)) {
+      const decls = declarations(rule.body);
+      // A rule that styles the control's own surface states the pair, so
+      // nothing can arrive through the cascade: a disabled rule that says
+      // nothing about its fill leaves the fill to whichever rule wins, and
+      // the winner is not always the base sheet. A rule that styles a piece
+      // of the control (a pseudo-element) is not asked for a fill.
+      const isPiece = /::[a-z-]+$/i.test(selector);
+      const saysFill = decls.some(([prop]) => prop === 'background' || prop === 'background-color');
+      const saysInk = decls.some(([prop]) => prop === 'color');
+      if (!isPiece && !saysFill) {
+        offenders.push(`${rel}:${rule.line} ${selector} -> no fill of its own`);
+      }
+      if (!isPiece && !saysInk) {
+        offenders.push(`${rel}:${rule.line} ${selector} -> no ink of its own`);
+      }
+      for (const [prop, value] of decls) {
         if (prop === 'opacity') {
           const num = parseFloat(value);
           if (Number.isFinite(num) && num < 1) {
@@ -243,7 +265,7 @@ test('no shipped style fades a disabled control, and no disabled rule keeps a fi
             offenders.push(`${rel}:${rule.line} ${selector} -> color: ${value}`);
           }
         } else if (prop === 'border' || prop === 'border-color') {
-          if (!value.includes(DISABLED_LINE)) {
+          if (!value.includes(DISABLED_LINE) && !value.includes(CONTROL_LINE)) {
             offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
           }
         }
@@ -254,9 +276,10 @@ test('no shipped style fades a disabled control, and no disabled rule keeps a fi
     offenders.sort(),
     [],
     `a shipped style breaks the disabled rule. A disabled control DROPS ITS FILL AND GOES GREY through\n` +
-      `the --hh-disabled-* token swap: the fill is ${DISABLED_FILL}, the ink is ${DISABLED_INK}, the line is\n` +
-      `${DISABLED_LINE}, and the opacity is 1. A fade is not a state, and a disabled control never keeps a\n` +
-      `brand fill:\n  ${offenders.join('\n  ')}`,
+      `the --hh-disabled-* token swap: the fill is ${DISABLED_FILL}, the ink is ${DISABLED_INK}, and the\n` +
+      `opacity is 1. A fade is not a state, and a disabled control never keeps a brand fill. The edge is\n` +
+      `either the disabled line (${DISABLED_LINE}) or the kit's findable edge (${CONTROL_LINE});\n` +
+      `a brand line is not:\n  ${offenders.join('\n  ')}`,
   );
 });
 
