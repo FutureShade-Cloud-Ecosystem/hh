@@ -23,7 +23,8 @@
 # LAST '@' (so a password may carry a raw '@'), the user and the password
 # split at the FIRST ':', a bracketed host carries its port after the ']',
 # and every parameter after the '?' is a libpq connection parameter whose
-# name is written into the service file as it stands.
+# name is decoded (libpq reads the URI's names decoded) and checked for a
+# line break, raw and encoded, before it is written into the service file.
 
 # The libpq service name the probe asks for. It names the service, not the
 # target, so it says nothing about the database.
@@ -205,7 +206,23 @@ pg_service_write() {
 				pg_value=""
 				;;
 		esac
-		case "$pg_key" in
+		# The name is read twice: once as it stands, once decoded. The raw
+		# check is the line break check the name had never had, and it comes
+		# first because the decoder reads line by line, so a raw newline
+		# would be folded away before a check after it could see it. The
+		# decoded check catches the percent encoded newline, and the decoded
+		# name is what the service file carries, because libpq reads the
+		# URI's parameter names decoded.
+		if ! pg_url_value_is_one_line "$pg_key"; then
+			PG_URL_ERROR="DATABASE_URL carries a line break in one of its parts"
+			return 1
+		fi
+		pg_key_decoded="$(pg_url_decode "$pg_key")"
+		if ! pg_url_value_is_one_line "$pg_key_decoded"; then
+			PG_URL_ERROR="DATABASE_URL carries a line break in one of its parts"
+			return 1
+		fi
+		case "$pg_key_decoded" in
 			service|servicefile)
 				PG_URL_ERROR="DATABASE_URL must not carry a service parameter (the probe reads one database, the one the URL names)"
 				return 1
@@ -219,7 +236,7 @@ pg_service_write() {
 			PG_URL_ERROR="DATABASE_URL carries a line break in one of its parts"
 			return 1
 		fi
-		pg_params="$pg_params$pg_key=$pg_value_decoded
+		pg_params="$pg_params$pg_key_decoded=$pg_value_decoded
 "
 	done
 
