@@ -98,15 +98,17 @@ That role needs one right the boot does not assume: **CREATEROLE**.
   and the migration that needs it: `the box's database role needs CREATEROLE:
   migration 0418 creates the assist roles`. Nothing is written on that path:
   no mark, no migration row, and the database still reads empty afterwards.
-- **The check is in the empty branch only**, because that is the only place
-  the box still has to create those roles. A database the box has already
-  migrated holds them, and the box never creates them again, so an existing
-  box keeps booting with a role that has no CREATEROLE, and a finance marked
-  database passes the box kind check with such a role.
+- **The check is in the empty branch only.** Only migrations that create
+  roles need the right: 0418 and 0427 today. A database the box has already
+  migrated holds those roles, so an existing box keeps booting with a role that
+  has no CREATEROLE, and a finance marked database passes the box kind check
+  with such a role. A later migration that creates a role would stop such a box
+  at its next boot (the migrate rolls that file back whole, so no data is
+  harmed, but the box stays down until the right is granted).
 - **How to grant it.** `ALTER ROLE <the box's database role> CREATEROLE;`, run
   as a role that may alter roles. A superuser already has the right. Grant it
-  before the first boot of a fresh database: a database the box has already
-  migrated does not need it again.
+  before the first boot of a fresh database, and keep it, or grant it again
+  before deploying an image that adds a migration that creates a role.
 
 ## The box's finance user list
 

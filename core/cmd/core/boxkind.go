@@ -145,11 +145,12 @@ func financeBoxEnvironmentLegs(getenv func(string) string, cfg config.Config) er
 // migrated: every migration before 0418 commits and 0418 rolls back whole,
 // and the box is left with a mark, a bookkeeping table and no seed.
 //
-// The check runs in the empty branch alone, because that is the only place
-// the box still has to create those roles: a database the box has already
-// migrated holds them, and the box never creates them again. So a finance
-// marked database boots with a role that has no CREATEROLE, and only a fresh
-// database is refused.
+// The check runs in the empty branch alone. Only migrations that create roles
+// need the right (0418 and 0427 today), and a database the box has already
+// migrated holds those roles, so a finance marked database boots with a role
+// that has no CREATEROLE, and only a fresh database is refused. A later
+// migration that creates a role would stop such a box at its migrate, which
+// rolls that file back whole; the deploy README says to keep the right.
 //
 // It refuses in words, naming the right and the migration that needs it, so
 // the operator is told what to change and not merely that something failed.
@@ -375,17 +376,17 @@ func financeBoxCheckRole(getenv func(string) string) error {
 func financeBoxStateRole(getenv func(string) string) error {
 	dsn, err := resolveOneshotDatabaseURL(getenv)
 	if err != nil {
-		return fmt.Errorf("finance-box-state: %w", err)
+		return err
 	}
 	printOneshotDatabaseTarget(os.Stderr, "finance-box-state", dsn)
 	pool, err := db.Connect(context.Background(), dsn)
 	if err != nil {
-		return fmt.Errorf("finance-box-state: cannot connect: %w", err)
+		return fmt.Errorf("cannot connect: %w", err)
 	}
 	defer pool.Close()
 	state, err := financeBoxDatabaseState(context.Background(), pool)
 	if err != nil {
-		return fmt.Errorf("finance-box-state: the database's shape could not be read: %w", err)
+		return fmt.Errorf("the database's shape could not be read: %w", err)
 	}
 	if state == financeBoxStateEmpty {
 		// The empty branch is the branch the entrypoint writes the
@@ -394,7 +395,7 @@ func financeBoxStateRole(getenv func(string) string) error {
 		// create the assist roles leaves nothing behind at all: no mark, no
 		// migration row, no half migrated database.
 		if err := financeBoxEmptyBranchCheck(context.Background(), pool); err != nil {
-			return fmt.Errorf("finance-box-state: %w", err)
+			return err
 		}
 	}
 	fmt.Println(state)
