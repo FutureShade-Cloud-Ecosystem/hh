@@ -17,7 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SCHEMA_DESCRIPTORS } from "../../../packages/api-client/src/testing.ts";
 import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
-import { IDS, OPENING_CENTS, statementMonth } from "./stub/bankrec-world.mjs";
+import { IDS, statementMonth } from "./stub/bankrec-world.mjs";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
@@ -141,7 +141,10 @@ function refused(res, status, fragment) {
 
 const { year: Y, month: M } = statementMonth();
 const period = `${Y}-${String(M).padStart(2, "0")}`;
-const CLOSING = OPENING_CENTS + 128_000 + 245_050 + 98_000 + 115_000 + 64_025 - 4_500 + 30_000;
+// The statement's closing balance in the stub world: the balance the ledger holds at the month end, read from the
+// ledger's own world ($25,025.00: the opening balances, the payment received and the till over/short). The same
+// figure the cut over form shows for the account.
+const CLOSING = 2_502_500;
 
 const lineByRef = async (description) => {
   const page = (await ctl("GET", `/api/v1/bankrec/lines?bank_account_id=${IDS.operating}&limit=50`)).json;
@@ -338,7 +341,7 @@ test("the rules answer a bare array, a new version retires the old, and the spec
   refused(await ctl("POST", "/api/v1/bankrec/rules", { code: "x", name: "x", spec: { kind: "guess" } }), 422, "spec.kind must be one of gateway_ref_exact, lodgement_ref_exact, descriptor_fuzzy");
 });
 
-test("a month opens with the ledger balance and the variance, a zero balance is replaced by the month's net, and a refresh follows the matching", async () => {
+test("a month opens with the ledger's balance and the variance, a zero balance is replaced by the month's net, and a refresh follows the lines", async () => {
   await reset();
   refused(await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: 13, statement_balance_cents: CLOSING }), 400, "valid year and month (1-12) are required");
   refused(await ctl("POST", "/api/v1/bankrec/reconciliations", { year: Y, month: M }), 400, "bank_account_id is required");
@@ -347,12 +350,16 @@ test("a month opens with the ledger balance and the variance, a zero balance is 
   holds("BankRecReconciliation", opened.json);
   assert.equal(opened.json.status, "OPEN");
   assert.equal(opened.json.statement_balance_cents, CLOSING);
+  // The ledger's balance, read from the ledger's own world: the GL world's posted journals on the account's code
+  // at the month end. The stub keeps no ledger of its own.
+  assert.equal(opened.json.gl_balance_cents, CLOSING);
   assert.equal(opened.json.variance_cents, opened.json.statement_balance_cents - opened.json.gl_balance_cents);
-  assert.equal(opened.json.variance_cents, 586_050 + 30_000, "before any match the ledger lacks the four auto lines and the wire");
+  assert.equal(opened.json.variance_cents, 0, "a statement that agrees with the ledger leaves no difference");
   // The core's placeholder: a typed zero is replaced by the month's line net.
   const zero = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: 0 });
   assert.equal(zero.json.id, opened.json.id, "opening the same month again refreshes it");
   assert.equal(zero.json.statement_balance_cents, 675_575);
+  assert.equal(zero.json.variance_cents, 675_575 - CLOSING, "a statement that does not agree with the ledger shows the whole difference");
   await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });
   const wire = await lineByRef("WIRE FROM CONTRACTOR");
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
@@ -362,7 +369,7 @@ test("a month opens with the ledger balance and the variance, a zero balance is 
   holds("BankRecReconciliationList", stale);
   assert.equal(stale[0].variance_cents, zero.json.variance_cents, "the stored variance is a snapshot until the month is opened again");
   const fresh = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING });
-  assert.equal(fresh.json.variance_cents, 0, "the cheque and the fee were booked by journals before matching, so the ledger reaches the statement once the rest is matched");
+  assert.equal(fresh.json.variance_cents, 0, "the ledger does not move with the matching: the statement that agrees with it balances the month");
 });
 
 test("a month signs off only with no unmatched line and a zero variance, in the core's order, and a signed off month is closed", async () => {
@@ -378,14 +385,16 @@ test("a month signs off only with no unmatched line and a zero variance, in the 
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000003" });
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: fee.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000004" });
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
-  // Every line is matched; the recomputed variance at completion decides (not the stale stored snapshot, P3-3).
-  // When the ledger moves after the matches, the recomputed variance refuses in dollars.
-  await fetch(`${base}/_stub/post-to-bank`, { method: "POST", body: JSON.stringify({ cents: -10_000 }) });
-  const moved = await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`);
-  refused(moved, 422, "the statement reads");
-  assert.match(moved.json.error, /^cannot complete, the statement reads \$[\d,]+\.\d{2} and the ledger reads \$[\d,]+\.\d{2} \(\$100\.00 apart\); they must agree/);
-  await fetch(`${base}/_stub/post-to-bank`, { method: "POST", body: JSON.stringify({ cents: 10_000 }) });
-  // Even without refreshing first, once the recomputed variance is zero the month signs off (P3-3).
+  // A statement that does not agree with the ledger refuses in dollars, the way the core does.
+  await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING + 23_075 });
+  const apart = await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`);
+  refused(apart, 422, "the statement reads");
+  assert.equal(
+    apart.json.error,
+    "cannot complete, the statement reads $25,255.75 and the ledger reads $25,025.00 ($230.75 apart); they must agree, refresh the figures and match what is open",
+  );
+  // The statement that agrees with the ledger signs the month off.
+  await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING });
   const signed = await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.id}/complete`);
   assert.equal(signed.status, 200);
   holds("BankRecReconciliation", signed.json);
@@ -397,7 +406,7 @@ test("a month signs off only with no unmatched line and a zero variance, in the 
   refused(await ctl("POST", "/api/v1/bankrec/reconciliations/not-a-uuid/complete"), 404, "not found");
 });
 
-test("a match explains its line: a group, a lodgement of another amount and a journal already used are refused, and a signed off month's match cannot be undone", async () => {
+test("a match explains its line: a group, a lodgement of another amount and a journal already used are refused", async () => {
   await reset();
   const wire = await lineByRef("WIRE FROM CONTRACTOR");
   const cheque = await lineByRef("CHEQUE DEPOSIT");
@@ -443,7 +452,7 @@ test("the walls: Money Desk work or above reads, counter and branch staff are re
   assert.equal((await call(IDS.payrec, "POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating })).status, 200);
 });
 
-test("the cut over door: the controller records the starting point on the account, and a signed off later month locks it", async () => {
+test("the cut over door: the controller records the starting point on the account, and it can be corrected while no month has signed off", async () => {
   await reset();
   const cutPath = `/api/v1/bankrec/accounts/${IDS.operating}/cutover`;
   const prior = M === 1 ? `${Y - 1}-12` : `${Y}-${String(M - 1).padStart(2, "0")}`;
@@ -520,7 +529,7 @@ test("the cut over door: the controller records the starting point on the accoun
   assert.match(laterPenny.json.error, new RegExp(`month ${period} is already completed`));
 });
 
-test("a derived month in the stub recomputes its statement balance from the lines at completion, and autoMatch skips a completed month", async () => {
+test("a derived month in the stub recomputes its statement balance from the lines, and it refuses against the ledger", async () => {
   await reset();
   await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });
   const wire = await lineByRef("WIRE FROM CONTRACTOR");
@@ -529,16 +538,15 @@ test("a derived month in the stub recomputes its statement balance from the line
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000003" });
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: fee.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000004" });
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
-  // Move the ledger to equal the month's line net (675,575) so a derived open (0) has zero variance.
-  await fetch(`${base}/_stub/post-to-bank`, { method: "POST", body: JSON.stringify({ cents: -OPENING_CENTS }) });
   const derived = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: 0 })).json;
   assert.equal(derived.statement_balance_cents, 675_575);
-  assert.equal(derived.variance_cents, 0);
+  // The month's lines do not agree with the ledger, so the difference is the whole gap.
+  assert.equal(derived.variance_cents, 675_575 - CLOSING);
   // Probe A: refreshing before the late import, taking no figure, keeps the month derived.
   const preRefreshed = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, refresh: true });
   assert.equal(preRefreshed.status, 201);
   assert.equal(preRefreshed.json.statement_balance_cents, 675_575);
-  // Import a late +$1,000.00 line into the month and match it to an existing journal (so the ledger stays at $6,755.75).
+  // Import a late +$1,000.00 line into the month and match it to an existing journal.
   await ctl("POST", "/api/v1/bankrec/imports", {
     bank_account_id: IDS.operating,
     profile_code: "rbc-default",
@@ -547,26 +555,23 @@ test("a derived month in the stub recomputes its statement balance from the line
   });
   const late = await lineByRef("LATE JOURNAL LINE");
   assert.equal((await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: late.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000099" })).status, 201);
-  // Completion after the pre-import refresh still re-derives the statement from the lines ($7,755.75 vs $6,755.75, $1,000.00 apart).
+  // The sign off reads the ledger and refuses in dollars: the month's net does not agree with it.
   const staleDerived = await ctl("POST", `/api/v1/bankrec/reconciliations/${derived.id}/complete`);
   refused(staleDerived, 422, "the statement reads");
   assert.equal(
     staleDerived.json.error,
-    "cannot complete, the statement reads $7,755.75 and the ledger reads $6,755.75 ($1,000.00 apart); they must agree, refresh the figures and match what is open",
+    "cannot complete, the statement reads $7,755.75 and the ledger reads $25,025.00 ($17,269.25 apart); they must agree, refresh the figures and match what is open",
   );
   // Refreshing after the late import updates the derived statement balance to $7,755.75.
   const postRefreshed = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, refresh: true });
   assert.equal(postRefreshed.json.statement_balance_cents, 775_575);
-  // Probe B: opening again with a typed statement balance ($6,755.75) sets derived to FALSE, so completion refuses against a $7,755.75 ledger.
-  const typedAgain = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: 675_575 });
-  assert.equal(typedAgain.json.statement_balance_cents, 675_575);
-  await fetch(`${base}/_stub/post-to-bank`, { method: "POST", body: JSON.stringify({ cents: 100_000 }) });
-  const probeB = await ctl("POST", `/api/v1/bankrec/reconciliations/${derived.id}/complete`);
-  refused(probeB, 422, "the statement reads");
-  assert.equal(
-    probeB.json.error,
-    "cannot complete, the statement reads $6,755.75 and the ledger reads $7,755.75 ($1,000.00 apart); they must agree, refresh the figures and match what is open",
-  );
+  // Probe B: opening again with a typed statement balance keeps that figure, not the month's net.
+  const typedAgain = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING });
+  assert.equal(typedAgain.json.statement_balance_cents, CLOSING);
+  const typedRefreshed = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, refresh: true });
+  assert.equal(typedRefreshed.json.statement_balance_cents, CLOSING, "a typed balance is kept across the refresh; only a derived one follows the lines");
+  // With the typed balance the statement agrees with the ledger, so the month signs off.
+  assert.equal((await ctl("POST", `/api/v1/bankrec/reconciliations/${derived.id}/complete`)).status, 200);
 
   // A completed month is skipped by autoMatch.
   const cardRec = (await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.fuelCard, year: Y, month: M, statement_balance_cents: 0 })).json;
@@ -622,7 +627,6 @@ test("FW1-04: outstanding items adjust the bank balance, sign off before month e
       outstanding_cheques: [{ journal_id: "7a1e0000-0000-4000-9000-000000000082", posted_at: `${period}-29T12:00:00Z`, memo: "Cheque 1044 to vendor", amount_cents: 12_000 }],
     }),
   });
-  await fetch(`${base}/_stub/post-to-bank`, { method: "POST", body: JSON.stringify({ cents: 18_000 }) });
   await ctl("POST", "/api/v1/bankrec/match", { mode: "auto", bank_account_id: IDS.operating });
   const wire = await lineByRef("WIRE FROM CONTRACTOR");
   const cheque = await lineByRef("CHEQUE DEPOSIT");
@@ -630,16 +634,23 @@ test("FW1-04: outstanding items adjust the bank balance, sign off before month e
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: cheque.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000003" });
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: fee.id, target_type: "JOURNAL", target_ref_id: "7a1e0000-0000-4000-9000-000000000004" });
   await ctl("POST", "/api/v1/bankrec/match", { mode: "manual", statement_line_id: wire.id, target_type: "PAYMENT", target_ref_id: IDS.paymentWire });
-  const opened = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING });
+  // The outstanding items adjust the bank balance: the statement carries the ledger's balance less them.
+  const opened = await ctl("POST", "/api/v1/bankrec/reconciliations", { bank_account_id: IDS.operating, year: Y, month: M, statement_balance_cents: CLOSING - 18_000 });
   assert.equal(opened.status, 201);
   holds("BankRecReconciliation", opened.json);
   assert.equal(opened.json.deposits_in_transit_cents, 30_000);
   assert.equal(opened.json.outstanding_cheques_cents, 12_000);
-  assert.equal(opened.json.adjusted_bank_balance_cents, CLOSING + 18_000);
+  assert.equal(opened.json.adjusted_bank_balance_cents, CLOSING);
+  assert.equal(opened.json.deposits_in_transit.length, 1);
+  assert.equal(opened.json.outstanding_cheques.length, 1);
+  assert.equal(opened.json.matched_lines_count, 7);
+  // The adjusted bank balance agrees with the ledger, so the difference is zero and the month signs off.
+  assert.equal(opened.json.gl_balance_cents, CLOSING);
   assert.equal(opened.json.variance_cents, 0);
   const done = await ctl("POST", `/api/v1/bankrec/reconciliations/${opened.json.id}/complete`);
   assert.equal(done.status, 200);
   holds("BankRecReconciliation", done.json);
+  assert.equal(done.json.status, "COMPLETED");
   assert.equal(done.json.matched_lines_count, 7);
   assert.equal(done.json.deposits_in_transit.length, 1);
   assert.equal(done.json.outstanding_cheques.length, 1);

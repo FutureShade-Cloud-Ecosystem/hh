@@ -4,7 +4,7 @@
 // payment or a journal; an undo that is confirmed and keeps its history; a month opened, held until it balances,
 // refused in words while lines are unmatched, then signed off and closed; the rules and a new version; every
 // refusal in words; the loading, empty and failed states; the phone; and the keyboard.
-import { test, expect, openBank, tab, resetStub, controllerHandoff, monthDay, priorMonth, cutoverDay, OPERATING, OPERATING_ID, FUEL_CARD, WIRE_PAYMENT, FEE_JOURNAL, CHEQUE_JOURNAL, CLOSING } from "./bankrec-helpers.js";
+import { test, expect, openBank, tab, resetStub, controllerHandoff, monthDay, priorMonth, cutoverDay, OPERATING, OPERATING_ID, FUEL_CARD, WIRE_PAYMENT, FEE_JOURNAL, CHEQUE_JOURNAL, CLOSING, CLOSING_WITH_OUTSTANDING } from "./bankrec-helpers.js";
 import { receivablesHandoff } from "./helpers.js";
 
 const row = (page: import("@playwright/test").Page, text: string) => page.locator("[data-line-id]").filter({ hasText: text });
@@ -209,17 +209,19 @@ test("an undo is confirmed, returns the line to unmatched and keeps the history"
 test("a month opens with the difference in words, sign off is held until it is zero, and the refusal for unmatched lines is in words", async ({ page, request }) => {
   await openBank(page, request);
   const prior = priorMonth();
-  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);
+  // A statement that does not agree with the ledger: the difference is in words, and the sign off is held.
+  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill("25,255.75");
   await page.getByRole("button", { name: "Open month" }).click();
   await expect(page.locator("[data-notice]")).toContainText(`${prior.words} is open`);
   const month = page.locator("[data-recon-id]");
   await expect(month).toContainText(prior.words);
   await expect(month).toContainText("$25,255.75");
-  await expect(month).toContainText("Off by $6,160.50");
+  await expect(month).toContainText("Off by $230.75");
   await expect(month).toContainText("Open");
   await expect(month.getByRole("button", { name: "Sign off" })).toBeDisabled();
   await expect(month.locator("[data-held]")).toContainText("Held: the statement and the ledger must agree first.");
-  // Match what can be matched, then refresh: the figures move, the month is balanced, two lines are still unmatched.
+  // Match what can be matched. The ledger does not move with the matching: the difference stands until the
+  // statement agrees with it.
   await tab(page, "match");
   await page.getByRole("button", { name: "Run auto match" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Auto match paired 4 lines");
@@ -228,9 +230,13 @@ test("a month opens with the difference in words, sign off is held until it is z
   await page.locator("[data-line-panel]").getByRole("button", { name: "Match line" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Matched.");
   await tab(page, "accounts");
-  // Until it is refreshed the month still shows the old difference.
-  await expect(page.locator("[data-recon-id]")).toContainText("Off by $6,160.50");
+  await expect(page.locator("[data-recon-id]")).toContainText("Off by $230.75");
   await page.locator("[data-recon-id]").getByRole("button", { name: "Refresh figures" }).click();
+  await expect(page.locator("[data-recon-id]")).toContainText("Off by $230.75");
+  // Open the month with the balance that agrees with the ledger: the month is balanced, and two lines are still
+  // unmatched, so the sign off is held for that reason instead.
+  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);
+  await page.getByRole("button", { name: "Open month" }).click();
   await expect(page.locator("[data-recon-id]")).toContainText("Balanced");
   const signOff = page.locator("[data-recon-id]").getByRole("button", { name: "Sign off" });
   await expect(signOff).toBeEnabled();
@@ -573,11 +579,11 @@ test("on a phone the tables give way to cards and no screen scrolls the page sid
   await openBank(page, request);
   const sideways = () => page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(await sideways()).toBe(false);
-  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);
+  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill("25,255.75");
   await page.getByRole("button", { name: "Open month" }).click();
   await expect(page.locator("[data-recon-card]")).toBeVisible();
   await expect(page.locator("[data-recon-id]")).toBeHidden();
-  await expect(page.locator("[data-recon-card]")).toContainText("Off by $6,160.50");
+  await expect(page.locator("[data-recon-card]")).toContainText("Off by $230.75");
   expect(await sideways()).toBe(false);
   await tab(page, "match");
   await expect(page.locator("[data-line-card]")).toHaveCount(7);
@@ -631,7 +637,6 @@ test("a month with a deposit in transit and an outstanding cheque shows the reco
       outstanding_cheques: [{ journal_id: "7a1e0000-0000-4000-9000-000000000082", posted_at: `${monthDay(29)}T12:00:00Z`, memo: "Cheque 1044 to vendor", amount_cents: 12_000 }],
     },
   });
-  await request.post("/_stub/post-to-bank", { data: { cents: 18_000 } });
   await tab(page, "match");
   await page.getByRole("button", { name: "Run auto match" }).click();
   for (const [text, how] of [
@@ -652,15 +657,15 @@ test("a month with a deposit in transit and an outstanding cheque shows the reco
   }
   await tab(page, "accounts");
   await expect(page.locator("[data-month-note]")).toContainText("adjusted bank balance less the ledger");
-  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING);
+  await page.getByRole("textbox", { name: "Closing balance on the statement" }).fill(CLOSING_WITH_OUTSTANDING);
   await page.getByRole("button", { name: "Open month" }).click();
-  await expect(page.locator("[data-recon-id] [data-row-adjusted]")).toHaveText("$25,435.75");
+  await expect(page.locator("[data-recon-id] [data-row-adjusted]")).toHaveText("$25,025.00");
   const report = page.locator("[data-recon-report]");
-  await expect(report.locator("[data-report-statement]")).toHaveText("$25,255.75");
+  await expect(report.locator("[data-report-statement]")).toHaveText("$24,845.00");
   await expect(report.locator("[data-report-dit]")).toHaveText("$300.00");
   await expect(report.locator("[data-report-oc]")).toHaveText("$120.00");
-  await expect(report.locator("[data-report-adjusted]")).toHaveText("$25,435.75");
-  await expect(report.locator("[data-report-gl]")).toHaveText("$25,435.75");
+  await expect(report.locator("[data-report-adjusted]")).toHaveText("$25,025.00");
+  await expect(report.locator("[data-report-gl]")).toHaveText("$25,025.00");
   await expect(report.locator("[data-report-matched]")).toHaveText("7");
   await expect(report.locator("[data-dit-list]")).toContainText("Month-end deposit in transit · $300.00");
   await expect(report.locator("[data-oc-list]")).toContainText("Cheque 1044 to vendor · $120.00");

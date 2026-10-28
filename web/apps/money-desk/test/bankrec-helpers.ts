@@ -12,8 +12,13 @@ export const FUEL_CARD = "Fleet fuel card (demo)";
 export const WIRE_PAYMENT = "b9000000-0000-4000-8000-000000000004";
 export const FEE_JOURNAL = "JE-0004 · Till over/short";
 export const CHEQUE_JOURNAL = "JE-0003 · Payment received";
-// The statement's closing balance in the stub world: the opening balance plus every line of the month.
-export const CLOSING = "25,255.75";
+// The statement's closing balance in the stub world: the balance the ledger holds at the month end, which the
+// GL world carries ($25,025.00: the opening balances, the payment received and the till over/short). A statement
+// that says this agrees with the ledger, so the month's difference is zero.
+export const CLOSING = "25,025.00";
+// The same balance, less the outstanding items the month carries ($300.00 in transit, $120.00 outstanding), so
+// the adjusted bank balance agrees with the ledger.
+export const CLOSING_WITH_OUTSTANDING = "24,845.00";
 
 /** The month before today, the way the desk and the stub cut it from the host's own clock. */
 export function priorMonth(): { year: number; month: number; words: string } {
