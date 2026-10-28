@@ -10,8 +10,9 @@
 // post takes the channel's lock first and stamps itself with the clock it
 // holds that lock at; the read takes the same lock (FOR UPDATE) before it
 // writes the cursor. A post that commits before the cursor is stamped before
-// it, so it reads as unread. A post that comes after waits for the lock and
-// is stamped after the cursor.
+// it, so it reads as READ (the badge stays dark for it: the read came after
+// it). A post that comes after waits for the lock and is stamped after the
+// cursor, so the badge lights for it.
 //
 // Every leg here runs against the migrated and seeded database (the same
 // DATABASE_URL the integration suite uses). The names are avoided on purpose:

@@ -46,6 +46,36 @@ type Repository struct {
 
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
 
+// syncQualifies is the derived-membership predicate for one channel `ch` and one user. Bind order is
+// FIXED so the seat, the prune and the room set share ONE definition: $1 = userID, $2 = isGlobal
+// (bool).
+//   - GLOBAL auto_scope: any ACTIVE staff;
+//   - BRANCH auto_scope: the user is GLOBAL-scoped (reaches every branch) OR holds a grant for
+//     ch.branch_id (mirrors StaffContext.CanAccessBranch);
+//   - auto_role narrows to a role code ('*'/NULL = any role);
+//   - member_roles (the money rooms, 0390) narrows to a list of role codes, NULL = no list.
+const syncQualifies = `
+		ch.auto_scope IS NOT NULL
+		AND ch.is_archived = FALSE
+		AND (
+		      ch.auto_scope = 'GLOBAL'
+		   OR (ch.auto_scope = 'BRANCH' AND ($2 OR EXISTS (
+		         SELECT 1 FROM user_branch_grants g
+		         WHERE g.user_id = $1 AND g.branch_id = ch.branch_id)))
+		    )
+		AND (
+		      ch.auto_role IS NULL OR ch.auto_role = '*'
+		   OR EXISTS (
+		         SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+		         WHERE ur.user_id = $1 AND ro.code = ch.auto_role)
+		    )
+		AND (
+		      ch.member_roles IS NULL
+		   OR EXISTS (
+		         SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+		         WHERE ur.user_id = $1 AND ro.code::text = ANY(ch.member_roles))
+		    )`
+
 // - Derived membership (FR-1) -
 // SyncMembership materializes the FR-1 role/branch rule into msg_members for one user. It runs on
 // every list-my-channels resolve so a role/branch change takes effect immediately (identity is the
@@ -95,34 +125,40 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 	}
 	isGlobal := scope == "GLOBAL"
 
-	// qualifies is the derived-membership predicate for one channel `ch` and this user. Bind order is
-	// FIXED so insert + prune can share ONE definition: $1 = userID, $2 = isGlobal (bool).
-	//   - GLOBAL auto_scope: any ACTIVE staff;
-	//   - BRANCH auto_scope: the user is GLOBAL-scoped (reaches every branch) OR holds a grant for
-	//     ch.branch_id (mirrors StaffContext.CanAccessBranch);
-	//   - auto_role narrows to a role code ('*'/NULL = any role);
-	//   - member_roles (the money rooms, 0390) narrows to a list of role codes, NULL = no list.
-	const qualifies = `
-		ch.auto_scope IS NOT NULL
-		AND ch.is_archived = FALSE
-		AND (
-		      ch.auto_scope = 'GLOBAL'
-		   OR (ch.auto_scope = 'BRANCH' AND ($2 OR EXISTS (
-		         SELECT 1 FROM user_branch_grants g
-		         WHERE g.user_id = $1 AND g.branch_id = ch.branch_id)))
-		    )
-		AND (
-		      ch.auto_role IS NULL OR ch.auto_role = '*'
-		   OR EXISTS (
-		         SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
-		         WHERE ur.user_id = $1 AND ro.code = ch.auto_role)
-		    )
-		AND (
-		      ch.member_roles IS NULL
-		   OR EXISTS (
-		         SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
-		         WHERE ur.user_id = $1 AND ro.code::text = ANY(ch.member_roles))
-		    )`
+	// The rooms this sync will write, read BEFORE any write. The channel's
+	// lock comes before the member row everywhere in this module (UX-110
+	// round 2: one lock order everywhere, the channel then the member), so
+	// the sync has to know which rooms it touches before it touches one: it
+	// reads the set, takes each room's lock in ONE order, and only then
+	// writes the member rows.
+	//
+	// A room the sync will not write is not in the set and is not locked, so
+	// a sync that changes nothing holds no lock at all.
+	rooms, err := syncRooms(ctx, tx, userID, isGlobal, status == "ACTIVE")
+	if err != nil {
+		return err
+	}
+	sort.Strings(rooms)
+
+	// The locks, one per room, in the room id ascending order the bumps
+	// below take. The mode is the one a write takes (FOR NO KEY UPDATE):
+	// the sync bumps every room it changes, and the bump asks for the very
+	// lock this holds, so nothing here ever has to upgrade it (an upgrade is
+	// how two syncs that cross deadlock against each other).
+	locked := make([]string, 0, len(rooms))
+	for _, room := range rooms {
+		if err := lockChannelForWrite(ctx, tx, room); err != nil {
+			if errors.Is(err, errNotFound) {
+				// The room went while this sync was reading the set. It is
+				// not this sync's room to write, and a write to a room whose
+				// lock this transaction does not hold is the one thing the
+				// order above forbids.
+				continue
+			}
+			return err
+		}
+		locked = append(locked, room)
+	}
 
 	// Insert the derived rows the user qualifies for. A non-ACTIVE user qualifies for nothing (the
 	// Go-side status guard) so it is skipped entirely. RETURNING hands back only the rooms that
@@ -130,15 +166,20 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 	// same announce the explicit seat owes: a device holding a cursor past the room's stamped seq
 	// sees the room arrive. The bumps ride the sync's own transaction, so the seats and their
 	// announce commit together or not at all.
+	//
+	// The seats are written only in the rooms this transaction holds the
+	// lock for (the set read above), so every member row it writes belongs
+	// to a room whose lock it holds.
 	var changed []string
-	if status == "ACTIVE" {
+	if status == "ACTIVE" && len(locked) > 0 {
 		rows, err := tx.Query(ctx, `
 			INSERT INTO msg_members (channel_id, user_id, role, source)
 			SELECT ch.id, $1, 'MEMBER', 'DERIVED'
 			FROM msg_channels ch
-			WHERE `+qualifies+`
+			WHERE `+syncQualifies+`
+			  AND ch.id::text = ANY($3::text[])
 			ON CONFLICT (channel_id, user_id) DO NOTHING
-			RETURNING channel_id`, userID, isGlobal)
+			RETURNING channel_id`, userID, isGlobal, locked)
 		if err != nil {
 			return fmt.Errorf("insert derived members: %w", err)
 		}
@@ -160,20 +201,25 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 
 	// Delete DERIVED rows the user no longer qualifies for (role/branch change, deactivation, or
 	// channel archival). EXPLICIT rows are untouched (source filter). An ACTIVE user is re-tested
-	// against `qualifies`; a non-ACTIVE user qualifies for NOTHING, so ALL their derived rows are
+	// against `syncQualifies`; a non-ACTIVE user qualifies for NOTHING, so ALL their derived rows are
 	// pruned (the branch below avoids binding the now-unused $2). Every pruned room owes the feed
 	// the same refresh bump a removal owes, on the same transaction.
-	if status == "ACTIVE" {
+	//
+	// The prunes are written only in the rooms this transaction holds the
+	// lock for, so every member row it writes belongs to a room whose lock
+	// it holds.
+	if status == "ACTIVE" && len(locked) > 0 {
 		rows, err := tx.Query(ctx, `
 			DELETE FROM msg_members m
 			WHERE m.user_id = $1
 			  AND m.source = 'DERIVED'
+			  AND m.channel_id::text = ANY($3::text[])
 			  AND NOT EXISTS (
 			        SELECT 1 FROM msg_channels ch
 			        WHERE ch.id = m.channel_id
-			          AND `+qualifies+`
+			          AND `+syncQualifies+`
 			      )
-			RETURNING m.channel_id`, userID, isGlobal)
+			RETURNING m.channel_id`, userID, isGlobal, locked)
 		if err != nil {
 			return fmt.Errorf("prune derived members: %w", err)
 		}
@@ -191,10 +237,11 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 			return fmt.Errorf("prune derived members: %w", err)
 		}
 		changed = append(changed, pruned...)
-	} else {
+	} else if len(locked) > 0 {
 		rows, err := tx.Query(ctx,
 			`DELETE FROM msg_members WHERE user_id = $1 AND source = 'DERIVED'
-			 RETURNING channel_id`, userID)
+			  AND channel_id::text = ANY($2::text[])
+			 RETURNING channel_id`, userID, locked)
 		if err != nil {
 			return fmt.Errorf("prune derived members (inactive): %w", err)
 		}
@@ -217,18 +264,19 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 	// A room carrying a member_roles list is a fence for EVERY seat source: an EXPLICIT row the
 	// user holds there, given while they held one of the roles (or before the list existed), goes
 	// when they hold none of them now. It owes the feed the same bump as any other prune.
-	if status == "ACTIVE" {
+	if status == "ACTIVE" && len(locked) > 0 {
 		rows, err := tx.Query(ctx, `
 			DELETE FROM msg_members m
 			USING msg_channels ch
 			WHERE m.user_id = $1
 			  AND m.source = 'EXPLICIT'
 			  AND ch.id = m.channel_id
+			  AND m.channel_id::text = ANY($2::text[])
 			  AND ch.member_roles IS NOT NULL
 			  AND NOT EXISTS (
 			        SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
 			        WHERE ur.user_id = $1 AND ro.code::text = ANY(ch.member_roles))
-			RETURNING m.channel_id`, userID)
+			RETURNING m.channel_id`, userID, locked)
 		if err != nil {
 			return fmt.Errorf("prune fenced explicit members: %w", err)
 		}
@@ -252,6 +300,9 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 	// bumped in ONE sorted order across seats and prunes alike, so two syncs that cross (one gaining
 	// room A and losing room B while another gains B and loses A) take their locks in the same order
 	// and cannot deadlock: a deadlock would fail the ListMyChannels read that runs the sync.
+	//
+	// The order is the order the locks above were taken in, so the sync never takes a room's row
+	// lock after another room's, in any statement.
 	sort.Strings(changed)
 	for i, ch := range changed {
 		if i > 0 && ch == changed[i-1] {
@@ -263,6 +314,73 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 	}
 
 	return tx.Commit(ctx)
+}
+
+// syncRooms answers the rooms one sync will write for one user: the rooms the
+// user qualifies for and is not in yet (the seats), the rooms whose derived
+// row the user no longer qualifies for (the prunes) and the rooms whose
+// explicit row a member_roles fence takes away (the fenced prunes).
+//
+// The set is read BEFORE any write, because the sync takes each room's lock
+// before it touches a member row (UX-110 round 2: one lock order everywhere,
+// the channel then the member). A room the sync will not write is not in the
+// set and is not locked, so a sync that changes nothing holds no lock at all.
+//
+// The set is the rooms the sync's own writes will land in, so the writes can
+// be narrowed to it: a room that qualifies while the sync runs is seated by
+// the next sync, and a room that stops qualifying while the sync runs is
+// pruned by the next one.
+func syncRooms(ctx context.Context, tx pgx.Tx, userID string, isGlobal, active bool) ([]string, error) {
+	var parts []string
+	var args []any
+	if active {
+		args = []any{userID, isGlobal}
+		parts = append(parts, `
+			SELECT ch.id::text
+			FROM msg_channels ch
+			WHERE `+syncQualifies+`
+			  AND NOT EXISTS (SELECT 1 FROM msg_members mem
+			                  WHERE mem.channel_id = ch.id AND mem.user_id = $1)`)
+		parts = append(parts, `
+			SELECT m.channel_id::text
+			FROM msg_members m
+			WHERE m.user_id = $1 AND m.source = 'DERIVED'
+			  AND NOT EXISTS (SELECT 1 FROM msg_channels ch
+			                  WHERE ch.id = m.channel_id AND `+syncQualifies+`)`)
+		parts = append(parts, `
+			SELECT m.channel_id::text
+			FROM msg_members m
+			JOIN msg_channels ch ON ch.id = m.channel_id
+			WHERE m.user_id = $1 AND m.source = 'EXPLICIT'
+			  AND ch.member_roles IS NOT NULL
+			  AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+			                  WHERE ur.user_id = $1 AND ro.code::text = ANY(ch.member_roles))`)
+	} else {
+		// A non-ACTIVE user qualifies for nothing, so every derived row of
+		// theirs goes.
+		args = []any{userID}
+		parts = append(parts, `
+			SELECT m.channel_id::text
+			FROM msg_members m
+			WHERE m.user_id = $1 AND m.source = 'DERIVED'`)
+	}
+	rows, err := tx.Query(ctx, strings.Join(parts, "\n\t\tUNION\n"), args...)
+	if err != nil {
+		return nil, fmt.Errorf("read the sync's rooms: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan the sync's room: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read the sync's rooms: %w", err)
+	}
+	return out, nil
 }
 
 // - Channels -
@@ -648,7 +766,15 @@ func (r *Repository) InsertMessage(ctx context.Context, channelID, userID, body,
 //
 // The membership answer comes FIRST, and it comes from the member row alone, so a non-member learns
 // nothing about the channel's existence: the read never touches the channel's row for a caller who
-// is not a member. Zero rows updated is still forbidden.
+// is not a member. It is a PLAIN read, so it takes no lock of its own, and the membership is
+// re-checked in the UPDATE's own WHERE with the same predicate, so a member row that went while
+// the read waited for the channel's lock is not written as if it were still there. Zero rows
+// updated is still forbidden.
+//
+// The channel's lock comes before the member row, which is the order every path in this module
+// takes (UX-110 round 2: one lock order everywhere, the channel then the member). The read, a
+// seat and a remove all want the same two rows of one room, and two of them taking the two tables
+// in opposite orders is a deadlock the database detects and the user pays for as a 500.
 //
 // It never moves the cursor backwards: GREATEST keeps the later of the two stamps, so a cursor is
 // never pulled back to an earlier point.
@@ -662,15 +788,14 @@ func (r *Repository) MarkRead(ctx context.Context, channelID, userID string) err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// The member row's lock, taken before the channel's. The order is the one
-	// the rest of this module already uses (a seat or a prune touches the
-	// member rows, then the channel), so the two never wait for each other.
-	// This is also the membership answer: no member row, no read.
+	// The membership answer, and it is a PLAIN read: no lock, no row lock.
+	// A caller who is not a member of this room is refused in words here,
+	// before any lock is taken, so a non-member learns nothing about the
+	// room's existence and never holds the room's lock.
 	var one int
 	err = tx.QueryRow(ctx, `
 		SELECT 1 FROM msg_members
-		WHERE channel_id = $1::uuid AND user_id = $2::uuid
-		FOR UPDATE`, channelID, userID).Scan(&one)
+		WHERE channel_id = $1::uuid AND user_id = $2::uuid`, channelID, userID).Scan(&one)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errForbidden
 	}
@@ -681,6 +806,12 @@ func (r *Repository) MarkRead(ctx context.Context, channelID, userID string) err
 	// The channel's lock: the read waits for the posts in flight. It is the
 	// read's own exclusive lock (FOR UPDATE), so it conflicts with the FOR
 	// SHARE a post holds, and the posts do not conflict with each other.
+	//
+	// The CHANNEL comes before the member row, which is the order every
+	// path in this module takes (UX-110 round 2: one lock order everywhere,
+	// the channel then the member). A read that took the member row first
+	// and the channel second would be the inverse of a seat or a remove,
+	// and the two would close a cycle on one member row of one room.
 	err = tx.QueryRow(ctx,
 		`SELECT 1 FROM msg_channels WHERE id = $1::uuid FOR UPDATE`, channelID).Scan(&one)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -694,9 +825,14 @@ func (r *Repository) MarkRead(ctx context.Context, channelID, userID string) err
 	// and not now(): now() is the clock this transaction began at, which is
 	// BEFORE the lock was granted, and a cursor stamped before the posts it
 	// waited for would call them read.
+	//
+	// The membership is re-checked in the UPDATE's own WHERE, with the same
+	// predicate the read above used: a member row deleted while this waited
+	// for the channel's lock must not be written as if it were still there,
+	// and zero rows is still forbidden.
 	ct, err := tx.Exec(ctx, `
 		UPDATE msg_members SET last_read_at = GREATEST(last_read_at, clock_timestamp())
-		WHERE channel_id = $1 AND user_id = $2`, channelID, userID)
+		WHERE channel_id = $1::uuid AND user_id = $2::uuid`, channelID, userID)
 	if err != nil {
 		return fmt.Errorf("mark read: %w", err)
 	}
@@ -854,6 +990,16 @@ func (r *Repository) EnsureApprovalChannel(ctx context.Context, userID string) (
 		}
 	} else if err != nil {
 		return "", fmt.Errorf("ensure approval channel: %w", err)
+	}
+	// The channel's lock, BEFORE the member row this path writes (UX-110
+	// round 2: the channel, then the member). On the fresh arm the room is
+	// this transaction's own row; on the conflict arm it is a row that is
+	// already there, and the lock is what keeps this path from writing a
+	// member row of a room whose lock it does not hold. This path writes no
+	// msg_channels row of its own, so the shared lock is the one a post
+	// takes (FOR SHARE).
+	if err := lockChannelForPost(ctx, tx, channelID); err != nil {
+		return "", err
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO msg_members (channel_id, user_id, role, source)
@@ -1703,6 +1849,13 @@ func (r *Repository) CreateDM(ctx context.Context, aUserID, bUserID string) (Cha
 		if existing.Kind != KindDM {
 			return Channel{}, false, ErrChannelSlugTaken
 		}
+		// The channel's lock, BEFORE the member rows this path writes (UX-110
+		// round 2: the channel, then the member). The room is a row that is
+		// already there, and this path writes no msg_channels row of its own,
+		// so the shared lock is the one a post takes (FOR SHARE).
+		if err := lockChannelForPost(ctx, tx, existing.ID); err != nil {
+			return Channel{}, false, err
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO msg_members (channel_id, user_id, role, source)
 			VALUES ($1, $2, 'OWNER', 'EXPLICIT'), ($1, $3, 'MEMBER', 'EXPLICIT')
@@ -1876,6 +2029,20 @@ func (r *Repository) AddChannelMember(ctx context.Context, in AddMemberInput) (C
 		return ChannelMember{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// The channel's lock, BEFORE the member row this path writes. The path
+	// writes msg_channels itself (the feed bump below), so it takes the
+	// lock in the mode a write takes: FOR NO KEY UPDATE. The bump asks for
+	// the very lock this holds and never has to upgrade it.
+	//
+	// The CHANNEL before the MEMBER is the one order this module takes
+	// everywhere (UX-110 round 2). A path that wrote the member row first
+	// and locked the channel second would be the inverse of a seat or a
+	// remove, and the two would close a cycle on one member row of one
+	// room: the database answers that cycle with 40P01 and the user sees a
+	// 500.
+	if err := lockChannelForWrite(ctx, tx, in.ChannelID); err != nil {
+		return ChannelMember{}, err
+	}
 	var m ChannelMember
 	var addedBy *string
 	err = tx.QueryRow(ctx, `
@@ -2083,6 +2250,11 @@ func (r *Repository) SeatGroupMember(ctx context.Context, channelID, userID, add
 	// it takes the lock in the mode a write takes: the bump asks for the very
 	// lock this holds and never has to upgrade it, which is how two posts to
 	// one channel would deadlock against each other.
+	//
+	// The CHANNEL before the MEMBER is the one order this module takes
+	// everywhere (UX-110 round 2). A path that wrote the member row first
+	// and locked the channel second would be the inverse of this one, and the
+	// two would close a cycle on one member row of one room.
 	if err := lockChannelForWrite(ctx, tx, channelID); err != nil {
 		return ChannelMember{}, false, err
 	}
@@ -2216,6 +2388,21 @@ func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID 
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// The channel's lock, BEFORE the member row this path deletes. The path
+	// writes msg_channels itself (the feed bump below), so it takes the
+	// lock in the mode a write takes: FOR NO KEY UPDATE, and the bump asks
+	// for the very lock this holds.
+	//
+	// The CHANNEL before the MEMBER is the one order this module takes
+	// everywhere (UX-110 round 2). The remove used to take the member row
+	// first and the channel second, the inverse of the seat path, and the
+	// two closed a cycle on one member row of one room: the seat's
+	// INSERT waited for the row this DELETE held, and this DELETE's bump
+	// waited for the channel the seat held. The database answered that
+	// cycle with 40P01 and the user saw a 500.
+	if err := lockChannelForWrite(ctx, tx, channelID); err != nil {
+		return err
+	}
 	ct, err := tx.Exec(ctx, `
 		DELETE FROM msg_members m
 		WHERE m.channel_id = $1 AND m.user_id = $2 AND m.source = 'EXPLICIT'
@@ -2874,8 +3061,9 @@ type dbQueryer interface {
 //
 // The read takes the SAME channel's lock (FOR UPDATE) before it writes the
 // cursor. So a post that commits before the cursor is stamped before it and
-// reads as unread, and a post that comes after waits for the lock and is
-// stamped after the cursor.
+// reads as READ (the badge stays dark for it: the read came after it), and a
+// post that comes after waits for the lock and is stamped after the cursor
+// (the badge lights for it: the post came after the read).
 //
 // FOR SHARE, and not FOR UPDATE: two posts to one channel share this lock, so
 // they do not block each other. It still conflicts with the read's FOR
