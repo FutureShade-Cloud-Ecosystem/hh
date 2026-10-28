@@ -311,6 +311,39 @@ func TestIntegration_FinanceUserApplyEmptyListAndDuplicates(t *testing.T) {
 	}
 }
 
+// The flag's word is "the list is SET and empty": only the entrypoint,
+// which knows set from unset, may pass it. A hand run with the flag and no
+// list in the process environment must refuse naming the variable, and the
+// box's people keep their grants (the M3 read's finding 3: the flag fired
+// on an unset list and revoked every finance person on the box).
+func TestIntegration_FinanceUserEmptyListRevokesOnlyAListTheEnvironmentCarries(t *testing.T) {
+	ctx := context.Background()
+	pool, dsn := freshMigratedBoxDB(t, "finuserunset")
+	t.Setenv("APP_ENV", "staging")
+	if err := financeSeedRole(mapGetenv(financeSeedEnv(dsn))); err != nil {
+		t.Fatalf("finance-seed: %v", err)
+	}
+	lastEmail := "fin-unset-person@example.invalid"
+	last := finEnvEntry(lastEmail, "fin-console-user-unset", "Unset Person", "financial_controller")
+	if err, out := finApply(t, finApplyEnv(dsn, []string{lastEmail}, last)); err != nil {
+		t.Fatalf("apply with one entry: %v (%s)", err, out)
+	}
+
+	// The variable is absent from the process environment, whatever the
+	// outer shell carries. The seam map cannot carry presence, so this leg
+	// is about the real environment picture.
+	unsetForTest(t, finEnvUsersVar)
+
+	out := &bytes.Buffer{}
+	err := financeUserRole([]string{"--apply-from-env", "--empty-list-revokes-all"}, out, out, mapGetenv(finApplyEnv(dsn, nil, "")))
+	if err == nil || !strings.Contains(err.Error(), finEnvUsersVar) {
+		t.Fatalf("the revoke all flag with the list unset in the environment must refuse naming the variable, got %v (%s)", err, out.String())
+	}
+	if n := finLiveGrants(t, ctx, pool, finOrgID(t, ctx, pool), "fin-console-user-unset"); n != 1 {
+		t.Fatalf("the person must keep their grant when the command refuses, got %d live grants", n)
+	}
+}
+
 // finOrgID resolves the finance box's org anchor id.
 func finOrgID(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	t.Helper()
