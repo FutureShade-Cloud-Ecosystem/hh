@@ -191,6 +191,18 @@ export class QuoteConvert extends HHElement {
         border-color: var(--hh-accent-text);
         box-shadow: inset 0 0 0 1px var(--hh-accent-text);
       }
+      /* A held fulfilment tile is a disabled control, and the selected rule
+         above outranks the primitive's own disabled rule (three classes to
+         one), so the tile would keep a brand edge and a brand ring while it
+         is refused. The pair is restated here in the grey triple, so a held
+         tile says what it says with no brand colour in it. */
+      .tile[aria-pressed="true"]:disabled {
+        background: var(--hh-disabled-fill);
+        color: var(--hh-disabled-ink);
+        border-color: var(--hh-disabled-line);
+        box-shadow: none;
+        cursor: not-allowed;
+      }
       .tile .name {
         font-weight: 600;
       }

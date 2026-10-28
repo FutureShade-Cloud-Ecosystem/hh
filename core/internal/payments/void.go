@@ -6,10 +6,11 @@ package payments
 // home: it books the amount into 2310 Customer Refunds and Unapplied Cash and holds it there for
 // the customer, whatever the day. A receipt keyed against the wrong figures and caught on the day
 // it was taken needs the other undo: the act that says the receipt never happened. It undoes the
-// receipt's allocation (the invoices are re-opened, the allocation rows go) and its journal (the
-// mirror of the receipt's own legs goes to the GL through payment.voided, so 1020 or 1010 is
-// credited back), it is audited and manager only, and it holds NOTHING in 2310: the money never
-// left the building, so the customer is not owed it.
+// receipt's allocation (the invoices are re-opened, the allocation row is kept and the undo is
+// written beside it as a reversal row, 0450) and its journal (the mirror of the receipt's own legs
+// goes to the GL through payment.voided, so 1020 or 1010 is credited back), it is audited and
+// manager only, and it holds NOTHING in 2310: the money never left the building, so the customer is
+// not owed it.
 //
 // The void is kept deliberately apart from the reversal:
 //   - its own repository function and service (this file), never a flag on the reversal's;
@@ -45,6 +46,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/google/uuid"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
@@ -84,12 +87,27 @@ type VoidInput struct {
 	CanAccessBranch func(branchID string) bool
 }
 
+// actorUUID returns the actor id when it has a UUID's shape and nil otherwise, so an optional uuid
+// column is never handed a string the database cannot cast. A malformed actor id must not refuse the
+// money move: the attribution is kept in the audit trail and on the payment row either way, and the
+// reversal row's own facts (the application it names, the negative, the instant) are the money.
+func actorUUID(s string) any {
+	if s == "" {
+		return nil
+	}
+	if _, err := uuid.Parse(s); err != nil {
+		return nil
+	}
+	return s
+}
+
 // VoidPayment undoes a mis-keyed receipt in ONE transaction: the payment row is stamped VOID with
-// the reason in its metadata, its allocations are deleted and their invoices re-opened (the
-// balance restored, the status re-read, the invoices feed seq stamped beside each move), the
-// subledger gets the mirror-of-cash rows so the customer's history shows the receipt undone, and
-// payment.voided goes to the outbox in the SAME transaction so the GL books the undo journal
-// exactly once. The reversal's columns are never touched and nothing is held in 2310.
+// the reason in its metadata, its allocation is kept and the undo is written beside it as a
+// reversal row (0450) while their invoices are re-opened (the balance restored, the status re-read,
+// the invoices feed seq stamped beside each move), the subledger gets the mirror-of-cash rows so the
+// customer's history shows the receipt undone, and payment.voided goes to the outbox in the SAME
+// transaction so the GL books the undo journal exactly once. The reversal's columns are never
+// touched and nothing is held in 2310.
 //
 // zone is the dealer's business day zone: the same-day gate is the dealer's day, never the server's
 // and never UTC midnight (an evening receipt in Ontario is the same dealer day as its void the next
@@ -161,20 +179,24 @@ func (r *Repository) VoidPayment(ctx context.Context, in VoidInput, now time.Tim
 			ErrNotVoidable, receivedAt.In(zone.Location()).Format("2006-01-02"))
 	}
 
-	// The allocations this receipt made are exactly what must be given back.
+	// The allocations this receipt made are exactly what must be given back. Only the APPLICATION
+	// rows: a reversal row (0450) is the undo of an application, and a receipt that was never voided
+	// carries none.
 	rows, err := tx.Query(ctx,
-		`SELECT invoice_id::text, amount_cents FROM payment_allocations WHERE payment_id = $1::uuid`, in.PaymentID)
+		`SELECT id::text, invoice_id::text, amount_cents FROM payment_allocations
+		  WHERE payment_id = $1::uuid AND kind = 'APPLICATION'`, in.PaymentID)
 	if err != nil {
 		return Void{}, fmt.Errorf("void: read allocations: %w", err)
 	}
 	type alloc struct {
+		id        string
 		invoiceID string
 		cents     int64
 	}
 	var allocs []alloc
 	for rows.Next() {
 		var a alloc
-		if err := rows.Scan(&a.invoiceID, &a.cents); err != nil {
+		if err := rows.Scan(&a.id, &a.invoiceID, &a.cents); err != nil {
 			rows.Close()
 			return Void{}, fmt.Errorf("void: scan allocation: %w", err)
 		}
@@ -283,10 +305,29 @@ UPDATE invoices
 			}
 		}
 	}
-	// The receipt's application goes: the bounce's own undo. Nothing contra is left behind, because
-	// nothing is contra: the receipt never happened.
-	if _, err := tx.Exec(ctx, `DELETE FROM payment_allocations WHERE payment_id = $1::uuid`, in.PaymentID); err != nil {
-		return Void{}, fmt.Errorf("void: delete allocations: %w", err)
+	// The receipt's application goes: the bounce's own undo. The row is KEPT and the undo is written
+	// beside it as a reversal row (0450): the same payment, the same invoice, the exact negative of
+	// the application, dated at the void's own instant, naming the application it reverses. Nothing is
+	// contra in the money (the receipt never happened, the invoice is re-opened above and the net of
+	// the two rows is zero), but "what did this receipt use to pay?" is answerable from the rows
+	// themselves and not only from an audit trail.
+	//
+	// THE UNDO IS NEVER DATED BEFORE THE MONEY IT UNDOES. The application's row is dated by Postgres
+	// (now(), the column default) and this row by the void's Go clock: two clocks for one fact, and
+	// when they disagree by a fraction of a second the undo lands before the application, every
+	// reader that lists the allocations in time order puts the undo first, and an as-of aging taken
+	// between the two instants nets the receipt below zero. GREATEST takes the later of the two, with
+	// the application's own instant read inside this statement on reverses_allocation_id, so the undo
+	// is dated at the void's instant at the earliest and never earlier than the application.
+	for _, a := range allocs {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO payment_allocations
+			   (payment_id, invoice_id, amount_cents, kind, reverses_allocation_id, allocated_by, created_at)
+			 VALUES ($1::uuid, $2::uuid, $3, 'REVERSAL', $4::uuid, $5::uuid,
+			         GREATEST($6::timestamptz, (SELECT app.created_at FROM payment_allocations app WHERE app.id = $4::uuid)))`,
+			in.PaymentID, a.invoiceID, -a.cents, a.id, actorUUID(in.ActorID), now); err != nil {
+			return Void{}, fmt.Errorf("void: write the reversal row: %w", err)
+		}
 	}
 
 	// Stamp the original. The reason and the actor ride the metadata, the reversal's columns are

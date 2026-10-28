@@ -2835,7 +2835,7 @@ paths:
       tags:
         - staff-payments
       summary: Void a mis-keyed desk receipt as never taken
-      description: "A receipt keyed against the wrong figures, caught on the dealer day it was taken, is undone as never taken: the receipt's allocations go, its invoices re-open at their full balances, and the GL books the receipt's own legs mirrored, so no money is held in 2310. A deposited, bounced, refunded or already voided payment is refused, as is a receipt from an earlier dealer day: those undos are a reversal's business. A payment taken on a till session is refused too, the drawer count owns that undo."
+      description: "A receipt keyed against the wrong figures, caught on the dealer day it was taken, is undone as never taken: the receipt's allocation is kept and the undo is written beside it as a negative row, its invoices re-open at their full balances, and the GL books the receipt's own legs mirrored, so no money is held in 2310. A deposited, bounced, refunded or already voided payment is refused, as is a receipt from an earlier dealer day: those undos are a reversal's business. A payment taken on a till session is refused too, the drawer count owns that undo."
       x-role: requireManager
       x-access:
         surfaces:
@@ -18915,6 +18915,119 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/till/reason-codes:
+    get:
+      operationId: tillListReasonCodes
+      tags:
+        - staff-till
+      summary: Read the branch's counter reason codes
+      description: The codes the drawer may name on a paid in or a paid out, each with the GL account its movement posts to. A branch manager reads the list of their own branch, and the Financial Controller reads any branch.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - counter-till
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The branch's counter reason codes
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TillReasonCode"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: tillCreateReasonCode
+      tags:
+        - staff-till
+      summary: Add a counter reason code to a branch's list
+      description: The label the drawer sees, the direction the code may name, and the account its movement posts to. The code is stored as the branch's own, upper cased, so the drawer names it the way the list shows it.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - counter-till
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TillReasonCodeInput"
+      responses:
+        "201":
+          description: The created counter reason code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillReasonCode"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/till/reason-codes/{id}:
+    put:
+      operationId: tillEditReasonCode
+      tags:
+        - staff-till
+      summary: Edit a counter reason code the branch's list already holds
+      description: A field the body leaves out keeps the value the row carries, so a code is turned off without restating its label or its account.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - counter-till
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TillReasonCodeEdit"
+      responses:
+        "200":
+          description: The edited counter reason code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillReasonCode"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/till/policy:
     get:
       operationId: tillGetPolicy
@@ -19024,7 +19137,7 @@ paths:
       tags:
         - staff-till
       summary: Read who took a payment and which invoices it was applied to
-      description: "The path key may be the payment's id or the human payment number printed on the receipt. For a BOUNCED payment the historical applications are reconstructed from the audit trail and flagged reversed_by_nsf. Held to work by ruling 87: a customer's payment trail is the money desk's to work, not a money desk reader's to browse."
+      description: "The path key may be the payment's id or the human payment number printed on the receipt. For a BOUNCED payment the history is the live rows: the application and, beside it, the reversal row the bounce wrote. A payment bounced before that row existed has no live row, and its applications are reconstructed from the audit trail and flagged reversed_by_nsf. Held to work by ruling 87: a customer's payment trail is the money desk's to work, not a money desk reader's to browse."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -33421,7 +33534,7 @@ components:
           type: boolean
     BillingCustomerWorkspacePayment:
       type: object
-      description: One payment the workspace payments tab carries, with the running unapplied figure the inline Apply Credit Note modal binds. Unapplied is derived (AmountCents - SUM(payment_allocations.amount_cents)) and floored at zero.
+      description: "One payment the workspace payments tab carries, with the running unapplied figure the inline Apply Credit Note modal binds. Unapplied is derived (AmountCents - SUM(payment_allocations.amount_cents)) and floored at zero. The sum is the net: a bounce or a void keeps the application and writes the undo beside it as a negative row, and the two net to zero."
       required:
         - id
         - payment_no
@@ -49724,6 +49837,87 @@ components:
             - OTHER
         reference:
           type: string
+    TillReasonCode:
+      type: object
+      description: One counter reason code on a branch's list
+      required:
+        - id
+        - branch_id
+        - code
+        - label
+        - movement_kind
+        - gl_account_code
+        - active
+      properties:
+        id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        label:
+          type: string
+        movement_kind:
+          type: string
+          enum:
+            - PAID_IN
+            - PAID_OUT
+            - BOTH
+        gl_account_code:
+          type: string
+        active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TillReasonCodeInput:
+      type: object
+      description: A code a manager adds to a branch's list
+      required:
+        - branch_id
+        - code
+        - label
+        - movement_kind
+        - gl_account_code
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        label:
+          type: string
+        movement_kind:
+          type: string
+          enum:
+            - PAID_IN
+            - PAID_OUT
+            - BOTH
+        gl_account_code:
+          type: string
+        active:
+          type: boolean
+    TillReasonCodeEdit:
+      type: object
+      description: A change to a row the list already holds; a field left out keeps the row's own value
+      properties:
+        label:
+          type: string
+        movement_kind:
+          type: string
+          enum:
+            - PAID_IN
+            - PAID_OUT
+            - BOTH
+        gl_account_code:
+          type: string
+        active:
+          type: boolean
     TillPolicy:
       type: object
       description: The branch variance threshold and close grain
@@ -49911,6 +50105,9 @@ components:
           type: string
         reference:
           type: string
+        reason_code:
+          type: string
+          description: The branch's counter reason code this movement names. The code says what the money is, and the code points at the account the movement posts to. It is required once the branch has a live code for that direction; a movement with no code still posts to 9999 Suspense.
     TillTenderActual:
       type: object
       description: One blind-counted method actual
@@ -50204,7 +50401,7 @@ components:
           format: uuid
     TillAllocationRecord:
       type: object
-      description: One payment-to-invoice application with attribution. reversed_by_nsf marks a historical allocation reconstructed from the audit trail after an NSF reversal deleted the live rows; such records carry no invoice_no.
+      description: One payment-to-invoice application with attribution. A bounce or a void keeps the application and writes the undo beside it as a second row, dated at the undo and carrying the negative amount, so the two net. reversed_by_nsf marks a historical allocation reconstructed from the audit trail after an NSF reversal deleted the live rows; such records carry no invoice_no.
       required:
         - invoice_id
         - invoice_no
@@ -50219,6 +50416,7 @@ components:
         amount_cents:
           type: integer
           format: int64
+          description: Negative on the row that takes an application back
         allocated_by:
           type: string
           description: Empty for a portal or customer-initiated payment
@@ -50327,7 +50525,7 @@ components:
         amount_cents:
           type: integer
           format: int64
-          description: The slice applied to this invoice
+          description: The slice applied to this invoice, negative on the row that takes it back
         payment_amount_cents:
           type: integer
           format: int64

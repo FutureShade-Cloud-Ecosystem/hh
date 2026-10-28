@@ -345,23 +345,28 @@ export class FrontDoorApp extends HHElement {
         border-color: var(--hh-accent);
         box-shadow: var(--hh-elev-2);
       }
-      /* The one card that is starting keeps its fill and takes the gold edge:
-         a page with one thing happening on it looks like one thing happening.
-         Its specificity outranks the base disabled rule, so the mint's own
-         card never reads as refused while the rest go grey. */
+      /* The one card that is starting is a disabled control like the rest: it
+         takes the grey triple, the gold edge and the card fill give way, and
+         the mark takes the disabled ink. What is in flight is said by the
+         card's own word (its cta names the verb), never by brand colour on
+         a refused control. */
       .card.starting {
-        border-color: var(--hh-accent);
-        background: var(--hh-card);
-        color: var(--hh-text);
+        /* hh-disabled-state: the selector names no disabled state, but the
+           card is natively disabled while a choice is starting. */
+        border-color: var(--hh-disabled-line);
+        background: var(--hh-disabled-fill);
+        color: var(--hh-disabled-ink);
       }
       .card .mark {
         color: var(--hh-text-dim);
         flex: none;
       }
       .card:hover:not(:disabled) .mark,
-      .card:focus-visible .mark,
-      .card.starting .mark {
+      .card:focus-visible .mark {
         color: var(--hh-accent-text);
+      }
+      .card.starting .mark {
+        color: var(--hh-disabled-ink);
       }
       .card .words {
         display: flex;
@@ -390,9 +395,16 @@ export class FrontDoorApp extends HHElement {
         color: var(--hh-accent-text);
       }
       .card:hover:not(:disabled) .cta,
-      .card:focus-visible .cta,
-      .card.starting .cta {
+      .card:focus-visible .cta {
         text-decoration: underline;
+      }
+      /* The starting card's word says what is in flight: "Starting..." is the
+         progress, and it is part of a disabled control, so it takes the
+         disabled ink, never the brand one. The underline is a link's own
+         affordance and is not a progress sign, so the refused card does not
+         wear one. */
+      .card.starting .cta {
+        color: var(--hh-disabled-ink);
       }
       .chips {
         display: flex;
@@ -478,20 +490,20 @@ export class FrontDoorApp extends HHElement {
       .coming li:last-child .coming-role {
         border-bottom: none;
       }
-      .coming-role button {
+      .coming-role button:disabled {
         flex: none;
         min-height: 0;
-        padding: var(--hh-s-4) 0;
+        padding: var(--hh-s-4) var(--hh-s-8);
         text-align: start;
-        background: transparent;
-        /* Round 2 (FROM-PRINCIPAL 9): the name wore the disabled INK on the card, and in
-           brand that pair reads 4.30:1 (the ink's own pair is on the disabled FILL, which
-           this lighter treatment drops). The name reads the dimmed text ink instead, the
-           ink the matrix holds at AA on the card in both halves and the one the chips and
-           the Coming pill beside it already carry; the disabled state stays in the
-           semantics and the pill, held by test/contrast.test.mjs. */
-        color: var(--hh-text-dim);
-        border: none;
+        /* The name button is natively disabled: the grey token swap, the same
+           triple every disabled control wears. The state is said by the
+           Coming pill beside it and by the semantics; the paint is the
+           house's honest grey, and the pair the swap states clears AA on the
+           disabled fill in both halves by the matrix's own pin. */
+        background: var(--hh-disabled-fill);
+        color: var(--hh-disabled-ink);
+        border: 1px solid var(--hh-disabled-line);
+        border-radius: var(--hh-radius-control);
         font-weight: 600;
         cursor: default;
       }
@@ -1561,6 +1573,7 @@ export class FrontDoorApp extends HHElement {
         data-flow=${options.action === "choose" ? role.flow : nothing}
         data-persona=${options.action === "persona" ? role.flow : nothing}
         aria-label=${role.label}
+        aria-busy=${starting ? "true" : "false"}
         ?disabled=${options.anyBusy}
       >
         <span class="mark">${drawIcon(iconForId(role.icon), 32)}</span>
@@ -1570,7 +1583,7 @@ export class FrontDoorApp extends HHElement {
           <span class="chips" aria-hidden="true">
             ${role.tiles.map((tile) => html`<span class="chip">${tile.name}</span>`)}
           </span>
-          <span class="cta" aria-hidden="true">${options.verb} ${role.label}</span>
+          <span class="cta" aria-hidden="true">${starting ? "Starting..." : `${options.verb} ${role.label}`}</span>
           ${refusal === undefined ? nothing : html`<span class="refusal">${refusal}</span>`}
         </span>
       </button>

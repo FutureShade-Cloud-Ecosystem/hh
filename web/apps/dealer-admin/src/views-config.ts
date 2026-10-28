@@ -27,6 +27,7 @@ import {
   itemSetError,
   rolesForShape,
   shapeWord,
+  surfaceItemsFor,
   surfaceWord,
 } from "./config-logic.js";
 import type { RoleRow } from "./dealer-api.js";
@@ -199,7 +200,7 @@ function renderGrid(model: RoleConfigModel): TemplateResult {
     </p>
     <section class="card">
       <div class="tablewrap">
-        <table class="cardrow-table" data-test="config-grid">
+        <table class="cardrow-table config-grid-table" data-test="config-grid">
           <thead>
             <tr>
               <th scope="col">Job shape</th>
@@ -306,10 +307,10 @@ function renderDealerDraft(editor: ConfigEditor): TemplateResult {
   return html`
     <div class="card-head">
       <h3 class="section-title">The dealer's curation</h3>
-      <span class="count">every surface shows its own registry default until a row is set</span>
+      <span class="count">every surface shows its standard view until a row is set</span>
     </div>
     <p class="card-sub">
-      Item ids belong to each surface's own registry; an id the surface does not know renders nothing.
+      Choose from the panels, columns, chips, and actions that belong to this surface.
     </p>
     ${editor.draft.length === 0
       ? html`<p class="notice-line" data-test="config-draft-empty">Nothing curated here yet.</p>`
@@ -319,7 +320,7 @@ function renderDealerDraft(editor: ConfigEditor): TemplateResult {
               <thead>
                 <tr>
                   <th scope="col">Kind</th>
-                  <th scope="col">Item id</th>
+                  <th scope="col">Item</th>
                   <th scope="col">Order</th>
                   <th scope="col">Shown</th>
                   <th scope="col"></th>
@@ -341,8 +342,13 @@ function renderDealerDraft(editor: ConfigEditor): TemplateResult {
         </select>
       </label>
       <label class="field">
-        <span class="field-label">Item id</span>
-        <input class="text-field" type="text" data-field="config-add-id" aria-label="Item id of the row to add" />
+        <span class="field-label">Item</span>
+        <select class="select" data-action="config-add-id" data-field="config-add-id" aria-label="Item to add">
+          <option value="">Choose an item</option>
+          ${surfaceItemsFor(editor.surface, editor.addKind).map(
+            (item) => html`<option data-option-id=${item.id}>${item.label}</option>`,
+          )}
+        </select>
       </label>
       <button type="button" class="btn btn-secondary" data-action="config-add-row">Add row</button>
       <button
@@ -372,7 +378,7 @@ function draftRow(it: ConfigItem, index: number, scope: "config" | "my"): Templa
   return html`
     <tr data-index=${index}>
       <td data-label="Kind"><span class="chip">${it.kind}</span></td>
-      <td data-label="Item id"><code class="mono">${it.id}</code></td>
+      <td data-label="Item"><code class="mono">${it.id}</code></td>
       <td data-label="Order">${it.position}</td>
       <td data-label="Shown">
         <button
@@ -417,7 +423,7 @@ function renderMyDraft(editor: ConfigEditor): TemplateResult {
               <thead>
                 <tr>
                   <th scope="col">Kind</th>
-                  <th scope="col">Item id</th>
+                  <th scope="col">Item</th>
                   <th scope="col">Order</th>
                   <th scope="col">Shown</th>
                   <th scope="col"></th>
@@ -438,8 +444,13 @@ function renderMyDraft(editor: ConfigEditor): TemplateResult {
         </select>
       </label>
       <label class="field">
-        <span class="field-label">Item id</span>
-        <input class="text-field" type="text" data-field="config-my-add-id" aria-label="Item id of your own row to add" />
+        <span class="field-label">Item</span>
+        <select class="select" data-action="config-my-add-id" data-field="config-my-add-id" aria-label="Item of your own row to add">
+          <option value="">Choose an item</option>
+          ${surfaceItemsFor(editor.surface, editor.myAddKind).map(
+            (item) => html`<option data-option-id=${item.id}>${item.label}</option>`,
+          )}
+        </select>
       </label>
       <button type="button" class="btn btn-secondary" data-action="config-my-add-row">Add row</button>
       <button type="button" class="btn btn-primary" data-action="config-save-my" ?disabled=${editor.busy || editor.myDraft.length === 0}>

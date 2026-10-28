@@ -312,7 +312,12 @@ function reset(kind = "full") {
     reason: "Cheque returned NSF",
     received_at: NOW_ISO(),
     bounced_at: NOW_ISO(),
-    allocations: [{ invoice_n: 2, amount_cents: 96_000 }],
+    // The core (0450) keeps the application row and writes the reversal beside it, so the
+    // history read carries both: the application positive, the reversal negative.
+    allocations: [
+      { invoice_n: 2, amount_cents: 96_000 },
+      { invoice_n: 2, amount_cents: -96_000 },
+    ],
   };
   world.payments.push(bounced);
 
@@ -1467,6 +1472,9 @@ async function handle(req, res) {
       inv.balance_cents += al.amount_cents;
       reopened += 1;
     }
+    // The core (0450) writes the reversal beside the application: the payment keeps both
+    // rows and its history read carries them, the application positive, the reversal negative.
+    p.allocations = [...p.allocations, ...p.allocations.map((al) => ({ invoice_n: al.invoice_n, amount_cents: -al.amount_cents }))];
     const hold = {
       id: uuid("d", 100 + world.holds.length),
       customer_id: custId(p.acct),

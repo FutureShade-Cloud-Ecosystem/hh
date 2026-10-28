@@ -141,10 +141,10 @@ export interface ConfigItem {
 
 /**
  * A cell's words: what the dealer has curated here, counted by kind, or the
- * plain fact that the surface shows its own registry default.
+ * plain fact that the surface shows its standard view.
  */
 export function cellWords(items: readonly ConfigItem[]): string {
-  if (items.length === 0) return "Registry default";
+  if (items.length === 0) return "Standard view";
   const counts = new Map<string, number>();
   for (const it of items) counts.set(it.kind, (counts.get(it.kind) ?? 0) + 1);
   const parts = [...counts.entries()].map(([kind, n]) => `${n} ${kind}${n === 1 ? "" : "s"}`);
@@ -154,6 +154,50 @@ export function cellWords(items: readonly ConfigItem[]): string {
 // -- the item set's shape checks (the server's own words) ---------------------------------------------
 
 export const ITEM_KINDS: readonly string[] = Object.freeze(["panel", "column", "chip", "action"]);
+
+/** One registered item a surface exposes for role curation (UX-117). */
+export interface SurfaceRegistryItem {
+  readonly kind: string;
+  readonly id: string;
+  readonly label: string;
+}
+
+const DEFAULT_SURFACE_ITEMS: readonly SurfaceRegistryItem[] = Object.freeze([
+  { kind: "panel", id: "lookup", label: "Product lookup panel" },
+  { kind: "panel", id: "ticket", label: "Active ticket panel" },
+  { kind: "panel", id: "summary", label: "Totals and standing panel" },
+  { kind: "column", id: "cost", label: "Unit cost" },
+  { kind: "column", id: "margin", label: "Line margin" },
+  { kind: "column", id: "discount", label: "Line discount" },
+  { kind: "column", id: "stock", label: "On-hand stock" },
+  { kind: "chip", id: "pavers", label: "Pavers quick filter" },
+  { kind: "chip", id: "walls", label: "Retaining walls quick filter" },
+  { kind: "chip", id: "slabs", label: "Slabs and steps quick filter" },
+  { kind: "chip", id: "aggregates", label: "Aggregates and soils quick filter" },
+  { kind: "action", id: "override-price", label: "Override line price" },
+  { kind: "action", id: "park-sale", label: "Park ticket" },
+  { kind: "action", id: "refund-sale", label: "Refund or return" },
+]);
+
+const SURFACE_ITEMS_BY_SURFACE: Readonly<Record<string, readonly SurfaceRegistryItem[]>> = Object.freeze({
+  "counter-till": DEFAULT_SURFACE_ITEMS,
+  "quote-desk": [
+    { kind: "panel", id: "quote-lines", label: "Quote lines panel" },
+    { kind: "panel", id: "customer-standing", label: "Customer standing panel" },
+    { kind: "column", id: "cost", label: "Unit cost" },
+    { kind: "column", id: "margin", label: "Line margin" },
+    { kind: "chip", id: "pavers", label: "Pavers quick filter" },
+    { kind: "chip", id: "walls", label: "Retaining walls quick filter" },
+    { kind: "action", id: "send-quote", label: "Send quote to customer" },
+    { kind: "action", id: "convert-order", label: "Convert quote to order" },
+  ],
+});
+
+/** The registered items for a surface and kind, for the curation item picker. */
+export function surfaceItemsFor(surface: string, kind: string): readonly SurfaceRegistryItem[] {
+  const list = SURFACE_ITEMS_BY_SURFACE[surface] ?? DEFAULT_SURFACE_ITEMS;
+  return list.filter((item) => item.kind === kind);
+}
 
 const ID_SHAPE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const MAX_ITEMS_PER_PUT = 128;

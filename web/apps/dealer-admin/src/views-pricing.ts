@@ -59,14 +59,19 @@ import {
   overrideEmptyWords,
   overrideValueWords,
   pctWords,
+  pricingAuditEntityWord,
+  pricingAuditFieldWord,
   pricingEmptyWords,
   priceSourceWord,
+  profileMappingWords,
   RULE_SCOPES,
   ruleEmptyWords,
   ruleValueWords,
   scopeWord,
   validityWords,
   PRICING_VIEWS,
+  accrualSourceWord,
+  bypassReasonWord,
 } from "./pricing-logic.js";
 import { whenWords } from "./audit-logic.js";
 import {
@@ -77,6 +82,7 @@ import {
   UNKNOWN_CUSTOMER,
   UNKNOWN_ENTITY,
   UNKNOWN_PRODUCT,
+  UNKNOWN_REASON,
   UNKNOWN_VIEW,
 } from "./placeholders.js";
 import type { BreakRow, ChangeLogRow, ClearanceRow, LowMarginScanRow as LowMarginScanRowApi, OverrideRow, PricingAuditRow, PromotionRow, RebateRow, RuleRow, UomConversionRow } from "./pricing-api.js";
@@ -85,8 +91,50 @@ type PriceFileModel = PricingModel["priceFile"];
 type LowMarginScanRow = LowMarginScanRowApi;
 type LowMarginEntry = PricingModel["lowMargin"]["probe"]["entries"][number];
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
+import type { BranchRow } from "./dealer-api.js";
+import type { DealerPickers, EntityPickerSpec } from "./pickers.js";
 
-export function renderPricing(model: PricingModel): TemplateResult {
+export interface PricingPickers {
+  renderCustomerPicker(spec: EntityPickerSpec): TemplateResult;
+  renderProductPicker(spec: EntityPickerSpec): TemplateResult;
+  rememberProduct?(id: string, sku: string, name: string): void;
+}
+
+const FALLBACK_PICKERS: PricingPickers = {
+  renderCustomerPicker: (spec) => html`<div class="hh-entity-picker" data-picker=${spec.field}><span class="picker-current">${spec.selectedId !== "" ? UNKNOWN_CUSTOMER : spec.emptyLabel}</span></div>`,
+  renderProductPicker: (spec) => html`<div class="hh-entity-picker" data-picker=${spec.field}><span class="picker-current">${spec.selectedId !== "" ? UNKNOWN_PRODUCT : spec.emptyLabel}</span></div>`,
+};
+
+function knownVendors(model: PricingModel): readonly { readonly id: string; readonly name: string }[] {
+  const seen = new Map<string, string>();
+  for (const v of model.priceFile.vendors) {
+    if (v.vendor_id !== "" && !seen.has(v.vendor_id)) seen.set(v.vendor_id, vendorWords(v.name, v.vendor_id));
+  }
+  for (const r of model.rebates.rows) {
+    if (r.vendor_id !== "" && !seen.has(r.vendor_id)) seen.set(r.vendor_id, vendorWords(r.vendor_name, r.vendor_id));
+  }
+  for (const b of model.batches.rows) {
+    if (b.vendor_id !== "" && !seen.has(b.vendor_id)) seen.set(b.vendor_id, vendorWords(b.vendor_name, b.vendor_id));
+  }
+  for (const p of model.batches.profiles) {
+    if (p.vendor_id !== "" && !seen.has(p.vendor_id)) seen.set(p.vendor_id, vendorWords(p.vendor_name, p.vendor_id));
+  }
+  return Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
+}
+
+export function renderPricing(
+  model: PricingModel,
+  branches: readonly BranchRow[] = [],
+  pickers: PricingPickers | DealerPickers = FALLBACK_PICKERS,
+): TemplateResult {
+  if (pickers.rememberProduct !== undefined) {
+    for (const r of model.promos.clearance.rows) {
+      pickers.rememberProduct(r.product_id, r.sku, r.name);
+    }
+    for (const r of model.uom.rows) {
+      pickers.rememberProduct(r.product_id, r.product_sku, "");
+    }
+  }
   const isPaymentTerms = model.tab === "payment-terms" || model.tab === "terms";
   return html`
     <header class="page-head">
@@ -118,7 +166,6 @@ export function renderPricing(model: PricingModel): TemplateResult {
         `,
       )}
     </nav>
-
     <div class="pr-nav-phone">
       <label class="field">
         <span class="field-label">Section</span>
@@ -128,26 +175,26 @@ export function renderPricing(model: PricingModel): TemplateResult {
       </label>
     </div>
 
-    ${renderTab(model)}
+    ${renderTab(model, branches, pickers)}
   `;
 }
 
-function renderTab(model: PricingModel): TemplateResult {
+function renderTab(model: PricingModel, branches: readonly BranchRow[], pickers: PricingPickers): TemplateResult {
   // The router line: one case per landed tab. The next group's commit adds
   // its case beside this one; until then the tab says plainly it is not wired.
   if (model.tab === "payment-terms" || model.tab === "terms") return renderPaymentTermsAndDeposits();
   if (model.tab === "margin") return renderMargin(model);
-  if (model.tab === "rules") return renderRules(model);
-  if (model.tab === "customers") return renderCustomers(model);
-  if (model.tab === "breaks") return renderBreaks(model);
-  if (model.tab === "promos") return renderPromos(model);
-  if (model.tab === "rebates") return renderRebates(model);
-  if (model.tab === "uom") return renderUom(model);
+  if (model.tab === "rules") return renderRules(model, branches, pickers);
+  if (model.tab === "customers") return renderCustomers(model, pickers);
+  if (model.tab === "breaks") return renderBreaks(model, pickers);
+  if (model.tab === "promos") return renderPromos(model, branches, pickers);
+  if (model.tab === "rebates") return renderRebates(model, pickers);
+  if (model.tab === "uom") return renderUom(model, pickers);
   if (model.tab === "batches") return renderBatches(model);
   if (model.tab === "pricefile") return renderPriceFile(model);
-  if (model.tab === "lowmargin") return renderLowMargin(model);
+  if (model.tab === "lowmargin") return renderLowMargin(model, pickers);
   if (model.tab === "audit") return renderPricingAudit(model);
-  if (model.tab === "changelog") return renderChangeLog(model);
+  if (model.tab === "changelog") return renderChangeLog(model, pickers);
   const tab = PRICING_VIEWS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? UNKNOWN_VIEW)}</p>`;
 }
@@ -387,7 +434,11 @@ function ruleDimsWords(rule: { readonly scope: string; readonly customer_id: str
   return parts.join(" · ");
 }
 
-export function renderRules(model: PricingModel): TemplateResult {
+export function renderRules(
+  model: PricingModel,
+  branches: readonly BranchRow[] = [],
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.rules;
   return html`
     ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-rules-loading">Loading the pricing rules…</p>` : nothing}
@@ -398,7 +449,7 @@ export function renderRules(model: PricingModel): TemplateResult {
         `
       : nothing}
     ${m.phase === "ready" ? renderRulesList(model) : nothing}
-    ${m.phase === "ready" && m.editing !== null ? renderRuleEditor(model) : nothing}
+    ${m.phase === "ready" && m.editing !== null ? renderRuleEditor(model, branches, pickers) : nothing}
   `;
 }
 
@@ -506,7 +557,11 @@ function renderRuleRow(rule: RuleRow, model: PricingModel): TemplateResult {
   `;
 }
 
-function renderRuleEditor(model: PricingModel): TemplateResult | typeof nothing {
+function renderRuleEditor(
+  model: PricingModel,
+  branches: readonly BranchRow[],
+  pickers: PricingPickers,
+): TemplateResult | typeof nothing {
   const m = model.rules;
   const e = m.editing;
   if (e === null) return nothing;
@@ -528,10 +583,16 @@ function renderRuleEditor(model: PricingModel): TemplateResult | typeof nothing 
             <option value="TIER_DEFAULT">${scopeWord("TIER_DEFAULT")}</option>
           </select>
         </label>
-        <label class="field">
-          <span class="field-label">Customer id (empty unless the rule names one)</span>
-          <input class="text-field" type="text" data-field="pr-rule-customer" ?disabled=${m.busy} />
-        </label>
+        <div class="field">
+          <span class="field-label">Customer (optional)</span>
+          ${pickers.renderCustomerPicker({
+            field: "pr-rule-customer",
+            selectedId: e.customerId,
+            emptyLabel: "Any customer",
+            ariaLabel: "Customer (optional)",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field">
           <span class="field-label">Customer type</span>
           <select class="select" data-field="pr-rule-type" ?disabled=${m.busy}>
@@ -550,13 +611,22 @@ function renderRuleEditor(model: PricingModel): TemplateResult | typeof nothing 
             ${model.categories.map((c) => html`<option>${c.name}</option>`)}
           </select>
         </label>
+        <div class="field">
+          <span class="field-label">Product (optional)</span>
+          ${pickers.renderProductPicker({
+            field: "pr-rule-product",
+            selectedId: e.productId,
+            emptyLabel: "Any product",
+            ariaLabel: "Product (optional)",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field">
-          <span class="field-label">Product id (empty unless the rule names one)</span>
-          <input class="text-field" type="text" data-field="pr-rule-product" ?disabled=${m.busy} />
-        </label>
-        <label class="field">
-          <span class="field-label">Branch id (empty prices every yard)</span>
-          <input class="text-field" type="text" data-field="pr-rule-branch" ?disabled=${m.busy} />
+          <span class="field-label">Branch</span>
+          <select class="select" data-field="pr-rule-branch" ?disabled=${m.busy}>
+            <option value="">Every yard</option>
+            ${branches.map((b) => html`<option data-option-id=${b.id}>${b.name}</option>`)}
+          </select>
         </label>
         <label class="field">
           <span class="field-label">What the rule does</span>
@@ -621,7 +691,10 @@ function renderRuleEditor(model: PricingModel): TemplateResult | typeof nothing 
 
 // -- the customer prices tab ---------------------------------------------------------------------------
 
-export function renderCustomers(model: PricingModel): TemplateResult {
+export function renderCustomers(
+  model: PricingModel,
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.customers;
   const asked = m.loadedFor !== "";
   return html`
@@ -634,11 +707,16 @@ export function renderCustomers(model: PricingModel): TemplateResult {
           : nothing}
       </div>
       <p class="pr-hint">
-        The category prices one account rides over its tier rules. The pricing reads here are the contract's own: this
-        surface holds no customer search, so the id is typed whole.
+        The category prices one account rides over its tier rules. Choose a customer to read and edit their category prices.
       </p>
       <div class="filters" role="group" aria-label="The customer">
-        <input class="text-field" type="text" placeholder="Customer id" aria-label="Customer id" data-field="pr-cust-id" />
+        ${pickers.renderCustomerPicker({
+          field: "pr-cust-id",
+          selectedId: m.customerIdInput,
+          emptyLabel: "No customer chosen",
+          ariaLabel: "Customer",
+          disabled: m.phase === "loading",
+        })}
         <button type="button" class="btn btn-primary" data-action="pr-cust-load" ?disabled=${m.busy}>Load prices</button>
       </div>
       ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-cust-loading">Loading the customer's prices…</p>` : nothing}
@@ -773,7 +851,10 @@ function breakScopeWords(row: BreakRow, model: PricingModel): string {
   return "unscoped";
 }
 
-export function renderBreaks(model: PricingModel): TemplateResult {
+export function renderBreaks(
+  model: PricingModel,
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.breaks;
   return html`
     ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-breaks-loading">Loading the quantity breaks…</p>` : nothing}
@@ -784,7 +865,7 @@ export function renderBreaks(model: PricingModel): TemplateResult {
         `
       : nothing}
     ${m.phase === "ready" ? renderBreaksList(model) : nothing}
-    ${m.phase === "ready" && m.editing !== null ? renderBreakEditor(model) : nothing}
+    ${m.phase === "ready" && m.editing !== null ? renderBreakEditor(model, pickers) : nothing}
   `;
 }
 
@@ -869,7 +950,7 @@ function renderBreakRowView(row: BreakRow, model: PricingModel): TemplateResult 
   `;
 }
 
-function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing {
+function renderBreakEditor(model: PricingModel, pickers: PricingPickers): TemplateResult | typeof nothing {
   const m = model.breaks;
   const e = m.editing;
   if (e === null) return nothing;
@@ -897,10 +978,16 @@ function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing
             ${model.categories.map((c) => html`<option>${c.name}</option>`)}
           </select>
         </label>
-        <label class="field">
-          <span class="field-label">Product id (empty prices by the category)</span>
-          <input class="text-field" type="text" data-field="pr-brk-product" ?disabled=${m.busy} />
-        </label>
+        <div class="field">
+          <span class="field-label">Product (optional)</span>
+          ${pickers.renderProductPicker({
+            field: "pr-brk-product",
+            selectedId: e.productId,
+            emptyLabel: "Any product (prices by the category)",
+            ariaLabel: "Product (optional)",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field">
           <span class="field-label">Threshold unit (the bands count in this)</span>
           <input class="text-field" type="text" placeholder="SF" data-field="pr-brk-uom" ?disabled=${m.busy} />
@@ -914,11 +1001,11 @@ function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing
         </label>
       </div>
       <div class="tablewrap">
-        <table class="cardrow-table">
+        <table class="cardrow-table pr-tier-table">
           <thead>
             <tr>
               <th scope="col">From</th>
-              <th scope="col">To (empty is the open top)</th>
+              <th scope="col">To (optional)</th>
               <th scope="col">What the tier does</th>
               <th scope="col">Value</th>
               <th scope="col">Unit</th>
@@ -985,7 +1072,11 @@ function promoScopeWords(row: PromotionRow, model: PricingModel): string {
   return "everywhere";
 }
 
-export function renderPromos(model: PricingModel): TemplateResult {
+export function renderPromos(
+  model: PricingModel,
+  branches: readonly BranchRow[] = [],
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const promos = model.promos.promotions;
   const clearance = model.promos.clearance;
   return html`
@@ -997,9 +1088,9 @@ export function renderPromos(model: PricingModel): TemplateResult {
           <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-promos-reload">Try again</button></div>`
       : nothing}
     ${promos.phase === "ready" ? renderPromotionsPanel(model) : nothing}
-    ${promos.phase === "ready" && promos.editing !== null ? renderPromoEditor(model) : nothing}
+    ${promos.phase === "ready" && promos.editing !== null ? renderPromoEditor(model, branches, pickers) : nothing}
     ${promos.phase === "ready" && clearance.phase === "ready" ? renderClearancePanel(model) : nothing}
-    ${promos.phase === "ready" && clearance.phase === "ready" && clearance.editing !== null ? renderClearanceEditor(model) : nothing}
+    ${promos.phase === "ready" && clearance.phase === "ready" && clearance.editing !== null ? renderClearanceEditor(model, pickers) : nothing}
   `;
 }
 
@@ -1078,7 +1169,11 @@ function renderPromoRow(row: PromotionRow, model: PricingModel): TemplateResult 
   `;
 }
 
-function renderPromoEditor(model: PricingModel): TemplateResult | typeof nothing {
+function renderPromoEditor(
+  model: PricingModel,
+  branches: readonly BranchRow[],
+  pickers: PricingPickers,
+): TemplateResult | typeof nothing {
   const m = model.promos.promotions;
   const e = m.editing;
   if (e === null) return nothing;
@@ -1105,13 +1200,22 @@ function renderPromoEditor(model: PricingModel): TemplateResult | typeof nothing
             ${model.categories.map((c) => html`<option>${c.name}</option>`)}
           </select>
         </label>
+        <div class="field">
+          <span class="field-label">Product (optional)</span>
+          ${pickers.renderProductPicker({
+            field: "pr-prm-product",
+            selectedId: e.productId,
+            emptyLabel: "Any product",
+            ariaLabel: "Product (optional)",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field">
-          <span class="field-label">Product id (empty unless the promo names one)</span>
-          <input class="text-field" type="text" data-field="pr-prm-product" ?disabled=${m.busy} />
-        </label>
-        <label class="field">
-          <span class="field-label">Branch id (empty runs everywhere)</span>
-          <input class="text-field" type="text" data-field="pr-prm-branch" ?disabled=${m.busy} />
+          <span class="field-label">Branch</span>
+          <select class="select" data-field="pr-prm-branch" ?disabled=${m.busy}>
+            <option value="">Everywhere</option>
+            ${branches.map((b) => html`<option data-option-id=${b.id}>${b.name}</option>`)}
+          </select>
         </label>
         <label class="field">
           <span class="field-label">Starts</span>
@@ -1242,7 +1346,7 @@ function renderClearanceRowView(row: ClearanceRow, model: PricingModel): Templat
   `;
 }
 
-function renderClearanceEditor(model: PricingModel): TemplateResult | typeof nothing {
+function renderClearanceEditor(model: PricingModel, pickers: PricingPickers): TemplateResult | typeof nothing {
   const m = model.promos.clearance;
   const e = m.editing;
   if (e === null) return nothing;
@@ -1253,10 +1357,16 @@ function renderClearanceEditor(model: PricingModel): TemplateResult | typeof not
         <h2 class="card-title">${heading}</h2>
       </div>
       <div class="form-grid">
-        <label class="field">
-          <span class="field-label">Product id</span>
-          <input class="text-field" type="text" data-field="pr-clr-product" ?disabled=${m.busy} />
-        </label>
+        <div class="field">
+          <span class="field-label">Product</span>
+          ${pickers.renderProductPicker({
+            field: "pr-clr-product",
+            selectedId: e.productId,
+            emptyLabel: "No product chosen",
+            ariaLabel: "Product",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field field-full">
           <span class="field-label">Why it is marked (the reason is what the row shows)</span>
           <input class="text-field" type="text" data-field="pr-clr-reason" ?disabled=${m.busy} />
@@ -1305,7 +1415,10 @@ function rebateVendorOptions(model: PricingModel): ReadonlyMap<string, string> {
   return seen;
 }
 
-export function renderRebates(model: PricingModel): TemplateResult {
+export function renderRebates(
+  model: PricingModel,
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.rebates;
   return html`
     ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-rebates-loading">Loading the rebate programs…</p>` : nothing}
@@ -1314,9 +1427,9 @@ export function renderRebates(model: PricingModel): TemplateResult {
           <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-rebates-reload">Try again</button></div>`
       : nothing}
     ${m.phase === "ready" ? renderRebatePrograms(model) : nothing}
-    ${m.phase === "ready" && m.editing !== null ? renderRebateEditor(model) : nothing}
+    ${m.phase === "ready" && m.editing !== null ? renderRebateEditor(model, pickers) : nothing}
     ${m.phase === "ready" ? renderLedger(model) : nothing}
-    ${m.phase === "ready" ? renderAccrual(model) : nothing}
+    ${m.phase === "ready" ? renderAccrual(model, pickers) : nothing}
   `;
 }
 
@@ -1395,11 +1508,12 @@ function renderRebateRowView(row: RebateRow, model: PricingModel): TemplateResul
   `;
 }
 
-function renderRebateEditor(model: PricingModel): TemplateResult | typeof nothing {
+function renderRebateEditor(model: PricingModel, pickers: PricingPickers): TemplateResult | typeof nothing {
   const m = model.rebates;
   const e = m.editing;
   if (e === null) return nothing;
   const heading = e.id === "" ? "New program" : `Program: ${e.nameInput === "" ? e.code : e.nameInput}`;
+  const vendors = knownVendors(model);
   return html`
     <section class="card" data-test="pr-rebate-editor">
       <div class="card-head">
@@ -1416,8 +1530,11 @@ function renderRebateEditor(model: PricingModel): TemplateResult | typeof nothin
           <input class="text-field" type="text" data-field="pr-reb-name" ?disabled=${m.busy} />
         </label>
         <label class="field">
-          <span class="field-label">Vendor id (immutable after create)</span>
-          <input class="text-field" type="text" data-field="pr-reb-vendor" ?disabled=${m.busy || e.id !== ""} />
+          <span class="field-label">Vendor (immutable after create)</span>
+          <select class="select" data-field="pr-reb-vendor" ?disabled=${m.busy || e.id !== ""}>
+            <option value="">${vendors.length === 0 ? "No vendors yet" : "Choose a vendor"}</option>
+            ${vendors.map((v) => html`<option data-option-id=${v.id}>${v.name}</option>`)}
+          </select>
         </label>
         <label class="field">
           <span class="field-label">Category</span>
@@ -1426,10 +1543,16 @@ function renderRebateEditor(model: PricingModel): TemplateResult | typeof nothin
             ${model.categories.map((c) => html`<option>${c.name}</option>`)}
           </select>
         </label>
-        <label class="field">
-          <span class="field-label">Product id (empty unless the program names one)</span>
-          <input class="text-field" type="text" data-field="pr-reb-product" ?disabled=${m.busy} />
-        </label>
+        <div class="field">
+          <span class="field-label">Product (optional)</span>
+          ${pickers.renderProductPicker({
+            field: "pr-reb-product",
+            selectedId: e.productId,
+            emptyLabel: "Any product",
+            ariaLabel: "Product (optional)",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field">
           <span class="field-label">Basis</span>
           <select class="select" data-field="pr-reb-basis" ?disabled=${m.busy}>
@@ -1487,7 +1610,7 @@ function renderLedger(model: PricingModel): TemplateResult {
       </div>
       <div class="filters" role="group" aria-label="The ledger's vendor">
         <select class="select" aria-label="Vendor" data-field="pr-ledger-name">
-          <option value="">Choose a vendor</option>
+          <option value="">${vendors.size === 0 ? "No vendors yet" : "Choose a vendor"}</option>
           ${Array.from(vendors.values()).map((name) => html`<option>${name}</option>`)}
         </select>
         <button type="button" class="btn btn-secondary" data-action="pr-ledger-vendor" ?disabled=${m.phase === "loading"}>Load ledger</button>
@@ -1519,7 +1642,7 @@ function renderLedger(model: PricingModel): TemplateResult {
                         <td class="mono dim" data-label="Accrued">${row.accrued_at.slice(0, 10)}</td>
                         <td class="mono" data-label="Program">${row.program_code === "" ? "-" : row.program_code}</td>
                         <td class="mono" data-label="SKU">${row.product_sku === "" ? row.product_sku : row.product_sku}</td>
-                        <td data-label="Source"><span class="chip">${row.source_type}</span></td>
+                        <td data-label="Source"><span class="chip">${accrualSourceWord(row.source_type)}</span></td>
                         <td class="num" data-label="Basis">${costCellWords(row.basis_cents)}</td>
                         <td class="mono dim" data-label="Rate note">${row.rate_note === null ? WITHHELD_FIGURE_WORDS : row.rate_note}</td>
                         <td class="num" data-label="Claim">${costCellWords(row.accrual_cents)}</td>
@@ -1536,7 +1659,7 @@ function renderLedger(model: PricingModel): TemplateResult {
   `;
 }
 
-function renderAccrual(model: PricingModel): TemplateResult {
+function renderAccrual(model: PricingModel, pickers: PricingPickers): TemplateResult {
   const m = model.rebates.accrual;
   return html`
     <section class="card">
@@ -1544,8 +1667,7 @@ function renderAccrual(model: PricingModel): TemplateResult {
         <h2 class="card-title">Accrue one sale event</h2>
       </div>
       <p class="pr-hint">
-        The caller supplies the facts; the engine reads no sales table. The source type and id are the idempotency key:
-        a retry answers skipped, not an error.
+        Enter the sale or order details to calculate any rebate earned. Sending the same source type and reference twice is skipped rather than counted twice.
       </p>
       <div class="form-grid">
         <label class="field">
@@ -1557,20 +1679,29 @@ function renderAccrual(model: PricingModel): TemplateResult {
           </select>
         </label>
         <label class="field">
-          <span class="field-label">Source id (empty only on an adjustment)</span>
+          <span class="field-label">Sale or order reference (empty only on an adjustment)</span>
           <input class="text-field" type="text" data-field="pr-acc-source-id" ?disabled=${m.busy} />
         </label>
         <label class="field">
           <span class="field-label">When it happened (empty means now)</span>
           <input class="text-field" type="date" data-field="pr-acc-occurred" ?disabled=${m.busy} />
         </label>
+        <div class="field">
+          <span class="field-label">Product</span>
+          ${pickers.renderProductPicker({
+            field: "pr-acc-product",
+            selectedId: m.productId,
+            emptyLabel: "No product chosen",
+            ariaLabel: "Product",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field">
-          <span class="field-label">Product id</span>
-          <input class="text-field" type="text" data-field="pr-acc-product" ?disabled=${m.busy} />
-        </label>
-        <label class="field">
-          <span class="field-label">Category id</span>
-          <input class="text-field" type="text" data-field="pr-acc-category" ?disabled=${m.busy} />
+          <span class="field-label">Category</span>
+          <select class="select" data-field="pr-acc-category" ?disabled=${m.busy}>
+            <option value="">Choose a category</option>
+            ${model.categories.map((c) => html`<option data-option-id=${c.id}>${c.name}</option>`)}
+          </select>
         </label>
         <label class="field">
           <span class="field-label">Quantity, base unit</span>
@@ -1589,7 +1720,7 @@ function renderAccrual(model: PricingModel): TemplateResult {
       ${m.result === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-accrue-result">${m.result}</p>`}
       <div class="pr-actions">
         <button type="button" class="btn btn-primary" data-action="pr-accrue" ?disabled=${m.busy}>
-          ${m.busy ? "Accruing…" : "Offer to the accrual engine"}
+          ${m.busy ? "Recording…" : "Record sale for rebate"}
         </button>
       </div>
     </section>
@@ -1605,7 +1736,10 @@ function uomProductWords(row: UomConversionRow): string {
   return "all products";
 }
 
-export function renderUom(model: PricingModel): TemplateResult {
+export function renderUom(
+  model: PricingModel,
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.uom;
   const unconfirmed = m.rows.filter((r) => !isUomConfirmed(r.source)).length;
   return html`
@@ -1619,15 +1753,15 @@ export function renderUom(model: PricingModel): TemplateResult {
           ${unconfirmed > 0
             ? html`<p class="error-line" data-test="pr-uom-warn">${uomUnconfirmedWords(unconfirmed, m.rows.length)}</p>`
             : nothing}
-          ${renderUomProbe(model)}
+          ${renderUomProbe(model, pickers)}
           ${renderUomTable(model)}
         `
       : nothing}
-    ${m.phase === "ready" && m.editing !== null ? renderUomEditor(model) : nothing}
+    ${m.phase === "ready" && m.editing !== null ? renderUomEditor(model, pickers) : nothing}
   `;
 }
 
-function renderUomProbe(model: PricingModel): TemplateResult {
+function renderUomProbe(model: PricingModel, pickers: PricingPickers): TemplateResult {
   const m = model.uom.probe;
   const plan = m.result;
   return html`
@@ -1641,10 +1775,23 @@ function renderUomProbe(model: PricingModel): TemplateResult {
         knows, is the review.
       </p>
       <div class="form-grid">
-        <label class="field"><span class="field-label">Product id</span>
-          <input class="text-field" type="text" data-field="pr-uom-probe-product" ?disabled=${m.busy} /></label>
-        <label class="field"><span class="field-label">Category id (empty is fine)</span>
-          <input class="text-field" type="text" data-field="pr-uom-probe-category" ?disabled=${m.busy} /></label>
+        <div class="field">
+          <span class="field-label">Product</span>
+          ${pickers.renderProductPicker({
+            field: "pr-uom-probe-product",
+            selectedId: m.productId,
+            emptyLabel: "No product chosen",
+            ariaLabel: "Product",
+            disabled: m.busy,
+          })}
+        </div>
+        <label class="field">
+          <span class="field-label">Category (optional)</span>
+          <select class="select" data-field="pr-uom-probe-category" ?disabled=${m.busy}>
+            <option value="">Any category</option>
+            ${model.categories.map((c) => html`<option data-option-id=${c.id}>${c.name}</option>`)}
+          </select>
+        </label>
         <label class="field"><span class="field-label">Quantity</span>
           <input class="text-field" type="text" inputmode="decimal" data-field="pr-uom-probe-qty" ?disabled=${m.busy} /></label>
         <label class="field"><span class="field-label">Unit entered</span>
@@ -1744,7 +1891,7 @@ function renderUomRow(row: UomConversionRow, model: PricingModel): TemplateResul
   `;
 }
 
-function renderUomEditor(model: PricingModel): TemplateResult | typeof nothing {
+function renderUomEditor(model: PricingModel, pickers: PricingPickers): TemplateResult | typeof nothing {
   const m = model.uom;
   const e = m.editing;
   if (e === null) return nothing;
@@ -1754,10 +1901,23 @@ function renderUomEditor(model: PricingModel): TemplateResult | typeof nothing {
         <h2 class="card-title">Conversion edge</h2>
       </div>
       <div class="form-grid">
-        <label class="field"><span class="field-label">Product id (empty is every product)</span>
-          <input class="text-field" type="text" data-field="pr-uom-product" ?disabled=${m.busy} /></label>
-        <label class="field"><span class="field-label">Category id (when the edge is category wide)</span>
-          <input class="text-field" type="text" data-field="pr-uom-category-id" ?disabled=${m.busy} /></label>
+        <div class="field">
+          <span class="field-label">Product (optional)</span>
+          ${pickers.renderProductPicker({
+            field: "pr-uom-product",
+            selectedId: e.productId,
+            emptyLabel: "Every product",
+            ariaLabel: "Product (optional)",
+            disabled: m.busy,
+          })}
+        </div>
+        <label class="field">
+          <span class="field-label">Category (when the edge is category wide)</span>
+          <select class="select" data-field="pr-uom-category-id" ?disabled=${m.busy}>
+            <option value="">Any category</option>
+            ${model.categories.map((c) => html`<option data-option-id=${c.id}>${c.name}</option>`)}
+          </select>
+        </label>
         <label class="field"><span class="field-label">From unit</span>
           <input class="text-field" type="text" placeholder="SF" data-field="pr-uom-from" ?disabled=${m.busy} /></label>
         <label class="field"><span class="field-label">To unit</span>
@@ -1888,16 +2048,23 @@ function renderBatchCreate(model: PricingModel): TemplateResult | typeof nothing
   const m = model.batches;
   const e = m.creating;
   if (e === null) return nothing;
+  const vendors = knownVendors(model);
   return html`
     <section class="card" data-test="pr-batch-create">
       <div class="card-head"><h2 class="card-title">New batch</h2></div>
       <div class="form-grid">
         <label class="field"><span class="field-label">Batch number</span>
           <input class="text-field" type="text" data-field="pr-batch-no" ?disabled=${m.busy} /></label>
-        <label class="field"><span class="field-label">Vendor id</span>
-          <input class="text-field" type="text" data-field="pr-batch-vendor" ?disabled=${m.busy} /></label>
-        <label class="field"><span class="field-label">Import profile id (the mapping it reads with)</span>
-          <input class="text-field" type="text" data-field="pr-batch-profile" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Vendor</span>
+          <select class="select" data-field="pr-batch-vendor" ?disabled=${m.busy}>
+            <option value="">${vendors.length === 0 ? "No vendors yet" : "Choose a vendor"}</option>
+            ${vendors.map((v) => html`<option data-option-id=${v.id}>${v.name}</option>`)}
+          </select></label>
+        <label class="field"><span class="field-label">Import profile (the mapping it reads with)</span>
+          <select class="select" data-field="pr-batch-profile" ?disabled=${m.busy}>
+            <option value="">No profile</option>
+            ${m.profiles.map((p) => html`<option data-option-id=${p.id}>${p.name}</option>`)}
+          </select></label>
         <label class="field"><span class="field-label">Effective date (empty applies by hand)</span>
           <input class="text-field" type="date" data-field="pr-batch-effective" ?disabled=${m.busy} /></label>
         <label class="field field-full"><span class="field-label">Source reference (the file it came from)</span>
@@ -2009,7 +2176,7 @@ function renderProfiles(model: PricingModel): TemplateResult {
                     <th scope="col">Profile</th>
                     <th scope="col">Vendor</th>
                     <th scope="col">Mapping</th>
-                    <th scope="col" class="num">Markup</th>
+                    <th scope="col" class="num">Markup on cost</th>
                     <th scope="col">Actions</th>
                   </tr>
                 </thead>
@@ -2019,8 +2186,8 @@ function renderProfiles(model: PricingModel): TemplateResult {
                       <tr data-profile=${p.id}>
                         <td class="person" data-label="Profile">${p.name}</td>
                         <td data-label="Vendor">${p.vendor_name === "" ? "unnamed" : p.vendor_name}</td>
-                        <td class="mono dim" data-label="Mapping">${Object.entries(p.mapping).map(([k, v]) => `${k}: ${v}`).join(", ")}</td>
-                        <td class="num" data-label="Markup">${p.markup_bps}</td>
+                        <td class="dim" data-label="Mapping">${profileMappingWords(p.mapping)}</td>
+                        <td class="num" data-label="Markup on cost">${pctWords(p.markup_bps)}</td>
                         <td class="cardrow-act">
                           <button
                             type="button"
@@ -2139,7 +2306,7 @@ function renderPriceFileForm(model: PricingModel): TemplateResult {
       <div class="form-grid">
         <label class="field"><span class="field-label">Manufacturer</span>
           <select class="select" data-field="pr-pf-vendor" ?disabled=${m.previewBusy}>
-            <option value="">Choose a manufacturer</option>
+            <option value="">${m.vendors.length === 0 ? "No vendors yet" : "Choose a manufacturer"}</option>
             ${m.vendors.map((v) => html`<option>${v.name}</option>`)}
           </select>
         </label>
@@ -2262,7 +2429,10 @@ function lowMarginLevelChip(level: string): string {
   return "chip-warn-word";
 }
 
-export function renderLowMargin(model: PricingModel): TemplateResult {
+export function renderLowMargin(
+  model: PricingModel,
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.lowMargin;
   return html`
     ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-lm-loading">Scanning the committed lines…</p>` : nothing}
@@ -2316,7 +2486,7 @@ export function renderLowMargin(model: PricingModel): TemplateResult {
                   </div>
                 `}
           </section>
-          ${renderLowMarginProbe(model)}
+          ${renderLowMarginProbe(model, pickers)}
         `
       : nothing}
   `;
@@ -2341,18 +2511,26 @@ function renderLowMarginRow(row: LowMarginScanRow): TemplateResult {
   `;
 }
 
-function renderLowMarginProbe(model: PricingModel): TemplateResult {
+function renderLowMarginProbe(model: PricingModel, pickers: PricingPickers): TemplateResult {
   const m = model.lowMargin.probe;
   return html`
     <section class="card">
       <div class="card-head"><h2 class="card-title">Grade a proposed line</h2></div>
       <p class="pr-hint">
-        One line through the resolver, before it is quoted: it is graded against the category's target and floor,
-        and the breach is named, if there is one.
+        Check one line before it is quoted: it is graded against the category's target and floor,
+        and any breach is named.
       </p>
       <div class="form-grid">
-        <label class="field"><span class="field-label">Customer id</span>
-          <input class="text-field" type="text" data-field="pr-lm-customer" ?disabled=${m.busy} /></label>
+        <div class="field">
+          <span class="field-label">Customer</span>
+          ${pickers.renderCustomerPicker({
+            field: "pr-lm-customer",
+            selectedId: m.customerId,
+            emptyLabel: "No customer chosen",
+            ariaLabel: "Customer",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field"><span class="field-label">Customer type</span>
           <select class="select" data-field="pr-lm-customer-type" ?disabled=${m.busy}>
             <option value="CONTRACTOR">Contractor</option>
@@ -2362,10 +2540,23 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
             <option value="INTERNAL">Internal</option>
           </select>
         </label>
-        <label class="field"><span class="field-label">Product id</span>
-          <input class="text-field" type="text" data-field="pr-lm-product" ?disabled=${m.busy} /></label>
-        <label class="field"><span class="field-label">Category id</span>
-          <input class="text-field" type="text" data-field="pr-lm-category" ?disabled=${m.busy} /></label>
+        <div class="field">
+          <span class="field-label">Product</span>
+          ${pickers.renderProductPicker({
+            field: "pr-lm-product",
+            selectedId: m.productId,
+            emptyLabel: "No product chosen",
+            ariaLabel: "Product",
+            disabled: m.busy,
+          })}
+        </div>
+        <label class="field">
+          <span class="field-label">Category (optional)</span>
+          <select class="select" data-field="pr-lm-category" ?disabled=${m.busy}>
+            <option value="">Any category</option>
+            ${model.categories.map((c) => html`<option data-option-id=${c.id}>${c.name}</option>`)}
+          </select>
+        </label>
         <label class="field"><span class="field-label">Quantity</span>
           <input class="text-field" type="text" inputmode="decimal" data-field="pr-lm-qty" ?disabled=${m.busy} /></label>
         <label class="field"><span class="field-label">Unit</span>
@@ -2421,9 +2612,10 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
  * house placeholder word, never as the id's own first block.
  */
 function auditEntityWords(row: PricingAuditRow, model: PricingModel): string {
-  if (row.entity_id === "") return row.entity_type;
+  const entityWord = pricingAuditEntityWord(row.entity_type);
+  if (row.entity_id === "") return entityWord;
   const name = categoryName(row.entity_id, model.categories);
-  return `${row.entity_type} / ${name === UNKNOWN_CATEGORY ? UNKNOWN_ENTITY : name}`;
+  return `${entityWord} / ${name === UNKNOWN_CATEGORY ? UNKNOWN_ENTITY : name}`;
 }
 
 export function renderPricingAudit(model: PricingModel): TemplateResult {
@@ -2488,18 +2680,23 @@ export function renderPricingAudit(model: PricingModel): TemplateResult {
 
 function renderPricingAuditRow(row: PricingAuditRow, model: PricingModel): TemplateResult {
   const bypass = row.action === "BYPASS";
-  const delta = deltaWords(row.old_value === "" ? null : row.old_value, row.new_value === "" ? null : row.new_value);
+  const delta = deltaWords(
+    row.old_value === "" ? null : row.old_value,
+    row.new_value === "" ? null : row.new_value,
+    row.field_name,
+  );
+  const reasonWord = bypass && row.bypass_reason !== "" ? bypassReasonWord(row.bypass_reason) : "";
   return html`
     <tr data-audit=${row.id}>
       <td class="mono dim" data-label="When">${whenWords(row.created_at)}</td>
       <td data-label="Entity">${auditEntityWords(row, model)}</td>
       <td data-label="Action"><span class="chip ${bypass ? "chip-danger" : ""}">${auditActionWord(row.action)}</span></td>
-      <td class="dim" data-label="Field">${row.field_name === "" ? "-" : row.field_name}</td>
+      <td class="dim" data-label="Field">${row.field_name === "" ? "-" : pricingAuditFieldWord(row.field_name)}</td>
       <td data-label="Change">${delta === "" ? html`<span class="dim">-</span>` : delta}</td>
-      <td class="dim" data-label="Actor">${row.user_id === "" ? "the engine" : UNKNOWN_ACTOR}</td>
+      <td class="dim" data-label="Actor">${row.user_id === "" ? "Automatic" : UNKNOWN_ACTOR}</td>
     </tr>
-    ${bypass && row.bypass_reason !== ""
-      ? html`<tr data-audit-reason=${row.id}><td colspan="6" data-label="Reason"><span class="chip chip-danger">bypass: ${row.bypass_reason}</span></td></tr>`
+    ${reasonWord !== ""
+      ? html`<tr data-audit-reason=${row.id}><td colspan="6" data-label="Reason"><span class="chip ${reasonWord === UNKNOWN_REASON ? "chip-neutral" : "chip-danger"}">${reasonWord}</span></td></tr>`
       : nothing}
   `;
 }
@@ -2512,7 +2709,10 @@ function changeFieldWord(field: string): string {
   return field;
 }
 
-export function renderChangeLog(model: PricingModel): TemplateResult {
+export function renderChangeLog(
+  model: PricingModel,
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.changeLog;
   return html`
     ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-log-loading">Loading the change log…</p>` : nothing}
@@ -2528,8 +2728,18 @@ export function renderChangeLog(model: PricingModel): TemplateResult {
               <span class="count" data-test="pr-log-count">${m.rows.length} ${m.rows.length === 1 ? "change" : "changes"}</span>
             </div>
             <div class="filters" role="group" aria-label="Change log filters">
-              <input class="text-field" type="text" placeholder="Product id" aria-label="Product id" data-field="pr-log-product" />
-              <input class="text-field" type="text" placeholder="Batch id" aria-label="Batch id" data-field="pr-log-batch" />
+              ${pickers.renderProductPicker({
+                field: "pr-log-product",
+                selectedId: m.filters.productId,
+                emptyLabel: "Any product",
+                ariaLabel: "Product",
+              })}
+              <select class="select" aria-label="Batch" data-field="pr-log-batch">
+                <option value="">Any batch</option>
+                ${model.batches.rows.map(
+                  (b) => html`<option data-option-id=${b.id}>${b.batch_no}${b.vendor_name !== "" ? ` · ${b.vendor_name}` : ""}</option>`,
+                )}
+              </select>
               <button type="button" class="btn btn-secondary" data-action="pr-log-apply">Apply</button>
               <button type="button" class="btn btn-secondary" data-action="pr-log-clear">Clear</button>
             </div>

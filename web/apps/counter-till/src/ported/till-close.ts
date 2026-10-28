@@ -341,7 +341,10 @@ export class HosTillClose extends LitElement {
       font-weight: 600;
     }
     button[disabled] {
-      opacity: 0.5;
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
+      opacity: 1;
       cursor: default;
     }
     .err {

@@ -23,13 +23,20 @@ type glStore interface {
 	// PostingAccountsTx is PostingAccounts read through the caller's transaction (no second pool connection).
 	PostingAccountsTx(ctx context.Context, tx pgx.Tx, eventType, branchID string) (map[string]string, error)
 	ListActiveRules(ctx context.Context) ([]RuleRef, error)
+	ListActiveRulesTx(ctx context.Context, tx pgx.Tx) ([]RuleRef, error)
 
 	// - chart of accounts -
 	ListAccounts(ctx context.Context) ([]Account, error)
 	AccountByCode(ctx context.Context, code string) (Account, bool, error)
+	// AccountByCodeTx reads the account row on the caller's transaction with FOR UPDATE (W2-6b fix
+	// round 4, P3-1), so DeactivateAccount and a till movement's record-time check serialise on the
+	// account row.
+	AccountByCodeTx(ctx context.Context, tx pgx.Tx, code string) (Account, bool, error)
 	InsertAccount(ctx context.Context, in CreateAccountInput) (Account, error)
 	DraftLineCountForAccountCode(ctx context.Context, code string) (int, error)
+	DraftLineCountForAccountCodeTx(ctx context.Context, tx pgx.Tx, code string) (int, error)
 	SetAccountActive(ctx context.Context, code string, active bool) (Account, error)
+	SetAccountActiveTx(ctx context.Context, tx pgx.Tx, code string, active bool) (Account, error)
 
 	// - journals (the shared persist path) -
 	InsertJournal(ctx context.Context, d journalDraft) (id string, created bool, err error)
@@ -66,6 +73,16 @@ type glStore interface {
 	// on 614: a refused audit holds the close, the way the year end close's row holds it).
 	ClosePeriod(ctx context.Context, id, actorID, reason string, record func(ctx context.Context, tx pgx.Tx) error) (Period, error)
 	ReopenPeriod(ctx context.Context, id, actorID, reason string) (Period, error)
+	// PeriodYearTx answers one period's year, read on the caller's transaction (FW1-09h): the
+	// reopen reads the year to ask whether that year carries its marker, and it reads it on the
+	// SAME transaction that holds the year end's lock, never through the pool (a pool read while
+	// a transaction is open makes the holder wait on a second connection).
+	PeriodYearTx(ctx context.Context, tx pgx.Tx, id string) (int, error)
+	// ReopenPeriodTx unseals a period on the caller's transaction (FW1-09h): the reopen and the
+	// year end close are serialized by the year end's OWN advisory lock, so the marker's read and
+	// the write happen on ONE transaction and a close cannot slip between them. A period that is
+	// not CLOSED is refused.
+	ReopenPeriodTx(ctx context.Context, tx pgx.Tx, id, actorID, reason string) (Period, error)
 	ClosePeriodsForYear(ctx context.Context, year int, actorID, reason string) error
 	// EnsureNextFiscalYear idempotently makes sure the year AFTER THE CURRENT HOUSE YEAR exists (round 2,
 	// S2 P2-1: a repeat is a no op, the roll forward never creeps) and answers it. The worker calls it

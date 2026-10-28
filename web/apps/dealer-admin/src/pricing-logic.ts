@@ -28,6 +28,7 @@
  */
 
 import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+import { UNKNOWN_REASON } from "./placeholders.js";
 import { UNKNOWN_CATEGORY, UNKNOWN_VENDOR } from "./placeholders.js";
 
 export interface PricingTab {
@@ -414,8 +415,8 @@ export function listEmptyWords(what: string): string {
 export function pricingRefusalWords(error: string, status: number | undefined, kind: "read" | "write"): string {
   if (status === 403) {
     return kind === "write"
-      ? "You may not change pricing. Pricing writes are managers' and above; the Forbidden gate named the caller, and the core's pricing editors list holds who may act. (server: Forbidden)"
-      : "You may not open this. The pricing reads are staff's; the Forbidden gate named the caller. (server: Forbidden)";
+      ? "You may not change pricing. Pricing changes are for managers and administrators. (server: Forbidden)"
+      : "You may not open this. Pricing is open to signed-in staff. (server: Forbidden)";
   }
   return error !== "" ? error : "Try again in a moment.";
 }
@@ -571,7 +572,7 @@ function dayWords(iso: string): string {
  */
 export function overrideEmptyWords(asked: boolean): string {
   if (!asked) {
-    return "Type a customer id and load their prices. The customer's own category prices ride over the tier rules for that account alone; an account with none is a system account and prices by its tier.";
+    return "Choose a customer and load their prices. The customer's own category prices ride over the tier rules for that account alone; an account with none is a system account and prices by its tier.";
   }
   return "No category prices for this customer. The account prices by its tier rules; a price here would ride over them for this customer alone.";
 }
@@ -905,15 +906,69 @@ export function pricingAuditEmptyWords(): string {
   return "No pricing log entries yet. Every pricing write lands here, and so does every bypass: the log is how a quiet price change stays findable.";
 }
 
+const BPS_AUDIT_FIELDS: ReadonlySet<string> = new Set([
+  "margin floor",
+  "margin target",
+  "target margin",
+  "margin",
+  "floor",
+  "target",
+  "discount",
+  "markup",
+  "markup on cost",
+  "surcharge",
+  "rebate rate",
+]);
+
+const CENTS_AUDIT_FIELDS: ReadonlySet<string> = new Set([
+  "price",
+  "clearance price",
+  "list price",
+  "cost",
+  "retail",
+  "rebate per unit",
+]);
+
+function auditValueWords(value: string, fieldName: string): string {
+  const trimmed = value.trim();
+  const field = fieldName.trim().toLowerCase();
+  if ((field.endsWith("_bps") || BPS_AUDIT_FIELDS.has(field)) && /^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+    return pctWords(Number(trimmed));
+  }
+  if (
+    (field.endsWith("_cents") || field.endsWith("_cents_per_unit") || CENTS_AUDIT_FIELDS.has(field)) &&
+    /^-?\d+(?:\.\d+)?$/.test(trimmed)
+  ) {
+    return moneyWords(Number(trimmed));
+  }
+  if (field.endsWith("_qty") || field === "quantity" || field === "from qty" || field === "to qty") {
+    const qtyMatch = /^(-?\d+(?:\.\d+)?)(?:\s+(.+))?$/.exec(trimmed);
+    if (qtyMatch !== null && qtyMatch[1] !== undefined) {
+      const n = trimNumber(Number(qtyMatch[1]));
+      return qtyMatch[2] !== undefined ? `${n} ${qtyMatch[2]}` : n;
+    }
+  }
+  if (field === "calc_type" || field === "calc type") return calcTypeWord(trimmed);
+  if (field === "basis") return rebateBasisWords(trimmed);
+  if (field === "scope") return scopeWord(trimmed);
+  return value;
+}
+
 /**
  * A log row's change as the delta reads: what a field went from and to. The
  * server carries the values as text; a null old is a set, a null new is a
  * clearing, and both nulls say nothing rather than an arrow to nowhere.
+ * When `fieldName` is provided, basis-point fields (`*_bps`) read as a
+ * percent with their unit, money fields (`*_cents`, `*_cents_per_unit`) read
+ * in dollars, and quantity fields (`*_qty`) trim trailing decimals while
+ * preserving their unit.
  */
-export function deltaWords(oldValue: string | null, newValue: string | null): string {
-  if (oldValue !== null && newValue !== null) return `${oldValue} to ${newValue}`;
-  if (oldValue === null && newValue !== null) return `set to ${newValue}`;
-  if (oldValue !== null && newValue === null) return "cleared";
+export function deltaWords(oldValue: string | null, newValue: string | null, fieldName = ""): string {
+  const oldFormatted = oldValue !== null ? auditValueWords(oldValue, fieldName) : null;
+  const newFormatted = newValue !== null ? auditValueWords(newValue, fieldName) : null;
+  if (oldFormatted !== null && newFormatted !== null) return `${oldFormatted} to ${newFormatted}`;
+  if (oldFormatted === null && newFormatted !== null) return `set to ${newFormatted}`;
+  if (oldFormatted !== null && newFormatted === null) return "cleared";
   return "";
 }
 
@@ -930,4 +985,101 @@ export function importResultWords(result: {
     `${result.outliers.length} ${result.outliers.length === 1 ? "outlier" : "outliers"} past the alert threshold.`,
   ];
   return parts.join(" ");
+}
+
+/** A rebate accrual ledger entry's source type in plain dealer words (UX-118). */
+export function accrualSourceWord(sourceType: string): string {
+  switch (sourceType) {
+    case "POS_SALE":
+      return "Counter sale";
+    case "ORDER":
+      return "Order";
+    case "ADJUSTMENT":
+      return "Adjustment";
+    default:
+      return plainly(sourceType);
+  }
+}
+
+const PROFILE_COLUMN_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  sku_col: "item number",
+  cost_col: "cost",
+  retail_col: "retail",
+  trade_col: "trade",
+  contractor_col: "contractor",
+  commercial_col: "commercial",
+  uom_col: "unit",
+  name_col: "product name",
+});
+
+/**
+ * An import profile's column mapping in plain dealer words (UX-118),
+ * never raw `sku_col: Item, cost_col: Dealer Net`.
+ */
+export function profileMappingWords(mapping: Readonly<Record<string, string>>): string {
+  const parts: string[] = [];
+  for (const [key, col] of Object.entries(mapping)) {
+    const trimmed = col.trim();
+    if (trimmed === "") continue;
+    const label = PROFILE_COLUMN_WORDS[key] ?? plainly(key.replace(/_col$/i, ""));
+    parts.push(`${label} is in column ${trimmed}`);
+  }
+  if (parts.length === 0) return "No columns mapped";
+  const joined = parts.join("; ");
+  return joined.charAt(0).toUpperCase() + joined.slice(1);
+}
+
+const PRICING_AUDIT_ENTITY_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  category_policy: "Category policy",
+  customer_override: "Customer override",
+  pricing_rule: "Pricing rule",
+  quantity_break: "Quantity break",
+  promotion: "Promotion",
+  clearance: "Clearance",
+  rebate_program: "Rebate program",
+});
+
+/** A pricing audit entry's entity type in plain dealer words (UX-118). */
+export function pricingAuditEntityWord(entityType: string): string {
+  const mapped = PRICING_AUDIT_ENTITY_WORDS[entityType];
+  if (mapped !== undefined) return mapped;
+  const plain = plainly(entityType);
+  return plain === "" ? "" : plain.charAt(0).toUpperCase() + plain.slice(1);
+}
+
+const PRICING_AUDIT_FIELD_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  margin_floor_bps: "margin floor",
+  margin_target_bps: "margin target",
+  target_margin_bps: "target margin",
+  margin_bps: "margin",
+  discount_bps: "discount",
+  markup_bps: "markup",
+  price_cents: "price",
+  clearance_price_cents: "clearance price",
+  rate_bps: "rebate rate",
+  rate_cents_per_unit: "rebate per unit",
+});
+
+/** A pricing audit entry's changed field in plain dealer words (UX-118). */
+export function pricingAuditFieldWord(field: string): string {
+  const mapped = PRICING_AUDIT_FIELD_WORDS[field];
+  if (mapped !== undefined) return mapped;
+  return plainly(field.replace(/_(bps|cents)$/i, ""));
+}
+
+const BYPASS_REASON_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  APPROVED_OVERRIDE: "Approved override",
+  MANAGER_SCOPE_OVERRIDE: "Manager override",
+  PRODUCT_POLICY_DISABLED: "Product margin policy off",
+  CATEGORY_POLICY_DISABLED: "Category margin policy off",
+});
+
+/**
+ * A pricing audit entry's bypass reason in plain dealer words (UX-118 r2).
+ * An unknown value reads as the neutral placeholder from placeholders.ts,
+ * never the raw code.
+ */
+export function bypassReasonWord(reason: string): string {
+  if (reason.trim() === "") return "";
+  return BYPASS_REASON_WORDS[reason] ?? UNKNOWN_REASON;
 }
