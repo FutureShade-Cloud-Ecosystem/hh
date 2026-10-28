@@ -14,6 +14,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // JournalClockEntry is one POSTED journal's as-of filing: the source document it
@@ -35,6 +37,12 @@ func (s *Service) JournalEffectiveInstants(ctx context.Context, journalIDs []str
 // source with one of the named refs, each with its posted and effective instants.
 func (s *Service) RefJournalInstants(ctx context.Context, source string, refIDs []string) (map[string][]JournalClockEntry, error) {
 	return s.repo.RefJournalInstants(ctx, source, refIDs)
+}
+
+// JournalEffectiveInstantByKey returns the effective instant of the POSTED journal
+// filed under an idempotency key, found false when no POSTED journal carries it.
+func (s *Service) JournalEffectiveInstantByKey(ctx context.Context, key string) (time.Time, bool, error) {
+	return s.repo.JournalEffectiveInstantByKey(ctx, key)
 }
 
 func (r *Repository) JournalEffectiveInstants(ctx context.Context, journalIDs []string) (map[string]time.Time, error) {
@@ -97,4 +105,25 @@ func (r *Repository) RefJournalInstants(ctx context.Context, source string, refI
 		out[ref] = append(out[ref], e)
 	}
 	return out, rows.Err()
+}
+
+func (r *Repository) JournalEffectiveInstantByKey(ctx context.Context, key string) (time.Time, bool, error) {
+	if r.pool == nil {
+		return time.Time{}, false, errNoDB
+	}
+	var eff time.Time
+	err := r.pool.QueryRow(ctx,
+		`SELECT `+asOfEffectiveInstant+`
+		  FROM gl_journals j
+		  JOIN fiscal_periods fp ON fp.id = j.period_id
+		 WHERE j.status = 'POSTED' AND j.idempotency_key = $1`,
+		key,
+	).Scan(&eff)
+	if err == pgx.ErrNoRows {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("gl: journal effective instant by key: %w", err)
+	}
+	return eff, true, nil
 }

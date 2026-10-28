@@ -50,7 +50,8 @@ func TestIntegration_W29A_APAging_CompositionRootTieAndRoute(t *testing.T) {
 		WithRuleResolver(glRuleAdapter{svc: glSvc})
 	landedSvc := landedcost.NewService(landedcost.NewRepository(pool)).
 		WithCapitalizer(landedAdapter{svc: inventorySvc}).
-		WithGLPoster(landedGLPoster{svc: glSvc})
+		WithGLPoster(landedGLPoster{svc: glSvc}).
+		WithJournalClock(w4cLandedJournalClock{svc: glSvc})
 	purchasingSvc := purchasing.NewService(purchasing.NewRepository(pool)).
 		WithZone(newDealerZone(pool)).
 		WithStockReceiver(w4cStockReceiver{svc: inventorySvc}).

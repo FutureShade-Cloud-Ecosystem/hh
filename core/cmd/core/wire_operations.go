@@ -219,6 +219,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	landedcostSvc := landedcost.NewService(landedcost.NewRepository(pool)).
 		WithCapitalizer(landedAdapter{svc: inventorySvc}).
 		WithGLPoster(landedGLPoster{svc: spine.glSvc}).
+		WithJournalClock(w4cLandedJournalClock{svc: spine.glSvc}).
 		WithAudit(auditSvc)
 	landedcost.NewHandler(landedcostSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
@@ -1994,6 +1995,19 @@ func (a w4cLandedCoster) OpenPayablesAsOf(ctx context.Context, asOf time.Time, b
 		}
 	}
 	return out, nil
+}
+
+// w4cLandedJournalClock satisfies landedcost.JournalClock over the gl service's own
+// as-of filing rule (W2-9a round 2b, S2's P3 1): a landed cost payable counts from
+// its posting journal's effective instant, never from the row's creation stamp.
+type w4cLandedJournalClock struct{ svc *gl.Service }
+
+func (a w4cLandedJournalClock) JournalEffectiveInstants(ctx context.Context, journalIDs []string) (map[string]time.Time, error) {
+	return a.svc.JournalEffectiveInstants(ctx, journalIDs)
+}
+
+func (a w4cLandedJournalClock) JournalEffectiveInstantByKey(ctx context.Context, key string) (time.Time, bool, error) {
+	return a.svc.JournalEffectiveInstantByKey(ctx, key)
 }
 
 // w4cGLJournalClock satisfies purchasing.GLJournalClock over the gl service's own
