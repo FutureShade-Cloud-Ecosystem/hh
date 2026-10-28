@@ -321,7 +321,9 @@ func (r *Repository) SessionTenders(ctx context.Context, sessionID string) ([]Te
 		return nil, fmt.Errorf("till: session tenders: %w", err)
 	}
 	defer rows.Close()
-	var out []TenderTotal
+	// An empty answer is the empty slice, never nil: the session detail's tenders are a contract
+	// array, and a nil slice marshals as null.
+	out := []TenderTotal{}
 	for rows.Next() {
 		var t TenderTotal
 		if err := rows.Scan(&t.Method, &t.ExpectedCents, &t.ActualCents, &t.LodgedCents); err != nil {
@@ -344,7 +346,9 @@ func (r *Repository) SessionMovements(ctx context.Context, sessionID string) ([]
 		return nil, fmt.Errorf("till: session movements: %w", err)
 	}
 	defer rows.Close()
-	var out []Movement
+	// An empty answer is the empty slice, never nil: the session detail's movements are a contract
+	// array, and a nil slice marshals as null.
+	out := []Movement{}
 	for rows.Next() {
 		var m Movement
 		if err := rows.Scan(&m.ID, &m.MovementType, &m.Method, &m.AmountCents, &m.Reason, &m.Reference); err != nil {
@@ -504,7 +508,9 @@ func (r *Repository) SlipCandidates(ctx context.Context, sessionID, method strin
 		return nil, fmt.Errorf("till: slip candidates: %w", err)
 	}
 	defer rows.Close()
-	var out []SlipCandidate
+	// An empty answer is the empty slice, never nil: the session detail's slip_candidates are a
+	// contract array, and a nil slice marshals as null.
+	out := []SlipCandidate{}
 	for rows.Next() {
 		var c SlipCandidate
 		if err := rows.Scan(&c.PaymentID, &c.PaymentNo, &c.AmountCents, &c.Method, &c.Reference); err != nil {
@@ -1121,7 +1127,9 @@ func (r *Repository) ListCreditHolds(ctx context.Context, status string) ([]Cred
 		return nil, fmt.Errorf("till: list credit holds: %w", err)
 	}
 	defer rows.Close()
-	var out []CreditHold
+	// An empty answer is the empty slice, never nil: the desk's render maps over items, and a nil
+	// slice marshals as null, which crashes it.
+	out := []CreditHold{}
 	for rows.Next() {
 		var h CreditHold
 		if err := rows.Scan(&h.ID, &h.CustomerID, &h.SourcePaymentID, &h.Status, &h.Reason,
@@ -1156,7 +1164,9 @@ func (r *Repository) ListBouncedPayments(ctx context.Context, gatewayRef string)
 		return nil, fmt.Errorf("till: list bounced payments: %w", err)
 	}
 	defer rows.Close()
-	var out []BouncedPayment
+	// An empty answer is the empty slice, never nil: the desk's render maps over items, and a nil
+	// slice marshals as null, which crashes it.
+	out := []BouncedPayment{}
 	for rows.Next() {
 		var b BouncedPayment
 		if err := rows.Scan(&b.PaymentID, &b.PaymentNo, &b.CustomerID, &b.BranchID, &b.Method,
