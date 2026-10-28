@@ -1490,6 +1490,13 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 		return out
 	}
 	before := income()
+	// The close has to do real work, or this leg proves nothing. A close of a year with no income
+	// statement posts no closing journal, seals no period and answers success, so the comparison
+	// below ranges over an empty map and passes for the wrong reason (S5's P2 on PR 634,
+	// REVIEW-PR634-r7-s5-opus.md). The closed year must carry a P&L before the close runs.
+	if len(before) == 0 {
+		t.Errorf("the closed year %d carries no income statement: the year end close of a year with no P&L posts no closing journal and seals no period, so this leg would prove nothing", closedYear)
+	}
 	if _, err := w.money.glSvc.CloseYear(fw1StaffCtx(context.Background()), closedYear, "FW1 walk year end close"); err != nil {
 		t.Fatalf("the year end close of %d: %v", closedYear, err)
 	}
