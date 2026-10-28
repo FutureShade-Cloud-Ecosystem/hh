@@ -83,15 +83,18 @@ export const poStyles = css`
   .drafted { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8); margin-top: var(--hh-s-4); }
   .link-inline { background: transparent; border: 0; padding: 0; min-height: 0; color: var(--hh-accent-text); font-weight: 700; text-decoration: underline; cursor: pointer; font-family: var(--hh-font-mono); }
   .link-inline:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
-  .box[disabled] { opacity: 1; background: transparent; border-style: dashed; cursor: not-allowed; }
   .foot { margin: var(--hh-s-12) 0 0; font-size: 14px; }
   .nodate { display: inline-block; padding: 0 var(--hh-s-8); border: 1px dashed var(--hh-state-watch); border-radius: var(--hh-radius-pill); color: var(--hh-state-watch); font-size: 13px; font-weight: 700; }
 
   /* The pick box: a button that is a checkbox, so the position gate has nothing to bind. */
   .box { width: 28px; height: 28px; min-height: 28px; padding: 0; border-radius: var(--hh-radius-control); border: 2px solid var(--hh-control-line); background: var(--hh-field); position: relative; }
   .box[aria-checked="true"] { background: var(--brand-fill, var(--hh-accent)); border-color: var(--brand-fill-on, var(--hh-accent-ink)); }
-  .box[aria-checked="true"]::after { content: ""; position: absolute; inset-inline-start: 8px; top: 3px; width: 6px; height: 12px; border: solid var(--brand-fill-on, var(--hh-accent-ink)); border-width: 0 3px 3px 0; transform: rotate(45deg); }
+  .box[aria-checked="true"]::after { content: ""; position: absolute; inset-inline-start: 8px; top: 3px; width: 6px; height: 12px; border: solid currentColor; border-width: 0 3px 3px 0; color: var(--brand-fill-on, var(--hh-accent-ink)); transform: rotate(45deg); }
   .box:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
+  /* The pick box's disabled rule, after the checked rule so a disabled box never keeps the brand
+     fill: the grey token swap, and a fade is not a state. */
+  .box[disabled] { background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border-color: var(--hh-disabled-line); border-style: dashed; opacity: 1; cursor: not-allowed; }
+  .box[disabled]::after { color: var(--hh-disabled-ink); }
 
   /* Status words: outline pills, never buttons. */
   .status { display: inline-flex; align-items: center; gap: var(--hh-s-8); padding: var(--hh-s-2) var(--hh-s-12); border-radius: var(--hh-radius-pill); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--hh-line); white-space: nowrap; }
