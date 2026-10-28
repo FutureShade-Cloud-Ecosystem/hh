@@ -106,8 +106,9 @@ func (r *Repository) DetailLines(ctx context.Context, invoiceID string) ([]Detai
 //
 // A reversal writes a contra allocation on its reversing row, a positive amount that undoes the original's, so the
 // reversing rows count NEGATIVE: a payment and its reversal net to zero (SF-2r; summed plainly they read twice the
-// payment). Money a reversal's held balance was re-applied to this invoice is not an allocation and is added by the
-// register service from the payments module's read.
+// payment). A bounce or a void writes a reversal row on the original payment instead (0450), a NEGATIVE amount that
+// undoes its own application, and it counts negative the same way. Money a reversal's held balance was re-applied to
+// this invoice is not an allocation and is added by the register service from the payments module's read.
 func (r *Repository) AppliedCents(ctx context.Context, invoiceID string) (int64, error) {
 	if r.pool == nil {
 		return 0, errNoDB
@@ -303,10 +304,13 @@ func (r *Repository) ActivityFor(ctx context.Context, invoiceID, orderID string,
 		     WHERE d.invoice_id = $1::uuid AND d.opened_at IS NOT NULL
 		    UNION ALL
 		    -- money applied
-		    -- a reversing row's contra allocation is the payment taken back: its own act, the amount negative
+		    -- a reversing row's contra allocation is the payment taken back: its own act, the amount negative.
+		    -- A reversal row (0450) is the same act on the payment itself and carries the negative itself.
 		    SELECT 'PAYMENT', pa.created_at,
 		           CASE WHEN p.reverses_payment_id IS NOT NULL
 		                THEN 'reversed ' || (SELECT o.payment_no::text FROM payments o WHERE o.id = p.reverses_payment_id) || ' · ' || p.method
+		                WHEN pa.kind = 'REVERSAL'
+		                THEN 'reversed ' || p.payment_no::text || ' · ' || p.method
 		                ELSE p.payment_no::text || ' · ' || p.method END,
 		           CASE WHEN p.reverses_payment_id IS NOT NULL THEN -pa.amount_cents ELSE pa.amount_cents END,
 		           COALESCE(u.display_name,'')
