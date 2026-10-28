@@ -119,7 +119,7 @@ function renderRegister(model: StaffModel): TemplateResult {
         <span class="count" data-test="staff-count">${model.rows.length} staff</span>
       </div>
       <div class="tablewrap">
-        <table>
+        <table class="staff-table">
           <thead>
             <tr>
               <th scope="col">PERSON</th>
@@ -140,6 +140,29 @@ function renderRegister(model: StaffModel): TemplateResult {
   `;
 }
 
+/**
+ * One staff member's row. UX-106: at a phone's width the register becomes one
+ * card per person, the role select under the name at the card's own width.
+ * The select used to run off the card's right edge, so "General Manager" and
+ * "Platform Administrator" were cut in half.
+ *
+ * UX-106 round 2: the branch values are one group inside the value column.
+ * The card row is a two column grid, the label in the first and the values in
+ * the second, so a cell with more than one value auto placed the second one
+ * under the label: the yard persona's second branch, "Julian", sat at the
+ * card's left edge and read as a label. The values sit in one wrapper, so
+ * they wrap inside the value column and never under the label.
+ *
+ * The chip's class never carries a "nothing": a mixed attribute binding whose
+ * value is "nothing" drops the whole attribute, so the branch values were
+ * plain text beside "All branches", which is a pill. An empty string keeps
+ * the class and reads as the chip alone.
+ *
+ * UX-106 round 3: a branch the catalog does not know is a neutral pill
+ * ("Unknown branch"), not the monospace chip an id used to wear. The word
+ * says what is unknown; the mono said "this is a record id", which is what
+ * the round removed.
+ */
 function renderStaffRow(m: StaffMemberRow, model: StaffModel): TemplateResult {
   const chips = branchChips(m.branch_ids, model.branches);
   const link = model.links.get(m.user_id);
@@ -148,7 +171,7 @@ function renderStaffRow(m: StaffMemberRow, model: StaffModel): TemplateResult {
   const statusCls = status === "ACTIVE" ? "badge-active" : status === "INVITED" ? "badge-invited" : "badge-disabled";
   return html`
     <tr data-user=${m.user_id}>
-      <td>
+      <td class="staff-person">
         <div class="person-cell">
           <div class="initials-disc">
             ${staffInitials(m.display_name)}
@@ -159,7 +182,7 @@ function renderStaffRow(m: StaffMemberRow, model: StaffModel): TemplateResult {
           </div>
         </div>
       </td>
-      <td>
+      <td class="staff-role" data-label="Role">
         ${assignableRole(m.role_code, model.roles)
           ? html`
               <select
@@ -176,17 +199,19 @@ function renderStaffRow(m: StaffMemberRow, model: StaffModel): TemplateResult {
             `
           : html`<span class="chip" title="Platform role, managed by a platform administrator">${m.role_name}</span>`}
       </td>
-      <td>
-        ${m.scope === "GLOBAL"
-          ? html`<span class="chip">All branches</span>`
-          : chips.length === 0
-            ? html`<span class="dim">None</span>`
-            : chips.map((c) => html`<span class="chip ${c.known ? nothing : "mono"}">${c.label}</span>`)}
+      <td class="staff-branches" data-label="Branches">
+        <span class="staff-branches-values">
+          ${m.scope === "GLOBAL"
+            ? html`<span class="chip">All branches</span>`
+            : chips.length === 0
+              ? html`<span class="dim">None</span>`
+              : chips.map((c) => html`<span class="chip ${c.known ? "" : "chip-neutral"}">${c.label}</span>`)}
+        </span>
       </td>
-      <td><span class="badge-outline"><strong>${accessWord(m.tier, m.scope)}</strong></span></td>
-      <td><span class="badge-status ${statusCls}"><strong>${status}</strong></span></td>
-      <td><span class="dim staff-last-seen">${staffLastSignIn(m)}</span></td>
-      <td>
+      <td class="staff-access" data-label="Access"><span class="badge-outline"><strong>${accessWord(m.tier, m.scope)}</strong></span></td>
+      <td class="staff-status" data-label="Status"><span class="badge-status ${statusCls}"><strong>${status}</strong></span></td>
+      <td class="staff-seen" data-label="Last sign in"><span class="dim staff-last-seen">${staffLastSignIn(m)}</span></td>
+      <td class="staff-actions">
         <button
           type="button"
           class="btn btn-secondary btn-small"
@@ -228,7 +253,7 @@ function renderCreate(roles: readonly RoleRow[], branches: readonly BranchRow[])
       </p>
 
       <div class="invitation-type-toggle">
-        <button type="button" class="btn btn-pill pr-board-pill-active">Email invitation</button>
+        <button type="button" class="btn btn-pill pill-selected">Email invitation</button>
         <button type="button" class="btn btn-pill">Temporary PIN</button>
       </div>
 

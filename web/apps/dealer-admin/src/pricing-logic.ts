@@ -28,6 +28,7 @@
  */
 
 import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+import { UNKNOWN_CATEGORY, UNKNOWN_VENDOR } from "./placeholders.js";
 
 export interface PricingTab {
   /** The id the strip button, the router line and the tests name. */
@@ -55,6 +56,40 @@ export const PRICING_TABS: readonly PricingTab[] = [
 
 export function isPricingTab(value: string): value is PricingTab["id"] {
   return PRICING_TABS.some((t) => t.id === value);
+}
+
+/**
+ * The payment terms and deposits view: the twelfth tabs' sibling, and the one
+ * the board strip used to carry alone above them. UX-106 merged the two
+ * strips into one axis, so the view joins the list the strip and the phone
+ * select both read.
+ */
+export const PAYMENT_TERMS_VIEW: PricingTab = {
+  id: "payment-terms",
+  title: "Payment terms and deposits",
+  blurb: "When a customer pays, and what is asked up front.",
+};
+
+/**
+ * The pricing views the one navigation lists: the twelve tabs, then the
+ * payment terms view.
+ *
+ * UX-106: the board strip and the tab strip were two rows of navigation over
+ * ONE set of views (the board's five were a subset of the tabs under other
+ * words: margin floors for margin policy, ladders for quantity breaks,
+ * imports for batches and imports), so the page showed two rows of pills and
+ * pushed its own content off the first screen at 390. One axis, one list.
+ */
+export const PRICING_VIEWS: readonly PricingTab[] = [...PRICING_TABS, PAYMENT_TERMS_VIEW];
+
+/** A view's own word, as the phone select carries it: the option's text is the value. */
+export function pricingViewTitle(id: string): string {
+  return PRICING_VIEWS.find((v) => v.id === id)?.title ?? "";
+}
+
+/** The view a phone select's answer names, by its own word. */
+export function pricingViewId(title: string): string {
+  return PRICING_VIEWS.find((v) => v.title === title)?.id ?? "";
 }
 
 // -- the words a stored enum carries -----------------------------------------------------------------
@@ -326,14 +361,17 @@ export interface CategoryRow {
 
 /**
  * A category id as a person reads it: the catalog's name when the read
- * knows the id, else the id's own first block. The original mapped its
- * seed ids in a table; HH asks the catalog instead, because a hardcoded
- * id table is one tenant's facts wearing another tenant's screen.
+ * knows the id. The original mapped its seed ids in a table; HH asks the
+ * catalog instead, because a hardcoded id table is one tenant's facts
+ * wearing another tenant's screen.
+ *
+ * UX-106 round 3: a category the catalog does not know reads as the house
+ * placeholder word, never as the id's own first block.
  */
 export function categoryName(id: string, categories: readonly CategoryRow[]): string {
   if (id === "") return "";
   const hit = categories.find((c) => c.id === id);
-  return hit !== undefined ? hit.name : id.slice(0, 8);
+  return hit !== undefined ? hit.name : UNKNOWN_CATEGORY;
 }
 
 /** The category picker's options, active first then retired, each by code order. */
@@ -676,11 +714,16 @@ export function rebateRateWords(program: {
   }
 }
 
-/** A vendor as a person reads it: the name when the read knows it, else the id's block. */
+/**
+ * A vendor as a person reads it: the name when the read knows it.
+ *
+ * UX-106 round 3: a vendor the read does not name reads as the house
+ * placeholder word, never as the id's own first block.
+ */
 export function vendorWords(name: string, vendorId: string): string {
   if (name !== "") return name;
   if (vendorId === "") return "";
-  return vendorId.slice(0, 8);
+  return UNKNOWN_VENDOR;
 }
 
 /** The accrual run's verdict, told from the server's own counts. */

@@ -228,7 +228,10 @@ func TestQD1E_SyncDoorDecidesFollowTheFilerRole(t *testing.T) {
 		for i, requester := range []string{f.branchMgr, f.peerSales, f.yardMgr} {
 			id := qd1bPlantFloor(t, q, requester, a, fmt.Sprintf("0000000%s5%d", tag, i))
 			res := push(id, testkit.SubSalesManager)
-			qd1bRejected(t, "the Sales manager decides a leadership-bound filing from the device", res, "not authorized")
+			// A leadership-bound filing is one the branch Sales manager may
+			// not read (the floor card rule), so the door answers the seam's
+			// row-not-found and never describes the card (UX-108).
+			qd1bRejected(t, "the Sales manager decides a leadership-bound filing from the device", res, "row not found")
 			if st := qd1eStatus(t, q.pool, id); st != "PENDING" {
 				t.Errorf("the refused device decision left the request %s, want PENDING", st)
 			}

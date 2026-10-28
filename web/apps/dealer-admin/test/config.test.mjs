@@ -16,6 +16,8 @@ import {
   itemSetError,
   profileForRoleCode,
   rolesForShape,
+  shapeWord,
+  surfaceWord,
   workspaceSplitError,
   newWorkspaceKey,
   inPool,
@@ -52,6 +54,15 @@ test("the grid's columns are the core's ten curated surfaces, each with its own 
   for (const s of CONFIG_SURFACES) {
     assert.match(s.word, /\s/);
   }
+});
+
+test("a shape and a surface the grid does not know read as words, never as the raw key", () => {
+  assert.equal(shapeWord("manager.branch"), "Branch manager");
+  assert.equal(surfaceWord("counter-till"), "Counter Till");
+  // UX-106 round 3: a lookup that misses reads as a word. The stored key must
+  // not reach a person as text.
+  assert.equal(shapeWord("not.a.shape"), "Unknown shape");
+  assert.equal(surfaceWord("not.a.surface"), "Unknown surface");
 });
 
 test("a role code resolves to the profile the core resolves today (0140 as amended by 0381); an unknown role falls back to the counter shape", () => {
