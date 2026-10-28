@@ -2034,6 +2034,10 @@ func (a w4cGLJournalClock) RefJournalInstants(ctx context.Context, source string
 	return out, nil
 }
 
+func (a w4cGLJournalClock) JournalSourceRefByKey(ctx context.Context, key string) (string, bool, error) {
+	return a.svc.JournalSourceRefByKey(ctx, key)
+}
+
 // w4cGLPoster satisfies purchasing.GLPoster over glSvc.PostExternal (the
 // vendor-bill journal).
 type w4cGLPoster struct{ svc *gl.Service }

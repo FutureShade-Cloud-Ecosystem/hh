@@ -147,16 +147,6 @@ var allowlist = []allowlistEntry{
 		reason: "DIB-429 self-healing sweep reads gl_journals by the derived idempotency key to re-post failed credit-memo journals; read only",
 	},
 	{
-		module: "purchasing",
-		file:   "core/internal/purchasing/ap_aging.go",
-		tables: []string{"gl_journals"},
-		// W2-9a round 2: PayBill's replay judgement. The instalment table
-		// carries no key column, so the payment's idempotency key rides the
-		// journal as purchasing.bill.payment:<key> (glPaymentKeyPrefix in the
-		// same file) and a re-press is judged by reading that journal.
-		reason: "PayBill's replay judgement reads gl_journals by the payment's purchasing.bill.payment:<key> idempotency key, because the instalment table carries no key column and no migration may be added without the lead's word; read only",
-	},
-	{
 		module: "billing",
 		file:   "core/internal/billing/credit_repository.go",
 		tables: []string{"credit_holds", "customers", "orders", "payment_allocations", "payment_reapplications", "payments"},

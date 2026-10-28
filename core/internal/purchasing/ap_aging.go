@@ -2,7 +2,6 @@ package purchasing
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -205,16 +204,21 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 
 	// The replay judgement runs before any money moves: a re-press under the first
 	// press's key returns the first payment and writes nothing. The key lives on the
-	// journal, so a key spent on another bill is a conflict, not a replay.
-	journalRef, err := s.repo.PaymentJournalSourceRefTx(ctx, tx, glPaymentKeyPrefix+key)
-	if err != nil {
-		return BillDetail{}, err
-	}
-	if journalRef != "" {
-		if journalRef != bill.ID {
-			return BillDetail{}, conflict("purchasing: idempotency key already used for another bill's payment")
+	// journal, so a key spent on another bill is a conflict, not a replay. The read
+	// goes through the GL journal clock seam, never a GL table. With the clock
+	// unwired the judgement cannot run and the payment proceeds, the behavior the
+	// seam replaced.
+	if s.journalClock != nil {
+		journalRef, found, err := s.journalClock.JournalSourceRefByKey(ctx, glPaymentKeyPrefix+key)
+		if err != nil {
+			return BillDetail{}, err
 		}
-		return s.GetBill(ctx, billID)
+		if found {
+			if journalRef != bill.ID {
+				return BillDetail{}, conflict("purchasing: idempotency key already used for another bill's payment")
+			}
+			return s.GetBill(ctx, billID)
+		}
 	}
 
 	if bill.Status != BillPosted {
@@ -283,27 +287,6 @@ func (r *Repository) PaidBillCentsTx(ctx context.Context, tx pgx.Tx, billID stri
 		return 0, fmt.Errorf("purchasing: sum paid instalments: %w", err)
 	}
 	return sum, nil
-}
-
-// PaymentJournalSourceRefTx returns the source_ref_id of the journal carrying
-// key within tx, empty when no journal carries it. PayBill's replay judgement
-// reads it: the payment key lives on the GL journal, not on the instalment row.
-func (r *Repository) PaymentJournalSourceRefTx(ctx context.Context, tx pgx.Tx, key string) (string, error) {
-	if r.pool == nil {
-		return "", errNoDB
-	}
-	var ref string
-	err := r.q(tx).QueryRow(ctx,
-		`SELECT COALESCE(source_ref_id::text, '') FROM gl_journals WHERE idempotency_key = $1`,
-		key,
-	).Scan(&ref)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("purchasing: look up payment journal by key: %w", err)
-	}
-	return ref, nil
 }
 
 // RecordBillPaymentTx inserts a PAID instalment row for a supplier payment against billID.

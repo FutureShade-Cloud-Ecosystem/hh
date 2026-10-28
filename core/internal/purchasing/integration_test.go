@@ -181,6 +181,10 @@ func (a itGLClock) RefJournalInstants(ctx context.Context, source string, refIDs
 	return out, nil
 }
 
+func (a itGLClock) JournalSourceRefByKey(ctx context.Context, key string) (string, bool, error) {
+	return a.svc.JournalSourceRefByKey(ctx, key)
+}
+
 func (a itGL) PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error) {
 	lines := make([]gl.ExternalLine, len(in.Lines))
 	for i, l := range in.Lines {

@@ -45,6 +45,12 @@ func (s *Service) JournalEffectiveInstantByKey(ctx context.Context, key string) 
 	return s.repo.JournalEffectiveInstantByKey(ctx, key)
 }
 
+// JournalSourceRefByKey returns the source document ref of the POSTED journal filed
+// under an idempotency key, found false when no POSTED journal carries it.
+func (s *Service) JournalSourceRefByKey(ctx context.Context, key string) (string, bool, error) {
+	return s.repo.JournalSourceRefByKey(ctx, key)
+}
+
 func (r *Repository) JournalEffectiveInstants(ctx context.Context, journalIDs []string) (map[string]time.Time, error) {
 	if r.pool == nil {
 		return nil, errNoDB
@@ -126,4 +132,22 @@ func (r *Repository) JournalEffectiveInstantByKey(ctx context.Context, key strin
 		return time.Time{}, false, fmt.Errorf("gl: journal effective instant by key: %w", err)
 	}
 	return eff, true, nil
+}
+
+func (r *Repository) JournalSourceRefByKey(ctx context.Context, key string) (string, bool, error) {
+	if r.pool == nil {
+		return "", false, errNoDB
+	}
+	var ref string
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(source_ref_id::text, '') FROM gl_journals WHERE status = 'POSTED' AND idempotency_key = $1`,
+		key,
+	).Scan(&ref)
+	if err == pgx.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("gl: journal source ref by key: %w", err)
+	}
+	return ref, true, nil
 }

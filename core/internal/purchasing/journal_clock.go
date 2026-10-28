@@ -33,6 +33,10 @@ type GLJournalClock interface {
 	// one of refIDs as its source ref, the ref, the instant the journal carries and
 	// the instant an as of read counts it at.
 	RefJournalInstants(ctx context.Context, source string, refIDs []string) ([]GLRefJournalInstant, error)
+	// JournalSourceRefByKey answers the source document ref of the POSTED journal
+	// filed under an idempotency key, found false when no journal carries it. This
+	// is PayBill's replay judgement: the payment key lives on the journal.
+	JournalSourceRefByKey(ctx context.Context, key string) (string, bool, error)
 }
 
 // WithGLJournalClock binds the GL journal clock seam.
