@@ -22,16 +22,43 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// fw1R4BranchFacts binds the branches module's location reads to gl's BranchFacts seam for these
+// legs, the way wire_money's glBranchFacts binds it in production.
+type fw1R4BranchFacts struct{ repo *branches.Repository }
+
+func (f fw1R4BranchFacts) Exists(ctx context.Context, id string) (bool, error) {
+	return f.repo.Exists(ctx, id)
+}
+
+// LiveBranchExists is the live branch read (FW1-08b part B round 2, P3-1): a soft deleted branch
+// is still a BRANCH row, but it is never a head office.
+func (f fw1R4BranchFacts) LiveBranchExists(ctx context.Context, id string) (bool, error) {
+	return f.repo.LiveBranchExists(ctx, id)
+}
+
+func (f fw1R4BranchFacts) BranchInOrg(ctx context.Context, orgID, branchID string) (bool, error) {
+	return f.repo.BranchInOrg(ctx, orgID, branchID)
+}
+
+func (f fw1R4BranchFacts) BranchRowByCodeTx(ctx context.Context, tx pgx.Tx, code string) (string, bool, error) {
+	return branches.BranchCodeReader{}.BranchRowByCodeTx(ctx, tx, code)
+}
 
 // fw1R4Controller builds a Financial Controller's service at the round's pinned clock inside the
 // given house year.
 func fw1R4Controller(pool *pgxpool.Pool, user string, house int) *Service {
-	return svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(house, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location()))
+	return svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(house, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location())).
+		WithBranchFacts(fw1R4BranchFacts{repo: branches.NewRepository(pool)})
 }
 
 // TestIntegration_FW1_01R4_OpenYearAuditRowThroughTheRealRecorder is the
@@ -276,15 +303,35 @@ func TestIntegration_FW1_01R4_HeadOfficeSetAuditRowThroughTheRealRecorder(t *tes
 	recorder := audit.NewService(audit.NewRepository(pool), nil)
 	controller := fw1R4Controller(pool, user, house).WithAuditTxRecorder(recorder)
 
-	var branchID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations LIMIT 1`).Scan(&branchID); err != nil {
+	// The candidate must be a LIVE branch of the caller's own org (FW1-08b part B round 2): the
+	// org half of the set is unconditional and the branch half asks for a live branch, so this
+	// fixture carries the org scope a request context carries and plants an org on the branch
+	// when the seed leaves it without one.
+	var branchID, orgID string
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text, COALESCE(org_id::text, '') FROM locations
+		  WHERE loc_type = 'BRANCH' AND deleted_at IS NULL ORDER BY code LIMIT 1`).Scan(&branchID, &orgID); err != nil {
 		t.Skipf("no seeded branch: %v", err)
 	}
+	if orgID == "" {
+		orgID = uuid.NewString()
+		if _, err := pool.Exec(ctx, `INSERT INTO org (id, slug, name) VALUES ($1::uuid, $2, 'FW1 01 R4 org')`, orgID, "fw108b01r4-"+orgID[:8]); err != nil {
+			t.Fatalf("plant the org: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1::uuid WHERE id::text = $2`, orgID, branchID); err != nil {
+			t.Fatalf("plant the org on the branch: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(ctx, `UPDATE locations SET org_id = NULL WHERE id::text = $1`, branchID)
+			_, _ = pool.Exec(ctx, `DELETE FROM org WHERE id = $1::uuid`, orgID)
+		})
+	}
+	scoped := authz.WithStaffScope(ctx, authz.StaffScope{OrgID: orgID})
 	var before int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'GL_HEAD_OFFICE_BRANCH_SET'`).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	if err := controller.SetHeadOfficeBranch(ctx, branchID, "FW1-01 round 4 head office set through the real recorder"); err != nil {
+	if err := controller.SetHeadOfficeBranch(scoped, branchID, "FW1-01 round 4 head office set through the real recorder"); err != nil {
 		t.Fatalf("the head office set through the real audit recorder: %v", err)
 	}
 	t.Cleanup(func() {

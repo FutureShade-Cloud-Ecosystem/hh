@@ -63,11 +63,19 @@ func TestIntegration_FW1_01_YearRollForward_PostsOnTheFirstDayAfterTheSeededYear
 	at := time.Date(next, 1, 1, 12, 0, 0, 0, time.UTC)
 	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, at)
 
+	// The one shared resolver, the way the production path stamps its branch: this leg writes
+	// its draft straight through the store seam, so the branch is its own to stamp
+	// (FW1-08b part B round 2: migration 0446's CHECK refuses a line with no branch).
+	branchID, berr := svc.resolveBranchID(ctx, "")
+	if berr != nil {
+		t.Fatalf("the head office branch: %v", berr)
+	}
 	id, _, err := svc.store.InsertJournal(ctx, journalDraft{
 		Source:     SourceAdjustment,
 		Memo:       "FW1-01 year roll",
 		Status:     StatusPosted,
 		OccurredAt: at,
+		BranchID:   branchID,
 		Lines: []draftLine{
 			{AccountCode: "1000", DebitCents: 1200, Memo: "bank"},
 			{AccountCode: "1020", CreditCents: 1200, Memo: "undeposited"},
