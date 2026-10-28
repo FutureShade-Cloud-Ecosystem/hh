@@ -23,7 +23,9 @@
 //      next page.goto lands signed in; coreURL() is the box's base URL, and this spec reads the
 //      core's API directly through it, with the bearer the app itself sent.
 //   3. THE WORLD: ./world exports the world's known figures. No figure is written in this file:
-//      every month, every cent and every journal number comes from ./world.
+//      every month, every cent and every journal number comes from ./world, and so does the AR
+//      account's code (AR_ACCOUNT_CODE), which names the account the ledger reads on both sides:
+//      the core's row and the screen's row.
 //   4. THE ROLE: the ledger's screens are the Financial Controller's, so the spec signs in as
 //      that role and reads what that role sees.
 //   5. THE BOX: acceptance-real/box.sh up and box.sh down (the part (a) brief's job) bring the
@@ -33,12 +35,22 @@
 //      small stub variant of the real config) and must fail there, because the stub's world is
 //      not the core's. The legs that fail there are the ones that read ./world.
 //
+// THE NAVIGATION, and why it is "./". The real config's base URL is the box's /money-desk/ path,
+// so "./" lands on the desk and "/" would escape to the front door at the origin root. The
+// harness's own spec (harness.pw.ts) navigates the same way.
+//
+// A BLANK IS NOT A TIE. Leg 1 asks the core for the world's month end trial balance and requires
+// it to carry rows and real totals. An empty core and an empty screen agree with each other, so
+// a leg that accepts them passes on a world with nothing posted, which proves nothing about the
+// ledger.
+//
 // ONE MORE THING THE FOLD SHOULD KNOW: the trial balance's month buttons are the months of the
 // year the trial balance is showing, which is the core's own current year. The world's month end
 // therefore has to fall in that year, and the spec says so in the open if it does not.
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
 import { asStaff, coreURL } from "./session.js";
 import {
+  AR_ACCOUNT_CODE,
   LEDGER_JOURNAL_ENTRY_NO,
   LEDGER_JOURNAL_MEMO,
   MONTH_END,
@@ -180,7 +192,10 @@ async function coreRead<T>(request: APIRequestContext, headers: StaffHeaders, pa
 /** Signs in as the Financial Controller and lands on the desk. */
 async function signIn(page: Page, context: BrowserContext): Promise<void> {
   await asStaff(context, "financial_controller");
-  await page.goto("/");
+  // "./" stays under this config's base URL: the real box serves the desk under /money-desk/,
+  // and "/" would escape to the front door at the origin root (the harness's own spec
+  // navigates the same way, harness.pw.ts).
+  await page.goto("./");
 }
 
 // ---- the legs --------------------------------------------------------------------------------------
@@ -231,11 +246,13 @@ test("the month end 1100 balance is the world's known figure", async ({ page, re
     await headers,
     `/api/v1/gl/trial-balance?year=${yearOf(MONTH_END)}&month=${monthNumber(MONTH_END)}`,
   );
-  const coreRow = core.rows.find((row) => row.account_code === "1100");
+  const coreRow = core.rows.find((row) => row.account_code === AR_ACCOUNT_CODE);
   const coreBalance = coreRow === undefined ? 0 : coreRow.balance_cents;
 
-  // The screen's own 1100 row: its debit less its credit.
-  const row = page.locator("[data-trial] tbody tr").filter({ has: page.locator("strong", { hasText: /^1100$/ }) });
+  // The screen's own AR row: its debit less its credit.
+  const row = page
+    .locator("[data-trial] tbody tr")
+    .filter({ has: page.locator("strong", { hasText: new RegExp(`^${AR_ACCOUNT_CODE}$`) }) });
   let screenBalance = 0;
   if ((await row.count()) > 0) {
     const cells = await row.locator("td").allInnerTexts();
@@ -259,13 +276,25 @@ test("the periods screen shows the closed month, the open month and the year end
   const table = page.getByRole("table", { name: "Periods" });
   await expect(table).toBeVisible();
 
-  // The signed off month reads Closed, and the open month reads Open.
-  await expect(table.getByRole("row", { name: new RegExp(monthName(SIGNED_OFF_BANK_MONTH)) })).toContainText("Closed");
+  // The core's own periods, read straight from the core.
+  const core = await coreRead<CorePeriods>(request, await headers, "/api/v1/gl/periods?limit=100");
+  expect(core.items.length).toBeGreaterThan(0);
+
+  // The signed off month reads Closed, when the world has signed one off. Today's finance seed
+  // signs off no month at all (every period of the box's year is OPEN), so the world names none
+  // and the truth on the screen is that no row reads Closed. The world's own signed off month
+  // switches this branch: the W2-1b world names the month before its anchor.
+  if (SIGNED_OFF_BANK_MONTH === "") {
+    for (const period of core.items) expect(period.status).toBe("OPEN");
+    await expect(table.getByRole("row").filter({ hasText: "Closed" })).toHaveCount(0);
+  } else {
+    await expect(table.getByRole("row", { name: new RegExp(monthName(SIGNED_OFF_BANK_MONTH)) })).toContainText("Closed");
+  }
+
+  // The open month reads Open.
   await expect(table.getByRole("row", { name: new RegExp(monthName(OPEN_MONTH)) })).toContainText("Open");
 
   // The core's own periods read the same on the screen, month for month.
-  const core = await coreRead<CorePeriods>(request, await headers, "/api/v1/gl/periods?limit=100");
-  expect(core.items.length).toBeGreaterThan(0);
   for (const period of core.items) {
     const name = new RegExp(monthName(`${period.year}-${String(period.month).padStart(2, "0")}`));
     await expect(table.getByRole("row", { name })).toContainText(period.status === "OPEN" ? "Open" : "Closed");
