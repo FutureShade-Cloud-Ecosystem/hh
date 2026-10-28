@@ -58,6 +58,30 @@ func (s *Service) branchUnitCost(ctx context.Context, productID, branchID string
 
 // - PO receiving -
 
+// movementInstant answers the ONE instant a movement is dated at.
+//
+// IT IS THE TRANSACTION'S OWN CLOCK, read ONCE: Postgres's now() is the transaction's start, the same value every
+// statement in this transaction sees. One read, one instant, for the whole movement.
+//
+// WHY IT MATTERS (W2-5 fix r8, S5's P2-2 and P3-1). The stock ledger's move and the GL's journal book the SAME
+// movement, and a month end reads both sides at one instant. Before this the move took the column default (the
+// row's own now()) and the journal took the DRAIN's clock, the two a drain apart: a receipt in a month's last
+// moment, drained after the month's end, left the stock ledger holding the goods and 1200 not holding them, and
+// the close was refused by the whole receipt. No later month could repair it: the stock side moved in the earlier
+// month, the book side in the later one.
+//
+// Reading the transaction's instant ONCE and stamping it on BOTH the move and the event closes that gap: the event
+// carries the instant, the consumer dates the journals with it, and the journals are posted at the same instant
+// the movement's own transaction owns. A transaction that straddles midnight no longer splits the two either:
+// both sides carry the transaction's own start.
+func (s *Service) movementInstant(ctx context.Context, tx pgx.Tx) (time.Time, error) {
+	at, err := s.db().MovementInstant(ctx, tx)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("inventory: read the movement's instant: %w", err)
+	}
+	return at, nil
+}
+
 // applyReceipt is the shared receiving core. requested==nil receives every outstanding unit; a non-nil map
 // receives exactly the given qty per po_line id (over-receipt-guarded). It writes RECEIPT moves, maintains the
 // weighted-average cost + on-hand balances, advances the PO status, and emits po.received (the GRNI producer).
@@ -75,6 +99,12 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 		return ReceiptResult{}, err
 	}
 	usd := hdr.Currency == "USD"
+	// The receipt's ONE instant (W2-5 fix r8): the move row and the event carry the same instant,
+	// and the consumer dates the receipt's journals with it. Read once, here, before any row is written.
+	at, err := s.movementInstant(ctx, tx)
+	if err != nil {
+		return ReceiptResult{}, err
+	}
 
 	var totalValue int64
 	var totalRounding int64
@@ -216,7 +246,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 			ProductID: ln.ProductID, BranchID: hdr.BranchID, ToLocation: hdr.BranchID, UOM: ln.UOM,
 			MoveType: MoveReceipt, QtyBase: recvQty, UnitCostCents: cadUnit, ValueCents: recvValue,
 			SourceType: "po_receipt", SourceRefID: receiptID, Reason: "PO receipt " + hdr.PONo,
-			Metadata: moveMeta,
+			Metadata: moveMeta, OccurredAt: at,
 		}); err != nil {
 			return ReceiptResult{}, err
 		}
@@ -252,6 +282,9 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 	if err := s.db().EmitEvent(ctx, tx, "po.received", map[string]any{
 		"po_id": poID, "receipt_id": receiptID, "branch_id": hdr.BranchID,
 		"value_cents": totalValue, "rounding_cents": totalRounding, "lines": eventLines, "true_ups": trueUps,
+		// The receipt's own instant (W2-5 fix r8): the consumer dates the receipt's journals with
+		// it, so the journal and the move it books carry the same moment.
+		"occurred_at": at,
 	}); err != nil {
 		return ReceiptResult{}, err
 	}
@@ -417,6 +450,7 @@ func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, 
 		if err := s.postMoveRoundingTx(ctx, tx, moveRoundingPost{
 			Event: "inventory.ship", MoveID: moveID, BranchID: branchID, RoundingCents: rounding,
 			InvEvent: "order.fulfilled", Memo: "WAC integer-cent rounding on stock issue",
+			OccurredAt: occurredAt,
 		}); err != nil {
 			return 0, err
 		}
@@ -496,8 +530,8 @@ func (s *Service) HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID
 // fulfilment's own transaction owns. A transaction that straddles midnight no longer splits the two
 // either: both sides carry the transaction's own start.
 func (s *Service) fulfilmentInstant(ctx context.Context, tx pgx.Tx) (time.Time, error) {
-	var at time.Time
-	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&at); err != nil {
+	at, err := s.db().MovementInstant(ctx, tx)
+	if err != nil {
 		return time.Time{}, fmt.Errorf("inventory: read the fulfilment's instant: %w", err)
 	}
 	return at, nil
@@ -592,6 +626,12 @@ func (s *Service) LockStockTx(ctx context.Context, tx pgx.Tx, branchID string, p
 // CURRENT weighted-average unit cost (found=false → cost 0, value 0, the GL side skips quietly the same
 // way), so the average is unchanged; the balance projection gains the qty.
 func (s *Service) restockForReturn(ctx context.Context, tx pgx.Tx, in RestockInput) error {
+	// The return's ONE instant (W2-5 fix r8, S5's P3-1), read once before any row is
+	// written: the RETURN move carries it and the rounding journal is dated with it.
+	at, err := s.movementInstant(ctx, tx)
+	if err != nil {
+		return err
+	}
 	for _, ln := range in.Lines {
 		if ln.QtyBase <= 0 {
 			continue
@@ -619,7 +659,8 @@ func (s *Service) restockForReturn(ctx context.Context, tx pgx.Tx, in RestockInp
 			ProductID: ln.ProductID, BranchID: in.BranchID, ToLocation: in.BranchID,
 			MoveType: MoveReturn, QtyBase: ln.QtyBase, UnitCostCents: avg, ValueCents: value,
 			SourceType: "pos_return", SourceRefID: in.ReturnID, Reason: "POS return " + in.ReturnNo,
-			Metadata: map[string]any{"wac_value_delta_cents": change},
+			Metadata:   map[string]any{"wac_value_delta_cents": change},
+			OccurredAt: at,
 		})
 		if err != nil {
 			return err
@@ -631,6 +672,7 @@ func (s *Service) restockForReturn(ctx context.Context, tx pgx.Tx, in RestockInp
 			if err := s.postMoveRoundingTx(ctx, tx, moveRoundingPost{
 				Event: "inventory.return", MoveID: moveID, BranchID: in.BranchID, RoundingCents: rounding,
 				InvEvent: "order.returned", Memo: "WAC integer-cent rounding on stock return",
+				OccurredAt: at,
 			}); err != nil {
 				return err
 			}
@@ -689,6 +731,13 @@ type moveRoundingPost struct {
 	RoundingCents int64
 	InvEvent      string // the posting-rule event the inventory leg resolves under
 	Memo          string
+	// OccurredAt is the instant the move it belongs to happened, the one stamped on the move
+	// row (W2-5 fix r8, S5's P3-1). The rounding journal is dated with it, so the journal and
+	// the move it corrects carry the same moment.
+	//
+	// The zero value means "no instant named": the journal falls back to the GL's clock, which
+	// is what every rounding journal did before the field existed.
+	OccurredAt time.Time
 }
 
 // postMoveRoundingTx books the difference between a stamped move's exact row change and its
@@ -736,6 +785,7 @@ func (s *Service) postMoveRoundingTx(ctx context.Context, tx pgx.Tx, p moveRound
 		IdempotencyKey: p.Event + ".rounding:" + p.MoveID,
 		Memo:           p.Memo,
 		BranchID:       p.BranchID,
+		DocumentDate:   p.OccurredAt,
 		Lines:          lines,
 	}
 	if tx != nil {
@@ -769,6 +819,14 @@ type poReceivedPayload struct {
 	ValueCents    int64          `json:"value_cents"`
 	RoundingCents int64          `json:"rounding_cents"`
 	TrueUps       []poTrueUpLine `json:"true_ups"`
+	// OccurredAt is the receipt's OWN instant, the one the receipt's transaction read once and
+	// stamped on the RECEIPT move (W2-5 fix r8, S5's P2-2). Every journal this payload books is
+	// dated with it, so the journal and the move it books carry the same moment and a month end
+	// finds both sides of the receipt on the same side of itself.
+	//
+	// The zero value means "no instant carried": the journals fall back to the GL's clock, which
+	// is what every receipt did before the field existed.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // postPOReceived posts the GRNI journal for a receipt: DR 1200 Inventory / CR 2150 Received-Not-Invoiced, both
@@ -805,6 +863,7 @@ func (s *Service) postPOReceived(ctx context.Context, payload []byte) error {
 			IdempotencyKey: "po.received:" + p.ReceiptID,
 			Memo:           "GRNI on PO receipt",
 			BranchID:       p.BranchID,
+			DocumentDate:   p.OccurredAt,
 			Lines: []GLLine{
 				{AccountCode: invCode, DebitCents: p.ValueCents, Memo: "inventory received"},
 				{AccountCode: apCode, CreditCents: p.ValueCents, Memo: "received not invoiced"},
@@ -859,6 +918,7 @@ func (s *Service) postPOReceivedRounding(ctx context.Context, p poReceivedPayloa
 		IdempotencyKey: "po.received.rounding:" + p.ReceiptID,
 		Memo:           "WAC integer-cent rounding on PO receipt",
 		BranchID:       p.BranchID,
+		DocumentDate:   p.OccurredAt,
 		Lines:          lines,
 	}); err != nil {
 		return err
@@ -896,6 +956,7 @@ func (s *Service) postPOReceivedTrueUp(ctx context.Context, p poReceivedPayload,
 		IdempotencyKey: "pre_receipt_trueup:" + p.ReceiptID + ":" + tu.ProductID,
 		Memo:           "Pre-receipt sale cost true-up on first receipt",
 		BranchID:       p.BranchID,
+		DocumentDate:   p.OccurredAt,
 		Lines:          lines,
 	}); err != nil {
 		return err
@@ -909,6 +970,13 @@ type inventoryAdjustedPayload struct {
 	AccountCode string `json:"account_code"` // reason (expense/contra) leg; "" → resolve the rule default
 	ValueCents  int64  `json:"value_cents"`  // signed: >0 stock found (asset up) / <0 loss (asset down)
 	Memo        string `json:"memo"`
+	// OccurredAt is the instant the counted movement happened, the one the count's own
+	// transaction stamped on the COUNT move (W2-5 fix r8, S5's P3-1). The journal is dated with
+	// it, so the variance journal and the count move that caused it carry the same moment.
+	//
+	// The zero value means "no instant carried": the journal falls back to the GL's clock, which
+	// is what every adjustment did before the field existed.
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // postInventoryAdjusted posts a reason-coded stock adjustment: the reason leg (payload account_code, or the
@@ -964,6 +1032,7 @@ func (s *Service) postInventoryAdjusted(ctx context.Context, payload []byte) err
 		IdempotencyKey: "inventory.adjusted:" + p.SourceRefID,
 		Memo:           "inventory adjustment",
 		BranchID:       p.BranchID,
+		DocumentDate:   p.OccurredAt,
 		Lines:          lines,
 	})
 	return err
@@ -972,11 +1041,22 @@ func (s *Service) postInventoryAdjusted(ctx context.Context, payload []byte) err
 // - count + landed seams -
 
 // postCountAdjustment writes the signed COUNT move for a counted variance (A-15). A zero delta books nothing.
+//
+// W2-5 fix round 8 (S5's P3-1): the count reads its transaction's instant ONCE and stamps it on the COUNT
+// move and on the rounding journal it may raise, so the journal and the move it corrects carry the same
+// moment. Before this the move took the column default (the row's own now()) and the journal took the GL's
+// clock, the two apart: a count in a month's last moment, journaled after the month's end, left the two
+// sides of the variance on different sides of the month's end.
 func (s *Service) postCountAdjustment(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, qtyDelta float64, unitCostCents int64, reason string) (string, error) {
 	if math.Abs(qtyDelta) <= qtyEpsilon {
 		return "", nil
 	}
 	value, err := qtyTimesCents(math.Abs(qtyDelta), unitCostCents)
+	if err != nil {
+		return "", err
+	}
+	// The count's ONE instant, read once, before any row is written.
+	at, err := s.movementInstant(ctx, tx)
 	if err != nil {
 		return "", err
 	}
@@ -1002,6 +1082,7 @@ func (s *Service) postCountAdjustment(ctx context.Context, tx pgx.Tx, productID,
 		QtyBase: math.Abs(qtyDelta), UnitCostCents: unitCostCents,
 		ValueCents: value,
 		SourceType: "count", Reason: reason,
+		OccurredAt: at,
 	}
 	if qtyDelta > 0 {
 		m.ToLocation = locationID
@@ -1028,6 +1109,7 @@ func (s *Service) postCountAdjustment(ctx context.Context, tx pgx.Tx, productID,
 		if err := s.postMoveRoundingTx(ctx, tx, moveRoundingPost{
 			Event: "inventory.count", MoveID: moveID, BranchID: branchID, RoundingCents: rounding,
 			InvEvent: "inventory.adjusted", Memo: "WAC integer-cent rounding on stock count",
+			OccurredAt: at,
 		}); err != nil {
 			return "", err
 		}

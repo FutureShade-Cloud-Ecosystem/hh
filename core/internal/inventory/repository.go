@@ -116,6 +116,17 @@ func (r *Repository) EmitEvent(ctx context.Context, tx pgx.Tx, topic string, pay
 
 // - ledger + read-model maintenance -
 
+// MovementInstant answers the transaction's OWN instant: the one instant a movement is dated
+// at. Postgres's now() is the transaction's start, the same value every statement in this
+// transaction sees, so one read dates the whole movement (nil tx = the pool).
+func (r *Repository) MovementInstant(ctx context.Context, tx pgx.Tx) (time.Time, error) {
+	var at time.Time
+	if err := r.q(tx).QueryRow(ctx, `SELECT now()`).Scan(&at); err != nil {
+		return time.Time{}, fmt.Errorf("inventory: read the movement's instant: %w", err)
+	}
+	return at, nil
+}
+
 func (r *Repository) InsertMove(ctx context.Context, tx pgx.Tx, m moveParams) (string, error) {
 	// uom_entered falls back to the product base_uom when the caller didn't supply one (a POS SHIP move).
 	metaJSON := []byte("{}")

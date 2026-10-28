@@ -190,6 +190,13 @@ func (s *Service) ShipTransferWithETA(ctx context.Context, transferID, actorID s
 		return Transfer{}, conflictErr("inventory: transfer %s is %s, only a DRAFT can ship", hdr.TransferNo, hdr.Status)
 	}
 
+	// The shipment's ONE instant (W2-5 fix r8, S5's P3-1), read once before any row is written:
+	// the outbound move carries it and the leg and rounding journals are dated with it.
+	at, err := s.movementInstant(ctx, tx)
+	if err != nil {
+		return Transfer{}, err
+	}
+
 	var totalValue int64
 	for _, ln := range lines {
 		// The source's weighted average travels with the stock: moving pallets between yards must
@@ -231,8 +238,9 @@ func (s *Service) ShipTransferWithETA(ctx context.Context, transferID, actorID s
 			ProductID: ln.ProductID, BranchID: hdr.FromBranchID, FromLocation: hdr.FromBranchID,
 			UOM: ln.UOM, MoveType: MoveTransfer, QtyBase: ln.QtyBase, UnitCostCents: avg,
 			ValueCents: value, SourceType: transferSource, SourceRefID: hdr.ID,
-			Reason:   "transfer out " + hdr.TransferNo,
-			Metadata: map[string]any{"wac_value_delta_cents": -change},
+			Reason:     "transfer out " + hdr.TransferNo,
+			Metadata:   map[string]any{"wac_value_delta_cents": -change},
+			OccurredAt: at,
 		})
 		if err != nil {
 			return Transfer{}, err
@@ -244,6 +252,7 @@ func (s *Service) ShipTransferWithETA(ctx context.Context, transferID, actorID s
 			if err := s.postMoveRoundingTx(ctx, tx, moveRoundingPost{
 				Event: EventTransferShipped, MoveID: moveID, BranchID: hdr.FromBranchID, RoundingCents: rounding,
 				InvEvent: EventTransferShipped, Memo: "WAC integer-cent rounding on transfer ship " + hdr.TransferNo,
+				OccurredAt: at,
 			}); err != nil {
 				return Transfer{}, err
 			}
@@ -271,7 +280,7 @@ func (s *Service) ShipTransferWithETA(ctx context.Context, transferID, actorID s
 	}
 	if err := s.postTransferLegTx(ctx, tx, transferPost{
 		TransferID: hdr.ID, TransferNo: hdr.TransferNo,
-		BranchID: hdr.FromBranchID, ValueCents: totalValue,
+		BranchID: hdr.FromBranchID, ValueCents: totalValue, OccurredAt: at,
 	}, EventTransferShipped, true); err != nil {
 		return Transfer{}, err
 	}
@@ -323,6 +332,13 @@ func (s *Service) ReceiveTransfer(ctx context.Context, transferID, actorID strin
 	}
 	if hdr.Status != TransferInTransit {
 		return Transfer{}, conflictErr("inventory: transfer %s is %s, only an IN_TRANSIT transfer can be received", hdr.TransferNo, hdr.Status)
+	}
+
+	// The unloading's ONE instant (W2-5 fix r8, S5's P3-1), read once before any row is written:
+	// the inbound move carries it and the leg and rounding journals are dated with it.
+	at, err := s.movementInstant(ctx, tx)
+	if err != nil {
+		return Transfer{}, err
 	}
 
 	var totalValue int64
@@ -390,8 +406,9 @@ func (s *Service) ReceiveTransfer(ctx context.Context, transferID, actorID strin
 			ProductID: ln.ProductID, BranchID: hdr.ToBranchID, ToLocation: hdr.ToBranchID,
 			UOM: ln.UOM, MoveType: MoveTransfer, QtyBase: outstanding, UnitCostCents: ln.UnitCostCents,
 			ValueCents: value, SourceType: transferSource, SourceRefID: hdr.ID,
-			Reason:   "transfer in " + hdr.TransferNo,
-			Metadata: map[string]any{"wac_value_delta_cents": subledgerDelta},
+			Reason:     "transfer in " + hdr.TransferNo,
+			Metadata:   map[string]any{"wac_value_delta_cents": subledgerDelta},
+			OccurredAt: at,
 		})
 		if err != nil {
 			return Transfer{}, err
@@ -424,14 +441,14 @@ func (s *Service) ReceiveTransfer(ctx context.Context, transferID, actorID strin
 	if totalRounding != 0 {
 		if err := s.postTransferReceivedRoundingTx(ctx, tx, transferPost{
 			TransferID: hdr.ID, TransferNo: hdr.TransferNo,
-			BranchID: hdr.ToBranchID,
+			BranchID: hdr.ToBranchID, OccurredAt: at,
 		}, totalRounding); err != nil {
 			return Transfer{}, err
 		}
 	}
 	if err := s.postTransferLegTx(ctx, tx, transferPost{
 		TransferID: hdr.ID, TransferNo: hdr.TransferNo,
-		BranchID: hdr.ToBranchID, ValueCents: totalValue,
+		BranchID: hdr.ToBranchID, ValueCents: totalValue, OccurredAt: at,
 	}, EventTransferReceived, false); err != nil {
 		return Transfer{}, err
 	}
@@ -513,6 +530,14 @@ type transferPost struct {
 	TransferNo string
 	BranchID   string
 	ValueCents int64
+	// OccurredAt is the instant the movement this leg books happened, the one the movement's own
+	// transaction read once and stamped on its move row (W2-5 fix r8, S5's P3-1). The leg journal and
+	// the rounding journal are dated with it, so a journal and the move it books carry the same
+	// moment and a month end finds both sides on the same side of itself.
+	//
+	// The zero value means "no instant named": the journal falls back to the GL's clock, which is
+	// what every transfer leg did before the field existed.
+	OccurredAt time.Time
 }
 
 // postTransferLegTx builds and posts the two-line journal for one half of a transfer, on the
@@ -568,6 +593,7 @@ func (s *Service) postTransferLegTx(ctx context.Context, tx pgx.Tx, p transferPo
 		IdempotencyKey: event + ":" + p.TransferID,
 		Memo:           "stock transfer " + p.TransferNo,
 		BranchID:       p.BranchID,
+		DocumentDate:   p.OccurredAt,
 		Lines:          []GLLine{inv, transit},
 	}
 	var postErr error
@@ -658,6 +684,7 @@ func (s *Service) postTransferReceivedRoundingTx(ctx context.Context, tx pgx.Tx,
 		IdempotencyKey: EventTransferReceived + ".rounding:" + p.TransferID,
 		Memo:           "WAC integer-cent rounding on transfer receive " + p.TransferNo,
 		BranchID:       p.BranchID,
+		DocumentDate:   p.OccurredAt,
 		Lines:          lines,
 	}
 	if tx != nil {

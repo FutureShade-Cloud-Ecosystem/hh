@@ -154,6 +154,10 @@ type store interface {
 	ExpireDueReservations(ctx context.Context, tx pgx.Tx) (int, error)
 
 	// ledger + read-model maintenance (inside the caller's tx)
+	// MovementInstant answers the transaction's OWN instant: the one instant a movement is
+	// dated at (nil tx = the pool). It is the store's method because the unit tests' fake
+	// store has no database and no transaction to read a clock from.
+	MovementInstant(ctx context.Context, tx pgx.Tx) (time.Time, error)
 	InsertMove(ctx context.Context, tx pgx.Tx, m moveParams) (string, error)
 	HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error)
 	OnHandQtyBranch(ctx context.Context, tx pgx.Tx, productID, branchID string) (float64, error)

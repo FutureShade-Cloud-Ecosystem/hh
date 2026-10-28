@@ -54,6 +54,15 @@ func newFakeStore() *fakeStore {
 
 func key(a, b string) string { return a + "|" + b }
 
+// fakeInstant is the fake store's movement instant: the fake has no database and no
+// transaction to read a clock from, so it answers one fixed instant. A unit test that
+// cares about the instant sets fakeInstant itself.
+var fakeInstant = time.Date(2026, time.January, 15, 12, 0, 0, 0, time.UTC)
+
+func (f *fakeStore) MovementInstant(_ context.Context, _ pgx.Tx) (time.Time, error) {
+	return fakeInstant, nil
+}
+
 func (f *fakeStore) POHeaderForReceipt(_ context.Context, _ pgx.Tx, _ string) (poHeader, error) {
 	return f.hdr, nil
 }
