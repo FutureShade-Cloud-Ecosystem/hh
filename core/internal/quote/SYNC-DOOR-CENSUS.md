@@ -36,8 +36,8 @@ How the test holds it:
 | `quotes.Write` | `PATCH /api/v1/quotes/{id}` | The ownership ladder (plan 3.3): Work edits its own quotes, Manage edits any quote of its branch, nothing below Work edits, no role edits another branch's quote. The edit matrix and the expiry guard follow. | `SyncStore.Write`, `authorizeSyncWrite` and `ownershipRung`, on the locked row |
 | `quotes.Delete` | the `PATCH` ladder; no REST delete exists | Withdrawing is an edit, so the same ladder as the `PATCH`; and only a DRAFT is withdrawn through sync (a SENT, ACCEPTED or CONVERTED quote is a record, the desk's own path withdraws it). | `SyncStore.Delete`, `authorizeSyncWrite`, then the DRAFT check |
 | `quotes.Pull` | `GET /api/v1/quotes` (the list) | The list rule (plan 3.3): nothing without a Quote Desk level of Read or better; at Work the caller's own quotes; at Manage or Read every quote of the branches the caller reaches, a dealer wide caller every branch. | `SyncStore.Pull`, `syncReadScope` as a predicate of the query, so a hidden row never shortens a page |
-| `quotes.Load` | `GET /api/v1/quotes` (the list), at the conflict envelope | The projection of a quote travels only to a caller the list would show it to. The engine still gets the row's id and seq; the data is dropped. See section 4: this is the one deliberate difference from `GET /api/v1/quotes/{id}`. | `SyncStore.Load`, `maskUnreadable` |
-| `quotes.FindApplied` | none; a replay answers status and seq only | A replay of an applied key answers applied with the stamped seq and carries no projection, and applies nothing. The data rule is the list rule above. | `SyncStore.FindApplied`, `maskUnreadable`; the engine never reads data on this path |
+| `quotes.Load` | `GET /api/v1/quotes` (the list), at the conflict envelope | The list rule (plan 3.3), as a predicate of the query: a quote the list would not show the caller is not found at all, the absent row's answer, so the engine never reads an unreadable row as visible. A quote the list would show travels whole. See section 4: this is the one deliberate difference from `GET /api/v1/quotes/{id}`. | `SyncStore.Load`, `syncReadScope` as a predicate of the query |
+| `quotes.FindApplied` | none; a replay answers status and seq only | A replay of an applied key answers applied with the stamped seq and applies nothing. The read rule is the list rule above: a key on a quote the caller may not read is not found, so the replay carries nothing of that row, the seq included (UX-108). | `SyncStore.FindApplied`, `syncReadScope` as a predicate of the query; the engine never reads data on this path |
 | `approvals.Create` | `POST /api/v1/staff/approvals` | Work or better on the counter, the Quote Desk or Manager Home. The caller files as itself. Credit and cash on delivery filings only: a margin, journal or freight filing is refused exactly as the rail refuses it. The branch must sit in the caller's org, and a caller not global scope must be granted it. | `ApprovalsSyncStore.Create`, `callerHoldsLevel`, `approvalCallerPolicy`, `approvalBranchInOrg` |
 | `approvals.Write` | `POST /api/v1/staff/approvals/{id}/decide` for a decision; the requester's note has no REST twin | A decision needs Manage or better on Manager Home or the Quote Desk, then the rail's own `Decide` (branch reach, who may decide that policy and filer, separation of duties, PENDING only). A note is the requester's own edit of its own PENDING plain request, for a role the sync write fence lists as an approvals writer (a role that cannot file is refused at the fence); a floor request's detail is never an editable note. | `ApprovalsSyncStore.Write`, `writeDecision` (`holdsLevel`, `Decide`), `writeNote` |
 | `approvals.Delete` | none; the withdrawal has no REST route | Only the requester withdraws a request, in any state except one whose approval has been consumed. Nobody else, in any state. Ownership decides, among the roles the sync write fence lists as approvals writers. | `ApprovalsSyncStore.Delete`, the requester and consumed checks on the locked row |
@@ -203,7 +203,7 @@ branch cases use branch A (the roles' granted branch) and branch B (not granted)
 
 ### `quotes.FindApplied`
 
-The census asserts for every role and for every planted row that the replay answer carries no projection and changes nothing. There is no allow or refuse cell: the rule is the same for all thirteen roles.
+The census asserts for every role and for every planted row that the replay answer carries no projection and changes nothing. There is no allow or refuse cell: the rule is the same for all thirteen roles. A caller that may not read the row is refused the row's seq as well: the key is not found for that caller (UX-108), and the answer still carries nothing of the row.
 
 ### `approvals.Create`
 
@@ -360,8 +360,11 @@ The census asserts for every role and for every planted row that the replay answ
    tombstones. The id and seq reveal no field of the request.
 4. **A replay is answered from the key alone.** `FindApplied` answers an
    already applied key as applied with the stamped seq, to whoever replays the key, and
-   applies nothing. A refused role replaying another's key learns that the key applied and
-   its seq, never the row.
+   applies nothing. A caller that may not read the row learns nothing of it: the key is
+   not found for that caller, so the replay carries neither the row's seq nor any part of
+   the row (UX-108). The status word stays the engine's own bound answer: the quotes
+   store cannot answer the gate's existence read, so the gate keeps the bound answer for
+   a key it cannot attribute, and what the scope owes is the row.
 5. **Withdrawal and note edits are ownership rules.** `approvals.Delete` and the note arm
    of `approvals.Write` have no REST twin and are ownership rules behind the sync write fence: the requester
    edits or withdraws its own request, and nobody else does, provided it still holds a

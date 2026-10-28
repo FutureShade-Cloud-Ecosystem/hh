@@ -605,9 +605,12 @@ func qd1gQuotesPull(t *testing.T, c *qd1gCensus, who qd1gRole) {
 // qd1gLoad calls one store's Load directly as the caller (the engine reaches
 // Load on a stale update, a delete and an update, but the quotes scope's
 // field merge answers its envelope only after an authorised write, so the
-// projection's mask is observable on the store itself). The store is built
+// projection's answer is observable on the store itself). The store is built
 // with the production linker's shape: platform subject to linked ERP user.
-func qd1gLoad(t *testing.T, c *qd1gCensus, scope string, who qd1gRole, id string) (data bool) {
+// The answer is the sync door's: the row is visible to the caller, found and
+// carrying its projection. A row the caller may not read is not found at all
+// (UX-108), so the answer is false, the absent row's answer.
+func qd1gLoad(t *testing.T, c *qd1gCensus, scope string, who qd1gRole, id string) (visible bool) {
 	t.Helper()
 	link := func(ctx context.Context, sub string) (string, bool) {
 		var uid string
@@ -627,10 +630,10 @@ func qd1gLoad(t *testing.T, c *qd1gCensus, scope string, who qd1gRole, id string
 	default:
 		row, found, err = identity.NewApprovalsSyncStore(c.q.pool, link).Load(context.Background(), f, id)
 	}
-	if err != nil || !found {
-		t.Fatalf("%s Load as %s: found %v err %v", scope, who.role, found, err)
+	if err != nil {
+		t.Fatalf("%s Load as %s: %v", scope, who.role, err)
 	}
-	return row.Data != nil
+	return found && row.Data != nil
 }
 
 // qd1gQuotesLoad: Load's projection travels in the conflict envelope. It must
