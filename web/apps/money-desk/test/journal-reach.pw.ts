@@ -24,10 +24,16 @@ const blank = process.env.JOURNAL_REACH_BLANK ?? "";
 async function openRegister(page: Page, request: APIRequestContext): Promise<void> {
   await resetStub(request);
   if (blank === "core") {
-    const emptied = await request.post("/_stub/register", { data: { empty: true } });
+    const emptied = await request.post("/api/v1/gl/journals/_stub/planter", {
+      data: { empty: true },
+      headers: { Authorization: "Bearer the-planter-is-a-stub-control" },
+    });
     if (!emptied.ok()) throw new Error("the stub refused the empty books");
   } else {
-    const planted = await request.post("/_stub/register", { data: { count: PLANTED } });
+    const planted = await request.post("/api/v1/gl/journals/_stub/planter", {
+      data: { count: PLANTED },
+      headers: { Authorization: "Bearer the-planter-is-a-stub-control" },
+    });
     if (!planted.ok()) throw new Error("the stub refused the older journals");
   }
   await page.addInitScript(controllerHandoff);

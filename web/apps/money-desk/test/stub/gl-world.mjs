@@ -954,8 +954,10 @@ export function createGlWorld() {
     // The register reach legs' planter (W2-10). {count: n} adds n older fiscal 2025 journals to the
     // seeded books, so a leg runs a ledger of more than the register's first hundred; {empty: true}
     // clears the books to nothing at all, the empty core the blank check runs against. Every other
-    // leg resets the world and never calls this, so the seeded answers stand.
-    if (req.method === "POST" && path === "/_stub/register") {
+    // leg resets the world and never calls this, so the seeded answers stand. The path wears the
+    // journals namespace because this is the line the stub server forwards here in one piece; the
+    // world's own _stub controls beside the reset answer before the caller is read, and so does this.
+    if (req.method === "POST" && path === "/api/v1/gl/journals/_stub/planter") {
       const asked = JSON.parse(bodyText || "{}");
       if (asked.empty === true) {
         world.journals = [];
