@@ -36,6 +36,16 @@ async function openSection(page: Page, surface: string, settle: string): Promise
   await page.waitForLoadState("networkidle");
 }
 
+async function openPricingTab(page: Page, tabId: string, title: string, settle: string): Promise<void> {
+  if (page.viewportSize()!.width <= 900) {
+    await page.locator('[data-test="pr-tab-select"]').selectOption({ label: title });
+  } else {
+    await page.locator(`.pr-tab[data-tab="${tabId}"]`).click();
+  }
+  await expect(page.locator(settle).first()).toBeVisible({ timeout: 30_000 });
+  await page.waitForLoadState("networkidle");
+}
+
 async function take(page: Page, name: string, theme: string, width: number): Promise<void> {
   await page.screenshot({
     path: join(dir, `${name}__${theme}-${width}.png`),
@@ -59,28 +69,24 @@ for (const size of SIZES) {
       await openSection(page, "pricing", '[data-test="pr-margin-count"]');
 
       // 1. Rules editor
-      await page.locator('.pr-tab[data-tab="rules"]').click();
-      await expect(page.locator('[data-test="pr-rules-count"]')).toBeVisible();
+      await openPricingTab(page, "rules", "Rules", '[data-test="pr-rules-count"]');
       await page.locator('[data-action="pr-rule-edit"]').first().click();
       await expect(page.locator('[data-test="pr-rule-editor"]')).toBeVisible();
       await take(page, "pricing__rules-editor", theme, size.width);
 
       // 2. Customer prices
-      await page.locator('.pr-tab[data-tab="customers"]').click();
-      await expect(page.locator('[data-test="pr-cust-empty"]')).toBeVisible();
+      await openPricingTab(page, "customers", "Customer prices", '[data-test="pr-cust-empty"]');
       await take(page, "pricing__customers", theme, size.width);
 
       // 3. Quantity breaks editor
-      await page.locator('.pr-tab[data-tab="breaks"]').click();
-      await expect(page.locator('[data-test="pr-breaks-count"]')).toBeVisible();
+      await openPricingTab(page, "breaks", "Quantity breaks", '[data-test="pr-breaks-count"]');
       await page.locator('[data-action="pr-break-edit"]').first().click();
       await expect(page.locator('[data-test="pr-break-editor"]')).toBeVisible();
       await take(page, "pricing__breaks-editor", theme, size.width);
 
       // 4. Promotions & clearance editors
-      await page.locator('.pr-tab[data-tab="promos"]').click();
+      await openPricingTab(page, "promos", "Promotions & clearance", '[data-test="pr-clear-count"]');
       await expect(page.locator('[data-test="pr-promo-count"]')).toBeVisible();
-      await expect(page.locator('[data-test="pr-clear-count"]')).toBeVisible();
       await page.locator('[data-action="pr-promo-edit"]').first().click();
       await page.locator('[data-action="pr-clear-edit"]').first().click();
       await expect(page.locator('[data-test="pr-promo-editor"]')).toBeVisible();
@@ -88,36 +94,31 @@ for (const size of SIZES) {
       await take(page, "pricing__promos-editor", theme, size.width);
 
       // 5. Rebates editor & accrual form
-      await page.locator('.pr-tab[data-tab="rebates"]').click();
+      await openPricingTab(page, "rebates", "Rebates", '[data-test="pr-ledger-total"]');
       await expect(page.locator('[data-test="pr-rebate-count"]')).toBeVisible();
-      await expect(page.locator('[data-test="pr-ledger-total"]')).toBeVisible();
       await page.locator('[data-action="pr-rebate-edit"]').first().click();
       await expect(page.locator('[data-test="pr-rebate-editor"]')).toBeVisible();
       await take(page, "pricing__rebates", theme, size.width);
 
       // 6. Units of measure probe & editor
-      await page.locator('.pr-tab[data-tab="uom"]').click();
-      await expect(page.locator('[data-test="pr-uom-count"]')).toBeVisible();
+      await openPricingTab(page, "uom", "Units of measure", '[data-test="pr-uom-count"]');
       await page.locator('[data-action="pr-uom-edit"]').first().click();
       await expect(page.locator('[data-test="pr-uom-editor"]')).toBeVisible();
       await take(page, "pricing__uom", theme, size.width);
 
       // 7. Batches create form
-      await page.locator('.pr-tab[data-tab="batches"]').click();
+      await openPricingTab(page, "batches", "Batches & imports", '[data-test="pr-profiles-count"]');
       await expect(page.locator('[data-test="pr-batches-count"]')).toBeVisible();
-      await expect(page.locator('[data-test="pr-profiles-count"]')).toBeVisible();
       await page.locator('[data-action="pr-batch-new"]').click();
       await expect(page.locator('[data-test="pr-batch-create"]')).toBeVisible();
       await take(page, "pricing__batches", theme, size.width);
 
       // 8. Low margin probe
-      await page.locator('.pr-tab[data-tab="lowmargin"]').click();
-      await expect(page.locator('[data-test="pr-lm-count"]')).toBeVisible();
+      await openPricingTab(page, "lowmargin", "Low margin", '[data-test="pr-lm-count"]');
       await take(page, "pricing__lowmargin", theme, size.width);
 
       // 9. Change log filters
-      await page.locator('.pr-tab[data-tab="changelog"]').click();
-      await expect(page.locator('[data-test="pr-log-count"]')).toBeVisible();
+      await openPricingTab(page, "changelog", "Change log", '[data-test="pr-log-count"]');
       await take(page, "pricing__changelog", theme, size.width);
 
       // 10. Audit filters

@@ -94,8 +94,8 @@ export interface PricingPickers {
 }
 
 const FALLBACK_PICKERS: PricingPickers = {
-  renderCustomerPicker: (spec) => html`<div class="hh-entity-picker" data-picker=${spec.field}><span class="picker-current">${spec.selectedId !== "" ? spec.selectedId : spec.emptyLabel}</span></div>`,
-  renderProductPicker: (spec) => html`<div class="hh-entity-picker" data-picker=${spec.field}><span class="picker-current">${spec.selectedId !== "" ? spec.selectedId : spec.emptyLabel}</span></div>`,
+  renderCustomerPicker: (spec) => html`<div class="hh-entity-picker" data-picker=${spec.field}><span class="picker-current">${spec.selectedId !== "" ? UNKNOWN_CUSTOMER : spec.emptyLabel}</span></div>`,
+  renderProductPicker: (spec) => html`<div class="hh-entity-picker" data-picker=${spec.field}><span class="picker-current">${spec.selectedId !== "" ? UNKNOWN_PRODUCT : spec.emptyLabel}</span></div>`,
 };
 
 function knownVendors(model: PricingModel): readonly { readonly id: string; readonly name: string }[] {

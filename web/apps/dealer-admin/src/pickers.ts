@@ -23,6 +23,7 @@ import {
   type DropView,
 } from "@hardscapehouse/pos-kit/src/ported/_pos-searchdrop.js";
 import type { CounterHit } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
+import { UNKNOWN_CUSTOMER, UNKNOWN_PRODUCT } from "./placeholders.js";
 
 export interface EntityPickerSpec {
   readonly field: string;
@@ -68,12 +69,12 @@ export class DealerPickers {
 
   customerLabel(id: string): string {
     if (id === "") return "";
-    return this.#customerNames.get(id) ?? id;
+    return this.#customerNames.get(id) ?? UNKNOWN_CUSTOMER;
   }
 
   productLabel(id: string): string {
     if (id === "") return "";
-    return this.#productNames.get(id) ?? id;
+    return this.#productNames.get(id) ?? UNKNOWN_PRODUCT;
   }
 
   rememberProduct(id: string, sku: string, name: string): void {

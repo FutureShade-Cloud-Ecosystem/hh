@@ -9,7 +9,26 @@ export const pickerStyles = css`
     display: flex;
     flex-direction: column;
     gap: var(--hh-s-6, 6px);
-    min-width: 220px;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .filters .hh-entity-picker {
+    flex: 1 1 220px;
+  }
+
+  .cardrow-table tbody td:not(.cardrow-act) > .hh-entity-picker {
+    grid-column: 2;
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .hh-entity-picker .picker-search {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
   }
 
   .picker-selected {
