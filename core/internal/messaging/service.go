@@ -1086,7 +1086,7 @@ func (s *Service) MirrorRoomAttachment(ctx context.Context, channelID string, me
 		SizeBytes:    meta.SizeBytes,
 		Kind:         kind,
 		UploadedBy:   uPtr,
-		CreatedAt:    time.Now(),
+		CreatedAt:    s.nowFn(),
 	}
 	return s.repo.UpsertChannelAttachmentFromMirror(ctx, channelID, att)
 }
