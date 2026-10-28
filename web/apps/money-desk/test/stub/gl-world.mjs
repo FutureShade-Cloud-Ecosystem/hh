@@ -691,6 +691,16 @@ export function createGlWorld() {
       if (caller.role !== "FINANCIAL_CONTROLLER") return say(403, "gl: only the Financial Controller may close the fiscal year");
       const year = Number(body.year ?? 0);
       if (!(year > 0)) return say(400, "gl: year is required");
+      // FW1-09g: the year end marker is the close's once only signal. A repeat press answers the first
+      // close's result with already_closed true and writes nothing; periods_closed is read from the
+      // year's real periods, as the core reads it from the count.
+      world.yearEndCloses ??= new Map();
+      const prior = world.yearEndCloses.get(year);
+      if (prior !== undefined) {
+        const periods = world.periods.filter((p) => p.year === year);
+        const sealed = periods.length > 0 && periods.every((p) => p.status === "CLOSED");
+        return { status: 200, body: { ...prior, periods_closed: sealed, already_closed: true } };
+      }
       const sums = new Map();
       for (const j of world.journals) {
         if (j.status !== "POSTED" || j.fiscal_year !== year) continue;
@@ -707,7 +717,7 @@ export function createGlWorld() {
         lines.push(net > 0 ? { account_code: code, debit_cents: 0, credit_cents: net, memo: "close to retained earnings" } : { account_code: code, debit_cents: -net, credit_cents: 0, memo: "close to retained earnings" });
         totalNetDebit += net;
       }
-      const result = { fiscal_year: year, net_income_cents: -totalNetDebit, periods_closed: true };
+      const result = { fiscal_year: year, net_income_cents: -totalNetDebit, periods_closed: true, already_closed: false };
       if (lines.length > 0) {
         lines.push(
           totalNetDebit > 0
@@ -743,6 +753,7 @@ export function createGlWorld() {
           p.closed_at = new Date(NOW).toISOString();
         }
       }
+      world.yearEndCloses.set(year, result);
       return { status: 200, body: result };
     }
 
