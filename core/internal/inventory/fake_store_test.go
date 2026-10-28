@@ -38,6 +38,12 @@ type fakeStore struct {
 	reservations []Reservation
 	resSeq       int
 	policies     map[string]AllocationPolicy // branch → configured policy (absent = system default)
+
+	// clock is the fake's ONE clock: the fake has no database and no transaction to read one from,
+	// so MovementInstant and ExpireDueReservations both read this field and never two different
+	// clocks. newFakeStore defaults it to time.Now; a test that wants a pinned instant sets the
+	// field to a func of its own.
+	clock func() time.Time
 }
 
 func newFakeStore() *fakeStore {
@@ -49,18 +55,14 @@ func newFakeStore() *fakeStore {
 		lineReceived: map[string]float64{},
 		reserved:     map[string]float64{},
 		policies:     map[string]AllocationPolicy{},
+		clock:        time.Now,
 	}
 }
 
 func key(a, b string) string { return a + "|" + b }
 
-// fakeInstant is the fake store's movement instant: the fake has no database and no
-// transaction to read a clock from, so it answers one fixed instant. A unit test that
-// cares about the instant sets fakeInstant itself.
-var fakeInstant = time.Date(2026, time.January, 15, 12, 0, 0, 0, time.UTC)
-
 func (f *fakeStore) MovementInstant(_ context.Context, _ pgx.Tx) (time.Time, error) {
-	return fakeInstant, nil
+	return f.clock(), nil
 }
 
 func (f *fakeStore) POHeaderForReceipt(_ context.Context, _ pgx.Tx, _ string) (poHeader, error) {
@@ -221,7 +223,7 @@ func (f *fakeStore) CloseReservationByID(_ context.Context, _ pgx.Tx, reservatio
 }
 
 func (f *fakeStore) ExpireDueReservations(_ context.Context, _ pgx.Tx) (int, error) {
-	now := time.Now()
+	now := f.clock()
 	return f.closeMatching(ResExpired, func(r Reservation) bool {
 		if r.ExpiresAt == "" {
 			return false
