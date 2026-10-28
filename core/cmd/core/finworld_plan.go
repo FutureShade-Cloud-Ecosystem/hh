@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"strings"
 	"time"
@@ -267,9 +268,11 @@ type finworldReturnableLine struct {
 	LineKey        string
 	SKU            string
 	UOM            string
+	OrigQty        int64
 	RemainingQty   int64
 	UnitPriceCents int64
 	UnitCostCents  int64
+	LineTaxCents   int64
 }
 
 type finworldOpenInvoice struct {
@@ -755,6 +758,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 
 			// Track reorder crossings on this day per branch.
 			reordersDoneToday := map[string]int{FinWorldBranchCodeTRT: 0, FinWorldBranchCodeKGN: 0}
+			dayBranchCounterIdx := map[string]int{FinWorldBranchCodeTRT: 0, FinWorldBranchCodeKGN: 0}
 
 			emitPurchaseAndBill := func(branchCode string, skuIdx int, triggeredByReorder bool, hour, min int) {
 				prod := plan.Products[skuIdx]
@@ -872,12 +876,19 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					}
 					saleMode = "COUNTER"
 					fulfillType = "COLLECT_NOW"
-					if rng.IntN(100) < 38 {
+					dayBranchCounterIdx[branchCode]++
+					cIdx := dayBranchCounterIdx[branchCode]
+					randDraw := rng.IntN(100)
+					if cIdx <= 2 {
+						payMethod = "CASH"
+					} else if cIdx == 3 {
+						payMethod = "CARD"
+					} else if randDraw < 38 {
 						payMethod = "CASH"
 					} else {
 						payMethod = "CARD"
 					}
-					tillIdx := saleSeq % 2
+					tillIdx := (cIdx - 1) % 2
 					sessionKey = sessionKeyByBranchTill[branchCode][tillIdx]
 					paymentSeq++
 					paymentKey = fmt.Sprintf("pay-s%d-%06d", seed, paymentSeq)
@@ -958,6 +969,19 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 
 				for lIdx := 0; lIdx < numLines; lIdx++ {
 					prodIdx := pickWeightedProductIndex()
+					for prev := 0; prev < lIdx; prev++ {
+						if lines[prev].SKU == plan.Products[prodIdx].SKU {
+							switch {
+							case prodIdx < 5:
+								prodIdx = (prodIdx + 1) % 5
+							case prodIdx < 15:
+								prodIdx = 5 + ((prodIdx - 5 + 1) % 10)
+							default:
+								prodIdx = 15 + ((prodIdx - 15 + 1) % (len(plan.Products) - 15))
+							}
+							prev = -1
+						}
+					}
 					prod := plan.Products[prodIdx]
 
 					var qty int64
@@ -973,6 +997,23 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					unitPrice := prod.ListPriceCents
 					if cust.CustomerType == "CONTRACTOR" {
 						unitPrice = prod.ContractorPriceCents
+					}
+					if lIdx > 0 {
+						for {
+							candSub := qty * unitPrice
+							candTax := finworldHSTOn(candSub, taxRateBps)
+							var candCred int64
+							if taxReason == FinWorldTaxReasonReliefFN8 {
+								candCred = finworldHSTOn(candSub, FinWorldTaxOntarioCreditBps)
+							}
+							taxOK := taxCents+candTax == finworldHSTOn(subCents+candSub, taxRateBps)
+							credOK := taxReason != FinWorldTaxReasonReliefFN8 ||
+								ontCreditCents+candCred == finworldHSTOn(subCents+candSub, FinWorldTaxOntarioCreditBps)
+							if taxOK && credOK {
+								break
+							}
+							qty++
+						}
 					}
 					lineSub := qty * unitPrice
 					lineTax := finworldHSTOn(lineSub, taxRateBps)
@@ -1070,24 +1111,28 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					InitialBalanceCents:    balCents,
 				}
 
-				// Record lines as eligible for later returns.
-				for _, ln := range lines {
-					returnableByBranch[branchCode] = append(returnableByBranch[branchCode], &finworldReturnableLine{
-						SaleKey:        sKey,
-						InvoiceKey:     invoiceKey,
-						SaleDate:       td.Date,
-						CustomerKey:    cust.Key,
-						PaymentMethod:  payMethod,
-						TaxReasonCode:  ln.TaxReasonCode,
-						TaxRateBps:     ln.TaxRateBps,
-						LineNo:         ln.LineNo,
-						LineKey:        ln.LineKey,
-						SKU:            ln.SKU,
-						UOM:            ln.UOM,
-						RemainingQty:   ln.Quantity,
-						UnitPriceCents: ln.UnitPriceCents,
-						UnitCostCents:  ln.UnitCostCents,
-					})
+				// Record single-line counter cash/card sales as eligible for later POS returns.
+				if saleMode == "COUNTER" && len(lines) == 1 {
+					for _, ln := range lines {
+						returnableByBranch[branchCode] = append(returnableByBranch[branchCode], &finworldReturnableLine{
+							SaleKey:        sKey,
+							InvoiceKey:     invoiceKey,
+							SaleDate:       td.Date,
+							CustomerKey:    cust.Key,
+							PaymentMethod:  payMethod,
+							TaxReasonCode:  ln.TaxReasonCode,
+							TaxRateBps:     ln.TaxRateBps,
+							LineNo:         ln.LineNo,
+							LineKey:        ln.LineKey,
+							SKU:            ln.SKU,
+							UOM:            ln.UOM,
+							OrigQty:        ln.Quantity,
+							RemainingQty:   ln.Quantity,
+							UnitPriceCents: ln.UnitPriceCents,
+							UnitCostCents:  ln.UnitCostCents,
+							LineTaxCents:   ln.TaxCents,
+						})
+					}
 				}
 
 				// If on account, register open invoice and schedule receipt (~92% overall paid, ~8% left open across aging buckets).
@@ -1298,23 +1343,40 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				targetRetLines := (monthSalesLinesByBranch[brCode]*3 + 50) / 100
 				pool := returnableByBranch[brCode]
 				for monthReturnLinesByBranch[brCode] < targetRetLines && len(pool) > 0 {
-					// Pick an eligible earlier line with RemainingQty > 0.
+					// Pick an eligible earlier line with RemainingQty > 0 whose refund fits today's drawer or card batch.
 					pickedIdx := -1
+					var retQty int64
 					for k := len(pool) - 1; k >= 0; k-- {
-						if pool[k].RemainingQty > 0 {
-							pickedIdx = k
-							break
+						cand := pool[k]
+						if cand.RemainingQty <= 0 {
+							continue
 						}
+						rq := cand.OrigQty
+						if cand.OrigQty > 2 && int64(math.Round(float64(cand.LineTaxCents)*2.0/float64(cand.OrigQty))) == finworldHSTOn(2*cand.UnitPriceCents, cand.TaxRateBps) {
+							rq = 2
+						} else if int64(math.Round(float64(cand.LineTaxCents)*1.0/float64(cand.OrigQty))) == finworldHSTOn(cand.UnitPriceCents, cand.TaxRateBps) {
+							rq = 1
+						}
+						candSub := rq * cand.UnitPriceCents
+						candTot := candSub + finworldHSTOn(candSub, cand.TaxRateBps)
+						if cand.PaymentMethod == "CASH" {
+							if tillCashNetBySession[sessionKeyByBranchTill[brCode][0]]-openingFloatCents < candTot+5000 {
+								continue
+							}
+						} else {
+							if dayGrossCardCents[brCode]-dayRefundCardCents[brCode] < candTot+5000 {
+								continue
+							}
+						}
+						pickedIdx = k
+						retQty = rq
+						break
 					}
 					if pickedIdx < 0 {
 						break
 					}
 					src := pool[pickedIdx]
-					retQty := int64(1)
-					if src.RemainingQty > 2 {
-						retQty = 2
-					}
-					src.RemainingQty -= retQty
+					src.RemainingQty = 0
 
 					lineSub := retQty * src.UnitPriceCents
 					lineTax := finworldHSTOn(lineSub, src.TaxRateBps)
@@ -1745,9 +1807,12 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					addStmtLine(td.Date, "EFT_RECEIPT", eft.ReceiptKey, eft.PaymentKey, "Customer EFT receipt", eft.AmountCents)
 				}
 
-				// NSF cheque returns debit the bank account.
+				// NSF cheque returns debit the bank account (principal on payment.bounced plus separate bank fee).
 				for _, nsf := range monthNSFBounces {
-					addStmtLine(td.Date, "NSF_RETURN", nsf.BounceKey, nsf.OriginalReceiptKey, "NSF returned customer cheque", -(nsf.BouncedAmountCents + nsf.NSFFeeCents))
+					addStmtLine(td.Date, "NSF_RETURN", nsf.BounceKey, nsf.OriginalReceiptKey, "NSF returned customer cheque", -nsf.BouncedAmountCents)
+					if nsf.NSFFeeCents > 0 {
+						addStmtLine(td.Date, "BANK_FEE", nsf.BounceKey, "NSF-FEE-"+nsf.BounceKey, "Bank NSF returned item charge", -nsf.NSFFeeCents)
+					}
 				}
 
 				// Clear all but the last 2 vendor bills; hold the last 2 as outstanding cheques.
