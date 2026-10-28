@@ -583,7 +583,7 @@ func (b *builder) invoices() {
 				"metadata", demoMetadata,
 				"created_at", received, "updated_at", received,
 			))
-			b.add(insert("payment_allocations", "(payment_id, invoice_id)",
+			b.add(insert("payment_allocations", "(payment_id, invoice_id, kind)",
 				"payment_id", demoID("payment:"+s.Key),
 				"invoice_id", demoID("invoice:"+s.Key),
 				"amount_cents", paid,
@@ -720,7 +720,7 @@ func (b *builder) counterSale(s saleSpec, mint func(string) string, no string) {
 				"metadata", demoMetadata,
 				"created_at", at, "updated_at", at,
 			))
-			b.add(insert("payment_allocations", "(payment_id, invoice_id)",
+			b.add(insert("payment_allocations", "(payment_id, invoice_id, kind)",
 				"payment_id", mint(payKey),
 				"invoice_id", mint(invKey),
 				"amount_cents", total,

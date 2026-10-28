@@ -44,8 +44,17 @@ func TestCostDoors_ChangeLogDropsCostRowsForACallerOffTheList(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != wantRows {
 			t.Fatalf("%s: want %d rows, got %d (%v): %s", role, wantRows, len(got), err, rec.Body.String())
 		}
-		if role == "HR" && (got[0].Field != "retail_cents" || strings.Contains(rec.Body.String(), "7400")) {
-			t.Fatalf("a caller off the list keeps the retail row only: %s", rec.Body.String())
+		if role == "HR" {
+			if got[0].Field != "retail_cents" {
+				t.Fatalf("a caller off the list keeps the retail row only: %s", rec.Body.String())
+			}
+			// FLAKE-10: the cost detail is read from the PARSED body. The raw hunt for the bare
+			// digits "7400" read the row's created_at nanoseconds as the cost figure: the body
+			// carries a clock, a clock spells "7400" in one run in 2,597, and this body carries
+			// no cost row at all.
+			if leaks := costDoorLeak(rec.Body.String(), "cost_cents", 7000, 7400); len(leaks) != 0 {
+				t.Fatalf("a caller off the list keeps the retail row only: %v\n%s", leaks, rec.Body.String())
+			}
 		}
 	}
 }

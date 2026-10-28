@@ -70,6 +70,17 @@ func nullUUID(id string) any {
 	return id
 }
 
+// actorUUID returns the actor id when it has a UUID's shape and nil otherwise, so an optional uuid
+// column is never handed a string the database cannot cast. A malformed actor id must not refuse the
+// money move: the attribution is kept in the NSF record and the audit trail either way, and the
+// reversal row's own facts (the application it names, the negative, the instant) are the money.
+func actorUUID(s string) any {
+	if s == "" || !uuidLike(s) {
+		return nil
+	}
+	return s
+}
+
 // nullTime maps the zero instant to SQL NULL, so a caller that named no instant leaves the column
 // default standing (the column default is the transaction's own timestamp) instead of writing the
 // zero instant, where every date read of the row would name a day that is not a day.
@@ -181,17 +192,32 @@ func (r *Repository) InsertPayment(ctx context.Context, tx pgx.Tx, p PaymentRow)
 
 func (r *Repository) InsertAllocation(ctx context.Context, tx pgx.Tx, paymentID, invoiceID string, amountCents int64, allocatedBy string) error {
 	// allocated_by (0043, Q-044): WHO matched this payment to this invoice, stamped on the allocation.
-	_, err := tx.Exec(ctx,
+	// The conflict target carries the kind (0450): the primary key is (payment_id, invoice_id, kind), so
+	// the upsert adds to the APPLICATION row and never to a reversal row, which is written once and is
+	// never added to. The WHERE refuses a pair a reversal already stands on (0450, W2-6A fix 1): the
+	// update never runs, so the pair is refused by the code before the trigger, and a zero row count
+	// is reported here in words.
+	res, err := tx.Exec(ctx,
 		`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents, allocated_by) VALUES ($1, $2, $3, $4)
-		 ON CONFLICT (payment_id, invoice_id) DO UPDATE SET amount_cents = payment_allocations.amount_cents + EXCLUDED.amount_cents`,
+		 ON CONFLICT (payment_id, invoice_id, kind) DO UPDATE SET amount_cents = payment_allocations.amount_cents + EXCLUDED.amount_cents
+		 WHERE NOT EXISTS (SELECT 1 FROM payment_allocations r
+		                    WHERE r.payment_id = payment_allocations.payment_id
+		                      AND r.invoice_id = payment_allocations.invoice_id
+		                      AND r.kind = 'REVERSAL')`,
 		paymentID, invoiceID, amountCents, nullStr(allocatedBy))
 	if err != nil {
 		return fmt.Errorf("till: insert allocation: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("till: insert allocation: the payment and invoice pair is reversed, the application cannot be added to")
 	}
 	return nil
 }
 
 func (r *Repository) AllocatedTotal(ctx context.Context, tx pgx.Tx, paymentID string) (int64, error) {
+	// The sum of every row the payment carries, so a reversal row (0450) takes its application back
+	// and the figure is the money still applied. Before the kind, a bounced payment's rows were gone
+	// and the figure was zero; it is zero now for the same reason and by the same arithmetic.
 	var total int64
 	err := tx.QueryRow(ctx,
 		`SELECT COALESCE(SUM(amount_cents), 0) FROM payment_allocations WHERE payment_id = $1`, paymentID,
@@ -985,18 +1011,23 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	}
 
 	// Reverse every allocation + reopen its invoice (restore the balance the payment had cleared).
-	rows, err := tx.Query(ctx, `SELECT invoice_id::text, amount_cents FROM payment_allocations WHERE payment_id = $1`, in.PaymentID)
+	// Only the APPLICATION rows: a reversal row (0450) is the undo of an application, and a payment
+	// that has not been bounced carries none.
+	rows, err := tx.Query(ctx,
+		`SELECT pa.id::text, pa.invoice_id::text, pa.amount_cents FROM payment_allocations pa
+		  WHERE pa.payment_id = $1 AND pa.kind = 'APPLICATION'`, in.PaymentID)
 	if err != nil {
 		return nsfReverseResult{}, fmt.Errorf("till: read allocations: %w", err)
 	}
 	type alloc struct {
+		id  string
 		inv string
 		amt int64
 	}
 	var allocs []alloc
 	for rows.Next() {
 		var a alloc
-		if err := rows.Scan(&a.inv, &a.amt); err != nil {
+		if err := rows.Scan(&a.id, &a.inv, &a.amt); err != nil {
 			rows.Close()
 			return nsfReverseResult{}, fmt.Errorf("till: scan allocation: %w", err)
 		}
@@ -1077,8 +1108,30 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	for _, id := range nsfFeeIDs {
 		res.ReversedCents += nsfAllocs[id]
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM payment_allocations WHERE payment_id = $1`, in.PaymentID); err != nil {
-		return nsfReverseResult{}, fmt.Errorf("till: reverse allocations: %w", err)
+	// The application stays and the undo is written beside it (0450): the same payment, the same
+	// invoice, the exact negative of the application, dated at the bounce's own instant, naming the
+	// application it reverses. The bounce's figures do not move (the invoice is re-opened above and
+	// the net of the two rows is zero), but "what did this cheque use to pay?" is answerable from the
+	// rows themselves and not only from an audit trail, and an as-of aging rebuilt from the dated acts
+	// can see the cheque was good before the bounce and owed after it.
+	//
+	// THE UNDO IS NEVER DATED BEFORE THE MONEY IT UNDOES. The application's row is dated by Postgres
+	// (now(), the column default at InsertAllocation) and this row by the bounce's Go clock (one
+	// clock rules the transaction, FW1-13b): two clocks for one fact, and when they disagree by a
+	// fraction of a second the undo lands before the application, the history lists it first, and an
+	// as-of aging taken between the two instants nets the payment below zero. GREATEST takes the
+	// later of the two, with the application's own instant read inside this statement on
+	// reverses_allocation_id, so the undo is dated at the bounce's instant at the earliest and never
+	// earlier than the application it reverses.
+	for _, a := range allocs {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO payment_allocations
+			   (payment_id, invoice_id, amount_cents, kind, reverses_allocation_id, allocated_by, created_at)
+			 VALUES ($1::uuid, $2::uuid, $3, 'REVERSAL', $4::uuid, $5::uuid,
+			         GREATEST($6::timestamptz, (SELECT app.created_at FROM payment_allocations app WHERE app.id = $4::uuid)))`,
+			in.PaymentID, a.inv, -a.amt, a.id, actorUUID(in.ActorID), in.At); err != nil {
+			return nsfReverseResult{}, fmt.Errorf("till: write the reversal row: %w", err)
+		}
 	}
 
 	// NSF record, fee captured from policy AT bounce time (a later policy change never rewrites history).

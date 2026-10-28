@@ -568,6 +568,80 @@ test.describe("phone", () => {
     await shot(page, "pay-statements-phone");
   });
 
+  test("a bounced or voided payment's line names each invoice once with no status word", async ({ page }) => {
+    // The history (PR 668) carries the application row and the reversal beside it: the row names
+    // each invoice once, from the application rows. The chip carries the state, so the line
+    // carries the facts only, no status word, never "Applied to".
+    let invoiceNos: string[] = [];
+    await page.route("**/api/v1/tenant/payments", async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch();
+      const payments = (await response.json()) as { payment_no: string }[];
+      const auth = route.request().headers()["authorization"] ?? "";
+      const invoices = await page.request.get("/api/v1/tenant/invoices?limit=200", { headers: { authorization: auth } });
+      const body = (await invoices.json()) as { items: { id: string; customer_id: string; invoice_no: string }[] };
+      const [inv1, inv2, inv3] = body.items;
+      invoiceNos = body.items.map((i) => i.invoice_no);
+      await route.fulfill({
+        json: [
+          ...payments,
+          {
+            id: "pmt-9101",
+            payment_no: "PMT-9101",
+            customer_id: inv1!.customer_id,
+            method: "CHEQUE",
+            amount_cents: 80_000,
+            status: "BOUNCED",
+            gateway_ref: "",
+            received_at: "2026-03-03T13:00:00.000Z",
+            allocations: [
+              { invoice_id: inv1!.id, amount_cents: 50_000, created_at: "2026-03-03T13:00:00.000Z" },
+              { invoice_id: inv2!.id, amount_cents: 30_000, created_at: "2026-03-03T13:00:00.000Z" },
+              { invoice_id: inv1!.id, amount_cents: -50_000, created_at: "2026-03-04T09:00:00.000Z" },
+              { invoice_id: inv2!.id, amount_cents: -30_000, created_at: "2026-03-04T09:00:00.000Z" },
+            ],
+          },
+          {
+            id: "pmt-9102",
+            payment_no: "PMT-9102",
+            customer_id: inv1!.customer_id,
+            method: "CHEQUE",
+            amount_cents: 25_000,
+            status: "VOID",
+            gateway_ref: "",
+            received_at: "2026-03-02T13:00:00.000Z",
+            allocations: [
+              { invoice_id: inv3!.id, amount_cents: 25_000, created_at: "2026-03-02T13:00:00.000Z" },
+              { invoice_id: inv3!.id, amount_cents: -25_000, created_at: "2026-03-02T14:00:00.000Z" },
+            ],
+          },
+        ],
+      });
+    });
+    await signIn(page, "ap");
+    await page.getByTestId("frame-selector").click();
+    await page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" }).getByRole("button", { name: "Statements" }).click();
+    await expect(page.getByTestId("payment-row")).toHaveCount(4);
+    // The standing payment is unchanged.
+    await expect(page.getByTestId("payment-row").filter({ hasText: "PMT-9001" })).toContainText("Applied to INV-");
+    // The bounced cheque's line names each invoice once, with no status word: the chip says Bounced.
+    const bounced = page.getByTestId("payment-row").filter({ hasText: "PMT-9101" });
+    await expect(bounced).toContainText("8:00 AM · INV-20403, INV-20402");
+    await expect(bounced).not.toContainText("Bounced ·");
+    await expect(bounced).not.toContainText("Applied to");
+    const bouncedText = await bounced.innerText();
+    for (const no of [invoiceNos[0]!, invoiceNos[1]!]) {
+      expect(bouncedText.split(no).length - 1, `${no} named once in ${bouncedText}`).toBe(1);
+    }
+    // The voided receipt's line names its invoice once, with no status word: the chip says Void.
+    const voided = page.getByTestId("payment-row").filter({ hasText: "PMT-9102" });
+    await expect(voided).toContainText(`8:00 AM · ${invoiceNos[2]}`);
+    await expect(voided).not.toContainText("Void ·");
+    await expect(voided).not.toContainText("Applied to");
+    const voidedText = await voided.innerText();
+    expect(voidedText.split(invoiceNos[2]!).length - 1, `${invoiceNos[2]} named once in ${voidedText}`).toBe(1);
+  });
+
   test("invoices, statement detail, the pay receipt and statements show the year on every date and glossary words for unknown figures", async ({ page }) => {
     await signIn(page, "ap");
     await expect(page.getByTestId("invoice-row").filter({ hasText: "INV-20401" })).toContainText(/Issued [A-Z][a-z]{2} \d{1,2}, \d{4}/);

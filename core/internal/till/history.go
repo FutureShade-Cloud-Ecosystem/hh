@@ -26,8 +26,9 @@ import (
 )
 
 // AuditTrailReader is the READ side of the audit seam (satisfied by *audit.Service.ReopenTransaction):
-// the chronological trail for one entity. PaymentHistory uses it to answer the forensic question NSF's
-// hard-delete of payment_allocations otherwise erases, "what did this bounced payment USED to pay?".
+// the chronological trail for one entity. PaymentHistory uses it for the LEGACY case: a payment bounced
+// before the allocation rows gained a kind (0450) has no live row, and the trail is all that still
+// holds "what did this bounced payment USED to pay?".
 type AuditTrailReader interface {
 	ReopenTransaction(ctx context.Context, entityType, entityID string) ([]audit.Entry, error)
 }
@@ -42,7 +43,9 @@ type AllocationRecord struct {
 	AllocatedAt     time.Time `json:"allocated_at"`                // payment_allocations.created_at
 	// ReversedByNSF marks a HISTORICAL allocation reconstructed from the PAYMENT_ALLOCATED audit trail
 	// after an NSF reversal hard-deleted the live payment_allocations rows. Such records carry
-	// invoice_id + amount from the audit Extra (invoice_no is not in the trail and stays "").
+	// invoice_id + amount from the audit Extra (invoice_no is not in the trail and stays ""). A bounce
+	// that ran AFTER the rows gained a kind (0450) leaves the live rows instead, so its history carries
+	// no such record and the two rows (the application and the reversal beside it) speak for themselves.
 	ReversedByNSF bool `json:"reversed_by_nsf,omitempty"`
 }
 
@@ -129,6 +132,13 @@ func (r *Repository) PaymentHistory(ctx context.Context, paymentID string) (Paym
 		return PaymentHistory{}, false, fmt.Errorf("till: payment history header: %w", err)
 	}
 
+	// THE ORDER DOES NOT HANG ON TWO CLOCKS AGREEING. A reversal row is ordered on the instant of the
+	// application it reverses, not on its own created_at: the application's row is dated by Postgres
+	// (now(), the column default) and the reversal's by the undo's own clock, so ordering the two on
+	// their own dates leaves the order to a race between two clocks. On the application's instant the
+	// pair sorts together, and pa.kind puts the APPLICATION before its REVERSAL (the undo is the later
+	// act). The row's own created_at is still returned as the instant, so the answer says when each
+	// act happened.
 	rows, err := r.pool.Query(ctx,
 		`SELECT pa.invoice_id::text, COALESCE(i.invoice_no::text, ''), pa.amount_cents,
 		        COALESCE(pa.allocated_by::text, ''), COALESCE(u.display_name, ''), pa.created_at
@@ -136,7 +146,9 @@ func (r *Repository) PaymentHistory(ctx context.Context, paymentID string) (Paym
 		 LEFT JOIN invoices i ON i.id = pa.invoice_id
 		 LEFT JOIN users u ON u.id = pa.allocated_by
 		 WHERE pa.payment_id = $1
-		 ORDER BY pa.created_at, pa.invoice_id`, h.PaymentID)
+		 ORDER BY COALESCE((SELECT app.created_at FROM payment_allocations app
+			                    WHERE app.id = pa.reverses_allocation_id), pa.created_at),
+		          pa.invoice_id, pa.kind`, h.PaymentID)
 	if err != nil {
 		return PaymentHistory{}, false, fmt.Errorf("till: payment history allocations: %w", err)
 	}
@@ -177,6 +189,9 @@ func (r *Repository) InvoicePayments(ctx context.Context, invoiceID string) (Inv
 		return InvoicePayments{}, false, fmt.Errorf("till: invoice payments header: %w", err)
 	}
 
+	// The same order as the payment history above, and for the same reason: a reversal row is
+	// ordered on the instant of the application it reverses, so the pair sorts together and the
+	// APPLICATION comes before its REVERSAL. The order does not hang on two clocks agreeing.
 	rows, err := r.pool.Query(ctx,
 		`SELECT p.id::text, p.payment_no::text, p.method, p.status, pa.amount_cents, p.amount_cents,
 		        COALESCE(pa.allocated_by::text, ''), COALESCE(ua.display_name, ''), pa.created_at,
@@ -186,7 +201,9 @@ func (r *Repository) InvoicePayments(ctx context.Context, invoiceID string) (Inv
 		 LEFT JOIN users ua ON ua.id = pa.allocated_by
 		 LEFT JOIN users ur ON ur.id = p.received_by
 		 WHERE pa.invoice_id = $1
-		 ORDER BY pa.created_at, p.payment_no`, out.InvoiceID)
+		 ORDER BY COALESCE((SELECT app.created_at FROM payment_allocations app
+			                    WHERE app.id = pa.reverses_allocation_id), pa.created_at),
+		          p.payment_no, pa.invoice_id, pa.kind`, out.InvoiceID)
 	if err != nil {
 		return InvoicePayments{}, false, fmt.Errorf("till: invoice payments: %w", err)
 	}
@@ -211,9 +228,10 @@ func (r *Repository) InvoicePayments(ctx context.Context, invoiceID string) (Inv
 // - service (caller guard + branch scope, same posture as the other till reads) -
 
 // PaymentHistory returns the attributed history of one payment (staff-gated, branch-scoped). For a
-// BOUNCED payment, whose live payment_allocations the NSF reversal hard-deleted, the application
-// history is reconstructed from the PAYMENT_ALLOCATED audit trail and returned flagged reversed_by_nsf,
-// so "what did this cheque used to pay?" stays answerable for the forensic case.
+// BOUNCED payment the history is the live rows: the application and, beside it, the reversal row the
+// bounce wrote (0450). A payment bounced BEFORE that kind existed has no live row at all, so its
+// application history is reconstructed from the PAYMENT_ALLOCATED audit trail and returned flagged
+// reversed_by_nsf, so "what did this cheque used to pay?" stays answerable for that forensic case too.
 func (s *Service) PaymentHistory(ctx context.Context, paymentID string) (PaymentHistory, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
@@ -236,18 +254,28 @@ func (s *Service) PaymentHistory(ctx context.Context, paymentID string) (Payment
 	}
 	if h.Status == "BOUNCED" {
 		h.Reversed = true
-		if reversed, err := s.reversedAllocations(ctx, paymentID); err == nil {
-			h.Allocations = append(h.Allocations, reversed...)
+		// The live rows ARE the history (0450): the application and the reversal beside it, so
+		// "what did this cheque used to pay?" is answered by the rows themselves. The audit trail
+		// reconstruction below is the LEGACY path, for a payment bounced before the kind existed and
+		// whose rows are gone; it is added only when no live row stands there, or it would double the
+		// history the rows already carry.
+		if len(h.Allocations) == 0 {
+			if reversed, err := s.reversedAllocations(ctx, paymentID); err == nil {
+				h.Allocations = append(h.Allocations, reversed...)
+			}
+			// A trail-read failure degrades to the live (empty) allocations rather than failing the whole
+			// history read, the header facts still answer who took the payment.
 		}
-		// A trail-read failure degrades to the live (empty) allocations rather than failing the whole
-		// history read, the header facts still answer who took the payment.
 	}
 	return h, nil
 }
 
 // reversedAllocations reconstructs a bounced payment's historical applications from the audit trail's
-// PAYMENT_ALLOCATED rows (entity = payment). invoice_id + amount come from the audit Extra; the trail
-// carries no invoice_no, so that stays "" (resolvable via the invoice_id when needed).
+// PAYMENT_ALLOCATED rows (entity = payment). It is the LEGACY path: a bounce that ran before the
+// rows gained a kind (0450) deleted them, and only the trail still holds the split. A bounce that ran
+// after leaves the live rows, and the trail is not added on top of them. invoice_id + amount come from
+// the audit Extra; the trail carries no invoice_no, so that stays "" (resolvable via the invoice_id
+// when needed).
 func (s *Service) reversedAllocations(ctx context.Context, paymentID string) ([]AllocationRecord, error) {
 	if s.auditTrail == nil {
 		return nil, nil

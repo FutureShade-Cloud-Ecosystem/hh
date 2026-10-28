@@ -745,7 +745,7 @@ func (r *Repository) allocationsByPayment(ctx context.Context, paymentIDs []stri
 		        COALESCE(pa.allocated_by::text, ''), COALESCE(u.display_name, ''), pa.created_at
 		 FROM payment_allocations pa
 		 LEFT JOIN users u ON u.id = pa.allocated_by
-		 WHERE pa.payment_id = ANY($1) ORDER BY pa.invoice_id`, paymentIDs)
+		 WHERE pa.payment_id = ANY($1) ORDER BY pa.invoice_id, pa.kind`, paymentIDs)
 	if err != nil {
 		return nil, fmt.Errorf("list allocations: %w", err)
 	}
@@ -1364,11 +1364,21 @@ type KeyedPayment struct {
 
 // PaymentByKeyTx answers the payments row an idempotency key wrote (a replay's
 // facts), on the caller's transaction.
+//
+// FirstInvoiceID is the invoice the payment's application STILL pays (0450): an application whose
+// reversal row stands beside it was taken back, so it no longer names an invoice, exactly as it named
+// none before the kind existed (a bounce deleted the rows). The order is by the application's own
+// instant, so the answer does not depend on which row the planner returns first.
 func (r *Repository) PaymentByKeyTx(ctx context.Context, tx pgx.Tx, key string) (KeyedPayment, bool, error) {
 	var k KeyedPayment
 	err := tx.QueryRow(ctx, `
 		SELECT p.id::text, p.method, p.amount_cents,
-		       COALESCE((SELECT a.invoice_id::text FROM payment_allocations a WHERE a.payment_id = p.id LIMIT 1), '')
+		       COALESCE((SELECT a.invoice_id::text FROM payment_allocations a
+		                  WHERE a.payment_id = p.id AND a.kind = 'APPLICATION'
+		                    AND NOT EXISTS (SELECT 1 FROM payment_allocations r
+		                                     WHERE r.payment_id = a.payment_id AND r.invoice_id = a.invoice_id
+		                                       AND r.kind = 'REVERSAL')
+		                  ORDER BY a.created_at, a.invoice_id LIMIT 1), '')
 		  FROM payments p WHERE p.idempotency_key = $1`, key).
 		Scan(&k.PaymentID, &k.Method, &k.AmountCents, &k.FirstInvoiceID)
 	if err != nil {
