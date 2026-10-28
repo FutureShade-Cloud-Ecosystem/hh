@@ -99,6 +99,23 @@ export function holdKindWord(kind: string): string {
   return HOLD_KIND_WORD[kind] ?? kind;
 }
 
+/**
+ * The invoices a returned payment reopened, for the bounced work card's "Reversed across" line:
+ * the application rows (positive amounts) only, each invoice once, in the history's own order.
+ * The reversal row the core writes beside each application (PR 668) names the same invoice
+ * again and must not read as a second invoice.
+ */
+export function reopenedInvoiceNos(allocations: readonly { invoice_no: string; amount_cents: number }[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const a of allocations) {
+    if (a.amount_cents <= 0 || a.invoice_no === "" || seen.has(a.invoice_no)) continue;
+    seen.add(a.invoice_no);
+    out.push(a.invoice_no);
+  }
+  return out;
+}
+
 /** What each walled move is, and who may do it (the matrix: Money Desk at Administer or Manage). */
 const WHO_MAY: Record<string, string> = {
   load: "Your role cannot open receivables. Ask the General Manager or the Financial Controller to widen your access.",

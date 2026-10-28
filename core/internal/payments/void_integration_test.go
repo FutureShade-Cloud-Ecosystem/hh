@@ -56,14 +56,24 @@ func TestIntegration_PaymentVoid_UndoesTheReceiptWithNo2310Hold(t *testing.T) {
 		t.Fatalf("the void's reason is not on the payment row: %s", meta)
 	}
 
-	// The allocation went, and the invoice is open again at its full balance.
+	// The allocation is KEPT and the undo is written beside it as a reversal row (0450): the same
+	// payment, the same invoice, the exact negative, dated at the void's own instant, naming the
+	// application it reverses. The invoice is open again at its full balance.
 	var allocs int
 	if err := w.r.obs.QueryRow(ctx,
 		`SELECT count(*) FROM payment_allocations WHERE payment_id = $1::uuid`, orig).Scan(&allocs); err != nil {
 		t.Fatalf("read allocations: %v", err)
 	}
-	if allocs != 0 {
-		t.Fatalf("the void left %d allocation rows, want none: the receipt never happened", allocs)
+	if allocs != 2 {
+		t.Fatalf("the void left %d allocation rows, want 2 (the application and the reversal beside it): the receipt's split across invoices must survive the void", allocs)
+	}
+	var allocNet int64
+	if err := w.r.obs.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount_cents), 0) FROM payment_allocations WHERE payment_id = $1::uuid`, orig).Scan(&allocNet); err != nil {
+		t.Fatalf("read the allocation net: %v", err)
+	}
+	if allocNet != 0 {
+		t.Fatalf("the voided receipt's allocations net %d, want 0 (the receipt never happened)", allocNet)
 	}
 	var bal int64
 	var invStatus string

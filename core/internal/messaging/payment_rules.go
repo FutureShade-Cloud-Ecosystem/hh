@@ -140,8 +140,9 @@ type PaymentFacts struct {
 	CustomerID   string `json:"customer_id,omitempty"`
 	CustomerName string `json:"customer_name,omitempty"`
 	AmountCents  int64  `json:"amount_cents,omitempty"`
-	// OnStatement is TRUE when the payment settled at least one invoice, the receipt lands on the
-	// customer's ACCOUNT/STATEMENT rather than being a bare counter tender. It is context for the
+	// OnStatement is TRUE when the payment settled at least one invoice that still stands, the receipt
+	// lands on the customer's ACCOUNT/STATEMENT rather than being a bare counter tender. An
+	// application a bounce or a void took back does not count (0450). It is context for the
 	// notice body; the ONLINE matcher does not depend on it (see matchesOnline).
 	OnStatement bool `json:"on_statement,omitempty"`
 }

@@ -243,7 +243,10 @@ export const dealerStyles = css`
     border-color: var(--hh-accent-text);
   }
   .btn:disabled {
-    opacity: 0.6;
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    opacity: 1;
     cursor: default;
   }
   .btn-primary {
@@ -940,7 +943,10 @@ export const dealerStyles = css`
     border-color: var(--hh-accent-text);
   }
   .role-card:disabled {
-    opacity: 0.6;
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    opacity: 1;
     cursor: default;
   }
   .role-card .mark {

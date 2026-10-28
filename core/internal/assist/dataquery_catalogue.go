@@ -438,7 +438,7 @@ func paymentAllocationsView() ViewDef { return classify(rawPaymentAllocationsVie
 func rawPaymentAllocationsView() ViewDef {
 	return ViewDef{
 		Name: "ai.payment_allocations", Schema: "ai", Table: "payment_allocations", Title: "Payment allocations", MinTier: 2, Large: true,
-		About: "One row per payment applied to an invoice: the payment, the invoice, the amount applied in cents and when. Only askers who hold the payment trail see any.",
+		About: "One row per application of a payment to an invoice, or per undo of one: the payment, the invoice, the amount in cents and when. An undo (a bounce or a void) is a negative row on the same payment and invoice. Sum amount_cents to get the money applied; do not count the rows, a bounced cheque is two rows for one payment. Only askers who hold the payment trail see any.",
 		Columns: []ColumnDef{
 			{Name: "payment_id", Label: "Payment id", Type: typeUUID, Filter: true, Hidden: true},
 			{Name: "payment_no", Label: "Payment", Type: typeText, Filter: true, Group: true, Search: true},

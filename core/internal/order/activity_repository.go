@@ -206,32 +206,46 @@ func (r *Repository) OrderDocumentEvents(ctx context.Context, orderID string, wi
 	// Payments applied to the order's invoices. The actor is WHO MATCHED the money to the invoice
 	// (allocated_by), falling back to WHO TOOK it (received_by) for an auto-applied tender, the
 	// Q-044 attribution pair.
+	//
+	// A reversal row (0450) is the undo of an application on the SAME payment: a bounce or a void
+	// writes it beside the application, so the trail carries both and the reader sees the money taken
+	// back. It reads as a reversal for the same reason a reversing row's contra allocation does.
+	//
+	// THE ORDER DOES NOT HANG ON TWO CLOCKS AGREEING. A reversal row is ordered on the instant of the
+	// application it reverses, not on its own created_at: the application's row is dated by Postgres
+	// (now(), the column default) and the reversal's by the undo's own clock, so ordering the two on
+	// their own dates leaves the order to a race between two clocks. On the application's instant the
+	// pair sorts together, and pa.kind puts the APPLICATION before its REVERSAL (the undo is the later
+	// act). The row's own created_at is still returned as the instant.
 	payRows, err := r.pool.Query(ctx, `
 		SELECT p.id::text, i.invoice_no::text, p.method, pa.amount_cents, pa.created_at,
 		       COALESCE(pa.allocated_by::text,''), COALESCE(ua.display_name,''),
 		       COALESCE(p.received_by::text,''), COALESCE(ur.display_name,''),
-		       p.reverses_payment_id IS NOT NULL
+		       p.reverses_payment_id IS NOT NULL OR pa.kind = 'REVERSAL',
+		       pa.kind
 		  FROM payment_allocations pa
 		  JOIN invoices i ON i.id = pa.invoice_id
 		  JOIN payments p ON p.id = pa.payment_id
 		  LEFT JOIN users ua ON ua.id = pa.allocated_by
 		  LEFT JOIN users ur ON ur.id = p.received_by
 		 WHERE i.order_id = $1::uuid
-		 ORDER BY pa.created_at`, orderID)
+		 ORDER BY COALESCE((SELECT app.created_at FROM payment_allocations app
+		                     WHERE app.id = pa.reverses_allocation_id), pa.created_at),
+		          pa.payment_id, pa.invoice_id, pa.kind`, orderID)
 	if err != nil {
 		return nil, fmt.Errorf("order: activity payments: %w", err)
 	}
 	defer payRows.Close()
 	for payRows.Next() {
 		var (
-			pid, invNo, method                 string
+			pid, invNo, method, kind           string
 			allocBy, allocName, rcvBy, rcvName string
 			amountCents                        int64
 			at                                 time.Time
 			isReversal                         bool
 		)
 		if err := payRows.Scan(&pid, &invNo, &method, &amountCents, &at,
-			&allocBy, &allocName, &rcvBy, &rcvName, &isReversal); err != nil {
+			&allocBy, &allocName, &rcvBy, &rcvName, &isReversal, &kind); err != nil {
 			return nil, fmt.Errorf("order: scan activity payment: %w", err)
 		}
 		ev := DocEvent{
@@ -240,11 +254,21 @@ func (r *Repository) OrderDocumentEvents(ctx context.Context, orderID string, wi
 			Summary: fmt.Sprintf("applied a %s payment (%s) to invoice %s",
 				moneyStr(amountCents), humanCode(method), invNo),
 		}
+		if kind == "REVERSAL" {
+			// A reversal row sits on the payment whose application it undoes, so the event id would
+			// collide with that application's own event. The kind names it.
+			ev.ID = "payment:" + pid + ":" + invNo + ":reversed"
+		}
 		if isReversal {
 			// A reversing row's contra allocation is the payment taken back, its own act (PR 602 round 2), not a
-			// second payment applied.
+			// second payment applied. A reversal row is the same act on the payment itself (0450), and it
+			// carries the negative, so the summary names the money that was taken back.
+			taken := amountCents
+			if taken < 0 {
+				taken = -taken
+			}
 			ev.Summary = fmt.Sprintf("reversed a %s payment (%s) on invoice %s",
-				moneyStr(amountCents), humanCode(method), invNo)
+				moneyStr(taken), humanCode(method), invNo)
 		}
 		if ev.ActorID == "" {
 			ev.ActorID, ev.ActorName = rcvBy, rcvName

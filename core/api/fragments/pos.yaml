@@ -1844,8 +1844,10 @@ paths:
       summary: Read who took a payment and which invoices it was applied to
       description: >-
         The path key may be the payment's id or the human payment number
-        printed on the receipt. For a BOUNCED payment the historical
-        applications are reconstructed from the audit trail and flagged
+        printed on the receipt. For a BOUNCED payment the history is the live
+        rows: the application and, beside it, the reversal row the bounce
+        wrote. A payment bounced before that row existed has no live row, and
+        its applications are reconstructed from the audit trail and flagged
         reversed_by_nsf. Held to work by ruling 87: a customer's payment trail
         is the money desk's to work, not a money desk reader's to browse.
       x-role: requireStaff
@@ -4007,15 +4009,17 @@ components:
     TillAllocationRecord:
       type: object
       description: >-
-        One payment-to-invoice application with attribution. reversed_by_nsf
-        marks a historical allocation reconstructed from the audit trail after
-        an NSF reversal deleted the live rows; such records carry no
-        invoice_no.
+        One payment-to-invoice application with attribution. A bounce or a void
+        keeps the application and writes the undo beside it as a second row,
+        dated at the undo and carrying the negative amount, so the two net.
+        reversed_by_nsf marks a historical allocation reconstructed from the
+        audit trail after an NSF reversal deleted the live rows; such records
+        carry no invoice_no.
       required: [invoice_id, invoice_no, amount_cents, allocated_at]
       properties:
         invoice_id: { type: string, format: uuid }
         invoice_no: { type: string }
-        amount_cents: { type: integer, format: int64 }
+        amount_cents: { type: integer, format: int64, description: Negative on the row that takes an application back }
         allocated_by: { type: string, description: Empty for a portal or customer-initiated payment }
         allocated_by_name: { type: string }
         allocated_at: { type: string, format: date-time }
@@ -4049,7 +4053,7 @@ components:
         payment_no: { type: string }
         method: { type: string, enum: [CASH, CHEQUE, CARD, EFT, OTHER] }
         status: { type: string, enum: [RECEIVED, DEPOSITED, BOUNCED, REFUNDED, VOID, PENDING] }
-        amount_cents: { type: integer, format: int64, description: The slice applied to this invoice }
+        amount_cents: { type: integer, format: int64, description: "The slice applied to this invoice, negative on the row that takes it back" }
         payment_amount_cents: { type: integer, format: int64, description: The whole payment }
         allocated_by: { type: string }
         allocated_by_name: { type: string }

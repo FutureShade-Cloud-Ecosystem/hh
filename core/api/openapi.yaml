@@ -2835,7 +2835,7 @@ paths:
       tags:
         - staff-payments
       summary: Void a mis-keyed desk receipt as never taken
-      description: "A receipt keyed against the wrong figures, caught on the dealer day it was taken, is undone as never taken: the receipt's allocations go, its invoices re-open at their full balances, and the GL books the receipt's own legs mirrored, so no money is held in 2310. A deposited, bounced, refunded or already voided payment is refused, as is a receipt from an earlier dealer day: those undos are a reversal's business. A payment taken on a till session is refused too, the drawer count owns that undo."
+      description: "A receipt keyed against the wrong figures, caught on the dealer day it was taken, is undone as never taken: the receipt's allocation is kept and the undo is written beside it as a negative row, its invoices re-open at their full balances, and the GL books the receipt's own legs mirrored, so no money is held in 2310. A deposited, bounced, refunded or already voided payment is refused, as is a receipt from an earlier dealer day: those undos are a reversal's business. A payment taken on a till session is refused too, the drawer count owns that undo."
       x-role: requireManager
       x-access:
         surfaces:
@@ -19024,7 +19024,7 @@ paths:
       tags:
         - staff-till
       summary: Read who took a payment and which invoices it was applied to
-      description: "The path key may be the payment's id or the human payment number printed on the receipt. For a BOUNCED payment the historical applications are reconstructed from the audit trail and flagged reversed_by_nsf. Held to work by ruling 87: a customer's payment trail is the money desk's to work, not a money desk reader's to browse."
+      description: "The path key may be the payment's id or the human payment number printed on the receipt. For a BOUNCED payment the history is the live rows: the application and, beside it, the reversal row the bounce wrote. A payment bounced before that row existed has no live row, and its applications are reconstructed from the audit trail and flagged reversed_by_nsf. Held to work by ruling 87: a customer's payment trail is the money desk's to work, not a money desk reader's to browse."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -33421,7 +33421,7 @@ components:
           type: boolean
     BillingCustomerWorkspacePayment:
       type: object
-      description: One payment the workspace payments tab carries, with the running unapplied figure the inline Apply Credit Note modal binds. Unapplied is derived (AmountCents - SUM(payment_allocations.amount_cents)) and floored at zero.
+      description: "One payment the workspace payments tab carries, with the running unapplied figure the inline Apply Credit Note modal binds. Unapplied is derived (AmountCents - SUM(payment_allocations.amount_cents)) and floored at zero. The sum is the net: a bounce or a void keeps the application and writes the undo beside it as a negative row, and the two net to zero."
       required:
         - id
         - payment_no
@@ -50204,7 +50204,7 @@ components:
           format: uuid
     TillAllocationRecord:
       type: object
-      description: One payment-to-invoice application with attribution. reversed_by_nsf marks a historical allocation reconstructed from the audit trail after an NSF reversal deleted the live rows; such records carry no invoice_no.
+      description: One payment-to-invoice application with attribution. A bounce or a void keeps the application and writes the undo beside it as a second row, dated at the undo and carrying the negative amount, so the two net. reversed_by_nsf marks a historical allocation reconstructed from the audit trail after an NSF reversal deleted the live rows; such records carry no invoice_no.
       required:
         - invoice_id
         - invoice_no
@@ -50219,6 +50219,7 @@ components:
         amount_cents:
           type: integer
           format: int64
+          description: Negative on the row that takes an application back
         allocated_by:
           type: string
           description: Empty for a portal or customer-initiated payment
@@ -50327,7 +50328,7 @@ components:
         amount_cents:
           type: integer
           format: int64
-          description: The slice applied to this invoice
+          description: The slice applied to this invoice, negative on the row that takes it back
         payment_amount_cents:
           type: integer
           format: int64

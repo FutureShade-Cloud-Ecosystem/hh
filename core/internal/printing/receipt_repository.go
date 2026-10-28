@@ -103,8 +103,11 @@ SELECT o.id::text, o.order_no, o.branch_id::text,
        COALESCE((o.metadata->>'cash_tendered_cents')::bigint, 0),
        COALESCE((SELECT SUM(p.amount_cents) FROM payments p
                   JOIN payment_allocations pa ON pa.payment_id = p.id
-                 WHERE pa.invoice_id = i.id AND p.status <> 'VOID'
-                   AND p.received_at = i.created_at), 0),
+                 WHERE pa.invoice_id = i.id AND pa.kind = 'APPLICATION' AND p.status <> 'VOID'
+                   AND p.received_at = i.created_at
+                   AND NOT EXISTS (SELECT 1 FROM payment_allocations r
+                                    WHERE r.payment_id = pa.payment_id AND r.invoice_id = pa.invoice_id
+                                      AND r.kind = 'REVERSAL')), 0),
        ps.created_at, COALESCE(c.name,''), COALESCE(c.account_no,''), COALESCE(u.display_name,''),
        ps.discount_cents, COALESCE(dsr.label, ps.discount_approved_role, '')
   FROM pos_sale ps
@@ -173,6 +176,10 @@ func (r *Repository) ReadReceiptLines(ctx context.Context, orderID string) ([]Re
 // ReadReceiptTenders reads how the sale was paid: the sale's own payment row plus anything else
 // allocated to its invoice (a deposit at ring, a later settlement on a COD account). A-03 owns
 // payments; this is a read.
+//
+// A payment whose application was taken back is not a tender (0450): a bounce or a void writes the
+// reversal row beside the application, and a receipt lists what PAID, not what was paid and given
+// back. Before the kind the rows were deleted and the payment fell out of this list the same way.
 func (r *Repository) ReadReceiptTenders(ctx context.Context, paymentID, invoiceID string) ([]ReceiptTender, error) {
 	if r.pool == nil {
 		return nil, errNoPool
@@ -184,7 +191,10 @@ func (r *Repository) ReadReceiptTenders(ctx context.Context, paymentID, invoiceI
 		 WHERE p.status <> 'VOID'
 		   AND (p.id = NULLIF($1,'')::uuid
 		        OR p.id IN (SELECT pa.payment_id FROM payment_allocations pa
-		                     WHERE pa.invoice_id = NULLIF($2,'')::uuid))
+		                     WHERE pa.invoice_id = NULLIF($2,'')::uuid AND pa.kind = 'APPLICATION'
+		                       AND NOT EXISTS (SELECT 1 FROM payment_allocations r
+		                                        WHERE r.payment_id = pa.payment_id AND r.invoice_id = pa.invoice_id
+		                                          AND r.kind = 'REVERSAL')))
 		 ORDER BY p.received_at, p.payment_no`, paymentID, invoiceID)
 	if err != nil {
 		return nil, err
