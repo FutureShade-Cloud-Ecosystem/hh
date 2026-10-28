@@ -28,6 +28,7 @@
  */
 
 import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+import { UNKNOWN_REASON } from "./placeholders.js";
 import { UNKNOWN_CATEGORY, UNKNOWN_VENDOR } from "./placeholders.js";
 
 export interface PricingTab {
@@ -905,15 +906,69 @@ export function pricingAuditEmptyWords(): string {
   return "No pricing log entries yet. Every pricing write lands here, and so does every bypass: the log is how a quiet price change stays findable.";
 }
 
+const BPS_AUDIT_FIELDS: ReadonlySet<string> = new Set([
+  "margin floor",
+  "margin target",
+  "target margin",
+  "margin",
+  "floor",
+  "target",
+  "discount",
+  "markup",
+  "markup on cost",
+  "surcharge",
+  "rebate rate",
+]);
+
+const CENTS_AUDIT_FIELDS: ReadonlySet<string> = new Set([
+  "price",
+  "clearance price",
+  "list price",
+  "cost",
+  "retail",
+  "rebate per unit",
+]);
+
+function auditValueWords(value: string, fieldName: string): string {
+  const trimmed = value.trim();
+  const field = fieldName.trim().toLowerCase();
+  if ((field.endsWith("_bps") || BPS_AUDIT_FIELDS.has(field)) && /^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+    return pctWords(Number(trimmed));
+  }
+  if (
+    (field.endsWith("_cents") || field.endsWith("_cents_per_unit") || CENTS_AUDIT_FIELDS.has(field)) &&
+    /^-?\d+(?:\.\d+)?$/.test(trimmed)
+  ) {
+    return moneyWords(Number(trimmed));
+  }
+  if (field.endsWith("_qty") || field === "quantity" || field === "from qty" || field === "to qty") {
+    const qtyMatch = /^(-?\d+(?:\.\d+)?)(?:\s+(.+))?$/.exec(trimmed);
+    if (qtyMatch !== null && qtyMatch[1] !== undefined) {
+      const n = trimNumber(Number(qtyMatch[1]));
+      return qtyMatch[2] !== undefined ? `${n} ${qtyMatch[2]}` : n;
+    }
+  }
+  if (field === "calc_type" || field === "calc type") return calcTypeWord(trimmed);
+  if (field === "basis") return rebateBasisWords(trimmed);
+  if (field === "scope") return scopeWord(trimmed);
+  return value;
+}
+
 /**
  * A log row's change as the delta reads: what a field went from and to. The
  * server carries the values as text; a null old is a set, a null new is a
  * clearing, and both nulls say nothing rather than an arrow to nowhere.
+ * When `fieldName` is provided, basis-point fields (`*_bps`) read as a
+ * percent with their unit, money fields (`*_cents`, `*_cents_per_unit`) read
+ * in dollars, and quantity fields (`*_qty`) trim trailing decimals while
+ * preserving their unit.
  */
-export function deltaWords(oldValue: string | null, newValue: string | null): string {
-  if (oldValue !== null && newValue !== null) return `${oldValue} to ${newValue}`;
-  if (oldValue === null && newValue !== null) return `set to ${newValue}`;
-  if (oldValue !== null && newValue === null) return "cleared";
+export function deltaWords(oldValue: string | null, newValue: string | null, fieldName = ""): string {
+  const oldFormatted = oldValue !== null ? auditValueWords(oldValue, fieldName) : null;
+  const newFormatted = newValue !== null ? auditValueWords(newValue, fieldName) : null;
+  if (oldFormatted !== null && newFormatted !== null) return `${oldFormatted} to ${newFormatted}`;
+  if (oldFormatted === null && newFormatted !== null) return `set to ${newFormatted}`;
+  if (oldFormatted !== null && newFormatted === null) return "cleared";
   return "";
 }
 
@@ -994,7 +1049,9 @@ export function pricingAuditEntityWord(entityType: string): string {
 
 const PRICING_AUDIT_FIELD_WORDS: Readonly<Record<string, string>> = Object.freeze({
   margin_floor_bps: "margin floor",
+  margin_target_bps: "margin target",
   target_margin_bps: "target margin",
+  margin_bps: "margin",
   discount_bps: "discount",
   markup_bps: "markup",
   price_cents: "price",
@@ -1008,4 +1065,21 @@ export function pricingAuditFieldWord(field: string): string {
   const mapped = PRICING_AUDIT_FIELD_WORDS[field];
   if (mapped !== undefined) return mapped;
   return plainly(field.replace(/_(bps|cents)$/i, ""));
+}
+
+const BYPASS_REASON_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  APPROVED_OVERRIDE: "Approved override",
+  MANAGER_SCOPE_OVERRIDE: "Manager override",
+  PRODUCT_POLICY_DISABLED: "Product margin policy off",
+  CATEGORY_POLICY_DISABLED: "Category margin policy off",
+});
+
+/**
+ * A pricing audit entry's bypass reason in plain dealer words (UX-118 r2).
+ * An unknown value reads as the neutral placeholder from placeholders.ts,
+ * never the raw code.
+ */
+export function bypassReasonWord(reason: string): string {
+  if (reason.trim() === "") return "";
+  return BYPASS_REASON_WORDS[reason] ?? UNKNOWN_REASON;
 }

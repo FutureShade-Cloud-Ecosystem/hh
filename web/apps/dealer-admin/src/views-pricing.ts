@@ -71,6 +71,7 @@ import {
   validityWords,
   PRICING_VIEWS,
   accrualSourceWord,
+  bypassReasonWord,
 } from "./pricing-logic.js";
 import { whenWords } from "./audit-logic.js";
 import {
@@ -81,6 +82,7 @@ import {
   UNKNOWN_CUSTOMER,
   UNKNOWN_ENTITY,
   UNKNOWN_PRODUCT,
+  UNKNOWN_REASON,
   UNKNOWN_VIEW,
 } from "./placeholders.js";
 import type { BreakRow, ChangeLogRow, ClearanceRow, LowMarginScanRow as LowMarginScanRowApi, OverrideRow, PricingAuditRow, PromotionRow, RebateRow, RuleRow, UomConversionRow } from "./pricing-api.js";
@@ -2174,7 +2176,7 @@ function renderProfiles(model: PricingModel): TemplateResult {
                     <th scope="col">Profile</th>
                     <th scope="col">Vendor</th>
                     <th scope="col">Mapping</th>
-                    <th scope="col" class="num">Markup</th>
+                    <th scope="col" class="num">Markup on cost</th>
                     <th scope="col">Actions</th>
                   </tr>
                 </thead>
@@ -2185,7 +2187,7 @@ function renderProfiles(model: PricingModel): TemplateResult {
                         <td class="person" data-label="Profile">${p.name}</td>
                         <td data-label="Vendor">${p.vendor_name === "" ? "unnamed" : p.vendor_name}</td>
                         <td class="dim" data-label="Mapping">${profileMappingWords(p.mapping)}</td>
-                        <td class="num" data-label="Markup">${pctWords(p.markup_bps)}</td>
+                        <td class="num" data-label="Markup on cost">${pctWords(p.markup_bps)}</td>
                         <td class="cardrow-act">
                           <button
                             type="button"
@@ -2678,7 +2680,12 @@ export function renderPricingAudit(model: PricingModel): TemplateResult {
 
 function renderPricingAuditRow(row: PricingAuditRow, model: PricingModel): TemplateResult {
   const bypass = row.action === "BYPASS";
-  const delta = deltaWords(row.old_value === "" ? null : row.old_value, row.new_value === "" ? null : row.new_value);
+  const delta = deltaWords(
+    row.old_value === "" ? null : row.old_value,
+    row.new_value === "" ? null : row.new_value,
+    row.field_name,
+  );
+  const reasonWord = bypass && row.bypass_reason !== "" ? bypassReasonWord(row.bypass_reason) : "";
   return html`
     <tr data-audit=${row.id}>
       <td class="mono dim" data-label="When">${whenWords(row.created_at)}</td>
@@ -2688,8 +2695,8 @@ function renderPricingAuditRow(row: PricingAuditRow, model: PricingModel): Templ
       <td data-label="Change">${delta === "" ? html`<span class="dim">-</span>` : delta}</td>
       <td class="dim" data-label="Actor">${row.user_id === "" ? "Automatic" : UNKNOWN_ACTOR}</td>
     </tr>
-    ${bypass && row.bypass_reason !== ""
-      ? html`<tr data-audit-reason=${row.id}><td colspan="6" data-label="Reason"><span class="chip chip-danger">bypass: ${row.bypass_reason}</span></td></tr>`
+    ${reasonWord !== ""
+      ? html`<tr data-audit-reason=${row.id}><td colspan="6" data-label="Reason"><span class="chip ${reasonWord === UNKNOWN_REASON ? "chip-neutral" : "chip-danger"}">${reasonWord}</span></td></tr>`
       : nothing}
   `;
 }
