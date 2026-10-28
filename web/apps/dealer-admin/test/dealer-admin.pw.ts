@@ -901,7 +901,11 @@ test("the low margin tab: the scan, the cleared stamp, and a proposed line grade
   await expect(page.locator("[data-test=pr-lm-count]")).toHaveText("2 lines");
   const criticalRow = page.locator('tr[data-lm="0c110000-0000-4000-9000-0000000000b2"]');
   await expect(criticalRow).toContainText("SO-2077");
-  await expect(criticalRow).toContainText("cleared: Branch manager (demo)");
+  // UX-106 round 7: the level and the clearance attribution are separate
+  // values. The Level cell holds the level's chip, and the "Cleared by" pair
+  // holds who cleared it.
+  await expect(criticalRow.locator('td[data-label="Level"]')).toContainText("critical");
+  await expect(criticalRow.locator('td[data-label="Cleared by"]')).toHaveText("Branch manager (demo)");
 
   // A proposed line grades through the resolver; the server names the breach.
   await page.locator('[data-field="pr-lm-customer"]').fill("cu110000-0000-4000-9000-0000000000a1");
