@@ -305,7 +305,7 @@ func TestIntegration_Workspace_AccountPositionPolicy(t *testing.T) {
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
 		 VALUES ('INV-UX97-'||$1, $1::uuid, $2::uuid, 'FINALIZED',
-		         CURRENT_DATE - 45, CURRENT_DATE - 15, 88000, 0, 88000, 88000, now())`,
+		         (now() AT TIME ZONE 'America/Toronto')::date - 45, (now() AT TIME ZONE 'America/Toronto')::date - 15, 88000, 0, 88000, 88000, now())`,
 		id, trenton); err != nil {
 		t.Fatalf("seed overdue invoice: %v", err)
 	}

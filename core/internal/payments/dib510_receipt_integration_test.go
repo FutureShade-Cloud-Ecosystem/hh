@@ -75,7 +75,7 @@ func dib510Fixture(t *testing.T, pool *pgxpool.Pool, balance int64) (customerID,
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
-		 VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 40, CURRENT_DATE - 10,
+		 VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date - 40, (now() AT TIME ZONE 'America/Toronto')::date - 10,
 		         $4, 0, $4, $4, now()) RETURNING id::text`,
 		"INV-"+tag, customerID, dib510Trenton, balance).Scan(&invoiceID); err != nil {
 		t.Fatalf("seed invoice: %v", err)

@@ -30,8 +30,8 @@ func seedNSFCase(t *testing.T, pool *pgxpool.Pool, branchID string, totalCents i
 	}
 	// Invoice starts life PAID with a zero balance (the cheque cleared it).
 	if err := pool.QueryRow(ctx,
-		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, due_date, subtotal_cents, tax_cents, total_cents, balance_cents)
-		 VALUES ('INV-NSF-'||$1, $2::uuid, $3::uuid, 'PAID', CURRENT_DATE + 30, $4, 0, $4, 0) RETURNING id::text`,
+		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents)
+		 VALUES ('INV-NSF-'||$1, $2::uuid, $3::uuid, 'PAID', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date + 30, $4, 0, $4, 0) RETURNING id::text`,
 		suffix, customerID, branchID, totalCents).Scan(&invoiceID); err != nil {
 		t.Fatalf("seed invoice: %v", err)
 	}

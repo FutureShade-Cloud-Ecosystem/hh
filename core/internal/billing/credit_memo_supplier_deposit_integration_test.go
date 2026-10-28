@@ -26,7 +26,7 @@ func seedSupplierDepositInvoice(t *testing.T, pool *pgxpool.Pool, customerID, no
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
 		                       doc_type, source_kind)
-		 VALUES ($1, $2, $3::uuid, 'FINALIZED', current_date, current_date, $4, 0, $4, $4, now(),
+		 VALUES ($1, $2, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date, $4, 0, $4, $4, now(),
 		         'INVOICE', 'SUPPLIER_DEPOSIT')
 		 RETURNING id::text`,
 		no, customerID, trentonBranch, subtotal).Scan(&id); err != nil {

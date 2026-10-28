@@ -440,14 +440,15 @@ func buildStatements() []string {
 			QuoteBetaLine, QuoteBetaID, ProductID, OrgNorthID,
 			QuoteGammaLine, QuoteGammaID, ProductID, OrgSouthID),
 
-		// Invoices and lines (carried due-date discipline via CURRENT_DATE
-		// arithmetic, never a literal date). The issue day is named rather
-		// than left to the column default: a writer that leaves it out takes
-		// the database session's day, and testaudit's invoice census holds
-		// every INSERT INTO invoices in the production tree to that rule.
+		// Invoices and lines (dated from the DEALER's day,
+		// (now() AT TIME ZONE 'America/Toronto')::date, the house's own SQL spelling, never the
+		// session's CURRENT_DATE: that is the UTC day and reads one day ahead of the dealer's day
+		// in the evening window). The issue day is named rather than left to the column default: a
+		// writer that leaves it out takes the database session's day, and testaudit's invoice
+		// census holds every INSERT INTO invoices in the production tree to that rule.
 		fmt.Sprintf(`INSERT INTO invoices (id, invoice_no, customer_id, branch_id, status, issue_date, due_date, org_id) VALUES
-			('%s', 'FXINV-A-1', '%s', '%s', 'DRAFT', CURRENT_DATE, CURRENT_DATE + 30, '%s'),
-			('%s', 'FXINV-B-1', '%s', '%s', 'DRAFT', CURRENT_DATE, CURRENT_DATE + 30, '%s')
+			('%s', 'FXINV-A-1', '%s', '%s', 'DRAFT', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date + 30, '%s'),
+			('%s', 'FXINV-B-1', '%s', '%s', 'DRAFT', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date + 30, '%s')
 			ON CONFLICT (id) DO NOTHING`,
 			InvoiceAlphaID, TenantAlphaID, BranchNorthAID, OrgNorthID,
 			InvoiceBetaID, TenantBetaID, BranchNorthAID, OrgNorthID),
