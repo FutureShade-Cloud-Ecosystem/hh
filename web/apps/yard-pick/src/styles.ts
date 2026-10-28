@@ -286,7 +286,7 @@ export const yardStyles = css`
     cursor: pointer;
   }
   .stepper:focus-visible { outline: 3px solid var(--hh-focus-ring); outline-offset: 2px; }
-  .stepper:disabled { border: 2px solid var(--hh-control-line); color: var(--hh-text-dim); }
+  .stepper:disabled { background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border: 2px solid var(--hh-control-line); }
   .qty-quick { display: flex; gap: var(--hh-s-12); }
   .qty-quick .stepper { flex: 1; width: auto; font-size: 18px; }
 
@@ -395,7 +395,7 @@ export const yardStyles = css`
   /* The moves. Big, full width, one hand. */
   .actions { display: flex; flex-direction: column; gap: var(--hh-s-12); margin: var(--hh-s-12) 0 var(--hh-s-16); }
   button.big { display: block; width: 100%; min-height: 64px; font-size: 18px; font-weight: 700; }
-  button.big:disabled { border: 2px solid var(--hh-control-line); }
+  button.big:disabled { background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border: 2px solid var(--hh-control-line); }
   button.big + button.big { margin-top: var(--hh-s-12); }
   /* The door's words carry its meaning; the amber outline keeps the accent.
      The watch colour itself misses 4.5 to 1 on the light surfaces when it

@@ -1,15 +1,11 @@
-// The coming surfaces' own contrast gate (round 2, FROM-PRINCIPAL 9). The design system's
-// matrix holds every text ink it declares on every flat surface, and its disabled pair
-// (ink on fill) clears AA by its own pin; what no gate measured is this app's lighter
-// disabled treatment, the coming role names and the hub's muted module names painted with
-// the disabled INK on a transparent ground over the CARD. In brand that pair reads 4.30:1
-// (#8499AD on #173550), under AA for text. This gate reads the rules the app ships,
-// resolves them through the design system's own palette reader per theme, and holds every
-// TEXT pair to AA and the icon marks to the non-text 3:1 bar, in BOTH halves. The coming
-// name buttons are disabled controls, which WCAG exempts; the sheet's own ruling is
-// asserted anyway ("both pairs clear AA even though WCAG exempts disabled controls: an
-// honest grey is free"), and the hub's muted module names are not disabled controls at
-// all: they open the polite coming-soon page.
+// The coming surfaces' own contrast gate (round 2, FROM-PRINCIPAL 9, held
+// through the settled disabled rule). The coming role names are disabled
+// controls and wear the grey token swap like every other disabled control;
+// what this gate holds is that the swap's own pair (the disabled ink on the
+// disabled fill) clears AA in BOTH halves, the house's standing word that an
+// honest grey is free even though WCAG exempts disabled controls. The hub's
+// muted module names are not disabled controls at all: they open the polite
+// coming-soon page, and they stay held to AA on their card.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -48,8 +44,9 @@ function declaration(body, prop) {
   return m[1].trim();
 }
 
-/** The ground a rule's text sits on: the rule's own background when it paints one, else
- * the named container's (the coming name button paints transparent over its card). */
+/** The ground a rule's text sits on: the rule's own background when it paints
+ *  one (the coming name button wears the disabled fill), else the named
+ *  container's. */
 function groundOf(rule, containerSelector, vars) {
   const own = rule.match(new RegExp("(?<![\\w-])background\\s*:\\s*([^;]+);"));
   const decl = own && !/transparent|none/.test(own[1]) ? own[1].trim() : declaration(ruleBody(containerSelector), "background");
@@ -61,7 +58,7 @@ function groundOf(rule, containerSelector, vars) {
 // The pairs the round named, read as the app paints them: the coming role names and the
 // hub's muted module names are TEXT (AA), the icons beside them are shapes (3:1).
 const PAIRS = [
-  { name: ".coming-role button (the coming role name)", ink: ".coming-role button", container: ".coming-card", bar: AA },
+  { name: ".coming-role button:disabled (the coming role name, in the grey swap)", ink: ".coming-role button:disabled", container: ".coming-card", bar: AA },
   { name: ".tile.muted .module (the hub's muted module name)", ink: ".tile.muted .module", container: ".tile", bar: AA },
   { name: ".tile.muted .mark (the muted tile's icon)", ink: ".tile.muted .mark", container: ".tile", bar: NON_TEXT },
 ];

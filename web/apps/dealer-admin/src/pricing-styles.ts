@@ -232,5 +232,43 @@ export const pricingStyles = css`
   .pr-readout .warn {
     color: var(--hh-danger);
   }
+
+  /* -- the quantity break editor's tier table (UX-118) ------------------------------ */
+
+  .pr-tier-table .text-field,
+  .pr-tier-table .select {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  @media (min-width: 901px) {
+    .pr-tier-table {
+      table-layout: fixed;
+    }
+    .pr-tier-table th:nth-child(1),
+    .pr-tier-table td:nth-child(1) {
+      width: 14%;
+    }
+    .pr-tier-table th:nth-child(2),
+    .pr-tier-table td:nth-child(2) {
+      width: 16%;
+    }
+    .pr-tier-table th:nth-child(3),
+    .pr-tier-table td:nth-child(3) {
+      width: 28%;
+    }
+    .pr-tier-table th:nth-child(4),
+    .pr-tier-table td:nth-child(4) {
+      width: 16%;
+    }
+    .pr-tier-table th:nth-child(5),
+    .pr-tier-table td:nth-child(5) {
+      width: 14%;
+    }
+    .pr-tier-table th:nth-child(6),
+    .pr-tier-table td:nth-child(6) {
+      width: 12%;
+    }
+  }
 `;
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/jackc/pgx/v5"
 )
 
 // PostingQueueRow is one GL event waiting or dead lettered.
@@ -38,6 +39,8 @@ type PostingQueueCounts struct {
 type OutboxQueue interface {
 	WaitingOrDead(ctx context.Context, topics []string, limit int) ([]notify.QueueRow, error)
 	WaitingOrDeadCounts(ctx context.Context, topics []string) (int, int, error)
+	UnpostedForAccount(ctx context.Context, topic, accountCode string) (int, error)
+	UnpostedForAccountTx(ctx context.Context, tx pgx.Tx, topic, accountCode string) (int, error)
 }
 
 // WithPostingQueue wires the outbox read the posting queue lists through.
