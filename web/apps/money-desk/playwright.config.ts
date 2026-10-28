@@ -31,7 +31,11 @@ export default defineConfig({
   testDir: "./test",
   testMatch: "**/*.pw.ts",
   // The card leg crosses apps and has its own harness and config (test/acceptance.config.ts).
-  testIgnore: ["**/acceptance/**"],
+  // The real-core legs live in test/acceptance-real/ and have their own harness and
+  // config too (test/acceptance-real.config.ts, plus a stub variant that proves them
+  // red). They run against a real core box, not this stub, so they are not this
+  // config's business.
+  testIgnore: ["**/acceptance/**", "**/acceptance-real/**"],
   workers: 1,
   use: {
     baseURL: `http://127.0.0.1:${appPort}`,
