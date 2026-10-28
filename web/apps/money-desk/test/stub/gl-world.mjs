@@ -644,6 +644,12 @@ export function createGlWorld() {
       }
       if (caller.role !== "FINANCIAL_CONTROLLER") return say(403, "gl: only the Financial Controller may reopen a closed period");
       if (String(body.reason ?? "").trim() === "") return say(422, "gl: a reason is required");
+      // FW1-09h: the year end close is an act and it leaves the year's marker, and a month of a
+      // CLOSED fiscal year cannot be reopened: a closed year's P&L never moves without a new
+      // close. The stub says the core's own sentence, the way the close's own refusals do.
+      if (period !== undefined && world.yearEndCloses?.has(period.year)) {
+        return say(409, `gl: fiscal year ${period.year} is closed; post the correction in the open year`);
+      }
       if (period === undefined || period.status !== "CLOSED") return say(409, "gl: period is not CLOSED");
       period.status = "OPEN";
       delete period.closed_at;

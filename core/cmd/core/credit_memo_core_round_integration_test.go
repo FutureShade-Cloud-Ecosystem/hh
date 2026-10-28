@@ -231,6 +231,13 @@ func TestIntegration_CreditMemoRound_TheRealRailPostsAParkedCredit(t *testing.T)
 	svc, approvals := cmRoundService(t, pool)
 
 	res := cmRoundParkCredit(t, pool, svc, world.requester, world.cust, world.inv, "cm-rail-approve")
+	// The reversing journal is the round's own row: it is posted under the memo's key and it
+	// is read again by the legs below, so it is taken back only when the leg ends. The lines
+	// cascade with the journal.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM gl_journals WHERE idempotency_key = $1`,
+			billing.CreditMemoJournalKeyPrefix+res.CreditMemoID)
+	})
 	decider := cmRoundDecider()
 	decider.UserID = world.decider
 	if err := approvals.DecideApproval(context.Background(), res.ApprovalID, decider, true, "agreed for the round"); err != nil {
@@ -302,6 +309,12 @@ func TestIntegration_CreditMemoRound_ARefusedParkVoidsTheMemoAndFreesTheRoom(t *
 	svc, approvals := cmRoundService(t, pool)
 
 	res := cmRoundParkCredit(t, pool, svc, world.requester, world.cust, world.inv, "cm-rail-refuse")
+	// The refused memo's journal is the round's own row too: it is voided, not deleted, and a
+	// voided journal on the shared gate is still a line no later package can decide.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM gl_journals WHERE idempotency_key = $1`,
+			billing.CreditMemoJournalKeyPrefix+res.CreditMemoID)
+	})
 	decider := cmRoundDecider()
 	decider.UserID = world.decider
 	if err := approvals.DecideApproval(context.Background(), res.ApprovalID, decider, false, "not warranted"); err != nil {
@@ -362,6 +375,12 @@ func TestIntegration_CreditMemoRound_ADeclineBridgesNothingForTheLedgersOwnJourn
 	if err != nil {
 		t.Fatalf("park the manual journal: %v", err)
 	}
+	// The ledger's own parked journal is the round's own row as well: a decline never bridges
+	// it, so the maker's own act to void it is never coming, and a DRAFT journal left on the
+	// shared gate is the line gl's deactivation leg reads later in the suite's go list order.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM gl_journals WHERE id = $1::uuid`, j.ID)
+	})
 	if j.Status != "DRAFT" {
 		t.Fatalf("the manual journal reads %s, want DRAFT (over the threshold)", j.Status)
 	}
