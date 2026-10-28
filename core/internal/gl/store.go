@@ -79,6 +79,11 @@ type glStore interface {
 	BeginTx(ctx context.Context) (pgx.Tx, error)
 	// ClosingJournalsForYearTx is the once only check read under the year end's lock.
 	ClosingJournalsForYearTx(ctx context.Context, tx pgx.Tx, year int) ([]string, int64, error)
+	// YearPeriodsTx answers how many periods the year has and how many of them are already
+	// CLOSED, read on the caller's transaction under the year end's lock: the year end's own
+	// seal, and the only marker a year with NO P&L leaves, because such a close posts no
+	// closing journal (FW1-09c round 2, S2's P2, FROM-PRINCIPAL 320 and 321).
+	YearPeriodsTx(ctx context.Context, tx pgx.Tx, year int) (total int, closed int, err error)
 	// InsertClosingJournalTx posts a closing journal inside the year end's transaction.
 	InsertClosingJournalTx(ctx context.Context, tx pgx.Tx, d journalDraft, year int) (string, error)
 	// ClosePeriodsForYearTx seals the year's periods inside the year end's transaction.
