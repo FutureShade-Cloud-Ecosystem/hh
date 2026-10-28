@@ -8,7 +8,7 @@
 // position the gate allows); there is no text input in this app at all (the card field is the processor's frame).
 import { html, nothing, type TemplateResult } from "lit";
 import type { TenantBillingSummary, TenantInvoice, TenantInvoiceDetail, TenantInvoiceLine, TenantPayment, TenantPaymentMethod } from "@hardscapehouse/api-client";
-import { money, calendarDay, houseMoment, qtyWithUnit, statusChip, NO_PRICE } from "@hardscapehouse/pro-kit";
+import { money, calendarDay, houseMoment, qtyWithUnit, statusChip, statusWords, NO_PRICE } from "@hardscapehouse/pro-kit";
 import { BUCKETS, BUCKET_WORDS, agingTotals, chargeFor, daysPastDue, isPayable, payableCents, type MethodKind } from "./pay-core.js";
 import { SANDBOX_NOTE } from "./hosted-field.js";
 
@@ -287,6 +287,20 @@ export function methodsScreen(state: ViewState): TemplateResult {
 
 // ---- Statements: payment history ---------------------------------------------------------------------------------
 
+/**
+ * The line under a payment row: which invoices it settled, or, for a returned payment (bounced
+ * or voided), that it came back in the status chip's own words, never "Applied to". The invoices
+ * are the application rows (positive amounts), each named once: the reversal row the core writes
+ * beside each application (PR 668) names the same invoice again and is not a second invoice.
+ */
+function settlementWords(p: TenantPayment, byId: ReadonlyMap<string, string>): string {
+  const applications = p.allocations.filter((a) => a.amount_cents > 0);
+  const invoices = [...new Set(applications.map((a) => byId.get(a.invoice_id) ?? "an invoice"))];
+  const list = invoices.length === 0 ? "no invoice yet" : invoices.join(", ");
+  if (p.status === "BOUNCED" || p.status === "VOID") return `${statusWords("payment", p.status)} · ${list}`;
+  return `Applied to ${list}`;
+}
+
 export function statementsScreen(state: ViewState): TemplateResult {
   const byId = new Map(state.invoices.map((i) => [i.id, i.invoice_no] as const));
   const paid = state.payments.filter((p) => p.status === "RECEIVED" || p.status === "DEPOSITED").reduce((sum, p) => sum + p.amount_cents, 0);
@@ -299,7 +313,7 @@ export function statementsScreen(state: ViewState): TemplateResult {
     <ul class="payments" data-testid="payment-rows">
       ${state.payments.map((p) => html`<li class="pay-row" data-testid="payment-row">
         <div class="pay-top"><span class="mono">${p.payment_no}</span>${statusChip("payment", p.status)}<span class="pay-amount mono">${money(p.amount_cents)}</span></div>
-        <div class="quiet">${tender(p.method)} · ${houseMoment(p.received_at)} · Applied to ${p.allocations.length === 0 ? "no invoice yet" : p.allocations.map((a) => byId.get(a.invoice_id) ?? "an invoice").join(", ")}</div>
+        <div class="quiet">${tender(p.method)} · ${houseMoment(p.received_at)} · ${settlementWords(p, byId)}</div>
       </li>`)}
     </ul>`;
 }
