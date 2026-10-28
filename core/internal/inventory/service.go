@@ -185,8 +185,16 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 			if err != nil {
 				return ReceiptResult{}, err
 			}
+			// The true-up journal books this delta with its own sign: a positive
+			// delta credited 1200 (the provisionally relieved units cost more
+			// than the fallback held), a negative delta debited it. The stamp is
+			// the figure the receipt's GL postings SUM to (GRNI plus rounding
+			// plus the true-up's signed effect on 1200), so the true-up enters
+			// subtracted: this branch never blends, so its exact subledger delta
+			// is the GRNI minus the true-up delta (W2-5 round 3: the addition
+			// here double-counted the true-up against the books to 2x its size).
 			trueUpDelta := actualSoldValue - provValue
-			subledgerDelta += trueUpDelta
+			subledgerDelta -= trueUpDelta
 			moveMeta = map[string]any{
 				"trued_up_move_ids":   moveIDs,
 				"true_up_delta_cents": trueUpDelta,

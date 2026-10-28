@@ -10,6 +10,7 @@ package inventory
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -643,10 +644,19 @@ func (r *Repository) StockValueCents(ctx context.Context, tx pgx.Tx, branchID st
 // count or transfer leg answers its own value_cents, and a PO receipt answers the realized
 // subledger delta stamped on its metadata (wac_value_delta_cents, the sum of the receipt's
 // GRNI, WAC rounding and true-up journals), so the read lands on the same figure the books
-// held at the instant. Rows written before the stamp existed fall back to value_cents, and
-// rows with no recorded value move nothing. A zero asOf is NOW: no movement is after it. The
-// month close holds no transaction, and the year end's pre flight reads stock on its own
-// connection by design (W2-5, the close pre flight's month-end stock tie).
+// held at the instant.
+//
+// THE LEGACY RECEIPT FALLBACK (W2-5 round 3, K3's P1 2) is deliberately not a guess. Rows
+// written before the stamp existed fall back in the subtraction to their GRNI plus the
+// true-up key they carry: the true-up journal's figure is recoverable exactly because a
+// receipt that trued up provisional sales never blended, so it never rounded. A receipt row
+// with NEITHER key may hide a WAC rounding journal (the rounding depends on the on-hand
+// quantity at the time, which the ledger no longer holds): the read REFUSES in words, naming
+// the receipt's move id and saying it predates the stamp, and the close pre flight refuses
+// the month with those words, rather than answer a figure it cannot prove. Rows with no
+// recorded value move nothing. A zero asOf is NOW: no movement is after it. The month close
+// holds no transaction, and the year end's pre flight reads stock on its own connection by
+// design (W2-5, the close pre flight's month-end stock tie).
 func (r *Repository) StockValueAsOfCents(ctx context.Context, tx pgx.Tx, asOf time.Time, branchID string) (int64, error) {
 	if r.pool == nil {
 		return 0, errNoDB
@@ -654,14 +664,36 @@ func (r *Repository) StockValueAsOfCents(ctx context.Context, tx pgx.Tx, asOf ti
 	if asOf.IsZero() {
 		return r.StockValueCents(ctx, tx, branchID)
 	}
+	// The historical rounding cannot be recovered from inventory's own records (it sat in
+	// the GL's rounding journal, another module's table this module never reads): refuse
+	// rather than guess. The true-up key marks the rows whose figure IS exact, those are
+	// recovered below, never refused.
+	var legacyID string
+	err := r.q(tx).QueryRow(ctx, `
+		SELECT m.id::text FROM stock_moves m
+		WHERE m.occurred_at > $1 AND ($2 = '' OR m.branch_id = $2::uuid)
+		  AND m.source_type = 'po_receipt'
+		  AND m.metadata->>'wac_value_delta_cents' IS NULL
+		  AND m.metadata->>'true_up_delta_cents' IS NULL
+		ORDER BY m.occurred_at, m.id LIMIT 1`, asOf, branchID).Scan(&legacyID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return 0, err
+	}
+	if legacyID != "" {
+		return 0, fmt.Errorf("inventory: receipt move %s predates the value stamp (wac_value_delta_cents) and its WAC rounding cannot be recovered from the ledger; the stock value as of an instant refuses to guess", legacyID)
+	}
 	current, err := r.StockValueCents(ctx, tx, branchID)
 	if err != nil {
 		return 0, err
 	}
 	var moved int64
+	// The fallback recovers the true-up the row carries with the sign the true-up journal
+	// booked it at: a positive true-up credited 1200, so the exact figure the books moved is
+	// the GRNI minus the true-up key.
 	err = r.q(tx).QueryRow(ctx, `
 		SELECT COALESCE(SUM(CASE WHEN m.to_location_id IS NOT NULL THEN 1 ELSE -1 END *
-			COALESCE((m.metadata->>'wac_value_delta_cents')::bigint, COALESCE(m.value_cents, 0))), 0)::bigint
+			COALESCE((m.metadata->>'wac_value_delta_cents')::bigint,
+				COALESCE(m.value_cents, 0) - COALESCE((m.metadata->>'true_up_delta_cents')::bigint, 0))), 0)::bigint
 		FROM stock_moves m
 		WHERE m.occurred_at > $1 AND ($2 = '' OR m.branch_id = $2::uuid)`, asOf, branchID).Scan(&moved)
 	if err != nil {
