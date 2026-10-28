@@ -216,7 +216,7 @@ export class QdOrderPayment extends PanelBase {
          with the greyed look, EXCEPT the chosen one, whose selection is a fact being carried,
          not a control being offered: it keeps its ink so the person can see what is in flight. */
       .tenders button[aria-disabled="true"]:not(.active) {
-        background: transparent;
+        background: var(--hh-disabled-fill);
         border-color: var(--hh-disabled-line);
         color: var(--hh-disabled-ink);
         cursor: not-allowed;
