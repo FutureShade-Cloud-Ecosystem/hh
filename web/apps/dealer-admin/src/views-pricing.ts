@@ -128,9 +128,6 @@ export function renderPricing(
     for (const r of model.uom.rows) {
       pickers.rememberProduct(r.product_id, r.product_sku, "");
     }
-    for (const r of model.rebates.ledger.rows) {
-      pickers.rememberProduct(r.product_id, r.product_sku, "");
-    }
   }
   const isPaymentTerms = model.tab === "payment-terms" || model.tab === "terms";
   return html`
