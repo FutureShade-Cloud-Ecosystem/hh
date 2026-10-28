@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"go/ast"
-	"go/build/constraint"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -372,7 +371,7 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 			}
 			// A file that builds only under the finworld tag (W2-1b's synthetic world harness) is never in
 			// a production binary, so it writes nothing the census guards.
-			if fw1BuildsOnlyUnderTag(fileAST, "finworld") {
+			if censusBuildsOnlyUnderTag(fileAST, "finworld") {
 				return nil
 			}
 			pkgDir := filepath.ToSlash(filepath.Dir(rel))
@@ -902,25 +901,4 @@ func fw1StringLiteral(e ast.Expr) (string, bool) {
 		return "", false
 	}
 	return s, true
-}
-
-// fw1BuildsOnlyUnderTag reports whether the file's build constraint holds only when tag is set:
-// the constraint is false with no tags and true with tag alone.
-func fw1BuildsOnlyUnderTag(f *ast.File, tag string) bool {
-	for _, cg := range f.Comments {
-		if cg.Pos() >= f.Package {
-			break
-		}
-		for _, c := range cg.List {
-			if !constraint.IsGoBuild(c.Text) {
-				continue
-			}
-			expr, err := constraint.Parse(c.Text)
-			if err != nil {
-				return false
-			}
-			return !expr.Eval(func(string) bool { return false }) && expr.Eval(func(t string) bool { return t == tag })
-		}
-	}
-	return false
 }
