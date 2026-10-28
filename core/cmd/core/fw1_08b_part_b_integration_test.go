@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
@@ -55,7 +56,8 @@ func TestFW1_08b_PartB_HeadOfficeSetChecksItsCandidate(t *testing.T) {
 	auditSvc := audit.NewService(audit.NewRepository(pool), slog.Default())
 	glSvc := gl.NewService(gl.NewRepository(pool).WithZone(newDealerZone(pool))).
 		WithAudit(auditSvc).
-		WithAuditTxRecorder(auditSvc)
+		WithAuditTxRecorder(auditSvc).
+		WithBranchFacts(glBranchFacts{repo: branches.NewRepository(pool)})
 
 	ctrl := identity.StaffContext{UserID: userID, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}
 	mgr := identity.StaffContext{UserID: userID, RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}

@@ -22,16 +22,35 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// fw1R4BranchFacts binds the branches module's location reads to gl's BranchFacts seam for these
+// legs, the way wire_money's glBranchFacts binds it in production.
+type fw1R4BranchFacts struct{ repo *branches.Repository }
+
+func (f fw1R4BranchFacts) Exists(ctx context.Context, id string) (bool, error) {
+	return f.repo.Exists(ctx, id)
+}
+
+func (f fw1R4BranchFacts) BranchInOrg(ctx context.Context, orgID, branchID string) (bool, error) {
+	return f.repo.BranchInOrg(ctx, orgID, branchID)
+}
+
+func (f fw1R4BranchFacts) BranchRowByCodeTx(ctx context.Context, tx pgx.Tx, code string) (string, bool, error) {
+	return branches.BranchCodeReader{}.BranchRowByCodeTx(ctx, tx, code)
+}
 
 // fw1R4Controller builds a Financial Controller's service at the round's pinned clock inside the
 // given house year.
 func fw1R4Controller(pool *pgxpool.Pool, user string, house int) *Service {
-	return svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(house, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location()))
+	return svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, time.Date(house, 6, 15, 12, 0, 0, 0, houseday.DefaultZone().Location())).
+		WithBranchFacts(fw1R4BranchFacts{repo: branches.NewRepository(pool)})
 }
 
 // TestIntegration_FW1_01R4_OpenYearAuditRowThroughTheRealRecorder is the

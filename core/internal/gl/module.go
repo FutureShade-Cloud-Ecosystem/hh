@@ -125,6 +125,18 @@ type DeadRequeuer interface {
 	RequeueDead(ctx context.Context, topics []string) (int, error)
 }
 
+// BranchFacts is the branch facts seam the head office branch reads and writes check their answer
+// through (FW1-08b part B, FROM-PRINCIPAL 176): whether an id names a branch row at all
+// (loc_type = 'BRANCH'), whether it is a branch of the caller's org, and which branch a yard code
+// names (ruling 162: the default reads TRT by code). branches owns locations; gl reads it only
+// through this seam, bound in the composition root over *branches.Repository. Satisfied by
+// core/cmd/core's glBranchFacts adapter.
+type BranchFacts interface {
+	Exists(ctx context.Context, id string) (bool, error)
+	BranchInOrg(ctx context.Context, orgID, branchID string) (bool, error)
+	BranchRowByCodeTx(ctx context.Context, tx pgx.Tx, code string) (branchID string, ok bool, err error)
+}
+
 // ApprovalFiler is GL's nil-able approvals-rail seam (0075). When CreateJournal parks a MANUAL journal as
 // DRAFT (at/over the shipped gl_policy maker-checker threshold), GL files a JE_OVER_THRESHOLD approval
 // request through this seam IN THE PARK'S TRANSACTION (ruling 108): the journal and its request commit
@@ -252,6 +264,9 @@ type Repository struct {
 	// authoritative source.
 	hoMu       sync.RWMutex
 	hoOverride string
+	// branchFacts is the branch facts seam the head office default's read TRT by code runs
+	// through (ruling 162); nil in unit scaffolds, where the fixed Trenton uuid stands in.
+	branchFacts BranchFacts
 }
 
 // ZoneTxSource is the dealer's business day zone read on a caller's open transaction. A journal is
@@ -306,6 +321,7 @@ type Service struct {
 	auditTx         AuditTxRecorder      // round 2: the open year's audit, in the year's transaction
 	strictPreFlight bool                 // round 4: production refuses a close when a pre flight check is unwired; tests may pass nil
 	queue           OutboxQueue          // the posting queue's rows: the waiting/dead events the Controller lists and the banner counts (nil-able: unwired, the queue reads refuse)
+	branchFacts     BranchFacts          // the branch facts the head office branch reads and writes check their answer through (unwired, the set refuses: fail closed)
 	log             *slog.Logger
 	now             func() time.Time
 	callerFrom      func(context.Context) (identity.StaffContext, bool)
@@ -465,6 +481,17 @@ func (s *Service) WithPaymentReader(r PaymentReader) *Service { s.payments = r; 
 
 // WithAudit injects the A-21 Recorder for sensitive-access stamping (reopen, close).
 func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }
+
+// WithBranchFacts binds the branch facts seam (branches owns locations; gl never reads it). It
+// feeds both the head office set's candidate check (Service) and the head office default's
+// read TRT by code (Repository), so one wiring point serves both.
+func (s *Service) WithBranchFacts(bf BranchFacts) *Service {
+	s.branchFacts = bf
+	if s.repo != nil {
+		s.repo.branchFacts = bf
+	}
+	return s
+}
 
 // WithCostBasis injects the inventory cost-basis seam (dormant at W5, NoopCostBasis).
 func (s *Service) WithCostBasis(c CostBasis) *Service { s.costBasis = c; return s }

@@ -10,6 +10,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/jackc/pgx/v5"
 )
 
 type fakeAuditRecorder struct {
@@ -28,6 +29,25 @@ type fakeTaxSplitWithBranch struct {
 
 func (f fakeTaxSplitWithBranch) OrderBranch(_ context.Context, _ string) (string, error) {
 	return f.branchID, nil
+}
+
+// fakeBranchFacts answers the branch facts the head office set and default check through: which
+// ids are branch rows, which org each branch belongs to, and which branch a yard code names.
+type fakeBranchFacts struct {
+	isBranch map[string]bool
+	orgOf    map[string]string
+	codeIDs  map[string]string
+}
+
+func (f fakeBranchFacts) Exists(_ context.Context, id string) (bool, error) { return f.isBranch[id], nil }
+
+func (f fakeBranchFacts) BranchInOrg(_ context.Context, orgID, branchID string) (bool, error) {
+	return f.orgOf[branchID] == orgID, nil
+}
+
+func (f fakeBranchFacts) BranchRowByCodeTx(_ context.Context, _ pgx.Tx, code string) (string, bool, error) {
+	id, ok := f.codeIDs[code]
+	return id, ok, nil
 }
 
 // TestFW1_08b_GLWritersStampBranch proves that the five FW1-08b GL writers
@@ -210,6 +230,11 @@ func TestFW1_08b_GLWritersStampBranch(t *testing.T) {
 		}
 
 		// Controller with reason updates HeadOfficeBranchID and records audit.
+		ctrlSvc = ctrlSvc.WithBranchFacts(fakeBranchFacts{
+			isBranch: map[string]bool{"branch-kgn": true},
+			orgOf:    map[string]string{"branch-kgn": "org-a"},
+			codeIDs:  map[string]string{"KGN": "branch-kgn"},
+		})
 		if err := ctrlSvc.SetHeadOfficeBranch(ctx, "branch-kgn", "Ruling 82.3 head office update"); err != nil {
 			t.Fatalf("SetHeadOfficeBranch: %v", err)
 		}
@@ -230,11 +255,16 @@ func TestFW1_08b_GLWritersStampBranch(t *testing.T) {
 func TestFW1_08b_PartB_HeadOfficeSetChecksItsCandidate(t *testing.T) {
 	ctx := context.Background()
 	aud := &fakeAuditRecorder{}
+	wall := fakeBranchFacts{
+		isBranch: map[string]bool{"branch-kgn": true, "branch-trt": true, "branch-foreign-org": true},
+		orgOf:    map[string]string{"branch-kgn": "org-a", "branch-trt": "org-a", "branch-foreign-org": "org-b"},
+		codeIDs:  map[string]string{"KGN": "branch-kgn", "TRT": "branch-trt"},
+	}
 
 	t.Run("another_orgs_branch_refused_in_words", func(t *testing.T) {
 		f := newFakeStore()
 		ctrl := identity.StaffContext{UserID: "u-ctrl", RoleCode: controllerRole, Scope: identity.ScopeGlobal}
-		svc := newTestServiceAs(f, ctrl).WithAudit(aud)
+		svc := newTestServiceAs(f, ctrl).WithAudit(aud).WithBranchFacts(wall)
 		scoped := authz.WithStaffScope(ctx, authz.StaffScope{OrgID: "org-a"})
 		err := svc.SetHeadOfficeBranch(scoped, "branch-foreign-org", "part B: another org's branch")
 		var ce clientError
@@ -246,7 +276,7 @@ func TestFW1_08b_PartB_HeadOfficeSetChecksItsCandidate(t *testing.T) {
 	t.Run("non_branch_location_refused_in_words", func(t *testing.T) {
 		f := newFakeStore()
 		ctrl := identity.StaffContext{UserID: "u-ctrl", RoleCode: controllerRole, Scope: identity.ScopeGlobal}
-		svc := newTestServiceAs(f, ctrl).WithAudit(aud)
+		svc := newTestServiceAs(f, ctrl).WithAudit(aud).WithBranchFacts(wall)
 		scoped := authz.WithStaffScope(ctx, authz.StaffScope{OrgID: "org-a"})
 		err := svc.SetHeadOfficeBranch(scoped, "loc-zone-1", "part B: a zone is not a branch")
 		var ce clientError

@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -73,7 +74,8 @@ func TestFW1_08b_Migration0445HeadOfficeBranch(t *testing.T) {
 		auditSvc := audit.NewService(audit.NewRepository(pool), slog.Default())
 		glSvc := gl.NewService(gl.NewRepository(pool).WithZone(newDealerZone(pool))).
 			WithAudit(auditSvc).
-			WithAuditTxRecorder(auditSvc)
+			WithAuditTxRecorder(auditSvc).
+			WithBranchFacts(glBranchFacts{repo: branches.NewRepository(pool)})
 		ctrlCtx := identity.ContextWithStaff(ctx, identity.StaffContext{
 			UserID:   userID,
 			RoleCode: "FINANCIAL_CONTROLLER",

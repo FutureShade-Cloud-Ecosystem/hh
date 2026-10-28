@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
@@ -127,7 +128,8 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithAuditTxRecorder(auditSvc).
 		WithStrictPreFlight().
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
-		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
+		WithApprovalStateChecker(jeStateAdapter{svc: approvals}).
+		WithBranchFacts(glBranchFacts{repo: branches.NewRepository(pool)})
 	gl.NewHandler(glSvc, log).WithZone(newDealerZone(pool)).WithLegacyImport(settings.NewDealerConfigReader(pool)).WithUserLinker(link).RegisterRoutes(r, g)
 	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc, journals: glRepo, memos: billing.NewInvoiceWriter(pool)})
 
@@ -978,4 +980,21 @@ func (a quoteCounterPayer) TakePaymentTx(ctx context.Context, tx pgx.Tx, in quot
 // receives this seam and panics at boot without it.
 func newCustomerWall(pool *pgxpool.Pool) billing.CustomerModuleReach {
 	return billing.NewCustomerModuleReach(customer.NewService(customer.NewRepository(pool)))
+}
+
+// glBranchFacts binds the branches module's location reads to gl's BranchFacts seam (FW1-08b
+// part B): the head office set's candidate check and the head office default's read TRT by code
+// both run through it, and gl never reads locations itself.
+type glBranchFacts struct{ repo *branches.Repository }
+
+func (g glBranchFacts) Exists(ctx context.Context, id string) (bool, error) {
+	return g.repo.Exists(ctx, id)
+}
+
+func (g glBranchFacts) BranchInOrg(ctx context.Context, orgID, branchID string) (bool, error) {
+	return g.repo.BranchInOrg(ctx, orgID, branchID)
+}
+
+func (g glBranchFacts) BranchRowByCodeTx(ctx context.Context, tx pgx.Tx, code string) (string, bool, error) {
+	return branches.BranchCodeReader{}.BranchRowByCodeTx(ctx, tx, code)
 }

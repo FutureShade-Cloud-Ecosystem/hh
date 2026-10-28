@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -78,7 +79,8 @@ func TestFW1_08b_HeadOfficePolicyMultiBranchCloseAndCrossBranchReturn(t *testing
 		WithPaymentReader(tillRepo).
 		WithAudit(auditSvc).
 		WithAuditTxRecorder(auditSvc).
-		WithCostBasis(fw1CensusCostBasis{unitCostCents: 2000})
+		WithCostBasis(fw1CensusCostBasis{unitCostCents: 2000}).
+		WithBranchFacts(glBranchFacts{repo: branches.NewRepository(pool)})
 
 	ctrl := identity.StaffContext{
 		UserID:   userID,

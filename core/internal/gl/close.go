@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -43,14 +44,18 @@ func (s *Service) HeadOfficeBranchID(ctx context.Context) (string, error) {
 }
 
 // SetHeadOfficeBranch updates the head office branch setting in gl_policy (ruling 82.3):
-// narrowed to the Financial Controller, mandatory reason, and audited.
+// narrowed to the Financial Controller, mandatory reason, and audited. FW1-08b part B
+// (FROM-PRINCIPAL 176) bounds the candidate: it must be a location with loc_type = 'BRANCH'
+// in the caller's org, checked through the branch facts seam; the refusal is fail closed
+// when the seam is unwired. The org half holds on a request context, where the middleware
+// has stamped the org scope; a direct composition call without one keeps the branch check.
 func (s *Service) SetHeadOfficeBranch(ctx context.Context, branchID, reason string) error {
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return err
 	}
 	if caller.RoleCode != controllerRole {
-		return errNotController
+		return errNotControllerHeadOffice
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -59,6 +64,25 @@ func (s *Service) SetHeadOfficeBranch(ctx context.Context, branchID, reason stri
 	branchID = strings.TrimSpace(branchID)
 	if branchID == "" {
 		return badReq("gl: branch_id is required")
+	}
+	if s.branchFacts == nil {
+		return errHeadOfficeUnverified
+	}
+	isBranch, err := s.branchFacts.Exists(ctx, branchID)
+	if err != nil {
+		return fmt.Errorf("gl: head office branch check: %w", err)
+	}
+	if !isBranch {
+		return unprocessable("gl: %s is not a branch location; the head office branch must be a branch (loc_type BRANCH)", branchID)
+	}
+	if scope, ok := authz.StaffScopeFrom(ctx); ok && scope.OrgID != "" {
+		inOrg, err := s.branchFacts.BranchInOrg(ctx, scope.OrgID, branchID)
+		if err != nil {
+			return fmt.Errorf("gl: head office branch org check: %w", err)
+		}
+		if !inOrg {
+			return errHeadOfficeForeignOrg
+		}
 	}
 	return s.store.SetHeadOfficeBranch(ctx, branchID, func(ctx context.Context, tx pgx.Tx) error {
 		sa := audit.SensitiveAccess{

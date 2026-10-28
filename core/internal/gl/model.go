@@ -322,7 +322,16 @@ var (
 	// errNotControllerOpenYear is the early open's own word (round 3, S2 P2-2): the open is not a
 	// reopen, so its refusal must not speak of reopening a closed period.
 	errNotControllerOpenYear = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may open the next fiscal year"}
-	errNotControllerQueue    = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may read the posting queue"}
+	// errNotControllerHeadOffice is the head office set's own word (FW1-08b part B, FROM-PRINCIPAL
+	// 206): the set is not a reopen either, so its refusal must not borrow the reopen words.
+	errNotControllerHeadOffice = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may set the head office branch"}
+	// errHeadOfficeForeignOrg is the tenancy wall on the set (FW1-08b part B, FROM-PRINCIPAL 176):
+	// a Controller points the head office at a branch of its own org only.
+	errHeadOfficeForeignOrg = clientError{status: http.StatusForbidden, msg: "gl: that branch is not in your org; the head office branch must be a branch of the caller's org"}
+	// errHeadOfficeUnverified is the fail closed answer of an unwired branch facts seam: without
+	// the branch facts the set cannot check its candidate, so it refuses rather than writes blind.
+	errHeadOfficeUnverified = clientError{status: http.StatusServiceUnavailable, msg: "gl: the branch facts seam is not wired, so the head office branch cannot be checked; wire the branch facts and try again"}
+	errNotControllerQueue   = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may read the posting queue"}
 	errQueueNotWired         = clientError{status: http.StatusServiceUnavailable, msg: "gl: the posting queue is not wired"}
 	// errForbidden is DIB-392's horizontal-read boundary: a manager asking for a branch's (or the whole
 	// org's) ledger that their scope does not reach.
