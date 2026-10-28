@@ -802,7 +802,7 @@ func TestParity_AgingBandEdgesInTwoZones(t *testing.T) {
 	ids := make([]string, len(edges))
 	for i, e := range edges {
 		if err := r.env.Admin.QueryRow(ctx, `INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, total_cents, balance_cents)
-			VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 200, CURRENT_DATE, $4, $4, $4) RETURNING id::text`,
+			VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date - 200, (now() AT TIME ZONE 'America/Toronto')::date, $4, $4, $4) RETURNING id::text`,
 			fmt.Sprintf("INV-S7A-%s-edge-%d", r.w.tag, e.daysBefore), edgeCustomer, r.w.a, e.amount).Scan(&ids[i]); err != nil {
 			t.Fatal(err)
 		}

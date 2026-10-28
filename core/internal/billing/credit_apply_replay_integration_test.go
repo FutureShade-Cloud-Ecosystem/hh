@@ -29,6 +29,7 @@ func TestIntegration_FW1_12b_ASpentKeyOnAClosedInvoiceReplaysItsFirstResult(t *t
 	applySvc := NewCreditApplyService(repo)
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	custID := seedCustomer(t, pool, n+"-CUST")
 
@@ -53,6 +54,7 @@ func TestIntegration_FW1_12b_ASpentKeyOnAClosedInvoiceReplaysItsFirstResult(t *t
 
 	in := ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: invID,
+		OrgID:       applyOrg,
 		AmountCents: 10000, Reason: "the whole credit", IdempotencyKey: n + "-key-1",
 	}
 	first, err := applySvc.Apply(ctx, in, true)

@@ -36,6 +36,7 @@ func TestIntegration_FW1_12b_AReversalRefusesAVoidInvoiceAndLeavesItVoid(t *test
 	w := NewInvoiceWriter(pool)
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	// An unpaid supplier deposit document on its order, the shape the deposit cancel's
 	// settlement voids (settleDepositDocument: a document still carrying balance leaves the
@@ -57,6 +58,7 @@ func TestIntegration_FW1_12b_AReversalRefusesAVoidInvoiceAndLeavesItVoid(t *test
 	// the application.
 	app, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: depID,
+		OrgID:       applyOrg,
 		AmountCents: 2500, Reason: "part of the credit", IdempotencyKey: n + "-key-1",
 	}, true)
 	if err != nil {
@@ -131,6 +133,7 @@ func TestIntegration_FW1_12b_AReversalRestoresTheMemosPriorStatus(t *testing.T) 
 	applySvc := NewCreditApplyService(repo)
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	custID := seedCustomer(t, pool, n+"-CUST")
 
@@ -155,6 +158,7 @@ func TestIntegration_FW1_12b_AReversalRestoresTheMemosPriorStatus(t *testing.T) 
 
 	app, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: invID,
+		OrgID:       applyOrg,
 		AmountCents: 1000, Reason: "a slice of the memo", IdempotencyKey: n + "-key-1",
 	}, true)
 	if err != nil {

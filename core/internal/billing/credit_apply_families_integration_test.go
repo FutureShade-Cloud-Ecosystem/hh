@@ -42,6 +42,7 @@ func TestIntegration_FW1_12b_AnAccountGroupTheAgingReadsAsZeroIsNotAnOpenCredit(
 	applySvc := NewCreditApplyService(repo)
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	custID := seedCustomer(t, pool, n+"-CUST")
 
@@ -108,6 +109,7 @@ func TestIntegration_FW1_12b_AnAccountGroupTheAgingReadsAsZeroIsNotAnOpenCredit(
 		InvoiceID:      invID,
 		AmountCents:    25000,
 		Reason:         "the written off credit",
+		OrgID:          applyOrg,
 		IdempotencyKey: n + "-key-1",
 	}, true)
 	if aerr == nil {
@@ -148,6 +150,7 @@ func TestIntegration_FW1_12b_APaidNSFIsNotACreditTheDoorMayApply(t *testing.T) {
 	applySvc := NewCreditApplyService(repo)
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	custID := seedCustomer(t, pool, n+"-CUST")
 
@@ -200,6 +203,7 @@ func TestIntegration_FW1_12b_APaidNSFIsNotACreditTheDoorMayApply(t *testing.T) {
 		InvoiceID:      invID,
 		AmountCents:    2500,
 		Reason:         "the paid NSF fee",
+		OrgID:          applyOrg,
 		IdempotencyKey: n + "-key-1",
 	}, true)
 	if aerr == nil {
@@ -241,6 +245,7 @@ func TestIntegration_FW1_12b_TheDoorAndTheAgingReadOneGroupTheSameWay(t *testing
 	applySvc := NewCreditApplyService(repo)
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	custID := seedCustomer(t, pool, n+"-CUST")
 
@@ -313,6 +318,7 @@ func TestIntegration_FW1_12b_TheDoorAndTheAgingReadOneGroupTheSameWay(t *testing
 		InvoiceID:      invID,
 		AmountCents:    15000,
 		Reason:         "the group as the aging reads it",
+		OrgID:          applyOrg,
 		IdempotencyKey: n + "-key-1",
 	}, true)
 	if err != nil {

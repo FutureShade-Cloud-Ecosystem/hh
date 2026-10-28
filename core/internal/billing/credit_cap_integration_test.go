@@ -32,7 +32,7 @@ func seedCappedInvoice(t *testing.T, pool *pgxpool.Pool, custID, no string) stri
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type, source_kind)
-		 VALUES ($1, $2, $3::uuid, 'FINALIZED', current_date, current_date, 10000, 2345, 12345, 12345, now(), 'INVOICE', 'ORDER')
+		 VALUES ($1, $2, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date, 10000, 2345, 12345, 12345, now(), 'INVOICE', 'ORDER')
 		 RETURNING id::text`, no, custID, trentonBranch).Scan(&id); err != nil {
 		t.Fatalf("seed the invoice: %v", err)
 	}
