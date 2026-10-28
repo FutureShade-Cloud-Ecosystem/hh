@@ -9,6 +9,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/finstmt"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
@@ -455,7 +456,7 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 					recSummary = fmt.Sprintf("%s status=%s stmt=%d dit=%d outChq=%d gl=%d var=%d",
 						mp.YearMonth.String(), rec.Status, rec.StatementBalanceCents, rec.DepositsInTransitCents, rec.OutstandingChequesCents, rec.GLBalanceCents, rec.VarianceCents)
 				}
-			} else if m == 0 || m == 10 {
+			} else {
 				if recSummary != "" {
 					recSummary += "; "
 				}
@@ -612,20 +613,18 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 				SELECT COUNT(*) FROM fiscal_periods WHERE year = 2026`).Scan(&count2026); err != nil {
 				return nil, err
 			}
-			var rev2025, exp2025 int64
-			if err := pool.QueryRow(ctx, `
-				SELECT COALESCE(SUM(CASE WHEN account_type = 'REVENUE' THEN -net_movement_cents ELSE 0 END), 0),
-				       COALESCE(SUM(CASE WHEN account_type = 'EXPENSE' THEN net_movement_cents ELSE 0 END), 0)
-				  FROM v_income_statement
-				 WHERE fiscal_year = 2025`).Scan(&rev2025, &exp2025); err != nil {
-				return nil, err
+			isRep, err := finstmt.NewService(finstmt.NewRepository(pool)).IncomeStatementReportFor(sctx, 2025, 0, "")
+			if err != nil {
+				return nil, fmt.Errorf("2025 IncomeStatementReportFor: %w", err)
 			}
+			rev2025 := isRep.RevenueCents
+			exp2025 := isRep.ExpenseCents
 			passed := closingCount >= 1 && nullBranchLines == 0 && open2025 == 0 && count2026 == 12 && rev2025 > 0 && exp2025 > 0
 			results = append(results, FinWorldTieResult{
 				Name:   "year_end_close_opens_next_year_and_keeps_income_statement",
 				Passed: passed,
-				Detail: fmt.Sprintf("2025 CLOSING journals=%d (nullBranchLines=%d), open2025=%d, 2026 periods=%d, 2025 IS revenue=%s expenses=%s",
-					closingCount, nullBranchLines, open2025, count2026, finworldDollars(rev2025), finworldDollars(exp2025)),
+				Detail: fmt.Sprintf("2025 CLOSING journals=%d (nullBranchLines=%d), open2025=%d, 2026 periods=%d, 2025 IS revenue=%s expenses=%s netIncome=%s",
+					closingCount, nullBranchLines, open2025, count2026, finworldDollars(rev2025), finworldDollars(exp2025), finworldDollars(isRep.NetIncomeCents)),
 			})
 		}
 	}

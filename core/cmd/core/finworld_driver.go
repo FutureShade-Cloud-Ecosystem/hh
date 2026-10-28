@@ -46,14 +46,15 @@ import (
 )
 
 const (
-	finworldOrgID     = "88a20000-0000-4000-8000-0000000000f2"
-	finworldOrgSlug   = "finworld-org"
-	finworldBranchTRT = "5d1b3f6e-0000-4000-9000-000000000001"
-	finworldBranchKGN = "5d1b3f6e-0000-4000-9000-000000000002"
-	finworldStaffUser = "d7000000-0000-4000-9000-000000000006"
-	finworldStaffSub  = "finworld-controller-sub"
-	finworldMarkKey   = "finworld_mark"
-	finworldMarkVal   = "v1"
+	finworldOrgID      = "88a20000-0000-4000-8000-0000000000f2"
+	finworldOrgSlug    = "finworld-org"
+	finworldBranchTRT  = "5d1b3f6e-0000-4000-9000-000000000001"
+	finworldBranchKGN  = "5d1b3f6e-0000-4000-9000-000000000002"
+	finworldStaffUser  = "d7000000-0000-4000-9000-000000000006"
+	finworldStaffSub   = "finworld-controller-sub"
+	finworldManagerSub = "finworld-branch-manager-sub"
+	finworldMarkKey    = "finworld_mark"
+	finworldMarkVal    = "v1"
 )
 
 func init() {
@@ -171,7 +172,7 @@ func finworldCheckSubsequentDayGuard(ctx context.Context, pool *pgxpool.Pool, da
 type finworldAuthDouble struct{}
 
 func (finworldAuthDouble) OrgMember(_ context.Context, sub, orgSlug string) (bool, error) {
-	return sub == finworldStaffSub && orgSlug == finworldOrgSlug, nil
+	return (sub == finworldStaffSub || sub == finworldManagerSub) && orgSlug == finworldOrgSlug, nil
 }
 
 func (finworldAuthDouble) TenantOrgs(_ context.Context, _ string) ([]string, error) {
@@ -185,7 +186,14 @@ func (finworldAuthDouble) ResolveSlug(_ context.Context, orgSlug string) (string
 	return "", false, nil
 }
 
-func (finworldAuthDouble) ResolveStaff(_ context.Context, _, _ string) (erpidentity.StaffAuthority, bool, error) {
+func (finworldAuthDouble) ResolveStaff(_ context.Context, sub, _ string) (erpidentity.StaffAuthority, bool, error) {
+	if sub == finworldManagerSub {
+		return erpidentity.StaffAuthority{
+			RoleID: "branch_manager",
+			Tier:   erpidentity.TierManager,
+			Scope:  erpidentity.ScopeGlobal,
+		}, true, nil
+	}
 	return erpidentity.StaffAuthority{
 		RoleID: "financial_controller",
 		Tier:   erpidentity.TierLeadership,
@@ -206,6 +214,7 @@ type finworldHarness struct {
 	disp          *notify.Dispatcher
 	minter        *erpidentity.SessionMinter
 	token         string
+	managerToken  string
 	vault         *payment.Vault
 	bankAccountID string
 }
@@ -226,6 +235,10 @@ func newFinWorldHarness(ctx context.Context, pool *pgxpool.Pool) (*finworldHarne
 	token, err := minter.MintAt(finworldStaffSub, 12*time.Hour, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("mint staff token: %w", err)
+	}
+	managerToken, err := minter.MintAt(finworldManagerSub, 12*time.Hour, time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("mint manager token: %w", err)
 	}
 	verifier, err := erpidentity.NewVerifier(erpidentity.Config{
 		KeySource:      keys,
@@ -288,30 +301,42 @@ func newFinWorldHarness(ctx context.Context, pool *pgxpool.Pool) (*finworldHarne
 		disp:          d,
 		minter:        minter,
 		token:         token,
+		managerToken:  managerToken,
 		vault:         vault,
 		bankAccountID: bankAccountID,
 	}, nil
 }
 
 func (h *finworldHarness) drain(ctx context.Context) error {
-	for i := 0; i < 50; i++ {
-		if h.disp.DrainOnce(ctx) == 0 {
+	for i := 0; i < 200; i++ {
+		if h.disp.DrainOnce(ctx) < 50 {
 			break
 		}
-	}
-	var pendingOrDead int
-	if err := h.pool.QueryRow(ctx, `SELECT COUNT(*) FROM events_outbox WHERE status IN ('PENDING', 'DEAD')`).Scan(&pendingOrDead); err != nil {
-		return err
-	}
-	if pendingOrDead > 0 {
-		var topic, lastErr string
-		_ = h.pool.QueryRow(ctx, `SELECT topic, COALESCE(last_error, '') FROM events_outbox WHERE status IN ('PENDING', 'DEAD') LIMIT 1`).Scan(&topic, &lastErr)
-		return fmt.Errorf("outbox has %d PENDING/DEAD events after drain (first topic=%s err=%s)", pendingOrDead, topic, lastErr)
 	}
 	return nil
 }
 
-func (h *finworldHarness) call(step, method, path string, body any) ([]byte, error) {
+func (h *finworldHarness) verifyOutboxEmpty(ctx context.Context) error {
+	if err := h.drain(ctx); err != nil {
+		return err
+	}
+	var pending int
+	if err := h.pool.QueryRow(ctx, `SELECT COUNT(*) FROM events_outbox WHERE status = 'PENDING'`).Scan(&pending); err != nil {
+		return err
+	}
+	var dead int
+	if err := h.pool.QueryRow(ctx, `SELECT COUNT(*) FROM events_outbox WHERE status = 'DEAD'`).Scan(&dead); err != nil {
+		return err
+	}
+	if pending+dead > 0 {
+		var topic, lastErr string
+		_ = h.pool.QueryRow(ctx, `SELECT topic, COALESCE(last_error, '') FROM events_outbox WHERE status IN ('PENDING', 'DEAD') LIMIT 1`).Scan(&topic, &lastErr)
+		return fmt.Errorf("outbox has %d PENDING/DEAD events after drain (first topic=%s err=%s)", pending+dead, topic, lastErr)
+	}
+	return nil
+}
+
+func (h *finworldHarness) callWithToken(tok, step, method, path string, body any) ([]byte, error) {
 	var rdr io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -321,7 +346,7 @@ func (h *finworldHarness) call(step, method, path string, body any) ([]byte, err
 		rdr = bytes.NewReader(b)
 	}
 	req := httptest.NewRequest(method, path, rdr)
-	req.Header.Set("Authorization", "Bearer "+h.token)
+	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set(authz.HeaderXOrg, finworldOrgSlug)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -332,6 +357,10 @@ func (h *finworldHarness) call(step, method, path string, body any) ([]byte, err
 		return nil, fmt.Errorf("%s: %s %s refused with HTTP %d: %s", step, method, path, rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
 	return rec.Body.Bytes(), nil
+}
+
+func (h *finworldHarness) call(step, method, path string, body any) ([]byte, error) {
+	return h.callWithToken(h.token, step, method, path, body)
 }
 
 func finworldDefaultDealer(getenv func(string) string) string {
@@ -387,7 +416,7 @@ func finworldMain(args []string, stdout, stderr io.Writer, getenv func(string) s
 	case "check":
 		fs := flag.NewFlagSet("finworld check", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		throughDay := fs.Int("through-day", 311, "trading day index to check ties through")
+		throughDay := fs.Int("through-day", 312, "trading day index to check ties through")
 		seed := fs.Uint64("seed", 1, "FinWorldPlan seed")
 		dealer := fs.String("dealer", finworldDefaultDealer(getenv), "dealer name")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -426,8 +455,25 @@ func finworldMain(args []string, stdout, stderr io.Writer, getenv func(string) s
 		}
 		return nil
 
+	case "days":
+		fs := flag.NewFlagSet("finworld days", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		seed := fs.Uint64("seed", 1, "FinWorldPlan seed")
+		dealer := fs.String("dealer", finworldDefaultDealer(getenv), "dealer name")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		plan, err := FinWorldPlan(*seed, YearMonth{Year: 2026, Month: 9}, *dealer)
+		if err != nil {
+			return fmt.Errorf("FinWorldPlan: %w", err)
+		}
+		for _, d := range finworldFlattenDays(plan) {
+			fmt.Fprintf(stdout, "%d %s %s\n", d.Day.TradingDayIndex, d.Day.Date, d.YearMonth.String())
+		}
+		return nil
+
 	default:
-		return fmt.Errorf("unknown finworld subcommand %q (want day or check)", sub)
+		return fmt.Errorf("unknown finworld subcommand %q (want day, check or days)", sub)
 	}
 }
 
@@ -460,6 +506,7 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 		fmt.Sprintf(`INSERT INTO org (id, slug, name) VALUES ('%s', '%s', 'FinWorld Org') ON CONFLICT (id) DO NOTHING`, finworldOrgID, finworldOrgSlug),
 		fmt.Sprintf(`UPDATE locations SET org_id = '%s' WHERE loc_type = 'BRANCH'`, finworldOrgID),
 		fmt.Sprintf(`UPDATE users SET platform_user_id = '%s' WHERE id = '%s'`, finworldStaffSub, finworldStaffUser),
+		fmt.Sprintf(`INSERT INTO users (id, email, display_name, status, org_id, platform_user_id) VALUES ('00000000-0000-0000-0000-000000000109', 'finworld-mgr@example.invalid', 'FinWorld Branch Manager', 'ACTIVE', '%s', '%s') ON CONFLICT (id) DO UPDATE SET platform_user_id = EXCLUDED.platform_user_id, status = 'ACTIVE'`, finworldOrgID, finworldManagerSub),
 		// Clear pre-seeded trading rows so the world starts from a clean opening trial balance
 		`TRUNCATE TABLE payments, customer_transactions, pos_returns, pos_sale, invoices, orders, quotes, landed_costs, purchasing_bills, purchasing_receipts, purchasing_pos, purchase_orders, events_outbox, stock_balances, stock_moves, product_branch_costs, gl_journals CASCADE`,
 		// Clear demo pricing surcharges/quantity breaks so pricing resolves strictly from FinWorldPlan list & contractor rules
@@ -713,7 +760,7 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 		return fmt.Errorf("close pre-cutover 2025 periods: %w", err)
 	}
 
-	return h.drain(ctx)
+	return h.verifyOutboxEmpty(ctx)
 }
 
 func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT, dayIdx int) error {
@@ -1009,7 +1056,7 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 		}
 	}
 
-	return h.drain(ctx)
+	return h.verifyOutboxEmpty(ctx)
 }
 
 func finworldExecuteSale(
@@ -1415,7 +1462,7 @@ func finworldExecuteReturn(
 		payload["till_session_id"] = tillSessByKey[ret.SessionKey]
 	}
 
-	_, callErr := h.call("return "+ret.ReturnKey, http.MethodPost, "/api/v1/pos/returns", payload)
+	_, callErr := h.callWithToken(h.managerToken, "return "+ret.ReturnKey, http.MethodPost, "/api/v1/pos/returns", payload)
 	return callErr
 }
 
@@ -1663,6 +1710,9 @@ func finworldExecuteLodgement(
 	h *finworldHarness,
 	lodg *FinWorldLodgementEvent,
 ) error {
+	if lodg.TotalAmountCents <= 0 {
+		return nil
+	}
 	branchID, err := finworldBranchID(lodg.BranchCode)
 	if err != nil {
 		return err
@@ -1798,8 +1848,14 @@ func finworldExecuteBankStatement(
 		if ln.AmountCents == 0 {
 			continue
 		}
-		fmt.Fprintf(&csvBuf, "%s,%s,%.2f,%s\n",
-			ln.ValueDate, strings.ReplaceAll(ln.Description, ",", " "), float64(ln.AmountCents)/100.0, ln.Reference)
+		sign := ""
+		absCents := ln.AmountCents
+		if absCents < 0 {
+			sign = "-"
+			absCents = -absCents
+		}
+		fmt.Fprintf(&csvBuf, "%s,%s,%s%d.%02d,%s\n",
+			ln.ValueDate, strings.ReplaceAll(ln.Description, ",", " "), sign, absCents/100, absCents%100, ln.Reference)
 	}
 
 	if _, err := h.call("import statement "+bs.StatementKey, http.MethodPost, "/api/v1/bankrec/imports", map[string]any{

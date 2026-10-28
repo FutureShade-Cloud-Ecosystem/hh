@@ -203,21 +203,62 @@ func TestFinWorldPlan_SeasonalityAndBranchMix(t *testing.T) {
 			plan.Totals.OpenAROver90Count, plan.Totals.OpenAROver90Cents)
 	}
 
-	// Restocking below reorder points.
+	// Restocking below reorder points and positive on-hand stock across all 313 days.
 	if plan.Totals.ReorderTriggeredReceipts <= 0 {
 		t.Fatalf("expected reorder-triggered purchase receipts > 0, got %d", plan.Totals.ReorderTriggeredReceipts)
+	}
+	simStock := map[string]map[string]int64{
+		FinWorldBranchCodeTRT: make(map[string]int64, len(plan.Products)),
+		FinWorldBranchCodeKGN: make(map[string]int64, len(plan.Products)),
+	}
+	for _, p := range plan.Products {
+		simStock[FinWorldBranchCodeTRT][p.SKU] = p.OpeningStockTRT
+		simStock[FinWorldBranchCodeKGN][p.SKU] = p.OpeningStockKGN
 	}
 	for _, m := range plan.Months {
 		for _, td := range m.TradingDays {
 			for _, ev := range td.Events {
-				if ev.PurchaseReceipt != nil && ev.PurchaseReceipt.TriggeredByReorder {
-					for _, ln := range ev.PurchaseReceipt.Lines {
-						if !ln.TriggeredReorder || ln.StockBeforeBase > ln.ReorderPointBase {
-							t.Fatalf("purchase receipt %s marked TriggeredByReorder but line %s stock_before=%d > reorder_point=%d",
-								ev.PurchaseReceipt.PurchaseReceiptKey, ln.SKU, ln.StockBeforeBase, ln.ReorderPointBase)
+				if ev.Sale != nil {
+					for _, ln := range ev.Sale.Lines {
+						simStock[ev.Sale.BranchCode][ln.SKU] -= ln.Quantity
+						if simStock[ev.Sale.BranchCode][ln.SKU] <= 0 {
+							t.Fatalf("day %s sale %s drove stock non-positive at %s for %s: %d",
+								td.Date, ev.Sale.SaleKey, ev.Sale.BranchCode, ln.SKU, simStock[ev.Sale.BranchCode][ln.SKU])
 						}
 					}
 				}
+				if ev.PurchaseReceipt != nil {
+					for _, ln := range ev.PurchaseReceipt.Lines {
+						if ev.PurchaseReceipt.TriggeredByReorder && (!ln.TriggeredReorder || ln.StockBeforeBase > ln.ReorderPointBase) {
+							t.Fatalf("purchase receipt %s marked TriggeredByReorder but line %s stock_before=%d > reorder_point=%d",
+								ev.PurchaseReceipt.PurchaseReceiptKey, ln.SKU, ln.StockBeforeBase, ln.ReorderPointBase)
+						}
+						simStock[ev.PurchaseReceipt.BranchCode][ln.SKU] += ln.Quantity
+					}
+				}
+				if ev.Return != nil {
+					for _, ln := range ev.Return.Lines {
+						simStock[ev.Return.BranchCode][ln.SKU] += ln.Quantity
+					}
+				}
+				if ev.StockTransfer != nil {
+					for _, ln := range ev.StockTransfer.Lines {
+						avail := simStock[ev.StockTransfer.FromBranchCode][ln.SKU]
+						if avail < ln.Quantity {
+							t.Fatalf("day %s transfer %s overdraws %s %s: avail=%d requested=%d",
+								td.Date, ev.StockTransfer.TransferKey, ev.StockTransfer.FromBranchCode, ln.SKU, avail, ln.Quantity)
+						}
+						simStock[ev.StockTransfer.FromBranchCode][ln.SKU] -= ln.Quantity
+						simStock[ev.StockTransfer.ToBranchCode][ln.SKU] += ln.Quantity
+					}
+				}
+			}
+		}
+	}
+	for _, brCode := range []string{FinWorldBranchCodeTRT, FinWorldBranchCodeKGN} {
+		for sku, q := range simStock[brCode] {
+			if q <= 0 {
+				t.Fatalf("ending stock at %s for %s is non-positive: %d", brCode, sku, q)
 			}
 		}
 	}

@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"math"
 	"math/rand/v2"
 	"strings"
 	"time"
@@ -775,14 +774,17 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				if branchCode == FinWorldBranchCodeTRT {
 					stockSlice = stockTRT
 					reorderPt = prod.ReorderPointTRT
-					reorderQty = prod.ReorderQtyTRT
+					reorderQty = prod.ReorderQtyTRT * 2
 				} else {
 					stockSlice = stockKGN
 					reorderPt = prod.ReorderPointKGN
-					reorderQty = prod.ReorderQtyKGN
+					reorderQty = prod.ReorderQtyKGN * 4
 				}
 				stockBefore := stockSlice[skuIdx]
 				qty := reorderQty
+				for stockBefore+qty <= reorderPt+reorderQty {
+					qty += reorderQty
+				}
 				stockSlice[skuIdx] += qty
 
 				lineSub := qty * prod.StandardCostCents
@@ -969,16 +971,26 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 
 				for lIdx := 0; lIdx < numLines; lIdx++ {
 					prodIdx := pickWeightedProductIndex()
+					brStock := stockTRT
+					if branchCode == FinWorldBranchCodeKGN {
+						brStock = stockKGN
+					}
+					for tries := 0; tries < len(plan.Products); tries++ {
+						dup := false
+						for prev := 0; prev < lIdx; prev++ {
+							if lines[prev].SKU == plan.Products[prodIdx].SKU {
+								dup = true
+								break
+							}
+						}
+						if !dup && brStock[prodIdx] >= 25 {
+							break
+						}
+						prodIdx = (prodIdx + 1) % len(plan.Products)
+					}
 					for prev := 0; prev < lIdx; prev++ {
 						if lines[prev].SKU == plan.Products[prodIdx].SKU {
-							switch {
-							case prodIdx < 5:
-								prodIdx = (prodIdx + 1) % 5
-							case prodIdx < 15:
-								prodIdx = 5 + ((prodIdx - 5 + 1) % 10)
-							default:
-								prodIdx = 15 + ((prodIdx - 15 + 1) % (len(plan.Products) - 15))
-							}
+							prodIdx = (prodIdx + 1) % len(plan.Products)
 							prev = -1
 						}
 					}
@@ -1298,6 +1310,17 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 			for i := 0; i < transfersPerDay[dIdx]; i++ {
 				transferSeq++
 				prodIdx := pickWeightedProductIndex()
+				for tries := 0; tries < len(plan.Products); tries++ {
+					candProd := plan.Products[prodIdx]
+					var candQty int64 = 5
+					if candProd.BaseUOM == "T" {
+						candQty = 2
+					}
+					if stockTRT[prodIdx] >= candQty*2 || stockKGN[prodIdx] >= candQty*2 {
+						break
+					}
+					prodIdx = (prodIdx + 1) % len(plan.Products)
+				}
 				prod := plan.Products[prodIdx]
 				var qty int64 = 5
 				if prod.BaseUOM == "T" {
@@ -1352,13 +1375,21 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 							continue
 						}
 						rq := cand.OrigQty
-						if cand.OrigQty > 2 && int64(math.Round(float64(cand.LineTaxCents)*2.0/float64(cand.OrigQty))) == finworldHSTOn(2*cand.UnitPriceCents, cand.TaxRateBps) {
+						if cand.OrigQty > 2 && (cand.LineTaxCents*2+cand.OrigQty/2)/cand.OrigQty == finworldHSTOn(2*cand.UnitPriceCents, cand.TaxRateBps) {
 							rq = 2
-						} else if int64(math.Round(float64(cand.LineTaxCents)*1.0/float64(cand.OrigQty))) == finworldHSTOn(cand.UnitPriceCents, cand.TaxRateBps) {
+						} else if (cand.LineTaxCents+cand.OrigQty/2)/cand.OrigQty == finworldHSTOn(cand.UnitPriceCents, cand.TaxRateBps) {
 							rq = 1
 						}
 						candSub := rq * cand.UnitPriceCents
 						candTot := candSub + finworldHSTOn(candSub, cand.TaxRateBps)
+						if candTot > 25000 && rq > 1 && (cand.LineTaxCents+cand.OrigQty/2)/cand.OrigQty == finworldHSTOn(cand.UnitPriceCents, cand.TaxRateBps) {
+							rq = 1
+							candSub = cand.UnitPriceCents
+							candTot = candSub + finworldHSTOn(candSub, cand.TaxRateBps)
+						}
+						if candTot > 25000 {
+							continue
+						}
 						if cand.PaymentMethod == "CASH" {
 							if tillCashNetBySession[sessionKeyByBranchTill[brCode][0]]-openingFloatCents < candTot+5000 {
 								continue
@@ -1376,7 +1407,21 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 						break
 					}
 					src := pool[pickedIdx]
-					src.RemainingQty = 0
+					for _, cand := range pool {
+						if cand.SaleKey == src.SaleKey {
+							cand.RemainingQty = 0
+						}
+					}
+					for pIdx, p := range plan.Products {
+						if p.SKU == src.SKU {
+							if brCode == FinWorldBranchCodeTRT {
+								stockTRT[pIdx] += retQty
+							} else {
+								stockKGN[pIdx] += retQty
+							}
+							break
+						}
+					}
 
 					lineSub := retQty * src.UnitPriceCents
 					lineTax := finworldHSTOn(lineSub, src.TaxRateBps)
