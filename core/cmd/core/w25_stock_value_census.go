@@ -44,6 +44,26 @@ func (s w25InventoryWriterSite) key() string {
 // stock_moves. It is case-insensitive and permits leading whitespace and newline before the verb.
 var w25WritePattern = regexp.MustCompile(`(?mi)^\s*(INSERT\s+INTO\s+(product_branch_costs|stock_moves)|UPDATE\s+(product_branch_costs|stock_moves)\b|DELETE\s+FROM\s+(product_branch_costs|stock_moves))`)
 
+// w25OnHandWritePattern matches a statement that writes stock_balances' on_hand: an INSERT naming
+// on_hand_base, an UPDATE setting on_hand_base, or any DELETE of balance rows (a deleted row takes
+// its on-hand with it). Writes that touch only the reserved/allocated projections do not move on
+// hand and are deliberately not matched (S5's P3 2: the census watches on hand writes).
+var w25OnHandWritePattern = regexp.MustCompile(`(?mi)^\s*(INSERT\s+INTO\s+stock_balances\b[\s\S]*?\bon_hand_base\b)|^\s*(UPDATE\s+stock_balances\b[\s\S]*?\bSET\b[\s\S]*?\bon_hand_base\b)|^\s*(DELETE\s+FROM\s+stock_balances\b)`)
+
+// w25OnHandWriteMatchKind turns a w25OnHandWritePattern submatch into the canonical
+// "SQL:stock_balances:<verb>[:on_hand]" kind.
+func w25OnHandWriteMatchKind(m []string) string {
+	switch {
+	case m[1] != "":
+		return "SQL:stock_balances:INSERT:on_hand"
+	case m[2] != "":
+		return "SQL:stock_balances:UPDATE:on_hand"
+	case m[3] != "":
+		return "SQL:stock_balances:DELETE"
+	}
+	return ""
+}
+
 // w25WriteMatchKind turns a w25WritePattern submatch into the canonical "SQL:<table>:<verb>" kind.
 func w25WriteMatchKind(m []string) string {
 	switch {
@@ -60,8 +80,15 @@ func w25WriteMatchKind(m []string) string {
 // w25InventoryValueCall is the set of repository method names that physically write inventory value.
 // Every caller of one of these is a writer site and must be accounted for.
 var w25InventoryValueCall = map[string]bool{
-	"InsertMove":       true,
-	"UpsertBranchCost": true,
+	"InsertMove":         true,
+	"UpsertBranchCost":   true,
+	"UpsertBalanceDelta": true,
+}
+
+// w25InventoryOnHandCall is the set of repository method names that physically write on hand. Every
+// caller of one of these is an on-hand writer site and must be accounted for (S5's P3 2).
+var w25InventoryOnHandCall = map[string]bool{
+	"UpsertBalanceDelta": true,
 }
 
 // w25FindInventoryWriters scans coreRoot for every inventory-value writer.
@@ -128,7 +155,7 @@ func w25GoInventoryWriters(path, rel string) ([]w25InventoryWriterSite, error) {
 		// The repository seam methods themselves are not inventory-value paths; every caller is
 		// accounted for as a call site, so counting the method body would double-count and force
 		// the generic writer into a stamped/unstamped decision it cannot make on its own.
-		if fnName == "(*Repository).InsertMove" || fnName == "(*Repository).UpsertBranchCost" {
+		if fnName == "(*Repository).InsertMove" || fnName == "(*Repository).UpsertBranchCost" || fnName == "(*Repository).UpsertBalanceDelta" {
 			continue
 		}
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -163,6 +190,18 @@ func w25GoInventoryWriters(path, rel string) ([]w25InventoryWriterSite, error) {
 						kind: kind,
 					})
 				}
+				if m := w25OnHandWritePattern.FindStringSubmatch(raw); m != nil {
+					kind := w25OnHandWriteMatchKind(m)
+					if kind == "" {
+						return true
+					}
+					sites = append(sites, w25InventoryWriterSite{
+						file: rel,
+						line: fset.Position(node.Pos()).Line,
+						fn:   fnName,
+						kind: kind,
+					})
+				}
 			}
 			return true
 		})
@@ -170,7 +209,8 @@ func w25GoInventoryWriters(path, rel string) ([]w25InventoryWriterSite, error) {
 	return sites, nil
 }
 
-// w25SQLInventoryWriters scans one SQL file for write statements against the inventory value tables.
+// w25SQLInventoryWriters scans one SQL file for write statements against the inventory value tables
+// and on-hand writes against stock_balances.
 func w25SQLInventoryWriters(path, rel string) ([]w25InventoryWriterSite, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -188,6 +228,24 @@ func w25SQLInventoryWriters(path, rel string) ([]w25InventoryWriterSite, error) 
 			continue
 		}
 		kind := w25WriteMatchKind(m)
+		if kind == "" {
+			continue
+		}
+		sites = append(sites, w25InventoryWriterSite{
+			file: rel,
+			line: line,
+			fn:   "(sql)",
+			kind: kind,
+		})
+	}
+	for _, loc := range w25OnHandWritePattern.FindAllStringIndex(string(clean), -1) {
+		start := loc[0]
+		line := strings.Count(string(clean[:start]), "\n") + 1
+		m := w25OnHandWritePattern.FindStringSubmatch(string(clean[start:loc[1]]))
+		if m == nil {
+			continue
+		}
+		kind := w25OnHandWriteMatchKind(m)
 		if kind == "" {
 			continue
 		}
