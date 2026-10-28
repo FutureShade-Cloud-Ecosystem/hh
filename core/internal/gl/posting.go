@@ -106,6 +106,14 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 	if draft.OccurredAt.IsZero() {
 		draft.OccurredAt = s.clock()
 	}
+	// FW1-08b part B round 2: the consumer's drafts take the same ONE resolver the internal path
+	// uses, so a payload that carries no branch lands at the head office rather than as a NULL
+	// the CHECK refuses.
+	branchID, berr := s.resolveBranchID(ctx, draft.BranchID)
+	if berr != nil {
+		return berr
+	}
+	draft.BranchID = branchID
 	if _, _, err := s.store.InsertJournal(ctx, draft); err != nil {
 		return fmt.Errorf("gl: post %q journal: %w", e.Topic, err)
 	}
@@ -332,11 +340,10 @@ func (s *Service) buildTaxRelief(ctx context.Context, payload []byte) (journalDr
 		}
 	}
 	if branchID == "" {
-		ho, herr := s.store.HeadOfficeBranchID(ctx)
-		if herr != nil {
-			return journalDraft{}, false, herr
+		branchID, err = s.resolveBranchID(ctx, branchID)
+		if err != nil {
+			return journalDraft{}, false, err
 		}
-		branchID = ho
 	}
 	et := "tax.relief.assessed"
 	rules, err := s.store.PostingAccounts(ctx, et, branchID)
@@ -1510,7 +1517,7 @@ func (s *Service) buildTillMovementPosted(ctx context.Context, payload []byte) (
 // - provider surface (bankrec + finstmt + boot) -
 
 func (s *Service) postExternal(ctx context.Context, in ExternalJournal) (string, error) {
-	draft, err := s.externalDraft(in)
+	draft, err := s.externalDraft(ctx, in)
 	if err != nil {
 		return "", err
 	}
@@ -1520,7 +1527,7 @@ func (s *Service) postExternal(ctx context.Context, in ExternalJournal) (string,
 
 // postExternalTx is postExternal posted through the caller's transaction.
 func (s *Service) postExternalTx(ctx context.Context, tx pgx.Tx, in ExternalJournal) (string, error) {
-	draft, err := s.externalDraft(in)
+	draft, err := s.externalDraft(ctx, in)
 	if err != nil {
 		return "", err
 	}
@@ -1530,7 +1537,11 @@ func (s *Service) postExternalTx(ctx context.Context, tx pgx.Tx, in ExternalJour
 
 // externalDraft validates a caller-built external journal and turns it into the draft both the pool and the
 // transaction post share, so the two variants refuse exactly the same inputs.
-func (s *Service) externalDraft(in ExternalJournal) (journalDraft, error) {
+//
+// FW1-08b part B round 2 (FROM-PRINCIPAL 318): a draft that names no branch resolves the head office through
+// the ONE shared resolver, the same rule the internal path uses. It used to copy the caller's empty branch
+// into the draft, the shared insert turned it into NULL, and migration 0446's CHECK refused the row by name.
+func (s *Service) externalDraft(ctx context.Context, in ExternalJournal) (journalDraft, error) {
 	if len(in.Lines) == 0 {
 		return journalDraft{}, badReq("gl: external journal has no lines")
 	}
@@ -1548,12 +1559,16 @@ func (s *Service) externalDraft(in ExternalJournal) (journalDraft, error) {
 	if !in.DocumentDate.IsZero() {
 		at = in.DocumentDate
 	}
+	branchID, err := s.resolveBranchID(ctx, in.BranchID)
+	if err != nil {
+		return journalDraft{}, err
+	}
 	draft := journalDraft{
 		Source:         source,
 		SourceRefID:    in.SourceRefID,
 		IdempotencyKey: in.IdempotencyKey,
 		Memo:           in.Memo,
-		BranchID:       in.BranchID,
+		BranchID:       branchID,
 		Status:         StatusPosted,
 		OccurredAt:     at,
 		Lines:          lines,

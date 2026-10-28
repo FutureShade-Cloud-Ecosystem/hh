@@ -566,8 +566,10 @@ test("the pricing surface: the margin policies, and an edit saved clean", async 
   await expect(page.locator("[data-test=staff-count]")).toBeVisible();
   await page.locator('.surface-link[data-surface="pricing"]').click();
 
-  // The strip names the twelve tabs; the margin tab is the open one.
-  await expect(page.locator(".pr-tab")).toHaveCount(12);
+  // The strip names the thirteen views: the twelve tabs and the payment terms
+  // view, one axis after UX-106 merged the two strips. The margin view is the
+  // open one.
+  await expect(page.locator(".pr-tab")).toHaveCount(13);
   await expect(page.locator("[data-test=pr-margin-count]")).toHaveText("1 policy");
   const row = page.locator('tr[data-category="ca7a0000-0000-4000-9000-0000000000a1"]');
   await expect(row).toContainText("Pavers");
@@ -899,7 +901,11 @@ test("the low margin tab: the scan, the cleared stamp, and a proposed line grade
   await expect(page.locator("[data-test=pr-lm-count]")).toHaveText("2 lines");
   const criticalRow = page.locator('tr[data-lm="0c110000-0000-4000-9000-0000000000b2"]');
   await expect(criticalRow).toContainText("SO-2077");
-  await expect(criticalRow).toContainText("cleared: Branch manager (demo)");
+  // UX-106 round 7: the level and the clearance attribution are separate
+  // values. The Level cell holds the level's chip, and the "Cleared by" pair
+  // holds who cleared it.
+  await expect(criticalRow.locator('td[data-label="Level"]')).toContainText("critical");
+  await expect(criticalRow.locator('td[data-label="Cleared by"]')).toHaveText("Branch manager (demo)");
 
   // A proposed line grades through the resolver; the server names the breach.
   await page.locator('[data-field="pr-lm-customer"]').fill("cu110000-0000-4000-9000-0000000000a1");

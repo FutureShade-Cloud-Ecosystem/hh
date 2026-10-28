@@ -152,13 +152,14 @@ func (p *dbPoster) PostJournal(ctx context.Context, in gl.ExternalJournal) (stri
 		Scan(&periodID, &year, &month); err != nil {
 		return "", err
 	}
+	branch := p.branchFor(ctx, tx, in.BranchID)
 	var journalID string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO gl_journals (fiscal_year, entry_no, period_id, source, memo, status, posted_at, idempotency_key)
-		VALUES ($1, (SELECT COALESCE(MAX(entry_no),0)+1 FROM gl_journals WHERE fiscal_year=$1), $2, $3, $4, 'POSTED', now(), $5)
+		INSERT INTO gl_journals (fiscal_year, entry_no, period_id, source, memo, status, posted_at, idempotency_key, branch_id)
+		VALUES ($1, (SELECT COALESCE(MAX(entry_no),0)+1 FROM gl_journals WHERE fiscal_year=$1), $2, $3, $4, 'POSTED', now(), $5, $6::uuid)
 		ON CONFLICT (idempotency_key) WHERE idempotency_key <> '' DO NOTHING
 		RETURNING id::text`,
-		year, periodID, in.Source, in.Memo, in.IdempotencyKey).Scan(&journalID)
+		year, periodID, in.Source, in.Memo, in.IdempotencyKey, branch).Scan(&journalID)
 	if err != nil {
 		// conflict → fetch existing
 		if in.IdempotencyKey == "" {
@@ -180,9 +181,9 @@ func (p *dbPoster) PostJournal(ctx context.Context, in gl.ExternalJournal) (stri
 			credit = l.CreditCents
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, credit_cents, memo)
-			VALUES ($1, $2, (SELECT id FROM gl_accounts WHERE code = $3), $4, $5, $6)`,
-			journalID, lineNo, l.AccountCode, debit, credit, l.Memo); err != nil {
+			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, credit_cents, branch_id, memo)
+			VALUES ($1, $2, (SELECT id FROM gl_accounts WHERE code = $3), $4, $5, $7::uuid, $6)`,
+			journalID, lineNo, l.AccountCode, debit, credit, l.Memo, branch); err != nil {
 			return "", err
 		}
 		lineNo++
@@ -213,11 +214,11 @@ func (p *dbPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in gl.ExternalJ
 	}
 	var journalID string
 	err := tx.QueryRow(ctx, `
-		INSERT INTO gl_journals (fiscal_year, entry_no, period_id, source, memo, status, posted_at, idempotency_key)
-		VALUES ($1, (SELECT COALESCE(MAX(entry_no),0)+1 FROM gl_journals WHERE fiscal_year=$1), $2, $3, $4, 'POSTED', now(), $5)
+		INSERT INTO gl_journals (fiscal_year, entry_no, period_id, source, memo, status, posted_at, idempotency_key, branch_id)
+		VALUES ($1, (SELECT COALESCE(MAX(entry_no),0)+1 FROM gl_journals WHERE fiscal_year=$1), $2, $3, $4, 'POSTED', now(), $5, $6::uuid)
 		ON CONFLICT (idempotency_key) WHERE idempotency_key <> '' DO NOTHING
 		RETURNING id::text`,
-		year, periodID, in.Source, in.Memo, in.IdempotencyKey).Scan(&journalID)
+		year, periodID, in.Source, in.Memo, in.IdempotencyKey, p.branchFor(ctx, tx, in.BranchID)).Scan(&journalID)
 	if err != nil {
 		if ferr := tx.QueryRow(ctx, `SELECT id::text FROM gl_journals WHERE idempotency_key = $1`, in.IdempotencyKey); ferr.Scan(&journalID) == nil {
 			p.seen[in.IdempotencyKey] = journalID
@@ -234,15 +235,34 @@ func (p *dbPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in gl.ExternalJ
 			credit = l.CreditCents
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, credit_cents, memo)
-			VALUES ($1, $2, (SELECT id FROM gl_accounts WHERE code = $3), $4, $5, $6)`,
-			journalID, lineNo, l.AccountCode, debit, credit, l.Memo); err != nil {
+			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, credit_cents, branch_id, memo)
+			VALUES ($1, $2, (SELECT id FROM gl_accounts WHERE code = $3), $4, $5, $7::uuid, $6)`,
+			journalID, lineNo, l.AccountCode, debit, credit, l.Memo, p.branchFor(ctx, tx, in.BranchID)); err != nil {
 			return "", err
 		}
 		lineNo++
 	}
 	p.seen[in.IdempotencyKey] = journalID
 	return journalID, nil
+}
+
+// branchFor answers the branch a planted journal and its lines carry: the branch the caller
+// named, or the head office branch when the caller named none. gl stamps the head office on a
+// journal that names no branch, and migration 0446's CHECK refuses a journal line with none.
+func (p *dbPoster) branchFor(ctx context.Context, tx pgx.Tx, branchID string) string {
+	if branchID != "" {
+		return branchID
+	}
+	var ho string
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(
+		  (SELECT head_office_branch_id::text FROM gl_policy WHERE branch_id IS NULL LIMIT 1),
+		  (SELECT id::text FROM locations WHERE loc_type = 'BRANCH' AND code = 'TRT' LIMIT 1),
+		  '')
+	`).Scan(&ho); err != nil {
+		return ""
+	}
+	return ho
 }
 
 // - DB-free till seam fakes -

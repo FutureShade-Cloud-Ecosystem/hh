@@ -19,6 +19,8 @@
 // its own one-line scope, its own grammar, and its own Save. EVERY function
 // below takes a surface, and none has a default.
 
+import { UNKNOWN_ACTION, UNKNOWN_SURFACE } from "./placeholders.js";
+
 /** The app-wide navigation map's surface id. */
 export const PLATFORM_SHELL_SURFACE = "app.shell";
 /** The counter roster's surface id. */
@@ -109,14 +111,20 @@ const SHELL_ACTIONS: readonly ShellAction[] = [
 /** Every action one surface can bind, in the order the screen lists them. */
 export function platformActions(surface: string): { id: string; label: string }[] {
   if (surface === PLATFORM_COUNTER_SURFACE) {
-    return COUNTER_ORDER.map((id) => ({ id, label: COUNTER_ACTION_LABEL[id] ?? id }));
+    return COUNTER_ORDER.map((id) => ({ id, label: COUNTER_ACTION_LABEL[id] ?? UNKNOWN_ACTION }));
   }
   return SHELL_ACTIONS.map((a) => ({ id: a.id, label: a.label }));
 }
 
-/** The human label for one action on one surface, never the stored id where a label exists. */
+/**
+ * The human label for one action on one surface, never the stored id.
+ *
+ * UX-106 round 3: an action the registry does not name reads as the house
+ * placeholder word. The stored id must not reach a person as text, which is
+ * what the counter roster's own note above says.
+ */
 export function platformActionLabel(surface: string, action: string): string {
-  return platformActions(surface).find((a) => a.id === action)?.label ?? action;
+  return platformActions(surface).find((a) => a.id === action)?.label ?? UNKNOWN_ACTION;
 }
 
 // -- the shell grammar (the original's bindingFromEvent, verbatim in meaning) ----------------------
@@ -390,7 +398,7 @@ export function effectiveVerdict(surface: string, action: string, binding: strin
     const there = otherSurface(surface);
     return {
       kind: "shared",
-      sentence: `${platformKeycap(surface, binding)} also runs "${platformActionLabel(there, elsewhere.action)}" ${PLATFORM_SURFACE_LABEL[there]?.toLowerCase() ?? there}. Both keep working: the till answers first while a sale is open.`,
+      sentence: `${platformKeycap(surface, binding)} also runs "${platformActionLabel(there, elsewhere.action)}" ${PLATFORM_SURFACE_LABEL[there]?.toLowerCase() ?? UNKNOWN_SURFACE}. Both keep working: the till answers first while a sale is open.`,
     };
   }
   return FREE;

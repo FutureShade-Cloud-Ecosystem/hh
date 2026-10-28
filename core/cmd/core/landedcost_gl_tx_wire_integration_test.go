@@ -44,6 +44,16 @@ func TestIntegration_LandedGLTxAdapter_RidesTheCallersTransaction(t *testing.T) 
 		return n
 	}
 
+	// A landed cost belongs to a branch (internal/landedcost/service.go refuses one with no branch), so
+	// the fixture names the branch the landed cost is at. KGN is a real branch that is NOT the head
+	// office: a fixture that left the branch off would ride the resolver's head office fallback and
+	// would not prove that the adapter carries the document's own branch (S4's census, FW1-08b part B
+	// round 3 item 1).
+	var branchID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'KGN' LIMIT 1`).Scan(&branchID); err != nil {
+		t.Fatalf("resolve KGN branch: %v", err)
+	}
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +61,7 @@ func TestIntegration_LandedGLTxAdapter_RidesTheCallersTransaction(t *testing.T) 
 	defer func() { _ = tx.Rollback(ctx) }()
 	id, err := poster.PostJournalTx(ctx, tx, landedcost.GLJournal{
 		Source: "ADJUSTMENT", IdempotencyKey: key, Memo: "wire leg",
+		BranchID: branchID,
 		Lines: []landedcost.GLLine{
 			{AccountCode: "2100", DebitCents: 700},
 			{AccountCode: "1200", CreditCents: 700},

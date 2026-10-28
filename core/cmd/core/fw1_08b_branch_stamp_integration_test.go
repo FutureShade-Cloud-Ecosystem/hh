@@ -14,10 +14,12 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
@@ -78,7 +80,8 @@ func TestFW1_08b_HeadOfficePolicyMultiBranchCloseAndCrossBranchReturn(t *testing
 		WithPaymentReader(tillRepo).
 		WithAudit(auditSvc).
 		WithAuditTxRecorder(auditSvc).
-		WithCostBasis(fw1CensusCostBasis{unitCostCents: 2000})
+		WithCostBasis(fw1CensusCostBasis{unitCostCents: 2000}).
+		WithBranchFacts(glBranchFacts{repo: branches.NewRepository(pool)})
 
 	ctrl := identity.StaffContext{
 		UserID:   userID,
@@ -92,8 +95,11 @@ func TestFW1_08b_HeadOfficePolicyMultiBranchCloseAndCrossBranchReturn(t *testing
 		Tier:     identity.TierManager,
 		Scope:    identity.ScopeGlobal,
 	}
-	ctrlCtx := identity.ContextWithStaff(ctx, ctrl)
-	mgrCtx := identity.ContextWithStaff(ctx, mgr)
+	// The set's org half is unconditional (FW1-08b part B round 2), so this leg carries the org
+	// scope a request context carries, and the branches it names belong to that org.
+	orgID := fw1HeadOfficeScope(t, pool)
+	ctrlCtx := identity.ContextWithStaff(authz.WithStaffScope(ctx, authz.StaffScope{OrgID: orgID}), ctrl)
+	mgrCtx := identity.ContextWithStaff(authz.WithStaffScope(ctx, authz.StaffScope{OrgID: orgID}), mgr)
 
 	// 1. Default head office branch is TRT; SetHeadOfficeBranch is Controller-only, reason-required, and audited.
 	ho, err := glSvc.HeadOfficeBranchID(ctrlCtx)
