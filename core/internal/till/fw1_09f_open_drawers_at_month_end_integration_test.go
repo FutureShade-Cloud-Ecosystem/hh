@@ -37,8 +37,8 @@ import (
 // through it, and it reads the REAL repository, the same read cmd/core wires (FW1-09f).
 type fw109fDrawerReader struct{ repo *Repository }
 
-func (r fw109fDrawerReader) OpenDrawers(ctx context.Context, from, to time.Time) (int, error) {
-	return r.repo.OpenSessionsBetween(ctx, from, to)
+func (r fw109fDrawerReader) OpenDrawersAt(ctx context.Context, at time.Time) (int, error) {
+	return r.repo.OpenSessionsAt(ctx, at)
 }
 
 // fw109fPeriods creates the sentinel year's twelve fiscal periods and removes them again when the

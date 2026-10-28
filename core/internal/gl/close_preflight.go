@@ -30,7 +30,11 @@ type preflightFail struct{ words string }
 // 1200 as of the service's clock now, because inventory answers no as of read
 // yet. A tie that read one side at the month's end and the other now refused
 // every correct month whose next month had moved the stock. The queue reads
-// the month's own window, [month start, next month start).
+// the month's own window, [month start, next month start). The DRAWER check reads
+// the month's END (the first instant of the next month), not the month's window:
+// a drawer opened in an earlier month and never closed is open at that instant
+// too, so "no open drawer" means any drawer still open at the month's end
+// (FW1-09f).
 func (s *Service) runClosePreFlight(ctx context.Context, year, month int) []string {
 	var fails []string
 	zone, err := s.store.BusinessZone(ctx)
@@ -73,10 +77,13 @@ func (s *Service) runClosePreFlight(ctx context.Context, year, month int) []stri
 		}
 	}
 	if s.drawers != nil {
-		if n, err := s.drawers.OpenDrawers(ctx, monthStart, nextMonth); err != nil {
+		// The month's END (the first instant of the next month), not the month's window: a drawer
+		// opened in an EARLIER month and never closed is open at this month's end too, and "no open
+		// drawer" means any drawer still open at the month's end (FW1-09f).
+		if n, err := s.drawers.OpenDrawersAt(ctx, nextMonth); err != nil {
 			fails = append(fails, fmt.Sprintf("the till drawers could not be read (%v)", err))
 		} else if n > 0 {
-			fails = append(fails, fmt.Sprintf("%d till drawer%s still open for this month", n, plural(n)))
+			fails = append(fails, fmt.Sprintf("%d till drawer%s still open at the month's end", n, plural(n)))
 		}
 	}
 	if s.strictPreFlight {

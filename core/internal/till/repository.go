@@ -1165,18 +1165,31 @@ func (r *Repository) RecordPaymentAttempt(ctx context.Context, in PaymentAttempt
 	return nil
 }
 
-// OpenSessionsBetween answers how many till sessions stand OPEN with opened_at
-// in [from, to): the GL close pre flight's "no open till drawer in that month"
-// check (FW1-09b). A nil pool answers zero (scaffold/offline mode).
-func (r *Repository) OpenSessionsBetween(ctx context.Context, from, to time.Time) (int, error) {
+// OpenSessionsAt answers how many till sessions were still OPEN at the instant:
+// the GL close pre flight's "no till drawer still open at the month's end" check
+// (FW1-09f). The instant is the month's end (the first instant of the next month in
+// the dealer's zone).
+//
+// A session COUNTS when it was opened before the instant and the till had not closed
+// it by the instant: still OPEN, still COUNTED (counted but not completed), or closed
+// AT OR AFTER the instant (it was still open at the month's end). A session opened and
+// closed before the instant does not count, and one opened after the instant does not
+// count either: it did not exist at that month's end.
+//
+// The old read counted only the sessions opened inside the month window, so a drawer
+// opened in an earlier month and never closed passed the close of every later month.
+// A nil pool answers zero (scaffold/offline mode).
+func (r *Repository) OpenSessionsAt(ctx context.Context, at time.Time) (int, error) {
 	if r == nil || r.pool == nil {
 		return 0, nil
 	}
 	var n int
 	if err := r.pool.QueryRow(ctx,
-		`SELECT count(*) FROM till_sessions WHERE status = 'OPEN' AND opened_at >= $1 AND opened_at < $2`,
-		from, to).Scan(&n); err != nil {
-		return 0, fmt.Errorf("till: open sessions between: %w", err)
+		`SELECT count(*) FROM till_sessions
+		  WHERE opened_at < $1
+		    AND (status <> 'CLOSED' OR (closed_at IS NOT NULL AND closed_at >= $1))`,
+		at).Scan(&n); err != nil {
+		return 0, fmt.Errorf("till: open sessions at: %w", err)
 	}
 	return n, nil
 }

@@ -204,11 +204,13 @@ type StockValueReader interface {
 	StockValueCents(ctx context.Context, branchID string) (int64, error)
 }
 
-// TillDrawerReader is the till side of the close pre flight: how many till sessions opened in the
-// month window stand OPEN still. The window is the pre flight's to compute (the dealer's zone); the
-// reader only queries. Satisfied by till.Repository, wired in cmd/core.
+// TillDrawerReader is the till side of the close pre flight: how many till drawers were still OPEN
+// at the month's end. The instant is the pre flight's to compute (the first instant of the next
+// month in the dealer's zone, the month's end in the dealer's terms); the reader only queries.
+// A drawer opened in an EARLIER month and still open counts: it was open at this month's end too.
+// Satisfied by till.Repository, wired in cmd/core.
 type TillDrawerReader interface {
-	OpenDrawers(ctx context.Context, from, to time.Time) (int, error)
+	OpenDrawersAt(ctx context.Context, at time.Time) (int, error)
 }
 
 // OutboxQueueReader is the outbox side of the close pre flight: posting events for the month that are

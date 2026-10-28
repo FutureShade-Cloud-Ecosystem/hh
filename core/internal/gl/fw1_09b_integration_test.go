@@ -177,8 +177,11 @@ type fw1Drawers struct {
 	n           int
 }
 
-func (f fw1Drawers) OpenDrawers(_ context.Context, from, _ time.Time) (int, error) {
-	if from.UTC().Year() == f.year && int(from.UTC().Month()) == f.month {
+// OpenDrawersAt answers the drawers still open at the month's end. The instant is the
+// first instant of the NEXT month, so the month being closed is the month before it.
+func (f fw1Drawers) OpenDrawersAt(_ context.Context, at time.Time) (int, error) {
+	m := at.AddDate(0, -1, 0)
+	if m.Year() == f.year && int(m.Month()) == f.month {
 		return f.n, nil
 	}
 	return 0, nil
