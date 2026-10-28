@@ -64,6 +64,22 @@ func intPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+// dbNow reads the database's own clock. The evening guard pins the Go wall
+// clock and the Postgres clock as two separate anchors a shift computation
+// apart, so a read cursor taken from time.Now() can sit ahead of the messages
+// Postgres stamps with its own now(): the badge math then counts nothing and
+// every badge leg goes dark under the pin while staying green unpinned. Every
+// test-side cursor takes the database's instant, the same clock the message
+// rows carry, so the unread comparison is one clock however the run is pinned.
+func dbNow(t *testing.T) time.Time {
+	t.Helper()
+	var now time.Time
+	if err := intPool(t).QueryRow(context.Background(), `SELECT now()`).Scan(&now); err != nil {
+		t.Fatalf("read the database clock: %v", err)
+	}
+	return now
+}
+
 // FR-1: derived membership. A Trenton-granted user auto-joins #yard-trenton and #office (GLOBAL) but
 // NOT #yard-kingston. A GLOBAL user joins both yards. Sync is idempotent and self-healing.
 func TestIntegration_DerivedMembership_FromRoleBranch(t *testing.T) {
@@ -136,7 +152,7 @@ func TestIntegration_UnreadMath(t *testing.T) {
 	// Baseline: mark BOTH Sam and Alex read so pre-existing (seeded) #office messages don't skew the
 	// count, we want to measure ONLY the message Alex is about to post.
 	for _, u := range []string{uSamRivera, uAlexMorgan} {
-		if err := repo.MarkRead(ctx, chOffice, u, time.Now()); err != nil {
+		if err := repo.MarkRead(ctx, chOffice, u, dbNow(t)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -155,7 +171,7 @@ func TestIntegration_UnreadMath(t *testing.T) {
 		t.Errorf("author's own message must not be unread, got %d", alexUnread)
 	}
 	// Sam marks read → unread clears.
-	if err := repo.MarkRead(ctx, chOffice, uSamRivera, time.Now()); err != nil {
+	if err := repo.MarkRead(ctx, chOffice, uSamRivera, dbNow(t)); err != nil {
 		t.Fatal(err)
 	}
 	if got := unreadFor(ctx, t, repo, uSamRivera, chOffice); got != 0 {
