@@ -75,7 +75,7 @@ func TestIntegrationARReminder_NoTransportIsNotADeliveredSendOrAFlag(t *testing.
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
 		                      doc_type, source_kind, closes_order)
-		VALUES ('INV-185-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 10, CURRENT_DATE - 10,
+		VALUES ('INV-185-'||$1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date - 10, (now() AT TIME ZONE 'America/Toronto')::date - 10,
 		        10000, 0, 10000, 10000, now(), 'INVOICE', 'ORDER', FALSE)`, suffix, customerID, branchID); err != nil {
 		t.Fatalf("seed open invoice: %v", err)
 	}

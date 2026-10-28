@@ -222,6 +222,57 @@ func TestWeightSyncPullAndLoadHoldTheCallersBranchReach(t *testing.T) {
 	}
 }
 
+// UX-103: the reach clause holds in the weights FindApplied query, as the weights pull's does. A pre ledger
+// key can name rows on two branches (0213's column carries no unique index), and an unordered LIMIT 1 must
+// not pick the out of reach row and answer not applied to the caller who owns the other one. The out of
+// reach row takes the key first, so an unordered scan meets it before the caller's own row.
+func TestWeightSyncFindAppliedHoldsTheReachInTheQuery(t *testing.T) {
+	d := newPickDoor(t)
+	north := d.org
+	stampBranch(t, d, d.branchA, north)
+	stampBranch(t, d, d.branchB, north)
+	staffOf := func(sc identity.StaffContext) identity.SyncStaffResolver {
+		return func(context.Context, string, string) (identity.StaffContext, bool, error) { return sc, true, nil }
+	}
+	branches := branchesOfOrg{d.branchA: {north: true}, d.branchB: {north: true}}
+	global := scopedTo(uuid.NewString())
+	global.Scope, global.Tier = identity.ScopeGlobal, identity.TierLeadership
+	orderA, orderB := uuid.NewString(), uuid.NewString()
+	owner := map[string]string{orderA: north, orderB: north}
+	key2 := uuid.NewString()
+	create := func(order, branch string) string {
+		s := NewWeightSyncStore(d.pool, weightDoorOrders{owner: owner, branch: branch}, nil).
+			WithStaffAuthority(staffOf(global)).WithBranchOrgReader(branches)
+		row, err := s.Create(context.Background(), d.f, key2, map[string]any{"order_id": order, "order_line_no": 1})
+		if err != nil {
+			t.Fatalf("create weight task: %v", err)
+		}
+		return row.ID
+	}
+	onB := create(orderB, d.branchB)
+	onA := create(orderA, d.branchA)
+	deviceA := NewWeightSyncStore(d.pool, weightDoorOrders{owner: owner, branch: d.branchA}, nil).
+		WithStaffAuthority(staffOf(scopedTo(uuid.NewString(), d.branchA))).WithBranchOrgReader(branches)
+	deviceB := NewWeightSyncStore(d.pool, weightDoorOrders{owner: owner, branch: d.branchB}, nil).
+		WithStaffAuthority(staffOf(scopedTo(uuid.NewString(), d.branchB))).WithBranchOrgReader(branches)
+	byGlobal := NewWeightSyncStore(d.pool, weightDoorOrders{owner: owner, branch: d.branchA}, nil).
+		WithStaffAuthority(staffOf(global)).WithBranchOrgReader(branches)
+	row, found, err := deviceA.FindApplied(context.Background(), d.f, key2)
+	if err != nil || !found {
+		t.Fatalf("a pre ledger key on two branches answers applied for the caller's own row: found %v err %v", found, err)
+	}
+	if row.ID != onA {
+		t.Errorf("the caller's own row answers, not the out of reach one: got %q want %q", row.ID, onA)
+	}
+	bRow, bFound, bErr := deviceB.FindApplied(context.Background(), d.f, key2)
+	if bErr != nil || !bFound || bRow.ID != onB {
+		t.Errorf("the other branch's caller answers for its own keyed row: found %v row %q err %v", bFound, bRow.ID, bErr)
+	}
+	if _, found, err := byGlobal.FindApplied(context.Background(), d.f, key2); err != nil || !found {
+		t.Errorf("a GLOBAL caller of the org still answers applied: found %v err %v", found, err)
+	}
+}
+
 // UX-81d: the weights sync replay door answers an out of reach row as not applied, the fence the pick
 // scope's FindApplied has held since 567 round 2. A branch B device replaying a key that applied on a
 // branch A task gets the absent key's answer, its own branch's key still answers, and a GLOBAL caller

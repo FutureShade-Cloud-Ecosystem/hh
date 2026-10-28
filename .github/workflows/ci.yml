@@ -629,11 +629,20 @@ jobs:
             DATABASE_URL="$GUARD/integration_gate?sslmode=disable" "$RUNNER_TEMP/evening-guard/go" run ./cmd/core seed
           GOFLAGS="-overlay=$RUNNER_TEMP/evening-guard/overlay.json" HH_CLOCK_SHIFT_SECONDS="$shift_s" \
             DATABASE_URL="$GUARD/integration_core_gate?sslmode=disable" "$RUNNER_TEMP/evening-guard/go" run ./cmd/core migrate
-          # -timeout 30m as on every go test step in this file. The packages share the one seeded gate
-          # database and run in go list order, the same order the integration job's $(go list ./...)
-          # runs them in, so a package sees the leftovers the same neighbours leave in both jobs.
+          # The package list is the date sensitive four plus every package whose integration legs
+          # seed invoices (FROM-PRINCIPAL 255 P1 and 261), plus messaging (its Mentions badge reads the
+          # dealer's day, MAIN-RED-2) and assist/parity (RedTeam9 plants and analyzes its own world,
+          # FLAKE-9), in go list order: the packages share one seeded gate database and run in the
+          # order the integration job's $(go list ./...) runs them, so a package sees the leftovers the
+          # same neighbours leave in both jobs. A fixture that dates a document from the session's
+          # CURRENT_DATE, the UTC day, is one day ahead of the dealer's day under this pin, so a leg
+          # reading date sensitive figures off it fails here instead of at a chance evening run of the
+          # main integration job. cmd/core's legs seed invoices too, but its integration suite alone is
+          # about half of this step's whole time budget, so it stays on the main integration job; its
+          # own fixtures take the dealer's day.
+          # -timeout 30m as on every go test step in this file.
           GOFLAGS="-overlay=$RUNNER_TEMP/evening-guard/overlay.json" HH_CLOCK_SHIFT_SECONDS="$shift_s" HH_EVENING_GUARD=1 \
             DATABASE_URL="$GUARD/integration_gate?sslmode=disable" \
             HH_CORE_TEST_DATABASE_URL="$GUARD/integration_core_gate?sslmode=disable" \
-            "$RUNNER_TEMP/evening-guard/go" test -tags integration ./internal/assist/parity ./internal/billing ./internal/messaging ./internal/platform/houseday ./internal/pos ./internal/purchasing \
+            "$RUNNER_TEMP/evening-guard/go" test -tags integration ./internal/assist/adapters ./internal/assist/parity ./internal/billing ./internal/finstmt ./internal/gl ./internal/load ./internal/messaging ./internal/order ./internal/payments ./internal/platform/houseday ./internal/portal ./internal/pos ./internal/printing ./internal/purchasing ./internal/quote ./internal/sync ./internal/tax ./internal/till \
             -count=1 -p 1 -timeout 30m

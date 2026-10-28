@@ -605,6 +605,35 @@ func (r *Repository) SnapshotOnHand(ctx context.Context, tx pgx.Tx, branchID str
 	return out, rows.Err()
 }
 
+// StockValueCents is the consolidated (or branch scoped, when the caller names a branch) stock value
+// in ONE statement: every stock_balances row at its branch's weighted average cost, the product taken
+// in exact NUMERIC (a DECIMAL(19,4) quantity times a BIGINT cost carries no rounding of its own), each
+// row rounded half away from zero - SQL ROUND()'s tie rule, the rounding the module's own valuation
+// writes (qtyTimesCents, and the received line's ROUND(received_base * unit_cost_cents) leg below) -
+// and summed, answered as integer cents. The rounding sits on each row, not after the sum, so the
+// value of any group of rows is the sum of its rows' values and a branch scoped read and the
+// consolidated one can never drift a cent apart. Go never multiplies a quantity by a cost on this
+// path: the caller's integer answer cannot inherit a float's last bit (FW1-09d round 2). A caller
+// holding a transaction passes it so the read rides that connection; nil reads through the pool.
+func (r *Repository) StockValueCents(ctx context.Context, tx pgx.Tx, branchID string) (int64, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	q := `
+		SELECT COALESCE(SUM(ROUND(sb.on_hand_base * COALESCE(pbc.avg_unit_cost_cents, 0))), 0)::bigint
+		FROM stock_balances sb
+		LEFT JOIN product_branch_costs pbc
+		       ON pbc.product_id = sb.product_id AND pbc.branch_id = sb.branch_id`
+	var args []any
+	if branchID != "" {
+		q += ` WHERE sb.branch_id = $1`
+		args = append(args, branchID)
+	}
+	var total int64
+	err := r.q(tx).QueryRow(ctx, q, args...).Scan(&total)
+	return total, err
+}
+
 // ReceivedLinesForPO returns the received lines of a PO for landed-cost allocation (extended CAD value =
 // received_base × unit_cost_cents; special-buy flagged off metadata). weight = received_base × per-unit kg.
 func (r *Repository) ReceivedLinesForPO(ctx context.Context, poID string) ([]ReceivedLine, error) {

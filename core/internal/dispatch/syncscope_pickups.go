@@ -222,6 +222,25 @@ func (s *PickupsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id stri
 	return s.load(ctx, s.pool, ids, ok, id)
 }
 
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// a pickup row stands, tombstone aware, for every caller of the tenant at
+// once. No per-caller leg rides it: the tenant's order id set is the
+// scope's anchor (every caller of the tenant resolves the same set), and
+// whose order a pickup sits on is the fence Load speaks. A staff filter
+// fails closed, the scope's own caller class.
+func (s *PickupsSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	if !f.Tenant || f.TenantID == "" || !looksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM will_call_pickups WHERE id = $1::uuid AND deleted_at IS NULL)`,
+		id).Scan(&present); err != nil {
+		return false, fmt.Errorf("dispatch: pickups bound entity exists: %w", err)
+	}
+	return present, nil
+}
+
 // pickupsQuerier is the read surface a pool and a transaction share, so
 // one loader body serves the public Load (the pool) and the callers
 // that already hold a transaction (their own connection).
