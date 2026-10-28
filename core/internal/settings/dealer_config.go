@@ -182,6 +182,7 @@ func NewDealerConfigReader(pool *pgxpool.Pool) *DealerConfigReader {
 // pgx.Tx both satisfy it, so the same read runs on the pool or on a caller's open transaction.
 type DealerConfigQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 // DealerConfig reads the five keys in one query, uncached. A malformed stored value falls back to
