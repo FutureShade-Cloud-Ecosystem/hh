@@ -717,6 +717,24 @@ export const dealerStyles = css`
   .staff-last-seen {
     font-size: 13px;
   }
+  /* -- the register's branch values --------------------------------------------------
+     UX-106 round 2: the values sit in one group, so the card row's grid has
+     the label in the first column and the group in the second. A cell with
+     more than one value auto placed the second one under the label, so the
+     yard persona's second branch, "Julian", sat at the card's left edge and
+     read as a label. Inside the group the values wrap on their own line,
+     still inside the value column. */
+  .staff-branches-values {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--hh-s-8);
+    align-items: center;
+  }
+  .staff-branches-values > * {
+    /* The values never squeeze: a pill that shrank would print its words
+       outside its own boundary. */
+    flex: none;
+  }
   .link-out-wrap {
     margin-top: var(--hh-s-8);
   }
@@ -786,6 +804,17 @@ export const dealerStyles = css`
     }
     .staff-table tbody td.staff-actions .link-out-wrap {
       max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+    /* The branch values: the group takes the value column's own width, and a
+       pill whose words are longer than the column breaks inside its own
+       boundary instead of running off the card. */
+    .staff-table tbody td.staff-branches .staff-branches-values {
+      max-width: 100%;
+    }
+    .staff-table tbody td.staff-branches .chip {
+      max-width: 100%;
+      white-space: normal;
       overflow-wrap: anywhere;
     }
   }

@@ -145,6 +145,18 @@ function renderRegister(model: StaffModel): TemplateResult {
  * card per person, the role select under the name at the card's own width.
  * The select used to run off the card's right edge, so "General Manager" and
  * "Platform Administrator" were cut in half.
+ *
+ * UX-106 round 2: the branch values are one group inside the value column.
+ * The card row is a two column grid, the label in the first and the values in
+ * the second, so a cell with more than one value auto placed the second one
+ * under the label: the yard persona's second branch, "Julian", sat at the
+ * card's left edge and read as a label. The values sit in one wrapper, so
+ * they wrap inside the value column and never under the label.
+ *
+ * The chip's class never carries a "nothing": a mixed attribute binding whose
+ * value is "nothing" drops the whole attribute, so the branch values were
+ * plain text beside "All branches", which is a pill. An empty string keeps
+ * the class and reads as the chip alone.
  */
 function renderStaffRow(m: StaffMemberRow, model: StaffModel): TemplateResult {
   const chips = branchChips(m.branch_ids, model.branches);
@@ -183,11 +195,13 @@ function renderStaffRow(m: StaffMemberRow, model: StaffModel): TemplateResult {
           : html`<span class="chip" title="Platform role, managed by a platform administrator">${m.role_name}</span>`}
       </td>
       <td class="staff-branches" data-label="Branches">
-        ${m.scope === "GLOBAL"
-          ? html`<span class="chip">All branches</span>`
-          : chips.length === 0
-            ? html`<span class="dim">None</span>`
-            : chips.map((c) => html`<span class="chip ${c.known ? nothing : "mono"}">${c.label}</span>`)}
+        <span class="staff-branches-values">
+          ${m.scope === "GLOBAL"
+            ? html`<span class="chip">All branches</span>`
+            : chips.length === 0
+              ? html`<span class="dim">None</span>`
+              : chips.map((c) => html`<span class="chip ${c.known ? "" : "mono"}">${c.label}</span>`)}
+        </span>
       </td>
       <td class="staff-access" data-label="Access"><span class="badge-outline"><strong>${accessWord(m.tier, m.scope)}</strong></span></td>
       <td class="staff-status" data-label="Status"><span class="badge-status ${statusCls}"><strong>${status}</strong></span></td>
