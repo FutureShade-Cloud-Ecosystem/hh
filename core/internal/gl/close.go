@@ -442,12 +442,25 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	if err != nil {
 		return YearCloseResult{}, err
 	}
+	// FW1-09g round 2 (S2's P3 1 ruled, FROM-PRINCIPAL 350): the press that answers
+	// "already closed" reads PeriodsClosed from the year's REAL period count, never from
+	// the marker. The marker records the ACT; it cannot say what the periods did
+	// afterwards, so a closed year whose month was reopened would answer PeriodsClosed
+	// true while one of its twelve months is OPEN. The count is the truth: every period
+	// of the year CLOSED, or not. It is read here, on THIS transaction under the year
+	// end's lock, and both already closed answers carry it. A year with no periods at all
+	// is not a closed year either, so the count answers false there too.
+	total, closed, err := s.store.YearPeriodsTx(ctx, tx, year)
+	if err != nil {
+		return YearCloseResult{}, err
+	}
+	periodsClosed := total > 0 && closed == total
 	if marked {
 		ids, net, err := s.store.ClosingJournalsForYearTx(ctx, tx, year)
 		if err != nil {
 			return YearCloseResult{}, err
 		}
-		return YearCloseResult{FiscalYear: year, ClosingJournalIDs: ids, ClosingJournalID: firstID(ids), NetIncomeCents: net, PeriodsClosed: true, AlreadyClosed: true}, nil
+		return YearCloseResult{FiscalYear: year, ClosingJournalIDs: ids, ClosingJournalID: firstID(ids), NetIncomeCents: net, PeriodsClosed: periodsClosed, AlreadyClosed: true}, nil
 	}
 	ids, net, err := s.store.ClosingJournalsForYearTx(ctx, tx, year)
 	if err != nil {
@@ -457,21 +470,18 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 		// The belt under the marker: a year that carries a closing journal was closed, even
 		// on a box whose marker was never written for it (a year closed before the marker
 		// existed, whose backfill did not reach it). The press answers and writes nothing.
-		return YearCloseResult{FiscalYear: year, ClosingJournalIDs: ids, ClosingJournalID: firstID(ids), NetIncomeCents: net, PeriodsClosed: true, AlreadyClosed: true}, nil
+		return YearCloseResult{FiscalYear: year, ClosingJournalIDs: ids, ClosingJournalID: firstID(ids), NetIncomeCents: net, PeriodsClosed: periodsClosed, AlreadyClosed: true}, nil
 	}
-	// FW1-09c round 2 (S2's P2, FROM-PRINCIPAL 320 and 321): the year's periods, counted, on THIS
-	// transaction under the year end's lock. A year with NO periods at all has nothing to close
-	// and refuses in words, never success (321); and the count comes before the CLOSED test, so
-	// "every period of the year is already CLOSED" is never vacuously true on zero periods.
+	// FW1-09c round 2 (S2's P2, FROM-PRINCIPAL 320 and 321): the year's periods, counted,
+	// on THIS transaction under the year end's lock (the count is read above, where the
+	// already closed answers read it from). A year with NO periods at all has nothing to
+	// close and refuses in words, never success (321); and the count comes before the
+	// CLOSED test, so "every period of the year is already CLOSED" is never vacuously true
+	// on zero periods.
 	//
-	// FW1-09g: the count no longer answers the repeat press (the marker does that now, read
-	// above), so the CLOSED half of the count is read and dropped: a year whose twelve months
-	// were sealed one by one is closed by this press like every other year, and the press
-	// leaves a record.
-	total, _, err := s.store.YearPeriodsTx(ctx, tx, year)
-	if err != nil {
-		return YearCloseResult{}, err
-	}
+	// FW1-09g: the count does not answer the repeat press (the marker does that now, read
+	// above), so the CLOSED half of the count answers the repeat press's PeriodsClosed
+	// and nothing else here.
 	if total == 0 {
 		return YearCloseResult{}, clientErr(409, "gl: fiscal year %d has no periods to close", year)
 	}
