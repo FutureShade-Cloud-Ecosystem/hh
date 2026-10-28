@@ -175,9 +175,9 @@ export const driveStyles = css`
   /* The moves. Big, full width, one hand. */
   .actions { display: flex; flex-direction: column; gap: var(--hh-s-12); margin-bottom: var(--hh-s-16); }
   button.big { display: block; width: 100%; min-height: 64px; font-size: 18px; font-weight: 700; }
-  /* A control that cannot be used yet keeps a visible edge, the disabled line, so it can be found,
-     and it wears the grey token swap: a fade is not a state. */
-  button.big:disabled { background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border: 2px solid var(--hh-disabled-line); }
+  /* A control that cannot be used yet keeps a visible edge, the sheet's control line (3:1), so it can be found.
+     Its fill and ink are the disabled pair: a fade is not a state. */
+  button.big:disabled { background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border: 2px solid var(--hh-control-line); }
   /* The board's second door: an outlined red, lighter than the yellow beside it. */
   .btn-door-fail { background: transparent; color: var(--hh-danger); border: 2px solid var(--hh-danger); }
   .btn-door-fail:hover:not(:disabled) { background: var(--hh-row-alt); }
