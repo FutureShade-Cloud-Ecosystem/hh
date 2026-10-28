@@ -37,6 +37,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"io/fs"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
@@ -1515,6 +1516,76 @@ func qd1gMatrixMutants(t *testing.T) {
 		}
 		if !hit {
 			t.Errorf("document mutant %q stayed green (want a problem naming %q, got %q)", m.name, m.want, problems)
+		}
+	}
+}
+
+// ---- the gated stores' create body validators (UX-116 round 3) -------------
+
+// qd1gScanStoreMethods maps every store type declaring one method across the
+// module packages: the package directory dot the type name, the
+// qd1gScopesGuard source-scan pattern. Store instances are wired at the
+// composition root, so the census scans the packages' sources instead.
+func qd1gScanStoreMethods(t *testing.T, method string) map[string]bool {
+	t.Helper()
+	found := map[string]bool{}
+	re := regexp.MustCompile(`func \([^)]*\*([A-Za-z0-9_]+)\) ` + method + `\(`)
+	err := filepath.WalkDir("../../internal", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range re.FindAllStringSubmatch(string(raw), -1) {
+			found[filepath.Dir(path)+"."+m[1]] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan the module packages for %s: %v", method, err)
+	}
+	return found
+}
+
+// qd1gCreateBodyValidatorExceptions are the gated stores whose Create admits
+// every field and so runs no body validation: a stated reason each, reviewed
+// by the census. Empty on purpose: every store that answers the bound key
+// gate's existence read today also validates its create body.
+var qd1gCreateBodyValidatorExceptions = map[string]string{}
+
+// TestQD1G_SyncCreateBodyValidatorCensus: the UX-116 round 3 leg (the K3
+// read's P3-2). Every store that answers the bound key gate's existence read
+// (BoundEntityChecker) can hide a spent key's row behind "sync: row not
+// found"; if its Create validates the body, an invalid body is the oracle
+// that tells the spent key from a free one, unless the store also answers
+// the gate's create body validation (CreateBodyValidator) with the same
+// refusal Create answers. So the census enumerates the gated stores by
+// source and requires each to implement the validator. A new gated store
+// fails this leg until it does, or is excepted above with a stated reason.
+func TestQD1G_SyncCreateBodyValidatorCensus(t *testing.T) {
+	gated := qd1gScanStoreMethods(t, "BoundEntityExists")
+	validators := qd1gScanStoreMethods(t, "ValidateCreate")
+	for key, reason := range qd1gCreateBodyValidatorExceptions {
+		if reason == "" {
+			t.Errorf("sync census: the create body validator exception for %s carries no stated reason", key)
+		}
+		if !gated[key] {
+			t.Errorf("sync census: the create body validator exception %s is stale: no such store answers the bound key gate's existence read", key)
+		}
+	}
+	for key := range gated {
+		if _, excepted := qd1gCreateBodyValidatorExceptions[key]; excepted {
+			continue
+		}
+		if !validators[key] {
+			t.Errorf("sync census: %s answers the bound key gate's existence read (BoundEntityExists) but implements no create body validation (ValidateCreate): "+
+				"an invalid create body then tells a spent key from a free one (UX-116). Implement the seam beside Create, sharing one shape helper, "+
+				"or record a stated exception in qd1gCreateBodyValidatorExceptions", key)
 		}
 	}
 }

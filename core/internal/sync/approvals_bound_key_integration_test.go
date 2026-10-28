@@ -320,3 +320,175 @@ func TestUX114ApprovalsGoneRowRefusesANonBinder(t *testing.T) {
 		t.Errorf("the replays bind nothing new: %d ledger rows, want 2", ledgerRows)
 	}
 }
+
+// TestUX116ApprovalsGrantsRefusalAnswersAlikeOnASpentAndAFreeKey: UX-116
+// round 3, the S2 read's live-hidden-row case (principal item 344). The GM
+// files a card at branch B under a key bound with his own note; the branch A
+// clerk may not read the card. The clerk replays a filing of the same shape
+// under the spent key and a free one. Today the answers differ: the spent
+// key meets the gate's hidden refusal and the free key the filing's
+// branch-grant wall. That wall depends only on the caller's grants and the
+// body, never on the row, so it moves into the store's create body
+// validation and the two keys answer it alike.
+func TestUX116ApprovalsGrantsRefusalAnswersAlikeOnASpentAndAFreeKey(t *testing.T) {
+	f := newGapFixture(t)
+	ctx := context.Background()
+	store := ux108ApprovalsStore(t, f)
+	gm := sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubGeneralMgr}
+	clerk := sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubInsideSales}
+	engine, info := ux108r2Engine(t, f, store)
+
+	bound := uuid.NewString()
+	fresh := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(ctx, `DELETE FROM sync_op_hashes WHERE client_id = ANY($1::uuid[])`,
+			[]string{bound, fresh})
+		_, _ = f.pool.Exec(ctx, `DELETE FROM permission_approval_requests WHERE detail LIKE 'ux116r3:%'`)
+	})
+
+	// The manager files the card at branch B and notes it under the key: the
+	// note binds the key to him, with the card as the key's entity.
+	rs, err := store.Create(ctx, gm, uuid.NewString(), map[string]any{
+		"branch_id":   testkit.BranchNorthBID,
+		"policy_type": "CREDIT_LIMIT_EXCEEDED",
+		"detail":      "ux116r3: a card the clerk may not read"})
+	if err != nil {
+		t.Fatalf("the manager files the credit exception: %v", err)
+	}
+	note := apigen.SyncPushOperation{ClientId: bound, Op: "update", Payload: map[string]any{
+		"id": rs.ID, "detail": "ux116r3: the manager's own note"}}
+	if first := ux108r2Push(t, engine, info, gm, note); first.Status != "applied" || first.Seq == nil {
+		t.Fatalf("the manager notes his own card: %+v", first)
+	}
+
+	// The clerk replays a filing of the same shape under the spent key and a
+	// free one. Both full answers must be the branch-grant wall, field for
+	// field: the status, the seq leg, the error words and the envelope.
+	createPayload := map[string]any{
+		"branch_id":   testkit.BranchNorthBID,
+		"policy_type": "CREDIT_LIMIT_EXCEEDED",
+		"detail":      "ux116r3: the clerk's replayed filing"}
+	spent := ux108r2Push(t, engine, info, clerk, apigen.SyncPushOperation{ClientId: bound, Op: "create", Payload: createPayload})
+	free := ux108r2Push(t, engine, info, clerk, apigen.SyncPushOperation{ClientId: fresh, Op: "create", Payload: createPayload})
+	ux108r2SameAnswer(t, "the spent key and a free key, a filing the clerk may not make", spent, free)
+	const grantsRefusal = "identity: that branch is outside your grants: sync: operation refused"
+	for name, r := range map[string]apigen.SyncPushResult{"the spent key": spent, "a free key": free} {
+		if r.Status != "rejected" || r.Error == nil || *r.Error != grantsRefusal {
+			t.Errorf("%s: the filing's answer is the branch-grant wall: %+v", name, r)
+		}
+		if r.Seq != nil {
+			t.Errorf("%s: the refused filing carries no seq: %+v", name, r)
+		}
+		if r.Conflict != nil {
+			t.Errorf("%s: the refused filing carries no envelope: %+v", name, r)
+		}
+	}
+
+	// The replay filed no card, and the ledger holds the manager's note
+	// binding alone.
+	var cards int
+	if err := f.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM permission_approval_requests WHERE detail = $1`,
+		"ux116r3: the clerk's replayed filing").Scan(&cards); err != nil {
+		t.Fatalf("count the replayed filings: %v", err)
+	}
+	if cards != 0 {
+		t.Errorf("the clerk's replay filed a card: %d", cards)
+	}
+	var ledgerRows int
+	if err := f.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sync_op_hashes WHERE client_id = ANY($1::uuid[])`,
+		[]string{bound, fresh}).Scan(&ledgerRows); err != nil {
+		t.Fatalf("count the probe's ledger rows: %v", err)
+	}
+	if ledgerRows != 1 {
+		t.Errorf("the replays bind nothing new: %d ledger rows, want 1", ledgerRows)
+	}
+}
+
+// TestUX114R3ApprovalsGoneRowCreateReplayRecordsTheTrade: the create trade on
+// a gone row, the approvals shape (principal items 342 and 344, stated in the
+// PR body). The GM files a card at branch B through sync under one key and
+// withdraws it under another; the clerk's pull carries the tombstone (PR
+// 657's org-wide broadcast), so the clerk's replay of the create key resolves
+// to the tombstone's seq, "applied", while a free key meets the branch-grant
+// wall. The pair is intentionally not equal: the bound answer can never
+// reach store.Create (PR 640's rule), and the tombstone's seq is a fact the
+// clerk's own pull already carries, so nothing new leaks except that this
+// key filed the card. This leg records both answers exactly.
+func TestUX114R3ApprovalsGoneRowCreateReplayRecordsTheTrade(t *testing.T) {
+	f := newGapFixture(t)
+	ctx := context.Background()
+	store := ux108ApprovalsStore(t, f)
+	gm := sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubGeneralMgr}
+	clerk := sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubInsideSales}
+	engine, info := ux108r2Engine(t, f, store)
+
+	createKey := uuid.NewString()
+	withdrawKey := uuid.NewString()
+	fresh := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(ctx, `DELETE FROM sync_op_hashes WHERE client_id = ANY($1::uuid[])`,
+			[]string{createKey, withdrawKey, fresh})
+		_, _ = f.pool.Exec(ctx, `DELETE FROM permission_approval_requests WHERE detail LIKE 'ux114r3:%'`)
+	})
+
+	// The GM files the card at branch B through sync under the create key.
+	createPayload := map[string]any{
+		"branch_id":   testkit.BranchNorthBID,
+		"policy_type": "CREDIT_LIMIT_EXCEEDED",
+		"detail":      "ux114r3: a card filed then withdrawn"}
+	filed := ux108r2Push(t, engine, info, gm, apigen.SyncPushOperation{ClientId: createKey, Op: "create", Payload: createPayload})
+	if filed.Status != "applied" || filed.Seq == nil {
+		t.Fatalf("the GM files the card through sync: %+v", filed)
+	}
+	var cardID string
+	if err := f.pool.QueryRow(ctx,
+		`SELECT id::text FROM permission_approval_requests WHERE detail = $1`,
+		"ux114r3: a card filed then withdrawn").Scan(&cardID); err != nil {
+		t.Fatalf("read the filed card back: %v", err)
+	}
+
+	// The GM withdraws the card through sync under its own key.
+	delOp := apigen.SyncPushOperation{ClientId: withdrawKey, Op: "delete", Payload: map[string]any{"id": cardID}}
+	withdrawn := ux108r2Push(t, engine, info, gm, delOp)
+	if withdrawn.Status != "applied" || withdrawn.Seq == nil || *withdrawn.Seq <= *filed.Seq {
+		t.Fatalf("the GM withdraws his own card through sync: %+v", withdrawn)
+	}
+	tombSeq := *withdrawn.Seq
+
+	// The clerk's create replay under the spent key: the tombstone rides the
+	// clerk's own pull, so the replay answers applied with the tombstone's
+	// seq, and nothing writes.
+	boundAnswer := ux108r2Push(t, engine, info, clerk, apigen.SyncPushOperation{ClientId: createKey, Op: "create", Payload: createPayload})
+	if boundAnswer.Status != "applied" || boundAnswer.Seq == nil || *boundAnswer.Seq != tombSeq {
+		t.Errorf("the spent key's create replay answers the tombstone's seq: %+v", boundAnswer)
+	}
+
+	// The same body under a free key: the branch-grant wall. The pair is the
+	// accepted trade: recorded here, not equal by design.
+	freeAnswer := ux108r2Push(t, engine, info, clerk, apigen.SyncPushOperation{ClientId: fresh, Op: "create", Payload: createPayload})
+	const grantsRefusal = "identity: that branch is outside your grants: sync: operation refused"
+	if freeAnswer.Status != "rejected" || freeAnswer.Error == nil || *freeAnswer.Error != grantsRefusal {
+		t.Errorf("the free key's create replay meets the branch-grant wall: %+v", freeAnswer)
+	}
+
+	// The card stays withdrawn, and the ledger holds the two GM bindings.
+	var deletedAt *time.Time
+	if err := f.pool.QueryRow(ctx,
+		`SELECT deleted_at FROM permission_approval_requests WHERE id = $1::uuid`, cardID).Scan(&deletedAt); err != nil {
+		t.Fatalf("read the card back: %v", err)
+	}
+	if deletedAt == nil {
+		t.Errorf("the replays wrote nothing: the card is not withdrawn")
+	}
+	var ledgerRows int
+	if err := f.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sync_op_hashes WHERE client_id = ANY($1::uuid[])`,
+		[]string{createKey, withdrawKey, fresh}).Scan(&ledgerRows); err != nil {
+		t.Fatalf("count the probe's ledger rows: %v", err)
+	}
+	if ledgerRows != 2 {
+		t.Errorf("the replays bind nothing new: %d ledger rows, want 2", ledgerRows)
+	}
+}
