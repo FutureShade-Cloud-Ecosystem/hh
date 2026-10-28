@@ -101,10 +101,18 @@ func TestWorkspacePayments_AbsentWithoutTheTrail(t *testing.T) {
 				t.Fatalf("status=%d", rr.Code)
 			}
 			raw := rr.Body.String()
-			for _, leak := range []string{"PAY-1", "50000", "7000", "EFT", "99123", "last_payment", "unapplied_cents\":7"} {
+			// FLAKE-10: the word shaped needles stay byte scans, because a clock carries no
+			// letters and no other field's figure can spell them. The FIGURES are read from the
+			// PARSED body: a raw digit hunt over the body read the body's as_of clock's
+			// nanoseconds, a uuid's hex digits and the tail of the seeded credit limit
+			// ("500000") as the payment's figures.
+			for _, leak := range []string{"PAY-1", "EFT", "last_payment"} {
 				if strings.Contains(raw, leak) {
 					t.Fatalf("payment detail %q leaked: %s", leak, raw)
 				}
+			}
+			if leaks := workspaceFiguresIn(raw, 50000, 7000, 99123); len(leaks) != 0 {
+				t.Fatalf("payment detail leaked: %v\n%s", leaks, raw)
 			}
 			var body map[string]json.RawMessage
 			_ = json.Unmarshal(rr.Body.Bytes(), &body)
