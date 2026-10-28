@@ -416,6 +416,12 @@ export const dealerStyles = css`
       text-align: start;
       color: var(--hh-text);
     }
+    /* One table's labels are wider than the pattern's default column: the
+       promotions table's own widest word is PROMOTION, which is 81 px. The
+       label column is a table's own number, so that table sets its own. */
+    .cardrow-table.cardrow-wide {
+      --cardrow-label-col: minmax(92px, 29%);
+    }
   }
 
   /* -- the fields ---------------------------------------------------------------------- */

@@ -147,6 +147,21 @@ async function measure(page: Page, view: string): Promise<Box[]> {
       const label = el.getAttribute("data-label");
       return `${el.tagName.toLowerCase()}${cls}${test === null ? "" : `[${test}]`}${label === null ? "" : `{${label}}`}`;
     };
+    /** The width of a label's widest word, drawn the way the cell draws it:
+     *  the label's own font, its own letter spacing, its own capitals. A
+     *  label wraps on its words, so the word is what has to fit the column. */
+    const measureLabel = (text: string, cs: CSSStyleDeclaration): number => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (ctx === null) return 0;
+      ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      ctx.letterSpacing = cs.letterSpacing === "normal" ? "0px" : cs.letterSpacing;
+      const drawn = cs.textTransform === "uppercase" ? text.toUpperCase() : text;
+      return drawn
+        .split(/\s+/)
+        .filter((word) => word !== "")
+        .reduce((widest, word) => Math.max(widest, ctx.measureText(word).width), 0);
+    };
     const boxes: { view: string; what: string; kind: "table" | "spill" | "stray"; scroll: number; client: number }[] = [];
 
     // The wrap holds the table, so the wrap is the box that scrolls.
@@ -200,6 +215,20 @@ async function measure(page: Page, view: string): Promise<Box[]> {
           client: Math.round(tracks[0] + gap),
         });
       }
+      // And the label fits its own column. The label is drawn by the cell's
+      // own CSS, so it is measured the way it is drawn: the label's own font,
+      // its own letter spacing, its own capitals.
+      const label = cell.getAttribute("data-label") ?? "";
+      const labelStyle = getComputedStyle(cell, "::before");
+      const width = measureLabel(label, labelStyle);
+      if (width <= tracks[0] + 0.5) continue;
+      boxes.push({
+        view: name,
+        what: `${describe(cell)} | the label does not fit its column`,
+        kind: "spill",
+        scroll: Math.round(width),
+        client: Math.round(tracks[0]),
+      });
     }
     return boxes;
   }, view);

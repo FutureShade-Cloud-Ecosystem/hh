@@ -1018,7 +1018,7 @@ function renderPromotionsPanel(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-promos-empty">${promosEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table class="cardrow-table">
+              <table class="cardrow-table cardrow-wide">
                 <thead>
                   <tr>
                     <th scope="col">Promotion</th>
@@ -1976,7 +1976,7 @@ function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
                       <tr data-line=${line.id}>
                         <td class="mono" data-label="SKU">${line.sku}</td>
                         <td data-label="Retail">${batchLineWords(line)}</td>
-                        <td class="dim" data-label="Set automatically">${derivationWord(line.derived_from)}</td>
+                        <td class="dim" data-label="Set by">${derivationWord(line.derived_from)}</td>
                         <td data-label="Flag">${line.unmatched ? html`<span class="chip chip-danger">unmatched</span>` : line.is_outlier ? html`<span class="chip chip-danger">outlier</span>` : html`<span class="chip chip-dim">ok</span>`}</td>
                       </tr>
                     `,
@@ -2193,7 +2193,7 @@ function renderPriceFilePreview(m: PriceFileModel): TemplateResult | typeof noth
                   <td data-label="Outcome"><span class="chip ${line.outcome === "UNKNOWN" ? "chip-danger" : ""}">${outcomeWord(line.outcome)}</span></td>
                   <td class="num" data-label="Retail now">${moneyWords(line.current_retail_cents)}</td>
                   <td class="num" data-label="Retail in the file">${moneyWords(line.new_retail_cents)}${line.freight_estimated ? html` <span class="chip chip-dim">est. freight</span>` : nothing}</td>
-                  <td class="dim" data-label="Set automatically">${derivationWord(line.derived_from)}</td>
+                  <td class="dim" data-label="Set by">${derivationWord(line.derived_from)}</td>
                 </tr>
               `,
             )}
