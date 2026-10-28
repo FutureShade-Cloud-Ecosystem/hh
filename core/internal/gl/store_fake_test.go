@@ -10,6 +10,7 @@ import (
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -91,6 +92,10 @@ func (f *fakeStore) PostingAccountsTx(ctx context.Context, _ pgx.Tx, eventType, 
 
 func (f *fakeStore) ListActiveRules(_ context.Context) ([]RuleRef, error) { return f.activeRules, nil }
 
+func (f *fakeStore) ListActiveRulesTx(ctx context.Context, _ pgx.Tx) ([]RuleRef, error) {
+	return f.ListActiveRules(ctx)
+}
+
 func (f *fakeStore) ListAccounts(_ context.Context) ([]Account, error) {
 	var out []Account
 	for _, a := range f.accounts {
@@ -102,6 +107,10 @@ func (f *fakeStore) ListAccounts(_ context.Context) ([]Account, error) {
 func (f *fakeStore) AccountByCode(_ context.Context, code string) (Account, bool, error) {
 	a, ok := f.accounts[code]
 	return a, ok, nil
+}
+
+func (f *fakeStore) AccountByCodeTx(ctx context.Context, _ pgx.Tx, code string) (Account, bool, error) {
+	return f.AccountByCode(ctx, code)
 }
 
 func (f *fakeStore) InsertAccount(_ context.Context, in CreateAccountInput) (Account, error) {
@@ -118,6 +127,10 @@ func (f *fakeStore) DraftLineCountForAccountCode(_ context.Context, code string)
 	return f.draftRefs[code], nil
 }
 
+func (f *fakeStore) DraftLineCountForAccountCodeTx(ctx context.Context, _ pgx.Tx, code string) (int, error) {
+	return f.DraftLineCountForAccountCode(ctx, code)
+}
+
 func (f *fakeStore) SetAccountActive(_ context.Context, code string, active bool) (Account, error) {
 	a, ok := f.accounts[code]
 	if !ok {
@@ -126,6 +139,10 @@ func (f *fakeStore) SetAccountActive(_ context.Context, code string, active bool
 	a.IsActive = active
 	f.accounts[code] = a
 	return a, nil
+}
+
+func (f *fakeStore) SetAccountActiveTx(ctx context.Context, _ pgx.Tx, code string, active bool) (Account, error) {
+	return f.SetAccountActive(ctx, code, active)
 }
 
 // InsertJournalTx has no transaction to ride in a DB-free fake; it posts as InsertJournal does.
@@ -509,10 +526,46 @@ func (h fakeHold) JournalApprovalState(context.Context, string, int64) (Approval
 	return h.state, h.err
 }
 
+// noLiveCounterCodes is the gl's own test world: no till module is in the composition, so no live
+// counter reason code names any account and the chart's retire guard (W2-6b fix round 3) has nothing
+// to refuse. The guard refuses an account it cannot check, so the seam is wired here with the honest
+// answer for a world without the till.
+type noLiveCounterCodes struct{}
+
+func (noLiveCounterCodes) ActiveCounterCodesForAccount(context.Context, string) ([]CounterAccountUse, error) {
+	return nil, nil
+}
+
+func (noLiveCounterCodes) ActiveCounterCodesForAccountTx(context.Context, pgx.Tx, string) ([]CounterAccountUse, error) {
+	return nil, nil
+}
+
+// noWaitingPostingQueue is the DB-free test world's posting queue seam (W2-6b fix round 4): no outbox
+// rows wait in memory unless a test wires its own queue.
+type noWaitingPostingQueue struct{}
+
+func (noWaitingPostingQueue) WaitingOrDead(context.Context, []string, int) ([]notify.QueueRow, error) {
+	return nil, nil
+}
+
+func (noWaitingPostingQueue) WaitingOrDeadCounts(context.Context, []string) (int, int, error) {
+	return 0, 0, nil
+}
+
+func (noWaitingPostingQueue) UnpostedForAccount(context.Context, string, string) (int, error) {
+	return 0, nil
+}
+
+func (noWaitingPostingQueue) UnpostedForAccountTx(context.Context, pgx.Tx, string, string) (int, error) {
+	return 0, nil
+}
+
 func newTestService(f *fakeStore) *Service {
 	holder := testCaller
 	return NewService(nil).
 		WithApprovalStateChecker(fakeHold{}).
+		WithCounterAccountUses(noLiveCounterCodes{}).
+		WithPostingQueue(noWaitingPostingQueue{}).
 		withStore(f).
 		// The unit clock is a private fixture date; no books stand behind it.
 		withClock(func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }).
@@ -523,6 +576,8 @@ func newTestService(f *fakeStore) *Service {
 func newTestServiceAs(f *fakeStore, caller identity.StaffContext) *Service {
 	return NewService(nil).
 		WithApprovalStateChecker(fakeHold{}).
+		WithCounterAccountUses(noLiveCounterCodes{}).
+		WithPostingQueue(noWaitingPostingQueue{}).
 		withStore(f).
 		// The unit clock is a private fixture date; no books stand behind it.
 		withClock(func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }).
