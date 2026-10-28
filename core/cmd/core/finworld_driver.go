@@ -960,6 +960,15 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 				return fmt.Errorf("%s drain: %w", ev.EventKey, err)
 			}
 
+		case FinWorldEventLandedCost:
+			lcEv := ev.LandedCost
+			if err := finworldExecuteLandedCost(ctx, h, lcEv); err != nil {
+				return fmt.Errorf("%s (%s): %w", ev.EventKey, lcEv.LandedCostKey, err)
+			}
+			if err := h.drain(ctx); err != nil {
+				return fmt.Errorf("%s drain: %w", ev.EventKey, err)
+			}
+
 		case FinWorldEventStockTransfer:
 			st := ev.StockTransfer
 			if err := finworldExecuteStockTransfer(ctx, h, st, prodBySKU); err != nil {
@@ -1134,6 +1143,11 @@ func finworldStampDayTime(ctx context.Context, pool *pgxpool.Pool, docTime time.
 		`UPDATE purchasing_receipts SET received_at = $1, created_at = $1 WHERE created_at > $2`,
 		`UPDATE purchasing_bills SET posted_at = CASE WHEN posted_at IS NOT NULL THEN $1::timestamptz ELSE NULL END, created_at = $1, updated_at = $1 WHERE created_at > $2`,
 		`UPDATE stock_moves SET created_at = $1, occurred_at = $1 WHERE created_at > $2`,
+		// landed_costs carries no applied_at/voided_at: the AP tie reads the outstanding payable
+		// as-of a month end from created_at (create) and updated_at (the apply/void status flip),
+		// so both stamps must ride the simulated day like every other document time.
+		`UPDATE landed_costs SET created_at = $1, updated_at = $1 WHERE created_at > $2`,
+		`UPDATE landed_costs SET updated_at = $1 WHERE updated_at > $2`,
 	}
 	for _, q := range queries {
 		if _, err := pool.Exec(ctx, q, docTime, cutoff); err != nil {
@@ -1451,11 +1465,65 @@ func finworldExecuteVendorBill(
 	return nil
 }
 
+// finworldExecuteLandedCost posts one plan landed-cost event through the production landed-cost
+// routes on the shared mux: POST /api/v1/landed-costs, then POST /api/v1/landed-costs/{id}/apply.
+// A VOIDED event instead posts POST /api/v1/landed-costs/{id}/void for the document the plan
+// names. Every route is RequireManager, and the driver posts them with the branch_manager token it
+// already links for approvals. The world key rides po_ref at create so a later void (a fresh
+// process, a later simulated day) resolves the applied document.
+func finworldExecuteLandedCost(ctx context.Context, h *finworldHarness, lc *FinWorldLandedCostEvent) error {
+	branchID, err := finworldBranchID(lc.BranchCode)
+	if err != nil {
+		return err
+	}
+	if lc.Status == "VOIDED" {
+		var applyID string
+		if err := h.pool.QueryRow(ctx, `SELECT id::text FROM landed_costs WHERE po_ref = $1`, lc.VoidOfLandedCostKey).Scan(&applyID); err != nil {
+			return fmt.Errorf("lookup applied landed cost %s: %w", lc.VoidOfLandedCostKey, err)
+		}
+		_, err := h.callWithToken(h.managerToken, "void landed cost "+lc.LandedCostKey, http.MethodPost, "/api/v1/landed-costs/"+applyID+"/void", nil)
+		return err
+	}
+	var poID string
+	// The landed cost attaches to the RECEIVING DOCUMENT (the 0011 purchase_orders row the
+	// purchasing Receive wrote for this receipt), whose po_lines carry the received_base the
+	// allocation reads; purchasing_pos is the order desk's own document and no landed-cost input.
+	if err := h.pool.QueryRow(ctx, `
+		SELECT d.id::text
+		  FROM purchase_orders d
+		  JOIN purchasing_pos p ON p.id::text = d.metadata->>'purchasing_po_id'
+		 WHERE p.notes = $1`, lc.PurchaseReceiptKey).Scan(&poID); err != nil {
+		return fmt.Errorf("lookup receiving document for receipt %s: %w", lc.PurchaseReceiptKey, err)
+	}
+	out, err := h.callWithToken(h.managerToken, "create landed cost "+lc.LandedCostKey, http.MethodPost, "/api/v1/landed-costs", map[string]any{
+		"po_id":                poID,
+		"po_ref":               lc.LandedCostKey,
+		"branch_id":            branchID,
+		"currency":             lc.Currency,
+		"fx_rate":              float64(lc.FXRateBps) / 10000,
+		"freight_cents":        lc.FreightCents,
+		"duty_cents":           lc.DutyCents,
+		"handling_cents":       lc.HandlingCents,
+		"allocation_basis":     lc.AllocationBasis,
+		"exclude_special_buys": lc.ExcludeSpecialBuys,
+	})
+	if err != nil {
+		return err
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(out, &created); err != nil {
+		return fmt.Errorf("create landed cost %s: %w", lc.LandedCostKey, err)
+	}
+	_, err = h.callWithToken(h.managerToken, "apply landed cost "+lc.LandedCostKey, http.MethodPost, "/api/v1/landed-costs/"+created.ID+"/apply", nil)
+	return err
+}
+
 func finworldExecuteStockTransfer(
 	ctx context.Context,
 	h *finworldHarness,
-	st *FinWorldStockTransferEvent,
-	prodBySKU map[string]string,
+	st *FinWorldStockTransferEvent, prodBySKU map[string]string,
 ) error {
 	fromBranchID, err := finworldBranchID(st.FromBranchCode)
 	if err != nil {

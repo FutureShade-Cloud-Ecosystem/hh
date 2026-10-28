@@ -56,17 +56,18 @@ func finworldReadLandedCostSchedule(t *testing.T) *finworldLandedCostSchedule {
 			case lc.Status == "POSTED" && sched.FirstApplyDay < 0:
 				sched.FirstApplyDay = d.Day.TradingDayIndex
 				sched.FirstApplyKey = lc.LandedCostKey
-				sched.FirstApplyCad = lc.ChargeCadCents
+				// ChargeCadCents carries freight+duty; the document's payable adds handling.
+				sched.FirstApplyCad = lc.ChargeCadCents + lc.HandlingCents
 			case lc.Status == "VOIDED" && sched.FirstVoidDay < 0:
 				sched.FirstVoidDay = d.Day.TradingDayIndex
 				sched.FirstVoidKey = lc.LandedCostKey
 				sched.FirstVoidOfKey = lc.VoidOfLandedCostKey
-				sched.FirstVoidOfCad = lc.ChargeCadCents
+				sched.FirstVoidOfCad = lc.ChargeCadCents + lc.HandlingCents
 			case lc.Status == "POSTED" && sched.CrossMonthDay < 0:
 				if rd, ok := receiptDate[lc.PurchaseReceiptKey]; ok && rd[:7] != ev.Date[:7] {
 					sched.CrossMonthDay = d.Day.TradingDayIndex
 					sched.CrossMonthKey = lc.LandedCostKey
-					sched.CrossMonthCad = lc.ChargeCadCents
+					sched.CrossMonthCad = lc.ChargeCadCents + lc.HandlingCents
 					sched.CrossReceiptDt = rd
 				}
 			}
