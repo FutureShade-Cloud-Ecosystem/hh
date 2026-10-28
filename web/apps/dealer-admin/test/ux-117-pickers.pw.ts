@@ -1,6 +1,9 @@
 // UX-117 browser legs: Dealer Admin forms pick customers, products, categories,
 // vendors, branches, profiles, batches, staff, channels and surface items;
 // they never ask a dealer to type a raw id.
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import { test, expect } from "@playwright/test";
 
@@ -497,5 +500,97 @@ test("390 px phone layout: every picker input placeholder and hint fits its box 
 
   expect(clipped, `picker placeholders or hints clipped at 390 px:\n${clipped.join("\n")}`).toEqual([]);
 });
+
+test("vendor picker lists only loaded vendors, says 'No vendors yet' when empty, and src carries no seed uuids or planted names", async ({
+  page,
+}) => {
+  const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+  const seedViolations: string[] = [];
+  const seedUuidRx = /[0-9a-f]{4,8}-[0-9a-f]{4}-4000-9000-[0-9a-f]{12}/i;
+  const plantedRx = /\bnorthline\b/i;
+
+  for (const entry of readdirSync(srcDir)) {
+    if (!entry.endsWith(".ts")) continue;
+    const lines = readFileSync(join(srcDir, entry), "utf8").split("\n");
+    lines.forEach((line, idx) => {
+      if (seedUuidRx.test(line) || plantedRx.test(line)) {
+        seedViolations.push(`${entry}:${idx + 1}: ${line.trim()}`);
+      }
+    });
+  }
+
+  await page.route("**/api/v1/pricing/rebates/programs*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [], has_more: false, next_cursor: "" }),
+    });
+  });
+  await page.route("**/api/v1/pricing/batches*", async (route) => {
+    if (
+      route.request().method() === "GET" &&
+      new URL(route.request().url()).pathname === "/api/v1/pricing/batches"
+    ) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], has_more: false, next_cursor: "" }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.route("**/api/v1/pricing/import-profiles*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [], has_more: false, next_cursor: "" }),
+    });
+  });
+  await page.route("**/api/v1/pricing/price-file/vendors*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [], has_more: false, next_cursor: "" }),
+    });
+  });
+
+  await signInAsDealerAdmin(page);
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+  await expect(page.locator('[data-test="pr-margin-count"]')).toBeVisible();
+
+  await page.locator('.pr-tab[data-tab="rebates"]').click();
+  await expect(page.locator('[data-test="pr-rebates-empty"]')).toBeVisible();
+  await page.locator('[data-action="pr-rebate-edit"]').first().click();
+  await expect(page.locator('[data-test="pr-rebate-editor"]')).toBeVisible();
+  const rebVendorOptions = await page.locator('select[data-field="pr-reb-vendor"] option').allTextContents();
+
+  await page.locator('.pr-tab[data-tab="batches"]').click();
+  await expect(page.locator('[data-test="pr-batches-empty"]')).toBeVisible();
+  await page.locator('[data-action="pr-batch-new"]').click();
+  await expect(page.locator('[data-test="pr-batch-create"]')).toBeVisible();
+  const batchVendorOptions = await page.locator('select[data-field="pr-batch-vendor"] option').allTextContents();
+  await page.locator('[data-field="pr-batch-no"]').fill("B-EMPTY-VENDOR-1");
+  await page.locator('[data-field="pr-batch-source"]').fill("sheet.csv");
+  await page.locator('[data-action="pr-batch-create"]').click();
+  await expect(page.locator('[data-test="pr-batches-notice"]')).toContainText("open in draft");
+
+  await page.locator('.pr-tab[data-tab="pricefile"]').click();
+  await expect(page.locator('[data-test="pr-pf-empty"]')).toBeVisible();
+  const pfVendorOptions = await page.locator('select[data-field="pr-pf-vendor"] option').allTextContents();
+
+  expect({
+    seedViolations,
+    rebVendorOptions,
+    batchVendorOptions,
+    pfVendorOptions,
+  }).toEqual({
+    seedViolations: [],
+    rebVendorOptions: ["No vendors yet"],
+    batchVendorOptions: ["No vendors yet"],
+    pfVendorOptions: ["No vendors yet"],
+  });
+});
+
 
 
