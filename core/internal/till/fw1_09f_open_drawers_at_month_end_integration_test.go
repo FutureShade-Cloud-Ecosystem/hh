@@ -1,25 +1,37 @@
 //go:build integration
 
 // fw1_09f_open_drawers_at_month_end_integration_test.go, FW1-09f (S5's P3 on PR 647, FROM-PRINCIPAL
-// 341 item 1): the close pre flight's drawer check must count every drawer STILL OPEN at the month's
-// end, not only the drawers OPENED inside the month.
+// 341 item 1): the close pre flight's drawer check must count every drawer the month is still
+// waiting on, not only the drawers OPENED inside the month.
 //
 // THE DEFECT. The pre flight asked the till seam for the drawers opened in [month start, next month)
 // that were still OPEN. A drawer opened in an EARLIER month and never closed passed the close of
 // every later month: the books sealed over a drawer that was still open. "No open drawer" means any
-// drawer still open at the month's end.
+// drawer the month is still waiting on.
+//
+// ROUND 2, THE RULE IS "NOT COMPLETED AT THE CLOSE" (S5's P2-1, FROM-PRINCIPAL 346). Round 1 read
+// the drawer as it stood at the month's END, a past instant: a drawer opened on the month's last
+// evening and completed after midnight counted for ever, because CLOSED is final and no product
+// action clears it. The month's books are whole once the drawer is completed, because the
+// completion posts the over or short into the business day the drawer was OPENED for. So the read
+// counts the drawers opened by the month's end that are NOT YET COMPLETED, and a drawer completed
+// at any time clears the month.
 //
 // THE LEGS. One red: a drawer opened in the month BEFORE the month being closed, never closed, and
-// the close of that later month must be refused naming the open drawer. Two honesty legs: a drawer
-// opened AND closed inside the month does not block, and a drawer opened AFTER the month's end does
-// not block (it blocks the month it was opened in, which is the point).
+// the close of that later month must be refused naming the drawer that is not yet completed. Round
+// 2's two reds: a drawer completed after midnight, and a drawer closed exactly at midnight, both in
+// the house zone, must CLOSE the month. Two honesty legs: a drawer opened AND closed inside the
+// month does not block, and a drawer opened AFTER the month's end does not block (it blocks the
+// month it was opened in, which is the point). Round 2's fourth leg: the legs' own cleanup must
+// remove the override rows of its own sentinel year only, never another year's.
 //
 // THE WIRING. The drawer seam reads the REAL till repository, the same read cmd/core wires, and the
 // closer is the real GL service, so the legs prove the shipped path and not a fake's arithmetic.
 //
-// THE SENTINEL YEARS. The months sit in past sentinel years (2019, 2021, 2023), never in the seeded
-// 2026 books. A past month also keeps the legs honest in the shared gate database: every other leg
-// opens its drawer NOW, so no other leg's drawer can sit open at a past month's end.
+// THE SENTINEL YEARS. The months sit in past sentinel years (2019, 2021, 2023, 2017, 2015, 2013),
+// never in the seeded 2026 books. A past month also keeps the legs honest in the shared gate
+// database: every other leg opens its drawer NOW, so no other leg's drawer can sit open at a past
+// month's end.
 package till
 
 import (
@@ -37,8 +49,8 @@ import (
 // through it, and it reads the REAL repository, the same read cmd/core wires (FW1-09f).
 type fw109fDrawerReader struct{ repo *Repository }
 
-func (r fw109fDrawerReader) OpenDrawersAt(ctx context.Context, at time.Time) (int, error) {
-	return r.repo.OpenSessionsAt(ctx, at)
+func (r fw109fDrawerReader) OpenDrawersAt(ctx context.Context, before time.Time) (int, error) {
+	return r.repo.OpenSessionsAt(ctx, before)
 }
 
 // fw109fPeriods creates the sentinel year's twelve fiscal periods and removes them again when the
@@ -51,10 +63,20 @@ func fw109fPeriods(t *testing.T, pool *pgxpool.Pool, year int) {
 		 ON CONFLICT (year, month) DO NOTHING`, year); err != nil {
 		t.Fatalf("ensure the %d periods: %v", year, err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE p.year = $1`, year)
-		_, _ = pool.Exec(ctx, `DELETE FROM fiscal_periods WHERE year = $1`, year)
-	})
+	t.Cleanup(func() { fw109fCleanupPeriods(t, pool, year) })
+}
+
+// fw109fCleanupPeriods removes the sentinel year's periods and the override rows that hang on
+// them, so the shared gate database keeps no trace of the leg.
+//
+// The override delete joins the periods on the override's OWN period, exactly as gl's ensurePeriods
+// does: joining on the year alone removed every override row in the shared gate database, other
+// packages' included.
+func fw109fCleanupPeriods(t *testing.T, pool *pgxpool.Pool, year int) {
+	t.Helper()
+	ctx := context.Background()
+	_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE p.year = $1`, year)
+	_, _ = pool.Exec(ctx, `DELETE FROM fiscal_periods WHERE year = $1`, year)
 }
 
 // fw109fPeriodID answers the month's period id.
@@ -70,27 +92,68 @@ func fw109fPeriodID(t *testing.T, pool *pgxpool.Pool, year, month int) string {
 
 // fw109fDrawer plants one till drawer: opened at openedAt, closed at closedAt when that is set,
 // left open otherwise. The read that matters runs through the real repository.
+//
+// A CLOSED drawer is planted in the EXACT shape SetCompleted writes (till/repository.go): the
+// session is CLOSED, the completion carries its own instant, and the over or short sits on the
+// row. The leg plants the row rather than running the till service, because the service's
+// completion posts a GL journal into the drawer's own business day, and a journal landed in a
+// shared period would move the balances other legs read.
 func fw109fDrawer(t *testing.T, pool *pgxpool.Pool, branchID, userID, station string, openedAt time.Time, closedAt *time.Time) {
 	t.Helper()
 	ctx := context.Background()
-	status := "OPEN"
-	var closedBy any
-	var closedValue any
-	if closedAt != nil {
-		status = "CLOSED"
-		closedBy = userID
-		closedValue = *closedAt
-	}
 	var id string
-	if err := pool.QueryRow(ctx,
-		`INSERT INTO till_sessions (branch_id, station, status, opened_by, float_cents, opened_at, closed_by, closed_at)
-		 VALUES ($1, $2, $3, $4, 0, $5, $6, $7) RETURNING id::text`,
-		branchID, station, status, userID, openedAt, closedBy, closedValue).Scan(&id); err != nil {
-		t.Fatalf("plant the drawer at %s: %v", station, err)
+	if closedAt == nil {
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO till_sessions (branch_id, station, status, opened_by, float_cents, opened_at)
+			 VALUES ($1, $2, 'OPEN', $3, 0, $4) RETURNING id::text`,
+			branchID, station, userID, openedAt).Scan(&id); err != nil {
+			t.Fatalf("plant the drawer at %s: %v", station, err)
+		}
+	} else {
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO till_sessions (branch_id, station, status, opened_by, float_cents, opened_at,
+			    completed_by, completed_at, closed_by, closed_at, counted_cents, over_short_cents)
+			 VALUES ($1, $2, 'CLOSED', $3, 0, $4, $3, $5, $3, $5, 0, 0) RETURNING id::text`,
+			branchID, station, userID, openedAt, *closedAt).Scan(&id); err != nil {
+			t.Fatalf("plant the closed drawer at %s: %v", station, err)
+		}
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM till_sessions WHERE id = $1`, id)
 	})
+}
+
+// fw109fHouseZone is the dealer's business zone, the one the close pre flight reads its
+// instants in (the store's own BusinessZone, never a hard coded default).
+func fw109fHouseZone(t *testing.T, pool *pgxpool.Pool) *time.Location {
+	t.Helper()
+	zone, err := gl.NewRepository(pool).BusinessZone(context.Background())
+	if err != nil {
+		t.Fatalf("the dealer's business zone: %v", err)
+	}
+	return zone.Location()
+}
+
+// fw109fOverrideCount counts the override rows in the whole gate database, the number a leg's
+// cleanup must not move beyond its own year's.
+func fw109fOverrideCount(t *testing.T, pool *pgxpool.Pool) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM gl_period_overrides`).Scan(&n); err != nil {
+		t.Fatalf("read the override rows: %v", err)
+	}
+	return n
+}
+
+// fw109fOverrideCountOn counts the override rows on one period.
+func fw109fOverrideCountOn(t *testing.T, pool *pgxpool.Pool, periodID string) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM gl_period_overrides WHERE period_id = $1::uuid`, periodID).Scan(&n); err != nil {
+		t.Fatalf("read the override rows of %s: %v", periodID, err)
+	}
+	return n
 }
 
 // fw109fCloser is the GL service the way cmd/core wires it, the drawer seam reading the real till
@@ -120,10 +183,11 @@ func fw109fPeriodStatus(t *testing.T, pool *pgxpool.Pool, year, month int) strin
 	return status
 }
 
-// TestIntegration_FW1_09f_ADrawerOpenFromAnEarlierMonthRefusesTheClose is the red: a drawer opened
-// in the month BEFORE the month being closed, never closed. The close of the later month must be
-// refused, naming the open drawer, and the month must stand OPEN. Today the close seals the month
-// over the drawer that is still open.
+// TestIntegration_FW1_09f_ADrawerOpenFromAnEarlierMonthRefusesTheClose is round 1's red, kept:
+// a drawer opened in the month BEFORE the month being closed, never closed. The close of the later
+// month must be refused, naming the drawer that is not yet completed, and the month must stand
+// OPEN. The refusal's words say what is true: the drawer was opened in or before the month and is
+// not yet completed.
 func TestIntegration_FW1_09f_ADrawerOpenFromAnEarlierMonthRefusesTheClose(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
@@ -139,7 +203,7 @@ func TestIntegration_FW1_09f_ADrawerOpenFromAnEarlierMonthRefusesTheClose(t *tes
 		t.Fatalf("the month closed with a drawer open from the earlier month; the pre flight must refuse")
 	}
 	msg := err.Error()
-	for _, want := range []string{"pre flight", "1 till drawer", "still open at the month's end"} {
+	for _, want := range []string{"pre flight", "1 till drawer opened in or before the month is not yet completed"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("the refusal %q does not name %q", msg, want)
 		}
@@ -198,12 +262,128 @@ func TestIntegration_FW1_09f_ADrawerOpenedAfterTheMonthEndDoesNotBlock(t *testin
 		t.Fatalf("the month closed with a drawer open inside it; the pre flight must refuse")
 	}
 	msg := err.Error()
-	for _, want := range []string{"pre flight", "1 till drawer", "still open at the month's end"} {
+	for _, want := range []string{"pre flight", "1 till drawer opened in or before the month is not yet completed"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("the refusal %q does not name %q", msg, want)
 		}
 	}
 	if status := fw109fPeriodStatus(t, pool, year, 8); status != "OPEN" {
 		t.Fatalf("the refused close left the period %s, want OPEN", status)
+	}
+}
+
+// TestIntegration_FW1_09f_ADrawerCompletedAfterMidnightDoesNotBlockTheMonth is round 2's first red
+// (S5's P2-1, FROM-PRINCIPAL 346): a drawer opened on the month's last evening and completed after
+// midnight must not block that month for ever.
+//
+// CLOSED is final: the completion is the one write that ends a drawer's life, so a pre flight that
+// counted the drawer would refuse the close with no product action left to clear it. And the books
+// are whole once it is done, because the completion posts the over or short into the business day
+// the drawer was OPENED for, which is the month being closed.
+func TestIntegration_FW1_09f_ADrawerCompletedAfterMidnightDoesNotBlockTheMonth(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	branchID, userID := seedBranchUser(t, pool)
+	const year = 2017
+	fw109fPeriods(t, pool, year)
+	house := fw109fHouseZone(t, pool)
+	// The drawer's own evening, and the count the next morning after midnight, both in the
+	// dealer's house zone, so the leg lands where the house zone matters.
+	opened := time.Date(year, 6, 30, 20, 0, 0, 0, house)
+	completed := time.Date(year, 7, 1, 8, 0, 0, 0, house)
+	fw109fDrawer(t, pool, branchID, userID, "FW1-09F-OVERNIGHT", opened, &completed)
+
+	svc := fw109fCloser(t, pool)
+	if _, err := svc.ClosePeriod(fw109fCtx(ctx, userID), fw109fPeriodID(t, pool, year, 6), "FW1-09f drawer completed after midnight"); err != nil {
+		t.Fatalf("the month did not close with a drawer completed after midnight: %v", err)
+	}
+	if status := fw109fPeriodStatus(t, pool, year, 6); status != "CLOSED" {
+		t.Fatalf("the closed month reads %s, want CLOSED", status)
+	}
+}
+
+// TestIntegration_FW1_09f_ADrawerClosedExactlyAtMidnightDoesNotBlockTheMonth is round 2's second
+// red: a drawer closed EXACTLY at midnight in the house zone, the first instant of the next month,
+// is the month's end itself. It is completed, so it must not block the month.
+//
+// The boundary is the one the zone decides: midnight in the house zone is not midnight in UTC, so
+// the leg reads the dealer's own zone instead of a fixed one.
+func TestIntegration_FW1_09f_ADrawerClosedExactlyAtMidnightDoesNotBlockTheMonth(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	branchID, userID := seedBranchUser(t, pool)
+	const year = 2015
+	fw109fPeriods(t, pool, year)
+	house := fw109fHouseZone(t, pool)
+	opened := time.Date(year, 6, 30, 20, 0, 0, 0, house)
+	// Exactly the month's end: the first instant of the next month in the house zone.
+	closed := time.Date(year, 7, 1, 0, 0, 0, 0, house)
+	fw109fDrawer(t, pool, branchID, userID, "FW1-09F-MIDNIGHT", opened, &closed)
+
+	svc := fw109fCloser(t, pool)
+	if _, err := svc.ClosePeriod(fw109fCtx(ctx, userID), fw109fPeriodID(t, pool, year, 6), "FW1-09f drawer closed at midnight"); err != nil {
+		t.Fatalf("the month did not close with a drawer closed exactly at midnight: %v", err)
+	}
+	if status := fw109fPeriodStatus(t, pool, year, 6); status != "CLOSED" {
+		t.Fatalf("the closed month reads %s, want CLOSED", status)
+	}
+}
+
+// TestIntegration_FW1_09f_ThePeriodCleanupLeavesAnotherYearsOverrideAlone is round 2's third red
+// (S5's P2-2): the legs' own cleanup must remove the override rows of ITS OWN sentinel year only.
+//
+// The cleanup joined the periods on the year alone, so it removed EVERY override row in the shared
+// gate database: other packages' legs read those rows by period, and the override row is the
+// recorded compensating control for a reopen. A gate shared across packages must be left as the leg
+// found it.
+func TestIntegration_FW1_09f_ThePeriodCleanupLeavesAnotherYearsOverrideAlone(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	const ownYear = 2013
+	const otherYear = 2009
+
+	// The leg's own sentinel year, through the leg's own helper, so the cleanup under test is
+	// the one every leg runs.
+	fw109fPeriods(t, pool, ownYear)
+	ownPeriod := fw109fPeriodID(t, pool, ownYear, 4)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO gl_period_overrides (period_id, action, reason) VALUES ($1::uuid, 'CLOSE', 'fw109f own year')`,
+		ownPeriod); err != nil {
+		t.Fatalf("plant the leg's own override: %v", err)
+	}
+
+	// Another year's period, with an override row on it the leg never touched.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO fiscal_periods (year, month) VALUES ($1, 3) ON CONFLICT (year, month) DO NOTHING`,
+		otherYear); err != nil {
+		t.Fatalf("ensure the %d period: %v", otherYear, err)
+	}
+	otherPeriod := fw109fPeriodID(t, pool, otherYear, 3)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO gl_period_overrides (period_id, action, reason) VALUES ($1::uuid, 'REOPEN', 'fw109f other year sentinel')`,
+		otherPeriod); err != nil {
+		t.Fatalf("plant the other year's override: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides WHERE period_id = $1::uuid`, otherPeriod)
+		_, _ = pool.Exec(ctx, `DELETE FROM fiscal_periods WHERE id = $1::uuid`, otherPeriod)
+	})
+
+	before := fw109fOverrideCount(t, pool)
+	otherBefore := fw109fOverrideCountOn(t, pool, otherPeriod)
+
+	// The cleanup under test: the one every leg runs when its sentinel year is done.
+	fw109fCleanupPeriods(t, pool, ownYear)
+
+	after := fw109fOverrideCount(t, pool)
+	otherAfter := fw109fOverrideCountOn(t, pool, otherPeriod)
+	t.Logf("fw109f sentinel: overrides before|%d after|%d, the other year's override before|%d after|%d",
+		before, after, otherBefore, otherAfter)
+
+	if otherAfter != 1 {
+		t.Fatalf("the cleanup left %d of the other year's override rows, want 1; it must delete only its own year's overrides", otherAfter)
+	}
+	if got := fw109fOverrideCountOn(t, pool, ownPeriod); got != 0 {
+		t.Fatalf("the leg's own period still holds %d override row(s), want 0", got)
 	}
 }
