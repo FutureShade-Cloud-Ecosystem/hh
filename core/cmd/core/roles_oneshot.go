@@ -137,19 +137,38 @@ func MigrationsAppliedCount(ctx context.Context, pool *pgxpool.Pool) (int, bool,
 	return count, true, nil
 }
 
-// PublicTableCount counts the tables in the public schema. It is the shape
-// read beside the bookkeeping read, and it lives here for the same reason:
-// the database's own shape is read in one place, so the finance box's boot
-// guard and the finance box's entrypoint (which asks the core for the
-// shape) can never answer "empty" differently. A database is empty only
-// when it holds neither the bookkeeping table nor any table at all.
-func PublicTableCount(ctx context.Context, pool *pgxpool.Pool) (int, error) {
+// UserTableCount counts the tables in every user schema: anything outside
+// pg_catalog and information_schema. It is the shape read beside the
+// bookkeeping read, and it lives here for the same reason: the database's
+// own shape is read in one place, so the finance box's boot guard and the
+// finance box's entrypoint (which asks the core for the shape) can never
+// answer "empty" differently. A database that keeps its tables in a schema
+// of its own is not empty: it is somebody else's world, and the box refuses
+// it instead of claiming it.
+func UserTableCount(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 	var count int
-	err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'`).Scan(&count)
+	err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.tables
+		WHERE table_schema <> 'pg_catalog' AND table_schema <> 'information_schema'`).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
 	return count, nil
+}
+
+// ForeignUserSchemaPresent reports whether the database holds a user schema
+// that is neither public nor the finance box's own bootstrap ownership mark:
+// a namespace another world plants for itself, even one that takes no table
+// yet. The read lives beside the other shape reads for the same reason they
+// do.
+func ForeignUserSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	var present bool
+	err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_namespace
+		WHERE nspname <> 'public' AND nspname <> $1
+		  AND nspname <> 'information_schema' AND nspname NOT LIKE 'pg\_%')`, financeBoxBootstrapSchema).Scan(&present)
+	if err != nil {
+		return false, err
+	}
+	return present, nil
 }
 
 // FinanceBootstrapMarkPresent reports whether the finance bootstrap

@@ -76,8 +76,9 @@ const (
 // the boot guard and the entrypoint's classifier (core finance-box-state)
 // read these words, so the two can never drift apart.
 const (
-	// financeBoxStateEmpty: no migration bookkeeping and no table at all in
-	// the public schema. A fresh database: first boot territory.
+	// financeBoxStateEmpty: no migration bookkeeping, no table in any user
+	// schema and no user schema outside public and the box's own bootstrap
+	// mark. A fresh database: first boot territory.
 	financeBoxStateEmpty = "empty"
 	// financeBoxStateUnseeded: the box's own bootstrap mark is present, the
 	// migrations are applied, the seed is not, and nothing is marked. An
@@ -176,39 +177,49 @@ func financeBoxReverseGuard(ctx context.Context, pool *pgxpool.Pool) error {
 	return fmt.Errorf("finance box: this database's %s is %s, so the environment must state %s=%s, APP_ENV=staging and %s=%s: the box statement cannot be lost or reversed, and the box refuses to serve a finance world that does not claim itself", settings.KeyBoxKind, boxKindFinance, envBoxKind, boxKindFinance, envSigninMode, signinConsole)
 }
 
-// financeBoxDatabaseShape reads the database's shape in two facts: whether
-// the migration bookkeeping is there (this tree's migrations were applied)
-// and how many tables the public schema holds. The bookkeeping read is the
-// migrate runner's own (roles_oneshot.go), so the guard never spells the
-// query itself; the guard must never treat a world it cannot read as empty.
-func financeBoxDatabaseShape(ctx context.Context, pool *pgxpool.Pool) (bookkeeping bool, tables int, err error) {
+// financeBoxDatabaseShape reads the database's shape in three facts: whether
+// the migration bookkeeping is there (this tree's migrations were applied),
+// how many tables the user schemas hold all told, and whether a user schema
+// outside public and the box's own bootstrap mark is present. The
+// bookkeeping read is the migrate runner's own (roles_oneshot.go), so the
+// guard never spells the query itself; the guard must never treat a world
+// it cannot read as empty, and a world that keeps its tables in a schema of
+// its own is not empty either.
+func financeBoxDatabaseShape(ctx context.Context, pool *pgxpool.Pool) (bookkeeping bool, tables int, foreignSchema bool, err error) {
 	_, present, err := MigrationsAppliedCount(ctx, pool)
 	if err != nil {
-		return false, 0, err
+		return false, 0, false, err
 	}
-	tables, err = PublicTableCount(ctx, pool)
+	tables, err = UserTableCount(ctx, pool)
 	if err != nil {
-		return false, 0, err
+		return false, 0, false, err
 	}
-	return present, tables, nil
+	foreignSchema, err = ForeignUserSchemaPresent(ctx, pool)
+	if err != nil {
+		return false, 0, false, err
+	}
+	return present, tables, foreignSchema, nil
 }
 
 // financeBoxDatabaseEmpty reports whether the database holds nothing yet: no
-// migration bookkeeping AND no table at all in the public schema. One
-// definition, read here by the boot guard and by the entrypoint's classifier
-// (core finance-box-state), so the two can never drift apart.
+// migration bookkeeping, no table in any user schema and no user schema
+// outside public and the box's own bootstrap mark. One definition, read here
+// by the boot guard and by the entrypoint's classifier (core
+// finance-box-state), so the two can never drift apart.
 func financeBoxDatabaseEmpty(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
-	bookkeeping, tables, err := financeBoxDatabaseShape(ctx, pool)
+	bookkeeping, tables, foreignSchema, err := financeBoxDatabaseShape(ctx, pool)
 	if err != nil {
 		return false, err
 	}
-	return !bookkeeping && tables == 0, nil
+	return !bookkeeping && tables == 0 && !foreignSchema, nil
 }
 
 // financeBoxDatabaseState is the database's state, the one definition the
 // entrypoint acts on:
 //
-//	empty     no bookkeeping and no table at all: a fresh database.
+//	empty     no bookkeeping, no table in any user schema and no user
+//	          schema outside public and the box's own bootstrap mark: a
+//	          fresh database.
 //	unseeded  the box's own bootstrap mark is there, the box's own
 //	          bookkeeping is there and nothing is marked and the seed is not
 //	          applied: an interrupted first boot (the entrypoint marks the
@@ -227,17 +238,17 @@ func financeBoxDatabaseEmpty(ctx context.Context, pool *pgxpool.Pool) (bool, err
 // what says the seed is applied: a database that holds it holds the demo
 // world, which the box did not plant, so the box refuses it.
 func financeBoxDatabaseState(ctx context.Context, pool *pgxpool.Pool) (string, error) {
-	bookkeeping, tables, err := financeBoxDatabaseShape(ctx, pool)
+	bookkeeping, tables, foreignSchema, err := financeBoxDatabaseShape(ctx, pool)
 	if err != nil {
 		return "", err
 	}
 	if !bookkeeping {
-		if tables == 0 {
+		if tables == 0 && !foreignSchema {
 			return financeBoxStateEmpty, nil
 		}
-		// Tables but no bookkeeping: a foreign schema. It is not empty (the
-		// box never migrates a database it did not create) and it is not the
-		// box's own world.
+		// Tables or a foreign schema but no bookkeeping: a foreign world. It
+		// is not empty (the box never migrates a database it did not create)
+		// and it is not the box's own.
 		return financeBoxStateForeign, nil
 	}
 	kind, marked, err := settings.NewDealerConfigReader(pool).BoxKindMark(ctx)
