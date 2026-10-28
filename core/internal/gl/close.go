@@ -364,6 +364,19 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	if len(ids) > 0 {
 		return YearCloseResult{FiscalYear: year, ClosingJournalIDs: ids, ClosingJournalID: firstID(ids), NetIncomeCents: net, PeriodsClosed: true}, nil
 	}
+	// FW1-09c round 2 (S2's P2, FROM-PRINCIPAL 320 and 321): the year's periods, counted, on THIS
+	// transaction under the year end's lock. A year with NO periods at all has nothing to close
+	// and refuses in words, never success (321); and the count comes before the CLOSED test, so
+	// "every period of the year is already CLOSED" is never vacuously true on zero periods. The
+	// count also reads the seal, which is the marker a year with NO P&L leaves: such a close
+	// posts no closing journal, so the once only check above cannot see the first run (320).
+	total, closed, err := s.store.YearPeriodsTx(ctx, tx, year)
+	if err != nil {
+		return YearCloseResult{}, err
+	}
+	if total == 0 {
+		return YearCloseResult{}, clientErr(409, "gl: fiscal year %d has no periods to close", year)
+	}
 	// FW1-09b, the lead's Ask 2: the close is refused until the year's last day has passed in the
 	// dealer's zone (a mid year press sealed the months still ahead and stopped all posting).
 	ended, err := s.store.HouseYearEnded(ctx, year, s.now())
@@ -436,6 +449,21 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 			byBranch[branchID] = map[string]int64{}
 		}
 		byBranch[branchID][r.AccountCode] += r.NetDebitCents
+	}
+
+	// FW1-09c round 2 (S2's P2, FROM-PRINCIPAL 320): the year end close is once only, and that
+	// must hold for a year with NO P&L too. A book with no P&L at all closes nothing (the house's
+	// own rule), so it posts no closing journal, and the once only check above cannot see the
+	// first run: a second press passes every check (the year has ended, no OPEN period is left
+	// to pre flight, no P&L to sweep) and records a SECOND GL_YEAR_END_CLOSE row, and two
+	// Controllers pressing at once each record one. The year's own seal is the marker such a
+	// close leaves: when every period of the year is already CLOSED and the year holds no P&L at
+	// all, there is nothing left for the press to write, so it answers the first run's result and
+	// records nothing. A year that DOES hold P&L is not answered here: a year whose months were
+	// sealed one by one still needs its closing entry, and the closing journal's own once only
+	// check above answers that year the second time round.
+	if len(plsByBranch) == 0 && closed == total {
+		return YearCloseResult{FiscalYear: year, PeriodsClosed: true}, nil
 	}
 
 	branchIDs := make([]string, 0, len(byBranch))
