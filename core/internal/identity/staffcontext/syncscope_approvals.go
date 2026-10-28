@@ -488,6 +488,26 @@ func (s *ApprovalsSyncStore) BoundEntityExists(ctx context.Context, f sync.Scope
 	return present, nil
 }
 
+// loadOrgHeld reads one request under the org fence alone, the collision
+// probe's read: the row is the caller's own org's fact, whatever branch it
+// sits on, so a client-chosen id taken inside the org answers ErrRowExists
+// (the pick door's rule, PR 648's collision arm). The reader does not ride
+// here: the probe answers whether the id is taken, not what it holds, and a
+// withdrawn request still holds its id.
+func (s *ApprovalsSyncStore) loadOrgHeld(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	where, args, ok := approvalScopePredicate(f)
+	if !ok || !approvalLooksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM permission_approval_requests a WHERE a.id = $2::uuid AND `+where+`)`,
+		append(args, id)...).Scan(&present); err != nil {
+		return false, fmt.Errorf("identity: approvals sync load org held: %w", err)
+	}
+	return present, nil
+}
+
 // approvalCreateFields is the field set a pushed create may declare:
 // the branch the request is filed at, the caller-facing policy, the
 // detail note and the optional subject. The requester is the CALLER's
@@ -622,13 +642,17 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The client-chosen id is taken: inside the caller's org the
 		// collision is the caller's own fact, outside it the answer is
-		// not-found so existence never leaks across the fence.
+		// not-found so existence never leaks across the fence. The
+		// read-back is org-held, as this comment describes: the probe
+		// answers whether the id is taken, not what the row holds, so a
+		// card the caller may not read still answers the collision
+		// inside its own org (UX-108 round 2, the quotes scope's rule).
 		// Nothing was written, so the transaction ends first: the
 		// read-back goes through the pool, and asking it for a second
 		// connection while this one is held starves the pool once
 		// pool-size creates collide.
 		_ = tx.Rollback(ctx)
-		if _, own, _ := s.Load(ctx, f, id); own {
+		if own, _ := s.loadOrgHeld(ctx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound
