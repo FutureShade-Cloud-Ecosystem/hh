@@ -37,10 +37,13 @@ func (w *mjWorld) dayInHouseZone(query string, args ...any) string {
 // books' first year, and June is the month gl's TestIntegration_M2C1_DemoSeed_RetiredSeedNetsZero
 // reads (it asserts every one of its seven fixture accounts nets to exactly zero in the June
 // inception-to-date), so on a shared database the leg's journals landed in a month another leg
-// judges. April is a month of the same first year that no leg reads (the tie-out legs read June,
-// the walk reads the month the run happens in), so the leg's own journals stay out of everyone
-// else's month. The leg also cleans up every row it writes, the bounce's journal and its event
-// included, so the shared gate database is as it found it.
+// judges. April is a month of the same first year that is not that leg's OWN period (it reads
+// June), but the move does NOT keep this leg's journals out of its read: the tie-out sums every
+// POSTED journal with posted_at at or before the end of June and no lower bound, so April sits
+// inside that inception-to-date window exactly as June does. What keeps the shared gate database
+// clean is this leg's own cleanup (every row it writes, the bounce's journal and its event
+// included) plus CI's package order (CI runs gl before the packages whose legs leave residue), not
+// the month: the month only names the fiscal period this leg's own journals file into.
 func TestFW113BPinnedClockStampsTheMovementTheBounceAndBothJournals(t *testing.T) {
 	w := newMJWorld(t)
 	ctx := context.Background()

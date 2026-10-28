@@ -814,6 +814,7 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	// still-undeposited 1020. It cannot be recovered from PaymentReader after the flip, so it rides the event.
 	clearedToBank := status == "DEPOSITED"
 
+	// updated_at is bookkeeping only: nothing reads it back as a money date (the AR aging reads customer_transactions.occurred_at, dated with the bounce's own instant), so this row keeps the database's clock while every money date in this transaction takes the service clock's instant.
 	if _, err := tx.Exec(ctx, `UPDATE payments SET status = 'BOUNCED', updated_at = now() WHERE id = $1`, in.PaymentID); err != nil {
 		return nsfReverseResult{}, fmt.Errorf("till: flip bounced: %w", err)
 	}
