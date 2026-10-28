@@ -479,7 +479,74 @@ export type BillingInvoiceDetail = {
   dispute?: BillingDisputeView;
   reminder_tones: ("FRIENDLY" | "FIRM" | "FINAL")[];
   last_contact_at?: string | null;
+  open_credits?: BillingOpenCreditSummary[];
+  credit_applications?: BillingCreditApplicationView[];
   as_of: string;
+};
+export type BillingOpenCreditSummary = {
+  credit_kind: "MEMO" | "ACCOUNT";
+  credit_id: string;
+  reference: string;
+  memo?: string;
+  issued_at: string;
+  amount_cents: number;
+  open_cents: number;
+};
+export type BillingCreditApplicationView = {
+  application_id: string;
+  credit_kind: "MEMO" | "ACCOUNT";
+  credit_id: string;
+  credit_reference?: string;
+  amount_cents: number;
+  reason: string;
+  applied_by?: string;
+  applied_at: string;
+  reversed: boolean;
+  reversal_reason?: string;
+  reversed_by?: string;
+  reversed_at?: string;
+};
+export type BillingApplyCreditInput = {
+  customer_id: string;
+  credit_kind: "MEMO" | "ACCOUNT";
+  credit_id: string;
+  invoice_id: string;
+  amount_cents: number;
+  reason: string;
+  idempotency_key: string;
+};
+export type BillingCreditApplicationLine = {
+  invoice_id: string;
+  invoice_no: string;
+  applied_cents: number;
+  outcome: "CLOSES" | "PART";
+  balance_after_cents: number;
+};
+export type BillingCreditApplication = {
+  application_id: string;
+  credit_kind: "MEMO" | "ACCOUNT";
+  credit_id: string;
+  invoice_id: string;
+  invoice_no: string;
+  applied_cents: number;
+  credit_open_after_cents: number;
+  lines: BillingCreditApplicationLine[];
+  replayed: boolean;
+};
+export type BillingReverseCreditApplicationInput = {
+  invoice_id: string;
+  application_id: string;
+  reason: string;
+};
+export type BillingCreditApplicationReversed = {
+  application_id: string;
+  invoice_id: string;
+  invoice_no: string;
+  restored_cents: number;
+  invoice_balance_after_cents: number;
+  credit_open_after_cents: number;
+  lines: BillingCreditApplicationLine[];
+  replayed: boolean;
 };
 export type BillingARWorklistRow = {
   customer_id: string;
@@ -941,6 +1008,19 @@ export type PaymentsReversalResult = {
   reason: string;
   same_day: boolean;
   reopened_invoices: string[];
+};
+export type PaymentsVoidRequest = {
+  reason: string;
+};
+export type PaymentsVoidResult = {
+  label: "VOID";
+  payment_id: string;
+  payment_no: string;
+  amount_cents: number;
+  reason: string;
+  voided_at: string;
+  reopened_invoices: string[];
+  held_cents: number;
 };
 export type PaymentsHeld = {
   payment_id: string;
@@ -2578,6 +2658,7 @@ export type GlPeriod = {
 };
 export type GlPeriodPage = {
   items: GlPeriod[];
+  next_openable_year?: number;
   next_cursor?: string | null;
   limit?: number;
 };
@@ -2601,6 +2682,7 @@ export type GlReasonBody = {
   reason?: string;
 };
 export type GlPeriodReopenBody = {
+  year?: number;
   reason: string;
 };
 export type GlCloseYearBody = {
@@ -2761,6 +2843,26 @@ export type BankRecAccount = {
   is_active: boolean;
   tracking_only: boolean;
   unmatched_lines: number;
+  cutover_date?: string | null;
+  cutover_statement_balance_cents?: number | null;
+  cutover_outstanding_journal_ids?: string[];
+};
+export type BankRecCutoverInput = {
+  cutover_date: string;
+  opening_statement_balance_cents: number;
+  outstanding_journal_ids?: string[];
+};
+export type BankRecCutoverPreview = {
+  book_balance_cents: number;
+  entries?: BankRecCutoverPreviewEntry[];
+  difference_cents?: number;
+  reconciles?: boolean;
+};
+export type BankRecCutoverPreviewEntry = {
+  journal_id: string;
+  posted_at: string;
+  memo: string;
+  amount_cents: number;
 };
 export type BankRecAccountList = BankRecAccount[];
 export type BankRecStatementLine = {
@@ -2854,15 +2956,29 @@ export type BankRecRuleInput = {
   priority: number;
 };
 export type BankRecMatchRuleList = BankRecMatchRule[];
+export type BankRecOutstandingItem = {
+  journal_id: string;
+  posted_at: string;
+  memo: string;
+  amount_cents: number;
+};
 export type BankRecReconciliation = {
   id: string;
   bank_account_id: string;
   year: number;
   month: number;
+  opening_balance_cents?: number | null;
   statement_balance_cents: number;
+  deposits_in_transit_cents?: number;
+  outstanding_cheques_cents?: number;
+  adjusted_bank_balance_cents?: number;
   gl_balance_cents: number;
   variance_cents: number;
+  matched_lines_count?: number;
+  deposits_in_transit?: BankRecOutstandingItem[];
+  outstanding_cheques?: BankRecOutstandingItem[];
   status: "OPEN" | "COMPLETED";
+  completed_by?: string | null;
   completed_at?: string | null;
 };
 export type BankRecReconInput = {
@@ -3434,6 +3550,17 @@ export type InventoryOnHandList = {
 };
 export type InventoryMoveList = {
   moves: InventoryStockMove[];
+};
+export type InventoryPreReceiptException = {
+  move_id: string;
+  order_id: string;
+  product_id: string;
+  branch_id: string;
+  qty_base: number;
+  provisional_unit_cost_cents: number;
+  provisional_value_cents: number;
+  fallback_source: string;
+  occurred_at: string;
 };
 export type InventoryPendingFulfilmentList = {
   pending: InventoryPendingFulfilment[];
@@ -5108,7 +5235,6 @@ export type PosPolicy = {
   workspace_arrangement: "LOOKUP_LEFT" | "SALE_LEFT";
   lookup_presentation: "CARDS" | "ROWS";
   margin_visibility: "MANAGER_UP" | "ALL_STAFF" | "HIDDEN";
-  balance_visibility: "ALL_STAFF" | "MANAGER_UP" | "HIDDEN";
   supplier_deposit_cancel: "CREDIT_BACK" | "KEPT";
   quick_chip_set?: string[];
 };
@@ -5542,7 +5668,14 @@ export type TillDenominationCount = {
   denomination_cents: number;
   quantity: number;
 };
-export type TillSessionDetail = TillSession & { tenders: TillTenderTotal[]; movements: TillMovement[] };
+export type TillSessionDetail = TillSession & { tenders: TillTenderTotal[]; movements: TillMovement[]; slip_candidates: TillSlipCandidate[] };
+export type TillSlipCandidate = {
+  payment_id: string;
+  payment_no: string;
+  amount_cents: number;
+  method: "CASH" | "CHEQUE" | "CARD" | "EFT" | "OTHER";
+  reference: string;
+};
 export type TillPolicy = {
   branch_id: string;
   variance_threshold_cents: number;
@@ -5560,6 +5693,15 @@ export type TillZReport = {
   per_tender: TillTenderTotal[];
   cash: TillCashSummary;
   closing_float_cents: number;
+  movements: TillZReportMovement[];
+};
+export type TillZReportMovement = {
+  movement_type: "PAID_IN" | "PAID_OUT" | "DROP" | "LODGEMENT";
+  method: "CASH" | "CHEQUE" | "CARD" | "EFT" | "OTHER";
+  amount_cents: number;
+  reason: string;
+  reference: string;
+  branch_id: string;
 };
 export type TillOpenInput = {
   branch_id: string;

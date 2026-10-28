@@ -316,31 +316,52 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 // FindApplied resolves one idempotency key to the row it applied: the
 // row's idempotency_key column (the D30 shape, the latest key) or the
 // applied-key history the adapter records in task_events (every key this
-// row ever applied, so multi-operation outboxes replay clean).
+// row ever applied, so multi-operation outboxes replay clean). The branch
+// reach is part of the query, as the pull's is (UX-81): the column carries
+// no unique index (0213's rule), so a key can name rows on two branches
+// and an unordered LIMIT 1 must not hand back the out of reach one (UX-103).
 func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
 	where, args, ok := pickScopePredicate(f)
 	if !ok {
 		return sync.RowState{}, false, nil
+	}
+	// The reach clause is the pull's (pullReach), in the query so LIMIT 1
+	// picks only among the rows the caller reaches: a pick with no branch
+	// is no scoped caller's, a GLOBAL caller adds no clause (the org
+	// predicate bounds it), an unwired authority fences nothing, and an
+	// absent or inactive one answers not applied.
+	reachSQL := ""
+	var branches []string
+	if s.staff != nil {
+		var reach bool
+		var err error
+		if branches, reach, err = s.pullReach(ctx, f); err != nil {
+			return sync.RowState{}, false, err
+		}
+		if !reach {
+			return sync.RowState{}, false, nil
+		}
+		if branches != nil {
+			reachSQL = " AND tasks.branch_id = ANY($4::uuid[])"
+		}
 	}
 	// No table alias: the projection's shortage-count subqueries
 	// reference tasks.id unqualified, which an alias would hide.
 	q := fmt.Sprintf(`SELECT %s FROM tasks
 		WHERE %s
 		  AND (idempotency_key = $2::uuid
-		       OR EXISTS (SELECT 1 FROM task_events e WHERE e.task_id = tasks.id AND e.note = $3))
-		LIMIT 1`, syncColumns, where)
+		       OR EXISTS (SELECT 1 FROM task_events e WHERE e.task_id = tasks.id AND e.note = $3))%s
+		LIMIT 1`, syncColumns, where, reachSQL)
 	args = append(args, key, idemNote(key))
+	if branches != nil {
+		args = append(args, branches)
+	}
 	r, err := scanSyncRow(s.pool.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("tasks: sync find applied: %w", err)
-	}
-	// A replay never answers for a row the caller cannot pull (UX-81 round 2): the key's row is out of reach, so
-	// it is not "applied" for this caller (the same answer as an absent key).
-	if reach, err := s.callerReaches(ctx, f, r.task.BranchID); err != nil || !reach {
-		return sync.RowState{}, false, err
 	}
 	if err := s.attachPicked(ctx, s.pool, &r); err != nil {
 		return sync.RowState{}, false, err
@@ -367,6 +388,34 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 		return sync.RowState{}, false, err
 	}
 	return rs, true, nil
+}
+
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// whether a task row the scope's keys can name still exists, for every
+// caller of the org at once. The org predicate alone, tombstone aware (a
+// tombstoned task is gone for everyone), never the branch reach the
+// caller's Load speaks: the gate may hide a key only for a live row a
+// caller cannot see, and a gone row keeps the bound answer. The weights
+// scope's store answers over the same rows through the same read.
+func (s *SyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	return taskBoundExists(ctx, s.pool, f, id)
+}
+
+// taskBoundExists is the existence read both task scope stores ask: a
+// tenant filter fails closed, a malformed id is the absent row, and a
+// read fault is the plain error (the gate's classified path), never a
+// silent verdict.
+func taskBoundExists(ctx context.Context, db pickQuerier, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || !looksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	if err := db.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL)`,
+		id, f.OrgID).Scan(&present); err != nil {
+		return false, fmt.Errorf("tasks: sync bound entity exists: %w", err)
+	}
+	return present, nil
 }
 
 // callerReaches says whether the caller's branch reach covers a pick on the given branch: exactly the pull's rule

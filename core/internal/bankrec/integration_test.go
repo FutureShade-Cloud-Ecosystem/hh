@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -52,6 +53,13 @@ func cleanTables(t *testing.T, pool *pgxpool.Pool) {
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
+	_, _ = pool.Exec(context.Background(), `
+		UPDATE bank_accounts
+		   SET cutover_date = NULL,
+		       cutover_statement_balance_cents = NULL,
+		       cutover_outstanding_journal_ids = '{}'::uuid[],
+		       cutover_recorded_by = NULL,
+		       cutover_recorded_at = NULL`)
 }
 
 func rbcAccountID(t *testing.T, pool *pgxpool.Pool) string {
@@ -186,6 +194,57 @@ func (p *dbPoster) PostJournal(ctx context.Context, in gl.ExternalJournal) (stri
 	return journalID, nil
 }
 
+// PostJournalTx is the transaction arm (FROM-PRINCIPAL 232): every poster bankrec is served gains it, so
+// the match and its journal share the caller's transaction. The same rows, written on the caller's tx, with
+// no begin and no commit of its own.
+func (p *dbPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in gl.ExternalJournal) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if in.IdempotencyKey != "" {
+		if id, ok := p.seen[in.IdempotencyKey]; ok {
+			return id, nil // idempotent replay
+		}
+	}
+	var periodID string
+	var year, month int
+	if err := tx.QueryRow(ctx, `SELECT id::text, year, month FROM fiscal_periods WHERE year=2026 AND month=6`).
+		Scan(&periodID, &year, &month); err != nil {
+		return "", err
+	}
+	var journalID string
+	err := tx.QueryRow(ctx, `
+		INSERT INTO gl_journals (fiscal_year, entry_no, period_id, source, memo, status, posted_at, idempotency_key)
+		VALUES ($1, (SELECT COALESCE(MAX(entry_no),0)+1 FROM gl_journals WHERE fiscal_year=$1), $2, $3, $4, 'POSTED', now(), $5)
+		ON CONFLICT (idempotency_key) WHERE idempotency_key <> '' DO NOTHING
+		RETURNING id::text`,
+		year, periodID, in.Source, in.Memo, in.IdempotencyKey).Scan(&journalID)
+	if err != nil {
+		if ferr := tx.QueryRow(ctx, `SELECT id::text FROM gl_journals WHERE idempotency_key = $1`, in.IdempotencyKey); ferr.Scan(&journalID) == nil {
+			p.seen[in.IdempotencyKey] = journalID
+			return journalID, nil
+		}
+		return "", err
+	}
+	lineNo := 1
+	for _, l := range in.Lines {
+		var debit, credit any
+		if l.DebitCents > 0 {
+			debit = l.DebitCents
+		} else {
+			credit = l.CreditCents
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, credit_cents, memo)
+			VALUES ($1, $2, (SELECT id FROM gl_accounts WHERE code = $3), $4, $5, $6)`,
+			journalID, lineNo, l.AccountCode, debit, credit, l.Memo); err != nil {
+			return "", err
+		}
+		lineNo++
+	}
+	p.seen[in.IdempotencyKey] = journalID
+	return journalID, nil
+}
+
 // - DB-free till seam fakes -
 type fakePayments struct {
 	cands     []CandidatePayment
@@ -217,7 +276,8 @@ func (f *fakeLodgements) LodgementFacts(_ context.Context, id string) (Lodgement
 	for _, l := range f.open {
 		if l.MovementID == id {
 			return LodgementFact{BranchID: l.BranchID, AmountCents: l.AmountCents,
-				PaymentIDs: l.PaymentIDs, PaymentsUnresolved: l.PaymentsUnresolved}, true, nil
+				PaymentIDs: l.PaymentIDs, PaymentsUnresolved: l.PaymentsUnresolved,
+				CarriesJournal: l.CarriesJournal}, true, nil
 		}
 	}
 	return LodgementFact{}, false, nil

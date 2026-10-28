@@ -75,6 +75,9 @@ var demoEnvDenyNames = []string{
 	"NATS_URL",
 	"HOS_STATEMENT_NOTICES",
 	"CORE_LOAD_DOORS",
+	// The finance box mark (W2-2): it names a deployment kind a demo box
+	// never is, so a demo box carrying it refuses the boot.
+	"HH_BOX_KIND",
 }
 
 // demoEnvCardProcessorVar and demoEnvCardProcessorValue: the card
@@ -104,8 +107,9 @@ var demoEnvAllowNames = []string{
 	"HH_DEMO_MINT_ADDRESS_CEILING",
 	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
 	// The HH_WEB_ names are the web runtime config's public facts, read by
-	// the image's entrypoint (deploy/demo/write-web-config.sh) and never by
-	// the core, so they are allowed here and are not in the inventory below.
+	// the image's entrypoint (deploy/demo/write-web-config.sh); HH_WEB_ORG is
+	// also read by the core's finance one-shot (the org anchor's slug), so
+	// it carries the inventory entry above beside this allow entry.
 	"HH_WEB_CONSOLE_ENDPOINT",
 	"HH_WEB_CONSOLE_PROJECT_ID",
 	"HH_WEB_CORE_BASE_URL",
@@ -227,10 +231,12 @@ var envInventoryFixture = []string{
 	"ERP_BASE_URL",
 	"HH_DEMO_MINT_ADDRESS_CEILING",
 	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
+	"HH_WEB_ORG",
 	"HH_ACCEPTANCE_SIGN_KEY",
 	"HH_ACCEPTANCE_SIGN_KEY_ID",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS_ID",
+	"HH_BOX_KIND",
 	"HOS_ASSIST_ANTHROPIC_API_KEY",
 	"HOS_ASSIST_CLAIMS_KEY",
 	"HOS_ASSIST_PRO_READER_DATABASE_URL",

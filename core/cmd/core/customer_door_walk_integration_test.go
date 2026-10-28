@@ -77,6 +77,7 @@ func walkDoors() []customerDoor {
 		{route: "POST /api/v1/ar/holds", class: doorWall, path: "/api/v1/ar/holds", body: `{"customer_id":"%C%","reason":"walk"}`},
 		{route: "POST /api/v1/ar/credit-memos", class: doorWall, path: "/api/v1/ar/credit-memos", body: `{"customer_id":"%C%","branch_id":"` + A + `","amount_cents":100,"reason":"walk"}`},
 		{route: "POST /api/v1/ar/credit-memos/quote", class: doorWall, path: "/api/v1/ar/credit-memos/quote", body: `{"customer_id":"%C%","branch_id":"` + A + `","amount_cents":100}`},
+		{route: "POST /api/v1/ar/credits/apply", class: doorAgree, path: "/api/v1/ar/credits/apply", body: `{"customer_id":"%C%","credit_kind":"MEMO","credit_id":"` + walkUUID1 + `","invoice_id":"` + walkUUID2 + `","amount_cents":100,"reason":"walk","idempotency_key":"walk-%C%"}`, reason: "the credit and the invoice are both the account's own and both inside the caller's branch reach, so an account out of reach names no invoice the caller may touch: the answer is alike (not found), not the wall's 404"},
 		{route: "POST /api/v1/ar/payment-attempts", class: doorWall, path: "/api/v1/ar/payment-attempts", body: `{"idempotency_key":"walk-%C%","customer_id":"%C%","amount_cents":100,"method":"CARD","processor":"x","result":"DECLINED","branch_id":"` + A + `"}`},
 		{route: "POST /api/v1/ar/payments/apply", class: doorAgree, path: "/api/v1/ar/payments/apply", body: `{"customer_id":"%C%","amount_cents":100,"method":"CASH","idempotency_key":"walk-%C%"}`},
 		{route: "POST /api/v1/ar/payments/paylink", class: doorWall, path: "/api/v1/ar/payments/paylink", body: `{"customer_id":"%C%","channel":"EMAIL"}`},
@@ -292,7 +293,7 @@ func walkEveryCustomerDoor(t *testing.T, pool *pgxpool.Pool, custB, custShared, 
 	// Round 4 fixtures: North B's account with an invoice and a promise at each branch, and rep assignments.
 	invoice := func(branch, tag string) string {
 		return one(`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, org_id)
-			VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', current_date, current_date, 700, 0, 700, 700, now(), $4::uuid) RETURNING id::text`,
+			VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date, 700, 0, 700, 700, now(), $4::uuid) RETURNING id::text`,
 			"R4-INV-"+tag+"-"+suffix, custB, branch, testkit.OrgNorthID)
 	}
 	invA, invB := invoice(testkit.BranchNorthAID, "A"), invoice(testkit.BranchNorthBID, "B")

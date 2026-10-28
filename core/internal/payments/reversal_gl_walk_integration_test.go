@@ -4,7 +4,8 @@
 // round 4, brief r2, ruling 52).
 //
 // A reversal leaves the payment RECEIVED, and the till's expected tenders count every RECEIVED payment of the
-// session. So the money is either still in the drawer (lodged, and the bank match clears 1020) or gone unrecorded
+// session. So the money is either still in the drawer (lodged, and the lodgement's own journal clears 1020 while
+// the bank match only confirms the line, FROM-PRINCIPAL 117 and 120) or gone unrecorded
 // (the count is short and the close posts Dr 6350 / Cr 1020). Crediting 1020 at the reversal credits it twice in
 // either case. The reversal credits 2310, the money held for the customer, whatever the tender, session, register
 // or deposit status; the act that moves the money clears it later (re-application, pay out, write off).
@@ -67,15 +68,18 @@ func (w *reversalGLWorld) inSession(session, paymentID string) {
 	}
 }
 
-// lodgeAndMatch records a LODGEMENT of the method on the session and matches it to a bank line (Dr 1000 / Cr 1020).
-func (w *reversalGLWorld) lodgeAndMatch(session, method string, cents int64) (matchID, line string) {
+// lodgeAndMatch records a LODGEMENT of the method on the session and matches it to a bank line. The lodgement posts
+// its own journal (Dr 1000 / Cr 1020, FROM-PRINCIPAL 117) and the bank match only confirms the line (FROM-PRINCIPAL
+// 117 and 120), so the walk must name the lodgement's journal to see the money reach the bank.
+func (w *reversalGLWorld) lodgeAndMatch(session, method string, cents int64) (matchID, movement, line string) {
 	w.r.t.Helper()
 	ctx := context.Background()
 	repo := till.NewRepository(w.r.pool)
-	if err := repo.InsertMovement(ctx, till.MovementRow{TillSessionID: session, MovementType: "LODGEMENT", Method: method, AmountCents: cents, Reason: "walk", Reference: "WALK-SLIP", CreatedBy: w.r.userID}); err != nil {
+	// CreatedAt: time.Now() is the column default this seed used to ride; the walk reads the row
+	// back by created_at DESC.
+	if err := repo.InsertMovement(ctx, till.MovementRow{TillSessionID: session, MovementType: "LODGEMENT", Method: method, AmountCents: cents, Reason: "walk", Reference: "WALK-SLIP", CreatedBy: w.r.userID, CreatedAt: time.Now()}); err != nil {
 		w.r.t.Fatalf("lodgement: %v", err)
 	}
-	var movement string
 	if err := w.r.obs.QueryRow(ctx, `SELECT id::text FROM till_movements WHERE till_session_id = $1::uuid AND movement_type = 'LODGEMENT' ORDER BY created_at DESC LIMIT 1`, session).Scan(&movement); err != nil {
 		w.r.t.Fatalf("find the lodgement: %v", err)
 	}
@@ -85,7 +89,7 @@ func (w *reversalGLWorld) lodgeAndMatch(session, method string, cents int64) (ma
 	if err != nil {
 		w.r.t.Fatalf("the lodgement match: %v", err)
 	}
-	return m.ID, line
+	return m.ID, movement, line
 }
 
 // closeSession counts the drawer and closes the session the way the till service does: expected cash is the float
@@ -143,9 +147,9 @@ func TestIntegration_ReversalGL_Walk_TillCashReversedThenLodgedAndClosed(t *test
 	w.inSession(session, orig)
 	w.drain()
 	rev := w.reverse(orig)
-	matchID, line := w.lodgeAndMatch(session, "CASH", 10_000)
+	matchID, movement, line := w.lodgeAndMatch(session, "CASH", 10_000)
 	w.closeSession(session, 0)
-	keys := append(caseKeys(orig, rev), "bankrec:match:"+matchID, "till.session.completed:"+session)
+	keys := append(caseKeys(orig, rev), "till.movement.posted:"+movement, "bankrec:match:"+matchID, "till.session.completed:"+session)
 	w.cleanupJournals(keys, []string{line})
 	wantNets(t, "(a) till cash", w.walkNets(keys, []string{line}), map[string]int64{"1000": 10_000, "1020": 0, "1100": 0, "2310": -10_000})
 }
@@ -157,8 +161,8 @@ func TestIntegration_ReversalGL_Walk_RegisterChequeReversedThenBanked(t *testing
 	w.drain()
 	rev := w.reverse(orig)
 	session := w.openSession()
-	matchID, line := w.lodgeAndMatch(session, "CHEQUE", 10_000)
-	keys := append(caseKeys(orig, rev), "bankrec:match:"+matchID)
+	matchID, movement, line := w.lodgeAndMatch(session, "CHEQUE", 10_000)
+	keys := append(caseKeys(orig, rev), "till.movement.posted:"+movement, "bankrec:match:"+matchID)
 	w.cleanupJournals(keys, []string{line})
 	wantNets(t, "(b) register cheque", w.walkNets(keys, []string{line}), map[string]int64{"1000": 10_000, "1020": 0, "1100": 0, "2310": -10_000})
 }

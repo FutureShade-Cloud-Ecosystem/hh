@@ -129,6 +129,17 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "billing",
+		file:   "core/internal/billing/credit_apply.go",
+		tables: []string{},
+		writes: []string{"scope_sequences"},
+		// FW1-12b: the apply and the reversal move the invoice's balance
+		// through creditFeedSeqCTE, the invoices feed counter every balance
+		// move draws beside its write, so the payer's device sees the
+		// change on its invoices feed.
+		reason: "the credit application door's balance moves draw the invoices feed seq through the 0213 allocator (creditFeedSeqCTE, the settle's own posture); its own invoices and customer_transactions rows are billing's",
+	},
+	{
+		module: "billing",
 		file:   "core/internal/billing/credit_memo_repost.go",
 		tables: []string{"gl_journals"},
 		// DIB-429: the sweep finds credit-memo journals whose inline post
@@ -138,13 +149,17 @@ var allowlist = []allowlistEntry{
 	{
 		module: "billing",
 		file:   "core/internal/billing/credit_repository.go",
-		tables: []string{"credit_holds", "customers", "orders"},
+		tables: []string{"credit_holds", "customers", "orders", "payment_allocations", "payment_reapplications", "payments"},
 		writes: []string{"credit_holds"},
 		// the file's own header, restating the module note: billing WRITES
 		// credit_holds, deliberate and documented in migration 0104, the
 		// alternative was a second holds table duplicating the one ACTIVE
-		// hold invariant. customers and orders feed the credit gates.
-		reason: "AR credit gates place and read holds (documented in migration 0104, stated in the file header) and read the customer and order facts the gates decide on",
+		// hold invariant. customers and orders feed the credit gates. The
+		// as-of aging (FW1-06b) rebuilds each document's balance at the
+		// as-of instant inside the one aging query, from the dated acts
+		// that moved it: the payments module's allocations, contra
+		// allocations and reapplications.
+		reason: "AR credit gates place and read holds (documented in migration 0104, stated in the file header), read the customer and order facts the gates decide on, and the as-of aging rebuild reads the dated payment acts per document in the one aging query; read only",
 	},
 	{
 		module: "billing",
@@ -154,6 +169,17 @@ var allowlist = []allowlistEntry{
 		// the consumer read picks its answer out of the same rows the AR
 		// console reads.
 		reason: "consumer-facing AR read reuses the payments stream rather than re-implementing the arithmetic, stated in the file header",
+	},
+	{
+		module: "billing",
+		file:   "core/internal/billing/gl_seam.go",
+		tables: []string{"payment_allocations", "payment_reapplications", "payments"},
+		// the file's own doc: ARBalanceCents is the 1100 tie-out's subledger
+		// figure. The as-of arm (FW1-06b) rebuilds each invoice's balance at
+		// the as-of instant inside the one query, from the same dated acts
+		// the aging's rebuild reads, so the tie-out at a past date compares
+		// what was owed then with the GL at that date.
+		reason: "the 1100 tie-out's as-of arm rebuilds each invoice's balance from the dated payment acts in the one query, the same reconstruction the aging runs, so the two tie by construction; read only",
 	},
 	{
 		module: "billing",
@@ -492,11 +518,14 @@ var allowlist = []allowlistEntry{
 	{
 		module: "notify",
 		file:   "core/internal/notify/requeue.go",
-		tables: []string{},
+		tables: []string{"events_outbox"},
 		writes: []string{"events_outbox"},
 		// the file's own header: the scaffold-owned dead-row replay seam on
-		// the outbox store; gl's DeadRequeuer satisfied by notify.
-		reason: "the outbox dead-row replay resets DEAD rows to PENDING for redelivery, stated in the file header",
+		// the outbox store; gl's DeadRequeuer satisfied by notify. FW1-09b
+		// adds a read beside the reset: the close pre flight counts the
+		// month's PENDING and DEAD rows through UnpostedForWindow on the
+		// same store, the outbox read staying in its keeper module.
+		reason: "the outbox dead-row replay resets DEAD rows to PENDING for redelivery, and the close pre flight counts the month's waiting or dead rows, both stated in the file header",
 	},
 	{
 		module: "notify",
@@ -624,6 +653,18 @@ var allowlist = []allowlistEntry{
 		// subledger and the general ledger are append-only projections of the
 		// payment stream.
 		reason: "reversals post the reversing rows into the AR subledger projection and un-apply the invoice balances, per the file header's pre-ratified ruling; events through the outbox, org and seq stamped",
+	},
+	{
+		module: "payments",
+		file:   "core/internal/payments/void.go",
+		tables: []string{"invoices"},
+		writes: []string{"customer_transactions", "events_outbox", "invoices", "scope_sequences"},
+		// the file's own header: the true void of a mis-keyed desk receipt
+		// (FW1-06b) undoes the receipt as never taken in ONE transaction,
+		// the reversal's sibling with no 2310 hold: the allocation is
+		// deleted, the invoice balances re-open, the subledger gets the
+		// mirror rows, and payment.voided rides the outbox.
+		reason: "the void of a mis-keyed receipt re-opens the invoice balances its allocation settled, mirrors the AR subledger rows, emits payment.voided through the outbox and stamps seq, the reversal's sibling act with no 2310 hold",
 	},
 	{
 		module: "product",
@@ -1047,11 +1088,16 @@ var allowlist = []allowlistEntry{
 	{
 		module: "till",
 		file:   "core/internal/till/recon_seam.go",
-		tables: []string{"payments"},
+		tables: []string{"events_outbox", "payments"},
 		writes: []string{"payments"},
 		// the file's own header: FROZEN scaffold seam; the sanctioned
 		// cross-module seam for bankrec and gl, read and deposit-stamp only.
-		reason: "the frozen bankrec and gl read seams over the payment rows (UnreconciledCardPayments, MarkDeposited, PaymentForGL), stated in the file header",
+		// The events_outbox READ is the till's own emission: the seam says
+		// whether a lodgement carries its own journal (the movement-posted
+		// event the till wrote in the movement's transaction), so the bank
+		// match can confirm the line without booking the deposit twice. It
+		// reads the till's own events, it writes none.
+		reason: "the frozen bankrec and gl read seams over the payment rows (UnreconciledCardPayments, MarkDeposited, PaymentForGL) and the till's own movement-posted emission, which says whether a lodgement carries its own journal, stated in the file header and in carriesJournalSQL",
 	},
 	{
 		module: "till",

@@ -87,7 +87,6 @@ type CounterPolicyRow = {
   workspace_arrangement: string;
   lookup_presentation: string;
   margin_visibility: string;
-  balance_visibility: string;
   supplier_deposit_cancel: string;
   quick_chip_set?: string[];
 };
@@ -931,10 +930,11 @@ export class HosPosCounterSettings extends LitElement {
             parked trail is deliberate and argued above; the SENTENCE was the defect, because "the
             counter rules" is precisely what the administrator has just changed.
 
-            The ten diffed fields (backend/internal/pos/policy_history.go:135) are cod_enabled,
-            restocking_fee_bps, margin_visibility and balance_visibility: money: and
+            The nine diffed fields (core/internal/pos/policy_history.go) are cod_enabled,
+            restocking_fee_bps and margin_visibility: money: and
             line_presentation, lookup_presentation, quick_chips_enabled, quick_chip_set,
-            workspace_arrangement and workspace_split_pct: layout. Nothing else. So that is what the
+            workspace_arrangement and workspace_split_pct: layout, and supplier_deposit_cancel:
+            deposits. Nothing else. So that is what the
             noun phrase says. It is still one noun phrase, which is the whole contract with the
             shared panel; it is simply the true one. */ ''}
       <hos-settings-history

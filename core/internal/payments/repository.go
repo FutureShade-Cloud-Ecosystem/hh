@@ -289,6 +289,15 @@ func (r *Repository) SetDefaultMethod(ctx context.Context, customerID, methodID 
 // while never queuing behind a foreign key's FOR KEY SHARE (a POS return's pos_returns insert).
 // The ascending order is PR 277's (the till's returns lock their documents the same way), so a
 // received payment and a return can never meet head on, whatever order the caller's list came in.
+//
+// The targets are INVOICES (doc_type = 'INVOICE'), and the filter is here, in the locking
+// statement, for K3's P2-1: a hand-built request may name a CREDIT_MEMO beside its target
+// INVOICE, and the memo passes this walk's open status check (it is FINALIZED) while its
+// negative balance only produces zero payable, so the walk kept the memo's row lock while it
+// paid the invoice beside it. With the memo's id below the invoice's, this walk takes the memo
+// and then the invoice while the billing credit apply takes the invoice and then the memo: each
+// door holds the row the other needs and Postgres answers one side 40P01. A memo is a document a
+// payment can never land on, so the walk refuses it here, before it takes a row at all.
 func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in ApplyRequest) ([]applyInvoiceRow, error) {
 	ids := append([]string(nil), in.InvoiceIDs...)
 	sort.Strings(ids)
@@ -304,6 +313,7 @@ func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in Appl
 			       issue_date, due_date, balance_cents, holdback_cents
 			  FROM invoices
 			 WHERE id = $1::uuid AND customer_id = $2::uuid
+			   AND doc_type = 'INVOICE'
 			   AND ($3::text[] IS NULL OR branch_id = ANY($3::uuid[]))
 			   FOR NO KEY UPDATE`, id, in.CustomerID, reach).
 			Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
@@ -389,6 +399,11 @@ func branchInReach(reach []string, branchID string) bool {
 // a single row lock. The judgements run in the same ascending id order the apply locks in, over
 // the rows the statement returned, so the refusal a preview surfaces is the refusal the apply
 // would surface.
+//
+// The targets are INVOICES (doc_type = 'INVOICE'), the same filter the apply's locking statement
+// carries (K3's P2-1), so the preview refuses a named credit memo exactly as the apply refuses
+// it: a memo is a document a payment can never land on. The preview takes no row either way, so
+// the filter here is about the answer the desk sees, not about a lock.
 func (r *Repository) readApplyInvoices(ctx context.Context, in ApplyRequest) ([]applyInvoiceRow, error) {
 	ids := append([]string(nil), in.InvoiceIDs...)
 	sort.Strings(ids)
@@ -402,6 +417,7 @@ func (r *Repository) readApplyInvoices(ctx context.Context, in ApplyRequest) ([]
 		       issue_date, due_date, balance_cents, holdback_cents
 		  FROM invoices
 		 WHERE id = ANY($1::uuid[]) AND customer_id = $2::uuid
+		   AND doc_type = 'INVOICE'
 		   AND ($3::text[] IS NULL OR branch_id = ANY($3::uuid[]))`, ids, in.CustomerID, reach)
 	if err != nil {
 		return nil, fmt.Errorf("apply preview: read invoices: %w", err)
@@ -960,6 +976,40 @@ func PaymentBranchesTx(ctx context.Context, tx pgx.Tx, ids []string) (map[string
 			return nil, fmt.Errorf("payments: read the payment branches: %w", err)
 		}
 		out[strings.ToLower(id)] = branch
+	}
+	return out, rows.Err()
+}
+
+// PaymentMatchFact holds the branch, tender method, gross amount, and till session presence of a payment row read
+// under LockPaymentRowsTx. InTillSession says the payment was taken in a till session (FW1-05b): a till cash
+// payment reaches the bank only by its lodgement, so it can never be matched alone as a PAYMENT target.
+type PaymentMatchFact struct {
+	BranchID      string
+	Method        string
+	AmountCents   int64
+	InTillSession bool
+}
+
+// PaymentFactsTx returns the branch, tender method, gross amount, and till session presence of each named payment,
+// keyed by the lowercased id (an id with no row is absent). Call it on the caller's transaction after
+// LockPaymentRowsTx has locked the rows.
+func PaymentFactsTx(ctx context.Context, tx pgx.Tx, ids []string) (map[string]PaymentMatchFact, error) {
+	out := map[string]PaymentMatchFact{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := tx.Query(ctx, `SELECT id::text, branch_id::text, method, amount_cents, till_session_id IS NOT NULL FROM payments WHERE id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("payments: read the payment match facts: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var f PaymentMatchFact
+		if err := rows.Scan(&id, &f.BranchID, &f.Method, &f.AmountCents, &f.InTillSession); err != nil {
+			return nil, fmt.Errorf("payments: read the payment match facts: %w", err)
+		}
+		out[strings.ToLower(id)] = f
 	}
 	return out, rows.Err()
 }

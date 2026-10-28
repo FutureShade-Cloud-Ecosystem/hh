@@ -173,6 +173,13 @@ test("the core's refusals read in words that say what to do, and a walled route 
   // SF-2j: what a manual match must explain, and the signed off month, in the dealer's words.
   assert.equal(refusalWords("match", "bankrec: a group match is not available yet, match the line to a payment, a lodgement or a journal", 422), "A group match is not available yet. Match the line to a payment, a lodgement or a journal.");
   assert.equal(refusalWords("match", "bankrec: that lodgement is for 5000 cents and the line is 500000 cents, so it does not explain the line", 422), `That lodgement is ${formatMoney(5000)} and the line is ${formatMoney(500000)}, so it does not explain the line. Pick the lodgement for the same amount.`);
+  // FW1-05: a hand match checks the payment's amount, the line's sign, and the tender.
+  assert.equal(refusalWords("match", "bankrec: that payment is for 5000 cents and the line is 50000 cents, so it does not explain the line", 422), `That payment is ${formatMoney(5000)} and the line is ${formatMoney(50000)}, so it does not explain the line. Pick the payment for the line's amount.`);
+  assert.equal(refusalWords("match", "bankrec: the match is for 12345 cents and the statement line is for 50000 cents, so it does not explain the line", 422), `The match was typed for ${formatMoney(12345)} and the line is ${formatMoney(50000)}. Leave the amount out, or type the line's own.`);
+  assert.equal(refusalWords("match", "bankrec: only a deposit (a positive line) can be matched to a payment; this line reads -50000 cents", 422), "Only a deposit (money in) can be matched to a payment; this line reads money out.");
+  assert.equal(refusalWords("match", "bankrec: a OTHER payment cannot be matched by hand; match a card, a cash, a cheque or an EFT deposit", 422), "That payment's tender cannot be matched by hand; match a card, a cash, a cheque or an EFT deposit.");
+  // FW1-05b: a till cash payment reaches the bank only by its lodgement, so it is never a PAYMENT target.
+  assert.equal(refusalWords("match", "bankrec: that payment was taken in a till session, so it reaches the bank only by its lodgement; match the lodgement's deposit line, not the payment", 422), "That payment was taken in by the till, so it reaches the bank only with its lodgement. Match the lodgement's deposit line, not the payment alone.");
   assert.equal(refusalWords("match", "bankrec: that journal is not posted, so it cannot explain a bank line", 422), "That journal is not posted yet, so it cannot explain a bank line.");
   assert.equal(refusalWords("match", "bankrec: that journal does not touch this bank account", 422), "That journal does not move this bank account, so it cannot explain this line.");
   assert.equal(refusalWords("match", "bankrec: that journal moves this bank account by 3000 cents and the line is 5000 cents", 422), `That journal moves this account by ${formatMoney(3000)} and the line is ${formatMoney(5000)}. Pick the journal for the line's amount.`);
@@ -197,6 +204,58 @@ test("the core's refusals read in words that say what to do, and a walled route 
   assert.equal(refusalWords("load", "internal error", 500), "The bank reconciliation service did not answer. Reload to try again.");
   assert.equal(refusalWords("load", "", 0), "The bank reconciliation service did not answer. Reload to try again.");
   assert.equal(refusalWords("open", "valid year and month (1-12) are required", 400), "Valid year and month (1-12) are required.");
+  // FW1-04: month-end sign-off guards in bookkeeper words.
+  assert.equal(
+    refusalWords("complete", "bankrec: cannot complete, 2087-12 has not reached month end yet (month end is 2087-12-31)", 422),
+    "Not signed off: December 2087 has not reached month end yet (Dec 31, 2087). Wait until the month has ended before signing it off.",
+  );
+  assert.equal(
+    refusalWords("complete", "bankrec: cannot complete, 2087-12 has not reached month end yet (month end is 2087-12-31; first day to sign off is 2088-01-01)", 422),
+    "Not signed off: December 2087 has not reached month end yet (Dec 31, 2087). The first day it may be signed off is Jan 1, 2088.",
+  );
+  assert.equal(
+    refusalWords("complete", "bankrec: cannot complete, no statement lines have been imported for 2031-05", 422),
+    "Not signed off: no statement lines have been imported for May 2031. Import the bank statement for that month first.",
+  );
+  assert.equal(
+    refusalWords("complete", 'bankrec: cannot complete, the clearing journal for "MAY SETTLEMENT REV" has been reversed in the ledger', 422),
+    'Not signed off: the clearing journal for "MAY SETTLEMENT REV" was reversed in the ledger. Undo the match and match the line again.',
+  );
+  assert.equal(
+    refusalWords("complete", "bankrec: cannot complete, an earlier month (2031-04) is still open; sign off months in chronological order", 422),
+    "Not signed off: April 2031 is still open. Sign off the earlier month first.",
+  );
+  assert.equal(
+    refusalWords("complete", "bankrec: cannot complete, a later month (2031-06) is already completed; months must be signed off in chronological order", 422),
+    "Not signed off: June 2031 is already signed off. Earlier months cannot be signed off after a later month.",
+  );
+  assert.equal(
+    refusalWords(
+      "complete",
+      "bankrec: cannot complete, the statement closing balance ($1,500.00) does not equal the prior month's closing balance ($1,000.00) plus this month's statement lines ($400.00 = $1,400.00)",
+      422,
+    ),
+    "Not signed off: the statement closing balance ($1,500.00) does not continue from the prior month's closing balance ($1,000.00) plus this month's lines ($400.00, expected $1,400.00). Check the closing balance and the imported lines.",
+  );
+});
+
+test("the cut over refusals read in words a bookkeeper can act on", () => {
+  assert.equal(
+    refusalWords("cutover", "bankrec: cannot record cut-over at 2031-03-31 because month 2031-04 is already completed", 409),
+    "Not recorded: April 2031 is already signed off, so the starting point cannot change. It stands as it was recorded.",
+  );
+  assert.equal(
+    refusalWords("cutover", "Forbidden", 403),
+    "Recording the starting point is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.",
+  );
+  assert.equal(
+    refusalWords("cutover", "bankrec: only the Financial Controller may record a bank reconciliation cut-over", 403),
+    "Recording the starting point is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.",
+  );
+  assert.equal(
+    refusalWords("cutover", "bankrec: cannot record cut-over at 2031-03-31: the statement and the book differ by $25.00; tick the items still outstanding at cut over, or check the date and balance", 422),
+    "The statement and the book differ by $25.00; tick the items still outstanding at cut over, or check the date and balance.",
+  );
 });
 
 test("a failed import says what the file lacked in words a bookkeeper can act on", () => {
@@ -216,6 +275,14 @@ test("a failed import says what the file lacked in words a bookkeeper can act on
   assert.equal(
     importFailedWords('bankrec: csv is missing the mapped column "Date"'),
     'Not imported: the file has no "Date" column. The first row must name Date, Description, Amount and Reference.',
+  );
+  assert.equal(
+    importFailedWords('bankrec: csv row 2: USD amount "250.00" is not supported on a CAD statement import'),
+    'Not imported: row 2 carries a USD amount ("250.00"), which cannot be imported into a CAD statement.',
+  );
+  assert.equal(
+    importFailedWords("bankrec: csv row 2: missing amount"),
+    "Not imported: row 2 has no amount.",
   );
   assert.equal(importFailedWords("statement parse failed: bankrec: read csv header: EOF"), "Not imported: the file is empty or has no header row.");
   assert.equal(importFailedWords("statement parse failed: something else"), "Not imported: something else.");

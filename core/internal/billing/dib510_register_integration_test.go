@@ -70,21 +70,56 @@ func newD510Fixture(t *testing.T) *d510Fixture {
 	}
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM ar_invoice_deliveries WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM ar_promises_to_pay WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM ar_invoice_disputes WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM credit_holds WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM payment_reapplications WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, f.customerID)
-		_, _ = pool.Exec(c, `UPDATE payments SET reversed_by_payment_id = NULL WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE payment_id IN (SELECT id FROM payments WHERE customer_id = $1::uuid)`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM customer_contacts WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, f.customerID)
+		if _, err := pool.Exec(c, `DELETE FROM ar_invoice_deliveries WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the invoice deliveries: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM ar_promises_to_pay WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the promises to pay: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM ar_invoice_disputes WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the invoice disputes: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM credit_holds WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the credit holds: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM payment_reapplications WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the payment reapplications: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the outbox events: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the customer transactions: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the payment allocations: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `UPDATE payments SET reversed_by_payment_id = NULL WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: release the reversed payments: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM payment_allocations WHERE payment_id IN (SELECT id FROM payments WHERE customer_id = $1::uuid)`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the payments' allocations: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the payments: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the invoice lines: %v", f.tag, err)
+		}
+		// The credit application keys reference the invoices (0447), so they go before the
+		// invoices: the invoice delete is refused by that foreign key while any of them stands.
+		if _, err := pool.Exec(c, `DELETE FROM credit_application_keys WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the credit application keys: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the invoices: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM customer_contacts WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the customer contacts: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the customer: %v", f.tag, err)
+		}
 	})
 	return f
 }
@@ -393,6 +428,42 @@ func TestRegister_AccountPositionIsByteAbsentForAFrontlineCaller(t *testing.T) {
 			t.Errorf("invoice detail must keep invoice document figure %s: %s", keep, detailFrontJSON)
 		}
 	}
+
+	// Round 2 (S6 P1-1): the account's OPEN CREDITS are an account level figure like the position,
+	// so a caller the position policy refuses receives no open_credits bytes at all, while the
+	// document's own credit_applications stay (they are this invoice's own acts). The manager sees
+	// both.
+	memoID := f.invoice(t, "CRED", "FINALIZED", -5, -15000, -15000, "CREDIT_MEMO")
+	applySvc := NewCreditApplyService(NewRepository(f.pool))
+	// The key's scope is the caller's org (FW1-12c) and the key table takes a real org (0448).
+	applyOrg := plantApplyOrg(t, f.pool, f.tag)
+	if _, err := applySvc.Apply(ctx, ApplyCreditInput{
+		CustomerID: f.customerID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: invID,
+		AmountCents: 5000, Reason: "byte absence leg", IdempotencyKey: f.tag + "-apply", OrgID: applyOrg,
+	}, true); err != nil {
+		t.Fatalf("apply memo to the gated invoice: %v", err)
+	}
+	mgrDetail2, err := f.service(d510Manager()).Detail(ctx, invID, false)
+	if err != nil {
+		t.Fatalf("manager detail with credits: %v", err)
+	}
+	mgrDetail2JSON, _ := json.Marshal(mgrDetail2)
+	for _, want := range []string{`"open_credits"`, `"credit_applications"`} {
+		if !strings.Contains(string(mgrDetail2JSON), want) {
+			t.Errorf("an allowed manager's detail carries %s: %s", want, mgrDetail2JSON)
+		}
+	}
+	frontDetail2, err := f.service(d510Frontline()).Detail(ctx, invID, false)
+	if err != nil {
+		t.Fatalf("frontline detail with credits: %v", err)
+	}
+	frontDetail2JSON, _ := json.Marshal(frontDetail2)
+	if strings.Contains(string(frontDetail2JSON), `"open_credits"`) {
+		t.Errorf("a refused caller's invoice detail must not contain %q at all: %s", "open_credits", frontDetail2JSON)
+	}
+	if !strings.Contains(string(frontDetail2JSON), `"credit_applications"`) {
+		t.Errorf("the invoice's own credit applications stay on a refused caller's detail: %s", frontDetail2JSON)
+	}
 }
 
 // TestRegister_ARefusedCallerCarriesTheStoredStatusAndNoPastDueFlags pins round 6 (S5 R5.6, row
@@ -453,6 +524,47 @@ func TestRegister_ARefusedCallerCarriesTheStoredStatusAndNoPastDueFlags(t *testi
 	}
 	if got := detailMgr.Status; got != StatusOverdue {
 		t.Errorf("the manager's derived status for a 12 day late invoice is OVERDUE, got %s", got)
+	}
+}
+
+// TestRegister_AnAsOfFigureIsByteAbsentForARefusedCaller pins the two features meeting in one read:
+// the register's rows age their documents at the service's as of clock (the true views work), and
+// the account position withholding drops exactly those as of derived fields for a caller the policy
+// refuses. The proof has both halves: the ALLOWED manager's row at the same pinned clock carries
+// the as of figure (days_overdue 68, the 61 to 90 bucket, the account position), so the figure was
+// computed and then withheld, and the refused caller's bytes carry none of it, absent and never 0,
+// while the invoice's own document figures and stored status stay.
+func TestRegister_AnAsOfFigureIsByteAbsentForARefusedCaller(t *testing.T) {
+	f := newD510Fixture(t)
+	ctx := context.Background()
+	// 68 days past due at d510Now: deep in the 61 to 90 bucket at the pinned as of instant.
+	f.invoice(t, "AGED", "FINALIZED", -68, 90000, 90000, "INVOICE")
+
+	mgr, err := f.service(d510Manager()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Limit: 50})
+	if err != nil {
+		t.Fatalf("manager register: %v", err)
+	}
+	mgrJSON, _ := json.Marshal(mgr)
+	for _, want := range []string{`"days_overdue":68`, `"bucket_key":"61_90"`, `"bucket_label":"61 to 90"`, `"account":{`} {
+		if !strings.Contains(string(mgrJSON), want) {
+			t.Errorf("the manager's as of row must carry %s: %s", want, mgrJSON)
+		}
+	}
+
+	front, err := f.service(d510Frontline()).Register(ctx, RegisterFilter{CustomerID: f.customerID, Limit: 50})
+	if err != nil {
+		t.Fatalf("frontline register: %v", err)
+	}
+	frontJSON, _ := json.Marshal(front)
+	for _, gated := range []string{"days_overdue", "bucket_label", "bucket_key", `"account":{`} {
+		if strings.Contains(string(frontJSON), gated) {
+			t.Errorf("a refused caller's register bytes must not carry the as of figure %s: %s", gated, frontJSON)
+		}
+	}
+	for _, keep := range []string{`"balance_cents":90000`, `"stored_status":"FINALIZED"`, `"as_of":`} {
+		if !strings.Contains(string(frontJSON), keep) {
+			t.Errorf("the refused page keeps %s: %s", keep, frontJSON)
+		}
 	}
 }
 

@@ -659,8 +659,35 @@ func TestFW1JournalLinesCarryBranch(t *testing.T) {
 	}
 	record("external_post_external_tx", "core/internal/gl/module.go:372-374,posting.go:1099-1146 (PostExternalTx)", extTxJID)
 
-	// 27. Year-end close (gl/close.go:159-212).
-	closeRes, err := glSvc.CloseYear(ctx, 2026, "fw1 census year-end close")
+	// 27. Year-end close (gl/close.go:159-212). The census closes a year of
+	// its own, not the seeded 2026: FW1-09b round 2 refuses a year end whose
+	// year has not ended in the dealer's zone, and the seeded year stands mid
+	// year on the real clock. The leg plants 2020's twelve periods, gives its
+	// Trenton books a P&L through PostExternal (dated by the document, the
+	// ruling 82.2 seam), closes THAT year, and reads its closing journal back.
+	// The census database is the test's own and dropped afterwards.
+	const censusFiscalYear = 2020
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO fiscal_periods (year, month)
+		SELECT $1, m FROM generate_series(1, 12) AS m
+		ON CONFLICT (year, month) DO NOTHING
+	`, censusFiscalYear); err != nil {
+		t.Fatalf("ensure %d periods: %v", censusFiscalYear, err)
+	}
+	if _, err := glSvc.PostExternal(ctx, gl.ExternalJournal{
+		Source:         gl.SourceAdjustment,
+		IdempotencyKey: "fw1-census:year-end-pnl",
+		Memo:           "fw1 census year end P&L",
+		BranchID:       trtBranchID,
+		DocumentDate:   time.Date(censusFiscalYear, 6, 15, 12, 0, 0, 0, time.UTC),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 5000, Memo: "bank"},
+			{AccountCode: "4000", CreditCents: 5000, Memo: "revenue"},
+		},
+	}); err != nil {
+		t.Fatalf("year end P&L: %v", err)
+	}
+	closeRes, err := glSvc.CloseYear(ctx, censusFiscalYear, "fw1 census year-end close")
 	if err != nil {
 		t.Fatalf("year_end_close: %v", err)
 	}

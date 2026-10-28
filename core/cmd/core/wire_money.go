@@ -16,6 +16,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
@@ -35,6 +36,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -123,6 +125,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithPostingQueue(outboxStore).
 		WithAudit(auditSvc).
 		WithAuditTxRecorder(auditSvc).
+		WithStrictPreFlight().
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
 		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
 	gl.NewHandler(glSvc, log).WithZone(newDealerZone(pool)).WithLegacyImport(settings.NewDealerConfigReader(pool)).WithUserLinker(link).RegisterRoutes(r, g)
@@ -131,6 +134,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	inventorySvc.WithGLPoster(invGLPoster{svc: glSvc}).WithRuleResolver(glRuleAdapter{svc: glSvc})
+	glSvc.WithCostBasis(inventorySvc)
 	pricingSvc.WithCandidateSource(pricingFloorCandidates{products: productSvc, inventory: inventorySvc})
 	productSvc.WithStock(productStockReader{svc: inventorySvc}).WithBranchStock(inventorySvc).WithListPrices(pricingSvc)
 	// X3, the yard fence: the stock reads' cost legs (on hand, branch
@@ -157,6 +161,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithAuditTrail(auditSvc).
 		WithReorderPricing(pricingSvc).
 		WithReorderInventory(inventorySvc).
+		WithStockFulfiller(inventorySvc).
 		// The money a reversal held and a manager applied to the order's invoices, read through the payments module's
 		// own seam for the activity stream (SF-2r round 2).
 		WithReapplied(order.NewPaymentsReappliedReader(payments.NewRepository(pool)))
@@ -420,6 +425,44 @@ func (a invGLPoster) PostJournal(ctx context.Context, in inventory.GLJournal) (s
 		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
 	}
 	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+}
+
+// glStockValueAdapter satisfies gl's close pre flight stock seam over inventory
+// (FW1-09b): the stock ledger side of the 1200 tie check, the weighted average
+// value of everything on hand.
+//
+// An empty branch id means the COMPANY, the way gl's other consolidated reads read it (the 1200 balance
+// and the AR balance both take an empty branch id for the whole book). The consolidated value is ONE
+// read over every branch (inventory's own consolidated value), not a read per branch: the pre flight
+// compares the company's stock against the company's 1200, so the two sides have to be on one basis and
+// the read must not fan out (FW1-09d).
+//
+// The figure is integer cents end to end: inventory values the rows in its own statement, in exact
+// NUMERIC, half away from zero per row, and this adapter passes the int64 through. It never multiplies
+// a quantity by a cost in Go - round 1's float64 product truncated 0.29 at 100 cents to 28 and refused
+// a month whose books tied to the cent by -$0.01 (FW1-09d round 2, AGENTS.md "Money is integer cents,
+// computed by the core"). A named branch reads the same statement scoped to that branch.
+type glStockValueAdapter struct{ svc *inventory.Service }
+
+func (a glStockValueAdapter) StockValueCents(ctx context.Context, branchID string) (int64, error) {
+	return a.svc.StockValueCents(ctx, branchID)
+}
+
+// tillDrawerAdapter satisfies gl's close pre flight drawer seam over the till
+// repository (FW1-09b): the till sessions opened in the month still OPEN.
+type tillDrawerAdapter struct{ repo *till.Repository }
+
+func (a tillDrawerAdapter) OpenDrawers(ctx context.Context, from, to time.Time) (int, error) {
+	_ = to
+	return a.repo.OpenSessionsBetween(ctx, from, to)
+}
+
+func (a invGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in inventory.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
 }
 
 // w5aQuoteStockReserver satisfies quote's stock reservation seam over

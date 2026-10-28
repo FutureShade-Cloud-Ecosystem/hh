@@ -261,6 +261,33 @@ export function createOfficeWorld(ctx) {
     return ok({ label: "VOID", original_payment_id: p.id, reversal_payment_id: reversal.id, reversal_no: reversal.no, amount_cents: p.amount_cents, reason, same_day: true, reopened_invoices: reopened }, 201);
   }
 
+  // ---- a true void of a mis-keyed desk receipt (core/internal/payments void.go, FW1-06b) --------------------------
+  // The receipt is undone as never taken: its allocations go, its invoices re-open at their full balances, and
+  // nothing is held in 2310. The gates, in the core's order under the row lock, in the core's words.
+
+  function voidPayment(id, body) {
+    if (body === null) return refuse(400, "invalid JSON body");
+    const world = ctx.world();
+    const reason = String(body.reason ?? "");
+    if (reason === "") return refuse(400, "payments: a void reason is required");
+    const p = world.payments.find((x) => x.id === id);
+    if (p === undefined) return refuse(404, "payment not found");
+    if (p.reversed === true) return refuse(400, "payments: this payment cannot be voided: it was reversed, and the reversal owns the undo");
+    if (p.reverses !== undefined) return refuse(400, "payments: this payment cannot be voided: it is itself a reversing entry, not a receipt");
+    if (p.status !== "RECEIVED") return refuse(400, `payments: this payment cannot be voided: its status is ${p.status}, only a received receipt that has not been deposited can be voided`);
+    if (p.gateway_ref) return refuse(400, "payments: this payment cannot be voided: the processor captured this card charge, and its undo is a refund through the processor, not a void");
+    const reopened = [];
+    for (const al of p.allocations) {
+      const inv = world.invoices.find((i) => ctx.invNumber(i) === al.invoice_n);
+      inv.balance_cents += al.amount_cents;
+      reopened.push(inv.id);
+    }
+    p.allocations = [];
+    p.status = "VOID";
+    p.void_reason = reason;
+    return ok({ label: "VOID", payment_id: p.id, payment_no: p.no, amount_cents: p.amount_cents, reason, voided_at: NOW_ISO(), reopened_invoices: reopened, held_cents: 0 }, 201);
+  }
+
   // ---- the money a reversal holds, applied to an invoice (core/internal/payments reapply.go, reversal.go) ----------------
 
   /** What the payment holds: amount less what was re-applied, for a reversed original; zero otherwise. */
@@ -371,6 +398,162 @@ export function createOfficeWorld(ctx) {
     p.paid_out_cents = (p.paid_out_cents ?? 0) + body.amount_cents;
     world.payoutKeys.set(key, { payment: id, kind, amount_cents: body.amount_cents, payout });
     return ok({ payment_id: id, payout_id: payout, kind, amount_cents: body.amount_cents, held_before_cents: held, held_after_cents: held - body.amount_cents, replayed: false }, 201);
+  }
+
+  // ---- applying open credit memos and account credits to invoices, and reversing applications (FW1-12b) -----------------
+
+  function applyCredit(body) {
+    if (body === null) return refuse(400, "invalid JSON body");
+    const world = ctx.world();
+    world.creditApplyKeys ??= new Map();
+    const reason = String(body.reason ?? "").trim();
+    if (reason === "") return refuse(400, "billing: a reason is required");
+    const key = String(body.idempotency_key ?? "").trim();
+    if (key === "") return refuse(400, "applying a credit needs an idempotency key");
+    const kind = String(body.credit_kind ?? "").trim().toUpperCase();
+    if (kind !== "MEMO" && kind !== "ACCOUNT") return refuse(400, "credit_kind must be MEMO or ACCOUNT");
+    if (!Number.isInteger(body.amount_cents) || body.amount_cents <= 0) return refuse(400, "the amount applied must be greater than zero");
+    const customerId = String(body.customer_id ?? "").trim();
+    const creditId = String(body.credit_id ?? "").trim();
+    const invoiceId = String(body.invoice_id ?? "").trim();
+    if (!UUID_RE.test(customerId)) return refuse(400, "customer id must be a uuid");
+    if (!UUID_RE.test(creditId)) return refuse(400, "credit id must be a uuid");
+    if (!UUID_RE.test(invoiceId)) return refuse(400, "invoice id must be a uuid");
+
+    const custLower = customerId.toLowerCase();
+    const creditLower = creditId.toLowerCase();
+    const invLower = invoiceId.toLowerCase();
+    const inv = world.invoices.find((i) => i.id === invLower && ctx.custId(i.acct) === custLower);
+    if (inv === undefined) return refuse(404, `invoice not found: ${invoiceId}`);
+
+    const memo = kind === "MEMO" ? world.credit_memos.find((m) => m.id === creditLower && ctx.custId(m.acct) === custLower && m.status !== "VOID") : undefined;
+    const acctCredit = kind === "ACCOUNT" ? (world.account_credits ?? []).find((c) => c.id === creditLower && ctx.custId(c.acct) === custLower) : undefined;
+    if (kind === "MEMO" && memo === undefined) return refuse(404, `credit not found: ${creditId}`);
+    if (kind === "ACCOUNT" && acctCredit === undefined) return refuse(404, `credit not found: ${creditId}`);
+
+    const spent = world.creditApplyKeys.get(key);
+    if (spent !== undefined) {
+      if (
+        spent.customer_id !== custLower ||
+        spent.credit_kind !== kind ||
+        spent.credit_id !== creditLower ||
+        spent.invoice_id !== invLower ||
+        spent.amount_cents !== body.amount_cents
+      ) {
+        return refuse(409, "that idempotency key already applied a credit differently; use a new key");
+      }
+      const creditNow = kind === "MEMO" ? Math.max(0, memo.amount_cents - (memo.applied_cents ?? 0)) : acctCredit.open_cents;
+      return ok(
+        {
+          ...spent.answer,
+          credit_open_after_cents: creditNow,
+          lines: [{ invoice_id: inv.id, invoice_no: inv.invoice_no, applied_cents: spent.amount_cents, outcome: inv.balance_cents <= 0 ? "CLOSES" : "PART", balance_after_cents: inv.balance_cents }],
+          replayed: true,
+        },
+        200,
+      );
+    }
+
+    const creditOpen = kind === "MEMO" ? Math.max(0, memo.amount_cents - (memo.applied_cents ?? 0)) : acctCredit.open_cents;
+    if (creditOpen <= 0) return refuse(409, "billing: that credit has nothing left to apply");
+    if (inv.balance_cents <= 0) return refuse(400, `invoice ${inv.invoice_no} is not open, a credit can only be applied to an open invoice`);
+    if (body.amount_cents > creditOpen) return refuse(400, `the credit has ${creditOpen} cents open; that is more than it holds`);
+    const payable = Math.max(inv.balance_cents - (inv.holdback_cents ?? 0), 0);
+    if (body.amount_cents > payable) return refuse(400, `invoice ${inv.invoice_no} can take at most ${payable} cents right now; refresh and retry`);
+
+    world.counter += 1;
+    const appId = ctx.uuid("b", 800 + world.counter);
+    const journalId = ctx.uuid("e", 800 + world.counter);
+    const creditNo = kind === "MEMO" ? memo.no : acctCredit.no;
+    const creditAfter = creditOpen - body.amount_cents;
+    const invAfter = inv.balance_cents - body.amount_cents;
+    if (kind === "MEMO") {
+      memo.applied_cents = (memo.applied_cents ?? 0) + body.amount_cents;
+    } else {
+      acctCredit.open_cents = creditAfter;
+    }
+    inv.balance_cents = invAfter;
+    world.credit_applications ??= [];
+    world.credit_applications.unshift({
+      application_id: appId,
+      customer_id: custLower,
+      credit_kind: kind,
+      credit_id: creditLower,
+      credit_no: creditNo,
+      invoice_id: inv.id,
+      invoice_no: inv.invoice_no,
+      amount_cents: body.amount_cents,
+      reason,
+      journal_entry_id: journalId,
+      applied_at: NOW_ISO(),
+    });
+    const answer = {
+      application_id: appId,
+      credit_kind: kind,
+      credit_id: creditLower,
+      invoice_id: inv.id,
+      invoice_no: inv.invoice_no,
+      applied_cents: body.amount_cents,
+      credit_open_after_cents: creditAfter,
+      lines: [{ invoice_id: inv.id, invoice_no: inv.invoice_no, applied_cents: body.amount_cents, outcome: invAfter <= 0 ? "CLOSES" : "PART", balance_after_cents: invAfter }],
+      replayed: false,
+    };
+    world.creditApplyKeys.set(key, {
+      customer_id: custLower,
+      credit_kind: kind,
+      credit_id: creditLower,
+      invoice_id: invLower,
+      amount_cents: body.amount_cents,
+      answer,
+    });
+    return ok(answer, 201);
+  }
+
+  function reverseCreditApplication(body) {
+    if (body === null) return refuse(400, "invalid JSON body");
+    const world = ctx.world();
+    const reason = String(body.reason ?? "").trim();
+    if (reason === "") return refuse(400, "billing: a reason is required");
+    const invoiceId = String(body.invoice_id ?? "").trim();
+    const applicationId = String(body.application_id ?? "").trim();
+    if (!UUID_RE.test(invoiceId)) return refuse(400, "invoice id must be a uuid");
+    if (!UUID_RE.test(applicationId)) return refuse(400, "application id must be a uuid");
+
+    const inv = world.invoices.find((i) => i.id === invoiceId.toLowerCase());
+    if (inv === undefined) return refuse(404, `invoice not found: ${invoiceId}`);
+    const app = (world.credit_applications ?? []).find((a) => a.application_id === applicationId.toLowerCase() && a.invoice_id === inv.id);
+    if (app === undefined) return refuse(400, `no credit application ${applicationId} sits on invoice ${inv.invoice_no}`);
+    if (app.reversed_at !== undefined) return refuse(409, "billing: that application has already been reversed");
+
+    let creditOpenAfter = 0;
+    if (app.credit_kind === "MEMO") {
+      const memo = world.credit_memos.find((m) => m.id === app.credit_id);
+      if (memo === undefined) return refuse(404, `credit not found: ${app.credit_id}`);
+      memo.applied_cents = Math.max(0, (memo.applied_cents ?? 0) - app.amount_cents);
+      creditOpenAfter = memo.amount_cents - memo.applied_cents;
+    } else {
+      const acctCredit = (world.account_credits ?? []).find((c) => c.id === app.credit_id);
+      if (acctCredit === undefined) return refuse(404, `credit not found: ${app.credit_id}`);
+      acctCredit.open_cents += app.amount_cents;
+      creditOpenAfter = acctCredit.open_cents;
+    }
+    inv.balance_cents += app.amount_cents;
+    world.counter += 1;
+    app.reversed_at = NOW_ISO();
+    app.reversal_reason = reason;
+    return ok(
+      {
+        application_id: app.application_id,
+        invoice_id: inv.id,
+        invoice_no: inv.invoice_no,
+        restored_cents: app.amount_cents,
+        invoice_balance_after_cents: inv.balance_cents,
+        credit_open_after_cents: creditOpenAfter,
+        lines: [{ invoice_id: inv.id, invoice_no: inv.invoice_no, applied_cents: app.amount_cents, outcome: inv.balance_cents <= 0 ? "CLOSES" : "PART", balance_after_cents: inv.balance_cents }],
+        replayed: false,
+      },
+      201,
+    );
   }
 
   // ---- settings: the register, the returned payment fee, automatic holds ----------------------------------------------------
@@ -502,12 +685,16 @@ export function createOfficeWorld(ctx) {
     }
     m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/reverse$/);
     if (m && method === "POST") return reversePayment(m[1], body);
+    m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/void$/);
+    if (m && method === "POST") return voidPayment(m[1], body);
     m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/reapply$/);
     if (m && method === "POST") return reapplyHeld(m[1], body);
     m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/payout$/);
     if (m && method === "POST") return payOutHeld(m[1], body);
     m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/held$/);
     if (m && method === "GET") return heldFor(m[1]);
+    if (method === "POST" && path === "/api/v1/ar/credits/apply") return applyCredit(body);
+    if (method === "POST" && path === "/api/v1/ar/credits/applications/reverse") return reverseCreditApplication(body);
     if (method === "POST" && path === "/api/v1/ar/reminders") {
       // The act is gated on the capability, not only the payload: a base plan caller who hand crafts the POST is refused.
       if (w.landingPolicy.ar_tier !== "PRO") return refuse(403, gateWords.base);

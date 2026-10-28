@@ -453,6 +453,17 @@ func (a posStockAdapter) DecrementForSaleTx(ctx context.Context, tx pgx.Tx, in p
 	})
 }
 
+// DecrementForSaleValuesTx answers each line's own move value (round 2, S3's P1).
+func (a posStockAdapter) DecrementForSaleValuesTx(ctx context.Context, tx pgx.Tx, in pos.StockDecrementInput) ([]inventory.ShipLineValue, error) {
+	lines := make([]inventory.SaleLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = inventory.SaleLine{ProductID: l.ProductID, QtyBase: l.QtyBase}
+	}
+	return a.svc.DecrementForSaleValuesTx(ctx, tx, inventory.DecrementInput{
+		OrderID: in.OrderID, BranchID: in.BranchID, SaleType: in.SaleType, Lines: lines,
+	})
+}
+
 // LockStockTx satisfies pos.StockLocker: the swap takes the branch's balance rows of every product its
 // two halves move, sorted, ahead of both.
 func (a posStockAdapter) LockStockTx(ctx context.Context, tx pgx.Tx, branchID string, productIDs []string) error {
@@ -475,6 +486,18 @@ func (a posRestockAdapter) RestockForReturnTx(ctx context.Context, tx pgx.Tx, in
 		ReturnNo: in.ReturnNo,
 		Lines:    lines,
 	})
+}
+
+// ReturnMoveValuesTx answers the return's RETURN moves' per line values (round 2, S3's P1).
+func (a posRestockAdapter) ReturnMoveValuesTx(ctx context.Context, tx pgx.Tx, returnID string) ([]inventory.ShipLineValue, error) {
+	return a.svc.ReturnMoveValuesTx(ctx, tx, returnID)
+}
+
+// ShippedValueForOrderLineTx answers the original sale's own moved value for one order line
+// (round 2, S3's P1): the write off path's figure, because goods written off have no move of
+// their own.
+func (a posRestockAdapter) ShippedValueForOrderLineTx(ctx context.Context, tx pgx.Tx, orderID, productID string, qtyBase float64) (inventory.ShipLineValue, bool, error) {
+	return a.svc.ShippedValueForOrderLineTx(ctx, tx, orderID, productID, qtyBase)
 }
 
 // posCardRefunderAdapter satisfies pos.CardRefunder over payment.Service.RefundTx, the creds-free
@@ -727,6 +750,26 @@ func (a w5aStockReserver) ReleaseBySourceTx(ctx context.Context, tx pgx.Tx, sour
 
 func (a w5aStockReserver) LockHardHoldBalancesTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID string) error {
 	return a.svc.LockHardHoldBalancesTx(ctx, tx, sourceType, sourceRefID)
+}
+
+func (a w5aStockReserver) FulfilOrderLinesTx(ctx context.Context, tx pgx.Tx, orderID, branchID string, productIDs []string, qtys []float64) error {
+	return a.svc.FulfilOrderLinesTx(ctx, tx, orderID, branchID, productIDs, qtys)
+}
+
+// FulfilGroupLinesTx relieves a ship group's own lines (round 2, S3's P1).
+func (a w5aStockReserver) FulfilGroupLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID, branchID string, productIDs []string, qtys []float64) error {
+	return a.svc.FulfilGroupLinesTx(ctx, tx, orderID, groupID, branchID, productIDs, qtys)
+}
+
+// HasShipMovesForGroupTx answers the group's own ship moves.
+func (a w5aStockReserver) HasShipMovesForGroupTx(ctx context.Context, tx pgx.Tx, orderID, groupID string) (bool, error) {
+	return a.svc.HasShipMovesForGroupTx(ctx, tx, orderID, groupID)
+}
+
+// HasShipMovesForOrderTx answers whether any ship move exists for the order, read on the caller's
+// transaction (round 2, S3's P1): the INVOICED gate's "the goods have left".
+func (a w5aStockReserver) HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error) {
+	return a.svc.HasShipMovesForOrderTx(ctx, tx, orderID)
 }
 
 // w5aPickState satisfies order.PickStateReader over the W2/W3 tasks substrate.
@@ -1280,19 +1323,22 @@ func (a posAgingAdapter) CustomerAging(ctx context.Context, customerID string) (
 // posAccountAdapter answers the counter's standing read whether an account exists FOR THIS CALLER,
 // through the customer module's by-id read, so the standing read stands behind the same reach fence
 // (the caller's branches, unhomed accounts visible, a global caller unfenced). An account the caller
-// cannot reach answers false exactly as an id nobody has, so the read's 404 carries no existence
-// signal and the hold and past-due figures behind it are never read for it. The caller is the
-// guard-stamped staff context on the request, never a request field.
+// cannot reach answers found=false exactly as an id nobody has, so the read's 404 carries no
+// existence signal and the hold and past-due figures behind it are never read for it. The branch
+// the read answers back is the account's home branch ("" unhomed): the standing decides the
+// position policy there, the account's own branch, exactly as the by-id read does (UX-97 item 208,
+// the one branch rule). The caller is the guard-stamped staff context on the request, never a
+// request field.
 type posAccountAdapter struct{ svc *customer.Service }
 
-func (a posAccountAdapter) AccountExists(ctx context.Context, customerID string) (bool, error) {
-	_, err := a.svc.GetAccount(ctx, customerID)
+func (a posAccountAdapter) AccountHomeBranch(ctx context.Context, customerID string) (string, bool, error) {
+	acc, err := a.svc.GetAccount(ctx, customerID)
 	switch {
 	case err == nil:
-		return true, nil
+		return acc.BranchID, true, nil
 	case errors.Is(err, customer.ErrNotFound):
-		return false, nil
+		return "", false, nil
 	default:
-		return false, err
+		return "", false, err
 	}
 }

@@ -160,15 +160,69 @@ export function refusalWords(action: string, message: string, status: number): s
         return "Signing off a month is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.";
       case "rule":
         return "Approving a match rule is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.";
+      case "cutover":
+        return "Recording the starting point is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.";
       default:
         return "That is for the Financial Controller.";
     }
+  }
+  const cutoverDone = /cannot record cut-over at (\d{4}-\d{2}-\d{2}) because month (\d{4})-(\d{2}) is already completed/i.exec(message);
+  if (cutoverDone !== null) {
+    return `Not recorded: ${periodWords(Number(cutoverDone[2]), Number(cutoverDone[3]))} is already signed off, so the starting point cannot change. It stands as it was recorded.`;
+  }
+  if (lower.includes("only the financial controller may record")) {
+    return "Recording the starting point is for the Financial Controller. Sign out and in again as the controller if this was not the role you meant.";
+  }
+  const cutoverGap = /cannot record cut-over at \d{4}-\d{2}-\d{2}: the statement and the book differ by (-?\$[\d,]+\.\d{2})/i.exec(message);
+  if (cutoverGap !== null) {
+    return `The statement and the book differ by ${cutoverGap[1].replace("-", "")}; tick the items still outstanding at cut over, or check the date and balance.`;
   }
   const remain = /cannot complete, (\d+) unmatched line\(s\) remain for (\d{4})-(\d{2})/i.exec(message);
   if (remain !== null) {
     const n = Number(remain[1]);
     const period = periodWords(Number(remain[2]), Number(remain[3]));
     return `Not signed off: ${plural(n, "statement line is", "statement lines are")} still unmatched for ${period}. ${n === 1 ? "Match it" : "Match them"}, or refresh the figures if you just did.`;
+  }
+  const beforeEnd =
+    /cannot complete, (\d{4})-(\d{2}) has not reached month end yet \(month end is (\d{4}-\d{2}-\d{2})(?:; first day to sign off is (\d{4}-\d{2}-\d{2}))?\)/i.exec(
+      message,
+    );
+  if (beforeEnd !== null) {
+    const firstDay =
+      beforeEnd[4] !== undefined && beforeEnd[4] !== ""
+        ? ` The first day it may be signed off is ${dayWords(beforeEnd[4])}.`
+        : " Wait until the month has ended before signing it off.";
+    return `Not signed off: ${periodWords(Number(beforeEnd[1]), Number(beforeEnd[2]))} has not reached month end yet (${dayWords(beforeEnd[3])}).${firstDay}`;
+  }
+  const noLines = /cannot complete, no statement lines have been (?:imported|loaded) for (\d{4})-(\d{2})/i.exec(message);
+  if (noLines !== null) {
+    return `Not signed off: no statement lines have been imported for ${periodWords(Number(noLines[1]), Number(noLines[2]))}. Import the bank statement for that month first.`;
+  }
+  const clearingRev = /cannot complete, the clearing journal for "([^"]*)" (?:has been reversed in the ledger|no longer exists in the ledger|is not posted)/i.exec(message);
+  if (clearingRev !== null) {
+    return `Not signed off: the clearing journal for "${clearingRev[1]}" was reversed in the ledger. Undo the match and match the line again.`;
+  }
+  const earlierOpen = /cannot complete, an earlier month \((\d{4})-(\d{2})\) is still open/i.exec(message);
+  if (earlierOpen !== null) {
+    return `Not signed off: ${periodWords(Number(earlierOpen[1]), Number(earlierOpen[2]))} is still open. Sign off the earlier month first.`;
+  }
+  const laterDone = /cannot complete, a later month \((\d{4})-(\d{2})\) is already completed/i.exec(message);
+  if (laterDone !== null) {
+    return `Not signed off: ${periodWords(Number(laterDone[1]), Number(laterDone[2]))} is already signed off. Earlier months cannot be signed off after a later month.`;
+  }
+  const continuity =
+    /cannot complete, the statement closing balance \((-?\$[\d,]+\.\d{2})\) does not equal the prior month's closing balance \((-?\$[\d,]+\.\d{2})\) plus this month's statement lines \((-?\$[\d,]+\.\d{2}) = (-?\$[\d,]+\.\d{2})\)/i.exec(
+      message,
+    );
+  if (continuity !== null) {
+    return `Not signed off: the statement closing balance (${continuity[1]}) does not continue from the prior month's closing balance (${continuity[2]}) plus this month's lines (${continuity[3]}, expected ${continuity[4]}). Check the closing balance and the imported lines.`;
+  }
+  const movedAdjusted =
+    /cannot complete, the adjusted bank balance reads (-?\$[\d,]+\.\d{2}) \(statement (-?\$[\d,]+\.\d{2}), deposits in transit (-?\$[\d,]+\.\d{2}), outstanding cheques (-?\$[\d,]+\.\d{2})\) and the ledger reads (-?\$[\d,]+\.\d{2}) \((-?\$[\d,]+\.\d{2}) apart\)/i.exec(
+      message,
+    );
+  if (movedAdjusted !== null) {
+    return `Not signed off: the adjusted bank balance reads ${movedAdjusted[1]} (statement ${movedAdjusted[2]}, deposits in transit ${movedAdjusted[3]}, outstanding cheques ${movedAdjusted[4]}) and the ledger reads ${movedAdjusted[5]}, ${movedAdjusted[6]} apart, and they must agree. Refresh the figures, then match what is open.`;
   }
   const moved = /cannot complete, the statement reads (-?\$[\d,]+\.\d{2}) and the ledger reads (-?\$[\d,]+\.\d{2}) \((-?\$[\d,]+\.\d{2}) apart\)/i.exec(message);
   if (moved !== null) {
@@ -206,6 +260,25 @@ export function refusalWords(action: string, message: string, status: number): s
   const lodgementApart = /that lodgement is for (-?\d+) cents and the line is (-?\d+) cents/i.exec(message);
   if (lodgementApart !== null) {
     return `That lodgement is ${formatMoney(Number(lodgementApart[1]))} and the line is ${formatMoney(Number(lodgementApart[2]))}, so it does not explain the line. Pick the lodgement for the same amount.`;
+  }
+  // FW1-05: a hand match checks the payment's amount, the line's sign, and the tender.
+  const paymentApart = /that payment is for (-?\d+) cents and the line is (-?\d+) cents/i.exec(message);
+  if (paymentApart !== null) {
+    return `That payment is ${formatMoney(Number(paymentApart[1]))} and the line is ${formatMoney(Number(paymentApart[2]))}, so it does not explain the line. Pick the payment for the line's amount.`;
+  }
+  const matchApart = /the match is for (-?\d+) cents and the statement line is for (-?\d+) cents/i.exec(message);
+  if (matchApart !== null) {
+    return `The match was typed for ${formatMoney(Number(matchApart[1]))} and the line is ${formatMoney(Number(matchApart[2]))}. Leave the amount out, or type the line's own.`;
+  }
+  if (lower.includes("only a deposit (a positive line)")) {
+    return "Only a deposit (money in) can be matched to a payment; this line reads money out.";
+  }
+  if (lower.includes("cannot be matched by hand")) {
+    return "That payment's tender cannot be matched by hand; match a card, a cash, a cheque or an EFT deposit.";
+  }
+  // FW1-05b: a till cash payment reaches the bank only by its lodgement, so it is never a PAYMENT target.
+  if (lower.includes("taken in a till session")) {
+    return "That payment was taken in by the till, so it reaches the bank only with its lodgement. Match the lodgement's deposit line, not the payment alone.";
   }
   if (lower.includes("that journal is not posted")) return "That journal is not posted yet, so it cannot explain a bank line.";
   if (lower.includes("that journal does not touch this bank account")) return "That journal does not move this bank account, so it cannot explain this line.";
@@ -257,6 +330,14 @@ export function importFailedWords(error: string): string {
   const date = /^csv row (\d+): bad date "([^"]*)"/.exec(text);
   if (date !== null) {
     return `Not imported: row ${date[1]} has a date the file format does not read ("${date[2]}"). Dates are written year, month, day, with dashes.`;
+  }
+  const usd = /^csv row (\d+): USD amount "([^"]*)" is not supported/.exec(text);
+  if (usd !== null) {
+    return `Not imported: row ${usd[1]} carries a USD amount ("${usd[2]}"), which cannot be imported into a CAD statement.`;
+  }
+  const missingAmt = /^csv row (\d+): missing amount/.exec(text);
+  if (missingAmt !== null) {
+    return `Not imported: row ${missingAmt[1]} has no amount.`;
   }
   const amount = /^csv row (\d+): bad (?:amount|debit|credit) "([^"]*)"/.exec(text);
   if (amount !== null) {

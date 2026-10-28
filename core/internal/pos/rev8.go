@@ -37,20 +37,6 @@ func validateMarginVisibility(v string) (string, error) {
 	}
 }
 
-// validateBalanceVisibility mirrors validateMarginVisibility for 0181, omitted normalizes to the
-// column default (ALL_STAFF), a bad word is a 422 in words BEFORE the CHECK constraint could 500.
-func validateBalanceVisibility(v string) (string, error) {
-	switch v {
-	case "":
-		return BalanceVisibilityAllStaff, nil
-	case BalanceVisibilityManagerUp, BalanceVisibilityAllStaff, BalanceVisibilityHidden:
-		return v, nil
-	default:
-		return "", clientErr(http.StatusUnprocessableEntity,
-			"pos: balance_visibility must be MANAGER_UP, ALL_STAFF or HIDDEN")
-	}
-}
-
 // validateQuickChipSet normalizes/refuses the curated chip categories (item 4): at most 8 entries,
 // each a non-empty comma-free string of at most 40 chars. nil/empty = "not curated" (the service
 // derives a top-selling default at read time) and is always fine.

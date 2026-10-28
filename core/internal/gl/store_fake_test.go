@@ -10,7 +10,9 @@ import (
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func defaultRules() map[string]map[string]string {
@@ -33,6 +35,8 @@ func defaultRules() map[string]map[string]string {
 }
 
 type fakeStore struct {
+	closingIDs []string
+
 	policy        Policy
 	rules         map[string]map[string]string
 	activeRules   []RuleRef
@@ -264,17 +268,72 @@ func (f *fakeStore) VoidJournal(_ context.Context, id string) (Journal, error) {
 	return *j, nil
 }
 
+// The fake's year answers are private fixtures: no unit test asserts their values and no database
+// stands behind the fake, so no books' year can move them.
 func (f *fakeStore) EnsureNextFiscalYear(_ context.Context, _ time.Time) (int, error) {
 	return 2027, nil
 }
 
-func (f *fakeStore) OpenNextFiscalYear(_ context.Context, _ time.Time, _ func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
-	return 2027, nil
+func (f *fakeStore) NextOpenableFiscalYear(_ context.Context, _ time.Time) (int, error) {
+	return 2028, nil
+}
+
+func (f *fakeStore) OpenNextFiscalYear(_ context.Context, _ time.Time, _ int, _ func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
+	return 2028, nil
+}
+
+func (f *fakeStore) HouseYearEnded(_ context.Context, _ int, _ time.Time) (bool, error) {
+	return true, nil
+}
+
+// fakeTx is the year end's no-op transaction: every Tx keyed method on the fake
+// ignores the transaction, and CloseYear's own touches on it (the advisory lock
+// exec, the commit and the deferred rollback) answer the empty result.
+type fakeTx struct{ pgx.Tx }
+
+func (fakeTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+func (fakeTx) Commit(context.Context) error   { return nil }
+func (fakeTx) Rollback(context.Context) error { return nil }
+
+func (f *fakeStore) BeginTx(context.Context) (pgx.Tx, error) { return fakeTx{}, nil }
+
+func (f *fakeStore) ClosingJournalsForYearTx(ctx context.Context, _ pgx.Tx, year int) ([]string, int64, error) {
+	return f.ClosingJournalsForYear(ctx, year)
+}
+
+func (f *fakeStore) InsertClosingJournalTx(ctx context.Context, _ pgx.Tx, d journalDraft, year int) (string, error) {
+	return f.InsertClosingJournal(ctx, d, year)
+}
+
+func (f *fakeStore) ClosePeriodsForYearTx(ctx context.Context, _ pgx.Tx, year int, actorID, reason string) error {
+	return f.ClosePeriodsForYear(ctx, year, actorID, reason)
+}
+
+func (f *fakeStore) ClosingJournalsForYear(_ context.Context, _ int) ([]string, int64, error) {
+	return f.closingIDs, 0, nil
+}
+
+func (f *fakeStore) InsertClosingJournal(_ context.Context, d journalDraft, _ int) (string, error) {
+	f.closingIDs = append(f.closingIDs, "closing-1")
+	f.inserted = append(f.inserted, d)
+	return "closing-1", nil
+}
+
+func (f *fakeStore) BusinessZone(_ context.Context) (houseday.Zone, error) {
+	return houseday.DefaultZone(), nil
 }
 
 func (f *fakeStore) ListPeriods(_ context.Context) ([]Period, error) { return nil, nil }
 func (f *fakeStore) GetPeriod(_ context.Context, _ string) (Period, error) {
 	return Period{}, errNotFound
+}
+
+// FiscalPeriodIDTx answers a fixed uuid-shaped id: the shape the open year's audit entity must
+// carry (audit_log.entity_id is a uuid column), never the year itself.
+func (f *fakeStore) FiscalPeriodIDTx(_ context.Context, _ pgx.Tx, year, month int) (string, error) {
+	return fmt.Sprintf("00000000-0000-4000-8000-%04d%02d000000", year%10000, month), nil
 }
 func (f *fakeStore) ClosePeriod(_ context.Context, id, _, _ string) (Period, error) {
 	return Period{ID: id, Status: "CLOSED"}, nil
@@ -294,6 +353,9 @@ func (f *fakeStore) AccountBalanceThrough(_ context.Context, _ string, _, _ int,
 func (f *fakeStore) AccountBalanceAsOf(_ context.Context, _ string, at time.Time, _ string) (int64, string, error) {
 	f.asOfSeen = at
 	return f.asOfNetDebit, NormalDebit, nil
+}
+func (f *fakeStore) BankAccountEntriesAsOf(_ context.Context, _ string, _ time.Time) ([]BankBookEntry, error) {
+	return nil, nil
 }
 func (f *fakeStore) TrialBalance(_ context.Context, _, _ int, _ string) ([]TrialBalanceRow, error) {
 	return f.tbRows, nil
@@ -384,7 +446,9 @@ func (f fakeTaxSplit) TaxSplit(_ context.Context, _ string) (int64, int64, int64
 
 // - test service wiring -
 
-var testCaller = identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeBranch}
+// Round 3 fences the ledger writes to the caller's reach; the unit fixtures'
+// makers are dealer wide, the fence legs prove the scoped refusals.
+var testCaller = identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 
 // fakeHold is the approvals queue seen from the approve route: state is the answer (the zero value means an
 // approved request for the journal's amount), err makes the read fail.
@@ -405,6 +469,7 @@ func newTestService(f *fakeStore) *Service {
 	return NewService(nil).
 		WithApprovalStateChecker(fakeHold{}).
 		withStore(f).
+		// The unit clock is a private fixture date; no books stand behind it.
 		withClock(func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }).
 		withCaller(func(_ context.Context) (identity.StaffContext, bool) { return holder, holder.UserID != "" })
 }
@@ -414,6 +479,7 @@ func newTestServiceAs(f *fakeStore, caller identity.StaffContext) *Service {
 	return NewService(nil).
 		WithApprovalStateChecker(fakeHold{}).
 		withStore(f).
+		// The unit clock is a private fixture date; no books stand behind it.
 		withClock(func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }).
 		withCaller(func(_ context.Context) (identity.StaffContext, bool) { return caller, caller.UserID != "" })
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+	"github.com/jackc/pgx/v5"
 )
 
 type glExternalPoster struct {
@@ -21,6 +22,13 @@ type glExternalPoster struct {
 
 func (p glExternalPoster) PostJournal(_ context.Context, in gl.ExternalJournal) (string, error) {
 	return p.svc.PostExternal(p.ctx, in)
+}
+
+// PostJournalTx is the transaction arm (FROM-PRINCIPAL 232): every poster bankrec is served gains it, so
+// the match and its clearing journal share the caller's transaction and no leg posts in two steps. The
+// caller's context is the leg's staff context, as in PostJournal.
+func (p glExternalPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in gl.ExternalJournal) (string, error) {
+	return p.svc.PostExternalTx(p.ctx, tx, in)
 }
 
 type singleEventOutbox struct {
@@ -255,7 +263,7 @@ func TestIntegration_FW1_06a_BounceOfFeePayingPaymentReopensNSFFee(t *testing.T)
 
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, doc_type)
-		VALUES ('INV-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 10, CURRENT_DATE + 20, 50000, 0, 50000, 50000, 'INVOICE')
+		VALUES ('INV-'||$1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date - 10, (now() AT TIME ZONE 'America/Toronto')::date + 20, 50000, 0, 50000, 50000, 'INVOICE')
 		RETURNING id::text`, suffix, custID, branchID).Scan(&invID); err != nil {
 		t.Fatalf("plant invoice: %v", err)
 	}

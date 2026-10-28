@@ -59,7 +59,7 @@ func TestIntegration_Projects_SpendRollup(t *testing.T) {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
 			                      subtotal_cents, tax_cents, total_cents, balance_cents)
-			VALUES ($1, $2, $3, $4, 'FINALIZED', CURRENT_DATE, CURRENT_DATE + 30, $5, 0, $5, $5)`,
+			VALUES ($1, $2, $3, $4, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date + 30, $5, 0, $5, $5)`,
 			fmt.Sprintf("INV-CP03-%s-%d", suffix, i), custID, orderID, branch, cents); err != nil {
 			t.Fatalf("insert invoice %d: %v", i, err)
 		}
@@ -162,7 +162,7 @@ func TestIntegration_Projects_SpendExcludesVoidAndDraft(t *testing.T) {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
 			                      subtotal_cents, tax_cents, total_cents, balance_cents)
-			VALUES ($1, $2, $3, $4, $5, CURRENT_DATE, CURRENT_DATE + 30, $6, 0, $6, $6)`,
+			VALUES ($1, $2, $3, $4, $5, (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date + 30, $6, 0, $6, $6)`,
 			fmt.Sprintf("INV-CP03V-%s-%d", suffix, i), custID, orderID, branch, s.status, s.cents); err != nil {
 			t.Fatalf("insert invoice %s: %v", s.status, err)
 		}
@@ -242,7 +242,7 @@ func TestIntegration_Projects_QuoteVarianceDedup(t *testing.T) {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
 			                      subtotal_cents, tax_cents, total_cents, balance_cents)
-			VALUES ($1, $2, $3, $4, 'FINALIZED', CURRENT_DATE, CURRENT_DATE + 30, 15000, 0, 15000, 15000)`,
+			VALUES ($1, $2, $3, $4, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date + 30, 15000, 0, 15000, 15000)`,
 			fmt.Sprintf("INV-CP03Q-%s-%d", suffix, i), custID, orderID, branch); err != nil {
 			t.Fatalf("insert invoice %d: %v", i, err)
 		}

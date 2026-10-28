@@ -8,11 +8,12 @@
 // bank reconciliation screens (the bankrec files under app/src: the main screen, import, match and rules)
 // for what each screen holds.
 import { html, nothing, type TemplateResult } from "lit";
-import type { BankRecAccount, BankRecMatch, BankRecMatchRule, BankRecReconciliation, BankRecStatementLine, GlJournal } from "@hardscapehouse/api-client";
+import type { BankRecAccount, BankRecCutoverPreview, BankRecMatch, BankRecMatchRule, BankRecReconciliation, BankRecStatementLine, GlJournal } from "@hardscapehouse/api-client";
 import type { LineStatus, TargetType } from "./bankrec-api.js";
 import {
   accountTypeWord,
   dayWords,
+  isUuid,
   lineAction,
   lineStatusWord,
   lineTone,
@@ -61,6 +62,15 @@ export interface BankrecModel {
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
+  readonly userId?: string;
+  readonly userName?: string;
+  // The starting point form (the Controller's cut over door, round 3): what is typed, what is ticked, and the
+  // core's preview read for the typed date (the ledger's entries and the book balance, the server's figures).
+  readonly cutoverDateText: string;
+  readonly cutoverBalanceText: string;
+  readonly cutoverTicked: Readonly<Record<string, boolean>>;
+  readonly cutoverPreview: BankRecCutoverPreview | null;
+  readonly cutoverPreviewLoading: boolean;
 }
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -90,6 +100,158 @@ function later(word: string): TemplateResult {
 
 function accountOf(model: BankrecModel): BankRecAccount | undefined {
   return model.accounts.find((a) => a.id === model.accountId);
+}
+
+// ---- the starting point (the Controller's cut over door, round 3) ---------------------------------------
+
+/**
+ * The recorded starting point of the chosen account, or null when none is recorded. Read from the account
+ * itself, so it is never a second copy of the core's fact.
+ */
+function recordedOf(account: BankRecAccount | undefined): { date: string; balanceCents: number; journalIds: readonly string[] } | null {
+  if (account === undefined || account.cutover_date === undefined || account.cutover_date === null || account.cutover_date === "") return null;
+  return {
+    date: account.cutover_date,
+    balanceCents: account.cutover_statement_balance_cents ?? 0,
+    journalIds: account.cutover_outstanding_journal_ids ?? [],
+  };
+}
+
+/**
+ * Whether the starting point section is closed, and the month that closed it. Once any month on the account has
+ * signed off (FROM-PRINCIPAL 183, S5 R3.3), the core refuses any cut-over, new or changed: a recorded point is
+ * shown as it is, and with none recorded the section says plainly that it can no longer be set, with no form
+ * and no Save.
+ */
+function lockedOf(recons: readonly BankRecReconciliation[]): { locked: boolean; closedBy: { year: number; month: number } | null } {
+  const completed = recons.filter((r) => r.status === "COMPLETED");
+  const first = completed.reduce<{ year: number; month: number } | null>(
+    (acc, r) => (acc === null || r.year < acc.year || (r.year === acc.year && r.month < acc.month) ? { year: r.year, month: r.month } : acc),
+    null,
+  );
+  return { locked: first !== null, closedBy: first };
+}
+
+/** The posted ledger entries on the account's GL code on or before the typed cut over date, oldest first: the core's preview read, never a desk computation. */
+function cutoverEntriesOf(model: BankrecModel): readonly { journal_id: string; posted_at: string; memo: string; amount_cents: number }[] {
+  return model.cutoverPreview?.entries ?? [];
+}
+
+function cutoverRecordedView(model: BankrecModel): TemplateResult {
+  const account = accountOf(model);
+  const recorded = recordedOf(account);
+  if (recorded === null) return html`${nothing}`;
+  const named = model.journals.filter((j) => recorded.journalIds.includes(j.id));
+  return html`
+    <div class="br-card" data-cutover-recorded>
+      <div class="br-card-top"><strong>Starting point</strong>${pill("good", "Recorded")}</div>
+      <dl class="br-facts">
+        <dt>Cut over date</dt><dd data-cutover-recorded-date>${dayWords(recorded.date)}</dd>
+        <dt>Statement balance that day</dt><dd data-cutover-recorded-balance>${formatMoney(recorded.balanceCents)}</dd>
+        <dt>Still outstanding at cut over</dt><dd data-cutover-recorded-count>${recorded.journalIds.length === 0 ? "None" : `${recorded.journalIds.length} ${recorded.journalIds.length === 1 ? "entry" : "entries"}`}</dd>
+      </dl>
+      ${named.length > 0
+        ? html`<ul class="br-history" aria-label="Entries still outstanding at cut over" data-cutover-recorded-list>
+            ${named.map((j) => html`<li>${j.memo}</li>`)}
+          </ul>`
+        : nothing}
+      <p class="br-note">The months after this point reconcile from here. A month has signed off, so this starting point no longer changes.</p>
+    </div>
+  `;
+}
+
+function cutoverPanel(model: BankrecModel): TemplateResult {
+  const account = accountOf(model);
+  if (account === undefined) return html`${nothing}`;
+  const { locked, closedBy } = lockedOf(model.recons);
+  const recorded = recordedOf(account);
+  return html`
+    <section class="br-panel" aria-label="Set the starting point" data-cutover>
+      <div class="br-panel-head"><h3>Set the starting point</h3></div>
+      ${recorded === null && !locked
+        ? html`<p class="br-dim">The point reconciliation starts from: the day the dealer's books moved onto this ledger, and the statement balance on that day. Entries on or before it are not outstanding items unless they are ticked.</p>`
+        : nothing}
+      ${recorded === null && locked
+        ? html`<p class="br-note" data-cutover-closed>${closedBy === null ? "A month" : periodWords(closedBy.year, closedBy.month)} has signed off, so this account reconciles from its signed off months; a starting point can no longer be set.</p>`
+        : nothing}
+      ${cutoverRecordedView(model)}
+      ${locked
+        ? nothing
+        : html`
+            <div class="br-form br-form-stack" role="group" aria-label="Set the starting point" data-cutover-form>
+              <label class="br-field">Cut over date
+                <input type="date" data-field="br-cutover-date" autocomplete="off" aria-label="Cut over date" />
+              </label>
+              <label class="br-field">Statement balance on that date
+                <input type="text" inputmode="decimal" data-field="br-cutover-balance" autocomplete="off" placeholder="Such as 25,255.75" aria-label="Statement balance on the cut over date" />
+                <span class="br-hint">Dollars and cents, from the statement of the day the books moved onto this ledger.</span>
+              </label>
+            </div>
+            ${model.cutoverDateText === ""
+              ? html`<p class="br-hint" data-cutover-await-date>Type the cut over date to list the ledger's entries on or before it.</p>`
+              : model.cutoverPreviewLoading
+                ? html`<p class="br-dim" role="status" data-loading-cutover-entries>Reading the ledger's entries.</p>`
+                : cutoverEntriesList(model)}
+            ${cutoverResultView(model)}
+            <div class="br-actions">
+              <button type="button" class="btn btn-primary" data-action="br-cutover-save" ?disabled=${model.busy}>Save the starting point</button>
+            </div>
+            <p class="br-note">Saving records the starting point for this account. Only the Financial Controller can record it, and once a month has signed off it can no longer change.</p>
+          `}
+    </section>
+  `;
+}
+
+function cutoverEntriesList(model: BankrecModel): TemplateResult {
+  const entries = cutoverEntriesOf(model);
+  if (entries.length === 0) {
+    return html`<p class="br-dim" data-cutover-no-entries>No ledger entries on or before that date.</p>`;
+  }
+  return html`
+    <ul class="br-history" aria-label="The ledger's entries on or before the cut over date" data-cutover-entries>
+      ${entries.map(
+        (e) => html`<li>
+          <label class="br-tick-row">
+            ${model.cutoverTicked[e.journal_id] === true
+              ? html`<input type="checkbox" data-field="br-cutover-tick" data-id=${e.journal_id} data-cutover-tick checked />`
+              : html`<input type="checkbox" data-field="br-cutover-tick" data-id=${e.journal_id} data-cutover-tick />`}
+            <span class="br-tick-date">${dayWords(e.posted_at)}</span>
+            <span class="br-tick-memo">${e.memo}</span>
+            <span class="br-tick-amount">${formatMoney(e.amount_cents)}</span>
+          </label>
+        </li>`,
+      )}
+    </ul>
+    <p class="br-hint">Tick an entry only if it was still outstanding at cut over: unticked entries on or before this date are never listed as outstanding items later.</p>
+  `;
+}
+
+function cutoverResultView(model: BankrecModel): TemplateResult {
+  if (model.cutoverDateText === "") return html`${nothing}`;
+  const entries = cutoverEntriesOf(model);
+  const ticked = entries.filter((e) => model.cutoverTicked[e.journal_id] === true);
+  const typed = model.cutoverBalanceText.trim();
+  const statement = typed === "" ? null : parseBalanceToCents(typed);
+  const reconciles = model.cutoverPreview?.reconciles;
+  return html`
+    <div class="br-card" data-cutover-result>
+      <div class="br-card-top"><strong>What saving will record</strong></div>
+      <dl class="br-facts">
+        <dt>Book balance at cut over</dt>
+        <dd data-cutover-book>${model.cutoverPreview === null ? "Reading the ledger." : formatMoney(model.cutoverPreview.book_balance_cents)}</dd>
+        <dt>Statement balance that day</dt>
+        <dd data-cutover-statement>${statement === null ? "Type the statement balance." : formatMoney(statement)}</dd>
+        ${reconciles === undefined
+          ? nothing
+          : html`<dt>Difference</dt><dd data-cutover-difference>${reconciles ? pill("good", "Nothing, it reconciles") : pill("stop", `${formatMoney(model.cutoverPreview?.difference_cents ?? 0)} apart`)}</dd>`}
+      </dl>
+      ${ticked.length === 0
+        ? html`<p class="br-hint" data-cutover-none>Nothing is ticked as still outstanding.</p>`
+        : html`<ul class="br-history" aria-label="Entries ticked as still outstanding" data-cutover-ticked>
+            ${ticked.map((e) => html`<li>${e.memo} · ${formatMoney(e.amount_cents)}</li>`)}
+          </ul>`}
+    </div>
+  `;
 }
 
 function messages(model: BankrecModel): TemplateResult {
@@ -192,6 +354,59 @@ function reconActions(model: BankrecModel, r: BankRecReconciliation): TemplateRe
   `;
 }
 
+function signedOffByWords(model: BankrecModel, completedBy: string | null | undefined): string {
+  if (completedBy === undefined || completedBy === null || completedBy === "") return "";
+  if (!isUuid(completedBy)) return completedBy;
+  if (model.userId !== undefined && model.userId !== "" && completedBy === model.userId && model.userName !== undefined && model.userName !== "") {
+    return model.userName;
+  }
+  return "";
+}
+
+function reconReport(model: BankrecModel, r: BankRecReconciliation): TemplateResult {
+  const dit = r.deposits_in_transit ?? [];
+  const oc = r.outstanding_cheques ?? [];
+  const ditCents = r.deposits_in_transit_cents ?? 0;
+  const ocCents = r.outstanding_cheques_cents ?? 0;
+  const adjusted = r.adjusted_bank_balance_cents ?? r.statement_balance_cents;
+  const signedBy = signedOffByWords(model, r.completed_by);
+  return html`
+    <div class="br-card" data-recon-report=${r.id}>
+      <div class="br-card-top">
+        <strong>Reconciliation report · ${periodWords(r.year, r.month)}</strong>
+        ${pill(reconTone(r.status), reconStatusWord(r.status))}
+      </div>
+      <dl class="br-facts">
+        ${r.opening_balance_cents !== undefined && r.opening_balance_cents !== null
+          ? html`<dt>Opening statement</dt><dd data-report-opening>${formatMoney(r.opening_balance_cents)}</dd>`
+          : nothing}
+        <dt>Closing statement</dt><dd data-report-statement>${formatMoney(r.statement_balance_cents)}</dd>
+        <dt>Deposits in transit</dt><dd data-report-dit>${formatMoney(ditCents)}</dd>
+        <dt>Outstanding cheques</dt><dd data-report-oc>${formatMoney(ocCents)}</dd>
+        <dt>Adjusted bank balance</dt><dd data-report-adjusted>${formatMoney(adjusted)}</dd>
+        <dt>Closing ledger</dt><dd data-report-gl>${formatMoney(r.gl_balance_cents)}</dd>
+        <dt>Matched lines</dt><dd data-report-matched>${r.matched_lines_count ?? 0}</dd>
+        ${signedBy !== ""
+          ? html`<dt>Signed off by</dt><dd data-report-completed-by>${signedBy}</dd>`
+          : nothing}
+        ${r.completed_at !== undefined && r.completed_at !== null
+          ? html`<dt>Signed off</dt><dd data-report-completed-at>${dayWords(r.completed_at)}</dd>`
+          : nothing}
+      </dl>
+      ${dit.length > 0
+        ? html`<ul class="br-history" aria-label="Deposits in transit" data-dit-list>
+            ${dit.map((item) => html`<li>Deposit in transit · ${dayWords(item.posted_at)} · ${item.memo} · ${formatMoney(item.amount_cents)}</li>`)}
+          </ul>`
+        : nothing}
+      ${oc.length > 0
+        ? html`<ul class="br-history" aria-label="Outstanding cheques" data-oc-list>
+            ${oc.map((item) => html`<li>Outstanding cheque · ${dayWords(item.posted_at)} · ${item.memo} · ${formatMoney(item.amount_cents)}</li>`)}
+          </ul>`
+        : nothing}
+    </div>
+  `;
+}
+
 function reconRows(model: BankrecModel): TemplateResult {
   if (model.recons.length === 0) {
     return html`<div class="br-empty" data-empty-recons><strong>No month is open for this account.</strong><span class="br-dim">Open a month with the closing balance on its statement.</span></div>`;
@@ -199,13 +414,15 @@ function reconRows(model: BankrecModel): TemplateResult {
   return html`
     <div class="br-scroll br-hide-narrow">
       <table aria-label="Months for this account">
-        <thead><tr><th>Month</th><th class="num">Statement</th><th class="num">Ledger</th><th>Difference</th><th></th></tr></thead>
+        <thead><tr><th>Month</th><th class="num">Statement</th><th class="num">Adjusted bank</th><th class="num">Ledger</th><th>Difference</th><th></th></tr></thead>
         <tbody>
           ${model.recons.map((r) => {
             const v = varianceWords(r.variance_cents);
+            const adjusted = r.adjusted_bank_balance_cents ?? r.statement_balance_cents;
             return html`<tr data-recon-id=${r.id}>
               <td><strong>${periodWords(r.year, r.month)}</strong><span class="br-sub">${pill(reconTone(r.status), reconStatusWord(r.status))}</span></td>
               <td class="num">${formatMoney(r.statement_balance_cents)}</td>
+              <td class="num" data-row-adjusted>${formatMoney(adjusted)}</td>
               <td class="num">${formatMoney(r.gl_balance_cents)}</td>
               <td>${pill(v.tone, v.word)}</td>
               <td>${reconActions(model, r)}</td>
@@ -217,10 +434,12 @@ function reconRows(model: BankrecModel): TemplateResult {
     <ul class="br-cards" aria-label="Months for this account, as cards">
       ${model.recons.map((r) => {
         const v = varianceWords(r.variance_cents);
+        const adjusted = r.adjusted_bank_balance_cents ?? r.statement_balance_cents;
         return html`<li class="br-card" data-recon-card=${r.id}>
           <div class="br-card-top"><strong>${periodWords(r.year, r.month)}</strong>${pill(reconTone(r.status), reconStatusWord(r.status))}</div>
           <dl class="br-facts">
             <dt>Statement</dt><dd>${formatMoney(r.statement_balance_cents)}</dd>
+            <dt>Adjusted bank</dt><dd data-card-adjusted>${formatMoney(adjusted)}</dd>
             <dt>Ledger</dt><dd>${formatMoney(r.gl_balance_cents)}</dd>
             <dt>Difference</dt><dd>${pill(v.tone, v.word)}</dd>
           </dl>
@@ -228,6 +447,7 @@ function reconRows(model: BankrecModel): TemplateResult {
         </li>`;
       })}
     </ul>
+    ${model.recons.map((r) => reconReport(model, r))}
   `;
 }
 
@@ -250,12 +470,13 @@ function accountsView(model: BankrecModel): TemplateResult {
               <div class="br-actions">
                 <button type="button" class="btn btn-primary" data-action="br-open-month" ?disabled=${model.busy}>Open month</button>
               </div>
-              <p class="br-note" data-month-note>The difference is the statement less the ledger. It is worked out when you open or refresh the month, so refresh the figures after you match. A month signs off only when no line is unmatched and the difference is zero.</p>
+              <p class="br-note" data-month-note>The difference is the adjusted bank balance less the ledger. It is worked out when you open or refresh the month, so refresh the figures after you match. A month signs off only when no line is unmatched and the difference is zero.</p>
               ${reconRows(model)}
               ${account.tracking_only ? html`<p class="br-dim br-later-line">Card spend is tracked here and not yet booked to the ledger: ${later("later")}</p>` : nothing}
             `}
       </section>
     </div>
+    ${cutoverPanel(model)}
   `;
 }
 

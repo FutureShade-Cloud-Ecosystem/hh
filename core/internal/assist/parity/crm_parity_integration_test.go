@@ -78,7 +78,7 @@ func plantCRMWorld(t *testing.T, env *testsupport.Env) *crmWorld {
 	contact("n-one", "no-invoice", "Lonely", true, true, 1)
 	inv := func(name, cust, br string) {
 		if _, err := env.Admin.Exec(ctx, `INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, total_cents, balance_cents)
-			VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 20, CURRENT_DATE + 10, 100, 100, 100)`,
+			VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date - 20, (now() AT TIME ZONE 'America/Toronto')::date + 10, 100, 100, 100)`,
 			fmt.Sprintf("INV-S7B-%s-%s", tag, name), w.customers[cust], br); err != nil {
 			t.Fatalf("plant invoice %s: %v", name, err)
 		}

@@ -45,11 +45,9 @@ var fw1BranchCensusWriters = []string{
 }
 
 // fw1BranchCensusRed maps each still-failing writer key to its owning wave 1
-// item (the two bankrec paths left are FW1-05's).
-var fw1BranchCensusRed = map[string]string{
-	"bankrec_manual_match_payment": "FW1-05",
-	"bankrec_unmatch_reversal":     "FW1-05",
-}
+// item. FW1-05's hand match and unmatch reversal stamp their branches (PR 632,
+// taken onto main), so no writer is red here any more.
+var fw1BranchCensusRed = map[string]string{}
 
 // fw1NonGLWriterSite identifies a non-GL journal writer call site or outbox
 // emitter whose payload carries a branch, together with where its branch_id
@@ -60,6 +58,13 @@ type fw1NonGLWriterSite struct {
 	Kind         string
 	BranchSource string
 }
+
+// fw1OutboxReadKind names the census kind of a site that READS the outbox
+// instead of writing to it. The census covers the reads too: a read of the
+// outbox is not a writer, but a writer's sibling that must be on the record
+// with its true reason, so the table says so and the scanner checks that the
+// listed read is really there.
+const fw1OutboxReadKind = "read:events_outbox"
 
 // fw1NonGLJournalWriterCallSites lists every non-GL journal writer call site
 // or method-value selector (PostExternal, PostExternalTx, PostJournal,
@@ -99,10 +104,22 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		BranchSource: "in.BranchID from inventory.GLJournal.BranchID",
 	},
 	{
+		File:         "core/cmd/core/wire_money.go",
+		Func:         "(invGLPoster).PostJournalTx",
+		Kind:         "PostExternalTx",
+		BranchSource: "in.BranchID from inventory.GLJournal.BranchID (FW1-07 round 2 sub item 5: the transfer leg's journal rides the move's transaction)",
+	},
+	{
 		File:         "core/cmd/core/wire_operations.go",
 		Func:         "(glPosterAdapter).PostJournal",
 		Kind:         "PostExternal",
 		BranchSource: "in.BranchID from bankrec gl.ExternalJournal.BranchID",
+	},
+	{
+		File:         "core/cmd/core/wire_operations.go",
+		Func:         "(glPosterAdapter).PostJournalTx",
+		Kind:         "PostExternalTx",
+		BranchSource: "in.BranchID from bankrec gl.ExternalJournal.BranchID (FW1-05 round 2 P1-A: the served bank match's one transaction arm)",
 	},
 	{
 		File:         "core/cmd/core/wire_operations.go",
@@ -148,21 +165,15 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 	},
 	{
 		File:         "core/internal/bankrec/service.go",
-		Func:         "(*Service).persistProposal",
-		Kind:         "PostJournal",
-		BranchSource: "prop.Journal.BranchID (CandidatePayment.BranchID for PAYMENT; Lodgement.BranchID for LODGEMENT)",
-	},
-	{
-		File:         "core/internal/bankrec/service.go",
-		Func:         "(*Service).ManualMatch",
-		Kind:         "PostJournal",
-		BranchSource: "manualJournal stamps the LODGEMENT path from the till's lodgement facts (FW1-06a) and passes empty BranchID for PAYMENT today (RED, owned by FW1-05)",
+		Func:         "(*Service).persistAndJournal",
+		Kind:         "PostJournalTx",
+		BranchSource: "the journal journalFn built carries its branch: the claimed payment's (PAYMENT, manualJournal from the payment's facts) or the lodgement's (LODGEMENT and the other paths)",
 	},
 	{
 		File:         "core/internal/bankrec/service.go",
 		Func:         "(*Service).UnmatchReach",
-		Kind:         "PostJournal",
-		BranchSource: "reversalJournal sets no BranchID today (RED, owned by FW1-05)",
+		Kind:         "PostJournalTx",
+		BranchSource: "reversalJournal carries the claimed payment's branch, or the lodgement's from the till's append only facts (FW1-05 item 4)",
 	},
 	{
 		File:         "core/internal/billing/credit_memo.go",
@@ -208,9 +219,27 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 	},
 	{
 		File:         "core/internal/inventory/service.go",
+		Func:         "(*Service).fulfilLinesTx",
+		Kind:         "emit:order.fulfilled",
+		BranchSource: "branch_id on the order.fulfilled payload, the fulfilling branch the order's relief or group relief passes in (FW1-07)",
+	},
+	{
+		File:         "core/internal/inventory/service.go",
 		Func:         "(*Service).postPOReceived",
 		Kind:         "PostJournal",
 		BranchSource: "p.BranchID from po.received outbox payload emitted at inventory/service.go:179",
+	},
+	{
+		File:         "core/internal/inventory/service.go",
+		Func:         "(*Service).postPOReceivedRounding",
+		Kind:         "PostJournal",
+		BranchSource: "p.BranchID from po.received outbox payload (FW1-07 round 1 sub item 2: the WAC rounding adjustment is its own journal, so its own function)",
+	},
+	{
+		File:         "core/internal/inventory/service.go",
+		Func:         "(*Service).postPOReceivedTrueUp",
+		Kind:         "PostJournal",
+		BranchSource: "p.BranchID from po.received outbox payload (FW1-07 round 1 sub item 4, ruling 82.4: one true-up journal per line, so its own function)",
 	},
 	{
 		File:         "core/internal/inventory/service.go",
@@ -220,9 +249,15 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 	},
 	{
 		File:         "core/internal/inventory/transfer.go",
-		Func:         "(*Service).postTransferLeg",
-		Kind:         "PostJournal",
+		Func:         "(*Service).postTransferLegTx",
+		Kind:         "PostJournalTx",
 		BranchSource: "p.BranchID (from_branch_id on ship, to_branch_id on receive; two-branch transfer question is FW1-07)",
+	},
+	{
+		File:         "core/internal/inventory/transfer.go",
+		Func:         "(*Service).postTransferLegCommitting",
+		Kind:         "PostJournal",
+		BranchSource: "p.BranchID (from_branch_id on ship, to_branch_id on receive; two-branch transfer question is FW1-07), passed through postTransferLegTx",
 	},
 	{
 		File:         "core/internal/landedcost/service.go",
@@ -301,6 +336,18 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		Func:         "(*Service).postBillJournal",
 		Kind:         "PostJournalTx",
 		BranchSource: "bill.BranchID from purchasing_bills.branch_id (NOT NULL)",
+	},
+	{
+		File:         "core/internal/till/recon_seam.go",
+		Func:         "(*Repository).OpenLodgements",
+		Kind:         fw1OutboxReadKind,
+		BranchSource: "no branch and no journal: the read asks whether the till's own journal for this lodgement has been emitted (the till.movement.posted row), so the bank match knows the lodgement carries its own journal; it reads the outbox and writes nothing",
+	},
+	{
+		File:         "core/internal/till/recon_seam.go",
+		Func:         "(*Repository).LodgementFacts",
+		Kind:         fw1OutboxReadKind,
+		BranchSource: "no branch and no journal: the same read for one lodgement (the manual match asks the same question of one movement); it reads the outbox and writes nothing",
 	},
 	{
 		File:         "core/internal/till/repository.go",

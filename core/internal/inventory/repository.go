@@ -116,20 +116,39 @@ func (r *Repository) EmitEvent(ctx context.Context, tx pgx.Tx, topic string, pay
 
 func (r *Repository) InsertMove(ctx context.Context, tx pgx.Tx, m moveParams) (string, error) {
 	// uom_entered falls back to the product base_uom when the caller didn't supply one (a POS SHIP move).
+	metaJSON := []byte("{}")
+	if len(m.Metadata) > 0 {
+		b, err := marshalJSON(m.Metadata)
+		if err != nil {
+			return "", err
+		}
+		metaJSON = b
+	}
 	const sql = `
 		INSERT INTO stock_moves
 			(product_id, from_location_id, to_location_id, qty_base, qty_entered, uom_entered,
-			 move_type, unit_cost_cents, value_cents, source_type, source_ref_id, reason, branch_id)
+			 move_type, unit_cost_cents, value_cents, source_type, source_ref_id, reason, branch_id, metadata)
 		VALUES ($1, $2, $3, $4, $4,
 			COALESCE(NULLIF($5,'')::citext, (SELECT base_uom FROM products WHERE id = $1)),
-			$6, $7, $8, $9, $10, $11, $12)
+			$6, $7, $8, $9, $10, $11, $12, COALESCE($13::jsonb, '{}'::jsonb))
 		RETURNING id::text`
 	var id string
 	err := r.q(tx).QueryRow(ctx, sql,
 		m.ProductID, nullStr(m.FromLocation), nullStr(m.ToLocation), m.QtyBase, m.UOM,
 		m.MoveType, m.UnitCostCents, m.ValueCents, nullStr(m.SourceType), nullStr(m.SourceRefID),
-		m.Reason, m.BranchID).Scan(&id)
+		m.Reason, m.BranchID, metaJSON).Scan(&id)
 	return id, err
+}
+
+func (r *Repository) HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error) {
+	var exists bool
+	err := r.q(tx).QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM stock_moves
+			 WHERE move_type = 'SHIP'
+			   AND source_ref_id = $1::uuid
+		)`, orderID).Scan(&exists)
+	return exists, err
 }
 
 func (r *Repository) OnHandQtyBranch(ctx context.Context, tx pgx.Tx, productID, branchID string) (float64, error) {
@@ -216,6 +235,170 @@ func (r *Repository) UpsertBranchCost(ctx context.Context, tx pgx.Tx, productID,
 		DO UPDATE SET avg_unit_cost_cents = EXCLUDED.avg_unit_cost_cents, updated_at = now()`,
 		productID, branchID, avgCents)
 	return err
+}
+
+func (r *Repository) FallbackCost(ctx context.Context, tx pgx.Tx, productID, branchID string) (int64, string, bool, error) {
+	// 1. LAST_KNOWN_COST: latest non-provisional stock move cost, or other-branch recorded cost, or latest PO line cost.
+	var lastMoveCost *int64
+	err := r.q(tx).QueryRow(ctx, `
+		SELECT unit_cost_cents
+		  FROM stock_moves
+		 WHERE product_id = $1
+		   AND unit_cost_cents > 0
+		   AND COALESCE(metadata->>'provisional_cost', 'false') <> 'true'
+		 ORDER BY occurred_at DESC, id DESC
+		 LIMIT 1`, productID).Scan(&lastMoveCost)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return 0, "", false, err
+	}
+	if lastMoveCost != nil && *lastMoveCost > 0 {
+		return *lastMoveCost, "LAST_KNOWN_COST", true, nil
+	}
+
+	var otherBranchAvg *int64
+	err = r.q(tx).QueryRow(ctx, `
+		SELECT ROUND(AVG(avg_unit_cost_cents))::bigint
+		  FROM product_branch_costs
+		 WHERE product_id = $1
+		   AND ($2 = '' OR branch_id <> $2::uuid)
+		   AND avg_unit_cost_cents > 0`, productID, branchID).Scan(&otherBranchAvg)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return 0, "", false, err
+	}
+	if otherBranchAvg != nil && *otherBranchAvg > 0 {
+		return *otherBranchAvg, "LAST_KNOWN_COST", true, nil
+	}
+
+	// 2. CATALOGUE_COST: product metadata cost.
+	var catCost int64
+	err = r.q(tx).QueryRow(ctx, `
+		SELECT COALESCE(
+			(metadata->>'catalogue_cost_cents')::bigint,
+			(metadata->>'cost_cents')::bigint,
+			(metadata->>'unit_cost_cents')::bigint,
+			0
+		)
+		  FROM products
+		 WHERE id = $1`, productID).Scan(&catCost)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return 0, "", false, err
+	}
+	if catCost > 0 {
+		return catCost, "CATALOGUE_COST", true, nil
+	}
+
+	// 3. Fallback to latest PO line cost when no catalogue cost is present.
+	var poLineCost *int64
+	err = r.q(tx).QueryRow(ctx, `
+		SELECT unit_cost_cents
+		  FROM po_lines
+		 WHERE product_id = $1
+		   AND unit_cost_cents > 0
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT 1`, productID).Scan(&poLineCost)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return 0, "", false, err
+	}
+	if poLineCost != nil && *poLineCost > 0 {
+		return *poLineCost, "LAST_KNOWN_COST", true, nil
+	}
+
+	return 0, "", false, nil
+}
+
+func (r *Repository) UntruedProvisionalShipMoves(ctx context.Context, tx pgx.Tx, productID, branchID string) ([]PreReceiptException, error) {
+	return r.queryPreReceiptExceptions(ctx, tx, branchID, productID)
+}
+
+func (r *Repository) PreReceiptExceptions(ctx context.Context, branchID string) ([]PreReceiptException, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	return r.queryPreReceiptExceptions(ctx, nil, branchID, "")
+}
+
+// PreReceiptExceptionsForBranches lists untrued provisional pre-receipt sales across the given
+// branch ids (round 3, FROM-PRINCIPAL 184). An empty branch slice returns an empty slice without
+// querying.
+func (r *Repository) PreReceiptExceptionsForBranches(ctx context.Context, branchIDs []string) ([]PreReceiptException, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if len(branchIDs) == 0 {
+		return []PreReceiptException{}, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT sm.id::text, COALESCE(sm.source_ref_id::text, ''), sm.product_id::text, sm.branch_id::text,
+		       sm.qty_base::float8, COALESCE(sm.unit_cost_cents, 0), COALESCE(sm.value_cents, 0),
+		       COALESCE(sm.metadata->>'fallback_source', 'LAST_KNOWN_COST'),
+		       to_char(sm.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		  FROM stock_moves sm
+		 WHERE sm.move_type = 'SHIP'
+		   AND COALESCE(sm.metadata->>'provisional_cost', 'false') = 'true'
+		   AND sm.branch_id = ANY($1::uuid[])
+		   AND NOT EXISTS (
+		       SELECT 1 FROM stock_moves rec
+		        WHERE rec.product_id = sm.product_id
+		          AND rec.branch_id = sm.branch_id
+		          AND rec.move_type = 'RECEIPT'
+		          AND rec.metadata->'trued_up_move_ids' ? sm.id::text
+		   )
+		 ORDER BY sm.occurred_at ASC, sm.id ASC`, branchIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PreReceiptException
+	for rows.Next() {
+		var ex PreReceiptException
+		if err := rows.Scan(
+			&ex.MoveID, &ex.OrderID, &ex.ProductID, &ex.BranchID,
+			&ex.QtyBase, &ex.ProvisionalUnitCostCents, &ex.ProvisionalValueCents,
+			&ex.FallbackSource, &ex.OccurredAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, ex)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) queryPreReceiptExceptions(ctx context.Context, tx pgx.Tx, branchID, productID string) ([]PreReceiptException, error) {
+	rows, err := r.q(tx).Query(ctx, `
+		SELECT sm.id::text, COALESCE(sm.source_ref_id::text, ''), sm.product_id::text, sm.branch_id::text,
+		       sm.qty_base::float8, COALESCE(sm.unit_cost_cents, 0), COALESCE(sm.value_cents, 0),
+		       COALESCE(sm.metadata->>'fallback_source', 'LAST_KNOWN_COST'),
+		       to_char(sm.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		  FROM stock_moves sm
+		 WHERE sm.move_type = 'SHIP'
+		   AND COALESCE(sm.metadata->>'provisional_cost', 'false') = 'true'
+		   AND ($1 = '' OR sm.branch_id = $1::uuid)
+		   AND ($2 = '' OR sm.product_id = $2::uuid)
+		   AND NOT EXISTS (
+		       SELECT 1 FROM stock_moves rec
+		        WHERE rec.product_id = sm.product_id
+		          AND rec.branch_id = sm.branch_id
+		          AND rec.move_type = 'RECEIPT'
+		          AND rec.metadata->'trued_up_move_ids' ? sm.id::text
+		   )
+		 ORDER BY sm.occurred_at ASC, sm.id ASC`, branchID, productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PreReceiptException
+	for rows.Next() {
+		var ex PreReceiptException
+		if err := rows.Scan(
+			&ex.MoveID, &ex.OrderID, &ex.ProductID, &ex.BranchID,
+			&ex.QtyBase, &ex.ProvisionalUnitCostCents, &ex.ProvisionalValueCents,
+			&ex.FallbackSource, &ex.OccurredAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, ex)
+	}
+	return out, rows.Err()
 }
 
 // - read models (pool) -
@@ -420,6 +603,35 @@ func (r *Repository) SnapshotOnHand(ctx context.Context, tx pgx.Tx, branchID str
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// StockValueCents is the consolidated (or branch scoped, when the caller names a branch) stock value
+// in ONE statement: every stock_balances row at its branch's weighted average cost, the product taken
+// in exact NUMERIC (a DECIMAL(19,4) quantity times a BIGINT cost carries no rounding of its own), each
+// row rounded half away from zero - SQL ROUND()'s tie rule, the rounding the module's own valuation
+// writes (qtyTimesCents, and the received line's ROUND(received_base * unit_cost_cents) leg below) -
+// and summed, answered as integer cents. The rounding sits on each row, not after the sum, so the
+// value of any group of rows is the sum of its rows' values and a branch scoped read and the
+// consolidated one can never drift a cent apart. Go never multiplies a quantity by a cost on this
+// path: the caller's integer answer cannot inherit a float's last bit (FW1-09d round 2). A caller
+// holding a transaction passes it so the read rides that connection; nil reads through the pool.
+func (r *Repository) StockValueCents(ctx context.Context, tx pgx.Tx, branchID string) (int64, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	q := `
+		SELECT COALESCE(SUM(ROUND(sb.on_hand_base * COALESCE(pbc.avg_unit_cost_cents, 0))), 0)::bigint
+		FROM stock_balances sb
+		LEFT JOIN product_branch_costs pbc
+		       ON pbc.product_id = sb.product_id AND pbc.branch_id = sb.branch_id`
+	var args []any
+	if branchID != "" {
+		q += ` WHERE sb.branch_id = $1`
+		args = append(args, branchID)
+	}
+	var total int64
+	err := r.q(tx).QueryRow(ctx, q, args...).Scan(&total)
+	return total, err
 }
 
 // ReceivedLinesForPO returns the received lines of a PO for landed-cost allocation (extended CAD value =

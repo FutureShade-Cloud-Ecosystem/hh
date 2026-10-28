@@ -7,7 +7,7 @@
 // credit-hold) for the cards, tables and the right hand panels; the original app's ar-console, ar-monthend and
 // ar-invoice-register screens for what each panel holds.
 import { html, nothing, type TemplateResult } from "lit";
-import type { BillingInvoiceDetail, BillingReminderRule, BillingStatement } from "@hardscapehouse/api-client";
+import type { BillingInvoiceDetail, BillingOpenCreditSummary, BillingReminderRule, BillingStatement } from "@hardscapehouse/api-client";
 import { formatMoney } from "./ar-money.js";
 import { cardTitle, relativeDay } from "./ar-logic.js";
 import type { Listing, OfficeModel } from "./office-desk.js";
@@ -402,6 +402,14 @@ export function renderReverse(om: OfficeModel, payment: { payment_id: string; pa
   return html`<button type="button" class="btn btn-secondary small-btn" data-action="reverse-start" data-payment-id="${payment.payment_id}">Reverse</button>`;
 }
 
+/** The true void's inline form, or its start button, for one receipt row: a mis-keyed receipt undone as never taken (FW1-06b). */
+export function renderVoid(om: OfficeModel, payment: { payment_id: string; payment_no: string }): TemplateResult {
+  if (om.voiding === payment.payment_id) {
+    return html`<span class="inline-form"><label><span class="visually-hidden">Why it is voided</span><input type="text" data-field="void-reason" placeholder="Why it is voided, such as keyed for the wrong amount" autocomplete="off" /></label><button type="button" class="btn btn-danger small-btn" data-action="void-confirm" data-payment-id="${payment.payment_id}" data-payment-no="${payment.payment_no}" ?disabled=${om.busy}>Confirm voided</button><button type="button" class="btn btn-secondary small-btn" data-action="void-cancel">Cancel</button></span>`;
+  }
+  return html`<button type="button" class="btn btn-secondary small-btn" data-action="void-start" data-payment-id="${payment.payment_id}">Void</button>`;
+}
+
 /**
  * The re-application's form for a reversed payment's row: the money the core still holds for it, the open invoice it
  * goes on, how much and why. It follows the Reverse form above it (the same inline form, the same buttons, the same
@@ -484,6 +492,102 @@ function renderPayout(om: OfficeModel, payment: { payment_id: string; payment_no
       <div class="actions">
         <button type="button" class="btn btn-primary small-btn" data-action="payout-confirm" data-payment-id="${payment.payment_id}" data-payment-no="${payment.payment_no}" ?disabled=${om.busy || picked === null}>${picked?.button ?? "Pay it out"}</button>
         <button type="button" class="btn btn-secondary small-btn" data-action="reapply-cancel">Cancel</button>
+      </div>
+    </form>
+  `;
+}
+
+/**
+ * The invoice panel's credits section (FW1-12b): applied credits on the invoice (with inline reversal by reason) and
+ * the customer's open credits (open credit memos and unapplied account credits, with inline apply-to-invoice form).
+ */
+export function renderInvoiceCredits(
+  om: OfficeModel,
+  d: BillingInvoiceDetail,
+  open: readonly { id: string; invoice_no: string; balance_cents: number }[],
+): TemplateResult {
+  const apps = d.credit_applications ?? [];
+  const credits = d.open_credits ?? [];
+  const choices = open.filter((i) => i.balance_cents > 0);
+  const current = choices.find((i) => i.id === d.id) ?? choices[0];
+  const currentPayable = current === undefined ? null : current.id === d.id ? d.totals.payable_cents : current.balance_cents;
+  return html`
+    <h3>Credits on this invoice</h3>
+    ${apps.length === 0
+      ? html`<p class="dim" data-credit-apps-empty>No credit has been applied to this invoice yet.</p>`
+      : html`
+          <ul class="alloc" data-credit-apps>
+            ${apps.map(
+              (app) => html`
+                <li data-credit-app-row>
+                  <span>${app.credit_reference} · ${app.credit_kind === "MEMO" ? "credit memo" : "account credit"} · ${formatMoney(app.amount_cents)}${app.reason ? ` · ${app.reason}` : ""}
+                    ${app.reversed ? html`<span class="pill pill-plain">Reversed</span>` : html`<span class="pill pill-good">Applied</span>`}</span>
+                  ${app.reversed
+                    ? nothing
+                    : om.reversingCreditApp === app.application_id
+                      ? html`<span class="inline-form" data-credit-reverse-form><label><span class="visually-hidden">Why the credit application is reversed</span><input type="text" data-field="credit-reverse-reason" placeholder="Why it is reversed, such as applied to the wrong invoice" autocomplete="off" /></label><button type="button" class="btn btn-danger small-btn" data-action="credit-reverse-confirm" data-invoice-id="${d.id}" data-application-id="${app.application_id}" data-credit-ref="${app.credit_reference}" ?disabled=${om.busy}>Confirm reverse credit</button><button type="button" class="btn btn-secondary small-btn" data-action="credit-reverse-cancel">Cancel</button></span>`
+                      : html`<span class="row-actions"><button type="button" class="btn btn-secondary small-btn" data-action="credit-reverse-start" data-application-id="${app.application_id}">Reverse credit</button></span>`}
+                </li>
+              `,
+            )}
+          </ul>
+        `}
+    <h3>Open credits on this account</h3>
+    ${credits.length === 0
+      ? html`<p class="dim" data-open-credits-empty>No open credit memo or account credit is on this account.</p>`
+      : html`
+          <ul class="alloc" data-open-credits>
+            ${credits.map(
+              (c) => html`
+                <li data-open-credit-row>
+                  <span><b>${c.reference}</b> · ${c.credit_kind === "MEMO" ? "credit memo" : "account credit"} · ${c.issued_at.slice(0, 10)}${c.memo ? ` · ${c.memo}` : ""} · <span data-open-credit-amount>${formatMoney(c.open_cents)} open</span></span>
+                  ${om.applyingCredit !== null && om.applyingCredit.creditId === c.credit_id
+                    ? renderApplyCreditForm(om, c, d, choices)
+                    : choices.length === 0
+                      ? nothing
+                      : html`<span class="row-actions"><button type="button" class="btn btn-secondary small-btn" data-action="credit-apply-start" data-customer-id="${d.customer.customer_id}" data-credit-id="${c.credit_id}" data-credit-kind="${c.credit_kind}" data-credit-ref="${c.reference}" data-credit-open="${String(c.open_cents)}" data-invoice-id="${current?.id ?? ""}" data-balance-cents="${currentPayable === null ? "" : String(currentPayable)}">Apply credit</button></span>`}
+                </li>
+              `,
+            )}
+          </ul>
+        `}
+  `;
+}
+
+function renderApplyCreditForm(
+  om: OfficeModel,
+  credit: BillingOpenCreditSummary,
+  d: BillingInvoiceDetail,
+  choices: readonly { id: string; invoice_no: string; balance_cents: number }[],
+): TemplateResult {
+  const view = om.applyingCredit;
+  if (view === null) return html``;
+  const maxCents = view.invoiceBalanceCents === null ? credit.open_cents : Math.min(credit.open_cents, view.invoiceBalanceCents);
+  const kindLabel = credit.credit_kind === "MEMO" ? "credit memo" : "account credit";
+  return html`
+    <form class="held-form" aria-label="Apply credit to an invoice" data-credit-apply-form>
+      <p class="callout" data-credit-callout><b>${formatMoney(credit.open_cents)} is open on ${kindLabel} ${credit.reference}.</b> Applying it reduces the open balance of the chosen invoice without recording a new payment.</p>
+      <p class="dim small">Apply to invoice</p>
+      <div class="row-actions" role="group" aria-label="Invoice to apply credit to" data-credit-apply-invoices>
+        ${choices.length === 0
+          ? html`<span class="dim small">No open invoice to apply it to.</span>`
+          : choices.map((i) => {
+              const payable = i.id === d.id ? d.totals.payable_cents : i.balance_cents;
+              return html`<button type="button" class="btn ${i.id === view.invoiceId ? "btn-primary" : "btn-secondary"} small-btn" data-action="credit-apply-pick" data-invoice-id="${i.id}" data-balance-cents="${String(payable)}" aria-pressed="${i.id === view.invoiceId ? "true" : "false"}">${i.invoice_no} · ${formatMoney(payable)}</button>`;
+            })}
+      </div>
+      <label>Amount <span class="dim small" data-credit-up-to>(up to ${formatMoney(maxCents)})</span>
+        <input type="text" inputmode="decimal" data-field="credit-apply-amount" placeholder="Such as 100.00" autocomplete="off" />
+      </label>
+      <div class="row-actions">
+        <button type="button" class="btn btn-secondary small-btn" data-action="credit-apply-full" ?disabled=${om.busy}>Use full ${formatMoney(maxCents)}</button>
+      </div>
+      <label>Why
+        <input type="text" data-field="credit-apply-reason" placeholder="Such as applying open credit memo to balance" autocomplete="off" />
+      </label>
+      <div class="actions">
+        <button type="button" class="btn btn-primary small-btn" data-action="credit-apply-confirm" ?disabled=${om.busy || choices.length === 0}>Apply to invoice</button>
+        <button type="button" class="btn btn-secondary small-btn" data-action="credit-apply-cancel">Cancel</button>
       </div>
     </form>
   `;

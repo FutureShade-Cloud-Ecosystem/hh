@@ -75,6 +75,33 @@ func ns(t *testing.T) string {
 	return fmt.Sprintf("%s-%d", t.Name(), time.Now().UnixNano()%1_000_000_000)
 }
 
+// plantApplyOrg plants one real org row for the apply door's key scope (FW1-12c): the key table's
+// org_id REFERENCES org (id) since 0448, so every application's caller carries a real org's id.
+// The row is removed at test end, and the key rows the applications wrote under it go first: the
+// foreign key refuses the org delete while any of them stands, so an org that outlives its keys
+// is a leaked row and not a cleaned one. The deletes do not swallow their errors: a cleanup that
+// fails in silence is how the leak stayed invisible in the first place.
+func plantApplyOrg(t *testing.T, pool *pgxpool.Pool, tag string) string {
+	t.Helper()
+	ctx := context.Background()
+	var id string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO org (slug, name) VALUES ($1, $2) RETURNING id::text`,
+		"apply-org-"+tag, "Apply Org "+tag).Scan(&id); err != nil {
+		t.Fatalf("plant the apply org: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		if _, err := pool.Exec(c, `DELETE FROM credit_application_keys WHERE org_id = $1::uuid`, id); err != nil {
+			t.Errorf("plant the apply org: remove the org's credit application keys: %v", err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM org WHERE id = $1::uuid`, id); err != nil {
+			t.Errorf("plant the apply org: remove the org row: %v", err)
+		}
+	})
+	return id
+}
+
 // seedCustomer creates a test-owned tenant and removes it (and anything hung off it) at test end.
 func seedCustomer(t *testing.T, pool *pgxpool.Pool, tag string) string {
 	t.Helper()
@@ -88,10 +115,28 @@ func seedCustomer(t *testing.T, pool *pgxpool.Pool, tag string) string {
 	}
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1`, id)
-		_, _ = pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1)`, id)
-		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1`, id)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, id)
+		if _, err := pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1`, id); err != nil {
+			t.Errorf("seed customer %s: remove the customer transactions: %v", tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1)`, id); err != nil {
+			t.Errorf("seed customer %s: remove the invoice lines: %v", tag, err)
+		}
+		// The credit application keys reference the invoices (0447), so they go before the
+		// invoices: the invoice delete is refused by that foreign key while any of them stands.
+		if _, err := pool.Exec(c, `DELETE FROM credit_application_keys WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1)`, id); err != nil {
+			t.Errorf("seed customer %s: remove the credit application keys: %v", tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1`, id); err != nil {
+			t.Errorf("seed customer %s: remove the invoices: %v", tag, err)
+		}
+		// The helper's own word is that it removes the tenant and anything hung off it, and the
+		// orders are hung off it: the customer delete is refused by the order's own foreign key.
+		if _, err := pool.Exec(c, `DELETE FROM orders WHERE customer_id = $1`, id); err != nil {
+			t.Errorf("seed customer %s: remove the orders: %v", tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM customers WHERE id = $1`, id); err != nil {
+			t.Errorf("seed customer %s: remove the customer: %v", tag, err)
+		}
 	})
 	return id
 }
@@ -128,7 +173,11 @@ func seedInvoice(t *testing.T, pool *pgxpool.Pool, customerID, namespace string,
 	}
 	var finalized any
 	if s.finalized {
-		finalized = time.Date(1990, 1, 15, 12, 0, 0, 0, time.UTC)
+		d, err := time.Parse("2006-01-02", issue)
+		if err != nil {
+			t.Fatalf("parse issue day %s: %v", issue, err)
+		}
+		finalized = d.Add(12 * time.Hour)
 	}
 	var id string
 	if err := pool.QueryRow(ctx,
@@ -143,8 +192,17 @@ func seedInvoice(t *testing.T, pool *pgxpool.Pool, customerID, namespace string,
 	}
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id = $1`, id)
-		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE id = $1`, id)
+		// The credit application keys reference this invoice (0447), so they go first: the
+		// invoice delete is refused by that foreign key while any of them stands.
+		if _, err := pool.Exec(c, `DELETE FROM credit_application_keys WHERE invoice_id = $1::uuid`, id); err != nil {
+			t.Errorf("seed invoice %s: remove the invoice's credit application keys: %v", s.no, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id = $1`, id); err != nil {
+			t.Errorf("seed invoice %s: remove the invoice lines: %v", s.no, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM invoices WHERE id = $1`, id); err != nil {
+			t.Errorf("seed invoice %s: remove the invoice: %v", s.no, err)
+		}
 	})
 	return id
 }
@@ -414,9 +472,31 @@ func TestIntegration_Billing_ARBalanceCents_ScopesAndTiesToAgingView(t *testing.
 	seedInvoice(t, pool, cust, n, invSpec{no: "AR-T1", status: "FINALIZED", branch: trentonBranch, total: 12000, balance: 12000, finalized: true})
 	// Kingston: 3000 open.
 	seedInvoice(t, pool, cust, n, invSpec{no: "AR-K1", status: "FINALIZED", branch: kingstonBranch, total: 3000, balance: 3000, finalized: true})
-	// Excluded by status / balance: a DRAFT and a zero-balance FINALIZED contribute nothing.
+	// Excluded by status / balance: a DRAFT contributes nothing, and the zero-balance FINALIZED
+	// carries the dated allocation that settled it inside the window, so it too nets to zero at the
+	// as-of date (the as-of balance rebuilds from dated acts, FW1-06b; a settlement with no dated
+	// act behind it would read as still owed at the date).
 	seedInvoice(t, pool, cust, n, invSpec{no: "AR-T2", status: "DRAFT", branch: trentonBranch, total: 999, balance: 999})
-	seedInvoice(t, pool, cust, n, invSpec{no: "AR-T3", status: "FINALIZED", branch: trentonBranch, total: 4000, balance: 0, finalized: true})
+	t3 := seedInvoice(t, pool, cust, n, invSpec{no: "AR-T3", status: "FINALIZED", branch: trentonBranch, total: 4000, balance: 0, finalized: true})
+	var t3Pay string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, branch_id)
+		 VALUES (nextval('payment_no_seq')::text, $1::uuid, 'CHEQUE', 4000, 'RECEIVED', $2::uuid)
+		 RETURNING id::text`, cust, trentonBranch).Scan(&t3Pay); err != nil {
+		t.Fatalf("seed AR-T3's settling payment: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents, created_at)
+		 VALUES ($1::uuid, $2::uuid, 4000, $3)`, t3Pay, t3, time.Date(1990, 5, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("seed AR-T3's dated allocation: %v", err)
+	}
+	// This test's payment rows are its own; they go before the customer cleanup runs.
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE payment_id IN
+			(SELECT id FROM payments WHERE customer_id = $1::uuid)`, cust)
+		_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, cust)
+	})
 	// Excluded by as-of: issued AFTER the window.
 	seedInvoice(t, pool, cust, n, invSpec{no: "AR-T4", status: "FINALIZED", branch: trentonBranch, issue: "1991-01-01", total: 7777, balance: 7777, finalized: true})
 

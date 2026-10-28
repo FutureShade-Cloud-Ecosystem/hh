@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/attachments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
@@ -168,11 +169,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// A-02 (W5): bank reconciliation over the till repository's payment
 	// and lodgement reads, posting clearing journals through the GL.
 	bankrecSvc := bankrec.NewService(bankrec.NewRepository(pool)).
+		WithZone(newDealerZone(pool)).
 		WithPayments(tillRepo).
 		WithLodgements(tillRepo).
 		WithJournalPoster(glPosterAdapter{svc: spine.glSvc}).
 		WithGLBalances(glBalanceAdapter{svc: spine.glSvc}).
 		WithJournals(spine.glSvc).
+		WithJournalKeys(spine.glSvc).
 		WithAudit(auditSvc)
 	bankrec.NewHandler(bankrecSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
@@ -802,7 +805,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	_ = w3bPaySvc // consumed by the portal BFF at the tops batch; constructed so boot proves it wires
 	// DIB-170: payment reversal, manager-gated, reason-required, audited.
 	w3bReverseSvc := payments.NewReverseService(w3bPaymentsRepo).WithAudit(auditSvc)
-	payments.NewReversalHandler(w3bReverseSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	// FW1-06b: the true void of a mis-keyed desk receipt, manager-gated, reason-required, audited,
+	// the same dealer day only, no 2310 hold. The two undos share a mounting and stay apart in their
+	// services and their journals.
+	w3bVoidSvc := payments.NewVoidService(w3bPaymentsRepo).WithAudit(auditSvc).WithZone(newDealerZone(pool))
+	payments.NewReversalHandler(w3bReverseSvc, log).WithUserLinker(link).WithVoidService(w3bVoidSvc).RegisterRoutes(r, g)
 
 	return &operationsSpine{
 		lienSvc:            lienSvc,
@@ -834,6 +841,14 @@ func (a glPosterAdapter) PostJournal(ctx context.Context, in gl.ExternalJournal)
 	return a.svc.PostExternal(ctx, in)
 }
 
+// PostJournalTx is PostJournal through the caller's transaction
+// (gl.Service.PostExternalTx), bankrec's JournalPosterTx arm, so a bank
+// match and its clearing journal commit or roll back together (FW1-05, live
+// in the served core, P1-A round 2).
+func (a glPosterAdapter) PostJournalTx(ctx context.Context, tx pgx.Tx, in gl.ExternalJournal) (string, error) {
+	return a.svc.PostExternalTx(ctx, tx, in)
+}
+
 // glBalanceAdapter satisfies bankrec.GLBalanceReader (and invcount's)
 // over the GL provider, so both read GL balances through the service
 // rather than the 0034 views directly.
@@ -841,6 +856,14 @@ type glBalanceAdapter struct{ svc *gl.Service }
 
 func (a glBalanceAdapter) GLBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
 	return a.svc.GLBalanceCents(ctx, accountCode, year, month, branchID)
+}
+
+func (a glBalanceAdapter) GLClosingBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	return a.svc.GLClosingBalanceCents(ctx, accountCode, year, month, branchID)
+}
+
+func (a glBalanceAdapter) GLBalanceAsOfCents(ctx context.Context, accountCode string, asOf time.Time, branchID string) (int64, error) {
+	return a.svc.GLBalanceAsOfCents(ctx, accountCode, asOf, branchID)
 }
 
 // GLBalanceThroughCents is the cumulative through-period read the inventory tie-out's GL side takes
@@ -1250,6 +1273,12 @@ type dispatchFulfilAdapter struct{ svc *order.Service }
 
 func (a dispatchFulfilAdapter) MarkFulfilled(ctx context.Context, orderID, reason string) error {
 	return a.svc.AdvanceFromDelivery(ctx, orderID, reason)
+}
+
+// MarkFulfilledTx is MarkFulfilled on the caller's transaction (round 2, S3's P2): the offline
+// pickup's confirm runs the order's fulfilment inside the confirm's own transaction.
+func (a dispatchFulfilAdapter) MarkFulfilledTx(ctx context.Context, tx pgx.Tx, orderID, reason string) error {
+	return a.svc.AdvanceFromDeliveryTx(ctx, tx, orderID, reason)
 }
 
 // dispatchPrintAdapter satisfies dispatch.PrintEnqueuer over

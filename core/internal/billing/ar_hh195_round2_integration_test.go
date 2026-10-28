@@ -67,7 +67,7 @@ func (r *hh195Rig) doc(t *testing.T, customerID, no, docType, status string, cen
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
 		                      doc_type, source_kind, closes_order)
 		VALUES ($1||'-'||$7, $2::uuid, $3::uuid, $4, $5::date, $5::date,
-		        $6, 0, $6, $6, now(), $8, 'ORDER', FALSE) RETURNING id::text`,
+		        $6, 0, $6, $6, $5::date::timestamptz, $8, 'ORDER', FALSE) RETURNING id::text`,
 		no, customerID, r.branchID, status, houseday.AddDays(func() time.Time { return r.clock }, -dueDaysAgo), cents, r.suffix, docType).Scan(&id); err != nil {
 		t.Fatalf("seed %s: %v", no, err)
 	}

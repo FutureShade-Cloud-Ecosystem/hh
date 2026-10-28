@@ -1203,6 +1203,11 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 			TillSessionID: in.TillSessionID, Method: till.MethodCash, AmountCents: railTotal,
 			BranchID: retRow.BranchID, CustomerID: oc.CustomerID, Reference: returnNo,
 			IdempotencyKey: "refund:" + in.IdempotencyKey,
+			// The return's own instant, read once for the whole return (one clock rules the
+			// transaction, FW1-13b): the till's REFUNDED payments row and the drawer movement
+			// beside it carry it, so the drawer's date read and the return's own date read never
+			// name two different days.
+			At: returnAt,
 		})
 		if err != nil {
 			return Return{}, clientErr(http.StatusConflict, "%s", err.Error())
@@ -1249,6 +1254,9 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		res, err := s.tender.RefundTender(ctx, tx, till.RefundInput{
 			Method: till.MethodCard, AmountCents: railTotal, BranchID: retRow.BranchID, CustomerID: oc.CustomerID,
 			GatewayRef: refundRef, Reference: returnNo, IdempotencyKey: "refund:" + in.IdempotencyKey,
+			// The return's own instant, read once for the whole return (one clock rules the
+			// transaction, FW1-13b).
+			At: returnAt,
 		})
 		if err != nil {
 			return Return{}, clientErr(http.StatusConflict, "%s", err.Error())
@@ -1323,6 +1331,25 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 		}); err != nil {
 			return Return{}, err
 		}
+		// Round 2 (S3's P1): the event carries the RETURN MOVES' OWN values, so the COGS reversal
+		// posts the value that moved at the restock, not a re-read average at the drain. The
+		// average moves between the return and the drain (a receipt lands in between), and a
+		// journal that re-reads it is a journal that says something else next week.
+		values, verr := s.restocker().ReturnMoveValuesTx(ctx, tx, returnID)
+		if verr != nil {
+			return Return{}, verr
+		}
+		byProduct := map[string]int64{}
+		for _, v := range values {
+			byProduct[v.ProductID] = v.ValueCents
+		}
+		for _, ln := range eventLines {
+			if pid, ok := ln["product_id"].(string); ok {
+				if value, found := byProduct[pid]; found {
+					ln["value_cents"] = value
+				}
+			}
+		}
 		if err := s.store.EmitEvent(ctx, tx, "order.returned", map[string]any{
 			"order_id": oc.OrderID, "return_id": returnID, "branch_id": retRow.BranchID, "lines": eventLines,
 			"occurred_at": returnAt,
@@ -1330,9 +1357,26 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 			return Return{}, err
 		}
 	}
-	//    Damaged goods that came back are written off (Q4): the cost leaves COGS for 5200 at the
-	//    average at posting time.
+	//    Damaged goods that came back are written off (Q4): the cost leaves COGS for 5200.
+	//    Round 2 (S3's P1): the goods were written off, not moved, so they have no move of their own.
+	//    Their cost is the cost they left the shelf with, the ORIGINAL SALE's own moved value for
+	//    that line. A line the sale never moved (an old row) has no such value, and the posting
+	//    falls back to the average, which is what it did before.
 	if len(g.writeOffLines) > 0 {
+		for _, ln := range g.writeOffLines {
+			pid, _ := ln["product_id"].(string)
+			qty, _ := ln["qty_base"].(float64)
+			if pid == "" || qty <= 0 {
+				continue
+			}
+			value, found, verr := s.restocker().ShippedValueForOrderLineTx(ctx, tx, oc.OrderID, pid, qty)
+			if verr != nil {
+				return Return{}, verr
+			}
+			if found {
+				ln["value_cents"] = value.ValueCents
+			}
+		}
 		if err := s.store.EmitEvent(ctx, tx, "pos.return.written_off", map[string]any{
 			"order_id": oc.OrderID, "return_id": returnID, "branch_id": retRow.BranchID, "lines": g.writeOffLines,
 			"occurred_at": returnAt,

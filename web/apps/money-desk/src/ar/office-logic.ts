@@ -6,7 +6,16 @@
 // The limits and sentences follow the core (core/internal/billing: ar_reminders.go, ar_landing.go,
 // register_service.go; core/internal/till; core/internal/payments) so a refusal the browser makes is the one the
 // server would have made.
-import type { BillingAPContact, BillingAPContactRead, BillingLandingPolicy, BillingReminderSend, PaymentsPayout, PaymentsReapplication } from "@hardscapehouse/api-client";
+import type {
+  BillingAPContact,
+  BillingAPContactRead,
+  BillingCreditApplication,
+  BillingCreditApplicationReversed,
+  BillingLandingPolicy,
+  BillingReminderSend,
+  PaymentsPayout,
+  PaymentsReapplication,
+} from "@hardscapehouse/api-client";
 import { refusalWords } from "./ar-logic.js";
 
 // ---- who may, in words, for the walls this slice meets ------------------------------------------------------------
@@ -224,13 +233,48 @@ export function relativeStamp(stamp: string, nowMs: number): string {
 
 // ---- an invoice: send, dispute, a payment reversal ------------------------------------------------------------------
 
-import type { BillingReminderResult, PaymentsReversalResult } from "@hardscapehouse/api-client";
+import type { BillingReminderResult, PaymentsReversalResult, PaymentsVoidResult } from "@hardscapehouse/api-client";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 
 export function sendInvoiceWords(result: BillingReminderResult): string {
   if (result.replayed > 0 && result.sent === 0) return "That invoice was already sent on this key, so nothing new went.";
-  if (result.skipped !== undefined && Object.keys(result.skipped).length > 0) return "The send was recorded, but did not go: nothing left the building.";
+  const skipped = Object.entries(result.skipped ?? {});
+  if (skipped.length > 0) {
+    const reasons = [...new Set(skipped.map(([, why]) => why))];
+    if (reasons.length === 1) return `The invoice did not go: ${reasons[0]}.`;
+    return `The invoice did not go: ${skipped.length} invoices were skipped.`;
+  }
   return "The invoice went to the account's contact through the messaging sink.";
+}
+
+// The server's own word for a delivery that did not go. The desk says it, but the reason is the
+// server's: there is no queue behind the desk, so a failed delivery is not a reminder waiting to be
+// retried by anything (FW1-06b round 2, S6's P2-2).
+const FAILED_DELIVERY = "delivery failed";
+
+/**
+ * What the account page's Remind run says happened (FW1-06b): sent, or nothing sent and why. The
+ * server decides all of it; this words its answer. A run that says sent when nothing left the
+ * building is the one thing this screen must never do, so anything the server did not count as sent
+ * is named with its reason.
+ */
+export function reminderRunWords(result: BillingReminderResult): { notice: string; sent: boolean } {
+  const skipped = Object.entries(result.skipped ?? {});
+  if (result.replayed > 0 && result.sent === 0 && skipped.length === 0) {
+    return { notice: `Nothing new went out: ${result.replayed} had already been sent.`, sent: false };
+  }
+  if (result.sent === 0) {
+    const reasons = [...new Set(skipped.map(([, why]) => why))];
+    if (reasons.length === 1 && reasons[0].startsWith(FAILED_DELIVERY)) {
+      return { notice: `No reminder went out: ${reasons[0]}.`, sent: false };
+    }
+    if (reasons.length === 1) return { notice: `No reminder was sent: ${reasons[0]}.`, sent: false };
+    return { notice: `No reminder was sent: ${skipped.length} ${skipped.length === 1 ? "invoice was" : "invoices were"} skipped.`, sent: false };
+  }
+  let notice = `Reminder sent for ${result.sent} ${result.sent === 1 ? "invoice" : "invoices"} to the account's contact email.`;
+  if (skipped.length > 0) notice += ` ${skipped.length} ${skipped.length === 1 ? "was" : "were"} not sent: nothing went out, send it again from the desk.`;
+  if (result.replayed > 0) notice += ` ${result.replayed} had already been sent.`;
+  return { notice, sent: true };
 }
 
 const DISPUTE_REASON_WORD: Record<string, string> = { SHORT_DELIVERY: "Short delivery", DAMAGED: "Damaged", PRICING: "Pricing", NOT_ORDERED: "Not ordered", OTHER: "Other" };
@@ -273,6 +317,21 @@ export function reversalWords(result: PaymentsReversalResult, paymentNo: string)
   const n = result.reopened_invoices.length;
   const kind = result.label === "VOID" ? "a void, the same day" : "a reversal";
   return `Payment ${paymentNo} is reversed as ${kind}. ${formatMoney(result.amount_cents)} is owing again on ${n} ${n === 1 ? "invoice" : "invoices"}.`;
+}
+
+export type VoidCheck = { ok: true; reason: string } | { ok: false; words: string };
+
+/** The true void's own check, apart from the reversal's: the receipt is undone as never taken (FW1-06b). */
+export function voidCheck(reason: string): VoidCheck {
+  const trimmed = reason.trim();
+  if (trimmed === "") return { ok: false, words: "Enter why the receipt is being voided, such as keyed for the wrong amount." };
+  return { ok: true, reason: trimmed };
+}
+
+/** What a void undid, from the server's own answer: the receipt never happened and nothing is held. */
+export function voidWords(result: PaymentsVoidResult, paymentNo: string): string {
+  const n = result.reopened_invoices.length;
+  return `Payment ${paymentNo} is voided as never received. ${formatMoney(result.amount_cents)} is owing again on ${n} ${n === 1 ? "invoice" : "invoices"}, and nothing is held for the customer.`;
 }
 
 export type ReapplyCheck = { ok: true; invoiceId: string; amountCents: number; reason: string } | { ok: false; words: string };
@@ -329,6 +388,72 @@ export function payoutWords(result: PaymentsPayout, paymentNo: string): string {
   const how = PAYOUT_KIND_WORDS[result.kind as PayoutKind]?.done ?? "has left";
   const left = result.held_after_cents === 0 ? "Nothing is held for this payment now." : `${formatMoney(result.held_after_cents)} is still held for this payment.`;
   return `${formatMoney(result.amount_cents)} of payment ${paymentNo} ${how}. ${left}`;
+}
+
+export type ApplyCreditCheck =
+  | { ok: true; creditKind: "MEMO" | "ACCOUNT"; creditId: string; invoiceId: string; amountCents: number; reason: string }
+  | { ok: false; words: string };
+
+/** The core's credit application checks (FW1-12b), said before the request is sent; the amount is parsed through the decimal string. */
+export function applyCreditCheck(input: {
+  creditKind: string;
+  creditId: string;
+  invoiceId: string;
+  amountText: string;
+  reason: string;
+  creditOpenCents: number;
+  invoiceBalanceCents: number | null;
+}): ApplyCreditCheck {
+  if ((input.creditKind !== "MEMO" && input.creditKind !== "ACCOUNT") || input.creditId.trim() === "") {
+    return { ok: false, words: "Choose the credit to apply." };
+  }
+  if (input.invoiceId === "" || input.invoiceBalanceCents === null) {
+    return { ok: false, words: "Choose the invoice to apply the credit to." };
+  }
+  if (input.amountText.trim() === "") {
+    return { ok: false, words: "Enter the amount to apply, such as 100.00." };
+  }
+  const cents = parseAmountToCents(input.amountText);
+  if (cents === null) {
+    return { ok: false, words: "Enter the amount as dollars and cents, such as 100.00." };
+  }
+  if (cents === 0) {
+    return { ok: false, words: "The amount must be more than zero." };
+  }
+  if (cents > input.creditOpenCents) {
+    return { ok: false, words: `That is more than the ${formatMoney(input.creditOpenCents)} open on this credit.` };
+  }
+  if (cents > input.invoiceBalanceCents) {
+    return { ok: false, words: `That is more than the invoice's open balance of ${formatMoney(input.invoiceBalanceCents)}.` };
+  }
+  const reason = input.reason.trim();
+  if (reason === "") {
+    return { ok: false, words: "Enter why the credit is being applied, such as applying open credit memo to balance." };
+  }
+  return { ok: true, creditKind: input.creditKind, creditId: input.creditId.trim(), invoiceId: input.invoiceId, amountCents: cents, reason };
+}
+
+/** What a credit application did, from the server's own answer: the credit applied and what remains open on the credit. The credit's reference is the row's, which the answer does not carry. */
+export function applyCreditWords(result: BillingCreditApplication, creditRef: string): string {
+  const kindWord = result.credit_kind === "MEMO" ? "credit memo" : "account credit";
+  const left = result.credit_open_after_cents === 0 ? `Nothing is left open on ${creditRef} now.` : `${formatMoney(result.credit_open_after_cents)} is still open on ${creditRef}.`;
+  return `${formatMoney(result.applied_cents)} of ${kindWord} ${creditRef} is applied to invoice ${result.invoice_no}. ${left}`;
+}
+
+export type ReverseCreditAppCheck = { ok: true; reason: string } | { ok: false; words: string };
+
+/** Checks the reason before reversing a credit application (FW1-12b). */
+export function reverseCreditAppCheck(reason: string): ReverseCreditAppCheck {
+  const trimmed = reason.trim();
+  if (trimmed === "") {
+    return { ok: false, words: "Enter why the credit application is being reversed, such as applied to the wrong invoice." };
+  }
+  return { ok: true, reason: trimmed };
+}
+
+/** What reversing a credit application undid, from the server's own answer. The credit's reference is the row's, which the answer does not carry. */
+export function reverseCreditAppWords(result: BillingCreditApplicationReversed, creditRef: string): string {
+  return `Credit application of ${formatMoney(result.restored_cents)} is reversed on invoice ${result.invoice_no}. ${formatMoney(result.credit_open_after_cents)} is open on ${creditRef} again.`;
 }
 
 // ---- settings: the receivables rules, the register, the returned payment fee, automatic holds ----------------------------

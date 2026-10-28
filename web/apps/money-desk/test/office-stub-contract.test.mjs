@@ -298,6 +298,40 @@ test("a payment is reversed once, reopens what it paid, and is refused in the co
   refused(await call("POST", `/api/v1/ar/payments/${paid.json.payment_id}/nsf`, { reason: "Returned" }), 409, "this payment was reversed, so it cannot be marked bounced");
 });
 
+test("a mis-keyed receipt is voided as never taken, with nothing held (FW1-06b)", async () => {
+  await reset();
+  const inv = await invoiceOf("INV-1002");
+  const paid = await call("POST", `/api/v1/ar/register/invoices/${inv.id}/payments`, { method: "CHEQUE", amount_cents: 2500, reference: "r", idempotency_key: "vd-1" });
+  const path = `/api/v1/ar/payments/${paid.json.payment_id}/void`;
+  refused(await call("POST", path, { reason: "" }), 400, "payments: a void reason is required");
+  refused(await call("POST", "/api/v1/ar/payments/nope/void", { reason: "Keyed in error" }), 404, "payment not found");
+  const voided = await call("POST", path, { reason: "Keyed for the wrong amount" });
+  assert.equal(voided.status, 201);
+  holds("PaymentsVoidResult", voided.json);
+  assert.equal(voided.json.amount_cents, 2500);
+  assert.equal(voided.json.label, "VOID");
+  assert.equal(voided.json.held_cents, 0, "the void holds nothing in 2310: the receipt never happened");
+  assert.equal(typeof voided.json.voided_at, "string");
+  assert.deepEqual(voided.json.reopened_invoices, [inv.id]);
+  assert.equal((await invoiceOf("INV-1002")).balance_cents, inv.balance_cents, "the balance is what it was before the payment");
+  refused(await call("POST", path, { reason: "again" }), 400, "only a received receipt that has not been deposited can be voided");
+  assert.ok(coreSource.includes("it was reversed, and the reversal owns the undo"));
+  // The voided receipt's allocation is gone, so the settlement list no longer carries the row.
+  const list = await call("GET", `/api/v1/ar/invoices/${inv.id}/payments`);
+  holds("TillInvoicePayments", list.json);
+  assert.ok(!list.json.items.some((p) => p.payment_id === paid.json.payment_id), "the voided receipt is not on the invoice's payments list");
+  // A voided receipt cannot be bounced either: the bounce undoes a live receipt, and this one never happened.
+  refused(await call("POST", `/api/v1/ar/payments/${paid.json.payment_id}/nsf`, { reason: "Returned" }), 409, "till: only a received or deposited payment can be marked bounced");
+});
+
+test("a card charge the processor captured is refused a void, in the core's words (FW1-06b round 2)", async () => {
+  await reset();
+  // The processor has the money, so the undo is a refund through the processor, not a void as never
+  // received: the void would owe the customer again while the settlement lands (S6's P2-3).
+  refused(await call("POST", "/api/v1/ar/payments/c0000000-0000-4000-8000-000000000002/void", { reason: "Keyed in error" }), 400, "the processor captured this card charge");
+  assert.ok(coreSource.includes("the processor captured this card charge"), "the core refuses a captured charge in these words");
+});
+
 test("a reversed payment's held money is read, applied to an invoice, replayed once and refused in the core's words", async () => {
   await reset();
   const inv = await invoiceOf("INV-1002");
@@ -555,4 +589,87 @@ test("the credit sweep only reports while automatic holds are off, and places th
   assert.equal(after.json.items.length, 3);
   holds("BillingCreditHoldPage", after.json);
   assert.equal((await call("POST", "/api/v1/ar/credit-sweep")).json.placed, 0, "an account already held is not held twice");
+});
+
+// ---- open credit memos and account credits applied to later invoices (FW1-12b) ----------------------------------------
+
+test("open credit memos and account credits show on the invoice detail, apply once per key, reverse with a reason, and refuse in the core's words", async () => {
+  await reset();
+  const inv = await invoiceOf("INV-1002");
+  const detailBefore = await call("GET", `/api/v1/ar/register/invoices/${inv.id}`);
+  assert.equal(detailBefore.status, 200);
+  holds("BillingInvoiceDetail", detailBefore.json);
+  assert.equal(detailBefore.json.open_credits.length, 2, "Granite Edge carries one open credit memo and one unapplied account credit");
+  const memo = detailBefore.json.open_credits.find((c) => c.credit_kind === "MEMO");
+  const acctCredit = detailBefore.json.open_credits.find((c) => c.credit_kind === "ACCOUNT");
+  assert.deepEqual([memo.reference, memo.open_cents, acctCredit.reference, acctCredit.open_cents], ["CM-0001", 25000, "AC-0001", 15000]);
+
+  const applyPath = "/api/v1/ar/credits/apply";
+  const reversePath = "/api/v1/ar/credits/applications/reverse";
+  const baseBody = (key, kind, creditId, cents) => ({
+    customer_id: inv.customer_id,
+    credit_kind: kind,
+    credit_id: creditId,
+    invoice_id: inv.id,
+    amount_cents: cents,
+    reason: "Applying open credit to balance",
+    idempotency_key: key,
+  });
+
+  // Validation and refusal sentences in the core's exact words.
+  refused(await call("POST", applyPath, { ...baseBody("ca-1", "MEMO", memo.credit_id, 1000), reason: " " }), 400, "billing: a reason is required");
+  refused(await call("POST", applyPath, { ...baseBody("", "MEMO", memo.credit_id, 1000) }), 400, "applying a credit needs an idempotency key");
+  refused(await call("POST", applyPath, { ...baseBody("ca-2", "COUPON", memo.credit_id, 1000) }), 400, "credit_kind must be");
+  refused(await call("POST", applyPath, { ...baseBody("ca-3", "MEMO", memo.credit_id, 0) }), 400, "the amount applied must be greater than zero");
+  refused(await call("POST", applyPath, { ...baseBody("ca-4", "MEMO", memo.credit_id, 25001) }), 400, "that is more than it holds");
+  refused(await call("POST", applyPath, { ...baseBody("ca-5", "MEMO", "00000000-0000-4000-8000-0000000000cc", 1000) }), 404, "credit not found");
+
+  // Apply part of the credit memo.
+  const firstMemo = await call("POST", applyPath, baseBody("ca-6", "MEMO", memo.credit_id, 10000));
+  assert.equal(firstMemo.status, 201);
+  holds("BillingCreditApplication", firstMemo.json);
+  assert.deepEqual(firstMemo.json.credit_kind, "MEMO");
+  assert.deepEqual(
+    [firstMemo.json.applied_cents, firstMemo.json.credit_open_after_cents, firstMemo.json.lines[0].invoice_no, firstMemo.json.lines[0].balance_after_cents, firstMemo.json.replayed],
+    [10000, 15000, "INV-1002", inv.balance_cents - 10000, false],
+  );
+
+  // Idempotent replay with same key and body returns 200 and writes nothing; same key with different amount is 409.
+  const replay = await call("POST", applyPath, baseBody("ca-6", "MEMO", memo.credit_id, 10000));
+  assert.equal(replay.status, 200);
+  holds("BillingCreditApplication", replay.json);
+  assert.deepEqual([replay.json.replayed, replay.json.application_id], [true, firstMemo.json.application_id]);
+  refused(await call("POST", applyPath, baseBody("ca-6", "MEMO", memo.credit_id, 5000)), 409, "that idempotency key already applied a credit differently; use a new key");
+
+  // Apply the full unapplied account credit (15,000 cents).
+  const firstAcct = await call("POST", applyPath, baseBody("ca-7", "ACCOUNT", acctCredit.credit_id, 15000));
+  assert.equal(firstAcct.status, 201);
+  holds("BillingCreditApplication", firstAcct.json);
+  assert.deepEqual([firstAcct.json.applied_cents, firstAcct.json.credit_open_after_cents], [15000, 0]);
+  refused(await call("POST", applyPath, baseBody("ca-8", "ACCOUNT", acctCredit.credit_id, 100)), 409, "billing: that credit has nothing left to apply");
+
+  // Detail now reflects 1 remaining open credit (CM-0001 with 15,000 open) and 2 credit applications.
+  const detailMid = await call("GET", `/api/v1/ar/register/invoices/${inv.id}`);
+  holds("BillingInvoiceDetail", detailMid.json);
+  assert.equal(detailMid.json.open_credits.length, 1);
+  assert.equal(detailMid.json.open_credits[0].open_cents, 15000);
+  assert.equal(detailMid.json.credit_applications.length, 2);
+  assert.deepEqual(
+    detailMid.json.credit_applications.map((a) => [a.credit_reference, a.reversed]).sort((x, y) => String(x[0]).localeCompare(String(y[0]))),
+    [["AC-0001", false], ["CM-0001", false]],
+  );
+
+  // Reverse the credit memo application.
+  refused(await call("POST", reversePath, { invoice_id: inv.id, application_id: firstMemo.json.application_id, reason: " " }), 400, "billing: a reason is required");
+  const rev = await call("POST", reversePath, { invoice_id: inv.id, application_id: firstMemo.json.application_id, reason: "Applied to the wrong invoice" });
+  assert.equal(rev.status, 201);
+  holds("BillingCreditApplicationReversed", rev.json);
+  assert.deepEqual([rev.json.restored_cents, rev.json.credit_open_after_cents, rev.json.invoice_balance_after_cents], [10000, 25000, inv.balance_cents - 15000]);
+  refused(await call("POST", reversePath, { invoice_id: inv.id, application_id: firstMemo.json.application_id, reason: "Again" }), 409, "billing: that application has already been reversed");
+
+  // The reversed application reads back reversed, with its reversal reason.
+  const detailAfter = await call("GET", `/api/v1/ar/register/invoices/${inv.id}`);
+  holds("BillingInvoiceDetail", detailAfter.json);
+  const reversedRow = detailAfter.json.credit_applications.find((a) => a.application_id === firstMemo.json.application_id);
+  assert.deepEqual([reversedRow.reversed, reversedRow.reversal_reason], [true, "Applied to the wrong invoice"]);
 });

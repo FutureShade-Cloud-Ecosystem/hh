@@ -206,6 +206,20 @@ func TestIntegration_AC2_BalanceSheetInvariant(t *testing.T) {
 	svc := realSvc(pool)
 	const yr = 2102
 	resetYear(t, pool, yr)
+	// Round 5 (S3's P1): the year's periods exist BEFORE the baseline is read, so the carried
+	// history (0439) stands behind both reads equally and the proof stays the fixture's own delta.
+	ensureStmtPeriods(t, pool, yr)
+
+	// 0439: the balance sheet carries history forward, so the year's totals stand on every year behind
+	// it, the seeded books included. The baseline is read BEFORE the fixture, and the proof is the
+	// DELTA the fixture's own movements make, on a database whose carried history may hold a seeded
+	// year nobody closed (its net income sits in its own P&L, so the absolute report need not
+	// balance; the fixture's movements must, and do).
+	base, err := svc.BalanceSheetReportFor(ctx, yr, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseLiab := func(code string) int64 { return amount(base.Liabilities, code) }
 
 	// A balanced set of POSTED journals touching assets, three loan/lease liabilities, equity, rev, exp.
 	seedJournal(t, pool, yr, 1, 1, "POSTED", trenton, []jline{{code: "1000", debit: 1_000_000}, {code: "3000", credit: 1_000_000}})
@@ -219,21 +233,107 @@ func TestIntegration_AC2_BalanceSheetInvariant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The absolute identity holds with earnings to date (round 4): assets == liabilities + equity
+	// (the carried equity plus the unclosed years' retained earnings to date) + this year's net income.
 	if !rep.Balanced {
 		t.Fatalf("not balanced: A=%d L=%d E=%d NI=%d",
 			rep.TotalAssetsCents, rep.TotalLiabilitiesCents, rep.TotalEquityCents, rep.NetIncomeCents)
 	}
-	if rep.TotalAssetsCents != 1_650_000 || rep.TotalLiabilitiesCents != 450_000 ||
-		rep.TotalEquityCents != 1_000_000 || rep.NetIncomeCents != 200_000 {
-		t.Fatalf("unexpected totals: %+v", rep)
+	// The fixture's own movements, per bucket, over the baseline.
+	dA := rep.TotalAssetsCents - base.TotalAssetsCents
+	dL := rep.TotalLiabilitiesCents - base.TotalLiabilitiesCents
+	dE := rep.TotalEquityCents - base.TotalEquityCents
+	dNI := rep.NetIncomeCents - base.NetIncomeCents
+	if dA != 1_650_000 || dL != 450_000 || dE != 1_000_000 || dNI != 200_000 {
+		t.Fatalf("unexpected deltas over the baseline: base=%+v rep=%+v", base, rep)
 	}
 	// the loan/lease liabilities must be present and carry their balances
-	if amount(rep.Liabilities, "2500") != 200_000 || amount(rep.Liabilities, "2510") != 150_000 || amount(rep.Liabilities, "2520") != 100_000 {
+	if amount(rep.Liabilities, "2500")-baseLiab("2500") != 200_000 ||
+		amount(rep.Liabilities, "2510")-baseLiab("2510") != 150_000 ||
+		amount(rep.Liabilities, "2520")-baseLiab("2520") != 100_000 {
 		t.Fatalf("loan/lease liabilities wrong: %+v", rep.Liabilities)
 	}
 }
 
 // -- AC3 branch-sum == consolidated -------------------------------------------
+
+// fw1PNLRow is one branch's own year: its net income and its 4000 revenue, as the view carries
+// them. The unbranched rows (a journal with no branch) are a row of their own.
+type fw1PNLRow struct {
+	netIncome   int64
+	revenue4000 int64
+}
+
+// fw1PNLByBranch reads the income statement view for a fiscal year, per branch: the branches that
+// carry rows, and the unbranched rows' own share.
+func fw1PNLByBranch(t *testing.T, pool *pgxpool.Pool, year int) (map[string]fw1PNLRow, fw1PNLRow) {
+	t.Helper()
+	ctx := context.Background()
+	rows, err := pool.Query(ctx,
+		`SELECT branch_id::text,
+		        SUM(CASE WHEN account_type = 'REVENUE' THEN amount_cents ELSE -amount_cents END),
+		        COALESCE(SUM(amount_cents) FILTER (WHERE account_code = '4000'), 0)
+		   FROM v_income_statement
+		  WHERE fiscal_year = $1
+		  GROUP BY branch_id`, year)
+	if err != nil {
+		t.Fatalf("read the income statement's branches: %v", err)
+	}
+	defer rows.Close()
+	byBranch := map[string]fw1PNLRow{}
+	var unbranched fw1PNLRow
+	for rows.Next() {
+		var id *string
+		var r fw1PNLRow
+		if err := rows.Scan(&id, &r.netIncome, &r.revenue4000); err != nil {
+			t.Fatalf("scan the income statement's branches: %v", err)
+		}
+		if id == nil {
+			unbranched.netIncome += r.netIncome
+			unbranched.revenue4000 += r.revenue4000
+			continue
+		}
+		byBranch[*id] = r
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read the income statement's branches: %v", err)
+	}
+	return byBranch, unbranched
+}
+
+// fw1ARByBranch reads the 1100 (accounts receivable) balance every branch carries in a fiscal
+// year, and the balance the unbranched rows carry.
+func fw1ARByBranch(t *testing.T, pool *pgxpool.Pool, year int) (map[string]int64, int64) {
+	t.Helper()
+	ctx := context.Background()
+	rows, err := pool.Query(ctx,
+		`SELECT branch_id::text, SUM(amount_cents)
+		   FROM v_balance_sheet
+		  WHERE fiscal_year = $1 AND account_code = '1100'
+		  GROUP BY branch_id`, year)
+	if err != nil {
+		t.Fatalf("read the balance sheet's branches: %v", err)
+	}
+	defer rows.Close()
+	byBranch := map[string]int64{}
+	var unbranched int64
+	for rows.Next() {
+		var id *string
+		var cents int64
+		if err := rows.Scan(&id, &cents); err != nil {
+			t.Fatalf("scan the balance sheet's branches: %v", err)
+		}
+		if id == nil {
+			unbranched += cents
+			continue
+		}
+		byBranch[*id] = cents
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read the balance sheet's branches: %v", err)
+	}
+	return byBranch, unbranched
+}
 
 func TestIntegration_AC3_BranchSumEqualsConsolidated(t *testing.T) {
 	pool := intPool(t)
@@ -259,22 +359,59 @@ func TestIntegration_AC3_BranchSumEqualsConsolidated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if trt.NetIncomeCents+kgn.NetIncomeCents != con.NetIncomeCents {
-		t.Fatalf("branch sum %d != consolidated %d", trt.NetIncomeCents+kgn.NetIncomeCents, con.NetIncomeCents)
+	// The fixture's own branches, exactly as they were seeded. These are the fixture's own rows and
+	// no other package's: the year 2103 is this leg's alone.
+	if trt.RevenueCents != 600_000 || trt.ExpenseCents != 200_000 || trt.NetIncomeCents != 400_000 {
+		t.Fatalf("Trenton's own year reads rev=%d exp=%d ni=%d, want 600000/200000/400000",
+			trt.RevenueCents, trt.ExpenseCents, trt.NetIncomeCents)
 	}
-	if con.RevenueCents != 1_000_000 || con.ExpenseCents != 300_000 {
-		t.Fatalf("consolidated rev/exp wrong: rev=%d exp=%d", con.RevenueCents, con.ExpenseCents)
+	if kgn.RevenueCents != 400_000 || kgn.ExpenseCents != 100_000 || kgn.NetIncomeCents != 300_000 {
+		t.Fatalf("Kingston's own year reads rev=%d exp=%d ni=%d, want 400000/100000/300000",
+			kgn.RevenueCents, kgn.ExpenseCents, kgn.NetIncomeCents)
 	}
-	// per-account additivity too
-	if amount(trt.Revenue, "4000")+amount(kgn.Revenue, "4000") != amount(con.Revenue, "4000") {
-		t.Fatal("per-account branch sum != consolidated for 4000")
+
+	// THE TRUE RULE (round 7, S3's round 6 finding): the sum over EVERY branch with a balance, plus
+	// any unbranched row, equals the consolidated figure. The consolidated figure IS that sum, so
+	// the leg holds on a shared gate database, where another package's own branch carries its own
+	// 1100, and it still says the branches add up to the company. No baseline: a baseline would
+	// prove the fixture's own movement and hide the very thing this leg is about.
+	pnlByBranch, unbranchedPNL := fw1PNLByBranch(t, pool, yr)
+	var niSum, revSum int64
+	for branch := range pnlByBranch {
+		rep, err := svc.IncomeStatementReportFor(ctx, yr, 0, branch)
+		if err != nil {
+			t.Fatalf("branch %s income statement: %v", branch, err)
+		}
+		niSum += rep.NetIncomeCents
+		revSum += amount(rep.Revenue, "4000")
 	}
-	// balance sheet consolidation likewise
-	bTrt, _ := svc.BalanceSheet(ctx, yr, trenton)
-	bKgn, _ := svc.BalanceSheet(ctx, yr, kingston)
-	bCon, _ := svc.BalanceSheet(ctx, yr, "")
-	if amount(bTrt, "1100")+amount(bKgn, "1100") != amount(bCon, "1100") {
-		t.Fatal("balance sheet 1100 branch sum != consolidated")
+	niSum += unbranchedPNL.netIncome
+	revSum += unbranchedPNL.revenue4000
+	if niSum != con.NetIncomeCents {
+		t.Fatalf("income statement branch sum %d != consolidated %d", niSum, con.NetIncomeCents)
+	}
+	// Per account, the same rule.
+	if revSum != amount(con.Revenue, "4000") {
+		t.Fatalf("revenue 4000 branch sum %d != consolidated %d", revSum, amount(con.Revenue, "4000"))
+	}
+
+	// The balance sheet, the same rule on 1100.
+	arByBranch, unbranchedAR := fw1ARByBranch(t, pool, yr)
+	var arSum int64
+	for branch := range arByBranch {
+		rows, err := svc.BalanceSheet(ctx, yr, branch)
+		if err != nil {
+			t.Fatalf("branch %s balance sheet: %v", branch, err)
+		}
+		arSum += amount(rows, "1100")
+	}
+	arSum += unbranchedAR
+	bCon, err := svc.BalanceSheet(ctx, yr, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if arSum != amount(bCon, "1100") {
+		t.Fatalf("balance sheet 1100 branch sum %d != consolidated %d", arSum, amount(bCon, "1100"))
 	}
 }
 
@@ -517,6 +654,22 @@ func TestIntegration_AC7_TrialBalanceInBalance(t *testing.T) {
 	svc := realSvc(pool)
 	const yr = 2107
 	resetYear(t, pool, yr)
+	// Round 5 (S3's P1): the year's periods exist BEFORE the baseline is read, so the carried
+	// history (0439) stands behind both reads equally and the proof stays the fixture's own delta.
+	ensureStmtPeriods(t, pool, yr)
+
+	// Round 4 (S3's P2): the trial balance's BALANCE accounts read inception to date, so the proof is
+	// the DELTA over the baseline this database already held (the seeded books and any earlier band's
+	// history stand behind the year), the P&L accounts staying the year's own movement.
+	base, err := svc.TrialBalanceReportFor(ctx, yr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseBy := func(code string) (int64, int64, bool) {
+		r, ok := tbRow(base.Rows, code)
+		return r.TotalDebitCents, r.TotalCreditCents, ok
+	}
+	baseTotals := [2]int64{base.TotalDebitCents, base.TotalCreditCents}
 
 	// Several balanced POSTED journals touching assets/liabilities/equity/revenue/expense.
 	// Each journal balances by construction (debits == credits), so Σall-debits == Σall-credits.
@@ -564,28 +717,39 @@ func TestIntegration_AC7_TrialBalanceInBalance(t *testing.T) {
 	if rep.TotalDebitCents != rep.TotalCreditCents {
 		t.Fatalf("Σdebit %d != Σcredit %d", rep.TotalDebitCents, rep.TotalCreditCents)
 	}
-	// (3) both equal the exact Σ of seeded (balanced) amounts, DRAFT excluded
-	if rep.TotalDebitCents != expDebit {
-		t.Fatalf("Σdebit %d != seeded Σdebit %d (DRAFT must be excluded)", rep.TotalDebitCents, expDebit)
+	// (2b) round 5 (S3's section 3): every row's balance is debit minus credit, the computed 3901
+	// line included, so the whole report's signed balances sum to zero.
+	var balanceSum int64
+	for _, r := range rep.Rows {
+		balanceSum += r.BalanceCents
 	}
-	if rep.TotalCreditCents != expCredit {
-		t.Fatalf("Σcredit %d != seeded Σcredit %d (DRAFT must be excluded)", rep.TotalCreditCents, expCredit)
+	if balanceSum != 0 {
+		t.Fatalf("Σbalance %d != 0 (the 3901 line's sign is off by twice its amount)", balanceSum)
+	}
+	// (3) the DELTAS equal the exact Σ of seeded (balanced) amounts, DRAFT excluded
+	if rep.TotalDebitCents-baseTotals[0] != expDebit {
+		t.Fatalf("Σdebit delta %d != seeded Σdebit %d (DRAFT must be excluded)", rep.TotalDebitCents-baseTotals[0], expDebit)
+	}
+	if rep.TotalCreditCents-baseTotals[1] != expCredit {
+		t.Fatalf("Σcredit delta %d != seeded Σcredit %d (DRAFT must be excluded)", rep.TotalCreditCents-baseTotals[1], expCredit)
 	}
 
-	// (4) one account's BalanceCents == its Σdebit − Σcredit from the fixtures.
-	// 1000 (cash): debit 1_000_000 + 600_000, credit 250_000 → balance 1_350_000.
+	// (4) one account's BalanceCents delta == its Σdebit − Σcredit from the fixtures (1000 is a BALANCE
+	// account, inception to date since 0439 round 4: the fixture's delta over the carried baseline).
+	// 1000 (cash): debit 1_000_000 + 600_000, credit 250_000 → delta 1_350_000.
 	const cashCode = "1000"
 	row, ok := tbRow(rep.Rows, cashCode)
 	if !ok {
 		t.Fatalf("account %s missing from trial balance", cashCode)
 	}
 	wantCashBal := debitBy[cashCode] - creditBy[cashCode]
-	if row.BalanceCents != wantCashBal {
-		t.Fatalf("%s balance %d != Σdebit−Σcredit %d", cashCode, row.BalanceCents, wantCashBal)
+	bd, bc, had := baseBy(cashCode)
+	if row.BalanceCents-(bd-bc) != wantCashBal {
+		t.Fatalf("%s balance delta %d != Σdebit−Σcredit %d", cashCode, row.BalanceCents-(bd-bc), wantCashBal)
 	}
-	if row.TotalDebitCents != debitBy[cashCode] || row.TotalCreditCents != creditBy[cashCode] {
+	if had && (row.TotalDebitCents-bd != debitBy[cashCode] || row.TotalCreditCents-bc != creditBy[cashCode]) {
 		t.Fatalf("%s debit/credit columns wrong: got d=%d c=%d want d=%d c=%d",
-			cashCode, row.TotalDebitCents, row.TotalCreditCents, debitBy[cashCode], creditBy[cashCode])
+			cashCode, row.TotalDebitCents-bd, row.TotalCreditCents-bc, debitBy[cashCode], creditBy[cashCode])
 	}
 	// the DRAFT credit of 777_777 must not have leaked into revenue 4000's credit column
 	if r4000, ok := tbRow(rep.Rows, "4000"); ok && r4000.TotalCreditCents != creditBy["4000"] {
