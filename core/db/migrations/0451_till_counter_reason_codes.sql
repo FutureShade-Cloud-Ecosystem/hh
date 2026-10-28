@@ -8,9 +8,12 @@
 -- The list is per branch: the same code string can sit on two branches pointing at different accounts
 -- (postage at one yard is not the other yard's postage), so the key is (branch_id, code).
 --
--- The movement carries the list row it names, not a copy of the label or the account: the row is the
--- one fact, and a manager may later edit the label or point the code at another account. The posting
--- reads the account from the row at post time through the gl module's seam.
+-- The movement carries the list row it names, and the account that row pointed at when the movement
+-- was recorded: the row is the one fact, and a manager may later edit the label or point the code at
+-- another account. The account the movement carries is the account it posts to, so a repoint made
+-- while the movement waited never moves the money (W2-6b fix round 3). The posting reads that
+-- account from the movement, and only asks the gl module's seam for the account of a movement
+-- recorded before this column existed.
 --
 -- Spec: W2-6b (fin2 wave 2) · Traces: FROM-PRINCIPAL 132 (a movement with no code still posts to 9999
 -- Suspense, so a movement recorded before this migration keeps its suspense posting).
@@ -35,6 +38,15 @@ CREATE INDEX idx_till_counter_reason_codes_branch ON till_counter_reason_codes (
 -- branch whose list carries no active code for that kind; those still post to 9999 Suspense.
 ALTER TABLE till_movements
   ADD COLUMN reason_code_id UUID REFERENCES till_counter_reason_codes(id) ON DELETE RESTRICT;
+
+-- The movement carries the account the code pointed at WHEN THE MOVEMENT WAS RECORDED (W2-6b fix round
+-- 3). The account resolves once, at record time, and travels with the movement: a manager may repoint
+-- the code later, and a repoint must not move a movement that has not posted yet.
+--
+-- The column is nullable. Every movement recorded before this migration keeps NULL, a movement that
+-- names no code keeps NULL, and both still post the way they always did.
+ALTER TABLE till_movements
+  ADD COLUMN gl_account_code TEXT;
 
 -- The starter list every branch begins with: the three spends a till drawer draws on most, each
 -- pointing at an expense account of its own.

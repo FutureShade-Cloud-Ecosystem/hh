@@ -508,10 +508,15 @@ type MovementRow struct {
 	// counter reason code, and the posting reads the account from that row at post time. Empty means
 	// the movement names no code, which still posts to 9999 Suspense.
 	ReasonCodeID string
-	Reference    string
-	CreatedBy    string
-	CreatedAt    time.Time
-	PaymentIDs   []string
+	// GLAccountCode is the GL account the movement posts to, resolved at record time from the code the
+	// movement names (W2-6b fix round 3). It is written on the movement and travels with it, so a
+	// repoint of the code never moves a movement that has not posted yet. Empty means the movement
+	// names no code.
+	GLAccountCode string
+	Reference     string
+	CreatedBy     string
+	CreatedAt     time.Time
+	PaymentIDs    []string
 }
 
 // SlipPayment is one named payment's read for a lodgement's deposit slip validation.

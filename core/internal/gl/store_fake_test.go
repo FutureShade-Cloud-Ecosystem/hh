@@ -495,10 +495,21 @@ func (h fakeHold) JournalApprovalState(context.Context, string, int64) (Approval
 	return h.state, h.err
 }
 
+// noLiveCounterCodes is the gl's own test world: no till module is in the composition, so no live
+// counter reason code names any account and the chart's retire guard (W2-6b fix round 3) has nothing
+// to refuse. The guard refuses an account it cannot check, so the seam is wired here with the honest
+// answer for a world without the till.
+type noLiveCounterCodes struct{}
+
+func (noLiveCounterCodes) ActiveCounterCodesForAccount(context.Context, string) ([]CounterAccountUse, error) {
+	return nil, nil
+}
+
 func newTestService(f *fakeStore) *Service {
 	holder := testCaller
 	return NewService(nil).
 		WithApprovalStateChecker(fakeHold{}).
+		WithCounterAccountUses(noLiveCounterCodes{}).
 		withStore(f).
 		// The unit clock is a private fixture date; no books stand behind it.
 		withClock(func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }).
@@ -509,6 +520,7 @@ func newTestService(f *fakeStore) *Service {
 func newTestServiceAs(f *fakeStore, caller identity.StaffContext) *Service {
 	return NewService(nil).
 		WithApprovalStateChecker(fakeHold{}).
+		WithCounterAccountUses(noLiveCounterCodes{}).
 		withStore(f).
 		// The unit clock is a private fixture date; no books stand behind it.
 		withClock(func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }).

@@ -402,7 +402,7 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 	var movementID string
 	var movementAt time.Time
 	if err := tx.QueryRow(ctx, insertMovementSQL+` RETURNING id, created_at`,
-		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, nullUUID(m.ReasonCodeID), m.Reference, nullStr(m.CreatedBy), m.CreatedAt).Scan(&movementID, &movementAt); err != nil {
+		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, nullUUID(m.ReasonCodeID), nullStr(m.GLAccountCode), m.Reference, nullStr(m.CreatedBy), m.CreatedAt).Scan(&movementID, &movementAt); err != nil {
 		return fmt.Errorf("till: insert movement: %w", err)
 	}
 	// The deposit slip's rows and the DEPOSITED marks ride THIS transaction (FROM-PRINCIPAL 120): the
@@ -450,9 +450,14 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 			"amount_cents":  m.AmountCents,
 			"occurred_at":   movementAt,
 			"reason":        m.Reason,
-			// The counter reason code (W2-6b): the list row this movement names. The gl reads the
-			// account from that row at post time through its seam, so no gl SQL names a till table.
+			// The counter reason code (W2-6b): the list row this movement names. A movement recorded
+			// before the account began travelling with it (W2-6b fix round 3) is posted from that row
+			// at post time, read through the gl's seam, so no gl SQL names a till table.
 			"reason_code_id": nullStr(m.ReasonCodeID),
+			// The account the code pointed at when the movement was recorded (W2-6b fix round 3). The
+			// posting uses the account the movement carries, so a repoint of the code made while this
+			// movement waited never moves the money.
+			"gl_account_code": nullStr(m.GLAccountCode),
 		})
 		if err != nil {
 			return fmt.Errorf("till: marshal movement posted: %w", err)
@@ -468,11 +473,14 @@ func (r *Repository) InsertMovement(ctx context.Context, m MovementRow) error {
 // insertMovementSQL is the movement INSERT. created_at is written from the service clock the
 // caller passes on the row (one clock rules the transaction, FW1-13b), never the column default:
 // the outbox payload's occurred_at is this row's created_at, and both journal builders date from
-// it. The pool path (InsertMovement) appends RETURNING id for the outbox payload's own key; the
-// in-caller-tx path (InsertMovementTx, the POS return's drawer movement) shares the statement
-// without it and never emits: the return event's journal already carries the drawer credit.
-const insertMovementSQL = `INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reason_code_id, reference, created_by, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+// it. gl_account_code is the account the movement's reason code pointed at when the movement was
+// recorded (W2-6b fix round 3): the account travels with the movement, so a repoint of the code
+// never moves a movement that has not posted yet. The pool path (InsertMovement) appends RETURNING
+// id for the outbox payload's own key; the in-caller-tx path (InsertMovementTx, the POS return's
+// drawer movement) shares the statement without it and never emits: the return event's journal
+// already carries the drawer credit.
+const insertMovementSQL = `INSERT INTO till_movements (till_session_id, movement_type, method, amount_cents, reason, reason_code_id, gl_account_code, reference, created_by, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 
 // PaymentsForSlip reads the named payments for a lodgement's deposit slip validation. The read is
 // fenced to the session and the method: a name that is not on this drawer as this method reads as
@@ -537,7 +545,7 @@ func (r *Repository) InsertMovementTx(ctx context.Context, tx pgx.Tx, m Movement
 		return errNoInstant("movement")
 	}
 	if _, err := tx.Exec(ctx, insertMovementSQL,
-		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, nullUUID(m.ReasonCodeID), m.Reference, nullStr(m.CreatedBy), m.CreatedAt); err != nil {
+		m.TillSessionID, m.MovementType, m.Method, m.AmountCents, m.Reason, nullUUID(m.ReasonCodeID), nullStr(m.GLAccountCode), m.Reference, nullStr(m.CreatedBy), m.CreatedAt); err != nil {
 		return fmt.Errorf("till: insert movement: %w", err)
 	}
 	return nil

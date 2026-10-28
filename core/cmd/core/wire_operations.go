@@ -169,6 +169,10 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// a movement's reason code points at, so no GL statement names a till table. Unwired, a movement
 	// that names a code refuses to post rather than posting to suspense.
 	spine.glSvc.WithCounterAccounts(tillRepo)
+	// W2-6b fix round 3: the chart's retire guard asks the till (the till owns the list) which LIVE
+	// codes name an account, so an account a live code needs is never retired under it. Unwired, the
+	// guard cannot check the account and the chart refuses to retire it.
+	spine.glSvc.WithCounterAccountUses(tillRepo)
 	tillHandler := till.NewHandler(tillSvc, log).WithUserLinker(link).WithCustomerReach(newCustomerWall(pool))
 	if !tillHandler.CustomerReachWired() {
 		panic("till: customer reach not wired - payment attempts would record against any named account")

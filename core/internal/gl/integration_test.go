@@ -96,6 +96,9 @@ func periodID(t *testing.T, pool *pgxpool.Pool, year, month int) string {
 
 func svcAt(pool *pgxpool.Pool, caller identity.StaffContext, at time.Time) *Service {
 	return NewService(NewRepository(pool)).
+		// The gl's own integration world carries no till module, so no live counter reason code names
+		// any account and the chart's retire guard (W2-6b fix round 3) has nothing to refuse.
+		WithCounterAccountUses(noLiveCounterCodes{}).
 		withCaller(func(_ context.Context) (identity.StaffContext, bool) { return caller, caller.UserID != "" }).
 		withClock(func() time.Time { return at })
 }

@@ -17,7 +17,9 @@ package main
 //   - a code repointed at an account that has been turned off is refused, in words, and the code keeps the
 //     account it had
 //   - a code pointing at a live account is still accepted, and a movement naming it posts there
-//   - a code whose account was turned off after the code was written still refuses at post time, as today
+//   - a code whose account was turned off after the code was written cannot take a movement: the till
+//     refuses the movement in words and records nothing (round 3 replaced the dead letter this leg used
+//     to pin)
 //
 // The legs run on a real migrated database seeded with the default build's Ontario Dibbits seed, every
 // step through the real services wired exactly as cmd/core wires them, and the GL consumer's posting loop
@@ -108,38 +110,39 @@ func TestW2B6FixReasonCodeAccount(t *testing.T) {
 		t.Errorf("the paid out with the code left %+v in 9999 Suspense, want nothing", l)
 	}
 
-	// 4. A code written while its account was live still refuses at post time when the account is turned
-	//    off afterwards, as today. The write time check cannot replace the post time check: the account
-	//    can be turned off at any moment after the code was written.
+	// 4. A code whose account was turned off afterwards cannot take a movement. The write time check
+	//    cannot replace the record time check: the account can be turned off at any moment after the
+	//    code was written. The account is retired while the code is off (no live code names it), and
+	//    the code is turned on afterwards. The movement is then refused in words, and nothing is
+	//    recorded: no movement row, no outbox row, no journal and no dead letter.
 	w.plantAccount(t, "9997", "A counter account turned off later")
 	later := w.createReasonCode(t, w2b6TRT, map[string]any{
 		"code": "LATER", "label": "Postage at an account turned off later",
 		"movement_kind": "PAID_OUT", "gl_account_code": "9997", "active": false,
 	})
-	w.editReasonCode(t, later, map[string]any{"active": true})
 	w.retireAccount(t, "9997")
+	w.editReasonCode(t, later, map[string]any{"active": true})
 	lateSession := w.openSession(t, w2b6TRT)
-	w.movement(t, lateSession, map[string]any{
+	movementsBefore := w.movementCount(t, lateSession)
+	outboxBefore := w.movementOutboxCount(t, lateSession)
+	status, out := w.call(http.MethodPost, "/api/v1/till/sessions/"+lateSession+"/movements", map[string]any{
 		"movement_type": "PAID_OUT",
 		"method":        "CASH",
 		"amount_cents":  2000,
 		"reason":        "the postage money, after the account was turned off",
 		"reason_code":   "LATER",
 	})
-	w.drain()
-	lateMovement := w.movementID(t, lateSession)
-	if lateLegs := w.journalLegs(t, lateMovement); len(lateLegs) != 0 {
-		t.Errorf("the movement whose account was turned off posted %+v, want no journal at all", lateLegs)
+	if status != http.StatusUnprocessableEntity {
+		t.Errorf("the till answered a movement naming a code whose account was turned off with %d, want 422: %s", status, out)
 	}
-	var lastErr string
-	if err := w.pool.QueryRow(context.Background(),
-		`SELECT last_error FROM events_outbox
-		  WHERE topic = 'till.movement.posted' AND payload->>'movement_id' = $1
-		  ORDER BY occurred_at DESC LIMIT 1`, lateMovement).Scan(&lastErr); err != nil {
-		t.Fatalf("reading the outbox row of the movement: %v", err)
+	if !strings.Contains(string(out), "the account 9997 is inactive") {
+		t.Errorf("the refusal of a movement naming a code whose account was turned off does not name the inactive account: %s", out)
 	}
-	if !strings.Contains(lastErr, "inactive") {
-		t.Errorf("the posting of a movement whose account was turned off said %q, want the inactive account named", lastErr)
+	if got := w.movementCount(t, lateSession); got != movementsBefore {
+		t.Errorf("the refused movement left %d movement rows behind, want %d", got, movementsBefore)
+	}
+	if got := w.movementOutboxCount(t, lateSession); got != outboxBefore {
+		t.Errorf("the refused movement left %d outbox rows behind, want %d", got, outboxBefore)
 	}
 }
 
@@ -148,8 +151,15 @@ func TestW2B6FixReasonCodeAccount(t *testing.T) {
 // run in one package run without fighting over one database.
 func newW2B6FixWalk(t *testing.T) *w2b6Walk {
 	t.Helper()
+	return newW2B6FixWalkNamed(t, "w2b6fix")
+}
+
+// newW2B6FixWalkNamed is the fix legs' world on a database of the given name, so the round 1 legs and
+// the round 3 legs each run on a database of their own and neither order changes what the other sees.
+func newW2B6FixWalkNamed(t *testing.T, suffix string) *w2b6Walk {
+	t.Helper()
 	ctx := context.Background()
-	pool := freshMigratedDB(t, "w2b6fix")
+	pool := freshMigratedDB(t, suffix)
 	body, err := seedFS.ReadFile("dibbits_seed.sql")
 	if err != nil {
 		t.Fatalf("reading the embedded seed: %v", err)

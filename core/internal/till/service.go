@@ -606,7 +606,11 @@ func (s *Service) recordMovement(ctx context.Context, in MovementInput, mt strin
 	// money is, and the code points at the GL account the movement posts to, so the money never
 	// lands in 9999 Suspense unnamed. A movement with no code is today's movement and stays legal
 	// only while the branch has no live code for that direction.
-	reasonCodeID, err := s.resolveReasonCode(ctx, sess, mt, in.ReasonCode)
+	//
+	// The code resolves into the list row AND the account that row points at (W2-6b fix round 3), and
+	// the account travels with the movement: a repoint of the code made while the movement waits must
+	// not move money that has not posted yet.
+	resolved, err := s.resolveReasonCode(ctx, sess, mt, in.ReasonCode)
 	if err != nil {
 		return err
 	}
@@ -620,7 +624,8 @@ func (s *Service) recordMovement(ctx context.Context, in MovementInput, mt strin
 		Method:        method,
 		AmountCents:   in.AmountCents,
 		Reason:        in.Reason,
-		ReasonCodeID:  reasonCodeID,
+		ReasonCodeID:  resolved.ID,
+		GLAccountCode: resolved.AccountCode,
 		Reference:     in.Reference,
 		CreatedBy:     caller.UserID,
 		CreatedAt:     at,
@@ -1124,8 +1129,10 @@ func (s *Service) EditReasonCode(ctx context.Context, id string, e ReasonCodeEdi
 		}
 		// The account the code is repointed at must be one the chart holds and keeps live (W2-6b fix
 		// round 1). The account the row already carries is not rechecked: an edit that does not name an
-		// account changes no account, and a code whose account was turned off after it was written is
-		// refused at post time, as today.
+		// account changes no account, so there is nothing new to check. A code whose account was turned
+		// off after it was written is caught when a movement names it (W2-6b fix round 3): the till
+		// refuses that movement in words and records nothing, and the chart refuses to turn an account
+		// off under a live code in the first place.
 		if err := s.checkAccountPostable(ctx, account); err != nil {
 			return ReasonCode{}, err
 		}
@@ -1148,6 +1155,19 @@ func (s *Service) EditReasonCode(ctx context.Context, id string, e ReasonCodeEdi
 	return row, nil
 }
 
+// resolvedReasonCode is the code a movement names, resolved into the list row and the account that
+// row points at.
+//
+// The account resolves ONCE, here, at record time, and travels with the movement (W2-6b fix round 3).
+// A manager may repoint the code later, and a repoint must not move a movement that has not posted
+// yet, so the movement carries the account it was given.
+type resolvedReasonCode struct {
+	// ID is the list row the movement names. Empty means the movement names no code.
+	ID string
+	// AccountCode is the GL account the movement posts to. Empty means the movement names no code.
+	AccountCode string
+}
+
 // resolveReasonCode resolves the code a movement names into the list row the movement carries.
 //
 // The rules, in the drawer's words:
@@ -1157,50 +1177,62 @@ func (s *Service) EditReasonCode(ctx context.Context, id string, e ReasonCodeEdi
 //   - a code the branch does not carry is refused. It may be another branch's code, or nobody's; the
 //     drawer is told it is not one of this branch's codes.
 //   - a code that is turned off is refused.
+//   - a code whose account the chart no longer holds, or no longer keeps live, is refused. The account
+//     was checked when the code was written, but an account can be retired afterwards, and a movement
+//     posted to a retired account would dead letter and leave the drawer's money unposted (W2-6b fix
+//     round 3). The refusal belongs at record time, where the drawer hears it and nothing is written.
 //   - a code that does not allow this direction is refused.
 //
 // A drop carries no journal of its own (its cash is still undeposited company cash), so a drop never
 // needs a code; a drop that names one still has to name a real one.
-func (s *Service) resolveReasonCode(ctx context.Context, sess TillSession, mt, code string) (string, error) {
+func (s *Service) resolveReasonCode(ctx context.Context, sess TillSession, mt, code string) (resolvedReasonCode, error) {
 	kind := reasonKindForMovement(mt)
 	named := strings.ToUpper(strings.TrimSpace(code))
 	if kind == "" {
 		// A drop: no account, no code required.
 		if named == "" {
-			return "", nil
+			return resolvedReasonCode{}, nil
 		}
 	}
 	if named == "" {
 		has, err := s.store.HasActiveReasonCode(ctx, sess.BranchID, kind)
 		if err != nil {
-			return "", err
+			return resolvedReasonCode{}, err
 		}
 		if !has {
 			// Today's movement: no code on this branch yet, so the money still lands in suspense.
-			return "", nil
+			return resolvedReasonCode{}, nil
 		}
 		if kind == ReasonKindPaidIn {
-			return "", unprocessable("till: this branch names its paid ins by reason code; name one")
+			return resolvedReasonCode{}, unprocessable("till: this branch names its paid ins by reason code; name one")
 		}
-		return "", unprocessable("till: this branch names its paid outs by reason code; name one")
+		return resolvedReasonCode{}, unprocessable("till: this branch names its paid outs by reason code; name one")
 	}
 	row, found, err := s.store.ReasonCodeFor(ctx, sess.BranchID, named)
 	if err != nil {
-		return "", err
+		return resolvedReasonCode{}, err
 	}
 	if !found {
-		return "", unprocessable("till: %s is not one of this branch's reason codes", named)
+		return resolvedReasonCode{}, unprocessable("till: %s is not one of this branch's reason codes", named)
 	}
 	if !row.Active {
-		return "", unprocessable("till: %s is turned off on this branch", named)
+		return resolvedReasonCode{}, unprocessable("till: %s is turned off on this branch", named)
+	}
+	// The account the code points at must still be one the chart holds and keeps live (W2-6b fix round
+	// 3). The code was checked when it was written, but the account can be retired after that, and the
+	// movement would then be accepted and its journal would dead letter with "account 9996 is inactive;
+	// cannot post". The drawer is told here, and nothing is recorded: no movement row, no outbox row,
+	// no dead letter, and the drawer's cash stays where it is.
+	if err := s.checkAccountPostable(ctx, row.GLAccountCode); err != nil {
+		return resolvedReasonCode{}, err
 	}
 	if kind != "" && row.MovementKind != kind && row.MovementKind != ReasonKindBoth {
 		if kind == ReasonKindPaidIn {
-			return "", unprocessable("till: %s does not allow a paid in", named)
+			return resolvedReasonCode{}, unprocessable("till: %s does not allow a paid in", named)
 		}
-		return "", unprocessable("till: %s does not allow a paid out", named)
+		return resolvedReasonCode{}, unprocessable("till: %s does not allow a paid out", named)
 	}
-	return row.ID, nil
+	return resolvedReasonCode{ID: row.ID, AccountCode: row.GLAccountCode}, nil
 }
 
 // reasonKindForMovement answers the direction a movement names a code for. A drop answers nothing:
