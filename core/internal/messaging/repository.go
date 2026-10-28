@@ -2387,7 +2387,10 @@ func (r *Repository) syncMessagesPage(ctx context.Context, userID string, since 
 }
 
 // syncMessageLoad reads one message under the caller's membership fence.
-func (r *Repository) syncMessageLoad(ctx context.Context, userID, messageID string) (messageFeedRow, int64, bool, error) {
+// The withdrawn flag rides with the row: a withdrawn message answers the
+// tombstone the pull answers (UX-108 round 2), and a reader that cannot see
+// the flag answers a live-shaped row for a message the server has dropped.
+func (r *Repository) syncMessageLoad(ctx context.Context, userID, messageID string) (messageFeedRow, int64, bool, bool, error) {
 	var m messageFeedRow
 	var ref []byte
 	var seq int64
@@ -2407,10 +2410,10 @@ func (r *Repository) syncMessageLoad(ctx context.Context, userID, messageID stri
 			&ref, &m.ThreadRootID, &m.RequiresAck, &m.Priority, &m.StateKey,
 			&m.SupersededBy, &m.SupersededAt, &m.CreatedAt, &seq, &del)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return messageFeedRow{}, 0, false, nil
+		return messageFeedRow{}, 0, false, false, nil
 	}
 	if err != nil {
-		return messageFeedRow{}, 0, false, fmt.Errorf("sync message load: %w", err)
+		return messageFeedRow{}, 0, false, false, fmt.Errorf("sync message load: %w", err)
 	}
 	if len(ref) > 0 && string(ref) != "{}" {
 		m.Ref = json.RawMessage(ref)
@@ -2418,27 +2421,30 @@ func (r *Repository) syncMessageLoad(ctx context.Context, userID, messageID stri
 	if del {
 		m.Body = ""
 	}
-	return m, seq, true, nil
+	return m, seq, del, true, nil
 }
 
 // syncMessageFindApplied resolves one idempotency key to the caller's own
 // message (the fence holds even for a row the caller has since left). The
 // room rides along, so the door's room fence (admitsRoom) can hold this read
 // the way it holds Load: a member the room refuses must not resolve the key.
-func (r *Repository) syncMessageFindApplied(ctx context.Context, userID, key string) (string, int64, string, bool, error) {
+// The withdrawn flag rides too: a withdrawn message answers the tombstone the
+// pull answers (UX-108 round 2).
+func (r *Repository) syncMessageFindApplied(ctx context.Context, userID, key string) (string, int64, string, bool, bool, error) {
 	var id, channelID string
 	var seq int64
+	var del bool
 	err := r.pool.QueryRow(ctx, `
-		SELECT m.id::text, m.seq, m.channel_id::text FROM msg_messages m
+		SELECT m.id::text, m.seq, m.channel_id::text, (m.deleted_at IS NOT NULL) FROM msg_messages m
 		JOIN msg_members mem ON mem.channel_id = m.channel_id AND mem.user_id = $1
-		WHERE m.idempotency_key = $2::uuid`, userID, key).Scan(&id, &seq, &channelID)
+		WHERE m.idempotency_key = $2::uuid`, userID, key).Scan(&id, &seq, &channelID, &del)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", 0, "", false, nil
+		return "", 0, "", false, false, nil
 	}
 	if err != nil {
-		return "", 0, "", false, fmt.Errorf("sync message find-applied: %w", err)
+		return "", 0, "", false, false, fmt.Errorf("sync message find-applied: %w", err)
 	}
-	return id, seq, channelID, true, nil
+	return id, seq, channelID, del, true, nil
 }
 
 // syncMessageExists answers the bound key gate's existence read (UX-103):

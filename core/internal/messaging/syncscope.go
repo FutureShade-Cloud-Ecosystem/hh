@@ -209,7 +209,7 @@ func (s *messagesSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter,
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
-	id, seq, channelID, found, err := s.repo.syncMessageFindApplied(ctx, uid, key)
+	id, seq, channelID, deleted, found, err := s.repo.syncMessageFindApplied(ctx, uid, key)
 	if err != nil || !found {
 		return sync.RowState{}, found, err
 	}
@@ -219,7 +219,9 @@ func (s *messagesSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter,
 	if !admitsRoom(ctx, s.fence, uid, channelID) {
 		return sync.RowState{}, false, nil
 	}
-	return sync.RowState{ID: id, Seq: seq}, true, nil
+	// A withdrawn message answers the tombstone the pull answers: the id and
+	// the seq and no projection (UX-108 round 2).
+	return sync.RowState{ID: id, Seq: seq, Deleted: deleted}, true, nil
 }
 
 func (s *messagesSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
@@ -227,12 +229,20 @@ func (s *messagesSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id str
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
-	row, seq, found, err := s.repo.syncMessageLoad(ctx, uid, id)
+	row, seq, deleted, found, err := s.repo.syncMessageLoad(ctx, uid, id)
 	if err != nil || !found {
 		return sync.RowState{}, found, err
 	}
 	if !admitsRoom(ctx, s.fence, uid, row.ChannelID) {
 		return sync.RowState{}, false, nil
+	}
+	// A withdrawn message answers the tombstone the pull answers: the id and
+	// the seq and no projection (UX-108 round 2). The read path leaked no
+	// body before this (the row drops it), but it answered a live-shaped row
+	// for a message the server has dropped, and the contract a deleted row
+	// carries its seq and no projection was broken for this scope alone.
+	if deleted {
+		return sync.RowState{ID: row.ID, Seq: seq, Deleted: true}, true, nil
 	}
 	data, err := syncProjection(row)
 	if err != nil {
