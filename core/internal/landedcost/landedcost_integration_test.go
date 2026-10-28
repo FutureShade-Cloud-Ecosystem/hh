@@ -14,6 +14,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5"
@@ -384,7 +385,7 @@ func itRound(f float64) int64 {
 	return int64(f + 0.5)
 }
 
-func (c *wacCapitalizer) CapitalizeLandedCostTx(_ context.Context, _ pgx.Tx, product, _ string, alloc int64) (int64, error) {
+func (c *wacCapitalizer) CapitalizeLandedCostTx(_ context.Context, _ pgx.Tx, product, _ string, alloc int64, _ time.Time, _ string) (int64, error) {
 	if alloc == 0 {
 		return 0, nil
 	}
@@ -421,9 +422,9 @@ func (c *wacCapitalizer) CapitalizeLandedCostTx(_ context.Context, _ pgx.Tx, pro
 
 // CapitalizeLandedCostSnapTx mirrors CapitalizeLandedCostTx but also returns the exact pre-Apply average (snapAvg)
 // it capitalized over and whether a WAC row existed, the snapshot the service persists for a cent-exact Void.
-func (c *wacCapitalizer) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, product, branch string, alloc int64) (int64, int64, bool, error) {
+func (c *wacCapitalizer) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, product, branch string, alloc int64, at time.Time, sourceRefID string) (int64, int64, bool, error) {
 	oldAvg, hadCost := c.wac[product]
-	absorbed, err := c.CapitalizeLandedCostTx(ctx, tx, product, branch, alloc)
+	absorbed, err := c.CapitalizeLandedCostTx(ctx, tx, product, branch, alloc, at, sourceRefID)
 	return absorbed, oldAvg, hadCost, err
 }
 
@@ -431,7 +432,7 @@ func (c *wacCapitalizer) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.
 // on-hand) and returns the realized subledger delta (negative on a void), the general cent-exact inverse the service's
 // Void path books as CR 1200. On-hand unchanged since Apply → restore snapAvg verbatim (drift-0); otherwise drain the
 // exact capitalized value, clamping the post-reversal value and WAC at zero so no negative leg is ever produced.
-func (c *wacCapitalizer) RestoreLandedCostTx(_ context.Context, _ pgx.Tx, product, _ string, snapAvg, absorbed int64) (int64, error) {
+func (c *wacCapitalizer) RestoreLandedCostTx(_ context.Context, _ pgx.Tx, product, _ string, snapAvg, absorbed int64, _ time.Time, _ string) (int64, error) {
 	if snapAvg < 0 {
 		snapAvg = 0
 	}
@@ -745,7 +746,7 @@ func (c *txDurableWAC) wacNow(t *testing.T, pool *pgxpool.Pool, product string) 
 	return avg
 }
 
-func (c *txDurableWAC) CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, product, _ string, alloc int64) (int64, error) {
+func (c *txDurableWAC) CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, product, _ string, alloc int64, _ time.Time, _ string) (int64, error) {
 	if alloc == 0 {
 		return 0, nil
 	}
@@ -788,7 +789,7 @@ func (c *txDurableWAC) CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, pr
 
 // CapitalizeLandedCostSnapTx mirrors CapitalizeLandedCostTx and additionally returns the exact pre-Apply average
 // (snapAvg) it capitalized over. hadCost is true whenever a WAC row exists (ensureWACTable seeds one).
-func (c *txDurableWAC) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, product, branch string, alloc int64) (int64, int64, bool, error) {
+func (c *txDurableWAC) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, product, branch string, alloc int64, at time.Time, sourceRefID string) (int64, int64, bool, error) {
 	oh := c.onHand[product]
 	var oldAvg int64
 	hadCost := true
@@ -798,7 +799,7 @@ func (c *txDurableWAC) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx
 	if oh <= 0 {
 		return 0, oldAvg, hadCost, nil
 	}
-	absorbed, err := c.CapitalizeLandedCostTx(ctx, tx, product, branch, alloc)
+	absorbed, err := c.CapitalizeLandedCostTx(ctx, tx, product, branch, alloc, at, sourceRefID)
 	return absorbed, oldAvg, hadCost, err
 }
 
@@ -806,7 +807,7 @@ func (c *txDurableWAC) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx
 // atomicity) and returns the realized subledger delta (negative on a void). Mirrors the real seam: on-hand unchanged
 // since Apply → restore snapAvg verbatim (drift-0); otherwise drain the exact capitalized value with value/WAC floored
 // at zero so no negative leg is produced.
-func (c *txDurableWAC) RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, product, _ string, snapAvg, absorbed int64) (int64, error) {
+func (c *txDurableWAC) RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, product, _ string, snapAvg, absorbed int64, _ time.Time, _ string) (int64, error) {
 	if snapAvg < 0 {
 		snapAvg = 0
 	}

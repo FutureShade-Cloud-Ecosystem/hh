@@ -10,6 +10,8 @@ package inventory
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -114,6 +116,17 @@ func (r *Repository) EmitEvent(ctx context.Context, tx pgx.Tx, topic string, pay
 
 // - ledger + read-model maintenance -
 
+// MovementInstant answers the transaction's OWN instant: the one instant a movement is dated
+// at. Postgres's now() is the transaction's start, the same value every statement in this
+// transaction sees, so one read dates the whole movement (nil tx = the pool).
+func (r *Repository) MovementInstant(ctx context.Context, tx pgx.Tx) (time.Time, error) {
+	var at time.Time
+	if err := r.q(tx).QueryRow(ctx, `SELECT now()`).Scan(&at); err != nil {
+		return time.Time{}, fmt.Errorf("inventory: read the movement's instant: %w", err)
+	}
+	return at, nil
+}
+
 func (r *Repository) InsertMove(ctx context.Context, tx pgx.Tx, m moveParams) (string, error) {
 	// uom_entered falls back to the product base_uom when the caller didn't supply one (a POS SHIP move).
 	metaJSON := []byte("{}")
@@ -127,16 +140,18 @@ func (r *Repository) InsertMove(ctx context.Context, tx pgx.Tx, m moveParams) (s
 	const sql = `
 		INSERT INTO stock_moves
 			(product_id, from_location_id, to_location_id, qty_base, qty_entered, uom_entered,
-			 move_type, unit_cost_cents, value_cents, source_type, source_ref_id, reason, branch_id, metadata)
+			 move_type, unit_cost_cents, value_cents, source_type, source_ref_id, reason, branch_id, metadata,
+			 occurred_at)
 		VALUES ($1, $2, $3, $4, $4,
 			COALESCE(NULLIF($5,'')::citext, (SELECT base_uom FROM products WHERE id = $1)),
-			$6, $7, $8, $9, $10, $11, $12, COALESCE($13::jsonb, '{}'::jsonb))
+			$6, $7, $8, $9, $10, $11, $12, COALESCE($13::jsonb, '{}'::jsonb),
+			COALESCE($14::timestamptz, now()))
 		RETURNING id::text`
 	var id string
 	err := r.q(tx).QueryRow(ctx, sql,
 		m.ProductID, nullStr(m.FromLocation), nullStr(m.ToLocation), m.QtyBase, m.UOM,
 		m.MoveType, m.UnitCostCents, m.ValueCents, nullStr(m.SourceType), nullStr(m.SourceRefID),
-		m.Reason, m.BranchID, metaJSON).Scan(&id)
+		m.Reason, m.BranchID, metaJSON, nullTime(m.OccurredAt)).Scan(&id)
 	return id, err
 }
 
@@ -157,6 +172,31 @@ func (r *Repository) OnHandQtyBranch(ctx context.Context, tx pgx.Tx, productID, 
 		SELECT COALESCE(SUM(on_hand_base), 0) FROM stock_balances
 		WHERE product_id = $1 AND branch_id = $2`, productID, branchID).Scan(&qty)
 	return qty, err
+}
+
+// BalanceRows reads every stock_balances row the branch holds for a product
+// inside the caller's tx, ordered by location so a recomputation over the row
+// set is deterministic. The as-of read's current value is the SUM of these
+// rows' round(on_hand x avg), so an exact-change stamp must start from the
+// row set, not the branch sum (W2-5 round 5, S5's P2-1).
+func (r *Repository) BalanceRows(ctx context.Context, tx pgx.Tx, productID, branchID string) ([]BalanceRow, error) {
+	rows, err := r.q(tx).Query(ctx, `
+		SELECT location_id::text, on_hand_base FROM stock_balances
+		WHERE product_id = $1 AND branch_id = $2
+		ORDER BY location_id`, productID, branchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BalanceRow
+	for rows.Next() {
+		var b BalanceRow
+		if err := rows.Scan(&b.LocationID, &b.OnHandBase); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 func (r *Repository) UpsertBalanceDelta(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, delta float64) error {
@@ -518,14 +558,15 @@ func (r *Repository) RecentMoves(ctx context.Context, productID, branchID string
 		limit = 100
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id::text, product_id::text, branch_id::text, qty_base, uom_entered::text, move_type,
-		       COALESCE(source_type,''), COALESCE(source_ref_id::text,''),
-		       COALESCE(unit_cost_cents,0),
-		       CASE WHEN to_location_id IS NOT NULL AND from_location_id IS NULL THEN 'IN' ELSE 'OUT' END,
-		       to_char(occurred_at, 'YYYY-MM-DD"T"HH24:MI:SSOF')
-		FROM stock_moves
-		WHERE product_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-		ORDER BY occurred_at DESC LIMIT $3`, productID, branchID, limit)
+		SELECT m.id::text, m.product_id::text, m.branch_id::text, m.qty_base, m.uom_entered::text, m.move_type,
+		       COALESCE(m.source_type,''), COALESCE(m.source_ref_id::text,''),
+		       COALESCE(m.unit_cost_cents,0),
+		       CASE WHEN m.move_type = 'VALUE' THEN 'VALUE'
+		            WHEN m.to_location_id IS NOT NULL AND m.from_location_id IS NULL THEN 'IN' ELSE 'OUT' END,
+		       to_char(m.occurred_at, 'YYYY-MM-DD"T"HH24:MI:SSOF')
+		FROM stock_moves m
+		WHERE m.product_id = $1 AND ($2 = '' OR m.branch_id = $2::uuid)
+		ORDER BY m.occurred_at DESC LIMIT $3`, productID, branchID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -632,6 +673,80 @@ func (r *Repository) StockValueCents(ctx context.Context, tx pgx.Tx, branchID st
 	var total int64
 	err := r.q(tx).QueryRow(ctx, q, args...).Scan(&total)
 	return total, err
+}
+
+// StockValueAsOfCents is the consolidated (or branch scoped) stock value as it stood at the
+// given instant: the current per-row rounded value (StockValueCents, the same read the live
+// tie uses) MINUS the value of every ledger movement that occurred after the instant. Every
+// movement row carries the exact figure its GL posting booked, so a movement that moved the
+// stock ledger and 1200 together cancels out of an as-of pair to the cent: an issue, return,
+// count or transfer leg answers its own value_cents, and a PO receipt answers the realized
+// subledger delta stamped on its metadata (wac_value_delta_cents, the sum of the receipt's
+// GRNI, WAC rounding and true-up journals), so the read lands on the same figure the books
+// held at the instant.
+//
+// THE LEGACY RECEIPT FALLBACK (W2-5 round 3, K3's P1 2) is deliberately not a guess. Rows
+// written before the stamp existed fall back in the subtraction to their GRNI plus the
+// true-up key they carry: the true-up journal's figure is recoverable exactly because a
+// receipt that trued up provisional sales never blended, so it never rounded. A receipt row
+// with NEITHER key may hide a WAC rounding journal (the rounding depends on the on-hand
+// quantity at the time, which the ledger no longer holds): the read REFUSES in words, naming
+// the receipt's move id and saying it predates the stamp, and the close pre flight refuses
+// the month with those words, rather than answer a figure it cannot prove. Rows with no
+// recorded value move nothing. A zero asOf is NOW: no movement is after it. The month close
+// holds no transaction, and the year end's pre flight reads stock on its own connection by
+// design (W2-5, the close pre flight's month-end stock tie).
+//
+// A VALUE move (0453, W2-5B) is the one row that moves NO stock: it carries the SIGNED value a
+// landed-cost capitalization, retro capitalization or restore moved, at the instant its own GL
+// journal carries. It has no location, so the direction a quantity move takes cannot read it; the
+// sign is the value's own, and it is unwound exactly like any other movement.
+func (r *Repository) StockValueAsOfCents(ctx context.Context, tx pgx.Tx, asOf time.Time, branchID string) (int64, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	if asOf.IsZero() {
+		return r.StockValueCents(ctx, tx, branchID)
+	}
+	// The historical rounding cannot be recovered from inventory's own records (it sat in
+	// the GL's rounding journal, another module's table this module never reads): refuse
+	// rather than guess. The true-up key marks the rows whose figure IS exact, those are
+	// recovered below, never refused.
+	var legacyID string
+	err := r.q(tx).QueryRow(ctx, `
+		SELECT m.id::text FROM stock_moves m
+		WHERE m.occurred_at > $1 AND ($2 = '' OR m.branch_id = $2::uuid)
+		  AND m.source_type = 'po_receipt'
+		  AND m.metadata->>'wac_value_delta_cents' IS NULL
+		  AND m.metadata->>'true_up_delta_cents' IS NULL
+		ORDER BY m.occurred_at, m.id LIMIT 1`, asOf, branchID).Scan(&legacyID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return 0, err
+	}
+	if legacyID != "" {
+		return 0, fmt.Errorf("inventory: receipt move %s predates the value stamp (wac_value_delta_cents) and its WAC rounding cannot be recovered from the ledger; the stock value as of an instant refuses to guess", legacyID)
+	}
+	current, err := r.StockValueCents(ctx, tx, branchID)
+	if err != nil {
+		return 0, err
+	}
+	var moved int64
+	// The fallback recovers the true-up the row carries with the sign the true-up journal
+	// booked it at: a positive true-up credited 1200, so the exact figure the books moved is
+	// the GRNI minus the true-up key.
+	err = r.q(tx).QueryRow(ctx, `
+		SELECT COALESCE(SUM(CASE
+			WHEN m.move_type = 'VALUE' THEN COALESCE(m.value_cents, 0)
+			ELSE (CASE WHEN m.to_location_id IS NOT NULL THEN 1 ELSE -1 END) *
+				COALESCE((m.metadata->>'wac_value_delta_cents')::bigint,
+					COALESCE(m.value_cents, 0) - COALESCE((m.metadata->>'true_up_delta_cents')::bigint, 0))
+		  END), 0)::bigint
+		FROM stock_moves m
+		WHERE m.occurred_at > $1 AND ($2 = '' OR m.branch_id = $2::uuid)`, asOf, branchID).Scan(&moved)
+	if err != nil {
+		return 0, err
+	}
+	return current - moved, nil
 }
 
 // ReceivedLinesForPO returns the received lines of a PO for landed-cost allocation (extended CAD value =

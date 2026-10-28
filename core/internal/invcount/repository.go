@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -119,6 +120,30 @@ func (r *Repository) ListLines(ctx context.Context, sheetID string) ([]Line, err
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// PostedInstant answers the instant the sheet's post committed at.
+//
+// IT IS THE COUNT'S OWN INSTANT. The posting transaction stamped the COUNT move it wrote and the
+// sheet's posted_at with the same transaction clock (Postgres's now() is the transaction's
+// start), so the two are one instant: a journal dated with the sheet's post instant is dated at
+// the count's move (W2-5 fix r10, S5's P2-7). A sheet that has not posted yet has no instant,
+// and the zero value reads as "no instant named", which leaves the GL's own clock in charge.
+func (r *Repository) PostedInstant(ctx context.Context, sheetID string) (time.Time, error) {
+	if r.pool == nil {
+		return time.Time{}, errNoDB
+	}
+	var at *time.Time
+	if err := r.pool.QueryRow(ctx, `SELECT posted_at FROM count_sheets WHERE id = $1`, sheetID).Scan(&at); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return time.Time{}, errNotFound
+		}
+		return time.Time{}, fmt.Errorf("invcount: read the sheet's post instant: %w", err)
+	}
+	if at == nil {
+		return time.Time{}, nil
+	}
+	return *at, nil
 }
 
 func (r *Repository) ReasonCodes(ctx context.Context) ([]ReasonCode, error) {

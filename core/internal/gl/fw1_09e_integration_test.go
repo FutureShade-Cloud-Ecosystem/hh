@@ -2,15 +2,19 @@
 
 package gl
 
-// fw1_09e_integration_test.go, FW1-09e: the close pre flight's STOCK tie reads both sides at the
-// same instant, so a month that ties at its end is never refused because a LATER month moved the
-// stock.
+// fw1_09e_integration_test.go, FW1-09e and W2-5: the close pre flight's STOCK
+// tie pins the MONTH'S END in both directions, so a month that tied at its end
+// is never refused because a LATER month moved the stock, and a month that was
+// out of tie at its end is never passed because a later month corrected it.
 //
 // THE DEFECT (FROM-PRINCIPAL 326, the principal checked it at source on main): runClosePreFlight
 // tied StockValueCents (TODAY's stock) against AccountBalanceAsOf("1200", nextMonth) (the month's
 // END). Closing October on the third of November therefore failed after the first November sale or
 // receipt moved the stock ledger and 1200 together: the stock side read November's figure and the
-// GL side read October's, and the difference was the movement.
+// GL side read October's, and the difference was the movement. FW1-09e made both sides read one
+// instant, the service clock's now, which refused no correct month but pinned nothing at the month
+// end (S5's three P3s on PR 659). W2-5 gives inventory an as of read over its own movement ledger
+// and this file pins the month's end basis in both directions.
 //
 // THE LEGS.
 //
@@ -79,16 +83,18 @@ func fw109eCaller(user string) identity.StaffContext {
 }
 
 // fw109eStockReader is the close pre flight's stock seam over inventory (the production read the
-// composition root wires): the company's stock value, weighted average, in integer cents.
+// composition root wires): the company's stock value at the instant the pre flight names, weighted
+// average, in integer cents.
 type fw109eStockReader struct{ pool *pgxpool.Pool }
 
-func (r fw109eStockReader) StockValueCents(ctx context.Context, branchID string) (int64, error) {
-	return inventory.NewService(inventory.NewRepository(r.pool)).StockValueCents(ctx, branchID)
+func (r fw109eStockReader) StockValueCents(ctx context.Context, asOf time.Time, branchID string) (int64, error) {
+	return inventory.NewService(inventory.NewRepository(r.pool)).StockValueAsOfCents(ctx, asOf, branchID)
 }
 
-// fw109eStockValue reads the company's stock value through that same production read.
+// fw109eStockValue reads the company's stock value through that same production read, as of now
+// (a zero instant: no movement is after it).
 func fw109eStockValue(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
-	return fw109eStockReader{pool: pool}.StockValueCents(ctx, "")
+	return fw109eStockReader{pool: pool}.StockValueCents(ctx, time.Time{}, "")
 }
 
 // fw109eWorld is the leg's world: the branch it trades at, its own product, and the figures the
@@ -215,6 +221,38 @@ func fw109eMove(t *testing.T, pool *pgxpool.Pool, w *fw109eWorld, moveAt time.Ti
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit the fulfilment: %v", err)
 	}
+	// The stock tie now reads the ledger as of the month's end, so the leg's
+	// fiction needs the move's own instant on the ledger too: the ledger is
+	// append-only (0037), and the fulfilment stamped the wall clock, which
+	// cannot reach the leg's year, so the leg re-inserts the rows its own
+	// movement wrote with the movement's instant (a DELETE allowed for fixture
+	// hygiene, then the same rows back). The GL side rides the leg's clock
+	// through the consumer below, so both sides cut the movement at one
+	// instant.
+	if _, err := pool.Exec(ctx, `
+		WITH gone AS (
+			DELETE FROM stock_moves WHERE source_ref_id = $1::uuid RETURNING *
+		)
+		INSERT INTO stock_moves (id, product_id, from_location_id, to_location_id, qty_base, qty_entered,
+			uom_entered, move_type, unit_cost_cents, value_cents, weight_kg_total, source_type, source_ref_id,
+			reason, actor_id, branch_id, metadata, occurred_at, created_at, bin_code)
+		SELECT id, product_id, from_location_id, to_location_id, qty_base, qty_entered,
+			uom_entered, move_type, unit_cost_cents, value_cents, weight_kg_total, source_type, source_ref_id,
+			reason, actor_id, branch_id, metadata, $2, created_at, bin_code
+		FROM gone`, orderID, moveAt); err != nil {
+		t.Fatalf("dating the movement's ledger rows: %v", err)
+	}
+	// The event carries the fulfilment's own instant (W2-5 fix r6: one instant per
+	// fulfilment, on the move and on the event), and the leg's fiction needs that instant
+	// on the event too: the wall clock cannot reach the leg's year, so the leg moves the
+	// instant the fulfilment wrote, the same one it gave the ledger rows above. The GL's
+	// consumer then posts the COGS at it, and both sides cut the movement at one instant.
+	if _, err := pool.Exec(ctx, `
+		UPDATE events_outbox
+		   SET payload = jsonb_set(payload, '{occurred_at}', to_jsonb($2::timestamptz), true)
+		 WHERE topic = 'order.fulfilled' AND payload->>'order_id' = $1 AND payload ? 'occurred_at'`, orderID, moveAt); err != nil {
+		t.Fatalf("dating the movement's event: %v", err)
+	}
 	// The GL's own posting consumer takes the event the movement emitted.
 	var eventID string
 	var payload []byte
@@ -255,8 +293,9 @@ func fw109eBookOnlyMovement(t *testing.T, pool *pgxpool.Pool, w *fw109eWorld, op
 
 // TestIntegration_FW1_09e_TheStockTieReadsBothSidesAtTheSameInstant is the red: a month that ties
 // at its end, a NEXT month's movement that moves the stock ledger and 1200 together, and the close
-// of the earlier month on the next month's third day. Today the close is refused with the stock out
-// of tie, because the stock side reads TODAY's figure while the GL side reads the month's end.
+// of the earlier month on the next month's third day. Before FW1-09e the close was refused, because
+// the stock side read the figure after the movement and the GL side read the instant before it;
+// since W2-5 both sides read the month's end and the close seals.
 func TestIntegration_FW1_09e_TheStockTieReadsBothSidesAtTheSameInstant(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
@@ -350,7 +389,7 @@ func TestIntegration_FW1_09e_ARealOutOfTieIsStillRefused(t *testing.T) {
 }
 
 // TestIntegration_FW1_09e_TheRefusalSaysWhatItCompares is the wording: the refusal says what it
-// compares and says when it read both sides.
+// compares and at which instant it read both sides.
 func TestIntegration_FW1_09e_TheRefusalSaysWhatItCompares(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
@@ -368,8 +407,7 @@ func TestIntegration_FW1_09e_TheRefusalSaysWhatItCompares(t *testing.T) {
 	msg := err.Error()
 	for _, want := range []string{
 		"stock is out of tie with 1200",
-		"both read now",
-		"the same instant",
+		"both read at the month's end",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("the refusal %q does not say %q", msg, want)

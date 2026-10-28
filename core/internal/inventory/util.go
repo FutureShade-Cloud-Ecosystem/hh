@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"time"
 )
 
 // nullStr binds "" as SQL NULL (so an optional FK / actor column stores NULL, not an empty string that fails a
@@ -18,6 +19,15 @@ func nullStr(s string) any {
 		return nil
 	}
 	return s
+}
+
+// nullTime is a zero time as a NULL, so a row that does not name its own instant rides the column's DEFAULT
+// (now()). A VALUE move names the instant its GL journal carries (W2-5B).
+func nullTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
 }
 
 // marshalJSON marshals an outbox payload to bytes.
