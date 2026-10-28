@@ -193,6 +193,16 @@ func fw1StaffCtx(ctx context.Context) context.Context {
 	})
 }
 
+// fw1ControllerCtx is the walk's Financial Controller. FW1-09c (FROM-PRINCIPAL 222) narrowed the year
+// end close to that role, so the leg that seals a year runs as the Controller, the way the service
+// demands; the walk's other legs keep the plain staff context above (they read).
+func fw1ControllerCtx(ctx context.Context) context.Context {
+	return staffctx.ContextWithStaff(ctx, staffctx.StaffContext{
+		UserID: "d7000000-0000-4000-9000-000000000006", RoleCode: "FINANCIAL_CONTROLLER",
+		Scope: staffctx.ScopeGlobal, Status: staffctx.StatusActive,
+	})
+}
+
 // fw1TestWriter routes the wired services' logs into the test log, so a step's 500 names its
 // cause without printing outside the test run.
 type fw1TestWriter struct{ t *testing.T }
@@ -1491,10 +1501,19 @@ func (w *fw1Walk) assertWalkMonthAndNextYearPeriodsOpen(t fw1TB) {
 func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 	ctx := context.Background()
 	// The walk's own year is still running: closing it would seal the months still ahead, so the
-	// close is refused until the year's last day has passed in the dealer's zone. Red until FW1-09
-	// lands: the refusal does not exist yet.
-	if _, err := w.money.glSvc.CloseYear(fw1StaffCtx(context.Background()), w.year, "FW1 walk, the running year's close must be refused"); err == nil {
+	// close is refused until the year's last day has passed in the dealer's zone: a 409 in the
+	// "has not ended" words, never any other refusal (S2's P3 on PR 655: no leg passes on the wrong
+	// error).
+	_, err := w.money.glSvc.CloseYear(fw1ControllerCtx(context.Background()), w.year, "FW1 walk, the running year's close must be refused")
+	if err == nil {
 		t.Errorf("the year end close of the walk's own year %d succeeded but the year has not ended (want refused)", w.year)
+	} else {
+		if status, ok := gl.ErrorHTTPStatus(err); !ok || status != http.StatusConflict {
+			t.Errorf("the year end close of the walk's own year %d was refused with status %d (typed %v), want 409: %v", w.year, status, ok, err)
+		}
+		if want := fmt.Sprintf("fiscal year %d has not ended", w.year); !strings.Contains(err.Error(), want) {
+			t.Errorf("the year end close of the walk's own year %d was refused with %q, want the words %q", w.year, err.Error(), want)
+		}
 	}
 	// The year before the walk's own has ended; its close must do real work.
 	closedYear := w.year - 1
@@ -1586,7 +1605,8 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 	if len(before) != len(wantIncome) {
 		t.Errorf("the closed year %d's income statement holds %d accounts (%v), want the planted %d", closedYear, len(before), before, len(wantIncome))
 	}
-	res, err := w.money.glSvc.CloseYear(fw1StaffCtx(context.Background()), closedYear, "FW1 walk year end close")
+	// The year end close is the Financial Controller's (FW1-09c), so the leg closes as the Controller.
+	res, err := w.money.glSvc.CloseYear(fw1ControllerCtx(context.Background()), closedYear, "FW1 walk year end close")
 	if err != nil {
 		t.Fatalf("the year end close of %d: %v", closedYear, err)
 	}

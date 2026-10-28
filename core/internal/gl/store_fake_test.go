@@ -303,6 +303,13 @@ func (f *fakeStore) ClosingJournalsForYearTx(ctx context.Context, _ pgx.Tx, year
 	return f.ClosingJournalsForYear(ctx, year)
 }
 
+// YearPeriodsTx answers one period and none of it closed: the fake holds no periods of its own,
+// so the year end's count never refuses and its seal check never fires, and the unit legs keep
+// the shape they had.
+func (f *fakeStore) YearPeriodsTx(context.Context, pgx.Tx, int) (int, int, error) {
+	return 1, 0, nil
+}
+
 func (f *fakeStore) InsertClosingJournalTx(ctx context.Context, _ pgx.Tx, d journalDraft, year int) (string, error) {
 	return f.InsertClosingJournal(ctx, d, year)
 }

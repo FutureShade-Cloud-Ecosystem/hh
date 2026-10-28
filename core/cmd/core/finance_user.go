@@ -15,6 +15,14 @@
 // ever sets or sees a password, and nothing is ever deleted. The guard
 // refuses anywhere but the finance box, one line naming the check, never a
 // value.
+//
+// There is ONE provisioning rule, in financeUserProvision, and both paths
+// call it: the one-shot command provisions one person through it, and the
+// boot time apply provisions every entry of the box's list through it, each
+// in the transaction the caller owns. So a role change demotes the person's
+// other live grants on either path, a run that wrote nothing records no
+// audit row on either path, and a person the identity seam refuses is
+// refused the same way on either path.
 
 package main
 
@@ -25,9 +33,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -35,19 +45,24 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/exchange"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 )
 
 // The environment the finance box alone is allowed to carry. W2-1's
 // boxkind guard owns the boot refusals over the same names; these local
 // names keep this command self-contained until the lead reconciles the
-// pair.
+// pair. The box kind names themselves live with the guard, in boxkind.go,
+// so the command and the guard read one pair of names.
 const (
-	envBoxKind        = "HH_BOX_KIND"
 	envAppEnv         = "APP_ENV"
 	envWebOrg         = "HH_WEB_ORG"
-	boxKindFinance    = "finance"
 	financeBoxOrgName = "Finance Box"
+	// envFinanceUsers is the one name the box's finance user list lives in.
+	// The entrypoint derives the sign in allow list from it and applies it
+	// at boot, so the list is the one source of truth for the people on the
+	// box.
+	envFinanceUsers = "HH_FINANCE_USERS"
 )
 
 // financeUserRoles is the one allowed list of finance roles a named tester
@@ -96,25 +111,52 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 	displayName := fs.String("display-name", "", "the person's display name (required to provision)")
 	role := fs.String("role", financeUserDefaultRole, "the finance role to grant")
 	revoke := fs.Bool("revoke", false, "deactivate the person and revoke every live grant instead of granting")
+	applyFromEnv := fs.Bool("apply-from-env", false, "apply the box's finance user list from HH_FINANCE_USERS: provision every entry and revoke every finance person the list left out, in one transaction")
+	emptyRevokesAll := fs.Bool("empty-list-revokes-all", false, "with --apply-from-env: an empty HH_FINANCE_USERS revokes every finance person on the box (the entrypoint passes it only when the list is set and empty; the command refuses when the variable is unset)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("finance-user: unexpected arguments %q", strings.Join(fs.Args(), " "))
 	}
-	if strings.TrimSpace(*email) == "" {
-		return errors.New("finance-user: -email is required")
-	}
-	if strings.TrimSpace(*platformUserID) == "" {
-		return errors.New("finance-user: -platform-user-id is required")
-	}
-	// The display name belongs to the provision path: a revoke names the
-	// person by email and platform id, and the name is not what it acts on.
-	if !*revoke && strings.TrimSpace(*displayName) == "" {
-		return errors.New("finance-user: -display-name is required to provision a staff user")
-	}
-	if !slices.Contains(financeUserRoles, *role) {
-		return fmt.Errorf("finance-user: -role must be one of the finance roles: %s", strings.Join(financeUserRoles, ", "))
+	if *applyFromEnv {
+		// The list is the person here: a name of its own would be a second
+		// source of truth, so the apply path takes no name of its own.
+		var others []string
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "apply-from-env" && f.Name != "empty-list-revokes-all" {
+				others = append(others, "-"+f.Name)
+			}
+		})
+		if len(others) > 0 {
+			return fmt.Errorf("finance-user: --apply-from-env applies the list in %s and takes no name of its own: %s does not belong to it", envFinanceUsers, strings.Join(others, ", "))
+		}
+		if *emptyRevokesAll {
+			// The flag's word is "the list is SET and empty", and only the
+			// entrypoint, which reads the environment with LookupEnv, knows
+			// set from unset. The value seam (a plain getenv) cannot carry
+			// presence, so the process environment is read directly: without
+			// the variable there is no list at all, and the command refuses
+			// rather than empty the box on a guess.
+			if _, set := os.LookupEnv(envFinanceUsers); !set {
+				return fmt.Errorf("finance-user: --empty-list-revokes-all refuses to run: %s is not set in the environment (only a list that is set and empty revokes every finance person)", envFinanceUsers)
+			}
+		}
+	} else {
+		if strings.TrimSpace(*email) == "" {
+			return errors.New("finance-user: -email is required")
+		}
+		if strings.TrimSpace(*platformUserID) == "" {
+			return errors.New("finance-user: -platform-user-id is required")
+		}
+		// The display name belongs to the provision path: a revoke names the
+		// person by email and platform id, and the name is not what it acts on.
+		if !*revoke && strings.TrimSpace(*displayName) == "" {
+			return errors.New("finance-user: -display-name is required to provision a staff user")
+		}
+		if !slices.Contains(financeUserRoles, *role) {
+			return fmt.Errorf("finance-user: -role must be one of the finance roles: %s", strings.Join(financeUserRoles, ", "))
+		}
 	}
 
 	dsn, err := resolveOneshotDatabaseURL(getenv)
@@ -132,6 +174,9 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 	if err := financeBoxReady(ctx, getenv, pool); err != nil {
 		return err
 	}
+	if *applyFromEnv {
+		return financeUserApplyFromEnv(ctx, pool, stdout, getenv, *emptyRevokesAll)
+	}
 	if *revoke {
 		return financeUserRevoke(ctx, pool, stdout, getenv, strings.TrimSpace(*platformUserID), strings.TrimSpace(*email))
 	}
@@ -145,18 +190,99 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 	if !listed[strings.ToLower(strings.TrimSpace(*email))] {
 		return fmt.Errorf("finance-user: the email is not on the sign in allow list (%s)", envSigninEmailAddresses)
 	}
-	return financeUserProvision(ctx, pool, stdout, getenv, strings.TrimSpace(*email), strings.TrimSpace(*platformUserID), strings.TrimSpace(*displayName), *role)
+	return financeUserProvisionOne(ctx, pool, stdout, getenv, strings.TrimSpace(*email), strings.TrimSpace(*platformUserID), strings.TrimSpace(*displayName), *role)
 }
 
-// financeUserProvision makes sure the org anchor exists, keeping the name
-// it already has, then writes the staff users row and the global grant in
-// one transaction, takes the live grants of the roles the provision does
-// not name so one entry maps to exactly one live role, then the audit
-// row, and prints only the users row id and the grant id. The audit row
-// records only a run that wrote the anchor, the user or a grant: an
-// identical re-run stands still and says nothing, so the boot time
-// reconciler adds no rows of its own.
-func financeUserProvision(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer, getenv func(string) string, email, platformUserID, displayName, role string) error {
+// financeUserProvisioned is what one provision wrote: the org it belongs
+// to, the users row id and the live grant id.
+type financeUserProvisioned struct {
+	orgID   string
+	userID  string
+	grantID string
+}
+
+// financeUserProvision is the ONE provisioning rule: it makes sure the org
+// anchor exists, keeping the name it already has, then writes the staff
+// users row and the global grant, takes the live grants of the roles the
+// provision does not name so one entry maps to exactly one live role, and
+// records the audit row, all in the CALLER'S transaction.
+//
+// The one-shot command and the boot time apply both call this one function,
+// so the rules exist once: a role change demotes the person's other live
+// grants on either path, a run that wrote nothing records no audit row and
+// says nothing, and a person the identity seam refuses is refused here the
+// same way on either path. The caller owns the transaction, so the apply
+// can provision every entry of the list in one transaction of its own.
+func financeUserProvision(ctx context.Context, tx pgx.Tx, svc *audit.Service, slug, email, platformUserID, displayName, role string, position int) (financeUserProvisioned, error) {
+	orgID, _, anchorWritten, err := identity.EnsureOrgAnchor(ctx, tx, slug, financeBoxOrgName)
+	if err != nil {
+		return financeUserProvisioned{}, fmt.Errorf("finance-user: the org anchor: %w", err)
+	}
+	// The adopt rule (FROM-PRINCIPAL 36): an email whose holder row has no
+	// platform link, as a migration seeds it, is linked to the listed id.
+	userID, userWritten, adopted, err := identity.AdoptOrEnsureStaffUser(ctx, tx, orgID, platformUserID, email, displayName)
+	if err != nil {
+		return financeUserProvisioned{}, financeUserStaffRefusal(position, err)
+	}
+	grantInserted, err := identity.EnsureStaffGrant(ctx, tx, orgID, platformUserID, role, nil)
+	if err != nil {
+		return financeUserProvisioned{}, fmt.Errorf("finance-user: the staff grant: %w", err)
+	}
+	// One entry of the finance list maps to exactly one live role: the
+	// grants of the roles this provision does not name go in the same
+	// transaction, so an edited entry demotes instead of stacking, and the
+	// tier 1 role never outlives its entry.
+	_, demoted, err := identity.RevokeStaffGrantsExcept(ctx, tx, orgID, platformUserID, role)
+	if err != nil {
+		return financeUserProvisioned{}, fmt.Errorf("finance-user: the grant demotion: %w", err)
+	}
+	grantID, ok, err := identity.StaffGrantID(ctx, tx, orgID, platformUserID, role)
+	if err != nil || !ok {
+		return financeUserProvisioned{}, errors.New("finance-user: the staff grant was not found after it was ensured")
+	}
+	// The audit row records only a run that wrote the anchor, the user, a
+	// grant or a demotion: an identical re-run stands still and says
+	// nothing, so the boot time reconciler adds no rows of its own.
+	wrote := anchorWritten || userWritten || grantInserted || demoted
+	if wrote {
+		if err := svc.RecordTx(ctx, tx, audit.SensitiveAccess{
+			Action:     "STAFF_PROVISION",
+			EntityType: "identity.staff_user",
+			EntityID:   userID,
+			ActorID:    userID,
+			Purpose:    "FINANCE_BOX_ACCESS",
+			Extra:      map[string]any{"status": provisionStatus(adopted)},
+		}); err != nil {
+			return financeUserProvisioned{}, fmt.Errorf("finance-user: the audit row: %w", err)
+		}
+	}
+	return financeUserProvisioned{orgID: orgID, userID: userID, grantID: grantID}, nil
+}
+
+// financeUserStaffRefusal is the refusal the provision gives when the
+// identity seam refuses the person: the entry is named by its position
+// alone, never by the email, the platform id, the display name or the role
+// it carries, because the refusal is the container log and the log is kept
+// and shown.
+func financeUserStaffRefusal(position int, err error) error {
+	name := fmt.Sprintf("the entry at position %d", position)
+	switch {
+	case errors.Is(err, identity.ErrStaffEmailTaken):
+		return fmt.Errorf("finance-user: %s holds an email that belongs to another platform user", name)
+	case errors.Is(err, identity.ErrStaffEmailBound):
+		return fmt.Errorf("finance-user: %s names a platform id that already holds another email", name)
+	case errors.Is(err, identity.ErrStaffAdoptHeld):
+		return fmt.Errorf("finance-user: %s names a platform user that already holds another staff row", name)
+	default:
+		return fmt.Errorf("finance-user: the staff user: %w", err)
+	}
+}
+
+// financeUserProvisionOne provisions one person, the way the command does
+// when an operator names them: one transaction of its own, the shared
+// provisioning rule inside it, and only the users row id and the grant id
+// printed.
+func financeUserProvisionOne(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer, getenv func(string) string, email, platformUserID, displayName, role string) error {
 	slug := strings.TrimSpace(getenv(envWebOrg))
 	if slug == "" {
 		return fmt.Errorf("finance-user: %s must name the org slug", envWebOrg)
@@ -167,47 +293,15 @@ func financeUserProvision(ctx context.Context, pool *pgxpool.Pool, stdout io.Wri
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	orgID, _, anchorWritten, err := identity.EnsureOrgAnchor(ctx, tx, slug, financeBoxOrgName)
+	svc := audit.NewService(audit.NewRepository(pool), slog.Default())
+	p, err := financeUserProvision(ctx, tx, svc, slug, email, platformUserID, displayName, role, 1)
 	if err != nil {
-		return fmt.Errorf("finance-user: the org anchor: %w", err)
-	}
-	userID, userWritten, err := identity.EnsureStaffUser(ctx, tx, orgID, platformUserID, email, displayName)
-	if err != nil {
-		return fmt.Errorf("finance-user: the staff user: %w", err)
-	}
-	grantInserted, err := identity.EnsureStaffGrant(ctx, tx, orgID, platformUserID, role, nil)
-	if err != nil {
-		return fmt.Errorf("finance-user: the staff grant: %w", err)
-	}
-	// One entry of the finance list maps to exactly one live role: the
-	// grants of the roles this provision does not name go in the same
-	// transaction, so an edited entry demotes instead of stacking, and the
-	// tier 1 role never outlives its entry.
-	_, demoted, err := identity.RevokeStaffGrantsExcept(ctx, tx, orgID, platformUserID, role)
-	if err != nil {
-		return fmt.Errorf("finance-user: the grant demotion: %w", err)
-	}
-	grantID, ok, err := identity.StaffGrantID(ctx, tx, orgID, platformUserID, role)
-	if err != nil || !ok {
-		return fmt.Errorf("finance-user: the staff grant was not found after it was ensured")
-	}
-	if anchorWritten || userWritten || grantInserted || demoted {
-		svc := audit.NewService(audit.NewRepository(pool), slog.Default())
-		if err := svc.RecordTx(ctx, tx, audit.SensitiveAccess{
-			Action:     "STAFF_PROVISION",
-			EntityType: "identity.staff_user",
-			EntityID:   userID,
-			ActorID:    userID,
-			Purpose:    "FINANCE_BOX_ACCESS",
-			Extra:      map[string]any{"status": "provisioned"},
-		}); err != nil {
-			return fmt.Errorf("finance-user: the audit row: %w", err)
-		}
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("finance-user: cannot commit: %w", err)
 	}
-	fmt.Fprintf(stdout, "user_id=%s grant_id=%s\n", userID, grantID)
+	fmt.Fprintf(stdout, "user_id=%s grant_id=%s\n", p.userID, p.grantID)
 	return nil
 }
 
@@ -299,4 +393,225 @@ func financeUserRevoke(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer
 		fmt.Fprintf(stdout, "user_id=%s grant_id=%s\n", userID, grantID)
 	}
 	return nil
+}
+
+// financeUserEntry is one person as the box's list carries them: the email,
+// the platform user id, the display name and the finance role.
+type financeUserEntry struct {
+	email          string
+	platformUserID string
+	displayName    string
+	role           string
+}
+
+// parseFinanceUserEntries reads the box's finance user list: the entries are
+// separated by ';', each one 'email|platform_user_id|display name|role'. A
+// bad entry refuses with one line naming the entry by its position alone,
+// never the email, the platform id, the display name or the role it carries.
+func parseFinanceUserEntries(raw string, allowEmpty bool) ([]financeUserEntry, error) {
+	if strings.TrimSpace(raw) == "" {
+		if allowEmpty {
+			// The entrypoint's word: the list is set and empty, so the box
+			// has no finance people and every one linked is revoked.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("finance-user: %s holds no entry: the box's finance users are applied from it, and there is nothing to apply without it", envFinanceUsers)
+	}
+	var out []financeUserEntry
+	for i, part := range strings.Split(raw, ";") {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		fields := strings.Split(part, "|")
+		if len(fields) != 4 {
+			return nil, fmt.Errorf("finance-user: %s does not have four fields (email|platform_user_id|display name|role)", financeUserEntryName(i+1))
+		}
+		e := financeUserEntry{
+			email:          strings.TrimSpace(fields[0]),
+			platformUserID: strings.TrimSpace(fields[1]),
+			displayName:    strings.TrimSpace(fields[2]),
+			role:           strings.TrimSpace(fields[3]),
+		}
+		if e.email == "" || e.platformUserID == "" || e.displayName == "" || e.role == "" {
+			return nil, fmt.Errorf("finance-user: %s has an empty field (email|platform_user_id|display name|role)", financeUserEntryName(i+1))
+		}
+		if !slices.Contains(financeUserRoles, e.role) {
+			return nil, fmt.Errorf("finance-user: %s has a role off the finance roles list: %s", financeUserEntryName(i+1), strings.Join(financeUserRoles, ", "))
+		}
+		// One person, one entry: a platform id listed twice would let the
+		// last entry win in silence, so the list refuses before any write.
+		for _, prior := range out {
+			if prior.platformUserID == e.platformUserID {
+				return nil, fmt.Errorf("finance-user: %s repeats a platform user another entry already names", financeUserEntryName(i+1))
+			}
+		}
+		out = append(out, e)
+	}
+	if len(out) == 0 && !allowEmpty {
+		return nil, fmt.Errorf("finance-user: %s holds no entry: the box's finance users are applied from it, and there is nothing to apply without it", envFinanceUsers)
+	}
+	return out, nil
+}
+
+// financeUserEntryName is how a bad entry is named in a refusal: by its
+// position alone. It never carries the email, the platform id, the display
+// name or the role, because the refusal is the container log and the log is
+// kept and shown.
+func financeUserEntryName(position int) string {
+	return fmt.Sprintf("the entry at position %d", position)
+}
+
+// financeUserApplyFromEnv applies the box's finance user list: every entry is
+// provisioned the way the command already provisions one person, and every
+// finance person the list left out is revoked, all of it in ONE transaction,
+// so the box is the list or the box is as it was. It prints ids and counts
+// only, never an email.
+//
+// The rules are the command's rules: the finance box alone, a role off the
+// finance list refuses, an email another platform subject holds refuses, and
+// a person already linked with the role the list gives is left alone.
+func financeUserApplyFromEnv(ctx context.Context, pool *pgxpool.Pool, stdout io.Writer, getenv func(string) string, emptyRevokesAll bool) error {
+	entries, err := parseFinanceUserEntries(getenv(envFinanceUsers), emptyRevokesAll)
+	if err != nil {
+		return err
+	}
+	slug := strings.TrimSpace(getenv(envWebOrg))
+	if slug == "" {
+		return fmt.Errorf("finance-user: %s must name the org slug", envWebOrg)
+	}
+	// The sign in allow list is the provision path's rule, and a person the
+	// list names must be a person who can sign in.
+	listed := map[string]bool{}
+	for _, a := range exchange.ParseAllowList(getenv(envSigninEmailAddresses)) {
+		listed[a] = true
+	}
+	if len(listed) == 0 && len(entries) > 0 {
+		return fmt.Errorf("finance-user: %s is not set: a person the list names must be on the sign in allow list, and the list is empty", envSigninEmailAddresses)
+	}
+	for i, e := range entries {
+		if !listed[strings.ToLower(e.email)] {
+			return fmt.Errorf("finance-user: %s is not on the sign in allow list (%s)", financeUserEntryName(i+1), envSigninEmailAddresses)
+		}
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("finance-user: cannot begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	svc := audit.NewService(audit.NewRepository(pool), slog.Default())
+
+	// Every entry, provisioned by the ONE provisioning rule: the person is
+	// linked, the role is granted, the roles it does not name are demoted,
+	// and the audit row says so when the run wrote something.
+	type appliedPerson struct {
+		userID  string
+		grantID string
+	}
+	var applied []appliedPerson
+	var orgID string
+	for i, e := range entries {
+		p, err := financeUserProvision(ctx, tx, svc, slug, e.email, e.platformUserID, e.displayName, e.role, i+1)
+		if err != nil {
+			return err
+		}
+		orgID = p.orgID
+		applied = append(applied, appliedPerson{userID: p.userID, grantID: p.grantID})
+	}
+	if orgID == "" {
+		// An emptied list provisions nobody, so the anchor comes from the
+		// identity seam directly: the revoke below still needs the org.
+		var err error
+		orgID, _, _, err = identity.EnsureOrgAnchor(ctx, tx, slug, financeBoxOrgName)
+		if err != nil {
+			return fmt.Errorf("finance-user: the org anchor: %w", err)
+		}
+	}
+
+	// Every finance person the list left out, revoked the way the command
+	// revokes one person: the grants go as tombstones, the person is
+	// deactivated, the audit row says so. Never a delete.
+	keep := map[string]bool{}
+	for _, e := range entries {
+		keep[e.platformUserID] = true
+	}
+	subjects, err := identity.StaffSubjectsWithLiveGrantsInRoles(ctx, tx, orgID, financeUserRoles)
+	if err != nil {
+		return fmt.Errorf("finance-user: the finance people read: %w", err)
+	}
+	type revokedPerson struct {
+		userID   string
+		grantIDs []string
+	}
+	var revoked []revokedPerson
+	for _, s := range subjects {
+		if keep[s.PlatformUserID] {
+			continue
+		}
+		userID, _, found, err := identity.StaffUserByPlatformID(ctx, tx, s.PlatformUserID)
+		if err != nil {
+			return fmt.Errorf("finance-user: the staff user read: %w", err)
+		}
+		if !found {
+			continue
+		}
+		grantIDs, ok, err := identity.RevokeStaffGrants(ctx, tx, orgID, s.PlatformUserID)
+		if err != nil {
+			return fmt.Errorf("finance-user: the grant revocation: %w", err)
+		}
+		if !ok {
+			continue
+		}
+		if _, _, err := identity.DeactivateStaffUser(ctx, tx, s.PlatformUserID); err != nil {
+			return fmt.Errorf("finance-user: the deactivation: %w", err)
+		}
+		if err := svc.RecordTx(ctx, tx, audit.SensitiveAccess{
+			Action:     "STAFF_REVOKE",
+			EntityType: "identity.staff_user",
+			EntityID:   userID,
+			ActorID:    userID,
+			Purpose:    "FINANCE_BOX_ACCESS",
+			Extra:      map[string]any{"status": "revoked"},
+		}); err != nil {
+			return fmt.Errorf("finance-user: the audit row: %w", err)
+		}
+		revoked = append(revoked, revokedPerson{userID: userID, grantIDs: grantIDs})
+	}
+
+	// The credential clears run at every boot, in the apply's own
+	// transaction: the seed's clears run once, so a hash planted after the
+	// seed would otherwise survive every reboot. No route this box serves
+	// reads either table, and the world the box plants has no real password,
+	// so the blanket clear is the box's standing answer to a planted hash.
+	if _, err := identity.DisableSeedCredentials(ctx, tx); err != nil {
+		return fmt.Errorf("finance-user: clearing the staff seed credentials: %w", err)
+	}
+	if _, err := portal.DisableSeedCredentials(ctx, tx); err != nil {
+		return fmt.Errorf("finance-user: clearing the portal seed credentials: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("finance-user: cannot commit: %w", err)
+	}
+	for _, p := range applied {
+		fmt.Fprintf(stdout, "user_id=%s grant_id=%s\n", p.userID, p.grantID)
+	}
+	for _, p := range revoked {
+		for _, grantID := range p.grantIDs {
+			fmt.Fprintf(stdout, "revoked user_id=%s grant_id=%s\n", p.userID, grantID)
+		}
+	}
+	fmt.Fprintf(stdout, "applied=%d revoked=%d\n", len(applied), len(revoked))
+	return nil
+}
+
+// provisionStatus is the audit row's status word for a provision: an
+// adopted row says it linked an unlinked seeded staff row (FROM-PRINCIPAL
+// 36), so the trail tells a seeded identity taken over from a new one.
+func provisionStatus(adopted bool) string {
+	if adopted {
+		return "linked an unlinked seeded staff row"
+	}
+	return "provisioned"
 }
