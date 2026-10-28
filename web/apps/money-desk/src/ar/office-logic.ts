@@ -6,7 +6,16 @@
 // The limits and sentences follow the core (core/internal/billing: ar_reminders.go, ar_landing.go,
 // register_service.go; core/internal/till; core/internal/payments) so a refusal the browser makes is the one the
 // server would have made.
-import type { BillingAPContact, BillingAPContactRead, BillingLandingPolicy, BillingReminderSend, PaymentsPayout, PaymentsReapplication } from "@hardscapehouse/api-client";
+import type {
+  BillingAPContact,
+  BillingAPContactRead,
+  BillingCreditApplication,
+  BillingCreditApplicationReversed,
+  BillingLandingPolicy,
+  BillingReminderSend,
+  PaymentsPayout,
+  PaymentsReapplication,
+} from "@hardscapehouse/api-client";
 import { refusalWords } from "./ar-logic.js";
 
 // ---- who may, in words, for the walls this slice meets ------------------------------------------------------------
@@ -379,6 +388,72 @@ export function payoutWords(result: PaymentsPayout, paymentNo: string): string {
   const how = PAYOUT_KIND_WORDS[result.kind as PayoutKind]?.done ?? "has left";
   const left = result.held_after_cents === 0 ? "Nothing is held for this payment now." : `${formatMoney(result.held_after_cents)} is still held for this payment.`;
   return `${formatMoney(result.amount_cents)} of payment ${paymentNo} ${how}. ${left}`;
+}
+
+export type ApplyCreditCheck =
+  | { ok: true; creditKind: "MEMO" | "ACCOUNT"; creditId: string; invoiceId: string; amountCents: number; reason: string }
+  | { ok: false; words: string };
+
+/** The core's credit application checks (FW1-12b), said before the request is sent; the amount is parsed through the decimal string. */
+export function applyCreditCheck(input: {
+  creditKind: string;
+  creditId: string;
+  invoiceId: string;
+  amountText: string;
+  reason: string;
+  creditOpenCents: number;
+  invoiceBalanceCents: number | null;
+}): ApplyCreditCheck {
+  if ((input.creditKind !== "MEMO" && input.creditKind !== "ACCOUNT") || input.creditId.trim() === "") {
+    return { ok: false, words: "Choose the credit to apply." };
+  }
+  if (input.invoiceId === "" || input.invoiceBalanceCents === null) {
+    return { ok: false, words: "Choose the invoice to apply the credit to." };
+  }
+  if (input.amountText.trim() === "") {
+    return { ok: false, words: "Enter the amount to apply, such as 100.00." };
+  }
+  const cents = parseAmountToCents(input.amountText);
+  if (cents === null) {
+    return { ok: false, words: "Enter the amount as dollars and cents, such as 100.00." };
+  }
+  if (cents === 0) {
+    return { ok: false, words: "The amount must be more than zero." };
+  }
+  if (cents > input.creditOpenCents) {
+    return { ok: false, words: `That is more than the ${formatMoney(input.creditOpenCents)} open on this credit.` };
+  }
+  if (cents > input.invoiceBalanceCents) {
+    return { ok: false, words: `That is more than the invoice's open balance of ${formatMoney(input.invoiceBalanceCents)}.` };
+  }
+  const reason = input.reason.trim();
+  if (reason === "") {
+    return { ok: false, words: "Enter why the credit is being applied, such as applying open credit memo to balance." };
+  }
+  return { ok: true, creditKind: input.creditKind, creditId: input.creditId.trim(), invoiceId: input.invoiceId, amountCents: cents, reason };
+}
+
+/** What a credit application did, from the server's own answer: the credit applied and what remains open on the credit. The credit's reference is the row's, which the answer does not carry. */
+export function applyCreditWords(result: BillingCreditApplication, creditRef: string): string {
+  const kindWord = result.credit_kind === "MEMO" ? "credit memo" : "account credit";
+  const left = result.credit_open_after_cents === 0 ? `Nothing is left open on ${creditRef} now.` : `${formatMoney(result.credit_open_after_cents)} is still open on ${creditRef}.`;
+  return `${formatMoney(result.applied_cents)} of ${kindWord} ${creditRef} is applied to invoice ${result.invoice_no}. ${left}`;
+}
+
+export type ReverseCreditAppCheck = { ok: true; reason: string } | { ok: false; words: string };
+
+/** Checks the reason before reversing a credit application (FW1-12b). */
+export function reverseCreditAppCheck(reason: string): ReverseCreditAppCheck {
+  const trimmed = reason.trim();
+  if (trimmed === "") {
+    return { ok: false, words: "Enter why the credit application is being reversed, such as applied to the wrong invoice." };
+  }
+  return { ok: true, reason: trimmed };
+}
+
+/** What reversing a credit application undid, from the server's own answer. The credit's reference is the row's, which the answer does not carry. */
+export function reverseCreditAppWords(result: BillingCreditApplicationReversed, creditRef: string): string {
+  return `Credit application of ${formatMoney(result.restored_cents)} is reversed on invoice ${result.invoice_no}. ${formatMoney(result.credit_open_after_cents)} is open on ${creditRef} again.`;
 }
 
 // ---- settings: the receivables rules, the register, the returned payment fee, automatic holds ----------------------------

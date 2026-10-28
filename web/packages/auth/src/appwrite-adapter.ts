@@ -45,6 +45,39 @@ export interface AppwriteAccountSurfaceOptions {
   pageOrigin?: string;
 }
 
+/**
+ * Why a password recovery did not land. The console's own rule is kept beside
+ * it, when the console named one, so the screen can say the rule in its own
+ * words instead of a status code.
+ *
+ * expired          the console would not accept the secret: the link was used, has
+ *                  expired, or names a user that is gone
+ * password_refused the console took the secret and refused the password itself
+ * rate_limited     the console is throttling this link
+ * unavailable      anything else the console said
+ * offline          the console could not be reached at all
+ */
+export type RecoveryRefusal = "expired" | "password_refused" | "rate_limited" | "unavailable" | "offline";
+
+/** The answer to a password recovery: it landed, or it did not and why. */
+export type RecoveryResult = { ok: true } | { ok: false; code: RecoveryRefusal; consoleType: string | null };
+
+/**
+ * The one thing a page that is not signed in needs from the console: finish a
+ * password recovery. It is a separate seam from the AccountSurface on purpose:
+ * a shell that signs in through its own Rust side has no recovery route to
+ * offer, and the AccountSurface must not grow a method the shell cannot keep.
+ */
+export interface PasswordRecoverySurface {
+  /**
+   * Confirm a password recovery. FB Console is Appwrite 2.1.0: the route is
+   * PUT /account/recovery and it takes exactly three fields, userId, secret and
+   * password. Nothing else is sent, so nothing else can leak. It never throws:
+   * the page wants an answer it can turn into words, not an exception.
+   */
+  completeRecovery(userId: string, secret: string, password: string): Promise<RecoveryResult>;
+}
+
 const EXCHANGE_PATH = "/api/v1/auth/exchange";
 
 /** A URL the password or a JWT will be sent to must be https; a local development host may be http. */
@@ -128,10 +161,10 @@ function sameOriginRedirect(redirectTo: string, origin: string | null): URL {
 }
 
 /**
- * The AccountSurface over FB Console and the core. Construction validates the
- * options and touches nothing.
+ * The AccountSurface over FB Console and the core, with the password recovery
+ * route beside it. Construction validates the options and touches nothing.
  */
-export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOptions): AccountSurface {
+export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOptions): AccountSurface & PasswordRecoverySurface {
   const endpoint = secureUrl(nonEmpty(options.endpoint, "endpoint"), "endpoint").replace(/\/+$/, "");
   const projectId = nonEmpty(options.projectId, "project id");
   let exchangeUrl: string;
@@ -156,7 +189,7 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
     });
 
   /** One console call: the project header, JSON, the first party cookie, no redirects. The response's headers are never read. */
-  function consoleCall(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<Response> {
+  function consoleCall(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<Response> {
     return send(`${endpoint}${path}`, {
       method,
       headers: { "X-Appwrite-Project": projectId, "Content-Type": "application/json" },
@@ -223,6 +256,41 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
   }
 
   return {
+    /**
+     * Finish a password recovery: the console's confirmation route, with the
+     * three fields it takes and nothing else. The secret and the password are
+     * locals of this call and are never kept, logged or returned.
+     */
+    async completeRecovery(userId: string, secret: string, password: string): Promise<RecoveryResult> {
+      if (userId === "" || secret === "" || password === "") {
+        return { ok: false, code: "unavailable", consoleType: null };
+      }
+      let response: Response;
+      try {
+        response = await consoleCall("PUT", "/account/recovery", { userId, secret, password });
+      } catch {
+        return { ok: false, code: "offline", consoleType: null };
+      }
+      if (response.status >= 200 && response.status <= 299) return { ok: true };
+      const type = await errorType(response);
+      // The route's 401 is the secret the console will not accept (used,
+      // expired or wrong) and its 404 is a user that is gone: both mean the
+      // link itself is spent, and only a new link can move it on.
+      if (response.status === 401 || response.status === 404) {
+        return { ok: false, code: "expired", consoleType: type };
+      }
+      // A 400 is the console's own rule about the password itself: too short,
+      // too close to the last one, too close to the person's own details, or a
+      // password known to be stolen.
+      if (response.status === 400) {
+        return { ok: false, code: "password_refused", consoleType: type };
+      }
+      if (response.status === 429) {
+        return { ok: false, code: "rate_limited", consoleType: type };
+      }
+      return { ok: false, code: "unavailable", consoleType: type };
+    },
+
     async createEmailPasswordSession(email: string, password: string): Promise<AccountUser> {
       const create = async (): Promise<Response> => {
         try {

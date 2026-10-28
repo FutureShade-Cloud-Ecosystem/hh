@@ -76,6 +76,7 @@ func fw1AssertionNames() []string {
 		"no_journal_waiting_or_dead_lettered",
 		"walk_month_and_next_year_periods_open",
 		"year_end_close_opens_next_year_and_keeps_income_statement",
+		"month_close_passes_its_pre_flight_and_seals_the_month",
 	}
 }
 
@@ -823,6 +824,7 @@ func TestFW1MonthWalk(t *testing.T) {
 		"no_journal_waiting_or_dead_lettered":                               w.assertNothingWaiting,
 		"walk_month_and_next_year_periods_open":                             w.assertWalkMonthAndNextYearPeriodsOpen,
 		"year_end_close_opens_next_year_and_keeps_income_statement":         w.assertYearEndClose,
+		"month_close_passes_its_pre_flight_and_seals_the_month":             w.assertMonthClose,
 	}
 	for _, name := range fw1AssertionNames() {
 		name := name
@@ -1342,12 +1344,47 @@ func (w *fw1Walk) assertWalkMonthAndNextYearPeriodsOpen(t fw1TB) {
 	if walkPeriod == 0 {
 		t.Errorf("the walk month %04d-%02d has no OPEN fiscal period", w.year, w.month)
 	}
+	// What the box does: the worker runs the roll forward at boot (cmd/core/worker.go,
+	// glSvc.EnsureNextFiscalYear), so the year after the current house year exists, all twelve
+	// months OPEN, ahead of need and without anyone acting. The walk runs it here before it counts.
+	if _, err := w.money.glSvc.EnsureNextFiscalYear(context.Background()); err != nil {
+		t.Fatalf("the boot roll forward: %v", err)
+	}
 	var nextYear int
 	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM fiscal_periods WHERE year = $1 AND status = 'OPEN'`, w.year+1).Scan(&nextYear); err != nil {
 		t.Fatalf("the next year period read: %v", err)
 	}
 	if nextYear < 12 {
 		t.Errorf("the fiscal calendar opened %d OPEN periods for next year %d ahead of need (want 12): posting into %d is refused for want of a period", nextYear, w.year+1, w.year+1)
+	}
+	// The promise kept, asserted by a posting and not by a row count alone: a journal dated in the
+	// next year is accepted and lands in an OPEN period of that year. Passing here with PR 612's
+	// maxYear+1 arm in insertJournalIn neutered is accepted, because the boot roll forward above
+	// makes the year and PR 612's own gl leg
+	// (TestIntegration_FW1_01_YearRollForward_PostsOnTheFirstDayAfterTheSeededYear) guards the arm.
+	jid, err := w.money.glSvc.PostExternal(context.Background(), gl.ExternalJournal{
+		Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:next-year-posting:%d", w.year+1),
+		Memo: "the next year roll forward, a posting dated in the next year", BranchID: fw1TRT,
+		DocumentDate: time.Date(w.year+1, time.January, 15, 12, 0, 0, 0, time.UTC),
+		Lines: []gl.ExternalLine{
+			{AccountCode: "1000", DebitCents: 100, Memo: "a posting dated in the next year"},
+			{AccountCode: "3000", CreditCents: 100, Memo: "a posting dated in the next year"},
+		},
+	})
+	if err != nil {
+		t.Errorf("a posting dated in %d was refused: %v", w.year+1, err)
+		return
+	}
+	var postedYear, postedMonth int
+	var postedStatus string
+	if err := w.pool.QueryRow(context.Background(), `
+		SELECT fp.year, fp.month, fp.status
+		  FROM gl_journals j JOIN fiscal_periods fp ON fp.id = j.period_id
+		 WHERE j.id = $1`, jid).Scan(&postedYear, &postedMonth, &postedStatus); err != nil {
+		t.Fatalf("the next year posting read: %v", err)
+	}
+	if postedYear != w.year+1 || postedStatus != "OPEN" {
+		t.Errorf("the posting dated in %d landed in %04d-%02d with status %s (want an OPEN period of %d)", w.year+1, postedYear, postedMonth, postedStatus, w.year+1)
 	}
 }
 
@@ -1391,8 +1428,27 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 	}
 }
 
+// 12. The walk month closes through the served route: the close pre flight reads the company's
+// stock, the AR subledger, the posting queue and the till drawers, and the close seals the month
+// (FW1-09d: the walk guards the month close from here on, where before it closed only a year).
+func (w *fw1Walk) assertMonthClose(t fw1TB) {
+	periodID := w.one(`SELECT id::text FROM fiscal_periods WHERE year = $1 AND month = $2`, w.year, w.month)
+	code, out := w.do(http.MethodPost, "/api/v1/gl/periods/"+periodID+"/close",
+		map[string]any{"reason": "FW1 walk month close"})
+	if code != http.StatusOK {
+		t.Fatalf("the walk month %04d-%02d close answered %d: %s", w.year, w.month, code, out)
+	}
+	var status string
+	if err := w.pool.QueryRow(context.Background(), `SELECT status FROM fiscal_periods WHERE id = $1::uuid`, periodID).Scan(&status); err != nil {
+		t.Fatalf("the closed period read: %v", err)
+	}
+	if status != "CLOSED" {
+		t.Errorf("the walk month %04d-%02d close answered 200 but the period is %s, want CLOSED", w.year, w.month, status)
+	}
+}
+
 // TestFW1WalkRedMapNamesRealSubtests guards the skip map: every key must name one of the walk's
-// eight subtests, every value must name a single owning item, and when FW1_WAVE_FINAL=1 is set
+// assertions, every value must name a single owning item, and when FW1_WAVE_FINAL=1 is set
 // the map must be empty.
 func TestFW1WalkRedMapNamesRealSubtests(t *testing.T) {
 	real := map[string]bool{}

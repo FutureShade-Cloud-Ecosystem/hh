@@ -268,12 +268,18 @@ func (f *fakeStore) VoidJournal(_ context.Context, id string) (Journal, error) {
 	return *j, nil
 }
 
+// The fake's year answers are private fixtures: no unit test asserts their values and no database
+// stands behind the fake, so no books' year can move them.
 func (f *fakeStore) EnsureNextFiscalYear(_ context.Context, _ time.Time) (int, error) {
 	return 2027, nil
 }
 
-func (f *fakeStore) OpenNextFiscalYear(_ context.Context, _ time.Time, _ func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
-	return 2027, nil
+func (f *fakeStore) NextOpenableFiscalYear(_ context.Context, _ time.Time) (int, error) {
+	return 2028, nil
+}
+
+func (f *fakeStore) OpenNextFiscalYear(_ context.Context, _ time.Time, _ int, _ func(ctx context.Context, tx pgx.Tx, year int) error) (int, error) {
+	return 2028, nil
 }
 
 func (f *fakeStore) HouseYearEnded(_ context.Context, _ int, _ time.Time) (bool, error) {
@@ -323,6 +329,12 @@ func (f *fakeStore) ListPeriods(_ context.Context) ([]Period, error) { return ni
 func (f *fakeStore) GetPeriod(_ context.Context, _ string) (Period, error) {
 	return Period{}, errNotFound
 }
+
+// FiscalPeriodIDTx answers a fixed uuid-shaped id: the shape the open year's audit entity must
+// carry (audit_log.entity_id is a uuid column), never the year itself.
+func (f *fakeStore) FiscalPeriodIDTx(_ context.Context, _ pgx.Tx, year, month int) (string, error) {
+	return fmt.Sprintf("00000000-0000-4000-8000-%04d%02d000000", year%10000, month), nil
+}
 func (f *fakeStore) ClosePeriod(_ context.Context, id, _, _ string) (Period, error) {
 	return Period{ID: id, Status: "CLOSED"}, nil
 }
@@ -344,9 +356,6 @@ func (f *fakeStore) AccountBalanceAsOf(_ context.Context, _ string, at time.Time
 }
 func (f *fakeStore) BankAccountEntriesAsOf(_ context.Context, _ string, _ time.Time) ([]BankBookEntry, error) {
 	return nil, nil
-}
-func (f *fakeStore) LodgementJournalForBank(_ context.Context, _, _ string) (string, bool, error) {
-	return "", false, nil
 }
 func (f *fakeStore) TrialBalance(_ context.Context, _, _ int, _ string) ([]TrialBalanceRow, error) {
 	return f.tbRows, nil
@@ -460,6 +469,7 @@ func newTestService(f *fakeStore) *Service {
 	return NewService(nil).
 		WithApprovalStateChecker(fakeHold{}).
 		withStore(f).
+		// The unit clock is a private fixture date; no books stand behind it.
 		withClock(func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }).
 		withCaller(func(_ context.Context) (identity.StaffContext, bool) { return holder, holder.UserID != "" })
 }
@@ -469,6 +479,7 @@ func newTestServiceAs(f *fakeStore, caller identity.StaffContext) *Service {
 	return NewService(nil).
 		WithApprovalStateChecker(fakeHold{}).
 		withStore(f).
+		// The unit clock is a private fixture date; no books stand behind it.
 		withClock(func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }).
 		withCaller(func(_ context.Context) (identity.StaffContext, bool) { return caller, caller.UserID != "" })
 }

@@ -30,6 +30,18 @@ import (
 
 const (
 	cmRoundNorthOrg = "ce110000-0000-4000-8000-0000000000d1"
+	// cmRoundLeftOrg is the org a leg of another package can leave a branch on when it does not
+	// restore what it stamped (FLAKE-4's leak, the leaver never named).
+	cmRoundLeftOrg = "ce110000-0000-4000-8000-0000000000d2"
+	// The round's own staff rows, planted and deleted again. Taking the first user by id and
+	// overwriting its platform_user_id (FLAKE-5) made the round's requester the fxstaff fixture's
+	// inside sales clerk whenever that row sat lowest by id, and the cleanup NULLed the very id
+	// every later fxstaff inside sales leg resolves its clerk by.
+	cmRoundRequesterID = "ce110000-0000-4000-8000-0000000000e1"
+	cmRoundDeciderID   = "ce110000-0000-4000-8000-0000000000e2"
+	// The platform subjects the two planted rows carry for the round.
+	cmRoundRequesterPlatform = "cm-round-actor"
+	cmRoundDeciderPlatform   = "cm-round-decider"
 )
 
 // cmRoundWorld is one leg's fixture: the org, the customer, the invoice, the two staff users.
@@ -56,9 +68,16 @@ func cmRoundPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// cmRoundWorld plants what one rail leg needs: the org on the seeded branches, a customer, one
-// invoice with room to credit (its total sits over the seeded threshold, so the credit parks), and
-// two staff users (the requester and the decider; the four eyes needs both).
+// cmRoundWorld plants what one rail leg needs: the org on the branches, a customer, one invoice
+// with room to credit (its total sits over the seeded threshold, so the credit parks), and two
+// staff users the fixture plants itself (the requester and the decider; the four eyes needs both).
+//
+// The fixture touches only rows it owns. The users are its own, deleted again with the leg: an
+// earlier plant took the first user by id, overwrote that user's platform_user_id and NULLed it on
+// cleanup, which is the fixture's own field to set, never a borrowed user's (FLAKE-5). The
+// branches are all stamped with the round's org and each one's prior org_id is restored exactly at
+// the end, NULL or not: stamping only the orgless branches left a branch some earlier leg had left
+// on another org off the stamp, and the fence refused the round's own park (FLAKE-4).
 func cmRoundWorldPlant(t *testing.T, pool *pgxpool.Pool) cmRoundWorld {
 	t.Helper()
 	ctx := context.Background()
@@ -68,8 +87,49 @@ func cmRoundWorldPlant(t *testing.T, pool *pgxpool.Pool) cmRoundWorld {
 		ON CONFLICT (id) DO NOTHING`, cmRoundNorthOrg); err != nil {
 		t.Fatalf("plant the rail org: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1::uuid WHERE org_id IS NULL`, cmRoundNorthOrg); err != nil {
-		t.Fatalf("give the branches their org: %v", err)
+	type cmRoundBranchOrg struct {
+		id    string
+		prior *string
+	}
+	var branchOrgs []cmRoundBranchOrg
+	rows, err := pool.Query(ctx, `SELECT id::text, org_id::text FROM locations`)
+	if err != nil {
+		t.Fatalf("read the branches' orgs: %v", err)
+	}
+	for rows.Next() {
+		var b cmRoundBranchOrg
+		if err := rows.Scan(&b.id, &b.prior); err != nil {
+			rows.Close()
+			t.Fatalf("read a branch's org: %v", err)
+		}
+		branchOrgs = append(branchOrgs, b)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read the branches' orgs: %v", err)
+	}
+	// The cleanups register in the order the rows exist, and each one only
+	// after its own row or stamp is in place: the branch restore goes before
+	// the first update, so a failure between the snapshot and any later step
+	// still gives every branch its prior org back, and a row's delete never
+	// registers ahead of that row's successful insert (an insert conflict
+	// would then make the cleanup delete a row this plant did not own).
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM org WHERE id = $1::uuid`, cmRoundNorthOrg)
+	})
+	t.Cleanup(func() {
+		c := context.Background()
+		// Each branch returns to the exact org it carried before the stamp,
+		// NULL or not: a prior NULL stays NULL and a non NULL prior is never
+		// cleared.
+		for _, b := range branchOrgs {
+			_, _ = pool.Exec(c, `UPDATE locations SET org_id = $1 WHERE id = $2::uuid`, b.prior, b.id)
+		}
+	})
+	for _, b := range branchOrgs {
+		if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1::uuid WHERE id = $2::uuid`, cmRoundNorthOrg, b.id); err != nil {
+			t.Fatalf("give the branches their org: %v", err)
+		}
 	}
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO customers (account_no, name, customer_type, home_branch_id, credit_limit_cents)
@@ -78,6 +138,12 @@ func cmRoundWorldPlant(t *testing.T, pool *pgxpool.Pool) cmRoundWorld {
 		RETURNING id::text`, trentonBranchID).Scan(&world.cust); err != nil {
 		t.Fatalf("seed the rail customer: %v", err)
 	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, world.cust)
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, world.cust)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, world.cust)
+	})
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, org_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
@@ -87,32 +153,29 @@ func cmRoundWorldPlant(t *testing.T, pool *pgxpool.Pool) cmRoundWorld {
 		RETURNING id::text`, world.cust, trentonBranchID).Scan(&world.inv); err != nil {
 		t.Fatalf("seed the rail invoice: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `
-		SELECT id::text FROM users WHERE deleted_at IS NULL ORDER BY id LIMIT 1`).Scan(&world.requester); err != nil {
-		t.Fatalf("seed users missing: %v", err)
-	}
-	if err := pool.QueryRow(ctx, `
-		SELECT id::text FROM users WHERE deleted_at IS NULL AND id <> $1 ORDER BY id LIMIT 1`,
-		world.requester).Scan(&world.decider); err != nil {
-		t.Fatalf("seed users missing: %v", err)
-	}
-	// The withdrawal leg's store resolves the actor through the platform user id, so the requester
-	// carries one for the round and it is restored at the end.
-	world.requesterPlatform = "cm-round-actor"
-	if _, err := pool.Exec(ctx, `UPDATE users SET platform_user_id = $1 WHERE id = $2::uuid`,
-		world.requesterPlatform, world.requester); err != nil {
-		t.Fatalf("give the requester a platform id: %v", err)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM invoice_lines WHERE invoice_id = $1::uuid`, world.inv)
+	})
+	// The round's own requester and decider, planted here and deleted again at the end. The
+	// withdrawal leg's store resolves the actor through the platform user id, so the requester
+	// carries the round's own; no seeded row and no other fixture's row is ever taken or touched.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users (id, email, display_name, status, password_hash, platform_user_id)
+		VALUES ($1::uuid, 'cm-round-requester@test.invalid', 'Credit Round Requester', 'ACTIVE', NULL, $2),
+		       ($3::uuid, 'cm-round-decider@test.invalid', 'Credit Round Decider', 'ACTIVE', NULL, $4)`,
+		cmRoundRequesterID, cmRoundRequesterPlatform, cmRoundDeciderID, cmRoundDeciderPlatform); err != nil {
+		t.Fatalf("plant the round's requester and decider: %v", err)
 	}
 	t.Cleanup(func() {
-		c := context.Background()
-		_, _ = pool.Exec(c, `UPDATE users SET platform_user_id = NULL WHERE id = $1::uuid`, world.requester)
-		_, _ = pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id = $1::uuid`, world.inv)
-		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, world.cust)
-		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, world.cust)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, world.cust)
-		_, _ = pool.Exec(c, `UPDATE locations SET org_id = NULL WHERE org_id = $1::uuid`, cmRoundNorthOrg)
-		_, _ = pool.Exec(c, `DELETE FROM org WHERE id = $1::uuid`, cmRoundNorthOrg)
+		// The round's own rows only: the two planted users go (their approval
+		// requests cascade, the decided_by and journal actor stamps fall NULL
+		// on their own).
+		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE id IN ($1::uuid, $2::uuid)`,
+			cmRoundRequesterID, cmRoundDeciderID)
 	})
+	world.requester = cmRoundRequesterID
+	world.requesterPlatform = cmRoundRequesterPlatform
+	world.decider = cmRoundDeciderID
 	return world
 }
 
@@ -321,4 +384,59 @@ func TestIntegration_CreditMemoRound_ADeclineBridgesNothingForTheLedgersOwnJourn
 	if status != "DRAFT" {
 		t.Fatalf("the ledger's own parked journal reads %s after a decline, want DRAFT (the maker's own act to void)", status)
 	}
+}
+
+// TestIntegration_CreditMemoRound_ABranchLeftOnAnotherOrgStillParks pins the fence against the
+// leftover: a leg of an earlier package can leave Trenton on its own org and never give it back
+// (FLAKE-4), and the round that runs after must still park its credit, then restore that branch to
+// exactly the org it found, never a NULL and never the round's own.
+func TestIntegration_CreditMemoRound_ABranchLeftOnAnotherOrgStillParks(t *testing.T) {
+	pool := cmRoundPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO org (id, slug, name) VALUES ($1::uuid, 'cm-round-left', 'Credit Round Left')
+		ON CONFLICT (id) DO NOTHING`, cmRoundLeftOrg); err != nil {
+		t.Fatalf("plant the leftover org: %v", err)
+	}
+	var priorOrg *string
+	if err := pool.QueryRow(ctx, `SELECT org_id::text FROM locations WHERE id = $1::uuid`, trentonBranchID).
+		Scan(&priorOrg); err != nil {
+		t.Fatalf("read Trenton's prior org: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1::uuid WHERE id = $2::uuid`,
+		cmRoundLeftOrg, trentonBranchID); err != nil {
+		t.Fatalf("leave Trenton on the leftover org: %v", err)
+	}
+	// Registered before the plant's own cleanup, so it runs after the plant has restored: this
+	// asserts the restore was exact, then gives Trenton its own prior org back and removes the
+	// leftover org row.
+	t.Cleanup(func() {
+		c := context.Background()
+		var after *string
+		if err := pool.QueryRow(c, `SELECT org_id::text FROM locations WHERE id = $1::uuid`, trentonBranchID).
+			Scan(&after); err != nil {
+			t.Errorf("read Trenton's org after the round: %v", err)
+		} else if after == nil || *after != cmRoundLeftOrg {
+			t.Errorf("the round left Trenton on %v, want the leftover org restored exactly", after)
+		}
+		if _, err := pool.Exec(c, `UPDATE locations SET org_id = $1 WHERE id = $2::uuid`, priorOrg, trentonBranchID); err != nil {
+			t.Errorf("give Trenton its prior org back: %v", err)
+		}
+		_, _ = pool.Exec(c, `DELETE FROM org WHERE id = $1::uuid`, cmRoundLeftOrg)
+	})
+	world := cmRoundWorldPlant(t, pool)
+	svc, _ := cmRoundService(t, pool)
+
+	// On the unfixed plant the stamp skips Trenton (its org is not NULL), so the caller's org and
+	// the branch's disagree and the fence refuses the park here.
+	res := cmRoundParkCredit(t, pool, svc, world.requester, world.cust, world.inv, "cm-rail-left-org")
+	// The park is never decided, so its journal leaves as it stands: a parked DRAFT with a 1100
+	// line. The round takes that journal back (the lines cascade with it), because a DRAFT journal
+	// line on 1100 left on the shared gate database is exactly what gl's FW1-09a deactivation leg
+	// reads later in the suite's go list order, and with the round's planted users gone the
+	// journal's approval request is gone with them, so nothing could ever decide it.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM gl_journals WHERE idempotency_key = $1`,
+			billing.CreditMemoJournalKeyPrefix+res.CreditMemoID)
+	})
 }

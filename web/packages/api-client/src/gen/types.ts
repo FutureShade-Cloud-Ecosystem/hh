@@ -479,7 +479,74 @@ export type BillingInvoiceDetail = {
   dispute?: BillingDisputeView;
   reminder_tones: ("FRIENDLY" | "FIRM" | "FINAL")[];
   last_contact_at?: string | null;
+  open_credits?: BillingOpenCreditSummary[];
+  credit_applications?: BillingCreditApplicationView[];
   as_of: string;
+};
+export type BillingOpenCreditSummary = {
+  credit_kind: "MEMO" | "ACCOUNT";
+  credit_id: string;
+  reference: string;
+  memo?: string;
+  issued_at: string;
+  amount_cents: number;
+  open_cents: number;
+};
+export type BillingCreditApplicationView = {
+  application_id: string;
+  credit_kind: "MEMO" | "ACCOUNT";
+  credit_id: string;
+  credit_reference?: string;
+  amount_cents: number;
+  reason: string;
+  applied_by?: string;
+  applied_at: string;
+  reversed: boolean;
+  reversal_reason?: string;
+  reversed_by?: string;
+  reversed_at?: string;
+};
+export type BillingApplyCreditInput = {
+  customer_id: string;
+  credit_kind: "MEMO" | "ACCOUNT";
+  credit_id: string;
+  invoice_id: string;
+  amount_cents: number;
+  reason: string;
+  idempotency_key: string;
+};
+export type BillingCreditApplicationLine = {
+  invoice_id: string;
+  invoice_no: string;
+  applied_cents: number;
+  outcome: "CLOSES" | "PART";
+  balance_after_cents: number;
+};
+export type BillingCreditApplication = {
+  application_id: string;
+  credit_kind: "MEMO" | "ACCOUNT";
+  credit_id: string;
+  invoice_id: string;
+  invoice_no: string;
+  applied_cents: number;
+  credit_open_after_cents: number;
+  lines: BillingCreditApplicationLine[];
+  replayed: boolean;
+};
+export type BillingReverseCreditApplicationInput = {
+  invoice_id: string;
+  application_id: string;
+  reason: string;
+};
+export type BillingCreditApplicationReversed = {
+  application_id: string;
+  invoice_id: string;
+  invoice_no: string;
+  restored_cents: number;
+  invoice_balance_after_cents: number;
+  credit_open_after_cents: number;
+  lines: BillingCreditApplicationLine[];
+  replayed: boolean;
 };
 export type BillingARWorklistRow = {
   customer_id: string;
@@ -2591,6 +2658,7 @@ export type GlPeriod = {
 };
 export type GlPeriodPage = {
   items: GlPeriod[];
+  next_openable_year?: number;
   next_cursor?: string | null;
   limit?: number;
 };
@@ -2614,6 +2682,7 @@ export type GlReasonBody = {
   reason?: string;
 };
 export type GlPeriodReopenBody = {
+  year?: number;
   reason: string;
 };
 export type GlCloseYearBody = {

@@ -128,6 +128,48 @@ the core's exchange:
   fall to their own demo entry. The wiring needed in each app is listed in the item
   7b report.
 
+## The set password page: `/set-password`
+
+The path FB Console's recovery link points at. It is a screen of its own, not a
+mode of the sign in screen, and it draws the sign in card exactly: the same
+card, the same type, the same spacing and the same themes, with two fields and
+no sign in.
+
+- The link arrives in the query: `?userId=<the user>&secret=<the token>`.
+  Both or nothing: half a link is no link, and the page then says it needs the
+  link from the email.
+- **The secret leaves the address bar.** The query is read and taken back out
+  before anything is awaited, so the secret never rests in the browser's
+  history or in a referrer the page hands on.
+- **The secret leaves in no Referer either.** The document sets
+  `<meta name="referrer" content="no-referrer">`, and the response header
+  `Referrer-Policy: no-referrer` carries the same policy. Both layers stay:
+  a meta tag is each browser's own read and not a guarantee across engines,
+  while the header is the layer the server controls. The policy covers
+  fetches and documents, not every subresource: a font a stylesheet loads was
+  measured carrying the full address in its Referer with the policy in place.
+  What keeps that request clean is the scrub, so taking the query out of the
+  address bar must stay the first act of the boot. The demo and finance boxes'
+  Caddyfiles send the header, and any other copy must too.
+- The two entries must match and the password must be eight characters or more
+  (FB Console's own minimum) before anything is sent: the console is never
+  asked to refuse what the page can see by itself. The field at fault is
+  marked.
+- The console's own rule about the password is said in plain words where the
+  console names one: too close to the last one, or too close to the person's
+  own details. The console's other refusals about the password (a length
+  outside 8 to 256, the project's own policy, a password known to be stolen)
+  arrive as one anonymous answer, because a failed validator is not a named
+  refusal, and the page answers that one with words that name no rule. A link
+  the console will not take says it has expired and asks for a new one. The
+  offline words are the sign in screen's own.
+- On success the page says the password is set and points at the sign in page.
+- It is a console-only screen: a demo box has no console and so no recovery
+  link, and shows the configuration error page there.
+- The pure parts are in `src/set-password.ts` (the link, the query scrub, the
+  rules and the words); the card is in `src/console-views.ts` beside the sign in
+  screen.
+
 ## Running the app against the local stub
 
 Without a core, a local stub serves the mint in the contract's shape
@@ -136,7 +178,9 @@ Without a core, a local stub serves the mint in the contract's shape
     npm run dev
 
 The dev server proxies `/api` to the stub (`FD_STUB_PORT`, default 4927) and
-serves the app on `FD_APP_PORT` (default 4926).
+serves the app on `FD_APP_PORT` (default 4926). The stub itself takes
+`FD_STUB_PORT` from the environment with no default of its own; start it with
+the same value the dev server is given.
 
 ## Tests
 

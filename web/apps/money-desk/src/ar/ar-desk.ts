@@ -515,8 +515,9 @@ export class ArDesk {
         const id = this.#workspaceCustomerId;
         const creditId = attr("data-credit-id");
         if (id === null || creditId === "") return true;
-        this.#notice = "Apply credit note is wired; the allocation write lands when the route accepts it. For now, use the invoice detail.";
-        this.#host.repaint();
+        const firstOpen = this.#workspace?.invoices_open[0]?.id ?? null;
+        this.closeWorkspace();
+        void this.#openAccount(id, firstOpen, firstOpen === null ? "receive" : "invoice", "invoices");
         return true;
       }
       case "workspace-quick": {

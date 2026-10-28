@@ -535,7 +535,11 @@ func (r *Repository) ReapplyHeld(ctx context.Context, in ReapplyInput, now time.
 	}
 
 	// The named invoice rows, ascending (the sort is the validation's), taken before any write. An invoice that is
-	// missing, another account's or outside the caller's branch reach is the same not found.
+	// missing, another account's, outside the caller's branch reach or not an INVOICE document is the same not found
+	// (M3's P2-5): without the doc_type filter a request could name a CREDIT_MEMO beside an invoice, and the door
+	// would take the memo's row first (the lower id) and reach for the invoice's row while still holding it, the
+	// order the credit apply walks its target and its memo in reverse, a lock cycle answered SQLSTATE 40P01. With
+	// the filter a memo matches no row, so nothing is locked and the refusal is the door's own no such invoice.
 	type target struct {
 		a       Allocation
 		no      string
@@ -549,7 +553,8 @@ func (r *Repository) ReapplyHeld(ctx context.Context, in ReapplyInput, now time.
 		)
 		err := tx.QueryRow(ctx,
 			`SELECT invoice_no::text, balance_cents, holdback_cents, branch_id::text, status
-			   FROM invoices WHERE id = $1::uuid AND customer_id = $2::uuid FOR NO KEY UPDATE`,
+			   FROM invoices WHERE id = $1::uuid AND customer_id = $2::uuid AND doc_type = 'INVOICE'
+			   FOR NO KEY UPDATE`,
 			a.InvoiceID, customerID).Scan(&no, &balance, &holdback, &invBranch, &status)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -749,6 +754,9 @@ func (r *Repository) WithTill(t TillSeam) *Repository { r.till = t; return r }
 // payment row FOR UPDATE first (the lock a reversal, a bounce and a re-application take), every judgement under it and
 // before the first write, then for a drawer pay out the till's PAID_OUT movement on its own session row (FOR SHARE, the
 // SF-2j rule), the payout row and one payment.paid_out outbox row for the GL.
+//
+// One clock rules that transaction (FW1-13b): now is the instant the act happened, and the payout row, the drawer's
+// movement the till writes beside it and the event the GL journal follows all carry it.
 func (r *Repository) PayOutHeld(ctx context.Context, in PayoutInput, now time.Time) (Payout, error) {
 	if r.pool == nil {
 		return Payout{}, errNoDB
@@ -832,6 +840,7 @@ func (r *Repository) PayOutHeld(ctx context.Context, in PayoutInput, now time.Ti
 		}
 		landedOn, err := r.till.PayOutHeldMoney(ctx, tx, DrawerPaidOut{
 			SessionID: strings.TrimSpace(in.TillSessionID), BranchID: branchID, AmountCents: in.AmountCents, Reason: in.Reason, Reference: in.Reference,
+			At: now,
 		})
 		if err != nil {
 			return Payout{}, err
@@ -877,10 +886,10 @@ func (r *Repository) PayOutHeld(ctx context.Context, in PayoutInput, now time.Ti
 
 	var payoutID string
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO payment_payouts (payment_id, customer_id, branch_id, kind, amount_cents, reason, reference, till_session_id, applied_by, idempotency_key)
-		 VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8::uuid, $9::uuid, $10) RETURNING id::text`,
+		`INSERT INTO payment_payouts (payment_id, customer_id, branch_id, kind, amount_cents, reason, reference, till_session_id, applied_by, idempotency_key, created_at)
+		 VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8::uuid, $9::uuid, $10, $11) RETURNING id::text`,
 		in.PaymentID, customerID, branchID, in.Kind, in.AmountCents, in.Reason, in.Reference, sessionForRow, nullableUUID(in.ActorID),
-		in.IdempotencyKey).Scan(&payoutID); err != nil {
+		in.IdempotencyKey, now).Scan(&payoutID); err != nil {
 		return Payout{}, fmt.Errorf("payout: record: %w", err)
 	}
 	payload, err := json.Marshal(map[string]any{
@@ -894,6 +903,10 @@ func (r *Repository) PayOutHeld(ctx context.Context, in PayoutInput, now time.Ti
 		"method":       method,
 		"reason":       in.Reason,
 		"reference":    in.Reference,
+		// The pay out's own instant, so the journal posts in the month the money left (one clock
+		// rules the transaction, FW1-13b): the payout row, the drawer's movement and the journal all
+		// carry this one instant.
+		"occurred_at": now,
 	})
 	if err != nil {
 		return Payout{}, fmt.Errorf("payout: marshal payment.paid_out: %w", err)

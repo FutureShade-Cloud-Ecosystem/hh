@@ -20,7 +20,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import '@lit-labs/ssr/lib/install-global-dom-shim.js';
+import '../src/lit-dom-fetch-guard.js';
 import { html } from 'lit';
 import { render } from '@lit-labs/ssr';
 import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';

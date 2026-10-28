@@ -832,6 +832,14 @@ func (a glPosterAdapter) PostJournal(ctx context.Context, in gl.ExternalJournal)
 	return a.svc.PostExternal(ctx, in)
 }
 
+// PostJournalTx is PostJournal through the caller's transaction
+// (gl.Service.PostExternalTx), bankrec's JournalPosterTx arm, so a bank
+// match and its clearing journal commit or roll back together (FW1-05, live
+// in the served core, P1-A round 2).
+func (a glPosterAdapter) PostJournalTx(ctx context.Context, tx pgx.Tx, in gl.ExternalJournal) (string, error) {
+	return a.svc.PostExternalTx(ctx, tx, in)
+}
+
 // glBalanceAdapter satisfies bankrec.GLBalanceReader (and invcount's)
 // over the GL provider, so both read GL balances through the service
 // rather than the 0034 views directly.

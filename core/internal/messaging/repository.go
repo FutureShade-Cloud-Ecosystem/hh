@@ -2430,6 +2430,23 @@ func (r *Repository) syncMessageFindApplied(ctx context.Context, userID, key str
 	return id, seq, true, nil
 }
 
+// syncMessageExists answers the bound key gate's existence read (UX-103):
+// the message row stands, tombstone aware, for every caller at once. No
+// membership or room leg rides it: those are the caller's fence, the one
+// Load speaks, and the gate may hide a key only for a row that is gone
+// for nobody. The module's tables keep no org column, so the bare row
+// read is the caller-independent answer the gate's contract asks for.
+func (r *Repository) syncMessageExists(ctx context.Context, messageID string) (bool, error) {
+	var present bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM msg_messages WHERE id = $1::uuid AND deleted_at IS NULL)`,
+		messageID).Scan(&present)
+	if err != nil {
+		return false, fmt.Errorf("sync message exists: %w", err)
+	}
+	return present, nil
+}
+
 // syncMessageCreate writes one offline post through the module's own rules
 // (membership, the same-channel thread root) stamping the client key; the
 // identity column stamps the seq. The mention parse runs on this path too
@@ -2546,6 +2563,20 @@ func (r *Repository) syncAckFindApplied(ctx context.Context, userID, key string)
 	return id, seq, true, nil
 }
 
+// syncAckExists answers the bound key gate's existence read (UX-103): the
+// ack row stands, tombstone aware, for every caller at once, with no user
+// leg (whose ack it is being the caller's fence, the one Load speaks).
+func (r *Repository) syncAckExists(ctx context.Context, ackID string) (bool, error) {
+	var present bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM msg_acks WHERE id = $1::uuid AND deleted_at IS NULL)`,
+		ackID).Scan(&present)
+	if err != nil {
+		return false, fmt.Errorf("sync ack exists: %w", err)
+	}
+	return present, nil
+}
+
 // syncAckCreate records the caller's acknowledgement of one message through
 // the module's own rules: the write binds to (message, its channel, the
 // caller's membership), idempotent on the upsert, method validated at the
@@ -2643,6 +2674,21 @@ func (r *Repository) syncPrefsFindApplied(ctx context.Context, userID, key strin
 		return "", 0, false, fmt.Errorf("sync prefs find-applied: %w", err)
 	}
 	return id, seq, true, nil
+}
+
+// syncPrefsExists answers the bound key gate's existence read (UX-103):
+// the pref row stands, tombstone aware, for every caller at once, with no
+// user leg (whose row it is being the caller's fence, the one Load
+// speaks).
+func (r *Repository) syncPrefsExists(ctx context.Context, prefID string) (bool, error) {
+	var present bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM msg_notification_prefs WHERE id = $1::uuid AND deleted_at IS NULL)`,
+		prefID).Scan(&present)
+	if err != nil {
+		return false, fmt.Errorf("sync prefs exists: %w", err)
+	}
+	return present, nil
 }
 
 // syncPrefsWrite upserts the caller's prefs for one channel with the client

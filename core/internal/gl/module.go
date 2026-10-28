@@ -177,6 +177,8 @@ type AuditTxRecorder interface {
 
 // StockValueReader is the stock ledger side of the close pre flight's 1200 tie check. Satisfied by
 // inventory.Service.SnapshotOnHand summed (the weighted average on-hand value), wired in cmd/core.
+// The branch id is the filter: the pre flight reads the COMPANY (an empty branch id), so the reader
+// answers with the consolidated value, and a named branch answers with that branch's (FW1-09d).
 type StockValueReader interface {
 	StockValueCents(ctx context.Context, branchID string) (int64, error)
 }
@@ -525,14 +527,6 @@ func (s *Service) GLBalanceAsOfCents(ctx context.Context, accountCode string, as
 // BankAccountEntriesAsOf returns the POSTED, unreversed book entries on a bank GL account through asOf (FW1-04).
 func (s *Service) BankAccountEntriesAsOf(ctx context.Context, glAccountCode string, asOf time.Time) ([]BankBookEntry, error) {
 	return s.store.BankAccountEntriesAsOf(ctx, glAccountCode, asOf)
-}
-
-// LodgementJournalForBank answers whether a till lodgement movement already has a POSTED, unreversed book
-// journal touching glAccountCode (FROM-PRINCIPAL 117): a new lodgement with a lodgement journal in 1000 does
-// not post a second 1020 -> 1000 clearing journal on match, whereas an older lodgement with no lodgement
-// journal keeps today's match.
-func (s *Service) LodgementJournalForBank(ctx context.Context, movementID, glAccountCode string) (string, bool, error) {
-	return s.store.LodgementJournalForBank(ctx, movementID, glAccountCode)
 }
 
 // GLBalanceThroughCents returns an account's balance THROUGH a period (every period up to and

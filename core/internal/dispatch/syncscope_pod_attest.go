@@ -181,6 +181,39 @@ func (s *PODSyncStore) attestationState(ctx context.Context, db attestationQueri
 	}}, nil
 }
 
+// loadAttestation answers Load for the typed name attestation's row. The
+// create answers the stop it proved (its id and its stops seq), so the
+// stop is the row Load reads, under the same fence the create's own stop
+// read runs (org, not deleted, the driver arm): a colleague's stop is
+// the same as absent, and the desk reads its org's stops. The stop must
+// carry the attestation (a received name): the proof Load answers is the
+// typed name's, so a stop delivered with a photo stays the absent row,
+// exactly as the create would refuse it (entry 489). Without this arm
+// Load would miss the row for every caller, and the engine's bound key
+// gate would take that blindness for a fence.
+func (s *PODSyncStore) loadAttestation(ctx context.Context, db attestationQuerier, f sync.ScopeFilter, d driverFence, id string) (sync.RowState, bool, error) {
+	if f.Tenant || f.OrgID == "" || !looksLikeUUID(id) {
+		return sync.RowState{}, false, nil
+	}
+	arm, args := driverArm(d, []any{id, f.OrgID})
+	var present int
+	err := db.QueryRow(ctx,
+		`SELECT 1 FROM delivery_stops WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL
+		  AND pod_received_by <> ''`+arm,
+		args...).Scan(&present)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sync.RowState{}, false, nil
+	}
+	if err != nil {
+		return sync.RowState{}, false, fmt.Errorf("dispatch: pod sync load: %w", err)
+	}
+	rs, err := s.attestationState(ctx, db, id)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	return rs, true, nil
+}
+
 // findAttestation resolves a key against delivered stops: the stop whose proof the key applied.
 func (s *PODSyncStore) findAttestation(ctx context.Context, f sync.ScopeFilter, d driverFence, key string) (sync.RowState, bool, error) {
 	if f.Tenant || f.OrgID == "" {
