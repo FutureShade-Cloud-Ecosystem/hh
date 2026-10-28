@@ -402,8 +402,12 @@ export function createGlWorld() {
 
   // The core's dateParam parses YYYY-MM-DD with a strict calendar read, so 2025-13-01 and
   // 2025-02-30 are caller garbage, refused as one. This mirrors it: shape first, then a
-  // round trip through the clock that keeps only real days.
-  const calendarDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v;
+  // round trip through the clock that keeps only real days and never throws on the rest.
+  const calendarDay = (v) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+    const day = new Date(`${v}T00:00:00Z`);
+    return !Number.isNaN(day.getTime()) && day.toISOString().slice(0, 10) === v;
+  };
 
 
   // ---- the rest of the ledger: chart, journals, recurring, periods, checks, policy, export ----------
