@@ -1056,6 +1056,14 @@ func TestGapInvoicesFenceHoldsThroughTheBranchOrg(t *testing.T) {
 			_, _ = f.pool.Exec(c, `DELETE FROM orders WHERE id = $1::uuid`, id)
 		}
 		_, _ = f.pool.Exec(c, `DELETE FROM order_no_sequences WHERE branch_id = $1::uuid`, orphanBranch)
+		// The walkthrough minted order numbers at the kit's fixture branches
+		// through the real next_order_no counter; the counter rows it added
+		// it removes, or the kit cleanup's branch delete is refused by the
+		// counter's foreign key and every later package on the shared gate
+		// finds the fixture world still standing.
+		for _, b := range []string{testkit.BranchNorthAID, testkit.BranchSouthAID} {
+			_, _ = f.pool.Exec(c, `DELETE FROM order_no_sequences WHERE branch_id = $1::uuid`, b)
+		}
 		_, _ = f.pool.Exec(c, `DELETE FROM locations WHERE id = $1::uuid`, orphanBranch)
 	})
 	line := func(lineID, orderID string) {

@@ -257,11 +257,25 @@ func TestPickFeed_AScheduledStopReachesTheYardQueueWithRealLines(t *testing.T) {
 	f := newFeedFixture(t)
 	// The dealer is the branch's org (UX-81 round 6): the order and the task carry no org_id (production writes
 	// none), the yard's branch row does.
+	var priorOrg *string
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT org_id::text FROM locations WHERE id = $1::uuid`, f.branch).Scan(&priorOrg); err != nil {
+		t.Fatalf("read the branch's standing org: %v", err)
+	}
 	if _, err := f.pool.Exec(context.Background(), `UPDATE locations SET org_id = $2::uuid WHERE id = $1::uuid`, f.branch, orgID); err != nil {
 		t.Fatalf("stamp the branch's org: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `UPDATE locations SET org_id = NULL WHERE id = $1::uuid`, f.branch)
+		// Restore the row as it stood, not a blanked org: the branch this
+		// leg borrows can be a kit fixture branch another package's world
+		// is built on, and a NULL org there leaves every later run and
+		// stop that derives its org from the branch row invisible to the
+		// fixture cleanup that scopes by org.
+		if priorOrg == nil {
+			_, _ = f.pool.Exec(context.Background(), `UPDATE locations SET org_id = NULL WHERE id = $1::uuid`, f.branch)
+			return
+		}
+		_, _ = f.pool.Exec(context.Background(), `UPDATE locations SET org_id = $2::uuid WHERE id = $1::uuid`, f.branch, *priorOrg)
 	})
 	stop := f.schedule(t, todayUTC())
 

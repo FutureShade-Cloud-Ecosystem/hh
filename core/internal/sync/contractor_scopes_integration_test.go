@@ -190,6 +190,21 @@ func open169Pool(t *testing.T) *pgxpool.Pool {
 		_, _ = pool.Exec(ctx, `DELETE FROM will_call_pickup_events WHERE pickup_id IN (SELECT id FROM will_call_pickups WHERE order_id IN (SELECT id FROM orders WHERE order_no LIKE 'FXWCL-%'))`)
 		_, _ = pool.Exec(ctx, `DELETE FROM will_call_pickups WHERE order_id IN (SELECT id FROM orders WHERE order_no LIKE 'FXWCL-%')`)
 		_, _ = pool.Exec(ctx, `DELETE FROM orders WHERE order_no LIKE 'FXWCL-%'`)
+		// The pull-only feeds leg seeds one row per org-class table, the kit
+		// product's balance among them; every row the lane adds the lane
+		// removes, before the shared kit cleanup runs, or a foreign key from
+		// one of them refuses the kit's branch, user and product deletes and
+		// every later package on the shared gate finds the fixture world
+		// still standing.
+		_, _ = pool.Exec(ctx, `DELETE FROM stock_balances WHERE product_id = $1::uuid AND location_id = $2::uuid`,
+			testkit.ProductID, testkit.BranchNorthAID)
+		_, _ = pool.Exec(ctx, `DELETE FROM pos_parked_tickets WHERE ticket_no = 'FX169-PARK'`)
+		_, _ = pool.Exec(ctx, `DELETE FROM warranty_claims WHERE claim_no = 'FX169-WTY'`)
+		_, _ = pool.Exec(ctx, `DELETE FROM dashboard_user_widgets WHERE widget_key = 'fx169.measure'`)
+		_, _ = pool.Exec(ctx, `DELETE FROM dispatch_trucks WHERE code = 'FX169-TRK'`)
+		_, _ = pool.Exec(ctx, `DELETE FROM dispatch_drivers WHERE name = 'FX Driver'`)
+		_, _ = pool.Exec(ctx, `DELETE FROM vendors WHERE vendor_no = 'FX169-VEN'`)
+		_, _ = pool.Exec(ctx, `DELETE FROM customers WHERE account_no = 'FX169-ACCT'`)
 		_ = testkit.Cleanup(ctx, testkit.PgxPool(pool))
 	})
 	return pool
