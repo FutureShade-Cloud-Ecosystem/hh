@@ -307,7 +307,10 @@ func (s *Service) decrementForSale(ctx context.Context, tx pgx.Tx, in DecrementI
 		if ln.QtyBase <= 0 {
 			continue
 		}
-		value, err := s.decrementOneShipLine(ctx, tx, in.OrderID, in.BranchID, "pos_sale", "POS COLLECT_NOW sale", ln)
+		// The POS ring's own move keeps the row's default instant (the transaction's clock):
+		// the ring's event already carries the sale's own date, and the ring's transaction
+		// opens and reads that date within the same breath, so the two are one moment.
+		value, err := s.decrementOneShipLine(ctx, tx, in.OrderID, in.BranchID, "pos_sale", "POS COLLECT_NOW sale", ln, time.Time{})
 		if err != nil {
 			return nil, err
 		}
@@ -321,7 +324,12 @@ func (s *Service) decrementForSale(ctx context.Context, tx pgx.Tx, in DecrementI
 // journal posts the value that moved, never a re-read average. A product with no cost at all ships
 // provisionally at $0.00 (round 2, S3's P2): the move is marked, the Controller exceptions list names
 // it, and the first receipt trues it up like any other provisional move.
-func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, branchID, sourceType, reason string, ln SaleLine, extraMeta ...map[string]any) (int64, error) {
+//
+// occurredAt is the instant the move is dated at. The zero value rides the row's own DEFAULT (now(),
+// the transaction's clock); the order's fulfilment passes the instant it read ONCE for the whole
+// fulfilment, so the move and the order.fulfilled event that books it carry the SAME one and the stock
+// ledger and 1200 cannot be found on different sides of a month end (W2-5 fix r6).
+func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, branchID, sourceType, reason string, ln SaleLine, occurredAt time.Time, extraMeta ...map[string]any) (int64, error) {
 	avg, hadCost, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, branchID)
 	if err != nil {
 		return 0, err
@@ -397,7 +405,7 @@ func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, 
 		ProductID: ln.ProductID, BranchID: branchID, FromLocation: branchID,
 		MoveType: MoveShip, QtyBase: ln.QtyBase, UnitCostCents: avg, ValueCents: value,
 		SourceType: sourceType, SourceRefID: orderID, Reason: reason,
-		Metadata: moveMeta,
+		Metadata: moveMeta, OccurredAt: occurredAt,
 	})
 	if err != nil {
 		return 0, err
@@ -470,6 +478,31 @@ func (s *Service) HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID
 	return exists, err
 }
 
+// fulfilmentInstant answers the ONE instant a fulfilment is dated at.
+//
+// IT IS THE TRANSACTION'S OWN CLOCK: Postgres's now() is the transaction's start, the same value every
+// statement in this transaction sees. One read, one instant, for the whole fulfilment.
+//
+// WHY IT MATTERS (W2-5 fix r6). The stock ledger's SHIP move and the GL's COGS journal book the SAME
+// sale, and a month end reads both sides at one instant. If the two carry different instants, a month
+// end that falls between them sees the stock relieved and 1200 unrelieved: the close is refused by the
+// whole sale, and no later month can repair it, because the stock side moved in the earlier month and
+// the book side moved in the later one. Before this, the move took the transaction's clock and the
+// journal took the consumer's clock (the drain's), and the two were a drain apart.
+//
+// Reading the transaction's instant ONCE and stamping it on BOTH the move and the event closes that
+// gap: the event carries the instant, the GL's consumer reads it off the payload (the same field the
+// POS ring's sale has always carried), and the journal is posted at that same instant, the one the
+// fulfilment's own transaction owns. A transaction that straddles midnight no longer splits the two
+// either: both sides carry the transaction's own start.
+func (s *Service) fulfilmentInstant(ctx context.Context, tx pgx.Tx) (time.Time, error) {
+	var at time.Time
+	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&at); err != nil {
+		return time.Time{}, fmt.Errorf("inventory: read the fulfilment's instant: %w", err)
+	}
+	return at, nil
+}
+
 func (s *Service) fulfilLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID, branchID string, productIDs []string, qtys []float64) error {
 	if orderID == "" || branchID == "" || len(productIDs) == 0 || len(productIDs) != len(qtys) {
 		return nil
@@ -496,6 +529,12 @@ func (s *Service) fulfilLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID
 		QtyBase    float64 `json:"qty_base"`
 		ValueCents int64   `json:"value_cents"`
 	}
+	// ONE instant for the whole fulfilment: the transaction's own clock, read once, so every
+	// SHIP move and the event that books them are dated at the same moment (fulfilmentInstant).
+	at, err := s.fulfilmentInstant(ctx, tx)
+	if err != nil {
+		return err
+	}
 	outLines := make([]outboxLine, 0, len(productIDs))
 	for i := range productIDs {
 		pid := productIDs[i]
@@ -510,7 +549,7 @@ func (s *Service) fulfilLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID
 		value, err := s.decrementOneShipLine(ctx, tx, orderID, branchID, "order", "order_fulfilled", SaleLine{
 			ProductID: pid,
 			QtyBase:   qty,
-		}, meta)
+		}, at, meta)
 		if err != nil {
 			return err
 		}
@@ -527,6 +566,10 @@ func (s *Service) fulfilLinesTx(ctx context.Context, tx pgx.Tx, orderID, groupID
 		"order_id":  orderID,
 		"branch_id": branchID,
 		"lines":     outLines,
+		// The fulfilment's own instant, the same one the SHIP moves carry: the COGS journal the
+		// consumer posts is dated at it, so the stock ledger and 1200 cut this sale at ONE moment
+		// and a month end cannot find them on different sides of itself (W2-5 fix r6).
+		"occurred_at": at,
 	}
 	if groupID != "" {
 		event["group_id"] = groupID
