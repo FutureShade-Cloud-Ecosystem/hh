@@ -5,17 +5,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/finstmt"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -61,135 +56,111 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 	glRepo := gl.NewRepository(pool)
 	glSvc := gl.NewService(glRepo)
 
+	seams, err := financeCheckSeams(ctx, pool, pool, nil)
+	if err != nil {
+		return nil, fmt.Errorf("finworld wire tie seams: %w", err)
+	}
+	seams.Clock = func() time.Time { return asOf }
+
+	var bankAccountID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM bank_accounts WHERE gl_account_code = '1000'`).Scan(&bankAccountID); err != nil {
+		return nil, fmt.Errorf("operating bank account 1000: %w", err)
+	}
+
+	var activeTieMonths []TieMonth
+	for mIdx, mp := range plan.Months {
+		if len(mp.TradingDays) == 0 || mp.TradingDays[0].TradingDayIndex > throughDay {
+			continue
+		}
+		tm := TieMonth{
+			Year:          mp.YearMonth.Year,
+			Month:         mp.YearMonth.Month,
+			MonthEnd:      seams.monthEnd(mp.YearMonth.Year, mp.YearMonth.Month),
+			BankAccountID: bankAccountID,
+		}
+		lastDayIdx := mp.TradingDays[len(mp.TradingDays)-1].TradingDayIndex
+		if throughDay < lastDayIdx {
+			tm.MonthEnd = asOf
+		}
+		_ = mIdx
+		activeTieMonths = append(activeTieMonths, tm)
+	}
+	latestTieMonth := activeTieMonths[len(activeTieMonths)-1]
+
 	var results []FinWorldTieResult
 
-	// 1. AR aging equals GL 1100
+	// 1. AR aging equals GL 1100 (shared TieARAgingToGL1100 in fw1_ties.go)
 	{
-		creditSvc := billing.NewCreditService(billing.NewRepository(pool))
-		rows, err := creditSvc.Aging(sctx, asOf, "")
-		if err != nil {
-			return nil, fmt.Errorf("AR aging read: %w", err)
+		allPass := true
+		var lastDetail string
+		for _, tm := range activeTieMonths {
+			res, err := TieARAgingToGL1100(ctx, seams, tm)
+			if err != nil {
+				return nil, fmt.Errorf("TieARAgingToGL1100 %04d-%02d: %w", tm.Year, tm.Month, err)
+			}
+			if !res.Pass {
+				allPass = false
+				lastDetail = fmt.Sprintf("%04d-%02d: %s", tm.Year, tm.Month, res.Detail)
+				break
+			}
+			lastDetail = fmt.Sprintf("%04d-%02d: %s", tm.Year, tm.Month, res.Detail)
 		}
-		var agingTotal int64
-		for _, r := range rows {
-			agingTotal += r.TotalCents
-		}
-		gl1100, _, err := glRepo.AccountBalanceAsOf(ctx, "1100", asOf, "")
-		if err != nil {
-			return nil, fmt.Errorf("GL 1100 read: %w", err)
-		}
-		passed := agingTotal == gl1100
 		results = append(results, FinWorldTieResult{
 			Name:   "AR_aging_ties_to_GL_1100",
-			Passed: passed,
-			Detail: fmt.Sprintf("through day %d (%s): AR aging=%s (%d cents), GL 1100=%s (%d cents), diff=%d cents",
-				throughDay, day.Date, finworldDollars(agingTotal), agingTotal, finworldDollars(gl1100), gl1100, agingTotal-gl1100),
+			Passed: allPass,
+			Detail: lastDetail,
 		})
 	}
 
-	// 2. Customer statements equal aging and subledger
+	// 2. Customer statements equal aging and subledger (shared TieStatementsToAging in fw1_ties.go)
 	{
-		billRepo := billing.NewRepository(pool)
-		creditSvc := billing.NewCreditService(billRepo)
-		agingRows, err := creditSvc.Aging(sctx, asOf, "")
-		if err != nil {
-			return nil, fmt.Errorf("AR aging for statement tie: %w", err)
+		// Ensure a statement run exists at the current month's MonthEnd if we are mid-month.
+		var hasRun bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM ar_statement_runs WHERE as_of_date = $1::date)`, latestTieMonth.MonthEnd.Format("2006-01-02")).Scan(&hasRun); err != nil {
+			return nil, fmt.Errorf("check statement run: %w", err)
 		}
-		agingByCust := make(map[string]int64, len(agingRows))
-		for _, r := range agingRows {
-			agingByCust[r.CustomerID] = r.TotalCents
-		}
-		stmtSvc := billing.NewStatementService(billRepo)
-		_, stmts, err := stmtSvc.GenerateRun(sctx, "MASS", "", asOf, finworldStaffUser)
-		if err != nil {
-			return nil, fmt.Errorf("statement run: %w", err)
-		}
-		stmtByCust := make(map[string]int64, len(stmts))
-		for _, it := range stmts {
-			stmtByCust[it.CustomerID] = it.ClosingCents
-		}
-		cRows, err := pool.Query(ctx, `SELECT id::text FROM customers ORDER BY account_no`)
-		if err != nil {
-			return nil, fmt.Errorf("customers list: %w", err)
-		}
-		var custIDs []string
-		for cRows.Next() {
-			var cid string
-			if err := cRows.Scan(&cid); err != nil {
-				cRows.Close()
-				return nil, err
+		if !hasRun {
+			stmtSvc := billing.NewStatementService(billing.NewRepository(pool))
+			if _, _, err := stmtSvc.GenerateRun(sctx, "MASS", "", latestTieMonth.MonthEnd, finworldStaffUser); err != nil {
+				return nil, fmt.Errorf("statement run for tie: %w", err)
 			}
-			custIDs = append(custIDs, cid)
 		}
-		cRows.Close()
-
-		mismatches := 0
-		var firstMismatch string
-		var totalSubledger int64
-		for _, cid := range custIDs {
-			var subledger int64
-			if err := pool.QueryRow(ctx, `
-				SELECT COALESCE(SUM(amount_cents), 0)
-				  FROM customer_transactions
-				 WHERE customer_id = $1::uuid
-				   AND occurred_at <= $2`, cid, asOf).Scan(&subledger); err != nil {
-				return nil, fmt.Errorf("customer subledger %s: %w", cid, err)
-			}
-			totalSubledger += subledger
-			var docsAndReceipts int64
-			if err := pool.QueryRow(ctx, `
-				SELECT COALESCE((
-				    SELECT SUM(balance_cents) FROM invoices
-				     WHERE customer_id = $1::uuid AND status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
-				), 0) + COALESCE((
-				    SELECT SUM(
-				        pn.fee_cents - COALESCE((
-				            SELECT SUM((p2.metadata->'nsf_fee_allocations'->>pn.id::text)::bigint)
-				              FROM payments p2
-				             WHERE p2.customer_id = pn.customer_id
-				               AND p2.reversed_at IS NULL
-				               AND p2.reverses_payment_id IS NULL
-				               AND p2.status <> 'BOUNCED'
-				               AND (p2.metadata->'nsf_fee_allocations'->>pn.id::text) IS NOT NULL
-				        ), 0)
-				    )
-				      FROM payment_nsf pn
-				     WHERE pn.customer_id = $1::uuid
-				), 0)`, cid).Scan(&docsAndReceipts); err != nil {
-				return nil, fmt.Errorf("customer docs and receipts %s: %w", cid, err)
-			}
-			lines, err := billRepo.StatementLines(ctx, cid, asOf, billing.AllBranches)
+		allPass := true
+		var lastDetail string
+		for _, tm := range activeTieMonths {
+			res, err := TieStatementsToAging(ctx, seams, tm)
 			if err != nil {
-				return nil, fmt.Errorf("statement lines %s: %w", cid, err)
+				return nil, fmt.Errorf("TieStatementsToAging %04d-%02d: %w", tm.Year, tm.Month, err)
 			}
-			var walked int64
-			if len(lines) > 0 {
-				walked = lines[len(lines)-1].BalanceRun
+			if !res.Pass {
+				allPass = false
+				lastDetail = fmt.Sprintf("%04d-%02d: %s", tm.Year, tm.Month, res.Detail)
+				break
 			}
-			ag := agingByCust[cid]
-			st := stmtByCust[cid]
-			if ag != st || st != walked || walked != subledger || subledger != docsAndReceipts {
-				mismatches++
-				if firstMismatch == "" {
-					firstMismatch = fmt.Sprintf("customer %s: aging=%d stmt=%d walked=%d subledger=%d docs=%d", cid, ag, st, walked, subledger, docsAndReceipts)
-				}
-			}
-		}
-		passed := mismatches == 0
-		detail := fmt.Sprintf("checked %d customers at %s: total subledger=%s (%d cents), mismatches=%d",
-			len(custIDs), day.Date, finworldDollars(totalSubledger), totalSubledger, mismatches)
-		if firstMismatch != "" {
-			detail += " (" + firstMismatch + ")"
+			lastDetail = fmt.Sprintf("%04d-%02d: %s", tm.Year, tm.Month, res.Detail)
 		}
 		results = append(results, FinWorldTieResult{
 			Name:   "customer_statement_equals_aging_and_subledger",
-			Passed: passed,
-			Detail: detail,
+			Passed: allPass,
+			Detail: lastDetail,
 		})
 	}
 
-	// 3. Stock value equals GL 1200 (per branch and consolidated)
+	// 3. Stock value equals GL 1200 (shared TieStockToGL1200 in fw1_ties.go + per-branch check)
 	{
+		allPass := true
+		var failDetail string
+		for _, tm := range activeTieMonths {
+			res, err := TieStockToGL1200(ctx, seams, tm)
+			if err != nil {
+				return nil, fmt.Errorf("TieStockToGL1200 %04d-%02d: %w", tm.Year, tm.Month, err)
+			}
+			if !res.Pass {
+				allPass = false
+				failDetail = fmt.Sprintf("%04d-%02d: %s", tm.Year, tm.Month, res.Detail)
+				break
+			}
+		}
 		stockByBranch := func(branchID string) (int64, error) {
 			var v int64
 			err := pool.QueryRow(ctx, `
@@ -224,87 +195,41 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 		if err != nil {
 			return nil, err
 		}
-		passed := trtStock == trtGL && kgnStock == kgnGL && consStock == consGL && (trtStock+kgnStock == consStock)
+		passed := allPass && trtStock == trtGL && kgnStock == kgnGL && consStock == consGL && (trtStock+kgnStock == consStock)
+		detail := fmt.Sprintf("TRT stock=%s GL1200=%s; KGN stock=%s GL1200=%s; Consolidated stock=%s GL1200=%s",
+			finworldDollars(trtStock), finworldDollars(trtGL),
+			finworldDollars(kgnStock), finworldDollars(kgnGL),
+			finworldDollars(consStock), finworldDollars(consGL))
+		if failDetail != "" {
+			detail += " (" + failDetail + ")"
+		}
 		results = append(results, FinWorldTieResult{
 			Name:   "stock_value_ties_to_GL_1200",
 			Passed: passed,
-			Detail: fmt.Sprintf("TRT stock=%s GL1200=%s; KGN stock=%s GL1200=%s; Consolidated stock=%s GL1200=%s",
-				finworldDollars(trtStock), finworldDollars(trtGL),
-				finworldDollars(kgnStock), finworldDollars(kgnGL),
-				finworldDollars(consStock), finworldDollars(consGL)),
+			Detail: detail,
 		})
 	}
 
-	// 4. HST collected and ITCs tie to GL 2200 and tax ReconcileReport
+	// 4. HST collected and ITCs tie to GL 2200 and tax ReconcileReport (shared TieHSTMovementToDocuments in fw1_ties.go)
 	{
-		var gl2200 int64
-		gl2200, _, err = glRepo.AccountBalanceAsOf(ctx, "2200", asOf, "")
-		if err != nil {
-			return nil, fmt.Errorf("GL 2200 read: %w", err)
-		}
-		// GL 2200 is a LIABILITY (CREDIT normal), while AccountBalanceAsOf returns debit - credit.
-		gl2200Credit := -gl2200
-
-		var salesTaxCents, posReturnTaxCents, billITCCents int64
-		if err := pool.QueryRow(ctx, `
-			SELECT COALESCE(SUM(tax_cents), 0)
-			  FROM invoices
-			 WHERE status NOT IN ('DRAFT', 'VOID')
-			   AND created_at <= $1`, asOf).Scan(&salesTaxCents); err != nil {
-			return nil, fmt.Errorf("invoices HST read: %w", err)
-		}
-		if err := pool.QueryRow(ctx, `
-			SELECT COALESCE(SUM(tax_cents), 0)
-			  FROM pos_returns
-			 WHERE status = 'COMMITTED'
-			   AND created_at <= $1`, asOf).Scan(&posReturnTaxCents); err != nil {
-			return nil, fmt.Errorf("pos_returns HST read: %w", err)
-		}
-		if err := pool.QueryRow(ctx, `
-			SELECT COALESCE(SUM(tax_cents), 0)
-			  FROM purchasing_bills
-			 WHERE status = 'POSTED'
-			   AND created_at <= $1`, asOf).Scan(&billITCCents); err != nil {
-			return nil, fmt.Errorf("purchasing_bills ITC read: %w", err)
-		}
-		netDocHST := salesTaxCents - posReturnTaxCents - billITCCents
-
-		taxSvc := tax.NewService(tax.NewRepository(pool)).
-			WithSalesHSTs(billing.NewRepository(pool)).
-			WithReturnHSTs(pos.NewRepository(pool)).
-			WithBillITCs(purchasing.NewRepository(pool)).
-			WithGLBalances(glBalanceAdapter{svc: glSvc})
-
-		activeMonths := make(map[YearMonth]bool)
-		for i := 0; i <= throughDay; i++ {
-			activeMonths[days[i].YearMonth] = true
-		}
-		reconcileFailures := 0
-		var firstRecErr string
-		for ym := range activeMonths {
-			rep, rerr := taxSvc.ReconcileReport(ctx, ym.Year, ym.Month, "")
-			if rerr != nil {
-				return nil, fmt.Errorf("HST ReconcileReport %s: %w", ym.String(), rerr)
+		allPass := true
+		var lastDetail string
+		for _, tm := range activeTieMonths {
+			res, err := TieHSTMovementToDocuments(ctx, seams, tm)
+			if err != nil {
+				return nil, fmt.Errorf("TieHSTMovementToDocuments %04d-%02d: %w", tm.Year, tm.Month, err)
 			}
-			if rep.VarianceCents != 0 || !rep.TiedOut {
-				reconcileFailures++
-				if firstRecErr == "" {
-					firstRecErr = fmt.Sprintf("%s variance=%d", ym.String(), rep.VarianceCents)
-				}
+			if !res.Pass {
+				allPass = false
+				lastDetail = fmt.Sprintf("%04d-%02d: %s", tm.Year, tm.Month, res.Detail)
+				break
 			}
-		}
-
-		passed := gl2200Credit == netDocHST && reconcileFailures == 0
-		detail := fmt.Sprintf("Sales/CM HST=%s, POS Return HST=%s, Bill ITC=%s, Net Doc HST=%s, GL 2200 (credit)=%s, diff=%d cents, monthly ReconcileReport failures=%d",
-			finworldDollars(salesTaxCents), finworldDollars(posReturnTaxCents), finworldDollars(billITCCents),
-			finworldDollars(netDocHST), finworldDollars(gl2200Credit), gl2200Credit-netDocHST, reconcileFailures)
-		if firstRecErr != "" {
-			detail += " (" + firstRecErr + ")"
+			lastDetail = fmt.Sprintf("%04d-%02d: %s", tm.Year, tm.Month, res.Detail)
 		}
 		results = append(results, FinWorldTieResult{
 			Name:   "HST_reconcile_ties",
-			Passed: passed,
-			Detail: detail,
+			Passed: allPass,
+			Detail: lastDetail,
 		})
 	}
 
@@ -411,26 +336,11 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 		})
 	}
 
-	// 5c. Bank month signs off at zero with outstanding items (for all closed months through throughDay)
+	// 5c. Bank month signs off at zero with outstanding items (shared TieBankReconciliationAtZero in fw1_ties.go)
 	{
-		bankrecSvc := bankrec.NewService(bankrec.NewRepository(pool)).
-			WithPayments(till.NewRepository(pool)).
-			WithLodgements(till.NewRepository(pool)).
-			WithJournalPoster(glPosterAdapter{svc: glSvc}).
-			WithGLBalances(glBalanceAdapter{svc: glSvc}).
-			WithJournals(glSvc)
-		allRecs, err := bankrecSvc.Reconciliations(ctx, "")
-		if err != nil {
-			return nil, fmt.Errorf("bankrec Reconciliations: %w", err)
-		}
-		recByYM := make(map[YearMonth]bankrec.Reconciliation, len(allRecs))
-		for _, r := range allRecs {
-			recByYM[YearMonth{Year: r.Year, Month: r.Month}] = r
-		}
-
 		closedMonths := 0
 		badRecs := 0
-		var recSummary string
+		var recParts []string
 		for m := 0; m < len(plan.Months); m++ {
 			mp := plan.Months[m]
 			if !mp.IsClosed || len(mp.TradingDays) == 0 {
@@ -441,29 +351,32 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 				continue
 			}
 			closedMonths++
-			rec, ok := recByYM[mp.YearMonth]
-			if !ok {
-				badRecs++
-				if recSummary == "" {
-					recSummary = fmt.Sprintf("%s missing bank_reconciliation", mp.YearMonth.String())
-				}
-				continue
+			tm := TieMonth{
+				Year:          mp.YearMonth.Year,
+				Month:         mp.YearMonth.Month,
+				MonthEnd:      seams.monthEnd(mp.YearMonth.Year, mp.YearMonth.Month),
+				BankAccountID: bankAccountID,
 			}
-			adjusted := rec.StatementBalanceCents + rec.DepositsInTransitCents - rec.OutstandingChequesCents
-			if rec.Status != "COMPLETED" || rec.VarianceCents != 0 || adjusted != rec.GLBalanceCents || rec.DepositsInTransitCents <= 0 || rec.OutstandingChequesCents <= 0 {
+			res, err := TieBankReconciliationAtZero(ctx, seams, tm)
+			if err != nil {
+				return nil, fmt.Errorf("TieBankReconciliationAtZero %s: %w", mp.YearMonth.String(), err)
+			}
+			dit, err := TieDepositsInTransit(ctx, seams, tm)
+			if err != nil {
+				return nil, fmt.Errorf("TieDepositsInTransit %s: %w", mp.YearMonth.String(), err)
+			}
+			outChq, err := TieOutstandingCheques(ctx, seams, tm)
+			if err != nil {
+				return nil, fmt.Errorf("TieOutstandingCheques %s: %w", mp.YearMonth.String(), err)
+			}
+			if !res.Pass || !res.Applicable || dit <= 0 || outChq <= 0 {
 				badRecs++
-				if recSummary == "" {
-					recSummary = fmt.Sprintf("%s status=%s stmt=%d dit=%d outChq=%d gl=%d var=%d",
-						mp.YearMonth.String(), rec.Status, rec.StatementBalanceCents, rec.DepositsInTransitCents, rec.OutstandingChequesCents, rec.GLBalanceCents, rec.VarianceCents)
-				}
+				recParts = append(recParts, fmt.Sprintf("%s FAIL (%s, dit=%s, outChq=%s)", mp.YearMonth.String(), res.Detail, finworldDollars(dit), finworldDollars(outChq)))
 			} else {
-				if recSummary != "" {
-					recSummary += "; "
-				}
-				recSummary += fmt.Sprintf("%s COMPLETED stmt=%s + DIT=%s - OutChq=%s = GL=%s (var=$0.00)",
-					mp.YearMonth.String(), finworldDollars(rec.StatementBalanceCents), finworldDollars(rec.DepositsInTransitCents), finworldDollars(rec.OutstandingChequesCents), finworldDollars(rec.GLBalanceCents))
+				recParts = append(recParts, fmt.Sprintf("%s PASS (%s)", mp.YearMonth.String(), res.Detail))
 			}
 		}
+		recSummary := strings.Join(recParts, "; ")
 		if recSummary == "" {
 			recSummary = "no closed months yet"
 		}
@@ -474,7 +387,7 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 		})
 	}
 
-	// 6. Every journal line carries a branch and branch trial balances sum to the consolidated trial balance
+	// 6. Every journal line carries a branch and branch trial balances sum to the consolidated trial balance (shared TieBranchTrialBalancesToConsolidated in fw1_ties.go)
 	{
 		var nullHeaderBranches, nullLineBranches int
 		if err := pool.QueryRow(ctx, `
@@ -490,31 +403,17 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 			return nil, err
 		}
 
-		activeMonths := make(map[YearMonth]bool)
-		for i := 0; i <= throughDay; i++ {
-			activeMonths[days[i].YearMonth] = true
-		}
 		tbMismatches := 0
 		var lastTBDetail string
-		for ym := range activeMonths {
-			cons, err := glSvc.TrialBalance(sctx, ym.Year, ym.Month, "")
+		for _, tm := range activeTieMonths {
+			res, err := TieBranchTrialBalancesToConsolidated(ctx, seams, tm)
 			if err != nil {
-				return nil, fmt.Errorf("consolidated TB %s: %w", ym.String(), err)
+				return nil, fmt.Errorf("TieBranchTrialBalancesToConsolidated %04d-%02d: %w", tm.Year, tm.Month, err)
 			}
-			trtTB, err := glSvc.TrialBalance(sctx, ym.Year, ym.Month, finworldBranchTRT)
-			if err != nil {
-				return nil, fmt.Errorf("TRT TB %s: %w", ym.String(), err)
-			}
-			kgnTB, err := glSvc.TrialBalance(sctx, ym.Year, ym.Month, finworldBranchKGN)
-			if err != nil {
-				return nil, fmt.Errorf("KGN TB %s: %w", ym.String(), err)
-			}
-			if cons.BalanceCents != 0 || trtTB.TotalDebit+kgnTB.TotalDebit != cons.TotalDebit || trtTB.TotalCredit+kgnTB.TotalCredit != cons.TotalCredit {
+			if !res.Pass {
 				tbMismatches++
 			}
-			lastTBDetail = fmt.Sprintf("%s: TRT DR=%s + KGN DR=%s = Cons DR=%s (net=%s)",
-				ym.String(), finworldDollars(trtTB.TotalDebit), finworldDollars(kgnTB.TotalDebit),
-				finworldDollars(cons.TotalDebit), finworldDollars(cons.BalanceCents))
+			lastTBDetail = fmt.Sprintf("%04d-%02d: %s", tm.Year, tm.Month, res.Detail)
 		}
 		passed := nullHeaderBranches == 0 && nullLineBranches == 0 && tbMismatches == 0
 		results = append(results, FinWorldTieResult{
@@ -525,17 +424,16 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 		})
 	}
 
-	// 7. Outbox clean (no PENDING or DEAD events)
+	// 7. Outbox clean (shared TieOutboxDrained in fw1_ties.go)
 	{
-		var pendingOrDead int
-		if err := pool.QueryRow(ctx, `
-			SELECT COUNT(*) FROM events_outbox WHERE status IN ('PENDING', 'DEAD')`).Scan(&pendingOrDead); err != nil {
-			return nil, err
+		res, err := TieOutboxDrained(ctx, seams, latestTieMonth)
+		if err != nil {
+			return nil, fmt.Errorf("TieOutboxDrained: %w", err)
 		}
 		results = append(results, FinWorldTieResult{
 			Name:   "no_journal_waiting_or_dead_lettered",
-			Passed: pendingOrDead == 0,
-			Detail: fmt.Sprintf("events_outbox PENDING/DEAD=%d", pendingOrDead),
+			Passed: res.Pass,
+			Detail: res.Detail,
 		})
 	}
 
@@ -587,7 +485,7 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 		})
 	}
 
-	// 9. Year-end close (after 2025-12, i.e., throughDay >= last day of Month 2)
+	// 9. Year-end close (shared TieClosedYearIncomeStatementUnchanged in fw1_ties.go)
 	if len(plan.Months) > 2 && len(plan.Months[2].TradingDays) > 0 {
 		m2LastDay := plan.Months[2].TradingDays[len(plan.Months[2].TradingDays)-1].TradingDayIndex
 		if throughDay >= m2LastDay {
@@ -613,18 +511,22 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 				SELECT COUNT(*) FROM fiscal_periods WHERE year = 2026`).Scan(&count2026); err != nil {
 				return nil, err
 			}
-			isRep, err := finstmt.NewService(finstmt.NewRepository(pool)).IncomeStatementReportFor(sctx, 2025, 0, "")
-			if err != nil {
-				return nil, fmt.Errorf("2025 IncomeStatementReportFor: %w", err)
+			dec2025 := TieMonth{
+				Year:          2025,
+				Month:         12,
+				MonthEnd:      seams.monthEnd(2025, 12),
+				BankAccountID: bankAccountID,
 			}
-			rev2025 := isRep.RevenueCents
-			exp2025 := isRep.ExpenseCents
-			passed := closingCount >= 1 && nullBranchLines == 0 && open2025 == 0 && count2026 == 12 && rev2025 > 0 && exp2025 > 0
+			isTieRes, err := TieClosedYearIncomeStatementUnchanged(ctx, seams, dec2025)
+			if err != nil {
+				return nil, fmt.Errorf("TieClosedYearIncomeStatementUnchanged 2025: %w", err)
+			}
+			passed := closingCount >= 1 && nullBranchLines == 0 && open2025 == 0 && count2026 == 12 && isTieRes.Pass
 			results = append(results, FinWorldTieResult{
 				Name:   "year_end_close_opens_next_year_and_keeps_income_statement",
 				Passed: passed,
-				Detail: fmt.Sprintf("2025 CLOSING journals=%d (nullBranchLines=%d), open2025=%d, 2026 periods=%d, 2025 IS revenue=%s expenses=%s netIncome=%s",
-					closingCount, nullBranchLines, open2025, count2026, finworldDollars(rev2025), finworldDollars(exp2025), finworldDollars(isRep.NetIncomeCents)),
+				Detail: fmt.Sprintf("2025 CLOSING journals=%d (nullBranchLines=%d), open2025=%d, 2026 periods=%d, %s",
+					closingCount, nullBranchLines, open2025, count2026, isTieRes.Detail),
 			})
 		}
 	}

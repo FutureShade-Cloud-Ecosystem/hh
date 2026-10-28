@@ -1015,6 +1015,9 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 			}
 
 		case FinWorldEventBankStatement:
+			if err := finworldStampDayTime(ctx, h.pool, docTime); err != nil {
+				return err
+			}
 			bs := ev.BankStatement
 			if err := finworldExecuteBankStatement(ctx, h, plan, bs, docTime); err != nil {
 				return fmt.Errorf("%s (%s): %w", ev.EventKey, bs.StatementKey, err)
@@ -1024,6 +1027,9 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 			}
 
 		case FinWorldEventPeriodClose:
+			if err := finworldStampDayTime(ctx, h.pool, docTime); err != nil {
+				return err
+			}
 			pc := ev.PeriodClose
 			if err := finworldExecutePeriodClose(ctx, h, pc, loc); err != nil {
 				return fmt.Errorf("%s (%s): %w", ev.EventKey, pc.CloseKey, err)
@@ -1033,6 +1039,9 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 			}
 
 		case FinWorldEventYearClose:
+			if err := finworldStampDayTime(ctx, h.pool, docTime); err != nil {
+				return err
+			}
 			yc := ev.YearClose
 			if err := finworldExecuteYearClose(ctx, h, yc, loc); err != nil {
 				return fmt.Errorf("%s (%s): %w", ev.EventKey, yc.YearCloseKey, err)
@@ -1046,17 +1055,59 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 		}
 	}
 
-	// On the last trading day of each month, also run the MASS statement run for that month
+	if err := finworldStampDayTime(ctx, h.pool, docTime); err != nil {
+		return err
+	}
+
+	// On the last trading day of each month, also run the MASS statement run for that month's calendar end.
 	if day.IsLastOfMonth {
-		if _, err := h.call("statement run "+day.Date, http.MethodPost, "/api/v1/ar/statement-runs", map[string]any{
+		ym := days[dayIdx].YearMonth
+		endOfMonthDate := time.Date(ym.Year, time.Month(ym.Month), 1, 0, 0, 0, 0, loc).AddDate(0, 1, -1).Format("2006-01-02")
+		if _, err := h.call("statement run "+endOfMonthDate, http.MethodPost, "/api/v1/ar/statement-runs", map[string]any{
 			"mode":  "MASS",
-			"as_of": day.Date,
+			"as_of": endOfMonthDate,
 		}); err != nil {
-			return fmt.Errorf("statement run %s: %w", day.Date, err)
+			return fmt.Errorf("statement run %s: %w", endOfMonthDate, err)
+		}
+		if dayIdx == len(days)-1 {
+			nextEndOfMonthDate := time.Date(ym.Year, time.Month(ym.Month), 1, 0, 0, 0, 0, loc).AddDate(0, 2, -1).Format("2006-01-02")
+			if _, err := h.call("statement run "+nextEndOfMonthDate, http.MethodPost, "/api/v1/ar/statement-runs", map[string]any{
+				"mode":  "MASS",
+				"as_of": nextEndOfMonthDate,
+			}); err != nil {
+				return fmt.Errorf("statement run %s: %w", nextEndOfMonthDate, err)
+			}
 		}
 	}
 
 	return h.verifyOutboxEmpty(ctx)
+}
+
+func finworldStampDayTime(ctx context.Context, pool *pgxpool.Pool, docTime time.Time) error {
+	cutoff := docTime.Add(24 * time.Hour)
+	queries := []string{
+		`UPDATE orders SET created_at = $1, updated_at = $1 WHERE created_at > $2`,
+		`UPDATE invoices SET created_at = $1, finalized_at = CASE WHEN finalized_at IS NOT NULL THEN $1 ELSE NULL END, updated_at = $1 WHERE created_at > $2`,
+		`UPDATE customer_transactions SET occurred_at = $1, created_at = $1 WHERE created_at > $2`,
+		`UPDATE payments SET received_at = $1, created_at = $1, updated_at = $1 WHERE created_at > $2`,
+		`UPDATE payment_allocations SET created_at = $1 WHERE created_at > $2`,
+		`UPDATE payment_reapplications SET created_at = $1 WHERE created_at > $2`,
+		`UPDATE payment_nsf SET bounced_at = $1, created_at = $1 WHERE created_at > $2`,
+		`UPDATE pos_sale SET created_at = $1 WHERE created_at > $2`,
+		`UPDATE pos_returns SET created_at = $1 WHERE created_at > $2`,
+		`UPDATE till_sessions SET opened_at = $1, closed_at = CASE WHEN closed_at IS NOT NULL THEN $1 ELSE NULL END WHERE opened_at > $2`,
+		`UPDATE till_movements SET created_at = $1 WHERE created_at > $2`,
+		`UPDATE purchasing_pos SET created_at = $1, updated_at = $1 WHERE created_at > $2`,
+		`UPDATE purchasing_receipts SET received_at = $1, created_at = $1 WHERE created_at > $2`,
+		`UPDATE purchasing_bills SET posted_at = CASE WHEN posted_at IS NOT NULL THEN $1 ELSE NULL END, created_at = $1, updated_at = $1 WHERE created_at > $2`,
+		`UPDATE inventory_transactions SET created_at = $1 WHERE created_at > $2`,
+	}
+	for _, q := range queries {
+		if _, err := pool.Exec(ctx, q, docTime, cutoff); err != nil {
+			return fmt.Errorf("stamp day time (%s): %w", q, err)
+		}
+	}
+	return nil
 }
 
 func finworldExecuteSale(
@@ -1462,7 +1513,11 @@ func finworldExecuteReturn(
 		payload["till_session_id"] = tillSessByKey[ret.SessionKey]
 	}
 
-	_, callErr := h.callWithToken(h.managerToken, "return "+ret.ReturnKey, http.MethodPost, "/api/v1/pos/returns", payload)
+	if ret.TotalCents > 25000 {
+		_, callErr := h.callWithToken(h.managerToken, "return "+ret.ReturnKey, http.MethodPost, "/api/v1/pos/returns", payload)
+		return callErr
+	}
+	_, callErr := h.call("return "+ret.ReturnKey, http.MethodPost, "/api/v1/pos/returns", payload)
 	return callErr
 }
 

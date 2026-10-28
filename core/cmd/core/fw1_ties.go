@@ -301,7 +301,19 @@ func TieHSTMovementToDocuments(ctx context.Context, seams TieSeams, m TieMonth) 
 		m.MonthStartDate(), m.MonthEndDate()).Scan(&billITC); err != nil {
 		return TieResult{}, fmt.Errorf("the vendor bill ITC read: %w", err)
 	}
-	netDocHST := docSalesHST - billITC
+	var posReturnHST int64
+	monthStart := time.Date(m.Year, time.Month(m.Month), 1, 0, 0, 0, 0, m.MonthEnd.Location())
+	nextMonthStart := monthStart.AddDate(0, 1, 0)
+	if err := seams.Querier.QueryRow(ctx, `
+		SELECT COALESCE(SUM(tax_cents), 0)
+		  FROM pos_returns
+		 WHERE status = 'COMMITTED'
+		   AND created_at >= $1
+		   AND created_at < $2`,
+		monthStart, nextMonthStart).Scan(&posReturnHST); err != nil {
+		return TieResult{}, fmt.Errorf("the POS return HST read: %w", err)
+	}
+	netDocHST := docSalesHST - posReturnHST - billITC
 	variance := gl2200Move - netDocHST
 	detail := fmt.Sprintf("GL 2200 month movement %s ties to the month's documents HST %s (sales and credit memos HST %s less vendor bill ITC %s)",
 		fw1Dollars(gl2200Move), fw1Dollars(netDocHST), fw1Dollars(docSalesHST), fw1Dollars(billITC))
@@ -362,7 +374,7 @@ func TieBankReconciliationAtZero(ctx context.Context, seams TieSeams, m TieMonth
 	if err != nil {
 		return TieResult{}, err
 	}
-	outstandingCheques, err := TieOutstandingCheques(ctx, seams)
+	outstandingCheques, err := TieOutstandingCheques(ctx, seams, m)
 	if err != nil {
 		return TieResult{}, err
 	}
@@ -395,13 +407,16 @@ func TieDepositsInTransit(ctx context.Context, seams TieSeams, m TieMonth) (int6
 		SELECT COALESCE(SUM(tm.amount_cents), 0)
 		  FROM till_movements tm
 		 WHERE tm.movement_type = 'LODGEMENT'
+		   AND ($2::timestamptz IS NULL OR tm.created_at <= $2)
 		   AND NOT (tm.id::text = ANY($1))
 		   AND NOT EXISTS (
 		       SELECT 1 FROM bank_matches bm
+		         LEFT JOIN bank_statement_lines bsl ON bsl.id = bm.statement_line_id
 		        WHERE bm.target_type = 'LODGEMENT'
 		          AND bm.target_ref_id = tm.id
 		          AND bm.unmatched_at IS NULL
-		   )`, excludedIDs(m.ExcludeLodgementIDs)).Scan(&total)
+		          AND ($3::text = '' OR bsl.id IS NULL OR bsl.txn_date <= $3::date)
+		   )`, excludedIDs(m.ExcludeLodgementIDs), m.MonthEnd, m.MonthEndDate()).Scan(&total)
 	if err != nil {
 		return 0, fmt.Errorf("the deposits in transit read: %w", err)
 	}
@@ -410,8 +425,33 @@ func TieDepositsInTransit(ctx context.Context, seams TieSeams, m TieMonth) (int6
 
 // TieOutstandingCheques reads the credits the ledger holds on the bank
 // account that no bank match has explained: the outstanding cheques.
-func TieOutstandingCheques(ctx context.Context, seams TieSeams) (int64, error) {
+func TieOutstandingCheques(ctx context.Context, seams TieSeams, months ...TieMonth) (int64, error) {
 	var total int64
+	if len(months) > 0 && !months[0].MonthEnd.IsZero() {
+		m := months[0]
+		err := seams.Querier.QueryRow(ctx, `
+			SELECT COALESCE(SUM(l.credit_cents), 0)
+			  FROM gl_journal_lines l
+			  JOIN gl_journals j ON j.id = l.journal_id
+			  JOIN gl_accounts a ON a.id = l.account_id
+			 WHERE a.code = '1000'
+			   AND j.status = 'POSTED'
+			   AND j.posted_at <= $1
+			   AND ($2::text = '' OR (j.posted_at AT TIME ZONE 'America/Toronto')::date > COALESCE((SELECT cutover_date FROM bank_accounts WHERE id = $2::uuid), '0001-01-01'::date))
+			   AND COALESCE(l.credit_cents, 0) > 0
+			   AND COALESCE(j.idempotency_key, '') NOT LIKE 'payment.bounced:%'
+			   AND NOT EXISTS (
+			       SELECT 1 FROM bank_matches bm
+			         LEFT JOIN bank_statement_lines bsl ON bsl.id = bm.statement_line_id
+			        WHERE (bm.journal_id = j.id OR (bm.target_type = 'JOURNAL' AND bm.target_ref_id = j.id))
+			          AND bm.unmatched_at IS NULL
+			          AND (bsl.id IS NULL OR bsl.txn_date <= $3::date)
+			   )`, m.MonthEnd, m.BankAccountID, m.MonthEndDate()).Scan(&total)
+		if err != nil {
+			return 0, fmt.Errorf("the outstanding cheques read: %w", err)
+		}
+		return total, nil
+	}
 	err := seams.Querier.QueryRow(ctx, `
 		SELECT COALESCE(SUM(l.credit_cents), 0)
 		  FROM gl_journal_lines l
@@ -510,11 +550,25 @@ func TieStatementsToAging(ctx context.Context, seams TieSeams, m TieMonth) (TieR
 		// Independent net receivable from the customer's documents (invoices and credit memos)
 		// and receipts (including bounced cheque NSF fee records in payment_nsf net of live
 		// payments.metadata->'nsf_fee_allocations' settlements per FW1-06a).
+		isCurrent := !seams.now().After(m.MonthEnd)
 		var docsAndReceipts int64
 		if err := seams.Querier.QueryRow(ctx, `
 			SELECT COALESCE((
-			    SELECT SUM(balance_cents) FROM invoices
-			     WHERE customer_id = $1 AND status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
+			    SELECT SUM(CASE WHEN $3::bool THEN i.balance_cents
+			                    ELSE i.total_cents
+			                         + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
+			                                      WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
+			                                        AND t.txn_type <> i.doc_type AND t.created_at <= $2), 0)
+			                         - COALESCE((SELECT SUM(CASE WHEN p.reverses_payment_id IS NULL THEN a.amount_cents ELSE -a.amount_cents END)
+			                                      FROM payment_allocations a JOIN payments p ON p.id = a.payment_id
+			                                     WHERE a.invoice_id = i.id AND a.created_at <= $2), 0)
+			                         - COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra
+			                                      WHERE ra.invoice_id = i.id AND ra.created_at <= $2), 0)
+			               END)
+			      FROM invoices i
+			     WHERE i.customer_id = $1
+			       AND i.status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
+			       AND ($3::bool OR COALESCE(i.finalized_at, i.created_at) <= $2)
 			), 0) + COALESCE((
 			    SELECT SUM(
 			        pn.fee_cents - COALESCE((
@@ -524,12 +578,14 @@ func TieStatementsToAging(ctx context.Context, seams TieSeams, m TieMonth) (TieR
 			               AND p2.reversed_at IS NULL
 			               AND p2.reverses_payment_id IS NULL
 			               AND p2.status <> 'BOUNCED'
+			               AND ($3::bool OR p2.created_at <= $2)
 			               AND (p2.metadata->'nsf_fee_allocations'->>pn.id::text) IS NOT NULL
 			        ), 0)
 			    )
 			      FROM payment_nsf pn
 			     WHERE pn.customer_id = $1
-			), 0)`, c.id).Scan(&docsAndReceipts); err != nil {
+			       AND ($3::bool OR pn.created_at <= $2)
+			), 0)`, c.id, m.MonthEnd, isCurrent).Scan(&docsAndReceipts); err != nil {
 			return TieResult{}, fmt.Errorf("the independent documents and receipts read for %s: %w", c.acctNo, err)
 		}
 		lines, err := seams.Billing.StatementLines(ctx, c.id, m.MonthEnd, billing.AllBranches)
@@ -747,7 +803,7 @@ func tieSweptNet(ctx context.Context, seams TieSeams, year int) (int64, error) {
 		  JOIN gl_journal_lines l ON l.journal_id = j.id
 		  JOIN gl_accounts a ON a.id = l.account_id
 		  JOIN fiscal_periods fp ON fp.id = j.period_id
-		 WHERE j.status = 'POSTED' AND a.code = '3900' AND fp.year = $1`, year).Scan(&retained)
+		 WHERE j.status = 'POSTED' AND j.source = 'CLOSING' AND a.code = '3900' AND fp.year = $1`, year).Scan(&retained)
 	if err != nil {
 		return 0, fmt.Errorf("the closing journal read: %w", err)
 	}
