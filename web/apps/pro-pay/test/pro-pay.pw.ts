@@ -568,10 +568,10 @@ test.describe("phone", () => {
     await shot(page, "pay-statements-phone");
   });
 
-  test("a bounced or voided payment reads as returned, each invoice named once, never Applied to", async ({ page }) => {
+  test("a bounced or voided payment's line names each invoice once with no status word", async ({ page }) => {
     // The history (PR 668) carries the application row and the reversal beside it: the row names
-    // each invoice once, from the application rows, and the returned payment says so in the
-    // status chip's own words, never "Applied to".
+    // each invoice once, from the application rows. The chip carries the state, so the line
+    // carries the facts only, no status word, never "Applied to".
     let invoiceNos: string[] = [];
     await page.route("**/api/v1/tenant/payments", async (route) => {
       if (route.request().method() !== "GET") return route.continue();
@@ -624,17 +624,19 @@ test.describe("phone", () => {
     await expect(page.getByTestId("payment-row")).toHaveCount(4);
     // The standing payment is unchanged.
     await expect(page.getByTestId("payment-row").filter({ hasText: "PMT-9001" })).toContainText("Applied to INV-");
-    // The bounced cheque says Bounced in the chip's own words and names each invoice once.
+    // The bounced cheque's line names each invoice once, with no status word: the chip says Bounced.
     const bounced = page.getByTestId("payment-row").filter({ hasText: "PMT-9101" });
-    await expect(bounced).toContainText("Bounced ·");
+    await expect(bounced).toContainText("8:00 AM · INV-20403, INV-20402");
+    await expect(bounced).not.toContainText("Bounced ·");
     await expect(bounced).not.toContainText("Applied to");
     const bouncedText = await bounced.innerText();
     for (const no of [invoiceNos[0]!, invoiceNos[1]!]) {
       expect(bouncedText.split(no).length - 1, `${no} named once in ${bouncedText}`).toBe(1);
     }
-    // The voided receipt says Void and names its invoice once.
+    // The voided receipt's line names its invoice once, with no status word: the chip says Void.
     const voided = page.getByTestId("payment-row").filter({ hasText: "PMT-9102" });
-    await expect(voided).toContainText("Void ·");
+    await expect(voided).toContainText(`8:00 AM · ${invoiceNos[2]}`);
+    await expect(voided).not.toContainText("Void ·");
     await expect(voided).not.toContainText("Applied to");
     const voidedText = await voided.innerText();
     expect(voidedText.split(invoiceNos[2]!).length - 1, `${invoiceNos[2]} named once in ${voidedText}`).toBe(1);

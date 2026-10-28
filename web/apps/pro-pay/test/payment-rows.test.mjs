@@ -1,11 +1,12 @@
-// PR 668 fix round 2 (the money wave 2 read's P3-2): a returned payment's row on Statements.
-// The payment history now carries the application row and the reversal beside it, so the row
-// lists each invoice once, from the application rows (positive amounts), and a returned
-// payment (bounced or voided) reads as returned in the status chip's own words, never
-// "Applied to".
+// PR 668 fix round 3: the portal row drops the inline status word. The chip carries the
+// state and the line carries the facts, so a returned payment (bounced or voided) names
+// each invoice once, from the application rows (positive amounts), with no status word on
+// the line. A returned payment with no application row ends the line after the moment:
+// "no invoice yet" is the received row's empty list, the object of "Applied to", and the
+// returned line has no list and no verb to carry it.
 //
-// Red first: today the bounced row reads "Applied to INV-20401, INV-20402, INV-20401,
-// INV-20402".
+// Red first: today the bounced row reads "Cheque · Mar 3, 2026, 8:00 AM · Bounced ·
+// INV-20401, INV-20402".
 //
 // Run it with the app's own loader:
 //   node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/payment-rows.test.mjs
@@ -70,7 +71,7 @@ function pay(over) {
 
 const times = (text, word) => text.split(word).length - 1;
 
-test("a bounced payment's row says Bounced, names each invoice once from the application rows, never Applied to", () => {
+test("a bounced payment's line names each invoice once from the application rows, with no status word", () => {
   const bounced = pay({
     payment_no: "PMT-9101",
     status: "BOUNCED",
@@ -82,13 +83,14 @@ test("a bounced payment's row says Bounced, names each invoice once from the app
     ],
   });
   const text = markup(statementsScreen(stateWith([bounced])));
-  assert.ok(text.includes("Bounced · INV-20401, INV-20402"), text);
+  assert.ok(text.includes("8:00 AM · INV-20401, INV-20402"), text);
+  assert.ok(!text.includes("Bounced ·"), text);
   assert.ok(!text.includes("Applied to"), text);
   assert.equal(times(text, "INV-20401"), 1, text);
   assert.equal(times(text, "INV-20402"), 1, text);
 });
 
-test("a voided payment's row says Void, names the invoice once, never Applied to", () => {
+test("a voided payment's line names the invoice once, with no status word", () => {
   const voided = pay({
     payment_no: "PMT-9102",
     status: "VOID",
@@ -99,9 +101,19 @@ test("a voided payment's row says Void, names the invoice once, never Applied to
     ],
   });
   const text = markup(statementsScreen(stateWith([voided])));
-  assert.ok(text.includes("Void · INV-20403"), text);
+  assert.ok(text.includes("8:00 AM · INV-20403"), text);
+  assert.ok(!text.includes("Void ·"), text);
   assert.ok(!text.includes("Applied to"), text);
   assert.equal(times(text, "INV-20403"), 1, text);
+});
+
+test("a returned payment with no invoice ends the line after the moment", () => {
+  const returned = pay({ payment_no: "PMT-9103", status: "VOID", allocations: [] });
+  const text = markup(statementsScreen(stateWith([returned])));
+  assert.ok(text.includes("Cheque · Mar 3, 2026, 8:00 AM"), text);
+  assert.ok(!text.includes("8:00 AM ·"), text);
+  assert.ok(!text.includes("no invoice yet"), text);
+  assert.ok(!text.includes("Applied to"), text);
 });
 
 test("a normal received row is unchanged: Applied to, each invoice once", () => {
@@ -113,4 +125,10 @@ test("a normal received row is unchanged: Applied to, each invoice once", () => 
   });
   const text = markup(statementsScreen(stateWith([received])));
   assert.ok(text.includes("Applied to INV-20401, INV-20402"), text);
+});
+
+test("a received payment with no invoice keeps the existing no invoice yet words", () => {
+  const received = pay({ allocations: [] });
+  const text = markup(statementsScreen(stateWith([received])));
+  assert.ok(text.includes("Applied to no invoice yet"), text);
 });
