@@ -70,21 +70,56 @@ func newD510Fixture(t *testing.T) *d510Fixture {
 	}
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM ar_invoice_deliveries WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM ar_promises_to_pay WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM ar_invoice_disputes WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM credit_holds WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM payment_reapplications WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, f.customerID)
-		_, _ = pool.Exec(c, `UPDATE payments SET reversed_by_payment_id = NULL WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE payment_id IN (SELECT id FROM payments WHERE customer_id = $1::uuid)`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM customer_contacts WHERE customer_id = $1::uuid`, f.customerID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, f.customerID)
+		if _, err := pool.Exec(c, `DELETE FROM ar_invoice_deliveries WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the invoice deliveries: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM ar_promises_to_pay WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the promises to pay: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM ar_invoice_disputes WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the invoice disputes: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM credit_holds WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the credit holds: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM payment_reapplications WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the payment reapplications: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the outbox events: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the customer transactions: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the payment allocations: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `UPDATE payments SET reversed_by_payment_id = NULL WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: release the reversed payments: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM payment_allocations WHERE payment_id IN (SELECT id FROM payments WHERE customer_id = $1::uuid)`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the payments' allocations: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the payments: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the invoice lines: %v", f.tag, err)
+		}
+		// The credit application keys reference the invoices (0447), so they go before the
+		// invoices: the invoice delete is refused by that foreign key while any of them stands.
+		if _, err := pool.Exec(c, `DELETE FROM credit_application_keys WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the credit application keys: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the invoices: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM customer_contacts WHERE customer_id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the customer contacts: %v", f.tag, err)
+		}
+		if _, err := pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, f.customerID); err != nil {
+			t.Errorf("DIB-510 register %s: remove the customer: %v", f.tag, err)
+		}
 	})
 	return f
 }
@@ -400,9 +435,11 @@ func TestRegister_AccountPositionIsByteAbsentForAFrontlineCaller(t *testing.T) {
 	// both.
 	memoID := f.invoice(t, "CRED", "FINALIZED", -5, -15000, -15000, "CREDIT_MEMO")
 	applySvc := NewCreditApplyService(NewRepository(f.pool))
+	// The key's scope is the caller's org (FW1-12c) and the key table takes a real org (0448).
+	applyOrg := plantApplyOrg(t, f.pool, f.tag)
 	if _, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: f.customerID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: invID,
-		AmountCents: 5000, Reason: "byte absence leg", IdempotencyKey: f.tag + "-apply",
+		AmountCents: 5000, Reason: "byte absence leg", IdempotencyKey: f.tag + "-apply", OrgID: applyOrg,
 	}, true); err != nil {
 		t.Fatalf("apply memo to the gated invoice: %v", err)
 	}

@@ -45,7 +45,7 @@ func plantARWorld(t *testing.T, env *testsupport.Env) *arWorld {
 	inv := func(name, branch, customer, docType, status string, dueOffsetDays int, total, balance int64) {
 		var id string
 		if err := env.Admin.QueryRow(ctx, `INSERT INTO invoices (invoice_no, customer_id, branch_id, doc_type, status, issue_date, due_date, subtotal_cents, tax_cents, holdback_cents, total_cents, balance_cents)
-			VALUES ($1, $2::uuid, $3::uuid, $4, $5, CURRENT_DATE - 120, CURRENT_DATE + $6::int, $7, 0, $8, $7, $9) RETURNING id::text`,
+			VALUES ($1, $2::uuid, $3::uuid, $4, $5, (now() AT TIME ZONE 'America/Toronto')::date - 120, (now() AT TIME ZONE 'America/Toronto')::date + $6::int, $7, 0, $8, $7, $9) RETURNING id::text`,
 			fmt.Sprintf("INV-S7A-%s-%s", tag, name), customer, branch, docType, status, dueOffsetDays, total, total/10, balance).Scan(&id); err != nil {
 			t.Fatalf("plant invoice %s: %v", name, err)
 		}

@@ -29,6 +29,7 @@ func TestIntegration_FW1_12b_ASpentKeyAgainstAnotherInvoiceIsTheSpentKeyConflict
 	applySvc := NewCreditApplyService(repo)
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	custID := seedCustomer(t, pool, n+"-CUST")
 
@@ -63,6 +64,7 @@ func TestIntegration_FW1_12b_ASpentKeyAgainstAnotherInvoiceIsTheSpentKeyConflict
 	key := n + "-key-1"
 	first, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: invA,
+		OrgID:       applyOrg,
 		AmountCents: 5000, Reason: "the first invoice", IdempotencyKey: key,
 	}, true)
 	if err != nil {
@@ -75,6 +77,7 @@ func TestIntegration_FW1_12b_ASpentKeyAgainstAnotherInvoiceIsTheSpentKeyConflict
 	// The same key, another invoice: the key is spent.
 	second, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: invB,
+		OrgID:       applyOrg,
 		AmountCents: 5000, Reason: "the second invoice", IdempotencyKey: key,
 	}, true)
 	if err == nil {
