@@ -165,6 +165,16 @@ func fw1StaffCtx(ctx context.Context) context.Context {
 	})
 }
 
+// fw1ControllerCtx is the walk's Financial Controller. FW1-09c (FROM-PRINCIPAL 222) narrowed the year
+// end close to that role, so the leg that seals a year runs as the Controller, the way the service
+// demands; the walk's other legs keep the plain staff context above (they read).
+func fw1ControllerCtx(ctx context.Context) context.Context {
+	return staffctx.ContextWithStaff(ctx, staffctx.StaffContext{
+		UserID: "d7000000-0000-4000-9000-000000000006", RoleCode: "FINANCIAL_CONTROLLER",
+		Scope: staffctx.ScopeGlobal, Status: staffctx.StatusActive,
+	})
+}
+
 // fw1TestWriter routes the wired services' logs into the test log, so a step's 500 names its
 // cause without printing outside the test run.
 type fw1TestWriter struct{ t *testing.T }
@@ -1409,7 +1419,8 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 		return out
 	}
 	before := income()
-	if _, err := w.money.glSvc.CloseYear(fw1StaffCtx(context.Background()), w.year, "FW1 walk year end close"); err != nil {
+	// The year end close is the Financial Controller's (FW1-09c), so the leg runs as the Controller.
+	if _, err := w.money.glSvc.CloseYear(fw1ControllerCtx(context.Background()), w.year, "FW1 walk year end close"); err != nil {
 		t.Fatalf("the year end close: %v", err)
 	}
 	after := income()
