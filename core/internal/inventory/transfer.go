@@ -195,7 +195,7 @@ func (s *Service) ShipTransferWithETA(ctx context.Context, transferID, actorID s
 		// The source's weighted average travels with the stock: moving pallets between yards must
 		// neither invent nor destroy value. found=false → cost 0, which is the same quiet skip the
 		// POS return restock takes for an uncosted product.
-		avg, _, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, hdr.FromBranchID)
+		avg, hadCost, err := s.db().GetBranchCost(ctx, tx, ln.ProductID, hdr.FromBranchID)
 		if err != nil {
 			return Transfer{}, err
 		}
@@ -215,17 +215,38 @@ func (s *Service) ShipTransferWithETA(ctx context.Context, transferID, actorID s
 		if err != nil {
 			return Transfer{}, err
 		}
+		// W2-5 round 5 (S5's P2-1): the outbound move stamps the source row's exact change in
+		// round(on_hand x avg), not the rounded movement value_cents carries; the difference
+		// rides the WAC integer-cent rounding journal in this same transaction, the PO
+		// receipt's rule. The ship does not move the source's weighted average.
+		avgEff := int64(0)
+		if hadCost {
+			avgEff = avg
+		}
+		change, err := s.exactRowChange(ctx, tx, ln.ProductID, hdr.FromBranchID, hdr.FromBranchID, -ln.QtyBase, avgEff, avgEff)
+		if err != nil {
+			return Transfer{}, err
+		}
 		moveID, err := s.db().InsertMove(ctx, tx, moveParams{
 			ProductID: ln.ProductID, BranchID: hdr.FromBranchID, FromLocation: hdr.FromBranchID,
 			UOM: ln.UOM, MoveType: MoveTransfer, QtyBase: ln.QtyBase, UnitCostCents: avg,
 			ValueCents: value, SourceType: transferSource, SourceRefID: hdr.ID,
-			Reason: "transfer out " + hdr.TransferNo,
+			Reason:   "transfer out " + hdr.TransferNo,
+			Metadata: map[string]any{"wac_value_delta_cents": -change},
 		})
 		if err != nil {
 			return Transfer{}, err
 		}
 		if err := s.db().UpsertBalanceDelta(ctx, tx, ln.ProductID, hdr.FromBranchID, hdr.FromBranchID, -ln.QtyBase); err != nil {
 			return Transfer{}, err
+		}
+		if rounding := change + value; rounding != 0 {
+			if err := s.postMoveRoundingTx(ctx, tx, moveRoundingPost{
+				Event: EventTransferShipped, MoveID: moveID, BranchID: hdr.FromBranchID, RoundingCents: rounding,
+				InvEvent: EventTransferShipped, Memo: "WAC integer-cent rounding on transfer ship " + hdr.TransferNo,
+			}); err != nil {
+				return Transfer{}, err
+			}
 		}
 		if err := s.repo.MarkLineShipped(ctx, tx, ln.ID, ln.QtyBase, avg, moveID); err != nil {
 			return Transfer{}, err

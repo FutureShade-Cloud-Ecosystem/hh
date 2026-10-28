@@ -95,6 +95,13 @@ type poLine struct {
 
 // moveParams is one stock_moves row the service composes (CAD; qty_base>0 with direction via from/to, except
 // a VALUE move, which carries no quantity at all and names no location).
+// BalanceRow is one stock_balances row the branch holds for a product: the
+// location the row keys on and the on-hand quantity it carries.
+type BalanceRow struct {
+	LocationID string
+	OnHandBase float64
+}
+
 type moveParams struct {
 	ProductID     string
 	BranchID      string
@@ -150,6 +157,7 @@ type store interface {
 	InsertMove(ctx context.Context, tx pgx.Tx, m moveParams) (string, error)
 	HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error)
 	OnHandQtyBranch(ctx context.Context, tx pgx.Tx, productID, branchID string) (float64, error)
+	BalanceRows(ctx context.Context, tx pgx.Tx, productID, branchID string) ([]BalanceRow, error)
 	UpsertBalanceDelta(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, delta float64) error
 	LockBranchCost(ctx context.Context, tx pgx.Tx, productID, branchID string) error
 	LockBalances(ctx context.Context, tx pgx.Tx, branchID string, productIDs []string) error

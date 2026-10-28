@@ -163,6 +163,31 @@ func (r *Repository) OnHandQtyBranch(ctx context.Context, tx pgx.Tx, productID, 
 	return qty, err
 }
 
+// BalanceRows reads every stock_balances row the branch holds for a product
+// inside the caller's tx, ordered by location so a recomputation over the row
+// set is deterministic. The as-of read's current value is the SUM of these
+// rows' round(on_hand x avg), so an exact-change stamp must start from the
+// row set, not the branch sum (W2-5 round 5, S5's P2-1).
+func (r *Repository) BalanceRows(ctx context.Context, tx pgx.Tx, productID, branchID string) ([]BalanceRow, error) {
+	rows, err := r.q(tx).Query(ctx, `
+		SELECT location_id::text, on_hand_base FROM stock_balances
+		WHERE product_id = $1 AND branch_id = $2
+		ORDER BY location_id`, productID, branchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BalanceRow
+	for rows.Next() {
+		var b BalanceRow
+		if err := rows.Scan(&b.LocationID, &b.OnHandBase); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repository) UpsertBalanceDelta(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, delta float64) error {
 	_, err := r.q(tx).Exec(ctx, `
 		INSERT INTO stock_balances (product_id, location_id, branch_id, on_hand_base, updated_at)

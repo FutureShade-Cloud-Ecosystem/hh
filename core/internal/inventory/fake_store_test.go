@@ -92,6 +92,9 @@ func (f *fakeStore) HasShipMovesForOrderTx(_ context.Context, _ pgx.Tx, orderID 
 func (f *fakeStore) OnHandQtyBranch(_ context.Context, _ pgx.Tx, productID, branchID string) (float64, error) {
 	return f.onhand[key(productID, branchID)], nil
 }
+func (f *fakeStore) BalanceRows(_ context.Context, _ pgx.Tx, productID, branchID string) ([]BalanceRow, error) {
+	return []BalanceRow{{LocationID: branchID, OnHandBase: f.onhand[key(productID, branchID)]}}, nil
+}
 func (f *fakeStore) UpsertBalanceDelta(_ context.Context, _ pgx.Tx, productID, _, branchID string, delta float64) error {
 	f.onhand[key(productID, branchID)] += delta
 	return nil
