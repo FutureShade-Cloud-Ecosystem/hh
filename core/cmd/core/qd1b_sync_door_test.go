@@ -224,6 +224,12 @@ func TestQD1B_SyncDoorRefusesAFloorRequestsNoteRewrite(t *testing.T) {
 // holds, so a legacy margin card with no line binding stays refused to
 // the branch Sales manager from the device too, and the refusal decides
 // nothing.
+//
+// The refusal's words are the seam's now (UX-108): an unbound margin card
+// is leadership-bound, so the branch Sales manager may not read it, and a
+// door that answers a card the caller may not read must not say what is
+// wrong with it. The engine's own row-not-found is the answer, the same
+// answer PR 640's gate gives a caller who cannot see the live entity.
 func TestQD1B_SyncDoorRefusesTheSalesManagerAnUnboundMarginCard(t *testing.T) {
 	q := newQD1BFixture(t)
 	clerk := qd1bUserID(t, q.pool, testkit.SubInsideSales)
@@ -236,7 +242,7 @@ func TestQD1B_SyncDoorRefusesTheSalesManagerAnUnboundMarginCard(t *testing.T) {
 		Payload:  map[string]any{"id": legacy, "status": "APPROVED"},
 	})
 	qd1bRejected(t, "the Sales manager decides an unbound margin card from the device", res,
-		"no line binding")
+		"row not found")
 
 	var status string
 	if err := q.pool.QueryRow(context.Background(),

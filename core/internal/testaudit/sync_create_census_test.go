@@ -7,8 +7,11 @@ package testaudit
 // row back to decide between "exists" and "not found". Read through the store's PUBLIC Load, that read
 // goes through the shared pool while the transaction still holds its own connection: a second
 // acquisition before the first is released. Pool-size such creates in flight starve the process.
-// Fifteen stores carried it and each was fixed by an unexported loader over a querier that the
+// Seventeen stores carried it and each was fixed by an unexported loader over a querier that the
 // conflict arm calls with the transaction (`s.load(ctx, tx, ...)`); each fix has its own pool-size leg.
+// The fifteen of the sweep, then the quotes scope and the approvals scope (UX-108 round 4): their
+// conflict arms read the taken row back through a loader over a querier, the loader does not name
+// `.pool`, and the arm calls it with the transaction it already holds.
 //
 // WHAT THIS CENSUS PINS. Every type in the module that has both a Create and a Load method (and
 // every type whose own Create calls a Load it inherits) is classified here, by an AST walk of the production sources (no database), into exactly one of:
@@ -63,7 +66,8 @@ func (c censusClass) String() string {
 
 // Store names are "<package dir under internal>.<Type>".
 
-// syncCensusFixed: Create reaches the loader through the transaction (the fifteen stores of the sweep).
+// syncCensusFixed: Create reaches the loader through the transaction (the fifteen stores of the
+// sweep and the two the UX-108 round 4 added).
 var syncCensusFixed = []string{
 	"attachments.SyncStore",
 	"customerquote.SyncStore",
@@ -72,11 +76,16 @@ var syncCensusFixed = []string{
 	"dispatch.RunsSyncStore",
 	"dispatch.StopsSyncStore",
 	"dispatch.WillCallSyncStore",
+	// The quotes scope and the approvals scope (UX-108 round 4). Both conflict arms read the
+	// taken row back through a loader over a querier, so the read rides the connection the
+	// create already holds and never asks the shared pool for a second one.
+	"identity/staffcontext.ApprovalsSyncStore",
 	"invcount.SyncStore",
 	"planflow.ItemsSyncStore",
 	"planflow.OrdersSyncStore",
 	"portal.TeamSyncStore",
 	"purchasing.SyncStore",
+	"quote.SyncStore",
 	"tasks.ShortageSyncStore",
 	"tasks.SyncStore",
 	"tasks.WeightSyncStore",
@@ -99,10 +108,12 @@ var syncCensusNoTxHeld = map[string]string{
 
 // syncCensusFenced: Create still calls the public Load under its own transaction; the owner has not
 // fixed it yet. The census fails when one of these is fixed without moving its entry.
-var syncCensusFenced = map[string]string{
-	"quote.SyncStore":                          "owner: the Quote Desk lane (quote/syncscope.go)",
-	"identity/staffcontext.ApprovalsSyncStore": "owner: identity approvals (staffcontext/syncscope_approvals.go)",
-}
+//
+// The list is empty since UX-108 round 4: the two stores it held (the quotes scope and the
+// approvals scope) now reach their loader through the transaction, so no store walks into this
+// class. A store that reaches the fixed shape must be moved to syncCensusFixed, and the census
+// fails when a fenced store is fixed without moving its entry, so this list can only shrink.
+var syncCensusFenced = map[string]string{}
 
 // syncCensusNoLoadCall: stores with both methods whose Create never reads the row back through its
 // own Load (so the arm cannot starve this way); reviewed at source.
@@ -434,7 +445,7 @@ func TestSyncCreateConflictArmCensus(t *testing.T) {
 			t.Errorf("%s: a fenced entry needs its owner", n)
 		}
 	}
-	if len(syncCensusFixed) != 15 {
-		t.Errorf("the sweep fixed fifteen stores, the census lists %d", len(syncCensusFixed))
+	if len(syncCensusFixed) != 17 {
+		t.Errorf("the sweep fixed fifteen stores and the UX-108 round 4 added two, the census lists %d", len(syncCensusFixed))
 	}
 }

@@ -393,32 +393,53 @@ func (s *ApprovalsSyncStore) readerFor(ctx context.Context, f sync.ScopeFilter) 
 }
 
 // FindApplied resolves one idempotency key to the row it applied,
-// under the org fence.
+// under the org fence and the caller's reader, the same rule the pull
+// speaks: a live card the caller may not read is not found, the absent
+// card's answer, so the engine never reads an unreadable row as visible
+// (UX-108). A withdrawn card stays found for every caller in the org: the
+// pull sends its tombstone to all of them.
 func (s *ApprovalsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
 	where, args, ok := approvalScopePredicate(f)
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
-	r, err := scanApprovalSync(s.pool.QueryRow(ctx, approvalSyncQuery+`
+	reader := s.readerFor(ctx, f)
+	// The candidates of the key, in the pull's own order, and the first one
+	// the pull would send. A key can name more than one card (the same key
+	// on a live card and on the card it became), so the winner is chosen
+	// the way the pull chooses, not by an unordered limit.
+	rows, err := s.pool.Query(ctx, approvalSyncQuery+`
 		WHERE `+where+` AND a.idempotency_key = $2::uuid
-		LIMIT 1`, append(args, key)...))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return sync.RowState{}, false, nil
-	}
+		ORDER BY a.seq ASC`, append(args, key)...)
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("identity: approvals sync find applied: %w", err)
 	}
-	rs, err := approvalStateOf(r)
-	if err == nil && !r.deleted && !s.readerFor(ctx, f)(r.req) {
-		// The engine never reads Data on a replay, but the projection of a
-		// card the caller may not read leaves nothing through this door.
-		rs.Data = nil
+	defer rows.Close()
+	for rows.Next() {
+		r, err := scanApprovalSync(rows)
+		if err != nil {
+			return sync.RowState{}, false, fmt.Errorf("identity: approvals sync find applied scan: %w", err)
+		}
+		if !r.deleted && !reader(r.req) {
+			continue
+		}
+		rs, err := approvalStateOf(r)
+		if err != nil {
+			return sync.RowState{}, false, err
+		}
+		return rs, true, nil
 	}
-	return rs, true, err
+	if err := rows.Err(); err != nil {
+		return sync.RowState{}, false, fmt.Errorf("identity: approvals sync find applied: %w", err)
+	}
+	return sync.RowState{}, false, nil
 }
 
-// Load reads one request by id under the org fence; a row outside the
-// caller's org is the same as an absent one (existence never leaks).
+// Load reads one request by id under the org fence and the caller's reader,
+// the same rule the pull speaks; a row outside the caller's org, or a live
+// card the caller may not read, is the same as an absent one (existence
+// never leaks). A withdrawn card stays found for every caller in the org:
+// the pull sends its tombstone to all of them.
 func (s *ApprovalsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	where, args, ok := approvalScopePredicate(f)
 	if !ok || !approvalLooksLikeUUID(id) {
@@ -432,15 +453,65 @@ func (s *ApprovalsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id st
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("identity: approvals sync load: %w", err)
 	}
-	rs, err := approvalStateOf(r)
-	if err == nil && !r.deleted && !s.readerFor(ctx, f)(r.req) {
-		// The row exists and the engine still needs its id and seq (the
-		// stale check, the write's own refusal words), but its projection
-		// travels in a conflict envelope: a card the caller may not read
-		// carries no data out of this door (P2-3, round 3).
-		rs.Data = nil
+	if !r.deleted && !s.readerFor(ctx, f)(r.req) {
+		// The card exists and the caller may not read it: the pull would not
+		// send it either, so this door answers not found (UX-108). A masked
+		// found would have told the engine the card was visible.
+		return sync.RowState{}, false, nil
 	}
-	return rs, true, err
+	rs, err := approvalStateOf(r)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	return rs, true, nil
+}
+
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// whether a request row the scope's keys can name still exists, for every
+// caller of the org at once. The org predicate alone (the org off the row's
+// branch), tombstone aware (a withdrawn request is gone for everyone), never
+// the reader the caller's Load speaks: the gate may hide a key only for a
+// live row a caller cannot see, and a gone row keeps the bound answer
+// (PR 640's rule).
+func (s *ApprovalsSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || !approvalLooksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM permission_approval_requests a
+		 WHERE a.id = $1::uuid AND a.deleted_at IS NULL
+		   AND EXISTS (SELECT 1 FROM locations l WHERE l.id = a.branch_id AND l.org_id = $2::uuid))`,
+		id, f.OrgID).Scan(&present); err != nil {
+		return false, fmt.Errorf("identity: approvals sync bound entity exists: %w", err)
+	}
+	return present, nil
+}
+
+// load reads one request under the org fence alone, the collision
+// probe's read over a querier: the row is the caller's own org's fact,
+// whatever branch it sits on, so a client-chosen id taken inside the org
+// answers ErrRowExists (the pick door's rule, PR 648's collision arm). The
+// reader does not ride here: the probe answers whether the id is taken, not
+// what it holds, and a withdrawn request still holds its id.
+//
+// The querier is the caller's: the conflict arm passes the transaction it
+// already holds, so the read rides that connection instead of asking the
+// shared pool for a second one (connection starvation by second acquisition,
+// when pool-size creates collide). The public Load is a different question
+// (it carries the caller's reader), so it keeps its own read.
+func (s *ApprovalsSyncStore) load(ctx context.Context, q approvalRowQuerier, f sync.ScopeFilter, id string) (bool, error) {
+	where, args, ok := approvalScopePredicate(f)
+	if !ok || !approvalLooksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	if err := q.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM permission_approval_requests a WHERE a.id = $2::uuid AND `+where+`)`,
+		append(args, id)...).Scan(&present); err != nil {
+		return false, fmt.Errorf("identity: approvals sync load org held: %w", err)
+	}
+	return present, nil
 }
 
 // approvalCreateFields is the field set a pushed create may declare:
@@ -577,13 +648,16 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The client-chosen id is taken: inside the caller's org the
 		// collision is the caller's own fact, outside it the answer is
-		// not-found so existence never leaks across the fence.
-		// Nothing was written, so the transaction ends first: the
-		// read-back goes through the pool, and asking it for a second
-		// connection while this one is held starves the pool once
-		// pool-size creates collide.
-		_ = tx.Rollback(ctx)
-		if _, own, _ := s.Load(ctx, f, id); own {
+		// not-found so existence never leaks across the fence. The
+		// read-back is org-held, as this comment describes: the probe
+		// answers whether the id is taken, not what the row holds, so a
+		// card the caller may not read still answers the collision
+		// inside its own org (UX-108 round 2, the quotes scope's rule).
+		// The read-back rides the transaction this create already holds,
+		// so the arm never asks the shared pool for a second connection
+		// while it holds one (connection starvation by second
+		// acquisition, when pool-size creates collide).
+		if own, _ := s.load(ctx, tx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound
