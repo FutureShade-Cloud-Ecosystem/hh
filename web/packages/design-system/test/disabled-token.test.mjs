@@ -94,7 +94,7 @@ function webStyleFiles() {
       if (statSync(abs).isDirectory()) {
         if (SKIP_DIRS.has(entry)) continue;
         walk(abs, rel);
-      } else if (STYLE_EXT.test(entry)) {
+      } else if (STYLE_EXT.test(entry) && rel !== 'packages/design-system/test/disabled-token.test.mjs') {
         out.push(rel);
       }
     }
