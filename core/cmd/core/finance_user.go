@@ -212,7 +212,7 @@ type financeUserProvisioned struct {
 // says nothing, and a person the identity seam refuses is refused here the
 // same way on either path. The caller owns the transaction, so the apply
 // can provision every entry of the list in one transaction of its own.
-func financeUserProvision(ctx context.Context, tx pgx.Tx, svc *audit.Service, slug, email, platformUserID, displayName, role string) (financeUserProvisioned, error) {
+func financeUserProvision(ctx context.Context, tx pgx.Tx, svc *audit.Service, slug, email, platformUserID, displayName, role string, position int) (financeUserProvisioned, error) {
 	orgID, _, anchorWritten, err := identity.EnsureOrgAnchor(ctx, tx, slug, financeBoxOrgName)
 	if err != nil {
 		return financeUserProvisioned{}, fmt.Errorf("finance-user: the org anchor: %w", err)
@@ -221,7 +221,7 @@ func financeUserProvision(ctx context.Context, tx pgx.Tx, svc *audit.Service, sl
 	// platform link, as a migration seeds it, is linked to the listed id.
 	userID, userWritten, adopted, err := identity.AdoptOrEnsureStaffUser(ctx, tx, orgID, platformUserID, email, displayName)
 	if err != nil {
-		return financeUserProvisioned{}, financeUserStaffRefusal(email, err)
+		return financeUserProvisioned{}, financeUserStaffRefusal(position, err)
 	}
 	grantInserted, err := identity.EnsureStaffGrant(ctx, tx, orgID, platformUserID, role, nil)
 	if err != nil {
@@ -259,16 +259,19 @@ func financeUserProvision(ctx context.Context, tx pgx.Tx, svc *audit.Service, sl
 }
 
 // financeUserStaffRefusal is the refusal the provision gives when the
-// identity seam refuses the person: the entry is named by its email alone,
-// never by the platform id, the display name or the role it carries.
-func financeUserStaffRefusal(email string, err error) error {
+// identity seam refuses the person: the entry is named by its position
+// alone, never by the email, the platform id, the display name or the role
+// it carries, because the refusal is the container log and the log is kept
+// and shown.
+func financeUserStaffRefusal(position int, err error) error {
+	name := fmt.Sprintf("the entry at position %d", position)
 	switch {
 	case errors.Is(err, identity.ErrStaffEmailTaken):
-		return fmt.Errorf("finance-user: the entry for %s holds an email that belongs to another platform user", email)
+		return fmt.Errorf("finance-user: %s holds an email that belongs to another platform user", name)
 	case errors.Is(err, identity.ErrStaffEmailBound):
-		return fmt.Errorf("finance-user: the entry for %s names a platform id that already holds another email", email)
+		return fmt.Errorf("finance-user: %s names a platform id that already holds another email", name)
 	case errors.Is(err, identity.ErrStaffAdoptHeld):
-		return fmt.Errorf("finance-user: the entry for %s names a platform user that already holds another staff row", email)
+		return fmt.Errorf("finance-user: %s names a platform user that already holds another staff row", name)
 	default:
 		return fmt.Errorf("finance-user: the staff user: %w", err)
 	}
@@ -290,7 +293,7 @@ func financeUserProvisionOne(ctx context.Context, pool *pgxpool.Pool, stdout io.
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	svc := audit.NewService(audit.NewRepository(pool), slog.Default())
-	p, err := financeUserProvision(ctx, tx, svc, slug, email, platformUserID, displayName, role)
+	p, err := financeUserProvision(ctx, tx, svc, slug, email, platformUserID, displayName, role, 1)
 	if err != nil {
 		return err
 	}
@@ -402,8 +405,8 @@ type financeUserEntry struct {
 
 // parseFinanceUserEntries reads the box's finance user list: the entries are
 // separated by ';', each one 'email|platform_user_id|display name|role'. A
-// bad entry refuses with one line naming the entry by its email alone, never
-// the platform id, the display name or the role it carries.
+// bad entry refuses with one line naming the entry by its position alone,
+// never the email, the platform id, the display name or the role it carries.
 func parseFinanceUserEntries(raw string, allowEmpty bool) ([]financeUserEntry, error) {
 	if strings.TrimSpace(raw) == "" {
 		if allowEmpty {
@@ -420,7 +423,7 @@ func parseFinanceUserEntries(raw string, allowEmpty bool) ([]financeUserEntry, e
 		}
 		fields := strings.Split(part, "|")
 		if len(fields) != 4 {
-			return nil, fmt.Errorf("finance-user: the entry for %s does not have four fields (email|platform_user_id|display name|role)", financeUserEntryName(fields, i+1))
+			return nil, fmt.Errorf("finance-user: %s does not have four fields (email|platform_user_id|display name|role)", financeUserEntryName(i+1))
 		}
 		e := financeUserEntry{
 			email:          strings.TrimSpace(fields[0]),
@@ -429,16 +432,16 @@ func parseFinanceUserEntries(raw string, allowEmpty bool) ([]financeUserEntry, e
 			role:           strings.TrimSpace(fields[3]),
 		}
 		if e.email == "" || e.platformUserID == "" || e.displayName == "" || e.role == "" {
-			return nil, fmt.Errorf("finance-user: the entry for %s has an empty field (email|platform_user_id|display name|role)", financeUserEntryName(fields, i+1))
+			return nil, fmt.Errorf("finance-user: %s has an empty field (email|platform_user_id|display name|role)", financeUserEntryName(i+1))
 		}
 		if !slices.Contains(financeUserRoles, e.role) {
-			return nil, fmt.Errorf("finance-user: the entry for %s has a role off the finance roles list: %s", e.email, strings.Join(financeUserRoles, ", "))
+			return nil, fmt.Errorf("finance-user: %s has a role off the finance roles list: %s", financeUserEntryName(i+1), strings.Join(financeUserRoles, ", "))
 		}
 		// One person, one entry: a platform id listed twice would let the
 		// last entry win in silence, so the list refuses before any write.
 		for _, prior := range out {
 			if prior.platformUserID == e.platformUserID {
-				return nil, fmt.Errorf("finance-user: the entry for %s repeats a platform user another entry already names", e.email)
+				return nil, fmt.Errorf("finance-user: %s repeats a platform user another entry already names", financeUserEntryName(i+1))
 			}
 		}
 		out = append(out, e)
@@ -449,15 +452,11 @@ func parseFinanceUserEntries(raw string, allowEmpty bool) ([]financeUserEntry, e
 	return out, nil
 }
 
-// financeUserEntryName is how a bad entry is named: by the email it carries,
-// and by its position only when it carries no email to name it by. It never
-// carries the platform id, the display name or the role.
-func financeUserEntryName(fields []string, position int) string {
-	if len(fields) > 0 {
-		if email := strings.TrimSpace(fields[0]); email != "" {
-			return email
-		}
-	}
+// financeUserEntryName is how a bad entry is named in a refusal: by its
+// position alone. It never carries the email, the platform id, the display
+// name or the role, because the refusal is the container log and the log is
+// kept and shown.
+func financeUserEntryName(position int) string {
 	return fmt.Sprintf("the entry at position %d", position)
 }
 
@@ -488,9 +487,9 @@ func financeUserApplyFromEnv(ctx context.Context, pool *pgxpool.Pool, stdout io.
 	if len(listed) == 0 && len(entries) > 0 {
 		return fmt.Errorf("finance-user: %s is not set: a person the list names must be on the sign in allow list, and the list is empty", envSigninEmailAddresses)
 	}
-	for _, e := range entries {
+	for i, e := range entries {
 		if !listed[strings.ToLower(e.email)] {
-			return fmt.Errorf("finance-user: the entry for %s is not on the sign in allow list (%s)", e.email, envSigninEmailAddresses)
+			return fmt.Errorf("finance-user: %s is not on the sign in allow list (%s)", financeUserEntryName(i+1), envSigninEmailAddresses)
 		}
 	}
 
@@ -511,8 +510,8 @@ func financeUserApplyFromEnv(ctx context.Context, pool *pgxpool.Pool, stdout io.
 	}
 	var applied []appliedPerson
 	var orgID string
-	for _, e := range entries {
-		p, err := financeUserProvision(ctx, tx, svc, slug, e.email, e.platformUserID, e.displayName, e.role)
+	for i, e := range entries {
+		p, err := financeUserProvision(ctx, tx, svc, slug, e.email, e.platformUserID, e.displayName, e.role, i+1)
 		if err != nil {
 			return err
 		}
