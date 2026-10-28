@@ -166,6 +166,65 @@ func TestIntegration_FinanceBoxStateAnswersTheFourStates(t *testing.T) {
 	})
 }
 
+// TestIntegration_FinanceBoxLargeObjectsMakeTheDatabaseForeign: a large
+// object lives outside every user schema, so the relation count cannot see
+// it, and a database whose only content is one large object read as empty.
+// An empty database is first boot territory: the box would have marked it,
+// migrated it and seeded it, and somebody else's payload would have ended
+// up inside the finance box's own world. A large object is somebody else's
+// data, so the database reads foreign, the guard refuses it, and the object
+// survives the refusal untouched.
+func TestIntegration_FinanceBoxLargeObjectsMakeTheDatabaseForeign(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a database whose only content is one large object is refused", func(t *testing.T) {
+		pool := freshEmptyDB(t, "finboxlargeobject")
+		if _, err := pool.Exec(ctx, `SELECT lo_from_bytea(0::oid, $1::bytea)`, []byte("another world's payload")); err != nil {
+			t.Fatalf("planting the large object: %v", err)
+		}
+		state, err := financeBoxDatabaseState(ctx, pool)
+		if err != nil {
+			t.Fatalf("reading the state: %v", err)
+		}
+		if state != financeBoxStateForeign {
+			t.Fatalf("a database whose only content is one large object must read as %s, got %s", financeBoxStateForeign, state)
+		}
+		if err := financeBoxDatabaseGuard(ctx, pool); err == nil {
+			t.Fatal("the boot guard must refuse a database that holds a large object")
+		}
+		var data []byte
+		if err := pool.QueryRow(ctx, `SELECT lo_get(oid) FROM pg_largeobject_metadata LIMIT 1`).Scan(&data); err != nil {
+			t.Fatalf("reading the large object back: %v", err)
+		}
+		if string(data) != "another world's payload" {
+			t.Fatalf("a refused database must be untouched: the large object holds %q", string(data))
+		}
+	})
+
+	t.Run("a truly empty database still reads empty", func(t *testing.T) {
+		pool := freshEmptyDB(t, "finboxlargeobjectempty")
+		empty, err := financeBoxDatabaseEmpty(ctx, pool)
+		if err != nil {
+			t.Fatalf("reading the emptiness: %v", err)
+		}
+		if !empty {
+			t.Fatal("a fresh database must still read empty")
+		}
+	})
+
+	t.Run("an interrupted first boot still reads unseeded", func(t *testing.T) {
+		pool, _ := freshMigratedBoxDB(t, "finboxlargeobjectunseeded")
+		writeBootstrapMarkForTest(t, ctx, pool)
+		state, err := financeBoxDatabaseState(ctx, pool)
+		if err != nil {
+			t.Fatalf("reading the state: %v", err)
+		}
+		if state != financeBoxStateUnseeded {
+			t.Fatalf("a marked interrupted first boot must read as %s, got %s", financeBoxStateUnseeded, state)
+		}
+	})
+}
+
 // TestIntegration_FinanceBoxUnseededRecoveryNeedsTheBootstrapMark: recovery
 // is the bootstrap ownership marker's answer alone. A migrated database with
 // no box kind, no seed and no marker was not planted by this box, and it is
