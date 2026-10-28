@@ -35,6 +35,13 @@ var (
 // all writes stay within the msg_* namespace.
 type Repository struct {
 	pool *pgxpool.Pool // nil in scaffold/tests
+
+	// afterPostBegin is a TEST SEAM: it runs inside a post's own transaction, right after the
+	// transaction opens and BEFORE the channel's lock is taken. A test sets it to hold the post
+	// open across a read, which is the race the channel's lock settles (UX-110): a post whose
+	// write lands after the read's cursor must light the badge, and a post whose write lands
+	// before it must not. It is nil in production, where it costs one branch.
+	afterPostBegin func(ctx context.Context)
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
@@ -569,6 +576,11 @@ func (r *Repository) InsertMessage(ctx context.Context, channelID, userID, body,
 		return Message{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// The test seam, before anything else in this transaction (UX-110). A test holds the post
+	// open here, across a read, and sees the race the channel's lock settles.
+	if r.afterPostBegin != nil {
+		r.afterPostBegin(ctx)
+	}
 	var rootArg any
 	if threadRootID != "" {
 		// The root must exist, be in THIS channel, and itself be a top-level message (one-level
