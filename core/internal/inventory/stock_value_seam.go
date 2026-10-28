@@ -8,6 +8,7 @@ package inventory
 
 import (
 	"context"
+	"time"
 )
 
 // StockValueCents values everything on hand at a branch (an empty branch id is the COMPANY, the way
@@ -18,4 +19,16 @@ import (
 // holds no transaction, and the year end's pre flight reads stock on its own connection by design.
 func (s *Service) StockValueCents(ctx context.Context, branchID string) (int64, error) {
 	return s.db().StockValueCents(ctx, nil, branchID)
+}
+
+// StockValueAsOfCents values everything on hand as it stood at the given instant (an
+// instant the dealer's zone computes, the first instant of the next month for the close
+// pre flight): the current weighted average value minus every ledger movement that
+// occurred after the instant, each at the exact figure its GL posting booked (see the
+// repository read). It answers integer cents, half away from nowhere new: the movement
+// arithmetic is exact integer cents and the current value carries the module's own
+// per-row rounding, so the as-of figure ties 1200 at the instant the way the live figure
+// ties it now (W2-5).
+func (s *Service) StockValueAsOfCents(ctx context.Context, asOf time.Time, branchID string) (int64, error) {
+	return s.db().StockValueAsOfCents(ctx, nil, asOf, branchID)
 }

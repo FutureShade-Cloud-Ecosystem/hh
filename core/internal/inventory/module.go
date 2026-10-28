@@ -24,6 +24,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"log/slog"
 	"math"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
@@ -151,6 +152,14 @@ type GLJournal struct {
 	Memo           string
 	BranchID       string
 	Lines          []GLLine
+	// DocumentDate is the instant the journal is DATED AT, the one instant the movement it books
+	// happened. It is the date the GL files the journal under and the instant an as-of read cuts
+	// it at, so the stock ledger and 1200 are cut at the same moment (W2-5 fix round 8, S5's P2-2).
+	//
+	// The ZERO value means "no date named": the GL falls back to its own clock, which is what
+	// every caller did before this field existed, so a caller that never names a date keeps
+	// today's meaning rather than silently booking into the zero year.
+	DocumentDate time.Time
 }
 
 // GLLine is one leg of a GLJournal.
