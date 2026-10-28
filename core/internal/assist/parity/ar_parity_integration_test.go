@@ -536,6 +536,21 @@ func TestParity_EveryAllocationFollowsTheTrailRoutes(t *testing.T) {
 				return err
 			}
 			x.amount, x.at = cents(amt), cents(at)
+			// The view carries the allocation HISTORY: a payment whose application was taken back
+			// (0450) carries the application and the reversal beside it, and the two net. The figure
+			// compared here is the net per payment and invoice.
+			if prev, seen := got[p]; seen {
+				var net int64
+				if prev.amount != nil {
+					net += *prev.amount
+				}
+				if x.amount != nil {
+					net += *x.amount
+				}
+				prev.amount = &net
+				got[p] = prev
+				return nil
+			}
 			got[p] = x
 			return nil
 		})
@@ -552,6 +567,9 @@ func TestParity_EveryAllocationFollowsTheTrailRoutes(t *testing.T) {
 			continue
 		}
 		octx := identity.ContextWithStaff(ctx, c.sc)
+		// The two trail routes read the same rows from the two sides: the payment's history and the
+		// invoice's payments. Each pair's figure is the NET, because a payment whose application was
+		// taken back (0450) carries the application and the reversal beside it.
 		want := map[pair]int64{}
 		for _, id := range pays {
 			h, err := r.till.PaymentHistory(octx, id)
@@ -560,18 +578,25 @@ func TestParity_EveryAllocationFollowsTheTrailRoutes(t *testing.T) {
 			}
 			for _, a := range h.Allocations {
 				if !a.ReversedByNSF {
-					want[pair{id, a.InvoiceID}] = a.AmountCents
+					want[pair{id, a.InvoiceID}] += a.AmountCents
 				}
 			}
 		}
+		wantInvoice := map[pair]int64{}
 		for _, id := range invs {
 			ip, err := r.till.InvoicePayments(octx, id)
 			if err != nil {
 				continue
 			}
 			for _, it := range ip.Items {
-				want[pair{it.PaymentID, id}] = it.AmountCents
+				wantInvoice[pair{it.PaymentID, id}] += it.AmountCents
 			}
+		}
+		for p, amt := range wantInvoice {
+			if seen, ok := want[p]; ok && seen != amt {
+				t.Errorf("%s: the trail routes disagree on allocation %v: the payment history says %d and the invoice view says %d", c.name, p, seen, amt)
+			}
+			want[p] = amt
 		}
 		for p, amt := range want {
 			g, ok := got[p]

@@ -115,7 +115,8 @@ func (s *Service) WithCardCharger(c CardCharger) *Service { s.charger = c; retur
 func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }
 
 // WithAuditTrail injects the READ side of the audit seam (satisfied by *audit.Service). PaymentHistory
-// uses it to reconstruct a BOUNCED payment's application history after NSF hard-deleted the allocations.
+// uses it for the LEGACY case: a payment bounced before the allocation rows gained a kind (0450) has
+// no live row, and the trail is all that still holds its application history.
 func (s *Service) WithAuditTrail(r AuditTrailReader) *Service { s.auditTrail = r; return s }
 
 // WithClock injects a deterministic clock (tests).

@@ -133,7 +133,7 @@ func (b *builder) depositSales() {
 			"metadata", demoMetadata,
 			"created_at", at, "updated_at", at,
 		))
-		b.addDeposit(insert("payment_allocations", "(payment_id, invoice_id)",
+		b.addDeposit(insert("payment_allocations", "(payment_id, invoice_id, kind)",
 			"payment_id", demoID(payKey),
 			"invoice_id", demoID(invKey),
 			"amount_cents", s.Deposit,

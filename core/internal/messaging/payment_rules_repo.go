@@ -30,8 +30,9 @@ import (
 //     notice names ONE order, so the query takes the LARGEST allocation (ties broken by the oldest
 //     invoice), the order the money is mostly about, decided deterministically rather than by
 //     whichever row the planner returned first.
-//  3. OnStatement, the payment settled at least one invoice at all, i.e. it landed on the account
-//     rather than being a bare counter tender. Context for the sentence; no rule turns on it.
+//  3. OnStatement, the payment settled at least one invoice that still stands, i.e. it landed on the
+//     account rather than being a bare counter tender. An application a bounce or a void took back
+//     does not count (0450). Context for the sentence; no rule turns on it.
 //
 // A payment id that names no row returns Found=false and a nil error: an event about a payment this
 // database cannot see is not a failure of the messaging module, and treating it as one would put the
@@ -43,11 +44,15 @@ func (r *Repository) PaymentNotifyFacts(ctx context.Context, paymentID string) (
 	const q = `
 WITH pick AS (
   -- The order this payment is mostly about: the biggest allocation to an order-backed invoice.
+  -- The sum is the NET: a bounce or a void writes a reversal row beside the application (0450), so
+  -- a payment whose application was taken back is against no order at all, exactly as it named none
+  -- before the kind (the rows were deleted then).
   SELECT i.order_id, sum(pa.amount_cents) AS alloc, min(i.created_at) AS first_at
   FROM payment_allocations pa
   JOIN invoices i ON i.id = pa.invoice_id
   WHERE pa.payment_id = $1::uuid AND i.order_id IS NOT NULL
   GROUP BY i.order_id
+  HAVING sum(pa.amount_cents) <> 0
   ORDER BY alloc DESC, first_at ASC
   LIMIT 1
 )
@@ -67,7 +72,11 @@ SELECT p.branch_id::text,
        COALESCE(o.order_no::text, ''),
        COALESCE(o.branch_id::text, ''),
        COALESCE(NULLIF(btrim(split_part(ol.name, chr(8212), 2)), ''), ol.name, ''),
-       EXISTS (SELECT 1 FROM payment_allocations a WHERE a.payment_id = p.id) AS on_statement
+       EXISTS (SELECT 1 FROM payment_allocations a
+                WHERE a.payment_id = p.id AND a.kind = 'APPLICATION'
+                  AND NOT EXISTS (SELECT 1 FROM payment_allocations r
+                                   WHERE r.payment_id = a.payment_id AND r.invoice_id = a.invoice_id
+                                     AND r.kind = 'REVERSAL')) AS on_statement
 FROM payments p
 LEFT JOIN locations pl ON pl.id = p.branch_id
 LEFT JOIN customers c  ON c.id = p.customer_id

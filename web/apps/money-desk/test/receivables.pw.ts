@@ -876,9 +876,40 @@ test("the bounced payment the demo world starts with: what happened, and a remin
   await expect(work).toContainText("PAY-0001");
   await expect(work).toContainText("INV-1002");
   await expect(work).toContainText("fee $35.00");
+  // The history carries the application row and the reversal beside it (PR 668); the card
+  // names the invoice once, never "Reversed across INV-1002 and INV-1002".
+  await expect(work).toContainText("Reversed across INV-1002; fee $35.00 charged.");
+  await expect(work).not.toContainText("INV-1002 and INV-1002");
   await work.getByRole("radio", { name: /Send a reminder/ }).click();
   await work.getByRole("button", { name: "Send reminder" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Reminder sent for 2 invoices");
+});
+
+test("a payment bounced across two invoices names each invoice once on the work card", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await page.getByRole("button", { name: "Pick all open" }).click();
+  const amount = page.locator("[data-field='receive-amount']");
+  await amount.fill("$5,000.00");
+  await amount.blur();
+  await expect(page.locator("[data-allocation]")).toContainText("INV-1001 · closes");
+  await expect(page.locator("[data-allocation]")).toContainText("INV-1002 · part, $785.00 stays open");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 4479");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 applied: $4,825.00 on INV-1001, balance now $0.00; $175.00 on INV-1002, balance now $785.00");
+  await page.locator("[data-invoice-row]", { hasText: "INV-1002" }).getByRole("button", { name: "INV-1002" }).click();
+  await page.locator("[data-payment-row]").getByRole("button", { name: "Mark bounced" }).click();
+  await page.locator("[data-field='bounce-reason']").fill("Cheque returned NSF");
+  await page.getByRole("button", { name: "Confirm bounced" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("marked bounced");
+  await page.getByRole("button", { name: "‹ Receivables" }).click();
+  await expect(page.locator("[data-bounced-row]")).toHaveCount(2);
+  await page.locator("[data-bounced-row]", { hasText: "PAY-0101" }).getByRole("button").click();
+  const work = page.locator("[data-bounced-work]");
+  // Each invoice once, from the application rows, in their order: never a doubled name.
+  await expect(work).toContainText("Reversed across INV-1001 and INV-1002; fee $35.00 charged.");
+  await expect(work).not.toContainText("INV-1001 and INV-1001");
+  await expect(work).not.toContainText("INV-1002 and INV-1002");
 });
 
 test("Remind on an account and the paper path item in Needs you chase what is overdue", async ({ page, request }) => {
