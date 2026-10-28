@@ -39,7 +39,10 @@ type store interface {
 	EditMessage(ctx context.Context, channelID, messageID, body string) (Message, error)
 	DeleteMessage(ctx context.Context, channelID, messageID string) (Message, error)
 	EditWindowMinutes(ctx context.Context) (int, error)
-	MarkRead(ctx context.Context, channelID, userID string, at time.Time) error
+	// MarkRead advances the caller's read cursor to the DATABASE's clock, in the repository's own
+	// statement: the cursor is compared against message rows the database stamps, so the app's clock
+	// never stamps it (UX-109).
+	MarkRead(ctx context.Context, channelID, userID string) error
 	UnreadSummary(ctx context.Context, userID string) (UnreadCounts, error)
 	InsertEventMessage(ctx context.Context, channelID, eventKey, body string, ref EventRef, requiresAck bool) (Message, bool, error)
 	ChannelIDBySlug(ctx context.Context, slug string) (string, error)
@@ -485,11 +488,14 @@ func trimMessageBody(body string) string {
 
 // MarkRead advances the caller's read cursor for a channel to now (drives unread counts). Requires
 // membership.
+//
+// The cursor is the DATABASE's clock, written by the repository in its own statement: it is compared
+// against message rows the database stamps, so the app's clock never stamps it (UX-109).
 func (s *Service) MarkRead(ctx context.Context, c Caller, channelID string) error {
 	if err := s.assertMember(ctx, c, channelID); err != nil {
 		return err
 	}
-	return s.repo.MarkRead(ctx, channelID, c.UserID, s.nowFn())
+	return s.repo.MarkRead(ctx, channelID, c.UserID)
 }
 
 // - Feature 1: Screen-Takeover forced acknowledgement (0071) -
@@ -1271,5 +1277,7 @@ func (s *Service) ShouldDeliverPushOnService(ctx context.Context, userID, channe
 	if err != nil {
 		qh = DefaultQuietHours(userID)
 	}
-	return ShouldDeliverPush(time.Now(), pref, tier, isForcedAck, eventCategory, classPref, qh, dmSenderID)
+	// The quiet-hours window is the USER's own wall clock (a window of local times of day), not a
+	// database stamp, so this is the app's clock to read: the push goes out now, from here.
+	return ShouldDeliverPush(s.nowFn(), pref, tier, isForcedAck, eventCategory, classPref, qh, dmSenderID)
 }

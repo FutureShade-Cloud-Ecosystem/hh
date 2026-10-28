@@ -213,7 +213,7 @@ func (f *fakeStore) InsertMessage(_ context.Context, channelID, userID, body, th
 	f.inserted = append(f.inserted, m)
 	return m, nil
 }
-func (f *fakeStore) MarkRead(_ context.Context, channelID, userID string, _ time.Time) error {
+func (f *fakeStore) MarkRead(_ context.Context, channelID, userID string) error {
 	f.markCalls = append(f.markCalls, channelID+"|"+userID)
 	return nil
 }

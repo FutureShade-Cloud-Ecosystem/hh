@@ -611,15 +611,24 @@ func (r *Repository) InsertMessage(ctx context.Context, channelID, userID, body,
 	return m, nil
 }
 
-// MarkRead advances the caller's read cursor for a channel to `at` (typically now), which zeroes the
-// channel's unread count via the msg_unread_summary view. It never moves the cursor backwards.
-func (r *Repository) MarkRead(ctx context.Context, channelID, userID string, at time.Time) error {
+// MarkRead advances the caller's read cursor for a channel to the DATABASE's clock, which zeroes the
+// channel's unread count via the msg_unread_summary view.
+//
+// The cursor is the database's own now(), in the same statement that writes it, because it is compared
+// against message rows the DATABASE stamps (msg_messages.created_at). A cursor taken from the app
+// server's clock puts a second clock in that comparison: when the app's clock runs ahead of the
+// database's, a message posted in the gap carries a created_at BEFORE the cursor, reads as already
+// read, and the badge never lights for it (UX-109).
+//
+// It never moves the cursor backwards: GREATEST keeps the later of the two stamps, so a cursor is
+// never pulled back to an earlier point.
+func (r *Repository) MarkRead(ctx context.Context, channelID, userID string) error {
 	if r.pool == nil {
 		return errNoDB
 	}
 	ct, err := r.pool.Exec(ctx, `
-		UPDATE msg_members SET last_read_at = GREATEST(last_read_at, $3)
-		WHERE channel_id = $1 AND user_id = $2`, channelID, userID, at)
+		UPDATE msg_members SET last_read_at = GREATEST(last_read_at, now())
+		WHERE channel_id = $1 AND user_id = $2`, channelID, userID)
 	if err != nil {
 		return fmt.Errorf("mark read: %w", err)
 	}
