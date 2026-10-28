@@ -221,9 +221,8 @@ type Service struct {
 	branches  BranchDirectory
 	poSender  POSender
 
-	warrantyCredit   WarrantyCreditReader
-	landedPayables   LandedCostPayableReader
-	supplierPayments SupplierPaymentReader
+	warrantyCredit WarrantyCreditReader
+	landedPayables LandedCostPayableReader
 
 	// now is the injected clock. The document stamps a printed-at time, and a document that read
 	// the wall clock directly could not be rendered identically twice in a test.

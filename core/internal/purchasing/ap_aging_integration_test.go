@@ -227,9 +227,10 @@ func TestIntegration_W29A_Sub1_APAgingRule(t *testing.T) {
 	// Record a part supplier payment of 4000 cents on billCur before asOf, leaving 6000 cents open in CURRENT.
 	payTime := asOf.Add(-2 * time.Hour)
 	if _, err := rig.svc.PayBill(rig.ctx, billCur.ID, PayBillRequest{
-		AmountCents: 4000,
-		PaidAt:      payTime,
-		Note:        "part supplier payment before asOf",
+		AmountCents:    4000,
+		PaidAt:         payTime,
+		Note:           "part supplier payment before asOf",
+		IdempotencyKey: "w29a-sub1-part-" + billCur.ID,
 	}); err != nil {
 		t.Fatalf("PayBill: %v", err)
 	}
@@ -344,9 +345,10 @@ func TestIntegration_W29A_Sub2_APAgingTiesToGL2100(t *testing.T) {
 	time.Sleep(15 * time.Millisecond)
 	tPayPart := time.Now().UTC()
 	if _, err := h.svc.PayBill(h.ctx, billA.ID, PayBillRequest{
-		AmountCents: 20000,
-		PaidAt:      tPayPart,
-		Note:        "sub2 part payment",
+		AmountCents:    20000,
+		PaidAt:         tPayPart,
+		Note:           "sub2 part payment",
+		IdempotencyKey: "w29a-sub2-part-" + billA.ID,
 	}); err != nil {
 		t.Fatalf("part PayBill: %v", err)
 	}
@@ -358,9 +360,10 @@ func TestIntegration_W29A_Sub2_APAgingTiesToGL2100(t *testing.T) {
 	time.Sleep(15 * time.Millisecond)
 	tPayFull := time.Now().UTC()
 	if _, err := h.svc.PayBill(h.ctx, billA.ID, PayBillRequest{
-		AmountCents: 30000,
-		PaidAt:      tPayFull,
-		Note:        "sub2 full payment",
+		AmountCents:    30000,
+		PaidAt:         tPayFull,
+		Note:           "sub2 full payment",
+		IdempotencyKey: "w29a-sub2-full-" + billA.ID,
 	}); err != nil {
 		t.Fatalf("full PayBill: %v", err)
 	}
@@ -582,18 +585,20 @@ func TestIntegration_W29A_Sub4_PrincipalReds_OpenLandedCostAndAsOfPayments(t *te
 
 	paidBeforeAt := dayAt(-33, 14, 0, 0, 0)
 	if _, err := rig.svc.PayBill(rig.ctx, billPaidBefore.ID, PayBillRequest{
-		AmountCents: 35000,
-		PaidAt:      paidBeforeAt,
-		Note:        "paid before as_of cutoff",
+		AmountCents:    35000,
+		PaidAt:         paidBeforeAt,
+		Note:           "paid before as_of cutoff",
+		IdempotencyKey: "w29a-sub4-before-" + billPaidBefore.ID,
 	}); err != nil {
 		t.Fatalf("PayBill(billPaidBefore): %v", err)
 	}
 
 	paidAfterAt := dayAt(-25, 14, 0, 0, 0)
 	if _, err := rig.svc.PayBill(rig.ctx, billPaidAfter.ID, PayBillRequest{
-		AmountCents: 60000,
-		PaidAt:      paidAfterAt,
-		Note:        "paid after as_of cutoff",
+		AmountCents:    60000,
+		PaidAt:         paidAfterAt,
+		Note:           "paid after as_of cutoff",
+		IdempotencyKey: "w29a-sub4-after-" + billPaidAfter.ID,
 	}); err != nil {
 		t.Fatalf("PayBill(billPaidAfter): %v", err)
 	}

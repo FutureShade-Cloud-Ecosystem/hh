@@ -57,7 +57,6 @@ func TestIntegration_W29A_APAging_CompositionRootTieAndRoute(t *testing.T) {
 		WithVendors(w4cVendorDirectory{pool: pool}).
 		WithLandedCoster(w4cLandedCoster{svc: landedSvc}).
 		WithLandedCostPayables(w4cLandedCoster{svc: landedSvc}).
-		WithSupplierPayments(w4cSupplierPaymentReader{pool: pool}).
 		WithGLPoster(w4cGLPoster{svc: glSvc}).
 		WithRuleResolver(glRuleAdapter{svc: glSvc}).
 		WithBranches(item5BranchDirectory{pool: pool}).
@@ -111,13 +110,9 @@ func TestIntegration_W29A_APAging_CompositionRootTieAndRoute(t *testing.T) {
 		t.Fatalf("create PO: %v", err)
 	}
 
-	var stockDocID, lcID, billID, extPayKey string
+	var stockDocID, lcID, billID string
 	t.Cleanup(func() {
 		bg := context.Background()
-		if extPayKey != "" {
-			_, _ = pool.Exec(bg, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE idempotency_key = $1)`, extPayKey)
-			_, _ = pool.Exec(bg, `DELETE FROM gl_journals WHERE idempotency_key = $1`, extPayKey)
-		}
 		if lcID != "" {
 			_, _ = pool.Exec(bg, `DELETE FROM landed_cost_allocations WHERE landed_cost_id = $1`, lcID)
 			_, _ = pool.Exec(bg, `UPDATE purchasing_receipts SET landed_cost_id = NULL WHERE landed_cost_id = $1`, lcID)
@@ -171,29 +166,11 @@ func TestIntegration_W29A_APAging_CompositionRootTieAndRoute(t *testing.T) {
 		t.Fatalf("create bill: %v", err)
 	}
 	billID = bill.ID
-	posted, err := purchasingSvc.PostBill(sCtx, bill.ID, purchasing.PostBillRequest{AcceptVariance: true, Note: "w29a cmd"})
-	if err != nil {
+	if _, err := purchasingSvc.PostBill(sCtx, bill.ID, purchasing.PostBillRequest{AcceptVariance: true, Note: "w29a cmd"}); err != nil {
 		t.Fatalf("post bill: %v", err)
 	}
 
-	// Post an external supplier payment journal (12500 cents debit to 2100, matching the month-walk pattern)
-	// and an open landed cost (8500 cents freight) through the composition-root adapters.
-	extPayKey = "w29a:ext:vpay:" + posted.ID
-	if _, err := glSvc.PostExternal(sCtx, gl.ExternalJournal{
-		Source:         "PAYMENT",
-		SourceRefID:    posted.ID,
-		IdempotencyKey: extPayKey,
-		Memo:           "External supplier cheque " + posted.BillNo,
-		BranchID:       branchTRT,
-		DocumentDate:   time.Now().UTC(),
-		Lines: []gl.ExternalLine{
-			{AccountCode: "2100", DebitCents: 12500, Memo: "AP settlement"},
-			{AccountCode: "1000", CreditCents: 12500, Memo: "Cheque written"},
-		},
-	}); err != nil {
-		t.Fatalf("post external payment: %v", err)
-	}
-
+	// Attach an open landed cost (8500 cents freight) through the composition-root adapter.
 	lcID, err = (w4cLandedCoster{svc: landedSvc}).CreateAndApply(sCtx, purchasing.LandedCostDraft{
 		POID:         stockDocID,
 		PORef:        po.PONo,
@@ -208,7 +185,7 @@ func TestIntegration_W29A_APAging_CompositionRootTieAndRoute(t *testing.T) {
 	}
 
 	// Verify GET /api/v1/purchasing/ap-aging ties to GL 2100:
-	// Bill 40000 - external payment 12500 + open landed cost 8500 = 36000 cents.
+	// Bill 40000 + open landed cost 8500 = 48500 cents.
 	sg := testkit.NewStaffGuards(t)
 	sg.SetAuthority(erpidentity.StaffAuthority{
 		RoleID: "CONTROLLER",
@@ -238,7 +215,7 @@ func TestIntegration_W29A_APAging_CompositionRootTieAndRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AccountBalanceAsOf(2100): %v", err)
 	}
-	if page.TotalCents != -glBal || page.TotalCents != 36000 {
-		t.Fatalf("W29A composition tie: page.TotalCents=%d -glBal=%d, want 36000", page.TotalCents, -glBal)
+	if page.TotalCents != -glBal || page.TotalCents != 48500 {
+		t.Fatalf("W29A composition tie: page.TotalCents=%d -glBal=%d, want 48500", page.TotalCents, -glBal)
 	}
 }

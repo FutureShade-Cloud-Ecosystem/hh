@@ -2,6 +2,7 @@ package purchasing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -26,6 +27,13 @@ const (
 	glSourcePayment = "PAYMENT"
 	glAccountCash   = "1000"
 	glAccountAPCode = "2100"
+
+	// glPaymentKeyPrefix is the GL journal key namespace of PayBill: the caller's
+	// idempotency key rides the journal (purchasing.bill.payment:<key>), because the
+	// instalment table carries no key column and no migration may be added without
+	// the lead's word. A re-press is judged by looking the instalment up through
+	// that journal.
+	glPaymentKeyPrefix = "purchasing.bill.payment:"
 )
 
 // LandedCostPayable is the by-value projection of an open landed-cost payable
@@ -52,40 +60,18 @@ type LandedCostPayableReader interface {
 	OpenPayablesAsOf(ctx context.Context, asOf time.Time, branchIDs []string, global bool) ([]LandedCostPayable, error)
 }
 
-// SupplierPayment is an external supplier payment journal posted to GL 2100.
-type SupplierPayment struct {
-	JournalID      string
-	SourceRefID    string
-	IdempotencyKey string
-	BranchID       string
-	Memo           string
-	AmountCents    int64
-	PostedAt       time.Time
-}
-
-// SupplierPaymentReader reads external supplier payment journals on GL 2100
-// that were posted outside purchasing's own bill-instalment payment path.
-type SupplierPaymentReader interface {
-	ExternalSupplierPaymentsAsOf(ctx context.Context, asOf time.Time, branchIDs []string, global bool) ([]SupplierPayment, error)
-}
-
 // WithLandedCostPayables binds the landed-cost payable reader seam.
 func (s *Service) WithLandedCostPayables(r LandedCostPayableReader) *Service {
 	s.landedPayables = r
 	return s
 }
 
-// WithSupplierPayments binds the external supplier payment reader seam.
-func (s *Service) WithSupplierPayments(r SupplierPaymentReader) *Service {
-	s.supplierPayments = r
-	return s
-}
-
 // PayBillRequest records a part or full supplier payment against a posted bill.
 type PayBillRequest struct {
-	AmountCents int64     `json:"amount_cents"`
-	PaidAt      time.Time `json:"paid_at"`
-	Note        string    `json:"note"`
+	AmountCents    int64     `json:"amount_cents"`
+	PaidAt         time.Time `json:"paid_at"`
+	Note           string    `json:"note"`
+	IdempotencyKey string    `json:"idempotency_key"`
 }
 
 // APAgingItem is one open AP obligation (either an open vendor bill or an open
@@ -177,6 +163,10 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 	if err != nil {
 		return BillDetail{}, err
 	}
+	key := strings.TrimSpace(in.IdempotencyKey)
+	if key == "" {
+		return BillDetail{}, badReq("purchasing: idempotency_key is required on a bill payment (one key per press)")
+	}
 	if in.AmountCents <= 0 {
 		return BillDetail{}, badReq("purchasing: payment amount_cents must be positive")
 	}
@@ -206,6 +196,21 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 	if !caller.CanAccessBranch(bill.BranchID) {
 		return BillDetail{}, errNotFound
 	}
+
+	// The replay judgement runs before any money moves: a re-press under the first
+	// press's key returns the first payment and writes nothing. The key lives on the
+	// journal, so a key spent on another bill is a conflict, not a replay.
+	journalRef, err := s.repo.PaymentJournalSourceRefTx(ctx, tx, glPaymentKeyPrefix+key)
+	if err != nil {
+		return BillDetail{}, err
+	}
+	if journalRef != "" {
+		if journalRef != bill.ID {
+			return BillDetail{}, conflict("purchasing: idempotency key already used for another bill's payment")
+		}
+		return s.GetBill(ctx, billID)
+	}
+
 	if bill.Status != BillPosted {
 		return BillDetail{}, conflict("purchasing: bill %s is %s; only POSTED bills can be paid", bill.BillNo, bill.Status)
 	}
@@ -223,8 +228,7 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 	if dueDate == "" {
 		dueDate = bill.BillDate
 	}
-	instID, err := s.repo.RecordBillPaymentTx(ctx, tx, bill.ID, dueDate, in.AmountCents, paidAt, strings.TrimSpace(in.Note))
-	if err != nil {
+	if _, err := s.repo.RecordBillPaymentTx(ctx, tx, bill.ID, dueDate, in.AmountCents, paidAt, strings.TrimSpace(in.Note)); err != nil {
 		return BillDetail{}, err
 	}
 
@@ -238,7 +242,7 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 		_, err = s.gl.PostJournalTx(ctx, tx, GLJournal{
 			Source:         glSourcePayment,
 			SourceRefID:    bill.ID,
-			IdempotencyKey: "purchasing.bill.payment:" + instID,
+			IdempotencyKey: glPaymentKeyPrefix + key,
 			Memo:           "Supplier payment " + bill.BillNo,
 			BranchID:       bill.BranchID,
 			DocumentDate:   paidAt,
@@ -273,6 +277,27 @@ func (r *Repository) PaidBillCentsTx(ctx context.Context, tx pgx.Tx, billID stri
 		return 0, fmt.Errorf("purchasing: sum paid instalments: %w", err)
 	}
 	return sum, nil
+}
+
+// PaymentJournalSourceRefTx returns the source_ref_id of the journal carrying
+// key within tx, empty when no journal carries it. PayBill's replay judgement
+// reads it: the payment key lives on the GL journal, not on the instalment row.
+func (r *Repository) PaymentJournalSourceRefTx(ctx context.Context, tx pgx.Tx, key string) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var ref string
+	err := r.q(tx).QueryRow(ctx,
+		`SELECT COALESCE(source_ref_id::text, '') FROM gl_journals WHERE idempotency_key = $1`,
+		key,
+	).Scan(&ref)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("purchasing: look up payment journal by key: %w", err)
+	}
+	return ref, nil
 }
 
 // RecordBillPaymentTx inserts a PAID instalment row for a supplier payment against billID.
@@ -327,14 +352,6 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 	candidates, err := s.repo.OpenBillsAsOf(ctx, effectiveAsOf, zone.Name(), reach)
 	if err != nil {
 		return APAgingPage{}, err
-	}
-
-	if s.supplierPayments != nil && len(candidates) > 0 {
-		extPayments, err := s.supplierPayments.ExternalSupplierPaymentsAsOf(ctx, effectiveAsOf, reach.BranchIDs, reach.Global)
-		if err != nil {
-			return APAgingPage{}, err
-		}
-		applyExternalSupplierPayments(candidates, extPayments)
 	}
 
 	vendorIndex := make(map[string]int)
@@ -623,66 +640,4 @@ func addBucketCents(row *APAgingRow, page *APAgingPage, bucket string, cents int
 	}
 	row.TotalCents += cents
 	page.TotalCents += cents
-}
-
-func applyExternalSupplierPayments(candidates []apBillCandidate, payments []SupplierPayment) {
-	for _, p := range payments {
-		rem := p.AmountCents
-		if rem <= 0 {
-			continue
-		}
-		// Pass 1: exact match by source_ref_id, finworld:vpay:<bill_no>, or bill_no in memo.
-		for i := range candidates {
-			if rem <= 0 {
-				break
-			}
-			c := &candidates[i]
-			open := c.TotalCents - c.PaidCents
-			if open <= 0 {
-				continue
-			}
-			matched := (p.SourceRefID != "" && p.SourceRefID == c.BillID) ||
-				(p.IdempotencyKey != "" && p.IdempotencyKey == "finworld:vpay:"+c.BillNo) ||
-				(c.BillNo != "" && strings.Contains(p.Memo, c.BillNo))
-			if !matched {
-				continue
-			}
-			apply := rem
-			if apply > open {
-				apply = open
-			}
-			c.PaidCents += apply
-			rem -= apply
-		}
-		if rem <= 0 {
-			continue
-		}
-		// Pass 2: FIFO across oldest open bills in the same branch (or any branch if payment has no branch).
-		bestOrder := make([]int, 0, len(candidates))
-		for i := range candidates {
-			if p.BranchID != "" && candidates[i].BranchID != p.BranchID {
-				continue
-			}
-			if candidates[i].TotalCents-candidates[i].PaidCents <= 0 {
-				continue
-			}
-			bestOrder = append(bestOrder, i)
-		}
-		for _, idx := range bestOrder {
-			if rem <= 0 {
-				break
-			}
-			c := &candidates[idx]
-			open := c.TotalCents - c.PaidCents
-			if open <= 0 {
-				continue
-			}
-			apply := rem
-			if apply > open {
-				apply = open
-			}
-			c.PaidCents += apply
-			rem -= apply
-		}
-	}
 }
