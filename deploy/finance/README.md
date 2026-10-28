@@ -55,7 +55,8 @@ through Caddy (it pings the database, 503 when the database is down).
 6. The database is classified, by the core itself (`core finance-box-state`,
    the one definition of the shape that the boot guard reads too, so the two
    can never answer "empty" differently). An EMPTY database (no migration
-   bookkeeping and no table at all): `core migrate`, then `core finance-seed`
+   bookkeeping, no table in any user schema, no large object at all and no
+   user schema of its own): `core migrate`, then `core finance-seed`
    (applies the Dibbits seed, records `box_kind=finance` in `system_settings`
    through the settings module, and leaves the seed's users with no usable
    password). An UNSEEDED database (the box's own bookkeeping is there, the
@@ -65,7 +66,9 @@ through Caddy (it pings the database, 503 when the database is down).
    boot heals at the next boot. The finance box's own world: `core
    finance-box-check` (refuses a database the box did not seed, before anything
    writes), then `core migrate`, forward only. Anything else is refused by the
-   box kind check. Every redeploy keeps the data; nothing on the boot path
+   box kind check: a database that holds a table the box never migrated, or a
+   large object somebody else left in it, is somebody else's world and the box
+   never claims it. Every redeploy keeps the data; nothing on the boot path
    drops, truncates or reseeds.
    The wait for the database comes before this step, and the database URL
    never sits on a command line: `psql` reads the connection from a libpq
@@ -77,6 +80,35 @@ through Caddy (it pings the database, 503 when the database is down).
    convergent, so a boot with a changed list brings the box to the list and
    a boot with the same list changes nothing. The command prints ids and
    counts only, never an address.
+
+## The database role's rights
+
+`DATABASE_URL` names the box's own Postgres and the role the box connects as.
+That role needs one right the boot does not assume: **CREATEROLE**.
+
+- **Why.** Migration 0418 creates the assistant's assist roles: the reader
+  roles, the two logins and the function users role. `CREATE ROLE` needs
+  CREATEROLE, so a role without it can never finish a migrate. The migrate
+  runner applies each file in its own transaction, so every migration before
+  0418 commits and 0418 rolls back whole, and a fresh database is left half
+  migrated: a bootstrap mark, a bookkeeping table, hundreds of migration rows
+  and no seed.
+- **What the box does about it.** On a fresh (empty) database the box checks
+  the role before it writes anything, and refuses in words, naming the right
+  and the migration that needs it: `the box's database role needs CREATEROLE:
+  migration 0418 creates the assist roles`. Nothing is written on that path:
+  no mark, no migration row, and the database still reads empty afterwards.
+- **The check is in the empty branch only.** Only migrations that create
+  roles need the right: 0418 and 0427 today. A database the box has already
+  migrated holds those roles, so an existing box keeps booting with a role that
+  has no CREATEROLE, and a finance marked database passes the box kind check
+  with such a role. A later migration that creates a role would stop such a box
+  at its next boot (the migrate rolls that file back whole, so no data is
+  harmed, but the box stays down until the right is granted).
+- **How to grant it.** `ALTER ROLE <the box's database role> CREATEROLE;`, run
+  as a role that may alter roles. A superuser already has the right. Grant it
+  before the first boot of a fresh database, and keep it, or grant it again
+  before deploying an image that adds a migration that creates a role.
 
 ## The box's finance user list
 
