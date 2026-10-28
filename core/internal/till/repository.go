@@ -1165,21 +1165,25 @@ func (r *Repository) RecordPaymentAttempt(ctx context.Context, in PaymentAttempt
 	return nil
 }
 
-// OpenSessionsAt answers how many till sessions were still OPEN at the instant:
-// the GL close pre flight's "no till drawer still open at the month's end" check
-// (FW1-09f). The instant is the month's end (the first instant of the next month in
-// the dealer's zone).
+// UncompletedSessionsOpenedBefore answers how many till sessions were opened before the
+// instant and are NOT YET COMPLETED: the GL close pre flight's "no till drawer opened in
+// or before the month is not yet completed" check (FW1-09f). The instant is the month's end
+// (the first instant of the next month in the dealer's zone).
 //
-// A session COUNTS when it was opened before the instant and the till had not closed
-// it by the instant: still OPEN, still COUNTED (counted but not completed), or closed
-// AT OR AFTER the instant (it was still open at the month's end). A session opened and
-// closed before the instant does not count, and one opened after the instant does not
-// count either: it did not exist at that month's end.
+// A session COUNTS when it was opened before the instant and the till has not completed it:
+// still OPEN, or COUNTED (counted but not completed). A COMPLETED session never counts,
+// whenever it was completed: the completion posts the over or short into the business day
+// the drawer was OPENED for, so the month's books are whole once the drawer is done. And
+// CLOSED is final, so a session that counted would block its month for ever with no product
+// action left to clear it. A session opened after the instant does not count either: it did
+// not exist at that month's end.
 //
-// The old read counted only the sessions opened inside the month window, so a drawer
-// opened in an earlier month and never closed passed the close of every later month.
+// The read before this one asked which sessions stood open AT the instant, so a drawer opened
+// on the month's last evening and completed after midnight counted for ever. The read before
+// THAT counted only the sessions opened inside the month window, so a drawer opened in an
+// earlier month and never closed passed the close of every later month.
 // A nil pool answers zero (scaffold/offline mode).
-func (r *Repository) OpenSessionsAt(ctx context.Context, at time.Time) (int, error) {
+func (r *Repository) UncompletedSessionsOpenedBefore(ctx context.Context, before time.Time) (int, error) {
 	if r == nil || r.pool == nil {
 		return 0, nil
 	}
@@ -1187,9 +1191,9 @@ func (r *Repository) OpenSessionsAt(ctx context.Context, at time.Time) (int, err
 	if err := r.pool.QueryRow(ctx,
 		`SELECT count(*) FROM till_sessions
 		  WHERE opened_at < $1
-		    AND (status <> 'CLOSED' OR (closed_at IS NOT NULL AND closed_at >= $1))`,
-		at).Scan(&n); err != nil {
-		return 0, fmt.Errorf("till: open sessions at: %w", err)
+		    AND status <> 'CLOSED'`,
+		before).Scan(&n); err != nil {
+		return 0, fmt.Errorf("till: uncompleted sessions opened before: %w", err)
 	}
 	return n, nil
 }

@@ -49,8 +49,8 @@ import (
 // through it, and it reads the REAL repository, the same read cmd/core wires (FW1-09f).
 type fw109fDrawerReader struct{ repo *Repository }
 
-func (r fw109fDrawerReader) OpenDrawersAt(ctx context.Context, before time.Time) (int, error) {
-	return r.repo.OpenSessionsAt(ctx, before)
+func (r fw109fDrawerReader) UncompletedDrawersOpenedBefore(ctx context.Context, before time.Time) (int, error) {
+	return r.repo.UncompletedSessionsOpenedBefore(ctx, before)
 }
 
 // fw109fPeriods creates the sentinel year's twelve fiscal periods and removes them again when the
@@ -75,7 +75,7 @@ func fw109fPeriods(t *testing.T, pool *pgxpool.Pool, year int) {
 func fw109fCleanupPeriods(t *testing.T, pool *pgxpool.Pool, year int) {
 	t.Helper()
 	ctx := context.Background()
-	_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE p.year = $1`, year)
+	_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE o.period_id = p.id AND p.year = $1`, year)
 	_, _ = pool.Exec(ctx, `DELETE FROM fiscal_periods WHERE year = $1`, year)
 }
 

@@ -31,10 +31,11 @@ type preflightFail struct{ words string }
 // yet. A tie that read one side at the month's end and the other now refused
 // every correct month whose next month had moved the stock. The queue reads
 // the month's own window, [month start, next month start). The DRAWER check reads
-// the month's END (the first instant of the next month), not the month's window:
-// a drawer opened in an earlier month and never closed is open at that instant
-// too, so "no open drawer" means any drawer still open at the month's end
-// (FW1-09f).
+// the month's END (the first instant of the next month), not the month's window,
+// and counts the drawers opened by then that are NOT YET COMPLETED: a drawer
+// opened in an earlier month and never closed is still waiting on this month's
+// close, and a drawer completed after midnight is not, so "no open drawer" means no
+// drawer the month is still waiting on (FW1-09f, round 2).
 func (s *Service) runClosePreFlight(ctx context.Context, year, month int) []string {
 	var fails []string
 	zone, err := s.store.BusinessZone(ctx)
@@ -77,13 +78,16 @@ func (s *Service) runClosePreFlight(ctx context.Context, year, month int) []stri
 		}
 	}
 	if s.drawers != nil {
-		// The month's END (the first instant of the next month), not the month's window: a drawer
-		// opened in an EARLIER month and never closed is open at this month's end too, and "no open
-		// drawer" means any drawer still open at the month's end (FW1-09f).
-		if n, err := s.drawers.OpenDrawersAt(ctx, nextMonth); err != nil {
+		// The month's END (the first instant of the next month), and the drawers opened by then
+		// that are NOT YET COMPLETED: a drawer opened in an EARLIER month and never closed is
+		// still waiting on this month's close, and a drawer completed after midnight is not
+		// (its over or short posted into the business day it was opened for, so the month's
+		// books are whole). "No open drawer" means no drawer the month is still waiting on
+		// (FW1-09f, round 2).
+		if n, err := s.drawers.UncompletedDrawersOpenedBefore(ctx, nextMonth); err != nil {
 			fails = append(fails, fmt.Sprintf("the till drawers could not be read (%v)", err))
 		} else if n > 0 {
-			fails = append(fails, fmt.Sprintf("%d till drawer%s still open at the month's end", n, plural(n)))
+			fails = append(fails, drawerRefusal(n))
 		}
 	}
 	if s.strictPreFlight {
@@ -110,6 +114,18 @@ func plural(n int) string {
 		return " is"
 	}
 	return "s are"
+}
+
+// drawerRefusal names the till drawers the month is still waiting on, with the count and the
+// verb that agrees with it: "1 till drawer opened in or before the month is not yet completed",
+// "2 till drawers opened in or before the month are not yet completed". The words say what is
+// true: the drawer was opened in or before the month, and the till has not completed it yet.
+func drawerRefusal(n int) string {
+	noun, verb := "drawers", "are"
+	if n == 1 {
+		noun, verb = "drawer", "is"
+	}
+	return fmt.Sprintf("%d till %s opened in or before the month %s not yet completed", n, noun, verb)
 }
 
 // usdCents renders a signed cents figure as dollars with commas, the figures

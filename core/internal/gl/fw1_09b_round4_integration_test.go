@@ -161,11 +161,12 @@ type fw1WindowDrawers struct {
 	calls       []time.Time
 }
 
-// OpenDrawersAt answers the drawers still open at the month's end. The instant is the
-// first instant of the NEXT month, so the month being closed is the month before it.
-func (f *fw1WindowDrawers) OpenDrawersAt(_ context.Context, at time.Time) (int, error) {
-	f.calls = append(f.calls, at)
-	m := at.AddDate(0, -1, 0)
+// UncompletedDrawersOpenedBefore answers the drawers opened by the month's end that are not yet
+// completed. The instant is the first instant of the NEXT month, so the month being closed is the
+// month before it.
+func (f *fw1WindowDrawers) UncompletedDrawersOpenedBefore(_ context.Context, before time.Time) (int, error) {
+	f.calls = append(f.calls, before)
+	m := before.AddDate(0, -1, 0)
 	if m.Year() == f.year && int(m.Month()) == f.month {
 		return 3, nil
 	}
