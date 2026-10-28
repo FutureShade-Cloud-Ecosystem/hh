@@ -409,6 +409,29 @@ test("the periods list, close, reopen and the year end close answer the contract
   refused(await call(IDS.controller, "POST", "/api/v1/gl/journals", { ...fresh, lines: [line("5200", 100, 0), line("1000", 0, 100)] }), 409, "gl: fiscal period is CLOSED");
 });
 
+// FW1-09h: the year end close is an act and it leaves the year's marker, and a month of a
+// CLOSED fiscal year cannot be reopened: a closed year's P&L never moves without a new
+// close. The stub says the core's own sentence, and the sentence is in the core's source.
+test("a month of a closed fiscal year cannot be reopened, and the stub says the core's own sentence", async () => {
+  await reset();
+  // THE CLOSE: the year end close writes the year's marker, the core's once only signal.
+  const done = await call(IDS.controller, "POST", "/api/v1/gl/periods/close-year", { year: 2026, reason: "year-end close FY2026" });
+  assert.equal(done.status, 200);
+  // THE REOPEN: a month of the closed year, as the Financial Controller.
+  const list = await call(IDS.controller, "GET", "/api/v1/gl/periods");
+  const december = list.json.items.find((p) => p.year === 2026 && p.month === 12);
+  assert.ok(december !== undefined, "the stub carries no December of 2026");
+  refused(
+    await call(IDS.controller, "POST", `/api/v1/gl/periods/${december.id}/reopen`, { reason: "A late invoice" }),
+    409,
+    "is closed; post the correction in the open year",
+  );
+  assert.ok(
+    (await call(IDS.controller, "GET", "/api/v1/gl/periods")).json.items.find((p) => p.id === december.id).status === "CLOSED",
+    "the refused reopen left the month unsealed",
+  );
+});
+
 test("the next fiscal year opens for the Controller with a reason and refuses in the core's words", async () => {
   await reset();
   refused(await call(IDS.controller, "POST", "/api/v1/gl/periods/open-year", { reason: "   " }), 422, "gl: a reason is required");

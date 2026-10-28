@@ -55,6 +55,7 @@ type fakeStore struct {
 	headOffice    string
 	seq           int
 	markers       map[int]bool // the year end markers the fake holds (FW1-09g)
+	periodYear    int          // the year the fake's one period sits in (FW1-09h: the reopen reads the year)
 }
 
 func newFakeStore() *fakeStore {
@@ -67,6 +68,7 @@ func newFakeStore() *fakeStore {
 		byKey:         map[string]string{},
 		closedPeriods: map[string]bool{},
 		headOffice:    "head-office",
+		periodYear:    2026,
 	}
 }
 
@@ -369,8 +371,20 @@ func (f *fakeStore) ClosePeriod(ctx context.Context, id, _, _ string, record fun
 	}
 	return Period{ID: id, Status: "CLOSED"}, nil
 }
-func (f *fakeStore) ReopenPeriod(_ context.Context, id, _, _ string) (Period, error) {
+func (f *fakeStore) ReopenPeriod(ctx context.Context, id, actorID, reason string) (Period, error) {
+	return f.ReopenPeriodTx(ctx, fakeTx{}, id, actorID, reason)
+}
+
+// ReopenPeriodTx unseals the fake's period on the caller's no-op transaction (FW1-09h): the
+// fake holds no periods of its own, so the reopen answers the one it is asked about.
+func (f *fakeStore) ReopenPeriodTx(_ context.Context, _ pgx.Tx, id, _, _ string) (Period, error) {
 	return Period{ID: id, Status: "OPEN"}, nil
+}
+
+// PeriodYearTx answers the fake's one period's year (FW1-09h): the reopen reads the year to
+// ask whether the year carries its marker.
+func (f *fakeStore) PeriodYearTx(_ context.Context, _ pgx.Tx, _ string) (int, error) {
+	return f.periodYear, nil
 }
 func (f *fakeStore) ClosePeriodsForYear(_ context.Context, _ int, _, _ string) error { return nil }
 
