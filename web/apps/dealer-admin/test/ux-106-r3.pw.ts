@@ -89,10 +89,23 @@ async function expectNoIdFragment(page: Page, where: string, selector: string): 
 
 // -- 1: the register's unknown branch -------------------------------------------------------------------
 
+/**
+ * Puts the stub in the unknown branch scenario, and says so when it does
+ * not. The world is reset first: a leg elsewhere in the suite leaves the
+ * yard persona on another role, and this leg must read the world the stub
+ * starts with.
+ */
+async function useUnknownBranchScenario(page: Page): Promise<void> {
+  await page.request.post("/_stub/reset");
+  const answer = await page.request.post("/_stub/scenario", { data: { name: "unknown-branch" } });
+  expect(answer.ok(), "the stub's scenario control did not answer").toBe(true);
+  expect((await answer.text()).includes("unknown-branch"), "the stub did not take the scenario").toBe(true);
+}
+
 for (const theme of ["light", "charcoal"] as const) {
   test(`the register's unknown branch reads as a neutral pill, never as an id, in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.request.post("/_stub/scenario", { data: { name: "unknown-branch" } });
+    await useUnknownBranchScenario(page);
     await signIn(page);
     if (theme === "charcoal") await goCharcoal(page);
 
@@ -122,7 +135,7 @@ for (const theme of ["light", "charcoal"] as const) {
 
 test("no dealer screen prints a bare id fragment", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.request.post("/_stub/scenario", { data: { name: "unknown-branch" } });
+  await useUnknownBranchScenario(page);
   await signIn(page);
 
   // The register.

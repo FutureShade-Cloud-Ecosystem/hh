@@ -62,6 +62,11 @@ const JUL = BRANCHES[1].id;
 // unknown branch reads as a word and never as a fragment of its id.
 const UNKNOWN_BRANCH_ID = "9a11e111-0000-4000-9000-0000000000ff";
 
+// The yard persona's own id. The scenario names the persona by id and not by
+// role: a leg elsewhere in the suite moves that persona to Yard Manager, and
+// the world it leaves behind must not decide what this one reads.
+const YARD_PERSONA_ID = "da110000-0000-4000-9000-0000000000yt";
+
 // The roles catalog, the core's own list (staffcontext/rbac.go AllRoles):
 // the platform role and the thirteen business roles.
 const ROLES = [
@@ -142,7 +147,7 @@ function buildStaff() {
 // yard persona's third branch. Nothing else moves.
 function staffWithUnknownBranch() {
   return staff.map((m) =>
-    m.role_code === "YARD_TEAM" ? { ...m, branch_ids: [...m.branch_ids, UNKNOWN_BRANCH_ID] } : m,
+    m.user_id === YARD_PERSONA_ID ? { ...m, branch_ids: [...m.branch_ids, UNKNOWN_BRANCH_ID] } : m,
   );
 }
 

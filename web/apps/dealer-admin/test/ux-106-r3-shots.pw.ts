@@ -29,6 +29,7 @@ async function signIn(page: Page): Promise<void> {
 test("the register's unknown branch, at 390, light", async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.request.post("/_stub/reset");
   await page.request.post("/_stub/scenario", { data: { name: "unknown-branch" } });
   await signIn(page);
   await page.screenshot({
