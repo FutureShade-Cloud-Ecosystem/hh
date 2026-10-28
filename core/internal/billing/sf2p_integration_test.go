@@ -105,7 +105,7 @@ func TestIntegration_SF2p_TheBackfillStampsANullOrgInvoiceAndReServesIt(t *testi
 	var id string
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents)
-		 VALUES ('#INV-SF2P-NULL', $1::uuid, $2::uuid, 'FINALIZED', current_date, current_date, 1000, 0, 1000, 1000) RETURNING id::text`,
+		 VALUES ('#INV-SF2P-NULL', $1::uuid, $2::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date, 1000, 0, 1000, 1000) RETURNING id::text`,
 		testkit.TenantAlphaID, testkit.BranchNorthAID).Scan(&id); err != nil {
 		t.Fatalf("plant the NULL org invoice: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestIntegration_SF2p_TheBackfillStampsANullOrgInvoiceAndReServesIt(t *testi
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents)
-		 VALUES ('#INV-SF2P-NULL2', $1::uuid, $2::uuid, 'FINALIZED', current_date, current_date, 1000, 0, 1000, 1000)`,
+		 VALUES ('#INV-SF2P-NULL2', $1::uuid, $2::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date, 1000, 0, 1000, 1000)`,
 		testkit.TenantAlphaID, testkit.BranchNorthAID); err == nil {
 		t.Errorf("an invoice with no org was accepted after 0432")
 	}
@@ -175,7 +175,7 @@ func TestIntegration_SF2p_TheMigrationRaisesForAnInvoiceAtALocationWithNoOrg(t *
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents)
-		 VALUES ('#INV-SF2P-RAISE', $1::uuid, $2::uuid, 'FINALIZED', current_date, current_date, 1000, 0, 1000, 1000)`,
+		 VALUES ('#INV-SF2P-RAISE', $1::uuid, $2::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date, 1000, 0, 1000, 1000)`,
 		testkit.TenantAlphaID, testkit.BranchNorthBID); err != nil {
 		t.Fatalf("plant the invoice: %v", err)
 	}

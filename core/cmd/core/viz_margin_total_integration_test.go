@@ -174,7 +174,7 @@ func TestIntegration_VizARAgingBranch_IsPastDue(t *testing.T) {
 		if err := pool.QueryRow(ctx,
 			`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 			                       subtotal_cents, tax_cents, total_cents, balance_cents, source_kind)
-			 VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE, $4::date, $5, 0, $5, $5, 'ORDER')
+			 VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, $4::date, $5, 0, $5, $5, 'ORDER')
 			 RETURNING id::text`,
 			fmt.Sprintf("R5AG-%d-%s", stamp, branch), customer, branch, due, cents).Scan(&inv); err != nil {
 			t.Fatalf("seed invoice %s: %v", due, err)

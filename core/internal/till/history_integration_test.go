@@ -29,8 +29,8 @@ func seedCustomerInvoice(t *testing.T, pool *pgxpool.Pool, branchID string, tota
 		t.Fatalf("seed customer: %v", err)
 	}
 	if err := pool.QueryRow(ctx,
-		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, due_date, subtotal_cents, tax_cents, total_cents, balance_cents)
-		 VALUES ('INV-Q44-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE + 30, $4, 0, $4, $4) RETURNING id::text`,
+		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents)
+		 VALUES ('INV-Q44-'||$1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date + 30, $4, 0, $4, $4) RETURNING id::text`,
 		suffix, customerID, branchID, totalCents).Scan(&invoiceID); err != nil {
 		t.Fatalf("seed invoice: %v", err)
 	}
