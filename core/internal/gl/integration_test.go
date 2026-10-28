@@ -62,6 +62,12 @@ func aUser(t *testing.T, pool *pgxpool.Pool) string {
 
 // ensurePeriods creates the 12 fiscal periods for a test year (idempotent) so posting/closing there never
 // touches the seeded 2026 periods.
+//
+// The cleanup wipes everything the leg owns for that year: the journals and their lines, the
+// override rows, the periods, and the year end close's MARKER (FW1-09g). The marker is the
+// close's own record of the act and it outlives the seal, so a leg that closes a year and
+// leaves its marker behind would answer "already closed" to the next leg that closes the same
+// year, and to the next run of itself.
 func ensurePeriods(t *testing.T, pool *pgxpool.Pool, year int) {
 	t.Helper()
 	ctx := context.Background()
@@ -74,6 +80,7 @@ func ensurePeriods(t *testing.T, pool *pgxpool.Pool, year int) {
 		_, _ = pool.Exec(ctx, `DELETE FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id=j.id AND j.fiscal_year=$1`, year)
 		_, _ = pool.Exec(ctx, `DELETE FROM gl_journals WHERE fiscal_year=$1`, year)
 		_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE o.period_id=p.id AND p.year=$1`, year)
+		_, _ = pool.Exec(ctx, `DELETE FROM gl_year_end_closes WHERE fiscal_year=$1`, year)
 		_, _ = pool.Exec(ctx, `DELETE FROM fiscal_periods WHERE year=$1`, year)
 	})
 }
@@ -156,7 +163,7 @@ func TestIntegration_AC1_ClosedPeriodBlocked(t *testing.T) {
 	ensurePeriods(t, pool, 2097)
 	pid := periodID(t, pool, 2097, 6)
 	repo := NewRepository(pool)
-	if _, err := repo.ClosePeriod(ctx, pid, user, "test close"); err != nil {
+	if _, err := repo.ClosePeriod(ctx, pid, user, "test close", nil); err != nil {
 		t.Fatalf("close period: %v", err)
 	}
 	at := time.Date(2097, 6, 15, 12, 0, 0, 0, time.UTC)

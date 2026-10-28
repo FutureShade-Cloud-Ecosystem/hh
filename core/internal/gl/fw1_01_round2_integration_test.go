@@ -43,6 +43,10 @@ func (f *fw1AuditTx) RecordTx(_ context.Context, _ audit.Execer, a audit.Sensiti
 }
 
 // fw1ScrubYear removes a fiscal year's rows before and after a leg.
+//
+// The year end close's MARKER (FW1-09g) is one of the year's rows: it is the close's own
+// record of the act, it outlives the seal, and a year that keeps its marker answers
+// "already closed" to every later close of that year.
 func fw1ScrubYear(t *testing.T, pool *pgxpool.Pool, years ...int) {
 	t.Helper()
 	ctx := context.Background()
@@ -51,6 +55,7 @@ func fw1ScrubYear(t *testing.T, pool *pgxpool.Pool, years ...int) {
 			`DELETE FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id=j.id AND j.fiscal_year=$1`,
 			`DELETE FROM gl_journals WHERE fiscal_year=$1`,
 			`DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE o.period_id=p.id AND p.year=$1`,
+			`DELETE FROM gl_year_end_closes WHERE fiscal_year=$1`,
 			`DELETE FROM fiscal_periods WHERE year=$1`,
 		} {
 			if _, err := pool.Exec(ctx, q, y); err != nil {
