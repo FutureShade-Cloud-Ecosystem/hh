@@ -641,16 +641,15 @@ var allowedExtraKeys = map[string]bool{
 	"load_updated":   true, // the batch's updated count
 	"load_unchanged": true, // the batch's unchanged count
 	"load_refused":   true, // the batch's refused count
-	// The gl open year row (GL_FISCAL_YEAR_OPEN): the year the Controller's open made sure of.
-	// audit_log.entity_id is a uuid column, so the row is keyed to the opened year's January period
-	// and the year itself rides here, an int like the counts above, never an identifier.
+	// The gl rows that name a year: the open year row (GL_FISCAL_YEAR_OPEN, 614, the year the
+	// Controller's open made sure of) and the year end close row (GL_YEAR_END_CLOSE, FW1-09c, the
+	// year the Controller sealed). audit_log.entity_id is a uuid column, so those rows are keyed to
+	// the year's January period and the year itself rides here, an int like the counts above,
+	// never an identifier. The close's reason rides the top-level SensitiveAccess.Reason field
+	// (persisted as changes["reason"], redacted like every string) and NOT an Extra key: a reason
+	// is FREE TEXT a person types, and the Extra path's non string values pass the chokepoint
+	// untouched, so an allowlisted "reason" would open a second, wider path to the same key.
 	"fiscal_year": true,
-	// The gl year end close row (GL_YEAR_END_CLOSE, FW1-09c): the year the Controller sealed and the
-	// reason they gave for it. The reason is the same string the top-level SensitiveAccess.Reason
-	// field carries, so the row holds it once under one key; it is allowlisted here so the Extra
-	// path cannot drop it (a dropped key is a dropped trail) and so the deny-by-default boundary
-	// still redacts it like every other free text value.
-	"reason": true,
 	// The finstmt export row (FINSTMT_EXPORT): which statement was taken and in what shape. report
 	// is the module's own CHECK vocabulary (INCOME_STATEMENT, BALANCE_SHEET, TRIAL_BALANCE,
 	// GL_DETAIL, AR_AGING) and format is csv or xlsx, both code words, never identifiers. The row

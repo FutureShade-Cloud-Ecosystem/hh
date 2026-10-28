@@ -545,7 +545,9 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	// refused audit leaves no close behind, the open year's rule (S2's P2-4). The row is
 	// keyed to the closed year's January period, read on this same transaction (audit_log.
 	// entity_id is a uuid column, 0013), so the id it names is the one this close just
-	// sealed; the year and the reason ride Extra. Unwired, nothing is recorded (the role
+	// sealed; the year rides Extra and the reason rides the top-level Reason field, the
+	// house way (the audit boundary's Extra path is deny-by-default, and a reason is FREE
+	// TEXT a person types, so it never rides Extra). Unwired, nothing is recorded (the role
 	// rule and the close itself still hold).
 	if s.auditTx != nil {
 		periodID, perr := s.store.FiscalPeriodIDTx(ctx, tx, year, 1)
@@ -558,7 +560,7 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 			EntityID:   periodID,
 			ActorID:    caller.UserID,
 			Reason:     reason,
-			Extra:      map[string]any{"fiscal_year": year, "reason": reason},
+			Extra:      map[string]any{"fiscal_year": year},
 		}); aerr != nil {
 			return YearCloseResult{}, fmt.Errorf("gl: audit the year end close: %w", aerr)
 		}
