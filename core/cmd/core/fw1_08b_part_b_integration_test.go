@@ -12,6 +12,9 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -20,6 +23,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestFW1_08b_PartB_HeadOfficeSetChecksItsCandidate(t *testing.T) {
@@ -167,9 +171,10 @@ func TestFW1_08b_PartB_Migration0446BranchCheck(t *testing.T) {
 	ctx := context.Background()
 	const checkName = "gl_journal_lines_branch_id_not_null"
 
-	// plantBranchlessJournal inserts one POSTED journal carrying two balanced branchless lines,
-	// the shape a pre 629 year end close left behind, and answers the journal's id.
-	plantBranchlessJournal := func(t *testing.T, pool *pgxpool.Pool) string {
+	// plantJournal inserts one MANUAL journal with no lines and answers the journal's id. The
+	// header lands as a DRAFT: the balance trigger of 0021 is deferred to the commit, so a
+	// POSTED header whose lines are not written yet is refused before its lines exist.
+	plantJournal := func(t *testing.T, pool *pgxpool.Pool) string {
 		t.Helper()
 		mustExec(t, ctx, pool, `
 			INSERT INTO fiscal_periods (year, month, status)
@@ -182,25 +187,30 @@ func TestFW1_08b_PartB_Migration0446BranchCheck(t *testing.T) {
 			VALUES (2026,
 			        (SELECT COALESCE(MAX(entry_no), 0) + 1 FROM gl_journals WHERE fiscal_year = 2026),
 			        (SELECT id FROM fiscal_periods WHERE year = 2026 AND month = 6),
-			        'MANUAL', 'fw1 08b part b branchless probe', 'POSTED', '2026-06-15 15:00:00+00',
+			        'MANUAL', 'fw1 08b part b branchless probe', 'DRAFT', '2026-06-15 15:00:00+00',
 			        'fw108pb-branchless-' || gen_random_uuid()::text)
 			RETURNING id::text
 		`).Scan(&jid); err != nil {
 			t.Fatalf("plant the branchless journal: %v", err)
 		}
+		return jid
+	}
+
+	// plantBranchlessJournal adds the two balanced branchless lines to a planted journal and
+	// posts it: the shape a pre 629 year end close left behind. It only runs on a box that
+	// does not carry the CHECK yet, which is the box the pre check has to refuse.
+	plantBranchlessJournal := func(t *testing.T, pool *pgxpool.Pool) string {
+		t.Helper()
+		jid := plantJournal(t, pool)
 		mustExec(t, ctx, pool, `
 			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, memo)
-			SELECT $1::uuid, 9001, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), 100, 'probe dr'
-			UNION ALL
-			SELECT $1::uuid, 9002, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), NULL, 'probe cr'
-			 WHERE NOT EXISTS (SELECT 1 FROM gl_journal_lines WHERE journal_id = $1::uuid AND line_no IN (9001, 9002))
+			VALUES ($1::uuid, 9001, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), 100, 'probe dr')
 		`, jid)
-		// The credit leg needs its own row: the UNION above inserts the debit twice, so write the
-		// credit explicitly.
 		mustExec(t, ctx, pool, `
 			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, credit_cents, memo)
-			SELECT $1::uuid, 9002, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), 100, 'probe cr'
+			VALUES ($1::uuid, 9002, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), 100, 'probe cr')
 		`, jid)
+		mustExec(t, ctx, pool, `UPDATE gl_journals SET status = 'POSTED' WHERE id = $1::uuid`, jid)
 		var nullLines int
 		if err := pool.QueryRow(ctx,
 			`SELECT COUNT(*) FROM gl_journal_lines WHERE journal_id = $1::uuid AND branch_id IS NULL`, jid,
@@ -211,6 +221,23 @@ func TestFW1_08b_PartB_Migration0446BranchCheck(t *testing.T) {
 			t.Fatalf("the probe journal carries %d branchless lines, want 2", nullLines)
 		}
 		return jid
+	}
+
+	// branchlessInsertRefused writes one journal line with no branch and answers the
+	// database's refusal. The refusal must name the CHECK: the database is what says no.
+	branchlessInsertRefused := func(t *testing.T, pool *pgxpool.Pool, jid string) error {
+		t.Helper()
+		_, err := pool.Exec(ctx, `
+			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, memo)
+			VALUES ($1::uuid, 9003, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), 100, 'the database must refuse this line')
+		`, jid)
+		if err == nil {
+			t.Fatal("want the database to refuse a journal line with no branch after migration 0446, got <nil>")
+		}
+		if !strings.Contains(err.Error(), checkName) {
+			t.Fatalf("the refusal must name the CHECK %q, got %v", checkName, err)
+		}
+		return err
 	}
 
 	t.Run("a_fresh_box_carries_the_check_and_refuses_a_branchless_line", func(t *testing.T) {
@@ -226,14 +253,10 @@ func TestFW1_08b_PartB_Migration0446BranchCheck(t *testing.T) {
 		if !validated {
 			t.Fatal("migration 0446's CHECK landed NOT VALIDATED, want VALIDATEd")
 		}
-		jid := plantBranchlessJournal(t, pool)
-		_, err = pool.Exec(ctx, `
-			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, memo)
-			VALUES ($1::uuid, 9003, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), 100, 'the database must refuse this line')
-		`, jid)
-		if err == nil {
-			t.Fatal("want the database to refuse a journal line with no branch after migration 0446, got <nil>")
-		}
+		// The box already carries the CHECK, so the branchless journal cannot be planted on
+		// it: the probe is the write itself, which the database must refuse.
+		jid := plantJournal(t, pool)
+		branchlessInsertRefused(t, pool, jid)
 	})
 
 	t.Run("an_upgraded_seeded_box_validates_clean_and_refuses_a_branchless_line", func(t *testing.T) {
@@ -266,14 +289,8 @@ func TestFW1_08b_PartB_Migration0446BranchCheck(t *testing.T) {
 		`, checkName).Scan(&validated); err != nil || !validated {
 			t.Fatalf("the CHECK after 0446 on the upgraded seeded box: validated=%v err=%v, want true and no error", validated, err)
 		}
-		jid := plantBranchlessJournal(t, pool)
-		_, err = pool.Exec(ctx, `
-			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, memo)
-			VALUES ($1::uuid, 9003, (SELECT id FROM gl_accounts WHERE is_active ORDER BY code LIMIT 1), 100, 'the database must refuse this line')
-		`, jid)
-		if err == nil {
-			t.Fatal("want the database to refuse a journal line with no branch after migration 0446, got <nil>")
-		}
+		jid := plantJournal(t, pool)
+		branchlessInsertRefused(t, pool, jid)
 	})
 
 	t.Run("the_pre_check_refuses_naming_each_branchless_journal", func(t *testing.T) {
