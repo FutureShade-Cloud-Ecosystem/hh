@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"math/rand/v2"
+	"sort"
 	"strings"
 	"time"
 
@@ -259,6 +260,7 @@ type finworldReturnableLine struct {
 	SaleKey        string
 	InvoiceKey     string
 	SaleDate       string
+	SaleMode       string
 	CustomerKey    string
 	PaymentMethod  string
 	TaxReasonCode  string
@@ -267,11 +269,97 @@ type finworldReturnableLine struct {
 	LineKey        string
 	SKU            string
 	UOM            string
+	CategoryCode   string
 	OrigQty        int64
 	RemainingQty   int64
 	UnitPriceCents int64
 	UnitCostCents  int64
 	LineTaxCents   int64
+	OpenInv        *finworldOpenInvoice
+}
+
+// finworldReturnKeptUnits is the number of units of a returned sale line the customer keeps. A
+// customer who brings a load back keeps the piece they meant to use, so the return carries the
+// rest of the line's quantity. It is what holds the returns at the world's return rate, about 2 to
+// 3 percent of the sales value, while the share of returned lines stays at about 3 percent.
+const finworldReturnKeptUnits = 1
+
+// finworldSortedCategoryCodes returns the category codes of a category map in a deterministic order.
+func finworldSortedCategoryCodes(valueByCategory map[string]int64) []string {
+	codes := make([]string, 0, len(valueByCategory))
+	for code := range valueByCategory {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	return codes
+}
+
+// finworldAllocateByValue splits a count of return lines across the catalogue categories in
+// proportion to each category's share of a sales value. The split uses the largest remainder
+// method, so it is deterministic, the parts sum to the count, and a category with a larger sales
+// value never gets fewer lines than one with a smaller value. Ties go to the earlier category in
+// the order. Every figure here is an integer count or an integer cent amount, never a float.
+func finworldAllocateByValue(total int, valueByCategory map[string]int64, order []string) map[string]int {
+	allocated := make(map[string]int, len(order))
+	if total <= 0 {
+		return allocated
+	}
+
+	var sum int64
+	for _, code := range order {
+		sum += valueByCategory[code]
+	}
+	if sum <= 0 {
+		// No sales value to weigh the categories by, so the whole count goes to the first category.
+		if len(order) > 0 {
+			allocated[order[0]] = total
+		}
+		return allocated
+	}
+
+	remainders := make([]int64, len(order))
+	assigned := 0
+	for i, code := range order {
+		numerator := int64(total) * valueByCategory[code]
+		base := int(numerator / sum)
+		allocated[code] = base
+		assigned += base
+		remainders[i] = numerator - int64(base)*sum
+	}
+
+	// Hand the lines the floor left over to the categories with the largest fractional part.
+	leftover := total - assigned
+	given := make([]bool, len(order))
+	for leftover > 0 {
+		best := -1
+		for i := range order {
+			if given[i] {
+				continue
+			}
+			if best < 0 || remainders[i] > remainders[best] {
+				best = i
+			}
+		}
+		if best < 0 {
+			break
+		}
+		allocated[order[best]]++
+		given[best] = true
+		leftover--
+	}
+
+	return allocated
+}
+
+// finworldPickReturnLineLIFO returns the index of the most recent line in a category's pool that
+// still has quantity left to return, or -1 when the pool holds nothing left to return.
+func finworldPickReturnLineLIFO(pool []*finworldReturnableLine) int {
+	for k := len(pool) - 1; k >= 0; k-- {
+		if pool[k].RemainingQty > 0 {
+			return k
+		}
+	}
+	return -1
 }
 
 type finworldOpenInvoice struct {
@@ -487,6 +575,12 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 		totalProductWeight += spec.SelectionWeight
 	}
 
+	// The catalogue category of every SKU, so a sale line can be filed under its category.
+	productCategoryBySKU := make(map[string]string, len(plan.Products))
+	for _, p := range plan.Products {
+		productCategoryBySKU[p.SKU] = p.CategoryCode
+	}
+
 	pickWeightedProductIndex := func() int {
 		draw := rng.IntN(totalProductWeight)
 		acc := 0
@@ -564,9 +658,11 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 	}
 
 	// Track returnable sale lines, open AR invoices, scheduled receipts, and scheduled NSF bounces.
-	returnableByBranch := map[string][]*finworldReturnableLine{
-		FinWorldBranchCodeTRT: nil,
-		FinWorldBranchCodeKGN: nil,
+	// The returnable pool is kept per branch and per catalogue category, because the return pick
+	// serves each category in turn (see 7e).
+	returnableByBranch := map[string]map[string][]*finworldReturnableLine{
+		FinWorldBranchCodeTRT: {},
+		FinWorldBranchCodeKGN: {},
 	}
 	var allOpenInvoices []*finworldOpenInvoice
 	invoicesByPayDay := make(map[int][]*finworldOpenInvoice)
@@ -652,6 +748,17 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 
 		monthSalesLinesByBranch := map[string]int{FinWorldBranchCodeTRT: 0, FinWorldBranchCodeKGN: 0}
 		monthReturnLinesByBranch := map[string]int{FinWorldBranchCodeTRT: 0, FinWorldBranchCodeKGN: 0}
+		// The month's sales value by category, per branch, and the returns already served to each
+		// category this month. Together they let the return pick serve each category in
+		// proportion to its share of the sales value.
+		monthSalesValueByCategory := map[string]map[string]int64{
+			FinWorldBranchCodeTRT: {},
+			FinWorldBranchCodeKGN: {},
+		}
+		monthReturnsByCategory := map[string]map[string]int{
+			FinWorldBranchCodeTRT: {},
+			FinWorldBranchCodeKGN: {},
+		}
 		bouncesEmittedInMonth := 0
 		targetBouncesInMonth := 1
 		if m.SeasonBand == FinWorldSeasonPeak {
@@ -1029,6 +1136,9 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					}
 					lineSub := qty * unitPrice
 					lineTax := finworldHSTOn(lineSub, taxRateBps)
+					// The month's sales value by category, per branch: the return pick serves each
+					// category in proportion to this.
+					monthSalesValueByCategory[branchCode][prod.CategoryCode] += lineSub
 					// The engine's ON_FN_POS_8 path collects the bound rate (the 5% net) and tracks the 8%
 					// Ontario credit alongside it; the net collected equals the assessed tax
 					// (core/internal/tax/service.go, assessSale).
@@ -1123,31 +1233,8 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					InitialBalanceCents:    balCents,
 				}
 
-				// Record single-line counter cash/card sales as eligible for later POS returns.
-				if saleMode == "COUNTER" && len(lines) == 1 {
-					for _, ln := range lines {
-						returnableByBranch[branchCode] = append(returnableByBranch[branchCode], &finworldReturnableLine{
-							SaleKey:        sKey,
-							InvoiceKey:     invoiceKey,
-							SaleDate:       td.Date,
-							CustomerKey:    cust.Key,
-							PaymentMethod:  payMethod,
-							TaxReasonCode:  ln.TaxReasonCode,
-							TaxRateBps:     ln.TaxRateBps,
-							LineNo:         ln.LineNo,
-							LineKey:        ln.LineKey,
-							SKU:            ln.SKU,
-							UOM:            ln.UOM,
-							OrigQty:        ln.Quantity,
-							RemainingQty:   ln.Quantity,
-							UnitPriceCents: ln.UnitPriceCents,
-							UnitCostCents:  ln.UnitCostCents,
-							LineTaxCents:   ln.TaxCents,
-						})
-					}
-				}
-
 				// If on account, register open invoice and schedule receipt (~92% overall paid, ~8% left open across aging buckets).
+				var openInv *finworldOpenInvoice
 				if onAccount {
 					payDay := -1
 					// Decide whether this invoice gets paid before the end of the 12-month plan:
@@ -1178,7 +1265,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 						lag := 1 + rng.IntN(maxLag)
 						payDay = globalDay + lag
 					}
-					openInv := &finworldOpenInvoice{
+					openInv = &finworldOpenInvoice{
 						InvoiceKey:         invoiceKey,
 						SaleKey:            sKey,
 						CustomerKey:        cust.Key,
@@ -1195,6 +1282,32 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					if payDay > globalDay {
 						invoicesByPayDay[payDay] = append(invoicesByPayDay[payDay], openInv)
 					}
+				}
+
+				// Record lines as eligible for later returns, in the pool of their own category.
+				for _, ln := range lines {
+					category := productCategoryBySKU[ln.SKU]
+					returnableByBranch[branchCode][category] = append(returnableByBranch[branchCode][category], &finworldReturnableLine{
+						SaleKey:        sKey,
+						InvoiceKey:     invoiceKey,
+						SaleDate:       td.Date,
+						SaleMode:       saleMode,
+						CustomerKey:    cust.Key,
+						PaymentMethod:  payMethod,
+						TaxReasonCode:  ln.TaxReasonCode,
+						TaxRateBps:     ln.TaxRateBps,
+						LineNo:         ln.LineNo,
+						LineKey:        ln.LineKey,
+						SKU:            ln.SKU,
+						UOM:            ln.UOM,
+						CategoryCode:   category,
+						OrigQty:        ln.Quantity,
+						RemainingQty:   ln.Quantity,
+						UnitPriceCents: ln.UnitPriceCents,
+						UnitCostCents:  ln.UnitCostCents,
+						LineTaxCents:   ln.TaxCents,
+						OpenInv:        openInv,
+					})
 				}
 
 				// Update summaries.
@@ -1361,55 +1474,96 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				m.Summary.StockTransfers++
 			}
 
-			// 7e. Customer returns (~3% of sales lines per branch in the month).
+			// 7e. Customer returns (~3% of sales lines per branch in the month). The month's return
+			// lines are spread across the catalogue categories in proportion to each category's share
+			// of the branch's month to date sales value, and within a category they are still LIFO
+			// from that category's own pool. The pick serves whichever category is furthest behind its
+			// share, so the month ends on the proportional mix even though the returns go out a day at
+			// a time.
 			for _, brCode := range []string{FinWorldBranchCodeTRT, FinWorldBranchCodeKGN} {
 				targetRetLines := (monthSalesLinesByBranch[brCode]*3 + 50) / 100
-				pool := returnableByBranch[brCode]
-				for monthReturnLinesByBranch[brCode] < targetRetLines && len(pool) > 0 {
-					// Pick an eligible earlier line with RemainingQty > 0 whose refund fits today's drawer or card batch.
-					pickedIdx := -1
-					var retQty int64
-					for k := len(pool) - 1; k >= 0; k-- {
-						cand := pool[k]
-						if cand.RemainingQty <= 0 {
+				need := targetRetLines - monthReturnLinesByBranch[brCode]
+				if need <= 0 {
+					continue
+				}
+				valueByCategory := monthSalesValueByCategory[brCode]
+				categories := finworldSortedCategoryCodes(valueByCategory)
+				if len(categories) == 0 {
+					continue
+				}
+				desired := finworldAllocateByValue(targetRetLines, valueByCategory, categories)
+				returnsByCategory := monthReturnsByCategory[brCode]
+				catPool := returnableByBranch[brCode]
+
+				// A category that has run out of returnable lines is taken out of the running.
+				blocked := map[string]bool{}
+				for need > 0 {
+					pick := ""
+					pickDeficit := int64(0)
+					havePick := false
+					for _, code := range categories {
+						if blocked[code] {
 							continue
 						}
-						rq := cand.OrigQty
-						if cand.OrigQty > 2 && (cand.LineTaxCents*2+cand.OrigQty/2)/cand.OrigQty == finworldHSTOn(2*cand.UnitPriceCents, cand.TaxRateBps) {
-							rq = 2
-						} else if (cand.LineTaxCents+cand.OrigQty/2)/cand.OrigQty == finworldHSTOn(cand.UnitPriceCents, cand.TaxRateBps) {
+						deficit := int64(desired[code] - returnsByCategory[code])
+						if !havePick || deficit > pickDeficit {
+							pick = code
+							pickDeficit = deficit
+							havePick = true
+						}
+					}
+					if !havePick {
+						break
+					}
+					pool := catPool[pick]
+					pickedIdx := -1
+					for idx := finworldPickReturnLineLIFO(pool); idx >= 0; idx = finworldPickReturnLineLIFO(pool[:idx]) {
+						cand := pool[idx]
+						if cand.SaleMode != "COUNTER" {
+							continue
+						}
+						rq := cand.RemainingQty - finworldReturnKeptUnits
+						if rq < 1 {
 							rq = 1
+						}
+						if cand.OrigQty > 0 && (2*cand.LineTaxCents*rq+cand.OrigQty)/(2*cand.OrigQty) != finworldHSTOn(rq*cand.UnitPriceCents, cand.TaxRateBps) {
+							continue
 						}
 						candSub := rq * cand.UnitPriceCents
 						candTot := candSub + finworldHSTOn(candSub, cand.TaxRateBps)
-						if candTot > 25000 && rq > 1 && (cand.LineTaxCents+cand.OrigQty/2)/cand.OrigQty == finworldHSTOn(cand.UnitPriceCents, cand.TaxRateBps) {
-							rq = 1
-							candSub = cand.UnitPriceCents
-							candTot = candSub + finworldHSTOn(candSub, cand.TaxRateBps)
-						}
-						if candTot > 25000 {
-							continue
-						}
 						if cand.PaymentMethod == "CASH" {
 							if tillCashNetBySession[sessionKeyByBranchTill[brCode][0]]-openingFloatCents < candTot+5000 {
 								continue
 							}
-						} else {
+						} else if cand.PaymentMethod == "CARD" {
 							if dayGrossCardCents[brCode]-dayRefundCardCents[brCode] < candTot+5000 {
 								continue
 							}
+						} else if cand.PaymentMethod == "ACCOUNT" {
+							if cand.OpenInv == nil || cand.OpenInv.OpenBalanceCents < candTot+15000 {
+								continue
+							}
 						}
-						pickedIdx = k
-						retQty = rq
+						pickedIdx = idx
 						break
 					}
 					if pickedIdx < 0 {
-						break
+						blocked[pick] = true
+						continue
 					}
 					src := pool[pickedIdx]
-					for _, cand := range pool {
-						if cand.SaleKey == src.SaleKey {
-							cand.RemainingQty = 0
+					// A return reverses the sale line the customer brings back. The customer
+					// keeps the last unit of the line, so the return carries the rest of it.
+					// It still carries the sale line's own unit price.
+					retQty := src.RemainingQty - finworldReturnKeptUnits
+					if retQty < 1 {
+						retQty = 1
+					}
+					for _, cList := range catPool {
+						for _, cand := range cList {
+							if cand.SaleKey == src.SaleKey {
+								cand.RemainingQty = 0
+							}
 						}
 					}
 					for pIdx, p := range plan.Products {
@@ -1426,6 +1580,9 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					lineSub := retQty * src.UnitPriceCents
 					lineTax := finworldHSTOn(lineSub, src.TaxRateBps)
 					lineTot := lineSub + lineTax
+					if src.PaymentMethod == "ACCOUNT" && src.OpenInv != nil {
+						src.OpenInv.OpenBalanceCents -= lineTot
+					}
 
 					returnSeq++
 					retKey := fmt.Sprintf("ret-s%d-%05d", seed, returnSeq)
@@ -1476,7 +1633,9 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 						TotalCents:    lineTot,
 					}
 
+					returnsByCategory[pick]++
 					monthReturnLinesByBranch[brCode]++
+					need--
 					bs := m.Summary.ByBranch[brCode]
 					bs.ReturnDocs++
 					bs.ReturnLines++

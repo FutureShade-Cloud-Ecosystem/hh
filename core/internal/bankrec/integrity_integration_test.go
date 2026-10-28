@@ -35,6 +35,22 @@ func (w *reachWorld) plantJournal(t *testing.T, key, branch, status string, line
 	if branch != "" {
 		branchArg = branch
 	}
+	// Every journal line carries a branch: migration 0446's CHECK refuses a line with no branch.
+	// A dealer wide journal names no branch of its own, so its lines carry the head office's.
+	lineBranch := branch
+	if lineBranch == "" {
+		if err := w.pool.QueryRow(ctx, `
+			SELECT COALESCE(
+			  (SELECT head_office_branch_id::text FROM gl_policy WHERE branch_id IS NULL LIMIT 1),
+			  (SELECT id::text FROM locations WHERE loc_type = 'BRANCH' AND code = 'TRT' LIMIT 1),
+			  '')
+		`).Scan(&lineBranch); err != nil {
+			t.Fatalf("resolve the head office branch: %v", err)
+		}
+		if lineBranch == "" {
+			t.Fatalf("this box names no branch, so it cannot plant a journal line")
+		}
+	}
 	var id string
 	if err := w.pool.QueryRow(ctx, `
 		INSERT INTO gl_journals (fiscal_year, entry_no, period_id, source, memo, status, idempotency_key, branch_id)
@@ -50,8 +66,8 @@ func (w *reachWorld) plantJournal(t *testing.T, key, branch, status string, line
 		} else {
 			cr = l.cr
 		}
-		if _, err := w.pool.Exec(ctx, `INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, credit_cents)
-			VALUES ($1::uuid, $2, (SELECT id FROM gl_accounts WHERE code = $3), $4, $5)`, id, i+1, l.code, dr, cr); err != nil {
+		if _, err := w.pool.Exec(ctx, `INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, credit_cents, branch_id)
+			VALUES ($1::uuid, $2, (SELECT id FROM gl_accounts WHERE code = $3), $4, $5, $6::uuid)`, id, i+1, l.code, dr, cr, lineBranch); err != nil {
 			t.Fatalf("plant journal line: %v", err)
 		}
 	}

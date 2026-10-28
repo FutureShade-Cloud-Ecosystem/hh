@@ -1170,6 +1170,20 @@ func (r *Repository) ClosingJournalsForYearTx(ctx context.Context, tx pgx.Tx, ye
 	return ids, net, nil
 }
 
+// YearPeriodsTx answers how many periods the year has and how many of them are already CLOSED,
+// read on the caller's transaction under the year end's lock: the year end's own seal, and the
+// only marker a year with NO P&L leaves, because such a close posts no closing journal (FW1-09c
+// round 2, S2's P2, FROM-PRINCIPAL 320 and 321).
+func (r *Repository) YearPeriodsTx(ctx context.Context, tx pgx.Tx, year int) (int, int, error) {
+	var total, closed int
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*), count(*) FILTER (WHERE status = 'CLOSED') FROM fiscal_periods WHERE year = $1`, year).
+		Scan(&total, &closed); err != nil {
+		return 0, 0, fmt.Errorf("gl: read the year's periods: %w", err)
+	}
+	return total, closed, nil
+}
+
 // InsertClosingJournal is the year end's dedicated insert (round 4, S3's P1): the closing journal posts
 // into the closed year's December WHATEVER its status, the year end being the one act allowed to write
 // a closed month. The period is resolved explicitly, never by the posting date, so the late posted rule
@@ -1620,6 +1634,15 @@ func (r *Repository) PLBalances(ctx context.Context, year int) ([]TrialBalanceRo
 // branch when gl_policy carries no override yet (ruling 82.3).
 const DefaultHeadOfficeBranchID = "5d1b3f6e-0000-4000-9000-000000000001"
 
+// headOfficeFallback answers the head office branch of an UNWIRED scaffold: a repository with no
+// branch facts seam has no way to ask which branch is the head office, so it answers the fixed
+// Trenton uuid or, when a caller sets it, the in-process override.
+//
+// FW1-08b part B round 2 (P3-2): this is the unwired scaffold's stand in and NOT the production
+// answer. The production repository carries the seam: gl_policy.head_office_branch_id is
+// authoritative, and with no policy row the seam reads TRT by code (ruling 162). Nothing in
+// production reads this value; it is kept, not removed, because the offline scaffold's
+// HeadOfficeBranchID has no other answer to give.
 func (r *Repository) headOfficeFallback() string {
 	r.hoMu.RLock()
 	defer r.hoMu.RUnlock()
@@ -1629,27 +1652,50 @@ func (r *Repository) headOfficeFallback() string {
 	return DefaultHeadOfficeBranchID
 }
 
+// headOfficeBranchCode is the yard code the head office default reads by (ruling 162, kept by
+// FW1-08b part B): the fallback answers the live branch whose code is TRT, never a fixed uuid.
+const headOfficeBranchCode = "TRT"
+
 // HeadOfficeBranchID answers the head office branch the company level lines
-// stamp (ruling 82.3): reads gl_policy (org default row) and falls back to
-// Trenton (TRT, DefaultHeadOfficeBranchID).
+// stamp (ruling 82.3): reads gl_policy (org default row) first; when no row
+// answers or the setting is empty, the default reads TRT by code through the
+// branch facts seam and refuses in words when no branch answers
+// (FW1-08b part B, FROM-PRINCIPAL 176). A repository built without the seam
+// (unit scaffolds, offline mode) keeps the fixed Trenton uuid stand-in.
 func (r *Repository) HeadOfficeBranchID(ctx context.Context) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
 	}
-	fallback := r.headOfficeFallback()
 	var id string
 	err := r.pool.QueryRow(ctx,
-		`SELECT COALESCE(NULLIF(to_jsonb(p)->>'head_office_branch_id', ''), $1)
+		`SELECT COALESCE(NULLIF(to_jsonb(p)->>'head_office_branch_id', ''), '')
 		   FROM gl_policy p
 		  WHERE p.branch_id IS NULL
-		  LIMIT 1`, fallback).Scan(&id)
+		  LIMIT 1`).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return fallback, nil
-	}
-	if err != nil {
+		id = ""
+	} else if err != nil {
 		return "", fmt.Errorf("gl: head office branch: %w", err)
 	}
-	return id, nil
+	if id != "" {
+		return id, nil
+	}
+	if r.branchFacts == nil {
+		return r.headOfficeFallback(), nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("gl: head office branch begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	byCode, ok, err := r.branchFacts.BranchRowByCodeTx(ctx, tx, headOfficeBranchCode)
+	if err != nil {
+		return "", fmt.Errorf("gl: head office branch by code: %w", err)
+	}
+	if !ok {
+		return "", unprocessable("gl: no head office branch: no live branch carries the %s code and gl_policy sets no head office branch; the Financial Controller sets one with SetHeadOfficeBranch", headOfficeBranchCode)
+	}
+	return byCode, nil
 }
 
 // SetHeadOfficeBranch updates the head office branch in gl_policy (org default row)

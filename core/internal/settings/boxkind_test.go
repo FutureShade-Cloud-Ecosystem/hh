@@ -42,13 +42,19 @@ func TestParseBoxKind(t *testing.T) {
 
 // boxKindWriter is a non nil write handle that records the calls it took:
 // the shape rule is proved against a handle that is there, so the refusal
-// cannot be the nil handle's refusal wearing the shape's name.
+// cannot be the nil handle's refusal wearing the shape's name. It remembers
+// the statement and the arguments too, so the write's own shape (the owning
+// table, the key, the JSON string value) is proved as well.
 type boxKindWriter struct {
 	calls int
+	sql   string
+	args  []any
 }
 
 func (w *boxKindWriter) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	w.calls++
+	w.sql = sql
+	w.args = args
 	return pgconn.CommandTag{}, nil
 }
 
@@ -97,5 +103,36 @@ func TestBoxKindWriteShapeOnANonNilHandle(t *testing.T) {
 	}
 	if w.calls != 1 {
 		t.Fatalf("a well shaped kind wrote %d times, want 1", w.calls)
+	}
+}
+
+// The whole malformed vocabulary, not one sample of it: every kind that is
+// not a short lowercase word refuses, and a refusal never touches the
+// database. Carried over from the other branch's copy of this seam, whose
+// callers needed the wider set proved.
+func TestBoxKindWriteRefusesEveryMalformedKind(t *testing.T) {
+	for _, kind := range []string{"", "FINANCE", "a b", "-finance", "finance!"} {
+		w := &boxKindWriter{}
+		if err := WriteBoxKindTx(context.Background(), w, kind); err == nil {
+			t.Errorf("WriteBoxKindTx(%q) must refuse, never write", kind)
+		} else if w.calls != 0 {
+			t.Errorf("WriteBoxKindTx(%q) refused but still touched the database", kind)
+		}
+	}
+}
+
+// The write's own shape: it goes through the owning table and carries the
+// key and the JSON string value, so the row reads back as the word. Carried
+// over from the other branch's copy of this seam.
+func TestBoxKindWriteGoesThroughTheOwningTable(t *testing.T) {
+	w := &boxKindWriter{}
+	if err := WriteBoxKindTx(context.Background(), w, "finance"); err != nil {
+		t.Fatalf("WriteBoxKindTx: %v", err)
+	}
+	if !strings.Contains(w.sql, "system_settings") {
+		t.Fatalf("the write must go through the owning table, got: %s", w.sql)
+	}
+	if len(w.args) != 2 || w.args[0] != KeyBoxKind || w.args[1] != `"finance"` {
+		t.Fatalf("the write must carry the key and the JSON string value, got: %v", w.args)
 	}
 }

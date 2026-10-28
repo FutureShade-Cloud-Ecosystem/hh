@@ -19,10 +19,11 @@ import (
 )
 
 // ErrStaffEmailTaken names the refusal when the email already belongs to a
-// different platform user (or to a row with no platform link at all): the
-// users table's unique email index makes the collision a fact either way,
-// so guessing a new owner would fail closed at the insert and is refused
-// here instead, before any write.
+// different platform user: the users table's unique email index makes the
+// collision a fact, so guessing a new owner would fail closed at the insert
+// and is refused here instead, before any write. A holder row with no
+// platform link at all is not a collision: it is adopted (see
+// AdoptOrEnsureStaffUser).
 var ErrStaffEmailTaken = errors.New("identity: the email already belongs to another platform user")
 
 // ErrStaffEmailBound names the refusal when the platform user already
@@ -34,6 +35,12 @@ var ErrStaffEmailTaken = errors.New("identity: the email already belongs to anot
 // re-provision, which leaves its audit trail; a revoked row is not live
 // and converges as usual.
 var ErrStaffEmailBound = errors.New("identity: the platform user already holds a live staff row with another email")
+
+// ErrStaffAdoptHeld names the refusal when an unlinked holder row could be
+// adopted but the listed platform user already holds another row: the
+// unique index on platform_user_id allows one row per subject, and which of
+// the two is the person is not this seam's guess.
+var ErrStaffAdoptHeld = errors.New("identity: the platform user already holds another staff row, so the unlinked row holding the email cannot be adopted")
 
 // EnsureStaffUser inserts, or reactivates, one ACTIVE users row for a
 // platform user, idempotent on platform_user_id: a live row holding the
@@ -47,11 +54,26 @@ var ErrStaffEmailBound = errors.New("identity: the platform user already holds a
 // reports whether this call changed the row. The row carries no password
 // hash: the core has no password route and the sign in is the platform's.
 func EnsureStaffUser(ctx context.Context, db DBTX, orgID, platformUserID, email, displayName string) (userID string, written bool, err error) {
+	userID, written, _, err = AdoptOrEnsureStaffUser(ctx, db, orgID, platformUserID, email, displayName)
+	return userID, written, err
+}
+
+// AdoptOrEnsureStaffUser is EnsureStaffUser with the adopt rule
+// (FROM-PRINCIPAL 36) reported: when the email's holder row has no platform
+// link (a staff row a migration seeded, such as 0043's platform admin
+// row), that row is the person, and it is linked to the listed platform id,
+// made ACTIVE and moved to the caller's org in the caller's transaction,
+// rather than refused. The caller has already confirmed in FB Console that
+// the platform id holds that email. adopted reports that this call linked
+// such a row, so the caller can say so in its audit row. A holder linked to
+// another platform id still refuses with ErrStaffEmailTaken, and a platform
+// id that already holds another row refuses with ErrStaffAdoptHeld.
+func AdoptOrEnsureStaffUser(ctx context.Context, db DBTX, orgID, platformUserID, email, displayName string) (userID string, written, adopted bool, err error) {
 	if db == nil {
-		return "", false, errors.New("identity: a staff user requires a database handle")
+		return "", false, false, errors.New("identity: a staff user requires a database handle")
 	}
 	if orgID == "" || platformUserID == "" || email == "" || displayName == "" {
-		return "", false, errors.New("identity: a staff user requires the org, the platform user, an email and a display name")
+		return "", false, false, errors.New("identity: a staff user requires the org, the platform user, an email and a display name")
 	}
 
 	var holder struct {
@@ -60,10 +82,32 @@ func EnsureStaffUser(ctx context.Context, db DBTX, orgID, platformUserID, email,
 	}
 	err = db.QueryRow(ctx, `SELECT id::text, platform_user_id FROM users WHERE email = $1`, email).Scan(&holder.id, &holder.platformUserID)
 	switch {
-	case err == nil && (holder.platformUserID == nil || *holder.platformUserID != platformUserID):
-		return "", false, ErrStaffEmailTaken
+	case err == nil && holder.platformUserID == nil:
+		// The adopt rule: the unlinked holder is the person, unless the
+		// platform id already holds a row of its own.
+		var other string
+		switch oerr := db.QueryRow(ctx, `SELECT id::text FROM users WHERE platform_user_id = $1`, platformUserID).Scan(&other); {
+		case oerr == nil:
+			return "", false, false, ErrStaffAdoptHeld
+		case !errors.Is(oerr, pgx.ErrNoRows):
+			return "", false, false, fmt.Errorf("identity: staff user adopt read failed: %w", oerr)
+		}
+		tag, uerr := db.Exec(ctx, `
+			UPDATE users SET platform_user_id = $2, display_name = $3, org_id = $4::uuid, status = 'ACTIVE',
+				deleted_at = NULL, updated_at = now()
+			WHERE id = $1::uuid AND platform_user_id IS NULL`,
+			holder.id, platformUserID, displayName, orgID)
+		if uerr != nil {
+			return "", false, false, fmt.Errorf("identity: staff user adopt failed: %w", uerr)
+		}
+		if tag.RowsAffected() != 1 {
+			return "", false, false, errors.New("identity: staff user adopt changed no row")
+		}
+		return holder.id, true, true, nil
+	case err == nil && *holder.platformUserID != platformUserID:
+		return "", false, false, ErrStaffEmailTaken
 	case err != nil && !errors.Is(err, pgx.ErrNoRows):
-		return "", false, fmt.Errorf("identity: staff user email ownership read failed: %w", err)
+		return "", false, false, fmt.Errorf("identity: staff user email ownership read failed: %w", err)
 	}
 
 	var held struct {
@@ -86,19 +130,19 @@ func EnsureStaffUser(ctx context.Context, db DBTX, orgID, platformUserID, email,
 			INSERT INTO users (email, display_name, status, platform_user_id, org_id)
 			VALUES ($1, $2, 'ACTIVE', $3, $4) RETURNING id::text`,
 			email, displayName, platformUserID, orgID).Scan(&userID); err != nil {
-			return "", false, fmt.Errorf("identity: staff user write failed: %w", err)
+			return "", false, false, fmt.Errorf("identity: staff user write failed: %w", err)
 		}
-		return userID, true, nil
+		return userID, true, false, nil
 	case err != nil:
-		return "", false, fmt.Errorf("identity: staff user read failed: %w", err)
+		return "", false, false, fmt.Errorf("identity: staff user read failed: %w", err)
 	}
 	// The comparison folds case, because an address is one address however
 	// it is spelled, and users.email is citext for the same reason.
 	if held.live && !strings.EqualFold(strings.TrimSpace(held.email), strings.TrimSpace(email)) {
-		return "", false, ErrStaffEmailBound
+		return "", false, false, ErrStaffEmailBound
 	}
 	if held.converged {
-		return held.id, false, nil
+		return held.id, false, false, nil
 	}
 	tag, err := db.Exec(ctx, `
 		UPDATE users SET email = $2, display_name = $3, org_id = $4::uuid, status = 'ACTIVE',
@@ -106,12 +150,12 @@ func EnsureStaffUser(ctx context.Context, db DBTX, orgID, platformUserID, email,
 		WHERE id = $1::uuid`,
 		held.id, email, displayName, orgID)
 	if err != nil {
-		return "", false, fmt.Errorf("identity: staff user reactivation failed: %w", err)
+		return "", false, false, fmt.Errorf("identity: staff user reactivation failed: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
-		return "", false, errors.New("identity: staff user reactivation changed no row")
+		return "", false, false, errors.New("identity: staff user reactivation changed no row")
 	}
-	return held.id, true, nil
+	return held.id, true, false, nil
 }
 
 // StaffUserByPlatformID reads the users row the platform subject holds: the
@@ -258,4 +302,48 @@ func StaffGrantID(ctx context.Context, db DBTX, orgID, platformUserID, roleID st
 		return "", false, fmt.Errorf("identity: staff grant read failed: %w", err)
 	}
 	return grantID, true, nil
+}
+
+// StaffSubject is one platform subject that holds a live grant: the platform
+// user id and the email the linked users row carries.
+type StaffSubject struct {
+	PlatformUserID string
+	Email          string
+}
+
+// StaffSubjectsWithLiveGrantsInRoles lists the platform subjects that hold a
+// live grant of one of the named roles in the org. It is the read a caller
+// acts on when the box's list of people changes: the subjects the list left
+// out are the ones to revoke. The email comes back as the linked users row
+// carries it, so the caller folds the case itself. Each subject comes back
+// once, however many of the roles it holds.
+func StaffSubjectsWithLiveGrantsInRoles(ctx context.Context, db DBTX, orgID string, roleIDs []string) ([]StaffSubject, error) {
+	if db == nil {
+		return nil, errors.New("identity: a staff subject read requires a database handle")
+	}
+	if orgID == "" || len(roleIDs) == 0 {
+		return nil, errors.New("identity: a staff subject read requires the org and the roles")
+	}
+	rows, err := db.Query(ctx, `
+		SELECT DISTINCT g.platform_user_id, COALESCE(u.email::text, '')
+		  FROM staff_role_grant g
+		  LEFT JOIN users u ON u.platform_user_id = g.platform_user_id
+		 WHERE g.org_id = $1 AND g.deleted_at IS NULL AND g.role_id = ANY($2::text[])`,
+		orgID, roleIDs)
+	if err != nil {
+		return nil, fmt.Errorf("identity: staff subject read failed: %w", err)
+	}
+	defer rows.Close()
+	var out []StaffSubject
+	for rows.Next() {
+		var s StaffSubject
+		if err := rows.Scan(&s.PlatformUserID, &s.Email); err != nil {
+			return nil, fmt.Errorf("identity: staff subject read failed: %w", err)
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("identity: staff subject read failed: %w", err)
+	}
+	return out, nil
 }

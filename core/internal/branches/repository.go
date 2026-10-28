@@ -196,3 +196,31 @@ func (r *Repository) Exists(ctx context.Context, id string) (bool, error) {
 	}
 	return ok, nil
 }
+
+// LiveBranchExists answers whether the id names a LIVE branch: a BRANCH location that is not soft
+// deleted.
+//
+// It is the read the head office candidate check runs (FW1-08b part B round 2, P3-1): a soft
+// deleted branch is still a BRANCH row, so Exists answers true for one, but it is not a live
+// branch and a soft deleted branch is never a head office. The code read the same wave relies on
+// (BranchRowByCodeTx) already filters deleted_at, so the two lookups agree on what a live branch
+// is.
+//
+// The same id::text comparison as Exists, and for the same reason: `WHERE id = $1::uuid` raises
+// 22P02 for any string that is not a uuid, which is the internal error this seam exists to
+// remove.
+func (r *Repository) LiveBranchExists(ctx context.Context, id string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	if id == "" {
+		return false, nil
+	}
+	var ok bool
+	if err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM locations WHERE id::text = $1 AND loc_type = 'BRANCH' AND deleted_at IS NULL)`,
+		id).Scan(&ok); err != nil {
+		return false, fmt.Errorf("branches: live branch exists %s: %w", id, err)
+	}
+	return ok, nil
+}

@@ -8698,7 +8698,7 @@ paths:
       tags:
         - staff-gl
       summary: Post the year-end closing entry and seal the year's open periods
-      description: Flattens every REVENUE and EXPENSE account for the fiscal year and sweeps the net income (or loss) into the retained-earnings equity account, then seals all of the year's OPEN periods.
+      description: Financial-Controller-only inside the service on top of the admin gate; any other caller is refused as forbidden. Flattens every REVENUE and EXPENSE account for the fiscal year and sweeps the net income (or loss) into the retained-earnings equity account, then seals all of the year's OPEN periods.
       x-role: requireAdmin
       x-access:
         surfaces:

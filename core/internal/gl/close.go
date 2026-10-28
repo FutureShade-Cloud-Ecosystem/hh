@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -27,8 +28,13 @@ const actGLFiscalYearOpen = "GL_FISCAL_YEAR_OPEN"
 // changes the head office branch setting in gl_policy (ruling 82.3).
 const actGLHeadOfficeBranchSet = "GL_HEAD_OFFICE_BRANCH_SET"
 
+// actGLYearEndClose is the sensitive-access action stamped on the Controller's year end close (the
+// close seals a whole year, so its trail is a recorded row, not only the override rows).
+const actGLYearEndClose = "GL_YEAR_END_CLOSE"
+
 // controllerRole is the only role permitted to reopen a closed period (the frozen route is RequireAdmin -
-// Tier-1 GLOBAL, and the service narrows it to the Financial Controller specifically).
+// Tier-1 GLOBAL, and the service narrows it to the Financial Controller specifically). It is also the
+// only role permitted to open a fiscal year early and to seal a year (FW1-09c, FROM-PRINCIPAL 222).
 const controllerRole = "FINANCIAL_CONTROLLER"
 
 // - policy -
@@ -43,14 +49,22 @@ func (s *Service) HeadOfficeBranchID(ctx context.Context) (string, error) {
 }
 
 // SetHeadOfficeBranch updates the head office branch setting in gl_policy (ruling 82.3):
-// narrowed to the Financial Controller, mandatory reason, and audited.
+// narrowed to the Financial Controller, mandatory reason, and audited. FW1-08b part B
+// (FROM-PRINCIPAL 176) bounds the candidate: it must be a LIVE location with loc_type = 'BRANCH'
+// in the caller's org, checked through the branch facts seam; the refusal is fail closed
+// when the seam is unwired.
+//
+// FW1-08b part B round 2 (FROM-PRINCIPAL 309) closes the two halves that used to fail open:
+// the org half is UNCONDITIONAL, so a context that carries no staff scope is refused in words
+// rather than skipping the tenancy wall, and the branch half asks for a LIVE branch, so a soft
+// deleted branch is never a head office.
 func (s *Service) SetHeadOfficeBranch(ctx context.Context, branchID, reason string) error {
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return err
 	}
 	if caller.RoleCode != controllerRole {
-		return errNotController
+		return errNotControllerHeadOffice
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -59,6 +73,32 @@ func (s *Service) SetHeadOfficeBranch(ctx context.Context, branchID, reason stri
 	branchID = strings.TrimSpace(branchID)
 	if branchID == "" {
 		return badReq("gl: branch_id is required")
+	}
+	if s.branchFacts == nil {
+		return errHeadOfficeUnverified
+	}
+	// A soft deleted branch is not a live branch, so it is never a head office. The plain
+	// existence read answers true for one, which is why the code read the same wave relies on
+	// (BranchRowByCodeTx) filters deleted_at and this check must as well.
+	isBranch, err := s.branchFacts.LiveBranchExists(ctx, branchID)
+	if err != nil {
+		return fmt.Errorf("gl: head office branch check: %w", err)
+	}
+	if !isBranch {
+		return unprocessable("gl: %s is not a live branch location; the head office branch must be a branch (loc_type BRANCH) that is not deleted", branchID)
+	}
+	// The org half is unconditional: without the org scope the tenancy wall cannot be checked at
+	// all, so the set refuses rather than accepting a branch of any org.
+	scope, ok := authz.StaffScopeFrom(ctx)
+	if !ok || scope.OrgID == "" {
+		return errHeadOfficeNoScope
+	}
+	inOrg, err := s.branchFacts.BranchInOrg(ctx, scope.OrgID, branchID)
+	if err != nil {
+		return fmt.Errorf("gl: head office branch org check: %w", err)
+	}
+	if !inOrg {
+		return errHeadOfficeForeignOrg
 	}
 	return s.store.SetHeadOfficeBranch(ctx, branchID, func(ctx context.Context, tx pgx.Tx) error {
 		sa := audit.SensitiveAccess{
@@ -316,10 +356,17 @@ type YearCloseResult struct {
 // and sweeps the net income (or loss) into 3900 Retained Earnings, then seals all of the year's OPEN periods.
 // After the close the income statement nets to zero and the balance sheet balances with retained earnings
 // carried into equity (AC13).
+//
+// FW1-09c (FROM-PRINCIPAL 222): the year end close is the Financial Controller's, the way the period
+// reopen and the early open are. The route is RequireAdmin (a Tier-1 GLOBAL, the GM among them), so
+// the service narrows it here, before any write, in words.
 func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearCloseResult, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return YearCloseResult{}, err
+	}
+	if caller.RoleCode != controllerRole {
+		return YearCloseResult{}, errNotControllerCloseYear
 	}
 	if reason == "" {
 		reason = fmt.Sprintf("year-end close FY%d", year)
@@ -351,6 +398,19 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	}
 	if len(ids) > 0 {
 		return YearCloseResult{FiscalYear: year, ClosingJournalIDs: ids, ClosingJournalID: firstID(ids), NetIncomeCents: net, PeriodsClosed: true}, nil
+	}
+	// FW1-09c round 2 (S2's P2, FROM-PRINCIPAL 320 and 321): the year's periods, counted, on THIS
+	// transaction under the year end's lock. A year with NO periods at all has nothing to close
+	// and refuses in words, never success (321); and the count comes before the CLOSED test, so
+	// "every period of the year is already CLOSED" is never vacuously true on zero periods. The
+	// count also reads the seal, which is the marker a year with NO P&L leaves: such a close
+	// posts no closing journal, so the once only check above cannot see the first run (320).
+	total, closed, err := s.store.YearPeriodsTx(ctx, tx, year)
+	if err != nil {
+		return YearCloseResult{}, err
+	}
+	if total == 0 {
+		return YearCloseResult{}, clientErr(409, "gl: fiscal year %d has no periods to close", year)
 	}
 	// FW1-09b, the lead's Ask 2: the close is refused until the year's last day has passed in the
 	// dealer's zone (a mid year press sealed the months still ahead and stopped all posting).
@@ -412,7 +472,7 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 		branchID := r.BranchID
 		if branchID == "" {
 			if headOffice == "" {
-				ho, herr := s.store.HeadOfficeBranchID(ctx)
+				ho, herr := s.resolveBranchID(ctx, branchID)
 				if herr != nil {
 					return YearCloseResult{}, herr
 				}
@@ -424,6 +484,30 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 			byBranch[branchID] = map[string]int64{}
 		}
 		byBranch[branchID][r.AccountCode] += r.NetDebitCents
+	}
+
+	// FW1-09c round 2 (S2's P2, FROM-PRINCIPAL 320): the year end close is once only, and that
+	// must hold for a year with NO P&L too. A book with no P&L at all closes nothing (the house's
+	// own rule), so it posts no closing journal, and the once only check above cannot see the
+	// first run: a second press passes every check (the year has ended, no OPEN period is left
+	// to pre flight, no P&L to sweep) and records a SECOND GL_YEAR_END_CLOSE row, and two
+	// Controllers pressing at once each record one. The year's own seal is the marker such a
+	// close leaves: when every period of the year is already CLOSED and there is nothing to
+	// sweep, there is nothing left for the press to write, so it answers the first run's result
+	// and records nothing. A year that DOES hold a P&L to sweep is not answered here: a year
+	// whose months were sealed one by one still needs its closing entry, and the closing
+	// journal's own once only check above answers that year the second time round.
+	//
+	// FW1-09c round 3 (S2's narrowed P2, FROM-PRINCIPAL 329): the test is the SWEPT nets, not
+	// the LISTED rows. A year whose P&L nets to zero on every account (a revenue journal and its
+	// reversal) HOLDS a P&L: the rows are there, every one of them nets to zero, and byBranch
+	// has already dropped them, so the close sweeps nothing and posts no closing journal. The
+	// listed rows therefore hide a year that is as closed as a year with no P&L at all: the once
+	// only check above cannot see the first run, and a second press records a SECOND
+	// GL_YEAR_END_CLOSE row. A year with no P&L, or whose P&L nets to zero on every account,
+	// sweeps nothing, so the seal answers both of them the same way.
+	if len(byBranch) == 0 && closed == total {
+		return YearCloseResult{FiscalYear: year, PeriodsClosed: true}, nil
 	}
 
 	branchIDs := make([]string, 0, len(byBranch))
@@ -500,6 +584,30 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	}
 	if err := s.store.ClosePeriodsForYearTx(ctx, tx, year, caller.UserID, reason); err != nil {
 		return YearCloseResult{}, err
+	}
+	// FW1-09c (FROM-PRINCIPAL 222): the close's own audit row rides THIS transaction, so a
+	// refused audit leaves no close behind, the open year's rule (S2's P2-4). The row is
+	// keyed to the closed year's January period, read on this same transaction (audit_log.
+	// entity_id is a uuid column, 0013), so the id it names is the one this close just
+	// sealed; the year rides Extra and the reason rides the top-level Reason field, the
+	// house way (the audit boundary's Extra path is deny-by-default, and a reason is FREE
+	// TEXT a person types, so it never rides Extra). Unwired, nothing is recorded (the role
+	// rule and the close itself still hold).
+	if s.auditTx != nil {
+		periodID, perr := s.store.FiscalPeriodIDTx(ctx, tx, year, 1)
+		if perr != nil {
+			return YearCloseResult{}, perr
+		}
+		if aerr := s.auditTx.RecordTx(ctx, tx, audit.SensitiveAccess{
+			Action:     actGLYearEndClose,
+			EntityType: "gl.period",
+			EntityID:   periodID,
+			ActorID:    caller.UserID,
+			Reason:     reason,
+			Extra:      map[string]any{"fiscal_year": year},
+		}); aerr != nil {
+			return YearCloseResult{}, fmt.Errorf("gl: audit the year end close: %w", aerr)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return YearCloseResult{}, fmt.Errorf("gl: commit the year end: %w", err)

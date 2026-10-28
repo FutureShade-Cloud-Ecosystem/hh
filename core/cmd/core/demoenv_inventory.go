@@ -78,6 +78,16 @@ var demoEnvDenyNames = []string{
 	// The finance box mark (W2-2): it names a deployment kind a demo box
 	// never is, so a demo box carrying it refuses the boot.
 	"HH_BOX_KIND",
+	// The finance box's people (W2-2): they are the finance box's, a demo
+	// box has none, and a demo box carrying the list refuses the boot.
+	"HH_FINANCE_USERS",
+	// The finance world's dump names (W2-1b): the address, the digest and
+	// the fetch credential of the world the finance box restores. A demo box
+	// never restores a world, so a demo box carrying any of them refuses the
+	// boot, and the credential never rides an ordinary deployment.
+	"HH_FINANCE_WORLD_URL",
+	"HH_FINANCE_WORLD_SHA256",
+	"HH_FINANCE_WORLD_TOKEN",
 }
 
 // demoEnvCardProcessorVar and demoEnvCardProcessorValue: the card
@@ -229,14 +239,18 @@ var envInventoryFixture = []string{
 	"DEALER_NAME",
 	"DEMO_MODE",
 	"ERP_BASE_URL",
+	"HH_BOX_KIND",
 	"HH_DEMO_MINT_ADDRESS_CEILING",
 	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
+	"HH_FINANCE_USERS",
 	"HH_WEB_ORG",
 	"HH_ACCEPTANCE_SIGN_KEY",
 	"HH_ACCEPTANCE_SIGN_KEY_ID",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS_ID",
-	"HH_BOX_KIND",
+	"HH_FINANCE_WORLD_SHA256",
+	"HH_FINANCE_WORLD_TOKEN",
+	"HH_FINANCE_WORLD_URL",
 	"HOS_ASSIST_ANTHROPIC_API_KEY",
 	"HOS_ASSIST_CLAIMS_KEY",
 	"HOS_ASSIST_PRO_READER_DATABASE_URL",
