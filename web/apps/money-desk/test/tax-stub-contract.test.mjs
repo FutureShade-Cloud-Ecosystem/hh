@@ -38,16 +38,29 @@ const moduleSource = readFileSync(join(coreInternal, "tax", "module.go"), "utf8"
 // record carries an id, a captured_by and a created_at, so its body can hold the digits of the
 // card number without echoing the card number. Every value that is neither an id nor a clock
 // must not carry the raw number.
+//
+// The walk goes through nested objects and arrays as well as the top level, so a record that
+// grows a nested field cannot slip a value under the check, and it names the field's path, so a
+// failure says which field carried it. A value that is id shaped or clock shaped is skipped on
+// purpose: a number echoed into an id shaped field is the id's own digits, not a leak, and the
+// same holds for a clock.
 function fieldsCarrying(raw, record) {
   const idShape = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const clockShape = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
-  return Object.entries(record)
-    .filter(([, value]) => {
-      const text = String(value);
-      if (idShape.test(text) || clockShape.test(text)) return false;
-      return text.includes(raw);
-    })
-    .map(([field]) => field);
+  const found = [];
+  const walk = (value, path) => {
+    if (value !== null && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) {
+        walk(item, path ? `${path}.${key}` : key);
+      }
+      return;
+    }
+    const text = String(value);
+    if (idShape.test(text) || clockShape.test(text)) return;
+    if (text.includes(raw)) found.push(path);
+  };
+  walk(record, "");
+  return found;
 }
 
 let child;
