@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/logging"
 )
@@ -205,9 +206,13 @@ func seedRole(getenv func(string) string) error {
 	// on the demo GM login rather than a product SKU (migrations insert
 	// DBS-% products of their own, so a SKU guard trips on a fresh
 	// migrated-only database and silently skips users/customers/pricing,
-	// the pin's DIB-378 finding).
-	var seeded bool
-	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE email = 'alex.morgan@dibbits.example')`).Scan(&seeded); err != nil {
+	// the pin's DIB-378 finding). The login is asked through the identity
+	// module's seam with the one constant finance-seed guards on
+	// (finance_seed.go), so "is the seed applied" has one key and one
+	// reader, and core seed and the finance box's classifier can never
+	// answer it differently.
+	seeded, err := identity.HasUser(ctx, pool, financeSeedGuardEmail)
+	if err != nil {
 		return fmt.Errorf("seed: guard check failed: %w", err)
 	}
 	if seeded {
