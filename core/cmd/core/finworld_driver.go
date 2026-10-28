@@ -28,6 +28,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	erpidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	staffcontext "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	staffctx "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
@@ -38,6 +39,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
@@ -1511,21 +1513,26 @@ func finworldExecuteVendorBill(
 	return finworldPostSupplierCheque(ctx, h, branchID, vb.VendorBillKey, vb.VendorInvoiceNo, vb.TotalCents, docTime)
 }
 
-// finworldPostSupplierCheque settles a vendor bill: DR 2100 / CR 1000, the journal the AP
-// subledger's settlement side reads.
+// finworldPostSupplierCheque settles a vendor bill through purchasing's own PayBill (W2-9a round 2): a PAID
+// instalment the AP aging counts, and the DR 2100 / CR 1000 journal PayBill posts at the cheque's own date. The
+// world's key makes a re-run of the day return the first payment and write nothing.
 func finworldPostSupplierCheque(ctx context.Context, h *finworldHarness, branchID, billKey, invoiceNo string, totalCents int64, docTime time.Time) error {
-	if _, err := h.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
-		Source:         "PAYMENT",
+	var billID string
+	if err := h.pool.QueryRow(ctx, `SELECT id::text FROM purchasing_bills WHERE bill_no = $1 AND branch_id = $2::uuid`, invoiceNo, branchID).Scan(&billID); err != nil {
+		return fmt.Errorf("lookup vendor bill %s (%s): %w", billKey, invoiceNo, err)
+	}
+	sctx := staffcontext.ContextWithStaff(ctx, staffcontext.StaffContext{
+		UserID: finworldStaffUser,
+		Scope:  staffcontext.ScopeGlobal,
+		Status: staffcontext.StatusActive,
+	})
+	if _, err := h.ops.purchasingSvc.PayBill(sctx, billID, purchasing.PayBillRequest{
+		AmountCents:    totalCents,
+		PaidAt:         docTime,
+		Note:           "Supplier cheque " + billKey + " (" + invoiceNo + ")",
 		IdempotencyKey: "finworld:vpay:" + invoiceNo,
-		Memo:           "Supplier cheque " + billKey + " (" + invoiceNo + ")",
-		BranchID:       branchID,
-		DocumentDate:   docTime,
-		Lines: []gl.ExternalLine{
-			{AccountCode: "2100", DebitCents: totalCents, Memo: "AP settlement " + invoiceNo},
-			{AccountCode: "1000", CreditCents: totalCents, Memo: "Supplier cheque " + invoiceNo},
-		},
 	}); err != nil {
-		return fmt.Errorf("post supplier payment journal %s: %w", billKey, err)
+		return fmt.Errorf("pay vendor bill %s: %w", billKey, err)
 	}
 	return nil
 }
@@ -2217,7 +2224,7 @@ func finworldResolveBankMatchTarget(ctx context.Context, pool *pgxpool.Pool, ref
 
 	case strings.HasPrefix(ref, "VINV-"):
 		var jid string
-		if err := pool.QueryRow(ctx, `SELECT id::text FROM gl_journals WHERE idempotency_key = $1`, "finworld:vpay:"+ref).Scan(&jid); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT j.id::text FROM gl_journals j JOIN purchasing_bills b ON b.id = j.source_ref_id WHERE b.bill_no = $1 AND j.source = 'PAYMENT'`, ref).Scan(&jid); err != nil {
 			return "", "", fmt.Errorf("lookup vendor payment journal %s: %w", ref, err)
 		}
 		return "JOURNAL", jid, nil
