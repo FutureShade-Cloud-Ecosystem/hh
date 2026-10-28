@@ -80,12 +80,15 @@ export const warrantyStyles = css`
     font-weight: 600;
   }
   .seg button:disabled {
-    cursor: default;
+    background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
   }
   .seg button[aria-pressed="true"]:disabled {
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
   }
 
   /* -- the threshold's field row ------------------------------------------------- */
