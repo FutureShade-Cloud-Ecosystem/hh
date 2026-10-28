@@ -287,25 +287,32 @@ func (r *Repository) ActivityFor(ctx context.Context, invoiceID, orderID string,
 		SELECT kind, at, detail, amount_cents, actor FROM (
 		    -- the document was raised
 		    SELECT 'ISSUED'::text AS kind, i.finalized_at AS at, i.invoice_no::text AS detail,
-		           i.total_cents AS amount_cents, ''::text AS actor
+		           i.total_cents AS amount_cents, ''::text AS actor, 0::int AS ord
 		      FROM invoices i WHERE i.id = $1::uuid AND i.finalized_at IS NOT NULL
 		    UNION ALL
 		    -- what we sent, and what it was
 		    SELECT CASE WHEN d.kind = 'REMINDER' THEN 'REMINDER' ELSE 'EMAILED' END,
 		           d.sent_at,
 		           NULLIF(TRIM(BOTH ' ' FROM COALESCE(d.tone,'') || ' ' || d.to_address), ''),
-		           d.balance_cents, COALESCE(u.display_name,'')
+		           d.balance_cents, COALESCE(u.display_name,''), 0::int
 		      FROM ar_invoice_deliveries d LEFT JOIN users u ON u.id = d.sent_by
 		     WHERE d.invoice_id = $1::uuid
 		    UNION ALL
 		    -- and whether they opened it
-		    SELECT 'VIEWED', d.opened_at, d.to_address, 0, ''
+		    SELECT 'VIEWED', d.opened_at, d.to_address, 0, '', 0::int
 		      FROM ar_invoice_deliveries d
 		     WHERE d.invoice_id = $1::uuid AND d.opened_at IS NOT NULL
 		    UNION ALL
 		    -- money applied
 		    -- a reversing row's contra allocation is the payment taken back: its own act, the amount negative.
 		    -- A reversal row (0450) is the same act on the payment itself and carries the negative itself.
+		    --
+		    -- ord is the tiebreak, so the order does not hang on two clocks agreeing: a reversal row
+		    -- (0450) and the application it reverses can carry the same instant (the application's row
+		    -- is dated by Postgres now(), the reversal's by the undo's own clock, and the undo never
+		    -- lands earlier than the application), and the list is newest first, so the undo, the later
+		    -- act, reads above the application. The instant shown is the row's own, so the timeline
+		    -- says when each act happened.
 		    SELECT 'PAYMENT', pa.created_at,
 		           CASE WHEN p.reverses_payment_id IS NOT NULL
 		                THEN 'reversed ' || (SELECT o.payment_no::text FROM payments o WHERE o.id = p.reverses_payment_id) || ' · ' || p.method
@@ -313,28 +320,29 @@ func (r *Repository) ActivityFor(ctx context.Context, invoiceID, orderID string,
 		                THEN 'reversed ' || p.payment_no::text || ' · ' || p.method
 		                ELSE p.payment_no::text || ' · ' || p.method END,
 		           CASE WHEN p.reverses_payment_id IS NOT NULL THEN -pa.amount_cents ELSE pa.amount_cents END,
-		           COALESCE(u.display_name,'')
+		           COALESCE(u.display_name,''),
+		           CASE WHEN pa.kind = 'REVERSAL' THEN 1 ELSE 0 END
 		      FROM payment_allocations pa
 		      JOIN payments p ON p.id = pa.payment_id
 		      LEFT JOIN users u ON u.id = COALESCE(pa.allocated_by, p.received_by)
 		     WHERE pa.invoice_id = $1::uuid AND $3::bool
 		    UNION ALL
 		    -- the delivery that earned the invoice
-		    SELECT 'DELIVERED', s.pod_at, s.pod_received_by, 0, COALESCE(u.display_name,'')
+		    SELECT 'DELIVERED', s.pod_at, s.pod_received_by, 0, COALESCE(u.display_name,''), 0::int
 		      FROM delivery_stops s LEFT JOIN users u ON u.id = s.pod_by
 		     WHERE s.order_id = NULLIF($2, '')::uuid AND s.pod_at IS NOT NULL
 		    UNION ALL
 		    -- commitments and arguments
-		    SELECT 'PROMISE', pr.taken_at, pr.promised_by, pr.promised_cents, COALESCE(u.display_name,'')
+		    SELECT 'PROMISE', pr.taken_at, pr.promised_by, pr.promised_cents, COALESCE(u.display_name,''), 0::int
 		      FROM ar_promises_to_pay pr LEFT JOIN users u ON u.id = pr.taken_by
 		     WHERE pr.invoice_id = $1::uuid
 		    UNION ALL
-		    SELECT 'DISPUTE', di.raised_at, di.reason, di.amount_cents, COALESCE(u.display_name,'')
+		    SELECT 'DISPUTE', di.raised_at, di.reason, di.amount_cents, COALESCE(u.display_name,''), 0::int
 		      FROM ar_invoice_disputes di LEFT JOIN users u ON u.id = di.raised_by
 		     WHERE di.invoice_id = $1::uuid
 		) t
 		WHERE at IS NOT NULL
-		ORDER BY at DESC
+		ORDER BY t.at DESC, t.ord DESC
 		LIMIT 40`, invoiceID, orderID, withPayments)
 	if err != nil {
 		return nil, fmt.Errorf("billing: read activity: %w", err)

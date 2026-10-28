@@ -210,6 +210,13 @@ func (r *Repository) OrderDocumentEvents(ctx context.Context, orderID string, wi
 	// A reversal row (0450) is the undo of an application on the SAME payment: a bounce or a void
 	// writes it beside the application, so the trail carries both and the reader sees the money taken
 	// back. It reads as a reversal for the same reason a reversing row's contra allocation does.
+	//
+	// THE ORDER DOES NOT HANG ON TWO CLOCKS AGREEING. A reversal row is ordered on the instant of the
+	// application it reverses, not on its own created_at: the application's row is dated by Postgres
+	// (now(), the column default) and the reversal's by the undo's own clock, so ordering the two on
+	// their own dates leaves the order to a race between two clocks. On the application's instant the
+	// pair sorts together, and pa.kind puts the APPLICATION before its REVERSAL (the undo is the later
+	// act). The row's own created_at is still returned as the instant.
 	payRows, err := r.pool.Query(ctx, `
 		SELECT p.id::text, i.invoice_no::text, p.method, pa.amount_cents, pa.created_at,
 		       COALESCE(pa.allocated_by::text,''), COALESCE(ua.display_name,''),
@@ -222,7 +229,9 @@ func (r *Repository) OrderDocumentEvents(ctx context.Context, orderID string, wi
 		  LEFT JOIN users ua ON ua.id = pa.allocated_by
 		  LEFT JOIN users ur ON ur.id = p.received_by
 		 WHERE i.order_id = $1::uuid
-		 ORDER BY pa.created_at`, orderID)
+		 ORDER BY COALESCE((SELECT app.created_at FROM payment_allocations app
+		                     WHERE app.id = pa.reverses_allocation_id), pa.created_at),
+		          pa.payment_id, pa.invoice_id, pa.kind`, orderID)
 	if err != nil {
 		return nil, fmt.Errorf("order: activity payments: %w", err)
 	}

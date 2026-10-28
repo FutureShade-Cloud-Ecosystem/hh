@@ -67,16 +67,27 @@ ALTER TABLE payment_allocations ADD CONSTRAINT payment_allocations_amount_cents_
 --    nothing or at the wrong money. And once a reversal stands, the application it names cannot be
 --    changed at all: growing its amount or moving its payment or invoice would rewrite the history
 --    the reversal row preserved, so the pair would stop netting zero.
+--
+--    THE REVERSAL IS NEVER DATED BEFORE THE APPLICATION IT UNDOES. An application row's created_at is
+--    the column default, Postgres now(); a reversal row's is the undo's own clock. Two clocks for one
+--    fact: when they disagree by a fraction of a second, the undo is dated before the money it undoes,
+--    every reader that lists the allocations in time order puts the undo first, and an as-of aging
+--    taken between the two instants nets the payment below zero. The guard refuses that order here, so
+--    no writer can write it: the undo's instant is at the earliest the application's own instant. The
+--    application cannot move its instant either once a reversal stands, or the pair would fall into the
+--    same order from the other side.
 CREATE OR REPLACE FUNCTION payment_allocations_reversal_guard() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
     app_amount  BIGINT;
     app_payment UUID;
     app_invoice UUID;
+    app_created TIMESTAMPTZ;
 BEGIN
     IF TG_OP = 'UPDATE' AND OLD.kind = 'APPLICATION'
        AND (NEW.kind <> OLD.kind OR NEW.amount_cents <> OLD.amount_cents
-            OR NEW.payment_id <> OLD.payment_id OR NEW.invoice_id <> OLD.invoice_id)
+            OR NEW.payment_id <> OLD.payment_id OR NEW.invoice_id <> OLD.invoice_id
+            OR NEW.created_at <> OLD.created_at)
        AND EXISTS (SELECT 1 FROM payment_allocations
                     WHERE kind = 'REVERSAL' AND reverses_allocation_id = OLD.id) THEN
         RAISE EXCEPTION 'payment_allocations: an application a reversal row names cannot be changed (payment %, invoice %)',
@@ -93,7 +104,8 @@ BEGIN
         RAISE EXCEPTION 'payment_allocations: a reversal row must name the application it reverses (payment %, invoice %)',
             NEW.payment_id, NEW.invoice_id USING ERRCODE = 'check_violation';
     END IF;
-    SELECT amount_cents, payment_id, invoice_id INTO app_amount, app_payment, app_invoice
+    SELECT amount_cents, payment_id, invoice_id, created_at
+      INTO app_amount, app_payment, app_invoice, app_created
       FROM payment_allocations WHERE id = NEW.reverses_allocation_id;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'payment_allocations: a reversal row names no application (payment %, invoice %)',
@@ -106,6 +118,10 @@ BEGIN
     IF NEW.amount_cents <> -app_amount THEN
         RAISE EXCEPTION 'payment_allocations: a reversal row must carry the exact negative of the application it reverses (payment %, invoice %): % against %',
             NEW.payment_id, NEW.invoice_id, NEW.amount_cents, app_amount USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.created_at < app_created THEN
+        RAISE EXCEPTION 'payment_allocations: a reversal row cannot be dated before the application it reverses (payment %, invoice %)',
+            NEW.payment_id, NEW.invoice_id USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
 END;

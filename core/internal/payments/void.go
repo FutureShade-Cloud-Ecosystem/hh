@@ -311,11 +311,20 @@ UPDATE invoices
 	// contra in the money (the receipt never happened, the invoice is re-opened above and the net of
 	// the two rows is zero), but "what did this receipt use to pay?" is answerable from the rows
 	// themselves and not only from an audit trail.
+	//
+	// THE UNDO IS NEVER DATED BEFORE THE MONEY IT UNDOES. The application's row is dated by Postgres
+	// (now(), the column default) and this row by the void's Go clock: two clocks for one fact, and
+	// when they disagree by a fraction of a second the undo lands before the application, every
+	// reader that lists the allocations in time order puts the undo first, and an as-of aging taken
+	// between the two instants nets the receipt below zero. GREATEST takes the later of the two, with
+	// the application's own instant read inside this statement on reverses_allocation_id, so the undo
+	// is dated at the void's instant at the earliest and never earlier than the application.
 	for _, a := range allocs {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO payment_allocations
 			   (payment_id, invoice_id, amount_cents, kind, reverses_allocation_id, allocated_by, created_at)
-			 VALUES ($1::uuid, $2::uuid, $3, 'REVERSAL', $4::uuid, $5::uuid, $6)`,
+			 VALUES ($1::uuid, $2::uuid, $3, 'REVERSAL', $4::uuid, $5::uuid,
+			         GREATEST($6::timestamptz, (SELECT app.created_at FROM payment_allocations app WHERE app.id = $4::uuid)))`,
 			in.PaymentID, a.invoiceID, -a.cents, a.id, actorUUID(in.ActorID), now); err != nil {
 			return Void{}, fmt.Errorf("void: write the reversal row: %w", err)
 		}

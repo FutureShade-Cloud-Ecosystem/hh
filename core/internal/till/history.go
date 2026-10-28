@@ -132,6 +132,13 @@ func (r *Repository) PaymentHistory(ctx context.Context, paymentID string) (Paym
 		return PaymentHistory{}, false, fmt.Errorf("till: payment history header: %w", err)
 	}
 
+	// THE ORDER DOES NOT HANG ON TWO CLOCKS AGREEING. A reversal row is ordered on the instant of the
+	// application it reverses, not on its own created_at: the application's row is dated by Postgres
+	// (now(), the column default) and the reversal's by the undo's own clock, so ordering the two on
+	// their own dates leaves the order to a race between two clocks. On the application's instant the
+	// pair sorts together, and pa.kind puts the APPLICATION before its REVERSAL (the undo is the later
+	// act). The row's own created_at is still returned as the instant, so the answer says when each
+	// act happened.
 	rows, err := r.pool.Query(ctx,
 		`SELECT pa.invoice_id::text, COALESCE(i.invoice_no::text, ''), pa.amount_cents,
 		        COALESCE(pa.allocated_by::text, ''), COALESCE(u.display_name, ''), pa.created_at
@@ -139,7 +146,9 @@ func (r *Repository) PaymentHistory(ctx context.Context, paymentID string) (Paym
 		 LEFT JOIN invoices i ON i.id = pa.invoice_id
 		 LEFT JOIN users u ON u.id = pa.allocated_by
 		 WHERE pa.payment_id = $1
-		 ORDER BY pa.created_at, pa.invoice_id, pa.kind`, h.PaymentID)
+		 ORDER BY COALESCE((SELECT app.created_at FROM payment_allocations app
+			                    WHERE app.id = pa.reverses_allocation_id), pa.created_at),
+		          pa.invoice_id, pa.kind`, h.PaymentID)
 	if err != nil {
 		return PaymentHistory{}, false, fmt.Errorf("till: payment history allocations: %w", err)
 	}
@@ -180,6 +189,9 @@ func (r *Repository) InvoicePayments(ctx context.Context, invoiceID string) (Inv
 		return InvoicePayments{}, false, fmt.Errorf("till: invoice payments header: %w", err)
 	}
 
+	// The same order as the payment history above, and for the same reason: a reversal row is
+	// ordered on the instant of the application it reverses, so the pair sorts together and the
+	// APPLICATION comes before its REVERSAL. The order does not hang on two clocks agreeing.
 	rows, err := r.pool.Query(ctx,
 		`SELECT p.id::text, p.payment_no::text, p.method, p.status, pa.amount_cents, p.amount_cents,
 		        COALESCE(pa.allocated_by::text, ''), COALESCE(ua.display_name, ''), pa.created_at,
@@ -189,7 +201,9 @@ func (r *Repository) InvoicePayments(ctx context.Context, invoiceID string) (Inv
 		 LEFT JOIN users ua ON ua.id = pa.allocated_by
 		 LEFT JOIN users ur ON ur.id = p.received_by
 		 WHERE pa.invoice_id = $1
-		 ORDER BY pa.created_at, p.payment_no, pa.kind`, out.InvoiceID)
+		 ORDER BY COALESCE((SELECT app.created_at FROM payment_allocations app
+			                    WHERE app.id = pa.reverses_allocation_id), pa.created_at),
+		          p.payment_no, pa.invoice_id, pa.kind`, out.InvoiceID)
 	if err != nil {
 		return InvoicePayments{}, false, fmt.Errorf("till: invoice payments: %w", err)
 	}
