@@ -54,6 +54,7 @@ type fakeStore struct {
 	plBranchRows  []PLBranchRow
 	headOffice    string
 	seq           int
+	markers       map[int]bool // the year end markers the fake holds (FW1-09g)
 }
 
 func newFakeStore() *fakeStore {
@@ -303,6 +304,21 @@ func (f *fakeStore) ClosingJournalsForYearTx(ctx context.Context, _ pgx.Tx, year
 	return f.ClosingJournalsForYear(ctx, year)
 }
 
+// YearEndCloseMarkerTx answers the fake's own markers (FW1-09g): a year the fake closed
+// carries one, and the press that finds it is answered with the first run's result.
+func (f *fakeStore) YearEndCloseMarkerTx(_ context.Context, _ pgx.Tx, year int) (bool, error) {
+	return f.markers[year], nil
+}
+
+// InsertYearEndCloseMarkerTx writes the fake's marker (FW1-09g).
+func (f *fakeStore) InsertYearEndCloseMarkerTx(_ context.Context, _ pgx.Tx, year int, _, _ string) error {
+	if f.markers == nil {
+		f.markers = map[int]bool{}
+	}
+	f.markers[year] = true
+	return nil
+}
+
 // YearPeriodsTx answers one period and none of it closed: the fake holds no periods of its own,
 // so the year end's count never refuses and its seal check never fires, and the unit legs keep
 // the shape they had.
@@ -342,7 +358,15 @@ func (f *fakeStore) GetPeriod(_ context.Context, _ string) (Period, error) {
 func (f *fakeStore) FiscalPeriodIDTx(_ context.Context, _ pgx.Tx, year, month int) (string, error) {
 	return fmt.Sprintf("00000000-0000-4000-8000-%04d%02d000000", year%10000, month), nil
 }
-func (f *fakeStore) ClosePeriod(_ context.Context, id, _, _ string) (Period, error) {
+func (f *fakeStore) ClosePeriod(ctx context.Context, id, _, _ string, record func(ctx context.Context, tx pgx.Tx) error) (Period, error) {
+	// FW1-09g: the fake runs the record callback on its no-op transaction, the way the
+	// repository runs it inside the close's own transaction, so a refused record holds the
+	// close here too.
+	if record != nil {
+		if err := record(ctx, fakeTx{}); err != nil {
+			return Period{}, err
+		}
+	}
 	return Period{ID: id, Status: "CLOSED"}, nil
 }
 func (f *fakeStore) ReopenPeriod(_ context.Context, id, _, _ string) (Period, error) {
