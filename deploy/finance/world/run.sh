@@ -9,12 +9,15 @@ SEED="${FINWORLD_SEED:-1}"
 ANCHOR="${FINWORLD_ANCHOR:-2026-09}"
 DEALER_NAME="${HH_WEB_DEALER_NAME:-Quarryfen Hardscape Supply}"
 GOCACHE_DIR="${FINWORLD_GOCACHE:-/home/colton/Desktop/FBHQ/hh-wt/s4-fin2-w21b-driver-gocache}"
-EG_DIR="${FINWORLD_EG_DIR:-/home/colton/Desktop/FBHQ/hh-wt/s4-fin2-w21b-driver-eg}"
+OUT_DIR="${FINWORLD_OUT_DIR:-/home/colton/Desktop/FBHQ/hh-s4/fin2/gates/w21b}"
+# The build directory lives under the output directory, so two runs never
+# share a binary: the evening guard toolchain, the overlay, the faketime
+# clock and the built core all belong to the run that made them.
+EG_DIR="${FINWORLD_EG_DIR:-${OUT_DIR}/eg}"
 FAKETIME_DIR="${FINWORLD_FAKETIME_DIR:-${EG_DIR}/faketime}"
 FAKETIME_FILE="${FAKETIME_DIR}/clock"
 CONTAINER_NAME="${FINWORLD_PG_CONTAINER:-s4-fin2-w21b-pg}"
 PG_PORT="${FINWORLD_PG_PORT:-57728}"
-OUT_DIR="${FINWORLD_OUT_DIR:-/home/colton/Desktop/FBHQ/hh-s4/fin2/gates/w21b}"
 
 # 1. Check free space on /home (stop under 30 GB).
 AVAIL_KB="$(df -Pk /home | awk 'NR==2 {print $4}')"
