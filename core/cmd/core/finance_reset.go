@@ -249,6 +249,13 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	// The schemas the dump owns: the public schema every dump of this tree's
 	// world carries, and every schema the dump creates for itself.
 	schemas := dumpOwnedSchemas(dump)
+	// The recreated public schema has to carry the initdb shape, and giving
+	// a schema to pg_database_owner needs a role the box's role can set.
+	// The check runs before the drop, so a box that cannot carry the shape
+	// is refused with its tables still in place.
+	if err := financeResetPublicShapePossible(ctx, pool); err != nil {
+		return err
+	}
 	dropped, err := financeResetDropSchemas(ctx, pool, schemas)
 	if err != nil {
 		return err
@@ -426,11 +433,84 @@ func financeResetDropSchemas(ctx context.Context, pool *pgxpool.Pool, schemas []
 		dropped++
 	}
 	// The public schema is the one the dump does not create for itself: its
-	// tables are named public.something, so the schema has to be there.
+	// tables are named public.something, so the schema has to be there, and
+	// it has to carry the shape initdb gave it: pg_database_owner owns it
+	// and PUBLIC holds USAGE on it, and nothing else.
+	//
+	// The assist migrations from 0419 on create their views under a per
+	// database view owner role: a role that does not own public and that
+	// reads public's tables. Without the grant that role holds no USAGE on
+	// the schema, and the first migration that touches public from a non
+	// owner role refuses with permission denied for schema public. The shape
+	// is restored here, right after the recreate, so the migrations the reset
+	// runs next see the schema the box's first migrate saw.
 	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS public"); err != nil {
 		return dropped, fmt.Errorf("finance-reset: the public schema could not be recreated: %w", err)
 	}
+	if _, err := pool.Exec(ctx, "ALTER SCHEMA public OWNER TO pg_database_owner"); err != nil {
+		return dropped, fmt.Errorf("finance-reset: the public schema could not be given its initdb owner: %w", err)
+	}
+	if err := financeResetPublicGrant(ctx, pool); err != nil {
+		return dropped, err
+	}
 	return dropped, nil
+}
+
+// financeResetPublicGrant gives PUBLIC the USAGE on the public schema that
+// initdb gives it. The grant is made as pg_database_owner, the role initdb
+// makes the grantor, so the schema's ACL is the one a fresh database has:
+// pg_database_owner holds USAGE and CREATE on it, and PUBLIC holds USAGE and
+// nothing else.
+func financeResetPublicGrant(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("finance-reset: the public schema could not be given its initdb grant: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SET LOCAL ROLE pg_database_owner`); err != nil {
+		return fmt.Errorf("finance-reset: the public schema could not be given its initdb grant: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `GRANT USAGE ON SCHEMA public TO PUBLIC`); err != nil {
+		return fmt.Errorf("finance-reset: the public schema could not be given its initdb grant: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
+		return fmt.Errorf("finance-reset: the public schema could not be given its initdb grant: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("finance-reset: the public schema could not be given its initdb grant: %w", err)
+	}
+	return nil
+}
+
+// financeResetPublicShapePossible answers whether the reset can give the
+// recreated public schema its initdb shape at all: the owner is
+// pg_database_owner, and a role may only hand a schema to a role it can
+// set. The check is made on a throwaway schema inside a transaction that is
+// rolled back, so nothing is left behind, and the answer does not depend on
+// the server's major version.
+//
+// It runs before anything is dropped: a box whose role cannot carry the
+// shape is refused with its tables still in place, never with them gone and
+// the grant missing.
+func financeResetPublicShapePossible(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("finance-reset: the public schema's shape could not be checked: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `CREATE SCHEMA finance_reset_probe`); err != nil {
+		return fmt.Errorf("finance-reset: the public schema's shape could not be checked: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `ALTER SCHEMA finance_reset_probe OWNER TO pg_database_owner`); err != nil {
+		return fmt.Errorf("finance-reset: this role cannot give the public schema its initdb owner (pg_database_owner), so the reset refuses before it drops anything: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `SET LOCAL ROLE pg_database_owner`); err != nil {
+		return fmt.Errorf("finance-reset: this role cannot act as the public schema's initdb owner, so the reset refuses before it drops anything: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `GRANT USAGE ON SCHEMA finance_reset_probe TO PUBLIC`); err != nil {
+		return fmt.Errorf("finance-reset: this role cannot give the public schema its initdb grant, so the reset refuses before it drops anything: %w", err)
+	}
+	return nil
 }
 
 // financeResetDumpDirectory answers the directory the dump file is written
