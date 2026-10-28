@@ -1088,11 +1088,6 @@ async function handle(req, res) {
     parkedApplyMs = Math.max(0, Number(body?.ms ?? 0));
     return send(res, 200, { ok: true, parkedApplyMs });
   }
-  if (method === "POST" && path === "/_stub/post-to-bank") {
-    const body = await readBody(req);
-    const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
-    return send(res, answer.status, answer.body);
-  }
   if (method === "POST" && path === "/_stub/outstanding-items") {
     const body = await readBody(req);
     const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));

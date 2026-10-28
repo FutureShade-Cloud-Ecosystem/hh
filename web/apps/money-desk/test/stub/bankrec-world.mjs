@@ -45,11 +45,11 @@ export function statementMonth() {
   return { year: before.getFullYear(), month: before.getMonth() + 1 };
 }
 
-// The ledger side of the operating account before any match: its opening balance, plus the cheque deposit and the
-// bank fee that were already booked by journals. The statement closing balance is the opening balance plus every
-// line of the month; once every line is matched the ledger reaches it and the variance is zero.
-export const OPENING_CENTS = 1_850_000;
-const BOOKED_BEFORE_MATCHING = 64_025 - 4_500;
+// The ledger side is the GL module's, and this stub reads it where the ledger is: the posted journals' lines on
+// the account's own GL code, the same read the cut over preview makes (its entries and their book balance). The
+// stub keeps no ledger of its own: no balance to move, no clearing arithmetic, no control that posts to the
+// account. The month that really signs off at zero difference belongs to the real core, and its spec reads it
+// there (test/acceptance-real/bankrec.pw.ts).
 
 function fresh() {
   const { year, month } = statementMonth();
@@ -97,8 +97,6 @@ function fresh() {
     recons: [],
     depositsInTransit: [],
     outstandingCheques: [],
-    // The ledger side (account 1000): moved by the clearing journals a match posts and the reversal an undo posts.
-    glCents: OPENING_CENTS + BOOKED_BEFORE_MATCHING,
     nextMatch: 1,
     nextRule: 4,
     nextRecon: 1,
@@ -209,10 +207,31 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
   const stamp = () => new Date(Date.now() + world.tick++).toISOString();
   const liveMatch = (lineId) => world.matches.find((m) => m.statement_line_id === lineId && !m.unmatched_at);
 
-  /** The clearing journal a match posts moves the ledger by the deposit; an undo of a posting match moves it back. */
-  const postClearing = (cents) => {
-    world.glCents += cents;
-    return uuid("b6", world.tick++);
+  /** The clearing journal a match posts: the core names the journal it posted. This stub names it and keeps no
+   *  ledger for it to move, because the ledger is the GL module's. */
+  const clearingJournal = () => uuid("b6", world.tick++);
+
+  /** The ledger's balance for an account's GL code, as of a day: the posted journals' lines on that account,
+   *  read from the ledger's own world. The same read the cut over preview makes. */
+  const ledgerBalanceCents = (glAccountCode, asOf) => {
+    const rows = (typeof ledgerPosted === "function" ? ledgerPosted() : [])
+      .flatMap((j) =>
+        j.lines
+          .filter((l) => l.account_code === glAccountCode)
+          .map((l) => ({ journal: j, net: l.debit_cents - l.credit_cents })),
+      )
+      .filter((e) => e.net !== 0 && (e.journal.posted_at ?? "").slice(0, 10) <= asOf);
+    return rows.reduce((s, e) => s + e.net, 0);
+  };
+
+  /** The month end, the day the ledger's closing balance is read on. */
+  const monthEndDay = (year, month) => new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+
+  /** The ledger's balance for an account, as the core reads it: the closing balance of the month, and a card's
+   *  own sign (the core: core/internal/bankrec/service.go:798-820). */
+  const ledgerFor = (account, year, month) => {
+    const balance = ledgerBalanceCents(account.gl_account_code, monthEndDay(year, month));
+    return account.account_type === "CREDIT_CARD" ? -balance : balance;
   };
 
   // The CSV the built-in parser reads: the rbc-default and visa-default mapping, a header row required.
@@ -441,7 +460,7 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
         target_ref_id: found.ref,
         method: "AUTO",
         rule_id: found.rule.id,
-        journal_id: postClearing(line.amount_cents),
+        journal_id: clearingJournal(),
         amount_cents: line.amount_cents,
         matched_by: caller.id,
         matched_at: stamp(),
@@ -506,7 +525,7 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
       target_ref_id: input.target_ref_id ?? "",
       method: "MANUAL",
       rule_id: "",
-      journal_id: posts ? postClearing(line.amount_cents) : "",
+      journal_id: posts ? clearingJournal() : "",
       amount_cents: amount,
       matched_by: caller.id,
       matched_at: stamp(),
@@ -540,8 +559,8 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
       const payment = world.payments.find((p) => p.id === match.target_ref_id && p.status === "DEPOSITED");
       if (payment !== undefined) payment.status = "RECEIVED";
     }
-    // A payment or lodgement match posted a clearing journal; the undo posts the reversal.
-    if ((match.target_type === "PAYMENT" || match.target_type === "LODGEMENT") && match.amount_cents > 0) world.glCents -= match.amount_cents;
+    // A payment or lodgement match posted a clearing journal; the undo posts the reversal. The ledger the
+    // journal moves is the GL module's, and this stub keeps none.
     return { status: 200, body: { status: "unmatched" } };
   }
 
@@ -582,8 +601,8 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
     const account = world.accounts.find((a) => a.id === input.bank_account_id);
     if (account === undefined) return clientError(404, "not found");
     const netNow = monthNet(account.id, input.year, input.month);
-    // Only the operating account has a ledger balance in this world; the cards are tracking only.
-    const gl = account.gl_account_code === "1000" ? world.glCents : 0;
+    // The ledger side: read from the ledger's own world, at the month's end.
+    const gl = ledgerFor(account, input.year, input.month);
     const ditCents = account.gl_account_code === "1000" ? world.depositsInTransit.reduce((s, x) => s + x.amount_cents, 0) : 0;
     const ocCents = account.gl_account_code === "1000" ? world.outstandingCheques.reduce((s, x) => s + x.amount_cents, 0) : 0;
     const existing = world.recons.find((r) => r.bank_account_id === account.id && r.year === input.year && r.month === input.month);
@@ -706,7 +725,7 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
     }
     // SF-2s + FW1-04: the core recomputes the ledger, outstanding items, and a derived statement balance from the lines at completion.
     const stmt = rec.statement_balance_derived ? monthNet(rec.bank_account_id, rec.year, rec.month) : rec.statement_balance_cents;
-    const ledger = account !== undefined && account.gl_account_code === "1000" ? world.glCents : 0;
+    const ledger = account !== undefined ? ledgerFor(account, rec.year, rec.month) : 0;
     const ditCents = account !== undefined && account.gl_account_code === "1000" ? world.depositsInTransit.reduce((s, x) => s + x.amount_cents, 0) : 0;
     const ocCents = account !== undefined && account.gl_account_code === "1000" ? world.outstandingCheques.reduce((s, x) => s + x.amount_cents, 0) : 0;
     const adjBank = stmt + ditCents - ocCents;
@@ -735,11 +754,6 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
       return { status: 200, body: { ok: true } };
     }
     // A control the contract test uses to reverse a payment the way the payments module would (reversed_at set).
-    // A control the contract test uses to post to the operating account's ledger after a month was opened (SF-2s).
-    if (method === "POST" && path === "/_stub/post-to-bank") {
-      world.glCents += JSON.parse(bodyText || "{}").cents ?? 0;
-      return { status: 200, body: { ok: true } };
-    }
     if (method === "POST" && path === "/_stub/outstanding-items") {
       const input = JSON.parse(bodyText || "{}");
       world.depositsInTransit = Array.isArray(input.deposits_in_transit) ? input.deposits_in_transit : [];
