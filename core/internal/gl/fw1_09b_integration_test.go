@@ -126,7 +126,7 @@ func TestIntegration_FW1_09b_ParkedJournalCannotPostIntoAClosedMonth(t *testing.
 	direct, rail := mk(1), mk(2)
 
 	repo := NewRepository(pool)
-	if _, err := repo.ClosePeriod(ctx, periodID(t, pool, 2081, 6), user, "FW1-09b close first"); err != nil {
+	if _, err := repo.ClosePeriod(ctx, periodID(t, pool, 2081, 6), user, "FW1-09b close first", nil); err != nil {
 		t.Fatalf("close June 2081: %v", err)
 	}
 
@@ -403,6 +403,11 @@ func TestIntegration_FW1_09b_TheStatementsSurviveTheClose(t *testing.T) {
 	// report year's periods exist BEFORE that baseline so both reads stand on
 	// the same view rows (the round 5 AC2 pattern).
 	ensurePeriods(t, pool, 2093)
+	// FW1-09g: this leg closes 2092, so it OWNS 2092: the year end close's marker is the
+	// record of the act and it outlives the seal, so the leg that closes a year takes its
+	// marker with it (otherwise the next leg that closes the same year is answered "already
+	// closed" and the statements never carry the year's net income).
+	ensurePeriods(t, pool, 2092)
 	bs := func(year int) map[string]int64 {
 		t.Helper()
 		rows, err := pool.Query(ctx, `SELECT account_code, COALESCE(SUM(amount_cents),0) FROM v_balance_sheet WHERE fiscal_year=$1 GROUP BY account_code`, year)

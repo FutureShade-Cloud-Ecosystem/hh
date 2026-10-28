@@ -24,6 +24,12 @@ import (
 // suite's open periods and the earliest open month at or after the year's end
 // is the leg's own to control. The seeded 2026 books and every sentinel band
 // below the threshold stand.
+//
+// FW1-09g round 2 (K3's P2, FROM-PRINCIPAL 350): the year end marker goes with
+// the year's periods. The marker (gl_year_end_closes) has its own primary key
+// and no foreign key to fiscal_periods, so deleting the periods cannot take it
+// with them, and a marker left behind on a reused box makes the next close of
+// that year answer AlreadyClosed before the leg does any work.
 func fw1ScrubAfter(t *testing.T, pool *pgxpool.Pool, threshold int) {
 	t.Helper()
 	ctx := context.Background()
@@ -31,6 +37,7 @@ func fw1ScrubAfter(t *testing.T, pool *pgxpool.Pool, threshold int) {
 		`DELETE FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id=j.id AND j.fiscal_year > $1`,
 		`DELETE FROM gl_journals WHERE fiscal_year > $1`,
 		`DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE o.period_id=p.id AND p.year > $1`,
+		`DELETE FROM gl_year_end_closes WHERE fiscal_year > $1`,
 		`DELETE FROM fiscal_periods WHERE year > $1`,
 	} {
 		if _, err := pool.Exec(ctx, q, threshold); err != nil {
@@ -66,7 +73,7 @@ func fw1CloseEveryMonth(t *testing.T, pool *pgxpool.Pool, year int, actor string
 	t.Helper()
 	repo := NewRepository(pool)
 	for m := 1; m <= 12; m++ {
-		if _, err := repo.ClosePeriod(context.Background(), periodID(t, pool, year, m), actor, "round 4 month close"); err != nil {
+		if _, err := repo.ClosePeriod(context.Background(), periodID(t, pool, year, m), actor, "round 4 month close", nil); err != nil {
 			t.Fatalf("close %04d-%02d: %v", year, m, err)
 		}
 	}
