@@ -350,6 +350,14 @@ func unprocessable(format string, a ...any) error {
 	return clientError{status: http.StatusUnprocessableEntity, msg: fmt.Sprintf(format, a...)}
 }
 
+// errYearClosed is the reopen's own word (FW1-09h, FROM-PRINCIPAL 350): the year end close is
+// an act and it leaves the year's marker (gl_year_end_closes), and a closed year's P&L never
+// moves without a new close. A month of a CLOSED fiscal year cannot be reopened, so the
+// refusal names the year and sends the correction to the open year.
+func errYearClosed(year int) error {
+	return clientErr(http.StatusConflict, "gl: fiscal year %d is closed; post the correction in the open year", year)
+}
+
 // ErrorHTTPStatus extracts the HTTP status a GL clientError carries (e.g. ApproveJournal's 409 when a
 // journal is no longer DRAFT, or errFourEyes' 403). It is the boundary accessor a main.go adapter uses to
 // translate a GL error into a sibling module's error taxonomy, the JE decide→GL bridge surfaces GL's
