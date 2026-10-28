@@ -114,6 +114,23 @@ export function policyHistoryWho(who: string): string {
   return who === "" ? "somebody" : UNKNOWN_ACTOR;
 }
 
+const POLICY_FIELD_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  restocking_fee_bps: "restocking fee",
+  split_pct: "workspace split",
+  quick_chips: "quick chips",
+  visibility_class: "visibility",
+  presentation_class: "presentation",
+  return_notes: "return notes",
+  notes: "notes",
+});
+
+/** A counter policy history row's knob name in plain dealer words (UX-118). */
+export function policyFieldWord(field: string): string {
+  const mapped = POLICY_FIELD_WORDS[field];
+  if (mapped !== undefined) return mapped;
+  return field.replace(/_bps$/i, "").replace(/_/g, " ").trim();
+}
+
 // -- the walkthrough ----------------------------------------------------------------------------------
 
 /** The line budget, counted in characters, with the doctrine's own words. */

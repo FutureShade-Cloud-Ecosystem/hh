@@ -22,6 +22,7 @@ import {
   TOUR_READONLY_WORDS,
   chipSetError,
   chipsOf,
+  policyFieldWord,
   policyHistoryWho,
   restockingFeeError,
   workspaceSplitError,
@@ -299,7 +300,7 @@ function renderPolicyHistory(s: PolicySection): TemplateResult {
                 ${s.history.map(
                   (row) => html`
                     <tr data-test="policy-history-row">
-                      <td><code class="mono">${row.field}</code></td>
+                      <td>${policyFieldWord(row.field)}</td>
                       <td class="mono">${row.before}</td>
                       <td class="mono">${row.after}</td>
                       <td><span class="chip">${policyHistoryWho(row.who)}</span></td>
