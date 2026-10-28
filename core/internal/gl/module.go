@@ -31,6 +31,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -123,6 +124,26 @@ type BranchCostBasis interface {
 // were emitted before a handler existed). Satisfied by *notify.PgOutboxStore (internal/notify/requeue.go).
 type DeadRequeuer interface {
 	RequeueDead(ctx context.Context, topics []string) (int, error)
+}
+
+// BranchFacts is the branch facts seam the head office branch reads and writes check their answer
+// through (FW1-08b part B, FROM-PRINCIPAL 176): whether an id names a branch row at all
+// (loc_type = 'BRANCH'), whether it is a branch of the caller's org, and which branch a yard code
+// names (ruling 162: the default reads TRT by code). branches owns locations; gl reads it only
+// through this seam, bound in the composition root over *branches.Repository. Satisfied by
+// core/cmd/core's glBranchFacts adapter.
+//
+// FW1-08b part B round 2 (P3-1) adds the LIVE read: a soft deleted branch is still a BRANCH row,
+// so Exists answers true for one, but it is not a live branch and a soft deleted branch is never a
+// head office. The code read the same wave relies on (BranchRowByCodeTx) filters deleted_at, so
+// the two lookups now agree on what a live branch is.
+type BranchFacts interface {
+	Exists(ctx context.Context, id string) (bool, error)
+	// LiveBranchExists answers whether the id names a live branch: a BRANCH row that is not soft
+	// deleted.
+	LiveBranchExists(ctx context.Context, id string) (bool, error)
+	BranchInOrg(ctx context.Context, orgID, branchID string) (bool, error)
+	BranchRowByCodeTx(ctx context.Context, tx pgx.Tx, code string) (branchID string, ok bool, err error)
 }
 
 // ApprovalFiler is GL's nil-able approvals-rail seam (0075). When CreateJournal parks a MANUAL journal as
@@ -247,11 +268,20 @@ type Repository struct {
 	// zone is the dealer's business day zone, read ON the posting transaction; nil = the Ontario
 	// dealer's. It decides which fiscal period a posting's instant belongs to.
 	zone ZoneTxSource
-	// hoMu and hoOverride hold an in-process head office branch override before the FW1-08b
-	// migration adds gl_policy.head_office_branch_id; once the column exists, gl_policy is the
-	// authoritative source.
+	// hoMu and hoOverride hold an in-process head office branch override (FW1-08b part B round 2,
+	// P3-2: THIS IS THE UNWIRED SCAFFOLD's STAND IN and not the production answer).
+	//
+	// A repository built without the branch facts seam cannot ask which branch is the head
+	// office, so headOfficeFallback() answers the fixed Trenton uuid or, when a caller sets it,
+	// this override. The production repository carries the seam: gl_policy.head_office_branch_id
+	// is authoritative, and with no policy row the seam reads TRT by code (ruling 162). Nothing in
+	// production reads this field; it is kept, not removed, because the offline scaffold's
+	// HeadOfficeBranchID has no other answer to give.
 	hoMu       sync.RWMutex
 	hoOverride string
+	// branchFacts is the branch facts seam the head office default's read TRT by code runs
+	// through (ruling 162); nil in unit scaffolds, where the fixed Trenton uuid stands in.
+	branchFacts BranchFacts
 }
 
 // ZoneTxSource is the dealer's business day zone read on a caller's open transaction. A journal is
@@ -306,6 +336,7 @@ type Service struct {
 	auditTx         AuditTxRecorder      // round 2: the open year's audit, in the year's transaction
 	strictPreFlight bool                 // round 4: production refuses a close when a pre flight check is unwired; tests may pass nil
 	queue           OutboxQueue          // the posting queue's rows: the waiting/dead events the Controller lists and the banner counts (nil-able: unwired, the queue reads refuse)
+	branchFacts     BranchFacts          // the branch facts the head office branch reads and writes check their answer through (unwired, the set refuses: fail closed)
 	log             *slog.Logger
 	now             func() time.Time
 	callerFrom      func(context.Context) (identity.StaffContext, bool)
@@ -399,6 +430,36 @@ func (s *Service) authorizeBranchWrite(ctx context.Context, branchID string) err
 	return nil
 }
 
+// resolveBranchID answers the branch a journal carries: the branch the caller named, or the head
+// office branch when the caller named none (ruling 82.3).
+//
+// It is the ONE resolver every writer shares (FW1-08b part B round 2, FROM-PRINCIPAL 318). The
+// internal path (a manual journal, a reversal, a recurring run, the tax relief, the year end
+// close) and the provider surface (PostExternal, PostExternalTx, ParkExternalJournalTx) all ask
+// this one, so an external draft stamps the head office by the same rule the internal path does
+// and never by a copy of it. Before this resolver the external path carried the caller's empty
+// branch straight into the draft, the shared insert turned it into NULL, and migration 0446's
+// CHECK refused the row by name: a database error where a sentence belongs.
+//
+// A head office that answers empty is refused in words. The shared insert turns an empty branch
+// into NULL and the CHECK refuses the row, so a sentence that says what went wrong is the far
+// better answer.
+func (s *Service) resolveBranchID(ctx context.Context, branchID string) (string, error) {
+	branchID = strings.TrimSpace(branchID)
+	if branchID != "" {
+		return branchID, nil
+	}
+	ho, err := s.store.HeadOfficeBranchID(ctx)
+	if err != nil {
+		return "", err
+	}
+	ho = strings.TrimSpace(ho)
+	if ho == "" {
+		return "", unprocessable("gl: no head office branch: the journal names no branch and no head office branch is set; the Financial Controller sets one with SetHeadOfficeBranch")
+	}
+	return ho, nil
+}
+
 // clock returns the service clock (defaults to time.Now).
 func (s *Service) clock() time.Time {
 	if s.now == nil {
@@ -465,6 +526,17 @@ func (s *Service) WithPaymentReader(r PaymentReader) *Service { s.payments = r; 
 
 // WithAudit injects the A-21 Recorder for sensitive-access stamping (reopen, close).
 func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }
+
+// WithBranchFacts binds the branch facts seam (branches owns locations; gl never reads it). It
+// feeds both the head office set's candidate check (Service) and the head office default's
+// read TRT by code (Repository), so one wiring point serves both.
+func (s *Service) WithBranchFacts(bf BranchFacts) *Service {
+	s.branchFacts = bf
+	if s.repo != nil {
+		s.repo.branchFacts = bf
+	}
+	return s
+}
 
 // WithCostBasis injects the inventory cost-basis seam (dormant at W5, NoopCostBasis).
 func (s *Service) WithCostBasis(c CostBasis) *Service { s.costBasis = c; return s }

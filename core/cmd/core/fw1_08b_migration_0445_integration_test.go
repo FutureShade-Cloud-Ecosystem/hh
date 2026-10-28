@@ -24,8 +24,10 @@ import (
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -73,8 +75,12 @@ func TestFW1_08b_Migration0445HeadOfficeBranch(t *testing.T) {
 		auditSvc := audit.NewService(audit.NewRepository(pool), slog.Default())
 		glSvc := gl.NewService(gl.NewRepository(pool).WithZone(newDealerZone(pool))).
 			WithAudit(auditSvc).
-			WithAuditTxRecorder(auditSvc)
-		ctrlCtx := identity.ContextWithStaff(ctx, identity.StaffContext{
+			WithAuditTxRecorder(auditSvc).
+			WithBranchFacts(glBranchFacts{repo: branches.NewRepository(pool)})
+		// The set's org half is unconditional (FW1-08b part B round 2), so this leg carries the
+		// org scope a request context carries, and the branches it names belong to that org.
+		orgID := fw1HeadOfficeScope(t, pool)
+		ctrlCtx := identity.ContextWithStaff(authz.WithStaffScope(ctx, authz.StaffScope{OrgID: orgID}), identity.StaffContext{
 			UserID:   userID,
 			RoleCode: "FINANCIAL_CONTROLLER",
 			Tier:     identity.TierLeadership,
@@ -151,7 +157,9 @@ func TestFW1_08b_Migration0445HeadOfficeBranch(t *testing.T) {
 	})
 
 	t.Run("backfills_the_earliest_branch_when_the_box_has_no_trt", func(t *testing.T) {
-		pool := freshMigratedDBWithout(t, "fw108bnotrt", "0445_gl_branch_stamp.sql")
+		// 0446 depends on 0445: 0445 stamps the setup entries and 0446 refuses a box where
+		// they are still unstamped. So this box is built without either of them.
+		pool := freshMigratedDBWithout(t, "fw108bnotrt", "0445_gl_branch_stamp.sql,0446_gl_branch_stamp.sql")
 
 		// Make the box one whose branches carry no TRT code at all, and make the
 		// former TRT row the NEWEST branch, so "earliest" can only mean KGN.

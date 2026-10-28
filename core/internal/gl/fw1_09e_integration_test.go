@@ -168,6 +168,7 @@ func fw109eSetup(t *testing.T, pool *pgxpool.Pool, openAt, monthEnd time.Time) *
 		if _, err := svc.PostExternal(ctx, ExternalJournal{
 			Source:         SourceAdjustment,
 			IdempotencyKey: "fw1-09e:opening:" + w.productID,
+			BranchID:       w.branchID,
 			Memo:           "opening stock",
 			Lines:          lines,
 		}); err != nil {
@@ -241,6 +242,7 @@ func fw109eBookOnlyMovement(t *testing.T, pool *pgxpool.Pool, w *fw109eWorld, op
 	if _, err := svc.PostExternal(context.Background(), ExternalJournal{
 		Source:         SourceAdjustment,
 		IdempotencyKey: "fw1-09e:out-of-tie:" + w.productID,
+		BranchID:       w.branchID,
 		Memo:           "a book only stock write down",
 		Lines: []ExternalLine{
 			{AccountCode: "5000", DebitCents: fw109eSold * fw109eUnitCost, Memo: "stock write down"},
