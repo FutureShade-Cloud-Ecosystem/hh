@@ -11,6 +11,8 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/landedcost"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -233,8 +235,12 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 		})
 	}
 
-	// 4b. AP (2100) ties to vendor bills and payments at every month end, and Accrued Liabilities (2400) ties to manual accruals
+	// 4b. AP (2100) ties to the AP subledger at every month end, and Accrued Liabilities (2400) ties to manual accruals.
+	// The subledger is two modules' documents on one account: the vendor bills (read through purchasing's own
+	// seam) less the supplier payments, plus the landed-cost payable (read through landedcost's own seam).
 	{
+		purchSvc := purchasing.NewService(purchasing.NewRepository(pool))
+		landedSvc := landedcost.NewService(landedcost.NewRepository(pool))
 		allPass := true
 		var lastDetail string
 		for _, tm := range activeTieMonths {
@@ -246,14 +252,11 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 			if err != nil {
 				return nil, fmt.Errorf("GL 2150 read %04d-%02d: %w", tm.Year, tm.Month, err)
 			}
-			var billsTotalCents, vpayTotalCents int64
-			if err := pool.QueryRow(ctx, `
-				SELECT COALESCE(SUM(total_cents), 0)
-				  FROM purchasing_bills
-				 WHERE status = 'POSTED'
-				   AND bill_date <= $1::date`, tm.MonthEndDate()).Scan(&billsTotalCents); err != nil {
-				return nil, fmt.Errorf("purchasing_bills read %04d-%02d: %w", tm.Year, tm.Month, err)
+			billsTotalCents, err := purchSvc.PostedBillTotalCentsAsOf(ctx, tm.MonthEnd)
+			if err != nil {
+				return nil, fmt.Errorf("vendor bills read %04d-%02d: %w", tm.Year, tm.Month, err)
 			}
+			var vpayTotalCents int64
 			if err := pool.QueryRow(ctx, `
 				SELECT COALESCE(SUM(l.debit_cents), 0)
 				  FROM gl_journal_lines l
@@ -265,18 +268,22 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 				   AND j.posted_at <= $1`, tm.MonthEnd).Scan(&vpayTotalCents); err != nil {
 				return nil, fmt.Errorf("vendor payment journals read %04d-%02d: %w", tm.Year, tm.Month, err)
 			}
-			apSubledgerCents := billsTotalCents - vpayTotalCents
+			landedOutstandingCents, err := landedSvc.OutstandingPayableCentsAsOf(ctx, tm.MonthEnd)
+			if err != nil {
+				return nil, fmt.Errorf("landed cost payable read %04d-%02d: %w", tm.Year, tm.Month, err)
+			}
+			apSubledgerCents := billsTotalCents - vpayTotalCents + landedOutstandingCents
 			gl2100CreditCents := -gl2100
 			if gl2100CreditCents != apSubledgerCents || gl2150 != 0 {
 				allPass = false
-				lastDetail = fmt.Sprintf("%04d-%02d FAIL: GL 2100 credit=%s vs vendor subledger=%s (bills=%s less payments=%s), GL 2150=%s",
+				lastDetail = fmt.Sprintf("%04d-%02d FAIL: GL 2100 credit=%s vs AP subledger=%s (bills=%s less payments=%s plus landed cost=%s), GL 2150=%s",
 					tm.Year, tm.Month, finworldDollars(gl2100CreditCents), finworldDollars(apSubledgerCents),
-					finworldDollars(billsTotalCents), finworldDollars(vpayTotalCents), finworldDollars(gl2150))
+					finworldDollars(billsTotalCents), finworldDollars(vpayTotalCents), finworldDollars(landedOutstandingCents), finworldDollars(gl2150))
 				break
 			}
-			lastDetail = fmt.Sprintf("%04d-%02d: GL 2100 credit %s ties to vendor bills %s less supplier payments %s = %s (GL 2150 GRNI=%s)",
+			lastDetail = fmt.Sprintf("%04d-%02d: GL 2100 credit %s ties to vendor bills %s less supplier payments %s plus landed cost %s = %s (GL 2150 GRNI=%s)",
 				tm.Year, tm.Month, finworldDollars(gl2100CreditCents), finworldDollars(billsTotalCents),
-				finworldDollars(vpayTotalCents), finworldDollars(apSubledgerCents), finworldDollars(gl2150))
+				finworldDollars(vpayTotalCents), finworldDollars(landedOutstandingCents), finworldDollars(apSubledgerCents), finworldDollars(gl2150))
 		}
 		results = append(results, FinWorldTieResult{
 			Name:   "AP_2100_ties_to_vendor_subledger",
