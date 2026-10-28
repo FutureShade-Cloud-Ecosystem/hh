@@ -44,17 +44,8 @@ export class DealerPickers {
   readonly #errors = new Map<string, string>();
   #openField = "";
 
-  readonly #customerNames = new Map<string, string>([
-    ["cu110000-0000-4000-9000-0000000000a1", "Point Loma Hardscape & Masonry (ACCT-1042)"],
-    ["cu110000-0000-4000-9000-0000000000a2", "Julian Stoneworks (ACCT-1088)"],
-  ]);
-
-  readonly #productNames = new Map<string, string>([
-    ["fa110000-0000-4000-9000-0000000000a1", "Paver 60 Charcoal (PAV-60-CH)"],
-    ["fa110000-0000-4000-9000-0000000000a2", "Wall block 8 (WAL-8)"],
-    ["3a000000-0000-4000-9000-000000000001", "Charcoal 60 paver (PAV-60-CH)"],
-    ["3a000000-0000-4000-9000-000000000002", "Seminole wall block (WALL-SEM-BR)"],
-  ]);
+  readonly #customerNames = new Map<string, string>();
+  readonly #productNames = new Map<string, string>();
 
   readonly #recentCustomers: string[] = [];
 
@@ -79,6 +70,7 @@ export class DealerPickers {
 
   rememberProduct(id: string, sku: string, name: string): void {
     if (id === "") return;
+    if (name === "" && this.#productNames.has(id)) return;
     const label = name !== "" && sku !== "" ? `${name} (${sku})` : name !== "" ? name : sku;
     if (label !== "") this.#productNames.set(id, label);
   }
@@ -177,6 +169,9 @@ export class DealerPickers {
     this.#queries.clear();
     this.#customerHits.clear();
     this.#productDrops.clear();
+    this.#customerNames.clear();
+    this.#productNames.clear();
+    this.#recentCustomers.length = 0;
     this.#loading.clear();
     this.#errors.clear();
     this.#openField = "";

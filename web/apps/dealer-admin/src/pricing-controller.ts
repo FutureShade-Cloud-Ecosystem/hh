@@ -2885,6 +2885,10 @@ export class PricingController {
       return;
     }
     this.#setRebates({ phase: "ready", rows: result.value });
+    if (this.model.priceFile.vendors.length === 0 && typeof this.#door.priceFileVendors === "function") {
+      const vendors = await this.#door.priceFileVendors();
+      if (vendors.ok) this.#setPriceFile({ vendors: vendors.value });
+    }
     // The ledger follows the first vendor the programs name, so the screen
     // demonstrates itself instead of waiting for a pick.
     const firstVendor = result.value.find((r) => r.is_active && r.vendor_id !== "") ?? result.value.find((r) => r.vendor_id !== "");
@@ -3192,6 +3196,10 @@ export class PricingController {
       const profiles = await this.#door.importProfiles();
       if (profiles.ok) this.#setBatches({ profiles: profiles.value, profilesPhase: "ready" });
       else this.#setBatches({ profilesPhase: "error", profilesError: profiles.error });
+    }
+    if (this.model.priceFile.vendors.length === 0 && typeof this.#door.priceFileVendors === "function") {
+      const vendors = await this.#door.priceFileVendors();
+      if (vendors.ok) this.#setPriceFile({ vendors: vendors.value });
     }
   }
 

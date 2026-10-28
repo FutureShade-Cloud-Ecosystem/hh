@@ -91,6 +91,7 @@ import type { DealerPickers, EntityPickerSpec } from "./pickers.js";
 export interface PricingPickers {
   renderCustomerPicker(spec: EntityPickerSpec): TemplateResult;
   renderProductPicker(spec: EntityPickerSpec): TemplateResult;
+  rememberProduct?(id: string, sku: string, name: string): void;
 }
 
 const FALLBACK_PICKERS: PricingPickers = {
@@ -112,9 +113,6 @@ function knownVendors(model: PricingModel): readonly { readonly id: string; read
   for (const p of model.batches.profiles) {
     if (p.vendor_id !== "" && !seen.has(p.vendor_id)) seen.set(p.vendor_id, vendorWords(p.vendor_name, p.vendor_id));
   }
-  if (!seen.has("vd110000-0000-4000-9000-0000000000a1")) {
-    seen.set("vd110000-0000-4000-9000-0000000000a1", "Northline Supply");
-  }
   return Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
 }
 
@@ -123,6 +121,17 @@ export function renderPricing(
   branches: readonly BranchRow[] = [],
   pickers: PricingPickers | DealerPickers = FALLBACK_PICKERS,
 ): TemplateResult {
+  if (pickers.rememberProduct !== undefined) {
+    for (const r of model.promos.clearance.rows) {
+      pickers.rememberProduct(r.product_id, r.sku, r.name);
+    }
+    for (const r of model.uom.rows) {
+      pickers.rememberProduct(r.product_id, r.product_sku, "");
+    }
+    for (const r of model.rebates.ledger.rows) {
+      pickers.rememberProduct(r.product_id, r.product_sku, "");
+    }
+  }
   const isPaymentTerms = model.tab === "payment-terms" || model.tab === "terms";
   return html`
     <header class="page-head">
@@ -1520,7 +1529,7 @@ function renderRebateEditor(model: PricingModel, pickers: PricingPickers): Templ
         <label class="field">
           <span class="field-label">Vendor (immutable after create)</span>
           <select class="select" data-field="pr-reb-vendor" ?disabled=${m.busy || e.id !== ""}>
-            <option value="">Choose a vendor</option>
+            <option value="">${vendors.length === 0 ? "No vendors yet" : "Choose a vendor"}</option>
             ${vendors.map((v) => html`<option data-option-id=${v.id}>${v.name}</option>`)}
           </select>
         </label>
@@ -1598,7 +1607,7 @@ function renderLedger(model: PricingModel): TemplateResult {
       </div>
       <div class="filters" role="group" aria-label="The ledger's vendor">
         <select class="select" aria-label="Vendor" data-field="pr-ledger-name">
-          <option value="">Choose a vendor</option>
+          <option value="">${vendors.size === 0 ? "No vendors yet" : "Choose a vendor"}</option>
           ${Array.from(vendors.values()).map((name) => html`<option>${name}</option>`)}
         </select>
         <button type="button" class="btn btn-secondary" data-action="pr-ledger-vendor" ?disabled=${m.phase === "loading"}>Load ledger</button>
@@ -2046,7 +2055,7 @@ function renderBatchCreate(model: PricingModel): TemplateResult | typeof nothing
           <input class="text-field" type="text" data-field="pr-batch-no" ?disabled=${m.busy} /></label>
         <label class="field"><span class="field-label">Vendor</span>
           <select class="select" data-field="pr-batch-vendor" ?disabled=${m.busy}>
-            <option value="">Choose a vendor</option>
+            <option value="">${vendors.length === 0 ? "No vendors yet" : "Choose a vendor"}</option>
             ${vendors.map((v) => html`<option data-option-id=${v.id}>${v.name}</option>`)}
           </select></label>
         <label class="field"><span class="field-label">Import profile (the mapping it reads with)</span>
@@ -2295,7 +2304,7 @@ function renderPriceFileForm(model: PricingModel): TemplateResult {
       <div class="form-grid">
         <label class="field"><span class="field-label">Manufacturer</span>
           <select class="select" data-field="pr-pf-vendor" ?disabled=${m.previewBusy}>
-            <option value="">Choose a manufacturer</option>
+            <option value="">${m.vendors.length === 0 ? "No vendors yet" : "Choose a manufacturer"}</option>
             ${m.vendors.map((v) => html`<option>${v.name}</option>`)}
           </select>
         </label>
