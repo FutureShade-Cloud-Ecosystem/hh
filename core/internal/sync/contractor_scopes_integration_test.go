@@ -195,16 +195,9 @@ func open169Pool(t *testing.T) *pgxpool.Pool {
 		// removes, before the shared kit cleanup runs, or a foreign key from
 		// one of them refuses the kit's branch, user and product deletes and
 		// every later package on the shared gate finds the fixture world
-		// still standing.
-		_, _ = pool.Exec(ctx, `DELETE FROM stock_balances WHERE product_id = $1::uuid AND location_id = $2::uuid`,
-			testkit.ProductID, testkit.BranchNorthAID)
-		_, _ = pool.Exec(ctx, `DELETE FROM pos_parked_tickets WHERE ticket_no = 'FX169-PARK'`)
-		_, _ = pool.Exec(ctx, `DELETE FROM warranty_claims WHERE claim_no = 'FX169-WTY'`)
-		_, _ = pool.Exec(ctx, `DELETE FROM dashboard_user_widgets WHERE widget_key = 'fx169.measure'`)
-		_, _ = pool.Exec(ctx, `DELETE FROM dispatch_trucks WHERE code = 'FX169-TRK'`)
-		_, _ = pool.Exec(ctx, `DELETE FROM dispatch_drivers WHERE name = 'FX Driver'`)
-		_, _ = pool.Exec(ctx, `DELETE FROM vendors WHERE vendor_no = 'FX169-VEN'`)
-		_, _ = pool.Exec(ctx, `DELETE FROM customers WHERE account_no = 'FX169-ACCT'`)
+		// still standing. The seeds and their removals live beside the leg
+		// (Test169PullOnlyFeeds): each removes only the row that leg
+		// planted, or restores the values the row stood with.
 		_ = testkit.Cleanup(ctx, testkit.PgxPool(pool))
 	})
 	return pool
@@ -902,25 +895,147 @@ func Test169PullOnlyFeeds(t *testing.T) {
 		}
 	}
 	seed(`UPDATE products SET seq = 1 WHERE id = $1`, testkit.ProductID)
+
+	// Standing rows the leg did not plant, planted first so the cleanup's
+	// width is a stated, asserted fact: a balance at the natural key the
+	// seed plants beside (the seed's insert is ON CONFLICT (product_id,
+	// location_id) DO NOTHING, so a standing row survives the seed), and
+	// the same widget key for another user (a delete keyed on widget_key
+	// alone eats it). Both are removed after the leg's own cleanup is
+	// asserted.
+	var keyStands bool
+	if err := f.pool.QueryRow(ctx, `SELECT true FROM stock_balances WHERE product_id = $1 AND location_id = $2`,
+		testkit.ProductID, testkit.BranchNorthAID).Scan(&keyStands); err == nil {
+		t.Fatalf("the standing balance's key already stands before the leg plants it")
+	} else if err != pgx.ErrNoRows {
+		t.Fatalf("probe the standing balance's key: %v", err)
+	}
+	seed(`INSERT INTO stock_balances (product_id, location_id, branch_id, on_hand_base, allocated_base, org_id, seq)
+	     VALUES ($1, $2, $2, 7, 2, $3, 1)`, testkit.ProductID, testkit.BranchNorthAID, testkit.OrgNorthID)
+	otherWidgetUser := testkit.UserSalesMgrID
+	widgetKey := "fx169.measure"
+	seed(`INSERT INTO dashboard_user_widgets (user_id, widget_key, shape, measure, seq) VALUES ($1, $2, 'stat', 'fx169_measure', 1)`,
+		otherWidgetUser, widgetKey)
+
+	// The leg's cleanup is exactly as wide as its seeds. The balance and
+	// the widget plant beside a row that can already stand (both inserts
+	// are ON CONFLICT DO NOTHING on their natural key), so each records
+	// what stood at its key before it planted; the cleanup restores a
+	// found row's values and removes only a row this run planted. The six
+	// id-keyed seeds clean by the id the leg minted, never by a natural
+	// key another run's row could also carry.
+	stockBefore := struct {
+		onHand    string
+		allocated string
+		existed   bool
+	}{}
+	if err := f.pool.QueryRow(ctx, `SELECT on_hand_base::text, allocated_base::text FROM stock_balances WHERE product_id = $1 AND location_id = $2`,
+		testkit.ProductID, testkit.BranchNorthAID).Scan(&stockBefore.onHand, &stockBefore.allocated); err == nil {
+		stockBefore.existed = true
+	} else if err != pgx.ErrNoRows {
+		t.Fatalf("snapshot the kit product's balance: %v", err)
+	}
+	widgetUser := testkit.UserInsideSalesID
+	widgetBefore := struct {
+		shape   string
+		measure string
+		seq     *int64
+		existed bool
+	}{}
+	if err := f.pool.QueryRow(ctx, `SELECT shape, measure, seq FROM dashboard_user_widgets WHERE user_id = $1 AND widget_key = $2`,
+		widgetUser, widgetKey).Scan(&widgetBefore.shape, &widgetBefore.measure, &widgetBefore.seq); err == nil {
+		widgetBefore.existed = true
+	} else if err != pgx.ErrNoRows {
+		t.Fatalf("snapshot the leg's widget row: %v", err)
+	}
+	planted := []struct {
+		table string
+		id    string
+	}{}
+	plant := func(table, id string, insertSQL string, args ...any) {
+		t.Helper()
+		var prior bool
+		if err := f.pool.QueryRow(ctx, `SELECT true FROM `+table+` WHERE id = $1`, id).Scan(&prior); err == nil {
+			t.Fatalf("the %s seed's minted id already stands; the leg cannot prove its plant", table)
+		} else if err != pgx.ErrNoRows {
+			t.Fatalf("pre-check the %s seed: %v", table, err)
+		}
+		seed(insertSQL, args...)
+		planted = append(planted, struct {
+			table string
+			id    string
+		}{table, id})
+	}
 	custID := fmt.Sprintf("3ef10000-0000-4000-8000-%012d", nextVal())
-	seed(`INSERT INTO customers (id, account_no, name, org_id, seq) VALUES ($1, 'FX169-ACCT', 'FX Yard Supply', $2, 1) ON CONFLICT (id) DO NOTHING`, custID, testkit.OrgNorthID)
+	plant("customers", custID,
+		`INSERT INTO customers (id, account_no, name, org_id, seq) VALUES ($1, 'FX169-ACCT', 'FX Yard Supply', $2, 1) ON CONFLICT (id) DO NOTHING`,
+		custID, testkit.OrgNorthID)
 	vendID := fmt.Sprintf("3ef10000-0000-4000-8000-%012d", nextVal())
-	seed(`INSERT INTO vendors (id, vendor_no, name, org_id, seq) VALUES ($1, 'FX169-VEN', 'FX Stone Works', $2, 1) ON CONFLICT (id) DO NOTHING`, vendID, testkit.OrgNorthID)
+	plant("vendors", vendID,
+		`INSERT INTO vendors (id, vendor_no, name, org_id, seq) VALUES ($1, 'FX169-VEN', 'FX Stone Works', $2, 1) ON CONFLICT (id) DO NOTHING`,
+		vendID, testkit.OrgNorthID)
 	seed(`UPDATE vendors SET seq = COALESCE(seq, 1) WHERE org_id = $1`, testkit.OrgNorthID)
 	truckID := fmt.Sprintf("3ef10000-0000-4000-8000-%012d", nextVal())
-	seed(`INSERT INTO dispatch_trucks (id, branch_id, code, name, seq) VALUES ($1, $2, 'FX169-TRK', 'FX Flatbed', 1) ON CONFLICT (id) DO NOTHING`, truckID, testkit.BranchNorthAID)
+	plant("dispatch_trucks", truckID,
+		`INSERT INTO dispatch_trucks (id, branch_id, code, name, seq) VALUES ($1, $2, 'FX169-TRK', 'FX Flatbed', 1) ON CONFLICT (id) DO NOTHING`,
+		truckID, testkit.BranchNorthAID)
 	driverID := fmt.Sprintf("3ef10000-0000-4000-8000-%012d", nextVal())
-	seed(`INSERT INTO dispatch_drivers (id, branch_id, name, seq) VALUES ($1, $2, 'FX Driver', 1) ON CONFLICT (id) DO NOTHING`, driverID, testkit.BranchNorthAID)
-	balProduct := testkit.ProductID
+	plant("dispatch_drivers", driverID,
+		`INSERT INTO dispatch_drivers (id, branch_id, name, seq) VALUES ($1, $2, 'FX Driver', 1) ON CONFLICT (id) DO NOTHING`,
+		driverID, testkit.BranchNorthAID)
 	seed(`INSERT INTO stock_balances (product_id, location_id, branch_id, on_hand_base, allocated_base, org_id, seq)
-	     VALUES ($1, $2, $2, 40, 5, $3, 1) ON CONFLICT (product_id, location_id) DO NOTHING`, balProduct, testkit.BranchNorthAID, testkit.OrgNorthID)
+	     VALUES ($1, $2, $2, 40, 5, $3, 1) ON CONFLICT (product_id, location_id) DO NOTHING`, testkit.ProductID, testkit.BranchNorthAID, testkit.OrgNorthID)
 	parkID := fmt.Sprintf("3ef10000-0000-4000-8000-%012d", nextVal())
-	seed(`INSERT INTO pos_parked_tickets (id, ticket_no, branch_id, lines, seq) VALUES ($1, 'FX169-PARK', $2, '[]'::jsonb, 1) ON CONFLICT (id) DO NOTHING`, parkID, testkit.BranchNorthAID)
+	plant("pos_parked_tickets", parkID,
+		`INSERT INTO pos_parked_tickets (id, ticket_no, branch_id, lines, seq) VALUES ($1, 'FX169-PARK', $2, '[]'::jsonb, 1) ON CONFLICT (id) DO NOTHING`,
+		parkID, testkit.BranchNorthAID)
 	wtyID := fmt.Sprintf("3ef10000-0000-4000-8000-%012d", nextVal())
-	seed(`INSERT INTO warranty_claims (id, claim_no, branch_id, seq) VALUES ($1, 'FX169-WTY', $2, 1) ON CONFLICT (id) DO NOTHING`, wtyID, testkit.BranchNorthAID)
-	widgetUser := testkit.UserInsideSalesID
-	seed(`INSERT INTO dashboard_user_widgets (user_id, widget_key, shape, measure, seq) VALUES ($1, 'fx169.measure', 'stat', 'fx169_measure', 1) ON CONFLICT (user_id, widget_key) DO NOTHING`, widgetUser)
-	seed(`UPDATE dashboard_user_widgets SET seq = 1 WHERE user_id = $1 AND widget_key = 'fx169.measure'`, widgetUser)
+	plant("warranty_claims", wtyID,
+		`INSERT INTO warranty_claims (id, claim_no, branch_id, seq) VALUES ($1, 'FX169-WTY', $2, 1) ON CONFLICT (id) DO NOTHING`,
+		wtyID, testkit.BranchNorthAID)
+	seed(`INSERT INTO dashboard_user_widgets (user_id, widget_key, shape, measure, seq) VALUES ($1, $2, 'stat', 'fx169_measure', 1) ON CONFLICT (user_id, widget_key) DO NOTHING`, widgetUser, widgetKey)
+	seed(`UPDATE dashboard_user_widgets SET seq = 1 WHERE user_id = $1 AND widget_key = $2`, widgetUser, widgetKey)
+
+	// The sentinel rows are the leg's own; the leg removes them. Registered
+	// before the cleanup assertion so they stand while it reads.
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = f.pool.Exec(ctx, `DELETE FROM stock_balances WHERE product_id = $1 AND location_id = $2`,
+			testkit.ProductID, testkit.BranchNorthAID)
+		_, _ = f.pool.Exec(ctx, `DELETE FROM dashboard_user_widgets WHERE user_id = $1 AND widget_key = $2`,
+			otherWidgetUser, widgetKey)
+	})
+	t.Cleanup(func() {
+		ctx := context.Background()
+		if stockBefore.existed {
+			_, _ = f.pool.Exec(ctx, `UPDATE stock_balances SET on_hand_base = $3::numeric, allocated_base = $4::numeric WHERE product_id = $1 AND location_id = $2`,
+				testkit.ProductID, testkit.BranchNorthAID, stockBefore.onHand, stockBefore.allocated)
+		} else {
+			_, _ = f.pool.Exec(ctx, `DELETE FROM stock_balances WHERE product_id = $1 AND location_id = $2`,
+				testkit.ProductID, testkit.BranchNorthAID)
+		}
+		if widgetBefore.existed {
+			_, _ = f.pool.Exec(ctx, `UPDATE dashboard_user_widgets SET shape = $3, measure = $4, seq = $5 WHERE user_id = $1 AND widget_key = $2`,
+				widgetUser, widgetKey, widgetBefore.shape, widgetBefore.measure, widgetBefore.seq)
+		} else {
+			_, _ = f.pool.Exec(ctx, `DELETE FROM dashboard_user_widgets WHERE user_id = $1 AND widget_key = $2`,
+				widgetUser, widgetKey)
+		}
+		for _, p := range planted {
+			_, _ = f.pool.Exec(ctx, `DELETE FROM `+p.table+` WHERE id = $1`, p.id)
+		}
+		// The standing rows the leg planted before its seeds stand after
+		// its cleanup, with the values they stood with.
+		var n int
+		if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM stock_balances WHERE product_id = $1 AND location_id = $2 AND on_hand_base = 7 AND allocated_base = 2`,
+			testkit.ProductID, testkit.BranchNorthAID).Scan(&n); err != nil || n != 1 {
+			t.Errorf("the standing balance did not survive the leg's cleanup: %d rows (err %v)", n, err)
+		}
+		if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM dashboard_user_widgets WHERE user_id = $1 AND widget_key = $2`,
+			otherWidgetUser, widgetKey).Scan(&n); err != nil || n != 1 {
+			t.Errorf("the other user's widget did not survive the leg's cleanup: %d rows (err %v)", n, err)
+		}
+	})
 
 	link := func(ctx context.Context, subject string) (string, bool) {
 		var uid string
