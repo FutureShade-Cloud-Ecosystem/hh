@@ -39,7 +39,10 @@ type store interface {
 	EditMessage(ctx context.Context, channelID, messageID, body string) (Message, error)
 	DeleteMessage(ctx context.Context, channelID, messageID string) (Message, error)
 	EditWindowMinutes(ctx context.Context) (int, error)
-	MarkRead(ctx context.Context, channelID, userID string, at time.Time) error
+	// MarkRead advances the caller's read cursor to the DATABASE's clock, in the repository's own
+	// statement: the cursor is compared against message rows the database stamps, so the app's clock
+	// never stamps it (UX-109).
+	MarkRead(ctx context.Context, channelID, userID string) error
 	UnreadSummary(ctx context.Context, userID string) (UnreadCounts, error)
 	InsertEventMessage(ctx context.Context, channelID, eventKey, body string, ref EventRef, requiresAck bool) (Message, bool, error)
 	ChannelIDBySlug(ctx context.Context, slug string) (string, error)
@@ -140,6 +143,14 @@ type Service struct {
 	payAccess PaymentAccess
 	// payRecipients says who a staffer is to the gate and which branches they reach; nil closes the fence.
 	payRecipients PaymentRecipients
+	// now is the APPLICATION's own clock. It is a seam so a test can put the app's clock where it
+	// likes, ahead of the database's, without touching the machine's clock.
+	//
+	// It is NOT the database's clock. Every row this module compares a time against is stamped by
+	// the DATABASE (msg_messages.created_at, msg_members.last_read_at), so a decision that is
+	// compared against a stored stamp reads the DATABASE's clock, in the same statement that reads
+	// the stamp, and never this one (UX-109).
+	now func() time.Time
 }
 
 // WithAttachmentChecker attaches the attachment checker seam.
@@ -162,7 +173,24 @@ func (s *Service) rollupDayFor(ctx context.Context, at time.Time) (string, error
 	return zone.Today(func() time.Time { return at }), nil
 }
 
-func NewService(repo *Repository) *Service { return &Service{repo: repo} }
+func NewService(repo *Repository) *Service { return &Service{repo: repo, now: time.Now} }
+
+// WithClock pins the application's own clock (tests). A nil clock is ignored, so the clock stays
+// time.Now and the shipped behaviour is unchanged.
+func (s *Service) WithClock(now func() time.Time) *Service {
+	if now != nil {
+		s.now = now
+	}
+	return s
+}
+
+// nowFn reads the application's clock, time.Now when no clock is pinned.
+func (s *Service) nowFn() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
 
 // WithRealtime attaches the SSE hub (FR-7). Optional, poll fallback works without it.
 func (s *Service) WithRealtime(rt realtime) *Service { s.rt = rt; return s }
@@ -460,11 +488,14 @@ func trimMessageBody(body string) string {
 
 // MarkRead advances the caller's read cursor for a channel to now (drives unread counts). Requires
 // membership.
+//
+// The cursor is the DATABASE's clock, written by the repository in its own statement: it is compared
+// against message rows the database stamps, so the app's clock never stamps it (UX-109).
 func (s *Service) MarkRead(ctx context.Context, c Caller, channelID string) error {
 	if err := s.assertMember(ctx, c, channelID); err != nil {
 		return err
 	}
-	return s.repo.MarkRead(ctx, channelID, c.UserID, time.Now())
+	return s.repo.MarkRead(ctx, channelID, c.UserID)
 }
 
 // - Feature 1: Screen-Takeover forced acknowledgement (0071) -
@@ -1029,6 +1060,10 @@ func (s *Service) CreateChannelAttachment(ctx context.Context, c Caller, channel
 }
 
 // MirrorRoomAttachment mirrors an attachment link to msg_attachments.
+//
+// The mirrored row carries the DATABASE's clock, like every other row in
+// msg_attachments: the room's attachment list is ordered by created_at, and one
+// list must carry one clock. The app's stamp is not sent (UX-109).
 func (s *Service) MirrorRoomAttachment(ctx context.Context, channelID string, meta AttachmentMeta, uploadedBy, filename, role string) error {
 	name := filename
 	if name == "" {
@@ -1055,7 +1090,6 @@ func (s *Service) MirrorRoomAttachment(ctx context.Context, channelID string, me
 		SizeBytes:    meta.SizeBytes,
 		Kind:         kind,
 		UploadedBy:   uPtr,
-		CreatedAt:    time.Now(),
 	}
 	return s.repo.UpsertChannelAttachmentFromMirror(ctx, channelID, att)
 }
@@ -1246,5 +1280,7 @@ func (s *Service) ShouldDeliverPushOnService(ctx context.Context, userID, channe
 	if err != nil {
 		qh = DefaultQuietHours(userID)
 	}
-	return ShouldDeliverPush(time.Now(), pref, tier, isForcedAck, eventCategory, classPref, qh, dmSenderID)
+	// The quiet-hours window is the USER's own wall clock (a window of local times of day), not a
+	// database stamp, so this is the app's clock to read: the push goes out now, from here.
+	return ShouldDeliverPush(s.nowFn(), pref, tier, isForcedAck, eventCategory, classPref, qh, dmSenderID)
 }
