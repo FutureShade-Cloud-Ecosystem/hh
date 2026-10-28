@@ -129,13 +129,15 @@ type ServerStateDecorator interface {
 }
 
 // BoundEntityChecker is an optional leg of a Store: the existence half of the bound key gate's
-// question (UX-103). When a caller's Load cannot see the entity a key applied, the gate asks this
-// once: does the entity exist for every caller of the scope? The answer is the entity's, never the
-// caller's: the org and tenant predicate alone, tombstone aware (a tombstoned row is gone for
-// everyone), and never the branch reach, the driver hold, the room membership or any other
-// caller-side fence, those being exactly what the caller's Load already speaks. A store that does
-// not implement it keeps the bound answer wherever its Load misses, and so does a store whose answer
-// is no: the gate fails toward idempotency, never toward a second create.
+// question (UX-103, sharpened by UX-114). When a caller's Load cannot see the entity a key applied,
+// the gate asks this once: does the entity exist for every caller of the scope? The answer is the
+// entity's, never the caller's: the org and tenant predicate alone, tombstone aware (a tombstoned
+// row is gone for everyone), and never the branch reach, the driver hold, the room membership or any
+// other caller-side fence, those being exactly what the caller's Load already speaks. Once the store
+// can place the entity, the gate answers a non binder it hides the row not found refusal whether the
+// entity is live or gone, because the key's binder is known (migration 0449) and a refusal never
+// reaches store.Create. A store that does not implement it keeps the bound answer wherever its
+// Load misses: the gate fails toward idempotency, never toward a second create.
 type BoundEntityChecker interface {
 	BoundEntityExists(ctx context.Context, f ScopeFilter, id string) (bool, error)
 }
