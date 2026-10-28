@@ -379,6 +379,9 @@ func finworldDefaultDealer(getenv func(string) string) string {
 	return "Quarryfen Hardscape Supply"
 }
 
+// slogDefault is the discarded logger the tie-side composition reads go through.
+func slogDefault() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
 // finworldDefaultAnchor is the world's own anchor: the twelve months the plan lays out end here.
 const finworldDefaultAnchor = "2026-09"
 
@@ -995,6 +998,15 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 				return fmt.Errorf("%s drain: %w", ev.EventKey, err)
 			}
 
+		case FinWorldEventVendorPayment:
+			vpEv := ev.VendorPayment
+			if err := finworldExecuteVendorPayment(ctx, h, vpEv, docTime); err != nil {
+				return fmt.Errorf("%s (%s): %w", ev.EventKey, vpEv.VendorPaymentKey, err)
+			}
+			if err := h.drain(ctx); err != nil {
+				return fmt.Errorf("%s drain: %w", ev.EventKey, err)
+			}
+
 		case FinWorldEventLandedCost:
 			lcEv := ev.LandedCost
 			if err := finworldExecuteLandedCost(ctx, h, lcEv); err != nil {
@@ -1487,20 +1499,41 @@ func finworldExecuteVendorBill(
 		return err
 	}
 
+	if vb.PaymentDeferred {
+		// Net 30 terms: the bill stays open across the month end and the plan settles it with a
+		// VENDOR_PAYMENT event on the next month's first trading day.
+		return nil
+	}
+	return finworldPostSupplierCheque(ctx, h, branchID, vb.VendorBillKey, vb.VendorInvoiceNo, vb.TotalCents, docTime)
+}
+
+// finworldPostSupplierCheque settles a vendor bill: DR 2100 / CR 1000, the journal the AP
+// subledger's settlement side reads.
+func finworldPostSupplierCheque(ctx context.Context, h *finworldHarness, branchID, billKey, invoiceNo string, totalCents int64, docTime time.Time) error {
 	if _, err := h.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
 		Source:         "PAYMENT",
-		IdempotencyKey: "finworld:vpay:" + vb.VendorInvoiceNo,
-		Memo:           "Supplier cheque " + vb.VendorBillKey + " (" + vb.VendorInvoiceNo + ")",
+		IdempotencyKey: "finworld:vpay:" + invoiceNo,
+		Memo:           "Supplier cheque " + billKey + " (" + invoiceNo + ")",
 		BranchID:       branchID,
 		DocumentDate:   docTime,
 		Lines: []gl.ExternalLine{
-			{AccountCode: "2100", DebitCents: vb.TotalCents, Memo: "AP settlement " + vb.VendorInvoiceNo},
-			{AccountCode: "1000", CreditCents: vb.TotalCents, Memo: "Supplier cheque " + vb.VendorInvoiceNo},
+			{AccountCode: "2100", DebitCents: totalCents, Memo: "AP settlement " + invoiceNo},
+			{AccountCode: "1000", CreditCents: totalCents, Memo: "Supplier cheque " + invoiceNo},
 		},
 	}); err != nil {
-		return fmt.Errorf("post supplier payment journal %s: %w", vb.VendorBillKey, err)
+		return fmt.Errorf("post supplier payment journal %s: %w", billKey, err)
 	}
 	return nil
+}
+
+// finworldExecuteVendorPayment settles a bill the plan left open across a month end: the supplier
+// cheque clears on this day, the same day the statement carries it.
+func finworldExecuteVendorPayment(ctx context.Context, h *finworldHarness, vp *FinWorldVendorPaymentEvent, docTime time.Time) error {
+	branchID, err := finworldBranchID(vp.BranchCode)
+	if err != nil {
+		return err
+	}
+	return finworldPostSupplierCheque(ctx, h, branchID, vp.VendorBillKey, vp.VendorInvoiceNo, vp.AmountCents, docTime)
 }
 
 // finworldExecuteLandedCost posts one plan landed-cost event through the production landed-cost

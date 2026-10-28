@@ -373,3 +373,104 @@ func TestFinWorldDriver_LandedCostCrossMonthLeg(t *testing.T) {
 		t.Log(ln)
 	}
 }
+
+// TestFinWorldDriver_OpenAPAcrossMonthEndLeg walks two month ends with deferred bills in the plan:
+// the open AP is nonzero at each month end, the supplier cheques clear on the next month's first
+// trading day, and the AP tie stays honest through purchasing's own seam.
+func TestFinWorldDriver_OpenAPAcrossMonthEndLeg(t *testing.T) {
+	ctx := context.Background()
+	dsn := finworldTestDSN(t)
+
+	pool, err := db.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect finworld db: %v", err)
+	}
+	defer pool.Close()
+
+	finworldResetSchema(t, ctx, pool)
+	binPath := finworldBuildBinary(t)
+	const throughDay = 48
+
+	finworldWalkDays(t, binPath, dsn, throughDay)
+
+	// The plan's deferred bills issued on or before each month end are the open AP the tie must see.
+	plan, err := FinWorldPlan(1, YearMonth{Year: 2026, Month: 9}, "Quarryfen Hardscape Supply")
+	if err != nil {
+		t.Fatalf("FinWorldPlan: %v", err)
+	}
+	days := finworldFlattenDays(plan)
+	if throughDay >= len(days) {
+		t.Fatalf("through day %d beyond the plan", throughDay)
+	}
+	asOfDate := days[throughDay].Day.Date
+	// When each deferred bill settles: its vendor payment event's day, if the plan schedules one.
+	paidOn := map[string]string{}
+	for _, d := range days {
+		for _, ev := range d.Day.Events {
+			if ev.VendorPayment != nil {
+				paidOn[ev.VendorPayment.VendorBillKey] = ev.Date
+			}
+		}
+	}
+	// The open AP at a cutoff: deferred bills issued on or before it that no payment has settled yet.
+	deferredByDate := func(cutoff string) int64 {
+		var total int64
+		for _, d := range days {
+			for _, ev := range d.Day.Events {
+				if ev.VendorBill == nil || !ev.VendorBill.PaymentDeferred || ev.Date > cutoff {
+					continue
+				}
+				if payDate, ok := paidOn[ev.VendorBill.VendorBillKey]; ok && payDate <= cutoff {
+					continue
+				}
+				total += ev.VendorBill.TotalCents
+			}
+		}
+		return total
+	}
+	wantOct, wantNov := deferredByDate("2025-10-31"), deferredByDate(asOfDate)
+	if wantOct == 0 || wantNov == 0 {
+		t.Fatalf("the schedule carries no deferred bills open at the month ends (oct=%d, through %s=%d)", wantOct, asOfDate, wantNov)
+	}
+
+	svc := finworldPurchasingComposition(pool, slogDefault(), nil)
+	for _, at := range []struct{ name, cutoff string }{
+		{"2025-10 month end", "2025-10-31"},
+		{"through " + asOfDate, asOfDate},
+	} {
+		cut, err := time.ParseInLocation("2006-01-02", at.cutoff, houseday.DefaultZone().Location())
+		if err != nil {
+			t.Fatalf("parse %s: %v", at.cutoff, err)
+		}
+		open, err := svc.OpenAPCentsAsOf(ctx, cut.Add(23*time.Hour))
+		if err != nil {
+			t.Fatalf("open AP read at %s: %v", at.name, err)
+		}
+		want := wantOct
+		if at.cutoff != "2025-10-31" {
+			want = wantNov
+		}
+		if open != want {
+			t.Fatalf("open AP at %s = %d, want the plan's deferred bills %d", at.name, open, want)
+		}
+		t.Logf("open AP at %s: %d cents (the plan's deferred bills)", at.name, open)
+	}
+
+	// The tie suite over both month ends, landed cost payable included. The stock line is recorded
+	// verbatim (the void clamp, section 5 of the round report); every other tie must pass.
+	var stockLine string
+	for _, ln := range finworldRunTieCheck(t, binPath, dsn, throughDay, true) {
+		if strings.HasPrefix(ln, "[FAIL] ") {
+			if !strings.HasPrefix(ln, "[FAIL] stock_value_ties_to_GL_1200") {
+				t.Fatalf("non-stock tie refused on the open AP leg: %s", ln)
+			}
+			stockLine = ln
+		}
+		if strings.HasPrefix(ln, "[PASS] AP_2100_ties_to_vendor_subledger") || strings.HasPrefix(ln, "[FAIL] stock") {
+			t.Log(ln)
+		}
+	}
+	if stockLine != "" {
+		t.Logf("the stock tie refused after the day 33 void (the module's void clamp): %s", stockLine)
+	}
+}

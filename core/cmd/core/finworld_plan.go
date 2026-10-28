@@ -878,6 +878,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 	poSeq := 0
 	vendorBillSeq := 0
 	transferSeq := 0
+	vendorPaymentSeq := 0
 	journalSeq := 0
 	bankStmtSeq := 0
 	periodCloseSeq := 0
@@ -888,10 +889,17 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 	var runningBankBalanceCents int64 = 18500000 // $185,000.00 opening operating bank balance
 	var priorTransitLodgements []*FinWorldLodgementEvent
 	var priorOutstandingBills []*FinWorldVendorBillEvent
+	// Bills deferred past their own month end, settled with a vendor payment on the next month's
+	// first trading day. Left open when there is no next month.
+	var pendingDeferredPayments []*FinWorldVendorBillEvent
 
 	// The landed costs run on their own random stream, so the world's own stream is untouched and
 	// every other figure in the plan stays exactly where it was.
 	lcRng := rand.New(rand.NewPCG(seed^0x5bf03635, seed^0xc2b2ae35))
+
+	// The deferred vendor bills run on their own stream too: a few bills a month stay open across
+	// the month end on net 30 terms, and the draw touches nothing else.
+	deferRng := rand.New(rand.NewPCG(seed^0x9e3779b9, seed^0x85ebca6b))
 
 	// Lay the landed costs out before the day walk: 3 to 5 a quarter per branch, one of them
 	// against a receipt from the month before and one of them on a month's last trading day,
@@ -1051,6 +1059,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 		var monthCardSettlements []*FinWorldCardSettlementEvent
 		var monthEFTReceipts []*FinWorldAccountReceiptEvent
 		var monthVendorBills []*FinWorldVendorBillEvent
+		var monthDeferredBills []*FinWorldVendorBillEvent
 		var monthNSFBounces []*FinWorldNSFBounceEvent
 
 		for dIdx := 0; dIdx < numDays; dIdx++ {
@@ -1072,6 +1081,23 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				}
 				td.Events = append(td.Events, ev)
 				return &td.Events[len(td.Events)-1]
+			}
+
+			// The first trading day settles the bills last month left open: one vendor payment per
+			// bill, the same day the statement carries the cheque.
+			if dIdx == 0 && len(pendingDeferredPayments) > 0 {
+				for _, pb := range pendingDeferredPayments {
+					vendorPaymentSeq++
+					vpEv := appendEvent(pb.BranchCode, FinWorldEventVendorPayment, 16, 45, 0)
+					vpEv.VendorPayment = &FinWorldVendorPaymentEvent{
+						VendorPaymentKey: fmt.Sprintf("vp-s%d-%04d", seed, vendorPaymentSeq),
+						VendorBillKey:    pb.VendorBillKey,
+						VendorInvoiceNo:  pb.VendorInvoiceNo,
+						BranchCode:       pb.BranchCode,
+						AmountCents:      pb.TotalCents,
+					}
+				}
+				pendingDeferredPayments = nil
 			}
 
 			// 7a. Morning: open 2 tills per branch.
@@ -1221,12 +1247,19 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					VendorInvoiceNo:    fmt.Sprintf("VINV-%d-%05d", seed, vendorBillSeq),
 					IssueDate:          td.Date,
 					DueDate:            dueDate,
+					PaymentDeferred:    deferRng.IntN(100) < 15,
 					Lines:              []FinWorldPurchaseLine{pLine},
 					SubtotalCents:      lineSub,
 					TaxCents:           lineTax,
 					TotalCents:         lineTot,
 				}
-				monthVendorBills = append(monthVendorBills, vbEv.VendorBill)
+				if vbEv.VendorBill.PaymentDeferred {
+					// Net 30 terms: the cheque goes out after the month end, so the bill is open at
+					// this month end and the open AP carries it.
+					monthDeferredBills = append(monthDeferredBills, vbEv.VendorBill)
+				} else {
+					monthVendorBills = append(monthVendorBills, vbEv.VendorBill)
+				}
 
 				// The receipt joins the pool a later landed cost can attach to.
 				receiptTime, _ := time.ParseInLocation("2006-01-02", td.Date, loc)
@@ -2455,7 +2488,10 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 						outChequeKeys = append(outChequeKeys, vb.VendorBillKey)
 					}
 				}
-				priorOutstandingBills = monthVendorBills[billSplit:]
+				priorOutstandingBills = append(monthVendorBills[billSplit:], monthDeferredBills...)
+				if mIdx+1 < len(plan.Months) {
+					pendingDeferredPayments = append(pendingDeferredPayments, monthDeferredBills...)
+				}
 
 				// Monthly bank service fee.
 				const bankFeeCents int64 = 3500
