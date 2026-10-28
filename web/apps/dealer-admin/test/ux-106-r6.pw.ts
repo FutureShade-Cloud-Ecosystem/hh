@@ -76,13 +76,24 @@ async function goCharcoal(page: Page): Promise<void> {
 
 /** The section opens through the app's own list; on a phone the list waits
  *  folded behind the Settings control (UX-104). */
+/** The settle marker: at least one of the selectors is visible. The pricing
+ *  surface needs it, because the phone folds its list behind a select and
+ *  the desk keeps a strip of pills, and only one of the two is on screen. */
+async function expectVisible(page: Page, settle: string): Promise<void> {
+  const visible = page.locator(settle.split(",").map((s) => `${s.trim()}:visible`).join(", ")).first();
+  await expect(visible).toBeVisible({ timeout: 30_000 });
+}
+
 async function openSurface(page: Page, surface: string, settle: string): Promise<void> {
   if (page.viewportSize()!.width <= 900) {
-    await page.locator('[data-action="toggle-surface-list"]').click();
-    await expect(page.locator(".surface-list")).toBeVisible();
+    const list = page.locator(".surface-list");
+    if (!(await list.isVisible())) {
+      await page.locator('[data-action="toggle-surface-list"]').click();
+    }
+    await expect(list).toBeVisible();
   }
   await page.locator(`.surface-link[data-surface="${surface}"]`).click();
-  await expect(page.locator(settle).first()).toBeVisible({ timeout: 30_000 });
+  await expectVisible(page, settle);
   await page.waitForLoadState("networkidle");
   await waitForQuiet(page);
 }
@@ -201,7 +212,7 @@ async function pageScrolls(page: Page): Promise<{ scroll: number; client: number
 
 /** The pricing audit log's own table, the defect this round names. */
 async function pricingAuditTable(page: Page): Promise<Locator> {
-  await openSurface(page, "pricing", '[data-test="pr-margin-count"]');
+  await openSurface(page, "pricing", '[data-test="pr-tab-select"], .pr-tabs');
   await openPricingView(page, "Pricing audit", '[data-test="pr-audit-count"]');
   return page.locator(".tablewrap").first();
 }
@@ -245,7 +256,7 @@ for (const theme of THEMES) {
     boxes.push(...(await measure(page, "staff")));
 
     // Every pricing view, the Section list's own thirteen.
-    await openSurface(page, "pricing", '[data-test="pr-margin-count"]');
+    await openSurface(page, "pricing", '[data-test="pr-tab-select"], .pr-tabs');
     for (const v of PRICING_VIEWS) {
       await openPricingView(page, v.title, v.settle);
       if (v.id === "customers") {
@@ -287,13 +298,52 @@ for (const theme of THEMES) {
     visited.push("hotkeys:rosters");
     boxes.push(...(await measure(page, "hotkeys:rosters")));
 
+    // The editors. A table behind a click is a table still: the margin
+    // policy's own floor panel, the break schedule's tiers, one batch's
+    // lines, the price file's diff and the curation editor's own rows.
+    await openSurface(page, "pricing", '[data-test="pr-tab-select"], .pr-tabs');
+    await openPricingView(page, "Margin policy", '[data-test="pr-margin-count"]');
+    await page.locator('[data-action="pr-policy-edit"]').first().click();
+    await waitForQuiet(page);
+    visited.push("pricing:margin-editor");
+    boxes.push(...(await measure(page, "pricing:margin-editor")));
+
+    await openPricingView(page, "Quantity breaks", '[data-test="pr-breaks-count"]');
+    await page.locator('[data-action="pr-break-edit"]').first().click();
+    await expect(page.locator('[data-field="pr-brk-item-0-from"]')).toBeVisible({ timeout: 30_000 });
+    await waitForQuiet(page);
+    visited.push("pricing:break-editor");
+    boxes.push(...(await measure(page, "pricing:break-editor")));
+
+    await openPricingView(page, "Batches & imports", '[data-test="pr-profiles-count"]');
+    await page.locator('[data-action="pr-batch-open"]').first().click();
+    await waitForQuiet(page);
+    visited.push("pricing:batch-lines");
+    boxes.push(...(await measure(page, "pricing:batch-lines")));
+
+    await openPricingView(page, "Price file", '[data-test="pr-pf-runs-count"]');
+    await page.locator('[data-field="pr-pf-vendor"]').selectOption({ label: "Northline Supply" });
+    await page
+      .locator('[data-field="pr-pf-file"]')
+      .setInputFiles({ name: "price-file.csv", mimeType: "text/csv", buffer: Buffer.from("sku,retail,cost\nPAV-1,480,300\nPAV-2,510,320\nPAV-3,530,340\n") });
+    await page.locator('[data-action="pr-pf-preview"]').click();
+    await expect(page.locator('[data-test="pr-pf-preview"]')).toBeVisible({ timeout: 30_000 });
+    await waitForQuiet(page);
+    visited.push("pricing:pricefile-preview");
+    boxes.push(...(await measure(page, "pricing:pricefile-preview")));
+
+    await openSurface(page, "role-config", '[data-test="role-matrix-card"]');
+    await page.locator('[data-action="open-config-editor"]').first().click();
+    await waitForQuiet(page);
+    visited.push("roles:editor");
+    boxes.push(...(await measure(page, "roles:editor")));
+
     // The sweep walked every view it names: a view that stopped rendering must
-    // fail the leg, not quietly shrink the measurement. And seventeen of the
-    // nineteen views carry a table (the payment terms and the hotkey rosters
-    // carry none), so a table that stopped rendering fails it too.
-    expect(visited.length, "the sweep did not walk every view").toBe(19);
+    // fail the leg, not quietly shrink the measurement. And the views that
+    // carry a table must still carry one.
+    expect(visited.length, "the sweep did not walk every view").toBe(24);
     const withTable = new Set(boxes.filter((b) => b.kind === "table").map((b) => b.view));
-    expect(withTable.size, "the sweep measured no table on some views").toBeGreaterThanOrEqual(17);
+    expect(withTable.size, "the sweep measured no table on some views").toBeGreaterThanOrEqual(21);
 
     // The page itself never scrolls sideways.
     const scrolled = await pageScrolls(page);

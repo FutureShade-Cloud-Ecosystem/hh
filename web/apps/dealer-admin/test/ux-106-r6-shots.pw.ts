@@ -62,13 +62,24 @@ async function goCharcoal(page: Page): Promise<void> {
 
 /** The surface opens through the app's own list; on a phone the list waits
  *  folded behind the Settings control (UX-104). */
+/** The settle marker: at least one of the selectors is visible. The pricing
+ *  surface needs it, because the phone folds its list behind a select and
+ *  the desk keeps a strip of pills, and only one of the two is on screen. */
+async function expectVisible(page: Page, settle: string): Promise<void> {
+  const visible = page.locator(settle.split(",").map((s) => `${s.trim()}:visible`).join(", ")).first();
+  await expect(visible).toBeVisible({ timeout: 30_000 });
+}
+
 async function openSurface(page: Page, surface: string, settle: string): Promise<void> {
   if (page.viewportSize()!.width <= 900) {
-    await page.locator('[data-action="toggle-surface-list"]').click();
-    await expect(page.locator(".surface-list")).toBeVisible();
+    const list = page.locator(".surface-list");
+    if (!(await list.isVisible())) {
+      await page.locator('[data-action="toggle-surface-list"]').click();
+    }
+    await expect(list).toBeVisible();
   }
   await page.locator(`.surface-link[data-surface="${surface}"]`).click();
-  await expect(page.locator(settle).first()).toBeVisible({ timeout: 30_000 });
+  await expectVisible(page, settle);
   await page.waitForLoadState("networkidle");
   await waitForQuiet(page);
 }
@@ -125,7 +136,7 @@ for (const size of SIZES) {
       if (theme === "charcoal") await goCharcoal(page);
 
       // The pricing views: each one holds a table the round fixed.
-      await openSurface(page, "pricing", '[data-test="pr-margin-count"]');
+      await openSurface(page, "pricing", '[data-test="pr-tab-select"], .pr-tabs');
       for (const v of PRICING_VIEWS) {
         await openPricingView(page, v.id, v.title, v.settle);
         if (v.id === "customers") {
@@ -146,11 +157,28 @@ for (const size of SIZES) {
       await waitForQuiet(page);
       await take(page, "pricing", "break-editor", theme, size.width);
 
+      // The margin policy editor's own floor panel.
+      await openPricingView(page, "margin", "Margin policy", '[data-test="pr-margin-count"]');
+      await page.locator('[data-action="pr-policy-edit"]').first().click();
+      await waitForQuiet(page);
+      await take(page, "pricing", "margin-editor", theme, size.width);
+
       // One batch's lines: a table the round fixed.
       await openPricingView(page, "batches", "Batches & imports", '[data-test="pr-profiles-count"]');
       await page.locator('[data-action="pr-batch-open"]').first().click();
       await waitForQuiet(page);
       await take(page, "pricing", "batch-lines", theme, size.width);
+
+      // The price file's own diff: the table the round fixed.
+      await openPricingView(page, "pricefile", "Price file", '[data-test="pr-pf-runs-count"]');
+      await page.locator('[data-field="pr-pf-vendor"]').selectOption({ label: "Northline Supply" });
+      await page
+        .locator('[data-field="pr-pf-file"]')
+        .setInputFiles({ name: "price-file.csv", mimeType: "text/csv", buffer: Buffer.from("sku,retail,cost\nPAV-1,480,300\nPAV-2,510,320\nPAV-3,530,340\n") });
+      await page.locator('[data-action="pr-pf-preview"]').click();
+      await expect(page.locator('[data-test="pr-pf-preview"]')).toBeVisible({ timeout: 30_000 });
+      await waitForQuiet(page);
+      await take(page, "pricing", "pricefile-preview", theme, size.width);
 
       // The roles grid: the matrix and the curation grid.
       await openSurface(page, "role-config", '[data-test="role-matrix-card"]');
