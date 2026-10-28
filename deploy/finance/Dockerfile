@@ -5,19 +5,25 @@
 #
 # The demo image (deploy/demo/Dockerfile) is the pattern this file follows;
 # the differences are the point. The core here is the DEFAULT build: no demo
-# tag, so the binary carries serve, worker, migrate, finance-seed and
-# finance-box-check, and none of the demo commands or the demo credential
-# bypass. The web build is the console sign in, never the demo mode: the
-# front door, the Counter Till, the Money Desk and Manager Home, each under
-# its own prefix, with the runtime config (mode console) written at boot from
-# HH_WEB_* names by the entrypoint. Caddy fronts everything; there is no
-# basic auth gate, the box's own FB Console sign in is the door. The
-# entrypoint (deploy/finance/entrypoint.sh) is the only place the boot order
-# lives: the variable checks, the one database name held in both spellings,
-# migrate then finance-seed on an empty database, migrate then finance-seed
-# again on a database that holds the migrations but no seed (an interrupted
-# first boot), the box kind check then migrate on the finance box's own
-# world, then core serve, core worker and Caddy under the supervisor.
+# tag, so the binary carries serve, worker, migrate, seed, finance-seed,
+# finance-box-check and finance-box-state, and it carries the demoseed role
+# too, which refuses on the finance box in both directions: the
+# HH_BOX_KIND=finance statement alone refuses it before anything else, and a
+# database marked box_kind=finance refuses it with the statement lost. So no
+# demo world can be written here, and the demo credential bypass (the demo
+# web build's mint and adopt paths) is not in this image: the web build is
+# the console sign in, never the demo mode. The front door, the Counter
+# Till, the Money Desk and Manager Home, each under its own prefix, with the
+# runtime config (mode console) written at boot from HH_WEB_* names by the
+# entrypoint. Caddy fronts everything; there is no basic auth gate, the
+# box's own FB Console sign in is the door. The entrypoint
+# (deploy/finance/entrypoint.sh) is the only place the boot order lives: the
+# variable checks, the one database name held in both spellings, the
+# bootstrap ownership mark then migrate then finance-seed on an empty
+# database, migrate then finance-seed again on a database that holds the
+# mark, the migrations and no seed (an interrupted first boot), the box kind
+# check then migrate on the finance box's own world, then core serve, core
+# worker and Caddy under the supervisor.
 
 FROM golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS core-build
 WORKDIR /src/core
