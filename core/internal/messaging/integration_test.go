@@ -136,7 +136,7 @@ func TestIntegration_UnreadMath(t *testing.T) {
 	// Baseline: mark BOTH Sam and Alex read so pre-existing (seeded) #office messages don't skew the
 	// count, we want to measure ONLY the message Alex is about to post.
 	for _, u := range []string{uSamRivera, uAlexMorgan} {
-		if err := repo.MarkRead(ctx, chOffice, u, time.Now()); err != nil {
+		if err := repo.MarkRead(ctx, chOffice, u); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -155,7 +155,7 @@ func TestIntegration_UnreadMath(t *testing.T) {
 		t.Errorf("author's own message must not be unread, got %d", alexUnread)
 	}
 	// Sam marks read → unread clears.
-	if err := repo.MarkRead(ctx, chOffice, uSamRivera, time.Now()); err != nil {
+	if err := repo.MarkRead(ctx, chOffice, uSamRivera); err != nil {
 		t.Fatal(err)
 	}
 	if got := unreadFor(ctx, t, repo, uSamRivera, chOffice); got != 0 {

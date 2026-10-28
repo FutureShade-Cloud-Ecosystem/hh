@@ -39,7 +39,7 @@ func TestIntegration_FW1_06a_OneStatementBalanceAgreesWithAgingAndSubledger(t *t
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
 		                      doc_type, source_kind, reverses_invoice_id, closes_order)
-		VALUES ('CM-ST-TIE-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 1, CURRENT_DATE - 1,
+		VALUES ('CM-ST-TIE-'||$1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date - 1, (now() AT TIME ZONE 'America/Toronto')::date - 1,
 		        -10000, 0, -10000, -10000, now(), 'CREDIT_MEMO', 'ORDER', $4::uuid, FALSE)
 		RETURNING id::text`,
 		fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000), rig.customerID, rig.branchID, invID).Scan(&cmID); err != nil {

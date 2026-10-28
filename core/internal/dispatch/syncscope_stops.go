@@ -319,6 +319,25 @@ func (s *StopsSyncStore) load(ctx context.Context, db stopsQuerier, f sync.Scope
 	return rs, true, err
 }
 
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// whether a stop row the scope's keys can name still exists, for every
+// caller of the org at once. The org predicate alone, tombstone aware (a
+// tombstoned stop is gone for everyone), never the driver arm the
+// caller's Load speaks. The loads and delivery_stops adapters embed the
+// stops adapter, so one method serves all three scopes.
+func (s *StopsSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || !looksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM delivery_stops WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL)`,
+		id, f.OrgID).Scan(&present); err != nil {
+		return false, fmt.Errorf("dispatch: stops sync bound entity exists: %w", err)
+	}
+	return present, nil
+}
+
 // stopCreateFields is the field set a pushed create may declare on a
 // stop: the order it delivers for, the date, the optional address legs
 // the device copies off the paperwork, and the run it joins. The

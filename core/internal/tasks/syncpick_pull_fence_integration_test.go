@@ -292,6 +292,58 @@ func TestPickPullFence_AReplayNeverAnswersForARowOutOfReach(t *testing.T) {
 	}
 }
 
+// TestPickPullFence_TheReachClauseHoldsInTheFindAppliedQuery (UX-103): a pre ledger key can name rows on two
+// branches (tasks.idempotency_key holds no unique index, 0213's rule), and an unordered LIMIT 1 must not pick
+// the out of reach row and answer not applied to the caller who owns the other one. The reach clause sits in
+// the query, as the pull's does: the caller's own row answers, the other branch's device is told nothing, and
+// a GLOBAL caller of the org still answers.
+func TestPickPullFence_TheReachClauseHoldsInTheFindAppliedQuery(t *testing.T) {
+	d := newPickDoor(t)
+	own := d.task(d.branchA)
+	foreign := make([]string, 0, 40)
+	for i := 0; i < 40; i++ {
+		foreign = append(foreign, d.task(d.branchB))
+	}
+	// The pre ledger shape: the key sits on the rows' column and the ledger holds nothing. The out of reach
+	// rows take the key first, so an unordered scan meets one of them before the caller's own row.
+	key := uuid.NewString()
+	for _, id := range foreign {
+		if _, err := d.pool.Exec(context.Background(), `UPDATE tasks SET idempotency_key = $1::uuid WHERE id = $2::uuid`, key, id); err != nil {
+			t.Fatalf("stamp a foreign row: %v", err)
+		}
+	}
+	if _, err := d.pool.Exec(context.Background(), `UPDATE tasks SET idempotency_key = $1::uuid WHERE id = $2::uuid`, key, own); err != nil {
+		t.Fatalf("stamp the owned row: %v", err)
+	}
+	findAs := func(sc identity.StaffContext) (hhsync.RowState, bool) {
+		t.Helper()
+		d.authority = func() (identity.StaffContext, bool, error) { return sc, true, nil }
+		row, found, err := d.store.FindApplied(context.Background(), d.f, key)
+		if err != nil {
+			t.Fatalf("find applied: %v", err)
+		}
+		return row, found
+	}
+	row, found := findAs(scopedTo(uuid.NewString(), d.branchA))
+	if !found {
+		t.Fatalf("a pre ledger key on two branches answers applied for the caller's own row, got not applied")
+	}
+	if row.ID != own {
+		t.Errorf("the caller's own row answers, not the out of reach one: got %q want %q", row.ID, own)
+	}
+	// The branch B device owns its own keyed rows, so the same key answers for it too, never with the
+	// caller's own row.
+	bRow, bFound := findAs(scopedTo(uuid.NewString(), d.branchB))
+	if !bFound || bRow.ID == own {
+		t.Errorf("a branch B caller answers for its own keyed row, got found %v row %q", bFound, bRow.ID)
+	}
+	global := scopedTo(uuid.NewString())
+	global.Scope, global.Tier = identity.ScopeGlobal, identity.TierLeadership
+	if _, found := findAs(global); !found {
+		t.Errorf("a GLOBAL caller of the org still answers applied")
+	}
+}
+
 // unknownOrders is an order seam that knows no order, the answer a sync create meets for an id that is not an order.
 type unknownOrders struct{}
 

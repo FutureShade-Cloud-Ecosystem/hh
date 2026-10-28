@@ -272,6 +272,16 @@ func (r *Repository) EnsureRepDMChannel(ctx context.Context, userID string) (str
 	} else if err != nil {
 		return "", fmt.Errorf("ensure rep dm channel: %w", err)
 	}
+	// The channel's lock, BEFORE the member row this path writes (UX-110
+	// round 2: the channel, then the member). On the fresh arm the room is
+	// this transaction's own row; on the conflict arm it is a row that is
+	// already there, and the lock is what keeps this path from writing a
+	// member row of a room whose lock it does not hold. This path writes no
+	// msg_channels row of its own, so the shared lock is the one a post
+	// takes (FOR SHARE).
+	if err := lockChannelForPost(ctx, tx, channelID); err != nil {
+		return "", err
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO msg_members (channel_id, user_id, role, source)
 		VALUES ($1, $2, 'OWNER', 'EXPLICIT')

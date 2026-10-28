@@ -160,7 +160,7 @@ func TestIntegration_Statements_ZeroBalanceIsGeneratedButNotQueued(t *testing.T)
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
 		                      doc_type, source_kind, reverses_invoice_id, closes_order)
-		VALUES ('CM-CRED-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 5, CURRENT_DATE - 5,
+		VALUES ('CM-CRED-'||$1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date - 5, (now() AT TIME ZONE 'America/Toronto')::date - 5,
 		        -55000, 0, -55000, -55000, now(), 'CREDIT_MEMO', 'ORDER', $4::uuid, FALSE)`,
 		fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000), rig.customerID, rig.branchID, inv); err != nil {
 		t.Fatalf("seed credit memo: %v", err)

@@ -92,8 +92,11 @@ package billing
 // through untouched, and the door refuses another org's invoice with it), no invoice qualifier. A
 // key spent on any invoice of one org is spent for that org; another org's FIRST use under the
 // same string applies, and a bare string is no longer a key one org can spend for another
-// (AGENTS.md: a scoped table is never keyed or queried without its scope). A caller that carries
-// no org shares one org-less scope, as the bare key did.
+// (AGENTS.md: a scoped table is never keyed or queried without its scope). FW1-12c closes the
+// org-less corner: the door refuses an empty org in words before any write, and the key table's
+// org_id is a real reference to org (0448), the scoped siblings' own shape, so a non uuid org
+// fails at the column. Production never carried an org-less caller: the staff gate resolves an
+// org uuid or refuses, and the handler is the door's only caller.
 //
 // -- THE LOCKS -------------------------------------------------------------------------------------
 // The one money lock order (payments/LOCK-ORDER.md): the target invoice row, then the application
@@ -217,8 +220,10 @@ type ApplyCreditInput struct {
 	IdempotencyKey string
 	// CanAccessBranch is the caller's branch reach; nil reaches every branch.
 	CanAccessBranch func(branchID string) bool
-	// OrgID is the caller's org slug scope id; an invoice of another org is refused. Empty on
-	// callers that carry none, and then nothing is judged.
+	// OrgID is the caller's org slug scope id; an invoice of another org is refused. An empty org is
+	// refused in words before any write (FW1-12c): the key's scope is the caller's org and the key
+	// table takes a real org reference (0448). A non uuid org is not judged here: it is passed and
+	// the column refuses it.
 	OrgID string
 }
 
@@ -316,6 +321,14 @@ func validateApplyCredit(in ApplyCreditInput) (ApplyCreditInput, error) {
 	}
 	if strings.TrimSpace(in.IdempotencyKey) == "" {
 		return in, httpx.BadRequestf("applying a credit needs an idempotency key")
+	}
+	// The key's scope is the caller's org (FW1-12c), and the key table carries a real reference to
+	// org (0448), so an org less caller is refused here, in words, before any database is consulted.
+	// Production never passes one: the staff gate resolves an org uuid or refuses, and the handler
+	// is the door's only caller. The org's SPELLING is not judged here: a non uuid org is passed and
+	// the column refuses it, loud at the database.
+	if strings.TrimSpace(in.OrgID) == "" {
+		return in, httpx.BadRequestf("applying a credit needs the caller's org: the key's scope is the caller's org and the key table takes a real org")
 	}
 	if in.CreditKind != CreditKindMemo && in.CreditKind != CreditKindAccount {
 		return in, httpx.BadRequestf("credit_kind must be %s or %s", CreditKindMemo, CreditKindAccount)
@@ -428,7 +441,7 @@ func (row creditKeyRow) spent() bool { return row.applicationID != "" }
 func reserveCreditApplicationKey(ctx context.Context, tx pgx.Tx, in ApplyCreditInput) (creditKeyRow, error) {
 	if _, err := tx.Exec(ctx, `
 INSERT INTO credit_application_keys (org_id, idempotency_key, invoice_id, credit_kind, credit_id, request_hash)
-VALUES ($1, $2, $3::uuid, $4, $5::uuid, $6)
+VALUES ($1::uuid, $2, $3::uuid, $4, $5::uuid, $6)
 ON CONFLICT (org_id, idempotency_key) DO NOTHING`,
 		in.OrgID, in.IdempotencyKey, in.InvoiceID, in.CreditKind, in.CreditID, creditKeyHash(in)); err != nil {
 		return creditKeyRow{}, fmt.Errorf("credit apply: reserve the idempotency key: %w", err)
@@ -436,7 +449,7 @@ ON CONFLICT (org_id, idempotency_key) DO NOTHING`,
 	var row creditKeyRow
 	err := tx.QueryRow(ctx, `
 SELECT invoice_id::text, request_hash, COALESCE(stored_result::text, ''), COALESCE(application_id::text, '')
-  FROM credit_application_keys WHERE org_id = $1 AND idempotency_key = $2`, in.OrgID, in.IdempotencyKey).
+  FROM credit_application_keys WHERE org_id = $1::uuid AND idempotency_key = $2`, in.OrgID, in.IdempotencyKey).
 		Scan(&row.invoiceID, &row.requestHash, &row.storedResult, &row.applicationID)
 	if err != nil {
 		return creditKeyRow{}, fmt.Errorf("credit apply: read the idempotency key: %w", err)
@@ -769,7 +782,7 @@ VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
 	if _, err := tx.Exec(ctx, `
 UPDATE credit_application_keys
    SET application_id = $2::uuid, stored_result = $3::jsonb
- WHERE org_id = $4 AND idempotency_key = $1`, in.IdempotencyKey, applicationID, string(stored), in.OrgID); err != nil {
+ WHERE org_id = $4::uuid AND idempotency_key = $1`, in.IdempotencyKey, applicationID, string(stored), in.OrgID); err != nil {
 		return CreditApplication{}, fmt.Errorf("credit apply: store the key's result: %w", err)
 	}
 

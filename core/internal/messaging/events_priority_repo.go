@@ -14,6 +14,9 @@ import (
 // InsertEventMessageOpts is InsertEventMessage with the 0138 columns. The shipped 5-arg
 // InsertEventMessage stays (it delegates here) so no existing caller changes: the portal bridge and
 // the task/quote notifiers wired in main.go keep their signatures.
+//
+// The write runs in a transaction that takes the channel's lock before it stamps itself, so a read of
+// this channel is ordered against this post by the lock and not by a clock (UX-110).
 func (r *Repository) InsertEventMessageOpts(ctx context.Context, channelID, eventKey, body string, ref EventRef, opts EventOpts) (Message, bool, error) {
 	if r.pool == nil {
 		return Message{}, false, errNoDB
@@ -27,10 +30,19 @@ func (r *Repository) InsertEventMessageOpts(ctx context.Context, channelID, even
 	if opts.StateKey != "" {
 		stateKey = opts.StateKey
 	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Message{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// The channel's lock, BEFORE the post stamps itself (UX-110).
+	if err := lockChannelForPost(ctx, tx, channelID); err != nil {
+		return Message{}, false, err
+	}
 	var m Message
-	err = r.pool.QueryRow(ctx, `
-		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, requires_ack, priority, state_key)
-		VALUES ($1, NULL, 'EVENT', $2, $3, $4, $5, $6, $7)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, requires_ack, priority, state_key, created_at)
+		VALUES ($1, NULL, 'EVENT', $2, $3, $4, $5, $6, $7, clock_timestamp())
 		ON CONFLICT (channel_id, event_key) WHERE event_key IS NOT NULL DO NOTHING
 		RETURNING id::text, channel_id::text, kind, body, requires_ack, created_at`,
 		channelID, body, refBytes, eventKey, opts.RequiresAck, opts.Priority, stateKey).
@@ -44,6 +56,9 @@ func (r *Repository) InsertEventMessageOpts(ctx context.Context, channelID, even
 	m.Ref = json.RawMessage(refBytes)
 	m.Priority = opts.Priority
 	m.StateKey = opts.StateKey
+	if err := tx.Commit(ctx); err != nil {
+		return Message{}, false, err
+	}
 	return m, true, nil
 }
 

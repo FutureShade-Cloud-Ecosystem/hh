@@ -62,7 +62,7 @@ func TestIntegration_MutedChannelStopsBadging(t *testing.T) {
 		if err := repo.SyncMembership(ctx, u); err != nil {
 			t.Fatal(err)
 		}
-		if err := repo.MarkRead(ctx, chOffice, u, time.Now()); err != nil {
+		if err := repo.MarkRead(ctx, chOffice, u); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -122,7 +122,7 @@ func TestIntegration_MentionOnlyModeCountsOnlyMentions(t *testing.T) {
 		if err := repo.SyncMembership(ctx, u); err != nil {
 			t.Fatal(err)
 		}
-		if err := repo.MarkRead(ctx, chOffice, u, time.Now()); err != nil {
+		if err := repo.MarkRead(ctx, chOffice, u); err != nil {
 			t.Fatal(err)
 		}
 	}

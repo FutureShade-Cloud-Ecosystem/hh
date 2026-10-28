@@ -116,6 +116,9 @@ func (r *Repository) FindEventMessage(ctx context.Context, channelID, eventKey s
 // The root is validated the same way InsertMessage validates a TEXT reply's root: it must exist, live in
 // THIS channel, and itself be top-level (one-level threads, MSG-01). Re-checking here rather than
 // trusting the caller keeps the invariant with the write, where a future caller cannot skip it.
+//
+// The write runs in a transaction that takes the channel's lock before it stamps itself, so a read of
+// this channel is ordered against this reply by the lock and not by a clock (UX-110).
 func (r *Repository) InsertEventReply(ctx context.Context, channelID, rootID, eventKey, body string, ref EventRef) (Message, bool, error) {
 	if r.pool == nil {
 		return Message{}, false, errNoDB
@@ -136,10 +139,19 @@ func (r *Repository) InsertEventReply(ctx context.Context, channelID, rootID, ev
 	if err != nil {
 		return Message{}, false, fmt.Errorf("marshal ref: %w", err)
 	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Message{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// The channel's lock, BEFORE the reply stamps itself (UX-110).
+	if err := lockChannelForPost(ctx, tx, channelID); err != nil {
+		return Message{}, false, err
+	}
 	var m Message
-	err = r.pool.QueryRow(ctx, `
-		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, thread_root_id)
-		VALUES ($1, NULL, 'EVENT', $2, $3, $4, $5)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, thread_root_id, created_at)
+		VALUES ($1, NULL, 'EVENT', $2, $3, $4, $5, clock_timestamp())
 		ON CONFLICT (channel_id, event_key) WHERE event_key IS NOT NULL DO NOTHING
 		RETURNING id::text, channel_id::text, kind, body, COALESCE(thread_root_id::text,''), created_at`,
 		channelID, body, refBytes, eventKey, rootID).
@@ -151,6 +163,9 @@ func (r *Repository) InsertEventReply(ctx context.Context, channelID, rootID, ev
 		return Message{}, false, fmt.Errorf("insert rollup reply: %w", err)
 	}
 	m.Ref = json.RawMessage(refBytes)
+	if err := tx.Commit(ctx); err != nil {
+		return Message{}, false, err
+	}
 	return m, true, nil
 }
 

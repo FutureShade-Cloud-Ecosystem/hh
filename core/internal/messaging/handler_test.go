@@ -148,11 +148,11 @@ func (f pgCastFakeStore) ListMessages(ctx context.Context, channelID, cursor str
 	}
 	return f.fakeStore.ListMessages(ctx, channelID, cursor, limit)
 }
-func (f pgCastFakeStore) MarkRead(ctx context.Context, channelID, userID string, at time.Time) error {
+func (f pgCastFakeStore) MarkRead(ctx context.Context, channelID, userID string) error {
 	if !isUUIDish(channelID) {
 		return fmt.Errorf("mark read: %w", errPGCast)
 	}
-	return f.fakeStore.MarkRead(ctx, channelID, userID, at)
+	return f.fakeStore.MarkRead(ctx, channelID, userID)
 }
 
 // newCastHandler wires a Handler over the pg-cast-simulating store and returns a request stamped with
