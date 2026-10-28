@@ -8,7 +8,7 @@ export const pickerStyles = css`
     position: relative;
     display: flex;
     flex-direction: column;
-    gap: var(--hh-s-6, 6px);
+    gap: var(--hh-s-8);
     min-width: 0;
     max-width: 100%;
   }
@@ -63,14 +63,18 @@ export const pickerStyles = css`
   .picker-results {
     display: flex;
     flex-direction: column;
-    gap: var(--hh-s-2, 2px);
+    gap: var(--hh-s-2);
     max-height: 220px;
     overflow-y: auto;
     padding: var(--hh-s-4);
     border: 1px solid var(--hh-control-line);
     border-radius: var(--hh-radius-control);
     background: var(--hh-card);
-    box-shadow: var(--hh-shadow-pop, 0 8px 20px rgba(0, 0, 0, 0.16));
+    /* The raised level of the design system's elevation set, the token the
+       shell's own dropdown panels wear and the house's customer search drop
+       wears through the same name. The panel's face is the card, one step off
+       the page, and the elevation lifts it off whatever it hangs over. */
+    box-shadow: var(--hh-elev-2);
     z-index: 20;
   }
 
@@ -81,7 +85,7 @@ export const pickerStyles = css`
     gap: var(--hh-s-8);
     width: 100%;
     min-height: 36px;
-    padding: var(--hh-s-6, 6px) var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-8);
     border: 1px solid transparent;
     border-radius: var(--hh-radius-control);
     background: transparent;
