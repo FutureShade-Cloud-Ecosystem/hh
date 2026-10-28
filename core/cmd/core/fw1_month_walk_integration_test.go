@@ -76,6 +76,7 @@ func fw1AssertionNames() []string {
 		"no_journal_waiting_or_dead_lettered",
 		"walk_month_and_next_year_periods_open",
 		"year_end_close_opens_next_year_and_keeps_income_statement",
+		"month_close_passes_its_pre_flight_and_seals_the_month",
 	}
 }
 
@@ -823,6 +824,7 @@ func TestFW1MonthWalk(t *testing.T) {
 		"no_journal_waiting_or_dead_lettered":                               w.assertNothingWaiting,
 		"walk_month_and_next_year_periods_open":                             w.assertWalkMonthAndNextYearPeriodsOpen,
 		"year_end_close_opens_next_year_and_keeps_income_statement":         w.assertYearEndClose,
+		"month_close_passes_its_pre_flight_and_seals_the_month":             w.assertMonthClose,
 	}
 	for _, name := range fw1AssertionNames() {
 		name := name
@@ -1426,8 +1428,27 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 	}
 }
 
+// 12. The walk month closes through the served route: the close pre flight reads the company's
+// stock, the AR subledger, the posting queue and the till drawers, and the close seals the month
+// (FW1-09d: the walk guards the month close from here on, where before it closed only a year).
+func (w *fw1Walk) assertMonthClose(t fw1TB) {
+	periodID := w.one(`SELECT id::text FROM fiscal_periods WHERE year = $1 AND month = $2`, w.year, w.month)
+	code, out := w.do(http.MethodPost, "/api/v1/gl/periods/"+periodID+"/close",
+		map[string]any{"reason": "FW1 walk month close"})
+	if code != http.StatusOK {
+		t.Fatalf("the walk month %04d-%02d close answered %d: %s", w.year, w.month, code, out)
+	}
+	var status string
+	if err := w.pool.QueryRow(context.Background(), `SELECT status FROM fiscal_periods WHERE id = $1::uuid`, periodID).Scan(&status); err != nil {
+		t.Fatalf("the closed period read: %v", err)
+	}
+	if status != "CLOSED" {
+		t.Errorf("the walk month %04d-%02d close answered 200 but the period is %s, want CLOSED", w.year, w.month, status)
+	}
+}
+
 // TestFW1WalkRedMapNamesRealSubtests guards the skip map: every key must name one of the walk's
-// eight subtests, every value must name a single owning item, and when FW1_WAVE_FINAL=1 is set
+// assertions, every value must name a single owning item, and when FW1_WAVE_FINAL=1 is set
 // the map must be empty.
 func TestFW1WalkRedMapNamesRealSubtests(t *testing.T) {
 	real := map[string]bool{}

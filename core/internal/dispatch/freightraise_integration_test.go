@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -441,10 +442,83 @@ SELECT a.policy_type, a.detail, (a.data->>'amount_cents')::bigint
 	if amount != nil {
 		t.Fatalf("the approval row carries a figure (%d) into an ungated list", *amount)
 	}
-	for _, forbidden := range []string{"26000", "34000", "8000", "260.00", "340.00", "$"} {
-		if strings.Contains(detail, forbidden) {
-			t.Fatalf("the approval sentence leaks a customer's delivery charge: %q", detail)
+	if frtDetailLeaksMoney(detail) {
+		t.Fatalf("the approval sentence leaks a customer's delivery charge: %q", detail)
+	}
+}
+
+// frtDetailLeaksMoney is the leak check the queue row must pass: the approval sentence carries no
+// money. The rule is unchanged from the bare substring hunt it replaces; what changed is that the
+// check matches MONEY SHAPES and not bare digits, because the sentence's only digits belong to the
+// identifiers it names (raiseDetail files the order number and nothing else) and the fixture order
+// number is random: PR 632's run 40591154455 seeded #SO-DISPATCHTEST-5682680004, whose digits hold
+// 8000, and the substring hunt tripped on the id though the sentence carries no money. A dollar
+// sign anywhere, a decimal amount, or a forbidden cents figure standing as a whole word is money;
+// 8000 inside 5682680004 is not. Matching the shapes keeps the rule exact without the check having
+// to know every identifier the sentence may ever carry, which stripping ids would.
+var (
+	frtMoneyShape   = regexp.MustCompile(`\d+\.\d{2}`)
+	frtWholeFigures = regexp.MustCompile(`\b(?:26000|34000|8000)\b`)
+)
+
+func frtDetailLeaksMoney(detail string) bool {
+	return strings.Contains(detail, "$") || frtMoneyShape.MatchString(detail) || frtWholeFigures.MatchString(detail)
+}
+
+// - the flake, pinned -
+
+// The fixture order number is random digits, so once in a while its digits hold one of the forbidden
+// figures: PR 632's run 40591154455 seeded #SO-DISPATCHTEST-5682680004, whose number carries 8000,
+// and the leak check tripped on the identifier though the sentence carries no money. The rule is
+// unchanged, the approval sentence carries no money and the approval row carries no figure; this leg
+// pins the flake, the exact order number from that run parks a raise and its sentence must pass the
+// leak check.
+func TestFreightRaise_TheLeakCheckReadsMoneyNotDigitsInsideAnId(t *testing.T) {
+	h := newFreightHarness(t)
+	ctx := h.dispatcherCtx(t)
+	orderID, _ := h.seedQuotedOrder(t, branchKGN, cents(26000), 26000)
+	if _, err := h.pool.Exec(context.Background(),
+		`UPDATE orders SET order_no = $2 WHERE id = $1`, orderID, "#SO-DISPATCHTEST-5682680004"); err != nil {
+		t.Fatalf("seed the order number from the flake's run: %v", err)
+	}
+
+	res, err := h.svc.SplitFreight(ctx, SplitInput{OrderID: orderID, Loads: 4, FreightCents: cents(34000)})
+	if err != nil || res.Parked == nil {
+		t.Fatalf("the raise did not park: %v", err)
+	}
+	var detail string
+	if err := h.pool.QueryRow(context.Background(), `
+SELECT a.detail FROM permission_approval_requests a
+  JOIN delivery_freight_raises r ON r.approval_id = a.id
+ WHERE r.order_id = $1`, orderID).Scan(&detail); err != nil {
+		t.Fatalf("read the filed approval: %v", err)
+	}
+	if frtDetailLeaksMoney(detail) {
+		t.Fatalf("the check read the order number's digits as money: %q", detail)
+	}
+}
+
+// THE CHECK MUST STILL BITE. Whatever identifier the sentence also names, a dollar sign, a decimal
+// amount, or a forbidden cents figure standing as a whole word is money on the ungated queue, and
+// every one of those sentences must fail the check.
+func TestFreightRaise_TheLeakCheckStillBitesOnRealMoney(t *testing.T) {
+	bites := []struct{ name, detail string }{
+		{"a dollar sign", "Freight on #SO-DISPATCHTEST-1041 is being raised above the $80.00 the customer was quoted."},
+		{"a decimal amount", "Freight on #SO-DISPATCHTEST-1041 rises by 340.00 above the quoted delivery."},
+		{"the whole token 8000", "Freight on #SO-DISPATCHTEST-1041 rises by 8000 cents above the quoted delivery."},
+		{"the whole token 26000", "The delivery on #SO-DISPATCHTEST-1041 charges 26000 cents."},
+		{"the whole token 34000", "The delivery on #SO-DISPATCHTEST-1041 charges 34000 cents."},
+		{"a bare dollar sign", "Freight on #SO-DISPATCHTEST-1041 is being raised above the delivery the customer was $ quoted."},
+	}
+	for _, tc := range bites {
+		if !frtDetailLeaksMoney(tc.detail) {
+			t.Fatalf("%s: the leak check let real money through: %q", tc.name, tc.detail)
 		}
+	}
+	// And the sentence the queue actually files, whose only digits belong to the order number, is
+	// not a leak.
+	if frtDetailLeaksMoney(raiseDetail("#SO-DISPATCHTEST-5682680004", "Bay of Quinte Landscaping")) {
+		t.Fatal("the check read the order number inside the real sentence as money")
 	}
 }
 
