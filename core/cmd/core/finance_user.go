@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 
@@ -110,7 +111,7 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 	role := fs.String("role", financeUserDefaultRole, "the finance role to grant")
 	revoke := fs.Bool("revoke", false, "deactivate the person and revoke every live grant instead of granting")
 	applyFromEnv := fs.Bool("apply-from-env", false, "apply the box's finance user list from HH_FINANCE_USERS: provision every entry and revoke every finance person the list left out, in one transaction")
-	emptyRevokesAll := fs.Bool("empty-list-revokes-all", false, "with --apply-from-env: an empty HH_FINANCE_USERS revokes every finance person on the box (the entrypoint passes it only when the list is set and empty)")
+	emptyRevokesAll := fs.Bool("empty-list-revokes-all", false, "with --apply-from-env: an empty HH_FINANCE_USERS revokes every finance person on the box (the entrypoint passes it only when the list is set and empty; the command refuses when the variable is unset)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -128,6 +129,17 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 		})
 		if len(others) > 0 {
 			return fmt.Errorf("finance-user: --apply-from-env applies the list in %s and takes no name of its own: %s does not belong to it", envFinanceUsers, strings.Join(others, ", "))
+		}
+		if *emptyRevokesAll {
+			// The flag's word is "the list is SET and empty", and only the
+			// entrypoint, which reads the environment with LookupEnv, knows
+			// set from unset. The value seam (a plain getenv) cannot carry
+			// presence, so the process environment is read directly: without
+			// the variable there is no list at all, and the command refuses
+			// rather than empty the box on a guess.
+			if _, set := os.LookupEnv(envFinanceUsers); !set {
+				return fmt.Errorf("finance-user: --empty-list-revokes-all refuses to run: %s is not set in the environment (only a list that is set and empty revokes every finance person)", envFinanceUsers)
+			}
 		}
 	} else {
 		if strings.TrimSpace(*email) == "" {

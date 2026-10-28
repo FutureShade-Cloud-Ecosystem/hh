@@ -294,7 +294,10 @@ func TestIntegration_FinanceUserApplyEmptyListAndDuplicates(t *testing.T) {
 	if err, _ := finApply(t, emptyEnv); err == nil {
 		t.Fatal("an empty list without --empty-list-revokes-all must refuse")
 	}
-	// With it, the last person is revoked.
+	// With it, the last person is revoked. The list is set and empty in the
+	// process environment, the one picture the flag's rule reads: set and
+	// empty is the only list that revokes everyone.
+	t.Setenv(finEnvUsersVar, "")
 	out2 := &bytes.Buffer{}
 	if err := financeUserRole([]string{"--apply-from-env", "--empty-list-revokes-all"}, out2, out2, mapGetenv(emptyEnv)); err != nil {
 		t.Fatalf("an emptied list with --empty-list-revokes-all must apply: %v (%s)", err, out2.String())
