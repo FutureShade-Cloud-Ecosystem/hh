@@ -90,8 +90,8 @@ func fw1R4WritePolicyHeadOffice(ctx context.Context, pool *pgxpool.Pool, branchI
 // NULL whatever it found left a box whose policy named a head office (migration 0445 backfills
 // one) with the leg's own write instead of its own, and the FW1-10 leg read the wrong head
 // office on a reused box.
-func fw1R4RestoreHeadOffice(ctx context.Context, pool *pgxpool.Pool, _ string) {
-	_, _ = pool.Exec(ctx, `UPDATE gl_policy SET head_office_branch_id = NULL WHERE branch_id IS NULL`)
+func fw1R4RestoreHeadOffice(ctx context.Context, pool *pgxpool.Pool, prior string) {
+	fw1R4WritePolicyHeadOffice(ctx, pool, prior)
 }
 
 // fw1R4HeadOfficeName names a head office branch the way a reader wants it: the branch code and

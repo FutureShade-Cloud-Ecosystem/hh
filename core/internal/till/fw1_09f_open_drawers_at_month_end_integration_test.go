@@ -133,10 +133,13 @@ func fw109fOtherYearPeriod(t *testing.T, pool *pgxpool.Pool, year, month int) (s
 // ON CONFLICT DO NOTHING, so on a reused box the row can already be there, and a leg that removed
 // it anyway took a row it did not create out of the shared gate database. The override row is
 // removed first, because gl_period_overrides holds the period ON DELETE RESTRICT.
-func fw109fOtherYearCleanup(t *testing.T, pool *pgxpool.Pool, periodID string, _ bool) {
+func fw109fOtherYearCleanup(t *testing.T, pool *pgxpool.Pool, periodID string, planted bool) {
 	t.Helper()
 	ctx := context.Background()
 	_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides WHERE period_id = $1::uuid`, periodID)
+	if !planted {
+		return
+	}
 	_, _ = pool.Exec(ctx, `DELETE FROM fiscal_periods WHERE id = $1::uuid`, periodID)
 }
 
