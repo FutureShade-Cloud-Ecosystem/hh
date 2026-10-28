@@ -1430,14 +1430,22 @@ func (s *Service) buildTillSessionCompleted(ctx context.Context, payload []byte)
 }
 
 type tillMovementPayload struct {
-	MovementID   string    `json:"movement_id"`
-	SessionID    string    `json:"session_id"`
-	BranchID     string    `json:"branch_id"`
-	MovementType string    `json:"movement_type"`
-	Method       string    `json:"method"`
-	AmountCents  int64     `json:"amount_cents"`
-	Reason       string    `json:"reason"`
-	OccurredAt   time.Time `json:"occurred_at"`
+	MovementID   string `json:"movement_id"`
+	SessionID    string `json:"session_id"`
+	BranchID     string `json:"branch_id"`
+	MovementType string `json:"movement_type"`
+	Method       string `json:"method"`
+	AmountCents  int64  `json:"amount_cents"`
+	Reason       string `json:"reason"`
+	// ReasonCodeID is the counter reason code the movement names (W2-6b): the till's list row, which
+	// points at the account the movement posts to. Empty means the movement names no code.
+	ReasonCodeID string `json:"reason_code_id"`
+	// GLAccountCode is the account the movement's reason code pointed at WHEN THE MOVEMENT WAS
+	// RECORDED (W2-6b fix round 3). The posting uses the account the movement carries, so a repoint of
+	// the code made while the movement waited never moves the money. Empty means the movement names no
+	// code, or it was recorded before the account travelled with it.
+	GLAccountCode string    `json:"gl_account_code"`
+	OccurredAt    time.Time `json:"occurred_at"`
 }
 
 // buildTillMovementPosted posts a till movement's journal (FW1-13). A paid out debits 9999 Suspense
@@ -1454,6 +1462,10 @@ type tillMovementPayload struct {
 // Every line carries the drawer's own reason words (the payload's reason) and the branch (the journal's
 // branch, stamped on each line by insertJournalIn), so the suspense balance reads back to the movement
 // behind it.
+//
+// A movement that names a counter reason code (W2-6b) posts to the account that code points at, and
+// only a movement with no code posts to 9999 Suspense. The account is asked of the till through the gl's
+// own seam (the till owns the list), so no gl statement names a till table.
 func (s *Service) buildTillMovementPosted(ctx context.Context, payload []byte) (journalDraft, bool, error) {
 	var p tillMovementPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -1487,16 +1499,42 @@ func (s *Service) buildTillMovementPosted(ctx context.Context, payload []byte) (
 		words = ": " + reason
 	}
 	memo := p.MovementType + " " + p.Method + " on session " + p.SessionID + words
+	// The counter reason code (W2-6b): the movement names the code that says what the money is, and
+	// the code points at the account the movement posts to, so the money lands where it belongs
+	// instead of in 9999 Suspense. A movement that names no code still posts to 9999 Suspense
+	// (FROM-PRINCIPAL 132).
+	//
+	// The account the movement carries is the account it posts to (W2-6b fix round 3). It was
+	// resolved once, at record time, and travels with the movement, so a manager repointing the code
+	// while the movement waits never moves the money. Only a movement recorded before the account
+	// travelled with it asks the till, through the gl's own seam (the till owns the list), and never
+	// by SQL on a till table.
+	counterCode := "9999"
+	if p.GLAccountCode != "" {
+		counterCode = p.GLAccountCode
+	} else if p.ReasonCodeID != "" {
+		if s.counterAccounts == nil {
+			return journalDraft{}, false, fmt.Errorf("gl: counter account reader not configured")
+		}
+		account, found, err := s.counterAccounts.CounterAccountCode(ctx, p.BranchID, p.ReasonCodeID)
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		if !found {
+			return journalDraft{}, false, fmt.Errorf("gl: till.movement.posted names reason code %s that is not on branch %s", p.ReasonCodeID, p.BranchID)
+		}
+		counterCode = account
+	}
 	var title string
 	switch p.MovementType {
 	case "PAID_OUT":
 		title = "Till movement PAID_OUT"
 		// 9999 Suspense is the ruled account (FROM-PRINCIPAL 132 names it flatly); a rules row may
 		// carry a per dealer suspense code one day, and this literal is where it swaps in.
-		lines = []draftLine{dr("9999", p.AmountCents, memo), cr(undCode, p.AmountCents, "drawer paid out"+words)}
+		lines = []draftLine{dr(counterCode, p.AmountCents, memo), cr(undCode, p.AmountCents, "drawer paid out"+words)}
 	case "PAID_IN":
 		title = "Till movement PAID_IN"
-		lines = []draftLine{dr(undCode, p.AmountCents, memo), cr("9999", p.AmountCents, "drawer paid in"+words)}
+		lines = []draftLine{dr(undCode, p.AmountCents, memo), cr(counterCode, p.AmountCents, "drawer paid in"+words)}
 	default:
 		title = "Till lodgement"
 		// Bank is the ruled account (FROM-PRINCIPAL 117 names 1000 Bank flatly); a rules row may
