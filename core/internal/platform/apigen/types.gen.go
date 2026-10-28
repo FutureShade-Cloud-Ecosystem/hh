@@ -3187,6 +3187,7 @@ type GlYearCloseResult struct {
 	ClosingJournalId *string `json:"closing_journal_id,omitempty"`
 	NetIncomeCents   int64   `json:"net_income_cents"`
 	PeriodsClosed    bool    `json:"periods_closed"`
+	AlreadyClosed    bool    `json:"already_closed"`
 }
 
 type GlPolicy struct {

@@ -126,6 +126,19 @@ test("the Controller's year end close still answers the contract's shape", async
   holds("GlYearCloseResult", done.json);
   assert.equal(done.json.fiscal_year, 2026);
   assert.equal(done.json.periods_closed, true);
+  assert.equal(done.json.already_closed, false, "a first press closes now");
+});
+
+test("a repeat year end press answers already closed and writes nothing (FW1-09g)", async () => {
+  await reset();
+  const first = await call(IDS.controller, "POST", "/api/v1/gl/periods/close-year", { year: 2026, reason: "year-end close FY2026" });
+  assert.equal(first.status, 200);
+  assert.equal(first.json.already_closed, false, "a first press closes now");
+  const again = await call(IDS.controller, "POST", "/api/v1/gl/periods/close-year", { year: 2026, reason: "again" });
+  assert.equal(again.status, 200);
+  holds("GlYearCloseResult", again.json);
+  assert.equal(again.json.already_closed, true, "a repeat press says the year is already closed");
+  assert.equal(again.json.closing_journal_id, first.json.closing_journal_id, "a repeat press answers the first close's result");
 });
 
 test("the desk's own words name the Financial Controller, in dealer words", () => {
