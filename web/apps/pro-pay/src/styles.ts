@@ -81,6 +81,12 @@ export const screenStyles = css`
   .opt:disabled { background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border-color: var(--hh-disabled-line); cursor: default; opacity: 1; }
   .dot { flex: none; width: 20px; height: 20px; border-radius: var(--hh-radius-pill); border: 2px solid var(--hh-control-line); background: var(--hh-field); box-sizing: border-box; }
   .opt.is-on .dot { border: 6px solid var(--hh-accent); }
+  /* A locked option keeps its mark, and the mark is never brand colour. The
+     unchosen dot takes the disabled line, the chosen one keeps its 6 px
+     weight and takes the disabled ink: the weight is what says "this one",
+     the colour is what says "held", and only the colour may be grey here. */
+  .opt:disabled .dot { border: 2px solid var(--hh-disabled-line); }
+  .opt.is-on:disabled .dot { border: 6px solid var(--hh-disabled-ink); }
   .opt-text { display: flex; flex-direction: column; gap: var(--hh-s-2); min-width: 0; }
   .opt-name { font-weight: 600; }
   .opt-sub { font-size: 0.8125rem; color: var(--hh-text-dim); }
