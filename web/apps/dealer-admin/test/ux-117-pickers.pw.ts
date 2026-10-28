@@ -100,6 +100,8 @@ test("no dealer-admin form carries a raw id text input or asks the dealer to typ
   // 7. Batches create form
   await page.locator('.pr-tab[data-tab="batches"]').click();
   await expect(page.locator('[data-test="pr-batches-count"]')).toBeVisible();
+  await page.locator('[data-action="pr-batch-new"]').click();
+  await expect(page.locator('[data-test="pr-batch-create"]')).toBeVisible();
   allViolations.push(...(await collectRawIdFields(page, "pricing:batches")));
 
   // 8. Low margin probe
@@ -224,6 +226,7 @@ test("category, vendor, branch, profile and batch pickers: choose by name and se
 
   // Batches tab: vendor and import profile selects.
   await page.locator('.pr-tab[data-tab="batches"]').click();
+  await page.locator('[data-action="pr-batch-new"]').click();
   await expect(page.locator('select[data-field="pr-batch-vendor"]')).toBeVisible();
   await expect(page.locator('select[data-field="pr-batch-profile"]')).toBeVisible();
 

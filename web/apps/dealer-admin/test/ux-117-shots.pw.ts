@@ -106,6 +106,8 @@ for (const size of SIZES) {
       await page.locator('.pr-tab[data-tab="batches"]').click();
       await expect(page.locator('[data-test="pr-batches-count"]')).toBeVisible();
       await expect(page.locator('[data-test="pr-profiles-count"]')).toBeVisible();
+      await page.locator('[data-action="pr-batch-new"]').click();
+      await expect(page.locator('[data-test="pr-batch-create"]')).toBeVisible();
       await take(page, "pricing__batches", theme, size.width);
 
       // 8. Low margin probe
