@@ -61,6 +61,91 @@ func fw1R4Controller(pool *pgxpool.Pool, user string, house int) *Service {
 		WithBranchFacts(fw1R4BranchFacts{repo: branches.NewRepository(pool)})
 }
 
+// fw1R4PolicyHeadOffice reads the org default policy row's head office branch: the value the head
+// office leg must put back when it ends. The empty string means the policy names none.
+func fw1R4PolicyHeadOffice(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT COALESCE(head_office_branch_id::text, '') FROM gl_policy WHERE branch_id IS NULL LIMIT 1`).Scan(&id); err != nil {
+		t.Fatalf("read the policy's head office branch: %v", err)
+	}
+	return id
+}
+
+// fw1R4WritePolicyHeadOffice writes the org default policy row's head office branch. The empty
+// string writes NULL, the value a policy that named no head office held.
+func fw1R4WritePolicyHeadOffice(ctx context.Context, pool *pgxpool.Pool, branchID string) {
+	if branchID == "" {
+		_, _ = pool.Exec(ctx, `UPDATE gl_policy SET head_office_branch_id = NULL WHERE branch_id IS NULL`)
+		return
+	}
+	_, _ = pool.Exec(ctx, `UPDATE gl_policy SET head_office_branch_id = $1::uuid WHERE branch_id IS NULL`, branchID)
+}
+
+// fw1R4RestoreHeadOffice is the head office leg's cleanup: it puts the policy's head office back
+// to the value the leg found.
+//
+// FLAKE-9: it writes the value the policy held, NULL only when the policy held none. Writing
+// NULL whatever it found left a box whose policy named a head office (migration 0445 backfills
+// one) with the leg's own write instead of its own, and the FW1-10 leg read the wrong head
+// office on a reused box.
+func fw1R4RestoreHeadOffice(ctx context.Context, pool *pgxpool.Pool, prior string) {
+	fw1R4WritePolicyHeadOffice(ctx, pool, prior)
+}
+
+// fw1R4HeadOfficeName names a head office branch the way a reader wants it: the branch code and
+// its id, or "none" for the empty string.
+func fw1R4HeadOfficeName(t *testing.T, pool *pgxpool.Pool, id string) string {
+	t.Helper()
+	if id == "" {
+		return "none"
+	}
+	var code string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT COALESCE(code, '') FROM locations WHERE id = $1::uuid`, id).Scan(&code); err != nil {
+		t.Fatalf("read the head office branch %s: %v", id, err)
+	}
+	if code == "" {
+		return id
+	}
+	return fmt.Sprintf("%s (%s)", code, id)
+}
+
+// fw1R4HeadOfficeCandidate answers a live branch the head office set may take, with the caller's
+// org scope for it. The candidate is never the branch the policy already names as the head
+// office when exclude names one, so the leg's own write is visible.
+//
+// The candidate must be a LIVE branch of the caller's own org (FW1-08b part B round 2): the org
+// half of the set is unconditional and the branch half asks for a live branch, so this fixture
+// carries the org scope a request context carries and plants an org on the branch when the seed
+// leaves it without one.
+func fw1R4HeadOfficeCandidate(t *testing.T, pool *pgxpool.Pool, exclude string) (string, context.Context) {
+	t.Helper()
+	ctx := context.Background()
+	var branchID, orgID string
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text, COALESCE(org_id::text, '') FROM locations
+		  WHERE loc_type = 'BRANCH' AND deleted_at IS NULL AND ($1 = '' OR id::text <> $1)
+		  ORDER BY code LIMIT 1`, exclude).Scan(&branchID, &orgID); err != nil {
+		t.Skipf("no seeded branch: %v", err)
+	}
+	if orgID == "" {
+		orgID = uuid.NewString()
+		if _, err := pool.Exec(ctx, `INSERT INTO org (id, slug, name) VALUES ($1::uuid, $2, 'FW1 01 R4 org')`, orgID, "fw108b01r4-"+orgID[:8]); err != nil {
+			t.Fatalf("plant the org: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1::uuid WHERE id::text = $2`, orgID, branchID); err != nil {
+			t.Fatalf("plant the org on the branch: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(ctx, `UPDATE locations SET org_id = NULL WHERE id::text = $1`, branchID)
+			_, _ = pool.Exec(ctx, `DELETE FROM org WHERE id = $1::uuid`, orgID)
+		})
+	}
+	return branchID, authz.WithStaffScope(ctx, authz.StaffScope{OrgID: orgID})
+}
+
 // TestIntegration_FW1_01R4_OpenYearAuditRowThroughTheRealRecorder is the
 // round 4 P1 red: the Controller's open through the real recorder must
 // succeed AND leave exactly one GL_FISCAL_YEAR_OPEN row in audit_log, keyed
@@ -303,30 +388,10 @@ func TestIntegration_FW1_01R4_HeadOfficeSetAuditRowThroughTheRealRecorder(t *tes
 	recorder := audit.NewService(audit.NewRepository(pool), nil)
 	controller := fw1R4Controller(pool, user, house).WithAuditTxRecorder(recorder)
 
-	// The candidate must be a LIVE branch of the caller's own org (FW1-08b part B round 2): the
-	// org half of the set is unconditional and the branch half asks for a live branch, so this
-	// fixture carries the org scope a request context carries and plants an org on the branch
-	// when the seed leaves it without one.
-	var branchID, orgID string
-	if err := pool.QueryRow(ctx,
-		`SELECT id::text, COALESCE(org_id::text, '') FROM locations
-		  WHERE loc_type = 'BRANCH' AND deleted_at IS NULL ORDER BY code LIMIT 1`).Scan(&branchID, &orgID); err != nil {
-		t.Skipf("no seeded branch: %v", err)
-	}
-	if orgID == "" {
-		orgID = uuid.NewString()
-		if _, err := pool.Exec(ctx, `INSERT INTO org (id, slug, name) VALUES ($1::uuid, $2, 'FW1 01 R4 org')`, orgID, "fw108b01r4-"+orgID[:8]); err != nil {
-			t.Fatalf("plant the org: %v", err)
-		}
-		if _, err := pool.Exec(ctx, `UPDATE locations SET org_id = $1::uuid WHERE id::text = $2`, orgID, branchID); err != nil {
-			t.Fatalf("plant the org on the branch: %v", err)
-		}
-		t.Cleanup(func() {
-			_, _ = pool.Exec(ctx, `UPDATE locations SET org_id = NULL WHERE id::text = $1`, branchID)
-			_, _ = pool.Exec(ctx, `DELETE FROM org WHERE id = $1::uuid`, orgID)
-		})
-	}
-	scoped := authz.WithStaffScope(ctx, authz.StaffScope{OrgID: orgID})
+	// The head office the policy holds BEFORE the leg's write: the cleanup must put back exactly
+	// this value (FLAKE-9), the way it found it.
+	prior := fw1R4PolicyHeadOffice(t, pool)
+	branchID, scoped := fw1R4HeadOfficeCandidate(t, pool, "")
 	var before int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'GL_HEAD_OFFICE_BRANCH_SET'`).Scan(&before); err != nil {
 		t.Fatal(err)
@@ -335,7 +400,7 @@ func TestIntegration_FW1_01R4_HeadOfficeSetAuditRowThroughTheRealRecorder(t *tes
 		t.Fatalf("the head office set through the real audit recorder: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `UPDATE gl_policy SET head_office_branch_id = NULL WHERE branch_id IS NULL`)
+		fw1R4RestoreHeadOffice(ctx, pool, prior)
 	})
 
 	var n int
@@ -356,6 +421,60 @@ func TestIntegration_FW1_01R4_HeadOfficeSetAuditRowThroughTheRealRecorder(t *tes
 	}
 	if actor != user {
 		t.Fatalf("the head office audit's actor is %q, want the Controller %q", actor, user)
+	}
+}
+
+// TestIntegration_FW1_01R4_TheHeadOfficeLegLeavesThePolicyHeadOfficeAsItFoundIt is FLAKE-9's red
+// (FROM-PRINCIPAL 344): a leg leaves the shared gate database exactly as it found it.
+//
+// The head office leg's cleanup wrote NULL whatever the policy held, so a box whose policy named
+// a head office (migration 0445 backfills one) was left with the leg's own write instead of its
+// own. On the gate database the column is NOT NULL, so that write is refused and the policy KEEPS
+// the leg's candidate: the head office the policy held before the leg is not the one it holds
+// after it, and the FW1-10 leg then reads the wrong head office on a reused box.
+//
+// The leg reads the policy before the write and after the cleanup, and it fails when the two
+// differ. Its own safety net puts the policy back whatever the cleanup under test does, so the
+// red run leaves the gate database as it found it.
+func TestIntegration_FW1_01R4_TheHeadOfficeLegLeavesThePolicyHeadOfficeAsItFoundIt(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	user := aUser(t, pool)
+	house := fw1NextYear(t, pool) - 1
+	controller := fw1R4Controller(pool, user, house).WithAuditTxRecorder(audit.NewService(audit.NewRepository(pool), nil))
+
+	// The head office the policy holds before the leg.
+	prior := fw1R4PolicyHeadOffice(t, pool)
+	if prior == "" {
+		// A policy that names no head office cannot lose one: plant one through the real path
+		// first, so the leg has a head office to put back.
+		planted, scoped := fw1R4HeadOfficeCandidate(t, pool, "")
+		if err := controller.SetHeadOfficeBranch(scoped, planted, "FLAKE-9 red: plant a head office to lose"); err != nil {
+			t.Fatalf("plant the head office: %v", err)
+		}
+		prior = fw1R4PolicyHeadOffice(t, pool)
+		if prior == "" {
+			t.Fatal("the planted head office did not land in the policy")
+		}
+	}
+	// This leg's own safety net: the red run must leave the gate database exactly as it found it,
+	// whatever the cleanup under test does.
+	t.Cleanup(func() {
+		fw1R4WritePolicyHeadOffice(context.Background(), pool, prior)
+	})
+
+	// A candidate that is not the head office the policy holds, so the leg's own write is visible.
+	branchID, scoped := fw1R4HeadOfficeCandidate(t, pool, prior)
+	if err := controller.SetHeadOfficeBranch(scoped, branchID, "FLAKE-9 red: the head office leg must put the policy back"); err != nil {
+		t.Fatalf("the head office set: %v", err)
+	}
+	// The cleanup under test: the one the round 4 leg runs when it ends.
+	fw1R4RestoreHeadOffice(ctx, pool, prior)
+
+	after := fw1R4PolicyHeadOffice(t, pool)
+	if after != prior {
+		t.Fatalf("the head office leg left the policy's head office at %s, want %s: it must put back exactly what it found",
+			fw1R4HeadOfficeName(t, pool, after), fw1R4HeadOfficeName(t, pool, prior))
 	}
 }
 

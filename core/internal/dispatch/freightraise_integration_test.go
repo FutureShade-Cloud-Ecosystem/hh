@@ -461,10 +461,17 @@ SELECT a.policy_type, a.detail, (a.data->>'amount_cents')::bigint
 var (
 	frtMoneyShape   = regexp.MustCompile(`\d+\.\d{2}`)
 	frtWholeFigures = regexp.MustCompile(`\b(?:26000|26,000|34000|34,000|8000|8,000)\b`)
+	// frtClockShape is a clock: a date, a time, or both, with the fractional seconds a timestamp
+	// carries. A clock is not money, and the digits are the clock's own: a timestamp's fractional
+	// seconds put a decimal shape in the text ("2026-10-28T12:48:30.034123459Z" carries "30.034"),
+	// the decimal money shape read that as an amount. The clock is read FIRST, so what the money
+	// shapes read is the money and not the clock.
+	frtClockShape = regexp.MustCompile(`\d{4}-\d{2}-\d{2}(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?|\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?`)
 )
 
 func frtDetailLeaksMoney(detail string) bool {
-	return strings.Contains(detail, "$") || frtMoneyShape.MatchString(detail) || frtWholeFigures.MatchString(detail)
+	withoutClocks := frtClockShape.ReplaceAllString(detail, "")
+	return strings.Contains(withoutClocks, "$") || frtMoneyShape.MatchString(withoutClocks) || frtWholeFigures.MatchString(withoutClocks)
 }
 
 // - the flake, pinned -
@@ -524,6 +531,29 @@ func TestFreightRaise_TheLeakCheckStillBitesOnRealMoney(t *testing.T) {
 	// not a leak.
 	if frtDetailLeaksMoney(raiseDetail("#SO-DISPATCHTEST-5682680004", "Bay of Quinte Landscaping")) {
 		t.Fatal("the check read the order number inside the real sentence as money")
+	}
+}
+
+// A CLOCK IS NOT MONEY. The sentence names ids and money, and a timestamp's fractional seconds
+// put a decimal shape in the text ("2026-10-28T12:48:30.034123459Z" carries "30.034"), which the
+// decimal money shape read as an amount. The clock is read FIRST, so a clock of any spelling is
+// never money, and the money beside it still is.
+func TestFreightRaise_TheLeakCheckReadsMoneyNotAClock(t *testing.T) {
+	clocks := []string{
+		"Freight on #SO-DISPATCHTEST-1041 is being raised above the delivery the customer was quoted at 2026-10-28T12:48:30.034123459Z.",
+		"Freight on #SO-DISPATCHTEST-1041 is being raised above the delivery the customer was quoted at 2026-10-28T12:48:30.03Z.",
+		"Freight on #SO-DISPATCHTEST-1041 is being raised above the delivery the customer was quoted at 2026-10-28T12:48:30Z.",
+		"Freight on #SO-DISPATCHTEST-1041 is being raised above the delivery the customer was quoted at 2026-10-28T12:48:30.80",
+		"Freight on #SO-DISPATCHTEST-1041 is being raised above the delivery the customer was quoted at 12:48:30.034123459.",
+	}
+	for _, detail := range clocks {
+		if frtDetailLeaksMoney(detail) {
+			t.Fatalf("the check read the clock as money: %q", detail)
+		}
+	}
+	// The clock is stripped, the money is not: a sentence carrying both is still a leak.
+	if !frtDetailLeaksMoney("Freight on #SO-DISPATCHTEST-1041 rises by 340.00 above the quoted delivery at 2026-10-28T12:48:30.034123459Z.") {
+		t.Fatal("the check let real money through")
 	}
 }
 

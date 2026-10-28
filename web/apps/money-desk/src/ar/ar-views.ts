@@ -32,7 +32,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, canVoidReceipt, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditTargetWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, offeredChips, relativeDay, rowMarks, type Mark, type RegisterChip, pastDueLine } from "./ar-logic.js";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, canVoidReceipt, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditTargetWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, offeredChips, relativeDay, reopenedInvoiceNos, rowMarks, type Mark, type RegisterChip, pastDueLine } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderInvoiceCredits, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel, renderVoid } from "./office-views.js";
@@ -462,7 +462,9 @@ const CHOICES: readonly { id: WorkChoice; head: string; body: string }[] = [
 
 function bouncedWork(model: DeskModel, work: BouncedWork): TemplateResult {
   const h = work.history;
-  const reopened = h.allocations.map((a) => a.invoice_no).join(" and ");
+  // The history carries the application row and the reversal beside it (PR 668); the card
+  // names each invoice once, from the application rows, in their order.
+  const reopened = reopenedInvoiceNos(h.allocations).join(" and ");
   const bounce = model.bounced.find((b) => b.payment_id === h.payment_id);
   return html`
     <section class="panel work" aria-label="Payment bounced" data-bounced-work>

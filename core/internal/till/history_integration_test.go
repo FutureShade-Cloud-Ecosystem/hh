@@ -167,9 +167,9 @@ func TestIntegration_Q044_AttributionAndAuditTrail(t *testing.T) {
 	}
 }
 
-// M5, a BOUNCED payment keeps its application history: allocate → NSF-bounce (hard-deletes the live
-// payment_allocations) → PaymentHistory reconstructs the historical allocation from the
-// PAYMENT_ALLOCATED audit trail, flagged reversed_by_nsf, with the header marked reversed.
+// M5, a BOUNCED payment keeps its application history: allocate → NSF-bounce (0450 keeps the live
+// payment_allocations and writes the undo beside it as a reversal row) → PaymentHistory reads both
+// rows, with the header marked reversed.
 func TestIntegration_Q044_BouncedPaymentHistory_ShowsReversedAllocations(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
@@ -213,17 +213,17 @@ func TestIntegration_Q044_BouncedPaymentHistory_ShowsReversedAllocations(t *test
 		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'payment_id' = $1`, res.PaymentID)
 	})
 
-	// The cheque bounces, the NSF reversal removes the live allocation rows.
+	// The cheque bounces: the NSF reversal keeps the allocation and writes the undo beside it.
 	if _, err := svc.MarkNSF(cctx, NSFInput{PaymentID: res.PaymentID, Reason: "cheque returned NSF"}); err != nil {
 		t.Fatalf("MarkNSF: %v", err)
 	}
 	var nAlloc int
 	_ = pool.QueryRow(ctx, `SELECT count(*) FROM payment_allocations WHERE payment_id = $1::uuid`, res.PaymentID).Scan(&nAlloc)
-	if nAlloc != 0 {
-		t.Fatalf("NSF must remove the live allocations, %d remain", nAlloc)
+	if nAlloc != 2 {
+		t.Fatalf("NSF must keep the allocation and write the reversal beside it, %d rows stand", nAlloc)
 	}
 
-	// The forensic read still answers "what did this cheque used to pay?".
+	// The forensic read still answers "what did this cheque used to pay?", from the live rows now.
 	h, err := svc.PaymentHistory(cctx, res.PaymentID)
 	if err != nil {
 		t.Fatalf("PaymentHistory: %v", err)
@@ -231,17 +231,21 @@ func TestIntegration_Q044_BouncedPaymentHistory_ShowsReversedAllocations(t *test
 	if h.Status != "BOUNCED" || !h.Reversed {
 		t.Fatalf("bounced payment must be marked reversed: status=%s reversed=%v", h.Status, h.Reversed)
 	}
-	if len(h.Allocations) != 1 {
-		t.Fatalf("want 1 reconstructed allocation, got %d: %+v", len(h.Allocations), h.Allocations)
+	if len(h.Allocations) != 2 {
+		t.Fatalf("want the application and the reversal beside it, got %d: %+v", len(h.Allocations), h.Allocations)
 	}
 	al := h.Allocations[0]
-	if !al.ReversedByNSF {
-		t.Fatalf("reconstructed allocation must be flagged reversed_by_nsf: %+v", al)
+	if al.ReversedByNSF {
+		t.Fatalf("the live application row must not be flagged reversed_by_nsf: that flag marks a trail reconstruction: %+v", al)
 	}
 	if al.InvoiceID != invoiceID || al.AmountCents != 7700 {
-		t.Fatalf("reconstructed allocation facts wrong: %+v", al)
+		t.Fatalf("the application row facts are wrong: %+v", al)
 	}
 	if al.AllocatedBy != userID {
-		t.Fatalf("reconstructed allocation must carry the audit actor: %+v", al)
+		t.Fatalf("the application row must carry the audit actor: %+v", al)
+	}
+	rev := h.Allocations[1]
+	if rev.InvoiceID != invoiceID || rev.AmountCents != -7700 {
+		t.Fatalf("the reversal row facts are wrong: %+v", rev)
 	}
 }
