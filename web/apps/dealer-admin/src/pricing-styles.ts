@@ -36,9 +36,13 @@ export const pricingStyles = css`
     font-size: 14px;
     cursor: pointer;
   }
+  /* UX-106: the hover does not paint the accent border the open tab carries.
+     It did, so a pill the pointer rested on read as a second selection, in
+     both themes (the audit's "Promotions & clearance" beside the real
+     selection). The hover brightens the word and leaves the boundary alone,
+     which is the design system's own hover on a segmented button. */
   .pr-tab:hover {
     color: var(--hh-text);
-    border-color: var(--hh-accent-text);
   }
   .pr-tab[aria-current="true"] {
     color: var(--hh-accent-text);
