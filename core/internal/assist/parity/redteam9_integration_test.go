@@ -21,6 +21,17 @@ import (
 
 func TestRedTeam9_AManagerWithoutThePaymentTrailCannotGetAPaymentByAnySpec(t *testing.T) {
 	r := newARRig(t)
+	// The querier's shape check prices every read with EXPLAIN before it runs, and the payment allocations
+	// view's row policy carries two EXISTS arms per row, so the plan's sequential scan cost is row estimates
+	// times four subqueries. The other legs of this suite and of the adapters package plant and then delete
+	// their worlds on the shared gate database, and until the database's first autoanalyze fires, the planner
+	// prices those tables from their file size, dead rows included: the allocation read then lands past the
+	// sequential scan limit and is refused with no rows, on a fresh database in a package sequence, whatever
+	// the clock. Analyze the four tables this leg reads right after its own world is planted, so the shape
+	// check reads this leg's own statistics and not another leg's leftover.
+	if _, err := r.env.Admin.Exec(testsupport.Ctx(t), `ANALYZE public.payment_allocations, public.payments, public.invoices, public.customers`); err != nil {
+		t.Fatalf("analyze the planted world: %v", err)
+	}
 	q := &assist.ReadQuerier{Reader: r.env.Readers.Staff, Now: time.Now}
 	ctx := testsupport.Ctx(t)
 	var without, with arCaller
