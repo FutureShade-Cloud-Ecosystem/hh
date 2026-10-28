@@ -27,6 +27,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -76,7 +77,10 @@ func TestFW1_08b_Migration0445HeadOfficeBranch(t *testing.T) {
 			WithAudit(auditSvc).
 			WithAuditTxRecorder(auditSvc).
 			WithBranchFacts(glBranchFacts{repo: branches.NewRepository(pool)})
-		ctrlCtx := identity.ContextWithStaff(ctx, identity.StaffContext{
+		// The set's org half is unconditional (FW1-08b part B round 2), so this leg carries the
+		// org scope a request context carries, and the branches it names belong to that org.
+		orgID := fw1HeadOfficeScope(t, pool)
+		ctrlCtx := identity.ContextWithStaff(authz.WithStaffScope(ctx, authz.StaffScope{OrgID: orgID}), identity.StaffContext{
 			UserID:   userID,
 			RoleCode: "FINANCIAL_CONTROLLER",
 			Tier:     identity.TierLeadership,

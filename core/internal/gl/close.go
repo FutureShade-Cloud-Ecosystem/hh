@@ -45,10 +45,14 @@ func (s *Service) HeadOfficeBranchID(ctx context.Context) (string, error) {
 
 // SetHeadOfficeBranch updates the head office branch setting in gl_policy (ruling 82.3):
 // narrowed to the Financial Controller, mandatory reason, and audited. FW1-08b part B
-// (FROM-PRINCIPAL 176) bounds the candidate: it must be a location with loc_type = 'BRANCH'
+// (FROM-PRINCIPAL 176) bounds the candidate: it must be a LIVE location with loc_type = 'BRANCH'
 // in the caller's org, checked through the branch facts seam; the refusal is fail closed
-// when the seam is unwired. The org half holds on a request context, where the middleware
-// has stamped the org scope; a direct composition call without one keeps the branch check.
+// when the seam is unwired.
+//
+// FW1-08b part B round 2 (FROM-PRINCIPAL 309) closes the two halves that used to fail open:
+// the org half is UNCONDITIONAL, so a context that carries no staff scope is refused in words
+// rather than skipping the tenancy wall, and the branch half asks for a LIVE branch, so a soft
+// deleted branch is never a head office.
 func (s *Service) SetHeadOfficeBranch(ctx context.Context, branchID, reason string) error {
 	caller, err := s.caller(ctx)
 	if err != nil {
@@ -68,21 +72,28 @@ func (s *Service) SetHeadOfficeBranch(ctx context.Context, branchID, reason stri
 	if s.branchFacts == nil {
 		return errHeadOfficeUnverified
 	}
-	isBranch, err := s.branchFacts.Exists(ctx, branchID)
+	// A soft deleted branch is not a live branch, so it is never a head office. The plain
+	// existence read answers true for one, which is why the code read the same wave relies on
+	// (BranchRowByCodeTx) filters deleted_at and this check must as well.
+	isBranch, err := s.branchFacts.LiveBranchExists(ctx, branchID)
 	if err != nil {
 		return fmt.Errorf("gl: head office branch check: %w", err)
 	}
 	if !isBranch {
-		return unprocessable("gl: %s is not a branch location; the head office branch must be a branch (loc_type BRANCH)", branchID)
+		return unprocessable("gl: %s is not a live branch location; the head office branch must be a branch (loc_type BRANCH) that is not deleted", branchID)
 	}
-	if scope, ok := authz.StaffScopeFrom(ctx); ok && scope.OrgID != "" {
-		inOrg, err := s.branchFacts.BranchInOrg(ctx, scope.OrgID, branchID)
-		if err != nil {
-			return fmt.Errorf("gl: head office branch org check: %w", err)
-		}
-		if !inOrg {
-			return errHeadOfficeForeignOrg
-		}
+	// The org half is unconditional: without the org scope the tenancy wall cannot be checked at
+	// all, so the set refuses rather than accepting a branch of any org.
+	scope, ok := authz.StaffScopeFrom(ctx)
+	if !ok || scope.OrgID == "" {
+		return errHeadOfficeNoScope
+	}
+	inOrg, err := s.branchFacts.BranchInOrg(ctx, scope.OrgID, branchID)
+	if err != nil {
+		return fmt.Errorf("gl: head office branch org check: %w", err)
+	}
+	if !inOrg {
+		return errHeadOfficeForeignOrg
 	}
 	return s.store.SetHeadOfficeBranch(ctx, branchID, func(ctx context.Context, tx pgx.Tx) error {
 		sa := audit.SensitiveAccess{
@@ -436,7 +447,7 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 		branchID := r.BranchID
 		if branchID == "" {
 			if headOffice == "" {
-				ho, herr := s.store.HeadOfficeBranchID(ctx)
+				ho, herr := s.resolveBranchID(ctx, branchID)
 				if herr != nil {
 					return YearCloseResult{}, herr
 				}

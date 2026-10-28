@@ -39,7 +39,15 @@ type fakeBranchFacts struct {
 	codeIDs  map[string]string
 }
 
-func (f fakeBranchFacts) Exists(_ context.Context, id string) (bool, error) { return f.isBranch[id], nil }
+func (f fakeBranchFacts) Exists(_ context.Context, id string) (bool, error) {
+	return f.isBranch[id], nil
+}
+
+// LiveBranchExists is the live branch read (FW1-08b part B round 2, P3-1). This fake has no
+// notion of a soft delete, so every branch row it holds is a live one.
+func (f fakeBranchFacts) LiveBranchExists(_ context.Context, id string) (bool, error) {
+	return f.isBranch[id], nil
+}
 
 func (f fakeBranchFacts) BranchInOrg(_ context.Context, orgID, branchID string) (bool, error) {
 	return f.orgOf[branchID] == orgID, nil
@@ -229,13 +237,16 @@ func TestFW1_08b_GLWritersStampBranch(t *testing.T) {
 			t.Fatalf("want 422 for empty reason on SetHeadOfficeBranch, got %v", err)
 		}
 
-		// Controller with reason updates HeadOfficeBranchID and records audit.
+		// Controller with reason updates HeadOfficeBranchID and records audit. The context
+		// carries the org scope (FW1-08b part B round 2): the org half of the candidate check is
+		// unconditional, so a context without a scope is refused rather than skipping the wall.
 		ctrlSvc = ctrlSvc.WithBranchFacts(fakeBranchFacts{
 			isBranch: map[string]bool{"branch-kgn": true},
 			orgOf:    map[string]string{"branch-kgn": "org-a"},
 			codeIDs:  map[string]string{"KGN": "branch-kgn"},
 		})
-		if err := ctrlSvc.SetHeadOfficeBranch(ctx, "branch-kgn", "Ruling 82.3 head office update"); err != nil {
+		scoped := authz.WithStaffScope(ctx, authz.StaffScope{OrgID: "org-a"})
+		if err := ctrlSvc.SetHeadOfficeBranch(scoped, "branch-kgn", "Ruling 82.3 head office update"); err != nil {
 			t.Fatalf("SetHeadOfficeBranch: %v", err)
 		}
 		ho, err := ctrlSvc.HeadOfficeBranchID(ctx)

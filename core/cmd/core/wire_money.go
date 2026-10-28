@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
@@ -989,6 +989,12 @@ type glBranchFacts struct{ repo *branches.Repository }
 
 func (g glBranchFacts) Exists(ctx context.Context, id string) (bool, error) {
 	return g.repo.Exists(ctx, id)
+}
+
+// LiveBranchExists is the live branch read (FW1-08b part B round 2, P3-1): a soft deleted branch
+// is still a BRANCH row, but it is never a head office.
+func (g glBranchFacts) LiveBranchExists(ctx context.Context, id string) (bool, error) {
+	return g.repo.LiveBranchExists(ctx, id)
 }
 
 func (g glBranchFacts) BranchInOrg(ctx context.Context, orgID, branchID string) (bool, error) {

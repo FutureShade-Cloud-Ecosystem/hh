@@ -153,9 +153,11 @@ func TestIntegration_FW1_08b_PartB_ARealReturnRungAtKingstonOnATrentonSaleStamps
 		t.Fatalf("the GL drained %d of the return's %d events", drained, want)
 	}
 
-	// Every journal the return wrote carries Kingston on every line, and no journal line in the
-	// box is left with no branch.
+	// Every journal line the return wrote carries the branch the return was rung at. The guard
+	// counts the return's OWN journal lines (FW1-08b part B round 2, P3-3): it used to count the
+	// whole box's branchless lines, a count migration 0446's CHECK has made unable to fire.
 	journals := 0
+	journalIDs := []string{}
 	for _, topic := range []string{"pos.return.committed", "order.returned", "pos.return.written_off"} {
 		var journalID string
 		err := s.pool.QueryRow(ctx, `SELECT id::text FROM gl_journals WHERE idempotency_key = $1`,
@@ -164,6 +166,7 @@ func TestIntegration_FW1_08b_PartB_ARealReturnRungAtKingstonOnATrentonSaleStamps
 			continue // this return's event booked nothing, which is its own answer
 		}
 		journals++
+		journalIDs = append(journalIDs, journalID)
 		var headerBranch string
 		var total, matching int
 		if err := s.pool.QueryRow(ctx, `
@@ -186,11 +189,11 @@ func TestIntegration_FW1_08b_PartB_ARealReturnRungAtKingstonOnATrentonSaleStamps
 		t.Fatalf("the return rung at Kingston booked no journal")
 	}
 
-	var nullLines int
-	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM gl_journal_lines WHERE branch_id IS NULL`).Scan(&nullLines); err != nil {
-		t.Fatalf("count the branchless journal lines: %v", err)
+	misStamped, err := fw1ReturnBranchGuard(ctx, s.pool, journalIDs, kingstonBranchID)
+	if err != nil {
+		t.Fatalf("the return leg's guard: %v", err)
 	}
-	if nullLines != 0 {
-		t.Errorf("the box carries %d journal lines with no branch", nullLines)
+	if misStamped != 0 {
+		t.Errorf("the return's own journals carry %d line(s) stamped at a branch other than %s", misStamped, kingstonBranchID)
 	}
 }

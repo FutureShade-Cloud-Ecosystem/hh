@@ -1620,6 +1620,15 @@ func (r *Repository) PLBalances(ctx context.Context, year int) ([]TrialBalanceRo
 // branch when gl_policy carries no override yet (ruling 82.3).
 const DefaultHeadOfficeBranchID = "5d1b3f6e-0000-4000-9000-000000000001"
 
+// headOfficeFallback answers the head office branch of an UNWIRED scaffold: a repository with no
+// branch facts seam has no way to ask which branch is the head office, so it answers the fixed
+// Trenton uuid or, when a caller sets it, the in-process override.
+//
+// FW1-08b part B round 2 (P3-2): this is the unwired scaffold's stand in and NOT the production
+// answer. The production repository carries the seam: gl_policy.head_office_branch_id is
+// authoritative, and with no policy row the seam reads TRT by code (ruling 162). Nothing in
+// production reads this value; it is kept, not removed, because the offline scaffold's
+// HeadOfficeBranchID has no other answer to give.
 func (r *Repository) headOfficeFallback() string {
 	r.hoMu.RLock()
 	defer r.hoMu.RUnlock()

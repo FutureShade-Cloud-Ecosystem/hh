@@ -331,8 +331,12 @@ var (
 	// errHeadOfficeUnverified is the fail closed answer of an unwired branch facts seam: without
 	// the branch facts the set cannot check its candidate, so it refuses rather than writes blind.
 	errHeadOfficeUnverified = clientError{status: http.StatusServiceUnavailable, msg: "gl: the branch facts seam is not wired, so the head office branch cannot be checked; wire the branch facts and try again"}
-	errNotControllerQueue   = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may read the posting queue"}
-	errQueueNotWired         = clientError{status: http.StatusServiceUnavailable, msg: "gl: the posting queue is not wired"}
+	// errHeadOfficeNoScope is the fail closed answer of an unscoped context (FW1-08b part B round 2,
+	// FROM-PRINCIPAL 309): the org half of the candidate check cannot be made without the org
+	// scope, so the set refuses rather than accepting a branch of any org.
+	errHeadOfficeNoScope  = clientError{status: http.StatusForbidden, msg: "gl: the request carries no org scope, so the head office branch cannot be checked against your org; the head office branch must be a branch of the caller's org"}
+	errNotControllerQueue = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may read the posting queue"}
+	errQueueNotWired      = clientError{status: http.StatusServiceUnavailable, msg: "gl: the posting queue is not wired"}
 	// errForbidden is DIB-392's horizontal-read boundary: a manager asking for a branch's (or the whole
 	// org's) ledger that their scope does not reach.
 	errForbidden      = clientError{status: http.StatusForbidden, msg: "gl: caller cannot access this branch"}
