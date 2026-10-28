@@ -922,10 +922,12 @@ func qd1gApprovalsFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 	}
 }
 
-// TestQD1G_ApprovalsFindAppliedProjectionIsMasked: the replay lookup carries
-// a projection only of a request the caller may read, the same reader Load
-// uses (defence in depth: the engine never reads Data on a replay).
-func TestQD1G_ApprovalsFindAppliedProjectionIsMasked(t *testing.T) {
+// TestQD1G_ApprovalsFindAppliedAnswersOnlyForARequestTheCallerMayRead: the
+// replay lookup answers for a request the caller may read only, the same
+// reader Load uses. A card the caller may not read is not found at all
+// (UX-108), so the engine never reads an unreadable row as visible; a masked
+// found would have told it the card was there.
+func TestQD1G_ApprovalsFindAppliedAnswersOnlyForARequestTheCallerMayRead(t *testing.T) {
 	q := newQD1BFixture(t)
 	c := qd1gPlantStaff(t, q)
 	clerk := qd1bUserID(t, q.pool, testkit.SubInsideSales)
@@ -943,25 +945,28 @@ func TestQD1G_ApprovalsFindAppliedProjectionIsMasked(t *testing.T) {
 		return uid, true
 	}
 	store := identity.NewApprovalsSyncStore(q.pool, link)
-	var readers, masked int
+	var readers, hidden int
 	for _, who := range c.roles {
 		f := syncpkg.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: who.sub}
 		row, found, err := store.FindApplied(context.Background(), f, key)
-		if err != nil || !found {
-			t.Fatalf("FindApplied as %s: found %v err %v", who.role, found, err)
+		if err != nil {
+			t.Fatalf("FindApplied as %s: %v", who.role, err)
 		}
 		want := qd1gLoad(t, c, "approvals", who, id)
-		if (row.Data != nil) != want {
+		if found != want {
+			t.Errorf("approvals.FindApplied as %s: answers found %v, but Load (the reader) says %v", who.role, found, want)
+		}
+		if found && (row.Data != nil) != want {
 			t.Errorf("approvals.FindApplied as %s: projection present %v, but Load (the reader) says %v", who.role, row.Data != nil, want)
 		}
 		if want {
 			readers++
 		} else {
-			masked++
+			hidden++
 		}
 	}
-	if readers == 0 || masked == 0 {
-		t.Errorf("the masked projection test is vacuous: %d readers, %d masked", readers, masked)
+	if readers == 0 || hidden == 0 {
+		t.Errorf("the reader leg is vacuous: %d readers, %d hidden", readers, hidden)
 	}
 }
 

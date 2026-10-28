@@ -42,8 +42,8 @@ How the test holds it:
 | `approvals.Write` | `POST /api/v1/staff/approvals/{id}/decide` for a decision; the requester's note has no REST twin | A decision needs Manage or better on Manager Home or the Quote Desk, then the rail's own `Decide` (branch reach, who may decide that policy and filer, separation of duties, PENDING only). A note is the requester's own edit of its own PENDING plain request, for a role the sync write fence lists as an approvals writer (a role that cannot file is refused at the fence); a floor request's detail is never an editable note. | `ApprovalsSyncStore.Write`, `writeDecision` (`holdsLevel`, `Decide`), `writeNote` |
 | `approvals.Delete` | none; the withdrawal has no REST route | Only the requester withdraws a request, in any state except one whose approval has been consumed. Nobody else, in any state. Ownership decides, among the roles the sync write fence lists as approvals writers. | `ApprovalsSyncStore.Delete`, the requester and consumed checks on the locked row |
 | `approvals.Pull` | `GET /api/v1/staff/approvals` (the list) | The list rule: Work or better on the counter, the Quote Desk or Manager Home; a dealer wide caller reads every branch, a scoped caller only its granted branches, none when it holds none; a floor request only for who could decide it or filed it. One addition to the list: a caller reads back its own filings in any branch. | `ApprovalsSyncStore.Pull`, `readerFor`; a tombstone names an id alone and stays (section 4) |
-| `approvals.Load` | `GET /api/v1/staff/approvals` (the list), at the conflict envelope | The projection of a request travels only to a caller the list would show it to; the engine keeps the id and seq. | `ApprovalsSyncStore.Load`, `readerFor` |
-| `approvals.FindApplied` | none; a replay answers status and seq only | As quotes.FindApplied: applied with the stamped seq, no projection, nothing applied. | `ApprovalsSyncStore.FindApplied`; the engine never reads data on this path |
+| `approvals.Load` | `GET /api/v1/staff/approvals` (the list), at the conflict envelope | The list rule: Work or better on the counter, the Quote Desk or Manager Home; a dealer wide caller reads every branch, a scoped one only its granted branches; a floor request only for who could decide it or filed it; a caller reads back its own filings. A live card the list would not show the caller is not found at all (UX-108), so the engine never reads an unreadable row as visible. A withdrawn card stays found for every caller in the org: the pull sends its tombstone to all of them. | `ApprovalsSyncStore.Load`, `readerFor` |
+| `approvals.FindApplied` | none; a replay answers status and seq only | As quotes.FindApplied: applied with the stamped seq, nothing applied. A key on a live card the caller may not read is not found, so the replay carries nothing of that card, the seq included (UX-108). A withdrawn card's key stays found: its tombstone goes to every caller in the org. | `ApprovalsSyncStore.FindApplied`, `readerFor`; the engine never reads data on this path |
 
 `SyncStore.WithNow` and `ApprovalsSyncStore.WithJEDecider` are the two exported
 methods that are not doors. `WithNow` pins the store's clock for tests, and
@@ -339,7 +339,7 @@ The census asserts for every role and for every planted row that the replay answ
 
 ### `approvals.FindApplied`
 
-The census asserts for every role and for every planted row that the replay answer carries no projection and changes nothing. There is no allow or refuse cell: the rule is the same for all thirteen roles.
+The census asserts for every role and for every planted row that the replay answer carries no projection and changes nothing. There is no allow or refuse cell: the rule is the same for all thirteen roles. A caller that may not read the card is refused the card's seq as well: the key is not found for that caller (UX-108), and the answer still carries nothing of the card.
 
 ## 4. Differences from REST that are ruled, not accidents
 
@@ -362,9 +362,10 @@ The census asserts for every role and for every planted row that the replay answ
    already applied key as applied with the stamped seq, to whoever replays the key, and
    applies nothing. A caller that may not read the row learns nothing of it: the key is
    not found for that caller, so the replay carries neither the row's seq nor any part of
-   the row (UX-108). The status word stays the engine's own bound answer: the quotes
-   store cannot answer the gate's existence read, so the gate keeps the bound answer for
-   a key it cannot attribute, and what the scope owes is the row.
+   the row (UX-108). The status word stays the engine's own bound answer: neither the
+   quotes store nor the approvals store can answer the gate's existence read, so the gate
+   keeps the bound answer for a key it cannot attribute, and what the scope owes is the
+   row.
 5. **Withdrawal and note edits are ownership rules.** `approvals.Delete` and the note arm
    of `approvals.Write` have no REST twin and are ownership rules behind the sync write fence: the requester
    edits or withdraws its own request, and nobody else does, provided it still holds a
