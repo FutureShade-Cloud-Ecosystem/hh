@@ -1,4 +1,4 @@
-// THE LEDGER AGAINST THE REAL CORE (W2-4 (c), the brief BRIEF-M3-W2-4c-r1).
+// THE LEDGER AGAINST THE REAL CORE (W2-4 (c), the brief BRIEF-M3-W2-4c-ROUND3-r1).
 //
 // WHAT THIS SPEC PROVES, the four things the brief names:
 //   1. the trial balance ties: debits equal credits, and the screen's totals are the core's own
@@ -33,7 +33,24 @@
 //      nothing to the core: every call it makes is a read.
 //   6. THE RED: this spec also runs under the stub (test/acceptance-real.stub.config.ts, the
 //      small stub variant of the real config) and must fail there, because the stub's world is
-//      not the core's. The legs that fail there are the ones that read ./world.
+//      not the core's.
+//
+// THE MONTHS ARE READ AT RUN TIME, NEVER WRITTEN DOWN (round 3, S4's P3-1). The seed's AR
+// movement lands in the month the box was built in, and migration 0055 dates the seed's demo
+// invoices CURRENT_DATE, so that month is not a fact anyone can write in a file. Each leg reads
+// the box's own month through the core first (readBoxMonth below), the world names the anchor
+// that replaces it when W2-1b's world lands, and no month literal is left in this file or in
+// ./world. The box's month is read from the core's AR register: the seeded invoice's own issue
+// date (the month the box booted, fixed when the migrations ran) and, for a box whose register
+// does not carry that invoice, the core's own reported date.
+//
+// THE JOURNAL IS FOUND BY ITS LEDGER KEY, ON BOTH SIDES (round 3, S4's P3-2). The ledger's own
+// key is the fiscal year and the entry number together, and the world names both. The core side
+// pages the core's own journal list, following the page's cursor, until it finds that journal,
+// and fails in words if it never does. The screen side reaches the same journal: the desk's
+// register reads every page of the core's journals (src/gl/gl-api.ts) and its row carries the
+// journal's own id, so the spec finds the world journal among any number of rows that share an
+// entry number.
 //
 // THE NAVIGATION, and why it is "./". The real config's base URL is the box's /money-desk/ path,
 // so "./" lands on the desk and "/" would escape to the front door at the origin root. The
@@ -44,6 +61,11 @@
 // a leg that accepts them passes on a world with nothing posted, which proves nothing about the
 // ledger.
 //
+// THE WORDS ARE THE LABEL, NOT THE VERDICT (round 3, S4's P3-3). The desk reads "In balance" on
+// a blank month, because a blank answer balances. So leg 1 compares the screen's own totals with
+// the core's own totals FIRST, and reads the words after. The numbers are the fact; the words
+// are what the desk calls them.
+//
 // ONE MORE THING THE FOLD SHOULD KNOW: the trial balance's month buttons are the months of the
 // year the trial balance is showing, which is the core's own current year. The world's month end
 // therefore has to fall in that year, and the spec says so in the open if it does not.
@@ -51,13 +73,16 @@ import { expect, test, type APIRequestContext, type BrowserContext, type Page } 
 import { asStaff, coreURL } from "./session.js";
 import {
   AR_ACCOUNT_CODE,
+  BOOT_MONTH_INVOICE_NO,
   LEDGER_JOURNAL_ENTRY_NO,
+  LEDGER_JOURNAL_FISCAL_YEAR,
   LEDGER_JOURNAL_MEMO,
-  MONTH_END,
   MONTH_END_1100_CENTS,
-  OPEN_MONTH,
+  MONTH_END_ANCHOR,
+  OPEN_MONTH_ANCHOR,
   SIGNED_OFF_BANK_MONTH,
   YEAR_END_MARKED_YEAR,
+  monthOfDate,
 } from "./world.js";
 
 // ---- the core's own answers, the shapes the routes serve -----------------------------------------
@@ -104,6 +129,12 @@ interface CoreJournal {
 interface CoreJournalPage {
   items: CoreJournal[];
   next_cursor?: string | null;
+}
+
+/** The AR register's read: the rows it lists and the date it reports. */
+interface CoreARRegister {
+  items: { invoice_no: string; issue_date: string }[];
+  as_of: string;
 }
 
 /** The bearer and the org the app itself sent, so a direct read reads the core as the app reads it. */
@@ -189,6 +220,70 @@ async function coreRead<T>(request: APIRequestContext, headers: StaffHeaders, pa
   return (await response.json()) as T;
 }
 
+/**
+ * THE BOX'S OWN MONTH (YYYY-MM), read from the core at run time.
+ *
+ * The seed's AR movement lands in the month the box booted, and the seed names that month on
+ * the demo invoice it plants dated CURRENT_DATE: that invoice's own issue date is fixed when
+ * the migrations ran, so it names the boot month however long after that the spec runs. It is
+ * the month the $700.00 movement is in, so a trial balance read for it carries the seed's
+ * rows.
+ *
+ * The core's own reported date is the fallback, for a box whose register does not carry that
+ * invoice: it is the box's wall clock, so it drifts with the run, and the movement's own month
+ * does not.
+ */
+async function readBoxMonth(request: APIRequestContext, headers: StaffHeaders): Promise<string> {
+  const register = await coreRead<CoreARRegister>(
+    request,
+    headers,
+    `/api/v1/ar/register?q=${encodeURIComponent(BOOT_MONTH_INVOICE_NO)}&limit=100`,
+  );
+  const seeded = register.items.find((row) => row.invoice_no === BOOT_MONTH_INVOICE_NO);
+  if (seeded !== undefined) return monthOfDate(seeded.issue_date);
+  return monthOfDate(register.as_of);
+}
+
+/**
+ * How far the core's journal list is paged, in pages of 100: the same bound the desk's own
+ * register uses (MAX_PAGES pages of 100, src/gl/gl-api.ts), so the core side and the screen
+ * side reach the same journal or neither of them does.
+ */
+const MAX_JOURNAL_PAGES = 50;
+
+/**
+ * The core's own journal, by the ledger's key: the fiscal year and the entry number together.
+ *
+ * The core's list serves one page at a time, newest first, and its page carries the cursor for
+ * the next one, so the read follows the cursor until it finds the journal. A box with more
+ * journals than one page holds keeps the world's journal on a later page, and a box that does
+ * not hold it at all fails here, in words.
+ */
+async function readCoreJournal(
+  request: APIRequestContext,
+  headers: StaffHeaders,
+  entryNo: string,
+  fiscalYear: number,
+): Promise<CoreJournal> {
+  const wanted = Number(entryNo.replace("JE-", ""));
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_JOURNAL_PAGES; page += 1) {
+    const answer = await coreRead<CoreJournalPage>(
+      request,
+      headers,
+      `/api/v1/gl/journals?limit=100${cursor === undefined ? "" : `&cursor=${encodeURIComponent(cursor)}`}`,
+    );
+    const found = answer.items.find((journal) => journal.entry_no === wanted && journal.fiscal_year === fiscalYear);
+    if (found !== undefined) {
+      return coreRead<CoreJournal>(request, headers, `/api/v1/gl/journals/${found.id}`);
+    }
+    const next = answer.next_cursor;
+    if (next === undefined || next === null || next === "") break;
+    cursor = next;
+  }
+  throw new Error(`the core's register holds no ${entryNo} of fiscal year ${fiscalYear}`);
+}
+
 /** Signs in as the Financial Controller and lands on the desk. */
 async function signIn(page: Page, context: BrowserContext): Promise<void> {
   await asStaff(context, "financial_controller");
@@ -207,14 +302,16 @@ test("the trial balance ties: the screen's totals are the core's own figures, an
 }) => {
   const headers = staffHeaders(page);
   await signIn(page, context);
+  const boxMonth = await readBoxMonth(request, await headers);
+  const monthEnd = MONTH_END_ANCHOR === "" ? boxMonth : MONTH_END_ANCHOR;
   await page.locator("[data-tab-id='trial']").click();
-  await page.locator(`[data-action="gl-trial-month"][data-month="${monthNumber(MONTH_END)}"]`).click();
-  await expect(page.locator("[data-trial] h3")).toContainText(monthName(MONTH_END));
+  await page.locator(`[data-action="gl-trial-month"][data-month="${monthNumber(monthEnd)}"]`).click();
+  await expect(page.locator("[data-trial] h3")).toContainText(monthName(monthEnd));
 
   const core = await coreRead<CoreTrialBalance>(
     request,
     await headers,
-    `/api/v1/gl/trial-balance?year=${yearOf(MONTH_END)}&month=${monthNumber(MONTH_END)}`,
+    `/api/v1/gl/trial-balance?year=${yearOf(monthEnd)}&month=${monthNumber(monthEnd)}`,
   );
 
   // The core's own books carry the world's journals: the trial balance has rows and real totals.
@@ -228,23 +325,27 @@ test("the trial balance ties: the screen's totals are the core's own figures, an
   expect(core.total_debit_cents).toBe(core.total_credit_cents);
   expect(core.balance_cents).toBe(0);
 
-  // The screen shows the core's own totals, and reads in balance.
-  await expect(page.locator("[data-trial]")).toContainText("In balance");
+  // The screen shows the core's own totals. This comes BEFORE the words below, because the
+  // desk reads "In balance" on a blank month (a blank answer balances), so the words can
+  // never carry this leg: the numbers are the fact and the words are the label.
   await expect(page.locator("[data-total-debit]")).toHaveText(money(core.total_debit_cents));
   await expect(page.locator("[data-total-credit]")).toHaveText(money(core.total_credit_cents));
+  await expect(page.locator("[data-trial]")).toContainText("In balance");
 });
 
 test("the month end 1100 balance is the world's known figure", async ({ page, request, context }) => {
   const headers = staffHeaders(page);
   await signIn(page, context);
+  const boxMonth = await readBoxMonth(request, await headers);
+  const monthEnd = MONTH_END_ANCHOR === "" ? boxMonth : MONTH_END_ANCHOR;
   await page.locator("[data-tab-id='trial']").click();
-  await page.locator(`[data-action="gl-trial-month"][data-month="${monthNumber(MONTH_END)}"]`).click();
-  await expect(page.locator("[data-trial] h3")).toContainText(monthName(MONTH_END));
+  await page.locator(`[data-action="gl-trial-month"][data-month="${monthNumber(monthEnd)}"]`).click();
+  await expect(page.locator("[data-trial] h3")).toContainText(monthName(monthEnd));
 
   const core = await coreRead<CoreTrialBalance>(
     request,
     await headers,
-    `/api/v1/gl/trial-balance?year=${yearOf(MONTH_END)}&month=${monthNumber(MONTH_END)}`,
+    `/api/v1/gl/trial-balance?year=${yearOf(monthEnd)}&month=${monthNumber(monthEnd)}`,
   );
   const coreRow = core.rows.find((row) => row.account_code === AR_ACCOUNT_CODE);
   const coreBalance = coreRow === undefined ? 0 : coreRow.balance_cents;
@@ -272,6 +373,8 @@ test("the periods screen shows the closed month, the open month and the year end
 }) => {
   const headers = staffHeaders(page);
   await signIn(page, context);
+  const boxMonth = await readBoxMonth(request, await headers);
+  const openMonth = OPEN_MONTH_ANCHOR === "" ? boxMonth : OPEN_MONTH_ANCHOR;
   await page.locator("[data-tab-id='periods']").click();
   const table = page.getByRole("table", { name: "Periods" });
   await expect(table).toBeVisible();
@@ -292,7 +395,7 @@ test("the periods screen shows the closed month, the open month and the year end
   }
 
   // The open month reads Open.
-  await expect(table.getByRole("row", { name: new RegExp(monthName(OPEN_MONTH)) })).toContainText("Open");
+  await expect(table.getByRole("row", { name: new RegExp(monthName(openMonth)) })).toContainText("Open");
 
   // The core's own periods read the same on the screen, month for month.
   for (const period of core.items) {
@@ -310,7 +413,7 @@ test("the periods screen shows the closed month, the open month and the year end
     }
   } else {
     // No year carries the marker yet: the world's own year can still be closed.
-    await expect(page.getByRole("button", { name: `Close fiscal year ${yearOf(OPEN_MONTH)}` })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: `Close fiscal year ${yearOf(openMonth)}` })).toHaveCount(1);
   }
 });
 
@@ -319,20 +422,21 @@ test("a journal's detail: the panel shows what the core holds", async ({ page, r
   await signIn(page, context);
   await page.locator("[data-tab-id='journals']").click();
   const register = page.getByRole("table", { name: "Journal register" });
-  const link = register.getByRole("button", { name: LEDGER_JOURNAL_ENTRY_NO });
+
+  // The core's own journal, by the ledger's key, read from the core's own paged list.
+  const journal = await readCoreJournal(request, await headers, LEDGER_JOURNAL_ENTRY_NO, LEDGER_JOURNAL_FISCAL_YEAR);
+
+  // The register reaches the same journal: its rows carry the journal's own id, so the world's
+  // journal is found among any number of rows that share its entry number, and the row shows
+  // the world's entry number.
+  const link = register.locator(`[data-journal-id="${journal.id}"]`);
   await expect(link).toHaveCount(1);
+  await expect(link).toHaveText(LEDGER_JOURNAL_ENTRY_NO);
   await link.click();
 
   const panel = page.locator("[data-journal-panel]");
   await expect(panel.getByRole("heading", { level: 2 })).toContainText(LEDGER_JOURNAL_ENTRY_NO);
   await expect(panel.getByRole("heading", { level: 2 })).toContainText(LEDGER_JOURNAL_MEMO);
-
-  // The core's own journal, read directly: the register first, then the journal it names.
-  const page_ = await coreRead<CoreJournalPage>(request, await headers, "/api/v1/gl/journals?limit=100");
-  const entryNo = Number(LEDGER_JOURNAL_ENTRY_NO.replace("JE-", ""));
-  const summary = page_.items.find((journal) => journal.entry_no === entryNo);
-  if (summary === undefined) throw new Error(`the core's register holds no ${LEDGER_JOURNAL_ENTRY_NO}`);
-  const journal = await coreRead<CoreJournal>(request, await headers, `/api/v1/gl/journals/${summary.id}`);
 
   // The lines on screen are the core's lines, line for line.
   const rows = panel.getByRole("table", { name: "Journal lines" }).getByRole("row");
