@@ -236,15 +236,24 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 // own key, so the last live operation's key still resolves after a
 // later delete, and the delete itself is idempotent through the
 // engine's already-tombstoned arm).
+//
+// The caller's read rung rides the query, as it rides the pull (UX-108):
+// a quote the caller may not read is not found, the absent row's answer, so
+// the engine never reads an unreadable row as visible.
 func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
 	where, args, ok := quoteScopePredicate(f)
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
+	read := s.syncReadScope(ctx, f)
+	if !read.ok {
+		return sync.RowState{}, false, nil
+	}
+	readSQL, readArgs := read.predicate(3)
 	q := fmt.Sprintf(`SELECT %s FROM quotes
-		WHERE %s AND idempotency_key = $2::uuid
-		LIMIT 1`, syncColumns, where)
-	args = append(args, key)
+		WHERE %s AND idempotency_key = $2::uuid%s
+		LIMIT 1`, syncColumns, where, readSQL)
+	args = append(append(args, key), readArgs...)
 	r, err := scanSyncRow(s.pool.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
@@ -253,37 +262,27 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 		return sync.RowState{}, false, fmt.Errorf("quote: sync find applied: %w", err)
 	}
 	rs, err := rowStateOf(r)
-	if err == nil {
-		s.maskUnreadable(ctx, f, r, &rs)
+	if err != nil {
+		return sync.RowState{}, false, err
 	}
-	return rs, true, err
+	return rs, true, nil
 }
 
-// maskUnreadable drops the projection of a quote the caller may not read
-// (P2-C): the engine still needs the row's id and seq (the stale check, the
-// idempotent replay), but the projection travels in a conflict envelope or
-// a replayed answer, and a quote the caller cannot list through REST carries
-// no data out of this door.
-func (s *SyncStore) maskUnreadable(ctx context.Context, f sync.ScopeFilter, r syncRow, rs *sync.RowState) {
-	if r.deleted {
-		return
-	}
-	read := s.syncReadScope(ctx, f)
-	if !read.ok || !read.reaches(r.branchID, r.ownerID) {
-		rs.Data = nil
-	}
-}
-
-// Load reads one quote by id under the org predicate; a row outside
-// the caller's org is the same as an absent one (existence never
-// leaks).
+// Load reads one quote by id under the org predicate and the caller's read
+// rung; a row outside the caller's org, or a row the caller may not read, is
+// the same as an absent one (existence never leaks).
 func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	where, args, ok := quoteScopePredicate(f)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
 	}
-	q := fmt.Sprintf(`SELECT %s FROM quotes WHERE id = $2::uuid AND %s`, syncColumns, where)
-	args = append(args, id)
+	read := s.syncReadScope(ctx, f)
+	if !read.ok {
+		return sync.RowState{}, false, nil
+	}
+	readSQL, readArgs := read.predicate(3)
+	q := fmt.Sprintf(`SELECT %s FROM quotes WHERE id = $2::uuid AND %s%s`, syncColumns, where, readSQL)
+	args = append(append(args, id), readArgs...)
 	r, err := scanSyncRow(s.pool.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
@@ -292,10 +291,62 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 		return sync.RowState{}, false, fmt.Errorf("quote: sync load: %w", err)
 	}
 	rs, err := rowStateOf(r)
-	if err == nil {
-		s.maskUnreadable(ctx, f, r, &rs)
+	if err != nil {
+		return sync.RowState{}, false, err
 	}
-	return rs, true, err
+	return rs, true, nil
+}
+
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// whether a quote row the scope's keys can name still exists, for every
+// caller of the org at once. The org predicate alone, tombstone aware (a
+// withdrawn quote is gone for everyone), never the read rung the caller's
+// Load speaks: the gate may hide a key only for a live row a caller cannot
+// see, and a gone row keeps the bound answer (PR 640's rule).
+func (s *SyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || !looksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM quotes WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL)`,
+		id, f.OrgID).Scan(&present); err != nil {
+		return false, fmt.Errorf("quote: sync bound entity exists: %w", err)
+	}
+	return present, nil
+}
+
+// load reads one quote under the org predicate alone, the collision
+// probe's read over a querier: the row is the caller's own org's fact,
+// whatever branch it sits on, so a client-chosen id taken inside the org
+// answers ErrRowExists (the pick door's rule, PR 648's collision arm). The
+// read rung does not ride here: the probe answers whether the id is taken,
+// not what it holds.
+//
+// The querier is the caller's: the conflict arm passes the transaction it
+// already holds, so the read rides that connection instead of asking the
+// shared pool for a second one (connection starvation by second acquisition,
+// when pool-size creates collide). The public Load is a different question
+// (it carries the caller's read rung), so it keeps its own read.
+func (s *SyncStore) load(ctx context.Context, q rowQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	where, args, ok := quoteScopePredicate(f)
+	if !ok || !looksLikeUUID(id) {
+		return sync.RowState{}, false, nil
+	}
+	query := fmt.Sprintf(`SELECT %s FROM quotes WHERE id = $2::uuid AND %s`, syncColumns, where)
+	args = append(args, id)
+	r, err := scanSyncRow(q.QueryRow(ctx, query, args...))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sync.RowState{}, false, nil
+	}
+	if err != nil {
+		return sync.RowState{}, false, fmt.Errorf("quote: sync load: %w", err)
+	}
+	rs, err := rowStateOf(r)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	return rs, true, nil
 }
 
 // parseSyncValidity reads one pushed validity leg and returns its
@@ -436,12 +487,12 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The ON CONFLICT arm answered no row: the client-chosen id is
 		// taken, answered as the caller's own fact inside the org and
-		// not-found outside it (existence never leaks). Nothing was
-		// written, so the transaction ends first: the read-back goes
-		// through the pool, and asking it for a second connection while
-		// this one is held starves the pool once pool-size creates collide.
-		_ = tx.Rollback(ctx)
-		if _, own, _ := s.Load(ctx, f, id); own {
+		// not-found outside it (existence never leaks). The read-back
+		// rides the transaction this create already holds, so the arm
+		// never asks the shared pool for a second connection while it
+		// holds one (connection starvation by second acquisition, when
+		// pool-size creates collide).
+		if _, own, _ := s.load(ctx, tx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound

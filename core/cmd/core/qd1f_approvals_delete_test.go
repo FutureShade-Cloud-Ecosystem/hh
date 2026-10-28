@@ -100,13 +100,16 @@ func TestQD1F_ApprovalsSyncDeleteIsTheRequestersOwnUnlessConsumed(t *testing.T) 
 	}
 }
 
-// TestQD1F_ApprovalsSyncStaleUpdateEnvelopeCarriesNoFloorRequestItsCallerCannotRead
-// pins the Load mask (round 3 P2-3, the review's round 4 P3-1): a stale push
-// meets the engine's conflict envelope, which carries Load's projection. For a
-// floor request the caller could not read through the pull, that projection
-// would carry the margin figures. The envelope must still arrive (the engine
-// needs the row's id and seq), with no server state.
-func TestQD1F_ApprovalsSyncStaleUpdateEnvelopeCarriesNoFloorRequestItsCallerCannotRead(t *testing.T) {
+// TestQD1F_ApprovalsSyncStaleUpdateOnAFloorRequestItsCallerCannotReadIsRefused
+// pins the read fence (round 3 P2-3, the review's round 4 P3-1; UX-108): a
+// floor request the caller could not read through the pull must not reach
+// the caller through the conflict envelope either. While the door masked the
+// card's projection, the envelope still arrived, with the row's id and seq
+// and no server state. The door answers not found for a card the caller may
+// not read, so the engine never reads it as visible: the stale push is
+// refused with the seam's row-not-found and nothing of the card travels at
+// all, the envelope included.
+func TestQD1F_ApprovalsSyncStaleUpdateOnAFloorRequestItsCallerCannotReadIsRefused(t *testing.T) {
 	q := newQD1BFixture(t)
 	clerk := qd1bUserID(t, q.pool, testkit.SubInsideSales)
 	id := qd1cPlantMargin(t, q, clerk, "0000000f4000")
@@ -121,11 +124,14 @@ func TestQD1F_ApprovalsSyncStaleUpdateEnvelopeCarriesNoFloorRequestItsCallerCann
 		if code != http.StatusOK {
 			t.Fatalf("stale push as %s: %d %s", sub, code, body)
 		}
-		if !strings.Contains(body, "conflict") {
-			t.Fatalf("%s: the stale push did not meet the conflict envelope: %s", sub, body)
+		if !strings.Contains(body, "row not found") {
+			t.Fatalf("%s: the stale push on a card the caller cannot read is not refused: %s", sub, body)
+		}
+		if strings.Contains(body, "conflict") {
+			t.Errorf("%s: the stale push met the conflict envelope of a card the caller cannot read: %s", sub, body)
 		}
 		if strings.Contains(body, "bps against") || strings.Contains(body, qd1cMarginDetail) {
-			t.Errorf("%s: the conflict envelope carries a floor request it cannot read: %s", sub, body)
+			t.Errorf("%s: the refusal carries a floor request it cannot read: %s", sub, body)
 		}
 	}
 }

@@ -142,23 +142,6 @@ func (r syncReadScope) predicate(argN int) (string, []any) {
 	return sb.String(), args
 }
 
-// reaches answers whether one row, by its branch and owner, sits inside the
-// scope: the per-row form of predicate.
-func (r syncReadScope) reaches(branchID, ownerID string) bool {
-	if !r.ok {
-		return false
-	}
-	if !r.global {
-		in := false
-		for _, b := range r.branches {
-			if b == branchID {
-				in = true
-				break
-			}
-		}
-		if !in {
-			return false
-		}
-	}
-	return r.owner == "" || r.owner == ownerID
-}
+// The read rung's per-row form (reaches) is gone with the mask it served:
+// the rung rides the query now, in the pull and in both row reads alike
+// (UX-108), so no read answers on a row the rung would hold back.
