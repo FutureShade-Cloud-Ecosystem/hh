@@ -233,6 +233,17 @@ export class QdOrderPayment extends PanelBase {
         color: var(--hh-disabled-ink);
         box-shadow: inset 0 0 0 1px var(--hh-disabled-line);
       }
+      /* The chosen tender says so with a check, not with a colour. The ring
+         inside the border is a 1 px line at about 1.5 to 1, which is very
+         nearly nothing to look at, so the selection gets a drawn mark: the
+         tick takes the tile's own ink, which is the disabled ink while the
+         panel is locked, and it is out of the way of the name because it is
+         aria-hidden art. */
+      .tenders button .picked {
+        flex: none;
+        font-size: 12px;
+        line-height: 1;
+      }
       /* Full height controls on the till's measure: the amount and reference boxes and the Take
          payment action are never smaller than a tile, and the inputs carry the control radius
          (the shared sheet's own), so the primary action is never the smallest control. */
@@ -1024,6 +1035,9 @@ export class QdOrderPayment extends PanelBase {
             >
               ${TENDER_GLYPH[m]}
               ${m}
+              ${this.fieldsLocked && this.tender === m
+                ? html`<span class="picked" aria-hidden="true">&#10003;</span>`
+                : nothing}
             </button>`,
           )}
         </div>
