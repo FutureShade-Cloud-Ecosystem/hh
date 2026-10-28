@@ -193,13 +193,12 @@ func TestIntegration_BouncedQueueWithNoBouncesAnswersAnEmptyArray(t *testing.T) 
 	// database an earlier package's leftover bounce would make the list legitimately non empty,
 	// so the leg stands only when the table holds none (a fresh seeded database holds none).
 	if n := arEmptyCount(t, pool, `SELECT count(*) FROM payments WHERE status = 'BOUNCED'`); n != 0 {
-		t.Logf("skipping the unfiltered legs: the shared database carries %d bounced payments", n)
-	} else {
-		assertArEmptyItems(t, f.get(t, "ar-empty-pr", "/api/v1/ar/bounced"),
-			"the bounced queue as the payables and receivables manager")
-		assertArEmptyItems(t, f.get(t, "ar-empty-bm", "/api/v1/ar/bounced"),
-			"the bounced queue as a branch manager")
+		t.Skipf("skipping the unfiltered legs: the shared database carries %d bounced payments", n)
 	}
+	assertArEmptyItems(t, f.get(t, "ar-empty-pr", "/api/v1/ar/bounced"),
+		"the bounced queue as the payables and receivables manager")
+	assertArEmptyItems(t, f.get(t, "ar-empty-bm", "/api/v1/ar/bounced"),
+		"the bounced queue as a branch manager")
 }
 
 // The session detail read on a drawer that has taken no money and seen no movement: tenders,
@@ -248,16 +247,25 @@ func TestIntegration_CreditHoldsWithNoHoldsAnswerAnEmptyArray(t *testing.T) {
 	f.person("ar-empty-bm", identity.StaffAuthority{RoleID: "branch_manager",
 		Tier: identity.TierManager, Scope: identity.ScopeBranch, Branches: []string{branchID}})
 
+	// The exact status search answers the empty shape whatever else the database carries: the
+	// repository matches status verbatim, so this value matches no hold on any database, for
+	// both callers. This arm runs unconditionally, the way the bounced queue's gateway_ref arm
+	// does, so the leg cannot pass by skipping on a shared database's leftovers.
+	assertArEmptyItems(t, f.get(t, "ar-empty-pr", "/api/v1/ar/credit-holds?status=ar-empty-none"),
+		"the credit hold list by an unknown status")
+	assertArEmptyItems(t, f.get(t, "ar-empty-bm", "/api/v1/ar/credit-holds?status=ar-empty-none"),
+		"the credit hold list by an unknown status as a branch manager")
+
 	// The same shared database guard as the bounced queue above: the unfiltered legs stand only
-	// when the hold table is empty, which a fresh seeded database is.
+	// when the hold table is empty, which a fresh seeded database is. A skip fails the leg
+	// visibly instead of reading as a PASS.
 	if n := arEmptyCount(t, pool, `SELECT count(*) FROM credit_holds`); n != 0 {
-		t.Logf("skipping the unfiltered legs: the shared database carries %d credit holds", n)
-	} else {
-		assertArEmptyItems(t, f.get(t, "ar-empty-pr", "/api/v1/ar/credit-holds"),
-			"the credit hold list as the payables and receivables manager")
-		assertArEmptyItems(t, f.get(t, "ar-empty-bm", "/api/v1/ar/credit-holds"),
-			"the credit hold list as a branch manager")
-		assertArEmptyItems(t, f.get(t, "ar-empty-pr", "/api/v1/ar/credit-holds?status=ACTIVE"),
-			"the credit hold list filtered to ACTIVE")
+		t.Skipf("skipping the unfiltered legs: the shared database carries %d credit holds", n)
 	}
+	assertArEmptyItems(t, f.get(t, "ar-empty-pr", "/api/v1/ar/credit-holds"),
+		"the credit hold list as the payables and receivables manager")
+	assertArEmptyItems(t, f.get(t, "ar-empty-bm", "/api/v1/ar/credit-holds"),
+		"the credit hold list as a branch manager")
+	assertArEmptyItems(t, f.get(t, "ar-empty-pr", "/api/v1/ar/credit-holds?status=ACTIVE"),
+		"the credit hold list filtered to ACTIVE")
 }
