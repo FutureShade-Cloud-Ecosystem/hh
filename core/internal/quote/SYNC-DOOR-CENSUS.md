@@ -38,12 +38,14 @@ How the test holds it:
 | `quotes.Pull` | `GET /api/v1/quotes` (the list) | The list rule (plan 3.3): nothing without a Quote Desk level of Read or better; at Work the caller's own quotes; at Manage or Read every quote of the branches the caller reaches, a dealer wide caller every branch. | `SyncStore.Pull`, `syncReadScope` as a predicate of the query, so a hidden row never shortens a page |
 | `quotes.Load` | `GET /api/v1/quotes` (the list), at the conflict envelope | The projection of a quote travels only to a caller the list would show it to. The engine still gets the row's id and seq; the data is dropped. See section 4: this is the one deliberate difference from `GET /api/v1/quotes/{id}`. | `SyncStore.Load`, `maskUnreadable` |
 | `quotes.FindApplied` | none; a replay answers status and seq only | A replay of an applied key answers applied with the stamped seq and carries no projection, and applies nothing. The data rule is the list rule above. | `SyncStore.FindApplied`, `maskUnreadable`; the engine never reads data on this path |
+| `quotes.ValidateCreate` | the `POST /api/v1/quotes` body's own validation (the refusal the route answers 400 with) | The body's shape alone: the declared field set, the customer and branch uuid shape, the validity and the payload id shape. The caller's walls are not its question (the engine's bound key gate asks it only after the caller's own `Load` already missed), so a valid body is admitted for every one of the thirteen and an invalid one refused for every one, with the route's own words. | `SyncStore.ValidateCreate`, `quoteCreateShape` |
 | `approvals.Create` | `POST /api/v1/staff/approvals` | Work or better on the counter, the Quote Desk or Manager Home. The caller files as itself. Credit and cash on delivery filings only: a margin, journal or freight filing is refused exactly as the rail refuses it. The branch must sit in the caller's org, and a caller not global scope must be granted it. | `ApprovalsSyncStore.Create`, `callerHoldsLevel`, `approvalCallerPolicy`, `approvalBranchInOrg` |
 | `approvals.Write` | `POST /api/v1/staff/approvals/{id}/decide` for a decision; the requester's note has no REST twin | A decision needs Manage or better on Manager Home or the Quote Desk, then the rail's own `Decide` (branch reach, who may decide that policy and filer, separation of duties, PENDING only). A note is the requester's own edit of its own PENDING plain request, for a role the sync write fence lists as an approvals writer (a role that cannot file is refused at the fence); a floor request's detail is never an editable note. | `ApprovalsSyncStore.Write`, `writeDecision` (`holdsLevel`, `Decide`), `writeNote` |
 | `approvals.Delete` | none; the withdrawal has no REST route | Only the requester withdraws a request, in any state except one whose approval has been consumed. Nobody else, in any state. Ownership decides, among the roles the sync write fence lists as approvals writers. | `ApprovalsSyncStore.Delete`, the requester and consumed checks on the locked row |
 | `approvals.Pull` | `GET /api/v1/staff/approvals` (the list) | The list rule: Work or better on the counter, the Quote Desk or Manager Home; a dealer wide caller reads every branch, a scoped caller only its granted branches, none when it holds none; a floor request only for who could decide it or filed it. One addition to the list: a caller reads back its own filings in any branch. | `ApprovalsSyncStore.Pull`, `readerFor`; a tombstone names an id alone and stays (section 4) |
 | `approvals.Load` | `GET /api/v1/staff/approvals` (the list), at the conflict envelope | The projection of a request travels only to a caller the list would show it to; the engine keeps the id and seq. | `ApprovalsSyncStore.Load`, `readerFor` |
 | `approvals.FindApplied` | none; a replay answers status and seq only | As quotes.FindApplied: applied with the stamped seq, no projection, nothing applied. | `ApprovalsSyncStore.FindApplied`; the engine never reads data on this path |
+| `approvals.ValidateCreate` | the `POST /api/v1/staff/approvals` body's own validation (the refusal the route answers 400 with) | As quotes.ValidateCreate: the filing body's shape alone (the declared field set, the branch uuid shape, the caller-facing policy pin, the subject length, the payload id shape), with no caller wall in the question. A valid body is admitted for every one of the thirteen and an invalid one refused for every one. | `ApprovalsSyncStore.ValidateCreate`, `approvalCreateShape` |
 
 `SyncStore.WithNow` and `ApprovalsSyncStore.WithJEDecider` are the two exported
 methods that are not doors. `WithNow` pins the store's clock for tests, and
@@ -205,6 +207,28 @@ branch cases use branch A (the roles' granted branch) and branch B (not granted)
 
 The census asserts for every role and for every planted row that the replay answer carries no projection and changes nothing. There is no allow or refuse cell: the rule is the same for all thirteen roles.
 
+### `quotes.ValidateCreate`
+
+| Role | 1 | 2 | 3 |
+|---|---|---|---|
+| inside_sales | A | R | R |
+| sales_manager | A | R | R |
+| outside_sales | A | R | R |
+| yard_team | A | R | R |
+| yard_manager | A | R | R |
+| logistics_manager | A | R | R |
+| driver | A | R | R |
+| branch_manager | A | R | R |
+| procurement_manager | A | R | R |
+| payables_receivables | A | R | R |
+| financial_controller | A | R | R |
+| general_manager | A | R | R |
+| hr | A | R | R |
+
+1. a valid create body
+2. a field the create does not admit
+3. a malformed customer uuid
+
 ### `approvals.Create`
 
 | Role | 1 | 2 | 3 |
@@ -340,6 +364,28 @@ The census asserts for every role and for every planted row that the replay answ
 ### `approvals.FindApplied`
 
 The census asserts for every role and for every planted row that the replay answer carries no projection and changes nothing. There is no allow or refuse cell: the rule is the same for all thirteen roles.
+
+### `approvals.ValidateCreate`
+
+| Role | 1 | 2 | 3 |
+|---|---|---|---|
+| inside_sales | A | R | R |
+| sales_manager | A | R | R |
+| outside_sales | A | R | R |
+| yard_team | A | R | R |
+| yard_manager | A | R | R |
+| logistics_manager | A | R | R |
+| driver | A | R | R |
+| branch_manager | A | R | R |
+| procurement_manager | A | R | R |
+| payables_receivables | A | R | R |
+| financial_controller | A | R | R |
+| general_manager | A | R | R |
+| hr | A | R | R |
+
+1. a valid filing body
+2. a margin filing (the quote desk's own)
+3. a field the filing does not admit
 
 ## 4. Differences from REST that are ruled, not accidents
 

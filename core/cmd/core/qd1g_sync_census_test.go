@@ -23,6 +23,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -507,20 +508,22 @@ var qd1gNotDoor = map[string]map[string]string{
 func qd1gDoors() map[string]map[string]qd1gDoor {
 	return map[string]map[string]qd1gDoor{
 		"quotes": {
-			"Create":      {"POST /api/v1/quotes", qd1gQuotesCreate},
-			"Write":       {"PATCH /api/v1/quotes/{id}", qd1gQuotesWrite},
-			"Delete":      {"the PATCH ladder, DRAFT only (no REST delete)", qd1gQuotesDelete},
-			"Pull":        {"GET /api/v1/quotes (the list)", qd1gQuotesPull},
-			"Load":        {"GET /api/v1/quotes (the list), by id at the conflict envelope", qd1gQuotesLoad},
-			"FindApplied": {"none: a replay answers status and seq only", qd1gQuotesFindApplied},
+			"Create":         {"POST /api/v1/quotes", qd1gQuotesCreate},
+			"Write":          {"PATCH /api/v1/quotes/{id}", qd1gQuotesWrite},
+			"Delete":         {"the PATCH ladder, DRAFT only (no REST delete)", qd1gQuotesDelete},
+			"Pull":           {"GET /api/v1/quotes (the list)", qd1gQuotesPull},
+			"Load":           {"GET /api/v1/quotes (the list), by id at the conflict envelope", qd1gQuotesLoad},
+			"FindApplied":    {"none: a replay answers status and seq only", qd1gQuotesFindApplied},
+			"ValidateCreate": {"the POST /api/v1/quotes body's own validation (the refusal the route answers 400 with)", qd1gQuotesValidateCreate},
 		},
 		"approvals": {
-			"Create":      {"POST /api/v1/staff/approvals", qd1gApprovalsCreate},
-			"Write":       {"POST /api/v1/staff/approvals/{id}/decide, and the requester's note (no REST twin)", qd1gApprovalsWrite},
-			"Delete":      {"the requester's own withdrawal unless consumed (no REST twin)", qd1gApprovalsDelete},
-			"Pull":        {"GET /api/v1/staff/approvals (the list)", qd1gApprovalsPull},
-			"Load":        {"GET /api/v1/staff/approvals (the list), by id at the conflict envelope", qd1gApprovalsLoad},
-			"FindApplied": {"none: a replay answers status and seq only", qd1gApprovalsFindApplied},
+			"Create":         {"POST /api/v1/staff/approvals", qd1gApprovalsCreate},
+			"Write":          {"POST /api/v1/staff/approvals/{id}/decide, and the requester's note (no REST twin)", qd1gApprovalsWrite},
+			"Delete":         {"the requester's own withdrawal unless consumed (no REST twin)", qd1gApprovalsDelete},
+			"Pull":           {"GET /api/v1/staff/approvals (the list)", qd1gApprovalsPull},
+			"Load":           {"GET /api/v1/staff/approvals (the list), by id at the conflict envelope", qd1gApprovalsLoad},
+			"FindApplied":    {"none: a replay answers status and seq only", qd1gApprovalsFindApplied},
+			"ValidateCreate": {"the POST /api/v1/staff/approvals body's own validation (the refusal the route answers 400 with)", qd1gApprovalsValidateCreate},
 		},
 	}
 }
@@ -676,6 +679,34 @@ func qd1gQuotesFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 			t.Errorf("CENSUS RULE quotes.FindApplied as %s (%s): the replay moved the quote's validity to %s", who.role, k.name, validity)
 		}
 	}
+}
+
+// qd1gQuotesValidateCreate rules the create body's shape door (UX-116): the
+// engine's bound key gate asks it before the hidden refusal, so it answers
+// the body's validation alone, the same refusal Create answers for the same
+// body, with no caller wall in the question: a valid body is admitted for
+// every caller and an invalid one refused for every caller.
+func qd1gQuotesValidateCreate(t *testing.T, c *qd1gCensus, who qd1gRole) {
+	store := quote.NewSyncStore(c.q.pool, nil)
+	ctx := context.Background()
+	f := syncpkg.ScopeFilter{Actor: who.sub}
+	allows := func(label string, fields map[string]any) bool {
+		t.Helper()
+		err := store.ValidateCreate(ctx, f, fields)
+		if err != nil && !errors.Is(err, syncpkg.ErrOpRefused) {
+			t.Errorf("CENSUS RULE quotes.ValidateCreate as %s (%s): the refusal is not the module's classified one: %v", who.role, label, err)
+		}
+		return err == nil
+	}
+	ok := allows("a valid create body", map[string]any{
+		"customer_id": testkit.TenantAlphaID, "branch_id": testkit.BranchNorthAID})
+	qd1gMust(t, "quotes.ValidateCreate", who, "a valid create body", ok, true)
+	qd1gMust(t, "quotes.ValidateCreate", who, "a field the create does not admit",
+		allows("a field the create does not admit", map[string]any{
+			"customer_id": testkit.TenantAlphaID, "branch_id": testkit.BranchNorthAID, "status": "SENT"}), false)
+	qd1gMust(t, "quotes.ValidateCreate", who, "a malformed customer uuid",
+		allows("a malformed customer uuid", map[string]any{
+			"customer_id": "not-a-uuid", "branch_id": testkit.BranchNorthAID}), false)
 }
 
 // ---- approvals legs ------------------------------------------------------
@@ -917,6 +948,35 @@ func qd1gApprovalsFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 	if err := json.Unmarshal([]byte(body), &resp); err != nil || len(resp.Results) != 1 || resp.Results[0].Status != "applied" {
 		t.Errorf("CENSUS RULE approvals.FindApplied as %s (its own plain request, dedup): the replay did not answer applied: %s", who.role, body)
 	}
+}
+
+// qd1gApprovalsValidateCreate rules the filing body's shape door (UX-116):
+// the engine's bound key gate asks it before the hidden refusal, so it
+// answers the body's validation alone, the same refusal Create answers for
+// the same body, with no caller wall in the question: a valid body is
+// admitted for every caller and an invalid one refused for every caller.
+func qd1gApprovalsValidateCreate(t *testing.T, c *qd1gCensus, who qd1gRole) {
+	store := identity.NewApprovalsSyncStore(c.q.pool, nil)
+	ctx := context.Background()
+	f := syncpkg.ScopeFilter{Actor: who.sub}
+	allows := func(label string, fields map[string]any) bool {
+		t.Helper()
+		err := store.ValidateCreate(ctx, f, fields)
+		if err != nil && !errors.Is(err, syncpkg.ErrOpRefused) {
+			t.Errorf("CENSUS RULE approvals.ValidateCreate as %s (%s): the refusal is not the module's classified one: %v", who.role, label, err)
+		}
+		return err == nil
+	}
+	ok := allows("a valid filing body", map[string]any{
+		"branch_id": testkit.BranchNorthAID, "policy_type": "CREDIT_LIMIT_EXCEEDED", "detail": "qd1g validate probe"})
+	qd1gMust(t, "approvals.ValidateCreate", who, "a valid filing body", ok, true)
+	qd1gMust(t, "approvals.ValidateCreate", who, "a margin filing (the quote desk's own)",
+		allows("a margin filing (the quote desk's own)", map[string]any{
+			"branch_id": testkit.BranchNorthAID, "policy_type": "MARGIN_BELOW_MINIMUM", "detail": "qd1g validate probe"}), false)
+	qd1gMust(t, "approvals.ValidateCreate", who, "a field the filing does not admit",
+		allows("a field the filing does not admit", map[string]any{
+			"branch_id": testkit.BranchNorthAID, "policy_type": "CREDIT_LIMIT_EXCEEDED",
+			"detail": "qd1g validate probe", "decided_by": who.sub}), false)
 }
 
 // TestQD1G_ApprovalsFindAppliedProjectionIsMasked: the replay lookup carries
