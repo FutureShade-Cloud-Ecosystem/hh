@@ -11,6 +11,4 @@ package main
 // posting books the two CP03 demo invoices a second time beside their own finalize journals. The
 // stock tie passes in the walk. Both lines go green with the walk follow up's marker filter on that
 // posting (FW1-00, PR 634), not with FW1-06a, which has merged.
-var fw1WalkRed = map[string]string{
-	"month_close_passes_its_pre_flight_and_seals_the_month": "FW1-00",
-}
+var fw1WalkRed = map[string]string{}
