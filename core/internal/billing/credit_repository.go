@@ -115,9 +115,10 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 // write off) move it by their signed amounts. An invoice paid after the as-of date therefore still
 // ages here at its full total, and an invoice finalized after it is not on the books at it. What was
 // settled by the instant nets to zero, so only a document open at the date survives the HAVING,
-// whatever its status is today. One honesty note: a bounce deletes its payment's allocation rows,
-// so a cheque that was good at the as-of date and bounced afterwards shows as owed at that date;
-// the payment's per-invoice split is unrecoverable once those rows are gone.
+// whatever its status is today. A bounce and a void keep their allocation rows (0450): the application
+// stays where it was and the undo is written beside it as a reversal row dated at the undo, so a cheque
+// that was good at the as-of date reads as paid there and as owed from the bounce's own instant on, and
+// the payment's per-invoice split survives the bounce.
 //
 // What this costs (S6's P3, measured with EXPLAIN on a migrated database): the three rebuild arms
 // are index-backed lookups per document (idx_cust_txn_source on the ledger rows, the

@@ -60,8 +60,9 @@ func seedNSFCase(t *testing.T, pool *pgxpool.Pool, branchID string, totalCents i
 	return paymentID, invoiceID, customerID, cleanup
 }
 
-// IN1 (AC2 + AC3), the full atomic reversal: BOUNCED, invoice reopened, allocation removed, NSF + fee +
-// reversal subledger rows written, credit hold placed, payment.bounced emitted once, and, the keystone -
+// IN1 (AC2 + AC3), the full atomic reversal: BOUNCED, invoice reopened, the allocation kept and the
+// undo written beside it as a reversal row (0450), NSF + fee + reversal subledger rows written,
+// credit hold placed, payment.bounced emitted once, and, the keystone -
 // ZERO tax_decision_snapshot rows written. The AR tie-out (invoice + fee) stays exact.
 func TestIntegration_NSF_FullReversal(t *testing.T) {
 	ctx := context.Background()
@@ -97,11 +98,18 @@ func TestIntegration_NSF_FullReversal(t *testing.T) {
 	if invBalance != 50000 || invStatus != "FINALIZED" {
 		t.Fatalf("invoice not reopened: balance=%d status=%s", invBalance, invStatus)
 	}
-	// Allocation reversed (removed).
+	// Allocation reversed: the application is KEPT and the undo is written beside it as a reversal
+	// row (0450), the same payment and the same invoice, the exact negative. The two net to zero, so
+	// the figures the bounce moves are the figures it moved before.
 	var nAlloc int
 	_ = pool.QueryRow(ctx, `SELECT count(*) FROM payment_allocations WHERE payment_id = $1`, pid).Scan(&nAlloc)
-	if nAlloc != 0 {
-		t.Fatalf("allocations not reversed: %d remain", nAlloc)
+	if nAlloc != 2 {
+		t.Fatalf("the bounce left %d allocation rows, want 2 (the application and the reversal beside it)", nAlloc)
+	}
+	var allocNet int64
+	_ = pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount_cents), 0) FROM payment_allocations WHERE payment_id = $1`, pid).Scan(&allocNet)
+	if allocNet != 0 {
+		t.Fatalf("the bounced payment's allocations net %d, want 0", allocNet)
 	}
 	// NSF record captured the policy fee ($45 placeholder).
 	var feeCents int64

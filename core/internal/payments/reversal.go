@@ -161,8 +161,9 @@ func (r *Repository) ReversePayment(ctx context.Context, in ReverseInput, now ti
 			"payment so the reason for re-charging is its own record", ErrNotReversible)
 	}
 	// Only a RECEIVED or DEPOSITED payment is reversible, decided under the row lock (SF-2d round 7). A payment is
-	// reversed or bounced, never both: a bounce already reopened the invoices and deleted the allocations, so a
-	// reversal would credit 2310 for money that never arrived. A refund row has nothing to give back either.
+	// reversed or bounced, never both: a bounce already reopened the invoices and took the applications back
+	// (0450), so a reversal would credit 2310 for money that never arrived. A refund row has nothing to give back
+	// either.
 	switch status {
 	case "RECEIVED", "DEPOSITED":
 	case "BOUNCED":
@@ -171,9 +172,12 @@ func (r *Repository) ReversePayment(ctx context.Context, in ReverseInput, now ti
 		return Reversal{}, fmt.Errorf("%w: status is %s, only a received or deposited payment can be reversed", ErrNotReversible, status)
 	}
 
-	// The allocations this payment made are exactly what must be given back.
+	// The allocations this payment made are exactly what must be given back. Only the APPLICATION
+	// rows: a reversal row (0450) is the undo of an application, and a payment that has not been
+	// bounced or voided carries none.
 	rows, err := tx.Query(ctx,
-		`SELECT invoice_id::text, amount_cents FROM payment_allocations WHERE payment_id = $1::uuid`, in.PaymentID)
+		`SELECT invoice_id::text, amount_cents FROM payment_allocations
+		  WHERE payment_id = $1::uuid AND kind = 'APPLICATION'`, in.PaymentID)
 	if err != nil {
 		return Reversal{}, fmt.Errorf("reverse: read allocations: %w", err)
 	}
