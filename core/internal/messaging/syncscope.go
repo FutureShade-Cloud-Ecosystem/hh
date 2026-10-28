@@ -248,19 +248,30 @@ func (s *messagesSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeF
 	return s.repo.syncMessageExists(ctx, id)
 }
 
+// ValidateCreate answers the create body's shape (the channel named, a
+// nonempty body) without the room fence or a write: the engine's bound key
+// gate calls it before the hidden refusal, so an invalid body meets this
+// refusal under a spent key and a free one. The words are exactly Create's.
+func (s *messagesSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	if channelID, _ := fields["channel_id"].(string); channelID == "" {
+		return syncRefused(fmt.Errorf("channel_id is required"))
+	}
+	if body, _ := fields["body"].(string); body == "" {
+		return syncRefused(fmt.Errorf("message body is empty"))
+	}
+	return nil
+}
+
 func (s *messagesSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
 	uid, ok := syncFeedUser(ctx, s.link, f)
 	if !ok {
 		return sync.RowState{}, syncRefused(fmt.Errorf("no linked staff user for the caller"))
 	}
+	if err := s.ValidateCreate(ctx, f, fields); err != nil {
+		return sync.RowState{}, err
+	}
 	channelID, _ := fields["channel_id"].(string)
-	if channelID == "" {
-		return sync.RowState{}, syncRefused(fmt.Errorf("channel_id is required"))
-	}
 	body, _ := fields["body"].(string)
-	if body == "" {
-		return sync.RowState{}, syncRefused(fmt.Errorf("message body is empty"))
-	}
 	if !admitsRoom(ctx, s.fence, uid, channelID) {
 		return sync.RowState{}, fmt.Errorf("%w: %w", sync.ErrRowNotFound, errNotFound)
 	}
@@ -357,20 +368,32 @@ func (s *acksSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilte
 	return s.repo.syncAckExists(ctx, id)
 }
 
+// ValidateCreate answers the create body's shape (the message named, a
+// method of the module's vocabulary) without a write: the engine's bound key
+// gate calls it before the hidden refusal, so an invalid body meets this
+// refusal under a spent key and a free one. The words are exactly Create's.
+func (s *acksSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	if messageID, _ := fields["message_id"].(string); messageID == "" {
+		return syncRefused(fmt.Errorf("message_id is required"))
+	}
+	method, _ := fields["method"].(string)
+	if _, ok := normalizeAckMethod(method); !ok {
+		return syncRefused(fmt.Errorf("ack method must be one of TAP, QUICK_REPLY, VOICE"))
+	}
+	return nil
+}
+
 func (s *acksSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
 	uid, ok := syncFeedUser(ctx, s.link, f)
 	if !ok {
 		return sync.RowState{}, syncRefused(fmt.Errorf("no linked staff user for the caller"))
 	}
+	if err := s.ValidateCreate(ctx, f, fields); err != nil {
+		return sync.RowState{}, err
+	}
 	messageID, _ := fields["message_id"].(string)
-	if messageID == "" {
-		return sync.RowState{}, syncRefused(fmt.Errorf("message_id is required"))
-	}
 	method, _ := fields["method"].(string)
-	m, ok := normalizeAckMethod(method)
-	if !ok {
-		return sync.RowState{}, syncRefused(fmt.Errorf("ack method must be one of TAP, QUICK_REPLY, VOICE"))
-	}
+	m, _ := normalizeAckMethod(method)
 	id, seq, err := s.repo.syncAckCreate(ctx, uid, messageID, m, key)
 	if err != nil {
 		if isRepoNotFound(err) {

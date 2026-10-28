@@ -496,6 +496,44 @@ func approvalBranchInOrg(ctx context.Context, s *ApprovalsSyncStore, branchID, o
 	return ok
 }
 
+// approvalCreateShape is the body-only half of the pushed filing's checks:
+// the declared field set, the branch uuid shape, the caller-facing policy
+// pin, the subject length and the payload id shape. It reads nothing and
+// honours no fence, so the bound key gate can run it before the hidden
+// refusal (UX-116): an invalid body then meets these refusals under a spent
+// key and a free one. The refusals are exactly the ones Create answers.
+func approvalCreateShape(fields map[string]any) (branchID string, policy PolicyType, detail, subject string, err error) {
+	if err := approvalCreateFields(fields); err != nil {
+		return "", "", "", "", err
+	}
+	branchID, _ = fields["branch_id"].(string)
+	if !approvalLooksLikeUUID(branchID) {
+		return "", "", "", "", fmt.Errorf("identity: branch_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	policy = PolicyType(strings.TrimSpace(fmt.Sprint(fields["policy_type"])))
+	if err := approvalCallerPolicy(policy); err != nil {
+		return "", "", "", "", err
+	}
+	detail, _ = fields["detail"].(string)
+	subject, _ = fields["subject_ref"].(string)
+	if strings.TrimSpace(subject) != "" && len(strings.TrimSpace(subject)) > 256 {
+		return "", "", "", "", fmt.Errorf("identity: subject_ref is too long: %w", sync.ErrOpRefused)
+	}
+	if id, hasID := fields["id"].(string); hasID && !approvalLooksLikeUUID(id) {
+		return "", "", "", "", fmt.Errorf("identity: payload id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	return branchID, policy, detail, subject, nil
+}
+
+// ValidateCreate answers the pushed filing's body shape without the org,
+// role or reach fences and without a write: the engine's bound key gate
+// calls it before the hidden refusal (UX-116). The refusals are exactly
+// Create's.
+func (s *ApprovalsSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	_, _, _, _, err := approvalCreateShape(fields)
+	return err
+}
+
 // Create files one request as the CALLER (the rail's own
 // caller-facing door): the caller-facing policies only, the branch in
 // the caller's org, the row stamped PENDING with a freshly allocated
@@ -507,15 +545,8 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 	if _, _, ok := approvalScopePredicate(f); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
-	if err := approvalCreateFields(fields); err != nil {
-		return sync.RowState{}, err
-	}
-	branchID, _ := fields["branch_id"].(string)
-	if !approvalLooksLikeUUID(branchID) {
-		return sync.RowState{}, fmt.Errorf("identity: branch_id must be a uuid: %w", sync.ErrOpRefused)
-	}
-	policy := PolicyType(strings.TrimSpace(fmt.Sprint(fields["policy_type"])))
-	if err := approvalCallerPolicy(policy); err != nil {
+	branchID, policy, detail, subject, err := approvalCreateShape(fields)
+	if err != nil {
 		return sync.RowState{}, err
 	}
 	if !approvalBranchInOrg(ctx, s, branchID, f.OrgID) {
@@ -537,15 +568,7 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 	if rerr != nil || !held || !auth.CanAccessBranch(branchID) {
 		return sync.RowState{}, fmt.Errorf("identity: that branch is outside your grants: %w", sync.ErrOpRefused)
 	}
-	detail, _ := fields["detail"].(string)
-	subject, _ := fields["subject_ref"].(string)
-	if strings.TrimSpace(subject) != "" && len(strings.TrimSpace(subject)) > 256 {
-		return sync.RowState{}, fmt.Errorf("identity: subject_ref is too long: %w", sync.ErrOpRefused)
-	}
-	id, hasID := fields["id"].(string)
-	if hasID && !approvalLooksLikeUUID(id) {
-		return sync.RowState{}, fmt.Errorf("identity: payload id must be a uuid: %w", sync.ErrOpRefused)
-	}
+	id, _ := fields["id"].(string)
 	requester := ""
 	if s.link != nil && f.Actor != "" {
 		if uid, ok := s.link(ctx, f.Actor); ok {

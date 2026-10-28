@@ -369,20 +369,55 @@ func (s *SyncStore) quoteActor(ctx context.Context, f sync.ScopeFilter) string {
 // create does, the number mints from the module's own quote_no_seq,
 // and the row stamps the caller's org, a freshly allocated seq and the
 // idempotency key.
+// quoteCreateShape is the body-only half of the sync create's checks: the
+// declared field set, the customer and branch uuid shape, the optional
+// validity and the payload id shape. It reads nothing and honours no fence,
+// so the bound key gate can run it before the hidden refusal (UX-116): an
+// invalid body then meets these refusals under a spent key and a free one.
+// The refusals are exactly the ones Create answers.
+func quoteCreateShape(fields map[string]any) (customerID, branchID, validUntil string, err error) {
+	if err := quoteCreateFields(fields); err != nil {
+		return "", "", "", err
+	}
+	customerID, _ = fields["customer_id"].(string)
+	if !looksLikeUUID(customerID) {
+		return "", "", "", fmt.Errorf("quote: customer_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	branchID, _ = fields["branch_id"].(string)
+	if !looksLikeUUID(branchID) {
+		return "", "", "", fmt.Errorf("quote: branch_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	// An absent validity leg means never-expires (the module's own ""
+	// semantics, D2a); a declared one may carry the plain date or the
+	// projection's own serialized form.
+	if v, has := fields["valid_until"]; has && v != nil {
+		parsed, perr := parseSyncValidity(fmt.Sprint(v))
+		if perr != nil {
+			return "", "", "", perr
+		}
+		validUntil = parsed
+	}
+	if id, hasID := fields["id"].(string); hasID && id != "" && !looksLikeUUID(id) {
+		return "", "", "", fmt.Errorf("quote: payload id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	return customerID, branchID, validUntil, nil
+}
+
+// ValidateCreate answers the create body's shape without the reach, org or
+// collision fences and without a write: the engine's bound key gate calls it
+// before the hidden refusal (UX-116). The refusals are exactly Create's.
+func (s *SyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	_, _, _, err := quoteCreateShape(fields)
+	return err
+}
+
 func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
 	if _, _, ok := quoteScopePredicate(f); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
-	if err := quoteCreateFields(fields); err != nil {
+	customerID, branchID, validUntil, err := quoteCreateShape(fields)
+	if err != nil {
 		return sync.RowState{}, err
-	}
-	customerID, _ := fields["customer_id"].(string)
-	if !looksLikeUUID(customerID) {
-		return sync.RowState{}, fmt.Errorf("quote: customer_id must be a uuid: %w", sync.ErrOpRefused)
-	}
-	branchID, _ := fields["branch_id"].(string)
-	if !looksLikeUUID(branchID) {
-		return sync.RowState{}, fmt.Errorf("quote: branch_id must be a uuid: %w", sync.ErrOpRefused)
 	}
 	// The REST create route's rule (P2-C): Work on the Quote Desk and the
 	// branch in the caller's reach, before anything is read or written.
@@ -400,21 +435,7 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 		// from a missing one: both answer not-found.
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
-	// An absent validity leg means never-expires (the module's own ""
-	// semantics, D2a); a declared one may carry the plain date or the
-	// projection's own serialized form.
-	validUntil := ""
-	if v, has := fields["valid_until"]; has && v != nil {
-		parsed, perr := parseSyncValidity(fmt.Sprint(v))
-		if perr != nil {
-			return sync.RowState{}, perr
-		}
-		validUntil = parsed
-	}
-	id, hasID := fields["id"].(string)
-	if hasID && id != "" && !looksLikeUUID(id) {
-		return sync.RowState{}, fmt.Errorf("quote: payload id must be a uuid: %w", sync.ErrOpRefused)
-	}
+	id, _ := fields["id"].(string)
 	actor := s.quoteActor(ctx, f)
 
 	tx, err := s.pool.Begin(ctx)

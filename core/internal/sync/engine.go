@@ -261,6 +261,18 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 					if _, visible, lerr := store.Load(ctx, f, id); lerr != nil {
 						return e.classified(ctx, info, f, op, id, lerr)
 					} else if !visible {
+						// UX-116: a create's body is validated before the
+						// gate hides the key. An invalid body meets the
+						// store's own validation refusal under a spent key
+						// and under a free one, so the words cannot tell
+						// the caller the key is bound to a row it cannot
+						// see. A valid body falls through to the gate
+						// untouched.
+						if op.Op == opCreate {
+							if verr := validateCreateBody(ctx, store, f, op.Payload); verr != nil {
+								return e.classified(ctx, info, f, op, id, verr)
+							}
+						}
 						if checker, ok := store.(BoundEntityChecker); ok {
 							if _, xerr := checker.BoundEntityExists(ctx, f, id); xerr != nil {
 								return e.classified(ctx, info, f, op, id, xerr)
@@ -362,6 +374,17 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 	// validOp pinned the op vocabulary; this arm is unreachable by
 	// construction and fails closed.
 	return e.auditRejected(ctx, info, f, op, "", fmt.Errorf("sync: unknown op %q", op.Op)), nil
+}
+
+// validateCreateBody asks the store's optional create body validation for
+// the bound key gate. A store that does not implement CreateBodyValidator
+// answers no, and the gate refuses with its own words as before: the seam
+// changes nothing a store did not ask for.
+func validateCreateBody(ctx context.Context, store Store, f ScopeFilter, fields map[string]any) error {
+	if v, ok := store.(CreateBodyValidator); ok {
+		return v.ValidateCreate(ctx, f, fields)
+	}
+	return nil
 }
 
 // loadWritable is the update and delete paths' row read: the store's own
