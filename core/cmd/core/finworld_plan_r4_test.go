@@ -440,12 +440,18 @@ func TestFinWorldPlan_LandedCostsLeaveTheRestOfTheWorldAlone(t *testing.T) {
 		t.Fatalf("the plan carries %d sale documents and %d sale lines, the world before the landed costs carried 11820 and 19017",
 			salesDocs, salesLines)
 	}
-	if salesSubtotal != 414779960 || salesTax != 53695286 || salesTotal != 468475246 {
-		t.Fatalf("the plan carries sales %d subtotal, %d tax, %d total cents, the world before the landed costs carried 414779960, 53695286 and 468475246",
+	// The money pin rides the tree's own base world. Round 4 pinned round 3's
+	// 414779960 / 53695286 / 468475246; the driver's round 2 world moved the sales money (the
+	// reorder multiples, the payment method draws and the tax consistent line building) while the
+	// document counts and the returns held, so the merged tree re-pins here. The invariant under
+	// test is unchanged: the landed-cost stream is the plan's own PCG stream and these figures are
+	// whatever the non-landed-cost world carries, so any future change to either side trips it.
+	if salesSubtotal != 418148682 || salesTax != 54133056 || salesTotal != 472281738 {
+		t.Fatalf("the plan carries sales %d subtotal, %d tax, %d total cents, the merged world's base carried 418148682, 54133056 and 472281738",
 			salesSubtotal, salesTax, salesTotal)
 	}
-	if returnsTotal != 13090654 {
-		t.Fatalf("the plan carries %d cents of returns, the world before the landed costs carried 13090654", returnsTotal)
+	if returnsTotal != 13421676 {
+		t.Fatalf("the plan carries %d cents of returns, the merged world's base carried 13421676", returnsTotal)
 	}
 	if purchaseReceipts == 0 || vendorBills == 0 {
 		t.Fatalf("the plan carries %d purchase receipts and %d vendor bills, the world carries both",
