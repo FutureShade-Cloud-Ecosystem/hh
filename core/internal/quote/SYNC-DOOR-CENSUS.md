@@ -47,7 +47,7 @@ How the test holds it:
 | `approvals.Load` | `GET /api/v1/staff/approvals` (the list), at the conflict envelope | The list rule: Work or better on the counter, the Quote Desk or Manager Home; a dealer wide caller reads every branch, a scoped one only its granted branches; a floor request only for who could decide it or filed it; a caller reads back its own filings. A live card the list would not show the caller is not found at all (UX-108), so the engine never reads an unreadable row as visible. A withdrawn card stays found for every caller in the org: the pull sends its tombstone to all of them. | `ApprovalsSyncStore.Load`, `readerFor` |
 | `approvals.FindApplied` | none; a replay answers status and seq only | As quotes.FindApplied: applied with the stamped seq, nothing applied. A key on a live card the caller may not read is not found, so the replay carries nothing of that card, the seq included (UX-108). A withdrawn card's key stays found: its tombstone goes to every caller in the org. | `ApprovalsSyncStore.FindApplied`, `readerFor`; the engine never reads data on this path |
 | `approvals.BoundEntityExists` | none; the bound key gate's own existence read has no REST twin | As quotes.BoundEntityExists: the card stands for every caller of the org at once, the org riding the card's branch, never the pull's reader, and a withdrawn card is gone for everyone (UX-108 round 2). | `ApprovalsSyncStore.BoundEntityExists`, `SELECT EXISTS` over the org and the tombstone |
-| `approvals.ValidateCreate` | the `POST /api/v1/staff/approvals` body's own validation (the refusal the route answers 400 with) | As quotes.ValidateCreate: the filing body's shape alone (the declared field set, the branch uuid shape, the caller-facing policy pin, the subject length, the payload id shape), with no caller wall in the question. A valid body is admitted for every one of the thirteen and an invalid one refused for every one. | `ApprovalsSyncStore.ValidateCreate`, `approvalCreateShape` |
+| `approvals.ValidateCreate` | the `POST /api/v1/staff/approvals` body's own validation (the refusals the route answers 400 and 403 with) | The filing body's shape (the declared field set, the branch uuid shape, the caller-facing policy pin, the subject length, the payload id shape) and, since UX-116 round 3, the filing's branch-grant wall: it depends only on the caller's grants and the body, never on the row, so the bound key gate can run it before the hidden refusal and a bound key answers it exactly as a free key does. A valid body is admitted for every caller the grants reach and refused for every caller they do not; a malformed one is refused for every caller, with the route's own words. The filing level wall stays in `Create`: it is not this door's question. | `ApprovalsSyncStore.ValidateCreate`, `approvalCreateShape`, `approvalCreateGrants` |
 
 `SyncStore.WithNow` and `ApprovalsSyncStore.WithJEDecider` are the two exported
 methods that are not doors. `WithNow` pins the store's clock for tests, and
@@ -413,25 +413,26 @@ The census asserts for every role and for every planted row that the replay answ
 
 ### `approvals.ValidateCreate`
 
-| Role | 1 | 2 | 3 |
-|---|---|---|---|
-| inside_sales | A | R | R |
-| sales_manager | A | R | R |
-| outside_sales | A | R | R |
-| yard_team | A | R | R |
-| yard_manager | A | R | R |
-| logistics_manager | A | R | R |
-| driver | A | R | R |
-| branch_manager | A | R | R |
-| procurement_manager | A | R | R |
-| payables_receivables | A | R | R |
-| financial_controller | A | R | R |
-| general_manager | A | R | R |
-| hr | A | R | R |
+| Role | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| inside_sales | A | R | R | R |
+| sales_manager | A | R | R | R |
+| outside_sales | A | R | R | R |
+| yard_team | A | R | R | R |
+| yard_manager | A | R | R | R |
+| logistics_manager | A | R | R | R |
+| driver | A | R | R | R |
+| branch_manager | A | R | R | R |
+| procurement_manager | A | R | R | R |
+| payables_receivables | A | R | R | A |
+| financial_controller | A | R | R | A |
+| general_manager | A | R | R | A |
+| hr | A | R | R | A |
 
 1. a valid filing body
 2. a margin filing (the quote desk's own)
 3. a field the filing does not admit
+4. a filing in a branch the caller is not granted
 
 ## 4. Differences from REST that are ruled, not accidents
 

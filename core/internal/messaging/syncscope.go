@@ -514,6 +514,36 @@ func (s *notifyPrefsSyncStore) BoundEntityExists(ctx context.Context, f sync.Sco
 	return s.repo.syncPrefsExists(ctx, id)
 }
 
+// prefsPatchShape is the body-only half of the prefs write's checks: the
+// channel the patch tunes and the mode vocabulary. It reads nothing and
+// honours no fence (the current row read and the tier read are the write's
+// own), so the bound key gate can run it before the hidden refusal
+// (UX-116): an invalid body then meets these refusals under a spent key and
+// a free one. The refusals are exactly the ones the write answers.
+func prefsPatchShape(fields map[string]any) (string, error) {
+	channelID, _ := fields["channel_id"].(string)
+	if channelID == "" {
+		return "", syncRefused(fmt.Errorf("channel_id is required"))
+	}
+	if mode, ok := fields["mode"].(string); ok {
+		if _, ok := normalizeMode(mode); !ok {
+			return "", syncRefused(fmt.Errorf("mode must be one of ALL, MENTIONS, MUTED"))
+		}
+	}
+	return channelID, nil
+}
+
+// ValidateCreate answers the pushed pref patch's body shape without the
+// current row read, the tier read or a write: the engine's bound key gate
+// calls it before the hidden refusal (UX-116). The refusals are exactly the
+// write's.
+func (s *notifyPrefsSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	_, err := prefsPatchShape(fields)
+	return err
+}
+
+var _ sync.CreateBodyValidator = (*notifyPrefsSyncStore)(nil)
+
 // Create and Write share the one write a pref row admits: the module's own
 // merge-then-upsert over the caller's current row (an omitted field keeps
 // the current value, never coerces), with the escalation-mute refusal the
@@ -523,9 +553,9 @@ func (s *notifyPrefsSyncStore) write(ctx context.Context, f sync.ScopeFilter, ke
 	if !ok {
 		return sync.RowState{}, syncRefused(fmt.Errorf("no linked staff user for the caller"))
 	}
-	channelID, _ := fields["channel_id"].(string)
-	if channelID == "" {
-		return sync.RowState{}, syncRefused(fmt.Errorf("channel_id is required"))
+	channelID, err := prefsPatchShape(fields)
+	if err != nil {
+		return sync.RowState{}, err
 	}
 	patch := PrefsPatch{
 		DesktopEnabled:     boolField(fields, "desktop_enabled"),

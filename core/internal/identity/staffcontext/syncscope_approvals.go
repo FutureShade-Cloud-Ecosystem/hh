@@ -596,13 +596,34 @@ func approvalCreateShape(fields map[string]any) (branchID string, policy PolicyT
 	return branchID, policy, detail, subject, nil
 }
 
-// ValidateCreate answers the pushed filing's body shape without the org,
-// role or reach fences and without a write: the engine's bound key gate
-// calls it before the hidden refusal (UX-116). The refusals are exactly
-// Create's.
-func (s *ApprovalsSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
-	_, _, _, _, err := approvalCreateShape(fields)
-	return err
+// ValidateCreate answers the pushed filing's body shape and branch-grant
+// wall without the row and without a write: the engine's bound key gate
+// calls it before the hidden refusal (UX-116), and the S2 read's round 3
+// finding moves the grant wall in here, because it depends only on the
+// caller's grants and the body, never on the row: the bound key and a free
+// key then answer it alike. The refusals are exactly Create's.
+func (s *ApprovalsSyncStore) ValidateCreate(ctx context.Context, f sync.ScopeFilter, fields map[string]any) error {
+	branchID, _, _, _, err := approvalCreateShape(fields)
+	if err != nil {
+		return err
+	}
+	return s.approvalCreateGrants(ctx, f, branchID)
+}
+
+// approvalCreateGrants is the branch wall the REST filing holds (UX-89), the
+// reach the guard's own authority answers (the role grants, per org), never
+// the row and never the legacy branch grant projection the decider reads.
+// Create and ValidateCreate share it so the two doors cannot drift.
+func (s *ApprovalsSyncStore) approvalCreateGrants(ctx context.Context, f sync.ScopeFilter, branchID string) error {
+	resolver, rerr := identity.NewStaffAuthorityResolver(s.pool)
+	if rerr != nil {
+		return fmt.Errorf("identity: resolve the filer's authority: %w: %w", sync.ErrOpRefused, rerr)
+	}
+	auth, held, rerr := resolver.ResolveStaff(ctx, f.Actor, f.OrgID)
+	if rerr != nil || !held || !auth.CanAccessBranch(branchID) {
+		return fmt.Errorf("identity: that branch is outside your grants: %w", sync.ErrOpRefused)
+	}
+	return nil
 }
 
 // Create files one request as the CALLER (the rail's own
@@ -628,16 +649,11 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 	if _, err := s.callerHoldsLevel(ctx, f, roleconfig.LevelWork, approvalFileSurfaces, "file an approval request"); err != nil {
 		return sync.RowState{}, err
 	}
-	// The branch wall the REST filing holds (UX-89): a card is filed only into a queue the caller is granted.
-	// The reach is the guard's own authority (the role grants, per org), the one the REST route's caller
-	// carries, not the legacy branch grant projection the decider reads.
-	resolver, rerr := identity.NewStaffAuthorityResolver(s.pool)
-	if rerr != nil {
-		return sync.RowState{}, fmt.Errorf("identity: resolve the filer's authority: %w: %w", sync.ErrOpRefused, rerr)
-	}
-	auth, held, rerr := resolver.ResolveStaff(ctx, f.Actor, f.OrgID)
-	if rerr != nil || !held || !auth.CanAccessBranch(branchID) {
-		return sync.RowState{}, fmt.Errorf("identity: that branch is outside your grants: %w", sync.ErrOpRefused)
+	// The branch wall the REST filing holds (UX-89), shared with the bound
+	// key gate's create body validation (UX-116 round 3): it depends only on
+	// the caller's grants and the body, never on the row.
+	if err := s.approvalCreateGrants(ctx, f, branchID); err != nil {
+		return sync.RowState{}, err
 	}
 	id, _ := fields["id"].(string)
 	requester := ""

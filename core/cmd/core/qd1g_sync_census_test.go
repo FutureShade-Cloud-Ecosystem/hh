@@ -526,7 +526,7 @@ func qd1gDoors() map[string]map[string]qd1gDoor {
 			"Load":              {"GET /api/v1/staff/approvals (the list), by id at the conflict envelope", qd1gApprovalsLoad},
 			"FindApplied":       {"none: a replay answers status and seq only", qd1gApprovalsFindApplied},
 			"BoundEntityExists": {"none: the bound key gate's own existence read", qd1gApprovalsBoundEntityExists},
-			"ValidateCreate":    {"the POST /api/v1/staff/approvals body's own validation (the refusal the route answers 400 with)", qd1gApprovalsValidateCreate},
+			"ValidateCreate":    {"the POST /api/v1/staff/approvals body's own validation (the refusals the route answers 400 and 403 with): the shape and the caller's branch grants", qd1gApprovalsValidateCreate},
 		},
 	}
 }
@@ -1038,12 +1038,16 @@ func qd1gApprovalsFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 // qd1gApprovalsValidateCreate rules the filing body's shape door (UX-116):
 // the engine's bound key gate asks it before the hidden refusal, so it
 // answers the body's validation alone, the same refusal Create answers for
-// the same body, with no caller wall in the question: a valid body is
-// admitted for every caller and an invalid one refused for every caller.
+// the same caller and body. Round 3 (the S2 read's finding, principal item
+// 344) moves the filing's branch-grant wall in here: it depends only on the
+// caller's grants and the body, never on the row, so a valid body is
+// admitted for every caller the grants reach, refused for every caller they
+// do not, and a malformed one refused for every caller, with the route's
+// own words.
 func qd1gApprovalsValidateCreate(t *testing.T, c *qd1gCensus, who qd1gRole) {
 	store := identity.NewApprovalsSyncStore(c.q.pool, nil)
 	ctx := context.Background()
-	f := syncpkg.ScopeFilter{Actor: who.sub}
+	f := syncpkg.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: who.sub}
 	allows := func(label string, fields map[string]any) bool {
 		t.Helper()
 		err := store.ValidateCreate(ctx, f, fields)
@@ -1062,6 +1066,12 @@ func qd1gApprovalsValidateCreate(t *testing.T, c *qd1gCensus, who qd1gRole) {
 		allows("a field the filing does not admit", map[string]any{
 			"branch_id": testkit.BranchNorthAID, "policy_type": "CREDIT_LIMIT_EXCEEDED",
 			"detail": "qd1g validate probe", "decided_by": who.sub}), false)
+	// The grant wall: the branch roles are planted at branch A alone, the
+	// dealer wide roles reach every branch.
+	qd1gMust(t, "approvals.ValidateCreate", who, "a filing in a branch the caller is not granted",
+		allows("a filing in a branch the caller is not granted", map[string]any{
+			"branch_id": testkit.BranchNorthBID, "policy_type": "CREDIT_LIMIT_EXCEEDED", "detail": "qd1g validate probe"}),
+		qd1gGlobalRoles[who.role])
 }
 
 // qd1gApprovalsBoundEntityExists: the bound key gate's own existence read.

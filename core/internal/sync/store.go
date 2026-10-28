@@ -142,14 +142,17 @@ type BoundEntityChecker interface {
 	BoundEntityExists(ctx context.Context, f ScopeFilter, id string) (bool, error)
 }
 
-// CreateBodyValidator is an optional leg of a Store: the shape check a
-// create body must pass before Create runs, answered without touching the
-// database or the caller's fences. The engine calls it BEFORE the bound key
-// gate's hidden refusal, so an invalid body meets the same validation
-// refusal whether the key is spent or free: the gate's refusal could
-// otherwise tell a caller who cannot read the row that the key is bound to
-// a row it cannot see. The refusal must be the exact refusal Create answers
-// for the same body: the seam exists so the two paths cannot drift.
+// CreateBodyValidator is an optional leg of a Store: the check a
+// create body must pass before Create runs. The engine calls it BEFORE the
+// bound key gate's hidden refusal, so an invalid body meets the same
+// validation refusal whether the key is spent or free: the gate's refusal
+// could otherwise tell a caller who cannot read the row that the key is
+// bound to a row it cannot see. The check must never read the row the key
+// may hide: most stores answer from the body alone, the approvals door also
+// runs the caller's branch-grant wall, which reads the caller's own
+// authority and the body, never the row. Every refusal it answers must be a
+// refusal Create answers for the same caller and body: the seam exists so
+// the two paths cannot drift.
 type CreateBodyValidator interface {
 	ValidateCreate(ctx context.Context, f ScopeFilter, fields map[string]any) error
 }
