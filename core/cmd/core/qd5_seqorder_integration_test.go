@@ -107,6 +107,7 @@ RETURNING id::text`, tag+"-OPEN", customerID, qd5Trenton).Scan(&invoiceID); err 
 			e.t.Errorf("read the settle's payment ids: %v", err)
 		}
 		for _, sql := range []string{
+			`DELETE FROM events_outbox WHERE payload->>'payment_id' IN (SELECT id::text FROM payments WHERE customer_id = $1::uuid)`,
 			`DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`,
 			`DELETE FROM payments WHERE customer_id = $1::uuid`,
 			`DELETE FROM customer_transactions WHERE customer_id = $1::uuid`,
