@@ -278,15 +278,24 @@ func (s *messagesSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key 
 		return sync.RowState{}, syncRefused(fmt.Errorf("message body is empty"))
 	}
 	if !admitsRoom(ctx, s.fence, uid, channelID) {
-		return sync.RowState{}, fmt.Errorf("%w: %w", sync.ErrRowNotFound, errNotFound)
+		// The seam's plain refusal, with no module suffix. The engine's
+		// bound key gate answers a key this caller may not read the very
+		// same way (core/internal/sync/engine.go), and a suffix here would
+		// tell the caller a spent key from a free one (UX-108 round 3).
+		return sync.RowState{}, sync.ErrRowNotFound
 	}
 	threadRoot, _ := fields["thread_root_id"].(string)
 	id, seq, err := s.repo.syncMessageCreate(ctx, uid, channelID, body, threadRoot, key)
 	if err != nil {
 		// The module's own not-found (membership, thread root) is the
-		// operation's rejected result, never a fabricated apply.
+		// operation's rejected result, never a fabricated apply, and it
+		// answers the seam's plain words: the bound key gate refuses a key
+		// bound to a row this caller cannot read with the same word, so the
+		// module's suffix never tells the caller a spent key from a free one
+		// (UX-108 round 3). The REST door keeps the module's own words for
+		// the human caller; this door is the machine's.
 		if isRepoNotFound(err) {
-			return sync.RowState{}, fmt.Errorf("%w: %w", sync.ErrRowNotFound, err)
+			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, err
 	}
@@ -389,8 +398,12 @@ func (s *acksSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key stri
 	}
 	id, seq, err := s.repo.syncAckCreate(ctx, uid, messageID, m, key)
 	if err != nil {
+		// The seam's plain words, as the messages scope's create answers
+		// them: the bound key gate refuses a key bound to a row this caller
+		// cannot read with the same word, so the module's suffix never tells
+		// the caller a spent key from a free one (UX-108 round 3).
 		if isRepoNotFound(err) {
-			return sync.RowState{}, fmt.Errorf("%w: %w", sync.ErrRowNotFound, err)
+			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, err
 	}
