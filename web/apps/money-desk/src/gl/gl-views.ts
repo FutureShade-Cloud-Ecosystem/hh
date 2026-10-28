@@ -10,7 +10,7 @@
 // and trial balance screens.
 import { html, nothing, type TemplateResult } from "lit";
 import type { Branch, GlJournal, GlTrialBalanceResult, IdentityApproval } from "@hardscapehouse/api-client";
-import { approvalKind, approvalTitle, canDecide, detailWords, entryLabel, floorFigures, floorWords, journalTone, journalWord, monthWord, systemJournalNote } from "./gl-logic.js";
+import { approvalKind, approvalTitle, canDecide, detailWords, entryLabel, floorFigures, floorWords, journalTone, journalWord, monthWord, rangeWords, systemJournalNote } from "./gl-logic.js";
 import { formatMoney } from "./gl-money.js";
 import { chartView, checksView, composerView, confirmFor, linesTable, periodsView, policyView, recurringView, type BooksModel } from "./gl-books.js";
 
@@ -27,6 +27,13 @@ export interface GlModel {
   readonly approvalJournal: GlJournal | null;
   readonly journals: readonly GlJournal[];
   readonly journalFilter: JournalFilter;
+  /** The applied posted date range, "" unbounded on that side: what the loaded window was read with. */
+  readonly journalFrom: string;
+  readonly journalTo: string;
+  /** The core's cursor to the page after the loaded rows; "" when the register is at its end. */
+  readonly journalsNext: string;
+  /** A register page is on its way: the range apply or a Show more, so neither presses twice. */
+  readonly reaching: boolean;
   readonly selectedJournal: string | null;
   readonly trial: GlTrialBalanceResult | null;
   readonly trialBranch: string;
@@ -330,6 +337,27 @@ function journalDetail(model: GlModel): TemplateResult {
   `;
 }
 
+/**
+ * The register's date range, on the filter row's own line: two date fields and the apply press that
+ * reads them. The fields are the person's while they type; the window they name is the applied one,
+ * said in words beside them, never echoed back into the fields.
+ */
+function dateRange(model: GlModel): TemplateResult {
+  const words = rangeWords(model.journalFrom, model.journalTo);
+  return html`
+    <div class="gl-range" role="group" aria-label="Posted dates shown">
+      <label class="gl-field">Posted from
+        <input data-field="journal-from" type="date" autocomplete="off" aria-label="Posted from" />
+      </label>
+      <label class="gl-field">Posted to
+        <input data-field="journal-to" type="date" autocomplete="off" aria-label="Posted to" />
+      </label>
+      <button type="button" class="gl-filter" data-action="gl-journal-range" ?disabled=${model.busy || model.reaching}>Apply dates</button>
+    </div>
+    ${words === "" ? nothing : html`<p class="gl-dim" data-range-words>${words}</p>`}
+  `;
+}
+
 function journalsView(model: GlModel): TemplateResult {
   const rows = model.journals.filter((j) => filterMatches(model.journalFilter, j));
   return html`
@@ -342,8 +370,9 @@ function journalsView(model: GlModel): TemplateResult {
             ${FILTERS.map((f) => html`<button type="button" class="gl-filter" data-action="gl-filter" data-filter=${f.id} aria-pressed="${model.journalFilter === f.id ? "true" : "false"}">${f.word}${f.id === "all" ? nothing : html` ${model.journals.filter((j) => filterMatches(f.id, j)).length}`}</button>`)}
           </div>
         </div>
+        ${dateRange(model)}
         ${rows.length === 0
-          ? html`<div class="gl-empty"><strong>No journals here.</strong><span class="gl-dim">Nothing matches this filter.</span></div>`
+          ? html`<div class="gl-empty"><strong>No journals here.</strong><span class="gl-dim">Nothing matches this filter or range.</span></div>`
           : html`
               <div class="gl-scroll">
                 <table aria-label="Journal register">
@@ -360,6 +389,9 @@ function journalsView(model: GlModel): TemplateResult {
                 </table>
               </div>
             `}
+        ${model.journalsNext !== ""
+          ? html`<div class="gl-actions"><button type="button" class="btn btn-secondary" data-action="gl-show-more" data-show-more ?disabled=${model.reaching}>Show more journals</button></div>`
+          : nothing}
         <p class="gl-note">Pending approval is a derived label: a manual draft at or over the threshold. Nothing writes it to the row.</p>
       </section>
       <div class="gl-stack">${journalDetail(model)}</div>
