@@ -152,16 +152,17 @@ func fw109fOtherYearPeriod(t *testing.T, pool *pgxpool.Pool, year, month int) (s
 	return fw109fPeriodID(t, pool, year, month), false
 }
 
-// fw109fOtherYearCleanup removes the other year's override row and its period.
+// fw109fOtherYearCleanup removes the override rows the leg planted on the period, by the leg's own
+// reason, and the period itself only when the leg planted it (S5's P3, FROM-PRINCIPAL 349). A
+// foreign override row on the period is a recorded compensating control, another leg's or a
+// Controller's: the leg leaves it exactly as it found it.
 //
-// The period is removed only when the leg planted it (S5's P3, FROM-PRINCIPAL 349): the plant is
-// ON CONFLICT DO NOTHING, so on a reused box the row can already be there, and a leg that removed
-// it anyway took a row it did not create out of the shared gate database. The override row is
-// removed first, because gl_period_overrides holds the period ON DELETE RESTRICT.
-func fw109fOtherYearCleanup(t *testing.T, pool *pgxpool.Pool, periodID string, planted bool) {
+// The override row is removed first, because gl_period_overrides holds the period ON DELETE
+// RESTRICT.
+func fw109fOtherYearCleanup(t *testing.T, pool *pgxpool.Pool, periodID string, planted bool, ownReason string) {
 	t.Helper()
 	ctx := context.Background()
-	_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides WHERE period_id = $1::uuid`, periodID)
+	_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides WHERE period_id = $1::uuid AND reason = $2`, periodID, ownReason)
 	if !planted {
 		return
 	}
@@ -444,7 +445,7 @@ func TestIntegration_FW1_09f_ThePeriodCleanupLeavesAnotherYearsOverrideAlone(t *
 		t.Fatalf("plant the other year's override: %v", err)
 	}
 	t.Cleanup(func() {
-		fw109fOtherYearCleanup(t, pool, otherPeriod, otherPlanted)
+		fw109fOtherYearCleanup(t, pool, otherPeriod, otherPlanted, "fw109f other year sentinel")
 	})
 
 	before := fw109fOverrideCount(t, pool)
@@ -580,7 +581,7 @@ func TestIntegration_FW1_09f_TheOtherYearCleanupLeavesAForeignOverrideRowAlone(t
 
 	// The cleanup under test, the one every leg runs: it must take the leg's own row and leave
 	// the foreign one. The period itself is this leg's own cleanup's business above.
-	fw109fOtherYearCleanup(t, pool, periodID, false)
+	fw109fOtherYearCleanup(t, pool, periodID, false, "fw109f own other year sentinel")
 
 	after := fw109fOverrideCountOn(t, pool, periodID)
 	foreignAfter := foreignCount()
@@ -619,10 +620,7 @@ func TestIntegration_FW1_09f_ThePeriodCleanupLeavesAPeriodItDidNotPlantAlone(t *
 		t.Fatalf("plant the pre planted period's override: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides WHERE period_id = $1::uuid`, prePeriod)
-		if prePlanted {
-			_, _ = pool.Exec(ctx, `DELETE FROM fiscal_periods WHERE id = $1::uuid`, prePeriod)
-		}
+		fw109fOtherYearCleanup(t, pool, prePeriod, prePlanted, "fw109f pre planted period sentinel")
 	})
 
 	before := fw109fPeriodCount(t, pool, year, month)
@@ -633,7 +631,7 @@ func TestIntegration_FW1_09f_ThePeriodCleanupLeavesAPeriodItDidNotPlantAlone(t *
 	if legPeriod != prePeriod {
 		t.Fatalf("the leg's plant answered the period %s, want the pre planted %s", legPeriod, prePeriod)
 	}
-	fw109fOtherYearCleanup(t, pool, legPeriod, legPlanted)
+	fw109fOtherYearCleanup(t, pool, legPeriod, legPlanted, "fw109f pre planted period sentinel")
 
 	after := fw109fPeriodCount(t, pool, year, month)
 	t.Logf("fw109f period cleanup: the %d-%02d periods before|%d after|%d, the leg planted|%t",
