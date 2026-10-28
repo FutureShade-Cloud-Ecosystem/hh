@@ -879,8 +879,16 @@ const KNOWN_SHIM_INSTALL_SOURCES = new Set([
 ]);
 
 const INSTALLER_SPECIFIER_MARK = 'install-global-dom-shim';
-const INSTALLER_SPECIFIER = '@lit-labs/ssr/lib/dom-shim.js';
 const INSTALLER_NAME = 'installWindowOnGlobal';
+
+// The resolved module, not one spelling of its path: the bare package
+// subpath with or without the .js extension, and any relative spelling
+// that reaches the same file inside node_modules. The fail-closed branch
+// keys on this, so an extensionless or otherwise respelled specifier
+// cannot walk past the pin in a package with no import allow list of its
+// own. The workspace uses no `#` subpath imports, so no `#` spelling
+// exists to match.
+const DOM_SHIM_MODULE = /(?:^|\/)@lit-labs\/ssr\/lib\/dom-shim(?:\.js)?$/;
 
 const shimInstallOffences = (rel, records) => {
   const offences = [];
@@ -888,7 +896,7 @@ const shimInstallOffences = (rel, records) => {
   for (const { spec, names } of records) {
     if (spec.includes(INSTALLER_SPECIFIER_MARK)) {
       offences.push(`${rel}: ${spec}`);
-    } else if (spec.includes(INSTALLER_SPECIFIER) && (names === null || names.includes(INSTALLER_NAME))) {
+    } else if (DOM_SHIM_MODULE.test(spec) && (names === null || names.includes(INSTALLER_NAME))) {
       offences.push(`${rel}: ${spec} (${names === null ? 'a name list the parser cannot read' : INSTALLER_NAME})`);
     } else if (names !== null && names.includes(INSTALLER_NAME)) {
       offences.push(`${rel}: ${spec} (${INSTALLER_NAME})`);
@@ -919,4 +927,39 @@ test('only the fetch guard installs the Lit shim, everywhere in the workspace', 
     offences.push(...shimInstallOffences(rel, importedSpecifiers(text, rel)));
   }
   assert.deepEqual(offences, []);
+});
+
+test('the shim inventory pin matches the resolved dom-shim module, not one spelling of its path', () => {
+  // The fail-closed branch refuses a dom-shim import whose name list the
+  // parser cannot read (a side effect import, a namespace, an unbound
+  // require). That refusal must key on the module the spelling resolves
+  // to, so every spelling of its path is refused, not only the one with
+  // the .js extension the gate's file carries. The workspace uses no `#`
+  // subpath imports (no package.json here carries an imports map), so no
+  // `#` spelling exists to leg.
+  const planted = [
+    [`import * as dom from '@lit-labs/ssr/lib/dom-shim.js';`, 'the .js spelling'],
+    [`import * as dom from '@lit-labs/ssr/lib/dom-shim';`, 'the extensionless spelling'],
+    [`import '@lit-labs/ssr/lib/dom-shim';`, 'a side effect import of the extensionless spelling'],
+    [`import * as dom from '../../node_modules/@lit-labs/ssr/lib/dom-shim.js';`, 'a relative path into node_modules'],
+    [`const dom = require('../../node_modules/@lit-labs/ssr/lib/dom-shim');`, 'a require of a relative path into node_modules'],
+  ];
+  for (const [p, expected] of planted) {
+    const offences = shimInstallOffences('packages/shell-chrome/src/plant.ts', importedSpecifiers(p, 'src/plant.ts'));
+    assert.ok(offences.length >= 1, `the pin missed the spelling (${expected}): ${p}`);
+    assert.ok(
+      offences.some((o) => o.includes(expected) || o.includes('a name list the parser cannot read')),
+      `the refusal must name the planted shape (${expected}): got ${JSON.stringify(offences)}`,
+    );
+  }
+  // And it stays quiet on the spelling that binds only names that cannot
+  // install, on every path shape: the rule is the installer, not the module.
+  const quiet = [
+    [`import { getWindow } from '@lit-labs/ssr/lib/dom-shim.js';`, 'the .js spelling'],
+    [`import { getWindow } from '@lit-labs/ssr/lib/dom-shim';`, 'the extensionless spelling'],
+  ];
+  for (const [p, why] of quiet) {
+    const offences = shimInstallOffences('packages/shell-chrome/src/quiet.ts', importedSpecifiers(p, 'src/quiet.ts'));
+    assert.deepEqual(offences, [], `the pin flagged an allowed import (${why}): ${p}`);
+  }
 });
