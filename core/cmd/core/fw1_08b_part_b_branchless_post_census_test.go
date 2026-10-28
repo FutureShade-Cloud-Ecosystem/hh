@@ -22,12 +22,16 @@ package main
 //
 // WHAT IT SEES. The scanner answers what the source can SHOW: a draft built in this file and handed
 // to the post in this file, including through a local variable, through a helper in the same
-// package, and behind a pointer. The draft's TYPE is resolved to its declaration, so a draft that
-// another package aliases under another name is still seen.
+// package, through a helper in another package whose source is in the scanned tree, and behind a
+// pointer. The draft's TYPE is resolved to its declaration, so a draft that another package aliases
+// under another name is still seen. A branch field set to the EMPTY STRING names no branch, so a
+// draft that spells the empty branch out is named as a branchless post too.
 //
 // WHAT IT CANNOT SEE. A draft that arrives as an argument (a composition root adapter, or a seam)
 // is not this file's to judge: those sites are on the record in fw1_branch_census_red.go with the
-// source of their branch, and the adapter's own draft names the field.
+// source of their branch, and the adapter's own draft names the field. A helper in another package
+// is followed only when that package's source is in the scanned tree: a helper from outside the
+// tree cannot be read, so the draft it returns is not named.
 
 import (
 	"fmt"
@@ -38,6 +42,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -109,6 +114,7 @@ type fw1BranchlessAllowance struct {
 // must pass it, or it is company level and must say so here.
 var fw1BranchlessPostAllowance = map[string]fw1BranchlessAllowance{
 	"core/cmd/core/fw1_08b_branch_stamp_integration_test.go|TestFW1_08b_HeadOfficePolicyMultiBranchCloseAndCrossBranchReturn|CreateJournal":                                      {sites: 1, reason: "the leg IS the head office proof: a branchless manual journal must name no branch so it stamps the head office the Controller configured"},
+	"core/cmd/core/fw1_branch_census_integration_test.go|TestFW1JournalLinesCarryBranch|CreateJournal":                                                                           {sites: 1, reason: "the leg IS the runtime census proof: a manual journal with no branch must name no branch so the resolver stamps the head office on every line it writes"},
 	"core/internal/bankrec/fw1_04_month_end_integration_test.go|TestIntegration_FW1_04_AMonthMatchedInTheFollowingMonthCanSignOff|PostExternal":                                  {sites: 1, reason: "the fixture is the company's own operating bank account's opening entry, and bank_accounts carries no branch, so the company's books are the head office's"},
 	"core/internal/bankrec/fw1_04_month_end_integration_test.go|TestIntegration_FW1_04_AMonthWithOneDepositInTransitAndOneOutstandingChequeCanSignOff|PostExternal":              {sites: 3, reason: "the fixtures are the company's own operating bank account's entries (a cleared deposit, a deposit in transit, a cheque in flight), and bank_accounts carries no branch"},
 	"core/internal/bankrec/fw1_04_month_end_integration_test.go|TestIntegration_FW1_04_ChronologicalSignOffOrderAndStatementContinuity|PostExternal":                             {sites: 3, reason: "the fixtures are the company's own operating bank account's entries, and bank_accounts carries no branch"},
@@ -519,6 +525,10 @@ func fw1IsDraftType(fields []string, name string) bool {
 // that at all. A positional literal takes the type's own field order, so the scanner cannot say
 // which field is the branch: it answers "cannot show", and the site is left alone rather than
 // called a branchless post on a guess.
+//
+// A branch field set to the EMPTY STRING names no branch. The resolver sends an empty branch to
+// the head office exactly as it sends a draft that leaves the field out, so a draft that spells the
+// empty branch out is a branchless post and is named as one.
 func fw1DraftBranchState(lit *ast.CompositeLit) (named bool, known bool) {
 	for _, elt := range lit.Elts {
 		kv, ok := elt.(*ast.KeyValueExpr)
@@ -530,10 +540,24 @@ func fw1DraftBranchState(lit *ast.CompositeLit) (named bool, known bool) {
 			continue
 		}
 		if fw1IsBranchField(key.Name) {
+			if fw1IsEmptyStringLiteral(kv.Value) {
+				return false, true
+			}
 			return true, true
 		}
 	}
 	return false, true
+}
+
+// fw1IsEmptyStringLiteral answers whether an expression is the empty string literal, in either
+// quoting. A branch field holding it names no branch.
+func fw1IsEmptyStringLiteral(expr ast.Expr) bool {
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return false
+	}
+	value, err := strconv.Unquote(lit.Value)
+	return err == nil && value == ""
 }
 
 // fw1DraftsProveBranchless answers whether every draft a posting call can hand over names no
@@ -608,11 +632,12 @@ func fw1ResolveTypeFields(tree *fw1SourceTree, pkg *fw1SourcePkg, file *fw1Sourc
 
 // fw1ResolveDrafts answers the composite literals a posting call hands over, when the call's own
 // package can show them: the literal itself, a local variable that holds it, or the results of a
-// helper in the same package.
+// helper in the same package. A helper in ANOTHER package is followed too, into that package's own
+// source, when that package is in the scanned tree.
 //
 // It answers nothing when the draft comes from somewhere the package cannot show: an argument the
-// caller passes in, or a helper in another package. Those sites are the seam table's record in
-// fw1_branch_census_red.go, not this scanner's.
+// caller passes in, or a helper in a package outside the scanned tree. Those sites are the seam
+// table's record in fw1_branch_census_red.go, not this scanner's.
 //
 // A helper answers EVERY draft it returns, not just its first return: a builder's error return is
 // usually an empty draft, and calling that a branchless post would be a false alarm.
@@ -647,10 +672,44 @@ func fw1ResolveDrafts(tree *fw1SourceTree, pkg *fw1SourcePkg, file *fw1SourceFil
 			if helper, ok := pkg.funcs[id.Name]; ok {
 				return fw1FuncResultDrafts(tree, pkg, helper, depth+1)
 			}
+			return nil
+		}
+		if sel, ok := v.Fun.(*ast.SelectorExpr); ok {
+			return fw1ResolveOtherPackageDrafts(tree, file, sel, depth)
 		}
 		return nil
 	}
 	return nil
+}
+
+// fw1ResolveOtherPackageDrafts answers the drafts a helper in ANOTHER package returns. The scanner
+// reads that package's source too, so the helper is followed into its own file, where its own
+// imports resolve the types it names.
+//
+// The helper's package must be in the scanned tree. A helper from outside the tree cannot be read,
+// so the draft it returns is not named: that is the seam table's record in fw1_branch_census_red.go,
+// not this scanner's.
+func fw1ResolveOtherPackageDrafts(tree *fw1SourceTree, file *fw1SourceFile, sel *ast.SelectorExpr, depth int) []*ast.CompositeLit {
+	if depth > 6 {
+		return nil
+	}
+	qualifier, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	path, ok := file.imports[qualifier.Name]
+	if !ok {
+		return nil
+	}
+	target := tree.fw1PkgForImport(path)
+	if target == nil {
+		return nil
+	}
+	helper, ok := target.funcs[sel.Sel.Name]
+	if !ok {
+		return nil
+	}
+	return fw1FuncResultDrafts(tree, target, helper, depth+1)
 }
 
 // fw1LocalDraft answers the expression a local variable of the given function was given, when the
