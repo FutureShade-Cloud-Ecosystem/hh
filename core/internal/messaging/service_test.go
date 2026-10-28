@@ -653,11 +653,16 @@ func (f *fakeStore) ListMentions(_ context.Context, _, _ string, _ int) (Message
 // - change 7 S4: the edit and delete doubles -
 
 // messageFactsFor answers a planted row bound to its channel; a row of
-// another channel is the same not-found an absent id is.
+// another channel is the same not-found an absent id is. A planted row with no
+// clock of its own answers the double's own now(), the way the repository
+// answers the database's clock at the read.
 func (f *fakeStore) messageFactsFor(_ context.Context, channelID, messageID string) (messageFacts, error) {
 	mf, ok := f.editFacts[messageID]
 	if !ok || mf.ChannelID != channelID {
 		return messageFacts{}, errNotFound
+	}
+	if mf.Now.IsZero() {
+		mf.Now = time.Now()
 	}
 	return mf, nil
 }

@@ -50,6 +50,10 @@ const defaultEditWindowMinutes = 15
 // messageFacts is what the walls read before any write: the message bound to
 // its channel, its author (empty for a system message), its kind, whether it
 // is a forced acknowledgement notice, and its clock state.
+//
+// Now is the DATABASE's clock at the read: the window is measured against the
+// same clock that stamped created_at, so the two are one clock and not two
+// (UX-109).
 type messageFacts struct {
 	ChannelID   string
 	AuthorID    string
@@ -57,6 +61,7 @@ type messageFacts struct {
 	RequiresAck bool
 	CreatedAt   time.Time
 	DeletedAt   *time.Time
+	Now         time.Time
 }
 
 // editWindowOpen reports whether a message created at createdAt is still
@@ -204,7 +209,7 @@ func (s *Service) EditMessage(ctx context.Context, c Caller, channelID, messageI
 	if err != nil {
 		return Message{}, err
 	}
-	if !editWindowOpen(facts.CreatedAt, mins, time.Now()) {
+	if !editWindowOpen(facts.CreatedAt, mins, s.nowFn()) {
 		return Message{}, ErrEditWindowClosed
 	}
 	body = trimMessageBody(body)
@@ -239,7 +244,7 @@ func (s *Service) DeleteMessage(ctx context.Context, c Caller, channelID, messag
 	if err != nil {
 		return Message{}, err
 	}
-	if facts.DeletedAt == nil && !editWindowOpen(facts.CreatedAt, mins, time.Now()) {
+	if facts.DeletedAt == nil && !editWindowOpen(facts.CreatedAt, mins, s.nowFn()) {
 		return Message{}, ErrEditWindowClosed
 	}
 	// A repeat delete of a tombstone changes nothing (the body is already dropped, deleted_at
