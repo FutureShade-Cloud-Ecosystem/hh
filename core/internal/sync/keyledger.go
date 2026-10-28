@@ -104,11 +104,15 @@ var ErrKeyReused = errors.New("key_reused: this idempotency key already names a 
 const auditKeyReused = "SYNC_KEY_REUSED"
 
 // LedgerEntry is what the ledger holds per applied key: the hash of the
-// body that first applied, and the id of the row it touched (the created
-// row's id for a create, the payload's id for an update or delete).
+// body that first applied, the id of the row it touched (the created row's
+// id for a create, the payload's id for an update or delete), and the actor
+// that bound it, the scope filter's Actor of the push that first applied
+// (empty when that push carried no actor; a row bound before migration
+// 0449 reads back empty too, its binder unknowable).
 type LedgerEntry struct {
 	Hash     string
 	EntityID string
+	BoundBy  string
 }
 
 // KeyLedger is the seam holding, per applied idempotency key, the hash of
