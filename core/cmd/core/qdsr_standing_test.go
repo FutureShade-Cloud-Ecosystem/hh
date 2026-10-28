@@ -36,7 +36,7 @@ func TestQDSRAccountStandingAnswersEveryCaseDistinctly(t *testing.T) {
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
 		 VALUES ('INV-QDSR-PASTDUE', $1::uuid, $2::uuid, 'FINALIZED',
-		         CURRENT_DATE - 75, CURRENT_DATE - 45, 25000, 0, 25000, 25000, now())`,
+		         (now() AT TIME ZONE 'America/Toronto')::date - 75, (now() AT TIME ZONE 'America/Toronto')::date - 45, 25000, 0, 25000, 25000, now())`,
 		qdsrPastDueID, qdsrNorthA); err != nil {
 		t.Fatalf("plant overdue invoice: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestQDSRAccountStandingAnswersEveryCaseDistinctly(t *testing.T) {
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
 		 VALUES ('INV-QDSR-UNHOMED2', $1::uuid, $2::uuid, 'FINALIZED',
-		         CURRENT_DATE - 75, CURRENT_DATE - 45, 25000, 0, 25000, 25000, now())`,
+		         (now() AT TIME ZONE 'America/Toronto')::date - 75, (now() AT TIME ZONE 'America/Toronto')::date - 45, 25000, 0, 25000, 25000, now())`,
 		qdsrUnhomedPastDueID, qdsrNorthA); err != nil {
 		t.Fatalf("plant unhomed overdue invoice: %v", err)
 	}

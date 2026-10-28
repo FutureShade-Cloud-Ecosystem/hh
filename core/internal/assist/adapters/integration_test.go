@@ -729,7 +729,7 @@ func insertInvoice(t *testing.T, pool *pgxpool.Pool, invoiceNo, customerID, bran
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at)
 		VALUES ($1::citext, $2::uuid, $3::uuid, 'FINALIZED',
-		        CURRENT_DATE - 60, CURRENT_DATE + $6::int, $4, 0, $4, $5, now())
+		        (now() AT TIME ZONE 'America/Toronto')::date - 60, (now() AT TIME ZONE 'America/Toronto')::date + $6::int, $4, 0, $4, $5, now())
 		RETURNING id::text`, invoiceNo, customerID, branchID, totalCents, balanceCents, dueInDays).Scan(&id)
 	if err != nil {
 		t.Fatalf("insert invoice %s: %v", invoiceNo, err)

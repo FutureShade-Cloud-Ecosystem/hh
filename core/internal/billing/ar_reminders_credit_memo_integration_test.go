@@ -52,7 +52,7 @@ func TestIntegrationHH195_AccountReminderNeverDunsACreditMemo(t *testing.T) {
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
 		                      doc_type, source_kind, closes_order)
-		VALUES ('INV-195-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 10, CURRENT_DATE - 10,
+		VALUES ('INV-195-'||$1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date - 10, (now() AT TIME ZONE 'America/Toronto')::date - 10,
 		        12345, 0, 12345, 12345, now(), 'INVOICE', 'ORDER', FALSE) RETURNING id::text`,
 		suffix, customerID, branchID).Scan(&invID); err != nil {
 		t.Fatalf("seed invoice: %v", err)
@@ -62,7 +62,7 @@ func TestIntegrationHH195_AccountReminderNeverDunsACreditMemo(t *testing.T) {
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
 		                      doc_type, source_kind, reverses_invoice_id, closes_order)
-		VALUES ('CM-195-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 30, CURRENT_DATE - 30,
+		VALUES ('CM-195-'||$1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date - 30, (now() AT TIME ZONE 'America/Toronto')::date - 30,
 		        -50, 0, -50, -50, now(), 'CREDIT_MEMO', 'ORDER', $4::uuid, FALSE)`,
 		suffix, customerID, branchID, invID); err != nil {
 		t.Fatalf("seed credit memo: %v", err)

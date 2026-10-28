@@ -72,7 +72,7 @@ func TestComposition_HH185ReminderTransport_UnwiredAtTheServedSurface(t *testing
 	if _, err := graph.pool.Exec(ctx,
 		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
-		 VALUES ('HH185W-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 40, CURRENT_DATE - 10,
+		 VALUES ('HH185W-'||$1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date - 40, (now() AT TIME ZONE 'America/Toronto')::date - 10,
 		         12345, 0, 12345, 12345, now(), 'INVOICE')`,
 		suffix, customerID, testkit.BranchNorthAID); err != nil {
 		t.Fatalf("plant open invoice: %v", err)

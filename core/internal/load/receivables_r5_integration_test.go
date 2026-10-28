@@ -110,7 +110,7 @@ func TestReceivablesFutureIssueDateRefusesAndTodayLands(t *testing.T) {
 	var saleID string
 	if err := e.pool.QueryRow(ctx, `
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, org_id)
-		VALUES ('#INV-LD11-SALE', $1::uuid, $2::uuid, 'FINALIZED', current_date, current_date, 700, 0, 700, 700, now(), $3::uuid) RETURNING id::text`,
+		VALUES ('#INV-LD11-SALE', $1::uuid, $2::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date, 700, 0, 700, 700, now(), $3::uuid) RETURNING id::text`,
 		ld11CustOneID, ld11BranchAID, ld11OrgID).Scan(&saleID); err != nil {
 		t.Fatalf("the HH sale: %v", err)
 	}
