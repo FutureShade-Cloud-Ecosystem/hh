@@ -91,6 +91,37 @@ func TestIntegration_FinanceBoxStateAnswersTheFourStates(t *testing.T) {
 			t.Fatalf("a marked database with the bookkeeping table and nothing else must read as %s, got %s", financeBoxStateUnseeded, state)
 		}
 	})
+
+	t.Run("tables that live outside public are foreign", func(t *testing.T) {
+		// The S3 read's P2 2: a database that holds its tables in a schema
+		// of their own, nothing in public and no bookkeeping, is somebody
+		// else's world: it is not empty, and the box refuses it instead of
+		// claiming and seeding it.
+		pool := freshEmptyDB(t, "finboxstateschema")
+		if _, err := pool.Exec(ctx, `
+			CREATE SCHEMA other;
+			CREATE TABLE other.precious (id INT PRIMARY KEY, note TEXT NOT NULL);
+			INSERT INTO other.precious VALUES (1, 'another app row')`); err != nil {
+			t.Fatalf("planting the foreign schema: %v", err)
+		}
+		state, err := financeBoxDatabaseState(ctx, pool)
+		if err != nil {
+			t.Fatalf("reading the state: %v", err)
+		}
+		if state != financeBoxStateForeign {
+			t.Fatalf("a database holding only other.precious must read as %s, got %s", financeBoxStateForeign, state)
+		}
+		if err := financeBoxDatabaseGuard(ctx, pool); err == nil {
+			t.Fatal("the boot guard must refuse a database whose tables live outside public")
+		}
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM other.precious`).Scan(&n); err != nil {
+			t.Fatalf("the foreign row: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("a refused database must be untouched, other.precious holds %d rows", n)
+		}
+	})
 }
 
 // TestIntegration_FinanceBoxUnseededRecoveryNeedsTheBootstrapMark: recovery
