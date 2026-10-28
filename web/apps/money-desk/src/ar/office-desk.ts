@@ -813,7 +813,10 @@ export class OfficeDesk {
     const got = await this.#api.tillHolds();
     if (!got.ok) return;
     this.#tillHolds.clear();
-    for (const h of got.value.items) if (h.source_payment_id !== undefined) this.#tillHolds.set(h.id, h.source_payment_id);
+    // The core's credit holds list answers a null items on an empty list (its
+    // shape census records the handler as tillListCreditHolds), and a null here
+    // took the Holds area down with it. The model's list is an array.
+    for (const h of got.value.items ?? []) if (h.source_payment_id !== undefined) this.#tillHolds.set(h.id, h.source_payment_id);
     this.#host.repaint();
   }
 
