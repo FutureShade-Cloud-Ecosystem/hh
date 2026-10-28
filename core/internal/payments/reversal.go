@@ -750,16 +750,30 @@ func outOfHeldTx(ctx context.Context, tx pgx.Tx, paymentID string) (reapplied, p
 // WithTill binds the till's side of the drawer pay out and the write off. Without it those two kinds are refused.
 func (r *Repository) WithTill(t TillSeam) *Repository { r.till = t; return r }
 
+// errNoInstant is the refusal a store hands back when a row arrives with no instant. The service
+// reads its clock once and hands the instant down (one clock rules that transaction, FW1-13b), so
+// a caller that hands nothing down would write the zero instant where the column default used to
+// stand: a day that is not a day, in the payout row and in the event the GL journal follows. The
+// refusal names the missing instant in words, before any write, so the mistake is loud instead of
+// silent. The till's store refuses its own zero stamps the same way (FW1-13b).
+func errNoInstant(what string) error {
+	return fmt.Errorf("payments: a %s needs the service clock's instant; a zero stamp is refused", what)
+}
+
 // PayOutHeld takes held money out of 2310 by the act that moves it (payout.go states the rules). ONE transaction: the
 // payment row FOR UPDATE first (the lock a reversal, a bounce and a re-application take), every judgement under it and
 // before the first write, then for a drawer pay out the till's PAID_OUT movement on its own session row (FOR SHARE, the
 // SF-2j rule), the payout row and one payment.paid_out outbox row for the GL.
 //
 // One clock rules that transaction (FW1-13b): now is the instant the act happened, and the payout row, the drawer's
-// movement the till writes beside it and the event the GL journal follows all carry it.
+// movement the till writes beside it and the event the GL journal follows all carry it. A zero instant is refused in
+// words before the transaction opens, so none of those three facts can carry the zero stamp (FW1-13c).
 func (r *Repository) PayOutHeld(ctx context.Context, in PayoutInput, now time.Time) (Payout, error) {
 	if r.pool == nil {
 		return Payout{}, errNoDB
+	}
+	if now.IsZero() {
+		return Payout{}, errNoInstant("payout")
 	}
 	in, err := validatePayout(in)
 	if err != nil {
