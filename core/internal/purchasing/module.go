@@ -220,6 +220,7 @@ type Service struct {
 
 	warrantyCredit WarrantyCreditReader
 	landedPayables LandedCostPayableReader
+	journalClock   GLJournalClock
 
 	// now is the injected clock. The document stamps a printed-at time, and a document that read
 	// the wall clock directly could not be rendered identically twice in a test.

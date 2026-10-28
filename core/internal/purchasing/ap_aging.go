@@ -153,7 +153,13 @@ type apBillCandidate struct {
 	BillDate         string
 	DueDate          string
 	TotalCents       int64
-	PaidCents        int64
+	GLJournalID      string
+	// PaidAts and PaidAmounts are the bill's PAID instalments, aligned by index. The
+	// as-of sum is the caller's to draw: which instalments count is the payment
+	// journals' effective instants, not the rows' own paid_at.
+	PaidAts     []time.Time
+	PaidAmounts []int64
+	PaidCents   int64
 }
 
 // PayBill records a supplier payment against a posted vendor bill and posts
@@ -349,7 +355,11 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 		return page, nil
 	}
 
-	candidates, err := s.repo.OpenBillsAsOf(ctx, effectiveAsOf, zone.Name(), reach)
+	candidates, err := s.repo.OpenBillsAsOf(ctx, reach)
+	if err != nil {
+		return APAgingPage{}, err
+	}
+	candidates, err = s.applyJournalClock(ctx, candidates, effectiveAsOf, loc)
 	if err != nil {
 		return APAgingPage{}, err
 	}
@@ -522,16 +532,16 @@ func parseAPAsOfParam(raw string, loc *time.Location) (time.Time, error) {
 	return time.Time{}, badReq("as_of must be an RFC3339 instant or YYYY-MM-DD")
 }
 
-// OpenBillsAsOf reads posted vendor bills and their paid instalment sums as of asOf.
-func (r *Repository) OpenBillsAsOf(ctx context.Context, asOf time.Time, zone string, reach BranchReach) ([]apBillCandidate, error) {
+// OpenBillsAsOf reads posted vendor bills in reach with their PAID instalments. The
+// query carries no as-of predicate of its own: which bills and which instalments
+// count as of an instant is the posting journals' effective instants, the caller's
+// GLJournalClock step.
+func (r *Repository) OpenBillsAsOf(ctx context.Context, reach BranchReach) ([]apBillCandidate, error) {
 	if r == nil || r.pool == nil {
 		return nil, errNoDB
 	}
 	if !reach.Global && len(reach.BranchIDs) == 0 {
 		return []apBillCandidate{}, nil
-	}
-	if strings.TrimSpace(zone) == "" {
-		zone = houseday.DefaultZone().Name()
 	}
 	branchIDs := reach.BranchIDs
 	if branchIDs == nil {
@@ -545,21 +555,20 @@ func (r *Repository) OpenBillsAsOf(ctx context.Context, asOf time.Time, zone str
 		       to_char(b.bill_date, 'YYYY-MM-DD'),
 		       to_char(COALESCE(b.due_date, b.bill_date), 'YYYY-MM-DD'),
 		       b.total_cents,
-		       COALESCE((
-		           SELECT SUM(i.amount_cents)
-		             FROM purchasing_bill_instalments i
-		            WHERE i.bill_id = b.id
-		              AND i.status = 'PAID'
-		              AND (i.paid_at IS NULL OR i.paid_at <= $1)
-		       ), 0) AS paid_cents
+		       COALESCE(b.gl_journal_id::text, ''),
+		       COALESCE((SELECT array_agg(i.paid_at ORDER BY i.paid_at, i.id)
+		           FROM purchasing_bill_instalments i
+		          WHERE i.bill_id = b.id AND i.status = 'PAID'), '{}'),
+		       COALESCE((SELECT array_agg(i.amount_cents ORDER BY i.paid_at, i.id)
+		           FROM purchasing_bill_instalments i
+		          WHERE i.bill_id = b.id AND i.status = 'PAID'), '{}')
 		  FROM purchasing_bills b
 		  JOIN vendors v ON v.id = b.vendor_id
 		  LEFT JOIN purchasing_pos p ON p.id = b.po_id
 		 WHERE b.status = 'POSTED'
-		   AND b.bill_date <= ($1 AT TIME ZONE $2)::date
-		   AND ($3::boolean OR b.branch_id = ANY($4::uuid[]))
+		   AND ($1::boolean OR b.branch_id = ANY($2::uuid[]))
 		 ORDER BY v.name ASC, v.id ASC, COALESCE(b.due_date, b.bill_date) ASC, b.bill_date ASC, b.bill_no ASC, b.id ASC`,
-		asOf, zone, reach.Global, branchIDs,
+		reach.Global, branchIDs,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("purchasing: open bills as of: %w", err)
@@ -574,7 +583,7 @@ func (r *Repository) OpenBillsAsOf(ctx context.Context, asOf time.Time, zone str
 			&c.VendorNo, &c.VendorName, &c.PaymentTermsDays,
 			&c.BranchID, &c.POID, &c.PONo,
 			&c.BillDate, &c.DueDate,
-			&c.TotalCents, &c.PaidCents,
+			&c.TotalCents, &c.GLJournalID, &c.PaidAts, &c.PaidAmounts,
 		); err != nil {
 			return nil, fmt.Errorf("purchasing: scan open bill as of: %w", err)
 		}
@@ -582,6 +591,94 @@ func (r *Repository) OpenBillsAsOf(ctx context.Context, asOf time.Time, zone str
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("purchasing: open bills rows: %w", err)
+	}
+	return out, nil
+}
+
+// applyJournalClock narrows the candidates to what counts as of the instant under the
+// GL's own filing rule (S2's P2 1, FROM-PRINCIPAL 124): a bill counts from its posting
+// journal's effective instant and a payment from its payment journal's, the same late
+// filing rule the GL's account reads keep, so a bill filed late into a later open month
+// breaks the tie in neither book until that month ends. The bill still AGES by its due
+// date; only the inclusion instant moved. Each instalment pairs with its payment
+// journal by the instant (PayBill stamps the journal's document date and the
+// instalment's paid_at with the same instant); a PAID instalment with no journal on
+// the books counts at its own paid_at, the legacy rule. With the clock unwired the
+// document's own dates keep the rule the seam replaced.
+func (s *Service) applyJournalClock(ctx context.Context, candidates []apBillCandidate, asOf time.Time, loc *time.Location) ([]apBillCandidate, error) {
+	if s.journalClock == nil {
+		day := asOf.In(loc).Format("2006-01-02")
+		out := make([]apBillCandidate, 0, len(candidates))
+		for _, c := range candidates {
+			if c.BillDate > day {
+				continue
+			}
+			var paid int64
+			for i, at := range c.PaidAts {
+				if !at.After(asOf) {
+					paid += c.PaidAmounts[i]
+				}
+			}
+			c.PaidCents = paid
+			out = append(out, c)
+		}
+		return out, nil
+	}
+
+	journalIDs := make([]string, 0, len(candidates))
+	billIDs := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		if c.GLJournalID != "" {
+			journalIDs = append(journalIDs, c.GLJournalID)
+		}
+		billIDs = append(billIDs, c.BillID)
+	}
+	billEff, err := s.journalClock.JournalEffectiveInstants(ctx, journalIDs)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := s.journalClock.RefJournalInstants(ctx, glSourcePayment, billIDs)
+	if err != nil {
+		return nil, err
+	}
+	payByRef := make(map[string][]GLRefJournalInstant, len(entries))
+	for _, e := range entries {
+		payByRef[e.RefID] = append(payByRef[e.RefID], e)
+	}
+
+	out := make([]apBillCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		if c.GLJournalID != "" {
+			eff, ok := billEff[c.GLJournalID]
+			if !ok || eff.After(asOf) {
+				continue
+			}
+		} else if c.BillDate > asOf.In(loc).Format("2006-01-02") {
+			// no posting journal on the row (the GL was unwired at post time): the
+			// document's own date decides, the legacy rule
+			continue
+		}
+		payments := payByRef[c.BillID]
+		used := make([]bool, len(payments))
+		var paid int64
+		for i, at := range c.PaidAts {
+			instant := at
+			for j := range payments {
+				if used[j] {
+					continue
+				}
+				if payments[j].PostedAt.Truncate(time.Microsecond).Equal(at.Truncate(time.Microsecond)) {
+					used[j] = true
+					instant = payments[j].EffectiveAt
+					break
+				}
+			}
+			if !instant.After(asOf) {
+				paid += c.PaidAmounts[i]
+			}
+		}
+		c.PaidCents = paid
+		out = append(out, c)
 	}
 	return out, nil
 }

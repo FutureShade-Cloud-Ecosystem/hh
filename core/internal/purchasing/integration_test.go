@@ -158,6 +158,29 @@ func (a itGL) PostJournal(ctx context.Context, in GLJournal) (string, error) {
 	})
 }
 
+// itGLClock mirrors itGL for reads: the GL service's own as-of filing rule behind
+// purchasing's GLJournalClock seam, so the aging's inclusion instants are the
+// journals' effective instants exactly as the production wiring answers them.
+type itGLClock struct{ svc *gl.Service }
+
+func (a itGLClock) JournalEffectiveInstants(ctx context.Context, journalIDs []string) (map[string]time.Time, error) {
+	return a.svc.JournalEffectiveInstants(ctx, journalIDs)
+}
+
+func (a itGLClock) RefJournalInstants(ctx context.Context, source string, refIDs []string) ([]GLRefJournalInstant, error) {
+	entries, err := a.svc.RefJournalInstants(ctx, source, refIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]GLRefJournalInstant, 0)
+	for _, refs := range entries {
+		for _, e := range refs {
+			out = append(out, GLRefJournalInstant{RefID: e.SourceRefID, PostedAt: e.PostedAt, EffectiveAt: e.EffectiveAt})
+		}
+	}
+	return out, nil
+}
+
 func (a itGL) PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error) {
 	lines := make([]gl.ExternalLine, len(in.Lines))
 	for i, l := range in.Lines {
@@ -252,6 +275,7 @@ func newHarness(t *testing.T) *harness {
 		WithLandedCostPayables(itLanded{svc: landedSvc}).
 		WithGLPoster(itGL{svc: glSvc}).
 		WithRuleResolver(itRules{svc: glSvc}).
+		WithGLJournalClock(itGLClock{svc: glSvc}).
 		withCaller(func(context.Context) (identity.StaffContext, bool) { return globalCaller(user), true })
 
 	return &harness{pool: pool, svc: svc, inv: invSvc, gl: glSvc, landed: landedSvc, vendor: vendor, user: user, ctx: ctx}

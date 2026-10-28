@@ -233,6 +233,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithVendors(w4cVendorDirectory{pool: pool}).
 		WithLandedCoster(w4cLandedCoster{svc: landedcostSvc}).
 		WithLandedCostPayables(w4cLandedCoster{svc: landedcostSvc}).
+		WithGLJournalClock(w4cGLJournalClock{svc: spine.glSvc}).
 		WithGLPoster(w4cGLPoster{svc: spine.glSvc}).
 		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
 		WithAudit(auditSvc).
@@ -1990,6 +1991,30 @@ func (a w4cLandedCoster) OpenPayablesAsOf(ctx context.Context, asOf time.Time, b
 			PayeeLabel:       r.PayeeLabel,
 			CreatedAt:        r.CreatedAt,
 			UpdatedAt:        r.UpdatedAt,
+		}
+	}
+	return out, nil
+}
+
+// w4cGLJournalClock satisfies purchasing.GLJournalClock over the gl service's own
+// as-of filing rule (W2-9a round 2b, S2's P2 1): a document counts from its posting
+// journal's effective instant, so the aging ties to GL 2100 for a bill filed late
+// into a later open month exactly as the GL's own account reads count it.
+type w4cGLJournalClock struct{ svc *gl.Service }
+
+func (a w4cGLJournalClock) JournalEffectiveInstants(ctx context.Context, journalIDs []string) (map[string]time.Time, error) {
+	return a.svc.JournalEffectiveInstants(ctx, journalIDs)
+}
+
+func (a w4cGLJournalClock) RefJournalInstants(ctx context.Context, source string, refIDs []string) ([]purchasing.GLRefJournalInstant, error) {
+	entries, err := a.svc.RefJournalInstants(ctx, source, refIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]purchasing.GLRefJournalInstant, 0)
+	for _, refs := range entries {
+		for _, e := range refs {
+			out = append(out, purchasing.GLRefJournalInstant{RefID: e.SourceRefID, PostedAt: e.PostedAt, EffectiveAt: e.EffectiveAt})
 		}
 	}
 	return out, nil

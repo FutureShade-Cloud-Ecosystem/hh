@@ -57,6 +57,7 @@ func TestIntegration_W29A_APAging_CompositionRootTieAndRoute(t *testing.T) {
 		WithVendors(w4cVendorDirectory{pool: pool}).
 		WithLandedCoster(w4cLandedCoster{svc: landedSvc}).
 		WithLandedCostPayables(w4cLandedCoster{svc: landedSvc}).
+		WithGLJournalClock(w4cGLJournalClock{svc: glSvc}).
 		WithGLPoster(w4cGLPoster{svc: glSvc}).
 		WithRuleResolver(glRuleAdapter{svc: glSvc}).
 		WithBranches(item5BranchDirectory{pool: pool}).
