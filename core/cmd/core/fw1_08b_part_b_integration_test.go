@@ -104,3 +104,55 @@ func TestFW1_08b_PartB_HeadOfficeSetChecksItsCandidate(t *testing.T) {
 		}
 	})
 }
+
+// TestFW1_08b_PartB_HeadOfficeFallbackReadsTRTByCode pins the head office default's fallback
+// (FW1-08b part B, ruling 162): when gl_policy sets no head office branch, the read answers the
+// branch the TRT yard code names, and when no branch answers it refuses in words, never stamping
+// the fixed Trenton uuid a box with history does not carry.
+func TestFW1_08b_PartB_HeadOfficeFallbackReadsTRTByCode(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("reads_trt_by_code_when_the_policy_row_is_gone", func(t *testing.T) {
+		pool := freshMigratedDB(t, "fw108bpbcody")
+		mustExec(t, ctx, pool, `DELETE FROM gl_policy WHERE branch_id IS NULL`)
+		// Retire the fixed Trenton uuid's yard code and mint a NEW branch carrying the TRT code:
+		// the fallback must answer the code's branch, not the fixed uuid (ruling 162).
+		mustExec(t, ctx, pool, `UPDATE locations SET code = 'XRT' WHERE code = 'TRT'`)
+		var newTrtID string
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO locations (id, branch_id, parent_id, loc_type, code, name)
+			VALUES ($1::uuid, $1::uuid, NULL, 'BRANCH', 'TRT', 'Trenton renewed')
+			RETURNING id::text
+		`, uuid.NewString()).Scan(&newTrtID); err != nil {
+			t.Fatalf("mint the renewed TRT branch: %v", err)
+		}
+		repo := gl.NewRepository(pool)
+		svc := gl.NewService(repo).WithBranchFacts(glBranchFacts{repo: branches.NewRepository(pool)})
+		ho, err := svc.HeadOfficeBranchID(ctx)
+		if err != nil {
+			t.Fatalf("HeadOfficeBranchID through the code read: %v", err)
+		}
+		if ho != newTrtID {
+			t.Fatalf("HeadOfficeBranchID fallback = %q, want the branch the TRT code names (%q)", ho, newTrtID)
+		}
+	})
+
+	t.Run("refuses_in_words_when_no_branch_answers_the_code", func(t *testing.T) {
+		pool := freshMigratedDB(t, "fw108bpbnobranch")
+		mustExec(t, ctx, pool, `DELETE FROM gl_policy WHERE branch_id IS NULL`)
+		mustExec(t, ctx, pool, `UPDATE locations SET code = 'XRT' WHERE code = 'TRT'`)
+		repo := gl.NewRepository(pool)
+		svc := gl.NewService(repo).WithBranchFacts(glBranchFacts{repo: branches.NewRepository(pool)})
+		ho, err := svc.HeadOfficeBranchID(ctx)
+		if err == nil {
+			t.Fatalf("want the fallback's refusal in words when no branch answers the TRT code, got the uuid %q with no error", ho)
+		}
+		status, ok := gl.ErrorHTTPStatus(err)
+		if !ok {
+			t.Fatalf("the fallback's refusal must be a client error in words, never a 500; got %v", err)
+		}
+		if status != 422 {
+			t.Fatalf("the fallback's refusal status = %d, want 422; err=%v", status, err)
+		}
+	})
+}
