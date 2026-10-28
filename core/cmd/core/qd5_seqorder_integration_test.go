@@ -101,6 +101,11 @@ RETURNING id::text`, tag+"-OPEN", customerID, qd5Trenton).Scan(&invoiceID); err 
 	}
 	e.t.Cleanup(func() {
 		c := context.Background()
+		var payIDs []string
+		if err := e.pool.QueryRow(c,
+			`SELECT COALESCE(array_agg(id::text), '{}') FROM payments WHERE customer_id = $1::uuid`, customerID).Scan(&payIDs); err != nil {
+			e.t.Errorf("read the settle's payment ids: %v", err)
+		}
 		for _, sql := range []string{
 			`DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`,
 			`DELETE FROM payments WHERE customer_id = $1::uuid`,
@@ -111,6 +116,20 @@ RETURNING id::text`, tag+"-OPEN", customerID, qd5Trenton).Scan(&invoiceID); err 
 		} {
 			if _, err := e.pool.Exec(c, sql, customerID); err != nil {
 				e.t.Errorf("sweep the AR customer: %v", err)
+			}
+		}
+		// Every QD-5 leg leaves the shared gate database as it found it, and later legs run
+		// whole-database checks that a stranger's leftovers fail. The settle's payment.received
+		// row names only the payment id in its payload, so the rows are counted by the ids the
+		// leg captured before its own deletes ran.
+		if len(payIDs) > 0 {
+			var stray int
+			if err := e.pool.QueryRow(c,
+				`SELECT count(*) FROM events_outbox WHERE payload->>'payment_id' = ANY($1::text[])`, payIDs).Scan(&stray); err != nil {
+				e.t.Errorf("count the settle's outbox rows: %v", err)
+			}
+			if stray != 0 {
+				e.t.Errorf("the leg left %d events_outbox row(s) naming its own payments; the cleanup must take what the settle planted", stray)
 			}
 		}
 	})
