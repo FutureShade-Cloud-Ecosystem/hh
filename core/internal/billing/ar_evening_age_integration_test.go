@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
@@ -81,32 +83,121 @@ func TestIntegrationEveningAge_StatementLinesFileAnEveningUnderTheHouseDay(t *te
 	}
 }
 
-// The tie-out balance counts an invoice only from its issue day on the dealer's calendar: an invoice
-// issue-dated the UTC day of the pinned instant is one day ahead of the house day at that hour, so
-// the 1100 balance must not carry it yet. The non-invoice arm stays on the raw instant (a payment or
-// NSF is an instant, not a day), so only the date arm moves.
-func TestIntegrationEveningAge_TieOutBalanceCutsTheIssueDateOnTheHouseDay(t *testing.T) {
+// An invoice finalized now is on the books NOW and ties to GL 1100. The ledger dates an invoice's
+// journal by its FINALIZE instant (gl/posting.go builds the journal's OccurredAt from FinalizedAt;
+// InvoiceForGL reads COALESCE(finalized_at, created_at)), so an invoice planted the way production
+// writers plant it, issue day the dealer's day taken through houseday (the repository's own zone)
+// and finalized this instant, moves GL 1100, the 1100 tie figure and the aging TOGETHER under the
+// evening pin, whatever the UTC day has rolled to. No house day read follows the UTC day: every
+// figure in this leg moves by exactly the invoice's total, at the instant it finalized.
+func TestIntegrationEveningAge_AnInvoiceFinalizedNowIsOnTheBooksAndTiesToGL1100(t *testing.T) {
 	pool := intPool(t)
 	repo := NewRepository(pool)
 	ctx := context.Background()
 	n := ns(t)
 	cust := seedCustomer(t, pool, n)
 
-	at := houseday.JustAfterUTCDayChange(time.Now())
-	utcDay := at.UTC().Format("2006-01-02")
+	// The real GL consumer, wired the way the app wires it: billing's invoice reader behind
+	// gl.Service, the finalize event drained out of the transactional outbox.
+	glSvc := gl.NewService(gl.NewRepository(pool)).WithInvoiceReader(repo)
+	dispatch := notify.NewDispatcher(notify.NewPgOutboxStore(pool), nil)
+	glSvc.RegisterPostingHandlers(dispatch)
 
-	base, err := repo.ARBalanceCents(ctx, at, "")
-	if err != nil {
-		t.Fatalf("baseline AR: %v", err)
+	gl1100 := func() int64 {
+		var v int64
+		if err := pool.QueryRow(ctx, `SELECT COALESCE(SUM(COALESCE(l.debit_cents,0)-COALESCE(l.credit_cents,0)),0)
+		   FROM gl_journal_lines l JOIN gl_journals j ON j.id = l.journal_id JOIN gl_accounts a ON a.id = l.account_id
+		  WHERE a.code = '1100' AND j.status = 'POSTED' AND j.posted_at <= now()`).Scan(&v); err != nil {
+			t.Fatalf("read GL 1100: %v", err)
+		}
+		return v
 	}
-	seedInvoice(t, pool, cust, n, invSpec{no: "AR-EVE", status: "FINALIZED", issue: utcDay, total: 8000, balance: 8000, finalized: true})
-	got, err := repo.ARBalanceCents(ctx, at, "")
-	if err != nil {
-		t.Fatalf("AR after seeding: %v", err)
+	figures := func() (glBal, tie, aging int64) {
+		glBal = gl1100()
+		var err error
+		if tie, err = repo.ARBalanceCents(ctx, time.Now(), ""); err != nil {
+			t.Fatalf("read the tie figure: %v", err)
+		}
+		rows, err := repo.AgingRowsIn(ctx, time.Now(), 60, "", BranchReach{Global: true})
+		if err != nil {
+			t.Fatalf("read the aging: %v", err)
+		}
+		for _, row := range rows {
+			aging += row.TotalCents
+		}
+		return glBal, tie, aging
 	}
-	if delta := got - base; delta != 0 {
-		t.Fatalf("an invoice issue-dated %s, one UTC day ahead of the dealer's day at %s, moved the tie-out balance by %d; the issue date arm must cut on the house day",
-			utcDay, at.UTC().Format(time.RFC3339), delta)
+
+	// The drain below must move the books by THIS leg's invoice alone: the shared outbox carries
+	// other tests' leftover rows, and posting their journals here would reach into windows other
+	// legs read (a backdated finalize journal lands inside the June residue probe in gl). So the
+	// leg takes FOR UPDATE locks on every other PENDING row and holds them while it drains: the
+	// claim reads FOR UPDATE SKIP LOCKED, ordered by occurred_at, so the only row the dispatcher
+	// can settle is this leg's own. The lock transaction rolls back and the leftovers stand as
+	// they were found.
+	gl0, tie0, aging0 := figures()
+
+	houseDay := houseday.Today(time.Now)
+	var id string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		 VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $4::date + 30, 8000, 0, 8000, 8000, now(), 'INVOICE')
+		 RETURNING id::text`,
+		n+"-EVE", cust, trentonBranch, houseDay).Scan(&id); err != nil {
+		t.Fatalf("plant the invoice on the dealer's day %s: %v", houseDay, err)
+	}
+	key := "ar.invoice.finalized:" + id
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE idempotency_key = $1)`, key)
+		_, _ = pool.Exec(c, `DELETE FROM gl_journals WHERE idempotency_key = $1`, key)
+		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'invoice_id' = $1`, id)
+		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE id = $1::uuid`, id)
+	})
+	if _, err := pool.Exec(ctx, `INSERT INTO events_outbox (topic, payload) VALUES ('ar.invoice.finalized', jsonb_build_object('invoice_id', $1::text))`, id); err != nil {
+		t.Fatalf("emit the finalize event: %v", err)
+	}
+
+	locks, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin the lock transaction: %v", err)
+	}
+	defer func() { _ = locks.Rollback(ctx) }()
+	if _, err := locks.Exec(ctx, `SELECT event_id FROM events_outbox WHERE status = 'PENDING' AND payload->>'invoice_id' IS DISTINCT FROM $1 FOR UPDATE`, id); err != nil {
+		t.Fatalf("lock the other pending rows: %v", err)
+	}
+
+	var posted int
+	for i := 0; i < 300 && posted == 0; i++ {
+		dispatch.DrainOnce(ctx)
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM gl_journals WHERE idempotency_key = $1`, key).Scan(&posted); err != nil {
+			t.Fatalf("read the journal: %v", err)
+		}
+	}
+	if posted == 0 {
+		t.Fatalf("the finalize event never posted its journal")
+	}
+	var postedAt, dbNow time.Time
+	if err := pool.QueryRow(ctx, `SELECT posted_at, now() FROM gl_journals WHERE idempotency_key = $1`, key).Scan(&postedAt, &dbNow); err != nil {
+		t.Fatalf("read the journal's posted_at: %v", err)
+	}
+	if postedAt.After(dbNow) {
+		t.Fatalf("the journal posted at %s, after now (%s): an invoice finalized now is on the books now", postedAt.Format(time.RFC3339), dbNow.Format(time.RFC3339))
+	}
+	if postedDay := houseday.Today(func() time.Time { return postedAt }); postedDay != houseDay {
+		t.Fatalf("the journal posted on house day %s, want %s: an invoice finalized now posts on the dealer's day", postedDay, houseDay)
+	}
+
+	gl1, tie1, aging1 := figures()
+	if moved := gl1 - gl0; moved != 8000 {
+		t.Fatalf("GL 1100 moved %d for the invoice finalized now, want 8000: the journal is dated by the finalize instant and the control account carries it now", moved)
+	}
+	if moved := tie1 - tie0; moved != 8000 {
+		t.Fatalf("the 1100 tie figure moved %d for the invoice finalized now, want 8000 (the invoice joins the books at its finalize instant, whatever the UTC day)", moved)
+	}
+	if moved := aging1 - aging0; moved != 8000 {
+		t.Fatalf("the aging moved %d for the invoice finalized now, want 8000 (the aging, the tie figure and GL 1100 read one rule)", moved)
 	}
 }
 

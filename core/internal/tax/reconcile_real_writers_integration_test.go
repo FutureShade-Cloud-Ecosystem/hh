@@ -129,7 +129,7 @@ func TestIntegration_FW1_11_CreditMemoThroughRealWriterSubtractsOnce(t *testing.
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
-		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE, CURRENT_DATE,
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date,
 		        100000, 13000, 113000, 113000, now(), 'INVOICE')
 		RETURNING id::text`,
 		invNo, customerID, fw11TRT).Scan(&invID); err != nil {
@@ -410,7 +410,7 @@ func TestIntegration_FW1_11_MarkedOpeningInvoiceIsExcludedAndListed(t *testing.T
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type, metadata)
-		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE, CURRENT_DATE,
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date,
 		        30000, 5000, 35000, 35000, now(), 'INVOICE', '{"opening_balance": true}'::jsonb)
 		RETURNING id::text`,
 		invNo, customerID, fw11TRT).Scan(&invID); err != nil {
@@ -477,7 +477,7 @@ func TestIntegration_FW1_11_UnpostedInvoiceWithoutTheMarkerStillShowsAsVariance(
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type, metadata)
-		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE, CURRENT_DATE,
+		VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', (now() AT TIME ZONE 'America/Toronto')::date, (now() AT TIME ZONE 'America/Toronto')::date,
 		        40000, 7000, 47000, 47000, now(), 'INVOICE', '{}'::jsonb)
 		RETURNING id::text`,
 		invNo, customerID, fw11TRT).Scan(&invID); err != nil {

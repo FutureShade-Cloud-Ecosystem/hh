@@ -15,6 +15,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/google/uuid"
 )
 
@@ -57,6 +58,7 @@ func TestIntegration_FW1_12b_ApplyCreditMemoAndAccountCredit_TiesTo1100AndRevers
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
 		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 	})
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	// Seed an open credit memo (-$150.00 = -15000 cents) and a later open invoice ($500.00 = 50000 cents).
 	var memoID, invID string
@@ -138,6 +140,7 @@ func TestIntegration_FW1_12b_ApplyCreditMemoAndAccountCredit_TiesTo1100AndRevers
 		InvoiceID:      invID,
 		AmountCents:    12000,
 		Reason:         "Apply return credit memo to subsequent invoice",
+		OrgID:          applyOrg,
 		IdempotencyKey: n + "-key-memo-1",
 	}, true)
 	if err != nil {
@@ -156,6 +159,7 @@ func TestIntegration_FW1_12b_ApplyCreditMemoAndAccountCredit_TiesTo1100AndRevers
 		InvoiceID:      invID,
 		AmountCents:    10000,
 		Reason:         "Apply cancelled deposit credit to invoice",
+		OrgID:          applyOrg,
 		IdempotencyKey: n + "-key-acct-1",
 	}, true)
 	if err != nil {
@@ -174,6 +178,7 @@ func TestIntegration_FW1_12b_ApplyCreditMemoAndAccountCredit_TiesTo1100AndRevers
 		InvoiceID:      invID,
 		AmountCents:    10000,
 		Reason:         "Apply cancelled deposit credit to invoice",
+		OrgID:          applyOrg,
 		IdempotencyKey: n + "-key-acct-1",
 	}, true)
 	if err != nil {
@@ -233,6 +238,9 @@ func TestIntegration_FW1_12b_RefusalsLeaveNothingApplied(t *testing.T) {
 
 	custID := seedCustomer(t, pool, n+"-C1")
 	otherCustID := seedCustomer(t, pool, n+"-C2")
+	// The key's scope is the caller's org (FW1-12c) and the key table takes a real org (0448), so
+	// the door's callers here carry a planted org's id.
+	applyOrg := plantApplyOrg(t, pool, n)
 	t.Cleanup(func() {
 		c := context.Background()
 		for _, cid := range []string{custID, otherCustID} {
@@ -277,6 +285,7 @@ func TestIntegration_FW1_12b_RefusalsLeaveNothingApplied(t *testing.T) {
 		InvoiceID:      invID,
 		AmountCents:    5000,
 		Reason:         "Valid reason",
+		OrgID:          applyOrg,
 		IdempotencyKey: n + "-k0",
 	}
 
@@ -307,6 +316,11 @@ func TestIntegration_FW1_12b_RefusalsLeaveNothingApplied(t *testing.T) {
 	wrongOrg.IdempotencyKey = n + "-k-wrong-org"
 	if _, err := applySvc.Apply(ctx, wrongOrg, true); err == nil || !strings.Contains(err.Error(), "another org") {
 		t.Fatalf("other org err = %v, want another org refusal", err)
+	}
+	// The invoice's org is put back on the caller's own org, so the later legs of this test (the
+	// ceilings and the spent key) stand where they stood before the wrong org leg moved it.
+	if _, err := pool.Exec(ctx, `UPDATE invoices SET org_id = $2::uuid WHERE id = $1::uuid`, invID, applyOrg); err != nil {
+		t.Fatalf("reset invoice org_id: %v", err)
 	}
 	// Branch outside caller's reach refused.
 	outOfReach := baseIn
@@ -374,6 +388,7 @@ func TestIntegration_FW1_12b_ASpentCreditOutOfReachAnswersNotFound(t *testing.T)
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
 		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 	})
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	// The target invoice sits at Trenton, inside the caller's reach; every credit sits at Kingston,
 	// outside it, and spending them takes a Kingston invoice of its own (a credit applies to its own
@@ -424,7 +439,7 @@ func TestIntegration_FW1_12b_ASpentCreditOutOfReachAnswersNotFound(t *testing.T)
 
 	// Spend the Kingston memo and the Kingston account credit against the Kingston invoice, with a
 	// caller who reaches every branch, so their state on the books is spent.
-	global := ApplyCreditInput{CustomerID: custID, InvoiceID: kingstonInvID, CanAccessBranch: nil}
+	global := ApplyCreditInput{CustomerID: custID, InvoiceID: kingstonInvID, CanAccessBranch: nil, OrgID: applyOrg}
 	if _, err := applySvc.Apply(ctx, func() ApplyCreditInput {
 		in := global
 		in.CreditKind, in.CreditID, in.AmountCents = CreditKindMemo, spentMemoID, 8000
@@ -450,6 +465,7 @@ func TestIntegration_FW1_12b_ASpentCreditOutOfReachAnswersNotFound(t *testing.T)
 	// is the leg S6 asked for: today the not open judgement runs first and leaks the state.
 	_, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindMemo, CreditID: spentMemoID, InvoiceID: invID,
+		OrgID:       applyOrg,
 		AmountCents: 1, Reason: "spent and out of reach", IdempotencyKey: n + "-k-r2-spent",
 		CanAccessBranch: trentonOnly,
 	}, true)
@@ -460,6 +476,7 @@ func TestIntegration_FW1_12b_ASpentCreditOutOfReachAnswersNotFound(t *testing.T)
 	// Same rule for the ACCOUNT group: a spent account credit out of reach answers 404.
 	_, err = applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: acctCreditID, InvoiceID: invID,
+		OrgID:       applyOrg,
 		AmountCents: 1, Reason: "spent and out of reach", IdempotencyKey: n + "-k-r2-spent-acct",
 		CanAccessBranch: trentonOnly,
 	}, true)
@@ -470,6 +487,7 @@ func TestIntegration_FW1_12b_ASpentCreditOutOfReachAnswersNotFound(t *testing.T)
 	// An OPEN credit out of reach keeps answering 404 (it already did; the move keeps it so).
 	_, err = applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindMemo, CreditID: openMemoID, InvoiceID: invID,
+		OrgID:       applyOrg,
 		AmountCents: 1, Reason: "open and out of reach", IdempotencyKey: n + "-k-r2-open",
 		CanAccessBranch: trentonOnly,
 	}, true)
@@ -481,6 +499,7 @@ func TestIntegration_FW1_12b_ASpentCreditOutOfReachAnswersNotFound(t *testing.T)
 	// other half.
 	unknown := ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindMemo, CreditID: uuid.NewString(), InvoiceID: invID,
+		OrgID:       applyOrg,
 		AmountCents: 1, Reason: "unknown credit", IdempotencyKey: n + "-k-r2-unknown",
 		CanAccessBranch: trentonOnly,
 	}
@@ -512,6 +531,7 @@ func TestIntegration_FW1_12b_TwoAppliesNamingDifferentRowsOfOneGroupCannotBothPa
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
 		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 	})
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	issue := time.Now().UTC().AddDate(0, 0, -3).Format("2006-01-02")
 	due := time.Now().UTC().AddDate(0, 0, 27).Format("2006-01-02")
@@ -545,6 +565,7 @@ func TestIntegration_FW1_12b_TwoAppliesNamingDifferentRowsOfOneGroupCannotBothPa
 	// (+4000) inside the group; 6000 stays open.
 	if _, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: inv1,
+		OrgID:       applyOrg,
 		AmountCents: 4000, Reason: "first slice", IdempotencyKey: n + "-k-first",
 	}, true); err != nil {
 		t.Fatalf("first apply: %v", err)
@@ -577,6 +598,7 @@ func TestIntegration_FW1_12b_TwoAppliesNamingDifferentRowsOfOneGroupCannotBothPa
 	race := func(namedRow, invoice, key string) {
 		app, err := applySvc.Apply(ctx, ApplyCreditInput{
 			CustomerID: custID, CreditKind: CreditKindAccount, CreditID: namedRow, InvoiceID: invoice,
+			OrgID:       applyOrg,
 			AmountCents: 6000, Reason: "the rest of the credit", IdempotencyKey: key,
 		}, true)
 		done <- outcome{app, err}
@@ -670,6 +692,7 @@ func TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce(t *testing
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
 		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 	})
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	issue := time.Now().UTC().AddDate(0, 0, -3).Format("2006-01-02")
 	due := time.Now().UTC().AddDate(0, 0, 27).Format("2006-01-02")
@@ -705,6 +728,7 @@ func TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce(t *testing
 	// two records sit on two different invoices naming two different rows of the one group.
 	app1, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: inv1,
+		OrgID:       applyOrg,
 		AmountCents: 4000, Reason: "first slice", IdempotencyKey: n + "-k-first",
 	}, true)
 	if err != nil {
@@ -719,6 +743,7 @@ func TestIntegration_FW1_12b_TwoReversalsOfOneGroupRestoreExactlyOnce(t *testing
 	}
 	app2, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: offsetID, InvoiceID: inv2,
+		OrgID:       applyOrg,
 		AmountCents: 6000, Reason: "the rest of the credit", IdempotencyKey: n + "-k-second",
 	}, true)
 	if err != nil {
@@ -899,6 +924,7 @@ func TestIntegration_FW1_12b_AReversalAndAnApplyOfOneGroupNeverDeadlock(t *testi
 				_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
 				_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 			})
+			applyOrg := plantApplyOrg(t, pool, tag)
 
 			var creditID, groupRef string
 			if err := pool.QueryRow(ctx, `
@@ -928,6 +954,7 @@ func TestIntegration_FW1_12b_AReversalAndAnApplyOfOneGroupNeverDeadlock(t *testi
 			// invoice 1 and is what the staged reversal undoes.
 			app1, err := applySvc.Apply(ctx, ApplyCreditInput{
 				CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: inv1,
+				OrgID:       applyOrg,
 				AmountCents: 4000, Reason: "first slice", IdempotencyKey: tag + "-k-first",
 			}, true)
 			if err != nil {
@@ -988,6 +1015,7 @@ func TestIntegration_FW1_12b_AReversalAndAnApplyOfOneGroupNeverDeadlock(t *testi
 			go func() {
 				_, e := applySvc.Apply(ctx, ApplyCreditInput{
 					CustomerID: custID, CreditKind: CreditKindAccount, CreditID: offsetID, InvoiceID: inv2,
+					OrgID:       applyOrg,
 					AmountCents: 1000, Reason: "one more slice", IdempotencyKey: tag + "-k-second",
 				}, true)
 				done <- outcome{"the apply", e}
@@ -1101,6 +1129,7 @@ func TestIntegration_FW1_12b_AMemoReversalAndAnApplyOfOneMemoNeverDeadlock(t *te
 				_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
 				_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 			})
+			applyOrg := plantApplyOrg(t, pool, tag)
 
 			// One open credit memo of -10000 (a CREDIT_MEMO invoice, S6's probe's own
 			// spelling) and two invoices of 10000.
@@ -1131,6 +1160,7 @@ func TestIntegration_FW1_12b_AMemoReversalAndAnApplyOfOneMemoNeverDeadlock(t *te
 			// which leaves the memo at -6000 with 6000 open.
 			app1, err := applySvc.Apply(ctx, ApplyCreditInput{
 				CustomerID: custID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: inv1,
+				OrgID:       applyOrg,
 				AmountCents: 4000, Reason: "first slice", IdempotencyKey: tag + "-k-first",
 			}, true)
 			if err != nil {
@@ -1184,6 +1214,7 @@ func TestIntegration_FW1_12b_AMemoReversalAndAnApplyOfOneMemoNeverDeadlock(t *te
 			go func() {
 				_, e := applySvc.Apply(ctx, ApplyCreditInput{
 					CustomerID: custID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: inv2,
+					OrgID:       applyOrg,
 					AmountCents: 1000, Reason: "one more slice", IdempotencyKey: tag + "-k-second",
 				}, true)
 				done <- outcome{"the apply", e}
@@ -1314,10 +1345,23 @@ func TestIntegration_FW1_12b_AMemoApplyAndItsReversalOfOneInvoiceNeverDeadlockAt
 				custID := seedCustomer(t, pool, tag)
 				t.Cleanup(func() {
 					c := context.Background()
-					_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
-					_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
-					_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+					if _, err := pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID); err != nil {
+						t.Errorf("the deadlock leg %s: remove the customer transactions: %v", tag, err)
+					}
+					// The credit application keys reference the invoices (0447), so they go before
+					// the invoices: the invoice delete is refused by that foreign key while any of
+					// them stands.
+					if _, err := pool.Exec(c, `DELETE FROM credit_application_keys WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, custID); err != nil {
+						t.Errorf("the deadlock leg %s: remove the credit application keys: %v", tag, err)
+					}
+					if _, err := pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID); err != nil {
+						t.Errorf("the deadlock leg %s: remove the invoices: %v", tag, err)
+					}
+					if _, err := pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID); err != nil {
+						t.Errorf("the deadlock leg %s: remove the customer: %v", tag, err)
+					}
 				})
+				applyOrg := plantApplyOrg(t, pool, tag)
 
 				// One open credit memo of -10000 and one invoice of 10000, the ids forced
 				// so the pair sits in the sort this case names (S6's probe's own spelling).
@@ -1349,6 +1393,7 @@ func TestIntegration_FW1_12b_AMemoApplyAndItsReversalOfOneInvoiceNeverDeadlockAt
 				// invoice, which leaves the memo at -9000 with 9000 open.
 				app1, err := applySvc.Apply(ctx, ApplyCreditInput{
 					CustomerID: custID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: invID,
+					OrgID:       applyOrg,
 					AmountCents: 1000, Reason: "first slice", IdempotencyKey: tag + "-k-first",
 				}, true)
 				if err != nil {
@@ -1402,6 +1447,7 @@ func TestIntegration_FW1_12b_AMemoApplyAndItsReversalOfOneInvoiceNeverDeadlockAt
 				go func() {
 					_, e := applySvc.Apply(ctx, ApplyCreditInput{
 						CustomerID: custID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: invID,
+						OrgID:       applyOrg,
 						AmountCents: 1000, Reason: "one more slice", IdempotencyKey: tag + "-k-second",
 					}, true)
 					done <- outcome{"the apply", e}
@@ -1497,6 +1543,7 @@ func TestIntegration_FW1_12b_MemoApplicationSurvivesAPastDateAging(t *testing.T)
 
 	probeID := seedCustomer(t, pool, n+"-PROBE")
 	custID := seedCustomer(t, pool, n+"-PAST")
+	applyOrg := plantApplyOrg(t, pool, n)
 	t.Cleanup(func() {
 		c := context.Background()
 		for _, cid := range []string{probeID, custID} {
@@ -1559,6 +1606,7 @@ func TestIntegration_FW1_12b_MemoApplicationSurvivesAPastDateAging(t *testing.T)
 	}
 	if _, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: invID,
+		OrgID:       applyOrg,
 		AmountCents: 5000, Reason: "past date leg", IdempotencyKey: n + "-k-past",
 	}, true); err != nil {
 		t.Fatalf("apply memo: %v", err)
@@ -1605,6 +1653,7 @@ func TestIntegration_FW1_12b_AWriteOffRowIsNotACredit(t *testing.T) {
 	n := ns(t)
 
 	writeOffCust := seedCustomer(t, pool, n+"-WO")
+	applyOrg := plantApplyOrg(t, pool, n)
 	t.Cleanup(func() {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, writeOffCust)
@@ -1638,6 +1687,7 @@ func TestIntegration_FW1_12b_AWriteOffRowIsNotACredit(t *testing.T) {
 	}
 	if _, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: writeOffCust, CreditKind: CreditKindAccount, CreditID: writeOffID, InvoiceID: woInvID,
+		OrgID:       applyOrg,
 		AmountCents: 1000, Reason: "write off is not a credit", IdempotencyKey: n + "-k-wo",
 	}, true); !errors.As(err, &NoSuchCreditError{}) {
 		t.Fatalf("applying a WRITE_OFF row err = %v, want NoSuchCreditError: a write off is never value the customer holds", err)
@@ -1655,6 +1705,7 @@ func TestIntegration_FW1_12b_ReversalRefusedOnAVoidedMemo(t *testing.T) {
 	n := ns(t)
 
 	voidCust := seedCustomer(t, pool, n+"-VOID")
+	applyOrg := plantApplyOrg(t, pool, n)
 	t.Cleanup(func() {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, voidCust)
@@ -1686,6 +1737,7 @@ func TestIntegration_FW1_12b_ReversalRefusedOnAVoidedMemo(t *testing.T) {
 	}
 	app, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: voidCust, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: vInvID,
+		OrgID:       applyOrg,
 		AmountCents: 5000, Reason: "applied before the void", IdempotencyKey: n + "-k-void",
 	}, true)
 	if err != nil {
@@ -1727,6 +1779,7 @@ func TestIntegration_FW1_12b_HandlerAndDetailRoundTrip(t *testing.T) {
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
 		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 	})
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	issue := time.Now().UTC().AddDate(0, 0, -2).Format("2006-01-02")
 	due := time.Now().UTC().AddDate(0, 0, 28).Format("2006-01-02")
@@ -1768,7 +1821,7 @@ func TestIntegration_FW1_12b_HandlerAndDetailRoundTrip(t *testing.T) {
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/ar/credits/apply", strings.NewReader(string(rawApply))).WithContext(mgrCtx)
 	rec := httptest.NewRecorder()
-	handler.apply(rec, req, guards.StaffCaller{})
+	handler.apply(rec, req, guards.StaffCaller{StaffScope: authz.StaffScope{OrgID: applyOrg}})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("handler apply status = %d body = %s, want 201", rec.Code, rec.Body.String())
 	}

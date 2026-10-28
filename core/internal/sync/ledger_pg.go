@@ -95,11 +95,13 @@ func (l *PgKeyLedger) Lock(ctx context.Context, f ScopeFilter, scope, key string
 	}, nil
 }
 
-// Lookup reads the stored entry for one key.
+// Lookup reads the stored entry for one key. bound_by is nullable (0449's
+// pre migration rows), read back as the empty string, the no-binder answer
+// the gate treats as an old row.
 func (l *PgKeyLedger) Lookup(ctx context.Context, f ScopeFilter, scope, key string) (LedgerEntry, bool, error) {
 	var e LedgerEntry
 	rows, err := l.pool.Query(ctx,
-		`SELECT body_hash, entity_id FROM sync_op_hashes
+		`SELECT body_hash, entity_id, COALESCE(bound_by, '') FROM sync_op_hashes
 		  WHERE org_id = $1::uuid AND tenant_id = $2 AND scope = $3 AND client_id = $4::uuid`,
 		f.OrgID, tenantSlot(f), scope, key)
 	if err != nil {
@@ -109,7 +111,7 @@ func (l *PgKeyLedger) Lookup(ctx context.Context, f ScopeFilter, scope, key stri
 	if !rows.Next() {
 		return LedgerEntry{}, false, rows.Err()
 	}
-	if err := rows.Scan(&e.Hash, &e.EntityID); err != nil {
+	if err := rows.Scan(&e.Hash, &e.EntityID, &e.BoundBy); err != nil {
 		return LedgerEntry{}, false, err
 	}
 	return e, true, nil
@@ -120,9 +122,9 @@ func (l *PgKeyLedger) Lookup(ctx context.Context, f ScopeFilter, scope, key stri
 // race; the conflict clause only keeps a direct caller honest.
 func (l *PgKeyLedger) Remember(ctx context.Context, f ScopeFilter, scope, key string, e LedgerEntry) error {
 	_, err := l.pool.Exec(ctx,
-		`INSERT INTO sync_op_hashes (org_id, tenant_id, scope, client_id, body_hash, entity_id)
-		 VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6)
+		`INSERT INTO sync_op_hashes (org_id, tenant_id, scope, client_id, body_hash, entity_id, bound_by)
+		 VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7)
 		 ON CONFLICT (org_id, tenant_id, scope, client_id) DO NOTHING`,
-		f.OrgID, tenantSlot(f), scope, key, e.Hash, e.EntityID)
+		f.OrgID, tenantSlot(f), scope, key, e.Hash, e.EntityID, e.BoundBy)
 	return err
 }

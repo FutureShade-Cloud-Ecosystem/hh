@@ -61,14 +61,17 @@ func TestIntegration_FW111_TheSeedMarksEveryJournalLessDocumentItPlants(t *testi
 	pool := freshMigratedDB(t, "fw111seed")
 
 	// The walk's own world, with the SEED'S CLOCK PINNED. The seed reads its own day from the
-	// database's clock (CURRENT_DATE), which is the very thing that dates the documents, so the pin
-	// is applied to the seed's own text: every CURRENT_DATE becomes the pinned 31st. Nothing else in
-	// the seed is dated from the clock in a way the tax tie-out reads.
+	// database's clock, and the day it reads is the DEALER's day, the house's own SQL spelling
+	// (now() AT TIME ZONE 'America/Toronto')::date, which is the very thing that dates the
+	// documents, so the pin is applied to the seed's own text: the dealer's day expression becomes
+	// the pinned 31st. Nothing else in the seed is dated from the clock in a way the tax tie-out
+	// reads.
 	body, err := seedFS.ReadFile("dibbits_seed.sql")
 	if err != nil {
 		t.Fatalf("reading the embedded seed: %v", err)
 	}
-	pinned := strings.ReplaceAll(string(body), "CURRENT_DATE", "DATE '"+fw111PinnedDay+"'")
+	pinned := strings.ReplaceAll(string(body), "(now() AT TIME ZONE 'America/Toronto')::date", "DATE '"+fw111PinnedDay+"'")
+	pinned = strings.ReplaceAll(pinned, "CURRENT_DATE", "DATE '"+fw111PinnedDay+"'")
 	if pinned == string(body) {
 		t.Fatal("the seed names no day to pin: the pinned seed would be the unpinned seed and the leg would prove nothing")
 	}

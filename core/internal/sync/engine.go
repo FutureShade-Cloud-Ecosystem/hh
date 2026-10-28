@@ -210,6 +210,72 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 		if err != nil {
 			return apigen.SyncPushResult{}, err
 		}
+		if bound {
+			// The ledger is keyed by org, tenant, scope and key, never by
+			// branch, and bound_by names the actor whose push first applied
+			// the key (migration 0449). The gate's question is now WHO is
+			// replaying, and three cases follow that must not be confused:
+			//
+			// The BINDER replays: the key keeps its bound answer, ALWAYS,
+			// whatever the binder's own Load says. Rows are not the only
+			// thing that moves after a key applied: an order moves branch,
+			// and a store whose Load fences on a branch stamped at create
+			// time (pick and weights stamp the order's branch) then hides
+			// the row from the very caller that created it. Hiding there
+			// would send the binder's replay down the plain path, where a
+			// create fence reading the order's CURRENT branch passes and
+			// the key applies a SECOND time; the bound answer (a replay is
+			// applied with no seq, another body is key_reused) is the
+			// idempotent one.
+			//
+			// A caller who is NOT the binder: the gate asks the caller's
+			// Load, and on a miss asks the store's optional
+			// BoundEntityExists, the entity's existence for every caller
+			// of the scope at once (org and tenant only, tombstone aware,
+			// never the caller-side fence Load speaks). A LIVE entity the
+			// caller cannot see is answered the seam's refusal, row not
+			// found, taken here and never by store.Create: the key is
+			// already spent in the org, the caller learns only the
+			// indistinguishable miss, and a create fence reading the
+			// entity's current state can no longer mint a second row for a
+			// spent key. The entity GONE for everyone (deleted,
+			// tombstoned), a store that cannot answer existence, and a key
+			// with no entity to check keep the bound answer, the pre-gate
+			// behaviour: the gate fails toward idempotency, never toward a
+			// second create.
+			//
+			// A row with NO binder (bound_by NULL, bound before 0449, or
+			// empty, bound by a push that carried no actor) keeps the bound
+			// answer for every caller, like the store-without-the-method
+			// case: with the binder unknowable, refusing could answer the
+			// owner's own replay with a refusal, and hiding could apply a
+			// second time. Those rows age out with the keys they hold.
+			//
+			// A fault in either read fails the push retryable (classified),
+			// never as a verdict on the operation.
+			if entry.BoundBy != "" && entry.BoundBy != f.Actor {
+				id := entry.EntityID
+				if id == "" {
+					id, _ = op.Payload["id"].(string)
+				}
+				if id != "" {
+					if _, visible, lerr := store.Load(ctx, f, id); lerr != nil {
+						return e.classified(ctx, info, f, op, id, lerr)
+					} else if !visible {
+						exists, xerr := boundEntityExists(ctx, store, f, id)
+						if xerr != nil {
+							return e.classified(ctx, info, f, op, id, xerr)
+						}
+						if exists {
+							// A live entity this caller cannot see: the
+							// fenced refusal, and store.Create is never
+							// reached for a bound key whose entity exists.
+							return e.auditRejected(ctx, info, f, op, id, ErrRowNotFound), nil
+						}
+					}
+				}
+			}
+		}
 		if bound && entry.Hash != hash {
 			return e.keyReused(ctx, info, f, op, entry.EntityID), nil
 		}
@@ -246,7 +312,7 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 		return res, nil
 	case opUpdate:
 		id, _ := op.Payload["id"].(string)
-		row, ok, err := store.Load(ctx, f, id)
+		row, ok, err := loadWritable(ctx, store, f, id)
 		if err != nil {
 			return e.classified(ctx, info, f, op, id, err)
 		}
@@ -268,7 +334,7 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 		return res, nil
 	case opDelete:
 		id, _ := op.Payload["id"].(string)
-		row, ok, err := store.Load(ctx, f, id)
+		row, ok, err := loadWritable(ctx, store, f, id)
 		if err != nil {
 			return e.classified(ctx, info, f, op, id, err)
 		}
@@ -297,6 +363,27 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 	// validOp pinned the op vocabulary; this arm is unreachable by
 	// construction and fails closed.
 	return e.auditRejected(ctx, info, f, op, "", fmt.Errorf("sync: unknown op %q", op.Op)), nil
+}
+
+// boundEntityExists asks the store's optional existence read for the
+// bound key gate. A store that does not implement BoundEntityChecker
+// answers no, which keeps the bound answer: the gate fails toward
+// idempotency, never toward a second create.
+func boundEntityExists(ctx context.Context, store Store, f ScopeFilter, id string) (bool, error) {
+	if c, ok := store.(BoundEntityChecker); ok {
+		return c.BoundEntityExists(ctx, f, id)
+	}
+	return false, nil
+}
+
+// loadWritable is the update and delete paths' row read: the store's own
+// writable read when it declares one (WritePathLoader), Load as before
+// when it does not.
+func loadWritable(ctx context.Context, store Store, f ScopeFilter, id string) (RowState, bool, error) {
+	if w, ok := store.(WritePathLoader); ok {
+		return w.LoadWritable(ctx, f, id)
+	}
+	return store.Load(ctx, f, id)
 }
 
 // classified sorts one store error: the seam's declared refusals are the
@@ -391,7 +478,7 @@ func (e *Engine) remember(ctx context.Context, info ScopeInfo, f ScopeFilter, op
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ledgerWriteBound)
 	defer cancel()
-	return e.ledger.Remember(wctx, f, info.Name, op.ClientId, LedgerEntry{Hash: hash, EntityID: entityID})
+	return e.ledger.Remember(wctx, f, info.Name, op.ClientId, LedgerEntry{Hash: hash, EntityID: entityID, BoundBy: f.Actor})
 }
 
 // ledgerWriteBound caps the detached ledger write, so a stalled database
@@ -403,6 +490,11 @@ const ledgerWriteBound = 30 * time.Second
 // answer is applied from the row's current state and nothing is written. A
 // row that can no longer be read under the caller's filter answers applied
 // without a seq (the operation did land; there is no row left to report).
+// The gate's verdict happened before this point: a caller who is not the
+// binder and cannot see a LIVE row was refused row not found in
+// pushCanonical, so a miss here is the binder's own moved row, a row that
+// vanished between the two reads, or the gone-for-everyone or no-binder row
+// whose key kept its bound answer on purpose.
 func (e *Engine) replayBound(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, entry LedgerEntry) (apigen.SyncPushResult, error) {
 	id := entry.EntityID
 	if id == "" {

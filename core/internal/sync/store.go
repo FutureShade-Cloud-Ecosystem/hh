@@ -127,3 +127,25 @@ type Store interface {
 type ServerStateDecorator interface {
 	DecorateServerState(ctx context.Context, f ScopeFilter, row *RowState)
 }
+
+// BoundEntityChecker is an optional leg of a Store: the existence half of the bound key gate's
+// question (UX-103). When a caller's Load cannot see the entity a key applied, the gate asks this
+// once: does the entity exist for every caller of the scope? The answer is the entity's, never the
+// caller's: the org and tenant predicate alone, tombstone aware (a tombstoned row is gone for
+// everyone), and never the branch reach, the driver hold, the room membership or any other
+// caller-side fence, those being exactly what the caller's Load already speaks. A store that does
+// not implement it keeps the bound answer wherever its Load misses, and so does a store whose answer
+// is no: the gate fails toward idempotency, never toward a second create.
+type BoundEntityChecker interface {
+	BoundEntityExists(ctx context.Context, f ScopeFilter, id string) (bool, error)
+}
+
+// WritePathLoader is an optional leg of a Store: the row read the engine's update and delete paths
+// take, answering only the rows the store's Write and Delete can touch. A scope whose create answers
+// a neighbouring row for the replay's sake (an attestation create answers the stop it proved) holds
+// that answer out of the write paths, so a stale write naming it is the row not found refusal it
+// always was, never a conflict envelope built from a row no write could have changed. A store that
+// does not implement it is read through Load, exactly as before.
+type WritePathLoader interface {
+	LoadWritable(ctx context.Context, f ScopeFilter, id string) (RowState, bool, error)
+}
