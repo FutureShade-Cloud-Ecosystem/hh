@@ -211,7 +211,7 @@ export class DealerPickers {
         <input
           class="text-field picker-search"
           type="search"
-          placeholder="Search customers by name or account"
+          placeholder="Name or account number"
           aria-label=${spec.ariaLabel}
           data-picker-search=${spec.field}
           data-picker-kind="customer"
