@@ -112,6 +112,7 @@ const (
 	FinWorldEventCardSettlement        FinWorldEventKind = "CARD_SETTLEMENT"
 	FinWorldEventPurchaseReceipt       FinWorldEventKind = "PURCHASE_RECEIPT"
 	FinWorldEventVendorBill            FinWorldEventKind = "VENDOR_BILL"
+	FinWorldEventVendorPayment         FinWorldEventKind = "VENDOR_PAYMENT"
 	FinWorldEventLandedCost            FinWorldEventKind = "LANDED_COST"
 	FinWorldEventStockTransfer         FinWorldEventKind = "STOCK_TRANSFER"
 	FinWorldEventManualJournal         FinWorldEventKind = "MANUAL_JOURNAL"
@@ -252,6 +253,7 @@ type FinWorldEvent struct {
 	CardSettlement  *FinWorldCardSettlementEvent  `json:"card_settlement,omitempty"`
 	PurchaseReceipt *FinWorldPurchaseReceiptEvent `json:"purchase_receipt,omitempty"`
 	VendorBill      *FinWorldVendorBillEvent      `json:"vendor_bill,omitempty"`
+	VendorPayment   *FinWorldVendorPaymentEvent   `json:"vendor_payment,omitempty"`
 	LandedCost      *FinWorldLandedCostEvent      `json:"landed_cost,omitempty"`
 	StockTransfer   *FinWorldStockTransferEvent   `json:"stock_transfer,omitempty"`
 	ManualJournal   *FinWorldManualJournalEvent   `json:"manual_journal,omitempty"`
@@ -488,18 +490,34 @@ type FinWorldPurchaseReceiptEvent struct {
 
 // FinWorldVendorBillEvent posts the supplier invoice matching an earlier purchase receipt.
 type FinWorldVendorBillEvent struct {
-	VendorBillKey      string                 `json:"vendor_bill_key"`
-	PurchaseReceiptKey string                 `json:"purchase_receipt_key"`
-	PurchaseOrderKey   string                 `json:"purchase_order_key"`
-	BranchCode         string                 `json:"branch_code"`
-	VendorNo           string                 `json:"vendor_no"`
-	VendorInvoiceNo    string                 `json:"vendor_invoice_no"`
-	IssueDate          string                 `json:"issue_date"`
-	DueDate            string                 `json:"due_date"`
-	Lines              []FinWorldPurchaseLine `json:"lines"`
-	SubtotalCents      int64                  `json:"subtotal_cents"`
-	TaxCents           int64                  `json:"tax_cents"`
-	TotalCents         int64                  `json:"total_cents"`
+	VendorBillKey      string `json:"vendor_bill_key"`
+	PurchaseReceiptKey string `json:"purchase_receipt_key"`
+	PurchaseOrderKey   string `json:"purchase_order_key"`
+	BranchCode         string `json:"branch_code"`
+	VendorNo           string `json:"vendor_no"`
+	VendorInvoiceNo    string `json:"vendor_invoice_no"`
+	IssueDate          string `json:"issue_date"`
+	DueDate            string `json:"due_date"`
+	// PaymentDeferred marks a bill the plan leaves open across a month end (net 30 terms): the
+	// driver posts the bill and holds the supplier cheque, and the plan settles it with a
+	// VENDOR_PAYMENT event on the next month's first trading day, the day the statement carries
+	// the cheque. Left open when there is no next month.
+	PaymentDeferred bool                   `json:"payment_deferred,omitempty"`
+	Lines           []FinWorldPurchaseLine `json:"lines"`
+	SubtotalCents   int64                  `json:"subtotal_cents"`
+	TaxCents        int64                  `json:"tax_cents"`
+	TotalCents      int64                  `json:"total_cents"`
+}
+
+// FinWorldVendorPaymentEvent settles a bill the plan left open across a month end: the supplier
+// cheque for the named bill clears on the day the event sits on, the same day the bank statement
+// carries its clearing line and the open AP drops by the amount.
+type FinWorldVendorPaymentEvent struct {
+	VendorPaymentKey string `json:"vendor_payment_key"`
+	VendorBillKey    string `json:"vendor_bill_key"`
+	VendorInvoiceNo  string `json:"vendor_invoice_no"`
+	BranchCode       string `json:"branch_code"`
+	AmountCents      int64  `json:"amount_cents"`
 }
 
 // FinWorldLandedCostEvent mirrors the landed-cost module's own shape (core/internal/landedcost):
