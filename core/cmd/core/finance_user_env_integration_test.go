@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -231,6 +232,53 @@ func TestIntegration_FinanceUserApplyFromEnvRefusesABadEntry(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), finEnvUsersVar) {
 		t.Fatalf("the refusal must name %s, got %v", finEnvUsersVar, err)
+	}
+}
+
+// The S3 read's P3 1: the credential clears run at seed only, so a hash
+// planted after the seed survived a reboot. Both clears now run inside the
+// boot apply's transaction too: a planted staff or portal hash is cleared
+// at the next boot.
+func TestIntegration_FinanceUserApplyClearsPlantedCredentials(t *testing.T) {
+	ctx := context.Background()
+	pool, dsn := freshMigratedBoxDB(t, "finusercred")
+	t.Setenv("APP_ENV", "staging")
+	if err := financeSeedRole(mapGetenv(financeSeedEnv(dsn))); err != nil {
+		t.Fatalf("finance-seed: %v", err)
+	}
+
+	// Plant one staff and one portal hash after the seed, the picture the
+	// read measured: both survive the seed's own clear.
+	if _, err := pool.Exec(ctx, `
+		UPDATE users SET password_hash = 'planted-staff-hash'
+		 WHERE email = $1`, financeSeedGuardEmail); err != nil {
+		t.Fatalf("planting the staff hash: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE portal_users SET password_hash = 'planted-portal-hash'
+		 WHERE email = 'mark@quintehardscapes.example'`); err != nil {
+		t.Fatalf("planting the portal hash: %v", err)
+	}
+
+	email := "fin-cred-a@example.invalid"
+	entry := finEnvEntry(email, "fin-console-cred-a", "Credential Person", "financial_controller")
+	if err, out := finApply(t, finApplyEnv(dsn, []string{email}, entry)); err != nil {
+		t.Fatalf("the apply: %v (%s)", err, out)
+	}
+
+	var staffLeft int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE password_hash IS NOT NULL`).Scan(&staffLeft); err != nil {
+		t.Fatalf("the staff hashes: %v", err)
+	}
+	if staffLeft != 0 {
+		t.Fatalf("the apply must clear a planted staff hash, %d rows still hold one", staffLeft)
+	}
+	var portalLeft int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM portal_users WHERE password_hash <> $1`, identity.PortalNoPasswordMarker).Scan(&portalLeft); err != nil {
+		t.Fatalf("the portal hashes: %v", err)
+	}
+	if portalLeft != 0 {
+		t.Fatalf("the apply must clear a planted portal hash, %d rows still hold one", portalLeft)
 	}
 }
 
