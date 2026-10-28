@@ -186,7 +186,6 @@ export const baseStyles = css`
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
     border-color: var(--hh-disabled-line);
-    opacity: 1;
   }
   /* The named group: the fieldset keeps its legend (the group's accessible
      name) and the legend is set as the group's visible heading. */
