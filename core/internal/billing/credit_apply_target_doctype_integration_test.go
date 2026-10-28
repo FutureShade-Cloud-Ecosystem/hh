@@ -39,6 +39,7 @@ func TestIntegration_FW1_12b_TheApplyRefusesACreditMemoNamedAsItsTarget(t *testi
 	applySvc := NewCreditApplyService(NewRepository(pool))
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	custID := seedCustomer(t, pool, n+"-CUST")
 
@@ -76,6 +77,7 @@ func TestIntegration_FW1_12b_TheApplyRefusesACreditMemoNamedAsItsTarget(t *testi
 	go func() {
 		_, err := applySvc.Apply(ctx, ApplyCreditInput{
 			CustomerID: custID, CreditKind: CreditKindMemo, CreditID: memoA, InvoiceID: memoB,
+			OrgID:       applyOrg,
 			AmountCents: 100, Reason: "round 9: the crossing", IdempotencyKey: n + "-key-1",
 		}, true)
 		applyErr <- err

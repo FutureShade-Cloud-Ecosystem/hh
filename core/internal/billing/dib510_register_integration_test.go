@@ -400,9 +400,11 @@ func TestRegister_AccountPositionIsByteAbsentForAFrontlineCaller(t *testing.T) {
 	// both.
 	memoID := f.invoice(t, "CRED", "FINALIZED", -5, -15000, -15000, "CREDIT_MEMO")
 	applySvc := NewCreditApplyService(NewRepository(f.pool))
+	// The key's scope is the caller's org (FW1-12c) and the key table takes a real org (0448).
+	applyOrg := plantApplyOrg(t, f.pool, f.tag)
 	if _, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: f.customerID, CreditKind: CreditKindMemo, CreditID: memoID, InvoiceID: invID,
-		AmountCents: 5000, Reason: "byte absence leg", IdempotencyKey: f.tag + "-apply",
+		AmountCents: 5000, Reason: "byte absence leg", IdempotencyKey: f.tag + "-apply", OrgID: applyOrg,
 	}, true); err != nil {
 		t.Fatalf("apply memo to the gated invoice: %v", err)
 	}

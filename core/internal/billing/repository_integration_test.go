@@ -75,6 +75,25 @@ func ns(t *testing.T) string {
 	return fmt.Sprintf("%s-%d", t.Name(), time.Now().UnixNano()%1_000_000_000)
 }
 
+// plantApplyOrg plants one real org row for the apply door's key scope (FW1-12c): the key table's
+// org_id REFERENCES org (id) since 0448, so every application's caller carries a real org's id.
+// The row is removed at test end.
+func plantApplyOrg(t *testing.T, pool *pgxpool.Pool, tag string) string {
+	t.Helper()
+	ctx := context.Background()
+	var id string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO org (slug, name) VALUES ($1, $2) RETURNING id::text`,
+		"apply-org-"+tag, "Apply Org "+tag).Scan(&id); err != nil {
+		t.Fatalf("plant the apply org: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM org WHERE id = $1::uuid`, id)
+	})
+	return id
+}
+
 // seedCustomer creates a test-owned tenant and removes it (and anything hung off it) at test end.
 func seedCustomer(t *testing.T, pool *pgxpool.Pool, tag string) string {
 	t.Helper()

@@ -77,12 +77,14 @@ func TestIntegration_FW1_12b_ASpentKeyRowNamesWhereTheKeyWasSpent(t *testing.T) 
 	applySvc := NewCreditApplyService(repo)
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	custID, invA, invB, creditID := spentKeyFixture(t, n)
 
 	key := n + "-key-1"
 	first, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: invA,
+		OrgID:       applyOrg,
 		AmountCents: 5000, Reason: "the first invoice", IdempotencyKey: key,
 	}, true)
 	if err != nil {
@@ -92,6 +94,7 @@ func TestIntegration_FW1_12b_ASpentKeyRowNamesWhereTheKeyWasSpent(t *testing.T) 
 	// The same key, another invoice: refused as the spent key it is, in the door's own words.
 	second, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: invB,
+		OrgID:       applyOrg,
 		AmountCents: 5000, Reason: "the second invoice", IdempotencyKey: key,
 	}, true)
 	if err == nil {
@@ -160,11 +163,13 @@ func TestIntegration_FW1_12b_AReplayAnswersTheStoredResultWithOneKeyRow(t *testi
 	applySvc := NewCreditApplyService(repo)
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	custID, invA, _, creditID := spentKeyFixture(t, n)
 
 	in := ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: invA,
+		OrgID:       applyOrg,
 		AmountCents: 10000, Reason: "the whole credit", IdempotencyKey: n + "-key-1",
 	}
 	first, err := applySvc.Apply(ctx, in, true)
@@ -238,12 +243,14 @@ func TestIntegration_FW1_12b_ADifferentRequestUnderASpentKeyIsRefusedNotReplayed
 	applySvc := NewCreditApplyService(repo)
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	custID, invA, _, creditID := spentKeyFixture(t, n)
 
 	key := n + "-key-1"
 	if _, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: invA,
+		OrgID:       applyOrg,
 		AmountCents: 4000, Reason: "the first ask", IdempotencyKey: key,
 	}, true); err != nil {
 		t.Fatalf("the first apply: %v", err)
@@ -252,6 +259,7 @@ func TestIntegration_FW1_12b_ADifferentRequestUnderASpentKeyIsRefusedNotReplayed
 	// The same key, the same invoice, the same amount, a different reason: a different request.
 	_, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: invA,
+		OrgID:       applyOrg,
 		AmountCents: 4000, Reason: "the second ask", IdempotencyKey: key,
 	}, true)
 	if err == nil {
@@ -268,6 +276,7 @@ func TestIntegration_FW1_12b_ADifferentRequestUnderASpentKeyIsRefusedNotReplayed
 	// A different amount on the same invoice is the same refusal.
 	_, err = applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: invA,
+		OrgID:       applyOrg,
 		AmountCents: 1000, Reason: "the first ask", IdempotencyKey: key,
 	}, true)
 	if !errors.As(err, &conflict) {
