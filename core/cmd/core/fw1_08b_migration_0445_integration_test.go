@@ -153,7 +153,9 @@ func TestFW1_08b_Migration0445HeadOfficeBranch(t *testing.T) {
 	})
 
 	t.Run("backfills_the_earliest_branch_when_the_box_has_no_trt", func(t *testing.T) {
-		pool := freshMigratedDBWithout(t, "fw108bnotrt", "0445_gl_branch_stamp.sql")
+		// 0446 depends on 0445: 0445 stamps the setup entries and 0446 refuses a box where
+		// they are still unstamped. So this box is built without either of them.
+		pool := freshMigratedDBWithout(t, "fw108bnotrt", "0445_gl_branch_stamp.sql,0446_gl_branch_stamp.sql")
 
 		// Make the box one whose branches carry no TRT code at all, and make the
 		// former TRT row the NEWEST branch, so "earliest" can only mean KGN.
