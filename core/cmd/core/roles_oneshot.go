@@ -179,6 +179,41 @@ func UserTableCount(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 	return count, nil
 }
 
+// LargeObjectCount counts the large objects the database holds: one row per
+// object in pg_largeobject_metadata. A large object lives outside every user
+// schema, so the relation count cannot see it, and a database whose only
+// content is a large object reads as empty: the box would claim it, migrate
+// it and seed it, and somebody else's payload would end up inside the
+// finance box's own world. The read lives beside the other shape reads for
+// the same reason they do.
+func LargeObjectCount(ctx context.Context, pool *pgxpool.Pool) (int, error) {
+	var count int
+	// pg_largeobject_metadata, not pg_largeobject: the metadata table holds
+	// one row per object and every role may read it, while the data catalog
+	// is closed to everybody but its owner.
+	err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_largeobject_metadata`).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// CurrentRoleCanCreateRoles reports whether the role the box connects as may
+// create roles: rolcreaterole or rolsuper for current_user in pg_roles.
+// Migration 0418 creates the assist roles, so a role without that right can
+// never finish a migrate, and the box says so before it writes anything
+// rather than half way through. The read lives beside the other shape reads
+// for the same reason they do.
+func CurrentRoleCanCreateRoles(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	var can bool
+	err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_roles
+		WHERE rolname = current_user AND (rolcreaterole OR rolsuper))`).Scan(&can)
+	if err != nil {
+		return false, err
+	}
+	return can, nil
+}
+
 // ForeignUserSchemaPresent reports whether the database holds a user schema
 // that is neither public nor the finance box's own bootstrap ownership mark:
 // a namespace another world plants for itself, even one that takes no table

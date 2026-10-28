@@ -30,6 +30,8 @@ import {
   floorNoteLines,
   needsFloorConfirm,
   pricingRefusalWords,
+  pricingViewId,
+  pricingViewTitle,
   pricingWriteError,
   shownProductIds,
 } from "./pricing-logic.js";
@@ -934,6 +936,27 @@ export class PricingController {
   }
 
   /**
+   * The view a navigation control opened, and the reads that view needs the
+   * first time it is opened. UX-106: the phone's one select answers with the
+   * view's own word, and the strip's button answers with its id; both land
+   * here, so the two controls cannot drift apart.
+   */
+  async #openTab(tab: string): Promise<void> {
+    this.setTab(tab);
+    // A tab loads its own reads the first time it is opened.
+    if (tab === "rules" && this.model.rules.phase === "idle") await this.loadRules();
+    if (tab === "breaks" && this.model.breaks.phase === "idle") await this.loadBreaks();
+    if (tab === "promos" && this.model.promos.promotions.phase === "idle") await this.loadPromosTab();
+    if (tab === "rebates" && this.model.rebates.phase === "idle") await this.loadRebates();
+    if (tab === "uom" && this.model.uom.phase === "idle") await this.loadUom();
+    if (tab === "batches" && this.model.batches.phase === "idle") await this.loadBatches();
+    if (tab === "pricefile" && this.model.priceFile.vendorsPhase === "idle") await this.loadPriceFile();
+    if (tab === "lowmargin" && this.model.lowMargin.phase === "idle") await this.loadLowMargin();
+    if (tab === "audit" && this.model.audit.phase === "idle") await this.loadPricingAudit();
+    if (tab === "changelog" && this.model.changeLog.phase === "idle") await this.loadChangeLog();
+  }
+
+  /**
    * A file input's answer: the file read whole, its name riding beside it.
    * The bytes go to the wire as they came; nothing parses them here.
    */
@@ -1133,6 +1156,13 @@ export class PricingController {
 
   /** A select or checkbox answered: the category (by its picker name), or the enforcement flag. */
   change(field: string, value: string): void {
+    // The phone's one navigation control (UX-106): the select answers with the
+    // view's own word, the way the house's other pickers answer.
+    if (field === "tab") {
+      const id = pricingViewId(value);
+      if (id !== "") void this.#openTab(id);
+      return;
+    }
     const editing = this.model.margin.editing;
     if (editing !== null) {
       if (field === "policy-category") {
@@ -1189,6 +1219,19 @@ export class PricingController {
     if (field === "aud-action") this.#setAudit({ filters: { ...this.model.audit.filters, action: value } });
     if (field === "log-product") this.#setChangeLog({ filters: { ...this.model.changeLog.filters, productId: value } });
     if (field === "log-batch") this.#setChangeLog({ filters: { ...this.model.changeLog.filters, batchId: value } });
+    if (
+      field === "rule-branch" ||
+      field === "prm-branch" ||
+      field === "reb-vendor" ||
+      field === "acc-category" ||
+      field === "uom-probe-category" ||
+      field === "uom-category-id" ||
+      field === "batch-vendor" ||
+      field === "batch-profile" ||
+      field === "lm-category"
+    ) {
+      this.input(field, value);
+    }
     if (field === "lm-customer-type") this.#setProbeMargin({ customerType: value });
     if (field === "pf-vendor") {
       const hit = this.model.priceFile.vendors.find((v) => v.name === value);
@@ -1284,6 +1327,8 @@ export class PricingController {
       }
     }
     switch (field) {
+      case "tab":
+        return pricingViewTitle(this.model.tab === "terms" ? "payment-terms" : this.model.tab);
       case "rules-scope":
         return this.model.rules.filters.scope;
       case "rules-type":
@@ -1538,18 +1583,7 @@ export class PricingController {
     switch (action) {
       case "pr-set-tab": {
         const tab = attrs.tab ?? "";
-        this.setTab(tab);
-        // A tab loads its own reads the first time it is opened.
-        if (tab === "rules" && this.model.rules.phase === "idle") await this.loadRules();
-        if (tab === "breaks" && this.model.breaks.phase === "idle") await this.loadBreaks();
-        if (tab === "promos" && this.model.promos.promotions.phase === "idle") await this.loadPromosTab();
-        if (tab === "rebates" && this.model.rebates.phase === "idle") await this.loadRebates();
-        if (tab === "uom" && this.model.uom.phase === "idle") await this.loadUom();
-        if (tab === "batches" && this.model.batches.phase === "idle") await this.loadBatches();
-        if (tab === "pricefile" && this.model.priceFile.vendorsPhase === "idle") await this.loadPriceFile();
-        if (tab === "lowmargin" && this.model.lowMargin.phase === "idle") await this.loadLowMargin();
-        if (tab === "audit" && this.model.audit.phase === "idle") await this.loadPricingAudit();
-        if (tab === "changelog" && this.model.changeLog.phase === "idle") await this.loadChangeLog();
+        await this.#openTab(tab);
         return;
       }
       case "pr-reload-margin":
@@ -2778,7 +2812,7 @@ export class PricingController {
     const editing = this.model.promos.clearance.editing;
     if (editing === null) return { productId: "", write: null, error: "" };
     const productId = editing.productId.trim();
-    if (productId === "") return { productId: "", write: null, error: "Type the product id the mark names." };
+    if (productId === "") return { productId: "", write: null, error: "Choose the product the mark names." };
     if (editing.reason.trim() === "") return { productId: "", write: null, error: "Say why the item is marked down; the reason is what the row shows." };
     if (editing.starts.trim() === "") return { productId: "", write: null, error: "A mark needs its start day." };
     let priceCents: number | null = null;
@@ -2851,6 +2885,10 @@ export class PricingController {
       return;
     }
     this.#setRebates({ phase: "ready", rows: result.value });
+    if (this.model.priceFile.vendors.length === 0 && typeof this.#door.priceFileVendors === "function") {
+      const vendors = await this.#door.priceFileVendors();
+      if (vendors.ok) this.#setPriceFile({ vendors: vendors.value });
+    }
     // The ledger follows the first vendor the programs name, so the screen
     // demonstrates itself instead of waiting for a pick.
     const firstVendor = result.value.find((r) => r.is_active && r.vendor_id !== "") ?? result.value.find((r) => r.vendor_id !== "");
@@ -2986,7 +3024,7 @@ export class PricingController {
     if (accrual.busy) return;
     const qty = Number(accrual.qtyInput.trim());
     if (accrual.productId.trim() === "" || accrual.categoryId.trim() === "") {
-      this.#setAccrual({ formError: "The line names its product and its category, by id." });
+      this.#setAccrual({ formError: "Choose the product and the category for the line." });
       return;
     }
     if (accrual.qtyInput.trim() === "" || !Number.isFinite(qty) || qty <= 0) {
@@ -3000,7 +3038,7 @@ export class PricingController {
       return;
     }
     if (accrual.sourceType !== "ADJUSTMENT" && accrual.sourceId.trim() === "") {
-      this.#setAccrual({ formError: "A sale or an order names its source id; the pair is the idempotency key." });
+      this.#setAccrual({ formError: "A sale or an order names its reference; the pair is the idempotency key." });
       return;
     }
     this.#setAccrual({ busy: true, formError: "", result: "" });
@@ -3158,6 +3196,10 @@ export class PricingController {
       const profiles = await this.#door.importProfiles();
       if (profiles.ok) this.#setBatches({ profiles: profiles.value, profilesPhase: "ready" });
       else this.#setBatches({ profilesPhase: "error", profilesError: profiles.error });
+    }
+    if (this.model.priceFile.vendors.length === 0 && typeof this.#door.priceFileVendors === "function") {
+      const vendors = await this.#door.priceFileVendors();
+      if (vendors.ok) this.#setPriceFile({ vendors: vendors.value });
     }
   }
 
@@ -3404,7 +3446,7 @@ export class PricingController {
     const qty = Number(probe.qtyInput.trim());
     const cost = centsFromMoneyInput(probe.costInput);
     if (probe.productId.trim() === "" || probe.customerId.trim() === "") {
-      this.#setProbeMargin({ error: "The line names its customer and its product, by id." });
+      this.#setProbeMargin({ error: "Choose the customer and the product for the line." });
       return;
     }
     if (probe.qtyInput.trim() === "" || !Number.isFinite(qty) || qty <= 0) {
@@ -3451,6 +3493,10 @@ export class PricingController {
   }
 
   async loadChangeLog(): Promise<void> {
+    if (this.model.batches.phase === "idle" && typeof this.#door.batches === "function") {
+      const b = await this.#door.batches("");
+      if (b.ok) this.#setBatches({ rows: b.value, phase: "ready" });
+    }
     this.#setChangeLog({ ...emptyChangeLog(), filters: this.model.changeLog.filters });
     const f = this.model.changeLog.filters;
     const result = await this.#door.changeLog({ product_id: f.productId.trim(), batch_id: f.batchId.trim() });

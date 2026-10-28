@@ -81,6 +81,8 @@ import { renderChatRules } from "./views-chat-rules.js";
 import { dealerStyles } from "./styles.js";
 import { pricingStyles } from "./pricing-styles.js";
 import { warrantyStyles } from "./warranty-styles.js";
+import { pickerStyles } from "./picker-styles.js";
+import { DealerPickers } from "./pickers.js";
 import { renderStaff, type StaffModel } from "./views-staff.js";
 import { renderHotkeys, type HotkeysModel } from "./views-hotkeys.js";
 import { renderAudit, type AuditDetail, type AuditModel, type AuditTrail } from "./views-audit.js";
@@ -154,6 +156,7 @@ const emptyAuditModel = (): AuditModel => ({
   error: "",
   detail: null,
   trail: null,
+  branches: [],
 });
 
 const emptyRoleConfigModel = (): RoleConfigModel => ({
@@ -281,7 +284,7 @@ const toAgreementLike = (row: AgreementRowView): {
 });
 
 export class DealerAdminApp extends HHElement {
-  static styles = [baseStyles, dealerStyles, pricingStyles, warrantyStyles];
+  static styles = [baseStyles, dealerStyles, pricingStyles, warrantyStyles, pickerStyles];
 
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();
@@ -320,9 +323,9 @@ export class DealerAdminApp extends HHElement {
   readonly #adminApi = new AdminApi(this.#staffClient);
   readonly #admin = new AdminWork(this.#adminApi, {
     repaint: () => this.requestUpdate(),
-    field: (name) => this.renderRoot.querySelector<HTMLInputElement>(`[data-field="${name}"]`)?.value ?? "",
+    field: (name) => this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]`)?.value ?? "",
     setField: (name, value) => {
-      const el = this.renderRoot.querySelector<HTMLInputElement>(`[data-field="${name}"]`);
+      const el = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]`);
       if (el !== null && el.value !== value) el.value = value;
     },
     setChecked: (name, value) => {
@@ -353,6 +356,7 @@ export class DealerAdminApp extends HHElement {
   // The pricing surface: its own controller, door and model, so this file
   // carries only the wiring (the listener branches and the router line).
   readonly #pricing = new PricingController(new PricingApi(this.#staffClient), () => this.requestUpdate());
+  readonly #pickers = new DealerPickers(this.#staffClient, () => this.requestUpdate());
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
@@ -457,6 +461,27 @@ export class DealerAdminApp extends HHElement {
     }
     // The pricing surface's controls: every action rides a pr- prefixed name
     // and the controller owns the whole state machine behind them.
+    if (action === "picker-choose") {
+      const field = control?.getAttribute("data-picker-field") ?? "";
+      const id = control?.getAttribute("data-picker-id") ?? "";
+      const label = control?.getAttribute("data-picker-label") ?? "";
+      const kind = control?.getAttribute("data-picker-kind") === "customer" ? "customer" : "product";
+      this.#pickers.choose(field, id, label, kind);
+      if (field.startsWith("pr-")) {
+        this.#pricing.input(field.slice(3), id);
+      }
+      this.requestUpdate();
+      return;
+    }
+    if (action === "picker-clear") {
+      const field = control?.getAttribute("data-picker-field") ?? "";
+      this.#pickers.clear(field);
+      if (field.startsWith("pr-")) {
+        this.#pricing.input(field.slice(3), "");
+      }
+      this.requestUpdate();
+      return;
+    }
     if (typeof action === "string" && action.startsWith("pr-")) {
       if (control !== undefined) void this.#pricing.click(action, pricingAttrs(control));
       return;
@@ -652,6 +677,15 @@ export class DealerAdminApp extends HHElement {
       return;
     }
     const field = target.getAttribute("data-field") ?? "";
+    if (field.startsWith("audit-")) {
+      const value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
+      const filters = this.#audit.filters;
+      if (field === "audit-entity-type") this.#audit = { ...this.#audit, filters: { ...filters, entity_type: value } };
+      if (field === "audit-action") this.#audit = { ...this.#audit, filters: { ...filters, action: value } };
+      if (field === "audit-actor-id") this.#audit = { ...this.#audit, filters: { ...filters, actor_id: value } };
+      if (field === "audit-since") this.#audit = { ...this.#audit, filters: { ...filters, since: value } };
+      return;
+    }
     if (field.startsWith("pr-")) {
       // A file input's answer is the chosen file read whole: the text hands
       // off to the controller with its name, so the wire carries both.
@@ -696,8 +730,10 @@ export class DealerAdminApp extends HHElement {
     const editor = this.#roleConfig.editor;
     if (editor !== null) {
       const value = target instanceof HTMLSelectElement ? target.value : "";
-      if (action === "config-add-kind") this.#patchEditor({ addKind: value });
-      if (action === "config-my-add-kind") this.#patchEditor({ myAddKind: value });
+      if (action === "config-add-kind") this.#patchEditor({ addKind: value, addId: "" });
+      if (action === "config-my-add-kind") this.#patchEditor({ myAddKind: value, myAddId: "" });
+      if (field === "config-add-id") this.#patchEditor({ addId: value });
+      if (field === "config-my-add-id") this.#patchEditor({ myAddId: value });
       if (action === "configws-arrangement") this.#patchEditor({ wsDraft: { ...editor.wsDraft, arrangement: value } });
     }
     // The counter policy's selects answer with their static wire values; the
@@ -740,6 +776,13 @@ export class DealerAdminApp extends HHElement {
   readonly #onHostInput = (event: Event): void => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    const pickerField = target.getAttribute("data-picker-search") ?? "";
+    if (pickerField !== "" && target instanceof HTMLInputElement) {
+      const kind = target.getAttribute("data-picker-kind");
+      if (kind === "customer") void this.#pickers.searchCustomer(pickerField, target.value);
+      else void this.#pickers.searchProduct(pickerField, target.value);
+      return;
+    }
     const field = target.getAttribute("data-field") ?? "";
     if (field.startsWith("audit-")) {
       const value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
@@ -767,7 +810,7 @@ export class DealerAdminApp extends HHElement {
     }
     const editor = this.#roleConfig.editor;
     if (editor !== null) {
-      const value = target instanceof HTMLInputElement ? target.value : "";
+      const value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
       if (field === "config-add-id") this.#patchEditor({ addId: value });
       if (field === "config-my-add-id") this.#patchEditor({ myAddId: value });
       if (field === "configws-split") {
@@ -913,6 +956,15 @@ export class DealerAdminApp extends HHElement {
 
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
+    for (const opt of Array.from(this.renderRoot.querySelectorAll<HTMLOptionElement>("option[data-option-id]"))) {
+      const id = opt.getAttribute("data-option-id") ?? "";
+      if (opt.value !== id) opt.value = id;
+    }
+    for (const input of Array.from(this.renderRoot.querySelectorAll<HTMLInputElement>("input[data-picker-search]"))) {
+      const field = input.getAttribute("data-picker-search") ?? "";
+      const q = this.#pickers.queryOf(field);
+      if (input.value !== q) input.value = q;
+    }
     for (const select of this.renderRoot.querySelectorAll<HTMLSelectElement>('select[data-action="assign-role"]')) {
       const id = select.getAttribute("data-user-id") ?? "";
       const row = this.#staff.rows.find((m) => m.user_id === id);
@@ -2138,6 +2190,7 @@ export class DealerAdminApp extends HHElement {
     this.#auditDetailGen += 1;
     this.#admin.signOut();
     this.#pricing.reset();
+    this.#pickers.reset();
     clearFrontDoorHandoff();
     if (this.#custody.mode === "console") {
       this.#entryView = entryUnavailable();
@@ -2205,15 +2258,17 @@ export class DealerAdminApp extends HHElement {
     // The router line: one case per registry surface. The next coder adds
     // theirs beside this one; nothing else in this file changes.
     if (isAdminWorkSurface(this.#surface)) {
-      const view = this.#admin.view(this.#surface);
+      const view = this.#admin.view(this.#surface, this.#staff.rows);
       if (view !== null) return view;
     }
     if (this.#surface === "hotkeys") return renderHotkeys(this.#hotkeys);
-    if (this.#surface === "audit") return renderAudit(this.#audit);
+    // The trail's drawer names the branch, so it reads the same branches the
+    // staff register names its grant chips from (UX-106 round 4).
+    if (this.#surface === "audit") return renderAudit({ ...this.#audit, branches: this.#staff.branches }, this.#staff.rows);
     if (this.#surface === "role-config" || this.#surface === "roles") return renderRoleConfig(this.#roleConfig);
     if (this.#surface === "deployment") return renderSettings(this.#settings);
     if (this.#surface === "warranty") return renderWarranty(this.#warranty);
-    if (this.#surface === "pricing") return renderPricing(this.#pricing.model);
+    if (this.#surface === "pricing") return renderPricing(this.#pricing.model, this.#staff.branches, this.#pickers);
     if (this.#surface === "delivery") return renderDelivery();
     if (this.#surface === "sign-in-methods" || this.#surface === "sign-in") return renderSignInMethods();
     if (this.#surface === "chat-rules") return renderChatRules();

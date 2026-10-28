@@ -404,8 +404,26 @@ func TestUX89R2_EveryCustomerDoorAgrees(t *testing.T) {
 	// the rules list and the by-id rule and override doors: North B's account has no rules and no overrides to
 	// this caller, as if it did not exist; the shared account's rule would be listed.
 	list := do(mgr, http.MethodGet, "/api/v1/pricing/rules?scope=CUSTOMER_PRODUCT", "")
-	if list.Code != http.StatusOK || strings.Contains(list.Body.String(), ruleB) || strings.Contains(list.Body.String(), "4242") {
+	if list.Code != http.StatusOK {
 		t.Errorf("rules list: want 200 without North B's contract rule, got %d: %s", list.Code, list.Body.String())
+	} else {
+		// FLAKE-10: the list is read as PARSED rules (the helper and its unit leg are in
+		// branch_fences_rules_list_test.go). The raw hunt for the bare digits "4242" over the
+		// body could be answered by the list's own uuids: a rule carries its id, its customer
+		// and its product, each a gen_random_uuid(), and a uuid's hex digits spell "4242" in
+		// about one run in 2,260. The price is read as the price field and the rule as its id.
+		listed, err := parsePricingRuleList(list.Body.Bytes())
+		if err != nil {
+			t.Fatalf("rules list: %v", err)
+		}
+		for _, rl := range listed {
+			if rl.ID == ruleB {
+				t.Errorf("rules list: it carries North B's contract rule: %s", list.Body.String())
+			}
+			if rl.PriceCents != nil && *rl.PriceCents == 4242 {
+				t.Errorf("rules list: it carries North B's contract price: %s", list.Body.String())
+			}
+		}
 	}
 	for _, c := range []struct{ door, method, path, body string }{
 		{"rule by id", http.MethodGet, "/api/v1/pricing/rules/" + ruleB, ""},

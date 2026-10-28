@@ -12,7 +12,8 @@
 // attributes. Every filter field is mirrored in code, the way the audit
 // filters are.
 import { html, nothing, type TemplateResult } from "lit";
-import type { MessagesExportRow } from "./admin-api.js";
+import type { MessagesExportRow, MessagingChannelRow } from "./admin-api.js";
+import type { StaffMemberRow } from "./dealer-api.js";
 import {
   messageKindWords,
   messagesEmptyWords,
@@ -44,20 +45,25 @@ export interface MessagesModel {
   readonly rows: readonly MessagesExportRow[];
 }
 
-export function renderExports(workbook: WorkbookModel, messages: MessagesModel): TemplateResult {
+export function renderExports(
+  workbook: WorkbookModel,
+  messages: MessagesModel,
+  staff: readonly StaffMemberRow[] = [],
+  channels: readonly MessagingChannelRow[] = [],
+): TemplateResult {
   return html`
     <header class="page-head">
       <h1>Exports</h1>
       <p class="page-sub">Two files, each one call: the audit trail as a workbook, and the house's messages, masked.</p>
     </header>
-    ${renderWorkbook(workbook)}
-    ${renderMessages(messages)}
+    ${renderWorkbook(workbook, staff)}
+    ${renderMessages(messages, staff, channels)}
   `;
 }
 
 // -- the audit workbook ---------------------------------------------------------------------------
 
-function renderWorkbook(model: WorkbookModel): TemplateResult {
+function renderWorkbook(model: WorkbookModel, staff: readonly StaffMemberRow[]): TemplateResult {
   return html`
     <section class="card">
       <div class="card-head">
@@ -69,7 +75,10 @@ function renderWorkbook(model: WorkbookModel): TemplateResult {
       <div class="filters">
         <input class="text-field" type="text" placeholder="Entity type" aria-label="Entity type" data-field="wb-entity-type" />
         <input class="text-field" type="text" placeholder="Action" aria-label="Action" data-field="wb-action" />
-        <input class="text-field" type="text" placeholder="Actor id" aria-label="Actor id" data-field="wb-actor" />
+        <select class="select" aria-label="Staff member" data-field="wb-actor">
+          <option value="">Any staff member</option>
+          ${staff.map((s) => html`<option data-option-id=${s.user_id}>${s.display_name || s.email}</option>`)}
+        </select>
         <input class="text-field" type="datetime-local" aria-label="Since" data-field="wb-since" />
         <button type="button" class="btn btn-primary" data-action="wb-download" ?disabled=${model.busy}>
           ${model.busy ? "Packing…" : "Download the workbook"}
@@ -83,7 +92,11 @@ function renderWorkbook(model: WorkbookModel): TemplateResult {
 
 const PREVIEW_ROWS = 50;
 
-function renderMessages(model: MessagesModel): TemplateResult {
+function renderMessages(
+  model: MessagesModel,
+  staff: readonly StaffMemberRow[],
+  channels: readonly MessagingChannelRow[],
+): TemplateResult {
   return html`
     <section class="card">
       <div class="card-head">
@@ -94,8 +107,14 @@ function renderMessages(model: MessagesModel): TemplateResult {
       ${model.error === "" ? nothing : html`<p class="error-line" data-test="msg-error">${model.error}</p>`}
       ${model.notice === "" ? nothing : html`<p class="notice-line" data-test="msg-notice">${model.notice}</p>`}
       <div class="filters">
-        <input class="text-field" type="text" placeholder="Channel id" aria-label="Channel id" data-field="msg-channel" />
-        <input class="text-field" type="text" placeholder="Person id" aria-label="Person id" data-field="msg-user" />
+        <select class="select" aria-label="Channel" data-field="msg-channel">
+          <option value="">Every channel</option>
+          ${channels.map((ch) => html`<option data-option-id=${ch.id}>${ch.name}</option>`)}
+        </select>
+        <select class="select" aria-label="Staff member" data-field="msg-user">
+          <option value="">Any staff member</option>
+          ${staff.map((s) => html`<option data-option-id=${s.user_id}>${s.display_name || s.email}</option>`)}
+        </select>
         <input class="text-field" type="datetime-local" aria-label="Since" data-field="msg-since" />
         <input class="text-field" type="datetime-local" aria-label="Until" data-field="msg-until" />
         <button type="button" class="btn btn-primary" data-action="msg-export" ?disabled=${model.busy}>

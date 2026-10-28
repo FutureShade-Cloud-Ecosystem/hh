@@ -15,12 +15,16 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
@@ -177,7 +181,131 @@ func TestIntegration_DemoseedRefusesTheFinanceBox(t *testing.T) {
 	}
 }
 
+// TestIntegration_FinanceBoxEmptyBranchNeedsCREATEROLE: migration 0418
+// creates the assist roles, so the box's database role must be able to
+// create roles. A role without that right left a fresh database half
+// migrated: every migration before 0418 committed and 0418 rolled back
+// whole, so the box wrote a mark, a bookkeeping table and hundreds of rows
+// into a database it could never finish. The empty branch refuses before it
+// writes anything, so the database is left exactly as it was found. The
+// check lives in the empty branch alone: a database the box has already
+// migrated holds the assist roles, so the box never creates them again, and
+// a finance marked database still passes the box check with a role without
+// CREATEROLE.
+func TestIntegration_FinanceBoxEmptyBranchNeedsCREATEROLE(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("an empty database refuses the boot and is left empty", func(t *testing.T) {
+		pool := freshEmptyDB(t, "finboxnocreaterole")
+		role, password := createLoginRoleWithoutCREATEROLE(t, ctx, pool)
+		asRole := connectAsRole(t, ctx, pool, role, password)
+		cfg := financeStagingConfig(t)
+
+		err := financeBoxBootGuard(financeBoxGetenv(map[string]string{"HH_BOX_KIND": "finance"}), cfg, asRole)
+		if err == nil || !strings.Contains(err.Error(), "the box's database role needs CREATEROLE: migration 0418 creates the assist roles") {
+			t.Fatalf("an empty database must refuse the boot naming CREATEROLE, got %v", err)
+		}
+		empty, err := financeBoxDatabaseEmpty(ctx, asRole)
+		if err != nil {
+			t.Fatalf("reading the emptiness: %v", err)
+		}
+		if !empty {
+			t.Fatal("a refused database must still read empty")
+		}
+		own, err := FinanceBootstrapMarkPresent(ctx, asRole)
+		if err != nil {
+			t.Fatalf("reading the bootstrap mark: %v", err)
+		}
+		if own {
+			t.Fatal("a refused boot must not write the bootstrap ownership mark")
+		}
+		if _, present, err := MigrationsAppliedCount(ctx, asRole); err != nil || present {
+			t.Fatalf("a refused boot must not write a migration row (present %t, err %v)", present, err)
+		}
+	})
+
+	t.Run("a finance marked database passes the box check", func(t *testing.T) {
+		pool, _ := freshMigratedBoxDB(t, "finboxnocreaterolefin")
+		writeBoxKindForTest(t, ctx, pool, "finance")
+		role, password := createLoginRoleWithoutCREATEROLE(t, ctx, pool)
+		// The box's role reads the settings table and the bookkeeping, and it
+		// holds no grant of its own on either. The settings table carries a
+		// row policy (migration 0427 closes it to everybody but the zone
+		// reader), so a role that does not own it sees no rows at all: the
+		// box's own role owns the tables it migrated, and the test role is
+		// made the owner of the two tables the box check reads. The settings
+		// key is a citext, so the read needs the compare function too, which
+		// migration 0418 hands back to the migrating role through the
+		// function users role.
+		if _, err := pool.Exec(ctx, fmt.Sprintf(
+			`GRANT CREATE ON SCHEMA public TO %[1]s;
+			 ALTER TABLE schema_migrations OWNER TO %[1]s;
+			 ALTER TABLE system_settings OWNER TO %[1]s;
+			 GRANT SELECT ON schema_migrations, system_settings TO %[1]s;
+			 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO %[1]s`,
+			role)); err != nil {
+			t.Fatalf("granting the role its reads: %v", err)
+		}
+		asRole := connectAsRole(t, ctx, pool, role, password)
+		cfg := financeStagingConfig(t)
+
+		if err := financeBoxBootGuard(financeBoxGetenv(map[string]string{"HH_BOX_KIND": "finance"}), cfg, asRole); err != nil {
+			t.Fatalf("a finance marked database must pass the box check with a role without CREATEROLE, got %v", err)
+		}
+	})
+}
+
 // -- helpers ---------------------------------------------------------------------------------------
+
+// createLoginRoleWithoutCREATEROLE creates the role the box's database role
+// is when it may not create roles: a login role with no CREATEROLE and no
+// superuser. The password is generated here, never printed, never written to
+// a file and never committed: it is a throwaway for a role that lives only
+// for the test that made it.
+func createLoginRoleWithoutCREATEROLE(t *testing.T, ctx context.Context, admin *pgxpool.Pool) (string, string) {
+	t.Helper()
+	name := "finbox_nocreaterole_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+	password := throwawayPassword(t)
+	if _, err := admin.Exec(ctx, fmt.Sprintf(
+		`CREATE ROLE %[1]s LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '%[2]s'`,
+		name, password)); err != nil {
+		t.Fatalf("creating the role without CREATEROLE: %v", err)
+	}
+	if _, err := admin.Exec(ctx, fmt.Sprintf(
+		`GRANT CONNECT ON DATABASE %[1]s TO %[2]s`,
+		admin.Config().ConnConfig.Database, name)); err != nil {
+		t.Fatalf("granting the role the connection: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), fmt.Sprintf(`DROP OWNED BY %[1]s; DROP ROLE IF EXISTS %[1]s`, name))
+	})
+	return name, password
+}
+
+// connectAsRole opens a pool as another role on the same database.
+func connectAsRole(t *testing.T, ctx context.Context, pool *pgxpool.Pool, user, password string) *pgxpool.Pool {
+	t.Helper()
+	cfg := pool.Config().Copy()
+	cfg.ConnConfig.User = user
+	cfg.ConnConfig.Password = password
+	as, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connecting as %s: %v", user, err)
+	}
+	t.Cleanup(as.Close)
+	return as
+}
+
+// throwawayPassword is a random hex string: a password for a role that
+// exists only inside one test, generated so it is never written anywhere.
+func throwawayPassword(t *testing.T) string {
+	t.Helper()
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		t.Fatalf("generating the throwaway password: %v", err)
+	}
+	return hex.EncodeToString(buf)
+}
 
 // freshMigratedBoxDB builds a database the way the migrate role does: every
 // migration file applied in order, each recorded in schema_migrations (the

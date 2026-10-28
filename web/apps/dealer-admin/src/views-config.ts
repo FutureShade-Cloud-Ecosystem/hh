@@ -27,6 +27,7 @@ import {
   itemSetError,
   rolesForShape,
   shapeWord,
+  surfaceItemsFor,
   surfaceWord,
 } from "./config-logic.js";
 import type { RoleRow } from "./dealer-api.js";
@@ -144,7 +145,7 @@ function renderRoleMatrix(): TemplateResult {
         <h2 class="card-title">What each job shape sees</h2>
       </div>
       <div class="tablewrap">
-        <table class="role-matrix-table">
+        <table class="role-matrix-table cardrow-table">
           <thead>
             <tr>
               <th scope="col" class="role-col">Role</th>
@@ -165,16 +166,16 @@ function renderRoleMatrix(): TemplateResult {
               (r) => html`
                 <tr>
                   <th scope="row" class="role-col"><strong>${r.role}</strong></th>
-                  <td>${renderMatrixCell(r.till)}</td>
-                  <td>${renderMatrixCell(r.quotes)}</td>
-                  <td>${renderMatrixCell(r.yard)}</td>
-                  <td>${renderMatrixCell(r.drive)}</td>
-                  <td>${renderMatrixCell(r.dispatch)}</td>
-                  <td>${renderMatrixCell(r.buying)}</td>
-                  <td>${renderMatrixCell(r.money)}</td>
-                  <td>${renderMatrixCell(r.manager)}</td>
-                  <td>${renderMatrixCell(r.messages)}</td>
-                  <td>${renderMatrixCell(r.admin)}</td>
+                  <td data-label="Till">${renderMatrixCell(r.till)}</td>
+                  <td data-label="Quotes">${renderMatrixCell(r.quotes)}</td>
+                  <td data-label="Yard">${renderMatrixCell(r.yard)}</td>
+                  <td data-label="Drive">${renderMatrixCell(r.drive)}</td>
+                  <td data-label="Dispatch">${renderMatrixCell(r.dispatch)}</td>
+                  <td data-label="Buying">${renderMatrixCell(r.buying)}</td>
+                  <td data-label="Money">${renderMatrixCell(r.money)}</td>
+                  <td data-label="Manager">${renderMatrixCell(r.manager)}</td>
+                  <td data-label="Messages">${renderMatrixCell(r.messages)}</td>
+                  <td data-label="Admin">${renderMatrixCell(r.admin)}</td>
                 </tr>
               `,
             )}
@@ -199,7 +200,7 @@ function renderGrid(model: RoleConfigModel): TemplateResult {
     </p>
     <section class="card">
       <div class="tablewrap">
-        <table data-test="config-grid">
+        <table class="cardrow-table" data-test="config-grid">
           <thead>
             <tr>
               <th scope="col">Job shape</th>
@@ -213,7 +214,7 @@ function renderGrid(model: RoleConfigModel): TemplateResult {
                   <div class="person">${shape.word}</div>
                   <div class="dim">${shape.what}</div>
                 </th>
-                ${CONFIG_SURFACES.map((s) => renderCell(model, s.id, shape.profile))}
+                ${CONFIG_SURFACES.map((s) => renderCell(model, s.id, shape.profile, s.word))}
               </tr>
             `)}
           </tbody>
@@ -223,13 +224,13 @@ function renderGrid(model: RoleConfigModel): TemplateResult {
   `;
 }
 
-function renderCell(model: RoleConfigModel, surface: string, profile: string): TemplateResult {
+function renderCell(model: RoleConfigModel, surface: string, profile: string, label: string): TemplateResult {
   const cell = model.cells.get(cellKey(surface, profile));
   if (cell === undefined) {
-    return html`<td><span class="dim">…</span></td>`;
+    return html`<td data-label=${label}><span class="dim">…</span></td>`;
   }
   return html`
-    <td>
+    <td data-label=${label}>
       <button
         type="button"
         class="btn btn-secondary btn-small cell-btn"
@@ -315,7 +316,7 @@ function renderDealerDraft(editor: ConfigEditor): TemplateResult {
       ? html`<p class="notice-line" data-test="config-draft-empty">Nothing curated here yet.</p>`
       : html`
           <div class="tablewrap">
-            <table data-test="config-draft-rows">
+            <table class="cardrow-table" data-test="config-draft-rows">
               <thead>
                 <tr>
                   <th scope="col">Kind</th>
@@ -341,8 +342,13 @@ function renderDealerDraft(editor: ConfigEditor): TemplateResult {
         </select>
       </label>
       <label class="field">
-        <span class="field-label">Item id</span>
-        <input class="text-field" type="text" data-field="config-add-id" aria-label="Item id of the row to add" />
+        <span class="field-label">Item</span>
+        <select class="select" data-action="config-add-id" data-field="config-add-id" aria-label="Item to add">
+          <option value="">Choose an item</option>
+          ${surfaceItemsFor(editor.surface, editor.addKind).map(
+            (item) => html`<option data-option-id=${item.id}>${item.label}</option>`,
+          )}
+        </select>
       </label>
       <button type="button" class="btn btn-secondary" data-action="config-add-row">Add row</button>
       <button
@@ -371,10 +377,10 @@ function renderDealerDraft(editor: ConfigEditor): TemplateResult {
 function draftRow(it: ConfigItem, index: number, scope: "config" | "my"): TemplateResult {
   return html`
     <tr data-index=${index}>
-      <td><span class="chip">${it.kind}</span></td>
-      <td><code class="mono">${it.id}</code></td>
-      <td>${it.position}</td>
-      <td>
+      <td data-label="Kind"><span class="chip">${it.kind}</span></td>
+      <td data-label="Item id"><code class="mono">${it.id}</code></td>
+      <td data-label="Order">${it.position}</td>
+      <td data-label="Shown">
         <button
           type="button"
           class="btn btn-secondary btn-small"
@@ -384,7 +390,7 @@ function draftRow(it: ConfigItem, index: number, scope: "config" | "my"): Templa
           ${it.visible ? "Shown" : "Hidden"}
         </button>
       </td>
-      <td>
+      <td class="cardrow-act">
         <span class="kcontrols">
           <button type="button" class="btn btn-secondary btn-small" data-action="${scope}-row-up" data-index=${index} aria-label="Move earlier">Up</button>
           <button type="button" class="btn btn-secondary btn-small" data-action="${scope}-row-down" data-index=${index} aria-label="Move later">Down</button>
@@ -413,7 +419,7 @@ function renderMyDraft(editor: ConfigEditor): TemplateResult {
       ? html`<p class="notice-line" data-test="config-my-empty">You follow the dealer's curation.</p>`
       : html`
           <div class="tablewrap">
-            <table data-test="config-my-rows">
+            <table class="cardrow-table" data-test="config-my-rows">
               <thead>
                 <tr>
                   <th scope="col">Kind</th>
@@ -438,8 +444,13 @@ function renderMyDraft(editor: ConfigEditor): TemplateResult {
         </select>
       </label>
       <label class="field">
-        <span class="field-label">Item id</span>
-        <input class="text-field" type="text" data-field="config-my-add-id" aria-label="Item id of your own row to add" />
+        <span class="field-label">Item</span>
+        <select class="select" data-action="config-my-add-id" data-field="config-my-add-id" aria-label="Item of your own row to add">
+          <option value="">Choose an item</option>
+          ${surfaceItemsFor(editor.surface, editor.myAddKind).map(
+            (item) => html`<option data-option-id=${item.id}>${item.label}</option>`,
+          )}
+        </select>
       </label>
       <button type="button" class="btn btn-secondary" data-action="config-my-add-row">Add row</button>
       <button type="button" class="btn btn-primary" data-action="config-save-my" ?disabled=${editor.busy || editor.myDraft.length === 0}>

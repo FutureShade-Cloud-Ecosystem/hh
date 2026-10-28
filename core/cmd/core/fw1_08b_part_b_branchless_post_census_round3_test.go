@@ -5,8 +5,9 @@ package main
 //
 // The leg plants branchless Go callers in a probe tree and asks the census to scan it. The census
 // must name every planted caller: the draft written out at the call, the draft held in a local
-// variable, the draft a helper returns, and the draft behind a pointer. A caller that names its
-// branch must NOT be named.
+// variable, the draft a helper returns, the draft behind a pointer, the draft whose branch
+// field is set to an explicit empty string, and the draft a helper in ANOTHER package returns.
+// A caller that names its branch must NOT be named.
 //
 // Nothing in the probe is compiled or run: the census reads the source. The probe tree is the shape
 // a new caller arrives in, a package under core/internal with a call to the gl API.
@@ -91,6 +92,17 @@ func postThroughAPointer(p poster) {
 	_, _ = p.PostExternal(context.Background(), *draft)
 }
 
+// A branchless caller: the draft whose branch field is an explicit empty string.
+// An empty branch string names no branch, so the census must name this caller
+// exactly as it names a draft that leaves the field out.
+func postWithAnEmptyBranch(p poster) {
+	_, _ = p.PostExternal(context.Background(), ExternalJournal{
+		Source:         "ADJUSTMENT",
+		IdempotencyKey: "probe-empty-branch",
+		BranchID:       "",
+	})
+}
+
 // A caller that names its branch: the census must not name it.
 func postWithABranch(p poster) {
 	_, _ = p.PostExternal(context.Background(), ExternalJournal{
@@ -98,6 +110,64 @@ func postWithABranch(p poster) {
 		IdempotencyKey: "probe-with-branch",
 		BranchID:       "5d1b3f6e-0000-4000-9000-000000000002",
 	})
+}
+`
+
+// fw1ProbeGLBody is the probe tree's gl package: the draft type the other packages name. The
+// census resolves a draft's TYPE to its declaration, so the type has to live in a package of the
+// scanned tree for a cross package helper to be followed.
+const fw1ProbeGLBody = `package gl
+
+type ExternalJournal struct {
+	Source         string
+	IdempotencyKey string
+	Memo           string
+	BranchID       string
+	Lines          []ExternalLine
+}
+
+type ExternalLine struct {
+	AccountCode string
+	DebitCents  int64
+	CreditCents int64
+}
+`
+
+// fw1ProbeWarrantyBody is the probe tree's warranty package: a helper in ANOTHER package that
+// returns a draft naming no branch.
+const fw1ProbeWarrantyBody = `package warranty
+
+import "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+
+// ZzS4Draft returns a draft that names no branch.
+func ZzS4Draft() gl.ExternalJournal {
+	return gl.ExternalJournal{
+		Source:         "ADJUSTMENT",
+		IdempotencyKey: "probe-cross-package",
+	}
+}
+`
+
+// fw1ProbeLienBody is the probe tree's lien package: the caller that hands the other package's
+// draft to a posting call.
+const fw1ProbeLienBody = `package lien
+
+import (
+	"context"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/warranty"
+)
+
+type poster struct{}
+
+func (p poster) PostExternal(ctx context.Context, in gl.ExternalJournal) (string, error) {
+	return "", nil
+}
+
+// A branchless caller: the draft a helper in ANOTHER package returns.
+func postThroughAnotherPackagesHelper(p poster) {
+	_, _ = p.PostExternal(context.Background(), warranty.ZzS4Draft())
 }
 `
 
@@ -115,6 +185,27 @@ func TestFW1_08b_PartB_Round3_ANewBranchlessGoCallerFailsTheCensus(t *testing.T)
 	if err := os.WriteFile(filepath.Join(probeDir, "probe.go"), []byte(fw1ProbeBody), 0o644); err != nil {
 		t.Fatalf("probe body: %v", err)
 	}
+	glDir := filepath.Join(root, "internal", "gl")
+	if err := os.MkdirAll(glDir, 0o755); err != nil {
+		t.Fatalf("probe gl package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(glDir, "gl.go"), []byte(fw1ProbeGLBody), 0o644); err != nil {
+		t.Fatalf("probe gl body: %v", err)
+	}
+	warrantyDir := filepath.Join(root, "internal", "warranty")
+	if err := os.MkdirAll(warrantyDir, 0o755); err != nil {
+		t.Fatalf("probe warranty package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(warrantyDir, "warranty.go"), []byte(fw1ProbeWarrantyBody), 0o644); err != nil {
+		t.Fatalf("probe warranty body: %v", err)
+	}
+	lienDir := filepath.Join(root, "internal", "lien")
+	if err := os.MkdirAll(lienDir, 0o755); err != nil {
+		t.Fatalf("probe lien package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(lienDir, "lien.go"), []byte(fw1ProbeLienBody), 0o644); err != nil {
+		t.Fatalf("probe lien body: %v", err)
+	}
 
 	result, err := fw1RunBranchlessCensus(root)
 	if err != nil {
@@ -125,6 +216,8 @@ func TestFW1_08b_PartB_Round3_ANewBranchlessGoCallerFailsTheCensus(t *testing.T)
 		"core/internal/probe/probe.go|postThroughAVariable|PostExternal",
 		"core/internal/probe/probe.go|postThroughAHelper|PostExternalTx",
 		"core/internal/probe/probe.go|postThroughAPointer|PostExternal",
+		"core/internal/probe/probe.go|postWithAnEmptyBranch|PostExternal",
+		"core/internal/lien/lien.go|postThroughAnotherPackagesHelper|PostExternal",
 	} {
 		if _, found := result.found[key]; !found {
 			t.Errorf("the census did not name the planted branchless caller %s: a new branchless Go caller must fail the census", key)

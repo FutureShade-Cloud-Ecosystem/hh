@@ -13,6 +13,7 @@
 // audit filters: mirrored in code, answered on the host's input listener.
 import { html, nothing, type TemplateResult } from "lit";
 import type { PrintJobRow } from "./admin-api.js";
+import { UNKNOWN_USER } from "./placeholders.js";
 import {
   PRINT_DOC_TYPES,
   printDocLabel,
@@ -107,7 +108,7 @@ function renderJobRow(row: PrintJobRow, index: number): TemplateResult {
     <tr data-test="print-row-${index}">
       <td><span class="chip ${row.status === "FAILED" ? "chip-sensitive" : ""}">${printStatusWords(row.status)}</span></td>
       <td><span class="chip">${printTargetWords(row.render_target)}</span></td>
-      <td class="mono">${row.requested_by === "" ? "not recorded" : row.requested_by.slice(0, 8)}</td>
+      <td>${row.requested_by === "" ? html`<span class="dim">not recorded</span>` : html`<span class="dim">${UNKNOWN_USER}</span>`}</td>
       <td class="mono dim">${row.requested_at}</td>
       <td class="mono dim">${row.printed_at === "" ? "not yet" : row.printed_at}</td>
       <td class="dim">${row.failure_reason}</td>

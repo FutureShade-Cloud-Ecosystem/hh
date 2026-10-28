@@ -66,17 +66,69 @@ import {
   ruleValueWords,
   scopeWord,
   validityWords,
-  PRICING_TABS,
+  PRICING_VIEWS,
 } from "./pricing-logic.js";
 import { whenWords } from "./audit-logic.js";
+import {
+  UNKNOWN_ACTOR,
+  UNKNOWN_BATCH,
+  UNKNOWN_BRANCH,
+  UNKNOWN_CATEGORY,
+  UNKNOWN_CUSTOMER,
+  UNKNOWN_ENTITY,
+  UNKNOWN_PRODUCT,
+  UNKNOWN_VIEW,
+} from "./placeholders.js";
 import type { BreakRow, ChangeLogRow, ClearanceRow, LowMarginScanRow as LowMarginScanRowApi, OverrideRow, PricingAuditRow, PromotionRow, RebateRow, RuleRow, UomConversionRow } from "./pricing-api.js";
 type BatchLineRow = Parameters<typeof batchLineWords>[0];
 type PriceFileModel = PricingModel["priceFile"];
 type LowMarginScanRow = LowMarginScanRowApi;
 type LowMarginEntry = PricingModel["lowMargin"]["probe"]["entries"][number];
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
+import type { BranchRow } from "./dealer-api.js";
+import type { DealerPickers, EntityPickerSpec } from "./pickers.js";
 
-export function renderPricing(model: PricingModel): TemplateResult {
+export interface PricingPickers {
+  renderCustomerPicker(spec: EntityPickerSpec): TemplateResult;
+  renderProductPicker(spec: EntityPickerSpec): TemplateResult;
+  rememberProduct?(id: string, sku: string, name: string): void;
+}
+
+const FALLBACK_PICKERS: PricingPickers = {
+  renderCustomerPicker: (spec) => html`<div class="hh-entity-picker" data-picker=${spec.field}><span class="picker-current">${spec.selectedId !== "" ? UNKNOWN_CUSTOMER : spec.emptyLabel}</span></div>`,
+  renderProductPicker: (spec) => html`<div class="hh-entity-picker" data-picker=${spec.field}><span class="picker-current">${spec.selectedId !== "" ? UNKNOWN_PRODUCT : spec.emptyLabel}</span></div>`,
+};
+
+function knownVendors(model: PricingModel): readonly { readonly id: string; readonly name: string }[] {
+  const seen = new Map<string, string>();
+  for (const v of model.priceFile.vendors) {
+    if (v.vendor_id !== "" && !seen.has(v.vendor_id)) seen.set(v.vendor_id, vendorWords(v.name, v.vendor_id));
+  }
+  for (const r of model.rebates.rows) {
+    if (r.vendor_id !== "" && !seen.has(r.vendor_id)) seen.set(r.vendor_id, vendorWords(r.vendor_name, r.vendor_id));
+  }
+  for (const b of model.batches.rows) {
+    if (b.vendor_id !== "" && !seen.has(b.vendor_id)) seen.set(b.vendor_id, vendorWords(b.vendor_name, b.vendor_id));
+  }
+  for (const p of model.batches.profiles) {
+    if (p.vendor_id !== "" && !seen.has(p.vendor_id)) seen.set(p.vendor_id, vendorWords(p.vendor_name, p.vendor_id));
+  }
+  return Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
+}
+
+export function renderPricing(
+  model: PricingModel,
+  branches: readonly BranchRow[] = [],
+  pickers: PricingPickers | DealerPickers = FALLBACK_PICKERS,
+): TemplateResult {
+  if (pickers.rememberProduct !== undefined) {
+    for (const r of model.promos.clearance.rows) {
+      pickers.rememberProduct(r.product_id, r.sku, r.name);
+    }
+    for (const r of model.uom.rows) {
+      pickers.rememberProduct(r.product_id, r.product_sku, "");
+    }
+  }
   const isPaymentTerms = model.tab === "payment-terms" || model.tab === "terms";
   return html`
     <header class="page-head">
@@ -88,51 +140,13 @@ export function renderPricing(model: PricingModel): TemplateResult {
       </p>
     </header>
 
-    <div class="pr-board-pills" role="tablist" aria-label="Pricing views">
-      <button
-        type="button"
-        class="pr-board-pill ${model.tab === "margin" ? "pr-board-pill-active" : ""}"
-        data-action="pr-set-tab"
-        data-tab="margin"
-      >
-        Margin floors
-      </button>
-      <button
-        type="button"
-        class="pr-board-pill ${model.tab === "rules" ? "pr-board-pill-active" : ""}"
-        data-action="pr-set-tab"
-        data-tab="rules"
-      >
-        Rules
-      </button>
-      <button
-        type="button"
-        class="pr-board-pill ${model.tab === "breaks" ? "pr-board-pill-active" : ""}"
-        data-action="pr-set-tab"
-        data-tab="breaks"
-      >
-        Ladders
-      </button>
-      <button
-        type="button"
-        class="pr-board-pill ${model.tab === "batches" ? "pr-board-pill-active" : ""}"
-        data-action="pr-set-tab"
-        data-tab="batches"
-      >
-        Imports
-      </button>
-      <button
-        type="button"
-        class="pr-board-pill ${isPaymentTerms ? "pr-board-pill-active" : ""}"
-        data-action="pr-set-tab"
-        data-tab="payment-terms"
-      >
-        Payment terms and deposits
-      </button>
-    </div>
-
-    <nav class="pr-tabs ${isPaymentTerms ? "pr-tabs-hidden" : ""}" role="group" aria-label="Pricing tabs">
-      ${PRICING_TABS.map(
+    <!-- UX-106: ONE navigation over ONE axis. The board strip and the tab strip
+         listed the same views under different words, so the page showed two rows
+         of pills and pushed its own content off the first screen at 390. The
+         desk widths keep one strip of pills; the phone folds the whole list
+         behind one select, so a single control sits above the content. -->
+    <nav class="pr-tabs" role="tablist" aria-label="Pricing views">
+      ${PRICING_VIEWS.map(
         (t) => html`
           <button
             type="button"
@@ -146,28 +160,37 @@ export function renderPricing(model: PricingModel): TemplateResult {
         `,
       )}
     </nav>
-    ${renderTab(model)}
+    <div class="pr-nav-phone">
+      <label class="field">
+        <span class="field-label">Section</span>
+        <select class="select pr-nav-select" data-field="pr-tab" data-test="pr-tab-select">
+          ${PRICING_VIEWS.map((t) => html`<option>${t.title}</option>`)}
+        </select>
+      </label>
+    </div>
+
+    ${renderTab(model, branches, pickers)}
   `;
 }
 
-function renderTab(model: PricingModel): TemplateResult {
+function renderTab(model: PricingModel, branches: readonly BranchRow[], pickers: PricingPickers): TemplateResult {
   // The router line: one case per landed tab. The next group's commit adds
   // its case beside this one; until then the tab says plainly it is not wired.
   if (model.tab === "payment-terms" || model.tab === "terms") return renderPaymentTermsAndDeposits();
   if (model.tab === "margin") return renderMargin(model);
-  if (model.tab === "rules") return renderRules(model);
-  if (model.tab === "customers") return renderCustomers(model);
-  if (model.tab === "breaks") return renderBreaks(model);
-  if (model.tab === "promos") return renderPromos(model);
-  if (model.tab === "rebates") return renderRebates(model);
-  if (model.tab === "uom") return renderUom(model);
+  if (model.tab === "rules") return renderRules(model, branches, pickers);
+  if (model.tab === "customers") return renderCustomers(model, pickers);
+  if (model.tab === "breaks") return renderBreaks(model, pickers);
+  if (model.tab === "promos") return renderPromos(model, branches, pickers);
+  if (model.tab === "rebates") return renderRebates(model, pickers);
+  if (model.tab === "uom") return renderUom(model, pickers);
   if (model.tab === "batches") return renderBatches(model);
   if (model.tab === "pricefile") return renderPriceFile(model);
-  if (model.tab === "lowmargin") return renderLowMargin(model);
+  if (model.tab === "lowmargin") return renderLowMargin(model, pickers);
   if (model.tab === "audit") return renderPricingAudit(model);
-  if (model.tab === "changelog") return renderChangeLog(model);
-  const tab = PRICING_TABS.find((t) => t.id === model.tab);
-  return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
+  if (model.tab === "changelog") return renderChangeLog(model, pickers);
+  const tab = PRICING_VIEWS.find((t) => t.id === model.tab);
+  return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? UNKNOWN_VIEW)}</p>`;
 }
 
 // FW1-14: this tab was a board of invented figures with no route behind it
@@ -224,7 +247,7 @@ function renderPolicies(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-margin-empty">${marginEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="pr-policy-table">
                 <thead>
                   <tr>
                     <th scope="col">Category</th>
@@ -248,22 +271,30 @@ function renderPolicies(model: PricingModel): TemplateResult {
   `;
 }
 
+/**
+ * One policy's row. UX-106: the dealer's screen shows the category's word and
+ * never a raw id; a category the catalog does not know says so, the way the
+ * editor's own chip says it. The phone's card row (the table's own labels in
+ * the data-label attributes) reads the same row without a cut column.
+ */
 function renderPolicyRow(row: { readonly category_id: string; readonly margin_target_bps: number; readonly margin_floor_bps: number; readonly margin_enforcement_disabled: boolean }, model: PricingModel): TemplateResult {
-  const name = categoryName(row.category_id, model.categories);
+  const known = model.categories.some((c) => c.id === row.category_id);
+  const name = known ? categoryName(row.category_id, model.categories) : "a category not in the catalog";
   return html`
     <tr data-category=${row.category_id}>
-      <td>
-        <span class="person">${name}</span>
-        <span class="mono dim">${row.category_id === name ? "" : row.category_id}</span>
+      <td class="pr-policy-cat">
+        ${known
+          ? html`<span class="person">${name}</span>`
+          : html`<span class="chip chip-danger">Not in the catalog</span>`}
       </td>
-      <td class="num" data-test="pr-margin-target">${pctWords(row.margin_target_bps)}</td>
-      <td class="num" data-test="pr-margin-floor">${pctWords(row.margin_floor_bps)}</td>
-      <td>
+      <td class="num pr-policy-num" data-label="Margin target" data-test="pr-margin-target">${pctWords(row.margin_target_bps)}</td>
+      <td class="num pr-policy-num" data-label="Margin floor" data-test="pr-margin-floor">${pctWords(row.margin_floor_bps)}</td>
+      <td class="pr-policy-enf" data-label="Enforcement">
         ${row.margin_enforcement_disabled
           ? html`<span class="chip chip-danger">Off: bypasses are logged</span>`
           : html`<span class="chip">On</span>`}
       </td>
-      <td>
+      <td class="pr-policy-act">
         <button
           type="button"
           class="btn btn-secondary btn-small"
@@ -344,7 +375,7 @@ function renderFloorPanel(floor: FloorPanel, confirmAction: string, reviewAction
         ? nothing
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Product</th>
@@ -359,12 +390,12 @@ function renderFloorPanel(floor: FloorPanel, confirmAction: string, reviewAction
                   ${floor.items.map(
                     (item) => html`
                       <tr data-product=${item.product_id}>
-                        <td>${floorItemWords(item)}</td>
-                        <td class="num">${moneyWords(item.previous_final_cents)}</td>
-                        <td class="num">${moneyWords(item.final_cents)}</td>
-                        <td class="num">${marginCellWords(item.margin_bps)}</td>
-                        <td class="num">${marginCellWords(item.floor_bps)}</td>
-                        <td>${item.already_under_floor ? html`<span class="chip chip-dim">yes</span>` : html`<span class="chip chip-danger">no</span>`}</td>
+                        <td data-label="Product">${floorItemWords(item)}</td>
+                        <td class="num" data-label="Price now">${moneyWords(item.previous_final_cents)}</td>
+                        <td class="num" data-label="Price with the change">${moneyWords(item.final_cents)}</td>
+                        <td class="num" data-label="Margin with the change">${marginCellWords(item.margin_bps)}</td>
+                        <td class="num" data-label="Floor">${marginCellWords(item.floor_bps)}</td>
+                        <td data-label="Under the floor">${item.already_under_floor ? html`<span class="chip chip-dim">yes</span>` : html`<span class="chip chip-danger">no</span>`}</td>
                       </tr>
                     `,
                   )}
@@ -387,15 +418,21 @@ function renderFloorPanel(floor: FloorPanel, confirmAction: string, reviewAction
 
 function ruleDimsWords(rule: { readonly scope: string; readonly customer_id: string; readonly customer_type: string; readonly category_id: string; readonly product_id: string; readonly branch_id: string }, model: PricingModel): string {
   const parts: string[] = [];
-  if (rule.customer_id !== "") parts.push(`customer ${rule.customer_id.slice(0, 8)}`);
+  // UX-106 round 3: a dimension the screen cannot name reads as the house
+  // placeholder word, never as the id's own first block.
+  if (rule.customer_id !== "") parts.push(UNKNOWN_CUSTOMER);
   if (rule.customer_type !== "") parts.push(customerTypeWord(rule.customer_type));
   if (rule.category_id !== "") parts.push(categoryName(rule.category_id, model.categories));
-  if (rule.product_id !== "") parts.push(`product ${rule.product_id.slice(0, 8)}`);
-  if (rule.branch_id !== "") parts.push(`branch ${rule.branch_id.slice(0, 8)}`);
+  if (rule.product_id !== "") parts.push(UNKNOWN_PRODUCT);
+  if (rule.branch_id !== "") parts.push(UNKNOWN_BRANCH);
   return parts.join(" · ");
 }
 
-export function renderRules(model: PricingModel): TemplateResult {
+export function renderRules(
+  model: PricingModel,
+  branches: readonly BranchRow[] = [],
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.rules;
   return html`
     ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-rules-loading">Loading the pricing rules…</p>` : nothing}
@@ -406,7 +443,7 @@ export function renderRules(model: PricingModel): TemplateResult {
         `
       : nothing}
     ${m.phase === "ready" ? renderRulesList(model) : nothing}
-    ${m.phase === "ready" && m.editing !== null ? renderRuleEditor(model) : nothing}
+    ${m.phase === "ready" && m.editing !== null ? renderRuleEditor(model, branches, pickers) : nothing}
   `;
 }
 
@@ -444,7 +481,7 @@ function renderRulesList(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-rules-empty">${ruleEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Scope</th>
@@ -471,20 +508,20 @@ function renderRuleRow(rule: RuleRow, model: PricingModel): TemplateResult {
   const confirming = m.confirmingId === rule.id;
   return html`
     <tr data-rule=${rule.id}>
-      <td><span class="chip">${scopeWord(rule.scope)}</span></td>
-      <td>
+      <td data-label="Scope"><span class="chip">${scopeWord(rule.scope)}</span></td>
+      <td data-label="Reaches">
         <div>${ruleDimsWords(rule, model)}</div>
         <div class="mono dim">${rule.detail_text}</div>
       </td>
-      <td class="num" data-test="pr-rule-value">${ruleValueWords(rule)}</td>
-      <td class="num">${rule.priority}</td>
-      <td class="mono dim">${validityWords(rule.valid_from, rule.valid_to)}</td>
-      <td>
+      <td class="num" data-label="Value" data-test="pr-rule-value">${ruleValueWords(rule)}</td>
+      <td class="num" data-label="Priority">${rule.priority}</td>
+      <td class="mono dim" data-label="Valid">${validityWords(rule.valid_from, rule.valid_to)}</td>
+      <td data-label="State">
         ${rule.is_active
           ? html`<span class="chip chip-good">active</span>`
           : html`<span class="chip chip-dim">retired</span>`}
       </td>
-      <td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -514,11 +551,15 @@ function renderRuleRow(rule: RuleRow, model: PricingModel): TemplateResult {
   `;
 }
 
-function renderRuleEditor(model: PricingModel): TemplateResult | typeof nothing {
+function renderRuleEditor(
+  model: PricingModel,
+  branches: readonly BranchRow[],
+  pickers: PricingPickers,
+): TemplateResult | typeof nothing {
   const m = model.rules;
   const e = m.editing;
   if (e === null) return nothing;
-  const heading = e.id === "" ? "New rule" : `Rule: ${e.detail === "" ? e.id.slice(0, 8) : e.detail}`;
+  const heading = e.id === "" ? "New rule" : e.detail === "" ? "Rule" : `Rule: ${e.detail}`;
   return html`
     <section class="card" data-test="pr-rule-editor">
       <div class="card-head">
@@ -536,10 +577,16 @@ function renderRuleEditor(model: PricingModel): TemplateResult | typeof nothing 
             <option value="TIER_DEFAULT">${scopeWord("TIER_DEFAULT")}</option>
           </select>
         </label>
-        <label class="field">
-          <span class="field-label">Customer id (empty unless the rule names one)</span>
-          <input class="text-field" type="text" data-field="pr-rule-customer" ?disabled=${m.busy} />
-        </label>
+        <div class="field">
+          <span class="field-label">Customer (optional)</span>
+          ${pickers.renderCustomerPicker({
+            field: "pr-rule-customer",
+            selectedId: e.customerId,
+            emptyLabel: "Any customer",
+            ariaLabel: "Customer (optional)",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field">
           <span class="field-label">Customer type</span>
           <select class="select" data-field="pr-rule-type" ?disabled=${m.busy}>
@@ -558,13 +605,22 @@ function renderRuleEditor(model: PricingModel): TemplateResult | typeof nothing 
             ${model.categories.map((c) => html`<option>${c.name}</option>`)}
           </select>
         </label>
+        <div class="field">
+          <span class="field-label">Product (optional)</span>
+          ${pickers.renderProductPicker({
+            field: "pr-rule-product",
+            selectedId: e.productId,
+            emptyLabel: "Any product",
+            ariaLabel: "Product (optional)",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field">
-          <span class="field-label">Product id (empty unless the rule names one)</span>
-          <input class="text-field" type="text" data-field="pr-rule-product" ?disabled=${m.busy} />
-        </label>
-        <label class="field">
-          <span class="field-label">Branch id (empty prices every yard)</span>
-          <input class="text-field" type="text" data-field="pr-rule-branch" ?disabled=${m.busy} />
+          <span class="field-label">Branch</span>
+          <select class="select" data-field="pr-rule-branch" ?disabled=${m.busy}>
+            <option value="">Every yard</option>
+            ${branches.map((b) => html`<option data-option-id=${b.id}>${b.name}</option>`)}
+          </select>
         </label>
         <label class="field">
           <span class="field-label">What the rule does</span>
@@ -629,7 +685,10 @@ function renderRuleEditor(model: PricingModel): TemplateResult | typeof nothing 
 
 // -- the customer prices tab ---------------------------------------------------------------------------
 
-export function renderCustomers(model: PricingModel): TemplateResult {
+export function renderCustomers(
+  model: PricingModel,
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.customers;
   const asked = m.loadedFor !== "";
   return html`
@@ -642,11 +701,16 @@ export function renderCustomers(model: PricingModel): TemplateResult {
           : nothing}
       </div>
       <p class="pr-hint">
-        The category prices one account rides over its tier rules. The pricing reads here are the contract's own: this
-        surface holds no customer search, so the id is typed whole.
+        The category prices one account rides over its tier rules. Choose a customer to read and edit their category prices.
       </p>
       <div class="filters" role="group" aria-label="The customer">
-        <input class="text-field" type="text" placeholder="Customer id" aria-label="Customer id" data-field="pr-cust-id" />
+        ${pickers.renderCustomerPicker({
+          field: "pr-cust-id",
+          selectedId: m.customerIdInput,
+          emptyLabel: "No customer chosen",
+          ariaLabel: "Customer",
+          disabled: m.phase === "loading",
+        })}
         <button type="button" class="btn btn-primary" data-action="pr-cust-load" ?disabled=${m.busy}>Load prices</button>
       </div>
       ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-cust-loading">Loading the customer's prices…</p>` : nothing}
@@ -666,7 +730,7 @@ function renderOverrides(model: PricingModel, asked: boolean): TemplateResult | 
   if (m.rows.length === 0) return html`<p class="notice-line" data-test="pr-cust-empty">${overrideEmptyWords(true)}</p>`;
   return html`
     <div class="tablewrap">
-      <table>
+      <table class="cardrow-table">
         <thead>
           <tr>
             <th scope="col">Category</th>
@@ -688,10 +752,10 @@ function renderOverrideRow(row: OverrideRow, model: PricingModel): TemplateResul
   const confirming = m.confirmingId === row.id;
   return html`
     <tr data-override=${row.id}>
-      <td><span class="person">${categoryName(row.category_id, model.categories)}</span></td>
-      <td class="num" data-test="pr-cust-value">${overrideValueWords(row)}</td>
-      <td class="dim">${row.notes}</td>
-      <td>
+      <td data-label="Category"><span class="person">${categoryName(row.category_id, model.categories)}</span></td>
+      <td class="num" data-label="Value" data-test="pr-cust-value">${overrideValueWords(row)}</td>
+      <td class="dim" data-label="Notes">${row.notes}</td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -776,12 +840,15 @@ function renderOverrideEditor(model: PricingModel): TemplateResult | typeof noth
 // -- the quantity breaks tab ---------------------------------------------------------------------------
 
 function breakScopeWords(row: BreakRow, model: PricingModel): string {
-  if (row.product_id !== "") return `product ${row.product_id.slice(0, 8)}`;
+  if (row.product_id !== "") return UNKNOWN_PRODUCT;
   if (row.category_id !== "") return categoryName(row.category_id, model.categories);
   return "unscoped";
 }
 
-export function renderBreaks(model: PricingModel): TemplateResult {
+export function renderBreaks(
+  model: PricingModel,
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.breaks;
   return html`
     ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-breaks-loading">Loading the quantity breaks…</p>` : nothing}
@@ -792,7 +859,7 @@ export function renderBreaks(model: PricingModel): TemplateResult {
         `
       : nothing}
     ${m.phase === "ready" ? renderBreaksList(model) : nothing}
-    ${m.phase === "ready" && m.editing !== null ? renderBreakEditor(model) : nothing}
+    ${m.phase === "ready" && m.editing !== null ? renderBreakEditor(model, pickers) : nothing}
   `;
 }
 
@@ -811,7 +878,7 @@ function renderBreaksList(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-breaks-empty">${breaksEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Schedule</th>
@@ -836,12 +903,12 @@ function renderBreakRowView(row: BreakRow, model: PricingModel): TemplateResult 
   const confirming = m.confirmingId === row.id;
   return html`
     <tr data-break=${row.id}>
-      <td>
+      <td data-label="Schedule">
         <div class="person">${row.name}</div>
         <div class="mono dim">${row.code} · by ${row.threshold_uom}</div>
       </td>
-      <td>${breakScopeWords(row, model)}</td>
-      <td>
+      <td data-label="Covers">${breakScopeWords(row, model)}</td>
+      <td data-label="Tiers">
         ${row.items.length === 0
           ? html`<span class="dim">no tiers</span>`
           : row.items.map(
@@ -850,10 +917,10 @@ function renderBreakRowView(row: BreakRow, model: PricingModel): TemplateResult 
               `,
             )}
       </td>
-      <td>
+      <td data-label="State">
         ${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}
       </td>
-      <td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -877,7 +944,7 @@ function renderBreakRowView(row: BreakRow, model: PricingModel): TemplateResult 
   `;
 }
 
-function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing {
+function renderBreakEditor(model: PricingModel, pickers: PricingPickers): TemplateResult | typeof nothing {
   const m = model.breaks;
   const e = m.editing;
   if (e === null) return nothing;
@@ -905,10 +972,16 @@ function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing
             ${model.categories.map((c) => html`<option>${c.name}</option>`)}
           </select>
         </label>
-        <label class="field">
-          <span class="field-label">Product id (empty prices by the category)</span>
-          <input class="text-field" type="text" data-field="pr-brk-product" ?disabled=${m.busy} />
-        </label>
+        <div class="field">
+          <span class="field-label">Product (optional)</span>
+          ${pickers.renderProductPicker({
+            field: "pr-brk-product",
+            selectedId: e.productId,
+            emptyLabel: "Any product (prices by the category)",
+            ariaLabel: "Product (optional)",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field">
           <span class="field-label">Threshold unit (the bands count in this)</span>
           <input class="text-field" type="text" placeholder="SF" data-field="pr-brk-uom" ?disabled=${m.busy} />
@@ -922,7 +995,7 @@ function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing
         </label>
       </div>
       <div class="tablewrap">
-        <table>
+        <table class="cardrow-table">
           <thead>
             <tr>
               <th scope="col">From</th>
@@ -937,9 +1010,9 @@ function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing
             ${e.items.map(
               (item, index) => html`
                 <tr data-tier=${index}>
-                  <td><input class="text-field" type="text" inputmode="decimal" aria-label=${tierWord(index)} data-field="pr-brk-item-${index}-from" ?disabled=${m.busy} /></td>
-                  <td><input class="text-field" type="text" inputmode="decimal" aria-label="Tier top" data-field="pr-brk-item-${index}-to" ?disabled=${m.busy} /></td>
-                  <td>
+                  <td data-label="From"><input class="text-field" type="text" inputmode="decimal" aria-label=${tierWord(index)} data-field="pr-brk-item-${index}-from" ?disabled=${m.busy} /></td>
+                  <td data-label="To"><input class="text-field" type="text" inputmode="decimal" aria-label="Tier top" data-field="pr-brk-item-${index}-to" ?disabled=${m.busy} /></td>
+                  <td data-label="What the tier does">
                     <select class="select" aria-label="What the tier does" data-field="pr-brk-item-${index}-type" ?disabled=${m.busy}>
                       <option value="PCT_OFF">Percent off</option>
                       <option value="ABS_OFF">Amount off</option>
@@ -947,9 +1020,9 @@ function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing
                       <option value="SURCHARGE_ABS">Amount surcharge</option>
                     </select>
                   </td>
-                  <td><input class="text-field" type="text" inputmode="decimal" aria-label="Tier value" data-field="pr-brk-item-${index}-value" ?disabled=${m.busy} /></td>
-                  <td><input class="text-field" type="text" aria-label="Tier unit" data-field="pr-brk-item-${index}-uom" ?disabled=${m.busy} /></td>
-                  <td>
+                  <td data-label="Value"><input class="text-field" type="text" inputmode="decimal" aria-label="Tier value" data-field="pr-brk-item-${index}-value" ?disabled=${m.busy} /></td>
+                  <td data-label="Unit"><input class="text-field" type="text" aria-label="Tier unit" data-field="pr-brk-item-${index}-uom" ?disabled=${m.busy} /></td>
+                  <td class="cardrow-act">
                     <button
                       type="button"
                       class="btn btn-secondary btn-small"
@@ -987,13 +1060,17 @@ function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing
 // -- the promotions and clearance tab -------------------------------------------------------------------
 
 function promoScopeWords(row: PromotionRow, model: PricingModel): string {
-  if (row.product_id !== "") return `product ${row.product_id.slice(0, 8)}`;
+  if (row.product_id !== "") return UNKNOWN_PRODUCT;
   if (row.category_id !== "") return categoryName(row.category_id, model.categories);
-  if (row.branch_id !== "") return `branch ${row.branch_id.slice(0, 8)}`;
+  if (row.branch_id !== "") return UNKNOWN_BRANCH;
   return "everywhere";
 }
 
-export function renderPromos(model: PricingModel): TemplateResult {
+export function renderPromos(
+  model: PricingModel,
+  branches: readonly BranchRow[] = [],
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const promos = model.promos.promotions;
   const clearance = model.promos.clearance;
   return html`
@@ -1005,9 +1082,9 @@ export function renderPromos(model: PricingModel): TemplateResult {
           <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-promos-reload">Try again</button></div>`
       : nothing}
     ${promos.phase === "ready" ? renderPromotionsPanel(model) : nothing}
-    ${promos.phase === "ready" && promos.editing !== null ? renderPromoEditor(model) : nothing}
+    ${promos.phase === "ready" && promos.editing !== null ? renderPromoEditor(model, branches, pickers) : nothing}
     ${promos.phase === "ready" && clearance.phase === "ready" ? renderClearancePanel(model) : nothing}
-    ${promos.phase === "ready" && clearance.phase === "ready" && clearance.editing !== null ? renderClearanceEditor(model) : nothing}
+    ${promos.phase === "ready" && clearance.phase === "ready" && clearance.editing !== null ? renderClearanceEditor(model, pickers) : nothing}
   `;
 }
 
@@ -1026,7 +1103,7 @@ function renderPromotionsPanel(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-promos-empty">${promosEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table cardrow-wide">
                 <thead>
                   <tr>
                     <th scope="col">Promotion</th>
@@ -1053,16 +1130,16 @@ function renderPromoRow(row: PromotionRow, model: PricingModel): TemplateResult 
   const confirming = m.confirmingId === row.id;
   return html`
     <tr data-promo=${row.id}>
-      <td>
+      <td data-label="Promotion">
         <div class="person">${row.name}</div>
         <div class="mono dim">${row.code} · ${row.detail_text}</div>
       </td>
-      <td>${promoScopeWords(row, model)}</td>
-      <td class="mono dim">${validityWords(row.starts_at, row.ends_at)}</td>
-      <td class="num" data-test="pr-promo-value">${promoValueWords(row)}</td>
-      <td class="num">${row.priority}</td>
-      <td>${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}</td>
-      <td>
+      <td data-label="Covers">${promoScopeWords(row, model)}</td>
+      <td class="mono dim" data-label="Window">${validityWords(row.starts_at, row.ends_at)}</td>
+      <td class="num" data-label="Value" data-test="pr-promo-value">${promoValueWords(row)}</td>
+      <td class="num" data-label="Priority">${row.priority}</td>
+      <td data-label="State">${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}</td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -1086,7 +1163,11 @@ function renderPromoRow(row: PromotionRow, model: PricingModel): TemplateResult 
   `;
 }
 
-function renderPromoEditor(model: PricingModel): TemplateResult | typeof nothing {
+function renderPromoEditor(
+  model: PricingModel,
+  branches: readonly BranchRow[],
+  pickers: PricingPickers,
+): TemplateResult | typeof nothing {
   const m = model.promos.promotions;
   const e = m.editing;
   if (e === null) return nothing;
@@ -1113,13 +1194,22 @@ function renderPromoEditor(model: PricingModel): TemplateResult | typeof nothing
             ${model.categories.map((c) => html`<option>${c.name}</option>`)}
           </select>
         </label>
+        <div class="field">
+          <span class="field-label">Product (optional)</span>
+          ${pickers.renderProductPicker({
+            field: "pr-prm-product",
+            selectedId: e.productId,
+            emptyLabel: "Any product",
+            ariaLabel: "Product (optional)",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field">
-          <span class="field-label">Product id (empty unless the promo names one)</span>
-          <input class="text-field" type="text" data-field="pr-prm-product" ?disabled=${m.busy} />
-        </label>
-        <label class="field">
-          <span class="field-label">Branch id (empty runs everywhere)</span>
-          <input class="text-field" type="text" data-field="pr-prm-branch" ?disabled=${m.busy} />
+          <span class="field-label">Branch</span>
+          <select class="select" data-field="pr-prm-branch" ?disabled=${m.busy}>
+            <option value="">Everywhere</option>
+            ${branches.map((b) => html`<option data-option-id=${b.id}>${b.name}</option>`)}
+          </select>
         </label>
         <label class="field">
           <span class="field-label">Starts</span>
@@ -1188,7 +1278,7 @@ function renderClearancePanel(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-clear-empty">No clearance marks. An item prices through the ordinary waterfall until it is marked.</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Product</th>
@@ -1213,24 +1303,27 @@ function renderClearanceRowView(row: ClearanceRow, model: PricingModel): Templat
   void model;
   const m = model.promos.clearance;
   const confirming = m.confirmingId === row.product_id;
+  // The row names the product it marks: the sku when it has one, else the
+  // name, else the house placeholder. Never the product id's own first block.
+  const productLabel = row.sku !== "" ? row.sku : row.name !== "" ? row.name : UNKNOWN_PRODUCT;
   return html`
     <tr data-clearance=${row.product_id}>
-      <td>
-        <div class="person">${row.name === "" ? "Unknown product" : row.name}</div>
-        <div class="mono dim">${row.sku === "" ? row.product_id.slice(0, 8) : row.sku}</div>
+      <td data-label="Product">
+        <div class="person">${row.name === "" ? UNKNOWN_PRODUCT : row.name}</div>
+        ${row.sku === "" ? nothing : html`<div class="mono dim">${row.sku}</div>`}
       </td>
-      <td>${row.reason}</td>
-      <td class="num" data-test="pr-clear-value">${clearanceValueWords(row)}</td>
-      <td class="mono dim">${validityWords(row.started_at, row.ends_at)}</td>
-      <td>${row.is_active ? html`<span class="chip chip-good">marked</span>` : html`<span class="chip chip-dim">ended</span>`}</td>
-      <td>
+      <td data-label="Why">${row.reason}</td>
+      <td class="num" data-label="Price" data-test="pr-clear-value">${clearanceValueWords(row)}</td>
+      <td class="mono dim" data-label="Marked">${validityWords(row.started_at, row.ends_at)}</td>
+      <td data-label="State">${row.is_active ? html`<span class="chip chip-good">marked</span>` : html`<span class="chip chip-dim">ended</span>`}</td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
             class="btn btn-secondary btn-small"
             data-action="pr-clear-edit"
             data-product=${row.product_id}
-            aria-label=${`Edit the mark on ${row.sku === "" ? row.product_id.slice(0, 8) : row.sku}`}
+            aria-label=${`Edit the mark on ${productLabel}`}
           >
             Edit
           </button>
@@ -1247,7 +1340,7 @@ function renderClearanceRowView(row: ClearanceRow, model: PricingModel): Templat
   `;
 }
 
-function renderClearanceEditor(model: PricingModel): TemplateResult | typeof nothing {
+function renderClearanceEditor(model: PricingModel, pickers: PricingPickers): TemplateResult | typeof nothing {
   const m = model.promos.clearance;
   const e = m.editing;
   if (e === null) return nothing;
@@ -1258,10 +1351,16 @@ function renderClearanceEditor(model: PricingModel): TemplateResult | typeof not
         <h2 class="card-title">${heading}</h2>
       </div>
       <div class="form-grid">
-        <label class="field">
-          <span class="field-label">Product id</span>
-          <input class="text-field" type="text" data-field="pr-clr-product" ?disabled=${m.busy} />
-        </label>
+        <div class="field">
+          <span class="field-label">Product</span>
+          ${pickers.renderProductPicker({
+            field: "pr-clr-product",
+            selectedId: e.productId,
+            emptyLabel: "No product chosen",
+            ariaLabel: "Product",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field field-full">
           <span class="field-label">Why it is marked (the reason is what the row shows)</span>
           <input class="text-field" type="text" data-field="pr-clr-reason" ?disabled=${m.busy} />
@@ -1310,7 +1409,10 @@ function rebateVendorOptions(model: PricingModel): ReadonlyMap<string, string> {
   return seen;
 }
 
-export function renderRebates(model: PricingModel): TemplateResult {
+export function renderRebates(
+  model: PricingModel,
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.rebates;
   return html`
     ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-rebates-loading">Loading the rebate programs…</p>` : nothing}
@@ -1319,9 +1421,9 @@ export function renderRebates(model: PricingModel): TemplateResult {
           <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-rebates-reload">Try again</button></div>`
       : nothing}
     ${m.phase === "ready" ? renderRebatePrograms(model) : nothing}
-    ${m.phase === "ready" && m.editing !== null ? renderRebateEditor(model) : nothing}
+    ${m.phase === "ready" && m.editing !== null ? renderRebateEditor(model, pickers) : nothing}
     ${m.phase === "ready" ? renderLedger(model) : nothing}
-    ${m.phase === "ready" ? renderAccrual(model) : nothing}
+    ${m.phase === "ready" ? renderAccrual(model, pickers) : nothing}
   `;
 }
 
@@ -1340,7 +1442,7 @@ function renderRebatePrograms(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-rebates-empty">${rebateEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Program</th>
@@ -1367,16 +1469,16 @@ function renderRebateRowView(row: RebateRow, model: PricingModel): TemplateResul
   const confirming = m.confirmingId === row.id;
   return html`
     <tr data-rebate=${row.id}>
-      <td>
+      <td data-label="Program">
         <div class="person">${row.name}</div>
         <div class="mono dim">${row.code} · ${row.notes}</div>
       </td>
-      <td>${vendorWords(row.vendor_name, row.vendor_id)}</td>
-      <td>${rebateCoversWords(row, model)}</td>
-      <td class="num" data-test="pr-rebate-rate">${rebateRateWords(row)}</td>
-      <td class="mono dim">${row.starts_at.slice(0, 10)}</td>
-      <td>${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}</td>
-      <td>
+      <td data-label="Vendor">${vendorWords(row.vendor_name, row.vendor_id)}</td>
+      <td data-label="Covers">${rebateCoversWords(row, model)}</td>
+      <td class="num" data-label="Rate" data-test="pr-rebate-rate">${rebateRateWords(row)}</td>
+      <td class="mono dim" data-label="From">${row.starts_at.slice(0, 10)}</td>
+      <td data-label="State">${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}</td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -1400,11 +1502,12 @@ function renderRebateRowView(row: RebateRow, model: PricingModel): TemplateResul
   `;
 }
 
-function renderRebateEditor(model: PricingModel): TemplateResult | typeof nothing {
+function renderRebateEditor(model: PricingModel, pickers: PricingPickers): TemplateResult | typeof nothing {
   const m = model.rebates;
   const e = m.editing;
   if (e === null) return nothing;
   const heading = e.id === "" ? "New program" : `Program: ${e.nameInput === "" ? e.code : e.nameInput}`;
+  const vendors = knownVendors(model);
   return html`
     <section class="card" data-test="pr-rebate-editor">
       <div class="card-head">
@@ -1421,8 +1524,11 @@ function renderRebateEditor(model: PricingModel): TemplateResult | typeof nothin
           <input class="text-field" type="text" data-field="pr-reb-name" ?disabled=${m.busy} />
         </label>
         <label class="field">
-          <span class="field-label">Vendor id (immutable after create)</span>
-          <input class="text-field" type="text" data-field="pr-reb-vendor" ?disabled=${m.busy || e.id !== ""} />
+          <span class="field-label">Vendor (immutable after create)</span>
+          <select class="select" data-field="pr-reb-vendor" ?disabled=${m.busy || e.id !== ""}>
+            <option value="">${vendors.length === 0 ? "No vendors yet" : "Choose a vendor"}</option>
+            ${vendors.map((v) => html`<option data-option-id=${v.id}>${v.name}</option>`)}
+          </select>
         </label>
         <label class="field">
           <span class="field-label">Category</span>
@@ -1431,10 +1537,16 @@ function renderRebateEditor(model: PricingModel): TemplateResult | typeof nothin
             ${model.categories.map((c) => html`<option>${c.name}</option>`)}
           </select>
         </label>
-        <label class="field">
-          <span class="field-label">Product id (empty unless the program names one)</span>
-          <input class="text-field" type="text" data-field="pr-reb-product" ?disabled=${m.busy} />
-        </label>
+        <div class="field">
+          <span class="field-label">Product (optional)</span>
+          ${pickers.renderProductPicker({
+            field: "pr-reb-product",
+            selectedId: e.productId,
+            emptyLabel: "Any product",
+            ariaLabel: "Product (optional)",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field">
           <span class="field-label">Basis</span>
           <select class="select" data-field="pr-reb-basis" ?disabled=${m.busy}>
@@ -1492,7 +1604,7 @@ function renderLedger(model: PricingModel): TemplateResult {
       </div>
       <div class="filters" role="group" aria-label="The ledger's vendor">
         <select class="select" aria-label="Vendor" data-field="pr-ledger-name">
-          <option value="">Choose a vendor</option>
+          <option value="">${vendors.size === 0 ? "No vendors yet" : "Choose a vendor"}</option>
           ${Array.from(vendors.values()).map((name) => html`<option>${name}</option>`)}
         </select>
         <button type="button" class="btn btn-secondary" data-action="pr-ledger-vendor" ?disabled=${m.phase === "loading"}>Load ledger</button>
@@ -1505,7 +1617,7 @@ function renderLedger(model: PricingModel): TemplateResult {
       ${m.phase === "ready" && m.rows.length > 0
         ? html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Accrued</th>
@@ -1521,13 +1633,13 @@ function renderLedger(model: PricingModel): TemplateResult {
                   ${m.rows.map(
                     (row) => html`
                       <tr data-accrual=${row.accrual_cents ?? ""}>
-                        <td class="mono dim">${row.accrued_at.slice(0, 10)}</td>
-                        <td class="mono">${row.program_code === "" ? "-" : row.program_code}</td>
-                        <td class="mono">${row.product_sku === "" ? row.product_sku : row.product_sku}</td>
-                        <td><span class="chip">${row.source_type}</span></td>
-                        <td class="num">${costCellWords(row.basis_cents)}</td>
-                        <td class="mono dim">${row.rate_note === null ? WITHHELD_FIGURE_WORDS : row.rate_note}</td>
-                        <td class="num">${costCellWords(row.accrual_cents)}</td>
+                        <td class="mono dim" data-label="Accrued">${row.accrued_at.slice(0, 10)}</td>
+                        <td class="mono" data-label="Program">${row.program_code === "" ? "-" : row.program_code}</td>
+                        <td class="mono" data-label="SKU">${row.product_sku === "" ? row.product_sku : row.product_sku}</td>
+                        <td data-label="Source"><span class="chip">${row.source_type}</span></td>
+                        <td class="num" data-label="Basis">${costCellWords(row.basis_cents)}</td>
+                        <td class="mono dim" data-label="Rate note">${row.rate_note === null ? WITHHELD_FIGURE_WORDS : row.rate_note}</td>
+                        <td class="num" data-label="Claim">${costCellWords(row.accrual_cents)}</td>
                       </tr>
                     `,
                   )}
@@ -1541,7 +1653,7 @@ function renderLedger(model: PricingModel): TemplateResult {
   `;
 }
 
-function renderAccrual(model: PricingModel): TemplateResult {
+function renderAccrual(model: PricingModel, pickers: PricingPickers): TemplateResult {
   const m = model.rebates.accrual;
   return html`
     <section class="card">
@@ -1549,7 +1661,7 @@ function renderAccrual(model: PricingModel): TemplateResult {
         <h2 class="card-title">Accrue one sale event</h2>
       </div>
       <p class="pr-hint">
-        The caller supplies the facts; the engine reads no sales table. The source type and id are the idempotency key:
+        The caller supplies the facts; the engine reads no sales table. The source type and reference are the idempotency key:
         a retry answers skipped, not an error.
       </p>
       <div class="form-grid">
@@ -1562,20 +1674,29 @@ function renderAccrual(model: PricingModel): TemplateResult {
           </select>
         </label>
         <label class="field">
-          <span class="field-label">Source id (empty only on an adjustment)</span>
+          <span class="field-label">Sale or order reference (empty only on an adjustment)</span>
           <input class="text-field" type="text" data-field="pr-acc-source-id" ?disabled=${m.busy} />
         </label>
         <label class="field">
           <span class="field-label">When it happened (empty means now)</span>
           <input class="text-field" type="date" data-field="pr-acc-occurred" ?disabled=${m.busy} />
         </label>
+        <div class="field">
+          <span class="field-label">Product</span>
+          ${pickers.renderProductPicker({
+            field: "pr-acc-product",
+            selectedId: m.productId,
+            emptyLabel: "No product chosen",
+            ariaLabel: "Product",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field">
-          <span class="field-label">Product id</span>
-          <input class="text-field" type="text" data-field="pr-acc-product" ?disabled=${m.busy} />
-        </label>
-        <label class="field">
-          <span class="field-label">Category id</span>
-          <input class="text-field" type="text" data-field="pr-acc-category" ?disabled=${m.busy} />
+          <span class="field-label">Category</span>
+          <select class="select" data-field="pr-acc-category" ?disabled=${m.busy}>
+            <option value="">Choose a category</option>
+            ${model.categories.map((c) => html`<option data-option-id=${c.id}>${c.name}</option>`)}
+          </select>
         </label>
         <label class="field">
           <span class="field-label">Quantity, base unit</span>
@@ -1605,12 +1726,15 @@ function renderAccrual(model: PricingModel): TemplateResult {
 
 function uomProductWords(row: UomConversionRow): string {
   if (row.product_sku !== "") return row.product_sku;
-  if (row.product_id !== "") return row.product_id.slice(0, 8);
-  if (row.category_id !== "") return `category ${row.category_id.slice(0, 8)}`;
+  if (row.product_id !== "") return UNKNOWN_PRODUCT;
+  if (row.category_id !== "") return UNKNOWN_CATEGORY;
   return "all products";
 }
 
-export function renderUom(model: PricingModel): TemplateResult {
+export function renderUom(
+  model: PricingModel,
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.uom;
   const unconfirmed = m.rows.filter((r) => !isUomConfirmed(r.source)).length;
   return html`
@@ -1624,15 +1748,15 @@ export function renderUom(model: PricingModel): TemplateResult {
           ${unconfirmed > 0
             ? html`<p class="error-line" data-test="pr-uom-warn">${uomUnconfirmedWords(unconfirmed, m.rows.length)}</p>`
             : nothing}
-          ${renderUomProbe(model)}
+          ${renderUomProbe(model, pickers)}
           ${renderUomTable(model)}
         `
       : nothing}
-    ${m.phase === "ready" && m.editing !== null ? renderUomEditor(model) : nothing}
+    ${m.phase === "ready" && m.editing !== null ? renderUomEditor(model, pickers) : nothing}
   `;
 }
 
-function renderUomProbe(model: PricingModel): TemplateResult {
+function renderUomProbe(model: PricingModel, pickers: PricingPickers): TemplateResult {
   const m = model.uom.probe;
   const plan = m.result;
   return html`
@@ -1646,10 +1770,23 @@ function renderUomProbe(model: PricingModel): TemplateResult {
         knows, is the review.
       </p>
       <div class="form-grid">
-        <label class="field"><span class="field-label">Product id</span>
-          <input class="text-field" type="text" data-field="pr-uom-probe-product" ?disabled=${m.busy} /></label>
-        <label class="field"><span class="field-label">Category id (empty is fine)</span>
-          <input class="text-field" type="text" data-field="pr-uom-probe-category" ?disabled=${m.busy} /></label>
+        <div class="field">
+          <span class="field-label">Product</span>
+          ${pickers.renderProductPicker({
+            field: "pr-uom-probe-product",
+            selectedId: m.productId,
+            emptyLabel: "No product chosen",
+            ariaLabel: "Product",
+            disabled: m.busy,
+          })}
+        </div>
+        <label class="field">
+          <span class="field-label">Category (optional)</span>
+          <select class="select" data-field="pr-uom-probe-category" ?disabled=${m.busy}>
+            <option value="">Any category</option>
+            ${model.categories.map((c) => html`<option data-option-id=${c.id}>${c.name}</option>`)}
+          </select>
+        </label>
         <label class="field"><span class="field-label">Quantity</span>
           <input class="text-field" type="text" inputmode="decimal" data-field="pr-uom-probe-qty" ?disabled=${m.busy} /></label>
         <label class="field"><span class="field-label">Unit entered</span>
@@ -1694,7 +1831,7 @@ function renderUomTable(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-uom-empty">${uomEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Product</th>
@@ -1721,15 +1858,15 @@ function renderUomRow(row: UomConversionRow, model: PricingModel): TemplateResul
   const confirmed = isUomConfirmed(row.source);
   return html`
     <tr data-conversion=${row.id}>
-      <td>${uomProductWords(row)}</td>
-      <td class="mono">${row.from_uom} → ${row.to_uom}</td>
-      <td class="num">${trimNumber(row.factor, 6)}</td>
-      <td>${row.round_up_at_pick ? html`<span class="chip">rounds up at pick</span>` : nothing}</td>
-      <td>
+      <td data-label="Product">${uomProductWords(row)}</td>
+      <td class="mono" data-label="Edge">${row.from_uom} → ${row.to_uom}</td>
+      <td class="num" data-label="Factor">${trimNumber(row.factor, 6)}</td>
+      <td data-label="Pick">${row.round_up_at_pick ? html`<span class="chip">rounds up at pick</span>` : nothing}</td>
+      <td data-label="Source">
         <span class="chip ${confirmed ? "chip-good" : "chip-danger"}">${confirmed ? uomSourceWord(row.source) : "unconfirmed"}</span>
         ${row.source_note === "" ? nothing : html`<div class="dim">${row.source_note}</div>`}
       </td>
-      <td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -1749,7 +1886,7 @@ function renderUomRow(row: UomConversionRow, model: PricingModel): TemplateResul
   `;
 }
 
-function renderUomEditor(model: PricingModel): TemplateResult | typeof nothing {
+function renderUomEditor(model: PricingModel, pickers: PricingPickers): TemplateResult | typeof nothing {
   const m = model.uom;
   const e = m.editing;
   if (e === null) return nothing;
@@ -1759,10 +1896,23 @@ function renderUomEditor(model: PricingModel): TemplateResult | typeof nothing {
         <h2 class="card-title">Conversion edge</h2>
       </div>
       <div class="form-grid">
-        <label class="field"><span class="field-label">Product id (empty is every product)</span>
-          <input class="text-field" type="text" data-field="pr-uom-product" ?disabled=${m.busy} /></label>
-        <label class="field"><span class="field-label">Category id (when the edge is category wide)</span>
-          <input class="text-field" type="text" data-field="pr-uom-category-id" ?disabled=${m.busy} /></label>
+        <div class="field">
+          <span class="field-label">Product (optional)</span>
+          ${pickers.renderProductPicker({
+            field: "pr-uom-product",
+            selectedId: e.productId,
+            emptyLabel: "Every product",
+            ariaLabel: "Product (optional)",
+            disabled: m.busy,
+          })}
+        </div>
+        <label class="field">
+          <span class="field-label">Category (when the edge is category wide)</span>
+          <select class="select" data-field="pr-uom-category-id" ?disabled=${m.busy}>
+            <option value="">Any category</option>
+            ${model.categories.map((c) => html`<option data-option-id=${c.id}>${c.name}</option>`)}
+          </select>
+        </label>
         <label class="field"><span class="field-label">From unit</span>
           <input class="text-field" type="text" placeholder="SF" data-field="pr-uom-from" ?disabled=${m.busy} /></label>
         <label class="field"><span class="field-label">To unit</span>
@@ -1833,7 +1983,7 @@ export function renderBatches(model: PricingModel): TemplateResult {
               ? html`<p class="notice-line" data-test="pr-batches-empty">${batchEmptyWords()}</p>`
               : html`
                   <div class="tablewrap">
-                    <table>
+                    <table class="cardrow-table">
                       <thead>
                         <tr>
                           <th scope="col">Batch</th>
@@ -1866,13 +2016,13 @@ function renderBatchRowView(row: Parameters<typeof batchStatusWord>[0] extends s
   const open = m.open?.id === row.id;
   return html`
     <tr data-batch=${row.id}>
-      <td class="mono">${row.batch_no}</td>
-      <td>${row.vendor_name === "" ? html`<span class="dim">unnamed</span>` : row.vendor_name}</td>
-      <td><span class="chip">${batchStatusWord(row.status)}</span></td>
-      <td class="mono dim">${row.effective_date === "" ? "no date" : row.effective_date.slice(0, 10)}</td>
-      <td class="num">${row.line_count}</td>
-      <td class="num ${row.outlier_count > 0 ? "" : "dim"}">${row.outlier_count}</td>
-      <td>
+      <td class="mono" data-label="Batch">${row.batch_no}</td>
+      <td data-label="Vendor">${row.vendor_name === "" ? html`<span class="dim">unnamed</span>` : row.vendor_name}</td>
+      <td data-label="Status"><span class="chip">${batchStatusWord(row.status)}</span></td>
+      <td class="mono dim" data-label="Effective">${row.effective_date === "" ? "no date" : row.effective_date.slice(0, 10)}</td>
+      <td class="num" data-label="Lines">${row.line_count}</td>
+      <td class="num ${row.outlier_count > 0 ? "" : "dim"}" data-label="Outliers">${row.outlier_count}</td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -1893,16 +2043,23 @@ function renderBatchCreate(model: PricingModel): TemplateResult | typeof nothing
   const m = model.batches;
   const e = m.creating;
   if (e === null) return nothing;
+  const vendors = knownVendors(model);
   return html`
     <section class="card" data-test="pr-batch-create">
       <div class="card-head"><h2 class="card-title">New batch</h2></div>
       <div class="form-grid">
         <label class="field"><span class="field-label">Batch number</span>
           <input class="text-field" type="text" data-field="pr-batch-no" ?disabled=${m.busy} /></label>
-        <label class="field"><span class="field-label">Vendor id</span>
-          <input class="text-field" type="text" data-field="pr-batch-vendor" ?disabled=${m.busy} /></label>
-        <label class="field"><span class="field-label">Import profile id (the mapping it reads with)</span>
-          <input class="text-field" type="text" data-field="pr-batch-profile" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Vendor</span>
+          <select class="select" data-field="pr-batch-vendor" ?disabled=${m.busy}>
+            <option value="">${vendors.length === 0 ? "No vendors yet" : "Choose a vendor"}</option>
+            ${vendors.map((v) => html`<option data-option-id=${v.id}>${v.name}</option>`)}
+          </select></label>
+        <label class="field"><span class="field-label">Import profile (the mapping it reads with)</span>
+          <select class="select" data-field="pr-batch-profile" ?disabled=${m.busy}>
+            <option value="">No profile</option>
+            ${m.profiles.map((p) => html`<option data-option-id=${p.id}>${p.name}</option>`)}
+          </select></label>
         <label class="field"><span class="field-label">Effective date (empty applies by hand)</span>
           <input class="text-field" type="date" data-field="pr-batch-effective" ?disabled=${m.busy} /></label>
         <label class="field field-full"><span class="field-label">Source reference (the file it came from)</span>
@@ -1922,10 +2079,13 @@ function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
   if (m === null) return nothing;
   const row = model.batches.openRow;
   const status = row?.status ?? "";
+  // A batch the read has not named yet says "Batch", never the id's own first
+  // block.
+  const batchNo = row?.batch_no ?? "";
   return html`
     <section class="card" data-test="pr-batch-open">
       <div class="card-head">
-        <h2 class="card-title">Batch ${row?.batch_no ?? m.id.slice(0, 8)}</h2>
+        <h2 class="card-title">${batchNo === "" ? "Batch" : `Batch ${batchNo}`}</h2>
         ${row?.effective_date ? html`<span class="chip">effective ${row.effective_date.slice(0, 10)}</span>` : nothing}
         <span class="chip">${batchStatusWord(status)}</span>
         <button type="button" class="btn btn-secondary btn-small" data-action="pr-batch-close">Close</button>
@@ -1963,7 +2123,7 @@ function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
       ${m.linesPhase === "ready" && m.lines.length > 0
         ? html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">SKU</th>
@@ -1976,10 +2136,10 @@ function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
                   ${m.lines.map(
                     (line) => html`
                       <tr data-line=${line.id}>
-                        <td class="mono">${line.sku}</td>
-                        <td>${batchLineWords(line)}</td>
-                        <td class="dim">${derivationWord(line.derived_from)}</td>
-                        <td>${line.unmatched ? html`<span class="chip chip-danger">unmatched</span>` : line.is_outlier ? html`<span class="chip chip-danger">outlier</span>` : html`<span class="chip chip-dim">ok</span>`}</td>
+                        <td class="mono" data-label="SKU">${line.sku}</td>
+                        <td data-label="Retail">${batchLineWords(line)}</td>
+                        <td class="dim" data-label="Set by">${derivationWord(line.derived_from)}</td>
+                        <td data-label="Flag">${line.unmatched ? html`<span class="chip chip-danger">unmatched</span>` : line.is_outlier ? html`<span class="chip chip-danger">outlier</span>` : html`<span class="chip chip-dim">ok</span>`}</td>
                       </tr>
                     `,
                   )}
@@ -2005,7 +2165,7 @@ function renderProfiles(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-profiles-empty">No import profiles yet. The first import against a vendor's file mints one.</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Profile</th>
@@ -2019,11 +2179,11 @@ function renderProfiles(model: PricingModel): TemplateResult {
                   ${m.profiles.map(
                     (p) => html`
                       <tr data-profile=${p.id}>
-                        <td class="person">${p.name}</td>
-                        <td>${p.vendor_name === "" ? "unnamed" : p.vendor_name}</td>
-                        <td class="mono dim">${Object.entries(p.mapping).map(([k, v]) => `${k}: ${v}`).join(", ")}</td>
-                        <td class="num">${p.markup_bps}</td>
-                        <td>
+                        <td class="person" data-label="Profile">${p.name}</td>
+                        <td data-label="Vendor">${p.vendor_name === "" ? "unnamed" : p.vendor_name}</td>
+                        <td class="mono dim" data-label="Mapping">${Object.entries(p.mapping).map(([k, v]) => `${k}: ${v}`).join(", ")}</td>
+                        <td class="num" data-label="Markup">${p.markup_bps}</td>
+                        <td class="cardrow-act">
                           <button
                             type="button"
                             class="btn btn-secondary btn-small"
@@ -2141,7 +2301,7 @@ function renderPriceFileForm(model: PricingModel): TemplateResult {
       <div class="form-grid">
         <label class="field"><span class="field-label">Manufacturer</span>
           <select class="select" data-field="pr-pf-vendor" ?disabled=${m.previewBusy}>
-            <option value="">Choose a manufacturer</option>
+            <option value="">${m.vendors.length === 0 ? "No vendors yet" : "Choose a manufacturer"}</option>
             ${m.vendors.map((v) => html`<option>${v.name}</option>`)}
           </select>
         </label>
@@ -2175,7 +2335,7 @@ function renderPriceFilePreview(m: PriceFileModel): TemplateResult | typeof noth
         ? nothing
         : html`<p class="error-line">The catalog could not answer: every row reads as unknown. Preview again before applying.</p>`}
       <div class="tablewrap">
-        <table>
+        <table class="cardrow-table">
           <thead>
             <tr>
               <th scope="col" class="num">Row</th>
@@ -2190,12 +2350,12 @@ function renderPriceFilePreview(m: PriceFileModel): TemplateResult | typeof noth
             ${p.lines.map(
               (line) => html`
                 <tr data-pf-row=${line.row}>
-                  <td class="num">${line.row}</td>
-                  <td class="mono">${line.sku}</td>
-                  <td><span class="chip ${line.outcome === "UNKNOWN" ? "chip-danger" : ""}">${outcomeWord(line.outcome)}</span></td>
-                  <td class="num">${moneyWords(line.current_retail_cents)}</td>
-                  <td class="num">${moneyWords(line.new_retail_cents)}${line.freight_estimated ? html` <span class="chip chip-dim">est. freight</span>` : nothing}</td>
-                  <td class="dim">${derivationWord(line.derived_from)}</td>
+                  <td class="num" data-label="Row">${line.row}</td>
+                  <td class="mono" data-label="SKU">${line.sku}</td>
+                  <td data-label="Outcome"><span class="chip ${line.outcome === "UNKNOWN" ? "chip-danger" : ""}">${outcomeWord(line.outcome)}</span></td>
+                  <td class="num" data-label="Retail now">${moneyWords(line.current_retail_cents)}</td>
+                  <td class="num" data-label="Retail in the file">${moneyWords(line.new_retail_cents)}${line.freight_estimated ? html` <span class="chip chip-dim">est. freight</span>` : nothing}</td>
+                  <td class="dim" data-label="Set by">${derivationWord(line.derived_from)}</td>
                 </tr>
               `,
             )}
@@ -2224,7 +2384,7 @@ function renderPriceFileRuns(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-pf-runs-empty">No runs yet. The road's own log fills as files are staged.</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">When</th>
@@ -2239,12 +2399,12 @@ function renderPriceFileRuns(model: PricingModel): TemplateResult {
                   ${m.runs.map(
                     (run) => html`
                       <tr data-run=${run.id}>
-                        <td class="mono dim">${run.created_at.slice(0, 10)}</td>
-                        <td class="mono">${run.source_name} (${run.source_format})</td>
-                        <td class="mono">${run.batch_no === "" ? "-" : run.batch_no}</td>
-                        <td class="num">${run.counts.rows}</td>
-                        <td class="num">${run.counts.changed}</td>
-                        <td class="dim">${run.imported_by_name === "" ? "-" : run.imported_by_name}</td>
+                        <td class="mono dim" data-label="When">${run.created_at.slice(0, 10)}</td>
+                        <td class="mono" data-label="File">${run.source_name} (${run.source_format})</td>
+                        <td class="mono" data-label="Batch">${run.batch_no === "" ? "-" : run.batch_no}</td>
+                        <td class="num" data-label="Rows">${run.counts.rows}</td>
+                        <td class="num" data-label="Changed">${run.counts.changed}</td>
+                        <td class="dim" data-label="By">${run.imported_by_name === "" ? "-" : run.imported_by_name}</td>
                       </tr>
                     `,
                   )}
@@ -2264,7 +2424,10 @@ function lowMarginLevelChip(level: string): string {
   return "chip-warn-word";
 }
 
-export function renderLowMargin(model: PricingModel): TemplateResult {
+export function renderLowMargin(
+  model: PricingModel,
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.lowMargin;
   return html`
     ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-lm-loading">Scanning the committed lines…</p>` : nothing}
@@ -2299,7 +2462,7 @@ export function renderLowMargin(model: PricingModel): TemplateResult {
               ? html`<p class="notice-line" data-test="pr-lm-empty">${lowMarginEmptyWords()}</p>`
               : html`
                   <div class="tablewrap">
-                    <table>
+                    <table class="cardrow-table cardrow-wide">
                       <thead>
                         <tr>
                           <th scope="col">Document</th>
@@ -2307,6 +2470,7 @@ export function renderLowMargin(model: PricingModel): TemplateResult {
                           <th scope="col" class="num">Price</th>
                           <th scope="col" class="num">Margin</th>
                           <th scope="col">Level</th>
+                          <th scope="col">Cleared by</th>
                           <th scope="col">Sold by</th>
                         </tr>
                       </thead>
@@ -2317,7 +2481,7 @@ export function renderLowMargin(model: PricingModel): TemplateResult {
                   </div>
                 `}
           </section>
-          ${renderLowMarginProbe(model)}
+          ${renderLowMarginProbe(model, pickers)}
         `
       : nothing}
   `;
@@ -2326,23 +2490,23 @@ export function renderLowMargin(model: PricingModel): TemplateResult {
 function renderLowMarginRow(row: LowMarginScanRow): TemplateResult {
   return html`
     <tr data-lm=${row.doc_id}>
-      <td>
+      <td data-label="Document">
         <div class="mono">${row.doc_no}</div>
         <div class="mono dim">${row.doc_at.slice(0, 10)}</div>
       </td>
-      <td>${lowMarginWords(row)}</td>
-      <td class="num">${moneyWords(row.unit_price_cents)}</td>
-      <td class="num">${pctWords(row.margin_bps)}</td>
-      <td>
+      <td data-label="Line">${lowMarginWords(row)}</td>
+      <td class="num" data-label="Price">${moneyWords(row.unit_price_cents)}</td>
+      <td class="num" data-label="Margin">${pctWords(row.margin_bps)}</td>
+      <td data-label="Level">
         <span class="chip ${lowMarginLevelChip(row.level)}">${row.level}</span>
-        ${row.cleared_below_floor ? html`<span class="chip chip-good">cleared: ${row.cleared_by === "" ? "a manager" : row.cleared_by}</span>` : nothing}
       </td>
-      <td class="dim">${row.salesperson === "" ? "-" : row.salesperson}</td>
+      <td data-label="Cleared by">${row.cleared_below_floor ? (row.cleared_by === "" ? "a manager" : row.cleared_by) : "-"}</td>
+      <td class="dim" data-label="Sold by">${row.salesperson === "" ? "-" : row.salesperson}</td>
     </tr>
   `;
 }
 
-function renderLowMarginProbe(model: PricingModel): TemplateResult {
+function renderLowMarginProbe(model: PricingModel, pickers: PricingPickers): TemplateResult {
   const m = model.lowMargin.probe;
   return html`
     <section class="card">
@@ -2352,8 +2516,16 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
         and the breach is named, if there is one.
       </p>
       <div class="form-grid">
-        <label class="field"><span class="field-label">Customer id</span>
-          <input class="text-field" type="text" data-field="pr-lm-customer" ?disabled=${m.busy} /></label>
+        <div class="field">
+          <span class="field-label">Customer</span>
+          ${pickers.renderCustomerPicker({
+            field: "pr-lm-customer",
+            selectedId: m.customerId,
+            emptyLabel: "No customer chosen",
+            ariaLabel: "Customer",
+            disabled: m.busy,
+          })}
+        </div>
         <label class="field"><span class="field-label">Customer type</span>
           <select class="select" data-field="pr-lm-customer-type" ?disabled=${m.busy}>
             <option value="CONTRACTOR">Contractor</option>
@@ -2363,10 +2535,23 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
             <option value="INTERNAL">Internal</option>
           </select>
         </label>
-        <label class="field"><span class="field-label">Product id</span>
-          <input class="text-field" type="text" data-field="pr-lm-product" ?disabled=${m.busy} /></label>
-        <label class="field"><span class="field-label">Category id</span>
-          <input class="text-field" type="text" data-field="pr-lm-category" ?disabled=${m.busy} /></label>
+        <div class="field">
+          <span class="field-label">Product</span>
+          ${pickers.renderProductPicker({
+            field: "pr-lm-product",
+            selectedId: m.productId,
+            emptyLabel: "No product chosen",
+            ariaLabel: "Product",
+            disabled: m.busy,
+          })}
+        </div>
+        <label class="field">
+          <span class="field-label">Category (optional)</span>
+          <select class="select" data-field="pr-lm-category" ?disabled=${m.busy}>
+            <option value="">Any category</option>
+            ${model.categories.map((c) => html`<option data-option-id=${c.id}>${c.name}</option>`)}
+          </select>
+        </label>
         <label class="field"><span class="field-label">Quantity</span>
           <input class="text-field" type="text" inputmode="decimal" data-field="pr-lm-qty" ?disabled=${m.busy} /></label>
         <label class="field"><span class="field-label">Unit</span>
@@ -2379,7 +2564,7 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
         ? nothing
         : html`
             <div class="tablewrap" data-test="pr-lm-entries">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col" class="num">Price</th>
@@ -2393,11 +2578,11 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
                   ${m.entries.map(
                     (entry) => html`
                       <tr data-entry=${entry.product_id}>
-                        <td class="num">${moneyWords(entry.final_cents)}</td>
-                        <td class="num">${pctWords(entry.margin_bps)}</td>
-                        <td><span class="chip ${lowMarginLevelChip(entry.level)}">${entry.level}</span></td>
-                        <td>${priceSourceWord(entry.source)}</td>
-                        <td class="dim">${entry.invalid ? entry.reason : entry.reason === "" ? "-" : entry.reason}</td>
+                        <td class="num" data-label="Price">${moneyWords(entry.final_cents)}</td>
+                        <td class="num" data-label="Margin">${pctWords(entry.margin_bps)}</td>
+                        <td data-label="Level"><span class="chip ${lowMarginLevelChip(entry.level)}">${entry.level}</span></td>
+                        <td data-label="Source">${priceSourceWord(entry.source)}</td>
+                        <td class="dim" data-label="Why">${entry.invalid ? entry.reason : entry.reason === "" ? "-" : entry.reason}</td>
                       </tr>
                     `,
                   )}
@@ -2416,8 +2601,15 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
 
 // -- the pricing audit tab ---------------------------------------------------------------------------
 
-function auditEntityWords(row: PricingAuditRow): string {
-  return `${row.entity_type} / ${row.entity_id.slice(0, 8)}`;
+/**
+ * The pricing log's entity cell: the core's own type word, and the name the
+ * catalog gives the record. A record the catalog does not know reads as the
+ * house placeholder word, never as the id's own first block.
+ */
+function auditEntityWords(row: PricingAuditRow, model: PricingModel): string {
+  if (row.entity_id === "") return row.entity_type;
+  const name = categoryName(row.entity_id, model.categories);
+  return `${row.entity_type} / ${name === UNKNOWN_CATEGORY ? UNKNOWN_ENTITY : name}`;
 }
 
 export function renderPricingAudit(model: PricingModel): TemplateResult {
@@ -2457,7 +2649,7 @@ export function renderPricingAudit(model: PricingModel): TemplateResult {
               ? html`<p class="notice-line" data-test="pr-audit-empty">No pricing log entries match. The log is append only: the filters are narrower than the record, not the actions undone.</p>`
               : html`
                   <div class="tablewrap">
-                    <table>
+                    <table class="cardrow-table">
                       <thead>
                         <tr>
                           <th scope="col">When</th>
@@ -2469,7 +2661,7 @@ export function renderPricingAudit(model: PricingModel): TemplateResult {
                         </tr>
                       </thead>
                       <tbody>
-                        ${m.rows.map((row) => renderPricingAuditRow(row))}
+                        ${m.rows.map((row) => renderPricingAuditRow(row, model))}
                       </tbody>
                     </table>
                   </div>
@@ -2480,20 +2672,20 @@ export function renderPricingAudit(model: PricingModel): TemplateResult {
   `;
 }
 
-function renderPricingAuditRow(row: PricingAuditRow): TemplateResult {
+function renderPricingAuditRow(row: PricingAuditRow, model: PricingModel): TemplateResult {
   const bypass = row.action === "BYPASS";
   const delta = deltaWords(row.old_value === "" ? null : row.old_value, row.new_value === "" ? null : row.new_value);
   return html`
     <tr data-audit=${row.id}>
-      <td class="mono dim">${whenWords(row.created_at)}</td>
-      <td class="mono">${auditEntityWords(row)}</td>
-      <td><span class="chip ${bypass ? "chip-danger" : ""}">${auditActionWord(row.action)}</span></td>
-      <td class="dim">${row.field_name === "" ? "-" : row.field_name}</td>
-      <td>${delta === "" ? html`<span class="dim">-</span>` : delta}</td>
-      <td class="mono dim">${row.user_id === "" ? "the engine" : row.user_id.slice(0, 8)}</td>
+      <td class="mono dim" data-label="When">${whenWords(row.created_at)}</td>
+      <td data-label="Entity">${auditEntityWords(row, model)}</td>
+      <td data-label="Action"><span class="chip ${bypass ? "chip-danger" : ""}">${auditActionWord(row.action)}</span></td>
+      <td class="dim" data-label="Field">${row.field_name === "" ? "-" : row.field_name}</td>
+      <td data-label="Change">${delta === "" ? html`<span class="dim">-</span>` : delta}</td>
+      <td class="dim" data-label="Actor">${row.user_id === "" ? "the engine" : UNKNOWN_ACTOR}</td>
     </tr>
     ${bypass && row.bypass_reason !== ""
-      ? html`<tr data-audit-reason=${row.id}><td colspan="6"><span class="chip chip-danger">bypass: ${row.bypass_reason}</span></td></tr>`
+      ? html`<tr data-audit-reason=${row.id}><td colspan="6" data-label="Reason"><span class="chip chip-danger">bypass: ${row.bypass_reason}</span></td></tr>`
       : nothing}
   `;
 }
@@ -2506,7 +2698,10 @@ function changeFieldWord(field: string): string {
   return field;
 }
 
-export function renderChangeLog(model: PricingModel): TemplateResult {
+export function renderChangeLog(
+  model: PricingModel,
+  pickers: PricingPickers = FALLBACK_PICKERS,
+): TemplateResult {
   const m = model.changeLog;
   return html`
     ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-log-loading">Loading the change log…</p>` : nothing}
@@ -2522,8 +2717,18 @@ export function renderChangeLog(model: PricingModel): TemplateResult {
               <span class="count" data-test="pr-log-count">${m.rows.length} ${m.rows.length === 1 ? "change" : "changes"}</span>
             </div>
             <div class="filters" role="group" aria-label="Change log filters">
-              <input class="text-field" type="text" placeholder="Product id" aria-label="Product id" data-field="pr-log-product" />
-              <input class="text-field" type="text" placeholder="Batch id" aria-label="Batch id" data-field="pr-log-batch" />
+              ${pickers.renderProductPicker({
+                field: "pr-log-product",
+                selectedId: m.filters.productId,
+                emptyLabel: "Any product",
+                ariaLabel: "Product",
+              })}
+              <select class="select" aria-label="Batch" data-field="pr-log-batch">
+                <option value="">Any batch</option>
+                ${model.batches.rows.map(
+                  (b) => html`<option data-option-id=${b.id}>${b.batch_no}${b.vendor_name !== "" ? ` · ${b.vendor_name}` : ""}</option>`,
+                )}
+              </select>
               <button type="button" class="btn btn-secondary" data-action="pr-log-apply">Apply</button>
               <button type="button" class="btn btn-secondary" data-action="pr-log-clear">Clear</button>
             </div>
@@ -2531,7 +2736,7 @@ export function renderChangeLog(model: PricingModel): TemplateResult {
               ? html`<p class="notice-line" data-test="pr-log-empty">No changes logged yet. A cost or a retail that moved through a batch lands here: who moved it, from what to what.</p>`
               : html`
                   <div class="tablewrap">
-                    <table>
+                    <table class="cardrow-table">
                       <thead>
                         <tr>
                           <th scope="col">When</th>
@@ -2559,14 +2764,14 @@ export function renderChangeLog(model: PricingModel): TemplateResult {
 function renderChangeLogRow(row: ChangeLogRow): TemplateResult {
   return html`
     <tr data-log=${row.id}>
-      <td class="mono dim">${whenWords(row.created_at)}</td>
-      <td class="mono">${row.product_id === "" ? "-" : row.product_id.slice(0, 8)}</td>
-      <td>${changeFieldWord(row.field)}</td>
-      <td class="num">${moneyWords(row.before_cents)}</td>
-      <td class="num">${moneyWords(row.after_cents)}</td>
-      <td class="mono dim">${row.effective_date === "" ? "-" : row.effective_date.slice(0, 10)}</td>
-      <td class="mono dim">${row.batch_id === "" ? "-" : row.batch_id.slice(0, 8)}</td>
-      <td class="mono dim">${row.changed_by === "" ? "-" : row.changed_by.slice(0, 8)}</td>
+      <td class="mono dim" data-label="When">${whenWords(row.created_at)}</td>
+      <td class="dim" data-label="Product">${row.product_id === "" ? "-" : UNKNOWN_PRODUCT}</td>
+      <td data-label="Field">${changeFieldWord(row.field)}</td>
+      <td class="num" data-label="From">${moneyWords(row.before_cents)}</td>
+      <td class="num" data-label="To">${moneyWords(row.after_cents)}</td>
+      <td class="mono dim" data-label="Effective">${row.effective_date === "" ? "-" : row.effective_date.slice(0, 10)}</td>
+      <td class="dim" data-label="Batch">${row.batch_id === "" ? "-" : UNKNOWN_BATCH}</td>
+      <td class="dim" data-label="By">${row.changed_by === "" ? "-" : UNKNOWN_ACTOR}</td>
     </tr>
   `;
 }

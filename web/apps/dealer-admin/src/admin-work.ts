@@ -12,7 +12,8 @@
 // refusal reads in the core's own words (admin-logic.ts); an amount is parsed
 // through its decimal string, never through float arithmetic.
 import type { TemplateResult } from "lit";
-import { AdminApi } from "./admin-api.js";
+import { AdminApi, type MessagingChannelRow } from "./admin-api.js";
+import type { StaffMemberRow } from "./dealer-api.js";
 import {
   assistBudgetInputWords,
   assistRefusalWords,
@@ -139,6 +140,8 @@ export class AdminWork {
   // The exports surface's state: two cards, each its own call.
   #workbook: WorkbookModel = emptyWorkbook();
   #messages: MessagesModel = emptyMessages();
+  #channels: readonly MessagingChannelRow[] = [];
+  #channelsLoaded = false;
 
   // The catalog surface's state, and the picked picture (a File is not state
   // the screens draw; the model holds only its words).
@@ -164,6 +167,7 @@ export class AdminWork {
   /** A surface was opened: the first open loads the reads. */
   open(surface: string): void {
     if (surface === "assist" && this.#assist.phase === "loading") void this.#loadAssist();
+    if (surface === "exports" && !this.#channelsLoaded) void this.#loadChannels();
     if (surface === "catalog" && this.#catalog.phase === "idle") void this.#loadCatalogFacts();
     if (surface === "keys" && this.#keys.phase === "loading") void this.#loadKeys();
   }
@@ -342,10 +346,10 @@ export class AdminWork {
   }
 
   /** The active surface's template, for the root's router line. */
-  view(surface: string): TemplateResult | null {
+  view(surface: string, staff: readonly StaffMemberRow[] = []): TemplateResult | null {
     if (surface === "assist") return renderAssist(this.#assist);
     if (surface === "printing") return renderPrint(this.#print);
-    if (surface === "exports") return renderExports(this.#workbook, this.#messages);
+    if (surface === "exports") return renderExports(this.#workbook, this.#messages, staff, this.#channels);
     if (surface === "catalog") return renderCatalog(this.#catalog);
     if (surface === "keys") return renderKeys(this.#keys);
     return null;
@@ -357,11 +361,22 @@ export class AdminWork {
     this.#print = emptyPrint();
     this.#workbook = emptyWorkbook();
     this.#messages = emptyMessages();
+    this.#channels = [];
+    this.#channelsLoaded = false;
     this.#catalog = emptyCatalog();
     this.#pickedImage = null;
     this.#seedPending = false;
     this.#budgetSeedPending = false;
     this.#keys = emptyKeys();
+  }
+
+  async #loadChannels(): Promise<void> {
+    this.#channelsLoaded = true;
+    const result = await this.#api.messagingChannels();
+    if (result.ok) {
+      this.#channels = result.value;
+      this.#host.repaint();
+    }
   }
 
   // -- the assist surface ------------------------------------------------------------------------
