@@ -89,6 +89,52 @@ else
 	fail "a URL with parameters was refused"
 fi
 
+# A parameter name that carries a raw line break: refused, like a value with
+# one would be. The name is written into the service file, and the file is
+# the only place the password lives, so an extra line there is not a shape
+# the box writes.
+newline_url="$(printf 'postgres://boxuser:boxpass@127.0.0.1:57726/finance_box?ssl\nmode=disable')"
+if pg_service_write "$SCRATCH/newline-key-service" "$newline_url" 2>/dev/null; then
+	fail "a parameter name with a raw line break was accepted"
+else
+	pass "a parameter name with a raw line break is refused"
+fi
+case "${PG_URL_ERROR:-}" in
+	*DATABASE_URL*) pass "the raw line break refusal names DATABASE_URL" ;;
+	*) fail "the raw line break refusal does not name DATABASE_URL: ${PG_URL_ERROR:-}" ;;
+esac
+
+# A percent encoded line break in a parameter name: the name is decoded
+# before the check, so the encoded newline is refused the same way.
+if pg_service_write "$SCRATCH/enc-newline-key-service" 'postgres://boxuser:boxpass@127.0.0.1:57726/finance_box?ssl%0Amode=disable' 2>/dev/null; then
+	fail "a percent encoded line break in a parameter name was accepted"
+else
+	pass "a percent encoded line break in a parameter name is refused"
+fi
+
+# A percent encoded service parameter: libpq decodes parameter names when it
+# reads the URI, so the encoded spelling IS the service parameter, and it is
+# refused the same way the plain one is.
+if pg_service_write "$SCRATCH/enc-svc-service" 'postgres://boxuser:boxpass@127.0.0.1:57726/finance_box?%73ervice=other' 2>/dev/null; then
+	fail "a percent encoded service parameter was accepted"
+else
+	pass "a percent encoded service parameter is refused"
+fi
+
+# A percent encoded parameter name without a line break: decoded, because
+# libpq reads the URI's names decoded, so the service file carries the name
+# the URI meant.
+if path="$(write_service 'postgres://boxuser:boxpass@127.0.0.1:57726/finance_box?sslmo%64e=disable')"; then
+	service="$(cat "$path")"
+	case "$service" in
+		*"sslmode=disable"*) pass "a percent encoded parameter name is decoded" ;;
+		*) fail "a percent encoded parameter name was not decoded: $service" ;;
+	esac
+	rm -f "$path"
+else
+	fail "a percent encoded parameter name was refused"
+fi
+
 # A percent encoded password: the escape is decoded, because libpq sends the
 # password as it stands.
 if path="$(write_service 'postgres://boxuser:p%40ss%20word@127.0.0.1:57726/finance_box')"; then
