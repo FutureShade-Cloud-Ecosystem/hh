@@ -581,6 +581,12 @@ func (r *Repository) InsertMessage(ctx context.Context, channelID, userID, body,
 	if r.afterPostBegin != nil {
 		r.afterPostBegin(ctx)
 	}
+	// The channel's lock, BEFORE the post stamps itself, so a read of this
+	// channel is ordered against this post by the lock and not by a clock
+	// (UX-110). It is held until this transaction commits.
+	if err := lockChannelForPost(ctx, tx, channelID); err != nil {
+		return Message{}, err
+	}
 	var rootArg any
 	if threadRootID != "" {
 		// The root must exist, be in THIS channel, and itself be a top-level message (one-level
@@ -601,8 +607,8 @@ func (r *Repository) InsertMessage(ctx context.Context, channelID, userID, body,
 	}
 	var m Message
 	err = tx.QueryRow(ctx, `
-		INSERT INTO msg_messages (channel_id, author_id, kind, body, thread_root_id)
-		VALUES ($1, $2, 'TEXT', $3, $4)
+		INSERT INTO msg_messages (channel_id, author_id, kind, body, thread_root_id, created_at)
+		VALUES ($1, $2, 'TEXT', $3, $4, clock_timestamp())
 		RETURNING id::text, channel_id::text, author_id::text, kind, body, COALESCE(thread_root_id::text,''), created_at`,
 		channelID, userID, body, rootArg).Scan(&m.ID, &m.ChannelID, &m.AuthorID, &m.Kind, &m.Body, &m.ThreadRootID, &m.CreatedAt)
 	if err != nil {
@@ -626,11 +632,23 @@ func (r *Repository) InsertMessage(ctx context.Context, channelID, userID, body,
 // MarkRead advances the caller's read cursor for a channel to the DATABASE's clock, which zeroes the
 // channel's unread count via the msg_unread_summary view.
 //
-// The cursor is the database's own now(), in the same statement that writes it, because it is compared
+// The cursor is the database's own clock, in the same statement that writes it, because it is compared
 // against message rows the DATABASE stamps (msg_messages.created_at). A cursor taken from the app
 // server's clock puts a second clock in that comparison: when the app's clock runs ahead of the
 // database's, a message posted in the gap carries a created_at BEFORE the cursor, reads as already
 // read, and the badge never lights for it (UX-109).
+//
+// The cursor is also taken under the channel's LOCK, because a clock alone does not order a post
+// against a read (UX-110). A post that is still in flight when the read lands is invisible to the
+// cursor's clock, so the cursor could be stamped after the post's stamp and the post would read as
+// already read. The lock settles it: the post takes the channel's lock before it stamps itself and
+// holds it until it commits, and the read takes the SAME lock (FOR UPDATE) before it writes the
+// cursor. A post that commits before the cursor is stamped before it. A post that comes after waits
+// for the lock and is stamped after the cursor.
+//
+// The membership answer comes FIRST, and it comes from the member row alone, so a non-member learns
+// nothing about the channel's existence: the read never touches the channel's row for a caller who
+// is not a member. Zero rows updated is still forbidden.
 //
 // It never moves the cursor backwards: GREATEST keeps the later of the two stamps, so a cursor is
 // never pulled back to an earlier point.
@@ -638,14 +656,55 @@ func (r *Repository) MarkRead(ctx context.Context, channelID, userID string) err
 	if r.pool == nil {
 		return errNoDB
 	}
-	ct, err := r.pool.Exec(ctx, `
-		UPDATE msg_members SET last_read_at = GREATEST(last_read_at, now())
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// The member row's lock, taken before the channel's. The order is the one
+	// the rest of this module already uses (a seat or a prune touches the
+	// member rows, then the channel), so the two never wait for each other.
+	// This is also the membership answer: no member row, no read.
+	var one int
+	err = tx.QueryRow(ctx, `
+		SELECT 1 FROM msg_members
+		WHERE channel_id = $1::uuid AND user_id = $2::uuid
+		FOR UPDATE`, channelID, userID).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errForbidden
+	}
+	if err != nil {
+		return fmt.Errorf("mark read membership: %w", err)
+	}
+
+	// The channel's lock: the read waits for the posts in flight. It is the
+	// read's own exclusive lock (FOR UPDATE), so it conflicts with the FOR
+	// SHARE a post holds, and the posts do not conflict with each other.
+	err = tx.QueryRow(ctx,
+		`SELECT 1 FROM msg_channels WHERE id = $1::uuid FOR UPDATE`, channelID).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errForbidden
+	}
+	if err != nil {
+		return fmt.Errorf("mark read lock: %w", err)
+	}
+
+	// The cursor, written under the lock that orders it. clock_timestamp()
+	// and not now(): now() is the clock this transaction began at, which is
+	// BEFORE the lock was granted, and a cursor stamped before the posts it
+	// waited for would call them read.
+	ct, err := tx.Exec(ctx, `
+		UPDATE msg_members SET last_read_at = GREATEST(last_read_at, clock_timestamp())
 		WHERE channel_id = $1 AND user_id = $2`, channelID, userID)
 	if err != nil {
 		return fmt.Errorf("mark read: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
 		return errForbidden
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
 	}
 	return nil
 }
@@ -687,6 +746,10 @@ func (r *Repository) UnreadSummary(ctx context.Context, userID string) (UnreadCo
 // inserted message and inserted=true, or inserted=false when it already existed. ref is the
 // {topic, entity, deep_link, summary} JSON. requiresAck (0071) flags a forced-ack post the kiosk
 // screen-takeover must block on. This is the single write path for FR-3.
+//
+// The write runs in a transaction that takes the channel's lock first, so a read of this channel is
+// ordered against this post by the lock and not by a clock (UX-110). The post stamps itself with the
+// clock it holds the lock at.
 func (r *Repository) InsertEventMessage(ctx context.Context, channelID, eventKey, body string, ref EventRef, requiresAck bool) (Message, bool, error) {
 	if r.pool == nil {
 		return Message{}, false, errNoDB
@@ -695,10 +758,19 @@ func (r *Repository) InsertEventMessage(ctx context.Context, channelID, eventKey
 	if err != nil {
 		return Message{}, false, fmt.Errorf("marshal ref: %w", err)
 	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Message{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// The channel's lock, BEFORE the post stamps itself (UX-110).
+	if err := lockChannelForPost(ctx, tx, channelID); err != nil {
+		return Message{}, false, err
+	}
 	var m Message
-	err = r.pool.QueryRow(ctx, `
-		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, requires_ack)
-		VALUES ($1, NULL, 'EVENT', $2, $3, $4, $5)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, requires_ack, created_at)
+		VALUES ($1, NULL, 'EVENT', $2, $3, $4, $5, clock_timestamp())
 		ON CONFLICT (channel_id, event_key) WHERE event_key IS NOT NULL DO NOTHING
 		RETURNING id::text, channel_id::text, kind, body, requires_ack, created_at`,
 		channelID, body, refBytes, eventKey, requiresAck).
@@ -710,6 +782,9 @@ func (r *Repository) InsertEventMessage(ctx context.Context, channelID, eventKey
 		return Message{}, false, fmt.Errorf("insert event message: %w", err)
 	}
 	m.Ref = json.RawMessage(refBytes)
+	if err := tx.Commit(ctx); err != nil {
+		return Message{}, false, err
+	}
 	return m, true, nil
 }
 
@@ -796,6 +871,9 @@ func (r *Repository) EnsureApprovalChannel(ctx context.Context, userID string) (
 // (channel_id, event_key): a re-notify or a reconcile-sweep re-fan of the same request is a silent no-op
 // (inserted=false). ref is the typed ApprovalRef JSON. This mirrors InsertEventMessage but with kind
 // APPROVAL, so the card carries the request pointer + display status rather than an EVENT topic.
+//
+// Like InsertEventMessage, the write takes the channel's lock before it stamps itself, so a read of
+// this channel is ordered against this card by the lock and not by a clock (UX-110).
 func (r *Repository) PostApprovalMessage(ctx context.Context, channelID, eventKey, body string, ref ApprovalRef) (Message, bool, error) {
 	if r.pool == nil {
 		return Message{}, false, errNoDB
@@ -804,10 +882,19 @@ func (r *Repository) PostApprovalMessage(ctx context.Context, channelID, eventKe
 	if err != nil {
 		return Message{}, false, fmt.Errorf("marshal approval ref: %w", err)
 	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Message{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// The channel's lock, BEFORE the card stamps itself (UX-110).
+	if err := lockChannelForPost(ctx, tx, channelID); err != nil {
+		return Message{}, false, err
+	}
 	var m Message
-	err = r.pool.QueryRow(ctx, `
-		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key)
-		VALUES ($1, NULL, 'APPROVAL', $2, $3, $4)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, created_at)
+		VALUES ($1, NULL, 'APPROVAL', $2, $3, $4, clock_timestamp())
 		ON CONFLICT (channel_id, event_key) WHERE event_key IS NOT NULL DO NOTHING
 		RETURNING id::text, channel_id::text, kind, body, created_at`,
 		channelID, body, refBytes, eventKey).
@@ -819,6 +906,9 @@ func (r *Repository) PostApprovalMessage(ctx context.Context, channelID, eventKe
 		return Message{}, false, fmt.Errorf("post approval message: %w", err)
 	}
 	m.Ref = json.RawMessage(refBytes)
+	if err := tx.Commit(ctx); err != nil {
+		return Message{}, false, err
+	}
 	return m, true, nil
 }
 
@@ -1987,6 +2077,15 @@ func (r *Repository) SeatGroupMember(ctx context.Context, channelID, userID, add
 		return ChannelMember{}, false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// The channel's lock, BEFORE the seat and the line it writes, so a read of
+	// this channel is ordered against that line by the lock and not by a clock
+	// (UX-110). This path writes msg_channels itself (the feed bump below), so
+	// it takes the lock in the mode a write takes: the bump asks for the very
+	// lock this holds and never has to upgrade it, which is how two posts to
+	// one channel would deadlock against each other.
+	if err := lockChannelForWrite(ctx, tx, channelID); err != nil {
+		return ChannelMember{}, false, err
+	}
 	var m ChannelMember
 	err = tx.QueryRow(ctx, `
 		INSERT INTO msg_members (channel_id, user_id, role, source)
@@ -2018,8 +2117,8 @@ func (r *Repository) SeatGroupMember(ctx context.Context, channelID, userID, add
 		return ChannelMember{}, false, fmt.Errorf("seat group member: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, requires_ack)
-		VALUES ($1, NULL, 'EVENT', $2, '{}'::jsonb, $3, FALSE)`,
+		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, requires_ack, created_at)
+		VALUES ($1, NULL, 'EVENT', $2, '{}'::jsonb, $3, FALSE, clock_timestamp())`,
 		channelID,
 		fmt.Sprintf("%s added %s to the group.", adderName, targetName),
 		fmt.Sprintf("group-added-%s-%d", userID, m.JoinedAt.UnixNano())); err != nil {
@@ -2057,9 +2156,17 @@ func (r *Repository) RenameGroup(ctx context.Context, channelID, name, actorName
 	if tag.RowsAffected() == 0 {
 		return Channel{}, errNotFound
 	}
+	// The UPDATE above IS this path's channel lock: it is the only write to
+	// msg_channels in this transaction and it is the FIRST statement, so it
+	// takes the channel row's lock in the mode a write takes (the columns it
+	// touches are not part of a unique index) and holds it until the commit.
+	// Nothing here upgrades that lock later, which is how two posts to one
+	// channel would deadlock against each other. The rename's line below is
+	// therefore stamped after the lock was granted, and a read of this channel
+	// is ordered against it by that lock and not by a clock (UX-110).
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, requires_ack)
-		VALUES ($1, NULL, 'EVENT', $2, '{}'::jsonb, $3, FALSE)`,
+		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, requires_ack, created_at)
+		VALUES ($1, NULL, 'EVENT', $2, '{}'::jsonb, $3, FALSE, clock_timestamp())`,
 		channelID,
 		fmt.Sprintf("%s renamed this group to %s.", actorName, name),
 		fmt.Sprintf("group-renamed-%d", time.Now().UnixNano())); err != nil {
@@ -2481,6 +2588,12 @@ func (r *Repository) syncMessageCreate(ctx context.Context, authorID, channelID,
 		return "", 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// The channel's lock, BEFORE the post stamps itself, so a read of this
+	// channel is ordered against this post by the lock and not by a clock
+	// (UX-110).
+	if err := lockChannelForPost(ctx, tx, channelID); err != nil {
+		return "", 0, err
+	}
 	var member bool
 	if err := tx.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM msg_members WHERE channel_id = $1 AND user_id = $2)`,
@@ -2493,8 +2606,8 @@ func (r *Repository) syncMessageCreate(ctx context.Context, authorID, channelID,
 	var id string
 	var seq int64
 	err = tx.QueryRow(ctx, `
-		INSERT INTO msg_messages (channel_id, author_id, kind, body, thread_root_id, idempotency_key)
-		SELECT $1, $2, 'TEXT', $3, NULLIF($4,'')::uuid, $5::uuid
+		INSERT INTO msg_messages (channel_id, author_id, kind, body, thread_root_id, idempotency_key, created_at)
+		SELECT $1, $2, 'TEXT', $3, NULLIF($4,'')::uuid, $5::uuid, clock_timestamp()
 		WHERE $4 = '' OR EXISTS (
 		        SELECT 1 FROM msg_messages root
 		        WHERE root.id = $4::uuid AND root.channel_id = $1 AND root.thread_root_id IS NULL)
@@ -2747,6 +2860,69 @@ func (r *Repository) syncPrefsWrite(ctx context.Context, p NotificationPrefs, ke
 // a feed bump can run inside the write it belongs to.
 type dbExecer interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+// dbQueryer is the least both the pool and an open transaction satisfy, so a
+// channel's lock can be taken inside the write it belongs to.
+type dbQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// lockChannelForPost takes the channel's lock before a post stamps itself, so
+// a post and a read of one channel are ordered by that lock and not by a
+// clock (UX-110).
+//
+// The read takes the SAME channel's lock (FOR UPDATE) before it writes the
+// cursor. So a post that commits before the cursor is stamped before it and
+// reads as unread, and a post that comes after waits for the lock and is
+// stamped after the cursor.
+//
+// FOR SHARE, and not FOR UPDATE: two posts to one channel share this lock, so
+// they do not block each other. It still conflicts with the read's FOR
+// UPDATE, which is the whole point, and with the write mode the paths that
+// write msg_channels take.
+//
+// The lock is taken on the channel's OWN row, before the message is written,
+// and it is held until the write commits. A path that wrote its message first
+// and locked the channel afterwards would break the order: the read would
+// land in between and stamp its cursor after the message.
+func lockChannelForPost(ctx context.Context, q dbQueryer, channelID string) error {
+	var one int
+	err := q.QueryRow(ctx,
+		`SELECT 1 FROM msg_channels WHERE id = $1::uuid FOR SHARE`, channelID).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock the channel: %w", err)
+	}
+	return nil
+}
+
+// lockChannelForWrite takes the channel's lock in the mode a WRITE of
+// msg_channels takes, for the paths that write that table themselves.
+//
+// The mode is FOR NO KEY UPDATE, which is the mode an UPDATE of a column that
+// is not part of a unique index takes: msg_channels.seq is not unique, so the
+// feed bump this mode must not fight with asks for the very lock this takes
+// and finds it already held. Nothing later in such a path has to UPGRADE the
+// lock, and an upgrade is how two posts to one channel deadlock against each
+// other: each waits for the other's weaker lock to lift.
+//
+// The lock conflicts with FOR SHARE, so a post to this channel waits for the
+// write, and a write waits for the posts in flight. That is the order the
+// badge depends on.
+func lockChannelForWrite(ctx context.Context, q dbQueryer, channelID string) error {
+	var one int
+	err := q.QueryRow(ctx,
+		`SELECT 1 FROM msg_channels WHERE id = $1::uuid FOR NO KEY UPDATE`, channelID).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock the channel for the write: %w", err)
+	}
+	return nil
 }
 
 // bumpChannelSeq draws a fresh channels-feed seq for one room, the tell a
