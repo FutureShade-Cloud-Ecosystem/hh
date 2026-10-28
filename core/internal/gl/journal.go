@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -45,6 +47,21 @@ func (s *Service) CreateAccount(ctx context.Context, in CreateAccountInput) (Acc
 // keeps its ledger rows; it just cannot be used on new entries). It also refuses (FW1-09a) when an active
 // posting rule points at the account: every automated posting the rule carries would be refused as
 // "inactive" and dead letter, so the refusal names the rules and their topics instead.
+//
+// It refuses (W2-6b fix round 3) when a LIVE counter reason code names the account: a movement naming
+// that code posts to the account, so retiring the account under a live code would leave the drawer's
+// money unposted and the journal dead lettered. The refusal names the codes and how many branches they
+// sit on, never a person.
+//
+// It also refuses (W2-6b fix round 4) while any unposted till.movement.posted event (PENDING, or DEAD
+// and not yet resolved) carries the account in its payload's gl_account_code, read through the GL's own
+// posting queue seam (OutboxQueue) and never a till table. The refusal names the account and the count
+// of waiting movements, never a person.
+//
+// The guard reads and the deactivate write run in one transaction, locking the account row FOR UPDATE
+// first (W2-6b fix round 4, P3-1). The till's record-time check takes the same lock inside the
+// movement's transaction, so a movement recorded between the guard's reads and the deactivate's write
+// cannot slip through.
 func (s *Service) DeactivateAccount(ctx context.Context, code string) (Account, error) {
 	// Round 3: the chart of accounts is dealer wide.
 	if err := s.authorizeBranchWrite(ctx, ""); err != nil {
@@ -54,19 +71,25 @@ func (s *Service) DeactivateAccount(ctx context.Context, code string) (Account, 
 	if code == "" {
 		return Account{}, badReq("gl: account code is required")
 	}
-	if _, found, err := s.store.AccountByCode(ctx, code); err != nil {
+	tx, err := s.store.BeginTx(ctx)
+	if err != nil {
+		return Account{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, found, err := s.store.AccountByCodeTx(ctx, tx, code); err != nil {
 		return Account{}, err
 	} else if !found {
 		return Account{}, errNotFound
 	}
-	n, err := s.store.DraftLineCountForAccountCode(ctx, code)
+	n, err := s.store.DraftLineCountForAccountCodeTx(ctx, tx, code)
 	if err != nil {
 		return Account{}, err
 	}
 	if n > 0 {
 		return Account{}, errAccountInUse
 	}
-	rules, err := s.store.ListActiveRules(ctx)
+	rules, err := s.store.ListActiveRulesTx(ctx, tx)
 	if err != nil {
 		return Account{}, err
 	}
@@ -79,7 +102,164 @@ func (s *Service) DeactivateAccount(ctx context.Context, code string) (Account, 
 	if len(need) > 0 {
 		return Account{}, clientErr(409, "gl: account %s cannot be deactivated: the posting rules %s need it; deactivating it would stop those postings", code, strings.Join(need, ", "))
 	}
-	return s.store.SetAccountActive(ctx, code, false)
+	// The counter reason codes that name this account (W2-6b fix round 3). The till owns the list, so
+	// the gl asks the till through its seam; no gl statement names a till table. Where the seam is not
+	// wired the chart cannot check the account, and it refuses rather than retire one it cannot see.
+	if s.counterUses == nil {
+		return Account{}, clientErr(http.StatusServiceUnavailable, "gl: the counter reason code list is not wired, so the account %s was not checked", code)
+	}
+	uses, err := s.counterUses.ActiveCounterCodesForAccountTx(ctx, tx, code)
+	if err != nil {
+		return Account{}, err
+	}
+	names := counterCodeNames(uses)
+	if len(names) > 0 {
+		return Account{}, clientErr(409, "gl: account %s cannot be deactivated: %s %s it on %d %s; deactivating it would refuse every movement that names %s",
+			code, counterCodeSubject(names), counterCodeVerb(len(names)), counterBranchCount(uses), counterBranchWord(uses), strings.Join(names, ", "))
+	}
+	// Unposted till movements that carry this account (W2-6b fix round 4). Read through the GL's own
+	// posting queue seam (OutboxQueue), never a till table. Where the seam is not wired the chart cannot
+	// check the posting queue, and it refuses rather than retire an account a waiting movement carries.
+	if s.queue == nil {
+		return Account{}, clientErr(http.StatusServiceUnavailable, "gl: the posting queue is not wired, so the account %s was not checked", code)
+	}
+	waiting, err := s.queue.UnpostedForAccountTx(ctx, tx, "till.movement.posted", code)
+	if err != nil {
+		return Account{}, err
+	}
+	if waiting > 0 {
+		return Account{}, clientErr(409, "gl: account %s cannot be deactivated: %s it; deactivating it before %s would strand %s",
+			code, waitingMovementSubject(waiting), waitingMovementPostClause(waiting), waitingMovementObject(waiting))
+	}
+	a, err := s.store.SetAccountActiveTx(ctx, tx, code, false)
+	if err != nil {
+		return Account{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Account{}, err
+	}
+	return a, nil
+}
+
+func waitingMovementSubject(n int) string {
+	if n == 1 {
+		return "1 waiting movement still carries"
+	}
+	return fmt.Sprintf("%d waiting movements still carry", n)
+}
+
+func waitingMovementPostClause(n int) string {
+	if n == 1 {
+		return "the movement posts"
+	}
+	return "the movements post"
+}
+
+func waitingMovementObject(n int) string {
+	if n == 1 {
+		return "the movement"
+	}
+	return "the movements"
+}
+
+// counterCodeNames answers the distinct live counter reason codes that need an account, in order. The
+// same code may sit on several branches, and it is named once.
+func counterCodeNames(uses []CounterAccountUse) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, u := range uses {
+		if u.Code == "" || seen[u.Code] {
+			continue
+		}
+		seen[u.Code] = true
+		names = append(names, u.Code)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// counterCodeSubject names the live counter reason codes that need an account, in the chart's words:
+// one code, or several. The codes are names and the branches are counted, never a person.
+func counterCodeSubject(names []string) string {
+	if len(names) == 1 {
+		return fmt.Sprintf("the counter reason code %s", names[0])
+	}
+	return fmt.Sprintf("the counter reason codes %s", strings.Join(names, ", "))
+}
+
+// counterCodeVerb agrees with the subject: one code needs, several codes need.
+func counterCodeVerb(n int) string {
+	if n == 1 {
+		return "needs"
+	}
+	return "need"
+}
+
+// counterBranchWord agrees with the branch count: one branch, several branches.
+func counterBranchWord(uses []CounterAccountUse) string {
+	if counterBranchCount(uses) == 1 {
+		return "branch"
+	}
+	return "branches"
+}
+
+// counterBranchCount answers how many branches the live codes sit on. The same code may sit on several
+// branches, and each branch's drawer names it.
+func counterBranchCount(uses []CounterAccountUse) int {
+	seen := map[string]bool{}
+	for _, u := range uses {
+		if u.BranchID != "" {
+			seen[u.BranchID] = true
+		}
+	}
+	return len(seen)
+}
+
+// AccountPostable reads the chart's answer about an account code: does the chart hold an account under
+// that code, and is that account live. It is the GL's own read, over the repository's AccountByCode, and
+// it is the read the till asks when a manager writes a reason code (W2-6b fix round 1): a code may only
+// point at an account that can take a posting.
+//
+// inChart is false when the chart holds no account under that code at all. active is false when the
+// chart holds one that has been turned off. Both false means the code names nowhere.
+//
+// This read never writes: the chart is the GL's, and a caller that wants the account changed goes
+// through CreateAccount or DeactivateAccount.
+func (s *Service) AccountPostable(ctx context.Context, code string) (inChart bool, active bool, err error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return false, false, nil
+	}
+	a, found, err := s.store.AccountByCode(ctx, code)
+	if err != nil {
+		return false, false, err
+	}
+	if !found {
+		return false, false, nil
+	}
+	return true, a.IsActive, nil
+}
+
+// AccountPostableTx reads the chart's answer about an account code on the caller's transaction,
+// locking the account row FOR UPDATE (W2-6b fix round 4, P3-1): a till movement's record-time check
+// takes the same lock on the account row that DeactivateAccount takes, so a movement recorded between
+// the deactivate guard's reads and its write cannot slip through.
+func (s *Service) AccountPostableTx(ctx context.Context, tx pgx.Tx, code string) (inChart bool, active bool, err error) {
+	if tx == nil {
+		return s.AccountPostable(ctx, code)
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return false, false, nil
+	}
+	a, found, err := s.store.AccountByCodeTx(ctx, tx, code)
+	if err != nil {
+		return false, false, err
+	}
+	if !found {
+		return false, false, nil
+	}
+	return true, a.IsActive, nil
 }
 
 // - journal reads -

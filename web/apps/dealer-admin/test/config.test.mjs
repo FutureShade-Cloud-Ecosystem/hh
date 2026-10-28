@@ -100,8 +100,8 @@ test("the job shape catalog groups the dealer's role names under their profiles"
   assert.deepEqual(rolesForShape("counter", roles), []);
 });
 
-test("a cell with no rows says the surface shows its own registry default; a curated cell counts its rows by kind", () => {
-  assert.equal(cellWords([]), "Registry default");
+test("a cell with no rows says the surface shows its standard view; a curated cell counts its rows by kind", () => {
+  assert.equal(cellWords([]), "Standard view");
   assert.equal(
     cellWords([
       { kind: "column", id: "a", position: 0, visible: true },

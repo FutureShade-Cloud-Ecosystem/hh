@@ -6595,6 +6595,34 @@ type TillSlipCandidate struct {
 	Reference   string `json:"reference"`
 }
 
+type TillReasonCode struct {
+	Id            string     `json:"id"`
+	BranchId      string     `json:"branch_id"`
+	Code          string     `json:"code"`
+	Label         string     `json:"label"`
+	MovementKind  string     `json:"movement_kind"`
+	GlAccountCode string     `json:"gl_account_code"`
+	Active        bool       `json:"active"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+type TillReasonCodeInput struct {
+	BranchId      string `json:"branch_id"`
+	Code          string `json:"code"`
+	Label         string `json:"label"`
+	MovementKind  string `json:"movement_kind"`
+	GlAccountCode string `json:"gl_account_code"`
+	Active        *bool  `json:"active,omitempty"`
+}
+
+type TillReasonCodeEdit struct {
+	Label         *string `json:"label,omitempty"`
+	MovementKind  *string `json:"movement_kind,omitempty"`
+	GlAccountCode *string `json:"gl_account_code,omitempty"`
+	Active        *bool   `json:"active,omitempty"`
+}
+
 type TillPolicy struct {
 	BranchId               string `json:"branch_id"`
 	VarianceThresholdCents int64  `json:"variance_threshold_cents"`
@@ -6645,11 +6673,12 @@ type TillOpenLookup struct {
 }
 
 type TillMovementInput struct {
-	MovementType string `json:"movement_type"`
-	Method       string `json:"method"`
-	AmountCents  int64  `json:"amount_cents"`
-	Reason       string `json:"reason"`
-	Reference    string `json:"reference"`
+	MovementType string  `json:"movement_type"`
+	Method       string  `json:"method"`
+	AmountCents  int64   `json:"amount_cents"`
+	Reason       string  `json:"reason"`
+	Reference    string  `json:"reference"`
+	ReasonCode   *string `json:"reason_code,omitempty"`
 }
 
 type TillTenderActual struct {
