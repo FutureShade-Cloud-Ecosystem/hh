@@ -57,6 +57,11 @@ const BRANCHES = [
 const PLM = BRANCHES[0].id;
 const JUL = BRANCHES[1].id;
 
+// A branch id the branches route does not know. The yard persona's grants
+// reach it under the "unknown-branch" scenario, so the leg can prove that an
+// unknown branch reads as a word and never as a fragment of its id.
+const UNKNOWN_BRANCH_ID = "9a11e111-0000-4000-9000-0000000000ff";
+
 // The roles catalog, the core's own list (staffcontext/rbac.go AllRoles):
 // the platform role and the thirteen business roles.
 const ROLES = [
@@ -131,6 +136,14 @@ function buildStaff() {
       branch_ids: [],
     },
   ];
+}
+
+// The register as it reads with a grant the branches route does not know: the
+// yard persona's third branch. Nothing else moves.
+function staffWithUnknownBranch() {
+  return staff.map((m) =>
+    m.role_code === "YARD_TEAM" ? { ...m, branch_ids: [...m.branch_ids, UNKNOWN_BRANCH_ID] } : m,
+  );
 }
 
 // A token with the shape the app reads an expiry from: three parts, the
@@ -1081,7 +1094,7 @@ async function handle(req, res) {
 
   if (req.method === "GET" && path === "/api/v1/staff") {
     if (!isManager(flow) || scenario === "refused-staff") return refuse(res, 403, "Forbidden");
-    const items = scenario === "empty-staff" ? [] : staff;
+    const items = scenario === "empty-staff" ? [] : scenario === "unknown-branch" ? staffWithUnknownBranch() : staff;
     return json(res, { items, next_cursor: null, limit: 200 });
   }
 

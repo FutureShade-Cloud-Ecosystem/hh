@@ -137,10 +137,11 @@ test("a percent the person typed becomes integer basis points, or nothing", () =
 
 // -- the category names -------------------------------------------------------------------------
 
-test("a category shows its catalog name; an unknown id shows its own block", () => {
+test("a category shows its catalog name; an unknown id reads as a word, never as its own block", () => {
   const cats = [{ id: "ca7-1", code: "PAV", name: "Pavers", is_active: true }];
   assert.equal(categoryName("ca7-1", cats), "Pavers");
-  assert.equal(categoryName("9a11e111-0000-4000-9000-0000000000ff", cats), "9a11e111");
+  // UX-106 round 3: a category the catalog does not know is a word.
+  assert.equal(categoryName("9a11e111-0000-4000-9000-0000000000ff", cats), "Unknown category");
   assert.equal(categoryName("", cats), "");
 });
 
@@ -358,9 +359,10 @@ test("a rebate's rate renders in the shape its basis means, the original's own r
   assert.equal(rebateRateWords({ basis: "ODD", rate_bps: null, rate_cents_per_unit: null }), "");
 });
 
-test("a vendor shows its name, else the id's own block", () => {
+test("a vendor shows its name, else a word, never the id's own block", () => {
   assert.equal(vendorWords("Northline Supply", "vd1"), "Northline Supply");
-  assert.equal(vendorWords("", "vd110000-0000-4000-9000-0000000000a1"), "vd110000");
+  // UX-106 round 3: a vendor the read does not name is a word.
+  assert.equal(vendorWords("", "vd110000-0000-4000-9000-0000000000a1"), "Unknown vendor");
   assert.equal(vendorWords("", ""), "");
 });
 

@@ -69,15 +69,17 @@ test("the yard is the tail of the dealer's own branch name", () => {
   assert.equal(shortBranch("Point Loma"), "Point Loma");
 });
 
-test("branch chips name the branches the staff row reaches; an unknown id shows its fragment", () => {
+test("branch chips name the branches the staff row reaches; an unknown branch reads as a word, never as its id", () => {
   const branches = [
     { id: "b-0001", name: "Gable Landscape Supply - Point Loma" },
     { id: "b-0002", name: "Gable Landscape Supply - Julian" },
   ];
   assert.deepEqual(branchChips(["b-0002"], branches), [{ label: "Julian", known: true }]);
   assert.deepEqual(branchChips([], branches), []);
+  // UX-106 round 3: a branch the catalog does not know is a word, never the
+  // id's own first block.
   const unknown = branchChips(["9a11e111-0000-4000-9000-0000000000ff"], branches);
-  assert.deepEqual(unknown, [{ label: "9a11e111", known: false }]);
+  assert.deepEqual(unknown, [{ label: "Unknown branch", known: false }]);
 });
 
 test("a role in the catalog is assignable; a platform role is read-only; no role is still assignable", () => {
@@ -179,7 +181,9 @@ test("the two surfaces are the two substrates, in the order the screen renders t
 test("the configurator's labels are sentences, never a stored id", () => {
   assert.equal(platformActionLabel("pos.counter", "pay"), "Take payment, complete the sale");
   assert.equal(platformActionLabel("app.shell", "sale.cash.new"), "Start a new sale at the till");
-  assert.equal(platformActionLabel("app.shell", "not.in.registry"), "not.in.registry");
+  // UX-106 round 3: an action the registry does not name reads as a word.
+  // The stored id must not reach a person as text.
+  assert.equal(platformActionLabel("app.shell", "not.in.registry"), "Unknown action");
 });
 
 test("a stored binding a shell grammar cannot round trip is not bindable", () => {
@@ -293,11 +297,13 @@ test("the sensitive actions badge, and the rest stay neutral", () => {
   assert.ok(ACTION_OPTIONS.includes("PRICE_OVERRIDE"));
 });
 
-test("the actor is a role label when the server sent one, else the id's own block", () => {
+test("the actor is a role label when the server sent one, else a word, never the id's own block", () => {
   // Production rows read the role word empty (the core attributes by the
   // linked users id); the role path is the coarse trail's fallback.
   assert.equal(actorWords({ actor_role: "GENERAL_MANAGER", actor_id: "da110000-0000-4000-9000-000000000001" }), "general manager");
-  assert.equal(actorWords({ actor_id: "da110000-0000-4000-9000-000000000001" }), "da110000");
+  // UX-106 round 3: an actor the trail cannot name reads as a word, never as
+  // the id's own first block.
+  assert.equal(actorWords({ actor_id: "da110000-0000-4000-9000-000000000001" }), "Unknown actor");
   assert.equal(actorWords({}), "No actor recorded");
 });
 
