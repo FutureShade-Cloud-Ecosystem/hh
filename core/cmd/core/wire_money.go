@@ -452,12 +452,12 @@ func (a glStockValueAdapter) StockValueCents(ctx context.Context, asOf time.Time
 }
 
 // tillDrawerAdapter satisfies gl's close pre flight drawer seam over the till
-// repository (FW1-09b): the till sessions opened in the month still OPEN.
+// repository (FW1-09b): the till drawers opened by the month's end that are not
+// yet completed.
 type tillDrawerAdapter struct{ repo *till.Repository }
 
-func (a tillDrawerAdapter) OpenDrawers(ctx context.Context, from, to time.Time) (int, error) {
-	_ = to
-	return a.repo.OpenSessionsBetween(ctx, from, to)
+func (a tillDrawerAdapter) UncompletedDrawersOpenedBefore(ctx context.Context, before time.Time) (int, error) {
+	return a.repo.UncompletedSessionsOpenedBefore(ctx, before)
 }
 
 func (a invGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in inventory.GLJournal) (string, error) {
