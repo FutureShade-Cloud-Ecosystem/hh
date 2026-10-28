@@ -64,7 +64,9 @@ ALTER TABLE payment_allocations ADD CONSTRAINT payment_allocations_amount_cents_
 
 -- 5. The guard: a reversal names the application it reverses and carries its exact negative, and an
 --    application names no reversal. A second call site cannot write a reversal that points at
---    nothing or at the wrong money.
+--    nothing or at the wrong money. And once a reversal stands, the application it names cannot be
+--    changed at all: growing its amount or moving its payment or invoice would rewrite the history
+--    the reversal row preserved, so the pair would stop netting zero.
 CREATE OR REPLACE FUNCTION payment_allocations_reversal_guard() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -72,6 +74,14 @@ DECLARE
     app_payment UUID;
     app_invoice UUID;
 BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.kind = 'APPLICATION'
+       AND (NEW.kind <> OLD.kind OR NEW.amount_cents <> OLD.amount_cents
+            OR NEW.payment_id <> OLD.payment_id OR NEW.invoice_id <> OLD.invoice_id)
+       AND EXISTS (SELECT 1 FROM payment_allocations
+                    WHERE kind = 'REVERSAL' AND reverses_allocation_id = OLD.id) THEN
+        RAISE EXCEPTION 'payment_allocations: an application a reversal row names cannot be changed (payment %, invoice %)',
+            OLD.payment_id, OLD.invoice_id USING ERRCODE = 'check_violation';
+    END IF;
     IF NEW.kind = 'APPLICATION' THEN
         IF NEW.reverses_allocation_id IS NOT NULL THEN
             RAISE EXCEPTION 'payment_allocations: an application row must not name a reversal (payment %, invoice %)',

@@ -182,13 +182,22 @@ func (r *Repository) InsertAllocation(ctx context.Context, tx pgx.Tx, paymentID,
 	// allocated_by (0043, Q-044): WHO matched this payment to this invoice, stamped on the allocation.
 	// The conflict target carries the kind (0450): the primary key is (payment_id, invoice_id, kind), so
 	// the upsert adds to the APPLICATION row and never to a reversal row, which is written once and is
-	// never added to.
-	_, err := tx.Exec(ctx,
+	// never added to. The WHERE refuses a pair a reversal already stands on (0450, W2-6A fix 1): the
+	// update never runs, so the pair is refused by the code before the trigger, and a zero row count
+	// is reported here in words.
+	res, err := tx.Exec(ctx,
 		`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents, allocated_by) VALUES ($1, $2, $3, $4)
-		 ON CONFLICT (payment_id, invoice_id, kind) DO UPDATE SET amount_cents = payment_allocations.amount_cents + EXCLUDED.amount_cents`,
+		 ON CONFLICT (payment_id, invoice_id, kind) DO UPDATE SET amount_cents = payment_allocations.amount_cents + EXCLUDED.amount_cents
+		 WHERE NOT EXISTS (SELECT 1 FROM payment_allocations r
+		                    WHERE r.payment_id = payment_allocations.payment_id
+		                      AND r.invoice_id = payment_allocations.invoice_id
+		                      AND r.kind = 'REVERSAL')`,
 		paymentID, invoiceID, amountCents, nullStr(allocatedBy))
 	if err != nil {
 		return fmt.Errorf("till: insert allocation: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("till: insert allocation: the payment and invoice pair is reversed, the application cannot be added to")
 	}
 	return nil
 }
