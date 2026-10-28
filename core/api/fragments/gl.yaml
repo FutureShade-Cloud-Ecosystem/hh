@@ -1880,12 +1880,18 @@ components:
         fiscal_year: { type: integer, format: int32 }
     GlYearCloseResult:
       type: object
-      required: [fiscal_year, net_income_cents, periods_closed]
+      required: [fiscal_year, net_income_cents, periods_closed, already_closed]
       properties:
         fiscal_year: { type: integer, format: int32 }
         closing_journal_id: { type: string, format: uuid }
         net_income_cents: { type: integer, format: int64 }
         periods_closed: { type: boolean }
+        already_closed:
+          type: boolean
+          description: >
+            Which press this was - false on the press that closed the year, true on the press
+            that found the year closed already. The year end close's own marker decides, so
+            the caller can say "closed now" or "already closed" in words.
     GlPolicy:
       type: object
       description: The GL policy row; an absent branch_id is the org-default row
