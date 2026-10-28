@@ -393,32 +393,53 @@ func (s *ApprovalsSyncStore) readerFor(ctx context.Context, f sync.ScopeFilter) 
 }
 
 // FindApplied resolves one idempotency key to the row it applied,
-// under the org fence.
+// under the org fence and the caller's reader, the same rule the pull
+// speaks: a live card the caller may not read is not found, the absent
+// card's answer, so the engine never reads an unreadable row as visible
+// (UX-108). A withdrawn card stays found for every caller in the org: the
+// pull sends its tombstone to all of them.
 func (s *ApprovalsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
 	where, args, ok := approvalScopePredicate(f)
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
-	r, err := scanApprovalSync(s.pool.QueryRow(ctx, approvalSyncQuery+`
+	reader := s.readerFor(ctx, f)
+	// The candidates of the key, in the pull's own order, and the first one
+	// the pull would send. A key can name more than one card (the same key
+	// on a live card and on the card it became), so the winner is chosen
+	// the way the pull chooses, not by an unordered limit.
+	rows, err := s.pool.Query(ctx, approvalSyncQuery+`
 		WHERE `+where+` AND a.idempotency_key = $2::uuid
-		LIMIT 1`, append(args, key)...))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return sync.RowState{}, false, nil
-	}
+		ORDER BY a.seq ASC`, append(args, key)...)
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("identity: approvals sync find applied: %w", err)
 	}
-	rs, err := approvalStateOf(r)
-	if err == nil && !r.deleted && !s.readerFor(ctx, f)(r.req) {
-		// The engine never reads Data on a replay, but the projection of a
-		// card the caller may not read leaves nothing through this door.
-		rs.Data = nil
+	defer rows.Close()
+	for rows.Next() {
+		r, err := scanApprovalSync(rows)
+		if err != nil {
+			return sync.RowState{}, false, fmt.Errorf("identity: approvals sync find applied scan: %w", err)
+		}
+		if !r.deleted && !reader(r.req) {
+			continue
+		}
+		rs, err := approvalStateOf(r)
+		if err != nil {
+			return sync.RowState{}, false, err
+		}
+		return rs, true, nil
 	}
-	return rs, true, err
+	if err := rows.Err(); err != nil {
+		return sync.RowState{}, false, fmt.Errorf("identity: approvals sync find applied: %w", err)
+	}
+	return sync.RowState{}, false, nil
 }
 
-// Load reads one request by id under the org fence; a row outside the
-// caller's org is the same as an absent one (existence never leaks).
+// Load reads one request by id under the org fence and the caller's reader,
+// the same rule the pull speaks; a row outside the caller's org, or a live
+// card the caller may not read, is the same as an absent one (existence
+// never leaks). A withdrawn card stays found for every caller in the org:
+// the pull sends its tombstone to all of them.
 func (s *ApprovalsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	where, args, ok := approvalScopePredicate(f)
 	if !ok || !approvalLooksLikeUUID(id) {
@@ -432,15 +453,17 @@ func (s *ApprovalsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id st
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("identity: approvals sync load: %w", err)
 	}
-	rs, err := approvalStateOf(r)
-	if err == nil && !r.deleted && !s.readerFor(ctx, f)(r.req) {
-		// The row exists and the engine still needs its id and seq (the
-		// stale check, the write's own refusal words), but its projection
-		// travels in a conflict envelope: a card the caller may not read
-		// carries no data out of this door (P2-3, round 3).
-		rs.Data = nil
+	if !r.deleted && !s.readerFor(ctx, f)(r.req) {
+		// The card exists and the caller may not read it: the pull would not
+		// send it either, so this door answers not found (UX-108). A masked
+		// found would have told the engine the card was visible.
+		return sync.RowState{}, false, nil
 	}
-	return rs, true, err
+	rs, err := approvalStateOf(r)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	return rs, true, nil
 }
 
 // approvalCreateFields is the field set a pushed create may declare:
