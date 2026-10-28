@@ -13,6 +13,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -68,7 +69,14 @@ type GLJournal struct {
 	IdempotencyKey string
 	Memo           string
 	BranchID       string
-	Lines          []GLLine
+	// DocumentDate, when set, is the instant the count's own COUNT move happened: the variance
+	// journal books that move, and a journal with no date is dated at the moment it is posted,
+	// which is a different instant, so a month end between the two finds the two sides of one
+	// count on different sides of itself and refuses the month by the count's whole variance
+	// (W2-5 fix r10, S5's P2-7). The zero value means "no instant named": the GL falls back to
+	// its own clock, which is what a journal without a count behind it wants.
+	DocumentDate time.Time
+	Lines        []GLLine
 }
 
 // GLLine is one leg of a GLJournal.

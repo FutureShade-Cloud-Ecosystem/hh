@@ -1,20 +1,22 @@
 package main
 
-// w25_journal_date_census.go is the source check for W2-5 fix round 8: EVERY journal inventory
-// posts carries a document date.
+// w25_journal_date_census.go is the source check for W2-5 fix round 8: EVERY journal the stock
+// side of the books posts carries a document date.
 //
-// WHAT IT CHECKS. The inventory module builds its GL journals as `GLJournal{...}` literals. A
-// journal with no document date is dated at the GL's clock, the moment it is posted, which is a
-// DIFFERENT instant from the movement it books: the stock ledger's move carries the movement's
-// instant and the journal carries the drain's. A month end that falls between the two finds the
-// two sides of one movement on different sides of itself and refuses the month by the whole
-// movement (S5's P2-2 for the receipts, P3-1 for the rest).
+// WHAT IT CHECKS. The modules that post a stock side journal build their GL journals as
+// `GLJournal{...}` literals. A journal with no document date is dated at the GL's clock, the
+// moment it is posted, which is a DIFFERENT instant from the movement it books: the stock
+// ledger's move carries the movement's instant and the journal carries the drain's. A month end
+// that falls between the two finds the two sides of one movement on different sides of itself
+// and refuses the month by the whole movement (S5's P2-2 for the receipts, P3-1 for the rest,
+// P2-7 for the count's variance journal).
 //
-// The scan walks every non-test Go file in the inventory package, finds every `GLJournal{...}`
-// literal, and fails when one names no `DocumentDate`. Every such literal in this package is
-// POSTED (each is handed to the GL poster or to a helper that hands it over), so the check needs
-// no separate "is it posted" test: a literal that is built and never posted would still be asked
-// for a date, which is the safe direction to be wrong in.
+// The scan walks every non-test Go file of every package in the stock journal set
+// (w25StockJournalPackages), finds every `GLJournal{...}` literal, and fails when one names no
+// `DocumentDate`. Every such literal in those packages is POSTED (each is handed to the GL poster
+// or to a helper that hands it over), so the check needs no separate "is it posted" test: a
+// literal that is built and never posted would still be asked for a date, which is the safe
+// direction to be wrong in.
 //
 // It mirrors FW1-08b's branch census shape: a source scan, a failure on any writer that does not
 // carry the thing, and a probe that proves the scan is not vacuous.
@@ -35,6 +37,59 @@ type w25UndatedJournal struct {
 	File string
 	Line int
 	Func string
+}
+
+// w25StockJournalPackages are the packages the census watches: every package that posts a GL
+// journal for the stock side of the books, a journal touching 1200 or booking a stock movement.
+//
+//   - internal/inventory: the stock ledger's own journals (the GRNI, the rounding journals, the
+//     true-up, the transfer legs): every one of them touches 1200.
+//   - internal/invcount: the count's variance journal: the 1200 leg against the reason leg.
+//   - internal/landedcost: the capitalization journal: it raises the inventory value (1200) and
+//     rides the VALUE stock move the capitalization writes.
+//   - internal/purchasing: the vendor bill journal: it relieves the goods received not invoiced
+//     (2150) the stock's value rests on and books the tax and price variance legs of the goods'
+//     cost.
+//
+// THE PACKAGES THAT POST NO STOCK JOURNAL ARE NOT ON THE LIST, and the reason is here so a reader
+// does not go looking for them: internal/pos posts no GL journal at all (its stock relief rides
+// the inventory seam, and the COGS journal is the inventory's own); internal/warranty posts the
+// settlement (the expense and the recovery) and its replacement issues stock through the
+// inventory seam; internal/lien posts the holdback release (1150/2350); internal/bankrec posts the
+// clearing journal of the statement lines.
+var w25StockJournalPackages = []string{
+	"inventory",
+	"invcount",
+	"landedcost",
+	"purchasing",
+}
+
+// w25StockJournalPackageResult is one package's scan: how many journal literals it holds and the
+// ones that name no document date.
+type w25StockJournalPackageResult struct {
+	Package  string
+	Literals int
+	Undated  []w25UndatedJournal
+}
+
+// w25StockJournalDateCensus scans every package in the stock journal set under one core root and
+// answers what each package's scan found. It judges nothing: the caller decides what an undated
+// journal means.
+func w25StockJournalDateCensus(coreRoot string) ([]w25StockJournalPackageResult, error) {
+	var out []w25StockJournalPackageResult
+	for _, pkg := range w25StockJournalPackages {
+		dir := filepath.Join(coreRoot, "internal", pkg)
+		result, err := w25JournalDateCensus(dir)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w25StockJournalPackageResult{
+			Package:  pkg,
+			Literals: result.Literals,
+			Undated:  result.Undated,
+		})
+	}
+	return out, nil
 }
 
 // w25JournalDateResult is what the scan found.
@@ -97,6 +152,12 @@ func w25GoJournalDates(path string) (w25JournalDateResult, error) {
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			lit, ok := n.(*ast.CompositeLit)
 			if !ok || !w25IsGLJournalType(lit.Type) {
+				return true
+			}
+			// A literal with no field at all is not a journal, it is the empty value a caller
+			// gets with its error, and it posts nothing: only a journal that carries something
+			// names a document date.
+			if len(lit.Elts) == 0 {
 				return true
 			}
 			result.Literals++

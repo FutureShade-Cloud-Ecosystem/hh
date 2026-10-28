@@ -888,7 +888,9 @@ func (a lienGLPoster) PostJournal(ctx context.Context, in lien.GLJournal) (strin
 }
 
 // invcountGLPoster satisfies invcount.GLPoster over glSvc.PostExternal
-// (the reason-coded variance journal).
+// (the reason-coded variance journal). The document date rides: the count's variance
+// journal is dated at the count's own instant, the one its COUNT move carries, so the two
+// sides of one count are cut at the same moment (W2-5 fix r10, S5's P2-7).
 type invcountGLPoster struct{ svc *gl.Service }
 
 func (a invcountGLPoster) PostJournal(ctx context.Context, in invcount.GLJournal) (string, error) {
@@ -896,7 +898,7 @@ func (a invcountGLPoster) PostJournal(ctx context.Context, in invcount.GLJournal
 	for i, l := range in.Lines {
 		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
 	}
-	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, DocumentDate: in.DocumentDate, Lines: lines})
 }
 
 // landedGLPoster satisfies landedcost.GLPoster over glSvc.PostExternal
