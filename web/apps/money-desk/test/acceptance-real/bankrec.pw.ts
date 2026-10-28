@@ -39,9 +39,16 @@ import { matchMethodWord, targetWord } from "../../src/bankrec/bankrec-logic.js"
 import { asStaff, coreURL } from "./session.js";
 import { OPEN_MONTH, SIGNED_OFF_BANK_MONTH, SIGNED_OFF_VARIANCE_CENTS } from "./world.js";
 
-/** The core's own answers, as the desk received them: the path is the core's route, the body is the core's JSON. */
+/** One answer the core sent: its route, the query it carried and its body. */
+interface CoreAnswer {
+  readonly path: string;
+  readonly params: URLSearchParams;
+  readonly body: unknown;
+}
+
+/** Every answer the core sent, in the order they arrived. */
 interface CoreAnswers {
-  readonly bodies: Map<string, unknown[]>;
+  readonly answers: readonly CoreAnswer[];
 }
 
 /** The value or a failure that says what was missing. */
@@ -58,7 +65,7 @@ function monthOf(text: string): { year: number; month: number } {
 
 /** The core's own answers, as they arrive: the desk's calls are the ones the spec reads. */
 function watchCore(page: Page): CoreAnswers {
-  const bodies = new Map<string, unknown[]>();
+  const answers: CoreAnswer[] = [];
   page.on("response", (response) => {
     const url = new URL(response.url());
     if (!url.pathname.startsWith("/api/v1/bankrec/")) return;
@@ -66,19 +73,26 @@ function watchCore(page: Page): CoreAnswers {
     void response
       .json()
       .then((body: unknown) => {
-        const list = bodies.get(url.pathname) ?? [];
-        list.push(body);
-        bodies.set(url.pathname, list);
+        answers.push({ path: url.pathname, params: url.searchParams, body });
       })
       .catch(() => undefined);
   });
-  return { bodies };
+  return { answers };
 }
 
-/** The last answer the core sent for a route, waiting for it to arrive. */
-async function coreAnswer(core: CoreAnswers, path: string): Promise<unknown> {
-  await expect.poll(() => core.bodies.get(path)?.length ?? 0, { timeout: 30_000 }).toBeGreaterThan(0);
-  const list = core.bodies.get(path) ?? [];
+/** The answers the core sent for a route, newest last. A query narrows the answers to the ones that carried it. */
+function answersFor(core: CoreAnswers, path: string, query?: Record<string, string>): unknown[] {
+  return core.answers
+    .filter((answer) => answer.path === path)
+    .filter((answer) => query === undefined || Object.entries(query).every(([key, value]) => answer.params.get(key) === value))
+    .map((answer) => answer.body);
+}
+
+/** The last answer the core sent for a route, waiting for it to arrive. The route and its query ride together: the
+ *  desk asks the lines with and without a status, and only the answer that carried the query is this one. */
+async function coreAnswer(core: CoreAnswers, path: string, query?: Record<string, string>): Promise<unknown> {
+  await expect.poll(() => answersFor(core, path, query).length, { timeout: 30_000 }).toBeGreaterThan(0);
+  const list = answersFor(core, path, query);
   return list[list.length - 1];
 }
 
@@ -196,7 +210,9 @@ test("the statement lines and their matches are the core's, and the desk shows e
 
   // The world's matched lines, the filter the desk offers for them.
   await page.locator("[data-action='br-filter'][data-filter-id='MATCHED']").click();
-  const lines = (await coreAnswer(core, "/api/v1/bankrec/lines")) as BankRecStatementLinePage;
+  // The core's answer to the filtered call: the query rides with the answer, so the lines the desk asked for with
+  // the filter are the ones read here, never the unfiltered page that came before it.
+  const lines = (await coreAnswer(core, "/api/v1/bankrec/lines", { status: "MATCHED" })) as BankRecStatementLinePage;
   const rows = page.locator("[data-line-id]");
   await expect(rows).toHaveCount(lines.items.length);
 
