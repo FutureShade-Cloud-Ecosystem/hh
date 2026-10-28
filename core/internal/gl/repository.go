@@ -955,6 +955,24 @@ func (r *Repository) ReopenPeriod(ctx context.Context, id, actorID, reason strin
 		return Period{}, fmt.Errorf("gl: begin reopen: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	p, err := r.ReopenPeriodTx(ctx, tx, id, actorID, reason)
+	if err != nil {
+		return Period{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Period{}, fmt.Errorf("gl: commit reopen: %w", err)
+	}
+	return p, nil
+}
+
+// ReopenPeriodTx unseals a period on the caller's transaction (FW1-09h). The service holds the
+// year end's OWN advisory lock on that transaction, so the marker it read and the write here
+// are one act: a close cannot slip between the read and the write and leave a closed year with
+// an open month.
+func (r *Repository) ReopenPeriodTx(ctx context.Context, tx pgx.Tx, id, actorID, reason string) (Period, error) {
+	if tx == nil {
+		return Period{}, errNoDB
+	}
 	tag, err := tx.Exec(ctx,
 		`UPDATE fiscal_periods SET status = 'OPEN', closed_at = NULL, closed_by = NULL, updated_at = now()
 		 WHERE id = $1 AND status = 'CLOSED'`, id)
@@ -967,10 +985,24 @@ func (r *Repository) ReopenPeriod(ctx context.Context, id, actorID, reason strin
 	if err := insertOverride(ctx, tx, id, "REOPEN", reason, actorID); err != nil {
 		return Period{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Period{}, fmt.Errorf("gl: commit reopen: %w", err)
+	return scanPeriod(tx.QueryRow(ctx, `SELECT `+periodCols+` FROM fiscal_periods WHERE id = $1`, id))
+}
+
+// PeriodYearTx answers one period's year, read on the caller's transaction (FW1-09h): the
+// reopen reads it to ask whether the year carries its marker, on the same transaction that
+// holds the year end's lock, never through the pool.
+func (r *Repository) PeriodYearTx(ctx context.Context, tx pgx.Tx, id string) (int, error) {
+	if tx == nil {
+		return 0, errNoDB
 	}
-	return r.GetPeriod(ctx, id)
+	var year int
+	if err := tx.QueryRow(ctx, `SELECT year FROM fiscal_periods WHERE id = $1`, id).Scan(&year); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, errNotFound
+		}
+		return 0, fmt.Errorf("gl: read the period's year: %w", err)
+	}
+	return year, nil
 }
 
 // ensureFiscalYearTx idempotently creates a fiscal year's twelve OPEN calendar months on tx. Periods are

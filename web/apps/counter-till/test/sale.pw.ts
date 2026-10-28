@@ -1392,22 +1392,47 @@ test("an empty draft shows the blank marker in the detached layout too", async (
   await savedBack;
 });
 
+/** The house disabled tokens, read as the browser computes them. The rule is
+ *  that a disabled control drops its fill and goes grey through the
+ *  --hh-disabled-* swap, so the assertion is against the tokens themselves
+ *  and not against a frozen colour. */
+async function disabledTokens(page: Page): Promise<{ fill: string; ink: string; line: string }> {
+  return page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.backgroundColor = "var(--hh-disabled-fill)";
+    probe.style.color = "var(--hh-disabled-ink)";
+    probe.style.borderColor = "var(--hh-disabled-line)";
+    document.body.appendChild(probe);
+    const style = getComputedStyle(probe);
+    const tokens = { fill: style.backgroundColor, ink: style.color, line: style.borderColor };
+    probe.remove();
+    return tokens;
+  });
+}
+
 test("a disabled control on the ported surface drops its fill and goes grey", async ({
   page,
 }) => {
   await signIn(page, "Sales");
   await openStep(page, "payment");
-  // The empty ticket's complete-sale button is disabled: grey, no gold fill,
-  // no fade. The computed styles are the assertion: a restored gold fill or
-  // a pure-opacity fade fails here.
+  // The empty ticket's complete-sale button is disabled: the grey token swap,
+  // no gold fill, no fade. The computed styles are the assertion: a restored
+  // gold fill or a pure-opacity fade fails here.
   const cta = page.getByTestId("pos-complete-sale");
   await expect(cta).toBeDisabled();
+  const tokens = await disabledTokens(page);
   const shape = await cta.evaluate((node) => {
     const style = getComputedStyle(node);
-    return { background: style.backgroundColor, color: style.color, opacity: style.opacity };
+    return {
+      background: style.backgroundColor,
+      color: style.color,
+      borderColor: style.borderColor,
+      opacity: style.opacity,
+    };
   });
-  expect(shape.background).toBe("rgba(0, 0, 0, 0)");
-  expect(shape.color).not.toBe("rgb(0, 0, 0)");
+  expect(shape.background).toBe(tokens.fill);
+  expect(shape.color).toBe(tokens.ink);
+  expect(shape.borderColor).toBe(tokens.line);
   expect(shape.opacity).toBe("1");
   // An empty ticket's split choice says so in the band's own words: the panel
   // itself does not mount with nothing to settle (the positions gate repair:
@@ -1430,11 +1455,13 @@ test("the split panel's ring wears the disabled rule's shape until the legs meet
   await page.getByRole("button", { name: "Split" }).click();
   const ring = page.getByTestId("split-ring");
   await expect(ring).toBeDisabled();
+  const tokens = await disabledTokens(page);
   const ringShape = await ring.evaluate((node) => {
     const style = getComputedStyle(node);
     return { background: style.backgroundColor, borderColor: style.borderColor, color: style.color };
   });
-  expect(ringShape.background).toBe("rgba(0, 0, 0, 0)");
+  expect(ringShape.background).toBe(tokens.fill);
+  expect(ringShape.color).toBe(tokens.ink);
 });
 
 test("the chrome sits above the surface: the demo banner is in the first viewport, on the till and in the pop-out", async ({
@@ -2060,19 +2087,20 @@ test("the sold-actions buttons drop their fill while a receipt loads, in the col
   await sold.getByTestId("sold-print").click();
   const sibling = sold.getByTestId("sold-print-page");
   await expect(sibling).toBeDisabled();
+  const tokens = await disabledTokens(page);
   const sib = (await sibling.evaluate((el) => ({
     cursor: getComputedStyle(el).cursor,
     background: getComputedStyle(el).backgroundColor,
     opacity: getComputedStyle(el).opacity,
   }))) as { cursor: string; background: string; opacity: string };
   expect(sib.cursor).toBe("not-allowed");
-  expect(sib.background).toBe("rgba(0, 0, 0, 0)");
+  expect(sib.background).toBe(tokens.fill);
   expect(Number(sib.opacity)).toBe(1);
   const primary = (await sold.getByTestId("sold-print").evaluate((el) => ({
     cursor: getComputedStyle(el).cursor,
     background: getComputedStyle(el).backgroundColor,
   }))) as { cursor: string; background: string };
   expect(primary.cursor).toBe("not-allowed");
-  expect(primary.background).toBe("rgba(0, 0, 0, 0)");
+  expect(primary.background).toBe(tokens.fill);
   await page.unroute("**/receipt*");
 });

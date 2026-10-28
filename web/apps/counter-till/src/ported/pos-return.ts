@@ -136,17 +136,17 @@ export class HosPosReturn extends LitElement {
       font-weight: 600;
     }
     button:disabled {
-      background: transparent;
-      border-color: var(--hos-line);
-      color: var(--hos-text-dim);
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
       opacity: 1;
       cursor: not-allowed;
     }
     /* HH note: disabled drops its fill and goes grey; fade is not a state. */
     button.primary:disabled {
-      background: transparent;
-      border-color: var(--hos-line);
-      color: var(--hos-text-dim);
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
       opacity: 1;
     }
     table {

@@ -141,6 +141,9 @@ export const consoleStyles = css`
     line-height: 1.2;
   }
   .signin-card .btn-primary:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
     cursor: progress;
   }
   /* A link that wears the button's shape: the set password page's done state
