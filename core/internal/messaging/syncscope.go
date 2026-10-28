@@ -209,9 +209,15 @@ func (s *messagesSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter,
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
-	id, seq, found, err := s.repo.syncMessageFindApplied(ctx, uid, key)
+	id, seq, channelID, found, err := s.repo.syncMessageFindApplied(ctx, uid, key)
 	if err != nil || !found {
 		return sync.RowState{}, found, err
+	}
+	// The room fence reaches this read the way it reaches Load: a member the
+	// room refuses resolves nothing, or the replayed answer crosses the read
+	// fence the pull holds (UX-108).
+	if !admitsRoom(ctx, s.fence, uid, channelID) {
+		return sync.RowState{}, false, nil
 	}
 	return sync.RowState{ID: id, Seq: seq}, true, nil
 }

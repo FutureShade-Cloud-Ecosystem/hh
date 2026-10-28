@@ -2422,21 +2422,23 @@ func (r *Repository) syncMessageLoad(ctx context.Context, userID, messageID stri
 }
 
 // syncMessageFindApplied resolves one idempotency key to the caller's own
-// message (the fence holds even for a row the caller has since left).
-func (r *Repository) syncMessageFindApplied(ctx context.Context, userID, key string) (string, int64, bool, error) {
-	var id string
+// message (the fence holds even for a row the caller has since left). The
+// room rides along, so the door's room fence (admitsRoom) can hold this read
+// the way it holds Load: a member the room refuses must not resolve the key.
+func (r *Repository) syncMessageFindApplied(ctx context.Context, userID, key string) (string, int64, string, bool, error) {
+	var id, channelID string
 	var seq int64
 	err := r.pool.QueryRow(ctx, `
-		SELECT m.id::text, m.seq FROM msg_messages m
+		SELECT m.id::text, m.seq, m.channel_id::text FROM msg_messages m
 		JOIN msg_members mem ON mem.channel_id = m.channel_id AND mem.user_id = $1
-		WHERE m.idempotency_key = $2::uuid`, userID, key).Scan(&id, &seq)
+		WHERE m.idempotency_key = $2::uuid`, userID, key).Scan(&id, &seq, &channelID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", 0, false, nil
+		return "", 0, "", false, nil
 	}
 	if err != nil {
-		return "", 0, false, fmt.Errorf("sync message find-applied: %w", err)
+		return "", 0, "", false, fmt.Errorf("sync message find-applied: %w", err)
 	}
-	return id, seq, true, nil
+	return id, seq, channelID, true, nil
 }
 
 // syncMessageExists answers the bound key gate's existence read (UX-103):
