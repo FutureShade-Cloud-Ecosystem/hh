@@ -8,9 +8,14 @@
 //
 //   1. THE SOURCE LEG: a lint over every shipped style under web/apps and
 //      web/packages. A rule that styles a disabled state (a :disabled, a
-//      [disabled], an [aria-disabled="true"] selector) may not declare an
-//      opacity below 1 (a fade is not a state) and may not declare a fill, an
-//      ink or a line that is not the grey disabled triple. The app-local
+//      [disabled], an [aria-disabled="true"] selector, a compound .disabled
+//      or .is-disabled class, or a bare-word state class carrying the
+//      hh-disabled-state marker) may not declare an opacity below 1 (a fade
+//      is not a state), may not declare a filter, and may not declare a
+//      fill, an ink or a line that is not the grey disabled triple or that
+//      arrives through a transparent mix (color-mix, rgba, hsla). No
+//      container that holds a disabled control may carry an opacity below 1
+//      or a filter where the lint can see the relationship. The app-local
 //      rule that faded a gold button, or that kept the gold fill under a
 //      reduced opacity, is caught here before anyone sees it.
 //
@@ -170,7 +175,12 @@ function ruleBlocks(src, lineAt) {
           // starts on: the chunk carries the whitespace and the blanked
           // comment that sit between the previous rule and this one.
           const lead = rule.bodyStart - 1 - rule.chunkStart - chunk.replace(/^\s+/, '').length;
-          out.push({ selector, body, line: lineAt(rule.chunkStart + lead) });
+          const selStart = rule.chunkStart + lead;
+          // selStart and open are indexes into the scanned source, which is
+          // the raw source with comments blanked and interpolations removed,
+          // both length preserving, so they are indexes into the raw source
+          // too: the marker check reads the raw text of the selector.
+          out.push({ selector, body, line: lineAt(selStart), selStart, open: rule.bodyStart - 1 });
         }
       }
       chunkStart = i + 1;
@@ -191,13 +201,59 @@ function stripNotGroups(selector) {
   return out;
 }
 
-/** True when the selector styles a disabled state. */
+/** True when the chunk reads as a selector and not as a piece of JavaScript
+ *  that happens to sit before a brace (a test's `if (el.disabled === true) {`
+ *  is the shape that must not reach the class tokens). A selector may hold
+ *  `=` and quotes only inside brackets and parentheses; at the top level
+ *  they are source code, not a selector. */
+function plausibleSelector(selector) {
+  let round = 0;
+  let square = 0;
+  let tokenStart = 0;
+  const isCombinatorOrSpace = (ch) => ch === ' ' || ch === '>' || ch === '+' || ch === '~' || ch === ',';
+  for (let i = 0; i < selector.length; i += 1) {
+    const ch = selector[i];
+    if (ch === '(') {
+      // A top level opening paren in a selector opens a pseudo, so the
+      // token it ends is one (:not, :is, :where, :has, :nth-child); an
+      // `if (` or a call `foo(` is source code.
+      if (round === 0 && square === 0) {
+        const token = selector.slice(tokenStart, i);
+        if (!/^::?[a-zA-Z-]+$/.test(token)) return false;
+      }
+      round += 1;
+    } else if (ch === ')') {
+      round = Math.max(0, round - 1);
+      if (round === 0) tokenStart = i + 1;
+    } else if (ch === '[') {
+      square += 1;
+    } else if (ch === ']') {
+      square = Math.max(0, square - 1);
+      if (square === 0) tokenStart = i + 1;
+    } else if (round === 0 && square === 0) {
+      if (ch === '=' || ch === "'" || ch === '"' || ch === ';') return false;
+      if (isCombinatorOrSpace(ch)) tokenStart = i + 1;
+    }
+  }
+  return true;
+}
+
+/** True when the selector styles a disabled state. Round 2 widened the
+ *  reach: the .disabled class token is read in any compound position (a
+ *  .btn.disabled is a disabled state), and .is-disabled joins it. A bare
+ *  class that names no disabled state (.off, .held, .starting) is NOT
+ *  matched here on purpose: the same text sits inside JavaScript property
+ *  reads (gated.held, control.disabled) the scan cannot tell from a class,
+ *  so those rules carry the hh-disabled-state marker instead, which is
+ *  unambiguous and lives on the rule it marks. */
 function isDisabledSelector(selector) {
+  if (!plausibleSelector(selector)) return false;
   const s = stripNotGroups(selector);
   if (/:disabled\b/.test(s)) return true;
   if (/\[disabled\]/.test(s)) return true;
   if (/\[aria-disabled\s*=\s*["']?true/.test(s)) return true;
-  if (/(^|[\s>+~,])\.disabled(?=[\s.:\[>+~,]|$)/.test(s)) return true;
+  if (/\.disabled(?![-\w=])/.test(s) && plausibleSelector(s)) return true;
+  if (/\.is-disabled(?![-\w])/.test(s)) return true;
   return false;
 }
 
@@ -221,56 +277,142 @@ const DISABLED_LINE = 'var(--hh-disabled-line)';
 // is the rule. A brand line is not.
 const CONTROL_LINE = 'var(--hh-control-line)';
 
-test('no shipped style fades a disabled control, and no disabled rule keeps a fill of its own', { timeout: 300_000 }, () => {
+// A disabled rule may not paint its fill, ink or edge through a transparent
+// mix: `color-mix(in srgb, var(--hh-disabled-fill) 45%, transparent)` names
+// the token and is transparent anyway, so naming the token is not enough.
+const TRANSPARENT_MIX = /color-mix\(|rgba\(|hsla\(|hsl\(|rgb\(|transparent/i;
+
+// The marker a rule carries when its selector names no disabled state but
+// the rule styles one (.result.off, .card.starting, .gl-choice-held): a
+// bare-word class cannot be matched from the selector alone, because the
+// same text sits inside JavaScript property reads the scan cannot tell from
+// a class (gated.held, control.disabled). The marker lives inside the rule
+// it marks, beside the declarations it guards, and nothing else in the tree
+// may use these words.
+const STATE_MARKER = 'hh-disabled-state';
+
+/** A rule's selector as its comma-separated compound sequences, for the
+ *  container check: whether a rule that fades or filters holds a disabled
+ *  control inside it. */
+function selectorCompounds(selector) {
+  const s = stripNotGroups(selector);
+  const out = [];
+  for (const part of s.split(',')) {
+    const comps = part.trim().split(/[\s>+~]+/).filter(Boolean);
+    if (comps.length > 0) out.push(comps);
+  }
+  return out;
+}
+
+/** A compound with its disabled markers removed, so a container rule can be
+ *  compared with the disabled rule that styles the same element. */
+function stripDisabledFromCompound(comp) {
+  return comp
+    .replace(/:disabled\b/g, '')
+    .replace(/\[disabled\]/g, '')
+    .replace(/\[aria-disabled\s*=\s*["']?true["']?\]/g, '')
+    .replace(/\.disabled(?![-\w=])/g, '')
+    .replace(/\.is-disabled(?![-\w])/g, '');
+}
+
+/** The per-rule checks a disabled-matching rule must pass. */
+function ruleOffenders(rel, rule, selector, decls) {
   const offenders = [];
-  for (const rel of webStyleFiles()) {
-    const raw = readFileSync(join(webRoot, rel), 'utf8');
-    // A file that never says "disabled" cannot carry a disabled rule, and the
-    // tree is large: this pre-filter is what keeps the scan inside its budget.
-    if (!/disabled/i.test(raw)) continue;
-    const src = stripInterpolations(blankComments(raw));
-    const lineAt = lineIndexer(src);
-    for (const rule of ruleBlocks(src, lineAt)) {
-      if (!isDisabledSelector(rule.selector)) continue;
-      const selector = rule.selector.replace(/\s+/g, ' ');
-      const decls = declarations(rule.body);
-      // A rule that styles the control's own surface states the pair, so
-      // nothing can arrive through the cascade: a disabled rule that says
-      // nothing about its fill leaves the fill to whichever rule wins, and
-      // the winner is not always the base sheet. A rule that styles a piece
-      // of the control (a pseudo-element) is not asked for a fill.
-      const isPiece = /::[a-z-]+$/i.test(selector);
-      const saysFill = decls.some(([prop]) => prop === 'background' || prop === 'background-color');
-      const saysInk = decls.some(([prop]) => prop === 'color');
-      if (!isPiece && !saysFill) {
-        offenders.push(`${rel}:${rule.line} ${selector} -> no fill of its own`);
+  // A rule that styles the control's own surface states the pair, so
+  // nothing can arrive through the cascade: a disabled rule that says
+  // nothing about its fill leaves the fill to whichever rule wins, and
+  // the winner is not always the base sheet. A rule that styles a piece
+  // of the control (a pseudo-element) is not asked for a fill.
+  const isPiece = /::[a-z-]+$/i.test(selector);
+  if (!isPiece && !decls.some(([prop]) => prop === 'background' || prop === 'background-color')) {
+    offenders.push(`${rel}:${rule.line} ${selector} -> no fill of its own`);
+  }
+  if (!isPiece && !decls.some(([prop]) => prop === 'color')) {
+    offenders.push(`${rel}:${rule.line} ${selector} -> no ink of its own`);
+  }
+  for (const [prop, value] of decls) {
+    if (prop === 'opacity') {
+      const num = parseFloat(value);
+      if (Number.isFinite(num) && num < 1) {
+        offenders.push(`${rel}:${rule.line} ${selector} -> opacity: ${value}`);
       }
-      if (!isPiece && !saysInk) {
-        offenders.push(`${rel}:${rule.line} ${selector} -> no ink of its own`);
+    } else if (prop === 'filter') {
+      offenders.push(`${rel}:${rule.line} ${selector} -> filter: ${value}`);
+    } else if (prop === 'background' || prop === 'background-color') {
+      if (!value.includes(DISABLED_FILL) || TRANSPARENT_MIX.test(value)) {
+        offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
       }
-      for (const [prop, value] of decls) {
-        if (prop === 'opacity') {
-          const num = parseFloat(value);
-          if (Number.isFinite(num) && num < 1) {
-            offenders.push(`${rel}:${rule.line} ${selector} -> opacity: ${value}`);
-          }
-        } else if (prop === 'filter') {
-          offenders.push(`${rel}:${rule.line} ${selector} -> filter: ${value}`);
-        } else if (prop === 'background' || prop === 'background-color') {
-          if (!value.includes(DISABLED_FILL)) {
-            offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
-          }
-        } else if (prop === 'color') {
-          if (!value.includes(DISABLED_INK)) {
-            offenders.push(`${rel}:${rule.line} ${selector} -> color: ${value}`);
-          }
-        } else if (prop === 'border' || prop === 'border-color') {
-          if (!value.includes(DISABLED_LINE) && !value.includes(CONTROL_LINE)) {
-            offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
+    } else if (prop === 'color') {
+      if (!value.includes(DISABLED_INK) || TRANSPARENT_MIX.test(value)) {
+        offenders.push(`${rel}:${rule.line} ${selector} -> color: ${value}`);
+      }
+    } else if (prop === 'border' || prop === 'border-color') {
+      if ((!value.includes(DISABLED_LINE) && !value.includes(CONTROL_LINE)) || TRANSPARENT_MIX.test(value)) {
+        offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
+      }
+    }
+  }
+  return offenders;
+}
+
+/** One source scanned: every rule read, the disabled-matching ones held to
+ *  the swap, and every fade or filter checked for the disabled controls it
+ *  would dim. Returns the offender lines. */
+function scanSource(rel, raw) {
+  // A file that never says "disabled" cannot carry a disabled rule, and the
+  // tree is large: this pre-filter is what keeps the scan inside its budget.
+  if (!/disabled/i.test(raw) && !raw.includes(STATE_MARKER)) return [];
+  const src = stripInterpolations(blankComments(raw));
+  const lineAt = lineIndexer(src);
+  const read = [];
+  for (const rule of ruleBlocks(src, lineAt)) {
+    const rawRule = raw.slice(rule.selStart, rule.open + 1 + rule.body.length);
+    const marked = rawRule.includes(STATE_MARKER) && plausibleSelector(rule.selector);
+    read.push({ rule, selector: rule.selector.replace(/\s+/g, ' '), decls: declarations(rule.body), marked });
+  }
+  const offenders = [];
+  const disabled = [];
+  for (const { rule, selector, decls, marked } of read) {
+    const match = marked || isDisabledSelector(rule.selector);
+    if (!match) continue;
+    disabled.push({ rule, selector });
+    offenders.push(...ruleOffenders(rel, rule, selector, decls));
+  }
+  // The fade bypass a disabled selector cannot see: an ancestor that dims
+  // the whole container. Where the lint can see the relationship (the
+  // container's compounds are the leading compounds of a disabled rule's
+  // selector, in the same sheet), the fade is refused: a disabled control
+  // inside an opacity 0.35 wrapper is faded whatever its own rule says.
+  for (const { rule, selector, decls } of read) {
+    if (disabled.some((d) => d.rule === rule)) continue;
+    if (!plausibleSelector(rule.selector)) continue;
+    const dims = decls.some(
+      ([prop, value]) =>
+        prop === 'filter' || (prop === 'opacity' && Number.isFinite(parseFloat(value)) && parseFloat(value) < 1),
+    );
+    if (!dims) continue;
+    for (const comps of selectorCompounds(selector)) {
+      for (const d of disabled) {
+        for (const dcomps of selectorCompounds(d.selector)) {
+          const same =
+            dcomps.map(stripDisabledFromCompound).filter((c) => c !== '').join('') === comps.join('') &&
+            dcomps.length === comps.length;
+          const ancestor =
+            dcomps.length > comps.length && dcomps.slice(0, comps.length).join(' ') === comps.join(' ');
+          if (same || ancestor) {
+            offenders.push(`${rel}:${rule.line} ${selector} -> dims a container that holds a disabled control`);
           }
         }
       }
     }
+  }
+  return offenders;
+}
+
+test('no shipped style fades a disabled control, and no disabled rule keeps a fill of its own', { timeout: 300_000 }, () => {
+  const offenders = [];
+  for (const rel of webStyleFiles()) {
+    offenders.push(...scanSource(rel, readFileSync(join(webRoot, rel), 'utf8')));
   }
   assert.deepEqual(
     offenders.sort(),
@@ -279,8 +421,124 @@ test('no shipped style fades a disabled control, and no disabled rule keeps a fi
       `the --hh-disabled-* token swap: the fill is ${DISABLED_FILL}, the ink is ${DISABLED_INK}, and the\n` +
       `opacity is 1. A fade is not a state, and a disabled control never keeps a brand fill. The edge is\n` +
       `either the disabled line (${DISABLED_LINE}) or the kit's findable edge (${CONTROL_LINE});\n` +
-      `a brand line is not:\n  ${offenders.join('\n  ')}`,
+      `a brand line is not. A fill, an ink or an edge may not arrive through a transparent mix\n` +
+      `(color-mix, rgba, hsla, transparent), and no container that holds a disabled control may\n` +
+      `carry an opacity below 1 or a filter:\n  ${offenders.join('\n  ')}`,
   );
+});
+
+// ── the bypass legs ─────────────────────────────────────────────────────────────
+//
+// Each leg feeds one source through the same scanSource the tree gate uses,
+// with a scratch rule shaped like a bypass. A leg fails while the bypass
+// passes the scan undetected, and passes once the scan names it. The
+// ancestor-opacity and colour-mix scratches are the ones the reviewer's
+// probe used against the round 1 gate.
+const SWAP = `background: ${DISABLED_FILL}; color: ${DISABLED_INK}; border-color: ${DISABLED_LINE}; opacity: 1;`;
+
+test('the gate names a transparent colour mix in a disabled rule', () => {
+  const scratch = `
+    .thing:disabled {
+      background: color-mix(in srgb, ${DISABLED_FILL} 45%, transparent);
+      color: ${DISABLED_INK};
+      border-color: ${DISABLED_LINE};
+      opacity: 1;
+    }
+  `;
+  const found = scanSource('scratch-transparent-mix.css', scratch);
+  assert.ok(
+    found.some((line) => line.includes('color-mix')),
+    `the transparent mix must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+  );
+});
+
+test('the gate names a translucent rgba ink in a disabled rule', () => {
+  const scratch = `
+    .thing:disabled { ${SWAP.replace(`color: ${DISABLED_INK};`, 'color: rgba(81, 97, 111, 0.45);')} }
+  `;
+  const found = scanSource('scratch-rgba-ink.css', scratch);
+  assert.ok(
+    found.some((line) => line.includes('rgba')),
+    `the translucent ink must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+  );
+});
+
+test('the gate names an ancestor opacity that dims disabled controls', () => {
+  const scratch = `
+    .wrap { opacity: 0.35; }
+    .wrap .thing:disabled { ${SWAP} }
+  `;
+  const found = scanSource('scratch-ancestor-opacity.css', scratch);
+  assert.ok(
+    found.some((line) => line.includes('dims a container')),
+    `the ancestor fade must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+  );
+});
+
+test('the gate names an ancestor filter that dims disabled controls', () => {
+  const scratch = `
+    .wrap { filter: grayscale(1); }
+    .wrap .thing:disabled { ${SWAP} }
+  `;
+  const found = scanSource('scratch-ancestor-filter.css', scratch);
+  assert.ok(
+    found.some((line) => line.includes('dims a container')),
+    `the ancestor filter must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+  );
+});
+
+test('the gate names a fade on the same element the disabled rule styles', () => {
+  const scratch = `
+    .thing { opacity: 0.35; }
+    .thing:disabled { ${SWAP} }
+  `;
+  const found = scanSource('scratch-same-element.css', scratch);
+  assert.ok(
+    found.some((line) => line.includes('dims a container')),
+    `the element fade must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+  );
+});
+
+test('the gate reaches a compound .disabled and a .btn.disabled, and .is-disabled', () => {
+  const scratch = `
+    button.disabled { ${SWAP.replace(`background: ${DISABLED_FILL};`, 'background: #c0ffee;')} }
+    .btn.disabled { ${SWAP.replace(`background: ${DISABLED_FILL};`, 'background: #c0ffee;')} }
+    .row.is-disabled { ${SWAP.replace(`background: ${DISABLED_FILL};`, 'background: #c0ffee;')} }
+  `;
+  const found = scanSource('scratch-compound-classes.css', scratch);
+  assert.equal(found.filter((line) => line.includes('#c0ffee')).length, 3, `every compound class breach must be named: ${found.join(' | ')}`);
+});
+
+test('a bare-word state class is held through the marker, and .result.off cannot regress', () => {
+  const clean = `
+    .result.off { /* ${STATE_MARKER} */ ${SWAP} }
+  `;
+  assert.deepEqual(scanSource('scratch-marker-clean.css', clean), [], 'the marked clean swap must pass');
+  const regressed = `
+    .result.off { /* ${STATE_MARKER} */ background: ${DISABLED_FILL}; color: ${DISABLED_INK}; border-color: ${DISABLED_LINE}; opacity: 0.55; }
+  `;
+  const found = scanSource('scratch-marker-regressed.css', regressed);
+  assert.ok(
+    found.some((line) => line.includes('opacity: 0.55')),
+    `the marked fade must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+  );
+  const unmarked = `
+    .result.off { opacity: 0.55; background: ${DISABLED_FILL}; color: ${DISABLED_INK}; }
+  `;
+  assert.deepEqual(
+    scanSource('scratch-unmarked.css', unmarked),
+    [],
+    'an unmarked bare-word class is not read as a disabled rule: the marker is what holds it',
+  );
+});
+
+test('a clean swap and a hover companion pass the scan', () => {
+  const scratch = `
+    .thing:disabled { ${SWAP} }
+    .thing:disabled:hover { ${SWAP} }
+    .thing [disabled] { ${SWAP} }
+  `;
+  assert.deepEqual(scanSource('scratch-clean.css', scratch), [], `the clean shapes must pass: ${[]}`);
 });
 
 test('the design system states the disabled rule once, as the grey token swap', () => {
