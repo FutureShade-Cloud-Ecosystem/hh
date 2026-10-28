@@ -45,6 +45,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/exchange"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 )
 
@@ -576,6 +577,18 @@ func financeUserApplyFromEnv(ctx context.Context, pool *pgxpool.Pool, stdout io.
 			return fmt.Errorf("finance-user: the audit row: %w", err)
 		}
 		revoked = append(revoked, revokedPerson{userID: userID, grantIDs: grantIDs})
+	}
+
+	// The credential clears run at every boot, in the apply's own
+	// transaction: the seed's clears run once, so a hash planted after the
+	// seed would otherwise survive every reboot. No route this box serves
+	// reads either table, and the world the box plants has no real password,
+	// so the blanket clear is the box's standing answer to a planted hash.
+	if _, err := identity.DisableSeedCredentials(ctx, tx); err != nil {
+		return fmt.Errorf("finance-user: clearing the staff seed credentials: %w", err)
+	}
+	if _, err := portal.DisableSeedCredentials(ctx, tx); err != nil {
+		return fmt.Errorf("finance-user: clearing the portal seed credentials: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
