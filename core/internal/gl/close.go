@@ -301,7 +301,7 @@ func (s *Service) ClosePeriod(ctx context.Context, id, reason string) (Period, e
 	if fails := s.runClosePreFlight(ctx, p.Year, p.Month); len(fails) > 0 {
 		caveat := ""
 		if s.stockValue != nil {
-			caveat = " (the stock tie reads both sides now: today's stock value against 1200 at the same instant)"
+			caveat = " (the stock tie reads both sides at the month's end)"
 		}
 		return Period{}, clientErr(409, "gl: period close pre flight failed%s: %s", caveat, strings.Join(fails, "; "))
 	}
@@ -343,6 +343,16 @@ func (s *Service) ClosePeriod(ctx context.Context, id, reason string) (Period, e
 // ReopenPeriod reopens a sealed period. It is Financial-Controller-only (narrowed from the RequireAdmin route),
 // requires a mandatory reason, logs the gl_period_overrides row, AND writes a sensitive-access audit record -
 // the recorded compensating control for an unsealing (2FA is not available in identity; this pairing is it).
+//
+// FW1-09h (FROM-PRINCIPAL 350): a month of a CLOSED fiscal year cannot be reopened. The year end close is an act
+// and it leaves the year's marker (gl_year_end_closes), and a closed year's P&L never moves without a new close.
+// So the refusal comes before any write and before the audit row: "gl: fiscal year N is closed; post the
+// correction in the open year", 409.
+//
+// The marker is read through the close's OWN seam (YearEndCloseMarkerTx) on ONE transaction that holds the year
+// end's OWN advisory lock, the lock CloseYear takes, and the reopen's write runs on that same transaction. So the
+// reopen and the year end close are serialized: a close cannot slip between the marker's read and the write and
+// leave a closed year with an open month.
 func (s *Service) ReopenPeriod(ctx context.Context, id, reason string) (Period, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
@@ -358,9 +368,37 @@ func (s *Service) ReopenPeriod(ctx context.Context, id, reason string) (Period, 
 	if strings.TrimSpace(reason) == "" {
 		return Period{}, errReasonRequired
 	}
-	p, err := s.store.ReopenPeriod(ctx, id, caller.UserID, reason)
+	// ONE transaction for the read and the write, under the year end's lock.
+	tx, err := s.store.BeginTx(ctx)
 	if err != nil {
 		return Period{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// The period's year, read ON this transaction and never through the pool: a pool read while a
+	// transaction is open makes the holder wait on a second connection.
+	year, err := s.store.PeriodYearTx(ctx, tx, id)
+	if err != nil {
+		return Period{}, err
+	}
+	// The year end's OWN advisory lock, the one CloseYear takes under its own name.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('gl:year-end:' || $1::int))`, year); err != nil {
+		return Period{}, fmt.Errorf("gl: lock the year end: %w", err)
+	}
+	// The MARKER, through the close's own seam, on this transaction under this lock: a row means the
+	// year was closed at the year end, and a month of it cannot be reopened.
+	closed, err := s.store.YearEndCloseMarkerTx(ctx, tx, year)
+	if err != nil {
+		return Period{}, err
+	}
+	if closed {
+		return Period{}, errYearClosed(year)
+	}
+	p, err := s.store.ReopenPeriodTx(ctx, tx, id, caller.UserID, reason)
+	if err != nil {
+		return Period{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Period{}, fmt.Errorf("gl: commit the reopen: %w", err)
 	}
 	if s.audit != nil {
 		if aerr := s.audit.Record(ctx, audit.SensitiveAccess{
@@ -508,7 +546,7 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 		if fails := s.runClosePreFlight(ctx, p.Year, p.Month); len(fails) > 0 {
 			caveat := ""
 			if s.stockValue != nil {
-				caveat = " (the stock tie reads both sides now: today's stock value against 1200 at the same instant)"
+				caveat = " (the stock tie reads both sides at the month's end)"
 			}
 			return YearCloseResult{}, clientErr(409, "gl: year end close pre flight failed for %04d-%02d%s: %s", p.Year, p.Month, caveat, strings.Join(fails, "; "))
 		}

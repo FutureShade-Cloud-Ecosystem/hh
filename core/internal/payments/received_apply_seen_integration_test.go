@@ -56,15 +56,31 @@ func TestApplyReceived_AnEventThatNeverBookedShowsInTheARTieOut(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		c := context.Background()
+		// The leg's own rows, and only the leg's own rows: the customer, its invoice, the
+		// payment the leg applies, the allocations, the subledger row and the two events the
+		// leg emitted. The events name their own payload keys: the invoice's event carries no
+		// customer id, so a payload match on customer_id alone would leave it behind.
+		_, _ = pool.Exec(c, `DELETE FROM events_outbox
+		   WHERE payload->>'customer_id' = $1
+		      OR payload->>'invoice_id' = $2
+		      OR payload->>'payment_id' IN (SELECT p.id::text FROM payments p WHERE p.customer_id = $1::uuid)`,
+			customerID, inv)
 		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, customerID)
-		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, customerID)
 		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id = $1::uuid`, inv)
+		// The journals the two events posted: the invoice's own key and the payments the leg
+		// applied. The key list is a pair of scalars, one per row, so the statement is a real
+		// IN list over a subquery: the earlier "key || ANY (SELECT ...)" shape was an array,
+		// and the IN list over it was an error, so the delete never ran and both journals
+		// stayed on the shared gate.
 		_, _ = pool.Exec(c, `DELETE FROM gl_journal_lines WHERE journal_id IN (
-		   SELECT id FROM gl_journals WHERE idempotency_key IN ('ar.invoice.finalized:' || $1, 'payment.received:' || ANY(
-		     SELECT p.id::text FROM payments p WHERE p.customer_id = $2::uuid)))`, inv, customerID)
-		_, _ = pool.Exec(c, `DELETE FROM gl_journals WHERE idempotency_key IN (
-		   'ar.invoice.finalized:' || $1, 'payment.received:' || ANY(
-		     SELECT p.id::text FROM payments p WHERE p.customer_id = $2::uuid))`, inv, customerID)
+		   SELECT id FROM gl_journals
+		    WHERE idempotency_key = 'ar.invoice.finalized:' || $1
+		       OR idempotency_key IN (SELECT 'payment.received:' || p.id::text
+		                              FROM payments p WHERE p.customer_id = $2::uuid))`, inv, customerID)
+		_, _ = pool.Exec(c, `DELETE FROM gl_journals
+		   WHERE idempotency_key = 'ar.invoice.finalized:' || $1
+		      OR idempotency_key IN (SELECT 'payment.received:' || p.id::text
+		                             FROM payments p WHERE p.customer_id = $2::uuid)`, inv, customerID)
 		_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, customerID)
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, customerID)
 		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, customerID)

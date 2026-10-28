@@ -123,6 +123,10 @@ export const quickStyles = css`
     font-weight: 600;
   }
   .qa-shape:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    opacity: 1;
     cursor: not-allowed;
   }
   .qa-foot {

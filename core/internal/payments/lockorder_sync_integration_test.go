@@ -130,10 +130,11 @@ const condSleepingInPaymentUpdate = `wait_event = 'PgSleep' AND query LIKE '%UPD
 
 // - item 1: allocations after a bounce -
 
-// A bounce deletes the payment's allocations (till/repository.go, in the MarkNSF transaction) and re-opens
-// every invoice it paid. The payments feed serves the allocations from a second read, so the payer must
-// pull the payment with them gone; the reopened invoice must reach the invoices feed on both arms.
-func TestIntegration_Fresh_BounceDropsTheAllocationsAndReopensTheInvoice(t *testing.T) {
+// A bounce keeps the payment's allocations and writes the undo beside them (till/repository.go, in
+// the MarkNSF transaction, 0450) and re-opens every invoice it paid. The payments feed serves the
+// allocations from a second read, so the payer must pull the payment with the application and the
+// reversal that nets to zero; the reopened invoice must reach the invoices feed on both arms.
+func TestIntegration_Fresh_BounceKeepsTheAllocationsAndReopensTheInvoice(t *testing.T) {
 	setup := func(t *testing.T) (*loRig, *loFeeds, string, payments.Payment) {
 		r := newLORig(t, 4)
 		inv := r.invoice("FB", 50_000)
@@ -154,7 +155,7 @@ func TestIntegration_Fresh_BounceDropsTheAllocationsAndReopensTheInvoice(t *test
 		}
 	}
 
-	t.Run("payments feed: the payment is BOUNCED and its allocations are gone", func(t *testing.T) {
+	t.Run("payments feed: the payment is BOUNCED and its allocations net to zero", func(t *testing.T) {
 		r, f, _, p := setup(t)
 		harness.Fresh(t, harness.FreshCase{
 			Engine: f.engine, Scope: f.payInfo, Filter: f.tenant, Write: bounce(r, p),
@@ -162,8 +163,18 @@ func TestIntegration_Fresh_BounceDropsTheAllocationsAndReopensTheInvoice(t *test
 				if d["status"] != "BOUNCED" {
 					return fmt.Errorf("status is %v, want BOUNCED", d["status"])
 				}
-				if a, _ := d["allocations"].([]any); len(a) != 0 {
-					return fmt.Errorf("the payment still carries %d allocations", len(a))
+				a, _ := d["allocations"].([]any)
+				if len(a) != 2 {
+					return fmt.Errorf("the payment carries %d allocations, want 2 (the application and the reversal beside it)", len(a))
+				}
+				var net int64
+				for _, row := range a {
+					m, _ := row.(map[string]any)
+					cents, _ := m["amount_cents"].(float64)
+					net += int64(cents)
+				}
+				if net != 0 {
+					return fmt.Errorf("the payment's allocations net %d, want 0: the bounce took the application back", net)
 				}
 				return nil
 			},

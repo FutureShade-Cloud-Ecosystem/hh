@@ -198,7 +198,10 @@ func (s *AgingStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key st
 	return sync.RowState{}, false, sync.ErrOpRefused
 }
 
-// Load reads one invoice's aging row under the tenant predicate.
+// Load reads one invoice's aging row under the tenant predicate. The
+// pull's PARKED CREDIT MEMO clause rides the query (UX-112): a parked
+// memo is in no page, so the key read answers the absent row's answer
+// and the engine never reads a row the pull hides as visible.
 func (s *AgingStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	if !f.Tenant || f.TenantID == "" {
 		return sync.RowState{}, false, nil
@@ -208,7 +211,8 @@ func (s *AgingStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (s
 		return sync.RowState{}, false, err
 	}
 	r, err := s.scanAging(s.pool.QueryRow(ctx, fmt.Sprintf(
-		`SELECT %s FROM invoices i WHERE i.customer_id = $1::uuid AND i.id = $2::uuid`,
+		`SELECT %s FROM invoices i WHERE i.customer_id = $1::uuid AND i.id = $2::uuid
+		   AND NOT (i.doc_type = 'CREDIT_MEMO' AND i.status = 'DRAFT')`,
 		agingColumnsAt("$3")), f.TenantID, id, zone.Name()))
 	if err == pgx.ErrNoRows {
 		return sync.RowState{}, false, nil

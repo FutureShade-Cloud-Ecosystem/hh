@@ -13,6 +13,7 @@ import (
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"log/slog"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -41,18 +42,23 @@ type Capitalizer interface {
 	// CapitalizeLandedCostTx capitalizes the allocation into the weighted-average cost and returns the value the
 	// subledger actually absorbed (0 when there is no on-hand; less than the allocation by the integer-cent
 	// rounding remainder). The service books GL 1200 from the return and expenses the remainder to COGS.
-	CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (int64, error)
+	//
+	// `at` and `sourceRefID` name the EVENT (W2-5B): the instant the capitalization happened and the landed-cost
+	// document it belongs to. The inventory seam books a VALUE ONLY move carrying the exact cents this event's GL
+	// 1200 debit books, at `at`, so the close pre flight's stock tie and account 1200 cut the same event at the same
+	// instant. The caller reads its own clock ONCE per operation and passes that instant here and to its journal.
+	CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64, at time.Time, sourceRefID string) (int64, error)
 	// CapitalizeLandedCostSnapTx capitalizes as above AND returns the exact pre-Apply weighted-average (snapAvg) it
 	// capitalized over plus whether a cost row existed. Apply persists snapAvg on the allocation row (0058); Void
 	// restores it verbatim via RestoreLandedCostTx so an Apply/Void round-trip reproduces the WAC to the cent even
 	// for sub-unit fractional on-hand where the forward round() quantizes oldAvg away (L8 MAJOR).
-	CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (int64, int64, bool, error)
+	CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64, at time.Time, sourceRefID string) (int64, int64, bool, error)
 	// RestoreLandedCostTx reverses the capitalization on Void by removing EXACTLY `absorbed` (the value this allocation
 	// raised the subledger by at Apply, the allocation's post-Apply AllocatedCadCents) and returns the realized
 	// subledger value delta (the CR 1200 magnitude the Void journal books). The GENERAL cent-exact inverse for every
 	// intervening scenario (nothing / receipt / sale): Σ(debit)==Σ(credit) always and no leg is ever negative. snapAvg
 	// restores the exact pre-Apply WAC on the drift-0 path where on-hand is unchanged since Apply (L8 MAJOR).
-	RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64) (int64, error)
+	RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64, at time.Time, sourceRefID string) (int64, error)
 }
 
 // ReceivedLine mirrors inventory.ReceivedLine (the allocation-basis inputs).
@@ -84,7 +90,12 @@ type GLJournal struct {
 	IdempotencyKey string
 	Memo           string
 	BranchID       string
-	Lines          []GLLine
+	// DocumentDate is the instant the journal belongs to. It is the SAME instant the stock ledger's value
+	// event for the same event carries (W2-5B), so the stock tie and account 1200 cut the event at one
+	// instant: a month that closed before the event excludes it from both sides, a month that closed
+	// after it includes it on both sides. A zero value rides the GL's own clock.
+	DocumentDate time.Time
+	Lines        []GLLine
 }
 
 // GLLine is one leg of a GLJournal.
@@ -117,11 +128,32 @@ type Service struct {
 	// gates against (handler.go / service.go CanAccessBranch checks). Defaults to the identity guard-stamped
 	// caller; tests override via withCaller. Mirrors order.Service.callerFrom (order/service.go:68).
 	callerFrom func(context.Context) (identity.StaffContext, bool)
+	// now is the clock the landed-cost events are dated from. It is read ONCE per operation, and the instant
+	// it answers is carried by BOTH the stock ledger's value event and the GL journal for that event, so the
+	// two sides of the stock tie always cut the same event at the same instant (W2-5B). Defaults to
+	// time.Now; WithClock pins it (the month walk pins the till and payments clocks the same way).
+	now func() time.Time
 }
 
 // NewService wires the repository. Optional deps are injected via the With* methods.
 func NewService(repo *Repository) *Service {
-	return &Service{repo: repo, log: slog.Default(), callerFrom: identity.StaffContextFromContext}
+	return &Service{repo: repo, log: slog.Default(), callerFrom: identity.StaffContextFromContext, now: time.Now}
+}
+
+// WithClock pins the clock the landed-cost events are dated from. The instant it answers is the instant the
+// event's stock ledger value event AND its GL journal carry, so the stock tie and account 1200 cut the event
+// at one instant. Mirrors till.Service.WithClock / payments' own setter.
+func (s *Service) WithClock(now func() time.Time) *Service {
+	s.now = now
+	return s
+}
+
+// clock answers the landed-cost service's clock.
+func (s *Service) clock() time.Time {
+	if s.now == nil {
+		return time.Now()
+	}
+	return s.now()
 }
 
 // withCaller is the test seam for the guard-stamped StaffContext (branch scope on every landed-cost surface).

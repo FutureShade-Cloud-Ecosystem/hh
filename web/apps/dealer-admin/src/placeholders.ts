@@ -58,3 +58,6 @@ export const UNKNOWN_ACTION = "Unknown action";
 
 /** A view the app does not name. */
 export const UNKNOWN_VIEW = "Unknown view";
+
+/** A bypass or audit reason the screen does not know. */
+export const UNKNOWN_REASON = "Unknown reason";

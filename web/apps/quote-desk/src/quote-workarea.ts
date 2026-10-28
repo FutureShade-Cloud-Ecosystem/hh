@@ -505,12 +505,12 @@ export class QdQuoteWorkarea extends LitElement {
       border-color: var(--hos-stone-amber, var(--hh-accent));
       color: var(--hos-stone-amber-text, var(--hh-accent-text));
     }
-    /* The closed control's rule: no fill, grey ink and line, and the reason
+    /* The closed control's rule: the grey token swap, and the reason
        on the title and the description. */
     .pbtn[aria-disabled="true"] {
-      background: transparent;
-      border-color: var(--hos-line, var(--hh-line));
-      color: var(--hos-text-dim, var(--hh-text-dim));
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
       cursor: default;
     }
     .divider {
@@ -681,7 +681,10 @@ export class QdQuoteWorkarea extends LitElement {
       cursor: pointer;
     }
     .stepper button:disabled {
-      opacity: 0.4;
+      background: var(--hh-disabled-fill);
+      color: var(--hh-disabled-ink);
+      border-color: var(--hh-disabled-line);
+      opacity: 1;
       cursor: default;
     }
     .stepper input,
@@ -797,7 +800,10 @@ export class QdQuoteWorkarea extends LitElement {
       color: var(--hos-stone-amber-text, var(--hh-accent-text));
     }
     .addonadd:disabled {
-      opacity: 0.5;
+      background: var(--hh-disabled-fill);
+      color: var(--hh-disabled-ink);
+      border-color: var(--hh-disabled-line);
+      opacity: 1;
       cursor: default;
     }
     /* The right panel's cards. */

@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { TillBouncedPaymentPage, TillCompleteInput, TillCountInput, TillCreditHoldPage, TillInvoicePayments, TillMovementInput, TillNSFInput, TillNSFPolicy, TillNSFResult, TillOpenInput, TillOpenLookup, TillOpenResult, TillPaymentAttempt, TillPaymentHistory, TillPolicy, TillReleaseHoldInput, TillSessionDetail, TillStatusResult, TillZReport } from "./types.js";
+import type { TillBouncedPaymentPage, TillCompleteInput, TillCountInput, TillCreditHoldPage, TillInvoicePayments, TillMovementInput, TillNSFInput, TillNSFPolicy, TillNSFResult, TillOpenInput, TillOpenLookup, TillOpenResult, TillPaymentAttempt, TillPaymentHistory, TillPolicy, TillReasonCode, TillReasonCodeEdit, TillReasonCodeInput, TillReleaseHoldInput, TillSessionDetail, TillStatusResult, TillZReport } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -158,6 +158,53 @@ export async function tillGetPolicy(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "tillGetPolicy",
+  });
+}
+
+export async function tillListReasonCodes(
+  client: ApiClient,
+  opts: { branch_id: string },
+  call?: ApiCallOptions
+): Promise<Result<{ items: TillReasonCode[] }>> {
+  return client.request<{ items: TillReasonCode[] }>({
+    method: "GET",
+    path: "/api/v1/till/reason-codes",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "tillListReasonCodes",
+  });
+}
+
+export async function tillCreateReasonCode(
+  client: ApiClient,
+  body: TillReasonCodeInput,
+  call?: ApiCallOptions
+): Promise<Result<TillReasonCode>> {
+  return client.request<TillReasonCode>({
+    method: "POST",
+    path: "/api/v1/till/reason-codes",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "tillCreateReasonCode",
+  });
+}
+
+export async function tillEditReasonCode(
+  client: ApiClient,
+  id: string | number,
+  body: TillReasonCodeEdit,
+  call?: ApiCallOptions
+): Promise<Result<TillReasonCode>> {
+  return client.request<TillReasonCode>({
+    method: "PUT",
+    path: "/api/v1/till/reason-codes/{id}",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "tillEditReasonCode",
   });
 }
 
