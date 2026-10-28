@@ -924,7 +924,7 @@ func TestIntegration_FW1_12b_AReversalAndAnApplyOfOneGroupNeverDeadlock(t *testi
 				_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
 				_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 			})
-			applyOrg := plantApplyOrg(t, pool, n)
+			applyOrg := plantApplyOrg(t, pool, tag)
 
 			var creditID, groupRef string
 			if err := pool.QueryRow(ctx, `
@@ -1129,7 +1129,7 @@ func TestIntegration_FW1_12b_AMemoReversalAndAnApplyOfOneMemoNeverDeadlock(t *te
 				_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
 				_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 			})
-			applyOrg := plantApplyOrg(t, pool, n)
+			applyOrg := plantApplyOrg(t, pool, tag)
 
 			// One open credit memo of -10000 (a CREDIT_MEMO invoice, S6's probe's own
 			// spelling) and two invoices of 10000.
@@ -1349,7 +1349,7 @@ func TestIntegration_FW1_12b_AMemoApplyAndItsReversalOfOneInvoiceNeverDeadlockAt
 					_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
 					_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 				})
-				applyOrg := plantApplyOrg(t, pool, n)
+				applyOrg := plantApplyOrg(t, pool, tag)
 
 				// One open credit memo of -10000 and one invoice of 10000, the ids forced
 				// so the pair sits in the sort this case names (S6's probe's own spelling).
