@@ -286,6 +286,17 @@ export const returnsStyles = css`
     background: color-mix(in srgb, var(--hh-accent) 22%, transparent);
     font-weight: 600;
   }
+  /* A disposition tile that is chosen and held is a disabled control. The
+     selected rule above is three classes to the disabled rule's two, so the
+     brand edge and the translucent gold wash would survive the refusal. The
+     pair is restated in the grey triple here. */
+  .returns .dispositions button[aria-pressed="true"]:disabled {
+    background: var(--hh-disabled-fill);
+    border-color: var(--hh-disabled-line);
+    color: var(--hh-disabled-ink);
+    opacity: 1;
+    cursor: not-allowed;
+  }
   /*
    * The manufacturer defect threshold sentence (walk change 6 item 4, boards
    * ct-return-defect-over and ct-return-defect-under). One bullet at the line's left, a short word
@@ -385,6 +396,16 @@ export const returnsStyles = css`
     border-color: var(--hh-accent);
     background: color-mix(in srgb, var(--hh-accent) 22%, transparent);
     font-weight: 600;
+  }
+  /* The same for a method tile: the shortfall tender is held while the swap
+     is out, and the chosen tile would keep the brand edge and the gold wash
+     through the refusal. */
+  .returns .methods button[aria-pressed="true"]:disabled {
+    background: var(--hh-disabled-fill);
+    border-color: var(--hh-disabled-line);
+    color: var(--hh-disabled-ink);
+    opacity: 1;
+    cursor: not-allowed;
   }
   .returns .refund-step {
     display: grid;
