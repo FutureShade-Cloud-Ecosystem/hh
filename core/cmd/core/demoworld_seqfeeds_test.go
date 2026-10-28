@@ -52,11 +52,10 @@ func feedIDs(t *testing.T, c *tillClient, scope string) []string {
 	return ids
 }
 
-// taskIDsInReach reads the seeded tasks of one type (PICK or NEED_WEIGHT) the persona's branch reach covers, the rule the pick_tasks pull holds to
-// (UX-81): the staff authority's branch grants, GLOBAL reaching every pick, a scoped persona only the picks of its
-// own branches (a pick with no branch is a GLOBAL caller's alone). It also returns how many sequenced picks the
-// seed holds in all, so the proof can show the fence has something to hold back.
-func taskIDsInReach(t *testing.T, w *driveWorld, sub, taskType string) (reach map[string]bool, all int) {
+// yardStaffContext resolves the demo persona's staff authority in the seeded org and answers that org's id, the
+// two facts every reach proof reads: the authority's branch grants (the reach) and the org the sync scopes' org
+// predicate binds the caller's rows to.
+func yardStaffContext(t *testing.T, w *driveWorld, sub string) (identity.StaffContext, string) {
 	t.Helper()
 	ctx := context.Background()
 	var orgID string
@@ -71,7 +70,17 @@ func taskIDsInReach(t *testing.T, w *driveWorld, sub, taskType string) (reach ma
 	if err != nil || !has {
 		t.Fatalf("the persona %s has no staff authority: %v %v", sub, has, err)
 	}
-	sc := identity.FromAuthority(a)
+	return identity.FromAuthority(a), orgID
+}
+
+// taskIDsInReach reads the seeded tasks of one type (PICK or NEED_WEIGHT) the persona's branch reach covers, the rule the pick_tasks pull holds to
+// (UX-81): the staff authority's branch grants, GLOBAL reaching every pick, a scoped persona only the picks of its
+// own branches (a pick with no branch is a GLOBAL caller's alone). It also returns how many sequenced picks the
+// seed holds in all, so the proof can show the fence has something to hold back.
+func taskIDsInReach(t *testing.T, w *driveWorld, sub, taskType string) (reach map[string]bool, all int) {
+	t.Helper()
+	ctx := context.Background()
+	sc, orgID := yardStaffContext(t, w, sub)
 	rows, err := w.pool.Query(ctx, `SELECT id::text, COALESCE(branch_id::text, '') FROM tasks
 		WHERE task_type = $2 AND org_id = $1::uuid AND seq IS NOT NULL AND deleted_at IS NULL`, orgID, taskType)
 	if err != nil {
@@ -95,6 +104,41 @@ func taskIDsInReach(t *testing.T, w *driveWorld, sub, taskType string) (reach ma
 	return reach, all
 }
 
+// shortageIDsInReach reads the seeded shortages the persona's branch reach covers, the rule the shortages pull
+// holds to (UX-105): a shortage carries no branch of its own, its scope IS its parent task's, so the reach rides
+// that task exactly as the pull's query does. The staff authority's branch grants decide it, GLOBAL reaching
+// every shortage, a scoped persona only the shortages of the branches its authority grants, and a shortage whose
+// task has no branch is in no scoped caller's reach. It also returns how many sequenced shortages the seed holds
+// in all, so the proof can show the fence has something to hold back.
+func shortageIDsInReach(t *testing.T, w *driveWorld, sub string) (reach map[string]bool, all int) {
+	t.Helper()
+	ctx := context.Background()
+	sc, orgID := yardStaffContext(t, w, sub)
+	rows, err := w.pool.Query(ctx, `SELECT ts.id::text, COALESCE(pt.branch_id::text, '')
+		FROM task_shortages ts
+		JOIN tasks pt ON pt.id = ts.task_id
+		WHERE pt.org_id = $1::uuid AND ts.seq IS NOT NULL AND ts.deleted_at IS NULL`, orgID)
+	if err != nil {
+		t.Fatalf("read the seeded shortages: %v", err)
+	}
+	defer rows.Close()
+	reach = map[string]bool{}
+	for rows.Next() {
+		var id, branch string
+		if err := rows.Scan(&id, &branch); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		all++
+		if sc.Scope == identity.ScopeGlobal || (branch != "" && sc.CanAccessBranch(branch)) {
+			reach[id] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("seeded shortages: %v", err)
+	}
+	return reach, all
+}
+
 type feedWant struct {
 	scope string
 	min   int
@@ -109,8 +153,10 @@ func TestDemoWorld_SeededRowsReachTheDeviceFeeds(t *testing.T) {
 		want []feedWant
 	}{
 		// Yard Pick: the picks, the shortage notices and the weights queue, plus the catalogue it looks up.
+		// The shortages feed is not a literal count: it is held to the persona's branch reach like the picks
+		// and the weights are, so the proof counts the seeded shortages in that reach below.
 		{"Yard Team", "d0200000-0000-4000-9000-000000000002", []feedWant{
-			{"shortages", 3}, {"products", 22}, {"inventory_lookup", 22},
+			{"products", 22}, {"inventory_lookup", 22},
 			{"customers", 16}, {"drivers", 7}, {"trucks", 7}, {"runs", 9}, {"stops", 22},
 		}},
 		{"Sales", qwSalesUserID, []feedWant{
@@ -168,8 +214,28 @@ func TestDemoWorld_SeededRowsReachTheDeviceFeeds(t *testing.T) {
 			t.Errorf("Yard Team: the weights feed omits task %s, which is in the persona's branch reach", id)
 		}
 	}
+	// The shortages feed is held to the same reach (UX-105): a shortage belongs to its task's branch, so the
+	// persona's shortage notices are the seeded shortages of the tasks in its own branch, every one served and
+	// none from another branch.
+	shortageReach, shortageAll := shortageIDsInReach(t, w, "d0200000-0000-4000-9000-000000000002")
+	if len(shortageReach) == 0 || len(shortageReach) == shortageAll {
+		t.Errorf("the seed holds %d shortages, %d in the yard persona's reach: the proof needs some in reach and some held back", shortageAll, len(shortageReach))
+	}
+	shortageServed := map[string]bool{}
+	for _, id := range feedIDs(t, yard, "shortages") {
+		shortageServed[id] = true
+		if !shortageReach[id] {
+			t.Errorf("Yard Team: the shortages feed serves shortage %s, which is outside the persona's branch reach", id)
+		}
+	}
+	for id := range shortageReach {
+		if !shortageServed[id] {
+			t.Errorf("Yard Team: the shortages feed omits shortage %s, which is in the persona's branch reach", id)
+		}
+	}
 	t.Logf("Yard Team: %d of the seed's %d weight tasks are in the persona's branch reach, and the feed serves %d", len(weightReach), weightAll, len(weightServed))
 	t.Logf("Yard Team: %d of the seed's %d picks are in the persona's branch reach, and the feed serves %d", len(reach), all, len(served))
+	t.Logf("Yard Team: %d of the seed's %d shortages are in the persona's branch reach, and the feed serves %d", len(shortageReach), shortageAll, len(shortageServed))
 
 	// HH Pro: the contractor account's own login, the account admin, who holds every Pro surface.
 	pro := w.tenant("de2c0000-0000-4000-9000-0000000000a1", contractorCustomerID, "Contractor Owner")

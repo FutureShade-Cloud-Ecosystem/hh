@@ -35,8 +35,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	hhsync "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
@@ -107,7 +109,14 @@ func TestShortageSyncCreateConflictArm_ReadsThroughTx_NoPoolCycle(t *testing.T) 
 		_, _ = probePool.Exec(context.Background(), `DELETE FROM tasks WHERE id = $1::uuid`, shortageCycleTaskID)
 	})
 
-	store := NewShortageSyncStore(scenario, nil)
+	// The store is wired: the branch fence reads the staff authority inside the same transaction the
+	// collision arm reads through, so the leg covers the wired path (the authority read inside a
+	// transaction) and not only the unwired one (UX-105 round 2). A GLOBAL authority reaches every
+	// branch, and the parent task of this leg carries none.
+	global := scopedTo(uuid.NewString())
+	global.Scope, global.Tier = identity.ScopeGlobal, identity.TierLeadership
+	store := NewShortageSyncStore(scenario, nil).WithStaffAuthority(
+		func(context.Context, string, string) (identity.StaffContext, bool, error) { return global, true, nil })
 	filter := hhsync.ScopeFilter{OrgID: shortageCycleOrgID, Actor: "pool-cycle-leg"}
 	fields := func(int) map[string]any {
 		return map[string]any{"id": shortageCycleRowID, "task_id": shortageCycleTaskID, "description": "cycle shortage", "qty_short": "1"}
