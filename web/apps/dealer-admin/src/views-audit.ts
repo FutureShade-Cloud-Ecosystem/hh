@@ -85,7 +85,7 @@ function renderTrail(model: AuditModel): TemplateResult {
         ? html`<p class="notice-line" data-test="audit-empty">${auditEmptyWords(filtersActive(model.filters))}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="audit-table">
                 <thead>
                   <tr>
                     <th scope="col">When</th>
@@ -142,11 +142,11 @@ function renderAuditRowView(row: AuditRow, model: AuditModel): TemplateResult {
       aria-current=${open ? "true" : "false"}
       data-test=${`audit-row-${row.id}`}
     >
-      <td class="mono dim">${whenWords(row.created_at)}</td>
-      <td><span class="chip ${isSensitive(row.action) ? "chip-sensitive" : ""}">${row.action}</span></td>
-      <td class="audit-entity">${renderEntity(row)}</td>
-      <td>${actorWords(row)}</td>
-      <td class="mono dim">${row.request_id === "" ? "-" : row.request_id}</td>
+      <td class="mono dim" data-label="When">${whenWords(row.created_at)}</td>
+      <td data-label="Action"><span class="chip ${isSensitive(row.action) ? "chip-sensitive" : ""}">${row.action}</span></td>
+      <td class="audit-entity-cell" data-label="Entity">${renderEntity(row)}</td>
+      <td data-label="Actor">${actorWords(row)}</td>
+      <td class="mono dim" data-label="Request">${row.request_id === "" ? "-" : row.request_id}</td>
     </tr>
   `;
 }
@@ -156,6 +156,11 @@ function renderAuditRowView(row: AuditRow, model: AuditModel): TemplateResult {
 // UX-106 round 4: the type and the handle are two things. The type reads as
 // words on its own line, and the handle sits on the next one under its own
 // caption, the way the Request column carries its own id.
+//
+// UX-106 round 5: the cell carries its own caption too, because at a phone's
+// width the table's head is gone and each row is a card row of labelled
+// pairs. The cell's caption is the label, and the type and the captioned
+// handle are the value beside it.
 
 /** The entity's type in words, and its handle under the caption that names it. */
 function renderEntity(entry: AuditRow): TemplateResult {
@@ -163,10 +168,12 @@ function renderEntity(entry: AuditRow): TemplateResult {
   const id = entityIdWords(entry);
   if (type === "" && id === "") return html`<span class="dim">-</span>`;
   return html`
-    <span class="audit-entity-type">${type}</span>
-    <span class="audit-entity-id">
-      <span class="k">ID</span>
-      <span class="mono dim">${id}</span>
+    <span class="audit-entity">
+      <span class="audit-entity-type">${type}</span>
+      <span class="audit-entity-id">
+        <span class="k">ID</span>
+        <span class="mono dim">${id}</span>
+      </span>
     </span>
   `;
 }
@@ -254,7 +261,7 @@ function renderTrailCard(trail: AuditTrail): TemplateResult {
       ${trail.phase === "ready" && trail.rows.length > 0
         ? html`
             <div class="tablewrap">
-              <table>
+              <table class="audit-table">
                 <thead>
                   <tr>
                     <th scope="col">When</th>
@@ -276,9 +283,9 @@ function renderTrailCard(trail: AuditTrail): TemplateResult {
 function renderTrailRow(row: AuditRow): TemplateResult {
   return html`
     <tr tabindex="0" data-action="open-audit-entry" data-entry-id=${row.id} data-test=${`audit-trail-row-${row.id}`}>
-      <td class="mono dim">${whenWords(row.created_at)}</td>
-      <td><span class="chip ${isSensitive(row.action) ? "chip-sensitive" : ""}">${row.action}</span></td>
-      <td>${actorWords(row)}</td>
+      <td class="mono dim" data-label="When">${whenWords(row.created_at)}</td>
+      <td data-label="Action"><span class="chip ${isSensitive(row.action) ? "chip-sensitive" : ""}">${row.action}</span></td>
+      <td data-label="Actor">${actorWords(row)}</td>
     </tr>
   `;
 }

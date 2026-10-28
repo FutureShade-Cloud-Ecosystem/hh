@@ -601,6 +601,74 @@ export const dealerStyles = css`
     color: var(--hh-text-dim);
   }
 
+  /* -- the audit trail fits a phone ------------------------------------------------
+     UX-106 round 5: the list is five columns and it scrolled sideways under a
+     cut column at 390, so the Entity column ran off the card's right edge and
+     a dealer read half a handle and no entity type at all. The one entity's
+     trail, on the same page, cut its Actor column the same way. Under 900 px
+     each entry is a card row: the house's own card-row pattern, the one the
+     margin policy table and the staff register take. Each cell names itself,
+     so the row reads as labelled pairs with no sideways scroll of a cut
+     column. The desk widths keep the table. */
+  @media (max-width: 900px) {
+    .audit-table thead {
+      display: none;
+    }
+    .audit-table,
+    .audit-table tbody {
+      display: block;
+    }
+    .audit-table tr {
+      display: grid;
+      gap: var(--hh-s-8);
+      padding: var(--hh-s-12) 0;
+      border-bottom: 1px solid var(--hh-hairline);
+    }
+    .audit-table tbody td {
+      display: grid;
+      grid-template-columns: minmax(76px, 24%) minmax(0, 1fr);
+      gap: var(--hh-s-8);
+      padding: 0;
+      border: 0;
+      text-align: start;
+      white-space: normal;
+      align-items: start;
+      justify-items: start;
+    }
+    .audit-table tbody td::before {
+      content: attr(data-label);
+      color: var(--hh-text-dim);
+      font-size: var(--hh-s-12);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    /* The action's chip takes the value column's own width: the longest action
+       the trail carries ("ORDER_STATUS_CHANGED") fits on one line beside the
+       label, and a longer one breaks inside its own pill instead of running
+       off the card. */
+    .audit-table tbody td .chip {
+      max-width: 100%;
+      white-space: normal;
+      overflow-wrap: break-word;
+    }
+    /* The entity's type and its captioned handle: the handle keeps its own
+       caption and breaks inside the value column, at the id's own dashes,
+       rather than running off the card. */
+    .audit-table tbody td.audit-entity-cell .audit-entity {
+      min-width: 0;
+      max-width: 100%;
+    }
+    .audit-table tbody td.audit-entity-cell .audit-entity-id {
+      min-width: 0;
+      max-width: 100%;
+    }
+    .audit-table tbody td.audit-entity-cell .audit-entity-id .mono {
+      min-width: 0;
+      overflow-wrap: break-word;
+    }
+  }
+
   /* The drawer's pairs flow across the width instead of stranding a column
      of it: the label/value pair is the repeating unit. */
   .detail .kv {
