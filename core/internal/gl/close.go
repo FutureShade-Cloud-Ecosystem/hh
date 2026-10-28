@@ -32,6 +32,12 @@ const actGLHeadOfficeBranchSet = "GL_HEAD_OFFICE_BRANCH_SET"
 // close seals a whole year, so its trail is a recorded row, not only the override rows).
 const actGLYearEndClose = "GL_YEAR_END_CLOSE"
 
+// actGLPeriodClose is the sensitive-access action stamped on the period close (FW1-09g, S2's P3 on
+// 614): the monthly act. The month is sealed and the override row says the month was closed, but
+// nothing said WHO closed it or WHY, and the trail now carries the same row the year end close
+// writes for itself.
+const actGLPeriodClose = "GL_PERIOD_CLOSE"
+
 // controllerRole is the only role permitted to reopen a closed period (the frozen route is RequireAdmin -
 // Tier-1 GLOBAL, and the service narrows it to the Financial Controller specifically). It is also the
 // only role permitted to open a fiscal year early and to seal a year (FW1-09c, FROM-PRINCIPAL 222).
@@ -302,7 +308,36 @@ func (s *Service) ClosePeriod(ctx context.Context, id, reason string) (Period, e
 	if reason == "" {
 		reason = "period close"
 	}
-	return s.store.ClosePeriod(ctx, id, caller.UserID, reason)
+	// FW1-09g (S2's P3 on 614): the period close records its OWN row, GL_PERIOD_CLOSE, inside
+	// the close's own transaction, through the audit seam: a refused audit holds the close,
+	// the way the year end close's row holds it. The row is keyed to the period id
+	// (audit_log.entity_id is a uuid column, 0013), the actor is the caller, the reason
+	// rides the top level Reason field (a reason is FREE TEXT a person types, so it never
+	// rides Extra), and the year rides Extra (the audit boundary's Extra path is deny-by-
+	// default and "fiscal_year" is on its allowlist).
+	//
+	// The month does NOT ride Extra: the allowlist does not admit it, and the rule is not to
+	// widen the allowlist for it. The period id names the month, so nothing is lost.
+	//
+	// Unwired, nothing is recorded (the guards and the seal still hold), the same rule the
+	// year end close and the early open follow.
+	closed, err := s.store.ClosePeriod(ctx, id, caller.UserID, reason, func(ctx context.Context, tx pgx.Tx) error {
+		if s.auditTx == nil {
+			return nil
+		}
+		return s.auditTx.RecordTx(ctx, tx, audit.SensitiveAccess{
+			Action:     actGLPeriodClose,
+			EntityType: "gl.period",
+			EntityID:   id,
+			ActorID:    caller.UserID,
+			Reason:     reason,
+			Extra:      map[string]any{"fiscal_year": p.Year},
+		})
+	})
+	if err != nil {
+		return Period{}, err
+	}
+	return closed, nil
 }
 
 // ReopenPeriod reopens a sealed period. It is Financial-Controller-only (narrowed from the RequireAdmin route),
@@ -350,6 +385,10 @@ type YearCloseResult struct {
 	ClosingJournalIDs []string `json:"closing_journal_ids,omitempty"`
 	NetIncomeCents    int64    `json:"net_income_cents"`
 	PeriodsClosed     bool     `json:"periods_closed"`
+	// AlreadyClosed says WHICH press this was (FW1-09g): false on the press that closed the
+	// year, true on the press that found the year closed already. The marker is what tells
+	// the two apart, so the caller can say "closed now" or "already closed" in words.
+	AlreadyClosed bool `json:"already_closed"`
 }
 
 // CloseYear posts the year-end closing entry, it flattens every REVENUE/EXPENSE account for the fiscal year
@@ -392,23 +431,57 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('gl:year-end:' || $1::int))`, year); err != nil {
 		return YearCloseResult{}, fmt.Errorf("gl: lock the year end: %w", err)
 	}
+	// FW1-09g: the MARKER is the close's ONE once only signal, for every shape of the books.
+	// It is read HERE, under the year end's lock and on this transaction, so a press that
+	// finds the year closed already answers the first run's result and writes nothing: no
+	// audit row, no marker, no journal. Before the marker the once only signal was the
+	// SHAPE of the books (a closing journal, or the seal of every period), which is not a
+	// record of the act: a year sealed month by month with no P&L recorded nothing at all
+	// and could not be told from a year that was never closed.
+	marked, err := s.store.YearEndCloseMarkerTx(ctx, tx, year)
+	if err != nil {
+		return YearCloseResult{}, err
+	}
+	// FW1-09g round 2 (S2's P3 1 ruled, FROM-PRINCIPAL 350): the press that answers
+	// "already closed" reads PeriodsClosed from the year's REAL period count, never from
+	// the marker. The marker records the ACT; it cannot say what the periods did
+	// afterwards, so a closed year whose month was reopened would answer PeriodsClosed
+	// true while one of its twelve months is OPEN. The count is the truth: every period
+	// of the year CLOSED, or not. It is read here, on THIS transaction under the year
+	// end's lock, and both already closed answers carry it. A year with no periods at all
+	// is not a closed year either, so the count answers false there too.
+	total, closed, err := s.store.YearPeriodsTx(ctx, tx, year)
+	if err != nil {
+		return YearCloseResult{}, err
+	}
+	periodsClosed := total > 0 && closed == total
+	if marked {
+		ids, net, err := s.store.ClosingJournalsForYearTx(ctx, tx, year)
+		if err != nil {
+			return YearCloseResult{}, err
+		}
+		return YearCloseResult{FiscalYear: year, ClosingJournalIDs: ids, ClosingJournalID: firstID(ids), NetIncomeCents: net, PeriodsClosed: periodsClosed, AlreadyClosed: true}, nil
+	}
 	ids, net, err := s.store.ClosingJournalsForYearTx(ctx, tx, year)
 	if err != nil {
 		return YearCloseResult{}, err
 	}
 	if len(ids) > 0 {
-		return YearCloseResult{FiscalYear: year, ClosingJournalIDs: ids, ClosingJournalID: firstID(ids), NetIncomeCents: net, PeriodsClosed: true}, nil
+		// The belt under the marker: a year that carries a closing journal was closed, even
+		// on a box whose marker was never written for it (a year closed before the marker
+		// existed, whose backfill did not reach it). The press answers and writes nothing.
+		return YearCloseResult{FiscalYear: year, ClosingJournalIDs: ids, ClosingJournalID: firstID(ids), NetIncomeCents: net, PeriodsClosed: periodsClosed, AlreadyClosed: true}, nil
 	}
-	// FW1-09c round 2 (S2's P2, FROM-PRINCIPAL 320 and 321): the year's periods, counted, on THIS
-	// transaction under the year end's lock. A year with NO periods at all has nothing to close
-	// and refuses in words, never success (321); and the count comes before the CLOSED test, so
-	// "every period of the year is already CLOSED" is never vacuously true on zero periods. The
-	// count also reads the seal, which is the marker a year with NO P&L leaves: such a close
-	// posts no closing journal, so the once only check above cannot see the first run (320).
-	total, closed, err := s.store.YearPeriodsTx(ctx, tx, year)
-	if err != nil {
-		return YearCloseResult{}, err
-	}
+	// FW1-09c round 2 (S2's P2, FROM-PRINCIPAL 320 and 321): the year's periods, counted,
+	// on THIS transaction under the year end's lock (the count is read above, where the
+	// already closed answers read it from). A year with NO periods at all has nothing to
+	// close and refuses in words, never success (321); and the count comes before the
+	// CLOSED test, so "every period of the year is already CLOSED" is never vacuously true
+	// on zero periods.
+	//
+	// FW1-09g: the count does not answer the repeat press (the marker does that now, read
+	// above), so the CLOSED half of the count answers the repeat press's PeriodsClosed
+	// and nothing else here.
 	if total == 0 {
 		return YearCloseResult{}, clientErr(409, "gl: fiscal year %d has no periods to close", year)
 	}
@@ -505,10 +578,20 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	// listed rows therefore hide a year that is as closed as a year with no P&L at all: the once
 	// only check above cannot see the first run, and a second press records a SECOND
 	// GL_YEAR_END_CLOSE row. A year with no P&L, or whose P&L nets to zero on every account,
-	// sweeps nothing, so the seal answers both of them the same way.
-	if len(byBranch) == 0 && closed == total {
-		return YearCloseResult{FiscalYear: year, PeriodsClosed: true}, nil
-	}
+	// sweeps nothing, so the seal answered both of them the same way.
+	//
+	// FW1-09g: that early answer is GONE, and the marker replaced it. The seal (every period
+	// of the year already CLOSED) was read as the once only signal for a year that sweeps
+	// nothing, and the press therefore answered the first run's result and RECORDED
+	// NOTHING: no GL_YEAR_END_CLOSE row, no marker. A year whose twelve months were sealed
+	// one by one was closed at the year end, and the close is an act that leaves a record.
+	// The marker (read above, under this same lock) is the one once only signal now, for
+	// every shape, and the press below writes it with the close.
+	//
+	// A year that sweeps nothing now falls through to the same path every other year takes:
+	// it seals what is still OPEN (nothing, on a year sealed month by month), records its
+	// GL_YEAR_END_CLOSE row, writes its marker, and commits. The answer is the same one it
+	// gave before (the year, closed, no closing journal, no net income), plus the record.
 
 	branchIDs := make([]string, 0, len(byBranch))
 	for b := range byBranch {
@@ -608,6 +691,13 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 		}); aerr != nil {
 			return YearCloseResult{}, fmt.Errorf("gl: audit the year end close: %w", aerr)
 		}
+	}
+	// FW1-09g: the MARKER, in the close's OWN transaction, beside the audit row. It is the
+	// record of the act (who closed the year, when, why) and the one once only signal for
+	// every shape of the books: it lands with the close or with nothing at all, and the
+	// press that finds it answers the first run's result and writes nothing.
+	if err := s.store.InsertYearEndCloseMarkerTx(ctx, tx, year, caller.UserID, reason); err != nil {
+		return YearCloseResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return YearCloseResult{}, fmt.Errorf("gl: commit the year end: %w", err)
