@@ -1170,6 +1170,20 @@ func (r *Repository) ClosingJournalsForYearTx(ctx context.Context, tx pgx.Tx, ye
 	return ids, net, nil
 }
 
+// YearPeriodsTx answers how many periods the year has and how many of them are already CLOSED,
+// read on the caller's transaction under the year end's lock: the year end's own seal, and the
+// only marker a year with NO P&L leaves, because such a close posts no closing journal (FW1-09c
+// round 2, S2's P2, FROM-PRINCIPAL 320 and 321).
+func (r *Repository) YearPeriodsTx(ctx context.Context, tx pgx.Tx, year int) (int, int, error) {
+	var total, closed int
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*), count(*) FILTER (WHERE status = 'CLOSED') FROM fiscal_periods WHERE year = $1`, year).
+		Scan(&total, &closed); err != nil {
+		return 0, 0, fmt.Errorf("gl: read the year's periods: %w", err)
+	}
+	return total, closed, nil
+}
+
 // InsertClosingJournal is the year end's dedicated insert (round 4, S3's P1): the closing journal posts
 // into the closed year's December WHATEVER its status, the year end being the one act allowed to write
 // a closed month. The period is resolved explicitly, never by the posting date, so the late posted rule
