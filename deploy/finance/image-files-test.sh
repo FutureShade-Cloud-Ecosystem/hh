@@ -34,6 +34,20 @@ for name in $helpers; do
 	fi
 done
 
+# The bootstrap ownership mark is written by the entrypoint and read by the
+# core's classifier, and the word must be the same word in both: a drifted
+# word would mark databases the classifier never answers for. Each side is
+# read from its own source, and the two must match.
+mark_shell="$(sed -n 's/.*CREATE SCHEMA IF NOT EXISTS \([a-z_]*\).*/\1/p' "$entrypoint" | head -n 1)"
+boxkind="$here/../../core/cmd/core/boxkind.go"
+mark_go="$(sed -n 's/^	financeBoxBootstrapSchema = "\([a-z_]*\)"$/\1/p' "$boxkind" | head -n 1)"
+if [ -n "$mark_shell" ] && [ "$mark_shell" = "$mark_go" ]; then
+	echo "PASS: the bootstrap ownership mark is the same word in the entrypoint and the classifier"
+else
+	echo "FAIL: the bootstrap ownership mark drifted (entrypoint: ${mark_shell:-none}, classifier: ${mark_go:-none})"
+	failures=$((failures + 1))
+fi
+
 if [ "$failures" -ne 0 ]; then
 	echo "$failures failure(s)"
 	exit 1

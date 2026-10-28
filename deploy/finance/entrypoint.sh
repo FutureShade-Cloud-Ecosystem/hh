@@ -227,16 +227,22 @@ rm -f "$PG_SERVICE_FILE"
 # the entrypoint and the boot guard can never answer "empty" differently:
 #
 #   empty     no migration bookkeeping and no table at all: a fresh
-#             database. Migrate, then finance-seed, which applies the seed,
-#             records box_kind=finance through the settings module and
-#             leaves the seed's users with no usable password.
-#   unseeded  the box's own bookkeeping is there, the seed is not and
-#             nothing is marked: an interrupted first boot (a crash between
-#             migrate and seed leaves exactly that) or an interrupted first
-#             migrate (the bookkeeping table and nothing else). The seed
-#             runs and its own guards decide whether it may, so the guards
-#             that keep the seed idempotent also keep it off a database it
-#             did not plant.
+#             database. The bootstrap ownership mark goes in first (one
+#             schema in the catalog, the word the core's classifier reads,
+#             so the box's own interrupted first boot can be told from a
+#             database the box never planted), then migrate, then
+#             finance-seed, which applies the seed, records box_kind=finance
+#             through the settings module and leaves the seed's users with
+#             no usable password.
+#   unseeded  the bootstrap ownership mark is there, the box's own
+#             bookkeeping is there, the seed is not and nothing is marked:
+#             an interrupted first boot (a crash between migrate and seed
+#             leaves exactly that) or an interrupted first migrate. The mark
+#             is what says this database is the box's own to heal: without
+#             it the same shape is foreign, and the classifier answers
+#             foreign. The seed runs and its own guards decide whether it
+#             may, so the guards that keep the seed idempotent also keep it
+#             off a database it did not plant.
 #   finance   the finance box's own world: the box kind check runs BEFORE
 #             migrate and refuses a database the box did not seed, so a box
 #             pointed at the testers' copy, a staging world or a demo world
@@ -250,12 +256,21 @@ state="$(core finance-box-state)"
 
 case "$state" in
 	empty)
-		log "the database is empty: migrate, then finance-seed"
+		log "the database is empty: the bootstrap ownership mark goes in first, then migrate, then finance-seed"
+		if ! pg_service_write "$PG_SERVICE_FILE" "$DATABASE_URL"; then
+			fail "${PG_URL_ERROR:-DATABASE_URL could not be read}: the entrypoint refuses to put the database URL on a command line"
+		fi
+		if ! PGCONNECT_TIMEOUT=10 PGSERVICEFILE="$PG_SERVICE_FILE" PGSERVICE="$PG_SERVICE_NAME" \
+			psql -q -c "CREATE SCHEMA IF NOT EXISTS finance_box_bootstrap" >/dev/null; then
+			rm -f "$PG_SERVICE_FILE"
+			fail "the finance bootstrap ownership mark could not be written: the box marks a database as its own before the first migrate, and it refuses to migrate a database it cannot mark"
+		fi
+		rm -f "$PG_SERVICE_FILE"
 		core migrate
 		core finance-seed
 		;;
 	unseeded)
-		log "the database holds the migrations but no seed and no box kind: an interrupted first boot, so the seed runs and its own guards decide"
+		log "the database holds the bootstrap mark, the migrations and no seed and no box kind: an interrupted first boot, so the seed runs and its own guards decide"
 		core migrate
 		core finance-seed
 		;;

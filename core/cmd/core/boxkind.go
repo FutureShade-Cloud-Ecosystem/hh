@@ -61,6 +61,15 @@ const (
 	envBoxKind = "HH_BOX_KIND"
 	// boxKindFinance is the only kind this tree knows how to be.
 	boxKindFinance = "finance"
+	// financeBoxBootstrapSchema is the finance bootstrap ownership mark: the
+	// one schema the finance entrypoint creates in a completely empty
+	// database, after the empty check and before the first migrate, and
+	// nothing else ever creates. It is a schema in the catalog rather than a
+	// row because it must exist before any migration does (it needs no
+	// migration, and a migration needs the mark first), and a schema takes
+	// no table. The word is spelled here and in the entrypoint, and the
+	// image files test reads the two against each other.
+	financeBoxBootstrapSchema = "finance_box_bootstrap"
 )
 
 // The database's state, as the box reads it. One definition, in one place:
@@ -70,9 +79,10 @@ const (
 	// financeBoxStateEmpty: no migration bookkeeping and no table at all in
 	// the public schema. A fresh database: first boot territory.
 	financeBoxStateEmpty = "empty"
-	// financeBoxStateUnseeded: the migrations are applied, the seed is not,
-	// and nothing is marked. An interrupted first boot: the seed's own
-	// guards decide whether the seed may run.
+	// financeBoxStateUnseeded: the box's own bootstrap mark is present, the
+	// migrations are applied, the seed is not, and nothing is marked. An
+	// interrupted first boot: the seed's own guards decide whether the seed
+	// may run. Without the mark the same shape is foreign.
 	financeBoxStateUnseeded = "unseeded"
 	// financeBoxStateFinance: the database is the finance box's own world.
 	financeBoxStateFinance = "finance"
@@ -199,14 +209,19 @@ func financeBoxDatabaseEmpty(ctx context.Context, pool *pgxpool.Pool) (bool, err
 // entrypoint acts on:
 //
 //	empty     no bookkeeping and no table at all: a fresh database.
-//	unseeded  the box's own bookkeeping is there and nothing is marked and
-//	          the seed is not applied: an interrupted first boot (a crash
-//	          between migrate and seed leaves exactly that) or an
-//	          interrupted first migrate (the bookkeeping table and nothing
-//	          else). The seed's own guards decide whether the seed may run.
+//	unseeded  the box's own bootstrap mark is there, the box's own
+//	          bookkeeping is there and nothing is marked and the seed is not
+//	          applied: an interrupted first boot (the entrypoint marks the
+//	          database before the first migrate, and a crash between migrate
+//	          and seed leaves exactly that) or an interrupted first migrate
+//	          (the bookkeeping table and nothing else). The seed's own
+//	          guards decide whether the seed may run.
 //	finance   the database is the finance box's own world.
 //	foreign   anything else: a world the box did not plant, a foreign
-//	          schema, or a database marked as another box.
+//	          schema, a database marked as another box, or a migrated
+//	          unmarked database with no bootstrap mark. Recovery is the
+//	          mark's answer alone: a database the box never marked is
+//	          nobody's to heal, whatever its shape.
 //
 // The seed's own idempotency key (the same login core seed guards on) is
 // what says the seed is applied: a database that holds it holds the demo
@@ -230,11 +245,25 @@ func financeBoxDatabaseState(ctx context.Context, pool *pgxpool.Pool) (string, e
 		return "", err
 	}
 	if kind == boxKindFinance {
+		// The box's own world, marked at the first seed: it never takes the
+		// bootstrap mark's path, and the mark's absence says nothing about
+		// it.
 		return financeBoxStateFinance, nil
 	}
 	if kind != "" {
 		// Another box's mark: a world this box does not own, and never one
 		// to seed into.
+		return financeBoxStateForeign, nil
+	}
+	// Unmarked and migrated: recovery is the bootstrap mark's answer alone.
+	// The entrypoint writes the mark into a completely empty database before
+	// the first migrate, so a database without it was never this box's to
+	// migrate, whatever its shape, and it is foreign.
+	own, err := FinanceBootstrapMarkPresent(ctx, pool)
+	if err != nil {
+		return "", err
+	}
+	if !own {
 		return financeBoxStateForeign, nil
 	}
 	if !marked {

@@ -12,6 +12,8 @@ package main
 import (
 	"context"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // TestIntegration_FinanceBoxStateAnswersTheFourStates: the state the
@@ -33,12 +35,13 @@ func TestIntegration_FinanceBoxStateAnswersTheFourStates(t *testing.T) {
 
 	t.Run("unseeded", func(t *testing.T) {
 		pool, _ := freshMigratedBoxDB(t, "finboxstateunseeded")
+		writeBootstrapMarkForTest(t, ctx, pool)
 		state, err := financeBoxDatabaseState(ctx, pool)
 		if err != nil {
 			t.Fatalf("reading the state: %v", err)
 		}
 		if state != financeBoxStateUnseeded {
-			t.Fatalf("a migrated database with no seed and no box kind must read as %s, got %s", financeBoxStateUnseeded, state)
+			t.Fatalf("a marked migrated database with no seed and no box kind must read as %s, got %s", financeBoxStateUnseeded, state)
 		}
 	})
 
@@ -79,12 +82,13 @@ func TestIntegration_FinanceBoxStateAnswersTheFourStates(t *testing.T) {
 
 	t.Run("interrupted first migrate", func(t *testing.T) {
 		pool, _ := freshBookkeepingOnlyDB(t, "finboxstatebookkeeping")
+		writeBootstrapMarkForTest(t, ctx, pool)
 		state, err := financeBoxDatabaseState(ctx, pool)
 		if err != nil {
 			t.Fatalf("reading the state: %v", err)
 		}
 		if state != financeBoxStateUnseeded {
-			t.Fatalf("a database with the bookkeeping table and nothing else must read as %s, got %s", financeBoxStateUnseeded, state)
+			t.Fatalf("a marked database with the bookkeeping table and nothing else must read as %s, got %s", financeBoxStateUnseeded, state)
 		}
 	})
 }
@@ -93,7 +97,10 @@ func TestIntegration_FinanceBoxStateAnswersTheFourStates(t *testing.T) {
 // is the bootstrap ownership marker's answer alone. A migrated database with
 // no box kind, no seed and no marker was not planted by this box, and it is
 // foreign: the entrypoint refuses it instead of healing it (the K3 read's
-// finding 1, a foreign migrated unmarked database was seeded).
+// finding 1, a foreign migrated unmarked database was seeded). With the
+// marker the same shapes are the box's own interrupted boot, and the seed
+// heals them; and the finance box's own world never takes the marker's path
+// at all, so the live box is untouched by any of this.
 func TestIntegration_FinanceBoxUnseededRecoveryNeedsTheBootstrapMark(t *testing.T) {
 	ctx := context.Background()
 
@@ -107,4 +114,58 @@ func TestIntegration_FinanceBoxUnseededRecoveryNeedsTheBootstrapMark(t *testing.
 			t.Fatalf("a migrated unmarked database with no bootstrap mark must read as %s, got %s", financeBoxStateForeign, state)
 		}
 	})
+
+	t.Run("an interrupted first boot with the mark heals", func(t *testing.T) {
+		// The entrypoint marks the database before the first migrate, so a
+		// crash between migrate and seed leaves the mark, the migrations,
+		// no box kind and no seed: the state the entrypoint heals.
+		pool, _ := freshMigratedBoxDB(t, "finboxstateheal")
+		writeBootstrapMarkForTest(t, ctx, pool)
+		state, err := financeBoxDatabaseState(ctx, pool)
+		if err != nil {
+			t.Fatalf("reading the state: %v", err)
+		}
+		if state != financeBoxStateUnseeded {
+			t.Fatalf("a marked interrupted first boot must read as %s so the boot heals, got %s", financeBoxStateUnseeded, state)
+		}
+	})
+
+	t.Run("an interrupted first migrate with the mark heals", func(t *testing.T) {
+		pool, _ := freshBookkeepingOnlyDB(t, "finboxstatehealmig")
+		writeBootstrapMarkForTest(t, ctx, pool)
+		state, err := financeBoxDatabaseState(ctx, pool)
+		if err != nil {
+			t.Fatalf("reading the state: %v", err)
+		}
+		if state != financeBoxStateUnseeded {
+			t.Fatalf("a marked interrupted first migrate must read as %s so the boot heals, got %s", financeBoxStateUnseeded, state)
+		}
+	})
+
+	t.Run("the finance box's own world never takes the marker path", func(t *testing.T) {
+		// The live box's database is marked box_kind=finance at the first
+		// seed, so it answers finance whatever the bootstrap mark says: the
+		// mark is read only on an unmarked database, and this leg holds no
+		// mark at all.
+		pool, _ := freshMigratedBoxDB(t, "finboxstatefinnomark")
+		writeBoxKindForTest(t, ctx, pool, "finance")
+		state, err := financeBoxDatabaseState(ctx, pool)
+		if err != nil {
+			t.Fatalf("reading the state: %v", err)
+		}
+		if state != financeBoxStateFinance {
+			t.Fatalf("the finance box's own world must read as %s with no bootstrap mark present, got %s", financeBoxStateFinance, state)
+		}
+	})
+}
+
+// writeBootstrapMarkForTest writes the finance bootstrap ownership mark the
+// entrypoint writes into a completely empty database before the first
+// migrate: one schema in the catalog, the word the classifier reads, and no
+// migration anywhere.
+func writeBootstrapMarkForTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+financeBoxBootstrapSchema); err != nil {
+		t.Fatalf("writing the bootstrap mark: %v", err)
+	}
 }

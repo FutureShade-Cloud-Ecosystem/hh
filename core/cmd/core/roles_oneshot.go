@@ -151,6 +151,22 @@ func PublicTableCount(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 	return count, nil
 }
 
+// FinanceBootstrapMarkPresent reports whether the finance bootstrap
+// ownership mark is present: the one schema the finance entrypoint writes
+// into a completely empty database before the first migrate, and nothing
+// else ever creates. It needs no migration, so it can exist before any
+// table, which is the whole point: it is what tells the box's own
+// interrupted first boot from a database the box never planted. The read
+// lives beside the other shape reads for the same reason they do.
+func FinanceBootstrapMarkPresent(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	var present bool
+	err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)`, financeBoxBootstrapSchema).Scan(&present)
+	if err != nil {
+		return false, err
+	}
+	return present, nil
+}
+
 // seedRole folds the pin's cmd/seed behaviour: the representative demo
 // world from the embedded SQL file, prod-guarded and idempotent.
 func seedRole(getenv func(string) string) error {
