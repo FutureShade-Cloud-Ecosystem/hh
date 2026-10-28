@@ -1486,17 +1486,18 @@ func (w *fw1Walk) assertWalkMonthAndNextYearPeriodsOpen(t fw1TB) {
 //     them (the GL repository's ensureFiscalYearTx), so the close has periods to seal. A posting
 //     dated in a year with no period rows files late into the next open month, so the periods come
 //     first;
-//   - the year's opening stock, the stock the dealer holds today, because the close's pre flight
-//     ties the company's stock against the company's 1200 at the month's end and the stock side
-//     reads today's value until the inventory module answers an as of read;
 //   - one revenue journal and one expense journal through PostExternal, the production posting
-//     seam, each stamped with a branch, so the year carries a P&L for the close to sweep;
-//   - the current year's mirror of that opening stock, so the stock the closed year opened with is
-//     not opened twice and the walk's own month close still ties.
+//     seam, each stamped with a branch, so the year carries a P&L for the close to sweep.
 //
-// The plant leaves the walk's own books as they were: the mirror cancels the duplicate at 1200 and
-// at 3000, so the walk's month close's pre flight still ties and the walk's own figures read the
-// same after the plant as before it.
+// The year carries no stock of its own and needs no stock plant: the close's pre flight ties the
+// company's stock against the company's 1200 at each month's end (W2-5), the stock ledger answers
+// as of that month end over its own movement ledger, and every movement on the books stands in the
+// current year, after every month end the closed year owns. Both sides of the year's stock tie
+// therefore read zero at each of its month ends: the year that holds no stock ties with no plant
+// at all. The stock plant this leg grew for the now-based tie (the year's opening stock plus the
+// current year's mirror) went redundant the moment the read became as of the month end, and it
+// breaks under the as-of read, because it books the stock the dealer holds TODAY inside the
+// closed year's opening.
 func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 	ctx := context.Background()
 	// The walk's own year is still running: closing it would seal the months still ahead, so the
@@ -1561,23 +1562,9 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 		 ON CONFLICT (year, month) DO NOTHING`, closedYear); err != nil {
 		t.Fatalf("planting the closed year %d's fiscal periods: %v", closedYear, err)
 	}
-	// The stock the dealer holds today, read through the production seam the close's pre flight
-	// reads it through, so the plant carries the figure the close's own tie will look for.
-	stock, err := w.money.inventorySvc.StockValueCents(ctx, "")
-	if err != nil {
-		t.Fatalf("the company's stock value: %v", err)
-	}
 	const plantedRevenue, plantedExpense = int64(100000), int64(40000)
 	openedAt := time.Date(closedYear, time.January, 15, 12, 0, 0, 0, time.UTC)
 	for _, p := range []gl.ExternalJournal{
-		{
-			Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:year-end-plant:opening:%d", closedYear),
-			Memo: "the closed year's opening stock", BranchID: fw1TRT, DocumentDate: openedAt,
-			Lines: []gl.ExternalLine{
-				{AccountCode: "1200", DebitCents: stock, Memo: "opening stock"},
-				{AccountCode: "3000", CreditCents: stock, Memo: "opening equity"},
-			},
-		},
 		{
 			Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:year-end-plant:revenue:%d", closedYear),
 			Memo: "the closed year's revenue", BranchID: fw1TRT, DocumentDate: openedAt,
@@ -1592,17 +1579,6 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 			Lines: []gl.ExternalLine{
 				{AccountCode: "6100", DebitCents: plantedExpense, Memo: "the year's rent"},
 				{AccountCode: "1000", CreditCents: plantedExpense, Memo: "the year's cash paid out"},
-			},
-		},
-		{
-			// The current year's mirror of that opening stock: the stock the closed year opened
-			// with is the stock the walk's own books already carry, so the current year does not
-			// open it a second time. It rides the clock, so it lands in the walk's own month.
-			Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:year-end-plant:mirror:%d", closedYear),
-			Memo: "the current year does not open the stock the closed year carries", BranchID: fw1TRT,
-			Lines: []gl.ExternalLine{
-				{AccountCode: "3000", DebitCents: stock, Memo: "opening equity"},
-				{AccountCode: "1200", CreditCents: stock, Memo: "the stock the closed year opened with"},
 			},
 		},
 	} {

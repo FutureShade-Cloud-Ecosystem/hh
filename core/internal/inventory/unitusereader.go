@@ -21,13 +21,17 @@ import (
 type LoadedUnitUseReader struct{}
 
 // ProductUnitInUseTx reports whether any stock move of productID was
-// entered in uom, inside the caller's transaction.
+// entered in uom, inside the caller's transaction. A VALUE move (0453,
+// W2-5B) moves no quantity and names no unit in fact: it names the
+// product's base unit only because the column requires one, so it never
+// keeps a unit in use.
 func (LoadedUnitUseReader) ProductUnitInUseTx(ctx context.Context, tx pgx.Tx, productID, uom string) (bool, error) {
 	var named bool
 	err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM stock_moves
 			 WHERE product_id = $1::uuid AND uom_entered = $2
+			   AND move_type <> 'VALUE'
 		)`, productID, uom).Scan(&named)
 	if err != nil {
 		return false, fmt.Errorf("inventory: loaded unit use read: %w", err)
