@@ -534,6 +534,7 @@ import {
   deltaWords,
   pricingAuditEmptyWords,
 } from "../src/pricing-logic.ts";
+import * as pricingLogic from "../src/pricing-logic.ts";
 
 test("a log row's change reads as from to to; the bypass names its reason", () => {
   assert.equal(deltaWords("480", "420"), "480 to 420");
@@ -544,4 +545,20 @@ test("a log row's change reads as from to to; the bypass names its reason", () =
 
 test("the pricing audit's empty words say what the log holds", () => {
   assert.match(pricingAuditEmptyWords(), /No pricing log entries/);
+});
+
+test("import profile mappings and audit fields read as plain dealer words, never raw keys (UX-118)", () => {
+  assert.equal(
+    pricingLogic.profileMappingWords?.({ sku_col: "Item", cost_col: "Dealer Net", retail_col: "MSRP", trade_col: "Trade" }),
+    "Item number is in column Item; cost is in column Dealer Net; retail is in column MSRP; trade is in column Trade",
+  );
+  assert.equal(pricingLogic.profileMappingWords?.({ sku_col: "SKU" }), "Item number is in column SKU");
+  assert.equal(pricingLogic.profileMappingWords?.({}), "No columns mapped");
+  assert.equal(pricingLogic.accrualSourceWord?.("POS_SALE"), "Counter sale");
+  assert.equal(pricingLogic.accrualSourceWord?.("ORDER"), "Order");
+  assert.equal(pricingLogic.accrualSourceWord?.("ADJUSTMENT"), "Adjustment");
+  assert.equal(pricingLogic.pricingAuditEntityWord?.("category_policy"), "Category policy");
+  assert.equal(pricingLogic.pricingAuditEntityWord?.("customer_override"), "Customer override");
+  assert.equal(pricingLogic.pricingAuditFieldWord?.("margin_floor_bps"), "margin floor");
+  assert.equal(pricingLogic.pricingAuditFieldWord?.("margin_target_bps"), "margin target");
 });

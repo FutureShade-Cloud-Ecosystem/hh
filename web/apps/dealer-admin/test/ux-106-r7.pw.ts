@@ -83,6 +83,32 @@ const DEMO_CUSTOMER = "cu110000-0000-4000-9000-0000000000a1";
 
 const THEMES = ["light", "charcoal"] as const;
 
+const SIZES = [
+  { width: 390, height: 844 },
+  { width: 1280, height: 800 },
+  { width: 1440, height: 900 },
+] as const;
+
+/** Engine terms that must never appear in dealer-facing text on any walked state. */
+const BANNED_ENGINE_TERMS: readonly RegExp[] = [
+  /\bregistry default\b/i,
+  /\bsurface's own registry\b/i,
+  /\bidempotency\b/i,
+  /\bthe engine reads no sales table\b/i,
+  /\boffer to the accrual engine\b/i,
+  /\bthrough the resolver\b/i,
+  /\bsku_col\b/i,
+  /\bcost_col\b/i,
+  /\bretail_col\b/i,
+  /\btrade_col\b/i,
+  /\bmargin_floor_bps\b/i,
+  /\brestocking_fee_bps\b/i,
+  /\bcategory_policy\b/i,
+  /\bcustomer_override\b/i,
+  /\bPOS_SALE\b/i,
+  /\bItem id\b/i,
+];
+
 async function signIn(page: Page): Promise<void> {
   await page.goto("/");
   await page.locator("[data-flow]").first().click();
@@ -119,10 +145,13 @@ async function openSurface(page: Page, surface: string, settle: string): Promise
   await waitForQuiet(page);
 }
 
-/** The pricing view a walk stands on: the phone folds the whole list behind
- *  one select, so the select is what the walk moves. */
+/** The pricing view a walk stands on: the strip's pill at the desk widths, the phone's select below them. */
 async function openPricingView(page: Page, title: string, settle: string): Promise<void> {
-  await page.locator("[data-test=pr-tab-select]").selectOption({ label: title });
+  if (page.viewportSize()!.width <= 900) {
+    await page.locator("[data-test=pr-tab-select]").selectOption({ label: title });
+  } else {
+    await page.locator(".pr-tab").filter({ hasText: title }).first().click();
+  }
   await expect(page.locator(settle).first()).toBeVisible({ timeout: 30_000 });
   await page.waitForLoadState("networkidle");
   await waitForQuiet(page);
@@ -256,40 +285,125 @@ async function measure(page: Page, view: string): Promise<Box[]> {
 }
 
 /**
- * Every chip in a card row, and the number of lines it takes there.
+ * Every pill, chip, button, table header, email and job-shape summary in a
+ * table, and the number of lines it takes there (UX-106 round 7 + UX-118).
  *
- * A card row is a row that lays out as a grid, which is what the house's
- * card-row pattern does at a phone's width. At the desk the row keeps the
- * table, and a chip in a table cell is the table's own business.
- *
- * The number of lines is the text's own line boxes: a range over the chip's
- * contents gives one rect per line box, so the distinct tops are the lines. A
- * chip whose text broke onto a second line has two.
+ * The number of lines is the text's own line boxes: a range over the node's
+ * contents gives one rect per line box, so the distinct tops are the lines.
  */
 async function measureChips(page: Page, view: string): Promise<Chip[]> {
   return page.evaluate((name) => {
     const app = document.querySelector("dealer-admin-app");
     const root = app?.shadowRoot ?? document;
+    const vw = window.innerWidth;
     const chips: { view: string; what: string; lines: number }[] = [];
-    for (const chip of Array.from(root.querySelectorAll(".chip"))) {
-      const row = chip.closest("tr");
-      if (row === null) continue;
-      if (getComputedStyle(row).display !== "grid") continue;
-      const cell = chip.closest("td, th");
-      const label = cell?.getAttribute("data-label") ?? "";
-      const text = (chip.textContent ?? "").replace(/\s+/g, " ").trim();
+    const lineCountOf = (el: Element): number => {
       const range = document.createRange();
-      range.selectNodeContents(chip);
+      range.selectNodeContents(el);
       const tops = new Set<number>();
-      for (const rect of Array.from(range.getClientRects())) tops.add(Math.round(rect.top));
+      for (const rect of Array.from(range.getClientRects())) {
+        if (rect.width === 0 && rect.height === 0) continue;
+        tops.add(Math.round(rect.top));
+      }
+      return Math.max(tops.size, 1);
+    };
+
+    for (const pill of Array.from(root.querySelectorAll("tr .chip, tr .btn, tr .badge-outline, tr .badge-status, tr .matrix-pill"))) {
+      const cs = getComputedStyle(pill);
+      if (cs.display === "none" || cs.visibility === "hidden") continue;
+      if (pill.getBoundingClientRect().width === 0) continue;
+      const row = pill.closest("tr");
+      if (row === null) continue;
+      const cell = pill.closest("td, th");
+      const label = cell?.getAttribute("data-label") ?? "";
+      const text = (pill.textContent ?? "").replace(/\s+/g, " ").trim();
       chips.push({
         view: name,
-        what: `${row.getAttribute("data-lm") ?? row.getAttribute("data-entry-id") ?? row.className} | ${label === "" ? (cell?.className ?? "") : label} | ${text}`,
-        lines: Math.max(tops.size, 1),
+        what: `pill | ${row.getAttribute("data-lm") ?? row.getAttribute("data-profile") ?? row.getAttribute("data-entry-id") ?? row.className} | ${label === "" ? (cell?.className ?? "") : label} | ${text}`,
+        lines: lineCountOf(pill),
       });
     }
+
+    for (const th of Array.from(root.querySelectorAll("table thead th, table th[scope='col']"))) {
+      const cs = getComputedStyle(th);
+      if (cs.display === "none" || cs.visibility === "hidden") continue;
+      if (th.getBoundingClientRect().width === 0) continue;
+      const head = th.closest("thead");
+      if (head !== null && getComputedStyle(head).display === "none") continue;
+      const text = (th.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (text === "") continue;
+      chips.push({
+        view: name,
+        what: `header | ${text}`,
+        lines: lineCountOf(th),
+      });
+    }
+
+    for (const email of Array.from(root.querySelectorAll(".staff-table .staff-email"))) {
+      const cs = getComputedStyle(email);
+      if (cs.display === "none" || cs.visibility === "hidden") continue;
+      if (email.getBoundingClientRect().width === 0) continue;
+      const text = (email.textContent ?? "").replace(/\s+/g, " ").trim();
+      const lines = lineCountOf(email);
+      if (vw > 900 && lines > 1) {
+        chips.push({
+          view: name,
+          what: `staff-email | ${text}`,
+          lines,
+        });
+      }
+    }
+
+    for (const desc of Array.from(root.querySelectorAll('[data-test="config-grid"] tbody th .dim'))) {
+      const cs = getComputedStyle(desc);
+      if (cs.display === "none" || cs.visibility === "hidden") continue;
+      if (desc.getBoundingClientRect().width === 0) continue;
+      const text = (desc.textContent ?? "").replace(/\s+/g, " ").trim();
+      const lines = lineCountOf(desc);
+      const maxAllowed = vw > 900 ? 2 : 4;
+      if (lines > maxAllowed) {
+        chips.push({
+          view: name,
+          what: `config-grid-desc | ${text}`,
+          lines,
+        });
+      }
+    }
+
     return chips;
   }, view);
+}
+
+/** Dealer-facing text audit: checks for banned engine words on the active state. */
+async function measureEngineWords(page: Page, view: string): Promise<string[]> {
+  return page.evaluate(
+    ({ name, patterns }) => {
+      const app = document.querySelector("dealer-admin-app");
+      const root = app?.shadowRoot ?? document;
+      const work = root.querySelector(".surface-work");
+      if (work === null) return [];
+      const text = (work.textContent ?? "").replace(/\s+/g, " ");
+      const hits: string[] = [];
+      for (const src of patterns) {
+        const rx = new RegExp(src, "i");
+        const m = text.match(rx);
+        if (m !== null) {
+          hits.push(`${name} | engine term "${m[0]}"`);
+        }
+      }
+      if (name === "pricing:batches") {
+        const markupCells = Array.from(work.querySelectorAll('tr[data-profile] td[data-label="Markup"]'));
+        for (const cell of markupCells) {
+          const val = (cell.textContent ?? "").trim();
+          if (/^\d+$/.test(val)) {
+            hits.push(`${name} | bare markup "${val}" with no unit`);
+          }
+        }
+      }
+      return hits;
+    },
+    { name: view, patterns: BANNED_ENGINE_TERMS.map((r) => r.source) },
+  );
 }
 
 /** The page itself never scrolls sideways at a phone's width. */
@@ -440,53 +554,59 @@ const STATES: readonly State[] = [
 
 // -- the sweep ---------------------------------------------------------------------------------------
 
-for (const theme of THEMES) {
-  test(`no table on any view scrolls sideways at 390, ${theme}`, async ({ page }) => {
-    test.setTimeout(300_000);
-    await page.setViewportSize({ width: 390, height: 844 });
-    await signIn(page);
-    if (theme === "charcoal") await goCharcoal(page);
+for (const size of SIZES) {
+  for (const theme of THEMES) {
+    test(`no table on any view scrolls sideways or wraps a pill or header at ${size.width}, ${theme}`, async ({ page }) => {
+      test.setTimeout(300_000);
+      await page.setViewportSize({ width: size.width, height: size.height });
+      await signIn(page);
+      if (theme === "charcoal") await goCharcoal(page);
 
-    const boxes: Box[] = [];
-    const chips: Chip[] = [];
-    const visited: string[] = [];
+      const boxes: Box[] = [];
+      const chips: Chip[] = [];
+      const engineHits: string[] = [];
+      const visited: string[] = [];
 
-    for (const state of STATES) {
-      await state.open(page);
-      visited.push(state.id);
-      boxes.push(...(await measure(page, state.id)));
-      chips.push(...(await measureChips(page, state.id)));
-    }
+      for (const state of STATES) {
+        await state.open(page);
+        visited.push(state.id);
+        boxes.push(...(await measure(page, state.id)));
+        chips.push(...(await measureChips(page, state.id)));
+        engineHits.push(...(await measureEngineWords(page, state.id)));
+      }
 
-    // The walk visited the manifest's states, exactly, once each. A state
-    // that stopped rendering fails here instead of quietly shrinking the
-    // measurement, and a state that was walked twice fails here too.
-    expect([...visited].sort(), "the sweep did not walk exactly the manifest's states").toEqual(STATES.map((state) => state.id).sort());
+      // The walk visited the manifest's states, exactly, once each. A state
+      // that stopped rendering fails here instead of quietly shrinking the
+      // measurement, and a state that was walked twice fails here too.
+      expect([...visited].sort(), "the sweep did not walk exactly the manifest's states").toEqual(STATES.map((state) => state.id).sort());
 
-    // Each state carries its own tables. A table that stopped rendering
-    // fails the state it stopped in, and a table that appeared fails the
-    // state it appeared in: the failure names the state that changed.
-    for (const state of STATES) {
-      const tables = boxes.filter((box) => box.view === state.id && box.kind === "table").length;
-      expect(tables, `the state ${state.id} does not carry its own tables`).toBe(state.tables);
-    }
+      // Each state carries its own tables. A table that stopped rendering
+      // fails the state it stopped in, and a table that appeared fails the
+      // state it appeared in: the failure names the state that changed.
+      for (const state of STATES) {
+        const tables = boxes.filter((box) => box.view === state.id && box.kind === "table").length;
+        expect(tables, `the state ${state.id} does not carry its own tables`).toBe(state.tables);
+      }
 
-    // The page itself never scrolls sideways.
-    const scrolled = await pageScrolls(page);
-    expect(scrolled.scroll, "the page scrolls sideways at 390").toBeLessThanOrEqual(scrolled.client);
+      // The page itself never scrolls sideways.
+      const scrolled = await pageScrolls(page);
+      expect(scrolled.scroll, `the page scrolls sideways at ${size.width}`).toBeLessThanOrEqual(scrolled.client);
 
-    // Every box: the scrollWidth against the clientWidth. A value that reads
-    // in the label column is the other way round: it sits before the column
-    // it belongs in.
-    const cut = boxes.filter((b) => (b.kind === "stray" ? b.scroll < b.client : b.scroll > b.client + 1));
-    const report = cut.map((b) => `  ${b.view} | ${b.what} | scroll ${b.scroll} client ${b.client}`).join("\n");
-    expect(cut, `these boxes cut their content at 390 (${theme}):\n${report}`).toEqual([]);
+      // Every box: the scrollWidth against the clientWidth. A value that reads
+      // in the label column is the other way round: it sits before the column
+      // it belongs in.
+      const cut = boxes.filter((b) => (b.kind === "stray" ? b.scroll < b.client : b.scroll > b.client + 1));
+      const report = cut.map((b) => `  ${b.view} | ${b.what} | scroll ${b.scroll} client ${b.client}`).join("\n");
+      expect.soft(cut, `these boxes cut their content at ${size.width} (${theme}):\n${report}`).toEqual([]);
 
-    // And every chip in a card row is one line. A chip is a pill: it reads on
-    // one line, and a chip that broke onto a second one is the chip's text
-    // running past the room the value column gives it.
-    const wrapped = chips.filter((chip) => chip.lines > 1);
-    const chipReport = wrapped.map((chip) => `  ${chip.view} | ${chip.what} | ${chip.lines} lines`).join("\n");
-    expect(wrapped, `these chips wrap onto a second line at 390 (${theme}):\n${chipReport}`).toEqual([]);
-  });
+      // Every pill, chip, button, table header, staff email and job-shape
+      // description stays within its line budget.
+      const wrapped = chips.filter((chip) => chip.lines > 1);
+      const chipReport = wrapped.map((chip) => `  ${chip.view} | ${chip.what} | ${chip.lines} lines`).join("\n");
+      expect.soft(wrapped, `these pills, headers or cells wrap at ${size.width} (${theme}):\n${chipReport}`).toEqual([]);
+
+      // No engine words on any dealer screen (UX-118 item 5).
+      expect.soft(engineHits, `engine terms found at ${size.width} (${theme}):\n${engineHits.join("\n")}`).toEqual([]);
+    });
+  }
 }
