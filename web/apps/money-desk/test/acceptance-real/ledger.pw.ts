@@ -47,10 +47,16 @@
 // THE JOURNAL IS FOUND BY ITS LEDGER KEY, ON BOTH SIDES (round 3, S4's P3-2). The ledger's own
 // key is the fiscal year and the entry number together, and the world names both. The core side
 // pages the core's own journal list, following the page's cursor, until it finds that journal,
-// and fails in words if it never does. The screen side reaches the same journal: the desk's
-// register reads every page of the core's journals (src/gl/gl-api.ts) and its row carries the
-// journal's own id, so the spec finds the world journal among any number of rows that share an
-// entry number.
+// and fails in words if it never does. The screen side finds the register row by the journal's
+// own id, so two rows that share an entry number across years cannot confuse it. The desk's
+// register reads one page of 100, newest first, so the world names a journal inside that page
+// (FROM-PRINCIPAL 403 and 404; W2-10 adds a date range and a way to show more).
+//
+// TWO EDGES OF THE BOX'S OWN MONTH (round 4, S4's P2 and P3-2). The desk shows the core's current
+// fiscal year, so a box built in one year and read in the next fails in words before any click
+// (requireDeskYear). And the seeded invoice is dated by the database session's date while the
+// posting dates its journal by the event's instant, so a box migrated within hours of a month
+// end can put the two in different months: then legs 1 and 2 find an empty month and say so.
 //
 // THE NAVIGATION, and why it is "./". The real config's base URL is the box's /money-desk/ path,
 // so "./" lands on the desk and "/" would escape to the front door at the origin root. The
@@ -245,9 +251,27 @@ async function readBoxMonth(request: APIRequestContext, headers: StaffHeaders): 
 }
 
 /**
- * How far the core's journal list is paged, in pages of 100: the same bound the desk's own
- * register uses (MAX_PAGES pages of 100, src/gl/gl-api.ts), so the core side and the screen
- * side reach the same journal or neither of them does.
+ * The desk's trial balance and periods show the core's current fiscal year, and their month
+ * buttons and rows are that year's (src/gl/gl-desk.ts asks the core with no year and keeps the
+ * answer's fiscal_year). A month from another year is not on the screen at all, so the leg says
+ * so in words before it clicks anything: a box built in one year and read in the next would
+ * otherwise go red on a missing month for nobody's commit (S4's P2 on round 3, FROM-PRINCIPAL 389).
+ */
+async function requireDeskYear(request: APIRequestContext, headers: StaffHeaders, month: string): Promise<void> {
+  const shown = await coreRead<{ fiscal_year: number }>(request, headers, "/api/v1/gl/trial-balance");
+  if (yearOf(month) !== shown.fiscal_year) {
+    throw new Error(
+      `the world's month ${month} is in ${yearOf(month)} and the desk shows ${shown.fiscal_year}: ` +
+        "rebuild the box this year, or set MONTH_END_ANCHOR and OPEN_MONTH_ANCHOR to the world's own months",
+    );
+  }
+}
+
+/**
+ * How far the core's journal list is paged, in pages of 100. The desk's own register reads one
+ * page of 100 today (src/gl/gl-api.ts, newest first), so on a box holding more than 100 journals
+ * the screen side cannot reach an older one and the leg goes red at the register's row: W2-10
+ * gives the register a date range and a way to show more (FROM-PRINCIPAL 404).
  */
 const MAX_JOURNAL_PAGES = 50;
 
@@ -304,6 +328,7 @@ test("the trial balance ties: the screen's totals are the core's own figures, an
   await signIn(page, context);
   const boxMonth = await readBoxMonth(request, await headers);
   const monthEnd = MONTH_END_ANCHOR === "" ? boxMonth : MONTH_END_ANCHOR;
+  await requireDeskYear(request, await headers, monthEnd);
   await page.locator("[data-tab-id='trial']").click();
   await page.locator(`[data-action="gl-trial-month"][data-month="${monthNumber(monthEnd)}"]`).click();
   await expect(page.locator("[data-trial] h3")).toContainText(monthName(monthEnd));
@@ -338,6 +363,7 @@ test("the month end 1100 balance is the world's known figure", async ({ page, re
   await signIn(page, context);
   const boxMonth = await readBoxMonth(request, await headers);
   const monthEnd = MONTH_END_ANCHOR === "" ? boxMonth : MONTH_END_ANCHOR;
+  await requireDeskYear(request, await headers, monthEnd);
   await page.locator("[data-tab-id='trial']").click();
   await page.locator(`[data-action="gl-trial-month"][data-month="${monthNumber(monthEnd)}"]`).click();
   await expect(page.locator("[data-trial] h3")).toContainText(monthName(monthEnd));
@@ -375,6 +401,7 @@ test("the periods screen shows the closed month, the open month and the year end
   await signIn(page, context);
   const boxMonth = await readBoxMonth(request, await headers);
   const openMonth = OPEN_MONTH_ANCHOR === "" ? boxMonth : OPEN_MONTH_ANCHOR;
+  await requireDeskYear(request, await headers, openMonth);
   await page.locator("[data-tab-id='periods']").click();
   const table = page.getByRole("table", { name: "Periods" });
   await expect(table).toBeVisible();
