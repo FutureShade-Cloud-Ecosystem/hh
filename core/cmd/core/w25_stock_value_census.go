@@ -42,7 +42,10 @@ func (s w25InventoryWriterSite) key() string {
 
 // w25WritePattern matches an INSERT / UPDATE / DELETE statement against product_branch_costs or
 // stock_moves. It is case-insensitive and permits leading whitespace and newline before the verb.
-var w25WritePattern = regexp.MustCompile(`(?mi)^\s*(INSERT\s+INTO\s+(product_branch_costs|stock_moves)|UPDATE\s+(product_branch_costs|stock_moves)\b|DELETE\s+FROM\s+(product_branch_costs|stock_moves))`)
+// Each verb branch has its own capture group, the w25OnHandWritePattern shape, so a match names
+// its own verb: with the alternation inside one group a matched UPDATE or DELETE also leaves the
+// INSERT branch's group set.
+var w25WritePattern = regexp.MustCompile(`(?mi)^\s*(INSERT\s+INTO\s+(product_branch_costs|stock_moves)\b)|^\s*(UPDATE\s+(product_branch_costs|stock_moves)\b)|^\s*(DELETE\s+FROM\s+(product_branch_costs|stock_moves)\b)`)
 
 // w25OnHandWritePattern matches a statement that writes stock_balances' on_hand: an INSERT naming
 // on_hand_base, an UPDATE setting on_hand_base, or any DELETE of balance rows (a deleted row takes
@@ -65,14 +68,16 @@ func w25OnHandWriteMatchKind(m []string) string {
 }
 
 // w25WriteMatchKind turns a w25WritePattern submatch into the canonical "SQL:<table>:<verb>" kind.
+// Each verb branch occupies its own capture group: group 1 INSERT, group 3 UPDATE, group 5 DELETE,
+// with the table one slot after the branch.
 func w25WriteMatchKind(m []string) string {
 	switch {
 	case m[1] != "":
 		return "SQL:" + m[2] + ":INSERT"
 	case m[3] != "":
-		return "SQL:" + m[3] + ":UPDATE"
-	case m[4] != "":
-		return "SQL:" + m[4] + ":DELETE"
+		return "SQL:" + m[4] + ":UPDATE"
+	case m[5] != "":
+		return "SQL:" + m[6] + ":DELETE"
 	}
 	return ""
 }

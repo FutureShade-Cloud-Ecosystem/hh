@@ -101,7 +101,9 @@ const w25TestHelperKey = "test_helpers|*|*"
 
 // w25TestHelperSiteCount is the exact number of inventory-value writer sites found in *_test.go files.
 // It is a constant so a change in the test tree fails the census until the table is updated.
-const w25TestHelperSiteCount = 95
+// The round 7 verb-kinding leg's own probe fixtures (two UPDATE and two DELETE writers) are scanned
+// like any other test helper site, so the count is 99: the round 5 tree's 95 plus those 4.
+const w25TestHelperSiteCount = 99
 
 // w25OnHandTestHelperKey is the allowance bucket for every on-hand writer found in *_test.go files.
 const w25OnHandTestHelperKey = "test_helpers_on_hand|*|*"
