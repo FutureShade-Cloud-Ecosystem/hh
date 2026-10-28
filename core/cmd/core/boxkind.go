@@ -40,6 +40,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -77,8 +78,8 @@ const (
 // read these words, so the two can never drift apart.
 const (
 	// financeBoxStateEmpty: no migration bookkeeping, no table in any user
-	// schema and no user schema outside public and the box's own bootstrap
-	// mark. A fresh database: first boot territory.
+	// schema, no large object and no user schema outside public and the
+	// box's own bootstrap mark. A fresh database: first boot territory.
 	financeBoxStateEmpty = "empty"
 	// financeBoxStateUnseeded: the box's own bootstrap mark is present, the
 	// migrations are applied, the seed is not, and nothing is marked. An
@@ -137,10 +138,39 @@ func financeBoxEnvironmentLegs(getenv func(string) string, cfg config.Config) er
 	return nil
 }
 
+// financeBoxEmptyBranchCheck is the empty branch's own check: the box's
+// database role must be able to create roles. Migration 0418 creates the
+// assist roles, and the migrate runner applies each file in its own
+// transaction, so a role without that right leaves a fresh database half
+// migrated: every migration before 0418 commits and 0418 rolls back whole,
+// and the box is left with a mark, a bookkeeping table and no seed.
+//
+// The check runs in the empty branch alone. Only migrations that create roles
+// need the right (0418 and 0427 today), and a database the box has already
+// migrated holds those roles, so a finance marked database boots with a role
+// that has no CREATEROLE, and only a fresh database is refused. A later
+// migration that creates a role would stop such a box at its migrate, which
+// rolls that file back whole; the deploy README says to keep the right.
+//
+// It refuses in words, naming the right and the migration that needs it, so
+// the operator is told what to change and not merely that something failed.
+func financeBoxEmptyBranchCheck(ctx context.Context, pool *pgxpool.Pool) error {
+	can, err := CurrentRoleCanCreateRoles(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("finance box: the box's database role could not be read: %w", err)
+	}
+	if !can {
+		return errors.New("finance box: the box's database role needs CREATEROLE: migration 0418 creates the assist roles")
+	}
+	return nil
+}
+
 // financeBoxDatabaseGuard is the database leg of the direction where the
 // environment claims the box, in this order: an empty database is first boot
-// territory and passes; anything non empty must answer box_kind=finance or
-// the boot stops. A database whose bookkeeping is present but whose settings
+// territory and passes, but only through the empty branch's own check (the
+// role must be able to create the roles migration 0418 creates); anything non
+// empty must answer box_kind=finance or the boot stops. A database whose
+// bookkeeping is present but whose settings
 // table cannot say finance (a missing table is a foreign schema, a malformed
 // row is a damaged one) is somebody else's world and is refused, never
 // guessed at.
@@ -150,7 +180,7 @@ func financeBoxDatabaseGuard(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("finance box: the database's shape could not be read: %w", err)
 	}
 	if empty {
-		return nil
+		return financeBoxEmptyBranchCheck(ctx, pool)
 	}
 	kind, err := settings.NewDealerConfigReader(pool).BoxKind(ctx)
 	if err != nil {
@@ -180,49 +210,54 @@ func financeBoxReverseGuard(ctx context.Context, pool *pgxpool.Pool) error {
 	return fmt.Errorf("finance box: this database's %s is %s, so the environment must state %s=%s, APP_ENV=staging and %s=%s: the box statement cannot be lost or reversed, and the box refuses to serve a finance world that does not claim itself", settings.KeyBoxKind, boxKindFinance, envBoxKind, boxKindFinance, envSigninMode, signinConsole)
 }
 
-// financeBoxDatabaseShape reads the database's shape in three facts: whether
+// financeBoxDatabaseShape reads the database's shape in four facts: whether
 // the migration bookkeeping is there (this tree's migrations were applied),
-// how many tables the user schemas hold all told, and whether a user schema
-// outside public and the box's own bootstrap mark is present. The
-// bookkeeping read is the migrate runner's own (roles_oneshot.go), so the
-// guard never spells the query itself; the guard must never treat a world
-// it cannot read as empty, and a world that keeps its tables in a schema of
-// its own is not empty either.
-func financeBoxDatabaseShape(ctx context.Context, pool *pgxpool.Pool) (bookkeeping bool, tables int, foreignSchema bool, err error) {
+// how many tables the user schemas hold all told, how many large objects the
+// database holds, and whether a user schema outside public and the box's own
+// bootstrap mark is present. The bookkeeping read is the migrate runner's
+// own (roles_oneshot.go), so the guard never spells the query itself; the
+// guard must never treat a world it cannot read as empty, and a world that
+// keeps its tables in a schema of its own, or its data in a large object, is
+// not empty either.
+func financeBoxDatabaseShape(ctx context.Context, pool *pgxpool.Pool) (bookkeeping bool, tables int, largeObjects int, foreignSchema bool, err error) {
 	_, present, err := MigrationsAppliedCount(ctx, pool)
 	if err != nil {
-		return false, 0, false, err
+		return false, 0, 0, false, err
 	}
 	tables, err = UserTableCount(ctx, pool)
 	if err != nil {
-		return false, 0, false, err
+		return false, 0, 0, false, err
+	}
+	largeObjects, err = LargeObjectCount(ctx, pool)
+	if err != nil {
+		return false, 0, 0, false, err
 	}
 	foreignSchema, err = ForeignUserSchemaPresent(ctx, pool)
 	if err != nil {
-		return false, 0, false, err
+		return false, 0, 0, false, err
 	}
-	return present, tables, foreignSchema, nil
+	return present, tables, largeObjects, foreignSchema, nil
 }
 
 // financeBoxDatabaseEmpty reports whether the database holds nothing yet: no
-// migration bookkeeping, no table in any user schema and no user schema
-// outside public and the box's own bootstrap mark. One definition, read here
-// by the boot guard and by the entrypoint's classifier (core
-// finance-box-state), so the two can never drift apart.
+// migration bookkeeping, no table in any user schema, no large object and no
+// user schema outside public and the box's own bootstrap mark. One
+// definition, read here by the boot guard and by the entrypoint's classifier
+// (core finance-box-state), so the two can never drift apart.
 func financeBoxDatabaseEmpty(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
-	bookkeeping, tables, foreignSchema, err := financeBoxDatabaseShape(ctx, pool)
+	bookkeeping, tables, largeObjects, foreignSchema, err := financeBoxDatabaseShape(ctx, pool)
 	if err != nil {
 		return false, err
 	}
-	return !bookkeeping && tables == 0 && !foreignSchema, nil
+	return !bookkeeping && tables == 0 && largeObjects == 0 && !foreignSchema, nil
 }
 
 // financeBoxDatabaseState is the database's state, the one definition the
 // entrypoint acts on:
 //
-//	empty     no bookkeeping, no table in any user schema and no user
-//	          schema outside public and the box's own bootstrap mark: a
-//	          fresh database.
+//	empty     no bookkeeping, no table in any user schema, no large object
+//	          and no user schema outside public and the box's own bootstrap
+//	          mark: a fresh database.
 //	unseeded  the box's own bootstrap mark is there, the box's own
 //	          bookkeeping is there and nothing is marked and the seed is not
 //	          applied: an interrupted first boot (the entrypoint marks the
@@ -232,26 +267,26 @@ func financeBoxDatabaseEmpty(ctx context.Context, pool *pgxpool.Pool) (bool, err
 //	          guards decide whether the seed may run.
 //	finance   the database is the finance box's own world.
 //	foreign   anything else: a world the box did not plant, a foreign
-//	          schema, a database marked as another box, or a migrated
-//	          unmarked database with no bootstrap mark. Recovery is the
-//	          mark's answer alone: a database the box never marked is
-//	          nobody's to heal, whatever its shape.
+//	          schema, a large object somebody else left here, a database
+//	          marked as another box, or a migrated unmarked database with no
+//	          bootstrap mark. Recovery is the mark's answer alone: a database
+//	          the box never marked is nobody's to heal, whatever its shape.
 //
 // The seed's own idempotency key (the same login core seed guards on) is
 // what says the seed is applied: a database that holds it holds the demo
 // world, which the box did not plant, so the box refuses it.
 func financeBoxDatabaseState(ctx context.Context, pool *pgxpool.Pool) (string, error) {
-	bookkeeping, tables, foreignSchema, err := financeBoxDatabaseShape(ctx, pool)
+	bookkeeping, tables, largeObjects, foreignSchema, err := financeBoxDatabaseShape(ctx, pool)
 	if err != nil {
 		return "", err
 	}
 	if !bookkeeping {
-		if tables == 0 && !foreignSchema {
+		if tables == 0 && largeObjects == 0 && !foreignSchema {
 			return financeBoxStateEmpty, nil
 		}
-		// Tables or a foreign schema but no bookkeeping: a foreign world. It
-		// is not empty (the box never migrates a database it did not create)
-		// and it is not the box's own.
+		// Tables, a large object or a foreign schema but no bookkeeping: a
+		// foreign world. It is not empty (the box never migrates a database
+		// it did not create) and it is not the box's own.
 		return financeBoxStateForeign, nil
 	}
 	kind, marked, err := settings.NewDealerConfigReader(pool).BoxKindMark(ctx)
@@ -331,22 +366,37 @@ func financeBoxCheckRole(getenv func(string) string) error {
 // standard output, so the entrypoint and the boot guard act on one
 // definition. The target banner goes to standard error, so the word is the
 // only thing on standard output. The role refuses on a database it cannot
-// read, and on nothing else: the foreign state is an answer, and the
-// entrypoint's own box kind check refuses it.
+// read, and on one more case: an empty database whose role cannot create
+// roles. That refusal is the empty branch's own check (the one the boot
+// guard runs too), and it belongs here because this role runs before the
+// entrypoint writes the bootstrap ownership mark: a fresh database must not
+// be marked and half migrated by a role that can never finish the migrate.
+// The foreign state is an answer, and the entrypoint's own box kind check
+// refuses it.
 func financeBoxStateRole(getenv func(string) string) error {
 	dsn, err := resolveOneshotDatabaseURL(getenv)
 	if err != nil {
-		return fmt.Errorf("finance-box-state: %w", err)
+		return err
 	}
 	printOneshotDatabaseTarget(os.Stderr, "finance-box-state", dsn)
 	pool, err := db.Connect(context.Background(), dsn)
 	if err != nil {
-		return fmt.Errorf("finance-box-state: cannot connect: %w", err)
+		return fmt.Errorf("cannot connect: %w", err)
 	}
 	defer pool.Close()
 	state, err := financeBoxDatabaseState(context.Background(), pool)
 	if err != nil {
-		return fmt.Errorf("finance-box-state: the database's shape could not be read: %w", err)
+		return fmt.Errorf("the database's shape could not be read: %w", err)
+	}
+	if state == financeBoxStateEmpty {
+		// The empty branch is the branch the entrypoint writes the
+		// bootstrap ownership mark into, and the mark goes in before the
+		// first migrate: the role is checked here, so a role that cannot
+		// create the assist roles leaves nothing behind at all: no mark, no
+		// migration row, no half migrated database.
+		if err := financeBoxEmptyBranchCheck(context.Background(), pool); err != nil {
+			return err
+		}
 	}
 	fmt.Println(state)
 	return nil
