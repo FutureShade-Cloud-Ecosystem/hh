@@ -23,13 +23,18 @@ const (
 	SaleDelivered    = "DELIVERED"
 )
 
-// stock_moves.move_type CHECK set (0005). The seams speak coarse IN/OUT; these are the ledger move types.
+// stock_moves.move_type CHECK set (0005, 0453). The seams speak coarse IN/OUT; these are the ledger move types.
 const (
 	MoveReceipt = "RECEIPT"
 	MoveShip    = "SHIP"
 	MoveCount   = "COUNT"
 	MoveAdjust  = "ADJUST"
 	MoveReturn  = "RETURN"
+	// MoveValue is the VALUE ONLY move (0453): a row that moves NO quantity and names NO location, and
+	// carries the SIGNED value a landed-cost capitalization, retro capitalization or restore moved. The
+	// close pre flight's stock tie unwinds it (W2-5B), so the stock side and account 1200 cut the event at
+	// the same instant. It is the only move type allowed to carry a zero quantity.
+	MoveValue = "VALUE"
 )
 
 // PO status vocabulary (0011 purchase_orders.status CHECK).
@@ -88,7 +93,15 @@ type poLine struct {
 	UnitCostCents int64
 }
 
-// moveParams is one stock_moves row the service composes (CAD; qty_base>0 with direction via from/to).
+// moveParams is one stock_moves row the service composes (CAD; qty_base>0 with direction via from/to, except
+// a VALUE move, which carries no quantity at all and names no location).
+// BalanceRow is one stock_balances row the branch holds for a product: the
+// location the row keys on and the on-hand quantity it carries.
+type BalanceRow struct {
+	LocationID string
+	OnHandBase float64
+}
+
 type moveParams struct {
 	ProductID     string
 	BranchID      string
@@ -103,6 +116,10 @@ type moveParams struct {
 	SourceRefID   string
 	Reason        string
 	Metadata      map[string]any
+	// OccurredAt is the instant the move happened. The zero value rides the row's own DEFAULT (now()).
+	// A VALUE move carries the instant its GL journal carries, so the two sides of the stock tie cut the
+	// event together (W2-5B).
+	OccurredAt time.Time
 }
 
 // - persistence seam (store) -
@@ -137,9 +154,14 @@ type store interface {
 	ExpireDueReservations(ctx context.Context, tx pgx.Tx) (int, error)
 
 	// ledger + read-model maintenance (inside the caller's tx)
+	// MovementInstant answers the transaction's OWN instant: the one instant a movement is
+	// dated at (nil tx = the pool). It is the store's method because the unit tests' fake
+	// store has no database and no transaction to read a clock from.
+	MovementInstant(ctx context.Context, tx pgx.Tx) (time.Time, error)
 	InsertMove(ctx context.Context, tx pgx.Tx, m moveParams) (string, error)
 	HasShipMovesForOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (bool, error)
 	OnHandQtyBranch(ctx context.Context, tx pgx.Tx, productID, branchID string) (float64, error)
+	BalanceRows(ctx context.Context, tx pgx.Tx, productID, branchID string) ([]BalanceRow, error)
 	UpsertBalanceDelta(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, delta float64) error
 	LockBranchCost(ctx context.Context, tx pgx.Tx, productID, branchID string) error
 	LockBalances(ctx context.Context, tx pgx.Tx, branchID string, productIDs []string) error
@@ -158,6 +180,7 @@ type store interface {
 	PendingFulfilments(ctx context.Context, branchID string) ([]PendingFulfilment, error)
 	SnapshotOnHand(ctx context.Context, tx pgx.Tx, branchID string) ([]CountSnapshot, error)
 	StockValueCents(ctx context.Context, tx pgx.Tx, branchID string) (int64, error)
+	StockValueAsOfCents(ctx context.Context, tx pgx.Tx, asOf time.Time, branchID string) (int64, error)
 	ReceivedLinesForPO(ctx context.Context, poID string) ([]ReceivedLine, error)
 }
 

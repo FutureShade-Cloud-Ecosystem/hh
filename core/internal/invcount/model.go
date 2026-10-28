@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -155,6 +156,11 @@ type countStore interface {
 	ListSheets(ctx context.Context, branchID, status string) ([]Sheet, error)
 	ListLines(ctx context.Context, sheetID string) ([]Line, error)
 	ReasonCodes(ctx context.Context) ([]ReasonCode, error)
+	// PostedInstant answers the instant the sheet's post committed at. It is the count's own
+	// instant: the posting transaction stamped the COUNT move it wrote and the sheet's post
+	// instant with the same transaction clock, so the variance journal dated with it is dated
+	// at the count's move (W2-5 fix r10, S5's P2-7).
+	PostedInstant(ctx context.Context, sheetID string) (time.Time, error)
 	// sheet lifecycle (own tx)
 	CreateSheet(ctx context.Context, branchID, scope, notes string) (Sheet, error)
 	FreezeSheet(ctx context.Context, sheetID string, snaps []Snapshot) error
@@ -232,7 +238,10 @@ func validateMakerChecker(s Sheet) error {
 // variance (found) debits inventory / credits the reason account; a negative variance (loss) does the reverse.
 // Legs that share an account are netted; the result balances by construction (Σ signed = 0). reasonAccounts
 // maps a reason code to its GL account. Lines with zero value or no reason are skipped.
-func buildAdjustmentJournal(sheetID, sheetNo, branchID, invAccount string, reasonAccounts map[string]string, lines []Line) (GLJournal, error) {
+//
+// at is the count's own instant, the one its COUNT move carries: the journal rides it as its document date, so
+// the two sides of one count are cut at the same moment (W2-5 fix r10, S5's P2-7).
+func buildAdjustmentJournal(sheetID, sheetNo, branchID, invAccount string, reasonAccounts map[string]string, lines []Line, at time.Time) (GLJournal, error) {
 	// net signed debit per account (positive = net debit, negative = net credit).
 	net := map[string]int64{}
 	any := false
@@ -284,6 +293,7 @@ func buildAdjustmentJournal(sheetID, sheetNo, branchID, invAccount string, reaso
 		IdempotencyKey: idempotencyKey(sheetID),
 		Memo:           "inventory count adjustment " + sheetNo,
 		BranchID:       branchID,
+		DocumentDate:   at,
 		Lines:          lines2,
 	}, nil
 }
