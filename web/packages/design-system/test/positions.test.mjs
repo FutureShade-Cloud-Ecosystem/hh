@@ -933,7 +933,7 @@ const isDomShimModule = (spec) => {
 const shimInstallOffences = (rel, records) => {
   const offences = [];
   const known = KNOWN_SHIM_INSTALL_SOURCES.has(rel);
-  for (const { spec, names, reexported } of records) {
+  for (const { spec, names, reexported, starReexport } of records) {
     if (!known) {
       if (spec.includes(INSTALLER_SPECIFIER_MARK)) {
         offences.push(`${rel}: ${spec}`);
@@ -949,6 +949,15 @@ const shimInstallOffences = (rel, records) => {
     // to any file that imports the guard, with neither gate seeing it.
     if (reexported.includes(INSTALLER_NAME)) {
       offences.push(`${rel}: ${spec} (re-exports ${INSTALLER_NAME})`);
+    }
+    // A star re-export lists no names, yet it hands every name the module
+    // has, the installer among them, to any file that imports this one, so
+    // the name-list checks above cannot see what leaves through it. A star
+    // re-export of the dom-shim module is an offence in any file, the
+    // exempt guard included; a star re-export of any other module stays
+    // the import list gate's ordinary business.
+    if (starReexport && isDomShimModule(spec)) {
+      offences.push(`${rel}: ${spec} (a star re-export: every name the module has leaves, ${INSTALLER_NAME} among them)`);
     }
   }
   return offences;
@@ -1034,6 +1043,8 @@ test('the shim inventory pin refuses a re-export of the installer from the exemp
     [`export { installWindowOnGlobal } from '@lit-labs/ssr/lib/dom-shim.js';`, 'a named re-export'],
     [`export { installWindowOnGlobal as install } from '@lit-labs/ssr/lib/dom-shim.js';`, 'a renamed re-export'],
     [`export { getWindow, installWindowOnGlobal } from '@lit-labs/ssr/lib/dom-shim.js';`, 'a re-export beside an allowed name'],
+    [`export * from '@lit-labs/ssr/lib/dom-shim.js';`, 'a star re-export'],
+    [`export * from '@lit-labs/ssr/lib/dom-shim';`, 'a star re-export of the extensionless spelling'],
   ];
   for (const [p, why] of planted) {
     const offences = shimInstallOffences(guard, importedSpecifiers(p, 'src/lit-dom-fetch-guard.ts'));
@@ -1048,6 +1059,7 @@ test('the shim inventory pin refuses a re-export of the installer from the exemp
   const quiet = [
     [`import { installWindowOnGlobal } from '@lit-labs/ssr/lib/dom-shim.js';`, 'the installer import itself'],
     [`export { getWindow } from '@lit-labs/ssr/lib/dom-shim.js';`, 'a re-export of a name that cannot install'],
+    [`export * from './fetch-capture.js';`, 'a star re-export of a module that is not the dom-shim'],
   ];
   for (const [p, why] of quiet) {
     const offences = shimInstallOffences(guard, importedSpecifiers(p, 'src/lit-dom-fetch-guard.ts'));
