@@ -245,6 +245,23 @@ func (s *RunsSyncStore) load(ctx context.Context, db runsQuerier, f sync.ScopeFi
 	return rs, true, err
 }
 
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// whether a run row the scope's keys can name still exists, for every
+// caller of the org at once. The org predicate alone, tombstone aware,
+// never the driver arm the caller's Load speaks.
+func (s *RunsSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || !looksLikeUUID(id) {
+		return false, nil
+	}
+	var present bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM delivery_runs WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL)`,
+		id, f.OrgID).Scan(&present); err != nil {
+		return false, fmt.Errorf("dispatch: runs sync bound entity exists: %w", err)
+	}
+	return present, nil
+}
+
 // runCreateFields is the field set a pushed create may declare on a
 // run: the row's own shape (id, branch, date, crew, notes) and nothing
 // else. A create cannot birth a run mid-flight: the birth row is

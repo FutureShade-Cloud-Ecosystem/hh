@@ -30,6 +30,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
@@ -233,6 +235,19 @@ func (s *messagesSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id str
 	return sync.RowState{ID: row.ID, Seq: seq, Data: data}, true, nil
 }
 
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// the message row stands, tombstone aware, for every caller at once. No
+// membership or room leg rides it, those being the caller's fence Load
+// speaks, and the gate may hide a key only for a live row a caller cannot
+// see. The module's tables keep no org column, so the bare row read is
+// the caller-independent answer the contract asks for.
+func (s *messagesSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || uuid.Validate(id) != nil {
+		return false, nil
+	}
+	return s.repo.syncMessageExists(ctx, id)
+}
+
 func (s *messagesSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
 	uid, ok := syncFeedUser(ctx, s.link, f)
 	if !ok {
@@ -332,6 +347,16 @@ func (s *acksSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string)
 	return sync.RowState{ID: row.ID, Seq: seq, Data: data}, true, nil
 }
 
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// the ack row stands, tombstone aware, for every caller at once, with no
+// user leg (whose ack it is being the caller's fence Load speaks).
+func (s *acksSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || uuid.Validate(id) != nil {
+		return false, nil
+	}
+	return s.repo.syncAckExists(ctx, id)
+}
+
 func (s *acksSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
 	uid, ok := syncFeedUser(ctx, s.link, f)
 	if !ok {
@@ -425,6 +450,16 @@ func (s *notifyPrefsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id 
 		return sync.RowState{}, false, err
 	}
 	return sync.RowState{ID: row.ID, Seq: seq, Data: data}, true, nil
+}
+
+// BoundEntityExists answers the bound key gate's existence half (UX-103):
+// the pref row stands, tombstone aware, for every caller at once, with no
+// user leg (whose row it is being the caller's fence Load speaks).
+func (s *notifyPrefsSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+	if f.Tenant || f.OrgID == "" || uuid.Validate(id) != nil {
+		return false, nil
+	}
+	return s.repo.syncPrefsExists(ctx, id)
 }
 
 // Create and Write share the one write a pref row admits: the module's own
