@@ -289,14 +289,14 @@ test("390 px phone layout: pickers fit within the card and a picker inside a car
   await page.locator('.surface-link[data-surface="pricing"]').click();
   await expect(page.locator('[data-test="pr-tab-select"]')).toBeVisible();
 
-  await page.locator('[data-test="pr-tab-select"]').selectOption("customers");
+  await page.locator('[data-test="pr-tab-select"]').selectOption({ label: "Customer prices" });
   await expect(page.locator('[data-picker="pr-cust-id"]')).toBeVisible();
   await page.locator('[data-picker-search="pr-cust-id"]').fill("Point Loma");
   await page.locator('[data-action="picker-choose"][data-picker-field="pr-cust-id"]').first().click();
   await page.locator('[data-action="pr-cust-load"]').click();
   await expect(page.locator('[data-test="pr-cust-count"]')).toHaveText("1 price");
 
-  await page.locator('[data-test="pr-tab-select"]').selectOption("rules");
+  await page.locator('[data-test="pr-tab-select"]').selectOption({ label: "Rules" });
   await page.locator('[data-action="pr-rule-edit"]').first().click();
   await expect(page.locator('[data-test="pr-rule-editor"]')).toBeVisible();
 

@@ -47,9 +47,8 @@ export const pickerStyles = css`
   .picker-current {
     font-weight: 600;
     color: var(--hh-text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    min-width: 0;
+    overflow-wrap: break-word;
   }
 
   .picker-current.picker-empty {
