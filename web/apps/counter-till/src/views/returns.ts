@@ -362,12 +362,13 @@ export const returnsStyles = css`
     width: 100%;
     min-height: 48px;
   }
-  /* The one disabled rule the till uses (Complete sale): no fill, grey ink and line, no fade. */
+  /* The one disabled rule the till uses (Complete sale): the grey token swap, never a fade and
+     never a brand fill. */
   .returns button:disabled,
   .returns button:disabled:hover {
-    background: transparent;
-    border-color: var(--hos-line);
-    color: var(--hos-text-dim);
+    background: var(--hh-disabled-fill);
+    border-color: var(--hh-disabled-line);
+    color: var(--hh-disabled-ink);
     opacity: 1;
     cursor: not-allowed;
   }
