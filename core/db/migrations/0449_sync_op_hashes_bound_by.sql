@@ -1,0 +1,22 @@
+-- 0449_sync_op_hashes_bound_by.sql
+-- Owner module: internal/sync (the engine's idempotency body ledger, 0389's one table).
+--
+-- UX-103 round 4: the ledger learns WHO bound the key. bound_by is the scope filter's actor (the
+-- platform subject the middleware stamped on the push that first applied the key), written by the
+-- engine's Remember beside the body hash. The bound key gate reads it for one question: is the
+-- replaying caller the binder? The binder's replay keeps the bound answer whatever its own Load
+-- then says (an order can move branch after the key applied, and a store whose Load fences on a
+-- branch stamped at create time hides the row from its own creator; hiding there would send the
+-- replay down the plain path, where a create fence reading the order's CURRENT branch applies the
+-- key a second time). A caller who is NOT the binder who cannot see the live entity is refused
+-- with the seam's row not found, and the engine never reaches store.Create for a bound key whose
+-- entity exists.
+--
+-- Nullable with no backfill, the pre ledger keys' own seam: a row with NULL bound_by was bound
+-- before this migration and its binder is unknowable, so its key keeps the bound answer for every
+-- caller, the gate failing toward idempotency exactly as it does for a store that cannot answer
+-- existence. Those rows age out with the keys they hold.
+--
+-- Additive: one nullable column, nothing read or changed by any running writer.
+
+ALTER TABLE sync_op_hashes ADD COLUMN bound_by TEXT;
