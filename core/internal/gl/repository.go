@@ -1629,27 +1629,50 @@ func (r *Repository) headOfficeFallback() string {
 	return DefaultHeadOfficeBranchID
 }
 
+// headOfficeBranchCode is the yard code the head office default reads by (ruling 162, kept by
+// FW1-08b part B): the fallback answers the live branch whose code is TRT, never a fixed uuid.
+const headOfficeBranchCode = "TRT"
+
 // HeadOfficeBranchID answers the head office branch the company level lines
-// stamp (ruling 82.3): reads gl_policy (org default row) and falls back to
-// Trenton (TRT, DefaultHeadOfficeBranchID).
+// stamp (ruling 82.3): reads gl_policy (org default row) first; when no row
+// answers or the setting is empty, the default reads TRT by code through the
+// branch facts seam and refuses in words when no branch answers
+// (FW1-08b part B, FROM-PRINCIPAL 176). A repository built without the seam
+// (unit scaffolds, offline mode) keeps the fixed Trenton uuid stand-in.
 func (r *Repository) HeadOfficeBranchID(ctx context.Context) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
 	}
-	fallback := r.headOfficeFallback()
 	var id string
 	err := r.pool.QueryRow(ctx,
-		`SELECT COALESCE(NULLIF(to_jsonb(p)->>'head_office_branch_id', ''), $1)
+		`SELECT COALESCE(NULLIF(to_jsonb(p)->>'head_office_branch_id', ''), '')
 		   FROM gl_policy p
 		  WHERE p.branch_id IS NULL
-		  LIMIT 1`, fallback).Scan(&id)
+		  LIMIT 1`).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return fallback, nil
-	}
-	if err != nil {
+		id = ""
+	} else if err != nil {
 		return "", fmt.Errorf("gl: head office branch: %w", err)
 	}
-	return id, nil
+	if id != "" {
+		return id, nil
+	}
+	if r.branchFacts == nil {
+		return r.headOfficeFallback(), nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("gl: head office branch begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	byCode, ok, err := r.branchFacts.BranchRowByCodeTx(ctx, tx, headOfficeBranchCode)
+	if err != nil {
+		return "", fmt.Errorf("gl: head office branch by code: %w", err)
+	}
+	if !ok {
+		return "", unprocessable("gl: no head office branch: no live branch carries the %s code and gl_policy sets no head office branch; the Financial Controller sets one with SetHeadOfficeBranch", headOfficeBranchCode)
+	}
+	return byCode, nil
 }
 
 // SetHeadOfficeBranch updates the head office branch in gl_policy (org default row)
