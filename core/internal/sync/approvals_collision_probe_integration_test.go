@@ -11,8 +11,9 @@
 // 1): a card the caller may not read read as absent, so a colliding id
 // answered "sync: row not found" where it answered "sync: row already
 // exists". The quotes scope, changed in the same PR, kept its collision
-// answer through an org-held read (quote/syncscope.go's loadOrgHeld), and
-// the probe's own comment still described that rule.
+// answer through an org-held read (quote/syncscope.go's load, the collision
+// probe's read over a querier), and the probe's own comment still described
+// that rule.
 //
 // The leg: an org caller who may not read the card, creating with its id,
 // gets the collision, and no row is written.

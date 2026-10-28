@@ -488,19 +488,25 @@ func (s *ApprovalsSyncStore) BoundEntityExists(ctx context.Context, f sync.Scope
 	return present, nil
 }
 
-// loadOrgHeld reads one request under the org fence alone, the collision
-// probe's read: the row is the caller's own org's fact, whatever branch it
-// sits on, so a client-chosen id taken inside the org answers ErrRowExists
-// (the pick door's rule, PR 648's collision arm). The reader does not ride
-// here: the probe answers whether the id is taken, not what it holds, and a
-// withdrawn request still holds its id.
-func (s *ApprovalsSyncStore) loadOrgHeld(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
+// load reads one request under the org fence alone, the collision
+// probe's read over a querier: the row is the caller's own org's fact,
+// whatever branch it sits on, so a client-chosen id taken inside the org
+// answers ErrRowExists (the pick door's rule, PR 648's collision arm). The
+// reader does not ride here: the probe answers whether the id is taken, not
+// what it holds, and a withdrawn request still holds its id.
+//
+// The querier is the caller's: the conflict arm passes the transaction it
+// already holds, so the read rides that connection instead of asking the
+// shared pool for a second one (connection starvation by second acquisition,
+// when pool-size creates collide). The public Load is a different question
+// (it carries the caller's reader), so it keeps its own read.
+func (s *ApprovalsSyncStore) load(ctx context.Context, q approvalRowQuerier, f sync.ScopeFilter, id string) (bool, error) {
 	where, args, ok := approvalScopePredicate(f)
 	if !ok || !approvalLooksLikeUUID(id) {
 		return false, nil
 	}
 	var present bool
-	if err := s.pool.QueryRow(ctx,
+	if err := q.QueryRow(ctx,
 		`SELECT EXISTS (SELECT 1 FROM permission_approval_requests a WHERE a.id = $2::uuid AND `+where+`)`,
 		append(args, id)...).Scan(&present); err != nil {
 		return false, fmt.Errorf("identity: approvals sync load org held: %w", err)
@@ -647,12 +653,11 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 		// answers whether the id is taken, not what the row holds, so a
 		// card the caller may not read still answers the collision
 		// inside its own org (UX-108 round 2, the quotes scope's rule).
-		// Nothing was written, so the transaction ends first: the
-		// read-back goes through the pool, and asking it for a second
-		// connection while this one is held starves the pool once
-		// pool-size creates collide.
-		_ = tx.Rollback(ctx)
-		if own, _ := s.loadOrgHeld(ctx, f, id); own {
+		// The read-back rides the transaction this create already holds,
+		// so the arm never asks the shared pool for a second connection
+		// while it holds one (connection starvation by second
+		// acquisition, when pool-size creates collide).
+		if own, _ := s.load(ctx, tx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound

@@ -316,19 +316,26 @@ func (s *SyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, i
 	return present, nil
 }
 
-// loadOrgHeld reads one quote under the org predicate alone, the collision
-// probe's read: the row is the caller's own org's fact, whatever branch it
-// sits on, so a client-chosen id taken inside the org answers ErrRowExists
-// (the pick door's rule, PR 648's collision arm). The read rung does not
-// ride here: the probe answers whether the id is taken, not what it holds.
-func (s *SyncStore) loadOrgHeld(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+// load reads one quote under the org predicate alone, the collision
+// probe's read over a querier: the row is the caller's own org's fact,
+// whatever branch it sits on, so a client-chosen id taken inside the org
+// answers ErrRowExists (the pick door's rule, PR 648's collision arm). The
+// read rung does not ride here: the probe answers whether the id is taken,
+// not what it holds.
+//
+// The querier is the caller's: the conflict arm passes the transaction it
+// already holds, so the read rides that connection instead of asking the
+// shared pool for a second one (connection starvation by second acquisition,
+// when pool-size creates collide). The public Load is a different question
+// (it carries the caller's read rung), so it keeps its own read.
+func (s *SyncStore) load(ctx context.Context, q rowQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
 	where, args, ok := quoteScopePredicate(f)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
 	}
-	q := fmt.Sprintf(`SELECT %s FROM quotes WHERE id = $2::uuid AND %s`, syncColumns, where)
+	query := fmt.Sprintf(`SELECT %s FROM quotes WHERE id = $2::uuid AND %s`, syncColumns, where)
 	args = append(args, id)
-	r, err := scanSyncRow(s.pool.QueryRow(ctx, q, args...))
+	r, err := scanSyncRow(q.QueryRow(ctx, query, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, false, nil
 	}
@@ -480,12 +487,12 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The ON CONFLICT arm answered no row: the client-chosen id is
 		// taken, answered as the caller's own fact inside the org and
-		// not-found outside it (existence never leaks). Nothing was
-		// written, so the transaction ends first: the read-back goes
-		// through the pool, and asking it for a second connection while
-		// this one is held starves the pool once pool-size creates collide.
-		_ = tx.Rollback(ctx)
-		if _, own, _ := s.loadOrgHeld(ctx, f, id); own {
+		// not-found outside it (existence never leaks). The read-back
+		// rides the transaction this create already holds, so the arm
+		// never asks the shared pool for a second connection while it
+		// holds one (connection starvation by second acquisition, when
+		// pool-size creates collide).
+		if _, own, _ := s.load(ctx, tx, f, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound
