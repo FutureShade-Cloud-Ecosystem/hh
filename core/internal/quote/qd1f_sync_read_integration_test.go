@@ -1,11 +1,12 @@
 //go:build integration
 
 // qd1f_sync_read_integration_test.go is the quotes sync door's read rung at
-// the store seam (P2-C, round 4): Load and FindApplied feed a conflict
-// envelope and a replayed answer, so the projection of a quote the caller
-// could not list through REST must not leave them, while the id and seq the
-// engine's stale check needs still do. The by-request legs sit in cmd/core
-// (qd1f_quote_sync_door_test.go); this leg injects configurations.
+// the store seam (P2-C, round 4; UX-108): Load and FindApplied feed a
+// conflict envelope and a replayed answer, so a quote the caller could not
+// list through REST must not leave them at all. The door answers not found
+// for such a row, the answer an absent row gives: a masked found would tell
+// the engine that an unreadable row is visible. The by-request legs sit in
+// cmd/core (qd1f_quote_sync_door_test.go); this leg injects configurations.
 package quote
 
 import (
@@ -17,7 +18,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
-func TestQD1F_SyncLoadAndFindAppliedCarryNoProjectionOfAnUnreadableQuote(t *testing.T) {
+func TestQD1F_SyncLoadAndFindAppliedAnswerNotFoundForAnUnreadableQuote(t *testing.T) {
 	f := newSyncFixture(t)
 	ctx := context.Background()
 	managerID, ok := linkedSyncUser(f.pool)(ctx, testkit.SubSalesManager)
@@ -36,21 +37,35 @@ func TestQD1F_SyncLoadAndFindAppliedCarryNoProjectionOfAnUnreadableQuote(t *test
 		t.Fatalf("plant quote: %v", err)
 	}
 	as := func(sub string) sync.ScopeFilter { return sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: sub} }
-	read := func(name, sub string, wantData bool) {
+	read := func(name, sub string, wantFound bool) {
 		t.Helper()
 		rs, found, err := f.store.Load(ctx, as(sub), quoteID)
-		if err != nil || !found || rs.Seq != 1 {
-			t.Fatalf("%s: load answered %+v found %v err %v, want the row's id and seq", name, rs, found, err)
+		if err != nil {
+			t.Fatalf("%s: load failed: %v", name, err)
 		}
-		if (rs.Data != nil) != wantData {
-			t.Errorf("%s: load projection present %v, want %v", name, rs.Data != nil, wantData)
+		if found != wantFound {
+			t.Errorf("%s: load answers found %v, want %v (%+v)", name, found, wantFound, rs)
+		}
+		if wantFound {
+			if rs.Data == nil {
+				t.Errorf("%s: the reader's load carries no projection", name)
+			}
+		} else if rs.ID != "" || rs.Seq != 0 || rs.Data != nil || rs.Deleted {
+			t.Errorf("%s: the unreadable load answer is not the absent row's answer: %+v", name, rs)
 		}
 		rs, found, err = f.store.FindApplied(ctx, as(sub), key)
-		if err != nil || !found {
-			t.Fatalf("%s: find applied answered %+v found %v err %v", name, rs, found, err)
+		if err != nil {
+			t.Fatalf("%s: find applied failed: %v", name, err)
 		}
-		if (rs.Data != nil) != wantData {
-			t.Errorf("%s: find applied projection present %v, want %v", name, rs.Data != nil, wantData)
+		if found != wantFound {
+			t.Errorf("%s: find applied answers found %v, want %v (%+v)", name, found, wantFound, rs)
+		}
+		if wantFound {
+			if rs.Seq != 1 {
+				t.Errorf("%s: the reader's key answers with the row's seq: got %v want 1", name, rs.Seq)
+			}
+		} else if rs.ID != "" || rs.Seq != 0 || rs.Data != nil || rs.Deleted {
+			t.Errorf("%s: the unreadable find applied answer is not the absent key's answer: %+v", name, rs)
 		}
 	}
 

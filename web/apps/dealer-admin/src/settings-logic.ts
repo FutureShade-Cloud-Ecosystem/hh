@@ -10,6 +10,7 @@
 // constants. The client's copies only spare a round trip; the server's own
 // 4xx stays the last word and is shown whole.
 import type { BranchRow } from "./dealer-api.js";
+import { UNKNOWN_ACTOR } from "./placeholders.js";
 
 // -- the card rail -----------------------------------------------------------------------------------
 
@@ -104,11 +105,13 @@ export function policyHistoryRefusalWords(error: string, status: number | undefi
 }
 
 /**
- * One policy history row's who: the actor id's own block, the way the audit
- * trail's actor cell reads, or somebody when the row carries no name.
+ * One policy history row's who: the actor's name when the trail carries one.
+ *
+ * UX-106 round 3: a row that carries only an id reads as the house
+ * placeholder word, never as the id's own first block.
  */
 export function policyHistoryWho(who: string): string {
-  return who === "" ? "somebody" : who.slice(0, 8);
+  return who === "" ? "somebody" : UNKNOWN_ACTOR;
 }
 
 // -- the walkthrough ----------------------------------------------------------------------------------

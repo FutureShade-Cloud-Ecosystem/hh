@@ -8,6 +8,7 @@
 // submitCreate and staff-reset.ts's own predicates; PROVENANCE.md carries the
 // row per rule.
 import type { BranchRow, RoleRow } from "./dealer-api.js";
+import { UNKNOWN_BRANCH } from "./placeholders.js";
 
 // -- the words a state carries ----------------------------------------------------------------------
 
@@ -81,14 +82,34 @@ export interface BranchChip {
 
 /**
  * The chips a staff row shows for its branch grants: the yard name when the
- * branches route knows the id, the id's own first block when it does not.
+ * branches route knows the id.
+ *
+ * UX-106 round 3: a branch the route does not know reads as the house
+ * placeholder word, never as the id's own first block ("9a11e111"). A dealer
+ * cannot look up a fragment of an id, and a made up yard name would be a lie
+ * they believe and act on. The word says what is unknown and nothing more.
+ *
  * Render only: this decides what a chip says, never who may edit it.
  */
 export function branchChips(branchIds: readonly string[], branches: readonly BranchRow[]): BranchChip[] {
   return (branchIds ?? []).map((id) => {
     const hit = branches.find((b) => b.id === id);
-    return hit === undefined ? { label: id.slice(0, 8), known: false } : { label: shortBranch(hit.name), known: true };
+    return hit === undefined ? { label: UNKNOWN_BRANCH, known: false } : { label: shortBranch(hit.name), known: true };
   });
+}
+
+/**
+ * A branch's name as a dealer reads it: the yard's own short name when the
+ * branches route knows the id, else the house placeholder word.
+ *
+ * UX-106 round 4: the audit drawer's branch row names the branch through this
+ * same lookup, so the register and the trail say the same yard the same way.
+ * An empty id is no branch at all, and it says nothing rather than "unknown".
+ */
+export function branchName(branchId: string, branches: readonly BranchRow[]): string {
+  if (branchId === "") return "";
+  const hit = branches.find((b) => b.id === branchId);
+  return hit === undefined ? UNKNOWN_BRANCH : shortBranch(hit.name);
 }
 
 // -- the create form ---------------------------------------------------------------------------------
