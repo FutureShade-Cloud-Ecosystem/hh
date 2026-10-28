@@ -116,3 +116,27 @@ test("the status filters keep working on the loaded window", async ({ page, requ
   await expect(register.getByRole("button", { name: "JE-0005" })).toBeVisible();
   await expect(register.getByRole("button", { name: "JE-0101" })).toHaveCount(0);
 });
+
+test("a refused range read keeps the shown range, and the same dates can be tried again", async ({ page, request }) => {
+  await openRegister(page, request);
+  const register = page.getByRole("table", { name: "Journal register" });
+  await expect(register.getByRole("button", { name: "JE-0137" })).toBeVisible();
+  // The first June read is refused, as a lost or failing core would answer it.
+  let refused = false;
+  await page.route("**/api/v1/gl/journals?**date_from=2025-06-01**", (route) => {
+    if (refused) return route.fallback();
+    refused = true;
+    return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "unavailable" }) });
+  });
+  await page.locator('[data-field="journal-from"]').fill("2025-06-01");
+  await page.locator('[data-field="journal-to"]').fill("2025-06-30");
+  await page.getByRole("button", { name: "Apply dates" }).click();
+  await expect.poll(() => refused).toBe(true);
+  // The old window stays, and nothing on screen claims it is June's.
+  await expect(register.getByRole("button", { name: "JE-0137" })).toBeVisible();
+  await expect(page.locator("[data-range-words]")).toHaveCount(0);
+  // The same dates, pressed again, are read again and land.
+  await page.getByRole("button", { name: "Apply dates" }).click();
+  await expect(register.locator("tbody tr")).toHaveCount(11);
+  await expect(register.getByRole("button", { name: "JE-0106" })).toBeVisible();
+});
