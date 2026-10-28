@@ -128,7 +128,7 @@ func TestIntegration_JournalTx_RefusalLeavesTheCallerUsable(t *testing.T) {
 	pool, svc := journalTxSetup(t)
 	user := aUser(t, pool)
 	closed := periodID(t, pool, journalTxYear, 3)
-	if _, err := NewRepository(pool).ClosePeriod(ctx, closed, user, "journal tx leg"); err != nil {
+	if _, err := NewRepository(pool).ClosePeriod(ctx, closed, user, "journal tx leg", nil); err != nil {
 		t.Fatalf("close period: %v", err)
 	}
 	okKey := fmt.Sprintf("jtx-ok-%d", time.Now().UnixNano())

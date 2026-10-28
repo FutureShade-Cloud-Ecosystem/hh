@@ -61,7 +61,10 @@ type glStore interface {
 	// year's audit takes to name the opened year's January period (round 4, S2's P1: the audit row
 	// must carry a uuid; the year itself rides Extra).
 	FiscalPeriodIDTx(ctx context.Context, tx pgx.Tx, year, month int) (string, error)
-	ClosePeriod(ctx context.Context, id, actorID, reason string) (Period, error)
+	// ClosePeriod seals the period and runs the record callback INSIDE the close's own
+	// transaction, so the audit row commits or rolls back with the seal (FW1-09g, S2's P3
+	// on 614: a refused audit holds the close, the way the year end close's row holds it).
+	ClosePeriod(ctx context.Context, id, actorID, reason string, record func(ctx context.Context, tx pgx.Tx) error) (Period, error)
 	ReopenPeriod(ctx context.Context, id, actorID, reason string) (Period, error)
 	ClosePeriodsForYear(ctx context.Context, year int, actorID, reason string) error
 	// EnsureNextFiscalYear idempotently makes sure the year AFTER THE CURRENT HOUSE YEAR exists (round 2,
@@ -79,6 +82,13 @@ type glStore interface {
 	BeginTx(ctx context.Context) (pgx.Tx, error)
 	// ClosingJournalsForYearTx is the once only check read under the year end's lock.
 	ClosingJournalsForYearTx(ctx context.Context, tx pgx.Tx, year int) ([]string, int64, error)
+	// YearEndCloseMarkerTx answers whether the year carries its marker, read on the
+	// caller's transaction under the year end's lock: the close's ONE once only signal for
+	// every shape of the books (FW1-09g). A row means the year was closed already.
+	YearEndCloseMarkerTx(ctx context.Context, tx pgx.Tx, year int) (bool, error)
+	// InsertYearEndCloseMarkerTx writes the marker in the close's own transaction, so the
+	// record of the act lands with the close or with nothing at all (FW1-09g).
+	InsertYearEndCloseMarkerTx(ctx context.Context, tx pgx.Tx, year int, closedBy, reason string) error
 	// YearPeriodsTx answers how many periods the year has and how many of them are already
 	// CLOSED, read on the caller's transaction under the year end's lock: the year end's own
 	// seal, and the only marker a year with NO P&L leaves, because such a close posts no
