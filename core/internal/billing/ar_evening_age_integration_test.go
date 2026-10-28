@@ -178,12 +178,15 @@ func TestIntegrationEveningAge_AnInvoiceFinalizedNowIsOnTheBooksAndTiesToGL1100(
 	if posted == 0 {
 		t.Fatalf("the finalize event never posted its journal")
 	}
-	var postedAt time.Time
-	if err := pool.QueryRow(ctx, `SELECT posted_at FROM gl_journals WHERE idempotency_key = $1`, key).Scan(&postedAt); err != nil {
+	var postedAt, dbNow time.Time
+	if err := pool.QueryRow(ctx, `SELECT posted_at, now() FROM gl_journals WHERE idempotency_key = $1`, key).Scan(&postedAt, &dbNow); err != nil {
 		t.Fatalf("read the journal's posted_at: %v", err)
 	}
-	if postedAt.After(time.Now()) {
-		t.Fatalf("the journal posted at %s, after now: an invoice finalized now is on the books now", postedAt.Format(time.RFC3339))
+	if postedAt.After(dbNow) {
+		t.Fatalf("the journal posted at %s, after now (%s): an invoice finalized now is on the books now", postedAt.Format(time.RFC3339), dbNow.Format(time.RFC3339))
+	}
+	if postedDay := houseday.Today(func() time.Time { return postedAt }); postedDay != houseDay {
+		t.Fatalf("the journal posted on house day %s, want %s: an invoice finalized now posts on the dealer's day", postedDay, houseDay)
 	}
 
 	gl1, tie1, aging1 := figures()
