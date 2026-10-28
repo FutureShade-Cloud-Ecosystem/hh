@@ -166,6 +166,56 @@ type TillPolicy struct {
 	RequireBlindClose      bool   `json:"require_blind_close"`
 }
 
+// - the counter reason codes (W2-6b, migration 0451) -
+//
+// A branch keeps a list of the codes the drawer names on a paid in or a paid out. Each code carries
+// the label the drawer sees, the movement kind it may be used for, the GL account the movement posts
+// to, and whether the code is live. The list is per branch, so the same code string can sit on two
+// branches pointing at different accounts.
+
+const (
+	// ReasonKindPaidIn is a code a paid in may name.
+	ReasonKindPaidIn = "PAID_IN"
+	// ReasonKindPaidOut is a code a paid out may name.
+	ReasonKindPaidOut = "PAID_OUT"
+	// ReasonKindBoth is a code either direction may name (a customer cash refund correction is
+	// money in when the customer overpays and money out when the till hands it back).
+	ReasonKindBoth = "BOTH"
+)
+
+// ReasonCode is one row of a branch's counter reason code list.
+type ReasonCode struct {
+	ID            string    `json:"id"`
+	BranchID      string    `json:"branch_id"`
+	Code          string    `json:"code"`
+	Label         string    `json:"label"`
+	MovementKind  string    `json:"movement_kind"`
+	GLAccountCode string    `json:"gl_account_code"`
+	Active        bool      `json:"active"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// ReasonCodeInput is a code a manager adds to a branch's list.
+type ReasonCodeInput struct {
+	BranchID      string `json:"branch_id"`
+	Code          string `json:"code"`
+	Label         string `json:"label"`
+	MovementKind  string `json:"movement_kind"`
+	GLAccountCode string `json:"gl_account_code"`
+	// Active leaves the new code live unless the caller says otherwise.
+	Active *bool `json:"active"`
+}
+
+// ReasonCodeEdit is a change to a row the list already holds. A nil field keeps the value the row
+// carries, so an edit turns a code off without touching its label or its account.
+type ReasonCodeEdit struct {
+	Label         *string `json:"label"`
+	MovementKind  *string `json:"movement_kind"`
+	GLAccountCode *string `json:"gl_account_code"`
+	Active        *bool   `json:"active"`
+}
+
 // ZReport is the expected vs actual vs over/short, revealed AFTER count (start float in the cash math).
 type ZReport struct {
 	SessionID         string        `json:"session_id"`
@@ -283,13 +333,17 @@ type OpenTillInput struct {
 // deposit slip (FROM-PRINCIPAL 128): the names are optional, and when given they must add up to the
 // slip's amount, every name on this drawer, this method, still RECEIVED and not reversed.
 type MovementInput struct {
-	TillSessionID string   `json:"-"`
-	MovementType  string   `json:"movement_type"`
-	Method        string   `json:"method"`
-	AmountCents   int64    `json:"amount_cents"`
-	Reason        string   `json:"reason"`
-	Reference     string   `json:"reference"`
-	PaymentIDs    []string `json:"payment_ids"`
+	TillSessionID string `json:"-"`
+	MovementType  string `json:"movement_type"`
+	Method        string `json:"method"`
+	AmountCents   int64  `json:"amount_cents"`
+	Reason        string `json:"reason"`
+	// ReasonCode names the branch's counter reason code this movement is (W2-6b): the code says
+	// what the money is, and the code points at the GL account the movement posts to. It is the
+	// branch's own code string, not the list row's id, so the drawer names what it sees.
+	ReasonCode string   `json:"reason_code"`
+	Reference  string   `json:"reference"`
+	PaymentIDs []string `json:"payment_ids"`
 }
 
 // CountInput is the blind per-tender actuals (+ optional CLOSE denominations).
@@ -450,10 +504,14 @@ type MovementRow struct {
 	Method        string
 	AmountCents   int64
 	Reason        string
-	Reference     string
-	CreatedBy     string
-	CreatedAt     time.Time
-	PaymentIDs    []string
+	// ReasonCodeID is the list row the movement names (W2-6b): the movement points at the branch's
+	// counter reason code, and the posting reads the account from that row at post time. Empty means
+	// the movement names no code, which still posts to 9999 Suspense.
+	ReasonCodeID string
+	Reference    string
+	CreatedBy    string
+	CreatedAt    time.Time
+	PaymentIDs   []string
 }
 
 // SlipPayment is one named payment's read for a lodgement's deposit slip validation.

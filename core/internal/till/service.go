@@ -3,6 +3,7 @@ package till
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -50,6 +51,24 @@ type tillStore interface {
 	// so the GL over/short journal posts exactly once (W5/A-05 AC9).
 	SetCompleted(ctx context.Context, sessionID, branchID, completedBy string, at time.Time, overShortCents, countedCashCents int64, overrideNotes string) error
 	Policy(ctx context.Context, branchID string) (TillPolicy, error)
+
+	// - the counter reason codes (W2-6b, migration 0451) -
+	// ReasonCodes reads a branch's counter reason code list, live rows and turned off rows alike.
+	ReasonCodes(ctx context.Context, branchID string) ([]ReasonCode, error)
+	// ReasonCodeFor resolves the code a movement names on this branch. found=false is an ordinary
+	// answer: the branch does not carry that code.
+	ReasonCodeFor(ctx context.Context, branchID, code string) (ReasonCode, bool, error)
+	// ReasonCodeByID reads one row of the list by its id. found=false is an ordinary answer.
+	ReasonCodeByID(ctx context.Context, id string) (ReasonCode, bool, error)
+	// HasActiveReasonCode reports whether the branch has a live code for that movement kind (a
+	// BOTH code counts for either direction). It answers the rule that a movement with no code
+	// stays legal only while the branch has no live code for that kind.
+	HasActiveReasonCode(ctx context.Context, branchID, movementKind string) (bool, error)
+	// InsertReasonCode adds a code to a branch's list and answers its id.
+	InsertReasonCode(ctx context.Context, c ReasonCode) (string, error)
+	// UpdateReasonCode edits the row an edit names and answers how many rows moved (zero means
+	// the code is not on the list).
+	UpdateReasonCode(ctx context.Context, id string, e ReasonCodeEdit, at time.Time) (int, error)
 
 	// PaymentsForSlip reads the named payments for a lodgement's deposit slip validation: the id, the
 	// amount, the status and whether a reversal has stamped it, for the ids named, on this session and
@@ -570,6 +589,14 @@ func (s *Service) recordMovement(ctx context.Context, in MovementInput, mt strin
 			return err
 		}
 	}
+	// The counter reason code (W2-6b): a paid in or a paid out names the code that says what the
+	// money is, and the code points at the GL account the movement posts to, so the money never
+	// lands in 9999 Suspense unnamed. A movement with no code is today's movement and stays legal
+	// only while the branch has no live code for that direction.
+	reasonCodeID, err := s.resolveReasonCode(ctx, sess, mt, in.ReasonCode)
+	if err != nil {
+		return err
+	}
 	// One clock rules the transaction (FW1-13b, the 616 rule): the movement row, the slip's link
 	// rows and the journal the outbox carries all date from this instant, never from the created_at
 	// column default, so a pinned clock reaches the books.
@@ -580,6 +607,7 @@ func (s *Service) recordMovement(ctx context.Context, in MovementInput, mt strin
 		Method:        method,
 		AmountCents:   in.AmountCents,
 		Reason:        in.Reason,
+		ReasonCodeID:  reasonCodeID,
 		Reference:     in.Reference,
 		CreatedBy:     caller.UserID,
 		CreatedAt:     at,
@@ -940,6 +968,225 @@ func (s *Service) Policy(ctx context.Context, branchID string) (TillPolicy, erro
 		}
 	}
 	return s.store.Policy(ctx, branchID)
+}
+
+// - the counter reason codes (W2-6b, migration 0451) -
+
+// ListReasonCodes reads a branch's counter reason code list: the codes the drawer may name on a paid
+// in or a paid out, each with the GL account its movement posts to, live rows and turned off rows
+// alike so a manager can see what the branch used to allow.
+//
+// The branch wall: a caller reads the list of a branch it holds. The manager gate is the route's
+// business; here the fence is the branch itself.
+func (s *Service) ListReasonCodes(ctx context.Context, branchID string) ([]ReasonCode, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if branchID == "" {
+		return nil, unprocessable("till: branch_id is required")
+	}
+	if !caller.CanAccessBranch(branchID) {
+		return nil, forbidden("till: caller cannot access branch %s", branchID)
+	}
+	return s.store.ReasonCodes(ctx, branchID)
+}
+
+// CreateReasonCode adds a code to a branch's list.
+//
+// A branch manager curates the vocabulary their drawer speaks (the till's own policy read already
+// sits at the manager gate), and the Financial Controller passes the same gate and reaches every
+// branch through the branch fence. The code is stored as the branch's own, upper cased, so the drawer
+// names it the way the list shows it.
+func (s *Service) CreateReasonCode(ctx context.Context, in ReasonCodeInput) (ReasonCode, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return ReasonCode{}, err
+	}
+	// Backstop under the route's manager gate.
+	if !caller.IsManager() {
+		return ReasonCode{}, forbidden("till: a manager is required to edit the reason code list")
+	}
+	if in.BranchID == "" {
+		return ReasonCode{}, unprocessable("till: branch_id is required")
+	}
+	if !caller.CanAccessBranch(in.BranchID) {
+		return ReasonCode{}, forbidden("till: caller cannot access branch %s", in.BranchID)
+	}
+	code := strings.ToUpper(strings.TrimSpace(in.Code))
+	if code == "" {
+		return ReasonCode{}, unprocessable("till: reason code is required")
+	}
+	if strings.TrimSpace(in.Label) == "" {
+		return ReasonCode{}, unprocessable("till: label is required")
+	}
+	kind := strings.ToUpper(strings.TrimSpace(in.MovementKind))
+	switch kind {
+	case ReasonKindPaidIn, ReasonKindPaidOut, ReasonKindBoth:
+	default:
+		return ReasonCode{}, unprocessable("till: movement_kind must be %s, %s or %s", ReasonKindPaidIn, ReasonKindPaidOut, ReasonKindBoth)
+	}
+	account := strings.TrimSpace(in.GLAccountCode)
+	if account == "" {
+		return ReasonCode{}, unprocessable("till: gl_account_code is required")
+	}
+	active := true
+	if in.Active != nil {
+		active = *in.Active
+	}
+	at := s.now()
+	row := ReasonCode{
+		BranchID:      in.BranchID,
+		Code:          code,
+		Label:         strings.TrimSpace(in.Label),
+		MovementKind:  kind,
+		GLAccountCode: account,
+		Active:        active,
+		CreatedAt:     at,
+		UpdatedAt:     at,
+	}
+	id, err := s.store.InsertReasonCode(ctx, row)
+	if err != nil {
+		return ReasonCode{}, err
+	}
+	row.ID = id
+	return row, nil
+}
+
+// EditReasonCode edits a code the list already holds: its label, the direction it allows, the
+// account it points at, and whether it is live. A field the edit does not name keeps the value the
+// row carries, so turning a code off does not restate its label.
+//
+// The code keeps its own code string: the drawer names it, and a movement that named it keeps
+// pointing at the row.
+func (s *Service) EditReasonCode(ctx context.Context, id string, e ReasonCodeEdit) (ReasonCode, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return ReasonCode{}, err
+	}
+	// Backstop under the route's manager gate.
+	if !caller.IsManager() {
+		return ReasonCode{}, forbidden("till: a manager is required to edit the reason code list")
+	}
+	if strings.TrimSpace(id) == "" {
+		return ReasonCode{}, unprocessable("till: reason code id is required")
+	}
+	row, found, err := s.store.ReasonCodeByID(ctx, id)
+	if err != nil {
+		return ReasonCode{}, err
+	}
+	if !found {
+		return ReasonCode{}, errNotFound
+	}
+	if !caller.CanAccessBranch(row.BranchID) {
+		return ReasonCode{}, forbidden("till: caller cannot access branch %s", row.BranchID)
+	}
+	if e.Label != nil {
+		label := strings.TrimSpace(*e.Label)
+		if label == "" {
+			return ReasonCode{}, unprocessable("till: label is required")
+		}
+		row.Label = label
+	}
+	if e.MovementKind != nil {
+		kind := strings.ToUpper(strings.TrimSpace(*e.MovementKind))
+		switch kind {
+		case ReasonKindPaidIn, ReasonKindPaidOut, ReasonKindBoth:
+		default:
+			return ReasonCode{}, unprocessable("till: movement_kind must be %s, %s or %s", ReasonKindPaidIn, ReasonKindPaidOut, ReasonKindBoth)
+		}
+		row.MovementKind = kind
+	}
+	if e.GLAccountCode != nil {
+		account := strings.TrimSpace(*e.GLAccountCode)
+		if account == "" {
+			return ReasonCode{}, unprocessable("till: gl_account_code is required")
+		}
+		row.GLAccountCode = account
+	}
+	if e.Active != nil {
+		row.Active = *e.Active
+	}
+	at := s.now()
+	moved, err := s.store.UpdateReasonCode(ctx, row.ID, e, at)
+	if err != nil {
+		return ReasonCode{}, err
+	}
+	if moved == 0 {
+		// The row went between the read and the write. The edit did not happen, and saying it did
+		// would be a lie the drawer reads back as a changed account.
+		return ReasonCode{}, errNotFound
+	}
+	row.UpdatedAt = at
+	return row, nil
+}
+
+// resolveReasonCode resolves the code a movement names into the list row the movement carries.
+//
+// The rules, in the drawer's words:
+//   - a paid in or a paid out that names no code is legal only while the branch has no live code for
+//     that direction. Once the branch has one, the code is required: the money has to say what it
+//     is.
+//   - a code the branch does not carry is refused. It may be another branch's code, or nobody's; the
+//     drawer is told it is not one of this branch's codes.
+//   - a code that is turned off is refused.
+//   - a code that does not allow this direction is refused.
+//
+// A drop carries no journal of its own (its cash is still undeposited company cash), so a drop never
+// needs a code; a drop that names one still has to name a real one.
+func (s *Service) resolveReasonCode(ctx context.Context, sess TillSession, mt, code string) (string, error) {
+	kind := reasonKindForMovement(mt)
+	named := strings.ToUpper(strings.TrimSpace(code))
+	if kind == "" {
+		// A drop: no account, no code required.
+		if named == "" {
+			return "", nil
+		}
+	}
+	if named == "" {
+		has, err := s.store.HasActiveReasonCode(ctx, sess.BranchID, kind)
+		if err != nil {
+			return "", err
+		}
+		if !has {
+			// Today's movement: no code on this branch yet, so the money still lands in suspense.
+			return "", nil
+		}
+		if kind == ReasonKindPaidIn {
+			return "", unprocessable("till: this branch names its paid ins by reason code; name one")
+		}
+		return "", unprocessable("till: this branch names its paid outs by reason code; name one")
+	}
+	row, found, err := s.store.ReasonCodeFor(ctx, sess.BranchID, named)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", unprocessable("till: %s is not one of this branch's reason codes", named)
+	}
+	if !row.Active {
+		return "", unprocessable("till: %s is turned off on this branch", named)
+	}
+	if kind != "" && row.MovementKind != kind && row.MovementKind != ReasonKindBoth {
+		if kind == ReasonKindPaidIn {
+			return "", unprocessable("till: %s does not allow a paid in", named)
+		}
+		return "", unprocessable("till: %s does not allow a paid out", named)
+	}
+	return row.ID, nil
+}
+
+// reasonKindForMovement answers the direction a movement names a code for. A drop answers nothing:
+// it carries no journal, so it has no account and needs no code.
+func reasonKindForMovement(mt string) string {
+	switch mt {
+	case MovementPaidIn:
+		return ReasonKindPaidIn
+	case MovementPaidOut:
+		return ReasonKindPaidOut
+	default:
+		return ""
+	}
 }
 
 // - W5 A-05: NSF handling + credit holds + declined-attempt log -

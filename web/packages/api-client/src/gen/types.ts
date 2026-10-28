@@ -5676,6 +5676,31 @@ export type TillSlipCandidate = {
   method: "CASH" | "CHEQUE" | "CARD" | "EFT" | "OTHER";
   reference: string;
 };
+export type TillReasonCode = {
+  id: string;
+  branch_id: string;
+  code: string;
+  label: string;
+  movement_kind: "PAID_IN" | "PAID_OUT" | "BOTH";
+  gl_account_code: string;
+  active: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+export type TillReasonCodeInput = {
+  branch_id: string;
+  code: string;
+  label: string;
+  movement_kind: "PAID_IN" | "PAID_OUT" | "BOTH";
+  gl_account_code: string;
+  active?: boolean;
+};
+export type TillReasonCodeEdit = {
+  label?: string;
+  movement_kind?: "PAID_IN" | "PAID_OUT" | "BOTH";
+  gl_account_code?: string;
+  active?: boolean;
+};
 export type TillPolicy = {
   branch_id: string;
   variance_threshold_cents: number;
@@ -5724,6 +5749,7 @@ export type TillMovementInput = {
   amount_cents: number;
   reason: string;
   reference: string;
+  reason_code?: string;
 };
 export type TillTenderActual = {
   method: "CASH" | "CHEQUE" | "CARD" | "EFT" | "OTHER";

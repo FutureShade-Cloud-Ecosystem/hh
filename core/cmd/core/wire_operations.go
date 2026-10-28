@@ -154,6 +154,10 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	tillSvc := till.NewService(tillRepo).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc)
+	// W2-6b: the counter reason codes. The GL asks the till (the till owns the list) for the account
+	// a movement's reason code points at, so no GL statement names a till table. Unwired, a movement
+	// that names a code refuses to post rather than posting to suspense.
+	spine.glSvc.WithCounterAccounts(tillRepo)
 	tillHandler := till.NewHandler(tillSvc, log).WithUserLinker(link).WithCustomerReach(newCustomerWall(pool))
 	if !tillHandler.CustomerReachWired() {
 		panic("till: customer reach not wired - payment attempts would record against any named account")

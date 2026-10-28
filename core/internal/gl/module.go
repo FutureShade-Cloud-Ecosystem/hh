@@ -211,6 +211,16 @@ type TillDrawerReader interface {
 	OpenDrawers(ctx context.Context, from, to time.Time) (int, error)
 }
 
+// CounterAccountReader is the till side of the counter reason codes (W2-6b): the GL account a till
+// movement's reason code points at. The till owns the list of codes (migration 0451), so the gl asks
+// the till instead of reading a till table: the account resolves at post time from the movement's
+// own code. Satisfied by till.Repository, wired in cmd/core.
+type CounterAccountReader interface {
+	// CounterAccountCode answers the account code the named reason code points at, for that branch.
+	// found=false means the code is not on that branch, so the movement names no account.
+	CounterAccountCode(ctx context.Context, branchID, reasonCodeID string) (accountCode string, found bool, err error)
+}
+
 // OutboxQueueReader is the outbox side of the close pre flight: posting events for the month that are
 // still waiting (PENDING) or dead lettered (DEAD). Satisfied by notify.PgOutboxStore, wired in cmd/core.
 type OutboxQueueReader interface {
@@ -337,6 +347,7 @@ type Service struct {
 	strictPreFlight bool                 // round 4: production refuses a close when a pre flight check is unwired; tests may pass nil
 	queue           OutboxQueue          // the posting queue's rows: the waiting/dead events the Controller lists and the banner counts (nil-able: unwired, the queue reads refuse)
 	branchFacts     BranchFacts          // the branch facts the head office branch reads and writes check their answer through (unwired, the set refuses: fail closed)
+	counterAccounts CounterAccountReader // W2-6b: the till's counter reason codes and the account each points at (unwired, a movement that names a code refuses)
 	log             *slog.Logger
 	now             func() time.Time
 	callerFrom      func(context.Context) (identity.StaffContext, bool)
@@ -507,6 +518,14 @@ func (s *Service) WithStockReader(r StockValueReader) *Service { s.stockValue = 
 
 // WithDrawerReader injects the till seam the close pre flight's open drawer check reads (FW1-09b).
 func (s *Service) WithDrawerReader(r TillDrawerReader) *Service { s.drawers = r; return s }
+
+// WithCounterAccounts injects the till seam the counter reason codes resolve through (W2-6b): the
+// account a movement's code points at. Unwired, a movement that names a code refuses to post rather
+// than posting to suspense, so a missing wire is loud.
+func (s *Service) WithCounterAccounts(r CounterAccountReader) *Service {
+	s.counterAccounts = r
+	return s
+}
 
 // WithQueueReader injects the outbox seam the close pre flight's waiting/dead lettered check reads (FW1-09b).
 // It is the pre flight's OWN seam, distinct from the posting queue's read (WithPostingQueue): the pre flight
