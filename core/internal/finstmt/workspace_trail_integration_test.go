@@ -99,17 +99,30 @@ func TestIntegration_Workspace_TrailAndReach(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", code, body)
 		}
-		if strings.Contains(body, "41234") || strings.Contains(body, "CHEQUE") || strings.Contains(body, `"payments":`) {
-			t.Fatalf("payment detail leaked: %s", body)
+		// FLAKE-10: the check reads parsed fields, never the raw body. A raw substring hunt read the
+		// body's "as_of" timestamp's nanoseconds as the seeded payment's amount.
+		leaks, err := workspaceTrailLeak(body)
+		if err != nil {
+			t.Fatalf("the body must be the workspace's JSON: %v", err)
 		}
-		if !strings.Contains(body, `"payments_withheld":true`) {
-			t.Fatalf("withheld flag missing: %s", body)
+		if len(leaks) != 0 {
+			t.Fatalf("payment detail leaked: %v\n%s", leaks, body)
 		}
 	})
 	t.Run("a customer of another branch is not found", func(t *testing.T) {
 		for _, held := range []bool{true, false} {
-			if code, body := call(held, other); code != http.StatusNotFound || strings.Contains(body, "41234") {
+			code, body := call(held, other)
+			if code != http.StatusNotFound {
 				t.Fatalf("held=%v status=%d body=%s", held, code, body)
+			}
+			// FLAKE-10: the error envelope is read as parsed fields too, so no other field's digits can
+			// read as the payment's amount.
+			leaks, err := workspacePaymentLeak(body, trailPaymentCents, trailPaymentMethod)
+			if err != nil {
+				t.Fatalf("the body must be the workspace's JSON: %v", err)
+			}
+			if len(leaks) != 0 {
+				t.Fatalf("payment detail leaked: %v\n%s", leaks, body)
 			}
 		}
 	})
@@ -214,10 +227,14 @@ func TestIntegration_Workspace_FeedGivesNoPaymentBack(t *testing.T) {
 	// The header's open figure (2500, the fee) is the account's open AR under the same union the
 	// aging reads, an account fact like the invoice balances; what stays withheld is the row
 	// detail: the fee's memo, the bounced payment and its amount, the running balance.
-	for _, leak := range []string{"NSF", "41234", "PAYMENT"} {
-		if strings.Contains(body, leak) {
-			t.Fatalf("%q reached a caller without the trail: %s", leak, body)
-		}
+	// FLAKE-10: the leak check reads parsed fields, never the raw body. A raw substring hunt read
+	// the body's "as_of" timestamp's nanoseconds as the bounced payment's amount.
+	leaks, err := workspacePaymentLeak(body, trailPaymentCents, "NSF", "PAYMENT")
+	if err != nil {
+		t.Fatalf("the body must be the workspace's JSON: %v", err)
+	}
+	if len(leaks) != 0 {
+		t.Fatalf("%v reached a caller without the trail: %s", leaks, body)
 	}
 
 	// A caller with the trail keeps every row and the running balance.

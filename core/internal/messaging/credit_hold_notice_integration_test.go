@@ -75,7 +75,7 @@ func TestIntegration_CreditHold_ReachesSalesWithNoAmounts(t *testing.T) {
 				continue
 			}
 			found = true
-			assertNoMoney(t, role, m)
+			assertNoMoney(t, role, name, m)
 		}
 		if !found {
 			t.Errorf("%s did not receive the credit hold notice in #house-trenton", role)
@@ -94,27 +94,14 @@ func TestIntegration_CreditHold_ReachesSalesWithNoAmounts(t *testing.T) {
 	}
 	for _, m := range page.Messages {
 		if strings.Contains(m.Body, name) {
-			assertNoMoney(t, "owner", m)
+			assertNoMoney(t, "owner", name, m)
 			return
 		}
 	}
 	t.Errorf("the sales owner's DM does not carry the notice")
 }
 
-// assertNoMoney fails when a notice carries an amount in its words or a money field in its ref.
-func assertNoMoney(t *testing.T, who string, m Message) {
-	t.Helper()
-	if strings.ContainsAny(m.Body, "$") || strings.Contains(m.Body, "1,250") || strings.Contains(m.Body, "125000") {
-		t.Errorf("%s: the notice words carry an amount: %q", who, m.Body)
-	}
-	var ref map[string]any
-	if err := json.Unmarshal(m.Ref, &ref); err != nil {
-		t.Errorf("%s: ref: %v", who, err)
-		return
-	}
-	for k, v := range ref {
-		if strings.Contains(k, "amount") || strings.Contains(k, "cents") || strings.Contains(fmt.Sprint(v), "1,250") {
-			t.Errorf("%s: the notice ref carries a money field %q=%v", who, k, v)
-		}
-	}
-}
+// assertNoMoney lives in credit_hold_notice_money_test.go, untagged, so its unit leg runs in the
+// untagged suite. It reads the notice's OWN words: the body is the customer's name and a fixed
+// sentence, and the seed puts the clock's nanoseconds in the name, so the name is taken out of
+// the haystack before the hunt (FLAKE-10).

@@ -281,7 +281,7 @@ import {
 } from "../src/pricing-logic.ts";
 
 test("the overrides tab's two empties are different sentences, the original's own rule", () => {
-  assert.match(overrideEmptyWords(false), /Type a customer id/);
+  assert.match(overrideEmptyWords(false), /Choose a customer/);
   assert.match(overrideEmptyWords(true), /No category prices for this customer/);
 });
 

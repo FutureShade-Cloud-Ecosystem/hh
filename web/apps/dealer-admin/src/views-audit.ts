@@ -9,7 +9,7 @@
 // data-action names and the host's listeners act on them; field values are
 // mirrored from input events, never bound.
 import { html, nothing, type TemplateResult } from "lit";
-import type { AuditRow, BranchRow } from "./dealer-api.js";
+import type { AuditRow, BranchRow, StaffMemberRow } from "./dealer-api.js";
 import {
   ACTION_OPTIONS,
   actorWords,
@@ -55,7 +55,7 @@ export interface AuditModel {
   readonly branches: readonly BranchRow[];
 }
 
-export function renderAudit(model: AuditModel): TemplateResult {
+export function renderAudit(model: AuditModel, staff: readonly StaffMemberRow[] = []): TemplateResult {
   return html`
     <header class="page-head">
       <h1>Audit</h1>
@@ -68,19 +68,19 @@ export function renderAudit(model: AuditModel): TemplateResult {
           <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="reload-audit">Try again</button></div>
         `
       : nothing}
-    ${model.phase === "error" ? html`<section class="card">${renderFilters(model.filters)}</section>` : nothing}
-    ${model.phase === "ready" ? renderTrail(model) : nothing}
+    ${model.phase === "error" ? html`<section class="card">${renderFilters(model.filters, staff)}</section>` : nothing}
+    ${model.phase === "ready" ? renderTrail(model, staff) : nothing}
   `;
 }
 
-function renderTrail(model: AuditModel): TemplateResult {
+function renderTrail(model: AuditModel, staff: readonly StaffMemberRow[]): TemplateResult {
   return html`
     <section class="card">
       <div class="card-head">
         <h2 class="card-title">The trail</h2>
         <span class="count" data-test="audit-count">${model.rows.length} entries</span>
       </div>
-      ${renderFilters(model.filters)}
+      ${renderFilters(model.filters, staff)}
       ${model.rows.length === 0
         ? html`<p class="notice-line" data-test="audit-empty">${auditEmptyWords(filtersActive(model.filters))}</p>`
         : html`
@@ -109,7 +109,7 @@ function renderTrail(model: AuditModel): TemplateResult {
 
 // -- the filters ------------------------------------------------------------------------------------
 
-function renderFilters(filters: AuditFilters): TemplateResult {
+function renderFilters(_filters: AuditFilters, staff: readonly StaffMemberRow[]): TemplateResult {
   return html`
     <div class="filters" role="group" aria-label="Trail filters">
       <input
@@ -122,7 +122,10 @@ function renderFilters(filters: AuditFilters): TemplateResult {
         <option value="">Action: all</option>
         ${ACTION_OPTIONS.map((a) => html`<option>${a}</option>`)}
       </select>
-      <input class="text-field" placeholder="Actor id" aria-label="Actor id" data-field="audit-actor-id" />
+      <select class="select" aria-label="Staff member" data-field="audit-actor-id">
+        <option value="">Any staff member</option>
+        ${staff.map((s) => html`<option data-option-id=${s.user_id}>${s.display_name || s.email}</option>`)}
+      </select>
       <input class="text-field" type="datetime-local" aria-label="Since" data-field="audit-since" />
       <button type="button" class="btn btn-primary" data-action="apply-audit-filters">Apply</button>
       <button type="button" class="btn btn-secondary" data-action="clear-audit-filters">Clear</button>
