@@ -600,9 +600,9 @@ export const IMPORT_ALLOW_LIST = {
     lit: ['html', 'svg'],
     'node:assert/strict': ['default'],
     'node:child_process': ['spawn', 'spawnSync'],
-    'node:fs': ['existsSync', 'mkdirSync', 'mkdtempSync', 'readFileSync', 'readdirSync', 'rmSync', 'statSync', 'unlinkSync', 'writeFileSync'],
+    'node:fs': ['existsSync', 'mkdirSync', 'mkdtempSync', 'readFileSync', 'readdirSync', 'realpathSync', 'rmSync', 'statSync', 'unlinkSync', 'writeFileSync'],
     'node:http': ['createServer'],
-    'node:module': ['stripTypeScriptTypes'],
+    'node:module': ['createRequire', 'stripTypeScriptTypes'],
     'node:os': ['tmpdir'],
     'node:path': ['dirname', 'join', 'relative'],
     'node:test': ['test'],
@@ -873,16 +873,24 @@ export const auditImports = (source, file) => {
 /** What one file imports today, read off the parser's tree: one record per
  * specifier, with every imported name ('default' for a default binding), or
  * names: null when the source shows no name list (a side effect import, a
- * namespace, a whole namespace binding). The gate's test holds the list to
- * these records: every entry is exercised by some walked file, every name on
- * an entry is imported today. */
+ * namespace, a whole namespace binding). A star re-export (export * from) is
+ * recorded on its own flag: it lists no names, yet it hands every name the
+ * module has to any file that imports this one, so a gate that only reads
+ * name lists cannot see what leaves through it. The gate's test holds the
+ * list to these records: every entry is exercised by some walked file,
+ * every name on an entry is imported today. */
 export const importedSpecifiers = (source, file) => {
   const found = new Map();
-  const add = (spec, name) => {
-    const record = found.get(spec) ?? { spec, names: new Set() };
+  const add = (spec, name, star = false) => {
+    const record = found.get(spec) ?? { spec, names: new Set(), reexported: new Set(), starReexport: false };
+    if (star) record.starReexport = true;
     if (name === null) record.names = null;
     else if (record.names !== null) record.names.add(name);
     found.set(spec, record);
+  };
+  const addReexport = (spec, name) => {
+    add(spec, name);
+    if (name !== null) found.get(spec).reexported.add(name);
   };
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const visit = (node) => {
@@ -897,9 +905,9 @@ export const importedSpecifiers = (source, file) => {
           if (named && ts.isNamespaceImport(named)) add(spec, null);
           else if (named) for (const e of named.elements) add(spec, (e.propertyName ?? e.name).text);
         }
-      } else if (!node.exportClause) add(spec, null);
+      } else if (!node.exportClause) add(spec, null, true);
       else if (ts.isNamespaceExport(node.exportClause)) add(spec, null);
-      else for (const e of node.exportClause.elements) add(spec, (e.propertyName ?? e.name).text);
+      else for (const e of node.exportClause.elements) addReexport(spec, (e.propertyName ?? e.name).text);
     }
     if (ts.isCallExpression(node)) {
       const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
@@ -913,7 +921,12 @@ export const importedSpecifiers = (source, file) => {
     node.forEachChild(visit);
   };
   visit(sf);
-  return [...found.values()].map(({ spec, names }) => ({ spec, names: names === null ? null : [...names].sort() }));
+  return [...found.values()].map(({ spec, names, reexported, starReexport }) => ({
+    spec,
+    names: names === null ? null : [...names].sort(),
+    reexported: [...reexported].sort(),
+    starReexport,
+  }));
 };
 
 // ── the tag's two places: the parser rule that closes the value flow ────────────

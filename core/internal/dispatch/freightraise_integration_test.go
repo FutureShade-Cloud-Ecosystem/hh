@@ -454,11 +454,13 @@ SELECT a.policy_type, a.detail, (a.data->>'amount_cents')::bigint
 // number is random: PR 632's run 40591154455 seeded #SO-DISPATCHTEST-5682680004, whose digits hold
 // 8000, and the substring hunt tripped on the id though the sentence carries no money. A dollar
 // sign anywhere, a decimal amount, or a forbidden cents figure standing as a whole word is money;
-// 8000 inside 5682680004 is not. Matching the shapes keeps the rule exact without the check having
+// 8000 inside 5682680004 is not, and a comma-grouped spelling of a forbidden
+// figure (26,000) is money exactly as the plain spelling is. Matching the
+// shapes keeps the rule exact without the check having
 // to know every identifier the sentence may ever carry, which stripping ids would.
 var (
 	frtMoneyShape   = regexp.MustCompile(`\d+\.\d{2}`)
-	frtWholeFigures = regexp.MustCompile(`\b(?:26000|34000|8000)\b`)
+	frtWholeFigures = regexp.MustCompile(`\b(?:26000|26,000|34000|34,000|8000|8,000)\b`)
 )
 
 func frtDetailLeaksMoney(detail string) bool {
@@ -508,6 +510,9 @@ func TestFreightRaise_TheLeakCheckStillBitesOnRealMoney(t *testing.T) {
 		{"the whole token 8000", "Freight on #SO-DISPATCHTEST-1041 rises by 8000 cents above the quoted delivery."},
 		{"the whole token 26000", "The delivery on #SO-DISPATCHTEST-1041 charges 26000 cents."},
 		{"the whole token 34000", "The delivery on #SO-DISPATCHTEST-1041 charges 34000 cents."},
+		{"the grouped figure 26,000", "The delivery on #SO-DISPATCHTEST-1041 charges 26,000 cents."},
+		{"a grouped figure with a decimal part", "Freight on #SO-DISPATCHTEST-1041 rises by 8,000.00 cents above the quoted delivery."},
+		{"a grouped figure inside a sentence", "Freight on #SO-DISPATCHTEST-1041 is being raised above the 34,000 cents the customer was quoted."},
 		{"a bare dollar sign", "Freight on #SO-DISPATCHTEST-1041 is being raised above the delivery the customer was $ quoted."},
 	}
 	for _, tc := range bites {
