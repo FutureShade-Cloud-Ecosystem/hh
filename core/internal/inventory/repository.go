@@ -10,6 +10,7 @@ package inventory
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -632,6 +633,41 @@ func (r *Repository) StockValueCents(ctx context.Context, tx pgx.Tx, branchID st
 	var total int64
 	err := r.q(tx).QueryRow(ctx, q, args...).Scan(&total)
 	return total, err
+}
+
+// StockValueAsOfCents is the consolidated (or branch scoped) stock value as it stood at the
+// given instant: the current per-row rounded value (StockValueCents, the same read the live
+// tie uses) MINUS the value of every ledger movement that occurred after the instant. Every
+// movement row carries the exact figure its GL posting booked, so a movement that moved the
+// stock ledger and 1200 together cancels out of an as-of pair to the cent: an issue, return,
+// count or transfer leg answers its own value_cents, and a PO receipt answers the realized
+// subledger delta stamped on its metadata (wac_value_delta_cents, the sum of the receipt's
+// GRNI, WAC rounding and true-up journals), so the read lands on the same figure the books
+// held at the instant. Rows written before the stamp existed fall back to value_cents, and
+// rows with no recorded value move nothing. A zero asOf is NOW: no movement is after it. The
+// month close holds no transaction, and the year end's pre flight reads stock on its own
+// connection by design (W2-5, the close pre flight's month-end stock tie).
+func (r *Repository) StockValueAsOfCents(ctx context.Context, tx pgx.Tx, asOf time.Time, branchID string) (int64, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	if asOf.IsZero() {
+		return r.StockValueCents(ctx, tx, branchID)
+	}
+	current, err := r.StockValueCents(ctx, tx, branchID)
+	if err != nil {
+		return 0, err
+	}
+	var moved int64
+	err = r.q(tx).QueryRow(ctx, `
+		SELECT COALESCE(SUM(CASE WHEN m.to_location_id IS NOT NULL THEN 1 ELSE -1 END *
+			COALESCE((m.metadata->>'wac_value_delta_cents')::bigint, COALESCE(m.value_cents, 0))), 0)::bigint
+		FROM stock_moves m
+		WHERE m.occurred_at > $1 AND ($2 = '' OR m.branch_id = $2::uuid)`, asOf, branchID).Scan(&moved)
+	if err != nil {
+		return 0, err
+	}
+	return current - moved, nil
 }
 
 // ReceivedLinesForPO returns the received lines of a PO for landed-cost allocation (extended CAD value =

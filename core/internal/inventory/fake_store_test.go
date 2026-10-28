@@ -239,6 +239,9 @@ func (f *fakeStore) SnapshotOnHand(context.Context, pgx.Tx, string) ([]CountSnap
 func (f *fakeStore) StockValueCents(context.Context, pgx.Tx, string) (int64, error) {
 	return 0, nil
 }
+func (f *fakeStore) StockValueAsOfCents(context.Context, pgx.Tx, time.Time, string) (int64, error) {
+	return 0, nil
+}
 func (f *fakeStore) ReceivedLinesForPO(context.Context, string) ([]ReceivedLine, error) {
 	return nil, nil
 }

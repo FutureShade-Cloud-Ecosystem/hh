@@ -716,3 +716,31 @@ INSERT INTO pos_addon_pairings (source_application, suggested_application, rank)
   ('Landscape','Bedding',  10),
   ('Coping',   'Sealing',  10)
 ON CONFLICT (source_application, suggested_application) DO NOTHING;
+
+-- ───────────────────────── opening moves' values meet the books' opening WAC ─────────────────────────
+-- W2-5: the close pre flight's stock tie reads the ledger AS OF the month's end, unwinding every
+-- movement at the exact figure its GL posting booked (see inventory's StockValueAsOfCents). The
+-- M7 opening moves above carried qty x unit_cost, a believable wholesale cost, while the books
+-- open the stock at the WAC product_branch_costs holds (planted by item 10's plant above
+-- and by demo migrations such as 0065). The ledger and the opening journals the suites post then
+-- told two stories, and the as of read answered a residue nobody booked at month ends before the
+-- seed. This statement aligns the two: the opening moves are re-inserted with value_cents = the
+-- per-row rounded value at the WAC the books open at (unit_cost_cents keeps the wholesale cost the
+-- fallback-cost read demos use). DELETE + INSERT, never an UPDATE: stock_moves is append-only
+-- (0037). Idempotent: the same rows come back with the same ids, recomputed against the WAC in
+-- force at re-seed time.
+WITH gone AS (
+  DELETE FROM stock_moves WHERE reason = 'M7 opening balance' RETURNING *
+)
+INSERT INTO stock_moves (id, product_id, from_location_id, to_location_id, qty_base, qty_entered,
+                         uom_entered, move_type, unit_cost_cents, value_cents, weight_kg_total,
+                         source_type, source_ref_id, reason, actor_id, branch_id, metadata,
+                         occurred_at, created_at, bin_code)
+SELECT g.id, g.product_id, g.from_location_id, g.to_location_id, g.qty_base, g.qty_entered,
+       g.uom_entered, g.move_type, g.unit_cost_cents,
+       ROUND(g.qty_base * COALESCE(pbc.avg_unit_cost_cents, 0))::bigint, g.weight_kg_total,
+       g.source_type, g.source_ref_id, g.reason, g.actor_id, g.branch_id, g.metadata,
+       g.occurred_at, g.created_at, g.bin_code
+  FROM gone g
+  LEFT JOIN product_branch_costs pbc
+         ON pbc.product_id = g.product_id AND pbc.branch_id = g.branch_id;

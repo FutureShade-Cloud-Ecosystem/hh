@@ -182,7 +182,7 @@ func (f *fw1TieSpy) ARBalanceCents(_ context.Context, asOf time.Time, _ string) 
 // fw1FixedStock answers one fixed stock value.
 type fw1FixedStock struct{ cents int64 }
 
-func (f fw1FixedStock) StockValueCents(_ context.Context, _ string) (int64, error) {
+func (f fw1FixedStock) StockValueCents(_ context.Context, _ time.Time, _ string) (int64, error) {
 	return f.cents, nil
 }
 

@@ -176,11 +176,12 @@ type AuditTxRecorder interface {
 // - close pre flight seams (FW1-09b; nil = the check is not wired and passes with no figures) -
 
 // StockValueReader is the stock ledger side of the close pre flight's 1200 tie check. Satisfied by
-// inventory.Service.SnapshotOnHand summed (the weighted average on-hand value), wired in cmd/core.
-// The branch id is the filter: the pre flight reads the COMPANY (an empty branch id), so the reader
-// answers with the consolidated value, and a named branch answers with that branch's (FW1-09d).
+// inventory.Service.StockValueAsOfCents (the weighted average value as of an instant), wired in
+// cmd/core. The pre flight reads the COMPANY at the month's end (an empty branch id, the first
+// instant of the next month), so the reader answers the consolidated value at that instant, and a
+// named branch answers with that branch's (FW1-09d, W2-5).
 type StockValueReader interface {
-	StockValueCents(ctx context.Context, branchID string) (int64, error)
+	StockValueCents(ctx context.Context, asOf time.Time, branchID string) (int64, error)
 }
 
 // TillDrawerReader is the till side of the close pre flight: how many till sessions opened in the

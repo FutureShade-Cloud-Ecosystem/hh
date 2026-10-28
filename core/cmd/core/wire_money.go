@@ -428,8 +428,9 @@ func (a invGLPoster) PostJournal(ctx context.Context, in inventory.GLJournal) (s
 }
 
 // glStockValueAdapter satisfies gl's close pre flight stock seam over inventory
-// (FW1-09b): the stock ledger side of the 1200 tie check, the weighted average
-// value of everything on hand.
+// (FW1-09b, W2-5): the stock ledger side of the 1200 tie check, the weighted average
+// value of everything on hand as of the instant the pre flight names (the month's end),
+// answered over the inventory movement ledger.
 //
 // An empty branch id means the COMPANY, the way gl's other consolidated reads read it (the 1200 balance
 // and the AR balance both take an empty branch id for the whole book). The consolidated value is ONE
@@ -444,8 +445,8 @@ func (a invGLPoster) PostJournal(ctx context.Context, in inventory.GLJournal) (s
 // computed by the core"). A named branch reads the same statement scoped to that branch.
 type glStockValueAdapter struct{ svc *inventory.Service }
 
-func (a glStockValueAdapter) StockValueCents(ctx context.Context, branchID string) (int64, error) {
-	return a.svc.StockValueCents(ctx, branchID)
+func (a glStockValueAdapter) StockValueCents(ctx context.Context, asOf time.Time, branchID string) (int64, error) {
+	return a.svc.StockValueAsOfCents(ctx, asOf, branchID)
 }
 
 // tillDrawerAdapter satisfies gl's close pre flight drawer seam over the till

@@ -158,6 +158,7 @@ type store interface {
 	PendingFulfilments(ctx context.Context, branchID string) ([]PendingFulfilment, error)
 	SnapshotOnHand(ctx context.Context, tx pgx.Tx, branchID string) ([]CountSnapshot, error)
 	StockValueCents(ctx context.Context, tx pgx.Tx, branchID string) (int64, error)
+	StockValueAsOfCents(ctx context.Context, tx pgx.Tx, asOf time.Time, branchID string) (int64, error)
 	ReceivedLinesForPO(ctx context.Context, poID string) ([]ReceivedLine, error)
 }
 

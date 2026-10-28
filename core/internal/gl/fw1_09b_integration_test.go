@@ -168,7 +168,7 @@ func TestIntegration_FW1_09b_ParkedJournalCannotPostIntoAClosedMonth(t *testing.
 // flight's three new seams.
 type fw1StockValue struct{ cents int64 }
 
-func (f fw1StockValue) StockValueCents(_ context.Context, _ string) (int64, error) {
+func (f fw1StockValue) StockValueCents(_ context.Context, _ time.Time, _ string) (int64, error) {
 	return f.cents, nil
 }
 

@@ -149,6 +149,12 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 		}
 		base := math.Max(onHand, 0)
 		newAvg := cadUnit
+		// subledgerDelta is the line's exact change in round(avg x on-hand), the figure the
+		// receipt's GL postings (GRNI, WAC rounding, true-up) sum to; it is stamped on the
+		// move row below so the as-of stock read can unwind the receipt to the cent (W2-5).
+		// An on-hand of zero (or a beyond-grain figure the helpers refused) absorbs exactly
+		// the received value.
+		subledgerDelta := recvValue
 		if len(provMoves) == 0 {
 			if denom := base + recvQty; denom > 0 {
 				newAvg, err = blendAvg(base, oldAvg, recvQty, cadUnit)
@@ -161,6 +167,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 				newSubledgerVal, errNew := qtyTimesCents(base+recvQty, newAvg)
 				if errOld == nil && errNew == nil {
 					totalRounding += (newSubledgerVal - oldSubledgerVal) - recvValue
+					subledgerDelta = newSubledgerVal - oldSubledgerVal
 				}
 			}
 		}
@@ -179,6 +186,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 				return ReceiptResult{}, err
 			}
 			trueUpDelta := actualSoldValue - provValue
+			subledgerDelta += trueUpDelta
 			moveMeta = map[string]any{
 				"trued_up_move_ids":   moveIDs,
 				"true_up_delta_cents": trueUpDelta,
@@ -188,6 +196,10 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 				DeltaCents: trueUpDelta,
 			})
 		}
+		if moveMeta == nil {
+			moveMeta = map[string]any{}
+		}
+		moveMeta["wac_value_delta_cents"] = subledgerDelta
 		if err := s.db().UpsertBranchCost(ctx, tx, ln.ProductID, hdr.BranchID, newAvg); err != nil {
 			return ReceiptResult{}, err
 		}
