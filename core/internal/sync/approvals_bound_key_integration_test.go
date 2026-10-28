@@ -1,26 +1,27 @@
 //go:build integration
 
-// approvals_bound_key_integration_test.go: UX-108 round 2. The engine's bound
-// key gate asks the store one more question when the caller's own Load cannot
-// see the row a key applied: does the entity still stand, for every caller of
-// the scope at once (sync.BoundEntityChecker.BoundEntityExists)? A LIVE entity
-// the caller cannot see is answered the seam's own refusal, "sync: row not
-// found", so the caller learns nothing of the row. The approvals store did not
-// answer that question, so the gate kept the bound answer ("applied") for a
-// key it could not attribute: the caller learned its key was spent, and on the
-// update path (where the caller holds the card's id in its own payload) that
-// the card exists.
+// approvals_bound_key_integration_test.go: UX-108 round 2, extended by
+// UX-114 round 2. The engine's bound key gate asks the store one more
+// question when the caller's own Load cannot see the row a key applied:
+// does the entity still stand, for every caller of the scope at once
+// (sync.BoundEntityChecker.BoundEntityExists)? A LIVE entity the caller
+// cannot see is answered the seam's own refusal, "sync: row not found",
+// so the caller learns nothing of the row. A GONE row (a withdrawn card)
+// answers a non binder the absent key's answer instead (UX-114): the
+// card's tombstone rides the pull to every caller of the org, so the
+// gate's Load does not miss and the equality lives one layer down, in
+// the answers the update and delete paths give a tombstone.
 //
-// The leg: the real engine over the real key ledger. A fenced caller's answer
-// on another caller's bound key is the answer on a never-bound key with the
-// same body, field for field: the status word, the seq, the error words and
-// the envelope. The binder keeps its bound answer, and a card that is gone
-// keeps its bound answer too (PR 640's rule).
+// The leg: the real engine over the real key ledger. A fenced caller's
+// answer on another caller's bound key is the answer on a never-bound
+// key with the same body, field for field: the status word, the seq,
+// the error words and the envelope. The binder keeps its bound answer.
 package sync_test
 
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -221,11 +222,13 @@ func TestUX108R2ApprovalsBinderKeepsItsBoundAnswer(t *testing.T) {
 	}
 }
 
-// TestUX108R2ApprovalsGoneRowKeepsItsBoundAnswer: a card that is gone keeps
-// the bound answer (PR 640's rule). The gate hides a key only for a LIVE row
-// a caller cannot see; a withdrawn card is gone for everyone in the org, so
-// the key keeps its own answer.
-func TestUX108R2ApprovalsGoneRowKeepsItsBoundAnswer(t *testing.T) {
+// TestUX114ApprovalsGoneRowRefusesANonBinder: UX-114 on the approvals scope.
+// A withdrawn card is gone for everyone; its tombstone rides the pull to
+// every caller of the org, so the gate's Load does not miss and the
+// equality lives one layer down: a non binder replaying the bound key
+// answers what a never-bound key with the same body answers, field for
+// field. The binder keeps the bound answer, and nothing writes twice.
+func TestUX114ApprovalsGoneRowRefusesANonBinder(t *testing.T) {
 	f := newGapFixture(t)
 	ctx := context.Background()
 	store := ux108ApprovalsStore(t, f)
@@ -234,31 +237,86 @@ func TestUX108R2ApprovalsGoneRowKeepsItsBoundAnswer(t *testing.T) {
 	engine, info := ux108r2Engine(t, f, store)
 
 	bound := uuid.NewString()
+	boundDelete := uuid.NewString()
+	fresh := uuid.NewString()
+	freshDelete := uuid.NewString()
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(ctx, `DELETE FROM sync_op_hashes WHERE client_id = ANY($1::uuid[])`, []string{bound})
+		_, _ = f.pool.Exec(ctx, `DELETE FROM sync_op_hashes WHERE client_id = ANY($1::uuid[])`,
+			[]string{bound, boundDelete, fresh, freshDelete})
 	})
 	rs, err := store.Create(ctx, gm, uuid.NewString(), map[string]any{
 		"branch_id":   testkit.BranchNorthBID,
 		"policy_type": "CREDIT_LIMIT_EXCEEDED",
-		"detail":      "ux108r2: a card withdrawn after the filing"})
+		"detail":      "ux114: a card withdrawn after the filing"})
 	if err != nil {
 		t.Fatalf("the manager files the credit exception: %v", err)
 	}
 	op := apigen.SyncPushOperation{ClientId: bound, Op: "update", Payload: map[string]any{
-		"id": rs.ID, "detail": "ux108r2: the manager's own note"}}
+		"id": rs.ID, "detail": "ux114: the manager's own note"}}
 	first := ux108r2Push(t, engine, info, gm, op)
 	if first.Status != "applied" || first.Seq == nil {
 		t.Fatalf("the manager notes his own card: %+v", first)
 	}
-	if _, err := store.Delete(ctx, gm, rs.ID, uuid.NewString()); err != nil {
-		t.Fatalf("the manager withdraws his own card: %v", err)
+
+	// The withdrawal itself runs through sync under its own key, so the
+	// delete replay below replays a key bound to a delete.
+	delOp := apigen.SyncPushOperation{ClientId: boundDelete, Op: "delete", Payload: map[string]any{"id": rs.ID}}
+	withdrawn := ux108r2Push(t, engine, info, gm, delOp)
+	if withdrawn.Status != "applied" || withdrawn.Seq == nil || *withdrawn.Seq <= *first.Seq {
+		t.Fatalf("the manager withdraws his own card through sync: %+v", withdrawn)
+	}
+	tombSeq := *withdrawn.Seq
+
+	// The update replay: the bound key and a never-bound key with the same
+	// body answer alike, field for field, and the answer is the
+	// tombstone's own (the update path reports the tombstone's seq and
+	// writes nothing, the delete path's own rule).
+	boundAnswer := ux108r2Push(t, engine, info, clerk, op)
+	neverOp := op
+	neverOp.ClientId = fresh
+	neverAnswer := ux108r2Push(t, engine, info, clerk, neverOp)
+	ux108r2SameAnswer(t, "the bound key and a never-bound key on a gone row, the update", boundAnswer, neverAnswer)
+	if boundAnswer.Status != "applied" || boundAnswer.Seq == nil || *boundAnswer.Seq != tombSeq {
+		t.Errorf("the update replay on a gone row answers the tombstone's seq: %+v", boundAnswer)
 	}
 
-	replay := ux108r2Push(t, engine, info, clerk, op)
-	if replay.Status != "applied" {
-		t.Errorf("a gone row keeps the bound answer: %+v", replay)
+	// The delete replay: the same pair, the same equality.
+	boundDeleteAnswer := ux108r2Push(t, engine, info, clerk, delOp)
+	neverDelete := delOp
+	neverDelete.ClientId = freshDelete
+	neverDeleteAnswer := ux108r2Push(t, engine, info, clerk, neverDelete)
+	ux108r2SameAnswer(t, "the bound key and a never-bound key on a gone row, the delete", boundDeleteAnswer, neverDeleteAnswer)
+	if boundDeleteAnswer.Status != "applied" || boundDeleteAnswer.Seq == nil || *boundDeleteAnswer.Seq != tombSeq {
+		t.Errorf("the delete replay on a gone row answers the tombstone's seq: %+v", boundDeleteAnswer)
 	}
-	if replay.Error != nil && *replay.Error == ux108r2Refusal {
-		t.Errorf("a gone row is not refused as unreadable: %+v", replay)
+
+	// The binder keeps the bound answer: applied, the tombstone's seq, no
+	// second write, two ledger rows (the note's and the withdrawal's).
+	replay := ux108r2Push(t, engine, info, gm, op)
+	if replay.Status != "applied" || replay.Seq == nil || *replay.Seq != tombSeq {
+		t.Errorf("the binder's own replay keeps the bound answer on a gone row: %+v", replay)
+	}
+	replayDelete := ux108r2Push(t, engine, info, gm, delOp)
+	if replayDelete.Status != "applied" || replayDelete.Seq == nil || *replayDelete.Seq != tombSeq {
+		t.Errorf("the binder's own withdrawal replay keeps the bound answer on a gone row: %+v", replayDelete)
+	}
+	var deletedAt *time.Time
+	var detail string
+	if err := f.pool.QueryRow(ctx,
+		`SELECT deleted_at, detail FROM permission_approval_requests WHERE id = $1::uuid`, rs.ID).
+		Scan(&deletedAt, &detail); err != nil {
+		t.Fatalf("read the card back: %v", err)
+	}
+	if deletedAt == nil || detail != "ux114: the manager's own note" {
+		t.Errorf("the replay wrote nothing: deleted_at %v detail %q", deletedAt, detail)
+	}
+	var ledgerRows int
+	if err := f.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sync_op_hashes WHERE client_id = ANY($1::uuid[])`,
+		[]string{bound, boundDelete, fresh, freshDelete}).Scan(&ledgerRows); err != nil {
+		t.Fatalf("count the probe's ledger rows: %v", err)
+	}
+	if ledgerRows != 2 {
+		t.Errorf("the replays bind nothing new: %d ledger rows, want 2", ledgerRows)
 	}
 }

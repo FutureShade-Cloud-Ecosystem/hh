@@ -540,3 +540,115 @@ func TestBoundKeyAnOldRowWithNoBinderKeepsTheBoundAnswer(t *testing.T) {
 		t.Errorf("the replays bind nothing new: %d entries, want 1", led.size())
 	}
 }
+
+// UX-114, the public tombstone shape (the approvals scope's): the store's
+// Load answers a tombstone to every caller of the org, so the bound key
+// gate's Load does not miss and the gone-row equality lives one layer
+// down. A non binder replaying the bound key answers applied with the
+// tombstone's seq (the ledger resolves the key to the same tombstone),
+// and a never-bound key with the same body must answer the same, whole:
+// the update path reports the tombstone's seq, writes nothing and binds
+// nothing, the delete path's own rule. Before the fix the free update met
+// the store's own row-not-found refusal where the bound replay answered
+// applied: the pair told a spent key from a free one.
+func TestBoundKeyGoneRowPublicTombstoneAnswersTheAbsentKeyOnUpdateAndDelete(t *testing.T) {
+	inner := &fakeStore{}
+	e := NewEngine()
+	if err := e.RegisterScope("approvals", inner); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	led := newMemLedger()
+	e.WithKeyLedger(led)
+	info, ok := Lookup("approvals")
+	if !ok {
+		t.Fatal("approvals missing from the registry")
+	}
+	push := func(f ScopeFilter, op apigen.SyncPushOperation) apigen.SyncPushResult {
+		t.Helper()
+		resp, err := e.Push(context.Background(), info, f, []apigen.SyncPushOperation{op})
+		if err != nil {
+			t.Fatalf("push: %v", err)
+		}
+		return resp.Results[0]
+	}
+	sameAnswer := func(name string, bound, absent apigen.SyncPushResult) {
+		t.Helper()
+		if bound.Status != absent.Status {
+			t.Errorf("%s: the status words differ: bound %q, absent %q", name, bound.Status, absent.Status)
+		}
+		boundSeq, absentSeq := int64(-1), int64(-1)
+		if bound.Seq != nil {
+			boundSeq = *bound.Seq
+		}
+		if absent.Seq != nil {
+			absentSeq = *absent.Seq
+		}
+		if boundSeq != absentSeq {
+			t.Errorf("%s: the seq legs differ: bound %d, absent %d", name, boundSeq, absentSeq)
+		}
+		boundWords, absentWords := "", ""
+		if bound.Error != nil {
+			boundWords = *bound.Error
+		}
+		if absent.Error != nil {
+			absentWords = *absent.Error
+		}
+		if boundWords != absentWords {
+			t.Errorf("%s: the error words differ: bound %q, absent %q", name, boundWords, absentWords)
+		}
+		if (bound.Conflict == nil) != (absent.Conflict == nil) {
+			t.Errorf("%s: the envelopes differ: bound %+v, absent %+v", name, bound.Conflict, absent.Conflict)
+		}
+	}
+	fA := ScopeFilter{OrgID: testFilter.OrgID, Actor: "staff-a"}
+	fB := ScopeFilter{OrgID: testFilter.OrgID, Actor: "staff-b"}
+
+	create := apigen.SyncPushOperation{ClientId: key(60), Op: "create", Payload: map[string]any{"id": rowID(60), "v": "a"}}
+	if first := push(fA, create); first.Status != "applied" || first.Seq == nil {
+		t.Fatalf("setup: the create applies: %+v", first)
+	}
+	update := apigen.SyncPushOperation{ClientId: key(61), Op: "update", Payload: map[string]any{"id": rowID(60), "v": "b"}}
+	if res := push(fA, update); res.Status != "applied" || res.Seq == nil {
+		t.Fatalf("setup: the update applies: %+v", res)
+	}
+	// The withdrawal runs through sync under its own key, so the delete
+	// replay below replays a key bound to a delete.
+	del := apigen.SyncPushOperation{ClientId: key(62), Op: "delete", Payload: map[string]any{"id": rowID(60)}}
+	withdrawn := push(fA, del)
+	if withdrawn.Status != "applied" || withdrawn.Seq == nil {
+		t.Fatalf("setup: the delete applies: %+v", withdrawn)
+	}
+	tombSeq := *withdrawn.Seq
+
+	// The update pair: the bound replay and a never-bound key with the
+	// same body answer alike, the tombstone's own seq.
+	boundUpdate := push(fB, update)
+	absentUpdate := push(fB, apigen.SyncPushOperation{ClientId: key(63), Op: "update", Payload: map[string]any{"id": rowID(60), "v": "c"}})
+	sameAnswer("the update on a public tombstone", boundUpdate, absentUpdate)
+	if boundUpdate.Status != "applied" || boundUpdate.Seq == nil || *boundUpdate.Seq != tombSeq {
+		t.Errorf("the update answers the tombstone's seq: %+v", boundUpdate)
+	}
+
+	// The delete pair: the same equality.
+	boundDelete := push(fB, del)
+	absentDelete := push(fB, apigen.SyncPushOperation{ClientId: key(64), Op: "delete", Payload: map[string]any{"id": rowID(60)}})
+	sameAnswer("the delete on a public tombstone", boundDelete, absentDelete)
+
+	// The free update wrote nothing and bound nothing.
+	if len(inner.rows) != 1 || inner.rows[0].fields["v"] != "b" || inner.rows[0].fields["__deleted"] != true {
+		t.Errorf("the free update wrote nothing: %+v", inner.rows[0].fields)
+	}
+	if led.size() != 3 {
+		t.Errorf("the free keys bind nothing: %d entries, want 3", led.size())
+	}
+
+	// The binder keeps the bound answer on its own replays.
+	again := push(fA, update)
+	if again.Status != "applied" || again.Seq == nil || *again.Seq != tombSeq {
+		t.Errorf("the binder's update replay keeps the bound answer: %+v", again)
+	}
+	againDelete := push(fA, del)
+	if againDelete.Status != "applied" || againDelete.Seq == nil || *againDelete.Seq != tombSeq {
+		t.Errorf("the binder's delete replay keeps the bound answer: %+v", againDelete)
+	}
+}

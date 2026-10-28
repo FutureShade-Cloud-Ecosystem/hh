@@ -7,13 +7,13 @@
 // fence refuses, replays the key. Before the fix the bound answer (applied)
 // leaks the one bit: the key was spent on a row that is gone. After the fix
 // the non binder is refused with the seam's row not found, the absent key's
-// answer; the binder keeps the bound answer and nothing writes twice; a key
-// with no binder (bound before migration 0449) keeps today's answer.
+// answer, word for word once PR 657's plain words ride the module's own
+// create refusal; the binder keeps the bound answer and nothing writes twice;
+// a key with no binder (bound before migration 0449) keeps today's answer.
 package messaging
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -166,18 +166,13 @@ func TestUX114MessagesGoneRowRefusesANonBinder(t *testing.T) {
 		t.Errorf("the refusal carries a seq or an envelope: %+v", replay)
 	}
 
-	// The never bound key with the same body: the same status, no seq and no
-	// envelope either. The words carry the module's own suffix on this path
-	// until the read fence agreement lands the seam's plain words; the status,
-	// the seq and the envelope are the comparison this leg pins, and both
-	// answers are the seam's miss.
+	// The never bound key with the same body: the same answer word for
+	// word. PR 657's plain words ride the module's own create refusal now,
+	// so the gone-row pair closes field for field, the status, the seq, the
+	// error words and the envelope.
 	absent := push(t, f.engine, msgs, gateCaseyFilter(), freeKey, "create", body)
-	if absent.Status != replay.Status || absent.Seq != nil || absent.Conflict != nil {
-		t.Errorf("the never bound key answers %+v, want the same status with no seq and no envelope", absent)
-	}
-	if absent.Error == nil || !strings.HasPrefix(*absent.Error, sync.ErrRowNotFound.Error()) {
-		t.Errorf("the never bound key answers error %v, want the seam's miss", absent.Error)
-	}
+	ux108R3Same(t, "the bound key and the never-bound key on a gone row, the same body", replay, absent)
+	ux108R3Plain(t, "the gone row refusal", absent)
 
 	// The binder keeps the bound answer: applied, the tombstone's seq, and no
 	// second write (the tombstone's seq stands, one ledger row only).

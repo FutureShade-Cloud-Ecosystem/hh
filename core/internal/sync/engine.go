@@ -330,6 +330,20 @@ func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo,
 		if !ok {
 			return e.auditRejected(ctx, info, f, op, id, ErrRowNotFound), nil
 		}
+		if row.Deleted {
+			// Already tombstoned: the update names a row whose only
+			// remaining fact is its withdrawal, and the answer reports
+			// the tombstone's seq rather than running a write against a
+			// row the pull no longer carries live. Nothing writes and
+			// nothing is remembered, so the free key's answer is the
+			// bound replay's answer (the ledger resolves the key to the
+			// same tombstone) and a spent key is told from a free one
+			// by nothing (UX-114). The delete path's own rule, reached
+			// by the update path as well.
+			res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &row.Seq}
+			e.record(ctx, info, f, op, id, resultApplied, "")
+			return res, nil
+		}
 		if stale(op, row) {
 			return e.resolveStale(ctx, store, info, f, op, row, id, hash)
 		}
