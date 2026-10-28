@@ -531,6 +531,67 @@ func TestIntegration_FW1_09f_TheYearCleanupLeavesAPeriodItDidNotPlantAlone(t *te
 	}
 }
 
+// TestIntegration_FW1_09f_TheOtherYearCleanupLeavesAForeignOverrideRowAlone is the other year
+// cleanup's own red for the override rows (S5's P3, FROM-PRINCIPAL 349): a leg leaves the shared
+// gate database exactly as it found it.
+//
+// The cleanup removed EVERY override row on the period, including one the leg did not plant. A
+// foreign override row is a recorded compensating control, another leg's or a Controller's: the
+// leg must take only the rows it planted and leave the foreign row exactly as it found it.
+func TestIntegration_FW1_09f_TheOtherYearCleanupLeavesAForeignOverrideRowAlone(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	const year = 2009
+	const month = 5
+
+	// The period, planted by this leg's own pre step or found already there on a reused box.
+	periodID, periodPlanted := fw109fOtherYearPeriod(t, pool, year, month)
+
+	// A foreign override row on the period, one this leg never planted, and the leg's own row,
+	// the one the cleanup must take.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO gl_period_overrides (period_id, action, reason) VALUES ($1::uuid, 'REOPEN', 'fw109f foreign override sentinel')`,
+		periodID); err != nil {
+		t.Fatalf("plant the foreign override row: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO gl_period_overrides (period_id, action, reason) VALUES ($1::uuid, 'CLOSE', 'fw109f own other year sentinel')`,
+		periodID); err != nil {
+		t.Fatalf("plant the leg's own override row: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides WHERE period_id = $1::uuid AND reason IN ('fw109f foreign override sentinel', 'fw109f own other year sentinel')`, periodID)
+		if periodPlanted {
+			_, _ = pool.Exec(ctx, `DELETE FROM fiscal_periods WHERE id = $1::uuid`, periodID)
+		}
+	})
+
+	foreignCount := func() int {
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM gl_period_overrides WHERE period_id = $1::uuid AND reason = 'fw109f foreign override sentinel'`,
+			periodID).Scan(&n); err != nil {
+			t.Fatalf("read the foreign override row: %v", err)
+		}
+		return n
+	}
+
+	before := fw109fOverrideCountOn(t, pool, periodID)
+
+	// The cleanup under test, the one every leg runs: it must take the leg's own row and leave
+	// the foreign one. The period itself is this leg's own cleanup's business above.
+	fw109fOtherYearCleanup(t, pool, periodID, false)
+
+	after := fw109fOverrideCountOn(t, pool, periodID)
+	foreignAfter := foreignCount()
+	t.Logf("fw109f other year cleanup: the override rows on the %d-%02d period before|%d after|%d, the foreign row after|%d",
+		year, month, before, after, foreignAfter)
+	if after != 1 || foreignAfter != 1 {
+		t.Fatalf("the other year cleanup left %d override row(s) on the %d-%02d period, the foreign row after|%d, want the leg's own row gone and the foreign row standing (1): it deleted every override row on the period, the foreign one with the leg's own",
+			after, year, month, foreignAfter)
+	}
+}
+
 // TestIntegration_FW1_09f_ThePeriodCleanupLeavesAPeriodItDidNotPlantAlone is S5's P3 red
 // (FROM-PRINCIPAL 349): a leg leaves the shared gate database exactly as it found it.
 //
