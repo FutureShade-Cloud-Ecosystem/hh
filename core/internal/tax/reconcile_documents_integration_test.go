@@ -72,10 +72,10 @@ func fw11Post(t *testing.T, pool *pgxpool.Pool, memo string, lines []fw11Line) {
 	}
 	for _, l := range lines {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, credit_cents, memo)
+			INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, credit_cents, branch_id, memo)
 			SELECT $1::uuid, (SELECT COALESCE(MAX(line_no),0)+1 FROM gl_journal_lines WHERE journal_id=$1::uuid),
-			       a.id, NULLIF($2,0), NULLIF($3,0), $4 FROM gl_accounts a WHERE a.code = $5`,
-			jid, l.debit, l.credit, memo, l.code); err != nil {
+			       a.id, NULLIF($2,0), NULLIF($3,0), $6::uuid, $4 FROM gl_accounts a WHERE a.code = $5`,
+			jid, l.debit, l.credit, memo, l.code, fw11TRT); err != nil {
 			_ = tx.Rollback(ctx)
 			t.Fatalf("plant line %s: %v", l.code, err)
 		}

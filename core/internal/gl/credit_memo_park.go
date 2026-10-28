@@ -33,7 +33,7 @@ func (s *Service) ParkExternalJournalTx(ctx context.Context, tx pgx.Tx, in Exter
 	if tx == nil {
 		return "", errNilTx
 	}
-	draft, err := s.externalDraft(in)
+	draft, err := s.externalDraft(ctx, in)
 	if err != nil {
 		return "", err
 	}

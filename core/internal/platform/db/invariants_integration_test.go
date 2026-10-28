@@ -50,6 +50,19 @@ func TestIntegration_GLJournal_UnbalancedRejected(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year=2026 AND month=1`).Scan(&periodID); err != nil {
 		t.Fatal(err)
 	}
+	// Every journal line carries a branch: migration 0446's CHECK refuses a line with no
+	// branch, and gl stamps the head office on a journal that names none.
+	var branchID string
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(
+		  (SELECT head_office_branch_id::text FROM gl_policy WHERE branch_id IS NULL LIMIT 1),
+		  (SELECT id::text FROM locations WHERE loc_type = 'BRANCH' AND code = 'TRT' LIMIT 1))
+	`).Scan(&branchID); err != nil {
+		t.Fatal(err)
+	}
+	if branchID == "" {
+		t.Fatal("this box names no branch, so it cannot post a journal line")
+	}
 
 	// Unbalanced: one debit line, no credit → must fail at commit.
 	tx, err := pool.Begin(ctx)
@@ -64,8 +77,8 @@ func TestIntegration_GLJournal_UnbalancedRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents)
-		VALUES ($1, 1, $2, 10000)`, jid, acctDebit); err != nil {
+		INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, branch_id)
+		VALUES ($1, 1, $2, 10000, $3::uuid)`, jid, acctDebit, branchID); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
 	}
@@ -86,12 +99,14 @@ func TestIntegration_GLJournal_UnbalancedRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := tx2.Exec(ctx, `
-		INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents) VALUES ($1,1,$2,10000)`, jid, acctDebit); err != nil {
+		INSERT INTO gl_journal_lines (journal_id, line_no, account_id, debit_cents, branch_id)
+		VALUES ($1,1,$2,10000,$3::uuid)`, jid, acctDebit, branchID); err != nil {
 		_ = tx2.Rollback(ctx)
 		t.Fatal(err)
 	}
 	if _, err := tx2.Exec(ctx, `
-		INSERT INTO gl_journal_lines (journal_id, line_no, account_id, credit_cents) VALUES ($1,2,$2,10000)`, jid, acctCredit); err != nil {
+		INSERT INTO gl_journal_lines (journal_id, line_no, account_id, credit_cents, branch_id)
+		VALUES ($1,2,$2,10000,$3::uuid)`, jid, acctCredit, branchID); err != nil {
 		_ = tx2.Rollback(ctx)
 		t.Fatal(err)
 	}

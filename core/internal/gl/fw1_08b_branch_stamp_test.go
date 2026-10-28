@@ -9,6 +9,8 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/jackc/pgx/v5"
 )
 
 type fakeAuditRecorder struct {
@@ -27,6 +29,33 @@ type fakeTaxSplitWithBranch struct {
 
 func (f fakeTaxSplitWithBranch) OrderBranch(_ context.Context, _ string) (string, error) {
 	return f.branchID, nil
+}
+
+// fakeBranchFacts answers the branch facts the head office set and default check through: which
+// ids are branch rows, which org each branch belongs to, and which branch a yard code names.
+type fakeBranchFacts struct {
+	isBranch map[string]bool
+	orgOf    map[string]string
+	codeIDs  map[string]string
+}
+
+func (f fakeBranchFacts) Exists(_ context.Context, id string) (bool, error) {
+	return f.isBranch[id], nil
+}
+
+// LiveBranchExists is the live branch read (FW1-08b part B round 2, P3-1). This fake has no
+// notion of a soft delete, so every branch row it holds is a live one.
+func (f fakeBranchFacts) LiveBranchExists(_ context.Context, id string) (bool, error) {
+	return f.isBranch[id], nil
+}
+
+func (f fakeBranchFacts) BranchInOrg(_ context.Context, orgID, branchID string) (bool, error) {
+	return f.orgOf[branchID] == orgID, nil
+}
+
+func (f fakeBranchFacts) BranchRowByCodeTx(_ context.Context, _ pgx.Tx, code string) (string, bool, error) {
+	id, ok := f.codeIDs[code]
+	return id, ok, nil
 }
 
 // TestFW1_08b_GLWritersStampBranch proves that the five FW1-08b GL writers
@@ -210,8 +239,16 @@ func TestFW1_08b_GLWritersStampBranch(t *testing.T) {
 			t.Fatalf("want 422 for empty reason on SetHeadOfficeBranch, got %v", err)
 		}
 
-		// Controller with reason updates HeadOfficeBranchID and records audit.
-		if err := ctrlSvc.SetHeadOfficeBranch(ctx, "branch-kgn", "Ruling 82.3 head office update"); err != nil {
+		// Controller with reason updates HeadOfficeBranchID and records audit. The context
+		// carries the org scope (FW1-08b part B round 2): the org half of the candidate check is
+		// unconditional, so a context without a scope is refused rather than skipping the wall.
+		ctrlSvc = ctrlSvc.WithBranchFacts(fakeBranchFacts{
+			isBranch: map[string]bool{"branch-kgn": true},
+			orgOf:    map[string]string{"branch-kgn": "org-a"},
+			codeIDs:  map[string]string{"KGN": "branch-kgn"},
+		})
+		scoped := authz.WithStaffScope(ctx, authz.StaffScope{OrgID: "org-a"})
+		if err := ctrlSvc.SetHeadOfficeBranch(scoped, "branch-kgn", "Ruling 82.3 head office update"); err != nil {
 			t.Fatalf("SetHeadOfficeBranch: %v", err)
 		}
 		ho, err := ctrlSvc.HeadOfficeBranchID(ctx)
@@ -220,6 +257,54 @@ func TestFW1_08b_GLWritersStampBranch(t *testing.T) {
 		}
 		if len(aud.entries) != 1 || aud.entries[0].Action != actGLHeadOfficeBranchSet || aud.entries[0].BranchID != "branch-kgn" {
 			t.Fatalf("audit entries = %+v, want 1 %s entry for branch-kgn", aud.entries, actGLHeadOfficeBranchSet)
+		}
+	})
+}
+
+// TestFW1_08b_PartB_HeadOfficeSetChecksItsCandidate proves the part B rules on the head office
+// set (FROM-PRINCIPAL 176): the candidate must be a branch row of the caller's org and is refused
+// in words otherwise, and the non-controller refusal carries the set's own words, not the reopen
+// ones (FROM-PRINCIPAL 206).
+func TestFW1_08b_PartB_HeadOfficeSetChecksItsCandidate(t *testing.T) {
+	ctx := context.Background()
+	aud := &fakeAuditRecorder{}
+	wall := fakeBranchFacts{
+		isBranch: map[string]bool{"branch-kgn": true, "branch-trt": true, "branch-foreign-org": true},
+		orgOf:    map[string]string{"branch-kgn": "org-a", "branch-trt": "org-a", "branch-foreign-org": "org-b"},
+		codeIDs:  map[string]string{"KGN": "branch-kgn", "TRT": "branch-trt"},
+	}
+
+	t.Run("another_orgs_branch_refused_in_words", func(t *testing.T) {
+		f := newFakeStore()
+		ctrl := identity.StaffContext{UserID: "u-ctrl", RoleCode: controllerRole, Scope: identity.ScopeGlobal}
+		svc := newTestServiceAs(f, ctrl).WithAudit(aud).WithBranchFacts(wall)
+		scoped := authz.WithStaffScope(ctx, authz.StaffScope{OrgID: "org-a"})
+		err := svc.SetHeadOfficeBranch(scoped, "branch-foreign-org", "part B: another org's branch")
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != 403 {
+			t.Fatalf("want 403 client refusal for another org's branch, got %v", err)
+		}
+	})
+
+	t.Run("non_branch_location_refused_in_words", func(t *testing.T) {
+		f := newFakeStore()
+		ctrl := identity.StaffContext{UserID: "u-ctrl", RoleCode: controllerRole, Scope: identity.ScopeGlobal}
+		svc := newTestServiceAs(f, ctrl).WithAudit(aud).WithBranchFacts(wall)
+		scoped := authz.WithStaffScope(ctx, authz.StaffScope{OrgID: "org-a"})
+		err := svc.SetHeadOfficeBranch(scoped, "loc-zone-1", "part B: a zone is not a branch")
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != 422 {
+			t.Fatalf("want 422 client refusal for a non branch location, got %v", err)
+		}
+	})
+
+	t.Run("the_non_controller_words_name_the_set_not_the_reopen", func(t *testing.T) {
+		f := newFakeStore()
+		mgrSvc := newTestService(f).WithAudit(aud)
+		err := mgrSvc.SetHeadOfficeBranch(ctx, "branch-kgn", "part B: the set's own words")
+		var ce clientError
+		if !errors.As(err, &ce) || ce.msg != "gl: only the Financial Controller may set the head office branch" {
+			t.Fatalf("want the head office set's own refusal words, got %q (err=%v)", ce.msg, err)
 		}
 	})
 }
