@@ -1443,6 +1443,19 @@ func (s *Service) restoreLandedCost(ctx context.Context, tx pgx.Tx, productID, b
 	if !ok {
 		return 0, fmt.Errorf("inventory: realized restore delta for product %s at branch %s exceeds integer cents", productID, branchID)
 	}
+	// Rounding newAvg DOWN realizes up to onHand/2 cents less than `remaining`, so the drain could take more than
+	// Apply absorbed; the caller clamps its CR 1200 at the capitalized total, so the subledger would fall further
+	// than 1200 (W2-5c). Step the WAC up, never past curAvg, until the drain is within absorbed; the shortfall is
+	// an under-reversal the caller already routes to COGS.
+	for delta < -absorbed && newAvg < curAvg {
+		newAvg++
+		if realized, err = qtyTimesCents(onHand, newAvg); err != nil {
+			return 0, err
+		}
+		if delta, ok = subCents(realized, curValue); !ok {
+			return 0, fmt.Errorf("inventory: realized restore delta for product %s at branch %s exceeds integer cents", productID, branchID)
+		}
+	}
 	if err := s.db().UpsertBranchCost(ctx, tx, productID, branchID, newAvg); err != nil {
 		return 0, err
 	}

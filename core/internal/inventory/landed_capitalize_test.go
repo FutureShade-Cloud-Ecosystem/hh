@@ -595,3 +595,35 @@ func TestRestoreLandedCost_VoidAfterReceiptReversesExactAbsorbedNoOverReversal(t
 	}
 	_ = postApplyAvg
 }
+
+// TestRestoreLandedCost_VoidRoundingNeverOverReverses (W2-5c, the finance world's November close): on the
+// absorbed-based drain path the new WAC is round(remaining/onHand), and rounding DOWN realizes up to onHand/2
+// cents less value than `remaining`, so the drain could take MORE than Apply absorbed. The caller clamps its
+// 1200 credit at the capitalized total, so the subledger then fell further than 1200 did: the world's void of
+// 1,386.90 drained 1,388.40, and November's close refused by -1.50. The drain must stay within absorbed, with
+// the remainder to COGS like any other under-reversal, and the reported delta must be the upserted WAC's own.
+func TestRestoreLandedCost_VoidRoundingNeverOverReverses(t *testing.T) {
+	ctx := context.Background()
+	const product, branch = "p", "b"
+
+	f := newFakeStore()
+	f.onhand[key(product, branch)] = 300
+	f.cost[key(product, branch)] = 1000 // current value 300,000
+	s := NewService(nil).withStore(f)
+
+	// snapAvg 990 keeps the drift-0 path out: 300,000 − 151 is not round(990×300).
+	const absorbed = 151
+	reversed, err := s.restoreLandedCost(ctx, nil, product, branch, 990, absorbed, time.Now(), "")
+	if err != nil {
+		t.Fatalf("void restore: %v", err)
+	}
+	if -reversed > absorbed {
+		t.Fatalf("over-reversal: drained %d > absorbed %d (round(299849/300)=999 realizes 299,700)", -reversed, absorbed)
+	}
+	if reversed > 0 {
+		t.Fatalf("a void raised the stock value by %d", reversed)
+	}
+	if got := f.cost[key(product, branch)]*300 - 300000; got != reversed {
+		t.Fatalf("reported delta %d is not the upserted WAC's realized delta %d", reversed, got)
+	}
+}
