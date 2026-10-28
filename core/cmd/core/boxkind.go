@@ -131,6 +131,9 @@ func financeBoxEnvironmentLegs(getenv func(string) string, cfg config.Config) er
 	if mode := strings.ToLower(strings.TrimSpace(getenv(payments.EnvGatewayMode))); mode != "" && mode != payments.ModeStub {
 		return fmt.Errorf("finance box: %s must be unset or %s (the portal rail stays on the stub on this box)", payments.EnvGatewayMode, payments.ModeStub)
 	}
+	if domains := strings.TrimSpace(getenv(envSigninEmailDomains)); domains != "" {
+		return fmt.Errorf("finance box: %s must be unset on the finance box: the box's people are exactly the list in %s, and a domain allow would let a whole domain in past that list (set it empty or unset it)", envSigninEmailDomains, envFinanceUsers)
+	}
 	return nil
 }
 
