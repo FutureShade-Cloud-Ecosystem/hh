@@ -145,6 +145,13 @@ export interface MessagesExportQuery {
   readonly until?: string;
 }
 
+/** One messaging channel for the export filter picker. */
+export interface MessagingChannelRow {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: string;
+}
+
 // -- the catalog: the product's words and its picture ---------------------------------------------
 
 /** One product, as the screens use it: the description fields and the facts around them. */
@@ -354,6 +361,20 @@ export class AdminApi {
     if (!answer.ok) return answer;
     const page = bag(answer.value);
     return { ok: true, value: list(page.messages).map(toMessagesExportRow) };
+  }
+
+  /** The house's messaging channels, for the export filter picker. */
+  async messagingChannels(): Promise<Result<readonly MessagingChannelRow[]>> {
+    const answer = await staffMessaging.messagingListChannels(this.#client);
+    if (!answer.ok) return answer;
+    const page = bag(answer.value);
+    return {
+      ok: true,
+      value: list(page.channels).map((raw) => {
+        const r = bag(raw);
+        return { id: text(r.id), name: text(r.name), kind: text(r.kind) };
+      }),
+    };
   }
 
   // -- the catalog: the product's words and its picture ------------------------------------------

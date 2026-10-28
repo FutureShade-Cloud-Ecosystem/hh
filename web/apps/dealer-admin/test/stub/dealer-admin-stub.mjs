@@ -1985,8 +1985,11 @@ async function handle(req, res) {
     const action = url.searchParams.get("action") ?? "";
     const actorId = url.searchParams.get("actor_id") ?? "";
     const since = url.searchParams.get("since") ?? "";
-    // The core refuses an actor id that is not a UUID with a 400 in words.
-    if (actorId !== "" && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(actorId)) {
+    // The core refuses an entity_type with spaces or an actor id that is not a UUID with a 400 in words.
+    if (entityType !== "" && /\s/.test(entityType)) {
+      return refuse(res, 400, "audit: entity_type must not contain spaces");
+    }
+    if (actorId !== "" && !staff.some((s) => s.user_id === actorId) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(actorId)) {
       return refuse(res, 400, "audit: actor_id must be a UUID");
     }
     const items = audit.filter((e) => {
@@ -2143,6 +2146,40 @@ async function handle(req, res) {
     return;
   }
 
+  if (req.method === "GET" && path === "/api/v1/messaging/channels") {
+    return json(res, {
+      channels: [
+        {
+          id: "bb000000-0000-4000-9000-000000000001",
+          kind: "BRANCH",
+          branch_id: PLM,
+          slug: "yard-and-dock",
+          name: "Yard and Dock",
+          topic: "Point Loma yard dispatches and dock staging",
+          tier: "STANDARD",
+          visibility: "PUBLIC",
+          is_archived: false,
+          created_at: "2026-01-01T00:00:00Z",
+          unread_count: 0,
+          mentioned: false,
+        },
+        {
+          id: "bb000000-0000-4000-9000-000000000002",
+          kind: "APPROVAL",
+          slug: "approvals-and-counter",
+          name: "Approvals and Counter",
+          topic: "Counter payment approvals and price overrides",
+          tier: "ESCALATION",
+          visibility: "PUBLIC",
+          is_archived: false,
+          created_at: "2026-01-01T00:00:00Z",
+          unread_count: 0,
+          mentioned: false,
+        },
+      ],
+    });
+  }
+
   if (req.method === "GET" && path === "/api/v1/messaging/export") {
     // The core's RequireAdmin: a frontline caller is refused the export.
     if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
@@ -2157,6 +2194,75 @@ async function handle(req, res) {
     const channelId = url.searchParams.get("channel_id") ?? "";
     const rows = buildMessageExport().filter((m) => channelId === "" || m.channel_id === channelId);
     return json(res, { messages: rows });
+  }
+
+  // ---- the customer search and product counter-search (for entity pickers) ----
+
+  if (req.method === "GET" && path === "/api/v1/customers/search") {
+    const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+    const customers = [
+      {
+        id: CUST_YARD,
+        name: "Point Loma Hardscape & Masonry",
+        account_no: "ACCT-1042",
+        customer_type: "CONTRACTOR",
+        payment_terms_days: 30,
+      },
+      {
+        id: "cu110000-0000-4000-9000-0000000000a2",
+        name: "Julian Stoneworks",
+        account_no: "ACCT-1088",
+        customer_type: "BUILDER",
+        payment_terms_days: 30,
+      },
+    ];
+    const hits = q === ""
+      ? customers
+      : customers.filter((c) => `${c.name} ${c.account_no} ${c.customer_type}`.toLowerCase().includes(q));
+    return json(res, hits);
+  }
+
+  if (req.method === "GET" && path === "/api/v1/products/counter-search") {
+    const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+    const catalogHits = [
+      {
+        product_id: "fa110000-0000-4000-9000-0000000000a1",
+        sku: "PAV-60-CH",
+        name: "Paver 60 Charcoal",
+        collection: "Blu",
+        color_family: "Grey",
+        base_uom: "SF",
+        sold_by: "SF",
+        has_image: false,
+        match_reason: "NAME_PREFIX",
+      },
+      {
+        product_id: "fa110000-0000-4000-9000-0000000000a2",
+        sku: "WAL-8",
+        name: "Wall block 8",
+        collection: "Seminole",
+        color_family: "Brown",
+        base_uom: "EA",
+        sold_by: "EA",
+        has_image: false,
+        match_reason: "NAME_PREFIX",
+      },
+      ...products.map((p) => ({
+        product_id: p.id,
+        sku: p.sku,
+        name: p.name,
+        collection: p.collection,
+        color_family: p.color_family,
+        base_uom: p.base_uom,
+        sold_by: p.sold_by,
+        has_image: false,
+        match_reason: "NAME",
+      })),
+    ];
+    const items = q === ""
+      ? catalogHits
+      : catalogHits.filter((p) => `${p.name} ${p.sku} ${p.collection}`.toLowerCase().includes(q));
+    return json(res, { items });
   }
 
   // ---- the catalog (the reads are the public catalogue; the writes are the manager gate) ----

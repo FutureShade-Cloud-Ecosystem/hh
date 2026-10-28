@@ -27,6 +27,7 @@ import {
   itemSetError,
   rolesForShape,
   shapeWord,
+  surfaceItemsFor,
   surfaceWord,
 } from "./config-logic.js";
 import type { RoleRow } from "./dealer-api.js";
@@ -341,8 +342,13 @@ function renderDealerDraft(editor: ConfigEditor): TemplateResult {
         </select>
       </label>
       <label class="field">
-        <span class="field-label">Item id</span>
-        <input class="text-field" type="text" data-field="config-add-id" aria-label="Item id of the row to add" />
+        <span class="field-label">Item</span>
+        <select class="select" data-action="config-add-id" data-field="config-add-id" aria-label="Item to add">
+          <option value="">Choose an item</option>
+          ${surfaceItemsFor(editor.surface, editor.addKind).map(
+            (item) => html`<option data-option-id=${item.id}>${item.label}</option>`,
+          )}
+        </select>
       </label>
       <button type="button" class="btn btn-secondary" data-action="config-add-row">Add row</button>
       <button
@@ -438,8 +444,13 @@ function renderMyDraft(editor: ConfigEditor): TemplateResult {
         </select>
       </label>
       <label class="field">
-        <span class="field-label">Item id</span>
-        <input class="text-field" type="text" data-field="config-my-add-id" aria-label="Item id of your own row to add" />
+        <span class="field-label">Item</span>
+        <select class="select" data-action="config-my-add-id" data-field="config-my-add-id" aria-label="Item of your own row to add">
+          <option value="">Choose an item</option>
+          ${surfaceItemsFor(editor.surface, editor.myAddKind).map(
+            (item) => html`<option data-option-id=${item.id}>${item.label}</option>`,
+          )}
+        </select>
       </label>
       <button type="button" class="btn btn-secondary" data-action="config-my-add-row">Add row</button>
       <button type="button" class="btn btn-primary" data-action="config-save-my" ?disabled=${editor.busy || editor.myDraft.length === 0}>

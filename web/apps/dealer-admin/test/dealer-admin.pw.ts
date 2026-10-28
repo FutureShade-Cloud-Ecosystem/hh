@@ -214,12 +214,12 @@ test("a refused filter leaves the filters on the glass, and Clear brings the tra
   await page.locator('.surface-link[data-surface="audit"]').click();
   await expect(page.locator("[data-test=audit-count]")).toHaveText("3 entries");
 
-  // An actor id that is not a UUID is refused in the server's words; the
+  // An entity type with spaces is refused in the server's words; the
   // surface must not become a dead end.
-  await page.locator('[data-field="audit-actor-id"]').fill("not-a-uuid");
+  await page.locator('[data-field="audit-entity-type"]').fill("bad entity");
   await page.locator('[data-action="apply-audit-filters"]').click();
-  await expect(page.locator("[data-test=audit-error]")).toContainText("actor_id must be a UUID");
-  await expect(page.locator('[data-field="audit-actor-id"]')).toHaveValue("not-a-uuid");
+  await expect(page.locator("[data-test=audit-error]")).toContainText("entity_type must not contain spaces");
+  await expect(page.locator('[data-field="audit-entity-type"]')).toHaveValue("bad entity");
 
   await page.locator('[data-action="clear-audit-filters"]').click();
   await expect(page.locator("[data-test=audit-count]")).toHaveText("3 entries");
@@ -273,7 +273,7 @@ test("curate one cell, save, and the grid cell counts the row", async ({ page })
   // The dealer's curation: hide the cost column for the yard shape. The id
   // is the counter's own registry's id; the editor's words say so.
   await page.locator('[data-action="config-add-kind"]').selectOption("column");
-  await page.locator('[data-field="config-add-id"]').fill("cost");
+  await page.locator('[data-field="config-add-id"]').selectOption("cost");
   await page.locator('[data-action="config-add-row"]').click();
   await expect(page.locator("[data-test=config-draft-rows]")).toContainText("cost");
 
@@ -292,7 +292,7 @@ test("your own view saves to the my-items route and reset brings the dealer's ba
   await page.locator('[data-test="config-cell-counter-till-counter"]').click();
 
   await page.locator('[data-action="config-my-add-kind"]').selectOption("chip");
-  await page.locator('[data-field="config-my-add-id"]').fill("pavers");
+  await page.locator('[data-field="config-my-add-id"]').selectOption("pavers");
   await page.locator('[data-action="config-my-add-row"]').click();
   await page.locator('[data-action="config-save-my"]').click();
   await expect(page.locator("[data-test=config-notice]")).toContainText("your own set");
@@ -336,7 +336,7 @@ test("a refused curation write keeps the editor and says the server's words", as
   await openRoleConfig(page);
   await page.locator('[data-test="config-cell-counter-till-yard"]').click();
   await page.locator('[data-action="config-add-kind"]').selectOption("column");
-  await page.locator('[data-field="config-add-id"]').fill("cost");
+  await page.locator('[data-field="config-add-id"]').selectOption("cost");
   await page.locator('[data-action="config-add-row"]').click();
   await page.locator('[data-action="config-save"]').click();
 
@@ -671,10 +671,11 @@ test("the customer prices tab: one account's overrides, an add, and a delete ask
   await page.locator('.pr-tab[data-tab="customers"]').click();
 
   // Before a customer is named, the empty says what this tab is for.
-  await expect(page.locator("[data-test=pr-cust-empty]")).toContainText("Type a customer id");
+  await expect(page.locator("[data-test=pr-cust-empty]")).toContainText("Choose a customer");
 
   // Load the yard account: one price on Retaining Walls, named by category.
-  await page.locator('[data-field="pr-cust-id"]').fill("cu110000-0000-4000-9000-0000000000a1");
+  await page.locator('[data-picker-search="pr-cust-id"]').fill("Point Loma");
+  await page.locator('[data-action="picker-choose"][data-picker-field="pr-cust-id"]').first().click();
   await page.locator('[data-action="pr-cust-load"]').click();
   await expect(page.locator("[data-test=pr-cust-count]")).toHaveText("1 price");
   const row = page.locator('tr[data-override="8a110000-0000-4000-9000-0000000000a1"]');
@@ -781,8 +782,9 @@ test("the rebates tab: the programs, the vendor's ledger, and an accrual with it
 
   // An accrual: the facts in, the server's counts out, and the ledger re-read.
   await page.locator('[data-field="pr-acc-source-id"]').fill("0f110000-0000-4000-9000-0000000000a2");
-  await page.locator('[data-field="pr-acc-product"]').fill("fa110000-0000-4000-9000-0000000000a1");
-  await page.locator('[data-field="pr-acc-category"]').fill("ca7a0000-0000-4000-9000-0000000000a1");
+  await page.locator('[data-picker-search="pr-acc-product"]').fill("Paver 60");
+  await page.locator('[data-action="picker-choose"][data-picker-field="pr-acc-product"]').first().click();
+  await page.locator('[data-field="pr-acc-category"]').selectOption("ca7a0000-0000-4000-9000-0000000000a1");
   await page.locator('[data-field="pr-acc-qty"]').fill("6");
   await page.locator('[data-field="pr-acc-sale"]').fill("3500.00");
   await page.locator('[data-field="pr-acc-cost"]').fill("2500.00");
@@ -807,7 +809,8 @@ test("the units of measure tab: the seeded edge, the warn line, and the probe's 
   await expect(row).toContainText("unconfirmed");
 
   // The probe: type the question, read the sentences the counter reads out.
-  await page.locator('[data-field="pr-uom-probe-product"]').fill("fa110000-0000-4000-9000-0000000000a1");
+  await page.locator('[data-picker-search="pr-uom-probe-product"]').fill("Paver 60");
+  await page.locator('[data-action="picker-choose"][data-picker-field="pr-uom-probe-product"]').first().click();
   await page.locator('[data-field="pr-uom-probe-qty"]').fill("77");
   await page.locator('[data-field="pr-uom-probe-uom"]').fill("SF");
   await page.locator('[data-action="pr-uom-plan"]').click();
@@ -902,8 +905,10 @@ test("the low margin tab: the scan, the cleared stamp, and a proposed line grade
   await expect(criticalRow).toContainText("cleared: Branch manager (demo)");
 
   // A proposed line grades through the resolver; the server names the breach.
-  await page.locator('[data-field="pr-lm-customer"]').fill("cu110000-0000-4000-9000-0000000000a1");
-  await page.locator('[data-field="pr-lm-product"]').fill("fa110000-0000-4000-9000-0000000000a2");
+  await page.locator('[data-picker-search="pr-lm-customer"]').fill("Point Loma");
+  await page.locator('[data-action="picker-choose"][data-picker-field="pr-lm-customer"]').first().click();
+  await page.locator('[data-picker-search="pr-lm-product"]').fill("Wall block");
+  await page.locator('[data-action="picker-choose"][data-picker-field="pr-lm-product"]').first().click();
   await page.locator('[data-field="pr-lm-qty"]').fill("40");
   await page.locator('[data-field="pr-lm-cost"]').fill("1.90");
   await page.locator('[data-action="pr-lm-grade"]').click();

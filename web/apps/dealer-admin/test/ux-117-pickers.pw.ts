@@ -155,7 +155,7 @@ test("customer picker: search by name, choose the account, see its name, and sen
   const readCall = log.find(
     (e: { method: string; path: string }) =>
       e.method === "GET" &&
-      e.path === "/api/v1/pricing/customers/cu110000-0000-4000-9000-0000000000a1/category-overrides",
+      e.path === "/api/v1/pricing/customers/cu110000-0000-4000-9000-0000000000a1/overrides",
   );
   expect(readCall).toBeTruthy();
 
