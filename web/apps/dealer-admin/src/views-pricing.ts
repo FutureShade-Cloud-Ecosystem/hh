@@ -334,7 +334,7 @@ function renderFloorPanel(floor: FloorPanel, confirmAction: string, reviewAction
         ? nothing
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Product</th>
@@ -349,12 +349,12 @@ function renderFloorPanel(floor: FloorPanel, confirmAction: string, reviewAction
                   ${floor.items.map(
                     (item) => html`
                       <tr data-product=${item.product_id}>
-                        <td>${floorItemWords(item)}</td>
-                        <td class="num">${moneyWords(item.previous_final_cents)}</td>
-                        <td class="num">${moneyWords(item.final_cents)}</td>
-                        <td class="num">${marginCellWords(item.margin_bps)}</td>
-                        <td class="num">${marginCellWords(item.floor_bps)}</td>
-                        <td>${item.already_under_floor ? html`<span class="chip chip-dim">yes</span>` : html`<span class="chip chip-danger">no</span>`}</td>
+                        <td data-label="Product">${floorItemWords(item)}</td>
+                        <td class="num" data-label="Price now">${moneyWords(item.previous_final_cents)}</td>
+                        <td class="num" data-label="Price with the change">${moneyWords(item.final_cents)}</td>
+                        <td class="num" data-label="Margin with the change">${marginCellWords(item.margin_bps)}</td>
+                        <td class="num" data-label="Floor">${marginCellWords(item.floor_bps)}</td>
+                        <td data-label="Under the floor">${item.already_under_floor ? html`<span class="chip chip-dim">yes</span>` : html`<span class="chip chip-danger">no</span>`}</td>
                       </tr>
                     `,
                   )}
@@ -436,7 +436,7 @@ function renderRulesList(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-rules-empty">${ruleEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Scope</th>
@@ -463,20 +463,20 @@ function renderRuleRow(rule: RuleRow, model: PricingModel): TemplateResult {
   const confirming = m.confirmingId === rule.id;
   return html`
     <tr data-rule=${rule.id}>
-      <td><span class="chip">${scopeWord(rule.scope)}</span></td>
-      <td>
+      <td data-label="Scope"><span class="chip">${scopeWord(rule.scope)}</span></td>
+      <td data-label="Reaches">
         <div>${ruleDimsWords(rule, model)}</div>
         <div class="mono dim">${rule.detail_text}</div>
       </td>
-      <td class="num" data-test="pr-rule-value">${ruleValueWords(rule)}</td>
-      <td class="num">${rule.priority}</td>
-      <td class="mono dim">${validityWords(rule.valid_from, rule.valid_to)}</td>
-      <td>
+      <td class="num" data-label="Value" data-test="pr-rule-value">${ruleValueWords(rule)}</td>
+      <td class="num" data-label="Priority">${rule.priority}</td>
+      <td class="mono dim" data-label="Valid">${validityWords(rule.valid_from, rule.valid_to)}</td>
+      <td data-label="State">
         ${rule.is_active
           ? html`<span class="chip chip-good">active</span>`
           : html`<span class="chip chip-dim">retired</span>`}
       </td>
-      <td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -658,7 +658,7 @@ function renderOverrides(model: PricingModel, asked: boolean): TemplateResult | 
   if (m.rows.length === 0) return html`<p class="notice-line" data-test="pr-cust-empty">${overrideEmptyWords(true)}</p>`;
   return html`
     <div class="tablewrap">
-      <table>
+      <table class="cardrow-table">
         <thead>
           <tr>
             <th scope="col">Category</th>
@@ -680,10 +680,10 @@ function renderOverrideRow(row: OverrideRow, model: PricingModel): TemplateResul
   const confirming = m.confirmingId === row.id;
   return html`
     <tr data-override=${row.id}>
-      <td><span class="person">${categoryName(row.category_id, model.categories)}</span></td>
-      <td class="num" data-test="pr-cust-value">${overrideValueWords(row)}</td>
-      <td class="dim">${row.notes}</td>
-      <td>
+      <td data-label="Category"><span class="person">${categoryName(row.category_id, model.categories)}</span></td>
+      <td class="num" data-label="Value" data-test="pr-cust-value">${overrideValueWords(row)}</td>
+      <td class="dim" data-label="Notes">${row.notes}</td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -803,7 +803,7 @@ function renderBreaksList(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-breaks-empty">${breaksEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Schedule</th>
@@ -828,12 +828,12 @@ function renderBreakRowView(row: BreakRow, model: PricingModel): TemplateResult 
   const confirming = m.confirmingId === row.id;
   return html`
     <tr data-break=${row.id}>
-      <td>
+      <td data-label="Schedule">
         <div class="person">${row.name}</div>
         <div class="mono dim">${row.code} · by ${row.threshold_uom}</div>
       </td>
-      <td>${breakScopeWords(row, model)}</td>
-      <td>
+      <td data-label="Covers">${breakScopeWords(row, model)}</td>
+      <td data-label="Tiers">
         ${row.items.length === 0
           ? html`<span class="dim">no tiers</span>`
           : row.items.map(
@@ -842,10 +842,10 @@ function renderBreakRowView(row: BreakRow, model: PricingModel): TemplateResult 
               `,
             )}
       </td>
-      <td>
+      <td data-label="State">
         ${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}
       </td>
-      <td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -914,7 +914,7 @@ function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing
         </label>
       </div>
       <div class="tablewrap">
-        <table>
+        <table class="cardrow-table">
           <thead>
             <tr>
               <th scope="col">From</th>
@@ -929,9 +929,9 @@ function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing
             ${e.items.map(
               (item, index) => html`
                 <tr data-tier=${index}>
-                  <td><input class="text-field" type="text" inputmode="decimal" aria-label=${tierWord(index)} data-field="pr-brk-item-${index}-from" ?disabled=${m.busy} /></td>
-                  <td><input class="text-field" type="text" inputmode="decimal" aria-label="Tier top" data-field="pr-brk-item-${index}-to" ?disabled=${m.busy} /></td>
-                  <td>
+                  <td data-label="From"><input class="text-field" type="text" inputmode="decimal" aria-label=${tierWord(index)} data-field="pr-brk-item-${index}-from" ?disabled=${m.busy} /></td>
+                  <td data-label="To"><input class="text-field" type="text" inputmode="decimal" aria-label="Tier top" data-field="pr-brk-item-${index}-to" ?disabled=${m.busy} /></td>
+                  <td data-label="What the tier does">
                     <select class="select" aria-label="What the tier does" data-field="pr-brk-item-${index}-type" ?disabled=${m.busy}>
                       <option value="PCT_OFF">Percent off</option>
                       <option value="ABS_OFF">Amount off</option>
@@ -939,9 +939,9 @@ function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing
                       <option value="SURCHARGE_ABS">Amount surcharge</option>
                     </select>
                   </td>
-                  <td><input class="text-field" type="text" inputmode="decimal" aria-label="Tier value" data-field="pr-brk-item-${index}-value" ?disabled=${m.busy} /></td>
-                  <td><input class="text-field" type="text" aria-label="Tier unit" data-field="pr-brk-item-${index}-uom" ?disabled=${m.busy} /></td>
-                  <td>
+                  <td data-label="Value"><input class="text-field" type="text" inputmode="decimal" aria-label="Tier value" data-field="pr-brk-item-${index}-value" ?disabled=${m.busy} /></td>
+                  <td data-label="Unit"><input class="text-field" type="text" aria-label="Tier unit" data-field="pr-brk-item-${index}-uom" ?disabled=${m.busy} /></td>
+                  <td class="cardrow-act">
                     <button
                       type="button"
                       class="btn btn-secondary btn-small"
@@ -1018,7 +1018,7 @@ function renderPromotionsPanel(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-promos-empty">${promosEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Promotion</th>
@@ -1045,16 +1045,16 @@ function renderPromoRow(row: PromotionRow, model: PricingModel): TemplateResult 
   const confirming = m.confirmingId === row.id;
   return html`
     <tr data-promo=${row.id}>
-      <td>
+      <td data-label="Promotion">
         <div class="person">${row.name}</div>
         <div class="mono dim">${row.code} · ${row.detail_text}</div>
       </td>
-      <td>${promoScopeWords(row, model)}</td>
-      <td class="mono dim">${validityWords(row.starts_at, row.ends_at)}</td>
-      <td class="num" data-test="pr-promo-value">${promoValueWords(row)}</td>
-      <td class="num">${row.priority}</td>
-      <td>${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}</td>
-      <td>
+      <td data-label="Covers">${promoScopeWords(row, model)}</td>
+      <td class="mono dim" data-label="Window">${validityWords(row.starts_at, row.ends_at)}</td>
+      <td class="num" data-label="Value" data-test="pr-promo-value">${promoValueWords(row)}</td>
+      <td class="num" data-label="Priority">${row.priority}</td>
+      <td data-label="State">${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}</td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -1180,7 +1180,7 @@ function renderClearancePanel(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-clear-empty">No clearance marks. An item prices through the ordinary waterfall until it is marked.</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Product</th>
@@ -1210,15 +1210,15 @@ function renderClearanceRowView(row: ClearanceRow, model: PricingModel): Templat
   const productLabel = row.sku !== "" ? row.sku : row.name !== "" ? row.name : UNKNOWN_PRODUCT;
   return html`
     <tr data-clearance=${row.product_id}>
-      <td>
+      <td data-label="Product">
         <div class="person">${row.name === "" ? UNKNOWN_PRODUCT : row.name}</div>
         ${row.sku === "" ? nothing : html`<div class="mono dim">${row.sku}</div>`}
       </td>
-      <td>${row.reason}</td>
-      <td class="num" data-test="pr-clear-value">${clearanceValueWords(row)}</td>
-      <td class="mono dim">${validityWords(row.started_at, row.ends_at)}</td>
-      <td>${row.is_active ? html`<span class="chip chip-good">marked</span>` : html`<span class="chip chip-dim">ended</span>`}</td>
-      <td>
+      <td data-label="Why">${row.reason}</td>
+      <td class="num" data-label="Price" data-test="pr-clear-value">${clearanceValueWords(row)}</td>
+      <td class="mono dim" data-label="Marked">${validityWords(row.started_at, row.ends_at)}</td>
+      <td data-label="State">${row.is_active ? html`<span class="chip chip-good">marked</span>` : html`<span class="chip chip-dim">ended</span>`}</td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -1335,7 +1335,7 @@ function renderRebatePrograms(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-rebates-empty">${rebateEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Program</th>
@@ -1362,16 +1362,16 @@ function renderRebateRowView(row: RebateRow, model: PricingModel): TemplateResul
   const confirming = m.confirmingId === row.id;
   return html`
     <tr data-rebate=${row.id}>
-      <td>
+      <td data-label="Program">
         <div class="person">${row.name}</div>
         <div class="mono dim">${row.code} · ${row.notes}</div>
       </td>
-      <td>${vendorWords(row.vendor_name, row.vendor_id)}</td>
-      <td>${rebateCoversWords(row, model)}</td>
-      <td class="num" data-test="pr-rebate-rate">${rebateRateWords(row)}</td>
-      <td class="mono dim">${row.starts_at.slice(0, 10)}</td>
-      <td>${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}</td>
-      <td>
+      <td data-label="Vendor">${vendorWords(row.vendor_name, row.vendor_id)}</td>
+      <td data-label="Covers">${rebateCoversWords(row, model)}</td>
+      <td class="num" data-label="Rate" data-test="pr-rebate-rate">${rebateRateWords(row)}</td>
+      <td class="mono dim" data-label="From">${row.starts_at.slice(0, 10)}</td>
+      <td data-label="State">${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}</td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -1500,7 +1500,7 @@ function renderLedger(model: PricingModel): TemplateResult {
       ${m.phase === "ready" && m.rows.length > 0
         ? html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Accrued</th>
@@ -1516,13 +1516,13 @@ function renderLedger(model: PricingModel): TemplateResult {
                   ${m.rows.map(
                     (row) => html`
                       <tr data-accrual=${row.accrual_cents ?? ""}>
-                        <td class="mono dim">${row.accrued_at.slice(0, 10)}</td>
-                        <td class="mono">${row.program_code === "" ? "-" : row.program_code}</td>
-                        <td class="mono">${row.product_sku === "" ? row.product_sku : row.product_sku}</td>
-                        <td><span class="chip">${row.source_type}</span></td>
-                        <td class="num">${costCellWords(row.basis_cents)}</td>
-                        <td class="mono dim">${row.rate_note === null ? WITHHELD_FIGURE_WORDS : row.rate_note}</td>
-                        <td class="num">${costCellWords(row.accrual_cents)}</td>
+                        <td class="mono dim" data-label="Accrued">${row.accrued_at.slice(0, 10)}</td>
+                        <td class="mono" data-label="Program">${row.program_code === "" ? "-" : row.program_code}</td>
+                        <td class="mono" data-label="SKU">${row.product_sku === "" ? row.product_sku : row.product_sku}</td>
+                        <td data-label="Source"><span class="chip">${row.source_type}</span></td>
+                        <td class="num" data-label="Basis">${costCellWords(row.basis_cents)}</td>
+                        <td class="mono dim" data-label="Rate note">${row.rate_note === null ? WITHHELD_FIGURE_WORDS : row.rate_note}</td>
+                        <td class="num" data-label="Claim">${costCellWords(row.accrual_cents)}</td>
                       </tr>
                     `,
                   )}
@@ -1689,7 +1689,7 @@ function renderUomTable(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-uom-empty">${uomEmptyWords()}</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Product</th>
@@ -1716,15 +1716,15 @@ function renderUomRow(row: UomConversionRow, model: PricingModel): TemplateResul
   const confirmed = isUomConfirmed(row.source);
   return html`
     <tr data-conversion=${row.id}>
-      <td>${uomProductWords(row)}</td>
-      <td class="mono">${row.from_uom} → ${row.to_uom}</td>
-      <td class="num">${trimNumber(row.factor, 6)}</td>
-      <td>${row.round_up_at_pick ? html`<span class="chip">rounds up at pick</span>` : nothing}</td>
-      <td>
+      <td data-label="Product">${uomProductWords(row)}</td>
+      <td class="mono" data-label="Edge">${row.from_uom} → ${row.to_uom}</td>
+      <td class="num" data-label="Factor">${trimNumber(row.factor, 6)}</td>
+      <td data-label="Pick">${row.round_up_at_pick ? html`<span class="chip">rounds up at pick</span>` : nothing}</td>
+      <td data-label="Source">
         <span class="chip ${confirmed ? "chip-good" : "chip-danger"}">${confirmed ? uomSourceWord(row.source) : "unconfirmed"}</span>
         ${row.source_note === "" ? nothing : html`<div class="dim">${row.source_note}</div>`}
       </td>
-      <td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -1828,7 +1828,7 @@ export function renderBatches(model: PricingModel): TemplateResult {
               ? html`<p class="notice-line" data-test="pr-batches-empty">${batchEmptyWords()}</p>`
               : html`
                   <div class="tablewrap">
-                    <table>
+                    <table class="cardrow-table">
                       <thead>
                         <tr>
                           <th scope="col">Batch</th>
@@ -1861,13 +1861,13 @@ function renderBatchRowView(row: Parameters<typeof batchStatusWord>[0] extends s
   const open = m.open?.id === row.id;
   return html`
     <tr data-batch=${row.id}>
-      <td class="mono">${row.batch_no}</td>
-      <td>${row.vendor_name === "" ? html`<span class="dim">unnamed</span>` : row.vendor_name}</td>
-      <td><span class="chip">${batchStatusWord(row.status)}</span></td>
-      <td class="mono dim">${row.effective_date === "" ? "no date" : row.effective_date.slice(0, 10)}</td>
-      <td class="num">${row.line_count}</td>
-      <td class="num ${row.outlier_count > 0 ? "" : "dim"}">${row.outlier_count}</td>
-      <td>
+      <td class="mono" data-label="Batch">${row.batch_no}</td>
+      <td data-label="Vendor">${row.vendor_name === "" ? html`<span class="dim">unnamed</span>` : row.vendor_name}</td>
+      <td data-label="Status"><span class="chip">${batchStatusWord(row.status)}</span></td>
+      <td class="mono dim" data-label="Effective">${row.effective_date === "" ? "no date" : row.effective_date.slice(0, 10)}</td>
+      <td class="num" data-label="Lines">${row.line_count}</td>
+      <td class="num ${row.outlier_count > 0 ? "" : "dim"}" data-label="Outliers">${row.outlier_count}</td>
+      <td class="cardrow-act">
         <div class="pr-actions">
           <button
             type="button"
@@ -1961,7 +1961,7 @@ function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
       ${m.linesPhase === "ready" && m.lines.length > 0
         ? html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">SKU</th>
@@ -1974,10 +1974,10 @@ function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
                   ${m.lines.map(
                     (line) => html`
                       <tr data-line=${line.id}>
-                        <td class="mono">${line.sku}</td>
-                        <td>${batchLineWords(line)}</td>
-                        <td class="dim">${derivationWord(line.derived_from)}</td>
-                        <td>${line.unmatched ? html`<span class="chip chip-danger">unmatched</span>` : line.is_outlier ? html`<span class="chip chip-danger">outlier</span>` : html`<span class="chip chip-dim">ok</span>`}</td>
+                        <td class="mono" data-label="SKU">${line.sku}</td>
+                        <td data-label="Retail">${batchLineWords(line)}</td>
+                        <td class="dim" data-label="Set automatically">${derivationWord(line.derived_from)}</td>
+                        <td data-label="Flag">${line.unmatched ? html`<span class="chip chip-danger">unmatched</span>` : line.is_outlier ? html`<span class="chip chip-danger">outlier</span>` : html`<span class="chip chip-dim">ok</span>`}</td>
                       </tr>
                     `,
                   )}
@@ -2003,7 +2003,7 @@ function renderProfiles(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-profiles-empty">No import profiles yet. The first import against a vendor's file mints one.</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">Profile</th>
@@ -2017,11 +2017,11 @@ function renderProfiles(model: PricingModel): TemplateResult {
                   ${m.profiles.map(
                     (p) => html`
                       <tr data-profile=${p.id}>
-                        <td class="person">${p.name}</td>
-                        <td>${p.vendor_name === "" ? "unnamed" : p.vendor_name}</td>
-                        <td class="mono dim">${Object.entries(p.mapping).map(([k, v]) => `${k}: ${v}`).join(", ")}</td>
-                        <td class="num">${p.markup_bps}</td>
-                        <td>
+                        <td class="person" data-label="Profile">${p.name}</td>
+                        <td data-label="Vendor">${p.vendor_name === "" ? "unnamed" : p.vendor_name}</td>
+                        <td class="mono dim" data-label="Mapping">${Object.entries(p.mapping).map(([k, v]) => `${k}: ${v}`).join(", ")}</td>
+                        <td class="num" data-label="Markup">${p.markup_bps}</td>
+                        <td class="cardrow-act">
                           <button
                             type="button"
                             class="btn btn-secondary btn-small"
@@ -2173,7 +2173,7 @@ function renderPriceFilePreview(m: PriceFileModel): TemplateResult | typeof noth
         ? nothing
         : html`<p class="error-line">The catalog could not answer: every row reads as unknown. Preview again before applying.</p>`}
       <div class="tablewrap">
-        <table>
+        <table class="cardrow-table">
           <thead>
             <tr>
               <th scope="col" class="num">Row</th>
@@ -2188,12 +2188,12 @@ function renderPriceFilePreview(m: PriceFileModel): TemplateResult | typeof noth
             ${p.lines.map(
               (line) => html`
                 <tr data-pf-row=${line.row}>
-                  <td class="num">${line.row}</td>
-                  <td class="mono">${line.sku}</td>
-                  <td><span class="chip ${line.outcome === "UNKNOWN" ? "chip-danger" : ""}">${outcomeWord(line.outcome)}</span></td>
-                  <td class="num">${moneyWords(line.current_retail_cents)}</td>
-                  <td class="num">${moneyWords(line.new_retail_cents)}${line.freight_estimated ? html` <span class="chip chip-dim">est. freight</span>` : nothing}</td>
-                  <td class="dim">${derivationWord(line.derived_from)}</td>
+                  <td class="num" data-label="Row">${line.row}</td>
+                  <td class="mono" data-label="SKU">${line.sku}</td>
+                  <td data-label="Outcome"><span class="chip ${line.outcome === "UNKNOWN" ? "chip-danger" : ""}">${outcomeWord(line.outcome)}</span></td>
+                  <td class="num" data-label="Retail now">${moneyWords(line.current_retail_cents)}</td>
+                  <td class="num" data-label="Retail in the file">${moneyWords(line.new_retail_cents)}${line.freight_estimated ? html` <span class="chip chip-dim">est. freight</span>` : nothing}</td>
+                  <td class="dim" data-label="Set automatically">${derivationWord(line.derived_from)}</td>
                 </tr>
               `,
             )}
@@ -2222,7 +2222,7 @@ function renderPriceFileRuns(model: PricingModel): TemplateResult {
         ? html`<p class="notice-line" data-test="pr-pf-runs-empty">No runs yet. The road's own log fills as files are staged.</p>`
         : html`
             <div class="tablewrap">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col">When</th>
@@ -2237,12 +2237,12 @@ function renderPriceFileRuns(model: PricingModel): TemplateResult {
                   ${m.runs.map(
                     (run) => html`
                       <tr data-run=${run.id}>
-                        <td class="mono dim">${run.created_at.slice(0, 10)}</td>
-                        <td class="mono">${run.source_name} (${run.source_format})</td>
-                        <td class="mono">${run.batch_no === "" ? "-" : run.batch_no}</td>
-                        <td class="num">${run.counts.rows}</td>
-                        <td class="num">${run.counts.changed}</td>
-                        <td class="dim">${run.imported_by_name === "" ? "-" : run.imported_by_name}</td>
+                        <td class="mono dim" data-label="When">${run.created_at.slice(0, 10)}</td>
+                        <td class="mono" data-label="File">${run.source_name} (${run.source_format})</td>
+                        <td class="mono" data-label="Batch">${run.batch_no === "" ? "-" : run.batch_no}</td>
+                        <td class="num" data-label="Rows">${run.counts.rows}</td>
+                        <td class="num" data-label="Changed">${run.counts.changed}</td>
+                        <td class="dim" data-label="By">${run.imported_by_name === "" ? "-" : run.imported_by_name}</td>
                       </tr>
                     `,
                   )}
@@ -2297,7 +2297,7 @@ export function renderLowMargin(model: PricingModel): TemplateResult {
               ? html`<p class="notice-line" data-test="pr-lm-empty">${lowMarginEmptyWords()}</p>`
               : html`
                   <div class="tablewrap">
-                    <table>
+                    <table class="cardrow-table">
                       <thead>
                         <tr>
                           <th scope="col">Document</th>
@@ -2324,18 +2324,18 @@ export function renderLowMargin(model: PricingModel): TemplateResult {
 function renderLowMarginRow(row: LowMarginScanRow): TemplateResult {
   return html`
     <tr data-lm=${row.doc_id}>
-      <td>
+      <td data-label="Document">
         <div class="mono">${row.doc_no}</div>
         <div class="mono dim">${row.doc_at.slice(0, 10)}</div>
       </td>
-      <td>${lowMarginWords(row)}</td>
-      <td class="num">${moneyWords(row.unit_price_cents)}</td>
-      <td class="num">${pctWords(row.margin_bps)}</td>
-      <td>
+      <td data-label="Line">${lowMarginWords(row)}</td>
+      <td class="num" data-label="Price">${moneyWords(row.unit_price_cents)}</td>
+      <td class="num" data-label="Margin">${pctWords(row.margin_bps)}</td>
+      <td data-label="Level">
         <span class="chip ${lowMarginLevelChip(row.level)}">${row.level}</span>
         ${row.cleared_below_floor ? html`<span class="chip chip-good">cleared: ${row.cleared_by === "" ? "a manager" : row.cleared_by}</span>` : nothing}
       </td>
-      <td class="dim">${row.salesperson === "" ? "-" : row.salesperson}</td>
+      <td class="dim" data-label="Sold by">${row.salesperson === "" ? "-" : row.salesperson}</td>
     </tr>
   `;
 }
@@ -2377,7 +2377,7 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
         ? nothing
         : html`
             <div class="tablewrap" data-test="pr-lm-entries">
-              <table>
+              <table class="cardrow-table">
                 <thead>
                   <tr>
                     <th scope="col" class="num">Price</th>
@@ -2391,11 +2391,11 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
                   ${m.entries.map(
                     (entry) => html`
                       <tr data-entry=${entry.product_id}>
-                        <td class="num">${moneyWords(entry.final_cents)}</td>
-                        <td class="num">${pctWords(entry.margin_bps)}</td>
-                        <td><span class="chip ${lowMarginLevelChip(entry.level)}">${entry.level}</span></td>
-                        <td>${priceSourceWord(entry.source)}</td>
-                        <td class="dim">${entry.invalid ? entry.reason : entry.reason === "" ? "-" : entry.reason}</td>
+                        <td class="num" data-label="Price">${moneyWords(entry.final_cents)}</td>
+                        <td class="num" data-label="Margin">${pctWords(entry.margin_bps)}</td>
+                        <td data-label="Level"><span class="chip ${lowMarginLevelChip(entry.level)}">${entry.level}</span></td>
+                        <td data-label="Source">${priceSourceWord(entry.source)}</td>
+                        <td class="dim" data-label="Why">${entry.invalid ? entry.reason : entry.reason === "" ? "-" : entry.reason}</td>
                       </tr>
                     `,
                   )}
@@ -2462,7 +2462,7 @@ export function renderPricingAudit(model: PricingModel): TemplateResult {
               ? html`<p class="notice-line" data-test="pr-audit-empty">No pricing log entries match. The log is append only: the filters are narrower than the record, not the actions undone.</p>`
               : html`
                   <div class="tablewrap">
-                    <table>
+                    <table class="cardrow-table">
                       <thead>
                         <tr>
                           <th scope="col">When</th>
@@ -2490,15 +2490,15 @@ function renderPricingAuditRow(row: PricingAuditRow, model: PricingModel): Templ
   const delta = deltaWords(row.old_value === "" ? null : row.old_value, row.new_value === "" ? null : row.new_value);
   return html`
     <tr data-audit=${row.id}>
-      <td class="mono dim">${whenWords(row.created_at)}</td>
-      <td>${auditEntityWords(row, model)}</td>
-      <td><span class="chip ${bypass ? "chip-danger" : ""}">${auditActionWord(row.action)}</span></td>
-      <td class="dim">${row.field_name === "" ? "-" : row.field_name}</td>
-      <td>${delta === "" ? html`<span class="dim">-</span>` : delta}</td>
-      <td class="dim">${row.user_id === "" ? "the engine" : UNKNOWN_ACTOR}</td>
+      <td class="mono dim" data-label="When">${whenWords(row.created_at)}</td>
+      <td data-label="Entity">${auditEntityWords(row, model)}</td>
+      <td data-label="Action"><span class="chip ${bypass ? "chip-danger" : ""}">${auditActionWord(row.action)}</span></td>
+      <td class="dim" data-label="Field">${row.field_name === "" ? "-" : row.field_name}</td>
+      <td data-label="Change">${delta === "" ? html`<span class="dim">-</span>` : delta}</td>
+      <td class="dim" data-label="Actor">${row.user_id === "" ? "the engine" : UNKNOWN_ACTOR}</td>
     </tr>
     ${bypass && row.bypass_reason !== ""
-      ? html`<tr data-audit-reason=${row.id}><td colspan="6"><span class="chip chip-danger">bypass: ${row.bypass_reason}</span></td></tr>`
+      ? html`<tr data-audit-reason=${row.id}><td colspan="6" data-label="Reason"><span class="chip chip-danger">bypass: ${row.bypass_reason}</span></td></tr>`
       : nothing}
   `;
 }
@@ -2536,7 +2536,7 @@ export function renderChangeLog(model: PricingModel): TemplateResult {
               ? html`<p class="notice-line" data-test="pr-log-empty">No changes logged yet. A cost or a retail that moved through a batch lands here: who moved it, from what to what.</p>`
               : html`
                   <div class="tablewrap">
-                    <table>
+                    <table class="cardrow-table">
                       <thead>
                         <tr>
                           <th scope="col">When</th>
@@ -2564,14 +2564,14 @@ export function renderChangeLog(model: PricingModel): TemplateResult {
 function renderChangeLogRow(row: ChangeLogRow): TemplateResult {
   return html`
     <tr data-log=${row.id}>
-      <td class="mono dim">${whenWords(row.created_at)}</td>
-      <td class="dim">${row.product_id === "" ? "-" : UNKNOWN_PRODUCT}</td>
-      <td>${changeFieldWord(row.field)}</td>
-      <td class="num">${moneyWords(row.before_cents)}</td>
-      <td class="num">${moneyWords(row.after_cents)}</td>
-      <td class="mono dim">${row.effective_date === "" ? "-" : row.effective_date.slice(0, 10)}</td>
-      <td class="dim">${row.batch_id === "" ? "-" : UNKNOWN_BATCH}</td>
-      <td class="dim">${row.changed_by === "" ? "-" : UNKNOWN_ACTOR}</td>
+      <td class="mono dim" data-label="When">${whenWords(row.created_at)}</td>
+      <td class="dim" data-label="Product">${row.product_id === "" ? "-" : UNKNOWN_PRODUCT}</td>
+      <td data-label="Field">${changeFieldWord(row.field)}</td>
+      <td class="num" data-label="From">${moneyWords(row.before_cents)}</td>
+      <td class="num" data-label="To">${moneyWords(row.after_cents)}</td>
+      <td class="mono dim" data-label="Effective">${row.effective_date === "" ? "-" : row.effective_date.slice(0, 10)}</td>
+      <td class="dim" data-label="Batch">${row.batch_id === "" ? "-" : UNKNOWN_BATCH}</td>
+      <td class="dim" data-label="By">${row.changed_by === "" ? "-" : UNKNOWN_ACTOR}</td>
     </tr>
   `;
 }

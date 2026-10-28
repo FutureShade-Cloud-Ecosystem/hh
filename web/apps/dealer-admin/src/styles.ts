@@ -329,6 +329,95 @@ export const dealerStyles = css`
     color: var(--hh-text-dim);
   }
 
+  /* -- the card row: a table that cannot fit a phone ------------------------------
+     UX-106 round 6: the sweep measured every table on every view the round
+     touches, at 390, in light and in charcoal, and found the ones that
+     scrolled sideways under a cut column. They all take one pattern: under
+     900 px the table's head is gone and each row lays out as a grid of
+     labelled pairs, and each cell names itself through the data-label its
+     own CSS reads. The house's own card-row pattern, the one the margin
+     policy table, the staff register and the audit list already take. The
+     desk widths keep the table.
+
+     The label column is the pattern's one number, and it is a table's own:
+     --cardrow-label-col sets it, and the default is the narrow one the
+     audit list needed, so a long value keeps room to stay whole. */
+  @media (max-width: 900px) {
+    .cardrow-table thead {
+      display: none;
+    }
+    .cardrow-table,
+    .cardrow-table tbody {
+      display: block;
+    }
+    .cardrow-table tr {
+      display: grid;
+      gap: var(--hh-s-8);
+      padding: var(--hh-s-12) 0;
+      border-bottom: 1px solid var(--hh-hairline);
+    }
+    .cardrow-table tbody td {
+      display: grid;
+      grid-template-columns: var(--cardrow-label-col, minmax(76px, 24%)) minmax(0, 1fr);
+      gap: var(--hh-s-8);
+      padding: 0;
+      border: 0;
+      text-align: start;
+      white-space: normal;
+      align-items: start;
+      justify-items: start;
+      overflow-wrap: break-word;
+    }
+    .cardrow-table tbody td::before {
+      content: attr(data-label);
+      color: var(--hh-text-dim);
+      font-size: var(--hh-s-12);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      grid-column: 1;
+      grid-row: 1;
+    }
+    /* The value never runs off the card: a value too long for its column
+       breaks inside its own boundary. */
+    .cardrow-table tbody td > * {
+      min-width: 0;
+      max-width: 100%;
+    }
+    /* Every part of the value reads in the value column. A cell that holds
+       two things (a name and its code, a scope and its detail) would
+       otherwise put the second of them in the label column of the next row. */
+    .cardrow-table tbody td:not(.cardrow-act) > * {
+      grid-column: 2;
+    }
+    /* A chip takes the value column's own width, so its words break inside
+       the pill instead of running off the card. */
+    .cardrow-table tbody td .chip {
+      max-width: 100%;
+      white-space: normal;
+      overflow-wrap: break-word;
+    }
+    /* An action cell has no label of its own: its control reads on its own. */
+    .cardrow-table tbody td.cardrow-act {
+      grid-template-columns: none;
+      justify-items: start;
+    }
+    .cardrow-table tbody td.cardrow-act::before {
+      content: none;
+    }
+    /* The row's own head cell is the row's title: the role, the job shape, the
+       record's name. It reads as a name, not as an uppercase column head. */
+    .cardrow-table tbody th[scope="row"] {
+      display: block;
+      font-size: var(--hh-s-16);
+      font-weight: 650;
+      text-transform: none;
+      letter-spacing: normal;
+      text-align: start;
+      color: var(--hh-text);
+    }
+  }
+
   /* -- the fields ---------------------------------------------------------------------- */
 
   .select,
@@ -682,6 +771,14 @@ export const dealerStyles = css`
   }
   .detail .v {
     overflow-wrap: anywhere;
+  }
+  /* UX-106 round 6: at a phone's width one pair is one row. The desk rule's
+     own minimum (a 120 px label and a 240 px value) is wider than the card
+     a phone gives the drawer, so the pairs ran off the card's right edge. */
+  @media (max-width: 900px) {
+    .detail .kv {
+      grid-template-columns: minmax(76px, 24%) minmax(0, 1fr);
+    }
   }
   .detail .changes {
     margin: 0;

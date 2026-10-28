@@ -24,25 +24,31 @@
 //      in charcoal.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-/** One measured box: what it is, and how far it scrolls sideways. */
+/** One measured box: what it is, how far it scrolls sideways, and whether it
+ *  is a table, a value that ran off its box, or a value that reads in the
+ *  label column. */
 interface Box {
   readonly view: string;
   readonly what: string;
+  readonly kind: "table" | "spill" | "stray";
   readonly scroll: number;
   readonly client: number;
 }
 
-/** The thirteen pricing views, the Section list's own words. */
+/** The thirteen pricing views, the Section list's own words. Each settles on
+ *  its LAST panel: a view reads its panels one after another (the promotions
+ *  read lands before the clearance read, the rebate programs before the
+ *  ledger), so settling on the first panel would measure a half-built view. */
 const PRICING_VIEWS: readonly { readonly id: string; readonly title: string; readonly settle: string }[] = [
   { id: "margin", title: "Margin policy", settle: '[data-test="pr-margin-count"]' },
   { id: "rules", title: "Rules", settle: '[data-test="pr-rules-count"]' },
-  { id: "customers", title: "Customer prices", settle: '[data-test="pr-cust-count"], [data-test="pr-cust-empty"]' },
+  { id: "customers", title: "Customer prices", settle: '[data-test="pr-cust-empty"]' },
   { id: "breaks", title: "Quantity breaks", settle: '[data-test="pr-breaks-count"]' },
-  { id: "promos", title: "Promotions & clearance", settle: '[data-test="pr-promo-count"]' },
-  { id: "rebates", title: "Rebates", settle: '[data-test="pr-rebate-count"]' },
+  { id: "promos", title: "Promotions & clearance", settle: '[data-test="pr-clear-count"]' },
+  { id: "rebates", title: "Rebates", settle: '[data-test="pr-ledger-total"]' },
   { id: "uom", title: "Units of measure", settle: '[data-test="pr-uom-count"]' },
-  { id: "batches", title: "Batches & imports", settle: '[data-test="pr-batches-count"]' },
-  { id: "pricefile", title: "Price file", settle: '[data-test="pr-pf-vendor-count"]' },
+  { id: "batches", title: "Batches & imports", settle: '[data-test="pr-profiles-count"]' },
+  { id: "pricefile", title: "Price file", settle: '[data-test="pr-pf-runs-count"]' },
   { id: "lowmargin", title: "Low margin", settle: '[data-test="pr-lm-count"]' },
   { id: "audit", title: "Pricing audit", settle: '[data-test="pr-audit-count"]' },
   { id: "changelog", title: "Change log", settle: '[data-test="pr-log-count"]' },
@@ -78,6 +84,7 @@ async function openSurface(page: Page, surface: string, settle: string): Promise
   await page.locator(`.surface-link[data-surface="${surface}"]`).click();
   await expect(page.locator(settle).first()).toBeVisible({ timeout: 30_000 });
   await page.waitForLoadState("networkidle");
+  await waitForQuiet(page);
 }
 
 /** The pricing view a walk stands on: the phone folds the whole list behind
@@ -86,6 +93,31 @@ async function openPricingView(page: Page, title: string, settle: string): Promi
   await page.locator("[data-test=pr-tab-select]").selectOption({ label: title });
   await expect(page.locator(settle).first()).toBeVisible({ timeout: 30_000 });
   await page.waitForLoadState("networkidle");
+  await waitForQuiet(page);
+}
+
+/** A fingerprint of the app's own shadow root. */
+async function fingerprint(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const app = document.querySelector("dealer-admin-app");
+    const root = app?.shadowRoot;
+    if (root === undefined || root === null) return "no-root";
+    return `${root.innerHTML.length}:${root.querySelectorAll("table").length}`;
+  });
+}
+
+/** Wait until the app stops changing. A view's panels read one after another,
+ *  so a measurement taken the moment the settle marker appears can still miss
+ *  a panel that lands a moment later. Two equal fingerprints in a row is the
+ *  view at rest. */
+async function waitForQuiet(page: Page): Promise<void> {
+  let previous = await fingerprint(page);
+  for (let beat = 0; beat < 50; beat += 1) {
+    await page.waitForTimeout(120);
+    const now = await fingerprint(page);
+    if (now === previous) return;
+    previous = now;
+  }
 }
 
 /**
@@ -101,27 +133,62 @@ async function measure(page: Page, view: string): Promise<Box[]> {
     const describe = (el: Element): string => {
       const cls = typeof el.className === "string" && el.className.trim() !== "" ? `.${el.className.trim().split(/\s+/).join(".")}` : "";
       const test = el.getAttribute("data-test");
-      return `${el.tagName.toLowerCase()}${cls}${test === null ? "" : `[${test}]`}`;
+      const label = el.getAttribute("data-label");
+      return `${el.tagName.toLowerCase()}${cls}${test === null ? "" : `[${test}]`}${label === null ? "" : `{${label}}`}`;
     };
-    const boxes: { view: string; what: string; scroll: number; client: number }[] = [];
+    const boxes: { view: string; what: string; kind: "table" | "spill" | "stray"; scroll: number; client: number }[] = [];
 
     // The wrap holds the table, so the wrap is the box that scrolls.
     for (const wrap of Array.from(root.querySelectorAll(".tablewrap"))) {
-      boxes.push({ view: name, what: describe(wrap), scroll: wrap.scrollWidth, client: wrap.clientWidth });
+      boxes.push({ view: name, what: describe(wrap), kind: "table", scroll: wrap.scrollWidth, client: wrap.clientWidth });
     }
     // A table that stands in no wrap is measured on its own.
     for (const table of Array.from(root.querySelectorAll("table"))) {
       if (table.closest(".tablewrap") !== null) continue;
-      boxes.push({ view: name, what: describe(table), scroll: table.scrollWidth, client: table.clientWidth });
+      boxes.push({ view: name, what: describe(table), kind: "table", scroll: table.scrollWidth, client: table.clientWidth });
     }
     // And anything whose content runs past its own box: that is the cut
-    // column, the value that left the card.
+    // column, the value that left the card. A form control is measured by its
+    // own box instead: an input's value scrolling inside the field is the
+    // field's own behaviour, not a cut column, and what matters is whether
+    // the control itself fits where it sits.
     for (const el of Array.from(root.querySelectorAll("*"))) {
       const cs = getComputedStyle(el);
       if (cs.display === "none" || cs.position === "absolute" || cs.position === "fixed") continue;
       if (cs.overflowX === "auto" || cs.overflowX === "scroll") continue;
+      const tag = el.tagName.toLowerCase();
+      if (tag === "input" || tag === "select" || tag === "textarea") {
+        const parent = el.parentElement;
+        if (parent === null) continue;
+        const own = el.getBoundingClientRect().width;
+        const room = parent.getBoundingClientRect().width;
+        if (own <= room + 1) continue;
+        boxes.push({ view: name, what: describe(el), kind: "spill", scroll: Math.round(own), client: Math.round(room) });
+        continue;
+      }
       if (el.scrollWidth <= el.clientWidth + 1) continue;
-      boxes.push({ view: name, what: describe(el), scroll: el.scrollWidth, client: el.clientWidth });
+      boxes.push({ view: name, what: describe(el), kind: "spill", scroll: el.scrollWidth, client: el.clientWidth });
+    }
+    // A card row's value reads in the value column. A cell that holds two
+    // things (a name and its code, a scope and its detail) would otherwise
+    // put the second of them in the label column, where the label reads.
+    for (const cell of Array.from(root.querySelectorAll(".cardrow-table tbody td[data-label]"))) {
+      const cs = getComputedStyle(cell);
+      const tracks = cs.gridTemplateColumns.split(" ").map((track) => Number.parseFloat(track));
+      if (tracks.length < 2 || Number.isNaN(tracks[0])) continue;
+      const gap = Number.parseFloat(cs.columnGap) || 0;
+      const valueLeft = cell.getBoundingClientRect().left + tracks[0] + gap;
+      for (const part of Array.from(cell.children)) {
+        const left = part.getBoundingClientRect().left;
+        if (left >= valueLeft - 1) continue;
+        boxes.push({
+          view: name,
+          what: `${describe(cell)} | ${describe(part)} reads in the label column`,
+          kind: "stray",
+          scroll: Math.round(left - cell.getBoundingClientRect().left),
+          client: Math.round(tracks[0] + gap),
+        });
+      }
     }
     return boxes;
   }, view);
@@ -170,9 +237,11 @@ for (const theme of THEMES) {
     if (theme === "charcoal") await goCharcoal(page);
 
     const boxes: Box[] = [];
+    const visited: string[] = [];
 
     // The register.
     await openSurface(page, "staff", '[data-test="staff-count"]');
+    visited.push("staff");
     boxes.push(...(await measure(page, "staff")));
 
     // Every pricing view, the Section list's own thirteen.
@@ -185,36 +254,55 @@ for (const theme of THEMES) {
         await page.locator('[data-action="pr-cust-load"]').click();
         await expect(page.locator('[data-test="pr-cust-count"]')).toBeVisible({ timeout: 30_000 });
         await page.waitForLoadState("networkidle");
+        await waitForQuiet(page);
       }
+      visited.push(`pricing:${v.id}`);
       boxes.push(...(await measure(page, `pricing:${v.id}`)));
     }
 
     // The audit trail: the list, one open drawer and one entity's whole trail.
     await openSurface(page, "audit", '[data-test="audit-count"]');
+    visited.push("audit:list");
     boxes.push(...(await measure(page, "audit:list")));
     await page.locator("tr[data-action='open-audit-entry']").first().click();
     await expect(page.locator("[data-detail-state='ready']").first()).toBeVisible({ timeout: 30_000 });
     await page.waitForLoadState("networkidle");
+    await waitForQuiet(page);
+    visited.push("audit:drawer");
     boxes.push(...(await measure(page, "audit:drawer")));
     await page.locator("[data-action='open-audit-trail']").first().click();
     await expect(page.locator("[data-test=audit-trail]").first()).toBeVisible({ timeout: 30_000 });
     await page.waitForLoadState("networkidle");
+    await waitForQuiet(page);
+    visited.push("audit:trail");
     boxes.push(...(await measure(page, "audit:trail")));
 
     // The roles grid.
     await openSurface(page, "role-config", '[data-test="role-matrix-card"]');
+    visited.push("roles:grid");
     boxes.push(...(await measure(page, "roles:grid")));
 
     // The hotkey rosters.
     await openSurface(page, "hotkeys", '[data-test^="hotkeys-roster-"]');
+    visited.push("hotkeys:rosters");
     boxes.push(...(await measure(page, "hotkeys:rosters")));
+
+    // The sweep walked every view it names: a view that stopped rendering must
+    // fail the leg, not quietly shrink the measurement. And seventeen of the
+    // nineteen views carry a table (the payment terms and the hotkey rosters
+    // carry none), so a table that stopped rendering fails it too.
+    expect(visited.length, "the sweep did not walk every view").toBe(19);
+    const withTable = new Set(boxes.filter((b) => b.kind === "table").map((b) => b.view));
+    expect(withTable.size, "the sweep measured no table on some views").toBeGreaterThanOrEqual(17);
 
     // The page itself never scrolls sideways.
     const scrolled = await pageScrolls(page);
     expect(scrolled.scroll, "the page scrolls sideways at 390").toBeLessThanOrEqual(scrolled.client);
 
-    // Every box: the scrollWidth against the clientWidth.
-    const cut = boxes.filter((b) => b.scroll > b.client + 1);
+    // Every box: the scrollWidth against the clientWidth. A value that reads
+    // in the label column is the other way round: it sits before the column
+    // it belongs in.
+    const cut = boxes.filter((b) => (b.kind === "stray" ? b.scroll < b.client : b.scroll > b.client + 1));
     const report = cut.map((b) => `  ${b.view} | ${b.what} | scroll ${b.scroll} client ${b.client}`).join("\n");
     expect(cut, `these boxes cut their content at 390 (${theme}):\n${report}`).toEqual([]);
   });
