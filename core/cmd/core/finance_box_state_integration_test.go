@@ -11,8 +11,11 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -120,6 +123,45 @@ func TestIntegration_FinanceBoxStateAnswersTheFourStates(t *testing.T) {
 		}
 		if n != 1 {
 			t.Fatalf("a refused database must be untouched, other.precious holds %d rows", n)
+		}
+	})
+
+	t.Run("a table the box's role cannot see is still foreign", func(t *testing.T) {
+		// S3's round 4 read: information_schema lists only what the reading
+		// role holds a privilege on, so on a shared cluster with a role per
+		// service another app's table in public is invisible to the box's
+		// role, and the database read as empty. The shape read must see every
+		// relation, whatever the grants.
+		owner := freshEmptyDB(t, "finboxstatehidden")
+		suffix := strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+		otherRole, boxRole := "finhid_other_"+suffix, "finhid_box_"+suffix
+		if _, err := owner.Exec(ctx, fmt.Sprintf(`
+			CREATE ROLE %[1]s NOLOGIN;
+			CREATE ROLE %[2]s LOGIN PASSWORD 'example-only';
+			GRANT CONNECT ON DATABASE %[3]s TO %[2]s;
+			CREATE TABLE public.hidden (id INT PRIMARY KEY);
+			INSERT INTO public.hidden VALUES (1);
+			ALTER TABLE public.hidden OWNER TO %[1]s;
+			REVOKE ALL ON public.hidden FROM PUBLIC`, otherRole, boxRole, owner.Config().ConnConfig.Database)); err != nil {
+			t.Fatalf("planting the hidden table: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = owner.Exec(context.Background(), fmt.Sprintf(`DROP TABLE IF EXISTS public.hidden; DROP OWNED BY %[2]s; DROP ROLE IF EXISTS %[2]s; DROP ROLE IF EXISTS %[1]s`, otherRole, boxRole))
+		})
+		cfg := owner.Config().Copy()
+		cfg.ConnConfig.User = boxRole
+		cfg.ConnConfig.Password = "example-only"
+		asBox, err := pgxpool.NewWithConfig(ctx, cfg)
+		if err != nil {
+			t.Fatalf("connecting as the box's role: %v", err)
+		}
+		defer asBox.Close()
+		state, err := financeBoxDatabaseState(ctx, asBox)
+		if err != nil {
+			t.Fatalf("reading the state as the box's role: %v", err)
+		}
+		if state != financeBoxStateForeign {
+			t.Fatalf("a database holding a table the box's role cannot see must read as %s, got %s", financeBoxStateForeign, state)
 		}
 	})
 }
