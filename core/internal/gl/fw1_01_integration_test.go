@@ -28,6 +28,13 @@ import (
 // fw1NextYear scrubs and names the first year after the latest the database
 // holds, so the leg posts on the exact boundary the roll forward must cover
 // whatever bands earlier tests left behind.
+//
+// FW1-09g round 2 (K3's P2, FROM-PRINCIPAL 350): the year end marker goes with
+// the year's periods, on BOTH halves of this wipe. The marker
+// (gl_year_end_closes) has its own primary key and no foreign key to
+// fiscal_periods, so deleting the periods cannot take it with them, and a
+// marker left behind on a reused box makes the next close of that year answer
+// AlreadyClosed before the leg does any work.
 func fw1NextYear(t *testing.T, pool *pgxpool.Pool) int {
 	t.Helper()
 	ctx := context.Background()
@@ -41,11 +48,13 @@ func fw1NextYear(t *testing.T, pool *pgxpool.Pool) int {
 		_, _ = pool.Exec(c, `DELETE FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id=j.id AND j.fiscal_year=$1`, next)
 		_, _ = pool.Exec(c, `DELETE FROM gl_journals WHERE fiscal_year=$1`, next)
 		_, _ = pool.Exec(c, `DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE o.period_id=p.id AND p.year=$1`, next)
+		_, _ = pool.Exec(c, `DELETE FROM gl_year_end_closes WHERE fiscal_year=$1`, next)
 		_, _ = pool.Exec(c, `DELETE FROM fiscal_periods WHERE year=$1`, next)
 	})
 	_, _ = pool.Exec(ctx, `DELETE FROM gl_journal_lines l USING gl_journals j WHERE l.journal_id=j.id AND j.fiscal_year=$1`, next)
 	_, _ = pool.Exec(ctx, `DELETE FROM gl_journals WHERE fiscal_year=$1`, next)
 	_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides o USING fiscal_periods p WHERE o.period_id=p.id AND p.year=$1`, next)
+	_, _ = pool.Exec(ctx, `DELETE FROM gl_year_end_closes WHERE fiscal_year=$1`, next)
 	_, _ = pool.Exec(ctx, `DELETE FROM fiscal_periods WHERE year=$1`, next)
 	return next
 }

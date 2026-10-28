@@ -2697,6 +2697,7 @@ export type GlYearCloseResult = {
   closing_journal_id?: string;
   net_income_cents: number;
   periods_closed: boolean;
+  already_closed: boolean;
 };
 export type GlPolicy = {
   branch_id?: string;
