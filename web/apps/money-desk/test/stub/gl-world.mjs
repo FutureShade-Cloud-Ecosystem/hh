@@ -685,6 +685,10 @@ export function createGlWorld() {
     if (m === "POST" && path === "/api/v1/gl/periods/close-year") {
       const refused = gate(caller, "admin");
       if (refused !== null) return refused;
+      // FW1-09c: the year end close is the Financial Controller's (the core narrows the route, which
+      // asks only for the admin level, to that role). The stub says the core's own sentence, the
+      // way the early open of the next fiscal year does.
+      if (caller.role !== "FINANCIAL_CONTROLLER") return say(403, "gl: only the Financial Controller may close the fiscal year");
       const year = Number(body.year ?? 0);
       if (!(year > 0)) return say(400, "gl: year is required");
       const sums = new Map();
