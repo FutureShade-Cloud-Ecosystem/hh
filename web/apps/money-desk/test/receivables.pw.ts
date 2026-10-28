@@ -56,7 +56,8 @@ test("the desk opens on the register: four tiles, the rows overdue first, Needs 
   await expect(page.locator("[data-bounced-row]")).toHaveCount(1);
   await expect(page.locator("[data-need-hold]")).toHaveCount(2);
   await expect(page.locator("[data-need-paper]")).toHaveCount(1);
-  await expect(page.locator(".tab-later", { hasText: "Payables" })).toContainText("later");
+  // The Payables tab is live (W2-9b): it reads the open AP from the purchasing route.
+  await expect(page.getByRole("button", { name: "Payables", exact: true })).toBeVisible();
 });
 
 test("a tile filters the register to the accounts it counted, and clears", async ({ page, request }) => {

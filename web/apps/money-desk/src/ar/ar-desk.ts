@@ -41,6 +41,8 @@ import {
 } from "./ar-views.js";
 import type { WorkspaceTab } from "./ar-workspace.js";
 import { formatWorkspaceMoney } from "./ar-workspace.js";
+import { renderPayables } from "./ap-views.js";
+import type { PayablesBoardPage } from "./ap-logic.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -76,6 +78,16 @@ export class ArDesk {
   #phase: "loading" | "ready" | "error" = "loading";
   #loadError = "";
   #tab: Tab = "receivables";
+
+  // The Payables board (src/ar/ap-views.ts): the open AP by payee, read from the purchasing
+  // route. It loads when the tab is opened, not with the desk, so the receivables desk is no
+  // slower for a screen nobody asked for. The day the books are read as of is the operator's
+  // to pick; the route answers the figures for that day.
+  #payablesState: "loading" | "ready" | "error" = "loading";
+  #payablesPage: PayablesBoardPage | null = null;
+  #payablesError = "";
+  #payablesAsOf = "";
+  #payablesOpenId: string | null = null;
   #landing: DeskModel["landing"] = null;
   #aging: DeskModel["aging"] = [];
   #rows: readonly BillingRegisterRow[] = [];
@@ -269,6 +281,17 @@ export class ArDesk {
         return true;
       case "tab":
         void this.#goTab(attr("data-tab") as Tab);
+        return true;
+      case "payables-open":
+        this.#payablesOpenId = attr("data-payee-id");
+        this.#host.repaint();
+        return true;
+      case "payables-back":
+        this.#payablesOpenId = null;
+        this.#host.repaint();
+        return true;
+      case "payables-reload":
+        void this.#loadPayables();
         return true;
       case "card":
         this.#cardFilter = this.#cardFilter === attr("data-card-id") ? null : attr("data-card-id");
@@ -604,6 +627,15 @@ export class ArDesk {
   /** A change (the field is left): the amount reads back as money, formatted only. */
   change(control: Element): void {
     if (this.#office.change(control)) return;
+    if (control.getAttribute("data-field") === "payables-asof") {
+      // The day the books are read as of: the operator picks it and the board reads it again.
+      const day = (control as HTMLInputElement).value;
+      if (day === "") return;
+      this.#payablesAsOf = day;
+      this.#payablesOpenId = null;
+      void this.#loadPayables();
+      return;
+    }
     if (control.getAttribute("data-field") === "place-hold-account") {
       const sel = (control as HTMLSelectElement).selectedOptions[0];
       const customerId = sel?.getAttribute("data-id") ?? (control as HTMLSelectElement).value;
@@ -627,6 +659,9 @@ export class ArDesk {
       this.#reveal = "";
       this.#host.reveal(selector);
     }
+    // The board's as of control shows the day the books were read as of, so the operator sees
+    // which day the figures are and can pick another one.
+    if (this.#payablesAsOf !== "") this.#host.setField("payables-asof", this.#payablesAsOf);
     const account = this.#account;
     if (account === null) return;
     if (this.#fillPending) {
@@ -657,12 +692,38 @@ export class ArDesk {
   async #goTab(tab: Tab): Promise<void> {
     this.#tab = tab;
     this.#account = null;
+    // Leaving the board closes the payee whose open items were open.
+    this.#payablesOpenId = null;
     this.#clearMessages();
     this.#host.repaint();
     if (tab === "statements") await Promise.all(this.#aging.map((a) => this.#loadStatement(a.customer_id)));
     if (tab === "reminders") await this.#office.openReminders();
     if (tab === "settings") await this.#office.openSettings();
     if (tab === "holds") await this.#office.openHolds();
+    if (tab === "payables") await this.#loadPayables();
+  }
+
+  /**
+   * The open AP, read from the purchasing route. The route answers the day the books are read
+   * as of: no day named means today's books. A refusal reads in words, the way every other read
+   * on this desk does, and the board keeps the last page it was given rather than showing a
+   * half drawn screen.
+   */
+  async #loadPayables(): Promise<void> {
+    this.#payablesState = "loading";
+    this.#host.repaint();
+    const got = await this.#api.apAging(this.#payablesAsOf === "" ? {} : { as_of: this.#payablesAsOf });
+    if (!got.ok) {
+      this.#payablesState = "error";
+      this.#payablesError = refusalWords("payables", got.error, got.status);
+      this.#host.repaint();
+      return;
+    }
+    this.#payablesState = "ready";
+    this.#payablesPage = got.value;
+    this.#payablesAsOf = got.value.as_of;
+    this.#payablesError = "";
+    this.#host.repaint();
   }
 
   async #loadPaid(): Promise<void> {
@@ -1463,6 +1524,13 @@ export class ArDesk {
     return {
       tab: this.#tab,
       asOf: this.#landing?.as_of ?? "",
+      payables: {
+        state: this.#payablesState,
+        page: this.#payablesPage,
+        error: this.#payablesError,
+        asOf: this.#payablesAsOf,
+        openPayeeId: this.#payablesOpenId,
+      },
       nowMs: Date.now(),
       roleCode: this.#who.roleCode,
       takenBy: this.#who.userName,
@@ -1504,6 +1572,7 @@ export class ArDesk {
     if (this.#workspaceMode) return html`${renderWorkspaceScreen(model)}`;
     if (model.account !== null) return html`${renderAccount(model, model.account)}`;
     if (model.tab === "statements") return html`${renderStatements(model)}`;
+    if (model.tab === "payables") return html`${renderPayables(model)}`;
     if (model.tab === "reminders") return html`${renderReminders(model)}`;
     if (model.tab === "settings") return html`${renderSettings(model)}`;
     if (model.tab === "holds") return html`${renderHolds(model)}`;

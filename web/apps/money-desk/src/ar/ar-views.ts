@@ -31,6 +31,7 @@ import type {
   TillPaymentHistory,
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
+import type { PayablesBoardModel } from "./ap-logic.js";
 import type { ApplyAnswer } from "./ar-api.js";
 import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, canVoidReceipt, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditTargetWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, offeredChips, relativeDay, reopenedInvoiceNos, rowMarks, type Mark, type RegisterChip, pastDueLine } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
@@ -38,7 +39,7 @@ import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderInvoiceCredits, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel, renderVoid } from "./office-views.js";
 import { renderSettingsPanels } from "./office-settings-views.js";
 
-export type Tab = "receivables" | "statements" | "holds" | "reminders" | "settings";
+export type Tab = "receivables" | "statements" | "holds" | "reminders" | "settings" | "payables";
 // C8 register filter chips. The legacy strings ("open", "overdue", "promised", "disputed", "paid")
 // stay valid for backward compatibility with every stored URL and every automation that already
 // names them.
@@ -118,6 +119,8 @@ export interface BouncedWork {
 export interface DeskModel {
   readonly tab: Tab;
   readonly asOf: string;
+  /** The Payables board (src/ar/ap-views.ts): the open AP, the day it is read as of, and the payee open. */
+  readonly payables: PayablesBoardModel;
   readonly nowMs: number;
   readonly roleCode: string;
   readonly takenBy: string;
@@ -204,12 +207,11 @@ function segmented(label: string, items: readonly { id: string; word: string }[]
   `;
 }
 
-function tabsBar(model: DeskModel): TemplateResult {
+export function tabsBar(model: DeskModel): TemplateResult {
   const tab = (id: Tab, word: string): TemplateResult => html`<button type="button" class="tab" data-action="tab" data-tab="${id}" aria-current="${model.tab === id ? "true" : "false"}">${word}</button>`;
   return html`
     <nav class="tabs" aria-label="Money Desk views">
-      ${tab("receivables", "Receivables")} ${tab("statements", "Statements")} ${tab("holds", "Credit holds")} ${tab("reminders", "Reminders")} ${tab("settings", "Settings")}
-      <span class="tab tab-later" aria-disabled="true">Payables ${later()}</span>
+      ${tab("receivables", "Receivables")} ${tab("statements", "Statements")} ${tab("holds", "Credit holds")} ${tab("reminders", "Reminders")} ${tab("settings", "Settings")} ${tab("payables", "Payables")}
     </nav>
   `;
 }
@@ -223,7 +225,7 @@ function frame(body: TemplateResult): TemplateResult {
       <div><h1>Receivables</h1><p class="dim">The AR register with its aging, past due first. Bounced payments and accounts on hold wait in Needs you.</p></div>
     </div>
     <nav class="tabs" aria-label="Money Desk views">
-      <span class="tab" aria-disabled="true">Receivables</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Credit holds</span><span class="tab" aria-disabled="true">Reminders</span><span class="tab" aria-disabled="true">Settings</span>
+      <span class="tab" aria-disabled="true">Receivables</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Credit holds</span><span class="tab" aria-disabled="true">Reminders</span><span class="tab" aria-disabled="true">Settings</span><span class="tab" aria-disabled="true">Payables</span>
     </nav>
     ${body}
   `;
