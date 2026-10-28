@@ -114,9 +114,19 @@ type operationsSpine struct {
 	lienSvc       *lien.Service
 	printQueue    *printing.QueueService
 	tillRepo      *till.Repository
-	unionGateway  payments.PaymentGateway
-	purchasingSvc *purchasing.Service
-	landedcostSvc *landedcost.Service
+	// tillSvc is the till service built below, stored so the month walk (FW1-00, this
+	// package) can pin its clock through the service's own WithClock setter
+	// (FROM-PRINCIPAL 209). The field only keeps the instance already constructed:
+	// production builds and registers it exactly as before and nothing in production
+	// reads the field.
+	tillSvc *till.Service
+	// paymentsReverseSvc is the payment reversal service built below, stored for the
+	// month walk's clock pin the same way; the field stores the instance already
+	// built and nothing in production reads it.
+	paymentsReverseSvc *payments.ReverseService
+	unionGateway       payments.PaymentGateway
+	purchasingSvc      *purchasing.Service
+	landedcostSvc      *landedcost.Service
 	// syncEngine is the sync core (HH-3.5): returned so the scopes
 	// whose owning service the operations wiring does not build (the
 	// customer-quote surface, constructed in main after the spines; the
@@ -368,9 +378,12 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// carry the ERP's own per-PO values), which is the D26 schema-shaped
 	// stop condition reported to the supervisor rather than routed
 	// around; both routes answer the honest 501 for it.
-	shortageSync := tasks.NewShortageSyncStore(pool, link).WithStaffAuthority(syncStaff)
+	shortageSync := tasks.NewShortageSyncStore(pool, link).WithStaffAuthority(syncStaff).WithBranchOrgReader(branchOrg)
 	if pool != nil && !shortageSync.StaffAuthorityWired() {
 		panic("tasks: shortage sync branch fence not wired - a yard device could report on another branch's pick")
+	}
+	if pool != nil && !shortageSync.BranchOrgWired() {
+		panic("tasks: shortage sync org bound not wired - a GLOBAL caller could read a shortage on a branch outside its own org")
 	}
 	if err := syncEngine.RegisterScope("shortages", shortageSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
@@ -802,17 +815,19 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	payments.NewReversalHandler(w3bReverseSvc, log).WithUserLinker(link).WithVoidService(w3bVoidSvc).RegisterRoutes(r, g)
 
 	return &operationsSpine{
-		lienSvc:       lienSvc,
-		dispatchSvc:   dispatchSvc,
-		yardTasksSvc:  yardTasksSvc,
-		warrantySvc:   warrantySvc,
-		messagingSvc:  messagingSvc,
-		messagingRepo: messagingRepo,
-		printQueue:    printQueue,
-		tillRepo:      tillRepo,
-		purchasingSvc: purchasingSvc,
-		landedcostSvc: landedcostSvc,
-		syncEngine:    syncEngine,
+		lienSvc:            lienSvc,
+		dispatchSvc:        dispatchSvc,
+		yardTasksSvc:       yardTasksSvc,
+		warrantySvc:        warrantySvc,
+		messagingSvc:       messagingSvc,
+		messagingRepo:      messagingRepo,
+		printQueue:         printQueue,
+		tillRepo:           tillRepo,
+		tillSvc:            tillSvc,
+		paymentsReverseSvc: w3bReverseSvc,
+		purchasingSvc:      purchasingSvc,
+		landedcostSvc:      landedcostSvc,
+		syncEngine:         syncEngine,
 	}
 }
 
