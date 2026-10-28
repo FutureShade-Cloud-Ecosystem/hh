@@ -84,14 +84,29 @@ func fw1R4WritePolicyHeadOffice(ctx context.Context, pool *pgxpool.Pool, branchI
 }
 
 // fw1R4RestoreHeadOffice is the head office leg's cleanup: it puts the policy's head office back
-// to the value the leg found.
+// to the value the leg found, reads the row back, and answers a problem string when the row does
+// not hold that value ("" when the put back landed).
 //
 // FLAKE-9: it writes the value the policy held, NULL only when the policy held none. Writing
 // NULL whatever it found left a box whose policy named a head office (migration 0445 backfills
 // one) with the leg's own write instead of its own, and the FW1-10 leg read the wrong head
 // office on a reused box.
-func fw1R4RestoreHeadOffice(ctx context.Context, pool *pgxpool.Pool, prior string) {
+//
+// FLAKE-12: the put back is no longer trusted in silence. The write's error was swallowed, so a
+// put back the database refuses (0445's NOT NULL refuses the NULL a policy that named no head
+// office found) left the row holding the leg's own write as if it had been restored, and the
+// FW1-10 fence leg then read a head office it did not expect. The read back answers for it.
+func fw1R4RestoreHeadOffice(ctx context.Context, pool *pgxpool.Pool, prior string) string {
 	fw1R4WritePolicyHeadOffice(ctx, pool, prior)
+	var after string
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(head_office_branch_id::text, '') FROM gl_policy WHERE branch_id IS NULL LIMIT 1`).Scan(&after); err != nil {
+		return fmt.Sprintf("the head office cleanup could not read the policy back after its put back: %v", err)
+	}
+	if after != prior {
+		return fmt.Sprintf("the head office cleanup's put back did not land: it found %q and the row holds %q after the restore (the empty string is none); a put back the database refuses must say so, never leave the leg's own write standing as if it had been restored", prior, after)
+	}
+	return ""
 }
 
 // fw1R4HeadOfficeName names a head office branch the way a reader wants it: the branch code and
@@ -400,7 +415,9 @@ func TestIntegration_FW1_01R4_HeadOfficeSetAuditRowThroughTheRealRecorder(t *tes
 		t.Fatalf("the head office set through the real audit recorder: %v", err)
 	}
 	t.Cleanup(func() {
-		fw1R4RestoreHeadOffice(ctx, pool, prior)
+		if problem := fw1R4RestoreHeadOffice(ctx, pool, prior); problem != "" {
+			t.Errorf("%s", problem)
+		}
 	})
 
 	var n int
@@ -469,12 +486,52 @@ func TestIntegration_FW1_01R4_TheHeadOfficeLegLeavesThePolicyHeadOfficeAsItFound
 		t.Fatalf("the head office set: %v", err)
 	}
 	// The cleanup under test: the one the round 4 leg runs when it ends.
-	fw1R4RestoreHeadOffice(ctx, pool, prior)
+	if problem := fw1R4RestoreHeadOffice(ctx, pool, prior); problem != "" {
+		t.Errorf("%s", problem)
+	}
 
 	after := fw1R4PolicyHeadOffice(t, pool)
 	if after != prior {
 		t.Fatalf("the head office leg left the policy's head office at %s, want %s: it must put back exactly what it found",
 			fw1R4HeadOfficeName(t, pool, after), fw1R4HeadOfficeName(t, pool, prior))
+	}
+}
+
+// TestIntegration_FW1_01R4_TheHeadOfficeCleanupsPutBackIsAnswered is FLAKE-12's pin on the
+// cleanup's own check: a put back the database refuses must be ANSWERED, never swallowed into
+// silence. The found value handed to the cleanup here names no branch, so the restore's write
+// is refused (the FK on head_office_branch_id) the same way migration 0445's NOT NULL refuses
+// the NULL put back a policy that named no head office found: the row keeps the leg's own
+// write, and the only honest answer is the cleanup saying so. A silent cleanup is how a used
+// shared box kept the round 4 leg's head office, and how the FW1-10 fence leg came to read a
+// head office it did not expect.
+//
+// The check and this leg land together (the round 4 cleanup has put back what it found since
+// PR 672, so no red run exists for them): this is a pin on the new contract, not a red.
+func TestIntegration_FW1_01R4_TheHeadOfficeCleanupsPutBackIsAnswered(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	user := aUser(t, pool)
+	house := fw1NextYear(t, pool) - 1
+	controller := fw1R4Controller(pool, user, house).WithAuditTxRecorder(audit.NewService(audit.NewRepository(pool), nil))
+
+	prior := fw1R4PolicyHeadOffice(t, pool)
+	// This leg's own safety net: the row leaves as the leg found it, whatever the leg does to it.
+	t.Cleanup(func() {
+		if problem := fw1R4RestoreHeadOffice(context.Background(), pool, prior); problem != "" {
+			t.Errorf("%s", problem)
+		}
+	})
+
+	branchID, scoped := fw1R4HeadOfficeCandidate(t, pool, prior)
+	if err := controller.SetHeadOfficeBranch(scoped, branchID, "FLAKE-12: the set the cleanup must answer for"); err != nil {
+		t.Fatalf("the head office set: %v", err)
+	}
+	// A found value no branch carries: the put back's write is refused, and the refusal must
+	// come back as the cleanup's own words.
+	if problem := fw1R4RestoreHeadOffice(ctx, pool, uuid.NewString()); problem == "" {
+		t.Fatalf("the head office cleanup answered nothing for a put back the database refused; the row holds %s, and a silent cleanup leaves the leg's own write standing as if it had been restored",
+			fw1R4HeadOfficeName(t, pool, fw1R4PolicyHeadOffice(t, pool)))
 	}
 }
 
