@@ -51,7 +51,7 @@ import {
 } from "@hardscapehouse/api-client";
 
 import { OfficeApi } from "./office-api.js";
-import type { PayablesBoardPage } from "./ap-logic.js";
+import type { PurchasingAPAgingPage } from "./ap-logic.js";
 
 export type PaymentMethod = "CASH" | "CARD" | "CHEQUE" | "EFT";
 
@@ -97,8 +97,8 @@ export class ArApi {
    * becomes the generated operation and the shape below is replaced by the generated type
    * (src/ar/ap-logic.ts holds the shape and the bands).
    */
-  apAging(opts: { as_of?: string } = {}): Promise<Result<PayablesBoardPage>> {
-    return this.#client.request<PayablesBoardPage>({
+  apAging(opts: { as_of?: string } = {}): Promise<Result<PurchasingAPAgingPage>> {
+    return this.#client.request<PurchasingAPAgingPage>({
       method: "GET",
       path: "/api/v1/purchasing/ap-aging",
       query: opts,

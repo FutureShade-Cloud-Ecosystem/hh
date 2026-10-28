@@ -397,6 +397,15 @@ export function relativeDay(date: string, asOf: string): string {
   return gap > 0 ? `${n} ${unit} ago` : `in ${n} ${unit}`;
 }
 
+/**
+ * The days a document is past due on the day the books are read as of: zero when it is not yet
+ * due, and the count from the due day. A calendar count between two days, not a figure the
+ * server owes: the same count relativeDay reads.
+ */
+export function daysPastDue(date: string, asOf: string): number {
+  return Math.max(0, dayNumber(asOf) - dayNumber(date));
+}
+
 export interface Mark {
   readonly word: string;
   readonly tone: Tone;
@@ -426,6 +435,11 @@ const BUCKET_WORD: Record<string, string> = {
   "31_60": "31 to 60 days",
   "61_90": "61 to 90 days",
   "90_PLUS": "Over 90 days",
+  // The purchasing route (W2-9a) names the same five bands with its own keys.
+  DAYS_30: "1 to 30 days",
+  DAYS_60: "31 to 60 days",
+  DAYS_60_TO_90: "61 to 90 days",
+  DAYS_90_PLUS: "Over 90 days",
 };
 
 /** The older labels the core still stamps, read back to the same one vocabulary. */

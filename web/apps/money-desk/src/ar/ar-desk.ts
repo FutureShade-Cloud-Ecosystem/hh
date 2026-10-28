@@ -42,7 +42,7 @@ import {
 import type { WorkspaceTab } from "./ar-workspace.js";
 import { formatWorkspaceMoney } from "./ar-workspace.js";
 import { renderPayables } from "./ap-views.js";
-import type { PayablesBoardPage } from "./ap-logic.js";
+import type { PurchasingAPAgingPage } from "./ap-logic.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -84,10 +84,10 @@ export class ArDesk {
   // slower for a screen nobody asked for. The day the books are read as of is the operator's
   // to pick; the route answers the figures for that day.
   #payablesState: "loading" | "ready" | "error" = "loading";
-  #payablesPage: PayablesBoardPage | null = null;
+  #payablesPage: PurchasingAPAgingPage | null = null;
   #payablesError = "";
   #payablesAsOf = "";
-  #payablesOpenId: string | null = null;
+  #payablesOpenKey: string | null = null;
   #landing: DeskModel["landing"] = null;
   #aging: DeskModel["aging"] = [];
   #rows: readonly BillingRegisterRow[] = [];
@@ -283,11 +283,11 @@ export class ArDesk {
         void this.#goTab(attr("data-tab") as Tab);
         return true;
       case "payables-open":
-        this.#payablesOpenId = attr("data-payee-id");
+        this.#payablesOpenKey = attr("data-payee-id");
         this.#host.repaint();
         return true;
       case "payables-back":
-        this.#payablesOpenId = null;
+        this.#payablesOpenKey = null;
         this.#host.repaint();
         return true;
       case "payables-reload":
@@ -632,7 +632,7 @@ export class ArDesk {
       const day = (control as HTMLInputElement).value;
       if (day === "") return;
       this.#payablesAsOf = day;
-      this.#payablesOpenId = null;
+      this.#payablesOpenKey = null;
       void this.#loadPayables();
       return;
     }
@@ -693,7 +693,7 @@ export class ArDesk {
     this.#tab = tab;
     this.#account = null;
     // Leaving the board closes the payee whose open items were open.
-    this.#payablesOpenId = null;
+    this.#payablesOpenKey = null;
     this.#clearMessages();
     this.#host.repaint();
     if (tab === "statements") await Promise.all(this.#aging.map((a) => this.#loadStatement(a.customer_id)));
@@ -1529,7 +1529,7 @@ export class ArDesk {
         page: this.#payablesPage,
         error: this.#payablesError,
         asOf: this.#payablesAsOf,
-        openPayeeId: this.#payablesOpenId,
+        openRowKey: this.#payablesOpenKey,
       },
       nowMs: Date.now(),
       roleCode: this.#who.roleCode,

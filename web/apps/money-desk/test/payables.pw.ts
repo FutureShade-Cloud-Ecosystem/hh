@@ -1,11 +1,17 @@
 // The Payables board walked in a real browser against the stub: the open AP by payee with its
 // bands and its total, a payee's open items with the landed cost line marked as one, and the
-// empty state. The stub serves the route the core's W2-9a will answer
+// empty state. The stub serves the route the core's W2-9a answers
 // (GET /api/v1/purchasing/ap-aging), so the board is walked on the shape the board will keep.
 //
 // The blank check (TO-PRINCIPAL 386): every leg reads the figures on the screen, so a screen
 // that renders nothing, or a route that answers nothing, fails the leg instead of passing it.
+//
+// The last leg is the contract's own: the board is walked on a response whose keys are the
+// contract's, and it fails on any key the board reads that the contract does not name.
 import { test, expect, openDesk, dayFromToday } from "./helpers.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { AP_AGING_FIXTURE, AP_AGING_KEYS } from "./ap-aging-contract.js";
 import type { Page } from "@playwright/test";
 
 /** The cents a figure reads: "$13,482.50" is 1348250. */
@@ -23,6 +29,12 @@ async function openBoard(page: Page): Promise<void> {
   await expect(page.locator("[data-payables-aging], [data-payables-empty]").first()).toBeVisible();
 }
 
+/** The board's own source, the files that read the route's shape. */
+function boardSource(): string {
+  const here = fileURLToPath(new URL(".", import.meta.url));
+  return ["ap-logic.ts", "ap-views.ts"].map((file) => readFileSync(`${here}../src/ar/${file}`, "utf8")).join("\n");
+}
+
 test("the Payables tab is live in the receivables desk, beside the views it always held", async ({ page, request }) => {
   await openDesk(page, request);
   const nav = page.locator("nav.tabs", { hasText: "Receivables" }).first();
@@ -36,6 +48,7 @@ test("the board opens on the open AP: the five bands, the payee rows and the day
   await expect(page.locator("[data-payables-aging]")).toBeVisible();
   await expect(page.locator("[data-band-head]")).toHaveText(["Current", "1 to 30 days", "31 to 60 days", "61 to 90 days", "Over 90 days"]);
   await expect(page.locator("[data-payee-row]")).toHaveCount(6);
+  // The rows are the most overdue first, the desk's own rule for an aging view.
   await expect(page.locator("[data-payee-row]").first()).toContainText("Meadowlark Landscape Lighting (demo)");
   await expect(page.locator("[data-field='payables-asof']")).toHaveValue(dayFromToday(0));
   await expect(page.locator("[data-payables-foot]")).toContainText("As of " + dayFromToday(0));
@@ -92,7 +105,7 @@ test("a landed cost line is marked as landed cost, on its own payee row", async 
   await expect(line).toHaveCount(1);
   await expect(line).toContainText("Landed cost");
   await expect(line).toContainText("Freight");
-  await expect(line).toContainText("LC-2201");
+  await expect(line).toContainText("PO-1042");
   await expect(line).toContainText("$780.00");
 });
 
@@ -148,4 +161,52 @@ test("the blank check: every board state says what it is, and none of them rende
   await page.locator("[data-field='payables-asof']").fill(dayFromToday(0));
   await expect(page.locator("[data-payables-empty]")).toContainText("No open AP as of this day.");
   expect((await page.locator("main").innerText()).trim()).not.toBe("");
+});
+
+test("the contract's own leg: the route answers the contract's keys, and the board reads no key the contract does not name", async ({ page, request }) => {
+  // The route's answer names nothing the contract does not, at any level.
+  const answer = await request.get("/api/v1/purchasing/ap-aging", { headers: { authorization: "Bearer contract-leg" } });
+  expect(answer.ok()).toBe(true);
+  const served = (await answer.json()) as { items: { open_items: unknown[] }[] } & Record<string, unknown>;
+  const stray = (object: Record<string, unknown>): string[] => Object.keys(object).filter((key) => !AP_AGING_KEYS.has(key));
+  expect(stray(served)).toEqual([]);
+  for (const row of served.items) {
+    expect(stray(row as unknown as Record<string, unknown>)).toEqual([]);
+    for (const item of row.open_items) expect(stray(item as Record<string, unknown>)).toEqual([]);
+  }
+
+  // The board is walked on a response whose keys are the contract's: the fixture, not the stub.
+  await page.route("**/api/v1/purchasing/ap-aging*", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(AP_AGING_FIXTURE) });
+  });
+  await openDesk(page, request);
+  await openBoard(page);
+  await expect(page.locator("[data-payee-row]")).toHaveCount(4);
+  // The rows are the most overdue first: the carrier's landed cost is the oldest money here.
+  await expect(page.locator("[data-payee-row]").first()).toContainText("Northwind Freight Lines (demo)");
+  await expect(page.locator("[data-payables-total]")).toContainText("$11,322.50");
+
+  // The payee that holds a vendor row and a landed cost row holds two, and they open apart:
+  // the core gives the landed cost its own row, and never folds it into the carrier's bill.
+  const landed = page.locator("[data-payee-row][data-payee-id='c0000000-0000-4000-8000-000000000005']");
+  await expect(landed).toContainText("Landed cost carrier");
+  const carrier = page.locator("[data-payee-row][data-payee-id='p0000000-0000-4000-8000-000000000007']");
+  await expect(carrier).toContainText("Net 15");
+  await carrier.getByRole("button").click();
+  await expect(page.locator("[data-line-row]")).toHaveCount(1);
+  await expect(page.locator("[data-line-row]")).toContainText("B-3301");
+  await page.getByRole("button", { name: "‹ Payables" }).click();
+  await landed.getByRole("button").click();
+  await expect(page.locator("[data-line-row]")).toHaveCount(1);
+  await expect(page.locator("[data-line-row]")).toContainText("PO-1042");
+  await expect(page.locator("[data-line-row]")).toContainText("Freight");
+
+  // And the board's own reads name nothing the contract does not: every wire key it touches is
+  // a key the schemas name, and the band it reads is the contract's 61 to 90 band.
+  const reads = new Set<string>();
+  const source = boardSource();
+  for (const match of source.matchAll(/\.([a-z][a-z0-9]*_[a-z0-9_]+)/g)) reads.add(match[1]);
+  for (const match of source.matchAll(/field: "([a-z0-9_]+)"/g)) reads.add(match[1]);
+  expect([...reads].filter((key) => !AP_AGING_KEYS.has(key)).sort()).toEqual([]);
+  expect(reads.has("days_60_to_90_cents")).toBe(true);
 });
