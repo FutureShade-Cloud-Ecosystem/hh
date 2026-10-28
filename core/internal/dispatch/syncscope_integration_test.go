@@ -221,8 +221,15 @@ func syncKey(n int) string { return fmt.Sprintf("40000000-0000-4000-8000-%012d",
 // first row's seq.
 var syncKeyCounter atomic.Int64
 
+// syncKeyRun is minted once per process: a rerun of the legs on a
+// database they already ran against must not replay a client id, or the
+// engine answers key_reused for every push the rows the cleanup misses
+// still hold. No leg asserts on a fresh key's fixed value, so the run
+// block carries the randomness and the counter stays the in-run half.
+var syncKeyRun = rand.Int63n(900000)
+
 func syncFreshKey() string {
-	return fmt.Sprintf("41000000-0000-4000-8000-%012d", 1000000+syncKeyCounter.Add(1))
+	return fmt.Sprintf("41%06d-0000-4000-8000-%012d", syncKeyRun, 1000000+syncKeyCounter.Add(1))
 }
 
 // syncOp builds one push operation; base is the seq the client based
