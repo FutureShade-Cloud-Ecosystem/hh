@@ -737,6 +737,16 @@ export const dealerStyles = css`
     background: transparent;
     color: var(--hh-text);
   }
+  /* The selected pill of a pair (the invitation type's own toggle): the accent
+     word, the accent boundary and the inset rule, so the chosen one reads as
+     chosen without a fill. UX-106: this mark used to be the pricing board's
+     active pill, and the board is gone; the mark itself is shared. */
+  .pill-selected {
+    color: var(--hh-accent-text);
+    border-color: var(--hh-accent-text);
+    box-shadow: inset 0 -2px 0 var(--hh-accent-text);
+    font-weight: 600;
+  }
   .sign-in-method-box {
     margin-top: var(--hh-s-16);
     padding: var(--hh-s-12);

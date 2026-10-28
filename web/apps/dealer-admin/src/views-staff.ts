@@ -228,7 +228,7 @@ function renderCreate(roles: readonly RoleRow[], branches: readonly BranchRow[])
       </p>
 
       <div class="invitation-type-toggle">
-        <button type="button" class="btn btn-pill pr-board-pill-active">Email invitation</button>
+        <button type="button" class="btn btn-pill pill-selected">Email invitation</button>
         <button type="button" class="btn btn-pill">Temporary PIN</button>
       </div>
 

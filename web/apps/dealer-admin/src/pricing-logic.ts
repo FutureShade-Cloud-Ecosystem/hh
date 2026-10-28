@@ -57,6 +57,40 @@ export function isPricingTab(value: string): value is PricingTab["id"] {
   return PRICING_TABS.some((t) => t.id === value);
 }
 
+/**
+ * The payment terms and deposits view: the twelfth tabs' sibling, and the one
+ * the board strip used to carry alone above them. UX-106 merged the two
+ * strips into one axis, so the view joins the list the strip and the phone
+ * select both read.
+ */
+export const PAYMENT_TERMS_VIEW: PricingTab = {
+  id: "payment-terms",
+  title: "Payment terms and deposits",
+  blurb: "When a customer pays, and what is asked up front.",
+};
+
+/**
+ * The pricing views the one navigation lists: the twelve tabs, then the
+ * payment terms view.
+ *
+ * UX-106: the board strip and the tab strip were two rows of navigation over
+ * ONE set of views (the board's five were a subset of the tabs under other
+ * words: margin floors for margin policy, ladders for quantity breaks,
+ * imports for batches and imports), so the page showed two rows of pills and
+ * pushed its own content off the first screen at 390. One axis, one list.
+ */
+export const PRICING_VIEWS: readonly PricingTab[] = [...PRICING_TABS, PAYMENT_TERMS_VIEW];
+
+/** A view's own word, as the phone select carries it: the option's text is the value. */
+export function pricingViewTitle(id: string): string {
+  return PRICING_VIEWS.find((v) => v.id === id)?.title ?? "";
+}
+
+/** The view a phone select's answer names, by its own word. */
+export function pricingViewId(title: string): string {
+  return PRICING_VIEWS.find((v) => v.title === title)?.id ?? "";
+}
+
 // -- the words a stored enum carries -----------------------------------------------------------------
 //
 // A stored enum is wire format. ABSOLUTE, BYPASS, CUSTOMER_PRODUCT_RULE and

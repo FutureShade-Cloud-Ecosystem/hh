@@ -66,7 +66,7 @@ import {
   ruleValueWords,
   scopeWord,
   validityWords,
-  PRICING_TABS,
+  PRICING_VIEWS,
 } from "./pricing-logic.js";
 import { whenWords } from "./audit-logic.js";
 import type { BreakRow, ChangeLogRow, ClearanceRow, LowMarginScanRow as LowMarginScanRowApi, OverrideRow, PricingAuditRow, PromotionRow, RebateRow, RuleRow, UomConversionRow } from "./pricing-api.js";
@@ -88,51 +88,13 @@ export function renderPricing(model: PricingModel): TemplateResult {
       </p>
     </header>
 
-    <div class="pr-board-pills" role="tablist" aria-label="Pricing views">
-      <button
-        type="button"
-        class="pr-board-pill ${model.tab === "margin" ? "pr-board-pill-active" : ""}"
-        data-action="pr-set-tab"
-        data-tab="margin"
-      >
-        Margin floors
-      </button>
-      <button
-        type="button"
-        class="pr-board-pill ${model.tab === "rules" ? "pr-board-pill-active" : ""}"
-        data-action="pr-set-tab"
-        data-tab="rules"
-      >
-        Rules
-      </button>
-      <button
-        type="button"
-        class="pr-board-pill ${model.tab === "breaks" ? "pr-board-pill-active" : ""}"
-        data-action="pr-set-tab"
-        data-tab="breaks"
-      >
-        Ladders
-      </button>
-      <button
-        type="button"
-        class="pr-board-pill ${model.tab === "batches" ? "pr-board-pill-active" : ""}"
-        data-action="pr-set-tab"
-        data-tab="batches"
-      >
-        Imports
-      </button>
-      <button
-        type="button"
-        class="pr-board-pill ${isPaymentTerms ? "pr-board-pill-active" : ""}"
-        data-action="pr-set-tab"
-        data-tab="payment-terms"
-      >
-        Payment terms and deposits
-      </button>
-    </div>
-
-    <nav class="pr-tabs ${isPaymentTerms ? "pr-tabs-hidden" : ""}" role="group" aria-label="Pricing tabs">
-      ${PRICING_TABS.map(
+    <!-- UX-106: ONE navigation over ONE axis. The board strip and the tab strip
+         listed the same views under different words, so the page showed two rows
+         of pills and pushed its own content off the first screen at 390. The
+         desk widths keep one strip of pills; the phone folds the whole list
+         behind one select, so a single control sits above the content. -->
+    <nav class="pr-tabs" role="tablist" aria-label="Pricing views">
+      ${PRICING_VIEWS.map(
         (t) => html`
           <button
             type="button"
@@ -146,6 +108,16 @@ export function renderPricing(model: PricingModel): TemplateResult {
         `,
       )}
     </nav>
+
+    <div class="pr-nav-phone">
+      <label class="field">
+        <span class="field-label">Section</span>
+        <select class="select pr-nav-select" data-field="pr-tab" data-test="pr-tab-select">
+          ${PRICING_VIEWS.map((t) => html`<option>${t.title}</option>`)}
+        </select>
+      </label>
+    </div>
+
     ${renderTab(model)}
   `;
 }
@@ -166,7 +138,7 @@ function renderTab(model: PricingModel): TemplateResult {
   if (model.tab === "lowmargin") return renderLowMargin(model);
   if (model.tab === "audit") return renderPricingAudit(model);
   if (model.tab === "changelog") return renderChangeLog(model);
-  const tab = PRICING_TABS.find((t) => t.id === model.tab);
+  const tab = PRICING_VIEWS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
 }
 

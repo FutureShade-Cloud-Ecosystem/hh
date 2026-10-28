@@ -7,6 +7,13 @@
 // the panel's real primary in the original (its DIB-513 note), so the strip
 // says "you are here" with the accent's text colour and an inset rule, and
 // saves the accent fill for the panel's own primary button.
+//
+// UX-106: there is ONE navigation over the pricing views now. The board
+// strip and the tab strip were one axis listed twice (the board's five were
+// a subset of the tabs under other words), so the page showed two rows of
+// pills and pushed its own card off the first screen at 390. The board's
+// styles went with it; the strip above is the whole navigation at the desk
+// widths, and the phone folds the same list behind one select.
 import { css } from "lit";
 
 export const pricingStyles = css`
@@ -38,6 +45,29 @@ export const pricingStyles = css`
     border-color: var(--hh-accent-text);
     box-shadow: inset 0 -2px 0 var(--hh-accent-text);
     font-weight: 600;
+  }
+
+  /* -- the phone's one navigation control --------------------------------------
+     UX-106: at a phone's width the strip of pills would take five rows and
+     push the section's own card off the first screen, so the whole list folds
+     behind one select. The select carries the view's own word as its value,
+     the way the house's other pickers do. */
+  .pr-nav-phone {
+    display: none;
+    margin: 0 0 var(--hh-s-16);
+  }
+  .pr-nav-select {
+    width: 100%;
+    min-height: 44px;
+    font-size: var(--hh-s-16);
+  }
+  @media (max-width: 900px) {
+    .pr-tabs {
+      display: none;
+    }
+    .pr-nav-phone {
+      display: block;
+    }
   }
 
   /* -- the floor warning ---------------------------------------------------------
@@ -132,44 +162,5 @@ export const pricingStyles = css`
   .pr-readout .warn {
     color: var(--hh-danger);
   }
-
-  /* -- change 11: payment terms and deposits --------------------------------------- */
-
-  .pr-board-pills {
-    display: flex;
-    gap: var(--hh-s-8);
-    margin: 0 0 var(--hh-s-16);
-    flex-wrap: wrap;
-  }
-  .pr-board-pill {
-    min-height: 32px;
-    padding: 0 var(--hh-s-12);
-    border: 1px solid var(--hh-control-line);
-    border-radius: var(--hh-radius-pill);
-    background: transparent;
-    color: var(--hh-text-dim);
-    font-size: 14px;
-    cursor: pointer;
-  }
-  .pr-board-pill:hover {
-    color: var(--hh-text);
-    border-color: var(--hh-accent-text);
-  }
-  .pr-board-pill-active {
-    color: var(--hh-accent-text);
-    border-color: var(--hh-accent-text);
-    box-shadow: inset 0 -2px 0 var(--hh-accent-text);
-    font-weight: 600;
-  }
-  .pr-tabs-hidden {
-    display: none !important;
-  }
-  /* The phone touch bar (HH-UX-BAR-L8 section 6): the pricing pills and tabs reach 44 px
-     at phone width; desktop pointer keeps the denser 32 px rows. */
-  @media (max-width: 900px) {
-    .pr-tab,
-    .pr-board-pill {
-      min-height: 44px;
-    }
-  }
 `;
+
