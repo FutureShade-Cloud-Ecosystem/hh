@@ -392,6 +392,198 @@ type finworldScheduledBounce struct {
 // finworldDealerLegalSuffix is the legal form suffix the world derives onto the caller's dealer name.
 const finworldDealerLegalSuffix = " Ltd."
 
+// finworldLandedCostFXRateBps is the landed cost document's fx rate in basis points: 10000 is
+// 1.0000. The world's purchase receipts carry no currency of their own, so every landed cost
+// document is in the dealer's operating currency, CAD, and the module converts it at 1.0.
+const finworldLandedCostFXRateBps = 10000
+
+// The freight bill rides a share of the value of the receipt it lands on: a pallet delivered to
+// a yard carries 8 to 20 percent of the goods value in freight. The floor keeps a small receipt
+// from carrying a charge that reads like a rounding error.
+const (
+	finworldLandedCostFreightMinBps  = 800
+	finworldLandedCostFreightMaxBps  = 2000
+	finworldLandedCostFreightFloor   = 4500
+	finworldLandedCostHandlingMin    = 2500
+	finworldLandedCostHandlingSpread = 6000
+)
+
+// finworldLandedCostDutyRateBps are the ad valorem duty rates the world charges on an imported
+// stone delivery: the CFTA rate and two tariff tiers.
+var finworldLandedCostDutyRateBps = []int64{650, 750, 950}
+
+// finworldLandedCostDutyCategories are the catalogue categories whose goods can carry import
+// duty: the stone, the pavers and the walls. Bulk aggregate and accessories do not.
+var finworldLandedCostDutyCategories = map[string]bool{
+	"SLABSTEP": true,
+	"PAVER":    true,
+	"WALL":     true,
+}
+
+// finworldLandedCostReceipt is one purchase receipt a landed cost can attach to.
+type finworldLandedCostReceipt struct {
+	PurchaseReceiptKey string
+	PurchaseOrderKey   string
+	BranchCode         string
+	VendorNo           string
+	SKU                string
+	CategoryCode       string
+	Date               string
+	Time               time.Time
+	YearMonth          YearMonth
+	SubtotalCents      int64
+	Quantity           int64
+}
+
+// finworldLandedCostSlot is one pre-planned landed cost placement: the branch and the trading
+// day it lands on, the receipt month it needs, the charge it carries, and the landed cost it
+// reverses when the slot is a void.
+type finworldLandedCostSlot struct {
+	BranchCode            string
+	MonthIndex            int
+	DayIndex              int
+	VoidOfSlot            int
+	WantPriorMonthReceipt bool
+	ChargeKind            string
+}
+
+// finworldPlanLandedCostSlots lays out the world's landed costs before the day walk. For every
+// calendar quarter and every branch it schedules 3 to 5 applications: one of them against a
+// receipt from the month before, so the charge crosses a month end, and one of them on the
+// quarter's third month's last trading day, so the quarter always has a landed cost applied at
+// a month end. It adds one void later in the same quarter, reversing the quarter's first
+// application. The layout runs on its own random stream, so the world's own stream is untouched.
+func finworldPlanLandedCostSlots(lcRng *rand.Rand, monthDayCounts []int) []finworldLandedCostSlot {
+	slots := []finworldLandedCostSlot{}
+	usedDays := map[string]bool{}
+	dayKey := func(br string, mIdx, dIdx int) string {
+		return fmt.Sprintf("%s|%d|%d", br, mIdx, dIdx)
+	}
+
+	// pickFreeDay picks a trading day in [lo, hi] the branch does not already use that month.
+	pickFreeDay := func(br string, mIdx, lo, hi int) int {
+		days := monthDayCounts[mIdx]
+		if hi > days-1 {
+			hi = days - 1
+		}
+		if lo < 0 {
+			lo = 0
+		}
+		if hi < lo {
+			hi = lo
+		}
+		for attempt := 0; attempt < 32; attempt++ {
+			d := lo
+			if hi > lo {
+				d = lo + lcRng.IntN(hi-lo+1)
+			}
+			if !usedDays[dayKey(br, mIdx, d)] {
+				usedDays[dayKey(br, mIdx, d)] = true
+				return d
+			}
+		}
+		for d := lo; d <= hi; d++ {
+			if !usedDays[dayKey(br, mIdx, d)] {
+				usedDays[dayKey(br, mIdx, d)] = true
+				return d
+			}
+		}
+		usedDays[dayKey(br, mIdx, hi)] = true
+		return hi
+	}
+
+	for q := 0; q < 4; q++ {
+		for _, br := range []string{FinWorldBranchCodeTRT, FinWorldBranchCodeKGN} {
+			quarterStart := q * 3
+			// 3 to 5 a quarter per branch, at least one in each of the quarter's three months.
+			count := 3 + lcRng.IntN(3)
+			perMonth := [3]int{1, 1, 1}
+			for i := 0; i < count-3; i++ {
+				perMonth[lcRng.IntN(3)]++
+			}
+
+			firstApply := -1
+			for mi := 0; mi < 3; mi++ {
+				mIdx := quarterStart + mi
+				if mIdx >= len(monthDayCounts) || monthDayCounts[mIdx] <= 0 {
+					continue
+				}
+				days := monthDayCounts[mIdx]
+				n := perMonth[mi]
+				// The quarter's third month carries one application on the month's last trading
+				// day, so every quarter has a landed cost applied at a month end.
+				monthEndSlot := -1
+				if mi == 2 {
+					monthEndSlot = n - 1
+					usedDays[dayKey(br, mIdx, days-1)] = true
+				}
+				for k := 0; k < n; k++ {
+					slot := finworldLandedCostSlot{
+						BranchCode: br,
+						MonthIndex: mIdx,
+						VoidOfSlot: -1,
+					}
+					if k == monthEndSlot {
+						slot.DayIndex = days - 1
+					} else {
+						lo, hi := 0, days-2
+						if mi == 1 && k == 0 {
+							// The middle month of the quarter reaches back to the prior
+							// month's receipts, so the charge crosses a month end. It lands on
+							// the 4th trading day or later, so the prior month's last receipt
+							// is at least three days back.
+							slot.WantPriorMonthReceipt = true
+							lo = 3
+							if hi < lo {
+								hi = lo
+							}
+						}
+						if mIdx == 0 {
+							// The world's first month has no month before it, so the charge
+							// can only ride a receipt the branch has already had. It lands on
+							// the 4th trading day or later, by which time both branches have
+							// taken delivery.
+							lo = 3
+							if hi < lo {
+								hi = lo
+							}
+						}
+						slot.DayIndex = pickFreeDay(br, mIdx, lo, hi)
+					}
+					// A charge that crosses a month end is a late freight invoice. Duty is
+					// assessed at the border and lands with the goods.
+					slot.ChargeKind = "FREIGHT"
+					if !slot.WantPriorMonthReceipt && lcRng.IntN(100) < 40 {
+						slot.ChargeKind = "DUTY"
+					}
+					slots = append(slots, slot)
+					if firstApply < 0 {
+						firstApply = len(slots) - 1
+					}
+				}
+			}
+
+			// One void later in the same quarter, reversing the quarter's first application.
+			if firstApply < 0 {
+				continue
+			}
+			voidMonth := quarterStart + 1 + lcRng.IntN(2)
+			if voidMonth >= len(monthDayCounts) || monthDayCounts[voidMonth] <= 0 {
+				continue
+			}
+			voidDay := pickFreeDay(br, voidMonth, 0, monthDayCounts[voidMonth]-1)
+			slots = append(slots, finworldLandedCostSlot{
+				BranchCode: br,
+				MonthIndex: voidMonth,
+				DayIndex:   voidDay,
+				VoidOfSlot: firstApply,
+			})
+		}
+	}
+
+	return slots
+}
+
 // FinWorldPlan builds the deterministic 12-month world plan for (seed, anchor). The dealer's display name
 // is an INPUT: the caller reads the deploy's setting (HH_WEB_DEALER_NAME) and hands it over, so the world
 // code carries no dealer name literal of its own. The legal entity name is derived from that input.
@@ -697,11 +889,101 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 	var priorTransitLodgements []*FinWorldLodgementEvent
 	var priorOutstandingBills []*FinWorldVendorBillEvent
 
+	// The landed costs run on their own random stream, so the world's own stream is untouched and
+	// every other figure in the plan stays exactly where it was.
+	lcRng := rand.New(rand.NewPCG(seed^0x5bf03635, seed^0xc2b2ae35))
+
+	// Lay the landed costs out before the day walk: 3 to 5 a quarter per branch, one of them
+	// against a receipt from the month before and one of them on a month's last trading day,
+	// plus one void later in the same quarter.
+	monthDayCounts := make([]int, len(plan.Months))
+	for i, m := range plan.Months {
+		monthDayCounts[i] = len(m.TradingDays)
+	}
+	landedCostSlots := finworldPlanLandedCostSlots(lcRng, monthDayCounts)
+	landedCostSlotsByDay := map[string][]int{}
+	for slotIdx, slot := range landedCostSlots {
+		slotKey := fmt.Sprintf("%d|%d", slot.MonthIndex, slot.DayIndex)
+		landedCostSlotsByDay[slotKey] = append(landedCostSlotsByDay[slotKey], slotIdx)
+	}
+	// The landed cost each applied slot produced, so a void can name it.
+	landedCostBySlot := make([]*FinWorldLandedCostEvent, len(landedCostSlots))
+	// The purchase receipts a landed cost can attach to, in the order they were received.
+	var landedCostReceipts []*finworldLandedCostReceipt
+	landedCostSeq := 0
+
 	// Helper to format an America/Toronto RFC3339 timestamp on dateStr at hour:min:sec.
 	formatOccurredAt := func(dateStr string, hour, minute, second int) string {
 		parsed, _ := time.ParseInLocation("2006-01-02", dateStr, loc)
 		ts := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), hour, minute, second, 0, loc)
 		return ts.Format(time.RFC3339)
+	}
+
+	// pickLandedCostReceipt chooses the purchase receipt a landed cost attaches to: the same
+	// branch, from the application month or the month before, and a few days back. A duty rides
+	// a stone, a paver or a wall receipt where the branch has one.
+	pickLandedCostReceipt := func(branchCode, chargeKind string, wantPriorMonth bool, appYM YearMonth, appTime time.Time) *finworldLandedCostReceipt {
+		priorYM := appYM.AddMonths(-1)
+		var pool []*finworldLandedCostReceipt
+		for _, r := range landedCostReceipts {
+			if r.BranchCode != branchCode {
+				continue
+			}
+			if appTime.Sub(r.Time).Hours()/24 < 1 {
+				continue // the receipt has to be an earlier day in the plan
+			}
+			isSame := r.YearMonth.Compare(appYM) == 0
+			isPrior := r.YearMonth.Compare(priorYM) == 0
+			if !isSame && !isPrior {
+				continue // the receipt is from the application month or the month before
+			}
+			if wantPriorMonth && !isPrior {
+				continue
+			}
+			pool = append(pool, r)
+		}
+		if len(pool) == 0 && !wantPriorMonth {
+			// The world's first month has no month before it, so the charge can only ride a
+			// receipt the branch has already had.
+			for _, r := range landedCostReceipts {
+				if r.BranchCode != branchCode {
+					continue
+				}
+				if appTime.Sub(r.Time).Hours()/24 < 1 {
+					continue
+				}
+				pool = append(pool, r)
+			}
+		}
+		if len(pool) == 0 {
+			return nil
+		}
+
+		// A duty rides a stone, a paver or a wall receipt where the branch has one.
+		if chargeKind == "DUTY" {
+			var stone []*finworldLandedCostReceipt
+			for _, r := range pool {
+				if finworldLandedCostDutyCategories[r.CategoryCode] {
+					stone = append(stone, r)
+				}
+			}
+			if len(stone) > 0 {
+				pool = stone
+			}
+		}
+
+		// Prefer a receipt a few days back.
+		var near []*finworldLandedCostReceipt
+		for _, r := range pool {
+			gapDays := int(appTime.Sub(r.Time).Hours() / 24)
+			if gapDays >= 3 && gapDays <= 12 {
+				near = append(near, r)
+			}
+		}
+		if len(near) > 0 {
+			pool = near
+		}
+		return pool[lcRng.IntN(len(pool))]
 	}
 
 	// 7. Walk month by month and trading day by trading day.
@@ -945,6 +1227,22 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					TotalCents:         lineTot,
 				}
 				monthVendorBills = append(monthVendorBills, vbEv.VendorBill)
+
+				// The receipt joins the pool a later landed cost can attach to.
+				receiptTime, _ := time.ParseInLocation("2006-01-02", td.Date, loc)
+				landedCostReceipts = append(landedCostReceipts, &finworldLandedCostReceipt{
+					PurchaseReceiptKey: prKey,
+					PurchaseOrderKey:   poKey,
+					BranchCode:         branchCode,
+					VendorNo:           prod.VendorNo,
+					SKU:                prod.SKU,
+					CategoryCode:       prod.CategoryCode,
+					Date:               td.Date,
+					Time:               receiptTime,
+					YearMonth:          m.YearMonth,
+					SubtotalCents:      lineSub,
+					Quantity:           qty,
+				})
 
 				bs := m.Summary.ByBranch[branchCode]
 				bs.PurchaseReceipts++
@@ -1801,7 +2099,132 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				}
 			}
 
-			// 7i. Manual journals for review (2 per month: one mid-month at TRT, one late-month at KGN).
+			// 7i. Landed costs: a freight or duty charge on an earlier purchase receipt,
+			// capitalized through the landed-cost module (core/internal/landedcost). The charge
+			// rides a receipt from the same month or the month before, a few days after that
+			// receipt, and a void reverses one of them later.
+			landedCostToday := 0
+			for _, slotIdx := range landedCostSlotsByDay[fmt.Sprintf("%d|%d", mIdx, dIdx)] {
+				slot := landedCostSlots[slotIdx]
+				appTime, _ := time.ParseInLocation("2006-01-02", td.Date, loc)
+				minute := 10 + (landedCostToday%4)*5
+				landedCostToday++
+
+				if slot.VoidOfSlot >= 0 {
+					// The void reverses a landed cost the plan applied earlier. It carries the
+					// same charge, so the tester can tie the reversal to the charge.
+					orig := landedCostBySlot[slot.VoidOfSlot]
+					if orig == nil {
+						continue
+					}
+					voidReason := "Carrier re-billed the yard under a new freight invoice"
+					voidDescription := "Freight bill voided, the carrier re-billed the yard"
+					if orig.ChargeKind == "DUTY" {
+						voidReason = "Customs duty reassessed on a corrected entry"
+						voidDescription = "Duty voided on a corrected customs entry"
+					}
+					landedCostSeq++
+					lcKey := fmt.Sprintf("lc-s%d-%04d", seed, landedCostSeq)
+					ev := appendEvent(slot.BranchCode, FinWorldEventLandedCost, 16, minute, 0)
+					ev.LandedCost = &FinWorldLandedCostEvent{
+						LandedCostKey:       lcKey,
+						PurchaseReceiptKey:  orig.PurchaseReceiptKey,
+						PurchaseOrderKey:    orig.PurchaseOrderKey,
+						BranchCode:          orig.BranchCode,
+						VendorNo:            orig.VendorNo,
+						Currency:            orig.Currency,
+						FXRateBps:           orig.FXRateBps,
+						ChargeKind:          orig.ChargeKind,
+						ChargeCents:         orig.ChargeCents,
+						ChargeCadCents:      orig.ChargeCadCents,
+						FreightCents:        orig.FreightCents,
+						DutyCents:           orig.DutyCents,
+						HandlingCents:       orig.HandlingCents,
+						AllocationBasis:     orig.AllocationBasis,
+						ExcludeSpecialBuys:  orig.ExcludeSpecialBuys,
+						Description:         voidDescription,
+						AppliedDate:         orig.AppliedDate,
+						Status:              "VOIDED",
+						VoidOfLandedCostKey: orig.LandedCostKey,
+						VoidedDate:          td.Date,
+						VoidReason:          voidReason,
+					}
+
+					bs := m.Summary.ByBranch[slot.BranchCode]
+					bs.LandedCostVoids++
+					bs.LandedCostVoidCents += orig.ChargeCents
+					m.Summary.ByBranch[slot.BranchCode] = bs
+					m.Summary.LandedCostVoids++
+					m.Summary.LandedCostVoidCents += orig.ChargeCents
+					continue
+				}
+
+				// The application: a freight or duty charge on an earlier purchase receipt.
+				rcpt := pickLandedCostReceipt(slot.BranchCode, slot.ChargeKind, slot.WantPriorMonthReceipt, m.YearMonth, appTime)
+				if rcpt == nil {
+					continue
+				}
+				var freightCents, dutyCents, handlingCents int64
+				var basis, description string
+				if slot.ChargeKind == "DUTY" {
+					rateBps := finworldLandedCostDutyRateBps[lcRng.IntN(len(finworldLandedCostDutyRateBps))]
+					dutyCents = (rcpt.SubtotalCents*rateBps + 5000) / 10000
+					if dutyCents < 1 {
+						dutyCents = 1
+					}
+					basis = "VALUE"
+					description = "Import duty on a stone delivery"
+				} else {
+					rateBps := finworldLandedCostFreightMinBps + int64(lcRng.IntN(finworldLandedCostFreightMaxBps-finworldLandedCostFreightMinBps+1))
+					freightCents = (rcpt.SubtotalCents*rateBps + 5000) / 10000
+					if freightCents < finworldLandedCostFreightFloor {
+						freightCents = finworldLandedCostFreightFloor
+					}
+					handlingCents = finworldLandedCostHandlingMin + int64(lcRng.IntN(finworldLandedCostHandlingSpread))
+					basis = "WEIGHT"
+					if lcRng.IntN(100) >= 70 {
+						basis = "QUANTITY"
+					}
+					description = "LTL freight on a pallet delivery to the yard"
+				}
+				chargeCents := freightCents + dutyCents
+				chargeCadCents := (chargeCents*finworldLandedCostFXRateBps + 5000) / 10000
+
+				landedCostSeq++
+				lcKey := fmt.Sprintf("lc-s%d-%04d", seed, landedCostSeq)
+				ev := appendEvent(slot.BranchCode, FinWorldEventLandedCost, 16, minute, 0)
+				ev.LandedCost = &FinWorldLandedCostEvent{
+					LandedCostKey:      lcKey,
+					PurchaseReceiptKey: rcpt.PurchaseReceiptKey,
+					PurchaseOrderKey:   rcpt.PurchaseOrderKey,
+					BranchCode:         slot.BranchCode,
+					VendorNo:           rcpt.VendorNo,
+					Currency:           "CAD",
+					FXRateBps:          finworldLandedCostFXRateBps,
+					ChargeKind:         slot.ChargeKind,
+					ChargeCents:        chargeCents,
+					ChargeCadCents:     chargeCadCents,
+					FreightCents:       freightCents,
+					DutyCents:          dutyCents,
+					HandlingCents:      handlingCents,
+					AllocationBasis:    basis,
+					// The module's own default: special buys do not absorb a landed cost.
+					ExcludeSpecialBuys: true,
+					Description:        description,
+					AppliedDate:        td.Date,
+					Status:             "POSTED",
+				}
+				landedCostBySlot[slotIdx] = ev.LandedCost
+
+				bs := m.Summary.ByBranch[slot.BranchCode]
+				bs.LandedCosts++
+				bs.LandedCostChargesCents += chargeCents
+				m.Summary.ByBranch[slot.BranchCode] = bs
+				m.Summary.LandedCosts++
+				m.Summary.LandedCostChargesCents += chargeCents
+			}
+
+			// 7j. Manual journals for review (2 per month: one mid-month at TRT, one late-month at KGN).
 			if dIdx == 10 || dIdx == 20 {
 				journalSeq++
 				brCode := FinWorldBranchCodeTRT
@@ -1843,7 +2266,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				m.Summary.ManualJournals++
 			}
 
-			// 7j. End of day: count and complete all 2 tills per branch, then daily lodgement and daily card settlement.
+			// 7k. End of day: count and complete all 2 tills per branch, then daily lodgement and daily card settlement.
 			varianceChoices := []int64{-250, 150, -100, 200, -175, 125}
 			for bIdx, br := range plan.Branches {
 				var branchLodgedCash int64
@@ -1955,7 +2378,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				m.Summary.CardSettlements++
 			}
 
-			// 7k. On the month's last trading day: import the monthly bank statement, then period close (and year close if month 12).
+			// 7l. On the month's last trading day: import the monthly bank statement, then period close (and year close if month 12).
 			if td.IsLastOfMonth {
 				bankStmtSeq++
 				stmtKey := fmt.Sprintf("bstmt-s%d-%03d", seed, bankStmtSeq)
@@ -2106,6 +2529,8 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 		plan.Totals.CardSettlements += m.Summary.CardSettlements
 		plan.Totals.PurchaseReceipts += m.Summary.PurchaseReceipts
 		plan.Totals.VendorBills += m.Summary.VendorBills
+		plan.Totals.LandedCosts += m.Summary.LandedCosts
+		plan.Totals.LandedCostVoids += m.Summary.LandedCostVoids
 		plan.Totals.StockTransfers += m.Summary.StockTransfers
 		plan.Totals.ManualJournals += m.Summary.ManualJournals
 		plan.Totals.BankStatements += m.Summary.BankStatements
@@ -2117,6 +2542,8 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 		plan.Totals.ReturnsTotalCents += m.Summary.ReturnsTotalCents
 		plan.Totals.CreditMemosTotalCents += m.Summary.CreditMemosTotalCents
 		plan.Totals.ReceiptsTotalCents += m.Summary.ReceiptsTotalCents
+		plan.Totals.LandedCostChargesCents += m.Summary.LandedCostChargesCents
+		plan.Totals.LandedCostVoidCents += m.Summary.LandedCostVoidCents
 	}
 
 	plan.Totals.TotalEvents = globalSeq

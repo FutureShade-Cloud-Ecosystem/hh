@@ -112,6 +112,7 @@ const (
 	FinWorldEventCardSettlement        FinWorldEventKind = "CARD_SETTLEMENT"
 	FinWorldEventPurchaseReceipt       FinWorldEventKind = "PURCHASE_RECEIPT"
 	FinWorldEventVendorBill            FinWorldEventKind = "VENDOR_BILL"
+	FinWorldEventLandedCost            FinWorldEventKind = "LANDED_COST"
 	FinWorldEventStockTransfer         FinWorldEventKind = "STOCK_TRANSFER"
 	FinWorldEventManualJournal         FinWorldEventKind = "MANUAL_JOURNAL"
 	FinWorldEventBankStatement         FinWorldEventKind = "BANK_STATEMENT"
@@ -251,6 +252,7 @@ type FinWorldEvent struct {
 	CardSettlement  *FinWorldCardSettlementEvent  `json:"card_settlement,omitempty"`
 	PurchaseReceipt *FinWorldPurchaseReceiptEvent `json:"purchase_receipt,omitempty"`
 	VendorBill      *FinWorldVendorBillEvent      `json:"vendor_bill,omitempty"`
+	LandedCost      *FinWorldLandedCostEvent      `json:"landed_cost,omitempty"`
 	StockTransfer   *FinWorldStockTransferEvent   `json:"stock_transfer,omitempty"`
 	ManualJournal   *FinWorldManualJournalEvent   `json:"manual_journal,omitempty"`
 	BankStatement   *FinWorldBankStatementEvent   `json:"bank_statement,omitempty"`
@@ -500,6 +502,36 @@ type FinWorldVendorBillEvent struct {
 	TotalCents         int64                  `json:"total_cents"`
 }
 
+// FinWorldLandedCostEvent mirrors the landed-cost module's own shape (core/internal/landedcost):
+// the purchase receipt it attaches to, the charge (freight or duty) in integer cents, the document
+// currency and the allocation basis, so the driver can post it through the module's API without
+// translation. A POSTED event is a landed cost that was created and applied; a VOIDED event
+// reverses the landed cost named by VoidOfLandedCostKey, the way the module's Void reverses an
+// applied document. The module's statuses and bases are spelled exactly as the module spells them.
+type FinWorldLandedCostEvent struct {
+	LandedCostKey       string `json:"landed_cost_key"`
+	PurchaseReceiptKey  string `json:"purchase_receipt_key"`
+	PurchaseOrderKey    string `json:"purchase_order_key"`
+	BranchCode          string `json:"branch_code"`
+	VendorNo            string `json:"vendor_no"`
+	Currency            string `json:"currency"`
+	FXRateBps           int    `json:"fx_rate_bps"`
+	ChargeKind          string `json:"charge_kind"` // "FREIGHT" or "DUTY"
+	ChargeCents         int64  `json:"charge_cents"`
+	ChargeCadCents      int64  `json:"charge_cad_cents"`
+	FreightCents        int64  `json:"freight_cents"`
+	DutyCents           int64  `json:"duty_cents"`
+	HandlingCents       int64  `json:"handling_cents"`
+	AllocationBasis     string `json:"allocation_basis"`
+	ExcludeSpecialBuys  bool   `json:"exclude_special_buys"`
+	Description         string `json:"description"`
+	AppliedDate         string `json:"applied_date"`
+	Status              string `json:"status"`
+	VoidOfLandedCostKey string `json:"void_of_landed_cost_key,omitempty"`
+	VoidedDate          string `json:"voided_date,omitempty"`
+	VoidReason          string `json:"void_reason,omitempty"`
+}
+
 // FinWorldTransferLine is one product line on an inter-branch stock transfer.
 type FinWorldTransferLine struct {
 	LineNo         int    `json:"line_no"`
@@ -608,6 +640,8 @@ type FinWorldBranchSummary struct {
 	PurchaseReceipts         int    `json:"purchase_receipts"`
 	ReorderTriggeredReceipts int    `json:"reorder_triggered_receipts"`
 	VendorBills              int    `json:"vendor_bills"`
+	LandedCosts              int    `json:"landed_costs"`
+	LandedCostVoids          int    `json:"landed_cost_voids"`
 	StockTransfers           int    `json:"stock_transfers"`
 	ManualJournals           int    `json:"manual_journals"`
 	SalesSubtotalCents       int64  `json:"sales_subtotal_cents"`
@@ -616,6 +650,8 @@ type FinWorldBranchSummary struct {
 	ReturnsTotalCents        int64  `json:"returns_total_cents"`
 	CreditMemosTotalCents    int64  `json:"credit_memos_total_cents"`
 	ReceiptsTotalCents       int64  `json:"receipts_total_cents"`
+	LandedCostChargesCents   int64  `json:"landed_cost_charges_cents"`
+	LandedCostVoidCents      int64  `json:"landed_cost_void_cents"`
 }
 
 // FinWorldMonthSummary aggregates document counts and cents across both branches for one month.
@@ -644,6 +680,8 @@ type FinWorldMonthSummary struct {
 	CardSettlements        int                              `json:"card_settlements"`
 	PurchaseReceipts       int                              `json:"purchase_receipts"`
 	VendorBills            int                              `json:"vendor_bills"`
+	LandedCosts            int                              `json:"landed_costs"`
+	LandedCostVoids        int                              `json:"landed_cost_voids"`
 	StockTransfers         int                              `json:"stock_transfers"`
 	ManualJournals         int                              `json:"manual_journals"`
 	BankStatements         int                              `json:"bank_statements"`
@@ -655,6 +693,8 @@ type FinWorldMonthSummary struct {
 	ReturnsTotalCents      int64                            `json:"returns_total_cents"`
 	CreditMemosTotalCents  int64                            `json:"credit_memos_total_cents"`
 	ReceiptsTotalCents     int64                            `json:"receipts_total_cents"`
+	LandedCostChargesCents int64                            `json:"landed_cost_charges_cents"`
+	LandedCostVoidCents    int64                            `json:"landed_cost_void_cents"`
 	ByBranch               map[string]FinWorldBranchSummary `json:"by_branch"`
 }
 
@@ -684,6 +724,8 @@ type FinWorldPlanSummary struct {
 	PurchaseReceipts            int   `json:"purchase_receipts"`
 	ReorderTriggeredReceipts    int   `json:"reorder_triggered_receipts"`
 	VendorBills                 int   `json:"vendor_bills"`
+	LandedCosts                 int   `json:"landed_costs"`
+	LandedCostVoids             int   `json:"landed_cost_voids"`
 	StockTransfers              int   `json:"stock_transfers"`
 	ManualJournals              int   `json:"manual_journals"`
 	BankStatements              int   `json:"bank_statements"`
@@ -699,6 +741,8 @@ type FinWorldPlanSummary struct {
 	ReturnsTotalCents           int64 `json:"returns_total_cents"`
 	CreditMemosTotalCents       int64 `json:"credit_memos_total_cents"`
 	ReceiptsTotalCents          int64 `json:"receipts_total_cents"`
+	LandedCostChargesCents      int64 `json:"landed_cost_charges_cents"`
+	LandedCostVoidCents         int64 `json:"landed_cost_void_cents"`
 	OpenARCurrent0To30Cents     int64 `json:"open_ar_current_0_to_30_cents"`
 	OpenAR31To90Cents           int64 `json:"open_ar_31_to_90_cents"`
 	OpenAROver90Cents           int64 `json:"open_ar_over_90_cents"`
