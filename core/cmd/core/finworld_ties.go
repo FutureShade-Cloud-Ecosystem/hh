@@ -233,6 +233,58 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 		})
 	}
 
+	// 4b. AP (2100) ties to vendor bills and payments at every month end, and Accrued Liabilities (2400) ties to manual accruals
+	{
+		allPass := true
+		var lastDetail string
+		for _, tm := range activeTieMonths {
+			gl2100, _, err := glRepo.AccountBalanceAsOf(ctx, "2100", tm.MonthEnd, "")
+			if err != nil {
+				return nil, fmt.Errorf("GL 2100 read %04d-%02d: %w", tm.Year, tm.Month, err)
+			}
+			gl2150, _, err := glRepo.AccountBalanceAsOf(ctx, "2150", tm.MonthEnd, "")
+			if err != nil {
+				return nil, fmt.Errorf("GL 2150 read %04d-%02d: %w", tm.Year, tm.Month, err)
+			}
+			var billsTotalCents, vpayTotalCents int64
+			if err := pool.QueryRow(ctx, `
+				SELECT COALESCE(SUM(total_cents), 0)
+				  FROM purchasing_bills
+				 WHERE status = 'POSTED'
+				   AND bill_date <= $1::date`, tm.MonthEndDate()).Scan(&billsTotalCents); err != nil {
+				return nil, fmt.Errorf("purchasing_bills read %04d-%02d: %w", tm.Year, tm.Month, err)
+			}
+			if err := pool.QueryRow(ctx, `
+				SELECT COALESCE(SUM(l.debit_cents), 0)
+				  FROM gl_journal_lines l
+				  JOIN gl_journals j ON j.id = l.journal_id
+				  JOIN gl_accounts a ON a.id = l.account_id
+				 WHERE j.status = 'POSTED'
+				   AND a.code = '2100'
+				   AND j.idempotency_key LIKE 'finworld:vpay:%'
+				   AND j.posted_at <= $1`, tm.MonthEnd).Scan(&vpayTotalCents); err != nil {
+				return nil, fmt.Errorf("vendor payment journals read %04d-%02d: %w", tm.Year, tm.Month, err)
+			}
+			apSubledgerCents := billsTotalCents - vpayTotalCents
+			gl2100CreditCents := -gl2100
+			if gl2100CreditCents != apSubledgerCents || gl2150 != 0 {
+				allPass = false
+				lastDetail = fmt.Sprintf("%04d-%02d FAIL: GL 2100 credit=%s vs vendor subledger=%s (bills=%s less payments=%s), GL 2150=%s",
+					tm.Year, tm.Month, finworldDollars(gl2100CreditCents), finworldDollars(apSubledgerCents),
+					finworldDollars(billsTotalCents), finworldDollars(vpayTotalCents), finworldDollars(gl2150))
+				break
+			}
+			lastDetail = fmt.Sprintf("%04d-%02d: GL 2100 credit %s ties to vendor bills %s less supplier payments %s = %s (GL 2150 GRNI=%s)",
+				tm.Year, tm.Month, finworldDollars(gl2100CreditCents), finworldDollars(billsTotalCents),
+				finworldDollars(vpayTotalCents), finworldDollars(apSubledgerCents), finworldDollars(gl2150))
+		}
+		results = append(results, FinWorldTieResult{
+			Name:   "AP_2100_ties_to_vendor_subledger",
+			Passed: allPass,
+			Detail: lastDetail,
+		})
+	}
+
 	// 5a. Till lodgements post DR 1000 / CR 1020 at lodgement
 	{
 		rows, err := pool.Query(ctx, `

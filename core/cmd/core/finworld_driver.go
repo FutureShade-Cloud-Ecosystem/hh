@@ -549,6 +549,30 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 		return fmt.Errorf("configure card rail: %w", err)
 	}
 
+	// Create dedicated GL accounts through POST /api/v1/gl/accounts on free account codes:
+	// - 6700: Equipment Fuel and Maintenance (EXPENSE, DEBIT)
+	// - 2400: Accrued Liabilities (LIABILITY, CREDIT)
+	// - 6750: Merchant Processing Fees (EXPENSE, DEBIT)
+	for _, acct := range []struct {
+		code          string
+		name          string
+		accountType   string
+		normalBalance string
+	}{
+		{"6700", "Equipment Fuel and Maintenance", "EXPENSE", "DEBIT"},
+		{"2400", "Accrued Liabilities", "LIABILITY", "CREDIT"},
+		{"6750", "Merchant Processing Fees", "EXPENSE", "DEBIT"},
+	} {
+		if _, err := h.call("create GL account "+acct.code, http.MethodPost, "/api/v1/gl/accounts", map[string]any{
+			"code":           acct.code,
+			"name":           acct.name,
+			"account_type":   acct.accountType,
+			"normal_balance": acct.normalBalance,
+		}); err != nil {
+			return fmt.Errorf("create GL account %s (%s): %w", acct.code, acct.name, err)
+		}
+	}
+
 	// Align all 30 products, UOMs, and list prices with FinWorldPlan
 	for _, p := range plan.Products {
 		catCode := p.CategoryCode
@@ -1853,7 +1877,7 @@ func finworldExecuteCardSettlement(
 		DocumentDate:   docTime,
 		Lines: []gl.ExternalLine{
 			{AccountCode: "1000", DebitCents: cs.NetSettledCents, Memo: "Card settlement net deposit " + cs.StatementRef},
-			{AccountCode: "6300", DebitCents: cs.ProcessorFeeCents, Memo: "Card processor fee " + cs.StatementRef},
+			{AccountCode: "6750", DebitCents: cs.ProcessorFeeCents, Memo: "Card processor fee " + cs.StatementRef},
 			{AccountCode: "1010", CreditCents: netCardClearing, Memo: "Clear card batch " + cs.StatementRef},
 		},
 	}); err != nil {

@@ -235,7 +235,12 @@ func financeCheckBankAccount(ctx context.Context, pool *pgxpool.Pool) (string, e
 // month is read in the dealer's own business day zone, the same zone the
 // close reads.
 func financeCheckMonths(ctx context.Context, seams TieSeams, bankAccountID string) ([]TieMonth, error) {
-	rows, err := seams.Querier.Query(ctx, `SELECT year, month FROM fiscal_periods WHERE status = 'CLOSED' ORDER BY year, month`)
+	rows, err := seams.Querier.Query(ctx, `
+		SELECT fp.year, fp.month
+		  FROM fiscal_periods fp
+		 WHERE fp.status = 'CLOSED'
+		    OR EXISTS (SELECT 1 FROM gl_journals j WHERE j.period_id = fp.id AND j.status = 'POSTED')
+		 ORDER BY fp.year, fp.month`)
 	if err != nil {
 		return nil, fmt.Errorf("the closed periods read: %w", err)
 	}
