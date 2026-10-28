@@ -328,3 +328,61 @@ jobs:
           name: acceptance-reports
           path: ${{ runner.temp }}/acc-out
           if-no-files-found: ignore
+
+  # W2-4 (a): the Money Desk's acceptance-real suite against the finance
+  # image (the default build) on a throwaway database, beside the demo
+  # suites. The box starts through the same script a developer runs
+  # (web/apps/money-desk/test/acceptance-real/box.sh), with the run's
+  # throwaway session key file; no FB Console and no demo mint stand in the
+  # specs' way: the console double answers the platform directory and the
+  # real exchange mints the staff token. Every value is generated inside
+  # the job and masked, as the demo suites' step does, and lives only for
+  # the run; nothing here is a credential of a real system.
+  money-desk-real:
+    name: Money Desk acceptance-real on the finance image
+    runs-on: ubuntu-latest
+    env:
+      # The image this job builds. The box's ports hash the checkout path
+      # (the config and box.sh compute the same pair), so no fixed numbers
+      # are needed on a runner of its own.
+      MDREAL_IMAGE: hh-accept-finance
+      MDREAL_STATE: ${{ runner.temp }}/mdreal-state
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the web workspace
+        run: npm --prefix web ci
+      - name: Check the browser the suite drives
+        run: |
+          set -euo pipefail
+          command -v google-chrome >/dev/null || { echo "google-chrome is missing from the runner image: the suite drives it" >&2; exit 1; }
+          google-chrome --version
+      - name: Build the finance image
+        run: docker build -f deploy/finance/Dockerfile -t "$MDREAL_IMAGE" .
+      - name: Generate the throwaway run values
+        run: |
+          set -euo pipefail
+          subject="$(cat /proc/sys/kernel/random/uuid)"
+          echo "::add-mask::$subject"
+          echo "MDREAL_SUBJECT=$subject" >> "$GITHUB_ENV"
+      - name: Suite, Money Desk acceptance-real (required)
+        run: |
+          set -euo pipefail
+          (cd web/apps/money-desk && CI=true PLAYWRIGHT_HTML_OPEN=never \
+            PLAYWRIGHT_HTML_REPORT="$MDREAL_STATE/report" \
+            npx --no-install playwright test --config test/acceptance-real.config.ts --reporter=list,html \
+            --trace=retain-on-failure --output="$MDREAL_STATE/results")
+      - name: Remove the box
+        if: always()
+        run: bash web/apps/money-desk/test/acceptance-real/box.sh down
+      - name: Upload the report, traces and screenshots of a red run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: money-desk-real-reports
+          path: ${{ runner.temp }}/mdreal-state
+          if-no-files-found: ignore
