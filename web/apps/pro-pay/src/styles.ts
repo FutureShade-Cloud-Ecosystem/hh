@@ -78,7 +78,7 @@ export const screenStyles = css`
   .opt { display: flex; align-items: center; gap: var(--hh-s-12); width: 100%; min-height: 56px; padding: var(--hh-s-8) var(--hh-s-12); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); background: var(--hh-card); color: inherit; font: inherit; text-align: left; cursor: pointer; }
   .opt-add { border-style: dashed; }
   .opt.is-on { border: 2px solid var(--hh-accent); background: var(--hh-row-alt); }
-  .opt:disabled { cursor: default; opacity: 1; color: var(--hh-disabled-ink); }
+  .opt:disabled { background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border-color: var(--hh-disabled-line); cursor: default; opacity: 1; }
   .dot { flex: none; width: 20px; height: 20px; border-radius: var(--hh-radius-pill); border: 2px solid var(--hh-control-line); background: var(--hh-field); box-sizing: border-box; }
   .opt.is-on .dot { border: 6px solid var(--hh-accent); }
   .opt-text { display: flex; flex-direction: column; gap: var(--hh-s-2); min-width: 0; }
