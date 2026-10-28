@@ -66,7 +66,7 @@ func fw1CloseEveryMonth(t *testing.T, pool *pgxpool.Pool, year int, actor string
 	t.Helper()
 	repo := NewRepository(pool)
 	for m := 1; m <= 12; m++ {
-		if _, err := repo.ClosePeriod(context.Background(), periodID(t, pool, year, m), actor, "round 4 month close"); err != nil {
+		if _, err := repo.ClosePeriod(context.Background(), periodID(t, pool, year, m), actor, "round 4 month close", nil); err != nil {
 			t.Fatalf("close %04d-%02d: %v", year, m, err)
 		}
 	}

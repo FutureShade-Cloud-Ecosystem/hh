@@ -882,7 +882,7 @@ func (r *Repository) GetPeriod(ctx context.Context, id string) (Period, error) {
 	return p, nil
 }
 
-func (r *Repository) ClosePeriod(ctx context.Context, id, actorID, reason string) (Period, error) {
+func (r *Repository) ClosePeriod(ctx context.Context, id, actorID, reason string, record func(ctx context.Context, tx pgx.Tx) error) (Period, error) {
 	if r.pool == nil {
 		return Period{}, errNoDB
 	}
@@ -903,10 +903,47 @@ func (r *Repository) ClosePeriod(ctx context.Context, id, actorID, reason string
 	if err := insertOverride(ctx, tx, id, "CLOSE", reason, actorID); err != nil {
 		return Period{}, err
 	}
+	// FW1-09g (S2's P3 on 614): the audit row rides THIS transaction, so a refused audit
+	// holds the close and leaves no seal behind (the year end close's rule, the period
+	// close's rule now). The callback runs after the seal and the override row, and before
+	// the commit: a refused record rolls the whole close back.
+	if record != nil {
+		if err := record(ctx, tx); err != nil {
+			return Period{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Period{}, fmt.Errorf("gl: commit close: %w", err)
 	}
 	return r.GetPeriod(ctx, id)
+}
+
+// YearEndCloseMarkerTx answers whether the year carries its marker, read on the caller's
+// transaction under the year end's lock (FW1-09g). The marker is the close's ONE once only
+// signal for every shape of the books, so a row here means the year was closed already.
+func (r *Repository) YearEndCloseMarkerTx(ctx context.Context, tx pgx.Tx, year int) (bool, error) {
+	var present bool
+	err := tx.QueryRow(ctx, `SELECT true FROM gl_year_end_closes WHERE fiscal_year = $1`, year).Scan(&present)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("gl: read the year end marker: %w", err)
+	}
+	return present, nil
+}
+
+// InsertYearEndCloseMarkerTx writes the marker in the close's own transaction (FW1-09g).
+// ON CONFLICT DO NOTHING is the belt under the lock: a year that already carries a marker
+// keeps the first run's row, and the row is the once only signal, never a second one.
+func (r *Repository) InsertYearEndCloseMarkerTx(ctx context.Context, tx pgx.Tx, year int, closedBy, reason string) error {
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO gl_year_end_closes (fiscal_year, closed_at, closed_by, reason)
+		 VALUES ($1, now(), $2, $3) ON CONFLICT (fiscal_year) DO NOTHING`,
+		year, nullStr(closedBy), reason); err != nil {
+		return fmt.Errorf("gl: write the year end marker: %w", err)
+	}
+	return nil
 }
 
 func (r *Repository) ReopenPeriod(ctx context.Context, id, actorID, reason string) (Period, error) {
