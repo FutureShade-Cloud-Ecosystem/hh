@@ -117,6 +117,10 @@ type Service struct {
 	charger    CardCharger
 	audit      audit.Recorder
 	auditTrail AuditTrailReader // Q-044/M5: read side of the audit seam (bounced-payment history)
+	// accounts is the chart's answer about an account code, the till's consumer side seam (W2-6b fix
+	// round 1). nil in a scaffold that never writes a reason code; then a reason code that names an
+	// account is refused, never waved through.
+	accounts   AccountPostabilityChecker
 	now        func() time.Time
 	callerFrom func(context.Context) (identity.StaffContext, bool)
 }
@@ -136,6 +140,14 @@ func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }
 // WithAuditTrail injects the READ side of the audit seam (satisfied by *audit.Service). PaymentHistory
 // uses it to reconstruct a BOUNCED payment's application history after NSF hard-deleted the allocations.
 func (s *Service) WithAuditTrail(r AuditTrailReader) *Service { s.auditTrail = r; return s }
+
+// WithAccountPostability injects the chart's answer about an account code (the till's consumer side
+// seam, W2-6b fix round 1). The composition root wires the GL service in, so the till asks the chart
+// whether the account a reason code names is one the chart holds and keeps live.
+func (s *Service) WithAccountPostability(c AccountPostabilityChecker) *Service {
+	s.accounts = c
+	return s
+}
 
 // WithClock injects a deterministic clock (tests).
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
@@ -1030,6 +1042,13 @@ func (s *Service) CreateReasonCode(ctx context.Context, in ReasonCodeInput) (Rea
 	if account == "" {
 		return ReasonCode{}, unprocessable("till: gl_account_code is required")
 	}
+	// The account the code points at must be one the chart holds and keeps live (W2-6b fix round 1).
+	// A code that names nowhere, or an account that has been turned off, would be refused at post time
+	// with the drawer's money unposted; the manager writes the list before the drawer needs it, so the
+	// refusal belongs here.
+	if err := s.checkAccountPostable(ctx, account); err != nil {
+		return ReasonCode{}, err
+	}
 	active := true
 	if in.Active != nil {
 		active = *in.Active
@@ -1101,6 +1120,13 @@ func (s *Service) EditReasonCode(ctx context.Context, id string, e ReasonCodeEdi
 		account := strings.TrimSpace(*e.GLAccountCode)
 		if account == "" {
 			return ReasonCode{}, unprocessable("till: gl_account_code is required")
+		}
+		// The account the code is repointed at must be one the chart holds and keeps live (W2-6b fix
+		// round 1). The account the row already carries is not rechecked: an edit that does not name an
+		// account changes no account, and a code whose account was turned off after it was written is
+		// refused at post time, as today.
+		if err := s.checkAccountPostable(ctx, account); err != nil {
+			return ReasonCode{}, err
 		}
 		row.GLAccountCode = account
 	}

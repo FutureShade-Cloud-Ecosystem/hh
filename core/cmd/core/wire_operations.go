@@ -135,6 +135,12 @@ type operationsSpine struct {
 	syncEngine *sync.Engine
 }
 
+// The GL service is the till's account postability seam (W2-6b fix round 1): the chart's own read about
+// an account code, asked when a manager writes a reason code. The composition root wires it in below;
+// this line keeps the wiring honest at build time, so the seam can never be wired to something that
+// stopped answering it.
+var _ till.AccountPostabilityChecker = (*gl.Service)(nil)
+
 func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, spine *moneySpine, streamTicketKey string, smsOutbox *messagingprovider.Outbox) *operationsSpine {
 	ops := &operationsSpine{}
 	link := linkedUserID(pool)
@@ -153,7 +159,12 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	tillRepo := till.NewRepository(pool)
 	tillSvc := till.NewService(tillRepo).
 		WithAudit(auditSvc).
-		WithAuditTrail(auditSvc)
+		WithAuditTrail(auditSvc).
+		// W2-6b fix round 1: the till asks the chart whether the account a reason code names is one the
+		// chart holds and keeps live. The GL service answers over its own account read, so the till asks
+		// the chart instead of reading a GL table. Unwired, a reason code that names an account is
+		// refused (fail closed), never waved through.
+		WithAccountPostability(spine.glSvc)
 	// W2-6b: the counter reason codes. The GL asks the till (the till owns the list) for the account
 	// a movement's reason code points at, so no GL statement names a till table. Unwired, a movement
 	// that names a code refuses to post rather than posting to suspense.

@@ -82,6 +82,31 @@ func (s *Service) DeactivateAccount(ctx context.Context, code string) (Account, 
 	return s.store.SetAccountActive(ctx, code, false)
 }
 
+// AccountPostable reads the chart's answer about an account code: does the chart hold an account under
+// that code, and is that account live. It is the GL's own read, over the repository's AccountByCode, and
+// it is the read the till asks when a manager writes a reason code (W2-6b fix round 1): a code may only
+// point at an account that can take a posting.
+//
+// inChart is false when the chart holds no account under that code at all. active is false when the
+// chart holds one that has been turned off. Both false means the code names nowhere.
+//
+// This read never writes: the chart is the GL's, and a caller that wants the account changed goes
+// through CreateAccount or DeactivateAccount.
+func (s *Service) AccountPostable(ctx context.Context, code string) (inChart bool, active bool, err error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return false, false, nil
+	}
+	a, found, err := s.store.AccountByCode(ctx, code)
+	if err != nil {
+		return false, false, err
+	}
+	if !found {
+		return false, false, nil
+	}
+	return true, a.IsActive, nil
+}
+
 // - journal reads -
 
 // ListJournals returns a page of journals. DIB-392: the branch filter is FENCED with the same rule the
