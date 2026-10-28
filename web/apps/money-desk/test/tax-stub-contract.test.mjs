@@ -32,6 +32,24 @@ const coreSource = ["tax", join("platform", "authz"), join("platform", "httpx")]
 const handlerSource = readFileSync(join(coreInternal, "tax", "handler.go"), "utf8");
 const moduleSource = readFileSync(join(coreInternal, "tax", "module.go"), "utf8");
 
+// The fields that carry the raw number, read from the record's PARSED values and not from the
+// stringified body. An id's hex digits and a timestamp's nanoseconds are the record's own digits,
+// and a raw hunt over the whole body read them as the card number (FLAKE-10): the evidence
+// record carries an id, a captured_by and a created_at, so its body can hold the digits of the
+// card number without echoing the card number. Every value that is neither an id nor a clock
+// must not carry the raw number.
+function fieldsCarrying(raw, record) {
+  const idShape = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const clockShape = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+  return Object.entries(record)
+    .filter(([, value]) => {
+      const text = String(value);
+      if (idShape.test(text) || clockShape.test(text)) return false;
+      return text.includes(raw);
+    })
+    .map(([field]) => field);
+}
+
 let child;
 let base;
 
@@ -310,9 +328,9 @@ test("capturing evidence checks the profile's forced fields in order, masks the 
   assert.equal(made.json.number_mask, "•••• 4821");
   assert.equal(made.json.attestation_status, "PENDING_LEGAL_REVIEW");
   assert.equal(made.json.captured_by, IDS.controller);
-  assert.ok(!JSON.stringify(made.json).includes("5550"), "the raw number is not echoed");
+  assert.deepEqual(fieldsCarrying("5550", made.json), [], "the raw number is not echoed");
   const read = await ctl("GET", `/api/v1/tax/evidence/${made.json.id}`);
-  assert.ok(!JSON.stringify(read.json).includes("5550"), "the raw number is not stored");
+  assert.deepEqual(fieldsCarrying("5550", read.json), [], "the raw number is not stored");
   assert.equal(read.json.number_mask, "•••• 4821");
   // A short number masks fully.
   const short = await ctl("POST", "/api/v1/tax/evidence", { ...full, raw_number: "12" });
