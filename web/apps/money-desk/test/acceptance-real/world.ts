@@ -129,17 +129,25 @@ export const LEDGER_JOURNAL_MEMO = "M2-C1 demo: invoice finalized";
 // moves. Parts (c) and (d) add their own constants to this file: the fold
 // unions all three sets rather than taking one.
 //
-// Today's seed is a finance box's world: the seeded customer invoices carry
-// the opening-balance marker, so they have no journal of their own, and
-// account 1100 holds no matching balance. The tie is therefore out by the
-// whole opening balance, and AR_1100_GL_CENTS says so rather than a zero that
-// would read as a tie.
+// Today's seed is a finance box's world: the seeded INV-2026-0002 carries the
+// opening-balance marker, so it has no journal of its own, and account 1100
+// holds only the two demo invoices the box's worker posts ($700.00). The tie
+// is therefore out by INV-2026-0002's balance, and AR_1100_GL_CENTS says so
+// rather than a figure that would read as a tie (settled on the real box at
+// the fold).
 
 /** The open receivables total in cents: the aging buckets' sum, and the AR subledger's figure for account 1100. */
 export const AR_TOTAL_CENTS = 1_087_000;
 
-/** The GL side of the 1100 tie in cents: what account 1100 holds on the same books. */
-export const AR_1100_GL_CENTS = 0;
+/**
+ * The GL side of the 1100 tie in cents: what account 1100 holds on the same books, read on the
+ * real finance box. The box's worker posts the two demo counterparty invoices (migrations 0055 and
+ * 0222, 20000 and 50000 cents) as DR 1100, and the June setup entries net to zero (0056 against
+ * 0221); the seeded INV-2026-0002 carries the opening-balance marker and has no journal. The
+ * tie-out reads every year to date, so this does not move with the clock. W2-1b's world ties by
+ * construction and switches this line.
+ */
+export const AR_1100_GL_CENTS = 70_000;
 
 /** The GL account code the AR aging total ties to: the receivables control account the tie-out reads. */
 export const AR_CONTROL_ACCOUNT_CODE = "1100";
