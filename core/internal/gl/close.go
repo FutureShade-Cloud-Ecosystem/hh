@@ -457,12 +457,21 @@ func (s *Service) CloseYear(ctx context.Context, year int, reason string) (YearC
 	// first run: a second press passes every check (the year has ended, no OPEN period is left
 	// to pre flight, no P&L to sweep) and records a SECOND GL_YEAR_END_CLOSE row, and two
 	// Controllers pressing at once each record one. The year's own seal is the marker such a
-	// close leaves: when every period of the year is already CLOSED and the year holds no P&L at
-	// all, there is nothing left for the press to write, so it answers the first run's result and
-	// records nothing. A year that DOES hold P&L is not answered here: a year whose months were
-	// sealed one by one still needs its closing entry, and the closing journal's own once only
-	// check above answers that year the second time round.
-	if len(plsByBranch) == 0 && closed == total {
+	// close leaves: when every period of the year is already CLOSED and there is nothing to
+	// sweep, there is nothing left for the press to write, so it answers the first run's result
+	// and records nothing. A year that DOES hold a P&L to sweep is not answered here: a year
+	// whose months were sealed one by one still needs its closing entry, and the closing
+	// journal's own once only check above answers that year the second time round.
+	//
+	// FW1-09c round 3 (S2's narrowed P2, FROM-PRINCIPAL 329): the test is the SWEPT nets, not
+	// the LISTED rows. A year whose P&L nets to zero on every account (a revenue journal and its
+	// reversal) HOLDS a P&L: the rows are there, every one of them nets to zero, and byBranch
+	// has already dropped them, so the close sweeps nothing and posts no closing journal. The
+	// listed rows therefore hide a year that is as closed as a year with no P&L at all: the once
+	// only check above cannot see the first run, and a second press records a SECOND
+	// GL_YEAR_END_CLOSE row. A year with no P&L, or whose P&L nets to zero on every account,
+	// sweeps nothing, so the seal answers both of them the same way.
+	if len(byBranch) == 0 && closed == total {
 		return YearCloseResult{FiscalYear: year, PeriodsClosed: true}, nil
 	}
 
