@@ -9,6 +9,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 )
 
 type fakeAuditRecorder struct {
@@ -218,6 +219,49 @@ func TestFW1_08b_GLWritersStampBranch(t *testing.T) {
 		}
 		if len(aud.entries) != 1 || aud.entries[0].Action != actGLHeadOfficeBranchSet || aud.entries[0].BranchID != "branch-kgn" {
 			t.Fatalf("audit entries = %+v, want 1 %s entry for branch-kgn", aud.entries, actGLHeadOfficeBranchSet)
+		}
+	})
+}
+
+// TestFW1_08b_PartB_HeadOfficeSetChecksItsCandidate proves the part B rules on the head office
+// set (FROM-PRINCIPAL 176): the candidate must be a branch row of the caller's org and is refused
+// in words otherwise, and the non-controller refusal carries the set's own words, not the reopen
+// ones (FROM-PRINCIPAL 206).
+func TestFW1_08b_PartB_HeadOfficeSetChecksItsCandidate(t *testing.T) {
+	ctx := context.Background()
+	aud := &fakeAuditRecorder{}
+
+	t.Run("another_orgs_branch_refused_in_words", func(t *testing.T) {
+		f := newFakeStore()
+		ctrl := identity.StaffContext{UserID: "u-ctrl", RoleCode: controllerRole, Scope: identity.ScopeGlobal}
+		svc := newTestServiceAs(f, ctrl).WithAudit(aud)
+		scoped := authz.WithStaffScope(ctx, authz.StaffScope{OrgID: "org-a"})
+		err := svc.SetHeadOfficeBranch(scoped, "branch-foreign-org", "part B: another org's branch")
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != 403 {
+			t.Fatalf("want 403 client refusal for another org's branch, got %v", err)
+		}
+	})
+
+	t.Run("non_branch_location_refused_in_words", func(t *testing.T) {
+		f := newFakeStore()
+		ctrl := identity.StaffContext{UserID: "u-ctrl", RoleCode: controllerRole, Scope: identity.ScopeGlobal}
+		svc := newTestServiceAs(f, ctrl).WithAudit(aud)
+		scoped := authz.WithStaffScope(ctx, authz.StaffScope{OrgID: "org-a"})
+		err := svc.SetHeadOfficeBranch(scoped, "loc-zone-1", "part B: a zone is not a branch")
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != 422 {
+			t.Fatalf("want 422 client refusal for a non branch location, got %v", err)
+		}
+	})
+
+	t.Run("the_non_controller_words_name_the_set_not_the_reopen", func(t *testing.T) {
+		f := newFakeStore()
+		mgrSvc := newTestService(f).WithAudit(aud)
+		err := mgrSvc.SetHeadOfficeBranch(ctx, "branch-kgn", "part B: the set's own words")
+		var ce clientError
+		if !errors.As(err, &ce) || ce.msg != "gl: only the Financial Controller may set the head office branch" {
+			t.Fatalf("want the head office set's own refusal words, got %q (err=%v)", ce.msg, err)
 		}
 	})
 }
