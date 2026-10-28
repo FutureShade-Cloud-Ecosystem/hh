@@ -32,7 +32,8 @@ package main
 // carry its days, so the reconciliation opens and signs off an ended month rather than a running
 // one. no_journal_waiting_or_dead_lettered is month free (the outbox carries both months'
 // events); year_end_close_opens_next_year_and_keeps_income_statement works the year ends around
-// the frame, refusing the running year's close and closing the year before it.
+// the frame, refusing the running year's close and closing the last year before it that the books
+// have not moved in, which the leg plants into a year of its own so the close does real work.
 //
 //	Run: DATABASE_URL='postgres://colton:fw1@127.0.0.1:57602/postgres?sslmode=disable' \
 //	     go test -tags integration ./cmd/core/ -run FW1MonthWalk -count=1 -v
@@ -1460,17 +1461,63 @@ func (w *fw1Walk) assertWalkMonthAndNextYearPeriodsOpen(t fw1TB) {
 }
 
 // 8. The walk's own year has not ended, so its year end close is refused (FW1-09b), and the close
-// of the year BEFORE the walk's own, which has ended, keeps that year's income statement unchanged
-// with the walk's own year's periods in place (FROM-PRINCIPAL 159).
+// of the last year before the walk's own that the books have not moved in, which has ended, really
+// closes: the closed year carries its own periods and its own P&L, the close posts a closing
+// journal carrying that P&L's net, every period of the closed year is sealed, the walk's own year
+// is left open, and the closed year's income statement still reads as it did before the close
+// (FROM-PRINCIPAL 159, ruled again in 321 after S5's P2 on PR 634).
+//
+// THE PLANT. On a fresh migrated and seeded database the year before the walk's own year holds
+// nothing: no periods, no journals, no P&L. A close of such a year posts no closing journal,
+// seals no period and answers success, so every check on it passes for the wrong reason (S5's P2,
+// REVIEW-PR634-r7-s5-opus.md). The plant below gives the closed year a book of its own:
+//
+//   - the year's twelve OPEN fiscal periods, created the way the product's own roll forward creates
+//     them (the GL repository's ensureFiscalYearTx), so the close has periods to seal. A posting
+//     dated in a year with no period rows files late into the next open month, so the periods come
+//     first;
+//   - the year's opening stock, the stock the dealer holds today, because the close's pre flight
+//     ties the company's stock against the company's 1200 at the month's end and the stock side
+//     reads today's value until the inventory module answers an as of read;
+//   - one revenue journal and one expense journal through PostExternal, the production posting
+//     seam, each stamped with a branch, so the year carries a P&L for the close to sweep;
+//   - the current year's mirror of that opening stock, so the stock the closed year opened with is
+//     not opened twice and the walk's own month close still ties.
+//
+// The plant leaves the walk's own books as they were: the mirror cancels the duplicate at 1200 and
+// at 3000, so the walk's month close's pre flight still ties and the walk's own figures read the
+// same after the plant as before it.
 func (w *fw1Walk) assertYearEndClose(t fw1TB) {
+	ctx := context.Background()
 	// The walk's own year is still running: closing it would seal the months still ahead, so the
 	// close is refused until the year's last day has passed in the dealer's zone. Red until FW1-09
 	// lands: the refusal does not exist yet.
 	if _, err := w.money.glSvc.CloseYear(fw1StaffCtx(context.Background()), w.year, "FW1 walk, the running year's close must be refused"); err == nil {
 		t.Errorf("the year end close of the walk's own year %d succeeded but the year has not ended (want refused)", w.year)
 	}
-	// The year before the walk's own has ended; its close must not move its income statement.
+	// The year before the walk's own has ended; its close must do real work.
 	closedYear := w.year - 1
+	// The year the leg closes has to be a year the books have not already moved in. The close's
+	// pre flight ties that year's own balances (the AR subledger against 1100, the stock against
+	// 1200) at each of its month ends, so a year that already carries a movement cannot be closed
+	// by this leg: the pre flight reads the AR subledger's own dated acts, and a year whose
+	// movements sit in the GL but not in the subledger is out of tie by construction. On the seeded
+	// database the year before the walk's own is empty, which is the year ruling 159 named; the
+	// rule keeps the leg honest on a box whose seed carries a year of history.
+	for {
+		var moved int
+		if err := w.pool.QueryRow(ctx, `
+			SELECT count(*) FROM gl_journals WHERE fiscal_year = $1 AND status = 'POSTED'`, closedYear).Scan(&moved); err != nil {
+			t.Fatalf("the closed year %d's journal read: %v", closedYear, err)
+		}
+		if moved == 0 {
+			break
+		}
+		closedYear--
+		if closedYear < w.year-100 {
+			t.Fatalf("no year before the walk's own year %d carries no movement of its own, so this leg has no year to close", w.year)
+		}
+	}
 	income := func() map[string]int64 {
 		out := map[string]int64{}
 		rows, err := w.pool.Query(context.Background(), `
@@ -1489,6 +1536,62 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 		}
 		return out
 	}
+	// -- the plant: the closed year as a year in the books --------------------------------
+	if _, err := w.pool.Exec(ctx, `
+		INSERT INTO fiscal_periods (year, month) SELECT $1, m FROM generate_series(1,12) AS m
+		 ON CONFLICT (year, month) DO UPDATE SET status = 'OPEN', closed_at = NULL, closed_by = NULL`, closedYear); err != nil {
+		t.Fatalf("planting the closed year %d's fiscal periods: %v", closedYear, err)
+	}
+	// The stock the dealer holds today, read through the production seam the close's pre flight
+	// reads it through, so the plant carries the figure the close's own tie will look for.
+	stock, err := w.money.inventorySvc.StockValueCents(ctx, "")
+	if err != nil {
+		t.Fatalf("the company's stock value: %v", err)
+	}
+	const plantedRevenue, plantedExpense = int64(100000), int64(40000)
+	openedAt := time.Date(closedYear, time.January, 15, 12, 0, 0, 0, time.UTC)
+	for _, p := range []gl.ExternalJournal{
+		{
+			Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:year-end-plant:opening:%d", closedYear),
+			Memo: "the closed year's opening stock", BranchID: fw1TRT, DocumentDate: openedAt,
+			Lines: []gl.ExternalLine{
+				{AccountCode: "1200", DebitCents: stock, Memo: "opening stock"},
+				{AccountCode: "3000", CreditCents: stock, Memo: "opening equity"},
+			},
+		},
+		{
+			Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:year-end-plant:revenue:%d", closedYear),
+			Memo: "the closed year's revenue", BranchID: fw1TRT, DocumentDate: openedAt,
+			Lines: []gl.ExternalLine{
+				{AccountCode: "1000", DebitCents: plantedRevenue, Memo: "the year's cash sale"},
+				{AccountCode: "4000", CreditCents: plantedRevenue, Memo: "the year's revenue"},
+			},
+		},
+		{
+			Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:year-end-plant:expense:%d", closedYear),
+			Memo: "the closed year's expense", BranchID: fw1TRT, DocumentDate: openedAt,
+			Lines: []gl.ExternalLine{
+				{AccountCode: "6100", DebitCents: plantedExpense, Memo: "the year's rent"},
+				{AccountCode: "1000", CreditCents: plantedExpense, Memo: "the year's cash paid out"},
+			},
+		},
+		{
+			// The current year's mirror of that opening stock: the stock the closed year opened
+			// with is the stock the walk's own books already carry, so the current year does not
+			// open it a second time. It rides the clock, so it lands in the walk's own month.
+			Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:year-end-plant:mirror:%d", closedYear),
+			Memo: "the current year does not open the stock the closed year carries", BranchID: fw1TRT,
+			Lines: []gl.ExternalLine{
+				{AccountCode: "3000", DebitCents: stock, Memo: "opening equity"},
+				{AccountCode: "1200", CreditCents: stock, Memo: "the stock the closed year opened with"},
+			},
+		},
+	} {
+		if _, err := w.money.glSvc.PostExternal(ctx, p); err != nil {
+			t.Fatalf("planting the closed year %d's journal %q: %v", closedYear, p.Memo, err)
+		}
+	}
+	// The income statement the close will sweep, read before the close runs.
 	before := income()
 	// The close has to do real work, or this leg proves nothing. A close of a year with no income
 	// statement posts no closing journal, seals no period and answers success, so the comparison
@@ -1497,8 +1600,81 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 	if len(before) == 0 {
 		t.Errorf("the closed year %d carries no income statement: the year end close of a year with no P&L posts no closing journal and seals no period, so this leg would prove nothing", closedYear)
 	}
-	if _, err := w.money.glSvc.CloseYear(fw1StaffCtx(context.Background()), closedYear, "FW1 walk year end close"); err != nil {
+	// The closed year carries exactly the planted P&L: one revenue and one expense.
+	wantIncome := map[string]int64{"4000": plantedRevenue, "6100": plantedExpense}
+	for code, want := range wantIncome {
+		if before[code] != want {
+			t.Errorf("the closed year %d's income statement holds %s on account %s, want the planted %s", closedYear, fw1Dollars(before[code]), code, fw1Dollars(want))
+		}
+	}
+	if len(before) != len(wantIncome) {
+		t.Errorf("the closed year %d's income statement holds %d accounts (%v), want the planted %d", closedYear, len(before), before, len(wantIncome))
+	}
+	res, err := w.money.glSvc.CloseYear(fw1StaffCtx(context.Background()), closedYear, "FW1 walk year end close")
+	if err != nil {
 		t.Fatalf("the year end close of %d: %v", closedYear, err)
+	}
+	// The close posted a closing journal, and it carries exactly the planted net.
+	plantedNet := plantedRevenue - plantedExpense
+	if len(res.ClosingJournalIDs) == 0 {
+		t.Errorf("the year end close of %d returned no closing journal: the year's P&L (%v) was not swept to retained earnings", closedYear, before)
+	}
+	if res.NetIncomeCents != plantedNet {
+		t.Errorf("the year end close of %d reported a net income of %s, want the planted net %s", closedYear, fw1Dollars(res.NetIncomeCents), fw1Dollars(plantedNet))
+	}
+	// The closing journal itself: it sits in the closed year's own December, every line carries a
+	// branch, and its retained earnings leg carries the year's net.
+	for _, id := range res.ClosingJournalIDs {
+		var retained int64
+		var periodYear, periodMonth int
+		if err := w.pool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(COALESCE(l.debit_cents, 0) - COALESCE(l.credit_cents, 0)), 0), fp.year, fp.month
+			  FROM gl_journals j
+			  JOIN gl_journal_lines l ON l.journal_id = j.id
+			  JOIN gl_accounts a ON a.id = l.account_id
+			  JOIN fiscal_periods fp ON fp.id = j.period_id
+			 WHERE j.id = $1::uuid AND a.code = '3900'
+			 GROUP BY fp.year, fp.month`, id).Scan(&retained, &periodYear, &periodMonth); err != nil {
+			t.Fatalf("the closing journal %s read: %v", id, err)
+		}
+		if retained != -plantedNet {
+			t.Errorf("the closing journal %s carries %s on retained earnings, want the planted net %s credited", id, fw1Dollars(retained), fw1Dollars(plantedNet))
+		}
+		if periodYear != closedYear || periodMonth != 12 {
+			t.Errorf("the closing journal %s sits in %04d-%02d, want the closed year's own December %04d-12", id, periodYear, periodMonth, closedYear)
+		}
+		var branchlessLines int
+		if err := w.pool.QueryRow(ctx, `
+			SELECT count(*) FROM gl_journal_lines l JOIN gl_journals j ON j.id = l.journal_id
+			 WHERE j.id = $1::uuid AND l.branch_id IS NULL`, id).Scan(&branchlessLines); err != nil {
+			t.Fatalf("the closing journal %s branch read: %v", id, err)
+		}
+		if branchlessLines != 0 {
+			t.Errorf("the closing journal %s carries %d line(s) without a branch, want every line stamped", id, branchlessLines)
+		}
+	}
+	// Every period of the closed year is sealed, and the walk's own year is left open.
+	var closedOpen, closedTotal int
+	if err := w.pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE status = 'OPEN'), count(*) FROM fiscal_periods WHERE year = $1`, closedYear).Scan(&closedOpen, &closedTotal); err != nil {
+		t.Fatalf("the closed year %d's period read: %v", closedYear, err)
+	}
+	if closedTotal == 0 {
+		t.Errorf("the year end close of %d left the closed year without a fiscal period: the close sealed nothing", closedYear)
+	}
+	if closedOpen != 0 {
+		t.Errorf("the year end close of %d left %d of the closed year's %d periods OPEN, want every period of the closed year sealed", closedYear, closedOpen, closedTotal)
+	}
+	var walkOpen, walkTotal int
+	if err := w.pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE status = 'OPEN'), count(*) FROM fiscal_periods WHERE year = $1`, w.year).Scan(&walkOpen, &walkTotal); err != nil {
+		t.Fatalf("the walk year period read: %v", err)
+	}
+	if walkTotal == 0 {
+		t.Errorf("the year end close of %d left the walk's own year %d without fiscal periods: posting into the walk year is refused for want of a period", closedYear, w.year)
+	}
+	if walkOpen != walkTotal {
+		t.Errorf("the year end close of %d left %d of the walk's own year %d's %d periods OPEN, want the walk's own year left open", closedYear, walkOpen, w.year, walkTotal)
 	}
 	after := income()
 	for code, amt := range before {
@@ -1506,14 +1682,6 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 			t.Errorf("the year end close changed the closed year's income statement: account %s held %s before the close and %s after (%s)",
 				code, fw1Dollars(amt), fw1Dollars(after[code]), byDollars(after[code]-amt))
 		}
-	}
-	// The next year is then the walk's own year, so its periods exist.
-	var walkYear int
-	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM fiscal_periods WHERE year = $1`, w.year).Scan(&walkYear); err != nil {
-		t.Fatalf("the walk year period read: %v", err)
-	}
-	if walkYear == 0 {
-		t.Errorf("the year end close of %d left the walk's own year %d without fiscal periods: posting into the walk year is refused for want of a period", closedYear, w.year)
 	}
 }
 
