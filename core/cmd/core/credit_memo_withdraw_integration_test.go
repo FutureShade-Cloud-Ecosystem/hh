@@ -25,6 +25,13 @@ func TestIntegration_CreditMemoRound_AWithdrawnParkVoidsTheMemoAndFreesTheRoom(t
 	svc, _ := cmRoundService(t, pool)
 
 	res := cmRoundParkCredit(t, pool, svc, world.requester, world.cust, world.inv, "cm-rail-withdraw")
+	// The withdrawn memo's journal is the round's own row: the withdrawal voids it, it does not
+	// delete it, and a voided journal left on the shared gate is still a line no later package
+	// can decide.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM gl_journals WHERE idempotency_key = $1`,
+			billing.CreditMemoJournalKeyPrefix+res.CreditMemoID)
+	})
 
 	// The requester takes their request back through the rail's own door. The store carries the same
 	// JE bridge the decide path does, as the composition root wires it.

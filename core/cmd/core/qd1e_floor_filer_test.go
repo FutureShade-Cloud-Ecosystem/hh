@@ -28,14 +28,19 @@ import (
 )
 
 // qd1ePlantRoleGrant gives one planted linked user a canonical role grant at
-// the migration planted branch and removes it when the test ends.
+// the kit's own branch and removes it when the test ends.
 func qd1ePlantRoleGrant(t *testing.T, pool *pgxpool.Pool, sub, role string) {
 	t.Helper()
 	ctx := context.Background()
+	// The grant names the kit's own branch and the kit's own org: a branch carries a grant
+	// only with the org that owns it, and the branch the QD1 legs file at is the kit's own
+	// branch A. The plant must not read whichever location row happens to sort first on the
+	// gate: the demo branch the migrations plant carries no org at all, and a grant named
+	// with a NULL org is refused by the table.
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO staff_role_grant (platform_user_id, role_id, org_id, branch_id)
-		SELECT $1, $2, l.org_id, l.id FROM locations l ORDER BY l.id LIMIT 1
-		ON CONFLICT DO NOTHING`, sub, role); err != nil {
+		VALUES ($1, $2, $3::uuid, $4::uuid)
+		ON CONFLICT DO NOTHING`, sub, role, testkit.OrgNorthID, testkit.BranchNorthAID); err != nil {
 		t.Fatalf("plant the %s grant: %v", role, err)
 	}
 	t.Cleanup(func() {
