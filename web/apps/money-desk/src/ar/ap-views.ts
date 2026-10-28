@@ -7,10 +7,9 @@
 // Every figure is the server's, formatted. The board never adds a bucket up and never takes a
 // figure of its own: the route's row totals and the route's book totals are what show.
 import { html, nothing, type TemplateResult } from "lit";
-import { PAYABLES_BANDS, isLandedCostRow, landedCostWords, rowItems, rowKey, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
+import { PAYABLES_BANDS, isLandedCostRow, landedCostWords, rowItems, rowKey, type PayablesBoardModel, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
 import { bucketWord, daysLateWord, daysPastDue, relativeDay } from "./ar-logic.js";
 import { formatMoney } from "./ar-money.js";
-import { tabsBar, type DeskModel } from "./ar-views.js";
 
 // ---- the aging list ----------------------------------------------------------------------------
 
@@ -54,7 +53,7 @@ function boardRows(page: PurchasingAPAgingPage): readonly PurchasingAPAgingRow[]
   });
 }
 
-function payablesAging(model: DeskModel, page: PurchasingAPAgingPage): TemplateResult {
+function payablesAging(page: PurchasingAPAgingPage): TemplateResult {
   const rows = boardRows(page);
   return html`
     <section class="panel" aria-label="Open AP aging">
@@ -137,7 +136,7 @@ function payeeLineRow(item: PurchasingAPAgingItem, asOf: string): TemplateResult
   `;
 }
 
-function payablesPayee(model: DeskModel, page: PurchasingAPAgingPage, row: PurchasingAPAgingRow): TemplateResult {
+function payablesPayee(page: PurchasingAPAgingPage, row: PurchasingAPAgingRow): TemplateResult {
   return html`
     <button type="button" class="link back" data-action="payables-back">‹ Payables</button>
     <div class="head">
@@ -176,15 +175,14 @@ function payablesPayee(model: DeskModel, page: PurchasingAPAgingPage, row: Purch
 
 /**
  * The board: the open AP by payee, the day it is read as of, and the row whose open items are
- * open. The desk's views nav sits above it, the way it sits above every other view of this
- * desk, and the Payables tab is the one in hand.
+ * open. The board is an area of the Money Desk in its own right, beside the receivables desk, so
+ * it carries no view nav of that desk's: the area switch above it is the way in.
  */
-export function renderPayables(model: DeskModel): TemplateResult {
-  const board = model.payables;
+export function renderPayables(board: PayablesBoardModel): TemplateResult {
   const page = board.page;
   if (board.openRowKey !== null && page !== null) {
     const row = page.items.find((item) => rowKey(item) === board.openRowKey);
-    if (row !== undefined) return html`${payablesPayee(model, page, row)}`;
+    if (row !== undefined) return html`${payablesPayee(page, row)}`;
   }
   return html`
     <div class="head">
@@ -193,7 +191,6 @@ export function renderPayables(model: DeskModel): TemplateResult {
         <p class="dim">Open AP by payee, the most overdue first. A landed cost rides its own line and its own payee.</p>
       </div>
     </div>
-    ${tabsBar(model)}
     ${board.state === "loading"
       ? html`<section class="panel" aria-busy="true"><p class="dim" role="status">Loading open AP.</p><div class="ghost"></div><div class="ghost"></div><div class="ghost"></div></section>`
       : board.state === "error" || page === null
@@ -203,6 +200,6 @@ export function renderPayables(model: DeskModel): TemplateResult {
               <div class="actions"><button type="button" class="btn btn-secondary" data-action="payables-reload">Try again</button></div>
             </section>
           `
-        : html`${payablesAging(model, page)}`}
+        : html`${payablesAging(page)}`}
   `;
 }

@@ -8,7 +8,7 @@
 //
 // The last leg is the contract's own: the board is walked on a response whose keys are the
 // contract's, and it fails on any key the board reads that the contract does not name.
-import { test, expect, openDesk, dayFromToday } from "./helpers.js";
+import { test, expect, openDesk, dayFromToday, receivablesHandoff } from "./helpers.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { AP_AGING_FIXTURE, AP_AGING_KEYS } from "./ap-aging-contract.js";
@@ -23,7 +23,7 @@ function centsOf(text: string): number {
 
 /** The board's open AP, read from the screen. */
 async function openBoard(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Payables", exact: true }).click();
+  await page.locator("nav[aria-label='Money Desk areas']").getByRole("button", { name: "Payables", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Payables", exact: true })).toBeVisible();
   // The board paints its head before the route answers: wait for the table itself.
   await expect(page.locator("[data-payables-aging], [data-payables-empty]").first()).toBeVisible();
@@ -35,11 +35,27 @@ function boardSource(): string {
   return ["ap-logic.ts", "ap-views.ts"].map((file) => readFileSync(`${here}../src/ar/${file}`, "utf8")).join("\n");
 }
 
-test("the Payables tab is live in the receivables desk, beside the views it always held", async ({ page, request }) => {
+test("the Payables area is in the Money Desk's top level switch, beside Receivables", async ({ page, request }) => {
   await openDesk(page, request);
-  const nav = page.locator("nav.tabs", { hasText: "Receivables" }).first();
-  await expect(nav.getByRole("button", { name: "Payables", exact: true })).toBeVisible();
+  const areas = page.locator("nav[aria-label='Money Desk areas']");
+  await expect(areas.getByRole("button", { name: "Payables", exact: true })).toBeVisible();
+  await expect(areas.getByRole("button", { name: "Receivables", exact: true })).toBeVisible();
+  // One way in: the receivables desk's own views nav holds no Payables.
+  const views = page.locator("nav[aria-label='Money Desk views']");
+  await expect(views.getByRole("button", { name: "Payables", exact: true })).toHaveCount(0);
   await expect(page.locator(".tab-later")).toHaveCount(0);
+});
+
+test("the Payables area rides the receivables gate: every role that holds the receivables aging holds it", async ({ page, request }) => {
+  // Payables and Receivables holds the receivables desk, so it holds the board.
+  await openDesk(page, request);
+  await expect(page.locator("nav[aria-label='Money Desk areas']").getByRole("button", { name: "Payables", exact: true })).toBeVisible();
+  // The controller holds the receivables desk too, so it holds the board.
+  const second = await page.context().newPage();
+  await second.addInitScript(receivablesHandoff as (who: string) => void, "controller");
+  await second.goto("/");
+  await expect(second.locator("nav[aria-label='Money Desk areas']").getByRole("button", { name: "Payables", exact: true })).toBeVisible();
+  await second.close();
 });
 
 test("the board opens on the open AP: the five bands, the payee rows and the day it is read as of", async ({ page, request }) => {

@@ -66,20 +66,22 @@ const GENERAL_MANAGER_ROLE = "general_manager";
 
 // The desk's areas, in switch order. A new area is one more entry here, one case in #onHostClick for its presses
 // and one in renderArea for its screens.
-const AREAS = ["ledger", "receivables", "statements", "bank", "tax", "liens", "compliance"] as const;
+const AREAS = ["ledger", "receivables", "payables", "statements", "bank", "tax", "liens", "compliance"] as const;
 type Area = (typeof AREAS)[number];
 
-// The areas each role holds, and the one it lands on (the first listed). The controller holds all six; Payables and
-// Receivables lands on receivables and holds the ledger as a reader, the liens and the calendar beside it; the General Manager, who holds the
-// release gate of the liens, lands there.
+// The areas each role holds, and the one it lands on (the first listed). The controller holds all eight; Payables and
+// Receivables lands on receivables and holds the ledger as a reader, the payables board and the liens beside it; the General Manager, who holds the
+// release gate of the liens, lands there. Payables rides the receivables gate: every role that holds the receivables
+// aging holds the payables board, and no other role does.
 const AREAS_BY_ROLE: Readonly<Record<string, readonly Area[]>> = {
-  [CONTROLLER_ROLE]: ["ledger", "receivables", "statements", "bank", "tax", "liens", "compliance"],
-  [PAYREC_ROLE]: ["ledger", "receivables", "liens", "compliance"],
+  [CONTROLLER_ROLE]: ["ledger", "receivables", "payables", "statements", "bank", "tax", "liens", "compliance"],
+  [PAYREC_ROLE]: ["ledger", "receivables", "payables", "liens", "compliance"],
   [GENERAL_MANAGER_ROLE]: ["liens", "compliance"],
 };
 const AREA_LABEL: Readonly<Record<Area, string>> = {
   ledger: "Approvals and ledger", // the reader's switch says just "Ledger"
   receivables: "Receivables",
+  payables: "Payables",
   statements: "Statements",
   bank: "Bank reconciliation",
   tax: "Tax",
@@ -436,6 +438,8 @@ export class MoneyDeskApp extends HHElement {
     if (action === "area") {
       const area = control?.getAttribute("data-area");
       if (AREAS.some((id) => id === area) && this.#areas().includes(area as Area)) {
+        // Leaving the payables board closes the payee whose open items were open.
+        if (area !== "payables") this.#ar.closePayables();
         this.#area = area as Area;
         this.#openArea();
         this.requestUpdate();
@@ -711,6 +715,8 @@ export class MoneyDeskApp extends HHElement {
     if (this.#area === "tax") this.#tax.ensureLoaded();
     if (this.#area === "liens") this.#lien.ensureLoaded();
     if (this.#area === "compliance") this.#compliance.ensureLoaded();
+    // The payables board is the receivables desk's own screen, read from the purchasing route.
+    if (this.#area === "payables") this.#ar.openPayables();
   }
 
   #onSignOut(): void {
@@ -739,7 +745,7 @@ export class MoneyDeskApp extends HHElement {
     return html`<button type="button" class="btn btn-secondary" data-action="theme" data-testid="theme-control">${label}</button>`;
   }
 
-  // The desks the role holds, as the area switch: the controller's five, Payables and Receivables' four and the General
+  // The desks the role holds, as the area switch: the controller's eight, Payables and Receivables' five and the General
   // Manager's two. The ledger reads "Ledger" to a reader.
   private renderAreas(): TemplateResult {
     const area = (id: Area): TemplateResult => html`
@@ -753,6 +759,8 @@ export class MoneyDeskApp extends HHElement {
     switch (this.#area) {
       case "ledger":
         return html`<main class="gl-desk">${this.#gl.render()}</main>`;
+      case "payables":
+        return html`<main class="desk">${this.#ar.renderPayablesArea()}</main>`;
       case "statements":
         return html`<main class="fs-desk">${this.#stmt.render()}</main>`;
       case "bank":

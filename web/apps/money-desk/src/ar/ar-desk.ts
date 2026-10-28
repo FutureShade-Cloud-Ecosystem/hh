@@ -42,7 +42,7 @@ import {
 import type { WorkspaceTab } from "./ar-workspace.js";
 import { formatWorkspaceMoney } from "./ar-workspace.js";
 import { renderPayables } from "./ap-views.js";
-import type { PurchasingAPAgingPage } from "./ap-logic.js";
+import type { PayablesBoardModel, PurchasingAPAgingPage } from "./ap-logic.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -692,15 +692,12 @@ export class ArDesk {
   async #goTab(tab: Tab): Promise<void> {
     this.#tab = tab;
     this.#account = null;
-    // Leaving the board closes the payee whose open items were open.
-    this.#payablesOpenKey = null;
     this.#clearMessages();
     this.#host.repaint();
     if (tab === "statements") await Promise.all(this.#aging.map((a) => this.#loadStatement(a.customer_id)));
     if (tab === "reminders") await this.#office.openReminders();
     if (tab === "settings") await this.#office.openSettings();
     if (tab === "holds") await this.#office.openHolds();
-    if (tab === "payables") await this.#loadPayables();
   }
 
   /**
@@ -1524,13 +1521,6 @@ export class ArDesk {
     return {
       tab: this.#tab,
       asOf: this.#landing?.as_of ?? "",
-      payables: {
-        state: this.#payablesState,
-        page: this.#payablesPage,
-        error: this.#payablesError,
-        asOf: this.#payablesAsOf,
-        openRowKey: this.#payablesOpenKey,
-      },
       nowMs: Date.now(),
       roleCode: this.#who.roleCode,
       takenBy: this.#who.userName,
@@ -1572,11 +1562,42 @@ export class ArDesk {
     if (this.#workspaceMode) return html`${renderWorkspaceScreen(model)}`;
     if (model.account !== null) return html`${renderAccount(model, model.account)}`;
     if (model.tab === "statements") return html`${renderStatements(model)}`;
-    if (model.tab === "payables") return html`${renderPayables(model)}`;
     if (model.tab === "reminders") return html`${renderReminders(model)}`;
     if (model.tab === "settings") return html`${renderSettings(model)}`;
     if (model.tab === "holds") return html`${renderHolds(model)}`;
     return html`${renderHome(model)}`;
+  }
+
+  /**
+   * The Payables board as the Money Desk's own area (src/ar/ap-views.ts). The board is the open
+   * AP read from the purchasing route; it stands beside the receivables desk in the area switch,
+   * so it is rendered on its own and carries no view nav of that desk's.
+   */
+  renderPayablesArea(): TemplateResult {
+    return renderPayables(this.#payablesModel());
+  }
+
+  /** Reads the board when its area opens, the way every other area reads its own screen. */
+  openPayables(): void {
+    void this.#loadPayables();
+  }
+
+  /** Leaving the board closes the payee whose open items were open. */
+  closePayables(): void {
+    if (this.#payablesOpenKey === null) return;
+    this.#payablesOpenKey = null;
+    this.#host.repaint();
+  }
+
+  /** The board's own state: the read, the day it is read as of, and the row open. */
+  #payablesModel(): PayablesBoardModel {
+    return {
+      state: this.#payablesState,
+      page: this.#payablesPage,
+      error: this.#payablesError,
+      asOf: this.#payablesAsOf,
+      openRowKey: this.#payablesOpenKey,
+    };
   }
 
   /**

@@ -39,14 +39,21 @@ for (const size of SIZES) {
           await on.getByRole("button", { name: "Theme: Light" }).click();
         }
       };
+      // The band's account menu stays open after the theme tap, and on a phone it hangs over
+      // the area switch. Escape closes it, the way it closes in every menu of the house.
+      const closeAccountMenu = async (on: Page = page) => {
+        await on.keyboard.press("Escape");
+      };
 
       await openDesk(page, request);
       await charcoalOn();
+      await closeAccountMenu();
       // The reference: the desk's own Receivables aging, the board's sibling.
       await shot(page, theme, size.width, "reference");
 
-      // The board: the open AP by payee.
-      await page.getByRole("button", { name: "Payables", exact: true }).click();
+      // The board: the open AP by payee. It is an area of the Money Desk, so it is reached
+      // from the area switch above, beside Receivables.
+      await page.locator("nav[aria-label='Money Desk areas']").getByRole("button", { name: "Payables", exact: true }).click();
       await expect(page.locator("[data-payables-aging]")).toBeVisible();
       await shot(page, theme, size.width, "aging");
 
@@ -59,7 +66,7 @@ for (const size of SIZES) {
       await request.post("/_stub/scenario", { data: { name: "empty" } });
       await page.getByRole("button", { name: "‹ Payables" }).click();
       await expect(page.locator("[data-payables-aging]")).toBeVisible();
-      await page.getByRole("button", { name: "Payables", exact: true }).click();
+      await page.locator("nav[aria-label='Money Desk areas']").getByRole("button", { name: "Payables", exact: true }).click();
       await expect(page.locator("[data-payables-empty]")).toBeVisible();
       await shot(page, theme, size.width, "empty");
       await resetStub(request);
