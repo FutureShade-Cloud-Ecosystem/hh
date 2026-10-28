@@ -339,6 +339,35 @@ func TestW25FixR3StampedReceiptAfterTheInstantStillCloses(t *testing.T) {
 	}
 }
 
+// TestW25FixR3StampedReceiptNeverCancelsAnOppositeDiscrepancy is the
+// stamped receipt's opposite shape (S5's P3 3): the month ended one cent out
+// of tie with stock below 1200, and the next month's receipt stamps a real
+// one cent WAC rounding in its delta. The close of the earlier month must
+// still refuse, naming the month's own discrepancy: the stamped 203, not the
+// GRNI's 202, is the figure the books moved, and the extra cent must never
+// cancel the discrepancy into a pass.
+func TestW25FixR3StampedReceiptNeverCancelsAnOppositeDiscrepancy(t *testing.T) {
+	leg, _, moveID := w25r3ReceiptLeg(t, "stampcancel", true, false)
+
+	stamp, _, value, _ := w25r3MoveAnswers(t, leg, moveID)
+	if want := value + 1; stamp != want {
+		t.Fatalf("the stamped receipt moved %d cents, want %d (the GRNI plus the one cent blend)", stamp, want)
+	}
+
+	code, body := w25Close(t, leg, w25Year, w25Month)
+	if code != http.StatusConflict {
+		t.Fatalf("the close of the month that was out of tie at its end was passed by the stamped receipt's rounding cent: %d: %s", code, body)
+	}
+	for _, want := range []string{"stock is out of tie with 1200", "$0.01"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the refusal %q does not name %q", body, want)
+		}
+	}
+	if status := w25PeriodStatus(t, leg, w25Year, w25Month); status != "OPEN" {
+		t.Fatalf("the refused close left the period %s, want OPEN", status)
+	}
+}
+
 // w25r3ReceiptOfMove answers the receipt id one receipt move keys on.
 func w25r3ReceiptOfMove(t *testing.T, leg *w25Leg, moveID string) string {
 	t.Helper()
