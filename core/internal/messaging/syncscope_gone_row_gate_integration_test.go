@@ -26,8 +26,10 @@ import (
 // org column, so any well-formed uuid serves.
 const gateOrgID = "3ef10000-0000-4000-8000-0000000000e1"
 
-func gateSamFilter() sync.ScopeFilter   { return sync.ScopeFilter{OrgID: gateOrgID, Actor: "sub-sam"} }
-func gateCaseyFilter() sync.ScopeFilter { return sync.ScopeFilter{OrgID: gateOrgID, Actor: "sub-casey"} }
+func gateSamFilter() sync.ScopeFilter { return sync.ScopeFilter{OrgID: gateOrgID, Actor: "sub-sam"} }
+func gateCaseyFilter() sync.ScopeFilter {
+	return sync.ScopeFilter{OrgID: gateOrgID, Actor: "sub-casey"}
+}
 
 // gateRoomFence is the stub money room fence: the Trenton yard room admits Sam
 // alone. Casey is seated in the room and refused it, the shape the leak probe
