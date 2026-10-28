@@ -91,7 +91,10 @@ func TestRoutineEvent_ThreePaymentsProduceOneChannelMessage(t *testing.T) {
 		}
 		t.Fatalf("three payments must collapse to ONE channel message, got %d: %v", len(roots), bodies)
 	}
-	if !strings.Contains(roots[0].Body, "3") || !strings.Contains(roots[0].Body, "$6,041.25") {
+	// FLAKE-10: the count is read as the count FIELD. The line carries the day too, and the day's
+	// digits are not the count.
+	_, count, money := rollupLine(t, roots[0].Body)
+	if count != 3 || money != "$6,041.25" {
 		t.Fatalf("the day's line must state the count AND the money, got %q", roots[0].Body)
 	}
 }
@@ -172,7 +175,10 @@ func TestRollup_DayIsOneMessage_NotAnAppendingLog(t *testing.T) {
 	if len(roots) != 1 {
 		t.Fatalf("five payments across one day must leave exactly ONE message, got %d", len(roots))
 	}
-	if !strings.Contains(roots[0].Body, "5") || !strings.Contains(roots[0].Body, "$15.00") {
+	// FLAKE-10: the count is read as the count FIELD. The line carries the day too, and the day's
+	// digits are not the count.
+	_, count, money := rollupLine(t, roots[0].Body)
+	if count != 5 || money != "$15.00" {
 		t.Fatalf("the ONE message must carry the CURRENT total, got %q", roots[0].Body)
 	}
 }
@@ -188,7 +194,10 @@ func TestRollup_RedeliveryDoesNotDoubleCount(t *testing.T) {
 	payEvent(t, c, "p1", "SO-1041", 124000, fkBrTrenton) // and again, out of order
 
 	root := onlyRoot(t, f, fkPayTrenton)
-	if !strings.Contains(root.Body, "2") || !strings.Contains(root.Body, "$5,120.50") {
+	// FLAKE-10: the count is read as the count FIELD. The line carries the day too, and the day's
+	// digits are not the count: a bare "2" matched the year's first digit on every day.
+	_, count, money := rollupLine(t, root.Body)
+	if count != 2 || money != "$5,120.50" {
 		t.Fatalf("redelivery must not inflate the day, got %q", root.Body)
 	}
 	if n := len(f.repliesUnder(root.ID)); n != 2 {

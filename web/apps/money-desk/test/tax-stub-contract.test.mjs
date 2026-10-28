@@ -32,6 +32,37 @@ const coreSource = ["tax", join("platform", "authz"), join("platform", "httpx")]
 const handlerSource = readFileSync(join(coreInternal, "tax", "handler.go"), "utf8");
 const moduleSource = readFileSync(join(coreInternal, "tax", "module.go"), "utf8");
 
+// The fields that carry the raw number, read from the record's PARSED values and not from the
+// stringified body. An id's hex digits and a timestamp's nanoseconds are the record's own digits,
+// and a raw hunt over the whole body read them as the card number (FLAKE-10): the evidence
+// record carries an id, a captured_by and a created_at, so its body can hold the digits of the
+// card number without echoing the card number. Every value that is neither an id nor a clock
+// must not carry the raw number.
+//
+// The walk goes through nested objects and arrays as well as the top level, so a record that
+// grows a nested field cannot slip a value under the check, and it names the field's path, so a
+// failure says which field carried it. A value that is id shaped or clock shaped is skipped on
+// purpose: a number echoed into an id shaped field is the id's own digits, not a leak, and the
+// same holds for a clock.
+function fieldsCarrying(raw, record) {
+  const idShape = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const clockShape = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+  const found = [];
+  const walk = (value, path) => {
+    if (value !== null && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) {
+        walk(item, path ? `${path}.${key}` : key);
+      }
+      return;
+    }
+    const text = String(value);
+    if (idShape.test(text) || clockShape.test(text)) return;
+    if (text.includes(raw)) found.push(path);
+  };
+  walk(record, "");
+  return found;
+}
+
 let child;
 let base;
 
@@ -310,9 +341,9 @@ test("capturing evidence checks the profile's forced fields in order, masks the 
   assert.equal(made.json.number_mask, "•••• 4821");
   assert.equal(made.json.attestation_status, "PENDING_LEGAL_REVIEW");
   assert.equal(made.json.captured_by, IDS.controller);
-  assert.ok(!JSON.stringify(made.json).includes("5550"), "the raw number is not echoed");
+  assert.deepEqual(fieldsCarrying("5550", made.json), [], "the raw number is not echoed");
   const read = await ctl("GET", `/api/v1/tax/evidence/${made.json.id}`);
-  assert.ok(!JSON.stringify(read.json).includes("5550"), "the raw number is not stored");
+  assert.deepEqual(fieldsCarrying("5550", read.json), [], "the raw number is not stored");
   assert.equal(read.json.number_mask, "•••• 4821");
   // A short number masks fully.
   const short = await ctl("POST", "/api/v1/tax/evidence", { ...full, raw_number: "12" });

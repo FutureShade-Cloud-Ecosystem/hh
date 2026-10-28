@@ -321,7 +321,7 @@ const officeStyles = css`
   .inline-select { min-width: 200px; }
   .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-16); align-items: start; }
   .settings-grid > div { min-width: 0; }
-  .pick.held { background: var(--hh-disabled-fill); border-color: var(--hh-disabled-line); cursor: not-allowed; }
+  .pick.held { background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border-color: var(--hh-disabled-line); cursor: not-allowed; }
   @media (max-width: 1100px) {
     .settings-grid { grid-template-columns: minmax(0, 1fr); }
   }

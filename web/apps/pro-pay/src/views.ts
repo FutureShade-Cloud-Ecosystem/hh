@@ -287,6 +287,23 @@ export function methodsScreen(state: ViewState): TemplateResult {
 
 // ---- Statements: payment history ---------------------------------------------------------------------------------
 
+/**
+ * The line under a payment row: which invoices it settled, or nothing more for a returned
+ * payment (bounced or voided), whose state the row's status chip already carries: the chip
+ * carries the state and the line carries the facts. The invoices are the application rows
+ * (positive amounts), each named once: the reversal row the core writes beside each
+ * application (PR 668) names the same invoice again and is not a second invoice. A returned
+ * payment with no application row ends the line after the moment; "no invoice yet" is the
+ * received row's empty list, the object of "Applied to", and belongs to that wording only.
+ */
+function settlementWords(p: TenantPayment, byId: ReadonlyMap<string, string>): string {
+  const applications = p.allocations.filter((a) => a.amount_cents > 0);
+  const invoices = [...new Set(applications.map((a) => byId.get(a.invoice_id) ?? "an invoice"))];
+  if (p.status === "BOUNCED" || p.status === "VOID") return invoices.join(", ");
+  const list = invoices.length === 0 ? "no invoice yet" : invoices.join(", ");
+  return `Applied to ${list}`;
+}
+
 export function statementsScreen(state: ViewState): TemplateResult {
   const byId = new Map(state.invoices.map((i) => [i.id, i.invoice_no] as const));
   const paid = state.payments.filter((p) => p.status === "RECEIVED" || p.status === "DEPOSITED").reduce((sum, p) => sum + p.amount_cents, 0);
@@ -297,9 +314,12 @@ export function statementsScreen(state: ViewState): TemplateResult {
       <p class="quiet">${state.summary === null ? "" : html`Still open <span class="mono">${money(state.summary.open_balance_cents)}</span> · `}${state.payments.length} ${plural(state.payments.length, "payment", "payments")}</p>
     </section>
     <ul class="payments" data-testid="payment-rows">
-      ${state.payments.map((p) => html`<li class="pay-row" data-testid="payment-row">
+      ${state.payments.map((p) => {
+        const settled = settlementWords(p, byId);
+        return html`<li class="pay-row" data-testid="payment-row">
         <div class="pay-top"><span class="mono">${p.payment_no}</span>${statusChip("payment", p.status)}<span class="pay-amount mono">${money(p.amount_cents)}</span></div>
-        <div class="quiet">${tender(p.method)} · ${houseMoment(p.received_at)} · Applied to ${p.allocations.length === 0 ? "no invoice yet" : p.allocations.map((a) => byId.get(a.invoice_id) ?? "an invoice").join(", ")}</div>
-      </li>`)}
+        <div class="quiet">${tender(p.method)} · ${houseMoment(p.received_at)}${settled === "" ? "" : ` · ${settled}`}</div>
+      </li>`;
+      })}
     </ul>`;
 }

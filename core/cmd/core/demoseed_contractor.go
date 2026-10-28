@@ -391,7 +391,7 @@ func (b *builder) contractorWorld() {
 				"metadata", demoMetadata,
 				"created_at", received, "updated_at", received,
 			))
-			add(insert("payment_allocations", "(payment_id, invoice_id)",
+			add(insert("payment_allocations", "(payment_id, invoice_id, kind)",
 				"payment_id", pid, "invoice_id", iid,
 				"amount_cents", paid,
 				"org_id", driverOrgStamp(),

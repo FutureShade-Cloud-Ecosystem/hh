@@ -66,6 +66,16 @@ type glStore interface {
 	// on 614: a refused audit holds the close, the way the year end close's row holds it).
 	ClosePeriod(ctx context.Context, id, actorID, reason string, record func(ctx context.Context, tx pgx.Tx) error) (Period, error)
 	ReopenPeriod(ctx context.Context, id, actorID, reason string) (Period, error)
+	// PeriodYearTx answers one period's year, read on the caller's transaction (FW1-09h): the
+	// reopen reads the year to ask whether that year carries its marker, and it reads it on the
+	// SAME transaction that holds the year end's lock, never through the pool (a pool read while
+	// a transaction is open makes the holder wait on a second connection).
+	PeriodYearTx(ctx context.Context, tx pgx.Tx, id string) (int, error)
+	// ReopenPeriodTx unseals a period on the caller's transaction (FW1-09h): the reopen and the
+	// year end close are serialized by the year end's OWN advisory lock, so the marker's read and
+	// the write happen on ONE transaction and a close cannot slip between them. A period that is
+	// not CLOSED is refused.
+	ReopenPeriodTx(ctx context.Context, tx pgx.Tx, id, actorID, reason string) (Period, error)
 	ClosePeriodsForYear(ctx context.Context, year int, actorID, reason string) error
 	// EnsureNextFiscalYear idempotently makes sure the year AFTER THE CURRENT HOUSE YEAR exists (round 2,
 	// S2 P2-1: a repeat is a no op, the roll forward never creeps) and answers it. The worker calls it

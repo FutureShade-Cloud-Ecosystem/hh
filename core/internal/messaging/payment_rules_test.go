@@ -385,7 +385,10 @@ func TestPaymentRules_RollupIsUnaffectedByRules(t *testing.T) {
 	payWithID(t, c, "e2", "pay-2", 388050, fkBrTrenton)
 
 	root := onlyRoot(t, f, fkPayTrenton)
-	if !strings.Contains(root.Body, "2") || !strings.Contains(root.Body, "$5,120.50") {
+	// FLAKE-10: the count is read as the count FIELD. The line carries the day too, and the day's
+	// digits are not the count: a bare "2" matched the year's first digit on every day.
+	_, count, money := rollupLine(t, root.Body)
+	if count != 2 || money != "$5,120.50" {
 		t.Fatalf("the day line must still state the count and the money, got %q", root.Body)
 	}
 	if n := len(f.repliesUnder(root.ID)); n != 2 {
