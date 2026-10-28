@@ -29,6 +29,7 @@ func TestIntegration_FW1_12b_TwoConcurrentAppliesUnderOneKeyApplyOnce(t *testing
 	applySvc := NewCreditApplyService(NewRepository(pool))
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	custID, invA, invB, creditID := spentKeyFixture(t, n)
 
@@ -45,6 +46,7 @@ func TestIntegration_FW1_12b_TwoConcurrentAppliesUnderOneKeyApplyOnce(t *testing
 		defer wg.Done()
 		res, err := applySvc.Apply(ctx, ApplyCreditInput{
 			CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: invA,
+			OrgID:       applyOrg,
 			AmountCents: 5000, Reason: "the twin on invoice a", IdempotencyKey: key,
 		}, true)
 		answers <- answer{inv: invA, res: res, err: err}
@@ -53,6 +55,7 @@ func TestIntegration_FW1_12b_TwoConcurrentAppliesUnderOneKeyApplyOnce(t *testing
 		defer wg.Done()
 		res, err := applySvc.Apply(ctx, ApplyCreditInput{
 			CustomerID: custID, CreditKind: CreditKindAccount, CreditID: creditID, InvoiceID: invB,
+			OrgID:       applyOrg,
 			AmountCents: 5000, Reason: "the twin on invoice b", IdempotencyKey: key,
 		}, true)
 		answers <- answer{inv: invB, res: res, err: err}

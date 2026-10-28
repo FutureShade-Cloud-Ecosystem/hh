@@ -116,7 +116,7 @@ func s3ResetReads(ctx context.Context, t *testing.T, repo *Repository, channelID
 		if err := repo.SyncMembership(ctx, u); err != nil {
 			t.Fatalf("sync %s: %v", u, err)
 		}
-		if err := repo.MarkRead(ctx, channelID, u, dbNow(t)); err != nil {
+		if err := repo.MarkRead(ctx, channelID, u); err != nil {
 			t.Fatalf("mark read %s: %v", u, err)
 		}
 	}
@@ -534,7 +534,7 @@ func TestIntegration_SeenBy_Author_Excluded_And_System_Counts_All(t *testing.T) 
 		t.Fatalf("before any read the count is 0: count=%d first=%s", n, who)
 	}
 	// Alex reads the room: he is counted, Sam (the author) is not.
-	if err := repo.MarkRead(ctx, chOffice, uAlexMorgan, dbNow(t)); err != nil {
+	if err := repo.MarkRead(ctx, chOffice, uAlexMorgan); err != nil {
 		t.Fatalf("alex mark read: %v", err)
 	}
 	if n, who := seenBy(post); n != 1 || who != uAlexMorgan {
@@ -550,7 +550,7 @@ func TestIntegration_SeenBy_Author_Excluded_And_System_Counts_All(t *testing.T) 
 	s3TrackPosted(eventMsg.ID)
 	time.Sleep(5 * time.Millisecond)
 	for _, u := range []string{uSamRivera, uAlexMorgan} {
-		if err := repo.MarkRead(ctx, chOffice, u, dbNow(t)); err != nil {
+		if err := repo.MarkRead(ctx, chOffice, u); err != nil {
 			t.Fatalf("mark read %s: %v", u, err)
 		}
 	}

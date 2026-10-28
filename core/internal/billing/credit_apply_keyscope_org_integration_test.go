@@ -30,6 +30,20 @@ func TestIntegration_FW1_12b_ASecondOrgsFirstUseOfAKeyStringAppliesNotConflicts(
 
 	orgA := "11111111-1111-4111-8111-111111111111"
 	orgB := "22222222-2222-4222-8222-222222222222"
+	// FW1-12c: the key table's org_id REFERENCES org (id) since 0448, so the two scopes are real
+	// org rows planted with the ids the leg reads back. Both are removed at test end, the key's
+	// rows with them.
+	for _, org := range []struct{ id, name string }{{orgA, "Key Scope Org A"}, {orgB, "Key Scope Org B"}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO org (id, slug, name) VALUES ($1::uuid, $2, $3) ON CONFLICT (id) DO NOTHING`,
+			org.id, "keyscope-"+org.id[:8], org.name); err != nil {
+			t.Fatalf("plant %s: %v", org.name, err)
+		}
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM credit_application_keys WHERE org_id IN ($1::uuid, $2::uuid)`, orgA, orgB)
+		_, _ = pool.Exec(c, `DELETE FROM org WHERE id IN ($1::uuid, $2::uuid)`, orgA, orgB)
+	})
 	seedOrgWorld := func(org, tag string) (custID, invID, creditID string) {
 		custID = seedCustomer(t, pool, n+"-"+tag+"-CUST")
 		if err := pool.QueryRow(ctx, `

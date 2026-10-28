@@ -66,6 +66,20 @@ func TestIntegration_LockOrder_TheReceivedPaymentWalkNeverTakesACreditMemo(t *te
 	}
 
 	applySvc := billing.NewCreditApplyService(billing.NewRepository(r.pool))
+	// The apply's key is scoped to the caller's org (FW1-12c) and the key table takes a real org
+	// (0448), so the leg's caller carries a planted org's id. The plant's own cleanup (the key's
+	// rows, then the org row) runs before the rig's, so the invoices free cleanly.
+	var applyOrg string
+	if err := r.obs.QueryRow(ctx,
+		`INSERT INTO org (slug, name) VALUES ($1, $2) RETURNING id::text`,
+		"lo-cmw-"+r.suffix, "Lock Order Credit Memo Walk").Scan(&applyOrg); err != nil {
+		t.Fatalf("plant the walk leg's org: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = r.obs.Exec(c, `DELETE FROM credit_application_keys WHERE org_id = $1::uuid`, applyOrg)
+		_, _ = r.obs.Exec(c, `DELETE FROM org WHERE id = $1::uuid`, applyOrg)
+	})
 
 	// The test's own transaction holds the invoice row: both doors' first lock step wants that row,
 	// so both park here whatever the id sort and whatever the code under test does.
@@ -86,6 +100,7 @@ func TestIntegration_LockOrder_TheReceivedPaymentWalkNeverTakesACreditMemo(t *te
 		_, e := applySvc.Apply(ctx, billing.ApplyCreditInput{
 			CustomerID: r.custID, CreditKind: billing.CreditKindMemo, CreditID: memoID, InvoiceID: invID,
 			AmountCents: 1000, Reason: "the memo applied to the invoice", IdempotencyKey: tag + "-k-apply",
+			OrgID: applyOrg,
 		}, true)
 		applyDone <- e
 	}()

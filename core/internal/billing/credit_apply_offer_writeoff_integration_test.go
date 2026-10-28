@@ -28,6 +28,7 @@ func TestIntegration_FW1_12b_TheDeskNeverOffersAWriteOffRowAsTheCredit(t *testin
 	applySvc := NewCreditApplyService(NewRepository(pool))
 	ctx := context.Background()
 	n := ns(t)
+	applyOrg := plantApplyOrg(t, pool, n)
 
 	custID := seedCustomer(t, pool, n+"-CUST")
 
@@ -92,6 +93,7 @@ func TestIntegration_FW1_12b_TheDeskNeverOffersAWriteOffRowAsTheCredit(t *testin
 	// invoice.
 	if _, err := applySvc.Apply(ctx, ApplyCreditInput{
 		CustomerID: custID, CreditKind: CreditKindAccount, CreditID: offeredTwo, InvoiceID: invID,
+		OrgID:       applyOrg,
 		AmountCents: 10000, Reason: "round 10: the anchor the desk offered", IdempotencyKey: n + "-key-1",
 	}, true); err != nil {
 		t.Fatalf("the door refused the id the desk offered (%s, the write off is %s): %v", offeredTwo, writeOffID, err)
