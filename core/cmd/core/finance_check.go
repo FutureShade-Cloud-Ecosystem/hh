@@ -34,6 +34,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/landedcost"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
@@ -192,7 +193,18 @@ func financeCheckSeams(ctx context.Context, pool *pgxpool.Pool, querier tieQueri
 		Tax:      taxSvc,
 		Branches: branches,
 		Zone:     zone,
+		AP:       financeCheckAPAging(pool),
 	}, nil
+}
+
+// financeCheckAPAging is purchasing's AP aging composed the way the production
+// wiring composes it for the read: the dealer zone and the landed cost
+// payables through landedcost's own seam. The aging writes nothing.
+func financeCheckAPAging(pool *pgxpool.Pool) *purchasing.Service {
+	landedSvc := landedcost.NewService(landedcost.NewRepository(pool))
+	return purchasing.NewService(purchasing.NewRepository(pool)).
+		WithZone(newDealerZone(pool)).
+		WithLandedCostPayables(w4cLandedCoster{svc: landedSvc})
 }
 
 // financeCheckBranches reads the branches the trial balances are read for.

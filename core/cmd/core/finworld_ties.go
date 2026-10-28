@@ -5,14 +5,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/landedcost"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -235,45 +233,28 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 		})
 	}
 
-	// 4b. AP (2100) ties to the AP subledger at every month end, and Accrued Liabilities (2400) ties to manual accruals.
-	// The subledger is two modules' documents on one account: the open AP (posted bills less the supplier
-	// payments settled against them) through purchasing's own OpenAPCentsAsOf, with the settlement side
-	// injected by the composition over the ledger, plus the landed-cost payable through landedcost's own
-	// seam. No purchasing SQL lives here.
+	// 4b. AP (2100) ties to the AP aging at every month end (W2-9a's rule, the same tie the box's
+	// finance-check runs): purchasing's own aging, posted vendor bills less PayBill's payments plus the
+	// landed cost payables, against GL 2100. GRNI (2150) clears to zero at every month end.
 	{
-		purchSvc := finworldPurchasingComposition(pool, slog.Default(), nil)
-		landedSvc := landedcost.NewService(landedcost.NewRepository(pool))
+		apSeams := TieSeams{Querier: pool, GLStore: glRepo, AP: financeCheckAPAging(pool)}
 		allPass := true
 		var lastDetail string
 		for _, tm := range activeTieMonths {
-			gl2100, _, err := glRepo.AccountBalanceAsOf(ctx, "2100", tm.MonthEnd, "")
+			res, err := TieAPAgingToGL2100(ctx, apSeams, tm)
 			if err != nil {
-				return nil, fmt.Errorf("GL 2100 read %04d-%02d: %w", tm.Year, tm.Month, err)
+				return nil, fmt.Errorf("AP tie %04d-%02d: %w", tm.Year, tm.Month, err)
 			}
 			gl2150, _, err := glRepo.AccountBalanceAsOf(ctx, "2150", tm.MonthEnd, "")
 			if err != nil {
 				return nil, fmt.Errorf("GL 2150 read %04d-%02d: %w", tm.Year, tm.Month, err)
 			}
-			apOpenCents, err := purchSvc.OpenAPCentsAsOf(ctx, tm.MonthEnd)
-			if err != nil {
-				return nil, fmt.Errorf("open AP read %04d-%02d: %w", tm.Year, tm.Month, err)
-			}
-			landedOutstandingCents, err := landedSvc.OutstandingPayableCentsAsOf(ctx, tm.MonthEnd)
-			if err != nil {
-				return nil, fmt.Errorf("landed cost payable read %04d-%02d: %w", tm.Year, tm.Month, err)
-			}
-			apSubledgerCents := apOpenCents + landedOutstandingCents
-			gl2100CreditCents := -gl2100
-			if gl2100CreditCents != apSubledgerCents || gl2150 != 0 {
+			if !res.Pass || gl2150 != 0 {
 				allPass = false
-				lastDetail = fmt.Sprintf("%04d-%02d FAIL: GL 2100 credit=%s vs AP subledger=%s (purchasing open AP=%s plus landed cost=%s), GL 2150=%s",
-					tm.Year, tm.Month, finworldDollars(gl2100CreditCents), finworldDollars(apSubledgerCents),
-					finworldDollars(apOpenCents), finworldDollars(landedOutstandingCents), finworldDollars(gl2150))
+				lastDetail = fmt.Sprintf("%04d-%02d FAIL: %s; GL 2150=%s", tm.Year, tm.Month, res.Detail, finworldDollars(gl2150))
 				break
 			}
-			lastDetail = fmt.Sprintf("%04d-%02d: GL 2100 credit %s ties to the purchasing open AP %s plus the landed cost payable %s = %s (GL 2150 GRNI=%s)",
-				tm.Year, tm.Month, finworldDollars(gl2100CreditCents),
-				finworldDollars(apOpenCents), finworldDollars(landedOutstandingCents), finworldDollars(apSubledgerCents), finworldDollars(gl2150))
+			lastDetail = fmt.Sprintf("%04d-%02d: %s (GL 2150 GRNI=%s)", tm.Year, tm.Month, res.Detail, finworldDollars(gl2150))
 		}
 		results = append(results, FinWorldTieResult{
 			Name:   "AP_2100_ties_to_vendor_subledger",

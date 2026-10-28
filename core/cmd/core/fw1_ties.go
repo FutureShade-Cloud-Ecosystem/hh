@@ -47,6 +47,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	staffctx "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 )
 
@@ -129,6 +130,15 @@ type TieSeams struct {
 	// Zone is the dealer's own business day zone, the zone the house month
 	// and every month's end are read in. Nil leaves the instants alone.
 	Zone *time.Location
+	// AP is purchasing's own AP aging (W2-9a): posted vendor bills less the
+	// payments PayBill recorded, plus the landed cost payables, as of an
+	// instant. It is the AP subledger the 2100 tie reads.
+	AP tieAPAging
+}
+
+// tieAPAging is the one purchasing read the AP tie needs.
+type tieAPAging interface {
+	APAging(ctx context.Context, asOf time.Time, reach purchasing.BranchReach) (purchasing.APAgingPage, error)
 }
 
 // now is the seam's clock: the instant the ties read now at, in the dealer's
@@ -167,6 +177,7 @@ const (
 	TieNameStatements   = "statements_to_aging"
 	TieNameBranchTotals = "branch_trial_balances_to_consolidated"
 	TieNameOutbox       = "outbox_drained"
+	TieNameAPAging      = "ap_aging_to_gl_2100"
 	TieNameIncomeClosed = "closed_year_income_statement_unchanged"
 	TieNameNoBranchless = "every_journal_line_carries_a_branch"
 )
@@ -184,6 +195,7 @@ func TiesForMonth(ctx context.Context, seams TieSeams, m TieMonth) ([]TieResult,
 		TieStatementsToAging,
 		TieBranchTrialBalancesToConsolidated,
 		TieOutboxDrained,
+		TieAPAgingToGL2100,
 	}
 	out := make([]TieResult, 0, len(ties))
 	for _, tie := range ties {
@@ -219,6 +231,84 @@ func TieARAgingToGL1100(ctx context.Context, seams TieSeams, m TieMonth) (TieRes
 			fw1Dollars(aging), fw1Dollars(gl1100), shorter(aging, gl1100), byDollars(variance))
 	}
 	return TieResult{Name: TieNameARAging, Pass: variance == 0, Applicable: true, VarianceCents: variance, Detail: detail}, nil
+}
+
+// TieAPAgingToGL2100: the AP aging total equals GL 2100's credit balance as of
+// the month's end, to the cent (W2-9a, FIN-AP-1 = A). The aging is the AP
+// subledger: posted vendor bills less the payments PayBill recorded, plus the
+// landed cost payables, read through purchasing's own aging. A 2100 entry that
+// no bill, payment or landed cost made (a manual accrual, an adjustment) is in
+// GL and not in the aging, by design: it is a difference the Controller
+// reconciles, so a failing line names every such journal.
+func TieAPAgingToGL2100(ctx context.Context, seams TieSeams, m TieMonth) (TieResult, error) {
+	if seams.AP == nil {
+		// A caller that wires no AP aging (the month walk's older legs) gets
+		// a tie that says so; the box's check always wires it and refuses
+		// otherwise (financeCheckSeams).
+		return TieResult{Name: TieNameAPAging, Pass: true, Applicable: false, Detail: "no AP aging is wired for this read"}, nil
+	}
+	page, err := seams.AP.APAging(fw1StaffCtx(ctx), m.MonthEnd, purchasing.BranchReach{Global: true})
+	if err != nil {
+		return TieResult{}, fmt.Errorf("the AP aging read: %w", err)
+	}
+	gl2100, _, err := seams.GLStore.AccountBalanceAsOf(ctx, "2100", m.MonthEnd, "")
+	if err != nil {
+		return TieResult{}, fmt.Errorf("the GL 2100 read: %w", err)
+	}
+	glCredit := -gl2100
+	variance := page.TotalCents - glCredit
+	detail := fmt.Sprintf("AP aging total %s ties to GL 2100 %s as of the month's end", fw1Dollars(page.TotalCents), fw1Dollars(glCredit))
+	if variance != 0 {
+		others, err := tieAPOtherJournals(ctx, seams, m)
+		if err != nil {
+			return TieResult{}, err
+		}
+		detail = fmt.Sprintf("AP aging total %s does not tie to GL 2100 %s as of the month's end: the aging is %s %s; 2100 entries no bill, payment or landed cost made: %s",
+			fw1Dollars(page.TotalCents), fw1Dollars(glCredit), shorter(page.TotalCents, glCredit), byDollars(variance), others)
+	}
+	return TieResult{Name: TieNameAPAging, Pass: variance == 0, Applicable: true, VarianceCents: variance, Detail: detail}, nil
+}
+
+// tieAPOtherJournals names the posted journals on 2100, up to the month's end,
+// that no vendor bill, PayBill payment or landed cost document posted: the
+// entries the Controller reconciles against the aging. It names at most ten.
+func tieAPOtherJournals(ctx context.Context, seams TieSeams, m TieMonth) (string, error) {
+	rows, err := seams.Querier.Query(ctx, `
+		SELECT j.entry_no::text, j.source, COALESCE(j.memo, ''),
+		       SUM(COALESCE(l.credit_cents, 0) - COALESCE(l.debit_cents, 0))::bigint
+		  FROM gl_journal_lines l
+		  JOIN gl_journals j ON j.id = l.journal_id
+		  JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE a.code = '2100' AND j.status = 'POSTED' AND j.posted_at <= $1
+		   AND j.idempotency_key NOT LIKE 'purchasing.bill:%'
+		   AND j.idempotency_key NOT LIKE 'purchasing.bill.payment:%'
+		   AND j.idempotency_key NOT LIKE 'landedcost.%'
+		 GROUP BY j.id, j.entry_no, j.source, j.memo, j.posted_at
+		 ORDER BY j.posted_at, j.id
+		 LIMIT 11`, m.MonthEnd)
+	if err != nil {
+		return "", fmt.Errorf("the 2100 journals read: %w", err)
+	}
+	defer rows.Close()
+	var named []string
+	for rows.Next() {
+		var entry, source, memo string
+		var credit int64
+		if err := rows.Scan(&entry, &source, &memo, &credit); err != nil {
+			return "", fmt.Errorf("the 2100 journals scan: %w", err)
+		}
+		named = append(named, fmt.Sprintf("journal %s (%s, %q, %s)", entry, source, memo, fw1Dollars(credit)))
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if len(named) == 0 {
+		return "none", nil
+	}
+	if len(named) > 10 {
+		named = append(named[:10], "and more")
+	}
+	return strings.Join(named, "; "), nil
 }
 
 // TieStockToGL1200: the stock on the shelves equals GL 1200.
