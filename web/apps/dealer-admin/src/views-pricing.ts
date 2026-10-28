@@ -2297,7 +2297,7 @@ export function renderLowMargin(model: PricingModel): TemplateResult {
               ? html`<p class="notice-line" data-test="pr-lm-empty">${lowMarginEmptyWords()}</p>`
               : html`
                   <div class="tablewrap">
-                    <table class="cardrow-table">
+                    <table class="cardrow-table cardrow-wide">
                       <thead>
                         <tr>
                           <th scope="col">Document</th>
@@ -2305,6 +2305,7 @@ export function renderLowMargin(model: PricingModel): TemplateResult {
                           <th scope="col" class="num">Price</th>
                           <th scope="col" class="num">Margin</th>
                           <th scope="col">Level</th>
+                          <th scope="col">Cleared by</th>
                           <th scope="col">Sold by</th>
                         </tr>
                       </thead>
@@ -2333,8 +2334,8 @@ function renderLowMarginRow(row: LowMarginScanRow): TemplateResult {
       <td class="num" data-label="Margin">${pctWords(row.margin_bps)}</td>
       <td data-label="Level">
         <span class="chip ${lowMarginLevelChip(row.level)}">${row.level}</span>
-        ${row.cleared_below_floor ? html`<span class="chip chip-good">cleared: ${row.cleared_by === "" ? "a manager" : row.cleared_by}</span>` : nothing}
       </td>
+      <td data-label="Cleared by">${row.cleared_below_floor ? (row.cleared_by === "" ? "a manager" : row.cleared_by) : "-"}</td>
       <td class="dim" data-label="Sold by">${row.salesperson === "" ? "-" : row.salesperson}</td>
     </tr>
   `;

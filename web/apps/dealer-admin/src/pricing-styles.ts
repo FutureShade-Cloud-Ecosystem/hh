@@ -125,8 +125,11 @@ export const pricingStyles = css`
     .pr-policy-table tbody td.pr-policy-enf {
       justify-items: start;
     }
+    /* The enforcement chip is a pill: it reads on one line. Its text is the
+       longest chip in the app ("Off: bypasses are logged") and it needs 184 of
+       the 188 px the value column gives it. */
     .pr-policy-table tbody td.pr-policy-enf .chip {
-      white-space: normal;
+      white-space: nowrap;
     }
     .pr-policy-table tbody td.pr-policy-act {
       grid-template-columns: none;

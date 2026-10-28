@@ -390,12 +390,15 @@ export const dealerStyles = css`
     .cardrow-table tbody td:not(.cardrow-act) > * {
       grid-column: 2;
     }
-    /* A chip takes the value column's own width, so its words break inside
-       the pill instead of running off the card. */
+    /* A chip is a pill: it reads on one line. UX-106 round 7: the clearance
+       chip broke before its last word and took two lines, because this rule
+       let a chip's text wrap. The chip takes the value column's own width,
+       and the sweep reads every chip's text against the column it sits in,
+       so a chip too wide for its column fails the sweep instead of breaking
+       inside the pill. */
     .cardrow-table tbody td .chip {
       max-width: 100%;
-      white-space: normal;
-      overflow-wrap: break-word;
+      white-space: nowrap;
     }
     /* An action cell has no label of its own: its control reads on its own. */
     .cardrow-table tbody td.cardrow-act {
@@ -418,7 +421,10 @@ export const dealerStyles = css`
     }
     /* One table's labels are wider than the pattern's default column: the
        promotions table's own widest word is PROMOTION, which is 81 px. The
-       label column is a table's own number, so that table sets its own. */
+       label column is a table's own number, so that table sets its own.
+       UX-106 round 7: the low margin table's own widest label is CLEARED BY,
+       which is 82 px, and it sets the same wider column, so each of its
+       labels reads on one line beside its value. */
     .cardrow-table.cardrow-wide {
       --cardrow-label-col: minmax(92px, 29%);
     }
@@ -739,13 +745,11 @@ export const dealerStyles = css`
       text-transform: uppercase;
     }
     /* The action's chip takes the value column's own width: the longest action
-       the trail carries ("ORDER_STATUS_CHANGED") fits on one line beside the
-       label, and a longer one breaks inside its own pill instead of running
-       off the card. */
+       the trail carries ("ORDER_STATUS_CHANGED") needs 201 of the 232 px the
+       value column gives it, and a chip is a pill: it reads on one line. */
     .audit-table tbody td .chip {
       max-width: 100%;
-      white-space: normal;
-      overflow-wrap: break-word;
+      white-space: nowrap;
     }
     /* The entity's type and its captioned handle: the handle keeps its own
        caption and breaks inside the value column, at the id's own dashes,
@@ -1014,15 +1018,13 @@ export const dealerStyles = css`
       overflow-wrap: anywhere;
     }
     /* The branch values: the group takes the value column's own width, and a
-       pill whose words are longer than the column breaks inside its own
-       boundary instead of running off the card. */
+       pill reads on one line, the way every chip in a card row does. */
     .staff-table tbody td.staff-branches .staff-branches-values {
       max-width: 100%;
     }
     .staff-table tbody td.staff-branches .chip {
       max-width: 100%;
-      white-space: normal;
-      overflow-wrap: anywhere;
+      white-space: nowrap;
     }
   }
   .auth-note {
