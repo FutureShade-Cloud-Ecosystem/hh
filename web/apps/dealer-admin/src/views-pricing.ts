@@ -59,14 +59,18 @@ import {
   overrideEmptyWords,
   overrideValueWords,
   pctWords,
+  pricingAuditEntityWord,
+  pricingAuditFieldWord,
   pricingEmptyWords,
   priceSourceWord,
+  profileMappingWords,
   RULE_SCOPES,
   ruleEmptyWords,
   ruleValueWords,
   scopeWord,
   validityWords,
   PRICING_VIEWS,
+  accrualSourceWord,
 } from "./pricing-logic.js";
 import { whenWords } from "./audit-logic.js";
 import {
@@ -995,11 +999,11 @@ function renderBreakEditor(model: PricingModel, pickers: PricingPickers): Templa
         </label>
       </div>
       <div class="tablewrap">
-        <table class="cardrow-table">
+        <table class="cardrow-table pr-tier-table">
           <thead>
             <tr>
               <th scope="col">From</th>
-              <th scope="col">To (empty is the open top)</th>
+              <th scope="col">To (optional)</th>
               <th scope="col">What the tier does</th>
               <th scope="col">Value</th>
               <th scope="col">Unit</th>
@@ -1636,7 +1640,7 @@ function renderLedger(model: PricingModel): TemplateResult {
                         <td class="mono dim" data-label="Accrued">${row.accrued_at.slice(0, 10)}</td>
                         <td class="mono" data-label="Program">${row.program_code === "" ? "-" : row.program_code}</td>
                         <td class="mono" data-label="SKU">${row.product_sku === "" ? row.product_sku : row.product_sku}</td>
-                        <td data-label="Source"><span class="chip">${row.source_type}</span></td>
+                        <td data-label="Source"><span class="chip">${accrualSourceWord(row.source_type)}</span></td>
                         <td class="num" data-label="Basis">${costCellWords(row.basis_cents)}</td>
                         <td class="mono dim" data-label="Rate note">${row.rate_note === null ? WITHHELD_FIGURE_WORDS : row.rate_note}</td>
                         <td class="num" data-label="Claim">${costCellWords(row.accrual_cents)}</td>
@@ -1661,8 +1665,7 @@ function renderAccrual(model: PricingModel, pickers: PricingPickers): TemplateRe
         <h2 class="card-title">Accrue one sale event</h2>
       </div>
       <p class="pr-hint">
-        The caller supplies the facts; the engine reads no sales table. The source type and reference are the idempotency key:
-        a retry answers skipped, not an error.
+        Enter the sale or order details to calculate any rebate earned. Sending the same source type and reference twice is skipped rather than counted twice.
       </p>
       <div class="form-grid">
         <label class="field">
@@ -1715,7 +1718,7 @@ function renderAccrual(model: PricingModel, pickers: PricingPickers): TemplateRe
       ${m.result === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-accrue-result">${m.result}</p>`}
       <div class="pr-actions">
         <button type="button" class="btn btn-primary" data-action="pr-accrue" ?disabled=${m.busy}>
-          ${m.busy ? "Accruing…" : "Offer to the accrual engine"}
+          ${m.busy ? "Recording…" : "Record sale for rebate"}
         </button>
       </div>
     </section>
@@ -2181,8 +2184,8 @@ function renderProfiles(model: PricingModel): TemplateResult {
                       <tr data-profile=${p.id}>
                         <td class="person" data-label="Profile">${p.name}</td>
                         <td data-label="Vendor">${p.vendor_name === "" ? "unnamed" : p.vendor_name}</td>
-                        <td class="mono dim" data-label="Mapping">${Object.entries(p.mapping).map(([k, v]) => `${k}: ${v}`).join(", ")}</td>
-                        <td class="num" data-label="Markup">${p.markup_bps}</td>
+                        <td class="dim" data-label="Mapping">${profileMappingWords(p.mapping)}</td>
+                        <td class="num" data-label="Markup">${pctWords(p.markup_bps)}</td>
                         <td class="cardrow-act">
                           <button
                             type="button"
@@ -2512,8 +2515,8 @@ function renderLowMarginProbe(model: PricingModel, pickers: PricingPickers): Tem
     <section class="card">
       <div class="card-head"><h2 class="card-title">Grade a proposed line</h2></div>
       <p class="pr-hint">
-        One line through the resolver, before it is quoted: it is graded against the category's target and floor,
-        and the breach is named, if there is one.
+        Check one line before it is quoted: it is graded against the category's target and floor,
+        and any breach is named.
       </p>
       <div class="form-grid">
         <div class="field">
@@ -2607,9 +2610,10 @@ function renderLowMarginProbe(model: PricingModel, pickers: PricingPickers): Tem
  * house placeholder word, never as the id's own first block.
  */
 function auditEntityWords(row: PricingAuditRow, model: PricingModel): string {
-  if (row.entity_id === "") return row.entity_type;
+  const entityWord = pricingAuditEntityWord(row.entity_type);
+  if (row.entity_id === "") return entityWord;
   const name = categoryName(row.entity_id, model.categories);
-  return `${row.entity_type} / ${name === UNKNOWN_CATEGORY ? UNKNOWN_ENTITY : name}`;
+  return `${entityWord} / ${name === UNKNOWN_CATEGORY ? UNKNOWN_ENTITY : name}`;
 }
 
 export function renderPricingAudit(model: PricingModel): TemplateResult {
@@ -2680,9 +2684,9 @@ function renderPricingAuditRow(row: PricingAuditRow, model: PricingModel): Templ
       <td class="mono dim" data-label="When">${whenWords(row.created_at)}</td>
       <td data-label="Entity">${auditEntityWords(row, model)}</td>
       <td data-label="Action"><span class="chip ${bypass ? "chip-danger" : ""}">${auditActionWord(row.action)}</span></td>
-      <td class="dim" data-label="Field">${row.field_name === "" ? "-" : row.field_name}</td>
+      <td class="dim" data-label="Field">${row.field_name === "" ? "-" : pricingAuditFieldWord(row.field_name)}</td>
       <td data-label="Change">${delta === "" ? html`<span class="dim">-</span>` : delta}</td>
-      <td class="dim" data-label="Actor">${row.user_id === "" ? "the engine" : UNKNOWN_ACTOR}</td>
+      <td class="dim" data-label="Actor">${row.user_id === "" ? "Automatic" : UNKNOWN_ACTOR}</td>
     </tr>
     ${bypass && row.bypass_reason !== ""
       ? html`<tr data-audit-reason=${row.id}><td colspan="6" data-label="Reason"><span class="chip chip-danger">bypass: ${row.bypass_reason}</span></td></tr>`

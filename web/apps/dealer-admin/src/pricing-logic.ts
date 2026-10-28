@@ -414,8 +414,8 @@ export function listEmptyWords(what: string): string {
 export function pricingRefusalWords(error: string, status: number | undefined, kind: "read" | "write"): string {
   if (status === 403) {
     return kind === "write"
-      ? "You may not change pricing. Pricing writes are managers' and above; the Forbidden gate named the caller, and the core's pricing editors list holds who may act. (server: Forbidden)"
-      : "You may not open this. The pricing reads are staff's; the Forbidden gate named the caller. (server: Forbidden)";
+      ? "You may not change pricing. Pricing changes are for managers and administrators. (server: Forbidden)"
+      : "You may not open this. Pricing is open to signed-in staff. (server: Forbidden)";
   }
   return error !== "" ? error : "Try again in a moment.";
 }
@@ -930,4 +930,82 @@ export function importResultWords(result: {
     `${result.outliers.length} ${result.outliers.length === 1 ? "outlier" : "outliers"} past the alert threshold.`,
   ];
   return parts.join(" ");
+}
+
+/** A rebate accrual ledger entry's source type in plain dealer words (UX-118). */
+export function accrualSourceWord(sourceType: string): string {
+  switch (sourceType) {
+    case "POS_SALE":
+      return "Counter sale";
+    case "ORDER":
+      return "Order";
+    case "ADJUSTMENT":
+      return "Adjustment";
+    default:
+      return plainly(sourceType);
+  }
+}
+
+const PROFILE_COLUMN_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  sku_col: "item number",
+  cost_col: "cost",
+  retail_col: "retail",
+  trade_col: "trade",
+  contractor_col: "contractor",
+  commercial_col: "commercial",
+  uom_col: "unit",
+  name_col: "product name",
+});
+
+/**
+ * An import profile's column mapping in plain dealer words (UX-118),
+ * never raw `sku_col: Item, cost_col: Dealer Net`.
+ */
+export function profileMappingWords(mapping: Readonly<Record<string, string>>): string {
+  const parts: string[] = [];
+  for (const [key, col] of Object.entries(mapping)) {
+    const trimmed = col.trim();
+    if (trimmed === "") continue;
+    const label = PROFILE_COLUMN_WORDS[key] ?? plainly(key.replace(/_col$/i, ""));
+    parts.push(`${label} is in column ${trimmed}`);
+  }
+  if (parts.length === 0) return "No columns mapped";
+  const joined = parts.join("; ");
+  return joined.charAt(0).toUpperCase() + joined.slice(1);
+}
+
+const PRICING_AUDIT_ENTITY_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  category_policy: "Category policy",
+  customer_override: "Customer override",
+  pricing_rule: "Pricing rule",
+  quantity_break: "Quantity break",
+  promotion: "Promotion",
+  clearance: "Clearance",
+  rebate_program: "Rebate program",
+});
+
+/** A pricing audit entry's entity type in plain dealer words (UX-118). */
+export function pricingAuditEntityWord(entityType: string): string {
+  const mapped = PRICING_AUDIT_ENTITY_WORDS[entityType];
+  if (mapped !== undefined) return mapped;
+  const plain = plainly(entityType);
+  return plain === "" ? "" : plain.charAt(0).toUpperCase() + plain.slice(1);
+}
+
+const PRICING_AUDIT_FIELD_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  margin_floor_bps: "margin floor",
+  target_margin_bps: "target margin",
+  discount_bps: "discount",
+  markup_bps: "markup",
+  price_cents: "price",
+  clearance_price_cents: "clearance price",
+  rate_bps: "rebate rate",
+  rate_cents_per_unit: "rebate per unit",
+});
+
+/** A pricing audit entry's changed field in plain dealer words (UX-118). */
+export function pricingAuditFieldWord(field: string): string {
+  const mapped = PRICING_AUDIT_FIELD_WORDS[field];
+  if (mapped !== undefined) return mapped;
+  return plainly(field.replace(/_(bps|cents)$/i, ""));
 }
