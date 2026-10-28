@@ -202,15 +202,16 @@ test("the trial balance ties: the screen's totals are the core's own figures, an
     `/api/v1/gl/trial-balance?year=${yearOf(MONTH_END)}&month=${monthNumber(MONTH_END)}`,
   );
 
+  // The core's own books carry the world's journals: the trial balance has rows and real totals.
+  // A blank answer would let this leg pass with an empty screen against an empty core, which
+  // proves nothing about the ledger (K3's P1: the leg passed on a world with nothing posted).
+  expect(core.rows.length, "the core's trial balance carries no rows").toBeGreaterThan(0);
+  expect(core.total_debit_cents, "the core's trial balance carries no debit total").toBeGreaterThan(0);
+  expect(core.total_credit_cents, "the core's trial balance carries no credit total").toBeGreaterThan(0);
+
   // The core's own books tie: debits equal credits.
   expect(core.total_debit_cents).toBe(core.total_credit_cents);
   expect(core.balance_cents).toBe(0);
-
-  if (core.rows.length === 0) {
-    // Nothing is posted in that month yet: the screen says so in words and shows no total.
-    await expect(page.locator("[data-trial]")).toContainText("No posted journals yet.");
-    return;
-  }
 
   // The screen shows the core's own totals, and reads in balance.
   await expect(page.locator("[data-trial]")).toContainText("In balance");
