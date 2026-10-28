@@ -165,6 +165,39 @@ export async function asStaff(context: BrowserContext, who: StaffRole): Promise<
 }
 
 /**
+ * The box's own sign in budget, kept. The core admits ten exchanges a minute for one subject
+ * (core/internal/identity/exchange/exchange.go, UserAllowance per LimitWindow), and the desk's
+ * console build spends one on every page load (its own session recovery), so a suite that loads
+ * the desk more than ten times a minute is refused with 429 for no product reason. Before each
+ * load, asStaff waits until the last minute holds room for what it is about to spend. The times
+ * live in the run's state directory, so a worker that restarts after a failure keeps the count.
+ * Nine, not ten: one short of the core's allowance, so a retry by the desk itself still fits.
+ */
+const EXCHANGE_ALLOWANCE = 9;
+const EXCHANGE_WINDOW_MS = 60_000;
+
+async function paceExchanges(spend: number): Promise<void> {
+  const file = join(stateDir(), "exchanges.json");
+  let times: number[] = [];
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (Array.isArray(parsed)) times = parsed.filter((t): t is number => typeof t === "number");
+  } catch {
+    // No exchange yet in this run.
+  }
+  for (;;) {
+    const now = Date.now();
+    times = times.filter((t) => now - t < EXCHANGE_WINDOW_MS);
+    if (times.length + spend <= EXCHANGE_ALLOWANCE) break;
+    const oldest = Math.min(...times);
+    await new Promise((resolve) => setTimeout(resolve, EXCHANGE_WINDOW_MS - (now - oldest) + 250));
+  }
+  const at = Date.now();
+  for (let i = 0; i < spend; i += 1) times.push(at);
+  writeFileSync(file, JSON.stringify(times), { mode: 0o600 });
+}
+
+/**
  * The core's own base URL: the box's, when this run has a box, and the stub's
  * under the stub. A spec that reads the core's API directly reads it here.
  */
@@ -204,8 +237,12 @@ async function boxSession(state: AcceptanceState, who: StaffRole): Promise<Sessi
   const key = `${state.subject}:${who}`;
   const cached = boxSessionCache;
   if (cached !== null && cached.key === key && cached.record.tokenExpiresAtMs > Date.now() + 60_000) {
+    // The desk's own load is the one exchange this call spends.
+    await paceExchanges(1);
     return cached.record;
   }
+  // This call's own exchange, and the desk's load after it.
+  await paceExchanges(2);
   const answer = await exchange(state);
   if (answer.user.role_code !== who) {
     throw new Error(`asStaff: the core answered the exchange with the role ${answer.user.role_code}, not ${who}.`);
