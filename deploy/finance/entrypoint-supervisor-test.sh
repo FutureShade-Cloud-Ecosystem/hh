@@ -121,10 +121,20 @@ case "$calls" in
 	*"finance-box-check"*) fail "the empty path must not run the box kind check: $calls" ;;
 	*) pass "the empty path runs no box kind check" ;;
 esac
-case "$calls" in
-	*"core serve"*"core worker"*"caddy run"*) pass "all three children started" ;;
-	*) fail "not all three children started: $calls" ;;
-esac
+# Each child is matched on its own: the entrypoint starts the three
+# concurrently and pins no order, so a case pattern that chains them in one
+# would pin an order the entrypoint does not guarantee (the S3 read's P3 3:
+# the chained pattern failed once with "not all three children started"
+# while listing all three).
+missing=""
+case "$calls" in *"core serve"*) ;; *) missing="$missing core serve" ;; esac
+case "$calls" in *"core worker"*) ;; *) missing="$missing core worker" ;; esac
+case "$calls" in *"caddy run"*) ;; *) missing="$missing caddy run" ;; esac
+if [ -n "$missing" ]; then
+	fail "not all three children started:$missing (calls: $calls)"
+else
+	pass "all three children started"
+fi
 [ -f "$SCRATCH/finance-root/app/config.json" ] && \
 	pass "the web config was written" || \
 	fail "the web config was not written"
