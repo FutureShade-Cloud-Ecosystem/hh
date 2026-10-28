@@ -15,11 +15,11 @@ import (
 func TestFinWorldPlan_Determinism(t *testing.T) {
 	anchor := YearMonth{Year: 2026, Month: 9}
 
-	plan1a, err := FinWorldPlan(1, anchor)
+	plan1a, err := FinWorldPlan(1, anchor, finworldTestDealerName)
 	if err != nil {
 		t.Fatalf("FinWorldPlan(1, %s) first call failed: %v", anchor, err)
 	}
-	plan1b, err := FinWorldPlan(1, anchor)
+	plan1b, err := FinWorldPlan(1, anchor, finworldTestDealerName)
 	if err != nil {
 		t.Fatalf("FinWorldPlan(1, %s) second call failed: %v", anchor, err)
 	}
@@ -36,7 +36,7 @@ func TestFinWorldPlan_Determinism(t *testing.T) {
 		t.Fatalf("same (seed, anchor) produced non-identical JSON (%d bytes vs %d bytes)", len(json1a), len(json1b))
 	}
 
-	plan2, err := FinWorldPlan(2, anchor)
+	plan2, err := FinWorldPlan(2, anchor, finworldTestDealerName)
 	if err != nil {
 		t.Fatalf("FinWorldPlan(2, %s) failed: %v", anchor, err)
 	}
@@ -51,7 +51,7 @@ func TestFinWorldPlan_Determinism(t *testing.T) {
 
 func TestFinWorldPlan_SeasonalityAndBranchMix(t *testing.T) {
 	anchor := YearMonth{Year: 2026, Month: 9}
-	plan, err := FinWorldPlan(1, anchor)
+	plan, err := FinWorldPlan(1, anchor, finworldTestDealerName)
 	if err != nil {
 		t.Fatalf("FinWorldPlan(1, %s) failed: %v", anchor, err)
 	}
@@ -257,7 +257,7 @@ func TestFinWorldPlan_SeasonalityAndBranchMix(t *testing.T) {
 
 func TestFinWorldPlan_NoFloatAmounts(t *testing.T) {
 	anchor := YearMonth{Year: 2026, Month: 9}
-	plan, err := FinWorldPlan(1, anchor)
+	plan, err := FinWorldPlan(1, anchor, finworldTestDealerName)
 	if err != nil {
 		t.Fatalf("FinWorldPlan(1, %s) failed: %v", anchor, err)
 	}
@@ -348,7 +348,7 @@ func TestFinWorldPlan_NoFloatAmounts(t *testing.T) {
 
 func TestFinWorldPlan_InventedNamesAndAddresses(t *testing.T) {
 	anchor := YearMonth{Year: 2026, Month: 9}
-	plan, err := FinWorldPlan(1, anchor)
+	plan, err := FinWorldPlan(1, anchor, finworldTestDealerName)
 	if err != nil {
 		t.Fatalf("FinWorldPlan(1, %s) failed: %v", anchor, err)
 	}
@@ -368,12 +368,12 @@ func TestFinWorldPlan_InventedNamesAndAddresses(t *testing.T) {
 	for _, st := range finworldStreetNames {
 		allowedStreets[st] = true
 	}
-	allowedFirstWords := make(map[string]bool, len(finworldDealerFirstWords))
-	for _, w := range finworldDealerFirstWords {
+	allowedFirstWords := make(map[string]bool, len(finworldCustomerFirstWords))
+	for _, w := range finworldCustomerFirstWords {
 		allowedFirstWords[w] = true
 	}
-	allowedSecondWords := make(map[string]bool, len(finworldDealerSecondWords))
-	for _, w := range finworldDealerSecondWords {
+	allowedSecondWords := make(map[string]bool, len(finworldCustomerSecondWords))
+	for _, w := range finworldCustomerSecondWords {
 		allowedSecondWords[w] = true
 	}
 	allowedHouseholds := make(map[string]bool, len(finworldHouseholdWords))
@@ -418,9 +418,14 @@ func TestFinWorldPlan_InventedNamesAndAddresses(t *testing.T) {
 		}
 	}
 
-	dealerParts := strings.Fields(plan.Dealer.Name)
-	if len(dealerParts) < 2 || !allowedFirstWords[dealerParts[0]] || !allowedSecondWords[dealerParts[1]] {
-		t.Fatalf("dealer name %q not built from invented word lists", plan.Dealer.Name)
+	// The dealer's display name is an input the caller supplies, so it is the caller's name verbatim and
+	// never a word list product.
+	if plan.Dealer.Name != finworldTestDealerName {
+		t.Fatalf("dealer name %q, want the caller's name %q", plan.Dealer.Name, finworldTestDealerName)
+	}
+	if !strings.HasPrefix(plan.Dealer.LegalName, finworldTestDealerName) {
+		t.Fatalf("dealer legal name %q is not derived from the caller's dealer name %q",
+			plan.Dealer.LegalName, finworldTestDealerName)
 	}
 	checkAddressAndTown("dealer", plan.Dealer.StreetAddress, plan.Dealer.Town)
 	for _, b := range plan.Branches {
@@ -512,7 +517,7 @@ func TestFinWorldPlan_InventedNamesAndAddresses(t *testing.T) {
 
 func TestFinWorldPlan_ReferentialAndTemporalOrder(t *testing.T) {
 	anchor := YearMonth{Year: 2026, Month: 9}
-	plan, err := FinWorldPlan(1, anchor)
+	plan, err := FinWorldPlan(1, anchor, finworldTestDealerName)
 	if err != nil {
 		t.Fatalf("FinWorldPlan(1, %s) failed: %v", anchor, err)
 	}

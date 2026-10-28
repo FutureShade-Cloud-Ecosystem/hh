@@ -28,6 +28,7 @@ var finworldStreetNames = []string{
 	"Alder Ridge Way",
 	"Bayshore Road",
 	"Birch Hollow Lane",
+	"Cairnbrook Way",
 	"Cedar Creek Drive",
 	"Clearwater Crescent",
 	"Cobblestone Court",
@@ -52,14 +53,14 @@ var finworldStreetNames = []string{
 	"Shale Creek Road",
 	"Silver Birch Trail",
 	"Spruce Hollow Drive",
-	"Stonebridge Way",
 	"Tamarack Lane",
 	"Willowbrook Avenue",
 }
 
-var finworldDealerFirstWords = []string{
+var finworldCustomerFirstWords = []string{
 	"Alder",
 	"Bayshore",
+	"Cairnbrook",
 	"Cedar",
 	"Clearwater",
 	"Fieldstone",
@@ -73,10 +74,9 @@ var finworldDealerFirstWords = []string{
 	"Riverbend",
 	"Sandstone",
 	"Silver",
-	"Stonebridge",
 }
 
-var finworldDealerSecondWords = []string{
+var finworldCustomerSecondWords = []string{
 	"Ridge",
 	"Creek",
 	"Hollow",
@@ -299,10 +299,19 @@ type finworldScheduledBounce struct {
 	Emitted      bool
 }
 
-// FinWorldPlan builds the deterministic 12-month world plan for (seed, anchor).
-func FinWorldPlan(seed uint64, anchor YearMonth) (*FinWorldPlanT, error) {
+// finworldDealerLegalSuffix is the legal form suffix the world derives onto the caller's dealer name.
+const finworldDealerLegalSuffix = " Ltd."
+
+// FinWorldPlan builds the deterministic 12-month world plan for (seed, anchor). The dealer's display name
+// is an INPUT: the caller reads the deploy's setting (HH_WEB_DEALER_NAME) and hands it over, so the world
+// code carries no dealer name literal of its own. The legal entity name is derived from that input.
+func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPlanT, error) {
 	if !anchor.Valid() {
 		return nil, fmt.Errorf("finworld: invalid anchor YearMonth %+v", anchor)
+	}
+	dealerName = strings.TrimSpace(dealerName)
+	if dealerName == "" {
+		return nil, fmt.Errorf("finworld: a dealer name is required (the caller reads the deploy's setting)")
 	}
 	if err := finworldVerifyCatalogueAgainstSeedSQL(); err != nil {
 		return nil, err
@@ -325,15 +334,13 @@ func FinWorldPlan(seed uint64, anchor YearMonth) (*FinWorldPlanT, error) {
 		CatalogueSourceNote:   "30 DBS- SKUs verified at plan construction against the embedded catalogue seed SQL (seedFS) and paired with finworldCatalogueSpecs",
 	}
 
-	// 1. Build invented dealer.
-	dealerW1 := finworldDealerFirstWords[rng.IntN(len(finworldDealerFirstWords))]
-	dealerW2 := finworldDealerSecondWords[rng.IntN(len(finworldDealerSecondWords))]
+	// 1. Build the dealer. Its display name is the caller's input and its legal entity name is derived
+	// from that input, so the world code holds no dealer name literal.
 	dealerStreet := finworldStreetNames[rng.IntN(len(finworldStreetNames))]
-	dealerName := fmt.Sprintf("%s %s Stone & Yard Supply", dealerW1, dealerW2)
 	plan.Dealer = FinWorldDealer{
 		Key:           fmt.Sprintf("dealer-s%d", seed),
 		Name:          dealerName,
-		LegalName:     dealerName + " Ltd.",
+		LegalName:     dealerName + finworldDealerLegalSuffix,
 		StreetAddress: fmt.Sprintf("%d %s", 100+rng.IntN(800), dealerStreet),
 		Town:          "Trenton",
 		Province:      "ON",
@@ -384,8 +391,8 @@ func FinWorldPlan(seed uint64, anchor YearMonth) (*FinWorldPlanT, error) {
 
 	plan.Contractors = make([]FinWorldCustomer, 70)
 	for i := 0; i < 70; i++ {
-		w1 := finworldDealerFirstWords[(i+rng.IntN(len(finworldDealerFirstWords)))%len(finworldDealerFirstWords)]
-		w2 := finworldDealerSecondWords[(i/2+rng.IntN(len(finworldDealerSecondWords)))%len(finworldDealerSecondWords)]
+		w1 := finworldCustomerFirstWords[(i+rng.IntN(len(finworldCustomerFirstWords)))%len(finworldCustomerFirstWords)]
+		w2 := finworldCustomerSecondWords[(i/2+rng.IntN(len(finworldCustomerSecondWords)))%len(finworldCustomerSecondWords)]
 		trade := finworldContractorTradeWords[(i+rng.IntN(len(finworldContractorTradeWords)))%len(finworldContractorTradeWords)]
 		suffix := finworldContractorSuffixes[i%len(finworldContractorSuffixes)]
 		town := finworldAllowedTowns[(i+rng.IntN(len(finworldAllowedTowns)))%len(finworldAllowedTowns)]
@@ -969,12 +976,14 @@ func FinWorldPlan(seed uint64, anchor YearMonth) (*FinWorldPlanT, error) {
 					}
 					lineSub := qty * unitPrice
 					lineTax := finworldHSTOn(lineSub, taxRateBps)
+					// The engine's ON_FN_POS_8 path collects the bound rate (the 5% net) and tracks the 8%
+					// Ontario credit alongside it; the net collected equals the assessed tax
+					// (core/internal/tax/service.go, assessSale).
 					var lineCredit int64
-					lineNetTax := lineTax
 					if taxReason == FinWorldTaxReasonReliefFN8 {
-						lineCredit = finworldHSTOn(lineSub, FinWorldTaxRateReliefBps)
-						lineNetTax = finworldHSTOn(lineSub, FinWorldTaxRateReliefNetBps)
+						lineCredit = finworldHSTOn(lineSub, FinWorldTaxOntarioCreditBps)
 					}
+					lineNetTax := lineTax
 					lineTotal := lineSub + lineTax
 					lineKey := fmt.Sprintf("%s-L%d", sKey, lIdx+1)
 

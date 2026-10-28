@@ -75,13 +75,20 @@ const (
 	FinWorldBranchRatioKGN = 5000
 )
 
-// Tax reason codes and basis point rates matching core/internal/tax.
+// Tax reason codes and basis point rates matching core/internal/tax. The rates are the tax engine's own
+// tax_rates rows (core/db/migrations/0042_tax_engine.sql): the engine reads those rows live at every
+// assessment, so the plan carries the same numbers.
 const (
 	FinWorldTaxReasonStandardON = "STD_ON_HST_13"
 	FinWorldTaxReasonReliefFN8  = "ON_FN_POS_8"
-	FinWorldTaxRateStandardBps  = 1300
-	FinWorldTaxRateReliefBps    = 800
-	FinWorldTaxRateReliefNetBps = 500
+	// FinWorldTaxRateStandardBps is the tax_rates row for STD_ON_HST_13: the Ontario standard HST.
+	FinWorldTaxRateStandardBps = 1300
+	// FinWorldTaxRateReliefBps is the tax_rates row for ON_FN_POS_8: the 5% net the engine collects at the
+	// point of sale once the relief evidence is attached.
+	FinWorldTaxRateReliefBps = 500
+	// FinWorldTaxOntarioCreditBps is the 8% Ontario credit the engine tracks alongside the 5% net on the
+	// ON_FN_POS_8 path (core/internal/tax/model.go, ontarioCredBps). It is a credit, not a rate row.
+	FinWorldTaxOntarioCreditBps = 800
 	FinWorldTaxRoundBase        = 10000
 )
 
