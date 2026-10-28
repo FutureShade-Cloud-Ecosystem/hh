@@ -25,8 +25,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
 
 import {
   auditSource,
@@ -858,8 +859,9 @@ test('the gate files are excluded from the raw-text walks by name, and by no oth
 // therefore installs the shim only through src/lit-dom-fetch-guard, which
 // captures the process's fetch, installs, and restores, in one synchronous
 // body. This test walks the workspace (the web packages, the web apps, the
-// repository's scripts, and web's scripts) and refuses any file outside the
-// known list that brings either install shape in: the installer module
+// repository's scripts, web's scripts, and the statecharts roots the root
+// bun test also runs) and refuses any file outside the known list that brings
+// either install shape in: the installer module
 // (install-global-dom-shim) by import, re-export, dynamic import or require,
 // or the installer function installWindowOnGlobal from anywhere, the shape
 // the guard itself takes through @lit-labs/ssr/lib/dom-shim.js. A dom-shim
@@ -879,19 +881,83 @@ const KNOWN_SHIM_INSTALL_SOURCES = new Set([
 ]);
 
 const INSTALLER_SPECIFIER_MARK = 'install-global-dom-shim';
-const INSTALLER_SPECIFIER = '@lit-labs/ssr/lib/dom-shim.js';
 const INSTALLER_NAME = 'installWindowOnGlobal';
+
+// The resolved module, not one spelling of its path. The check reads the
+// specifier two ways and refuses on either. The spelling leg normalises
+// the specifier (query or hash stripped, trailing slashes dropped, the
+// .js extension dropped, case folded) and matches the package subpath
+// and any relative spelling that reaches the same file inside
+// node_modules; that leg catches spellings the resolver cannot even look
+// up on this filesystem (a query, a trailing slash, a case-folded path
+// on a case-sensitive disk). The resolution leg asks Node's own resolver
+// for the module the importing file would receive and compares its real
+// path with the canonical spelling's real path; that leg catches a copy,
+// a symlink or an aliased install the spelling cannot name. The
+// fail-closed branch keys on this, so an extensionless or otherwise
+// respelled specifier cannot walk past the pin in a package with no
+// import allow list of its own. The workspace uses no `#` subpath
+// imports, so no `#` spelling exists to match.
+const DOM_SHIM_CANONICAL = '@lit-labs/ssr/lib/dom-shim.js';
+const DOM_SHIM_NORMALISED = /(?:^|\/)@lit-labs\/ssr\/lib\/dom-shim$/;
+
+const normaliseModuleSpelling = (spec) => {
+  let s = spec.split(/[?#]/, 1)[0].toLowerCase();
+  while (s.endsWith('/')) s = s.slice(0, -1);
+  if (s.endsWith('.js')) s = s.slice(0, -'.js'.length);
+  return s;
+};
+
+let domShimResolvedPath = null;
+try {
+  domShimResolvedPath = realpathSync(
+    createRequire(join(PKG, 'index.js')).resolve(DOM_SHIM_CANONICAL),
+  ).toLowerCase();
+} catch {
+  domShimResolvedPath = null;
+}
+
+const isDomShimModule = (spec) => {
+  if (DOM_SHIM_NORMALISED.test(normaliseModuleSpelling(spec))) return true;
+  if (domShimResolvedPath === null) return false;
+  try {
+    return (
+      realpathSync(createRequire(join(PKG, 'index.js')).resolve(spec)).toLowerCase() ===
+      domShimResolvedPath
+    );
+  } catch {
+    return false;
+  }
+};
 
 const shimInstallOffences = (rel, records) => {
   const offences = [];
-  if (KNOWN_SHIM_INSTALL_SOURCES.has(rel)) return offences;
-  for (const { spec, names } of records) {
-    if (spec.includes(INSTALLER_SPECIFIER_MARK)) {
-      offences.push(`${rel}: ${spec}`);
-    } else if (spec.includes(INSTALLER_SPECIFIER) && (names === null || names.includes(INSTALLER_NAME))) {
-      offences.push(`${rel}: ${spec} (${names === null ? 'a name list the parser cannot read' : INSTALLER_NAME})`);
-    } else if (names !== null && names.includes(INSTALLER_NAME)) {
-      offences.push(`${rel}: ${spec} (${INSTALLER_NAME})`);
+  const known = KNOWN_SHIM_INSTALL_SOURCES.has(rel);
+  for (const { spec, names, reexported, starReexport } of records) {
+    if (!known) {
+      if (spec.includes(INSTALLER_SPECIFIER_MARK)) {
+        offences.push(`${rel}: ${spec}`);
+      } else if (isDomShimModule(spec) && (names === null || names.includes(INSTALLER_NAME))) {
+        offences.push(`${rel}: ${spec} (${names === null ? 'a name list the parser cannot read' : INSTALLER_NAME})`);
+      } else if (names !== null && names.includes(INSTALLER_NAME)) {
+        offences.push(`${rel}: ${spec} (${INSTALLER_NAME})`);
+      }
+    }
+    // The known list's exemption covers the import that pairs the install
+    // with the capture and the restore of the process's own fetch, not a
+    // re-export of the installer: a re-export would hand the installer name
+    // to any file that imports the guard, with neither gate seeing it.
+    if (reexported.includes(INSTALLER_NAME)) {
+      offences.push(`${rel}: ${spec} (re-exports ${INSTALLER_NAME})`);
+    }
+    // A star re-export lists no names, yet it hands every name the module
+    // has, the installer among them, to any file that imports this one, so
+    // the name-list checks above cannot see what leaves through it. A star
+    // re-export of the dom-shim module is an offence in any file, the
+    // exempt guard included; a star re-export of any other module stays
+    // the import list gate's ordinary business.
+    if (starReexport && isDomShimModule(spec)) {
+      offences.push(`${rel}: ${spec} (a star re-export: every name the module has leaves, ${INSTALLER_NAME} among them)`);
     }
   }
   return offences;
@@ -913,10 +979,90 @@ test('only the fetch guard installs the Lit shim, everywhere in the workspace', 
   for (const group of ['packages', 'apps']) visit(join(webRoot, group), group);
   visit(join(webRoot, '..', 'scripts'), 'scripts');
   visit(join(webRoot, 'scripts'), 'web/scripts');
+  visit(join(webRoot, '..', 'statecharts'), 'statecharts');
+  // The walk must reach every root the canonical root bun test runs; the
+  // statecharts sync machine test is one of its files.
+  for (const mustWalk of ['statecharts/sync/machine.ts', 'statecharts/sync/test/machine.test.mjs']) {
+    assert.ok(walked.some((w) => w.rel === mustWalk), `the pin's walk does not reach ${mustWalk}`);
+  }
   const offences = [];
   for (const { rel, abs } of walked) {
     const text = readFileSync(abs, 'utf8');
     offences.push(...shimInstallOffences(rel, importedSpecifiers(text, rel)));
   }
   assert.deepEqual(offences, []);
+});
+
+test('the shim inventory pin matches the resolved dom-shim module, not one spelling of its path', () => {
+  // The fail-closed branch refuses a dom-shim import whose name list the
+  // parser cannot read (a side effect import, a namespace, an unbound
+  // require). That refusal must key on the module the spelling resolves
+  // to, so every spelling of its path is refused, not only the one with
+  // the .js extension the gate's file carries. The workspace uses no `#`
+  // subpath imports (no package.json here carries an imports map), so no
+  // `#` spelling exists to leg.
+  const planted = [
+    [`import * as dom from '@lit-labs/ssr/lib/dom-shim.js';`, 'the .js spelling'],
+    [`import * as dom from '@lit-labs/ssr/lib/dom-shim';`, 'the extensionless spelling'],
+    [`import '@lit-labs/ssr/lib/dom-shim';`, 'a side effect import of the extensionless spelling'],
+    [`import * as dom from '../../node_modules/@lit-labs/ssr/lib/dom-shim.js';`, 'a relative path into node_modules'],
+    [`const dom = require('../../node_modules/@lit-labs/ssr/lib/dom-shim');`, 'a require of a relative path into node_modules'],
+    [`import * as dom from '@lit-labs/ssr/lib/dom-shim.js?raw';`, 'the .js spelling carrying a query'],
+    [`import * as dom from '@lit-labs/ssr/lib/dom-shim/';`, 'the .js spelling with a trailing slash'],
+    [`import * as dom from '@LIT-LABS/SSR/LIB/DOM-SHIM.JS';`, 'the case-folded spelling'],
+  ];
+  for (const [p, expected] of planted) {
+    const offences = shimInstallOffences('packages/shell-chrome/src/plant.ts', importedSpecifiers(p, 'src/plant.ts'));
+    assert.ok(offences.length >= 1, `the pin missed the spelling (${expected}): ${p}`);
+    assert.ok(
+      offences.some((o) => o.includes(expected) || o.includes('a name list the parser cannot read')),
+      `the refusal must name the planted shape (${expected}): got ${JSON.stringify(offences)}`,
+    );
+  }
+  // And it stays quiet on the spelling that binds only names that cannot
+  // install, on every path shape: the rule is the installer, not the module.
+  const quiet = [
+    [`import { getWindow } from '@lit-labs/ssr/lib/dom-shim.js';`, 'the .js spelling'],
+    [`import { getWindow } from '@lit-labs/ssr/lib/dom-shim';`, 'the extensionless spelling'],
+  ];
+  for (const [p, why] of quiet) {
+    const offences = shimInstallOffences('packages/shell-chrome/src/quiet.ts', importedSpecifiers(p, 'src/quiet.ts'));
+    assert.deepEqual(offences, [], `the pin flagged an allowed import (${why}): ${p}`);
+  }
+});
+
+test('the shim inventory pin refuses a re-export of the installer from the exempt file', () => {
+  // The known list exempts the one file whose allowance names the installer,
+  // the fetch guard. The exemption covers the import that pairs the install
+  // with the capture and the restore of the process's own fetch, not a
+  // re-export of the installer: a re-export would hand the installer name to
+  // any file that imports the guard, in a package with no import allow list
+  // of its own, with neither gate seeing it.
+  const guard = 'packages/design-system/src/lit-dom-fetch-guard.ts';
+  const planted = [
+    [`export { installWindowOnGlobal } from '@lit-labs/ssr/lib/dom-shim.js';`, 'a named re-export'],
+    [`export { installWindowOnGlobal as install } from '@lit-labs/ssr/lib/dom-shim.js';`, 'a renamed re-export'],
+    [`export { getWindow, installWindowOnGlobal } from '@lit-labs/ssr/lib/dom-shim.js';`, 'a re-export beside an allowed name'],
+    [`export * from '@lit-labs/ssr/lib/dom-shim.js';`, 'a star re-export'],
+    [`export * from '@lit-labs/ssr/lib/dom-shim';`, 'a star re-export of the extensionless spelling'],
+  ];
+  for (const [p, why] of planted) {
+    const offences = shimInstallOffences(guard, importedSpecifiers(p, 'src/lit-dom-fetch-guard.ts'));
+    assert.ok(offences.length >= 1, `the pin missed the planted shape in the exempt file (${why}): ${p}`);
+    assert.ok(
+      offences.some((o) => o.includes('installWindowOnGlobal')),
+      `the refusal must name the installer: got ${JSON.stringify(offences)} for ${why}`,
+    );
+  }
+  // The import the allowance exists for, and an allowed name re-exported,
+  // stay quiet in the exempt file.
+  const quiet = [
+    [`import { installWindowOnGlobal } from '@lit-labs/ssr/lib/dom-shim.js';`, 'the installer import itself'],
+    [`export { getWindow } from '@lit-labs/ssr/lib/dom-shim.js';`, 'a re-export of a name that cannot install'],
+    [`export * from './fetch-capture.js';`, 'a star re-export of a module that is not the dom-shim'],
+  ];
+  for (const [p, why] of quiet) {
+    const offences = shimInstallOffences(guard, importedSpecifiers(p, 'src/lit-dom-fetch-guard.ts'));
+    assert.deepEqual(offences, [], `the pin flagged the exempt file's allowed shape (${why}): ${p}`);
+  }
 });
