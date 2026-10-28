@@ -58,7 +58,7 @@ export const warrantyStyles = css`
   }
   .seg button {
     min-height: 32px;
-    padding: 0 var(--hh-s-14);
+    padding: 0 var(--hh-s-16);
     border: 0;
     background: transparent;
     color: var(--hh-text);
