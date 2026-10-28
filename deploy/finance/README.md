@@ -211,6 +211,14 @@ Optional:
   token window and the console JWT bound (sane defaults when unset)
 - `FINANCE_ROOT` - the image layout root (default `/srv`; exists so the
   entrypoint can run from a checkout)
+- `HH_FINANCE_RESET_DIR` - the directory the world reset writes its dump
+  file under (default `/var/lib/finance-box/reset`, made by the reset when
+  it is not there). The dump is on disk and never on the shared memory
+  tmpfs: the world's decoded dump is larger than the tmpfs the platform
+  sizes by default, and the reset must not depend on a size the box does
+  not control. The dump is written, and its digest checked, before any
+  schema is dropped, so a directory that cannot be written refuses the
+  reset with the box's data still in place.
 
 Never set on this box: `DEMO_MODE`, `DEMO_GATE_BCRYPT_HASH`,
 `ALLOW_SEED`, `CORE_LOAD_DOORS`, `CORE_JWKS_URL`, `HOS_CARD_PROCESSOR`,

@@ -94,6 +94,10 @@ var demoEnvDenyNames = []string{
 	"HH_FINANCE_WORLD_URL",
 	"HH_FINANCE_WORLD_SHA256",
 	"HH_FINANCE_WORLD_TOKEN",
+	// The directory the world reset writes its dump file under (W2 reset fix
+	// r1): the dump is on disk, never on the shared memory tmpfs. A demo box
+	// never resets a world, so a demo box carrying it refuses the boot.
+	"HH_FINANCE_RESET_DIR",
 }
 
 // demoEnvCardProcessorVar and demoEnvCardProcessorValue: the card
@@ -266,6 +270,10 @@ var envInventoryFixture = []string{
 	"HH_FINANCE_WORLD_SHA256",
 	"HH_FINANCE_WORLD_TOKEN",
 	"HH_FINANCE_WORLD_URL",
+	// The directory the world reset writes its dump file under (W2 reset fix
+	// r1): the dump is on disk, never on the shared memory tmpfs, so the box
+	// does not depend on a shared memory size it does not control.
+	"HH_FINANCE_RESET_DIR",
 	"HOS_ASSIST_ANTHROPIC_API_KEY",
 	"HOS_ASSIST_CLAIMS_KEY",
 	"HOS_ASSIST_PRO_READER_DATABASE_URL",

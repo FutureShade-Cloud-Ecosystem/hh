@@ -21,6 +21,14 @@
 // written to a file and never put on a command line; the file sources have
 // no credential at all.
 //
+// The dump file itself is on disk, never on the shared memory tmpfs: the
+// world's decoded dump is larger than the tmpfs the platform sizes by
+// default, and the reset must not depend on a size the box does not control.
+// The directory is the one HH_FINANCE_RESET_DIR names, or the on-disk
+// default. The dump is decoded, written and checked there BEFORE any
+// schema is dropped, so a refusal anywhere before the restore leaves the
+// database exactly as it was.
+//
 // The reset prints counts only: how many bytes the decoded dump carried, how
 // many schemas it dropped, how many migrations it applied, how many tables
 // came back and how many audit rows it wrote. It writes no world value
@@ -77,6 +85,17 @@ const (
 	envFinanceWorldFile  = "HH_FINANCE_WORLD_FILE"
 )
 
+// envFinanceResetDir is where the reset writes the dump file it restores.
+// It is on disk and never on the shared memory tmpfs: the world's decoded
+// dump is larger than the tmpfs the platform sizes by default, and the reset
+// must not depend on a size the box does not control.
+const envFinanceResetDir = "HH_FINANCE_RESET_DIR"
+
+// financeResetDumpDir is the on-disk default for that directory: a plain
+// directory under the box's own var tree, made by the reset itself when it
+// is not there.
+const financeResetDumpDir = "/var/lib/finance-box/reset"
+
 // financeWorldDir is where the world rides in the image: the reset reads
 // the single *.sql.gz this directory holds when the environment names
 // neither a file nor a URL.
@@ -112,6 +131,12 @@ and an empty /srv/world/ refuses naming the names.
 The digest HH_FINANCE_WORLD_SHA256 (or -sha256) names is the sha256 of the
 decoded SQL, not of the gzip file: the digest identifies the world, so
 re-gzipping a world does not change it.
+
+The dump is written to disk before anything is dropped, under the directory
+HH_FINANCE_RESET_DIR names (or the on-disk default when it names none): the
+dump is never held on the shared memory tmpfs, whose size the platform
+sizes, not the box. A refusal before the restore leaves the database as it
+was.
 
 The dump does not have to carry the box's people. The live box's users are
 applied again at its next boot from HH_FINANCE_USERS, so the reset does not
@@ -211,6 +236,16 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	if !strings.EqualFold(got, expected) {
 		return fmt.Errorf("finance-reset: the dump's sha256 is not the one %s names: nothing was dropped", envFinanceWorldSHA)
 	}
+	// The dump is written to disk BEFORE anything is dropped. The file is the
+	// only copy the restore reads, so a write that fails, a disk that is full
+	// or a directory that cannot be made is a refusal with the box still
+	// standing: a reset that drops first and writes second empties the box
+	// and leaves no way back.
+	dumpPath, cleanupDump, err := financeResetWriteDump(financeResetDumpDirectory(getenv), dump)
+	if err != nil {
+		return err
+	}
+	defer cleanupDump()
 	// The schemas the dump owns: the public schema every dump of this tree's
 	// world carries, and every schema the dump creates for itself.
 	schemas := dumpOwnedSchemas(dump)
@@ -218,11 +253,6 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	if err != nil {
 		return err
 	}
-	dumpPath, cleanupDump, err := financeResetWriteDump(dump)
-	if err != nil {
-		return err
-	}
-	defer cleanupDump()
 	if err := financeResetRestore(ctx, dsn, dumpPath); err != nil {
 		return err
 	}
@@ -385,7 +415,8 @@ func dumpOwnedSchemas(dump []byte) []string {
 }
 
 // financeResetDropSchemas drops the schemas the dump owns and answers how
-// many it dropped. It runs only after the dump's sha256 matched.
+// many it dropped. It runs only after the dump's sha256 matched and after
+// the dump file was written on disk.
 func financeResetDropSchemas(ctx context.Context, pool *pgxpool.Pool, schemas []string) (int, error) {
 	dropped := 0
 	for _, name := range schemas {
@@ -402,29 +433,71 @@ func financeResetDropSchemas(ctx context.Context, pool *pgxpool.Pool, schemas []
 	return dropped, nil
 }
 
-// financeResetWriteDump writes the dump to the shared memory tmpfs and
-// answers its path and the remover.
-func financeResetWriteDump(dump []byte) (string, func(), error) {
-	dir := "/dev/shm"
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		dir = ""
+// financeResetDumpDirectory answers the directory the dump file is written
+// under: the one the environment names, or the on-disk default. It is never
+// the shared memory tmpfs: the world's decoded dump is larger than the tmpfs
+// the platform sizes by default, and a reset that depends on a size the box
+// does not control refuses on a box that is big enough to serve.
+func financeResetDumpDirectory(getenv func(string) string) string {
+	if dir := strings.TrimSpace(getenv(envFinanceResetDir)); dir != "" {
+		return dir
+	}
+	return financeResetDumpDir
+}
+
+// financeResetWriteDump writes the dump under the directory the reset is
+// given and answers its path and the remover. The directory is made when it
+// is not there, the file is written owner only, and the file is read back
+// and compared with the bytes that were written: a file the disk cut short
+// is caught here, before anything is dropped, not halfway through a restore.
+func financeResetWriteDump(dir string, dump []byte) (string, func(), error) {
+	if dir == "" {
+		dir = financeResetDumpDir
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", func() {}, fmt.Errorf("finance-reset: the dump directory %s could not be made: %w", dir, err)
 	}
 	file, err := os.CreateTemp(dir, "finance-world-dump-*.sql")
 	if err != nil {
-		return "", func() {}, fmt.Errorf("finance-reset: the dump file could not be written: %w", err)
+		return "", func() {}, fmt.Errorf("finance-reset: the dump file could not be written in %s: %w", dir, err)
 	}
 	path := file.Name()
 	cleanup := func() { _ = os.Remove(path) }
 	if _, err := file.Write(dump); err != nil {
 		file.Close()
 		cleanup()
-		return "", func() {}, fmt.Errorf("finance-reset: the dump file could not be written: %w", err)
+		return "", func() {}, fmt.Errorf("finance-reset: the dump file could not be written in %s: %w", dir, err)
 	}
 	if err := file.Close(); err != nil {
 		cleanup()
-		return "", func() {}, fmt.Errorf("finance-reset: the dump file could not be written: %w", err)
+		return "", func() {}, fmt.Errorf("finance-reset: the dump file could not be written in %s: %w", dir, err)
+	}
+	if err := financeResetDumpIntact(path, dump); err != nil {
+		cleanup()
+		return "", func() {}, err
 	}
 	return path, cleanup, nil
+}
+
+// financeResetDumpIntact answers whether the file on disk holds exactly the
+// bytes it was given: the file is read back and hashed, and the hash is
+// compared with the hash of the bytes written. A short write is a refusal
+// before the drop, never a half restored world.
+func financeResetDumpIntact(path string, dump []byte) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("finance-reset: the dump file %s could not be read back: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	sum := sha256.New()
+	if _, err := io.Copy(sum, f); err != nil {
+		return fmt.Errorf("finance-reset: the dump file %s could not be read back: %w", path, err)
+	}
+	want := sha256.Sum256(dump)
+	if !bytes.Equal(sum.Sum(nil), want[:]) {
+		return fmt.Errorf("finance-reset: the dump file %s does not hold the dump: nothing was dropped", path)
+	}
+	return nil
 }
 
 // financeResetRestore restores the dump with psql. The database URL never

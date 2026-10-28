@@ -192,6 +192,10 @@ func TestIntegration_FinanceReset(t *testing.T) {
 			envFinanceWorldURL:   srv.URL,
 			envFinanceWorldToken: token,
 			envFinanceWorldSHA:   digest,
+			// The dump file is written on disk, under the directory the
+			// reset is given. The test gives it one of its own, so the run
+			// never writes into the box's own var tree.
+			envFinanceResetDir: t.TempDir(),
 		}
 		for k, v := range over {
 			if v == "" {
