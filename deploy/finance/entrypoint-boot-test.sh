@@ -358,6 +358,24 @@ case "$record" in
 	*) fail "an empty database was not seeded: $record" ;;
 esac
 
+# The bootstrap ownership marker: an empty database is marked the box's own
+# BEFORE the first migrate, so the box's own interrupted first boot can be
+# told from a database the box never planted. The mark is one psql call that
+# sits between the shape question and the migrate, through the service file
+# like the probe, and never on a command line.
+case "$record" in
+	*"CREATE SCHEMA IF NOT EXISTS finance_box_bootstrap"*)
+		pass "an empty database is marked the box's own before the first migrate" ;;
+	*) fail "an empty database was not marked with the bootstrap ownership mark: $record" ;;
+esac
+mark_line="$(printf '%s\n' "$record" | grep -n 'CREATE SCHEMA IF NOT EXISTS' | head -n 1 | cut -d: -f1)"
+migrate_line="$(printf '%s\n' "$record" | grep -n 'core migrate' | head -n 1 | cut -d: -f1)"
+if [ -n "$mark_line" ] && [ -n "$migrate_line" ] && [ "$mark_line" -lt "$migrate_line" ]; then
+	pass "the bootstrap ownership mark is written before the migrate"
+else
+	fail "the bootstrap ownership mark is not written before the migrate (mark line ${mark_line:-none}, migrate line ${migrate_line:-none})"
+fi
+
 out="$(run_box unseeded pass)"
 record="$(cat "$SCRATCH/record" 2>/dev/null || true)"
 case "$record" in

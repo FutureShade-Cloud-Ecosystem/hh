@@ -88,3 +88,23 @@ func TestIntegration_FinanceBoxStateAnswersTheFourStates(t *testing.T) {
 		}
 	})
 }
+
+// TestIntegration_FinanceBoxUnseededRecoveryNeedsTheBootstrapMark: recovery
+// is the bootstrap ownership marker's answer alone. A migrated database with
+// no box kind, no seed and no marker was not planted by this box, and it is
+// foreign: the entrypoint refuses it instead of healing it (the K3 read's
+// finding 1, a foreign migrated unmarked database was seeded).
+func TestIntegration_FinanceBoxUnseededRecoveryNeedsTheBootstrapMark(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a foreign migrated unmarked database is refused", func(t *testing.T) {
+		pool, _ := freshMigratedBoxDB(t, "finboxstatemarkless")
+		state, err := financeBoxDatabaseState(ctx, pool)
+		if err != nil {
+			t.Fatalf("reading the state: %v", err)
+		}
+		if state != financeBoxStateForeign {
+			t.Fatalf("a migrated unmarked database with no bootstrap mark must read as %s, got %s", financeBoxStateForeign, state)
+		}
+	})
+}
