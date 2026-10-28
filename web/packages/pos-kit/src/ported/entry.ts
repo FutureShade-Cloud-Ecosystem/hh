@@ -176,13 +176,17 @@ export const entryStyles = css`
   .coming li:last-child .coming-role {
     border-bottom: none;
   }
-  .coming-role button {
+  .coming-role button:disabled {
     flex: 1;
     text-align: start;
-    background: transparent;
+    /* The name button is natively disabled: the grey token swap, the same
+       triple every disabled control wears, never a transparent fill with a
+       dim ink. The Coming pill beside it names the state. */
+    background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
-    border: none;
-    padding: var(--hh-s-8) 0;
+    border: 1px solid var(--hh-disabled-line);
+    border-radius: var(--hh-radius-control);
+    padding: var(--hh-s-8);
     min-height: 0;
     cursor: default;
   }

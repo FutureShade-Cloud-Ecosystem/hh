@@ -356,6 +356,12 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		BranchSource: "in.BranchID (sale input branch, also written to orders.branch_id in the same tx) in tax.relief.assessed outbox payload (FW1-08b)",
 	},
 	{
+		File:         "core/internal/purchasing/ap_aging.go",
+		Func:         "(*Service).PayBill",
+		Kind:         "PostJournalTx",
+		BranchSource: "bill.BranchID from purchasing_bills.branch_id (NOT NULL)",
+	},
+	{
 		File:         "core/internal/purchasing/service.go",
 		Func:         "(*Service).postBillJournal",
 		Kind:         "PostJournalTx",

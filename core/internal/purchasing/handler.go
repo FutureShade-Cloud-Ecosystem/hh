@@ -304,6 +304,16 @@ func (h *Handler) postBill(w http.ResponseWriter, r *http.Request, caller guards
 	httpx.WriteJSON(w, http.StatusOK, b)
 }
 
+func (h *Handler) apAging(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	q := r.URL.Query()
+	page, err := h.svc.APAgingForCaller(r.Context(), q.Get("as_of"), q.Get("branch_id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, page)
+}
+
 func (h *Handler) getTolerance(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	t, err := h.svc.GetTolerance(r.Context(), r.URL.Query().Get("branch_id"))
 	if err != nil {

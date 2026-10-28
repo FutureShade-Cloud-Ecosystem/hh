@@ -232,6 +232,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	purchasingSvc := finworldPurchasingComposition(pool, log, auditSvc).
 		WithStockReceiver(w4cStockReceiver{svc: inventorySvc}).
 		WithLandedCoster(w4cLandedCoster{svc: landedcostSvc}).
+		WithLandedCostPayables(w4cLandedCoster{svc: landedcostSvc}).
+		WithSupplierPayments(w4cSupplierPaymentReader{pool: pool}).
 		WithGLPoster(w4cGLPoster{svc: spine.glSvc}).
 		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
 		WithWarrantyCreditReader(w4cWarrantyCreditReader{pool: pool})
@@ -2002,6 +2004,84 @@ func (a w4cLandedCoster) CreateAndApply(ctx context.Context, in purchasing.Lande
 		return "", err
 	}
 	return id, nil
+}
+
+func (a w4cLandedCoster) OpenPayablesAsOf(ctx context.Context, asOf time.Time, branchIDs []string, global bool) ([]purchasing.LandedCostPayable, error) {
+	if a.svc == nil {
+		return nil, nil
+	}
+	rows, err := a.svc.OpenPayablesAsOf(ctx, asOf, branchIDs, global)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]purchasing.LandedCostPayable, len(rows))
+	for i, r := range rows {
+		out[i] = purchasing.LandedCostPayable{
+			ID:               r.ID,
+			POID:             r.POID,
+			PORef:            r.PORef,
+			BranchID:         r.BranchID,
+			Currency:         r.Currency,
+			FreightCadCents:  r.FreightCadCents,
+			DutyCadCents:     r.DutyCadCents,
+			HandlingCadCents: r.HandlingCadCents,
+			TotalCadCents:    r.TotalCadCents,
+			ChargeKind:       r.ChargeKind,
+			PayeeLabel:       r.PayeeLabel,
+			CreatedAt:        r.CreatedAt,
+			UpdatedAt:        r.UpdatedAt,
+		}
+	}
+	return out, nil
+}
+
+// w4cSupplierPaymentReader satisfies purchasing.SupplierPaymentReader over
+// posted GL journals debiting account 2100 from external payment postings.
+type w4cSupplierPaymentReader struct{ pool *pgxpool.Pool }
+
+func (a w4cSupplierPaymentReader) ExternalSupplierPaymentsAsOf(ctx context.Context, asOf time.Time, branchIDs []string, global bool) ([]purchasing.SupplierPayment, error) {
+	if a.pool == nil {
+		return nil, nil
+	}
+	if !global && len(branchIDs) == 0 {
+		return []purchasing.SupplierPayment{}, nil
+	}
+	if branchIDs == nil {
+		branchIDs = []string{}
+	}
+	rows, err := a.pool.Query(ctx, `
+		SELECT j.id::text, COALESCE(j.source_ref_id::text, ''), COALESCE(j.idempotency_key, ''),
+		       COALESCE(j.branch_id::text, ''), COALESCE(j.memo, ''),
+		       COALESCE(jl.debit_cents, 0) - COALESCE(jl.credit_cents, 0), j.posted_at
+		  FROM gl_journal_lines jl
+		  JOIN gl_journals j ON j.id = jl.journal_id
+		  JOIN gl_accounts ga ON ga.id = jl.account_id
+		 WHERE ga.code = '2100'
+		   AND j.status = 'POSTED'
+		   AND j.source IN ('PAYMENT', 'MANUAL')
+		   AND COALESCE(j.idempotency_key, '') NOT LIKE 'purchasing.bill.payment:%'
+		   AND (COALESCE(jl.debit_cents, 0) - COALESCE(jl.credit_cents, 0)) > 0
+		   AND j.posted_at <= $1
+		   AND ($2::boolean OR j.branch_id = ANY($3::uuid[]))
+		 ORDER BY j.posted_at ASC, j.id ASC, jl.line_no ASC`,
+		asOf, global, branchIDs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("supplier payment reader: %w", err)
+	}
+	defer rows.Close()
+	out := make([]purchasing.SupplierPayment, 0)
+	for rows.Next() {
+		var sp purchasing.SupplierPayment
+		if err := rows.Scan(
+			&sp.JournalID, &sp.SourceRefID, &sp.IdempotencyKey,
+			&sp.BranchID, &sp.Memo, &sp.AmountCents, &sp.PostedAt,
+		); err != nil {
+			return nil, fmt.Errorf("supplier payment reader: scan: %w", err)
+		}
+		out = append(out, sp)
+	}
+	return out, rows.Err()
 }
 
 // w4cGLPoster satisfies purchasing.GLPoster over glSvc.PostExternal (the

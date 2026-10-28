@@ -1022,9 +1022,9 @@ export class HosPosTerminal extends LitElement {
     /* HH note: disabled drops its fill and goes grey; fade is not a state. */
     .topbtn:disabled,
     .topbtn[aria-disabled='true'] {
-      background: transparent;
-      border-color: var(--hos-line);
-      color: var(--hos-text-dim);
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
       opacity: 1;
       cursor: not-allowed;
     }
@@ -1905,9 +1905,11 @@ export class HosPosTerminal extends LitElement {
       white-space: normal;
     }
     .dbtn:disabled {
-      cursor: not-allowed;
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
       opacity: 1;
-      color: var(--hos-text-dim);
+      cursor: not-allowed;
     }
     .trow.discrow {
       color: var(--hos-stone-amber-text);
@@ -2104,9 +2106,9 @@ export class HosPosTerminal extends LitElement {
       background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-field));
     }
     .fulfil button:disabled {
-      background: transparent;
-      border-color: var(--hos-line);
-      color: var(--hos-text-dim);
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
       opacity: 1;
       cursor: not-allowed;
     }
@@ -2215,9 +2217,9 @@ export class HosPosTerminal extends LitElement {
       background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-field));
     }
     .paytiles button:disabled {
-      background: transparent;
-      border-color: var(--hos-line);
-      color: var(--hos-text-dim);
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
       opacity: 1;
       cursor: not-allowed;
     }
@@ -2434,6 +2436,10 @@ export class HosPosTerminal extends LitElement {
       padding: 4px 2px;
     }
     .supplierlink:disabled {
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
+      opacity: 1;
       cursor: not-allowed;
     }
     /* ── Item 9.6: the payment shape menu, the deposit panel and the quiet split entry ── */
@@ -2466,8 +2472,10 @@ export class HosPosTerminal extends LitElement {
     }
     .shapemenu button:disabled,
     .dpmethods button:disabled {
-      background: transparent;
-      color: var(--hos-text-dim);
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
+      opacity: 1;
       cursor: not-allowed;
     }
     .shapehint {
@@ -2550,6 +2558,10 @@ export class HosPosTerminal extends LitElement {
       font-weight: 600;
     }
     .splitquiet:disabled {
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
+      opacity: 1;
       cursor: not-allowed;
     }
     .complete-cta {
@@ -2573,9 +2585,9 @@ export class HosPosTerminal extends LitElement {
     }
     /* HH note: disabled drops its fill and goes grey; fade is not a state. */
     .complete-cta:disabled {
-      background: transparent;
-      border-color: var(--hos-line);
-      color: var(--hos-text-dim);
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
       opacity: 1;
       cursor: not-allowed;
     }
@@ -3044,9 +3056,9 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-stone-amber);
     }
     .tenders button:disabled {
-      background: transparent;
-      border-color: var(--hos-line);
-      color: var(--hos-text-dim);
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
       opacity: 1;
       cursor: not-allowed;
     }
@@ -3104,6 +3116,10 @@ export class HosPosTerminal extends LitElement {
        the pointer promised an act the control cannot make, and it was the one cursor outside
        the rule. */
     .util button:disabled {
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
+      opacity: 1;
       cursor: not-allowed;
     }
     .util button.clear:hover {
@@ -3358,9 +3374,9 @@ export class HosPosTerminal extends LitElement {
        control cannot make. The rule sits after the primary's so the fill rule never wins. */
     .sold-actions button:disabled,
     .sold-actions button.primary:disabled {
-      background: transparent;
-      border-color: var(--hos-line);
-      color: var(--hos-text-dim);
+      background: var(--hh-disabled-fill);
+      border-color: var(--hh-disabled-line);
+      color: var(--hh-disabled-ink);
       opacity: 1;
       cursor: not-allowed;
     }

@@ -142,9 +142,9 @@ export class HosPosSplitTender extends LitElement {
         color: var(--hos-stone-amber-text);
       }
       button:disabled {
-        background: transparent;
-        border-color: var(--hos-line);
-        color: var(--hos-text-dim);
+        background: var(--hh-disabled-fill);
+        border-color: var(--hh-disabled-line);
+        color: var(--hh-disabled-ink);
         opacity: 1;
         cursor: not-allowed;
       }
@@ -156,9 +156,9 @@ export class HosPosSplitTender extends LitElement {
       }
       /* HH note: disabled drops its fill and goes grey; fade is not a state. */
       button.ring:disabled {
-        background: transparent;
-        border-color: var(--hos-line);
-        color: var(--hos-text-dim);
+        background: var(--hh-disabled-fill);
+        border-color: var(--hh-disabled-line);
+        color: var(--hh-disabled-ink);
         opacity: 1;
         cursor: not-allowed;
       }

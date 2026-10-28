@@ -117,6 +117,32 @@ func (a itLanded) CreateAndApply(ctx context.Context, in LandedCostDraft) (strin
 	return id, nil
 }
 
+func (a itLanded) OpenPayablesAsOf(ctx context.Context, asOf time.Time, branchIDs []string, global bool) ([]LandedCostPayable, error) {
+	rows, err := a.svc.OpenPayablesAsOf(ctx, asOf, branchIDs, global)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LandedCostPayable, len(rows))
+	for i, r := range rows {
+		out[i] = LandedCostPayable{
+			ID:               r.ID,
+			POID:             r.POID,
+			PORef:            r.PORef,
+			BranchID:         r.BranchID,
+			Currency:         r.Currency,
+			FreightCadCents:  r.FreightCadCents,
+			DutyCadCents:     r.DutyCadCents,
+			HandlingCadCents: r.HandlingCadCents,
+			TotalCadCents:    r.TotalCadCents,
+			ChargeKind:       r.ChargeKind,
+			PayeeLabel:       r.PayeeLabel,
+			CreatedAt:        r.CreatedAt,
+			UpdatedAt:        r.UpdatedAt,
+		}
+	}
+	return out, nil
+}
+
 type itGL struct{ svc *gl.Service }
 
 // itGL mirrors main.go's w4cGLPoster field for field, the document date included, so the legs read
@@ -166,6 +192,7 @@ type harness struct {
 	svc    *Service
 	inv    *inventory.Service
 	gl     *gl.Service
+	landed *landedcost.Service
 	vendor string
 	user   string
 	ctx    context.Context
@@ -222,11 +249,12 @@ func newHarness(t *testing.T) *harness {
 		WithStockReceiver(itStock{svc: invSvc}).
 		WithVendors(itVendors{pool: pool}).
 		WithLandedCoster(itLanded{svc: landedSvc}).
+		WithLandedCostPayables(itLanded{svc: landedSvc}).
 		WithGLPoster(itGL{svc: glSvc}).
 		WithRuleResolver(itRules{svc: glSvc}).
 		withCaller(func(context.Context) (identity.StaffContext, bool) { return globalCaller(user), true })
 
-	return &harness{pool: pool, svc: svc, inv: invSvc, gl: glSvc, vendor: vendor, user: user, ctx: ctx}
+	return &harness{pool: pool, svc: svc, inv: invSvc, gl: glSvc, landed: landedSvc, vendor: vendor, user: user, ctx: ctx}
 }
 
 // newProduct creates a throwaway product and registers its cleanup. Its own SKU means a test never competes

@@ -2835,7 +2835,7 @@ paths:
       tags:
         - staff-payments
       summary: Void a mis-keyed desk receipt as never taken
-      description: "A receipt keyed against the wrong figures, caught on the dealer day it was taken, is undone as never taken: the receipt's allocations go, its invoices re-open at their full balances, and the GL books the receipt's own legs mirrored, so no money is held in 2310. A deposited, bounced, refunded or already voided payment is refused, as is a receipt from an earlier dealer day: those undos are a reversal's business. A payment taken on a till session is refused too, the drawer count owns that undo."
+      description: "A receipt keyed against the wrong figures, caught on the dealer day it was taken, is undone as never taken: the receipt's allocation is kept and the undo is written beside it as a negative row, its invoices re-open at their full balances, and the GL books the receipt's own legs mirrored, so no money is held in 2310. A deposited, bounced, refunded or already voided payment is refused, as is a receipt from an earlier dealer day: those undos are a reversal's business. A payment taken on a till session is refused too, the drawer count owns that undo."
       x-role: requireManager
       x-access:
         surfaces:
@@ -19024,7 +19024,7 @@ paths:
       tags:
         - staff-till
       summary: Read who took a payment and which invoices it was applied to
-      description: "The path key may be the payment's id or the human payment number printed on the receipt. For a BOUNCED payment the historical applications are reconstructed from the audit trail and flagged reversed_by_nsf. Held to work by ruling 87: a customer's payment trail is the money desk's to work, not a money desk reader's to browse."
+      description: "The path key may be the payment's id or the human payment number printed on the receipt. For a BOUNCED payment the history is the live rows: the application and, beside it, the reversal row the bounce wrote. A payment bounced before that row existed has no live row, and its applications are reconstructed from the audit trail and flagged reversed_by_nsf. Held to work by ruling 87: a customer's payment trail is the money desk's to work, not a money desk reader's to browse."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -22413,6 +22413,48 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/purchasing/ap-aging:
+    get:
+      operationId: purchasingGetAPAging
+      tags:
+        - staff-purchasing
+      x-addition: "W2-9a: the AP aging worklist over open vendor bills and open landed-cost payables in the dealer's house zone, tying to GL 2100; no ERP source route"
+      summary: Read the AP aging worklist as of an instant
+      description: Open accounts payable as of an instant in the dealer's house zone, absent as_of meaning now. Each vendor row carries its posted bills less supplier payments as of the instant, bucketed across the five aging buckets, and each open landed-cost payable appears on its own row marked as landed cost. The aging total equals the net credit balance of GL 2100 as of the same instant.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: as_of
+          in: query
+          required: false
+          description: Read open AP as of this instant or house date; absent means now
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The AP aging page as of the instant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingAPAgingPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/purchasing/tolerance:
     get:
       operationId: purchasingGetTolerance
@@ -33421,7 +33463,7 @@ components:
           type: boolean
     BillingCustomerWorkspacePayment:
       type: object
-      description: One payment the workspace payments tab carries, with the running unapplied figure the inline Apply Credit Note modal binds. Unapplied is derived (AmountCents - SUM(payment_allocations.amount_cents)) and floored at zero.
+      description: "One payment the workspace payments tab carries, with the running unapplied figure the inline Apply Credit Note modal binds. Unapplied is derived (AmountCents - SUM(payment_allocations.amount_cents)) and floored at zero. The sum is the net: a bounce or a void keeps the application and writes the undo beside it as a negative row, and the two net to zero."
       required:
         - id
         - payment_no
@@ -50204,7 +50246,7 @@ components:
           format: uuid
     TillAllocationRecord:
       type: object
-      description: One payment-to-invoice application with attribution. reversed_by_nsf marks a historical allocation reconstructed from the audit trail after an NSF reversal deleted the live rows; such records carry no invoice_no.
+      description: One payment-to-invoice application with attribution. A bounce or a void keeps the application and writes the undo beside it as a second row, dated at the undo and carrying the negative amount, so the two net. reversed_by_nsf marks a historical allocation reconstructed from the audit trail after an NSF reversal deleted the live rows; such records carry no invoice_no.
       required:
         - invoice_id
         - invoice_no
@@ -50219,6 +50261,7 @@ components:
         amount_cents:
           type: integer
           format: int64
+          description: Negative on the row that takes an application back
         allocated_by:
           type: string
           description: Empty for a portal or customer-initiated payment
@@ -50327,7 +50370,7 @@ components:
         amount_cents:
           type: integer
           format: int64
-          description: The slice applied to this invoice
+          description: The slice applied to this invoice, negative on the row that takes it back
         payment_amount_cents:
           type: integer
           format: int64
@@ -54180,6 +54223,207 @@ components:
         limit:
           type: integer
           format: int32
+    PurchasingAPAgingItem:
+      type: object
+      description: One open AP obligation (a vendor bill or a landed-cost payable) as of the requested instant
+      required:
+        - id
+        - kind
+        - is_landed_cost
+        - ref_no
+        - branch_id
+        - bill_date
+        - due_date
+        - total_cents
+        - paid_cents
+        - open_cents
+        - bucket
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+            - VENDOR_BILL
+            - LANDED_COST
+        is_landed_cost:
+          type: boolean
+        ref_no:
+          type: string
+        bill_no:
+          type: string
+        po_id:
+          type: string
+          format: uuid
+        po_no:
+          type: string
+        po_ref:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+        vendor_id:
+          type: string
+          format: uuid
+        vendor_name:
+          type: string
+        charge_kind:
+          type: string
+        bill_date:
+          type: string
+          format: date
+        due_date:
+          type: string
+          format: date
+        total_cents:
+          type: integer
+          format: int64
+        paid_cents:
+          type: integer
+          format: int64
+        open_cents:
+          type: integer
+          format: int64
+        freight_cad_cents:
+          type: integer
+          format: int64
+        duty_cad_cents:
+          type: integer
+          format: int64
+        handling_cad_cents:
+          type: integer
+          format: int64
+        bucket:
+          type: string
+          enum:
+            - CURRENT
+            - DAYS_30
+            - DAYS_60
+            - DAYS_60_TO_90
+            - DAYS_90_PLUS
+    PurchasingAPAgingRow:
+      type: object
+      description: "One row of the AP aging table: either a vendor with its open bills or an open landed-cost payable owed to its carrier or broker."
+      required:
+        - row_kind
+        - is_landed_cost
+        - vendor_name
+        - payment_terms_days
+        - current_cents
+        - days_30_cents
+        - days_60_cents
+        - days_60_to_90_cents
+        - days_90_plus_cents
+        - total_cents
+        - open_items
+      properties:
+        row_kind:
+          type: string
+          enum:
+            - VENDOR
+            - LANDED_COST
+        is_landed_cost:
+          type: boolean
+        vendor_id:
+          type: string
+          format: uuid
+        vendor_no:
+          type: string
+        vendor_name:
+          type: string
+        landed_cost_id:
+          type: string
+          format: uuid
+        po_id:
+          type: string
+          format: uuid
+        po_ref:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+        charge_kind:
+          type: string
+        due_date:
+          type: string
+          format: date
+        payment_terms_days:
+          type: integer
+          format: int32
+        freight_cad_cents:
+          type: integer
+          format: int64
+        duty_cad_cents:
+          type: integer
+          format: int64
+        handling_cad_cents:
+          type: integer
+          format: int64
+        current_cents:
+          type: integer
+          format: int64
+        days_30_cents:
+          type: integer
+          format: int64
+        days_60_cents:
+          type: integer
+          format: int64
+        days_60_to_90_cents:
+          type: integer
+          format: int64
+        days_90_plus_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+        open_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PurchasingAPAgingItem"
+    PurchasingAPAgingPage:
+      type: object
+      required:
+        - as_of
+        - current_cents
+        - days_30_cents
+        - days_60_cents
+        - days_60_to_90_cents
+        - days_90_plus_cents
+        - total_cents
+        - items
+        - next_cursor
+      properties:
+        as_of:
+          type: string
+          format: date
+        current_cents:
+          type: integer
+          format: int64
+        days_30_cents:
+          type: integer
+          format: int64
+        days_60_cents:
+          type: integer
+          format: int64
+        days_60_to_90_cents:
+          type: integer
+          format: int64
+        days_90_plus_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PurchasingAPAgingRow"
+        next_cursor:
+          type:
+            - string
+            - "null"
     LandedCost:
       type: object
       description: "The landed-cost header. All cad figures are CAD: the conversion of the document currency happens at capture, so the GL and the inventory valuation only ever see CAD."

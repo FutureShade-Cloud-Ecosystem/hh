@@ -787,6 +787,15 @@ show at the window width and look the same, which is what their labels say.</p>
     color: var(--hh-text);
     font-weight: 600;
   }
+  /* A segment that is chosen and disabled is a disabled control, and the
+     chosen rule above outranks the primitive's own disabled rule (two classes
+     to one). The pair is restated in the grey triple, so a chosen segment
+     that is refused looks refused and not merely unfilled. */
+  .seg-btn.seg-on:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+  }
   /* The named group: the fieldset keeps its legend (the group's accessible
      name) and the legend is set as the group's visible heading. */
   .field-group {
