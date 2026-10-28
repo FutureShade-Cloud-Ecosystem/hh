@@ -435,6 +435,60 @@ func TestIntegration_FW1_09f_ThePeriodCleanupLeavesAnotherYearsOverrideAlone(t *
 	}
 }
 
+// TestIntegration_FW1_09f_TheYearCleanupLeavesAPeriodItDidNotPlantAlone is the year helper's own
+// S5's P3 red (FROM-PRINCIPAL 349): a leg leaves the shared gate database exactly as it found it.
+//
+// fw109fPeriods plants the sentinel year's twelve periods with ON CONFLICT DO NOTHING, so on a
+// reused box periods of the year can already be there, planted by another leg or left by an
+// earlier run. The year cleanup deleted EVERY period of the year anyway: it took periods the leg
+// did not plant out of the shared gate database, and the override rows hanging on them with it.
+//
+// The leg pre plants one period of its sentinel year with a row that references it (the
+// gl_period_overrides row holds the period ON DELETE RESTRICT, so the period can only go when the
+// row hanging on it goes first), runs the leg under test's own year plant and its own year
+// cleanup, and fails when the pre planted period is gone. Its own cleanup removes what it
+// planted.
+func TestIntegration_FW1_09f_TheYearCleanupLeavesAPeriodItDidNotPlantAlone(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	const year = 2011
+	const month = 2
+
+	// The period another leg planted in this leg's own sentinel year: the year cleanup must
+	// leave it.
+	prePeriod, prePlanted := fw109fOtherYearPeriod(t, pool, year, month)
+	// A row that references it, so the delete is visible: gl_period_overrides holds the period
+	// ON DELETE RESTRICT, so the period can only go when the row hanging on it goes first.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO gl_period_overrides (period_id, action, reason) VALUES ($1::uuid, 'REOPEN', 'fw109f pre planted year period sentinel')`,
+		prePeriod); err != nil {
+		t.Fatalf("plant the pre planted period's override: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM gl_period_overrides WHERE period_id = $1::uuid AND reason = 'fw109f pre planted year period sentinel'`, prePeriod)
+		if prePlanted {
+			_, _ = pool.Exec(ctx, `DELETE FROM fiscal_periods WHERE id = $1::uuid`, prePeriod)
+		}
+	})
+
+	before := fw109fPeriodCount(t, pool, year, month)
+	overridesBefore := fw109fOverrideCountOn(t, pool, prePeriod)
+
+	// The leg under test: its own year plant, which plants the year's missing periods, and its
+	// own year cleanup, the one every leg runs when its sentinel year is done.
+	fw109fPeriods(t, pool, year)
+	fw109fCleanupPeriods(t, pool, year)
+
+	after := fw109fPeriodCount(t, pool, year, month)
+	overridesAfter := fw109fOverrideCountOn(t, pool, prePeriod)
+	t.Logf("fw109f year cleanup: the %d-%02d periods before|%d after|%d, the override rows on it before|%d after|%d",
+		year, month, before, after, overridesBefore, overridesAfter)
+	if after != before {
+		t.Fatalf("the year cleanup removed the %d-%02d period it did not plant (periods before|%d after|%d, the override rows on it before|%d after|%d): it must delete only the periods it planted",
+			year, month, before, after, overridesBefore, overridesAfter)
+	}
+}
+
 // TestIntegration_FW1_09f_ThePeriodCleanupLeavesAPeriodItDidNotPlantAlone is S5's P3 red
 // (FROM-PRINCIPAL 349): a leg leaves the shared gate database exactly as it found it.
 //
