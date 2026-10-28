@@ -1539,7 +1539,7 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 	// -- the plant: the closed year as a year in the books --------------------------------
 	if _, err := w.pool.Exec(ctx, `
 		INSERT INTO fiscal_periods (year, month) SELECT $1, m FROM generate_series(1,12) AS m
-		 ON CONFLICT (year, month) DO UPDATE SET status = 'OPEN', closed_at = NULL, closed_by = NULL`, closedYear); err != nil {
+		 ON CONFLICT (year, month) DO NOTHING`, closedYear); err != nil {
 		t.Fatalf("planting the closed year %d's fiscal periods: %v", closedYear, err)
 	}
 	// The stock the dealer holds today, read through the production seam the close's pre flight
