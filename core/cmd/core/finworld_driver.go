@@ -35,6 +35,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
@@ -731,7 +732,10 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 	}
 
 	// Load opening stock into stock_balances, product_branch_costs, stock_moves, and post opening GL 1200 / 3000 per branch
-	cutoverDate := time.Date(2025, time.September, 30, 12, 0, 0, 0, time.UTC)
+	// The opening balances sit on the day before the world's first trading month, at noon in the
+	// dealer's house zone (day 0 of the start month is the prior month's last day), so the cutover
+	// follows the anchor and is decided on the house's day, never at Greenwich.
+	cutoverDate := time.Date(plan.StartMonth.Year, time.Month(plan.StartMonth.Month), 0, 12, 0, 0, 0, houseday.DefaultZone().Location())
 	var trtStockVal, kgnStockVal int64
 	for _, p := range plan.Products {
 		var prodID string
