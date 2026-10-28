@@ -11,11 +11,13 @@ import (
 // - in-memory fakes (no DB) -
 
 type fakeStore struct {
-	sheet   Sheet
-	lines   []Line
-	reasons []ReasonCode
-	recon   map[string]ReconRun // key: year|month|branch
-	inserts int
+	sheet    Sheet
+	lines    []Line
+	reasons  []ReasonCode
+	recon    map[string]ReconRun // key: year|month|branch
+	inserts  int
+	postedAt time.Time        // the instant the post committed at (the count's own instant)
+	clock    func() time.Time // the fake's one clock (see newFakeStore)
 }
 
 func newFakeStore() *fakeStore {
@@ -26,6 +28,11 @@ func newFakeStore() *fakeStore {
 			{Code: "SPOIL", AccountCode: "5900", IsActive: true},
 		},
 		recon: map[string]ReconRun{},
+		// THE FAKE'S ONE CLOCK: the post instant and the answer the store gives for it are one
+		// reading, the way the inventory's fake store reads one clock for its own instant. A
+		// pinned calendar date here would meet the suite's real clock, and the dated time bomb
+		// audit would rightly stop the build.
+		clock: time.Now,
 	}
 }
 
@@ -114,7 +121,12 @@ func (f *fakeStore) UpdateLinePostedTx(_ context.Context, _ pgx.Tx, lineID strin
 }
 func (f *fakeStore) MarkSheetPostedTx(_ context.Context, _ pgx.Tx, _ string) error {
 	f.sheet.Status = StatusPosted
+	// The posting transaction's own clock: the same instant the COUNT move it wrote carries.
+	f.postedAt = f.clock()
 	return nil
+}
+func (f *fakeStore) PostedInstant(_ context.Context, _ string) (time.Time, error) {
+	return f.postedAt, nil
 }
 func (f *fakeStore) GetReconRun(_ context.Context, y, m int, b string) (ReconRun, bool, error) {
 	r, ok := f.recon[reconKey(y, m, b)]
@@ -166,11 +178,13 @@ func (s *fakeStock) PostCountAdjustmentTx(_ context.Context, _ pgx.Tx, _, _, _ s
 
 type fakeGL struct {
 	posted map[string]GLJournal
+	last   GLJournal // the journal the last call carried, dedup or not
 	count  int
 }
 
 func newFakeGL() *fakeGL { return &fakeGL{posted: map[string]GLJournal{}} }
 func (g *fakeGL) PostJournal(_ context.Context, in GLJournal) (string, error) {
+	g.last = in
 	if _, ok := g.posted[in.IdempotencyKey]; ok {
 		return "j-" + in.IdempotencyKey, nil // dedup, no new journal
 	}
@@ -251,7 +265,7 @@ func TestBuildAdjustmentJournal_ReasonAccountMatrix(t *testing.T) {
 		{ProductID: "p3", ReasonCode: "SPOIL", VarianceValueCents: -600},   // loss: CR 1200, DR 5900
 		{ProductID: "p4", ReasonCode: "DAMAGE", VarianceValueCents: 0},     // skipped
 	}
-	j, err := buildAdjustmentJournal("s1", "CS-1", "br1", "1200", reasons, lines)
+	j, err := buildAdjustmentJournal("s1", "CS-1", "br1", "1200", reasons, lines, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +303,7 @@ func TestBuildAdjustmentJournal_ReasonAccountMatrix(t *testing.T) {
 func TestBuildAdjustmentJournal_MissingReasonAccount(t *testing.T) {
 	_, err := buildAdjustmentJournal("s1", "CS-1", "br1", "1200", map[string]string{}, []Line{
 		{ProductID: "p1", ReasonCode: "DAMAGE", VarianceValueCents: -100},
-	})
+	}, time.Time{})
 	if err == nil {
 		t.Fatal("expected error for unmapped reason account")
 	}
@@ -334,6 +348,43 @@ func TestPostCountedSheet_CrossModule_Idempotent(t *testing.T) {
 	}
 	if gp.count != 1 {
 		t.Errorf("replay posted a duplicate journal: %d", gp.count)
+	}
+}
+
+// TestPostCountedSheet_TheJournalCarriesTheCountsOwnInstant is W2-5 fix r10 (S5's P2-7): the
+// variance journal is dated at the count's own instant, the one its COUNT move carries, so the
+// two sides of one count are cut at the same moment. A journal dated at the moment it is posted
+// puts the two sides on two sides of a month end, and the close refuses the month by the count's
+// whole variance.
+func TestPostCountedSheet_TheJournalCarriesTheCountsOwnInstant(t *testing.T) {
+	st := newFakeStore()
+	st.sheet = Sheet{ID: "s1", SheetNo: "CS-1", BranchID: "br1", Status: StatusCounted, CountedBy: "maker", ApprovedBy: "checker"}
+	st.lines = []Line{{ID: "l1", ProductID: "p1", LocationID: "loc1", SnapshotQtyBase: 10, VarianceBase: -3, ReasonCode: "DAMAGE"}}
+	gp := newFakeGL()
+
+	if err := postCountedSheet(context.Background(), st, &fakeStock{avg: 350}, gp, fakeRule{inv: "1200"}, "s1"); err != nil {
+		t.Fatalf("the post: %v", err)
+	}
+	journal := gp.posted["invcount.count:s1"]
+	if journal.DocumentDate.IsZero() {
+		t.Fatalf("the count's variance journal names no instant: it is dated at the moment it is posted, a different instant from the COUNT move it books")
+	}
+	if !journal.DocumentDate.Equal(st.postedAt) {
+		t.Fatalf("the count's variance journal is dated at %s, want the count's own instant %s",
+			journal.DocumentDate.Format(time.RFC3339Nano), st.postedAt.Format(time.RFC3339Nano))
+	}
+
+	// The re-press carries the same instant, the count's own and not the moment it was pressed
+	// again: the sheet's recorded post instant is the count's own, and the re-press reads it.
+	if err := postCountedSheet(context.Background(), st, &fakeStock{avg: 350}, gp, fakeRule{inv: "1200"}, "s1"); err != nil {
+		t.Fatalf("the re-press: %v", err)
+	}
+	if gp.count != 1 {
+		t.Fatalf("the re-press posted a second journal: %d", gp.count)
+	}
+	if !gp.last.DocumentDate.Equal(st.postedAt) {
+		t.Fatalf("the re-press carried the instant %s, want the count's own instant %s",
+			gp.last.DocumentDate.Format(time.RFC3339Nano), st.postedAt.Format(time.RFC3339Nano))
 	}
 }
 

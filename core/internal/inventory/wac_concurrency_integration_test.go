@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestWACLock_ReceiptVsLandedCost_NoLostUpdate(t *testing.T) {
@@ -91,7 +92,7 @@ func TestWACLock_ReceiptVsLandedCost_NoLostUpdate(t *testing.T) {
 			}
 			defer tx.Rollback(ctx)
 			start.Wait()
-			if _, _, _, err := svc.capitalizeLandedSnap(ctx, tx, p, branch1, freight); err != nil {
+			if _, _, _, err := svc.capitalizeLandedSnap(ctx, tx, p, branch1, freight, time.Now(), ""); err != nil {
 				errCh <- fmt.Errorf("apply: %w", err)
 				return
 			}

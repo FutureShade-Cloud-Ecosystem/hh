@@ -884,7 +884,9 @@ func (a lienGLPoster) PostJournal(ctx context.Context, in lien.GLJournal) (strin
 }
 
 // invcountGLPoster satisfies invcount.GLPoster over glSvc.PostExternal
-// (the reason-coded variance journal).
+// (the reason-coded variance journal). The document date rides: the count's variance
+// journal is dated at the count's own instant, the one its COUNT move carries, so the two
+// sides of one count are cut at the same moment (W2-5 fix r10, S5's P2-7).
 type invcountGLPoster struct{ svc *gl.Service }
 
 func (a invcountGLPoster) PostJournal(ctx context.Context, in invcount.GLJournal) (string, error) {
@@ -892,7 +894,7 @@ func (a invcountGLPoster) PostJournal(ctx context.Context, in invcount.GLJournal
 	for i, l := range in.Lines {
 		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
 	}
-	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, DocumentDate: in.DocumentDate, Lines: lines})
 }
 
 // finworldPurchasingComposition builds the purchasing service the way the production wiring does,
@@ -950,12 +952,12 @@ func landedGLExtLines(in []landedcost.GLLine) []gl.ExternalLine {
 }
 
 func (a landedGLPoster) PostJournal(ctx context.Context, in landedcost.GLJournal) (string, error) {
-	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: landedGLExtLines(in.Lines)})
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, DocumentDate: in.DocumentDate, Lines: landedGLExtLines(in.Lines)})
 }
 
 // PostJournalTx is PostJournal through the caller's transaction (gl.Service.PostExternalTx).
 func (a landedGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in landedcost.GLJournal) (string, error) {
-	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: landedGLExtLines(in.Lines)})
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, DocumentDate: in.DocumentDate, Lines: landedGLExtLines(in.Lines)})
 }
 
 // warrantyGLPoster satisfies warranty.GLPoster over glSvc.PostExternal
@@ -1743,16 +1745,16 @@ func (a landedAdapter) ReceivedLinesForPO(ctx context.Context, poID string) ([]l
 	return out, nil
 }
 
-func (a landedAdapter) CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (int64, error) {
-	return a.svc.CapitalizeLandedCostTx(ctx, tx, productID, branchID, allocatedCadCents)
+func (a landedAdapter) CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64, at time.Time, sourceRefID string) (int64, error) {
+	return a.svc.CapitalizeLandedCostTx(ctx, tx, productID, branchID, allocatedCadCents, at, sourceRefID)
 }
 
-func (a landedAdapter) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (int64, int64, bool, error) {
-	return a.svc.CapitalizeLandedCostSnapTx(ctx, tx, productID, branchID, allocatedCadCents)
+func (a landedAdapter) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64, at time.Time, sourceRefID string) (int64, int64, bool, error) {
+	return a.svc.CapitalizeLandedCostSnapTx(ctx, tx, productID, branchID, allocatedCadCents, at, sourceRefID)
 }
 
-func (a landedAdapter) RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64) (int64, error) {
-	return a.svc.RestoreLandedCostTx(ctx, tx, productID, branchID, snapAvg, absorbed)
+func (a landedAdapter) RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64, at time.Time, sourceRefID string) (int64, error) {
+	return a.svc.RestoreLandedCostTx(ctx, tx, productID, branchID, snapAvg, absorbed, at, sourceRefID)
 }
 
 // w4cStockReceiver satisfies purchasing.StockReceiver over

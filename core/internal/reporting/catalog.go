@@ -370,6 +370,10 @@ SELECT p.sku::text                                                    AS sku,
 	// to_location_id for stock arriving). Summing qty_base therefore totals movement VOLUME, which is
 	// what a movement log is for; the net position is inventory_valuation's job. Grouping by move_type
 	// keeps the two directions on separate rows, so a reader is never adding a receipt to a pick.
+	//
+	// A VALUE move (0453, W2-5B) is left out: it moves NO quantity (a landed-cost capitalization, a retro
+	// capitalization or a restore), and its value_cents is the value the event moved, not the value of goods
+	// that moved. Mixing it into this log would put a valuation delta in the movement volume's money column.
 	"inventory_movement": {
 		sql: `
 SELECT sm.occurred_at::date::text            AS day,
@@ -385,6 +389,7 @@ SELECT sm.occurred_at::date::text            AS day,
    AND sm.occurred_at <  ($2::date + 1)
    AND ($3::uuid IS NULL OR sm.branch_id = $3::uuid)
    AND ($4::text = '' OR sm.move_type = $4::text)
+   AND sm.move_type <> 'VALUE'
  GROUP BY 1, 2, 3, 4
  ORDER BY 1, 3, 2`,
 		columns: []Column{

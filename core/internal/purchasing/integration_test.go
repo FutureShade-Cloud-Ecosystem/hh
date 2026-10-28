@@ -398,14 +398,14 @@ func (a landedBridge) ReceivedLinesForPO(ctx context.Context, poID string) ([]la
 	return out, nil
 }
 
-func (a landedBridge) CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, cents int64) (int64, error) {
-	return a.svc.CapitalizeLandedCostTx(ctx, tx, productID, branchID, cents)
+func (a landedBridge) CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, cents int64, at time.Time, sourceRefID string) (int64, error) {
+	return a.svc.CapitalizeLandedCostTx(ctx, tx, productID, branchID, cents, at, sourceRefID)
 }
 
-func (a landedBridge) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, productID, branchID string, cents int64) (int64, int64, bool, error) {
-	return a.svc.CapitalizeLandedCostSnapTx(ctx, tx, productID, branchID, cents)
+func (a landedBridge) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, productID, branchID string, cents int64, at time.Time, sourceRefID string) (int64, int64, bool, error) {
+	return a.svc.CapitalizeLandedCostSnapTx(ctx, tx, productID, branchID, cents, at, sourceRefID)
 }
 
-func (a landedBridge) RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64) (int64, error) {
-	return a.svc.RestoreLandedCostTx(ctx, tx, productID, branchID, snapAvg, absorbed)
+func (a landedBridge) RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64, at time.Time, sourceRefID string) (int64, error) {
+	return a.svc.RestoreLandedCostTx(ctx, tx, productID, branchID, snapAvg, absorbed, at, sourceRefID)
 }

@@ -38,6 +38,12 @@ type fakeStore struct {
 	reservations []Reservation
 	resSeq       int
 	policies     map[string]AllocationPolicy // branch → configured policy (absent = system default)
+
+	// clock is the fake's ONE clock: the fake has no database and no transaction to read one from,
+	// so MovementInstant and ExpireDueReservations both read this field and never two different
+	// clocks. newFakeStore defaults it to time.Now; a test that wants a pinned instant sets the
+	// field to a func of its own.
+	clock func() time.Time
 }
 
 func newFakeStore() *fakeStore {
@@ -49,10 +55,15 @@ func newFakeStore() *fakeStore {
 		lineReceived: map[string]float64{},
 		reserved:     map[string]float64{},
 		policies:     map[string]AllocationPolicy{},
+		clock:        time.Now,
 	}
 }
 
 func key(a, b string) string { return a + "|" + b }
+
+func (f *fakeStore) MovementInstant(_ context.Context, _ pgx.Tx) (time.Time, error) {
+	return f.clock(), nil
+}
 
 func (f *fakeStore) POHeaderForReceipt(_ context.Context, _ pgx.Tx, _ string) (poHeader, error) {
 	return f.hdr, nil
@@ -91,6 +102,9 @@ func (f *fakeStore) HasShipMovesForOrderTx(_ context.Context, _ pgx.Tx, orderID 
 }
 func (f *fakeStore) OnHandQtyBranch(_ context.Context, _ pgx.Tx, productID, branchID string) (float64, error) {
 	return f.onhand[key(productID, branchID)], nil
+}
+func (f *fakeStore) BalanceRows(_ context.Context, _ pgx.Tx, productID, branchID string) ([]BalanceRow, error) {
+	return []BalanceRow{{LocationID: branchID, OnHandBase: f.onhand[key(productID, branchID)]}}, nil
 }
 func (f *fakeStore) UpsertBalanceDelta(_ context.Context, _ pgx.Tx, productID, _, branchID string, delta float64) error {
 	f.onhand[key(productID, branchID)] += delta
@@ -209,7 +223,7 @@ func (f *fakeStore) CloseReservationByID(_ context.Context, _ pgx.Tx, reservatio
 }
 
 func (f *fakeStore) ExpireDueReservations(_ context.Context, _ pgx.Tx) (int, error) {
-	now := time.Now()
+	now := f.clock()
 	return f.closeMatching(ResExpired, func(r Reservation) bool {
 		if r.ExpiresAt == "" {
 			return false
@@ -237,6 +251,9 @@ func (f *fakeStore) SnapshotOnHand(context.Context, pgx.Tx, string) ([]CountSnap
 	return nil, nil
 }
 func (f *fakeStore) StockValueCents(context.Context, pgx.Tx, string) (int64, error) {
+	return 0, nil
+}
+func (f *fakeStore) StockValueAsOfCents(context.Context, pgx.Tx, time.Time, string) (int64, error) {
 	return 0, nil
 }
 func (f *fakeStore) ReceivedLinesForPO(context.Context, string) ([]ReceivedLine, error) {
