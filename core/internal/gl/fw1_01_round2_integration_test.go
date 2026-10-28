@@ -232,11 +232,19 @@ func TestIntegration_FW1_01R2_NeverCreatesAPastYear(t *testing.T) {
 	clockAt := time.Date(house, 6, 15, 12, 0, 0, 0, loc)
 	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeGlobal}, clockAt)
 
+	// The one shared resolver, the way the production path stamps its branch: this leg writes
+	// its draft straight through the store seam, so the branch is its own to stamp
+	// (FW1-08b part B round 2: migration 0446's CHECK refuses a line with no branch).
+	branchID, berr := svc.resolveBranchID(ctx, "")
+	if berr != nil {
+		t.Fatalf("the head office branch: %v", berr)
+	}
 	id, _, err := svc.store.InsertJournal(ctx, journalDraft{
 		Source:     SourceAdjustment,
 		Memo:       "FW1-01 round 2 past document",
 		Status:     StatusPosted,
 		OccurredAt: time.Date(past, 6, 15, 12, 0, 0, 0, loc),
+		BranchID:   branchID,
 		Lines: []draftLine{
 			{AccountCode: "1000", DebitCents: 700, Memo: "bank"},
 			{AccountCode: "1020", CreditCents: 700, Memo: "undeposited"},

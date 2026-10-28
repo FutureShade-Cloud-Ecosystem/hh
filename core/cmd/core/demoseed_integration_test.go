@@ -423,8 +423,8 @@ func freshMigratedDB(t *testing.T, suffix string) *pgxpool.Pool {
 	return freshMigratedDBWithout(t, suffix, "")
 }
 
-// freshMigratedDBWithout is freshMigratedDB with one migration file left unapplied (by file name; "" skips
-// none), for a test that needs the database as it stood just before that file.
+// freshMigratedDBWithout is freshMigratedDB with migration files left unapplied (by file name, comma
+// separated; "" skips none), for a test that needs the database as it stood just before them.
 func freshMigratedDBWithout(t *testing.T, suffix, skip string) *pgxpool.Pool {
 	t.Helper()
 	base, ok := os.LookupEnv("DATABASE_URL")
@@ -457,9 +457,15 @@ func freshMigratedDBWithout(t *testing.T, suffix, skip string) *pgxpool.Pool {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no migrations found (err=%v)", err)
 	}
+	skips := map[string]bool{}
+	for _, one := range strings.Split(skip, ",") {
+		if one = strings.TrimSpace(one); one != "" {
+			skips[one] = true
+		}
+	}
 	sort.Strings(files)
 	for _, f := range files {
-		if skip != "" && filepath.Base(f) == skip {
+		if skips[filepath.Base(f)] {
 			continue
 		}
 		body, err := os.ReadFile(f)

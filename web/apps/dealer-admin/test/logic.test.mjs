@@ -40,12 +40,15 @@ import {
   ACTION_OPTIONS,
   auditEmptyWords,
   actorWords,
-  entityWords,
   filtersActive,
   isSensitive,
   sinceWire,
   whenWords,
 } from "../src/audit-logic.ts";
+// UX-106 round 4: the new words are read through the namespace, so a name the
+// logic does not carry yet is a red assertion and not a red module load.
+import * as auditLogic from "../src/audit-logic.ts";
+import * as dealerLogic from "../src/dealer-logic.ts";
 
 const ROLES = [
   { code: "GENERAL_MANAGER", name: "General Manager", tier: 1, scope: "GLOBAL" },
@@ -69,15 +72,27 @@ test("the yard is the tail of the dealer's own branch name", () => {
   assert.equal(shortBranch("Point Loma"), "Point Loma");
 });
 
-test("branch chips name the branches the staff row reaches; an unknown id shows its fragment", () => {
+test("a branch reads as its own name, and one the catalog does not know reads as a word", () => {
+  // UX-106 round 4: the audit drawer names the branch through the same lookup
+  // the staff register uses, and a branch the branches route does not know
+  // reads as the house placeholder word, never as its id.
+  const branches = [{ id: "b-plm", code: "PLM", name: "Gable Landscape Supply - Point Loma", is_active: true }];
+  assert.equal(dealerLogic.branchName?.("b-plm", branches), "Point Loma");
+  assert.equal(dealerLogic.branchName?.("b-nope", branches), "Unknown branch");
+  assert.equal(dealerLogic.branchName?.("", branches), "");
+});
+
+test("branch chips name the branches the staff row reaches; an unknown branch reads as a word, never as its id", () => {
   const branches = [
     { id: "b-0001", name: "Gable Landscape Supply - Point Loma" },
     { id: "b-0002", name: "Gable Landscape Supply - Julian" },
   ];
   assert.deepEqual(branchChips(["b-0002"], branches), [{ label: "Julian", known: true }]);
   assert.deepEqual(branchChips([], branches), []);
+  // UX-106 round 3: a branch the catalog does not know is a word, never the
+  // id's own first block.
   const unknown = branchChips(["9a11e111-0000-4000-9000-0000000000ff"], branches);
-  assert.deepEqual(unknown, [{ label: "9a11e111", known: false }]);
+  assert.deepEqual(unknown, [{ label: "Unknown branch", known: false }]);
 });
 
 test("a role in the catalog is assignable; a platform role is read-only; no role is still assignable", () => {
@@ -179,7 +194,9 @@ test("the two surfaces are the two substrates, in the order the screen renders t
 test("the configurator's labels are sentences, never a stored id", () => {
   assert.equal(platformActionLabel("pos.counter", "pay"), "Take payment, complete the sale");
   assert.equal(platformActionLabel("app.shell", "sale.cash.new"), "Start a new sale at the till");
-  assert.equal(platformActionLabel("app.shell", "not.in.registry"), "not.in.registry");
+  // UX-106 round 3: an action the registry does not name reads as a word.
+  // The stored id must not reach a person as text.
+  assert.equal(platformActionLabel("app.shell", "not.in.registry"), "Unknown action");
 });
 
 test("a stored binding a shell grammar cannot round trip is not bindable", () => {
@@ -293,11 +310,13 @@ test("the sensitive actions badge, and the rest stay neutral", () => {
   assert.ok(ACTION_OPTIONS.includes("PRICE_OVERRIDE"));
 });
 
-test("the actor is a role label when the server sent one, else the id's own block", () => {
+test("the actor is a role label when the server sent one, else a word, never the id's own block", () => {
   // Production rows read the role word empty (the core attributes by the
   // linked users id); the role path is the coarse trail's fallback.
   assert.equal(actorWords({ actor_role: "GENERAL_MANAGER", actor_id: "da110000-0000-4000-9000-000000000001" }), "general manager");
-  assert.equal(actorWords({ actor_id: "da110000-0000-4000-9000-000000000001" }), "da110000");
+  // UX-106 round 3: an actor the trail cannot name reads as a word, never as
+  // the id's own first block.
+  assert.equal(actorWords({ actor_id: "da110000-0000-4000-9000-000000000001" }), "Unknown actor");
   assert.equal(actorWords({}), "No actor recorded");
 });
 
@@ -306,10 +325,14 @@ test("the when words read as a person reads a moment", () => {
   assert.equal(whenWords("not-a-date"), "not-a-date");
 });
 
-test("the entity is the type and, when the row carries one, the id", () => {
-  assert.equal(entityWords({ entity_type: "pos.sale", entity_id: "sa1" }), "pos.sale / sa1");
-  assert.equal(entityWords({ entity_type: "pos.sale" }), "pos.sale");
-  assert.equal(entityWords({ entity_type: "" }), "");
+test("the entity reads as a type in words and its own handle, never one string", () => {
+  // UX-106 round 4: the type is words a person reads, the handle is the
+  // record's own, and the two are never glued into one string.
+  assert.equal(auditLogic.entityTypeWords?.({ entity_type: "pos.sale", entity_id: "sa1" }), "pos sale");
+  assert.equal(auditLogic.entityTypeWords?.({ entity_type: "pricing.override" }), "pricing override");
+  assert.equal(auditLogic.entityTypeWords?.({ entity_type: "" }), "");
+  assert.equal(auditLogic.entityIdWords?.({ entity_type: "pos.sale", entity_id: "sa1" }), "sa1");
+  assert.equal(auditLogic.entityIdWords?.({ entity_type: "pos.sale" }), "");
 });
 
 test("empty because of the filters and empty because nothing happened are different sentences", () => {
