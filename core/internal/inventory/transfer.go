@@ -305,6 +305,7 @@ func (s *Service) ReceiveTransfer(ctx context.Context, transferID, actorID strin
 	}
 
 	var totalValue int64
+	var totalRounding int64
 	for _, ln := range lines {
 		outstanding := ln.QtyShippedBase - ln.QtyReceivedBase
 		if outstanding <= qtyEpsilon {
@@ -340,6 +341,26 @@ func (s *Service) ReceiveTransfer(ctx context.Context, transferID, actorID strin
 				return Transfer{}, err
 			}
 		}
+		// subledgerDelta is the destination's exact change in round(avg x on-hand),
+		// the figure the receive's GL postings sum to; it is stamped on the inbound
+		// move so the as-of stock read unwinds the transfer to the cent (W2-5 round
+		// 3, K3's P1 3). Like applyReceipt's blend, the new average revalues the units
+		// already on hand, and the difference against the transferred value is the
+		// WAC integer-cent rounding: without the stamp the inbound move answered
+		// only outstanding x unit cost and the rounding cent had no exact move or
+		// journal, so every earlier as-of answer kept it. An on-hand of zero (or a
+		// beyond-grain figure the helpers refused) absorbs exactly the transferred
+		// value, the PO receipt's own rule.
+		subledgerDelta := value
+		var rounding int64
+		if base > 0 {
+			oldSubledgerVal, errOld := qtyTimesCents(base, oldAvg)
+			newSubledgerVal, errNew := qtyTimesCents(base+outstanding, newAvg)
+			if errOld == nil && errNew == nil {
+				rounding = (newSubledgerVal - oldSubledgerVal) - value
+				subledgerDelta = newSubledgerVal - oldSubledgerVal
+			}
+		}
 		if err := s.db().UpsertBranchCost(ctx, tx, ln.ProductID, hdr.ToBranchID, newAvg); err != nil {
 			return Transfer{}, err
 		}
@@ -348,10 +369,16 @@ func (s *Service) ReceiveTransfer(ctx context.Context, transferID, actorID strin
 			ProductID: ln.ProductID, BranchID: hdr.ToBranchID, ToLocation: hdr.ToBranchID,
 			UOM: ln.UOM, MoveType: MoveTransfer, QtyBase: outstanding, UnitCostCents: ln.UnitCostCents,
 			ValueCents: value, SourceType: transferSource, SourceRefID: hdr.ID,
-			Reason: "transfer in " + hdr.TransferNo,
+			Reason:   "transfer in " + hdr.TransferNo,
+			Metadata: map[string]any{"wac_value_delta_cents": subledgerDelta},
 		})
 		if err != nil {
 			return Transfer{}, err
+		}
+		if total, ok := addCents(totalRounding, rounding); ok {
+			totalRounding = total
+		} else {
+			return Transfer{}, fmt.Errorf("inventory: transfer %s total rounding exceeds integer cents", hdr.TransferNo)
 		}
 		if err := s.db().UpsertBalanceDelta(ctx, tx, ln.ProductID, hdr.ToBranchID, hdr.ToBranchID, outstanding); err != nil {
 			return Transfer{}, err
@@ -368,6 +395,18 @@ func (s *Service) ReceiveTransfer(ctx context.Context, transferID, actorID strin
 
 	if err := s.repo.SetTransferReceived(ctx, tx, hdr.ID, actorID); err != nil {
 		return Transfer{}, err
+	}
+	// Book the blend's rounding at the destination through the same journal
+	// shape a PO receipt's WAC rounding uses (postPOReceivedRounding), before
+	// the leg journal it adjusts: the rounding and the leg are one fate, the
+	// transfer posting convention.
+	if totalRounding != 0 {
+		if err := s.postTransferReceivedRoundingTx(ctx, tx, transferPost{
+			TransferID: hdr.ID, TransferNo: hdr.TransferNo,
+			BranchID: hdr.ToBranchID,
+		}, totalRounding); err != nil {
+			return Transfer{}, err
+		}
 	}
 	if err := s.postTransferLegTx(ctx, tx, transferPost{
 		TransferID: hdr.ID, TransferNo: hdr.TransferNo,
@@ -477,12 +516,7 @@ func (s *Service) postTransferLegTx(ctx context.Context, tx pgx.Tx, p transferPo
 		return errNoRules
 	}
 	resolveRule := func(role string) (string, error) {
-		if tx != nil {
-			if rr, ok := s.rules.(RuleResolverTx); ok {
-				return rr.ResolveRuleTx(ctx, tx, event, role, p.BranchID)
-			}
-		}
-		return s.rules.ResolveRule(ctx, event, role, p.BranchID)
+		return s.resolveTransferRule(ctx, tx, event, role, p.BranchID)
 	}
 	invCode, err := resolveRule("inventory")
 	if err != nil {
@@ -539,4 +573,77 @@ func (s *Service) postTransferLegTx(ctx context.Context, tx pgx.Tx, p transferPo
 func (s *Service) postTransferLegCommitting(ctx context.Context, jr GLJournal) error {
 	_, err := s.gl.PostJournal(ctx, jr)
 	return err
+}
+
+// resolveTransferRule resolves one posting rule for a transfer event on the caller's
+// transaction when the resolver supports it (the receiving path holds one), the same way
+// postTransferLegTx resolves its legs.
+func (s *Service) resolveTransferRule(ctx context.Context, tx pgx.Tx, event, role, branchID string) (string, error) {
+	if tx != nil {
+		if rr, ok := s.rules.(RuleResolverTx); ok {
+			return rr.ResolveRuleTx(ctx, tx, event, role, branchID)
+		}
+	}
+	return s.rules.ResolveRule(ctx, event, role, branchID)
+}
+
+// postTransferReceivedRoundingTx posts the WAC integer-cent rounding adjustment journal on a
+// transfer receive (W2-5 round 3, K3's P1 3): the destination blend revalued the units already
+// on hand, and the difference against the transferred value is booked here through the same
+// journal shape a PO receipt's WAC rounding uses (postPOReceivedRounding): DR inventory / CR
+// expense when the blend raised the value, the mirror when it lowered it. The expense leg
+// resolves through the inventory.adjusted rule, the PO rounding's own rule, never a literal
+// except its fallback. The journal rides the receive's own transaction, the transfer posting
+// convention (the move and its journals are one fate), and its idempotency key is the receive
+// event's own with the rounding suffix, so a retry after a failure posts exactly one journal.
+// Its own function so the branch census finds one journal writer per function.
+func (s *Service) postTransferReceivedRoundingTx(ctx context.Context, tx pgx.Tx, p transferPost, roundingCents int64) error {
+	if p.TransferID == "" {
+		return fmt.Errorf("inventory: %s.rounding missing transfer id", EventTransferReceived)
+	}
+	if s.gl == nil {
+		return errNoGLPoster
+	}
+	if s.rules == nil {
+		return errNoRules
+	}
+	invCode, err := s.resolveTransferRule(ctx, tx, EventTransferReceived, "inventory", p.BranchID)
+	if err != nil {
+		return err
+	}
+	expCode, err := s.resolveTransferRule(ctx, tx, "inventory.adjusted", "expense", p.BranchID)
+	if err != nil || expCode == "" {
+		expCode = "5200"
+	}
+	amt := roundingCents
+	if amt < 0 {
+		amt = -amt
+	}
+	var lines []GLLine
+	if roundingCents > 0 {
+		lines = []GLLine{
+			{AccountCode: invCode, DebitCents: amt, Memo: "WAC integer-cent rounding"},
+			{AccountCode: expCode, CreditCents: amt, Memo: "WAC integer-cent rounding"},
+		}
+	} else {
+		lines = []GLLine{
+			{AccountCode: expCode, DebitCents: amt, Memo: "WAC integer-cent rounding"},
+			{AccountCode: invCode, CreditCents: amt, Memo: "WAC integer-cent rounding"},
+		}
+	}
+	jr := GLJournal{
+		Source:         "ADJUSTMENT",
+		SourceRefID:    p.TransferID,
+		IdempotencyKey: EventTransferReceived + ".rounding:" + p.TransferID,
+		Memo:           "WAC integer-cent rounding on transfer receive " + p.TransferNo,
+		BranchID:       p.BranchID,
+		Lines:          lines,
+	}
+	if tx != nil {
+		if gp, ok := s.gl.(GLPosterTx); ok {
+			_, err := gp.PostJournalTx(ctx, tx, jr)
+			return err
+		}
+	}
+	return s.postTransferLegCommitting(ctx, jr)
 }

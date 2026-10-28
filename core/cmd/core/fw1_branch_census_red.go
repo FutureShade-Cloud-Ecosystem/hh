@@ -260,6 +260,12 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		BranchSource: "p.BranchID (from_branch_id on ship, to_branch_id on receive; two-branch transfer question is FW1-07), passed through postTransferLegTx",
 	},
 	{
+		File:         "core/internal/inventory/transfer.go",
+		Func:         "(*Service).postTransferReceivedRoundingTx",
+		Kind:         "PostJournalTx",
+		BranchSource: "p.BranchID (to_branch_id on receive; the rounding journal revalues the destination's own stock, so the destination is the branch it stamps, W2-5 round 3)",
+	},
+	{
 		File:         "core/internal/landedcost/service.go",
 		Func:         "(*Service).postJournal",
 		Kind:         "PostJournal",
