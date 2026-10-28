@@ -98,6 +98,20 @@ export function branchChips(branchIds: readonly string[], branches: readonly Bra
   });
 }
 
+/**
+ * A branch's name as a dealer reads it: the yard's own short name when the
+ * branches route knows the id, else the house placeholder word.
+ *
+ * UX-106 round 4: the audit drawer's branch row names the branch through this
+ * same lookup, so the register and the trail say the same yard the same way.
+ * An empty id is no branch at all, and it says nothing rather than "unknown".
+ */
+export function branchName(branchId: string, branches: readonly BranchRow[]): string {
+  if (branchId === "") return "";
+  const hit = branches.find((b) => b.id === branchId);
+  return hit === undefined ? UNKNOWN_BRANCH : shortBranch(hit.name);
+}
+
 // -- the create form ---------------------------------------------------------------------------------
 //
 // The core has no create staff route yet (the parity ledger holds the whole

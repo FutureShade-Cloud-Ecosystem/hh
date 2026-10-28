@@ -280,10 +280,15 @@ export const dealerStyles = css`
   /* The neutral chip: the house's own placeholder pill (the design system
      carries the same class). UX-106 round 3 wears it on a thing the screen
      cannot name: an unknown branch. It says what it does not know, and it
-     wears no other colour's meaning. */
+     wears no other colour's meaning.
+     UX-106 round 4 (K3 P3): the border takes the design system's own line
+     token, --hh-line, the way the design system's chip-neutral wears it
+     (design-system/src/primitives.ts). It wore --hh-control-line, which is a
+     different token with a different value in both themes, so the claim that
+     the two matched was not exact. */
   .chip-neutral {
     color: var(--hh-text-dim);
-    border-color: var(--hh-control-line);
+    border-color: var(--hh-line);
   }
 
   /* -- the register's table ---------------------------------------------------------- */
@@ -571,6 +576,29 @@ export const dealerStyles = css`
   .chip-sensitive {
     color: var(--hh-danger);
     border-color: var(--hh-danger);
+  }
+
+  /* The trail's entity: the type in words on its own line, and the record's
+     handle on the next one, under the caption that names it (UX-106 round 4).
+     A handle with no caption reads as a code token that fell out of a
+     formatter, and the type and the handle glued together read as one
+     string. */
+  .audit-entity {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-4);
+    align-items: flex-start;
+  }
+  .audit-entity-type {
+    white-space: nowrap;
+  }
+  .audit-entity-id {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--hh-s-8);
+  }
+  .audit-entity-id .k {
+    color: var(--hh-text-dim);
   }
 
   /* The drawer's pairs flow across the width instead of stranding a column
