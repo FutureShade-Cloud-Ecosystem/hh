@@ -52,32 +52,9 @@ type LandedCostPayableReader interface {
 	OpenPayablesAsOf(ctx context.Context, asOf time.Time, branchIDs []string, global bool) ([]LandedCostPayable, error)
 }
 
-// SupplierPayment is an external supplier payment journal posted to GL 2100.
-type SupplierPayment struct {
-	JournalID      string
-	SourceRefID    string
-	IdempotencyKey string
-	BranchID       string
-	Memo           string
-	AmountCents    int64
-	PostedAt       time.Time
-}
-
-// SupplierPaymentReader reads external supplier payment journals on GL 2100
-// that were posted outside purchasing's own bill-instalment payment path.
-type SupplierPaymentReader interface {
-	ExternalSupplierPaymentsAsOf(ctx context.Context, asOf time.Time, branchIDs []string, global bool) ([]SupplierPayment, error)
-}
-
 // WithLandedCostPayables binds the landed-cost payable reader seam.
 func (s *Service) WithLandedCostPayables(r LandedCostPayableReader) *Service {
 	s.landedPayables = r
-	return s
-}
-
-// WithSupplierPayments binds the external supplier payment reader seam.
-func (s *Service) WithSupplierPayments(r SupplierPaymentReader) *Service {
-	s.supplierPayments = r
 	return s
 }
 
@@ -327,14 +304,6 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 	candidates, err := s.repo.OpenBillsAsOf(ctx, effectiveAsOf, zone.Name(), reach)
 	if err != nil {
 		return APAgingPage{}, err
-	}
-
-	if s.supplierPayments != nil && len(candidates) > 0 {
-		extPayments, err := s.supplierPayments.ExternalSupplierPaymentsAsOf(ctx, effectiveAsOf, reach.BranchIDs, reach.Global)
-		if err != nil {
-			return APAgingPage{}, err
-		}
-		applyExternalSupplierPayments(candidates, extPayments)
 	}
 
 	vendorIndex := make(map[string]int)
@@ -623,66 +592,4 @@ func addBucketCents(row *APAgingRow, page *APAgingPage, bucket string, cents int
 	}
 	row.TotalCents += cents
 	page.TotalCents += cents
-}
-
-func applyExternalSupplierPayments(candidates []apBillCandidate, payments []SupplierPayment) {
-	for _, p := range payments {
-		rem := p.AmountCents
-		if rem <= 0 {
-			continue
-		}
-		// Pass 1: exact match by source_ref_id, finworld:vpay:<bill_no>, or bill_no in memo.
-		for i := range candidates {
-			if rem <= 0 {
-				break
-			}
-			c := &candidates[i]
-			open := c.TotalCents - c.PaidCents
-			if open <= 0 {
-				continue
-			}
-			matched := (p.SourceRefID != "" && p.SourceRefID == c.BillID) ||
-				(p.IdempotencyKey != "" && p.IdempotencyKey == "finworld:vpay:"+c.BillNo) ||
-				(c.BillNo != "" && strings.Contains(p.Memo, c.BillNo))
-			if !matched {
-				continue
-			}
-			apply := rem
-			if apply > open {
-				apply = open
-			}
-			c.PaidCents += apply
-			rem -= apply
-		}
-		if rem <= 0 {
-			continue
-		}
-		// Pass 2: FIFO across oldest open bills in the same branch (or any branch if payment has no branch).
-		bestOrder := make([]int, 0, len(candidates))
-		for i := range candidates {
-			if p.BranchID != "" && candidates[i].BranchID != p.BranchID {
-				continue
-			}
-			if candidates[i].TotalCents-candidates[i].PaidCents <= 0 {
-				continue
-			}
-			bestOrder = append(bestOrder, i)
-		}
-		for _, idx := range bestOrder {
-			if rem <= 0 {
-				break
-			}
-			c := &candidates[idx]
-			open := c.TotalCents - c.PaidCents
-			if open <= 0 {
-				continue
-			}
-			apply := rem
-			if apply > open {
-				apply = open
-			}
-			c.PaidCents += apply
-			rem -= apply
-		}
-	}
 }
