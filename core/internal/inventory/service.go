@@ -447,9 +447,16 @@ func (s *Service) decrementOneShipLine(ctx context.Context, tx pgx.Tx, orderID, 
 		return 0, err
 	}
 	if rounding := change + value; rounding != 0 {
+		// An issue that took the provisional fallback cost revalues every unit still on hand
+		// from the old average to the fallback, so its difference is a REVALUATION, not the
+		// rounding of a cent (S5's P3-6). The memo says which one the Controller reads.
+		memo := "WAC integer-cent rounding on stock issue"
+		if wroteCost {
+			memo = "WAC revaluation on the provisional fallback cost at stock issue"
+		}
 		if err := s.postMoveRoundingTx(ctx, tx, moveRoundingPost{
 			Event: "inventory.ship", MoveID: moveID, BranchID: branchID, RoundingCents: rounding,
-			InvEvent: "order.fulfilled", Memo: "WAC integer-cent rounding on stock issue",
+			InvEvent: "order.fulfilled", Memo: memo,
 			OccurredAt: occurredAt,
 		}); err != nil {
 			return 0, err
