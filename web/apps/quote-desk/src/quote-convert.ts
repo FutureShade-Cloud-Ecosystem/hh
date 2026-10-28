@@ -201,7 +201,6 @@ export class QuoteConvert extends HHElement {
         color: var(--hh-disabled-ink);
         border-color: var(--hh-disabled-line);
         box-shadow: none;
-        opacity: 1;
         cursor: not-allowed;
       }
       .tile .name {

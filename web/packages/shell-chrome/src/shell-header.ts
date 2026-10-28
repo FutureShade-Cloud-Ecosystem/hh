@@ -380,7 +380,6 @@ const styles = css`
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
     border-color: var(--hh-disabled-line);
-    opacity: 1;
   }
   .badge {
     position: absolute;

@@ -221,7 +221,6 @@ export const messagesStyles = css`
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
     border-color: var(--hh-disabled-line);
-    opacity: 1;
   }
   .toggle-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); }
   .toggle-row .grow { flex: 1 1 220px; min-width: 0; }
@@ -231,7 +230,6 @@ export const messagesStyles = css`
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
     border-color: var(--hh-disabled-line);
-    opacity: 1;
   }
 
   .theme-btn { font: inherit; font-size: 13px; padding: 7px 12px; min-height: 0; border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid var(--hh-control-line); cursor: pointer; }
