@@ -30,8 +30,9 @@ const stubPort = process.env.ROLE_STUB_PORT ?? String(20000 + slot + 1);
 export default defineConfig({
   testDir: "./test",
   testMatch: "**/*.pw.ts",
-  // The card leg crosses apps and has its own harness and config (test/acceptance.config.ts).
-  testIgnore: ["**/acceptance/**"],
+  // The card leg crosses apps and has its own harness and config (test/acceptance.config.ts);
+  // the acceptance-real legs run only against the finance box (test/acceptance-real.config.ts).
+  testIgnore: ["**/acceptance/**", "**/acceptance-real/**"],
   workers: 1,
   use: {
     baseURL: `http://127.0.0.1:${appPort}`,

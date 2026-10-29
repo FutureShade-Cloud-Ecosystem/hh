@@ -536,6 +536,28 @@ jobs:
           echo "$bin" >> "$GITHUB_PATH"
           "$bin/pg_dump" --version
           "$bin/psql" --version
+      - name: Raise the Postgres service's lock table to the box's (512 a transaction)
+        # The finance reset restores a world in ONE transaction, and one world takes
+        # about 15,000 locks (measured, FIN2 TO-PRINCIPAL 249). The default lock table
+        # (64 x 100 = 6,400) holds that only by borrowing spare shared memory, so a busy
+        # shared server answers "out of shared memory". The finance box runs with
+        # max_locks_per_transaction = 512, so the job's service does too: the setting is
+        # written with ALTER SYSTEM, the service container restarts to take it, and the
+        # step waits until the server reports it.
+        run: |
+          set -euo pipefail
+          url="postgres://postgres:postgres@127.0.0.1:5599/postgres?sslmode=disable"
+          psql "$url" -v ON_ERROR_STOP=1 -q -c "ALTER SYSTEM SET max_locks_per_transaction = 512"
+          cid="$(docker ps -q --filter publish=5599)"
+          docker restart "$cid" >/dev/null
+          for _ in $(seq 1 90); do
+            if [ "$(psql "$url" -tAc 'SHOW max_locks_per_transaction' 2>/dev/null || true)" = "512" ]; then
+              break
+            fi
+            sleep 1
+          done
+          test "$(psql "$url" -tAc 'SHOW max_locks_per_transaction')" = "512"
+          echo "max_locks_per_transaction: 512"
       - name: Vet the integration tag shape
         # Repository-wide under the tag, which includes every package
         # the suite step below leaves out: one stray field in one
