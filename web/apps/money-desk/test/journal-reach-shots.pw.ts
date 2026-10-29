@@ -57,7 +57,7 @@ for (const size of SIZES) {
       await page.locator('[data-field="journal-from"]').fill("2025-01-01");
       await page.locator('[data-field="journal-to"]').fill("2025-12-31");
       await page.getByRole("button", { name: "Apply dates" }).click();
-      await expect(page.locator("[data-range-words]")).toContainText("2025-01-01 through 2025-12-31");
+      await expect(page.locator("[data-range-words]")).toContainText("Jan 1, 2025 through Dec 31, 2025");
       await take("01", "range-set");
 
       // After show more: the range off again, the first hundred, then the older page appended.
