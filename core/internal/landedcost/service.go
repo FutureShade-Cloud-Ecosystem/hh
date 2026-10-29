@@ -430,6 +430,9 @@ func (s *Service) Void(ctx context.Context, id string) error {
 	default:
 		return clientErr(409, "landedcost: cannot void a %s landed cost", lc.Status)
 	}
+	if lc.SettledCadCents > 0 {
+		return clientErr(409, "landedcost: this landed cost is settled; record the carrier's credit instead")
+	}
 	allocs, err := s.repo.Allocations(ctx, id)
 	if err != nil {
 		return err
@@ -478,6 +481,14 @@ func (s *Service) Void(ctx context.Context, id string) error {
 		}
 		if locked.Status == StatusVoided {
 			return nil // a prior void already reversed + posted + committed, do not re-capitalize or re-post
+		}
+		switch locked.Status {
+		case StatusPosted, StatusAllocated, StatusRetroAdjusted:
+		default:
+			return clientErr(409, "landedcost: cannot void a %s landed cost", locked.Status)
+		}
+		if locked.SettledCadCents > 0 {
+			return clientErr(409, "landedcost: this landed cost is settled; record the carrier's credit instead")
 		}
 		var reversedTotal int64
 		for _, a := range allocs {
@@ -579,6 +590,11 @@ func (s *Service) Settle(ctx context.Context, id string, in SettleInput) error {
 		locked, err := s.repo.LockForUpdateTx(ctx, tx, id)
 		if err != nil {
 			return err
+		}
+		switch locked.Status {
+		case StatusPosted, StatusRetroAdjusted:
+		default:
+			return clientErr(409, "landedcost: cannot settle a %s landed cost", locked.Status)
 		}
 		if locked.SettledCadCents > 0 {
 			return nil // a concurrent settle won the row, pay once
