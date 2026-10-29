@@ -4,6 +4,7 @@ package purchasing
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"regexp"
@@ -124,23 +125,44 @@ func TestIntegration_W3FX1Fix_OpenDocumentAmountPaysBillToZero(t *testing.T) {
 	}
 }
 
-// P3-2: a payment at the bill's own rate posts no FX, even when the bill's CAD was rounded per unit
-// at entry (100 units at USD 10.01 and 1.3333: CAD 13.35 a unit, CAD 1,335.00 the bill).
-func TestIntegration_W3FX1Fix_SameRatePaymentPostsNoRoundingFX(t *testing.T) {
+// P3-2, as S9 ruled on PR 717: the cash is always what the bank pays, even at the bill's own rate.
+// 100 units at USD 10.01 and 1.3333 carry CAD 13.35 a unit, CAD 1,335.00 the bill; the bank pays USD
+// 1,001.00 at 1.3333, CAD 1,334.63. So 1000 is credited 1,334.63, 2100 clears 1,335.00, and the
+// 0.37 of rounding at bill entry posts to 6310. One pip worse for the dealer (1.3334) books more
+// cash, never less.
+func TestIntegration_W3FX1Fix_CashIsWhatTheBankPaysAtAnyRate(t *testing.T) {
 	rig := newAPAgingRig(t)
 	now := time.Now().In(rig.zone)
 	rig.ensurePeriod(t, now.Year(), int(now.Month()))
-	bill := rig.postUSDBillQtyAt(t, "fx1f-same", now.Format("2006-01-02"), now.AddDate(0, 0, 30).Format("2006-01-02"), 1001, 100, 1.3333, now)
-	key := "fx1f-same-" + bill.ID
-	if _, err := rig.svc.PayBill(rig.ctx, bill.ID, PayBillRequest{AmountCents: bill.DocTotalCents, FXRate: 1.3333, PaidAt: now.Add(time.Minute), IdempotencyKey: key}); err != nil {
-		t.Fatal(err)
+	cash := map[float64]int64{}
+	for _, tc := range []struct {
+		rate       float64
+		wantCashCr int64
+		wantFXCr   int64
+	}{
+		{1.3333, 133_463, 37},
+		{1.3334, 133_473, 27},
+	} {
+		tag := fmt.Sprintf("fx1f-cash-%v", tc.rate)
+		bill := rig.postUSDBillQtyAt(t, tag, now.Format("2006-01-02"), now.AddDate(0, 0, 30).Format("2006-01-02"), 1001, 100, 1.3333, now)
+		key := tag + "-" + bill.ID
+		if _, err := rig.svc.PayBill(rig.ctx, bill.ID, PayBillRequest{AmountCents: bill.DocTotalCents, FXRate: tc.rate, PaidAt: now.Add(time.Minute), IdempotencyKey: key}); err != nil {
+			t.Fatal(err)
+		}
+		legs := rig.paymentJournalLegs(t, key)
+		if got := legs["1000"][1]; got != tc.wantCashCr {
+			t.Fatalf("rate %v: 1000 credited %d, want the bank's %d (legs %v)", tc.rate, got, tc.wantCashCr, legs)
+		}
+		if got := legs["6310"]; got[1]-got[0] != tc.wantFXCr {
+			t.Fatalf("rate %v: 6310 net credit %d, want %d (legs %v)", tc.rate, got[1]-got[0], tc.wantFXCr, legs)
+		}
+		if got := rig.billNetAP2100Cents(t, bill.ID); got != 0 {
+			t.Fatalf("rate %v: 2100 residual %d", tc.rate, got)
+		}
+		cash[tc.rate] = legs["1000"][1]
 	}
-	legs := rig.paymentJournalLegs(t, key)
-	if fx, ok := legs["6310"]; ok && (fx[0] != 0 || fx[1] != 0) {
-		t.Fatalf("same rate posted FX %v (legs %v)", fx, legs)
-	}
-	if got := rig.billNetAP2100Cents(t, bill.ID); got != 0 {
-		t.Fatalf("2100 residual %d", got)
+	if cash[1.3334] <= cash[1.3333] {
+		t.Fatalf("a worse rate booked less cash: %v", cash)
 	}
 }
 

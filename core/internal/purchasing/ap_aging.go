@@ -299,14 +299,10 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 			apCadCents = proRataHalfToEven(bill.TotalCents, in.AmountCents, billDocTotal)
 		}
 		payRateMicros := int64(math.Round(payFX * 1_000_000))
-		billRateMicros := int64(math.Round(bill.FXRate * 1_000_000))
-		if payRateMicros == billRateMicros {
-			// Paid at the bill's own rate: the cash is exactly the CAD the bill carries for this
-			// payment, so rounding at bill entry never shows up as a realised gain or loss.
-			cashCadCents = apCadCents
-		} else {
-			cashCadCents = proRataHalfToEven(in.AmountCents, payRateMicros, 1_000_000)
-		}
+		// The cash is always what the bank pays: the payment's USD at the payment's rate. At the
+		// bill's own rate, any difference from the CAD the bill carries is rounding at bill entry, and
+		// it posts to the FX account like any other difference, so 1000 always ties to the bank.
+		cashCadCents = proRataHalfToEven(in.AmountCents, payRateMicros, 1_000_000)
 	}
 	fxDiffCents := cashCadCents - apCadCents
 

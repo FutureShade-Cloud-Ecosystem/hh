@@ -338,15 +338,15 @@ func TestIntegration_W3FX1_RealisedFXGainOrLossAtPayment(t *testing.T) {
 				// Final payment of remaining 33,254 USD cents (30+50+33333+33333+33254 = 100000).
 				// Pro rata alone would be 135000 * 33254 / 100000 = 44892.90 -> 44893 (over-clearing 2100 by 1 cent).
 				// Last payment clears exact remainder: 135000 - (40+68+45000+45000) = 44892.
-				// Paid at the bill's own rate 1.35, so the cash is the CAD the bill carries for it and
-				// the cent of pro rata rounding posts no FX.
+				// Cash at 1.35: 33254 * 1.35 = 44892.90 -> 44893 -> FX loss = 1. The cash is what the
+				// bank pays, even at the bill's own rate (S9 on PR 717).
 				name:       "p5-final-remainder",
 				usdCents:   33_254,
 				fxRate:     1.35,
 				paidAt:     payInstant.Add(4 * time.Minute),
 				wantAPDr:   44_892,
-				wantCashCr: 44_892,
-				wantFXDr:   0,
+				wantCashCr: 44_893,
+				wantFXDr:   1,
 				wantFXCr:   0,
 				wantRemCAD: 0,
 			},
