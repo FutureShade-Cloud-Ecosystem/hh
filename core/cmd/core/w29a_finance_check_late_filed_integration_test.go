@@ -142,8 +142,8 @@ func TestIntegration_W29A_FinanceCheckAPTieLateFiledBill(t *testing.T) {
 		glBefore[asOf] = -bal
 	}
 
-	fcSeams := TieSeams{Querier: pool, GLStore: glRepo, AP: financeCheckAPAging(pool), Zone: zone}
-	prodSeams := TieSeams{Querier: pool, GLStore: glRepo, AP: purchasingSvc, Zone: zone}
+	fcSeams := TieSeams{Querier: pool, GLStore: glRepo, GLClock: glSvc, AP: financeCheckAPAging(pool), Zone: zone}
+	prodSeams := TieSeams{Querier: pool, GLStore: glRepo, GLClock: glSvc, AP: purchasingSvc, Zone: zone}
 	closed := TieMonth{Year: lastMonth.Year(), Month: int(lastMonth.Month()), MonthEnd: fcSeams.monthEnd(lastMonth.Year(), int(lastMonth.Month()))}
 	fcBefore, err := TieAPAgingToGL2100(ctx, fcSeams, closed)
 	if err != nil {
