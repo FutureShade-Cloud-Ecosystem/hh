@@ -222,6 +222,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// named at the registrar.
 	customerRepo := customer.NewRepository(pool)
 	customerSvc := customer.NewService(customerRepo).WithWriter(customerRepo).
+		// Wave 3 JA-1: the job accounts under a customer. The same repository is the job store,
+		// so the job rows are fenced by the same reach the account rows are.
+		WithJobs(customerRepo).
 		WithCountry(dealerCountryAdapter{r: settings.NewDealerConfigReader(pool)}).
 		// UX-97: the dealer's account position policy, the register's own gate.
 		WithPositionGate(billing.NewAccountPositionGate(billing.NewRepository(pool)))

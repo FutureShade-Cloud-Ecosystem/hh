@@ -1205,6 +1205,175 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  # --- customer: the job accounts under a customer (wave 3 JA-1) ----------------
+  # A job is a site of work under one customer (FIN-WAVE3-PLAN 1.1): it carries
+  # its own ship to address, PO reference and contact, and it may carry its own
+  # credit limit and payment terms. A job with neither shares the CUSTOMER's
+  # figures, and null is not zero. The routes live under the customer because
+  # the job belongs to the customer.
+  /api/v1/customers/{id}/jobs:
+    get:
+      operationId: customerListJobs
+      tags: [staff-customer]
+      summary: List a customer's job accounts
+      description: >-
+        The jobs the customer holds, oldest first. The list is fenced by the
+        caller's own grants: a job of a branch the caller cannot reach is not in
+        the list, and a customer the caller cannot reach is not found at all.
+      x-addition: "the list of a customer's job accounts, the split's first door; no ERP source route"
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The customer's jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CustomerJob" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: customerCreateJob
+      tags: [staff-customer]
+      summary: Open a job account under a customer
+      description: >-
+        The job number is the customer's own: two customers may each hold J-1,
+        and one customer may not hold two, so a number already in use under this
+        customer is a 409. The job's own credit limit may never exceed the
+        customer's, and is refused in words when it does. The job's own payment
+        terms and credit limit are left out when the job shares the customer's,
+        and null is not zero.
+      x-addition: "the door that opens a job account under a customer; no ERP source route"
+      x-role: requireManager
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerJobCreate"
+      responses:
+        "201":
+          description: The opened job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerJob"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/customers/{id}/jobs/{jobId}:
+    get:
+      operationId: customerGetJob
+      tags: [staff-customer]
+      summary: Read one job account of a customer
+      description: >-
+        The job's own facts. A job of another branch, a job of another customer
+        and a job that nobody has all answer 404, never a 403 that would
+        confirm it exists.
+      x-addition: "the read of one job account under a customer; no ERP source route"
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: The job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerJob"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: customerEditJob
+      tags: [staff-customer]
+      summary: Edit a job account of a customer
+      description: >-
+        A field left out keeps the job's own value. An explicit null on the
+        job's own credit limit or payment terms clears it, so the job shares
+        the customer's again. The job's own credit limit may never exceed the
+        customer's, and is refused in words when it does.
+      x-addition: "the edit of a job account under a customer; no ERP source route"
+      x-role: requireManager
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/JobId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerJobEdit"
+      responses:
+        "200":
+          description: The job after the edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerJob"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/customers/{id}/jobs/{jobId}/close:
+    post:
+      operationId: customerCloseJob
+      tags: [staff-customer]
+      summary: Close a job account of a customer
+      description: >-
+        A closed job reads and reports, and it takes no new document: the close
+        is the door every later document has to come through. A job that is
+        already closed is a 409, because the caller asked for a close that has
+        already happened and should be told so.
+      x-addition: "the door that closes a job account under a customer; no ERP source route"
+      x-role: requireManager
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: The closed job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerJob"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   # --- printing: the receipt document and the print queue --------------------
   /api/v1/pos/sales/{id}/receipt:
     get:
@@ -1318,6 +1487,13 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
 
 components:
+  parameters:
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      description: The job account's own id, under the customer in the path
+      schema: { type: string, format: uuid }
   schemas:
     # --- assist ---------------------------------------------------------------
     AssistArgSpec:
@@ -2360,6 +2536,138 @@ components:
         phone_e164:
           type: string
           description: Required to grant when no number is on file; ignored on a revocation
+
+    # --- customer: the job accounts under a customer (wave 3 JA-1) ----------------
+    CustomerJob:
+      type: object
+      description: >-
+        One job account under a customer. A job carries its own ship to address,
+        PO reference and contact, and may carry its own credit limit and
+        payment terms; a job with neither shares the CUSTOMER's figures, and
+        null is not zero. The credit limit follows the dealer's account
+        position policy: absent entirely, never 0, for a caller the policy
+        refuses.
+      required: [job_id, customer_id, branch_id, job_no, name, status]
+      properties:
+        job_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        branch_id:
+          type: string
+          format: uuid
+          description: The branch the job sits at, and the branch the staff reads are fenced by
+        job_no:
+          type: string
+          description: The job number, unique under the customer and not under the dealer
+        name: { type: string }
+        ship_to_address:
+          type: object
+          additionalProperties: true
+          description: The job's own delivery address, kept apart from the customer's billing address
+        po_reference: { type: string }
+        contact_name: { type: string }
+        contact_email: { type: string }
+        contact_phone: { type: string }
+        credit_limit_cents:
+          type: integer
+          format: int64
+          description: >-
+            The job's own credit ceiling. Absent when the job shares the
+            customer's, and absent for a caller the account position policy
+            refuses.
+        terms_days:
+          type: integer
+          format: int32
+          description: The job's own payment terms. Absent when the job shares the customer's.
+        status:
+          type: string
+          enum: [OPEN, CLOSED]
+        substantial_performance_date:
+          type: string
+          format: date
+          description: The job's own lien date, kept for wave 3 JA-2
+        last_supply_date:
+          type: string
+          format: date
+          description: The job's own last supply date, kept for wave 3 JA-2
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CustomerJobCreate:
+      type: object
+      description: >-
+        The job's own facts. The job number is the customer's own and is
+        unique under it. The credit limit and the payment terms are left out
+        when the job shares the customer's; null is not zero, and a job's own
+        credit limit may never exceed the customer's.
+      required: [job_no, name]
+      properties:
+        job_no: { type: string }
+        name: { type: string }
+        branch_id:
+          type: string
+          format: uuid
+          description: >-
+            The branch the job sits at. Only a customer with no home branch
+            needs it: a job under a customer homed at a branch sits at that
+            branch.
+        ship_to_address:
+          type: object
+          additionalProperties: true
+        po_reference: { type: string }
+        contact_name: { type: string }
+        contact_email: { type: string }
+        contact_phone: { type: string }
+        credit_limit_cents:
+          type: [integer, "null"]
+          format: int64
+          minimum: 0
+          description: The job's own credit ceiling; absent or null means the customer's own
+        terms_days:
+          type: [integer, "null"]
+          format: int32
+          minimum: 0
+          description: The job's own payment terms; absent or null means the customer's own
+        substantial_performance_date:
+          type: string
+          format: date
+        last_supply_date:
+          type: string
+          format: date
+
+    CustomerJobEdit:
+      type: object
+      description: >-
+        A change to a job the customer already holds. A field left out keeps
+        the job's own value, and an explicit null on the job's own credit
+        limit or payment terms clears it, so the job shares the customer's
+        again.
+      properties:
+        name: { type: string }
+        ship_to_address:
+          type: object
+          additionalProperties: true
+        po_reference: { type: string }
+        contact_name: { type: string }
+        contact_email: { type: string }
+        contact_phone: { type: string }
+        credit_limit_cents:
+          type: [integer, "null"]
+          format: int64
+          minimum: 0
+          description: The job's own credit ceiling; null clears it back to the customer's own
+        terms_days:
+          type: [integer, "null"]
+          format: int32
+          minimum: 0
+          description: The job's own payment terms; null clears it back to the customer's own
+        substantial_performance_date:
+          type: [string, "null"]
+          format: date
+          description: The job's own lien date; null clears it
+        last_supply_date:
+          type: [string, "null"]
+          format: date
+          description: The job's own last supply date; null clears it
 
     # --- printing ---------------------------------------------------------------
     PrintingJob:
