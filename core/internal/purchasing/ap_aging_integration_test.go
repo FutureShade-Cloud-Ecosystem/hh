@@ -146,16 +146,29 @@ func (rig *apAgingTestRig) createReceivedPOAndPostBill(
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		_, _ = rig.pool.Exec(bg, `
+		// The bill's own row still holds gl_journal_id: this wipe registered last,
+		// so t.Cleanup's LIFO order runs it before cleanupPO releases the
+		// reference, and a journals delete that does not release it first fails on
+		// the foreign key and leaves every journal for the bill standing, the post
+		// journal's and every payment's (W2-9a round 2, observation 2: the leak
+		// this closes). The reference goes first, and every delete answers its
+		// error, so a future reference bites loudly instead of leaking silently.
+		if _, err := rig.pool.Exec(bg, `UPDATE purchasing_bills SET gl_journal_id = NULL WHERE id = $1::uuid`, posted.ID); err != nil {
+			t.Errorf("cleanup: release the bill's journal reference: %v", err)
+		}
+		if _, err := rig.pool.Exec(bg, `
 			DELETE FROM gl_journal_lines
 			 WHERE journal_id IN (
 				SELECT id FROM gl_journals
 				 WHERE source_ref_id = $1
-				    OR idempotency_key LIKE 'purchasing.bill.payment:%'
-			 )`, posted.ID)
-		_, _ = rig.pool.Exec(bg, `
+			 )`, posted.ID); err != nil {
+			t.Errorf("cleanup: the bill's journal lines: %v", err)
+		}
+		if _, err := rig.pool.Exec(bg, `
 			DELETE FROM gl_journals
-			 WHERE source_ref_id = $1`, posted.ID)
+			 WHERE source_ref_id = $1`, posted.ID); err != nil {
+			t.Errorf("cleanup: the bill's journals: %v", err)
+		}
 	})
 	return po, posted
 }
