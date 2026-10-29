@@ -232,3 +232,45 @@ func TestDescriptorMatches(t *testing.T) {
 		}
 	}
 }
+
+// W2-1d item 5: every clearing journal a match or an unmatch posts carries a
+// memo in a bookkeeper's words, "Deposit, <bank line description>", never an
+// engine word and never the line's reference or a key.
+func TestMatch_MemosReadLikeABookkeeperWroteThem(t *testing.T) {
+	line := StatementLine{ID: "L9", Status: LineUnmatched, AmountCents: 50000, Reference: "pay-s1-010531", Description: "Customer EFT receipt", TxnDate: refDate}
+	pmts := []CandidatePayment{{PaymentID: "P9", GatewayRef: "pay-s1-010531", AmountCents: 50000, BranchID: "B1", ReceivedAt: refDate}}
+
+	prop, ok := matchLine(line, approvedRules(), pmts, nil)
+	if !ok {
+		t.Fatal("expected the gateway-ref match to fire")
+	}
+	if prop.Journal.Memo != "Deposit, Customer EFT receipt" {
+		t.Fatalf("card settlement memo %q, want the deposit and the bank line's own description", prop.Journal.Memo)
+	}
+
+	lodg := []Lodgement{{MovementID: "M1", Reference: "DEP-1", AmountCents: 25000, BranchID: "B1"}}
+	line2 := StatementLine{ID: "L10", Status: LineUnmatched, AmountCents: 25000, Reference: "DEP-1", Description: "Daily branch deposit", TxnDate: refDate}
+	prop2, ok := matchLine(line2, approvedRules(), nil, lodg)
+	if !ok {
+		t.Fatal("expected the lodgement match to fire")
+	}
+	if prop2.Journal.Memo != "Deposit, Daily branch deposit" {
+		t.Fatalf("lodgement memo %q, want the deposit and the bank line's own description", prop2.Journal.Memo)
+	}
+
+	rev, ok := reversalJournal("M1", TargetLodgement, "B1", "", 25000, 0, "", false)
+	if !ok {
+		t.Fatal("expected the reversal journal to build")
+	}
+	if rev.Memo != "Reversed deposit match" {
+		t.Fatalf("unmatch reversal memo %q, want bookkeeper words", rev.Memo)
+	}
+
+	manual, ok := manualJournal(line, TargetPayment, "CHEQUE", "B1", false)
+	if !ok {
+		t.Fatal("expected the manual deposit journal to build")
+	}
+	if manual.Memo != "Deposit, Customer EFT receipt" {
+		t.Fatalf("manual deposit memo %q, want the deposit and the bank line's own description", manual.Memo)
+	}
+}

@@ -842,7 +842,7 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 	if _, err := h.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
 		Source:         "MANUAL",
 		IdempotencyKey: "finworld:opening-stock:TRT",
-		Memo:           "FinWorld opening inventory balance TRT",
+		Memo:           "Opening inventory balance, Trenton yard",
 		BranchID:       finworldBranchTRT,
 		DocumentDate:   cutoverDate,
 		Lines: []gl.ExternalLine{
@@ -855,7 +855,7 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 	if _, err := h.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
 		Source:         "MANUAL",
 		IdempotencyKey: "finworld:opening-stock:KGN",
-		Memo:           "FinWorld opening inventory balance KGN",
+		Memo:           "Opening inventory balance, Kingston yard",
 		BranchID:       finworldBranchKGN,
 		DocumentDate:   cutoverDate,
 		Lines: []gl.ExternalLine{
@@ -871,7 +871,7 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 	if _, err := h.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
 		Source:         "MANUAL",
 		IdempotencyKey: "finworld:opening-bank:TRT",
-		Memo:           "FinWorld opening operating bank balance",
+		Memo:           "Opening operating bank balance",
 		BranchID:       finworldBranchTRT,
 		DocumentDate:   cutoverDate,
 		Lines: []gl.ExternalLine{
@@ -1566,7 +1566,7 @@ func finworldExecuteVendorBill(
 	}
 	if _, err := h.call("post bill "+vb.VendorBillKey, http.MethodPost, "/api/v1/purchasing/bills/"+billRes.ID+"/post", map[string]any{
 		"accept_variance": true,
-		"note":            vb.VendorBillKey,
+		"note":            "Supplier invoice received",
 	}); err != nil {
 		return err
 	}
@@ -1598,7 +1598,7 @@ func finworldPostSupplierCheque(ctx context.Context, h *finworldHarness, branchI
 	if _, err := h.ops.purchasingSvc.PayBill(sctx, billID, purchasing.PayBillRequest{
 		AmountCents:    totalCents,
 		PaidAt:         docTime,
-		Note:           "Supplier cheque " + billKey + " (" + invoiceNo + ")",
+		Note:           "Supplier cheque " + invoiceNo,
 		IdempotencyKey: "finworld:vpay:" + invoiceNo,
 	}); err != nil {
 		return fmt.Errorf("pay vendor bill %s: %w", billKey, err)
@@ -1779,7 +1779,7 @@ func finworldExecuteReturn(
 		"idempotency_key": finworldUUID("ret:" + ret.ReturnKey),
 		"order_id":        orderID,
 		"refund_method":   ret.RefundMethod,
-		"reason":          "Customer return " + ret.ReturnKey,
+		"reason":          "Customer return",
 		"restock":         true,
 		"lines":           retLines,
 	}
@@ -1907,7 +1907,7 @@ func finworldExecuteNSFBounce(
 		return fmt.Errorf("lookup payment for NSF %s (receipt %s): %w", nsf.BounceKey, nsf.OriginalReceiptKey, err)
 	}
 	if _, err := h.call("nsf "+nsf.BounceKey, http.MethodPost, "/api/v1/ar/payments/"+paymentID+"/nsf", map[string]any{
-		"reason": "NSF returned cheque " + nsf.BounceKey,
+		"reason": "Cheque returned NSF",
 	}); err != nil {
 		return err
 	}
@@ -1918,12 +1918,12 @@ func finworldExecuteNSFBounce(
 		if _, err := h.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
 			Source:         "MANUAL",
 			IdempotencyKey: "finworld:nsf-bank-fee:" + nsf.BounceKey,
-			Memo:           "Bank returned-item charge " + nsf.BounceKey,
+			Memo:           "Bank returned-item charge",
 			BranchID:       branchID,
 			DocumentDate:   docTime,
 			Lines: []gl.ExternalLine{
-				{AccountCode: "6300", DebitCents: nsf.NSFFeeCents, Memo: "Bank NSF charge " + nsf.BounceKey},
-				{AccountCode: "1000", CreditCents: nsf.NSFFeeCents, Memo: "Bank NSF charge " + nsf.BounceKey},
+				{AccountCode: "6300", DebitCents: nsf.NSFFeeCents, Memo: "Bank NSF charge"},
+				{AccountCode: "1000", CreditCents: nsf.NSFFeeCents, Memo: "Bank NSF charge"},
 			},
 		}); err != nil {
 			return fmt.Errorf("post NSF bank charge %s: %w", nsf.BounceKey, err)
@@ -2010,7 +2010,7 @@ func finworldExecuteTillCount(
 	_, err = h.call("count till "+tc.SessionKey, http.MethodPost, "/api/v1/till/sessions/"+sessID+"/count", map[string]any{
 		"tenders":             tenders,
 		"closing_float_cents": zrep.Cash.OpeningFloatCents,
-		"variance_notes":      "finworld end-of-day count",
+		"variance_notes":      "End-of-day count",
 	})
 	return err
 }
@@ -2426,7 +2426,7 @@ func finworldExecutePeriodClose(
 	}()
 
 	_, err := h.call("close period "+pc.YearMonth.String(), http.MethodPost, "/api/v1/gl/periods/"+periodID+"/close", map[string]any{
-		"reason": "FinWorld month-end close " + pc.YearMonth.String(),
+		"reason": "Month-end close " + pc.YearMonth.String(),
 	})
 	return err
 }
@@ -2457,7 +2457,7 @@ func finworldExecuteYearClose(
 
 	if _, err := h.call("close year "+yc.YearCloseKey, http.MethodPost, "/api/v1/gl/periods/close-year", map[string]any{
 		"year":   yc.FiscalYear,
-		"reason": "FinWorld fiscal year-end close",
+		"reason": "Fiscal year-end close",
 	}); err != nil {
 		return err
 	}

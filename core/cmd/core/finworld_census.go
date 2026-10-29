@@ -329,22 +329,23 @@ func finworldCensusSourceScan(coreRoot string) ([]finworldSourceMemoFinding, err
 	var out []finworldSourceMemoFinding
 	seen := map[string]bool{}
 	for _, dir := range dirs {
-		stat, err := os.Stat(dir)
-		if err != nil || !stat.IsDir() {
-			continue
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return nil, err
-		}
 		var files []string
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
-				continue
+		if stat, err := os.Stat(dir); err == nil && !stat.IsDir() {
+			// A single file entry (the finworld driver and plan files).
+			files = append(files, dir)
+		} else {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				return nil, err
 			}
-			files = append(files, filepath.Join(dir, e.Name()))
+			for _, e := range entries {
+				if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+					continue
+				}
+				files = append(files, filepath.Join(dir, e.Name()))
+			}
+			sort.Strings(files)
 		}
-		sort.Strings(files)
 		for _, path := range files {
 			found, err := finworldScanFileMemoPositions(path)
 			if err != nil {
