@@ -148,6 +148,10 @@ export const glStyles = css`
     .gl-tab { padding: 0 var(--hh-s-12); font-size: 14px; }
     .gl-col-type, .gl-col-name, .gl-col-posted { display: none; }
     .gl-name-narrow { display: block; color: var(--hh-text-dim); font-size: 12px; }
+    /* The register's posted day, on its own line under the memo: the day stays whole on that line, so
+       it takes the desk's smallest step of type. The cell gives the day two pixels less than the day
+       needs, and a day that breaks after its comma is a day nobody reads. */
+    [data-posted-narrow] { font-size: 11px; }
     .gl-panel { padding: var(--hh-s-16); }
     .gl-panel table { font-size: 13px; }
     .gl-panel th, .gl-panel td { padding: var(--hh-s-8) var(--hh-s-4); }

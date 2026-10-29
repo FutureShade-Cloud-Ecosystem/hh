@@ -384,13 +384,34 @@ export function nextCursorOf(page: { next_cursor?: string | null }): string {
   return typeof page.next_cursor === "string" && page.next_cursor !== "" ? page.next_cursor : "";
 }
 
-/** The window's words: what is loaded, said once beside the fields that change it. */
+/**
+ * The window's words: what is loaded, said once beside the fields that change it. The days are said in
+ * the desk's own date words, the same words the register's posted column reads (dayWords), never the
+ * core's ISO digits: a date that sits beside a date field reads the way the desk reads dates.
+ */
 export function rangeWords(dateFrom: string, dateTo: string): string {
-  if (dateFrom !== "" && dateTo !== "") return `Showing journals posted ${dateFrom} through ${dateTo}.`;
-  if (dateFrom !== "") return `Showing journals posted ${dateFrom} or later.`;
-  if (dateTo !== "") return `Showing journals posted through ${dateTo}.`;
+  if (dateFrom !== "" && dateTo !== "") return `Showing journals posted ${dayWords(dateFrom)} through ${dayWords(dateTo)}.`;
+  if (dateFrom !== "") return `Showing journals posted ${dayWords(dateFrom)} or later.`;
+  if (dateTo !== "") return `Showing journals posted through ${dayWords(dateTo)}.`;
   return "";
 }
+
+/**
+ * The count the register's filters show: how many of the loaded rows carry that status. The core
+ * answers no total for the register, so while its cursor says more rows are still to come the count is
+ * of the loaded rows only, and the words say so. At the end of the register the loaded rows are the
+ * whole of them, and the count stands alone.
+ */
+export function statusCountWord(count: number, nextCursor: string): string {
+  return nextCursor === "" ? String(count) : `${count} of the loaded`;
+}
+
+/**
+ * What "Pending approval" means to a bookkeeper: the desk works the label out from the journal's own
+ * amount and the policy's threshold, so the words say that plainly and name no mechanism.
+ */
+export const PENDING_APPROVAL_NOTE =
+  "Pending approval means the journal is a draft someone entered and its amount is at or over the approval threshold in the policy, so it waits for another approver to post it.";
 
 // ---- the late posted list -------------------------------------------------------------------------
 
