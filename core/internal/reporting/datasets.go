@@ -692,6 +692,7 @@ func (s *Service) readDatasetRows(ctx context.Context, set string, q DatasetQuer
 type datasetPushdown struct {
 	glYear, glMonth    int
 	salesFrom, salesTo time.Time
+	salesDay           bool // invoice_date came as eq (one day); any further invoice_date filter is a second one
 }
 
 // maxSalesWindowDays bounds the sales dataset's issue-date window to one year (leap year inclusive).
@@ -735,8 +736,10 @@ func validateDatasetFilters(set string, cols []DatasetColumn, in []DatasetFilter
 		}
 		filter := datasetFilter{column: col, op: f.Op, values: vals}
 
-		// The pushdowns, consumed by the owning module's read instead of the Go side.
-		// A second filter on one column is refused in words, never silently overwritten or dropped.
+		// The pushdowns, consumed by the owning module's read instead of the Go side. A second value
+		// for a pushdown is refused in words, never silently overwritten. Every other column is
+		// filtered on the Go side, where filters combine (a bill_date window is ge plus le), so a
+		// column may carry several of them there.
 		switch {
 		case set == "gl" && col.Name == "fiscal_year":
 			if seenCol[col.Name] {
@@ -762,6 +765,8 @@ func validateDatasetFilters(set string, cols []DatasetColumn, in []DatasetFilter
 			if pushdown.glMonth < 1 || pushdown.glMonth > 12 {
 				return nil, pushdown, errBadRequest("fiscal_month must be a whole month between 1 and 12, got %d", pushdown.glMonth)
 			}
+		case set == "sales" && col.Name == "invoice_date" && pushdown.salesDay:
+			return nil, pushdown, errBadRequest("column %q is filtered twice in one read: give eq for one day, or one from (ge) and one to (le)", col.Name)
 		case set == "sales" && col.Name == "invoice_date" && f.Op == "ge":
 			if !pushdown.salesFrom.IsZero() {
 				return nil, pushdown, errBadRequest("column %q has two from (ge) filters in one read: give one from (ge) and one to (le)", col.Name)
@@ -778,11 +783,8 @@ func validateDatasetFilters(set string, cols []DatasetColumn, in []DatasetFilter
 			}
 			pushdown.salesFrom = datasetDayStart(vals[0].(string))
 			pushdown.salesTo = datasetDayEnd(vals[0].(string))
+			pushdown.salesDay = true
 		default:
-			if seenCol[col.Name] {
-				return nil, pushdown, errBadRequest("column %q is filtered twice in one read: give one filter per column", col.Name)
-			}
-			seenCol[col.Name] = true
 			out = append(out, filter)
 		}
 	}

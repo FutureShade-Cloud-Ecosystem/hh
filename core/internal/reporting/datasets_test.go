@@ -303,16 +303,16 @@ func TestRunDataset_RefusesASecondFilterOnOneColumnInWords(t *testing.T) {
 		t.Fatalf("a second filter on fiscal_year must be refused in words, got: %v", err)
 	}
 
-	// Duplicate filter on a regular column must be refused in words.
-	_, err = svc.RunDataset(context.Background(), "ar", DatasetQuery{
-		Columns: []string{"total_cents"},
+	// A sales day (eq) followed by a to (le) is a second filter, named as such (S11 on PR 720).
+	_, err = svc.RunDataset(context.Background(), "sales", DatasetQuery{
+		Columns: []string{"line_total_cents"},
 		Filters: []DatasetFilter{
-			{Column: "customer_id", Op: "eq", Values: []any{"c1"}},
-			{Column: "customer_id", Op: "eq", Values: []any{"c2"}},
+			{Column: "invoice_date", Op: "eq", Values: []any{"1971-03-10"}},
+			{Column: "invoice_date", Op: "le", Values: []any{"1971-03-31"}},
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "customer_id") {
-		t.Fatalf("a second filter on customer_id must be refused in words, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "give eq for one day") {
+		t.Fatalf("eq then le on invoice_date must be refused as a second filter, got: %v", err)
 	}
 
 	// Duplicate ge bound on sales invoice_date must be refused in words, never overwritten.
@@ -481,6 +481,30 @@ func TestRunDataset_FiltersApplyInGoOverTheTypedRows(t *testing.T) {
 	}
 	if res.Totals["open_cents"] != int64(100) {
 		t.Fatalf("totals answer 100 cents, got %v", res.Totals)
+	}
+}
+
+// A column filtered on the Go side takes a window: ge plus le combine, and nothing is refused
+// (S11 on PR 720: the second filter refusal belongs to the pushdowns alone).
+func TestRunDataset_AGoSideColumnTakesAWindow(t *testing.T) {
+	ap := &fakeAPSource{lines: []APAgingLine{
+		{VendorName: "early", BranchID: "b1", Kind: "BILL", Bucket: "CURRENT", BillDate: "1971-02-27", OpenCents: 100},
+		{VendorName: "inside", BranchID: "b1", Kind: "BILL", Bucket: "CURRENT", BillDate: "1971-03-15", OpenCents: 200},
+		{VendorName: "late", BranchID: "b1", Kind: "BILL", Bucket: "CURRENT", BillDate: "1971-04-02", OpenCents: 400},
+	}}
+	svc := datasetTestService(nil).WithDatasetAPSource(ap)
+	res, err := svc.RunDataset(context.Background(), "ap", DatasetQuery{
+		Columns: []string{"vendor_name", "open_cents"},
+		Filters: []DatasetFilter{
+			{Column: "bill_date", Op: "ge", Values: []any{"1971-03-01"}},
+			{Column: "bill_date", Op: "le", Values: []any{"1971-03-31"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("a bill_date window must read, got: %v", err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0][0] != "inside" {
+		t.Fatalf("the window cuts to the March bill alone, got %v", res.Rows)
 	}
 }
 
