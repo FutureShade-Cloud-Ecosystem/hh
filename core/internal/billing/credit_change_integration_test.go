@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -284,5 +286,88 @@ func TestCreditChangeIntegration_AllLegsAndAuditTrail(t *testing.T) {
 	}
 	if rejected.Status != CreditChangeStatusRejected || rig.currentLimit(t) != 5500000 {
 		t.Fatalf("after reject: status=%q limit=%d, want REJECTED and 5500000", rejected.Status, rig.currentLimit(t))
+	}
+}
+
+// P2-1 Red leg: approve and reject raced on real Postgres, 20 rounds.
+// In every round, exactly one wins, a request already decided is refused in words,
+// and the customer's limit and audit trail match the request's final status.
+func TestCreditChangeIntegration_ApproveAndRejectRaced20Rounds(t *testing.T) {
+	rig := newCreditChangeIntRig(t, 1000000) // $10,000.00
+	ctx := context.Background()
+
+	salesMgrCtx := ccCallerCtx(rig.userSalesMgr, "SALES_MANAGER", identity.TierManager, identity.ScopeBranch, rig.branchID)
+	bm1Ctx := ccCallerCtx(rig.userBranchMgr, RoleBranchManager, identity.TierManager, identity.ScopeBranch, rig.branchID)
+	bm2Ctx := ccCallerCtx(rig.userBranchMgr2, RoleBranchManager, identity.TierManager, identity.ScopeBranch, rig.branchID)
+
+	for round := 0; round < 20; round++ {
+		if _, err := rig.pool.Exec(ctx, `UPDATE customers SET credit_limit_cents = 1000000 WHERE id = $1::uuid`, rig.customerID); err != nil {
+			t.Fatalf("round %d reset limit: %v", round, err)
+		}
+
+		req, err := rig.svc.Request(salesMgrCtx, CreateCreditChangeInput{
+			CustomerID:    rig.customerID,
+			NewLimitCents: i64Ptr(1100000),
+			Reason:        fmt.Sprintf("race round %d", round),
+		})
+		if err != nil {
+			t.Fatalf("round %d request: %v", round, err)
+		}
+
+		start := make(chan struct{})
+		var (
+			wg     sync.WaitGroup
+			appRes CreditChangeRequest
+			appErr error
+			rejRes CreditChangeRequest
+			rejErr error
+		)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			appRes, appErr = rig.svc.Approve(bm1Ctx, req.ID, DecideCreditChangeInput{Note: "approve race"})
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			rejRes, rejErr = rig.svc.Reject(bm2Ctx, req.ID, DecideCreditChangeInput{Reason: "reject race"})
+		}()
+		close(start)
+		wg.Wait()
+
+		if (appErr == nil) == (rejErr == nil) {
+			t.Fatalf("round %d: expected exactly one winner, got approveErr=%v rejectErr=%v", round, appErr, rejErr)
+		}
+
+		finalReq, err := rig.svc.Get(bm1Ctx, req.ID)
+		if err != nil {
+			t.Fatalf("round %d get request: %v", round, err)
+		}
+		gotLimit := rig.currentLimit(t)
+
+		if appErr == nil {
+			if finalReq.Status != CreditChangeStatusApplied || appRes.Status != CreditChangeStatusApplied {
+				t.Fatalf("round %d: approve won but status = %q (resp %q), want APPLIED", round, finalReq.Status, appRes.Status)
+			}
+			if gotLimit != 1100000 {
+				t.Fatalf("round %d: approve won (status=%s) but customer limit = %d, want 1100000", round, finalReq.Status, gotLimit)
+			}
+		} else {
+			if finalReq.Status != CreditChangeStatusRejected || rejRes.Status != CreditChangeStatusRejected {
+				t.Fatalf("round %d: reject won but status = %q (resp %q), want REJECTED", round, finalReq.Status, rejRes.Status)
+			}
+			if gotLimit != 1000000 {
+				t.Fatalf("round %d: reject won (status=%s) but customer limit moved to %d, want 1000000", round, finalReq.Status, gotLimit)
+			}
+		}
+
+		loserErr := appErr
+		if loserErr == nil {
+			loserErr = rejErr
+		}
+		if !errors.Is(loserErr, ErrCreditChangeNotPending) || !strings.Contains(loserErr.Error(), "already") {
+			t.Fatalf("round %d: loser error = %v, want ErrCreditChangeNotPending naming already decided in words", round, loserErr)
+		}
 	}
 }

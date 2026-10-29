@@ -6,7 +6,64 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 )
+
+type creditChangeTxKey struct{}
+
+type creditChangeRowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func withCreditChangeTx(ctx context.Context, tx pgx.Tx) context.Context {
+	if tx == nil {
+		return ctx
+	}
+	return customer.WithCallerTx(context.WithValue(ctx, creditChangeTxKey{}, tx), tx)
+}
+
+func creditChangeTxFrom(ctx context.Context) pgx.Tx {
+	if ctx == nil {
+		return nil
+	}
+	tx, _ := ctx.Value(creditChangeTxKey{}).(pgx.Tx)
+	return tx
+}
+
+func (r *Repository) creditChangeQuerier(ctx context.Context) creditChangeRowQuerier {
+	if tx := creditChangeTxFrom(ctx); tx != nil {
+		return tx
+	}
+	if r == nil || r.pool == nil {
+		return nil
+	}
+	return r.pool
+}
+
+// InCreditChangeTx opens a single transaction and carries it on ctx so the credit change
+// request lock, customer credit limit update, request status update, and audit write commit
+// or roll back together.
+func (r *Repository) InCreditChangeTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	if tx := creditChangeTxFrom(ctx); tx != nil {
+		return fn(ctx)
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("billing: begin credit change tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := fn(withCreditChangeTx(ctx, tx)); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("billing: commit credit change tx: %w", err)
+	}
+	return nil
+}
 
 const creditChangeColumns = `
 	id::text,
@@ -157,14 +214,20 @@ func (r *Repository) CreateCreditChangeRequest(ctx context.Context, req CreditCh
 }
 
 // GetCreditChangeRequest fetches a single credit_change_requests row by ID.
+// When called inside InCreditChangeTx, it locks the row FOR UPDATE on that transaction.
 func (r *Repository) GetCreditChangeRequest(ctx context.Context, id string) (CreditChangeRequest, error) {
-	if r.pool == nil {
+	q := r.creditChangeQuerier(ctx)
+	if q == nil {
 		return CreditChangeRequest{}, errNoDB
 	}
-	out, err := scanCreditChangeRequest(r.pool.QueryRow(ctx, `
+	lockClause := ""
+	if creditChangeTxFrom(ctx) != nil {
+		lockClause = " FOR UPDATE"
+	}
+	out, err := scanCreditChangeRequest(q.QueryRow(ctx, `
 		SELECT `+creditChangeColumns+`
 		  FROM credit_change_requests
-		 WHERE id = $1::uuid`, id))
+		 WHERE id = $1::uuid`+lockClause, id))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CreditChangeRequest{}, ErrCreditChangeNotFound
@@ -176,10 +239,11 @@ func (r *Repository) GetCreditChangeRequest(ctx context.Context, id string) (Cre
 
 // UpdateCreditChangeRequest updates a PENDING credit_change_requests row with an approval or rejection.
 func (r *Repository) UpdateCreditChangeRequest(ctx context.Context, req CreditChangeRequest) (CreditChangeRequest, error) {
-	if r.pool == nil {
+	q := r.creditChangeQuerier(ctx)
+	if q == nil {
 		return CreditChangeRequest{}, errNoDB
 	}
-	out, err := scanCreditChangeRequest(r.pool.QueryRow(ctx, `
+	out, err := scanCreditChangeRequest(q.QueryRow(ctx, `
 		UPDATE credit_change_requests
 		   SET status                  = $2,
 		       first_approved_by       = NULLIF($3, '')::uuid,
@@ -195,6 +259,11 @@ func (r *Repository) UpdateCreditChangeRequest(ctx context.Context, req CreditCh
 		       rejected_at             = $13,
 		       rejection_reason        = $14,
 		       applied_at              = $15,
+		       previous_limit_cents    = $16,
+		       delta_cents             = $17,
+		       required_approvals      = $18,
+		       first_threshold_cents   = $19,
+		       second_threshold_cents  = $20,
 		       updated_at              = now()
 		 WHERE id = $1::uuid AND status = 'PENDING'
 		RETURNING `+creditChangeColumns,
@@ -213,6 +282,11 @@ func (r *Repository) UpdateCreditChangeRequest(ctx context.Context, req CreditCh
 		req.RejectedAt,
 		req.RejectionReason,
 		req.AppliedAt,
+		req.PreviousLimitCents,
+		req.DeltaCents,
+		req.RequiredApprovals,
+		req.FirstThresholdCents,
+		req.SecondThresholdCents,
 	))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

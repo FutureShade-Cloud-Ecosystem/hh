@@ -3,6 +3,7 @@ package billing
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -397,7 +398,29 @@ func (s *CreditChangeService) Request(ctx context.Context, in CreateCreditChange
 	return saved, nil
 }
 
+type creditChangeTxRunner interface {
+	InCreditChangeTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+type creditChangeAuditTxRecorder interface {
+	RecordTx(ctx context.Context, q audit.Execer, a audit.SensitiveAccess) error
+}
+
+func (s *CreditChangeService) inTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	if tr, ok := s.store.(creditChangeTxRunner); ok && tr != nil {
+		return tr.InCreditChangeTx(ctx, fn)
+	}
+	return fn(ctx)
+}
+
+func alreadyDecidedError(status string) error {
+	return fmt.Errorf("%w: credit change request has already been %s", ErrCreditChangeNotPending, strings.ToLower(status))
+}
+
 // Approve records an approver's approval on a PENDING credit change request.
+// It takes the request row FOR UPDATE in one transaction, judges its status there,
+// applies the limit when the approval threshold is satisfied, marks the request,
+// and writes the audit row in that same transaction.
 func (s *CreditChangeService) Approve(ctx context.Context, id string, in DecideCreditChangeInput) (CreditChangeRequest, error) {
 	caller, err := s.requireManagerCaller(ctx)
 	if err != nil {
@@ -407,24 +430,8 @@ func (s *CreditChangeService) Approve(ctx context.Context, id string, in DecideC
 	if _, err := uuid.Parse(id); err != nil {
 		return CreditChangeRequest{}, ErrCreditChangeNotFound
 	}
-	req, err := s.store.GetCreditChangeRequest(ctx, id)
-	if err != nil {
-		return CreditChangeRequest{}, err
-	}
-	if !caller.CanReachAccountHome(req.BranchID) {
-		return CreditChangeRequest{}, ErrCreditChangeNotFound
-	}
 	if caller.UserID == "" {
 		return CreditChangeRequest{}, ErrCreditChangeUnauthorized
-	}
-	if req.Status != CreditChangeStatusPending {
-		return CreditChangeRequest{}, ErrCreditChangeNotPending
-	}
-	if caller.UserID == req.RequestedBy {
-		return CreditChangeRequest{}, ErrCreditChangeSelfApproval
-	}
-	if req.FirstApprovedBy != "" && caller.UserID == req.FirstApprovedBy {
-		return CreditChangeRequest{}, ErrCreditChangeDuplicateApprover
 	}
 
 	now := s.clock().UTC()
@@ -433,41 +440,67 @@ func (s *CreditChangeService) Approve(ctx context.Context, id string, in DecideC
 		note = strings.TrimSpace(in.Reason)
 	}
 
-	if req.FirstApprovedBy == "" {
-		if !canFirstApproveCreditIncrease(caller.RoleCode) {
-			return CreditChangeRequest{}, ErrCreditChangeRoleForbidden
+	var updated CreditChangeRequest
+	err = s.inTx(ctx, func(txCtx context.Context) error {
+		req, err := s.store.GetCreditChangeRequest(txCtx, id)
+		if err != nil {
+			return err
 		}
-		req.FirstApprovedBy = caller.UserID
-		req.FirstApprovedByRole = caller.RoleCode
-		req.FirstApprovedAt = &now
-		req.FirstApprovalNote = note
-		if req.RequiredApprovals <= 1 {
-			if err := s.applyRequest(ctx, &req, caller.UserID, now); err != nil {
-				return CreditChangeRequest{}, err
+		if !caller.CanReachAccountHome(req.BranchID) {
+			return ErrCreditChangeNotFound
+		}
+		if req.Status != CreditChangeStatusPending {
+			return alreadyDecidedError(req.Status)
+		}
+		if caller.UserID == req.RequestedBy {
+			return ErrCreditChangeSelfApproval
+		}
+		if req.FirstApprovedBy != "" && caller.UserID == req.FirstApprovedBy {
+			return ErrCreditChangeDuplicateApprover
+		}
+
+		if req.FirstApprovedBy == "" {
+			if !canFirstApproveCreditIncrease(caller.RoleCode) {
+				return ErrCreditChangeRoleForbidden
+			}
+			req.FirstApprovedBy = caller.UserID
+			req.FirstApprovedByRole = caller.RoleCode
+			req.FirstApprovedAt = &now
+			req.FirstApprovalNote = note
+			if req.RequiredApprovals <= 1 {
+				if err := s.applyRequest(txCtx, &req, caller.UserID, now); err != nil {
+					return err
+				}
+			}
+		} else {
+			if !canSecondApproveCreditIncrease(caller.RoleCode) {
+				return ErrCreditChangeRoleForbidden
+			}
+			req.SecondApprovedBy = caller.UserID
+			req.SecondApprovedByRole = caller.RoleCode
+			req.SecondApprovedAt = &now
+			req.SecondApprovalNote = note
+			if err := s.applyRequest(txCtx, &req, caller.UserID, now); err != nil {
+				return err
 			}
 		}
-	} else {
-		if !canSecondApproveCreditIncrease(caller.RoleCode) {
-			return CreditChangeRequest{}, ErrCreditChangeRoleForbidden
-		}
-		req.SecondApprovedBy = caller.UserID
-		req.SecondApprovedByRole = caller.RoleCode
-		req.SecondApprovedAt = &now
-		req.SecondApprovalNote = note
-		if err := s.applyRequest(ctx, &req, caller.UserID, now); err != nil {
-			return CreditChangeRequest{}, err
-		}
-	}
 
-	updated, err := s.store.UpdateCreditChangeRequest(ctx, req)
+		updated, err = s.store.UpdateCreditChangeRequest(txCtx, req)
+		if err != nil {
+			if errors.Is(err, ErrCreditChangeNotPending) {
+				return alreadyDecidedError("decided")
+			}
+			return err
+		}
+		action := ActCreditChangeApproved
+		if updated.Status == CreditChangeStatusApplied {
+			action = ActCreditChangeApplied
+		}
+		return s.recordAuditTx(txCtx, action, caller.UserID, updated)
+	})
 	if err != nil {
 		return CreditChangeRequest{}, err
 	}
-	action := ActCreditChangeApproved
-	if updated.Status == CreditChangeStatusApplied {
-		action = ActCreditChangeApplied
-	}
-	s.recordAudit(ctx, action, caller.UserID, updated)
 	return updated, nil
 }
 
@@ -488,7 +521,7 @@ func (s *CreditChangeService) applyRequest(ctx context.Context, req *CreditChang
 	return nil
 }
 
-// Reject rejects a PENDING credit change request.
+// Reject rejects a PENDING credit change request under one FOR UPDATE transaction lock.
 func (s *CreditChangeService) Reject(ctx context.Context, id string, in DecideCreditChangeInput) (CreditChangeRequest, error) {
 	caller, err := s.requireManagerCaller(ctx)
 	if err != nil {
@@ -498,46 +531,56 @@ func (s *CreditChangeService) Reject(ctx context.Context, id string, in DecideCr
 	if _, err := uuid.Parse(id); err != nil {
 		return CreditChangeRequest{}, ErrCreditChangeNotFound
 	}
-	req, err := s.store.GetCreditChangeRequest(ctx, id)
-	if err != nil {
-		return CreditChangeRequest{}, err
-	}
-	if !caller.CanReachAccountHome(req.BranchID) {
-		return CreditChangeRequest{}, ErrCreditChangeNotFound
-	}
 	if caller.UserID == "" {
 		return CreditChangeRequest{}, ErrCreditChangeUnauthorized
-	}
-	if req.Status != CreditChangeStatusPending {
-		return CreditChangeRequest{}, ErrCreditChangeNotPending
-	}
-	if !canFirstApproveCreditIncrease(caller.RoleCode) {
-		return CreditChangeRequest{}, ErrCreditChangeRoleForbidden
-	}
-	if caller.UserID == req.RequestedBy {
-		return CreditChangeRequest{}, ErrCreditChangeSelfApproval
 	}
 
 	reason := strings.TrimSpace(in.Reason)
 	if reason == "" {
 		reason = strings.TrimSpace(in.Note)
 	}
-	if reason == "" {
-		return CreditChangeRequest{}, ErrCreditChangeReasonRequired
-	}
 
-	now := s.clock().UTC()
-	req.Status = CreditChangeStatusRejected
-	req.RejectedBy = caller.UserID
-	req.RejectedByRole = caller.RoleCode
-	req.RejectedAt = &now
-	req.RejectionReason = reason
+	var updated CreditChangeRequest
+	err = s.inTx(ctx, func(txCtx context.Context) error {
+		req, err := s.store.GetCreditChangeRequest(txCtx, id)
+		if err != nil {
+			return err
+		}
+		if !caller.CanReachAccountHome(req.BranchID) {
+			return ErrCreditChangeNotFound
+		}
+		if req.Status != CreditChangeStatusPending {
+			return alreadyDecidedError(req.Status)
+		}
+		if !canFirstApproveCreditIncrease(caller.RoleCode) {
+			return ErrCreditChangeRoleForbidden
+		}
+		if caller.UserID == req.RequestedBy {
+			return ErrCreditChangeSelfApproval
+		}
+		if reason == "" {
+			return ErrCreditChangeReasonRequired
+		}
 
-	updated, err := s.store.UpdateCreditChangeRequest(ctx, req)
+		now := s.clock().UTC()
+		req.Status = CreditChangeStatusRejected
+		req.RejectedBy = caller.UserID
+		req.RejectedByRole = caller.RoleCode
+		req.RejectedAt = &now
+		req.RejectionReason = reason
+
+		updated, err = s.store.UpdateCreditChangeRequest(txCtx, req)
+		if err != nil {
+			if errors.Is(err, ErrCreditChangeNotPending) {
+				return alreadyDecidedError("decided")
+			}
+			return err
+		}
+		return s.recordAuditTx(txCtx, ActCreditChangeRejected, caller.UserID, updated)
+	})
 	if err != nil {
 		return CreditChangeRequest{}, err
 	}
-	s.recordAudit(ctx, ActCreditChangeRejected, caller.UserID, updated)
 	return updated, nil
 }
 
@@ -585,10 +628,7 @@ func (s *CreditChangeService) List(ctx context.Context, f CreditChangeFilter) ([
 	return s.store.ListCreditChangeRequests(ctx, f, reachOfCaller(caller))
 }
 
-func (s *CreditChangeService) recordAudit(ctx context.Context, action, actorID string, req CreditChangeRequest) {
-	if s.audit == nil {
-		return
-	}
+func (s *CreditChangeService) buildAuditEntry(action, actorID string, req CreditChangeRequest) audit.SensitiveAccess {
 	extra := map[string]any{
 		"status":       req.Status,
 		"requested_by": req.RequestedBy,
@@ -614,7 +654,7 @@ func (s *CreditChangeService) recordAudit(ctx context.Context, action, actorID s
 	if req.RejectedBy != "" {
 		extra["rejected_by"] = req.RejectedBy
 	}
-	_ = s.audit.Record(ctx, audit.SensitiveAccess{
+	return audit.SensitiveAccess{
 		Action:     action,
 		EntityType: "customer",
 		EntityID:   req.CustomerID,
@@ -622,5 +662,25 @@ func (s *CreditChangeService) recordAudit(ctx context.Context, action, actorID s
 		BranchID:   req.BranchID,
 		Reason:     req.Reason,
 		Extra:      extra,
-	})
+	}
+}
+
+func (s *CreditChangeService) recordAudit(ctx context.Context, action, actorID string, req CreditChangeRequest) {
+	if s.audit == nil {
+		return
+	}
+	_ = s.audit.Record(ctx, s.buildAuditEntry(action, actorID, req))
+}
+
+func (s *CreditChangeService) recordAuditTx(ctx context.Context, action, actorID string, req CreditChangeRequest) error {
+	if s.audit == nil {
+		return nil
+	}
+	entry := s.buildAuditEntry(action, actorID, req)
+	if tx := creditChangeTxFrom(ctx); tx != nil {
+		if rx, ok := s.audit.(creditChangeAuditTxRecorder); ok {
+			return rx.RecordTx(ctx, tx, entry)
+		}
+	}
+	return s.audit.Record(ctx, entry)
 }

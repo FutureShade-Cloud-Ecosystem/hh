@@ -13,6 +13,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,21 +27,24 @@ const (
 	ccTestBranchA    = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	ccTestBranchB    = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
-	ccUserSalesMgr  = "22222222-2222-4222-8222-222222222201"
-	ccUserBranchMgr = "22222222-2222-4222-8222-222222222202"
-	ccUserCtrl      = "22222222-2222-4222-8222-222222222203"
-	ccUserGM        = "22222222-2222-4222-8222-222222222204"
-	ccUserClerk     = "22222222-2222-4222-8222-222222222205"
+	ccUserSalesMgr   = "22222222-2222-4222-8222-222222222201"
+	ccUserBranchMgr  = "22222222-2222-4222-8222-222222222202"
+	ccUserBranchMgr2 = "22222222-2222-4222-8222-222222222206"
+	ccUserCtrl       = "22222222-2222-4222-8222-222222222203"
+	ccUserGM         = "22222222-2222-4222-8222-222222222204"
+	ccUserClerk      = "22222222-2222-4222-8222-222222222205"
 )
 
 type fakeCreditChangeWorld struct {
-	policy    CreditPolicy
-	customers map[string]*CustomerCreditFacts
-	requests  map[string]CreditChangeRequest
-	order     []string
-	holds     map[string]string
-	audits    []audit.SensitiveAccess
-	seq       int
+	mu          sync.Mutex
+	policy      CreditPolicy
+	customers   map[string]*CustomerCreditFacts
+	requests    map[string]CreditChangeRequest
+	order       []string
+	holds       map[string]string
+	audits      []audit.SensitiveAccess
+	seq         int
+	afterSetLim func()
 }
 
 func newFakeCreditChangeWorld(initialLimitCents int64) (*fakeCreditChangeWorld, *CreditChangeService) {
@@ -64,12 +69,30 @@ func newFakeCreditChangeWorld(initialLimitCents int64) (*fakeCreditChangeWorld, 
 	return w, svc
 }
 
-func (w *fakeCreditChangeWorld) Record(_ context.Context, a audit.SensitiveAccess) error {
+type fakeCreditChangeTxKey struct{}
+
+func (w *fakeCreditChangeWorld) lockIfNoTx(ctx context.Context) func() {
+	if ctx != nil && ctx.Value(fakeCreditChangeTxKey{}) != nil {
+		return func() {}
+	}
+	w.mu.Lock()
+	return w.mu.Unlock
+}
+
+func (w *fakeCreditChangeWorld) InCreditChangeTx(ctx context.Context, fn func(context.Context) error) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return fn(context.WithValue(ctx, fakeCreditChangeTxKey{}, true))
+}
+
+func (w *fakeCreditChangeWorld) Record(ctx context.Context, a audit.SensitiveAccess) error {
+	defer w.lockIfNoTx(ctx)()
 	w.audits = append(w.audits, a)
 	return nil
 }
 
-func (w *fakeCreditChangeWorld) CustomerCreditFacts(_ context.Context, customerID string) (CustomerCreditFacts, bool, error) {
+func (w *fakeCreditChangeWorld) CustomerCreditFacts(ctx context.Context, customerID string) (CustomerCreditFacts, bool, error) {
+	defer w.lockIfNoTx(ctx)()
 	c, ok := w.customers[customerID]
 	if !ok {
 		return CustomerCreditFacts{}, false, nil
@@ -77,28 +100,38 @@ func (w *fakeCreditChangeWorld) CustomerCreditFacts(_ context.Context, customerI
 	return *c, true, nil
 }
 
-func (w *fakeCreditChangeWorld) SetCustomerCreditLimit(_ context.Context, customerID string, newLimitCents int64) (int64, error) {
+func (w *fakeCreditChangeWorld) SetCustomerCreditLimit(ctx context.Context, customerID string, newLimitCents int64) (int64, error) {
+	unlock := w.lockIfNoTx(ctx)
 	c, ok := w.customers[customerID]
 	if !ok {
+		unlock()
 		return 0, ErrCreditChangeCustomerNotFound
 	}
 	prev := c.CreditLimitCents
 	c.CreditLimitCents = newLimitCents
+	hook := w.afterSetLim
+	unlock()
+	if hook != nil {
+		hook()
+	}
 	return prev, nil
 }
 
-func (w *fakeCreditChangeWorld) CreditPolicy(_ context.Context, _ string) (CreditPolicy, error) {
+func (w *fakeCreditChangeWorld) CreditPolicy(ctx context.Context, _ string) (CreditPolicy, error) {
+	defer w.lockIfNoTx(ctx)()
 	return w.policy, nil
 }
 
-func (w *fakeCreditChangeWorld) PlaceHold(_ context.Context, customerID, kind, _, _ string) (string, bool, error) {
+func (w *fakeCreditChangeWorld) PlaceHold(ctx context.Context, customerID, kind, _, _ string) (string, bool, error) {
+	defer w.lockIfNoTx(ctx)()
 	w.seq++
 	id := fmt.Sprintf("33333333-3333-4333-8333-%012d", w.seq)
 	w.holds[customerID] = kind
 	return id, true, nil
 }
 
-func (w *fakeCreditChangeWorld) CreateCreditChangeRequest(_ context.Context, req CreditChangeRequest) (CreditChangeRequest, error) {
+func (w *fakeCreditChangeWorld) CreateCreditChangeRequest(ctx context.Context, req CreditChangeRequest) (CreditChangeRequest, error) {
+	defer w.lockIfNoTx(ctx)()
 	if req.ID == "" {
 		w.seq++
 		req.ID = fmt.Sprintf("44444444-4444-4444-8444-%012d", w.seq)
@@ -108,7 +141,8 @@ func (w *fakeCreditChangeWorld) CreateCreditChangeRequest(_ context.Context, req
 	return req, nil
 }
 
-func (w *fakeCreditChangeWorld) GetCreditChangeRequest(_ context.Context, id string) (CreditChangeRequest, error) {
+func (w *fakeCreditChangeWorld) GetCreditChangeRequest(ctx context.Context, id string) (CreditChangeRequest, error) {
+	defer w.lockIfNoTx(ctx)()
 	req, ok := w.requests[id]
 	if !ok {
 		return CreditChangeRequest{}, ErrCreditChangeNotFound
@@ -116,15 +150,21 @@ func (w *fakeCreditChangeWorld) GetCreditChangeRequest(_ context.Context, id str
 	return req, nil
 }
 
-func (w *fakeCreditChangeWorld) UpdateCreditChangeRequest(_ context.Context, req CreditChangeRequest) (CreditChangeRequest, error) {
-	if _, ok := w.requests[req.ID]; !ok {
+func (w *fakeCreditChangeWorld) UpdateCreditChangeRequest(ctx context.Context, req CreditChangeRequest) (CreditChangeRequest, error) {
+	defer w.lockIfNoTx(ctx)()
+	cur, ok := w.requests[req.ID]
+	if !ok {
 		return CreditChangeRequest{}, ErrCreditChangeNotFound
+	}
+	if cur.Status != CreditChangeStatusPending {
+		return CreditChangeRequest{}, ErrCreditChangeNotPending
 	}
 	w.requests[req.ID] = req
 	return req, nil
 }
 
-func (w *fakeCreditChangeWorld) ListCreditChangeRequests(_ context.Context, f CreditChangeFilter, reach BranchReach) ([]CreditChangeRequest, error) {
+func (w *fakeCreditChangeWorld) ListCreditChangeRequests(ctx context.Context, f CreditChangeFilter, reach BranchReach) ([]CreditChangeRequest, error) {
+	defer w.lockIfNoTx(ctx)()
 	var out []CreditChangeRequest
 	for i := len(w.order) - 1; i >= 0; i-- {
 		r := w.requests[w.order[i]]
@@ -397,5 +437,97 @@ func TestCreditChange_EachChangeWritesAuditRow(t *testing.T) {
 		last.Extra["before"] != int64(1000000) ||
 		last.Extra["after"] != int64(4000000) {
 		t.Fatalf("applied audit row missing who asked, who approved, or before/after: %+v", last.Extra)
+	}
+}
+
+// P2-1 Red leg: approve and reject raced, 20 rounds. In every round, exactly one wins,
+// a request already decided is refused in words, and the customer's limit matches the
+// request's final status.
+func TestCreditChange_ApproveAndRejectRaced20Rounds(t *testing.T) {
+	reqCtx := ccCallerCtx(ccUserSalesMgr, "SALES_MANAGER", identity.TierManager, identity.ScopeBranch, ccTestBranchA)
+	bm1Ctx := ccCallerCtx(ccUserBranchMgr, RoleBranchManager, identity.TierManager, identity.ScopeBranch, ccTestBranchA)
+	bm2Ctx := ccCallerCtx(ccUserBranchMgr2, RoleBranchManager, identity.TierManager, identity.ScopeBranch, ccTestBranchA)
+
+	for round := 0; round < 20; round++ {
+		w, svc := newFakeCreditChangeWorld(1000000) // $10,000.00
+		req, err := svc.Request(reqCtx, CreateCreditChangeInput{
+			CustomerID:    ccTestCustomerID,
+			NewLimitCents: i64Ptr(1100000), // +$1,000.00
+			Reason:        fmt.Sprintf("race round %d", round),
+		})
+		if err != nil {
+			t.Fatalf("round %d request: %v", round, err)
+		}
+
+		// Yield inside SetCustomerCreditLimit when no transaction lock is held so a concurrent
+		// Reject lands in the gap between applying the limit and marking the request.
+		limitSet := make(chan struct{})
+		w.afterSetLim = func() {
+			select {
+			case <-limitSet:
+			default:
+				close(limitSet)
+			}
+			time.Sleep(time.Millisecond)
+		}
+
+		start := make(chan struct{})
+		var (
+			wg     sync.WaitGroup
+			appRes CreditChangeRequest
+			appErr error
+			rejRes CreditChangeRequest
+			rejErr error
+		)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			appRes, appErr = svc.Approve(bm1Ctx, req.ID, DecideCreditChangeInput{Note: "approve"})
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			if round%2 == 0 {
+				<-limitSet
+			}
+			rejRes, rejErr = svc.Reject(bm2Ctx, req.ID, DecideCreditChangeInput{Reason: "reject"})
+		}()
+		close(start)
+		wg.Wait()
+
+		if (appErr == nil) == (rejErr == nil) {
+			t.Fatalf("round %d: expected exactly one winner, got approveErr=%v rejectErr=%v", round, appErr, rejErr)
+		}
+
+		finalReq, err := svc.Get(bm1Ctx, req.ID)
+		if err != nil {
+			t.Fatalf("round %d get request: %v", round, err)
+		}
+		gotLimit := w.customers[ccTestCustomerID].CreditLimitCents
+
+		if appErr == nil {
+			if finalReq.Status != CreditChangeStatusApplied || appRes.Status != CreditChangeStatusApplied {
+				t.Fatalf("round %d: approve won but status = %q (resp %q), want APPLIED", round, finalReq.Status, appRes.Status)
+			}
+			if gotLimit != 1100000 {
+				t.Fatalf("round %d: approve won but customer limit = %d, want 1100000", round, gotLimit)
+			}
+		} else {
+			if finalReq.Status != CreditChangeStatusRejected || rejRes.Status != CreditChangeStatusRejected {
+				t.Fatalf("round %d: reject won but status = %q (resp %q), want REJECTED", round, finalReq.Status, rejRes.Status)
+			}
+			if gotLimit != 1000000 {
+				t.Fatalf("round %d: reject won (status=%s) but customer limit moved to %d, want 1000000", round, finalReq.Status, gotLimit)
+			}
+		}
+
+		loserErr := appErr
+		if loserErr == nil {
+			loserErr = rejErr
+		}
+		if !errors.Is(loserErr, ErrCreditChangeNotPending) || !strings.Contains(loserErr.Error(), "already") {
+			t.Fatalf("round %d: loser error = %v, want ErrCreditChangeNotPending naming already decided in words", round, loserErr)
+		}
 	}
 }

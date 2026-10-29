@@ -22,12 +22,13 @@ import (
 // the org default (branch_id IS NULL). A missing org row is a migration failure, not a runtime state,
 // so it errors rather than defaulting to something permissive in silence.
 func (r *Repository) CreditPolicy(ctx context.Context, branchID string) (CreditPolicy, error) {
-	if r.pool == nil {
+	q := r.creditChangeQuerier(ctx)
+	if q == nil {
 		return CreditPolicy{}, errNoDB
 	}
 	var p CreditPolicy
 	var bid *string
-	err := r.pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT COALESCE(branch_id::text,''), aging_bucket_days, aging_threshold_cents, aging_hold_enabled,
 		        limit_hold_enabled, limit_tolerance_cents, cod_enforced, auto_hold_enabled,
 		        increase_first_threshold_cents, increase_second_threshold_cents
@@ -279,7 +280,8 @@ func (r *Repository) CustomerExists(ctx context.Context, customerID string) (boo
 // the database (ux_credit_holds_one_active), not by a read-then-write we would have to get right
 // under concurrency. The WHERE NOT EXISTS is the fast path; the unique index is the guarantee.
 func (r *Repository) PlaceHold(ctx context.Context, customerID, kind, reason, placedBy string) (string, bool, error) {
-	if r.pool == nil {
+	q := r.creditChangeQuerier(ctx)
+	if q == nil {
 		return "", false, errNoDB
 	}
 	var actor *string
@@ -287,7 +289,7 @@ func (r *Repository) PlaceHold(ctx context.Context, customerID, kind, reason, pl
 		actor = &placedBy
 	}
 	var id string
-	err := r.pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`INSERT INTO credit_holds (customer_id, status, hold_kind, auto_placed, reason, placed_by)
 		 SELECT $1::uuid, 'ACTIVE', $2, $4, $3, $5::uuid
 		  WHERE NOT EXISTS (SELECT 1 FROM credit_holds WHERE customer_id = $1::uuid AND status = 'ACTIVE')
@@ -318,10 +320,11 @@ func scanHold(row pgx.Row) (CreditHold, error) {
 
 // ActiveHold returns the customer's ACTIVE hold, if any.
 func (r *Repository) ActiveHold(ctx context.Context, customerID string) (CreditHold, bool, error) {
-	if r.pool == nil {
+	q := r.creditChangeQuerier(ctx)
+	if q == nil {
 		return CreditHold{}, false, errNoDB
 	}
-	h, err := scanHold(r.pool.QueryRow(ctx,
+	h, err := scanHold(q.QueryRow(ctx,
 		`SELECT `+holdColumns+` FROM credit_holds h
 		   LEFT JOIN customers c ON c.id = h.customer_id
 		  WHERE h.customer_id = $1::uuid AND h.status = 'ACTIVE'`, customerID))
