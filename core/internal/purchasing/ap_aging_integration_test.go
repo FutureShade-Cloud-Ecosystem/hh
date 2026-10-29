@@ -327,6 +327,13 @@ func TestIntegration_W29A_Sub1_APAgingRule(t *testing.T) {
 //  3. a full payment;
 //  4. an open landed cost;
 //  5. a landed cost voided.
+//
+// The expectations are the test's own rows' movements against a baseline taken
+// before any of them: whatever else the database already carries (another
+// package's standing fixtures, an earlier run's leftovers) sits in both books at
+// the baseline and cancels, so the test passes on a rerun against a used
+// database (W3 item 4) and still proves its own documents tie in both books at
+// every step and at every historical instant.
 func TestIntegration_W29A_Sub2_APAgingTiesToGL2100(t *testing.T) {
 	h := newHarness(t)
 	zone, err := time.LoadLocation("America/Toronto")
@@ -345,7 +352,19 @@ func TestIntegration_W29A_Sub2_APAgingTiesToGL2100(t *testing.T) {
 	reach := BranchReach{BranchIDs: []string{branchTRT}}
 	todayStr := time.Now().In(zone).Format("2006-01-02")
 
-	assertTie := func(step string, asOf time.Time, wantCents int64) {
+	// The baseline: the aging and GL 2100 as they stand before the test's own
+	// first row, at one instant, before anything is posted.
+	baseline := time.Now().UTC()
+	page0, err := h.svc.APAging(h.ctx, baseline, reach)
+	if err != nil {
+		t.Fatalf("baseline: APAging: %v", err)
+	}
+	gl0, _, err := glRepo.AccountBalanceAsOf(h.ctx, "2100", baseline, branchTRT)
+	if err != nil {
+		t.Fatalf("baseline: AccountBalanceAsOf(2100): %v", err)
+	}
+
+	assertTie := func(step string, asOf time.Time, wantDeltaCents int64) {
 		t.Helper()
 		page, err := h.svc.APAging(h.ctx, asOf, reach)
 		if err != nil {
@@ -356,9 +375,11 @@ func TestIntegration_W29A_Sub2_APAgingTiesToGL2100(t *testing.T) {
 			t.Fatalf("%s: AccountBalanceAsOf(2100): %v", step, err)
 		}
 		glLiabilityCents := -glBal
-		if page.TotalCents != glLiabilityCents || page.TotalCents != wantCents {
-			t.Fatalf("W2-9a sub2 red (%s): ap_aging.total_cents=%d gl_2100_credit_cents=%d, want %d",
-				step, page.TotalCents, glLiabilityCents, wantCents)
+		agingDelta := page.TotalCents - page0.TotalCents
+		glDelta := glLiabilityCents + gl0
+		if agingDelta != glDelta || agingDelta != wantDeltaCents {
+			t.Fatalf("W2-9a sub2 red (%s): the test's own rows moved the aging %d cents and GL 2100 %d cents, want both %d",
+				step, agingDelta, glDelta, wantDeltaCents)
 		}
 	}
 
