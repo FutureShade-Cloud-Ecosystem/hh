@@ -224,7 +224,10 @@ export class ArDesk {
     if (landing.ok) this.#landing = landing.value;
     if (aging.ok) this.#aging = aging.value.items;
     if (register.ok) this.#rows = register.value.items;
-    if (bounced.ok) this.#bounced = bounced.value.items;
+    // The core's bounced queue answers a null items on an empty queue (its shape
+    // census records the handler as tillListBouncedPayments), and a null here
+    // took the whole landing down with it. The model's list is an array.
+    if (bounced.ok) this.#bounced = bounced.value.items ?? [];
     if (holds.ok) this.#holds = holds.value.items;
     if (branches.ok) this.#branches = branches.value;
     this.#phase = "ready";
@@ -238,7 +241,7 @@ export class ArDesk {
     if (landing.ok) this.#landing = landing.value;
     if (aging.ok) this.#aging = aging.value.items;
     if (register.ok) this.#rows = register.value.items;
-    if (bounced.ok) this.#bounced = bounced.value.items;
+    if (bounced.ok) this.#bounced = bounced.value.items ?? [];
     if (holds.ok) this.#holds = holds.value.items;
     await this.#refreshSelection();
   }

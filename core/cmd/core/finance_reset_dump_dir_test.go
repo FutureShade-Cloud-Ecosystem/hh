@@ -170,3 +170,31 @@ func TestFinanceResetNonDataLinesLeavesTheWorldsDataAlone(t *testing.T) {
 		}
 	}
 }
+
+// TestFinanceResetGuardReadsWholeWords is main's red on 5696d1eb: a newer
+// pg_dump writes "SET transaction_timeout = 0;", a harmless session setting,
+// and the guard's prefix match read it as SET TRANSACTION. The guard refuses
+// what truly breaks the one transaction and lets session settings through.
+func TestFinanceResetGuardReadsWholeWords(t *testing.T) {
+	for _, statement := range []string{
+		"SET transaction_timeout = 0;",
+		"SET statement_timeout = 0;",
+		"SET idle_in_transaction_session_timeout = 0;",
+		"CREATE FUNCTION public.f() RETURNS void LANGUAGE plpgsql AS $$\nBEGIN\n  PERFORM 1;\nEND;\n$$;",
+	} {
+		if err := financeResetTransactionSafe([]byte(statement)); err != nil {
+			t.Fatalf("the harmless statement %q was refused: %v", statement, err)
+		}
+	}
+	for _, statement := range []string{
+		"SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;",
+		"SET TRANSACTION READ WRITE;",
+		"COMMIT;",
+		"ROLLBACK;",
+		"\\connect other",
+	} {
+		if err := financeResetTransactionSafe([]byte(statement)); err == nil {
+			t.Fatalf("the statement %q was accepted inside the reset's transaction", statement)
+		}
+	}
+}
