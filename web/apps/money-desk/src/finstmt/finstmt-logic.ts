@@ -16,6 +16,7 @@ import type {
   GlPeriod,
 } from "@hardscapehouse/api-client";
 import { centsDecimal } from "./finstmt-money.js";
+import { openOut } from "../shared/source-words.js";
 
 export type StmtTab = "income" | "balance" | "trial" | "gl" | "aging" | "packs";
 
@@ -68,12 +69,6 @@ export function scopeLabel(branchId: string, branches: ReadonlyArray<{ readonly 
 
 // ---- words ----------------------------------------------------------------------------------------
 
-/** An unknown value is opened out, never hidden: "PO_RECEIPT" reads "Po receipt". */
-export function openOut(value: string): string {
-  const words = value.toLowerCase().replace(/_/g, " ").trim();
-  return words === "" ? "" : words.charAt(0).toUpperCase() + words.slice(1);
-}
-
 export function accountTypeWord(type: string): string {
   return openOut(type);
 }
@@ -88,20 +83,6 @@ const BUCKET_WORD: Record<string, string> = {
 
 export function bucketWord(bucket: string): string {
   return BUCKET_WORD[bucket] ?? openOut(bucket);
-}
-
-const SOURCE_WORD: Record<string, string> = {
-  MANUAL: "Manual",
-  INVOICE: "Invoice",
-  PAYMENT: "Payment",
-  FULFILLMENT: "Fulfillment",
-  PO_RECEIPT: "Purchase receipt",
-  ADJUSTMENT: "Adjustment",
-  CLOSING: "Year end closing",
-};
-
-export function sourceWord(source: string): string {
-  return SOURCE_WORD[source] ?? openOut(source);
 }
 
 const REPORT_WORD: Record<string, string> = {
