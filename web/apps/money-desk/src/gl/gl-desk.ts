@@ -564,13 +564,15 @@ export class GlDesk {
     const from = this.#host.field("journal-from").trim();
     const to = this.#host.field("journal-to").trim();
     if (from === this.#journalFrom && to === this.#journalTo) return;
-    this.#journalFrom = from;
-    this.#journalTo = to;
     this.#reaching = true;
     this.#host.repaint();
     const answer = await this.#api.journalsPage({ dateFrom: from, dateTo: to });
     this.#reaching = false;
     if (answer.ok) {
+      // The range is the register's only once its rows are, so a refusal leaves the shown range
+      // and its cursor standing, and the same dates can be pressed again.
+      this.#journalFrom = from;
+      this.#journalTo = to;
       this.#journals = answer.value.items;
       this.#journalsNext = answer.value.nextCursor;
       this.#error = "";
@@ -589,7 +591,9 @@ export class GlDesk {
     const answer = await this.#api.journalsPage({ dateFrom: this.#journalFrom, dateTo: this.#journalTo, cursor });
     this.#reaching = false;
     if (answer.ok) {
-      this.#journals = [...this.#journals, ...answer.value.items];
+      // A reread that landed while this page was in flight may already hold some of its rows.
+      const held = new Set(this.#journals.map((j) => j.id));
+      this.#journals = [...this.#journals, ...answer.value.items.filter((j) => !held.has(j.id))];
       this.#journalsNext = answer.value.nextCursor;
       this.#error = "";
     } else {
