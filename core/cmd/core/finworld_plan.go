@@ -133,6 +133,39 @@ var finworldHouseholdWords = []string{
 	"MacLeod", "Maddox", "Manning", "Marlowe", "Marshall", "Mason", "Matthews", "Maxwell", "McAllister", "McBride",
 	"McCallum", "McCarthy", "McCormick", "McDonald", "McFarlane", "McGill", "McGregor", "McIntosh", "McKay", "McKenzie",
 	"McLean", "McLeod", "McMillan", "McNeil", "Mercer", "Merritt", "Middleton", "Miller", "Mitchell", "Monroe",
+	"Montgomery", "Morgan", "Morris", "Morrison", "Morton", "Mowat", "Murdoch", "Murphy", "Murray", "Nelson",
+	"Newcombe", "Newman", "Newton", "Nicholson", "Nolan", "Norman", "Northey", "Norwood", "Oakley", "Ogden",
+	"Oliver", "Orchard", "Osborne", "Oswald", "Owen", "Palmer", "Parkin", "Parr", "Parsons", "Patterson",
+	"Pearce", "Pearson", "Pemberton", "Peters", "Phillips", "Pickering", "Platt", "Pollard", "Porter", "Powell",
+	"Pratt", "Preston", "Price", "Pringle", "Purcell", "Radcliffe", "Ramsay", "Randall", "Redfern", "Reeves",
+	"Renwick", "Reynolds", "Rhodes", "Ridley", "Ross", "Rowe", "Rutherford", "Sanderson", "Saunders", "Sawyer",
+	"Selkirk", "Sharpe", "Shelton", "Simmons", "Sinclair", "Slater", "Snider", "Somers", "Spencer", "Stanton",
+	"Steele", "Sterling", "Stewart", "Stone", "Strachan", "Sutton", "Swan", "Tait", "Talbot", "Taverner",
+	"Thorne", "Thornton", "Tillson", "Tolhurst", "Tremblay", "Tuck", "Tupper", "Underhill", "Vance", "Vaughan",
+	"Wade", "Walden", "Walker", "Wallace", "Walsh", "Ward", "Warner", "Waterman", "Watts", "Weatherup",
+	"Wells", "Wentworth", "Weston", "Wheeler", "Whitfield", "Wicks", "Wilkes", "Willoughby", "Wilson", "Winfield",
+	"Winterbourne", "Wolfe", "Woodhurst", "Wright", "Wyatt", "Yarker", "Yonge",
+}
+
+// finworldVendorSeedNames are the catalogue's goods suppliers, named exactly as
+// the embedded catalogue seed names them: the invented dealer's established
+// suppliers, whose rows the seed plants before the world runs. The world's
+// carriers and brokers join them as vendors in item 3, with names of the
+// plan's own.
+var finworldVendorSeedNames = []struct{ VendorNo, Name string }{
+	{"V-OAKS", "Oaks / Brampton Brick"},
+	{"V-PERMACON", "Permacon / Old Castle"},
+	{"V-TECHO", "Techo Bloc"},
+	{"V-BESTWAY", "Best Way Stone"},
+	{"V-UNILOCK", "Unilock"},
+	{"V-BROWNS", "Brown's Concrete"},
+	{"V-SOLENO", "Soleno"},
+	{"V-GATOR", "Alliance Gator"},
+	{"V-INLITE", "In-Lite"},
+	{"V-SIKA", "Sika"},
+	{"V-RYMAR", "Rymar Grass"},
+	{"V-BANAS", "Banas Stone"},
+	{"V-PORCEA", "Porcea"},
 }
 
 type finworldCatalogueSpec struct {
@@ -207,6 +240,29 @@ func finworldVerifyCatalogueAgainstSeedSQL() error {
 		needle := "'" + spec.SKU + "'"
 		if !strings.Contains(text, needle) {
 			return fmt.Errorf("finworld: SKU %s not found in embedded dibbits_seed.sql", spec.SKU)
+		}
+	}
+	return nil
+}
+
+// finworldVerifyVendorNamesAgainstSeedSQL holds the plan's vendor display
+// names to the embedded catalogue seed's own rows: every catalogue supplier's
+// (vendor_no, name) pair must appear in the seed's vendors INSERT verbatim, so
+// the plan's names and the database's names cannot drift apart.
+func finworldVerifyVendorNamesAgainstSeedSQL(vendorNameByNo map[string]string) error {
+	raw, err := seedFS.ReadFile("dibbits_seed.sql")
+	if err != nil {
+		return fmt.Errorf("finworld: read embedded dibbits_seed.sql: %w", err)
+	}
+	text := string(raw)
+	for _, spec := range finworldCatalogueSpecs {
+		name, ok := vendorNameByNo[spec.VendorNo]
+		if !ok {
+			return fmt.Errorf("finworld: catalogue vendor %s carries no display name", spec.VendorNo)
+		}
+		needle := fmt.Sprintf("('%s','%s',", spec.VendorNo, strings.ReplaceAll(name, "'", "''"))
+		if !strings.Contains(text, needle) {
+			return fmt.Errorf("finworld: vendor row ('%s','%s') not found in embedded dibbits_seed.sql", spec.VendorNo, name)
 		}
 	}
 	return nil
@@ -666,15 +722,35 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 	}
 
 	// 3. Build 70 invented contractors (first 15 are top Pareto contractors).
+	// Every name is a unique word-list pair plus trade and legal form: a name
+	// a person would give a business, with no counter and no id shape. The
+	// pair draws exactly as the world always drew it; where a draw collides
+	// with a name already given, the second word steps forward through the
+	// list until the pair is free, so the world's own random stream is
+	// untouched and every sales figure in the plan stays exactly where it was.
 	topParetoLimits := []int64{7500000, 12000000, 20000000}
 	stdContractorLimits := []int64{3000000, 4000000, 5000000, 7500000}
 	contractorTerms := []int{30, 30, 30, 45, 60}
 	contactRoles := []string{"Accounts Desk", "Purchasing Desk", "Estimating Desk", "Operations Desk"}
 
 	plan.Contractors = make([]FinWorldCustomer, 70)
+	usedContractorNames := map[string]bool{}
 	for i := 0; i < 70; i++ {
-		w1 := finworldCustomerFirstWords[(i+rng.IntN(len(finworldCustomerFirstWords)))%len(finworldCustomerFirstWords)]
-		w2 := finworldCustomerSecondWords[(i/2+rng.IntN(len(finworldCustomerSecondWords)))%len(finworldCustomerSecondWords)]
+		w1Idx := (i + rng.IntN(len(finworldCustomerFirstWords))) % len(finworldCustomerFirstWords)
+		w2Idx := (i/2 + rng.IntN(len(finworldCustomerSecondWords))) % len(finworldCustomerSecondWords)
+		var w1, w2 string
+		for {
+			w1 = finworldCustomerFirstWords[w1Idx]
+			w2 = finworldCustomerSecondWords[w2Idx]
+			if !usedContractorNames[w1+" "+w2] {
+				usedContractorNames[w1+" "+w2] = true
+				break
+			}
+			w2Idx = (w2Idx + 1) % len(finworldCustomerSecondWords)
+			if w2Idx == 0 {
+				w1Idx = (w1Idx + 1) % len(finworldCustomerFirstWords)
+			}
+		}
 		trade := finworldContractorTradeWords[(i+rng.IntN(len(finworldContractorTradeWords)))%len(finworldContractorTradeWords)]
 		suffix := finworldContractorSuffixes[i%len(finworldContractorSuffixes)]
 		town := finworldAllowedTowns[(i+rng.IntN(len(finworldAllowedTowns)))%len(finworldAllowedTowns)]
@@ -696,7 +772,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 			AccountNo:         fmt.Sprintf("FW-C%03d", i+1),
 			CustomerType:      "CONTRACTOR",
 			IsTopPareto:       isTop,
-			Name:              fmt.Sprintf("%s %s %s %s %d", w1, w2, trade, suffix, i+1),
+			Name:              fmt.Sprintf("%s %s %s %s", w1, w2, trade, suffix),
 			ContactName:       contactRoles[i%len(contactRoles)],
 			Email:             fmt.Sprintf("contractor-%03d-s%d@example.invalid", i+1, seed),
 			Phone:             fmt.Sprintf("613-555-%04d", 1001+i),
@@ -711,10 +787,15 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 		}
 	}
 
-	// 4. Build 180 invented homeowners ("The <Word> Household").
+	// 4. Build 180 invented homeowners ("The <Word> Household"). The word
+	// list carries more surnames than the world needs, so every household
+	// draws its own and the names stay unique with no counter.
+	if len(finworldHouseholdWords) < 180 {
+		return nil, fmt.Errorf("finworld: the household word list carries %d surnames, the world's 180 households need more", len(finworldHouseholdWords))
+	}
 	plan.Homeowners = make([]FinWorldCustomer, 180)
 	for i := 0; i < 180; i++ {
-		word := finworldHouseholdWords[i%len(finworldHouseholdWords)]
+		word := finworldHouseholdWords[i]
 		town := finworldAllowedTowns[(i+rng.IntN(len(finworldAllowedTowns)))%len(finworldAllowedTowns)]
 		street := finworldStreetNames[(i+rng.IntN(len(finworldStreetNames)))%len(finworldStreetNames)]
 		homeBranch := FinWorldBranchCodeTRT
@@ -785,22 +866,29 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 		return len(plan.Products) - 1
 	}
 
-	// 5b. Build the vendors. The world's vendors are the catalogue's goods
-	// suppliers, and (W2-1d item 3) the freight carriers and customs brokers
-	// the landed costs name as payees. Today the vendor row's display name is
-	// still the vendor number itself (the driver inserts name = vendor_no);
-	// item 2 gives every vendor a real name from the word lists, and the
-	// census fails on the numbered shape until then.
-	vendorNoSeen := map[string]bool{}
+	// 5b. Build the vendors. The catalogue's goods suppliers are the invented
+	// dealer's established vendors, named exactly as the embedded catalogue
+	// seed names them, and the plan verifies every pair against that seed at
+	// construction. The world's carriers and brokers join them as vendors in
+	// W2-1d item 3, with names of the plan's own; no vendor is ever named
+	// with its vendor number or a counter.
+	vendorNameByNo := map[string]string{}
+	for _, vn := range finworldVendorSeedNames {
+		vendorNameByNo[vn.VendorNo] = vn.Name
+	}
+	if err := finworldVerifyVendorNamesAgainstSeedSQL(vendorNameByNo); err != nil {
+		return nil, err
+	}
+	seenVendor := map[string]bool{}
 	plan.Vendors = []FinWorldVendor{}
 	for _, spec := range finworldCatalogueSpecs {
-		if vendorNoSeen[spec.VendorNo] {
+		if seenVendor[spec.VendorNo] {
 			continue
 		}
-		vendorNoSeen[spec.VendorNo] = true
+		seenVendor[spec.VendorNo] = true
 		plan.Vendors = append(plan.Vendors, FinWorldVendor{
 			VendorNo:         spec.VendorNo,
-			Name:             spec.VendorNo,
+			Name:             vendorNameByNo[spec.VendorNo],
 			Kind:             "SUPPLIER",
 			PaymentTermsDays: finworldVendorTermsDays,
 		})

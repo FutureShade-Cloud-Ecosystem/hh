@@ -669,6 +669,23 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 		}
 	}
 
+	// The vendors the plan names (the catalogue's suppliers, and from W2-1d
+	// item 3 the landed costs' carriers and brokers), inserted under the
+	// plan's own display name and terms. A vendor the seed already plants
+	// keeps its row; a carrier or broker gets its named row here.
+	vendorNameByNo := make(map[string]FinWorldVendor, len(plan.Vendors))
+	for _, v := range plan.Vendors {
+		vendorNameByNo[v.VendorNo] = v
+	}
+	for _, v := range plan.Vendors {
+		if _, err := h.pool.Exec(ctx, `
+			INSERT INTO vendors (vendor_no, name, payment_terms_days, is_edi)
+			VALUES ($1::citext, $2::text, $3, false)
+			ON CONFLICT (vendor_no) DO NOTHING`, v.VendorNo, v.Name, v.PaymentTermsDays); err != nil {
+			return fmt.Errorf("ensure vendor %s: %w", v.VendorNo, err)
+		}
+	}
+
 	// Align all 30 products, UOMs, and list prices with FinWorldPlan
 	for _, p := range plan.Products {
 		catCode := p.CategoryCode
@@ -714,11 +731,8 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 			prodID, p.ListPriceCents, p.SellUOM); err != nil {
 			return fmt.Errorf("upsert list price %s: %w", p.SKU, err)
 		}
-		if _, err := h.pool.Exec(ctx, `
-			INSERT INTO vendors (vendor_no, name, payment_terms_days, is_edi)
-			VALUES ($1::citext, $1::text, 30, false)
-			ON CONFLICT (vendor_no) DO NOTHING`, p.VendorNo); err != nil {
-			return fmt.Errorf("ensure vendor %s: %w", p.VendorNo, err)
+		if _, ok := vendorNameByNo[p.VendorNo]; !ok {
+			return fmt.Errorf("ensure vendor %s: the plan names no vendor for this product", p.VendorNo)
 		}
 	}
 

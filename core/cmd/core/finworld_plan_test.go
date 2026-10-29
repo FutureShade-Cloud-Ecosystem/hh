@@ -709,3 +709,68 @@ func TestFinWorldPlan_ReferentialAndTemporalOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestFinWorldPlan_NamesAreUniqueRealSoundingNames (W2-1d item 2): every
+// customer and vendor name is a real-sounding business or household name built
+// from the word lists, unique among its kind, with no counter and no digit.
+func TestFinWorldPlan_NamesAreUniqueRealSoundingNames(t *testing.T) {
+	anchor := YearMonth{Year: 2026, Month: 9}
+	plan, err := FinWorldPlan(1, anchor, finworldTestDealerName)
+	if err != nil {
+		t.Fatalf("FinWorldPlan(1, %s) failed: %v", anchor, err)
+	}
+
+	allowedFirstWords := make(map[string]bool, len(finworldCustomerFirstWords))
+	for _, w := range finworldCustomerFirstWords {
+		allowedFirstWords[w] = true
+	}
+	allowedSecondWords := make(map[string]bool, len(finworldCustomerSecondWords))
+	for _, w := range finworldCustomerSecondWords {
+		allowedSecondWords[w] = true
+	}
+
+	contractorNames := make(map[string]bool, len(plan.Contractors))
+	for _, c := range plan.Contractors {
+		if contractorNames[c.Name] {
+			t.Errorf("contractor name %q is given twice; names must be unique with no counter", c.Name)
+		}
+		contractorNames[c.Name] = true
+		if strings.ContainsAny(c.Name, "0123456789") {
+			t.Errorf("contractor name %q carries a digit; a business name never carries a counter", c.Name)
+		}
+		parts := strings.Fields(c.Name)
+		if len(parts) < 4 || !allowedFirstWords[parts[0]] || !allowedSecondWords[parts[1]] {
+			t.Errorf("contractor name %q is not built from the invented word lists", c.Name)
+		}
+	}
+
+	householdNames := make(map[string]bool, len(plan.Homeowners))
+	for _, h := range plan.Homeowners {
+		if householdNames[h.Name] {
+			t.Errorf("homeowner name %q is given twice; the word list must carry more surnames than the world needs", h.Name)
+		}
+		householdNames[h.Name] = true
+		if strings.ContainsAny(h.Name, "0123456789") {
+			t.Errorf("homeowner name %q carries a digit", h.Name)
+		}
+	}
+
+	vendorNames := make(map[string]bool, len(plan.Vendors))
+	vendorNos := make(map[string]bool, len(plan.Vendors))
+	for _, v := range plan.Vendors {
+		if vendorNames[v.Name] {
+			t.Errorf("vendor name %q is given twice", v.Name)
+		}
+		vendorNames[v.Name] = true
+		if vendorNos[v.VendorNo] {
+			t.Errorf("vendor number %s appears twice in the plan's vendors", v.VendorNo)
+		}
+		vendorNos[v.VendorNo] = true
+		if v.Name == "" || v.Name == v.VendorNo {
+			t.Errorf("vendor %s carries no display name of its own", v.VendorNo)
+		}
+		if strings.ContainsAny(v.Name, "0123456789") {
+			t.Errorf("vendor name %q carries a digit", v.Name)
+		}
+	}
+}
