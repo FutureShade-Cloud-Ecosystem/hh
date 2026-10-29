@@ -102,6 +102,18 @@ through Caddy (it pings the database, 503 when the database is down).
    a boot with the same list changes nothing. The command prints ids and
    counts only, never an address.
 
+## What the box holds after a failure
+
+The reset never leaves the box half way between two worlds. Every refusal
+before the restore and every failure inside it leaves the box as it was.
+
+| The path | What the box holds after the failure |
+|---|---|
+| the digest refusal | Everything it had. The dump's digest is not the one the environment names, so the reset stops before it writes the dump and before it drops anything: the tables, the rows and the recorded world are untouched. |
+| the write refusal | Everything it had. The dump file could not be written under the directory the reset was given, so the reset stops before the drop: the tables, the rows and the recorded world are untouched. |
+| a restore failure part way | Everything it had. The drop, the recreate and the restore are one transaction, so a failure part way through the restore rolls the drop back with it: the box is never empty and never half restored, and it records no world. |
+| a failure after the commit (the migration rerun) | The new world, committed, and no recorded world and no audit row yet. The box holds the world's tables and rows, and the migrations that follow the restore have not all run. The box records no world, so the next boot may reset again. |
+
 ## The database role's rights
 
 `DATABASE_URL` names the box's own Postgres and the role the box connects as.
