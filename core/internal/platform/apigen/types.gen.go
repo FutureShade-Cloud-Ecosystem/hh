@@ -800,6 +800,7 @@ type BillingApplyPaymentAnswer struct {
 	AmountCents    int64                     `json:"amount_cents"`
 	AppliedCents   int64                     `json:"applied_cents"`
 	UnappliedCents int64                     `json:"unapplied_cents"`
+	OnAccountCents int64                     `json:"on_account_cents"`
 	Lines          []BillingApplyPaymentLine `json:"lines"`
 	Replayed       bool                      `json:"replayed"`
 }

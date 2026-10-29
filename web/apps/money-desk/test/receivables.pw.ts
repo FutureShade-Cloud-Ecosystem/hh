@@ -683,13 +683,13 @@ test("a worded 4xx says the payment was not recorded in the route's own words, a
     posts.push(body);
     if (refuse) {
       refuse = false;
-      return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "the selected invoices can take at most 96000 cents right now; refresh and retry" }) });
+      return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "one payment applies to one branch's invoices; record a payment per branch" }) });
     }
     return route.continue();
   });
   await readyToPay(page, request, "Cheque 4471");
   await page.getByRole("button", { name: "Record payment" }).click();
-  await expect(page.locator("[data-error]")).toHaveText("The payment was not recorded. The selected invoices can take at most $960.00 right now; refresh and retry.");
+  await expect(page.locator("[data-error]")).toHaveText("The payment was not recorded. One payment applies to one branch's invoices; record a payment per branch.");
   await page.getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 applied");
   expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
@@ -796,7 +796,31 @@ test("on a phone the unknown outcome message is in view and focused when it appe
   expect(focused).toBe("");
 });
 
+test("a payment larger than the picked invoices leaves the remainder on the customer's account as a credit", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await page.getByRole("button", { name: "Clear" }).first().click();
+  await page.getByRole("checkbox", { name: "Pay INV-1002" }).click();
+  await page.locator("[data-field='receive-amount']").fill("1000.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 4480");
+  await expect(page.locator("[data-applied]")).toHaveText("$960.00 of $1,000.00");
+  await expect(page.locator("[data-on-account]")).toHaveText("$40.00 more than these invoices could take stays on the customer's account as a credit.");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("$40.00 more than these invoices could take stays on the customer's account as a credit");
+});
+
 test("a payment that cannot be posted is stopped in words, and the server's refusal shows beside the split", async ({ page, request }) => {
+  await page.route("**/api/v1/ar/payments/apply", (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    if (body.preview && body.amount_cents === 96001) {
+      return route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "one payment applies to one branch's invoices; record a payment per branch" }),
+      });
+    }
+    return route.continue();
+  });
   await openDesk(page, request);
   await openAccount(page, "Granite Edge Landscaping (demo)");
   await page.getByRole("button", { name: "Clear" }).first().click();
@@ -806,7 +830,7 @@ test("a payment that cannot be posted is stopped in words, and the server's refu
   await expect(page.locator("[data-error]")).toContainText("Pick the invoices the payment is for");
   await page.getByRole("checkbox", { name: "Pay INV-1002" }).click();
   await page.locator("[data-field='receive-amount']").fill("960.01");
-  await expect(page.locator("[data-preview-error]")).toHaveText("The selected invoices can take at most $960.00 right now; refresh and retry.");
+  await expect(page.locator("[data-preview-error]")).toHaveText("One payment applies to one branch's invoices; record a payment per branch.");
   await expect(page.locator("[data-applied]")).toHaveText("Nothing to apply yet");
   await page.locator("[data-field='receive-amount']").fill("abc");
   await expect(page.locator("[data-amount-hint]")).toHaveText("Enter dollars and cents, such as $100.00.");

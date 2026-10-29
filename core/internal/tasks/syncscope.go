@@ -534,6 +534,40 @@ func checkWritableCreate(fields map[string]any) error {
 	return nil
 }
 
+// pickCreateShape is the body-only half of the pushed create's checks: the
+// writable field set, the order uuid, the priority vocabulary and the
+// payload id shape. It reads nothing and honours no fence (the order's
+// existence and the caller's reach are Create's own reads), so the bound
+// key gate can run it before the hidden refusal (UX-116): an invalid body
+// then meets these refusals under a spent key and a free one. The refusals
+// are exactly the ones Create answers.
+func pickCreateShape(fields map[string]any) error {
+	if err := checkWritableCreate(fields); err != nil {
+		return err
+	}
+	orderID, _ := fields["order_id"].(string)
+	if !looksLikeUUID(orderID) {
+		return fmt.Errorf("tasks: order_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	priority, _ := fields["priority"].(string)
+	if priority != "" && !validPriority(priority) {
+		return fmt.Errorf("tasks: unknown priority %q: %w", priority, sync.ErrOpRefused)
+	}
+	if id, hasID := fields["id"].(string); hasID && !looksLikeUUID(id) {
+		return fmt.Errorf("tasks: payload id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	return nil
+}
+
+// ValidateCreate answers the pushed create's body shape without the order
+// read, the reach fence or a write: the engine's bound key gate calls it
+// before the hidden refusal (UX-116). The refusals are exactly Create's.
+func (s *SyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	return pickCreateShape(fields)
+}
+
+var _ sync.CreateBodyValidator = (*SyncStore)(nil)
+
 // actorERP resolves the audit actor from the filter's caller identity:
 // the linked ERP user when the linker resolves one, else the empty string
 // (the module's system-actor convention, the same NULL the REST surface
@@ -559,13 +593,10 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	if _, _, ok := pickScopePredicate(f); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
-	if err := checkWritableCreate(fields); err != nil {
+	if err := pickCreateShape(fields); err != nil {
 		return sync.RowState{}, err
 	}
 	orderID, _ := fields["order_id"].(string)
-	if !looksLikeUUID(orderID) {
-		return sync.RowState{}, fmt.Errorf("tasks: order_id must be a uuid: %w", sync.ErrOpRefused)
-	}
 	if s.orders == nil {
 		return sync.RowState{}, fmt.Errorf("tasks: order reader not configured: %w", sync.ErrOpRefused)
 	}
@@ -597,13 +628,9 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	if priority == "" {
 		priority = PriorityNormal
 	}
-	if !validPriority(priority) {
-		return sync.RowState{}, fmt.Errorf("tasks: unknown priority %q: %w", priority, sync.ErrOpRefused)
-	}
-	id, hasID := fields["id"].(string)
-	if hasID && !looksLikeUUID(id) {
-		return sync.RowState{}, fmt.Errorf("tasks: payload id must be a uuid: %w", sync.ErrOpRefused)
-	}
+	// The priority vocabulary and the payload id shape are pickCreateShape's
+	// checks, run before the order read there; here the shape stands proven.
+	id, _ := fields["id"].(string)
 	actor := s.actorERP(ctx, f)
 
 	tx, err := s.pool.Begin(ctx)

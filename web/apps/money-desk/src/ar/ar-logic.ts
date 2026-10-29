@@ -536,7 +536,12 @@ export function worklistActionWord(action: string): string {
   }
 }
 
-export function overpaymentPreview(answer: { unapplied_cents: number } | null, previewError: string): boolean {
-  if (answer !== null && answer.unapplied_cents > 0) return true;
-  return previewError.toLowerCase().includes("can take at most");
+export function overpaymentPreview(answer: { unapplied_cents: number; on_account_cents?: number | undefined } | null, _previewError = ""): boolean {
+  if (answer !== null && (answer.on_account_cents ?? answer.unapplied_cents) > 0) return true;
+  return false;
+}
+
+export function onAccountWords(onAccountCents: number): string {
+  if (onAccountCents <= 0) return "";
+  return `${formatMoney(onAccountCents)} more than these invoices could take stays on the customer's account as a credit.`;
 }
