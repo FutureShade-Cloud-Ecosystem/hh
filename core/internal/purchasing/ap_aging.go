@@ -374,7 +374,7 @@ func (r *Repository) PaidBillTotalsTx(ctx context.Context, tx pgx.Tx, billID str
 	}
 	if err := r.q(tx).QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount_cents), 0),
-		       COALESCE(SUM(COALESCE(NULLIF(doc_amount_cents, 0), amount_cents)), 0)
+		       COALESCE(SUM(doc_amount_cents), 0)
 		  FROM purchasing_bill_instalments
 		 WHERE bill_id = $1 AND status = 'PAID'`,
 		billID,

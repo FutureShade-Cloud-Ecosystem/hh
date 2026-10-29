@@ -59,7 +59,14 @@ ALTER TABLE purchasing_bill_instalments
   ADD COLUMN IF NOT EXISTS doc_amount_cents BIGINT NOT NULL DEFAULT 0 CHECK (doc_amount_cents >= 0),
   ADD COLUMN IF NOT EXISTS fx_rate          NUMERIC(12, 6) CHECK (fx_rate IS NULL OR fx_rate > 0);
 
-UPDATE purchasing_bill_instalments
-   SET doc_amount_cents = amount_cents,
-       fx_rate = 1.0
- WHERE doc_amount_cents = 0;
+-- Before this migration PayBill took CAD cents on every bill, so an instalment on a USD bill holds
+-- CAD in amount_cents. Convert that CAD to USD at the bill's own rate; counting it as USD would
+-- refuse the USD still owed and post a made up gain. Any rounding left is cleared by the remainder
+-- rule on the last payment.
+UPDATE purchasing_bill_instalments i
+   SET doc_amount_cents = CASE WHEN b.currency = 'USD' AND b.fx_rate > 0
+                               THEN ROUND(i.amount_cents / b.fx_rate)::bigint
+                               ELSE i.amount_cents END,
+       fx_rate = CASE WHEN b.currency = 'USD' AND b.fx_rate > 0 THEN b.fx_rate ELSE 1.0 END
+  FROM purchasing_bills b
+ WHERE b.id = i.bill_id AND i.doc_amount_cents = 0;
