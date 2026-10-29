@@ -26,6 +26,8 @@ import {
   worksheetCsvFilename,
   worksheetPeriodWords,
   worksheetTieWords,
+  taxSubtitle,
+  handEntryNote,
 } from "../src/tax/tax-logic.ts";
 import { bpsToField, centsDecimal, formatMoney, formatRate, parseRateToBps } from "../src/tax/tax-money.ts";
 
@@ -225,19 +227,19 @@ test("W3-HST2: worksheet tie words, period words, CSV export and worksheet refus
   assert.equal(centsDecimal(-85150), "-851.50");
 
   assert.deepEqual(worksheetTieWords(0, true), {
-    word: "Tied to GL 2200",
+    word: "Tied out",
     tone: "good",
-    detail: "No variance. The return's net GST/HST matches GL 2200's movement for the period.",
+    detail: "No variance. The return's net GST/HST matches the movement of the GST/HST payable account (GL 2200) for the period.",
   });
   assert.deepEqual(worksheetTieWords(85150, false), {
     word: "Off by $851.50",
     tone: "stop",
-    detail: "GL 2200 is $851.50 higher than the return's net GST/HST for the period.",
+    detail: "The GST/HST payable account (GL 2200) is $851.50 higher than the return's net GST/HST for the period.",
   });
   assert.deepEqual(worksheetTieWords(-1200, false), {
     word: "Off by $12.00",
     tone: "stop",
-    detail: "GL 2200 is $12.00 lower than the return's net GST/HST for the period.",
+    detail: "The GST/HST payable account (GL 2200) is $12.00 lower than the return's net GST/HST for the period.",
   });
 
   assert.equal(
@@ -288,8 +290,8 @@ test("W3-HST2: worksheet tie words, period words, CSV export and worksheet refus
   const csv = worksheetCsv(sample);
   assert.ok(csv.includes('101,"Sales and other revenue","From the books",36180.00'));
   assert.ok(csv.includes('104,"Adjustments to GST/HST","Entered by hand",0.00'));
-  assert.ok(csv.includes('GL_2200,"GL 2200 movement","From the books",3830.75'));
-  assert.ok(csv.includes('VARIANCE,"Variance to GL 2200","Tied to GL 2200",0.00'));
+  assert.ok(csv.includes('GL_2200,"GST/HST payable account movement (GL 2200)","From the books",3830.75'));
+  assert.ok(csv.includes('VARIANCE,"Variance to the GST/HST payable account (GL 2200)","Tied out",0.00'));
 
   assert.equal(
     refusalWords("worksheet", "tax: caller cannot access this branch", 403),
@@ -299,4 +301,29 @@ test("W3-HST2: worksheet tie words, period words, CSV export and worksheet refus
   assert.equal(refusalWords("worksheet", "year must be 2000..2100", 400), "The year must be a four digit year between 2000 and 2100.");
   assert.equal(refusalWords("worksheet", "quarter must be 1..4 for QUARTERLY filing", 400), "Choose a quarter from Q1 to Q4 for quarterly filing.");
   assert.equal(refusalWords("worksheet", "month must be 1..12 for MONTHLY filing", 400), "Choose a month from January to December for monthly filing.");
+});
+
+test("721 visual: the page subtitle follows the tab and the dealer's own tax setup", () => {
+  const rates = [{ jurisdiction: "CA", reason_code: "STD_ON_HST_13", effective_from: "2020-01-01" }];
+  const quarterly = { filing_frequency: "QUARTERLY" };
+  assert.equal(taxSubtitle("worksheet", quarterly, rates, "2030-01-01"), "Canadian GST/HST, Canadian dollars. Filed quarterly.");
+  assert.equal(taxSubtitle("worksheet", { filing_frequency: "MONTHLY" }, rates, "2030-01-01"), "Canadian GST/HST, Canadian dollars. Filed monthly.");
+  assert.equal(taxSubtitle("worksheet", null, rates, "2030-01-01"), "Canadian GST/HST, Canadian dollars.");
+  const rest = taxSubtitle("rates", quarterly, rates, "2030-01-01");
+  assert.ok(rest.endsWith("California sales tax; US dollars."), rest);
+  assert.ok(!/GST|HST|Canadian/.test(rest), rest);
+  assert.ok(taxSubtitle("settings", quarterly, [], "2030-01-01").endsWith("California sales tax; US dollars."));
+});
+
+test("721 visual: the hand entry note names only the lines the table tags as entered by hand", () => {
+  const lines = [
+    { line_no: "101", entered_by_hand: false },
+    { line_no: "104", entered_by_hand: true },
+    { line_no: "107", entered_by_hand: true },
+    { line_no: "405", entered_by_hand: true },
+  ];
+  assert.equal(handEntryNote(lines), "Lines 104, 107 and 405 are entered by hand on the CRA return.");
+  assert.equal(handEntryNote(lines, "Lines 205 (GST/HST due) and 405 (other GST/HST) are entered by hand."), "Lines 104, 107, 205 and 405 are entered by hand on the CRA return.");
+  assert.equal(handEntryNote([{ line_no: "104", entered_by_hand: true }]), "Line 104 is entered by hand on the CRA return.");
+  assert.equal(handEntryNote([{ line_no: "101", entered_by_hand: false }]), "");
 });

@@ -639,7 +639,7 @@ test("W3-HST2 leg 1: the GST/HST return view follows filing_frequency, shows the
   await expect(page.locator("tr[data-worksheet-line='113'] [data-line-amount]")).toHaveText("$3,830.75");
   await expect(page.locator("tr[data-worksheet-line='114'] [data-line-amount]")).toHaveText("$0.00");
   await expect(page.locator("tr[data-worksheet-line='115'] [data-line-amount]")).toHaveText("$3,830.75");
-  await expect(page.locator("[data-manual-entry-note]")).toContainText("Lines 104 (GST/HST adjustments), 107 (ITC adjustments)");
+  await expect(page.locator("[data-manual-entry-note]")).toHaveText("Lines 104, 107, 110, 111, 205 and 405 are entered by hand on the CRA return.");
 
   // When the dealer's filing_frequency is MONTHLY, the period picker shows Month instead of Quarter.
   await page.route("**/api/v1/tax/config", (route) =>
@@ -667,15 +667,15 @@ test("W3-HST2 leg 2: a variance to GL 2200 shows in words, never as a silent zer
   await openTax(page, request);
   const oq = olderQuarter();
   await tab(page, "worksheet");
-  await expect(page.locator("[data-worksheet-tie-pill]")).toHaveText("Tied to GL 2200");
-  await expect(page.locator("[data-worksheet-tie]")).toHaveText("No variance. The return's net GST/HST matches GL 2200's movement for the period.");
+  await expect(page.locator("[data-worksheet-tie-pill]")).toHaveText("Tied out");
+  await expect(page.locator("[data-worksheet-tie]")).toHaveText("No variance. The return's net GST/HST matches the movement of the GST/HST payable account (GL 2200) for the period.");
   await expect(page.locator("[data-worksheet-gl]")).toHaveText("$3,830.75");
 
   await page.getByLabel("Quarter").selectOption({ label: oq.label });
   await page.getByRole("textbox", { name: "Year" }).fill(String(oq.year));
   await page.getByRole("button", { name: "Show worksheet", exact: true }).click();
   await expect(page.locator("[data-worksheet-tie-pill]")).toHaveText("Off by $851.50");
-  await expect(page.locator("[data-worksheet-tie]")).toHaveText("GL 2200 is $851.50 higher than the return's net GST/HST for the period.");
+  await expect(page.locator("[data-worksheet-tie]")).toHaveText("The GST/HST payable account (GL 2200) is $851.50 higher than the return's net GST/HST for the period.");
   await expect(page.locator("[data-worksheet-gl]")).toHaveText("$3,899.00");
 
   // A bad year is held in the browser and sends nothing.
@@ -714,8 +714,8 @@ test("W3-HST2 leg 3: the CSV export equals the screen's CRA lines and GL 2200 ti
     const rawAmount = row.amount.replace(/[$,]/g, "");
     expect(csvLines[i + 1]).toBe(`${row.lineNo},"${row.label}","${row.source}",${rawAmount}`);
   }
-  expect(csv).toContain('GL_2200,"GL 2200 movement","From the books",3830.75');
-  expect(csv).toContain('VARIANCE,"Variance to GL 2200","Tied to GL 2200",0.00');
+  expect(csv).toContain('GL_2200,"GST/HST payable account movement (GL 2200)","From the books",3830.75');
+  expect(csv).toContain('VARIANCE,"Variance to the GST/HST payable account (GL 2200)","Tied out",0.00');
 });
 
 test("W3-HST2 leg 4: a clerk who cannot read tax sees no view, and a refused worksheet read names who may read it", async ({ page, request }) => {
@@ -832,4 +832,61 @@ test("W3-HST2 contract: the GST/HST return view reads only keys the TaxWorksheet
   expect(reads.size).toBeGreaterThan(0);
   const undeclared = [...reads].filter((k) => !TAX_WORKSHEET_ALLOWED_KEYS.has(k));
   expect(undeclared).toEqual([]);
+});
+
+// Sonnet's visual read of 721 (round 2).
+test("721 visual: the subtitle follows the tab, and the worksheet's tiles hold their figures on one line", async ({ page, request }) => {
+  await openTax(page, request);
+  const subtitle = page.locator("[data-tax-subtitle]");
+  await expect(subtitle).toContainText("California sales tax; US dollars.");
+  await tab(page, "worksheet");
+  await expect(subtitle).toHaveText(/^Canadian GST\/HST, Canadian dollars\./);
+  await expect(subtitle).not.toContainText("California");
+  await expect(page.locator("[data-worksheet-result]")).toBeVisible();
+
+  // The account is named, with its number as a hint.
+  await expect(page.locator("[data-worksheet-result] .tx-stat-label").nth(4)).toContainText("GST/HST payable account movement");
+  await expect(page.locator("[data-worksheet-result] .tx-stat-label").nth(5)).toContainText("Tie to the GST/HST payable account");
+
+  // A wide screen: every tile's label has the same height, so the six figures sit at one height.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const tops = await page.locator("[data-worksheet-result] .tx-stat-figure").evaluateAll((els) =>
+    els.map((el) => Math.round(el.getBoundingClientRect().top - (el.closest(".tx-stat")?.getBoundingClientRect().top ?? 0))),
+  );
+  // Within a pixel: the pill's inline box rounds half a pixel apart from a number's.
+  expect(Math.max(...tops) - Math.min(...tops), `figure offsets ${tops.join(",")}`).toBeLessThanOrEqual(1);
+});
+
+test("721 visual: the worksheet's hand entry note is the desk's own notice, in the watch colour", async ({ page, request }) => {
+  await openTax(page, request);
+  await tab(page, "worksheet");
+  const border = await page.locator("[data-manual-entry-note]").evaluate((el) => getComputedStyle(el).borderTopColor);
+  const watch = await page.locator("[data-worksheet-result]").evaluate((el) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--hh-state-watch)";
+    el.appendChild(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  expect(border).toBe(watch);
+});
+
+test("721 visual: on a phone the active area chip is scrolled fully into view", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openTax(page, request);
+  const box = await page.locator("nav[aria-label='Money Desk areas'] [aria-current='true']").boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+
+  // No chip is cut at the strip's left edge: each chip is wholly inside it or wholly outside.
+  const cut = await page.locator("nav[aria-label='Money Desk areas']").evaluate((nav) => {
+    const edge = nav.getBoundingClientRect().left;
+    return [...nav.children].filter((c) => {
+      const r = c.getBoundingClientRect();
+      return r.left < edge - 0.5 && r.right > edge + 0.5;
+    }).length;
+  });
+  expect(cut).toBe(0);
 });

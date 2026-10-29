@@ -78,6 +78,38 @@ export function areaForNewRows(rows: ReadonlyArray<{ jurisdiction: string; reaso
   return standard?.jurisdiction ?? rows[0]?.jurisdiction ?? "CA";
 }
 
+/**
+ * The page's subtitle under "Tax" follows the tab. The GST/HST return is the Canadian return in Canadian dollars,
+ * filed on the dealer's own filing frequency; every other tab speaks of the dealer's sales tax area, read from its
+ * own rate rows (the area new rows join).
+ */
+export function taxSubtitle(
+  tab: string,
+  config: { readonly filing_frequency?: string } | null,
+  rates: ReadonlyArray<{ jurisdiction: string; reason_code: string; effective_from: string; effective_to?: string }>,
+  today: string,
+): string {
+  if (tab === "worksheet") {
+    const freq = config?.filing_frequency;
+    const filed = freq === "QUARTERLY" ? " Filed quarterly." : freq === "MONTHLY" ? " Filed monthly." : freq === "YEARLY" ? " Filed yearly." : "";
+    return `Canadian GST/HST, Canadian dollars.${filed}`;
+  }
+  return `The sales tax rates, the exemption profiles and the certificates behind them, the settings, and the checks against the ledger. ${areaWord(areaForNewRows(rates, today))} sales tax; US dollars.`;
+}
+
+/**
+ * The short note under the worksheet: the lines the table tags "Entered by hand", plus the return lines the route's
+ * own note names that the worksheet has no row for (205 and 405), so the one sentence covers every line the dealer keys.
+ */
+export function handEntryNote(lines: ReadonlyArray<{ line_no: string; entered_by_hand: boolean }>, routeNote = ""): string {
+  const tagged = lines.filter((l) => l.entered_by_hand).map((l) => l.line_no);
+  const extra = ["205", "405"].filter((n) => routeNote.includes(`${n} (`) && !tagged.includes(n));
+  const nos = [...tagged, ...extra].sort((x, y) => Number(x) - Number(y));
+  if (nos.length === 0) return "";
+  if (nos.length === 1) return `Line ${nos[0]} is entered by hand on the CRA return.`;
+  return `Lines ${nos.slice(0, -1).join(", ")} and ${nos[nos.length - 1]} are entered by hand on the CRA return.`;
+}
+
 // ---- profiles -----------------------------------------------------------------------------------------
 
 const PROFILE_STATUS: Record<string, string> = { ACTIVE: "In force", PENDING: "Waiting for review", RETIRED: "Retired" };
@@ -155,15 +187,15 @@ export function varianceWords(varianceCents: number): VarianceView {
 }
 
 /**
- * The GST/HST return worksheet's tie to GL 2200: tied out when variance_cents is zero, or the variance in words
+ * The GST/HST return worksheet's tie to the GST/HST payable account (GL 2200): tied out when variance_cents is zero, or the variance in words
  * with its direction so a discrepancy never hides as a silent zero.
  */
 export function worksheetTieWords(varianceCents: number, tiedOut?: boolean): VarianceView {
   if (varianceCents === 0 && tiedOut !== false) {
     return {
-      word: "Tied to GL 2200",
+      word: "Tied out",
       tone: "good",
-      detail: "No variance. The return's net GST/HST matches GL 2200's movement for the period.",
+      detail: "No variance. The return's net GST/HST matches the movement of the GST/HST payable account (GL 2200) for the period.",
     };
   }
   const size = formatMoney(Math.abs(varianceCents));
@@ -172,8 +204,8 @@ export function worksheetTieWords(varianceCents: number, tiedOut?: boolean): Var
     tone: "stop",
     detail:
       varianceCents >= 0
-        ? `GL 2200 is ${size} higher than the return's net GST/HST for the period.`
-        : `GL 2200 is ${size} lower than the return's net GST/HST for the period.`,
+        ? `The GST/HST payable account (GL 2200) is ${size} higher than the return's net GST/HST for the period.`
+        : `The GST/HST payable account (GL 2200) is ${size} lower than the return's net GST/HST for the period.`,
   };
 }
 
@@ -211,8 +243,8 @@ export function worksheetCsv(worksheet: TaxWorksheet): string {
     rows.push(`${wLine.line_no},${csvCell(wLine.label)},${csvCell(source)},${centsDecimal(wLine.amount_cents)}`);
   }
   const tie = worksheetTieWords(worksheet.variance_cents, worksheet.tied_out);
-  rows.push(`GL_2200,${csvCell("GL 2200 movement")},${csvCell("From the books")},${centsDecimal(worksheet.gl_payable_cents)}`);
-  rows.push(`VARIANCE,${csvCell("Variance to GL 2200")},${csvCell(tie.word)},${centsDecimal(worksheet.variance_cents)}`);
+  rows.push(`GL_2200,${csvCell("GST/HST payable account movement (GL 2200)")},${csvCell("From the books")},${centsDecimal(worksheet.gl_payable_cents)}`);
+  rows.push(`VARIANCE,${csvCell("Variance to the GST/HST payable account (GL 2200)")},${csvCell(tie.word)},${centsDecimal(worksheet.variance_cents)}`);
   return `${rows.join("\n")}\n`;
 }
 

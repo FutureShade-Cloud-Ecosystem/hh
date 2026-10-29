@@ -10,10 +10,13 @@ import { html, nothing, type TemplateResult } from "lit";
 import type { TaxConfig, TaxEvidence, TaxRate, TaxReconReport, TaxRecomputeResult, TaxReliefEligibility, TaxStatusCardProfile, TaxWorksheet, TaxWorksheetLine } from "@hardscapehouse/api-client";
 import {
   areaWord,
+  handEntryNote,
+  taxSubtitle,
   attestationWords,
   blockReasonWords,
   dayWords,
   forcedEvidence,
+  hostDay,
   periodWords,
   profileStatusWord,
   profileTone,
@@ -628,12 +631,12 @@ function worksheetResult(worksheet: TaxWorksheet | null): TemplateResult {
         <div class="tx-stat"><span class="tx-stat-label">Line 103 GST/HST collected</span><span class="tx-stat-figure" data-worksheet-collected>${formatMoney(worksheet.line_103_collected_cents)}</span></div>
         <div class="tx-stat"><span class="tx-stat-label">Line 108 total ITCs</span><span class="tx-stat-figure" data-worksheet-itcs>${formatMoney(worksheet.line_108_total_itcs_cents)}</span></div>
         <div class="tx-stat"><span class="tx-stat-label">Line 109 net tax</span><span class="tx-stat-figure" data-worksheet-net>${formatMoney(worksheet.line_109_net_tax_cents)}</span></div>
-        <div class="tx-stat"><span class="tx-stat-label">GL 2200 movement</span><span class="tx-stat-figure" data-worksheet-gl>${formatMoney(worksheet.gl_payable_cents)}</span></div>
-        <div class="tx-stat"><span class="tx-stat-label">Tie to GL 2200</span><span class="tx-stat-figure"><span class="tx-status tx-status-${tie.tone}" data-worksheet-tie-pill>${tie.word}</span></span></div>
+        <div class="tx-stat"><span class="tx-stat-label">GST/HST payable account movement <span class="tx-hintline">GL 2200</span></span><span class="tx-stat-figure" data-worksheet-gl>${formatMoney(worksheet.gl_payable_cents)}</span></div>
+        <div class="tx-stat"><span class="tx-stat-label">Tie to the GST/HST payable account <span class="tx-hintline">GL 2200</span></span><span class="tx-stat-figure"><span class="tx-status tx-status-${tie.tone}" data-worksheet-tie-pill>${tie.word}</span></span></div>
       </div>
       <p class="tx-alert ${tie.tone === "good" ? "tx-alert-ok" : "tx-alert-error"}" role="status" data-worksheet-tie>${tie.detail}</p>
       <p class="tx-dim" data-worksheet-period>Filing period: ${period}</p>
-      <p class="tx-note" data-manual-entry-note>${worksheet.manual_entry_note}</p>
+      <p class="tx-note" data-manual-entry-note>${handEntryNote(worksheet.lines, worksheet.manual_entry_note) || worksheet.manual_entry_note}</p>
       <div class="tx-scroll tx-hide-narrow">
         <table aria-label="GST/HST return lines">
           <thead><tr><th>Line</th><th>Description</th><th>Standing</th><th class="num">Amount</th></tr></thead>
@@ -672,7 +675,7 @@ function worksheetView(model: TaxModel): TemplateResult {
   return html`
     <section class="tx-panel" aria-label="GST/HST return" data-tx-worksheet>
       <div class="tx-panel-head"><h3>GST/HST return</h3></div>
-      <p class="tx-note">Read-only worksheet for the CRA GST/HST return (lines 101 through 115), tied against GL 2200 for the filing period.</p>
+      <p class="tx-note">Read-only worksheet for the CRA GST/HST return (lines 101 through 115), tied against the GST/HST payable account (GL 2200) for the filing period.</p>
       <div class="tx-form" role="group" aria-label="Filing period">
         ${freq === "QUARTERLY"
           ? html`<label class="tx-field">Quarter
@@ -708,7 +711,7 @@ export function renderTax(model: TaxModel): TemplateResult {
   const head = html`
     <header class="tx-head">
       <h1>Tax</h1>
-      <p class="tx-dim">The sales tax rates, the exemption profiles and the certificates behind them, the settings, and the checks against the ledger. California sales tax; US dollars.</p>
+      <p class="tx-dim" data-tax-subtitle>${taxSubtitle(model.tab, model.config, model.rates, hostDay())}</p>
     </header>
   `;
   if (model.phase === "loading") return html`${head}${loading()}`;
