@@ -17,11 +17,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
@@ -237,7 +240,8 @@ func TestIntegration_Migration0466_RefusesNegativePaymentTermsDaysNamingCustomer
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO customers (account_no, name, customer_type, payment_terms_days)
-		VALUES ('CUST-NEG-15', 'Negative Days Customer', 'CONTRACTOR', -15)`); err != nil {
+		VALUES ('CUST-NEG-15', 'Negative Days Customer', 'CONTRACTOR', -15),
+		       ('CUST-NEG-30', 'Second Negative Customer', 'CONTRACTOR', -30)`); err != nil {
 		t.Fatalf("insert pre-0466 customer with negative payment_terms_days: %v", err)
 	}
 
@@ -249,7 +253,25 @@ func TestIntegration_Migration0466_RefusesNegativePaymentTermsDaysNamingCustomer
 	if err == nil {
 		t.Fatal("0466_payment_terms.sql accepted a customer with negative payment_terms_days")
 	}
-	if !strings.Contains(err.Error(), "CUST-NEG-15") {
-		t.Fatalf("0466_payment_terms.sql error did not name customer CUST-NEG-15: %v", err)
+	// Every such customer is named, so a dealer fixes them all before one deploy (S2 on PR 722).
+	for _, acct := range []string{"CUST-NEG-15", "CUST-NEG-30"} {
+		if !strings.Contains(err.Error(), acct) {
+			t.Fatalf("0466_payment_terms.sql error did not name customer %s: %v", acct, err)
+		}
+	}
+}
+
+// TestIntegration_Migration0466_ChecksNegativeDaysAfterwards proves no path, raw SQL included, can
+// write negative payment_terms_days once 0466 has run: the writer would date an invoice before
+// its issue (S2 on PR 722).
+func TestIntegration_Migration0466_ChecksNegativeDaysAfterwards(t *testing.T) {
+	ctx := context.Background()
+	pool := freshMigratedDBWithout(t, "s4fin2tm1chk", "")
+	_, err := pool.Exec(ctx, `
+		INSERT INTO customers (account_no, name, customer_type, payment_terms_days)
+		VALUES ('CUST-NEG-AFTER', 'Negative After Customer', 'CONTRACTOR', -7)`)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Fatalf("a negative payment_terms_days after 0466: err = %v, want the check (23514)", err)
 	}
 }
