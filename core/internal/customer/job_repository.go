@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -119,13 +120,18 @@ func (r *Repository) InsertJob(ctx context.Context, w JobWrite) (Job, error) {
 		INSERT INTO customer_jobs (customer_id, branch_id, job_no, name, ship_to_address, po_reference,
 		                           contact_name, contact_email, contact_phone, credit_limit_cents, terms_days,
 		                           substantial_performance_date, last_supply_date, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9, $10, $11, $12, $13, NULLIF($14, '')::uuid)
+		SELECT $1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9, $10, $11, $12, $13, NULLIF($14, '')::uuid
+		 WHERE $10::bigint IS NULL
+		    OR $10::bigint <= (SELECT credit_limit_cents FROM customers WHERE id = $1)
 		RETURNING id::text`,
 		w.CustomerID, w.BranchID, w.JobNo, w.Fields.Name, addr, w.Fields.POReference,
 		w.Fields.ContactName, w.Fields.ContactEmail, w.Fields.ContactPhone,
 		w.Fields.CreditLimitCents, w.Fields.TermsDays,
 		w.Fields.SubstantialPerformanceDate, w.Fields.LastSupplyDate, w.CreatedBy).Scan(&id)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Job{}, httpx.BadRequestf("a job's own credit limit cannot exceed the customer's own credit limit")
+		}
 		// The job number is unique PER CUSTOMER (migration 0460): a collision is the caller's
 		// mistake, not a server fault, so it is the sentinel the handler maps to a 409.
 		if isUniqueViolation(err) {
@@ -229,7 +235,8 @@ func (r *Repository) UpdateJob(ctx context.Context, customerID, jobID string, f 
 		       updated_at = now()
 		 WHERE id = $11
 		   AND customer_id = $12
-		   AND ($13::uuid[] IS NULL OR branch_id = ANY($13::uuid[]))`,
+		   AND ($13::uuid[] IS NULL OR branch_id = ANY($13::uuid[]))
+		   AND ($7::bigint IS NULL OR $7::bigint IS NOT DISTINCT FROM credit_limit_cents OR $7::bigint <= (SELECT credit_limit_cents FROM customers WHERE id = $12))`,
 		f.Name, addr, f.POReference, f.ContactName, f.ContactEmail, f.ContactPhone,
 		f.CreditLimitCents, f.TermsDays, f.SubstantialPerformanceDate, f.LastSupplyDate,
 		jobID, customerID, reach.branchFilter())
@@ -237,7 +244,12 @@ func (r *Repository) UpdateJob(ctx context.Context, customerID, jobID string, f 
 		return Job{}, fmt.Errorf("customer: update the job %q: %w", jobID, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return Job{}, ErrNotFound
+		if _, found, err := r.GetJob(ctx, customerID, jobID, reach); err != nil {
+			return Job{}, err
+		} else if !found {
+			return Job{}, ErrNotFound
+		}
+		return Job{}, httpx.BadRequestf("a job's own credit limit cannot exceed the customer's own credit limit")
 	}
 	return r.GetJobByID(ctx, jobID)
 }
@@ -303,7 +315,7 @@ type JobTerms struct {
 // A job that does not exist, or a customer that does not exist under it, is not found. A job whose
 // customer carries no terms at all reads zero: the customers table's own default is 30 days, so a
 // customer with no terms row has terms, and a zero here would mean the row was read wrong.
-func (r *Repository) JobEffectiveTerms(ctx context.Context, jobID string) (JobTerms, error) {
+func (r *Repository) JobEffectiveTerms(ctx context.Context, customerID, jobID string) (JobTerms, error) {
 	if r.pool == nil {
 		return JobTerms{}, errNoDB
 	}
@@ -315,7 +327,7 @@ func (r *Repository) JobEffectiveTerms(ctx context.Context, jobID string) (JobTe
 		SELECT j.terms_days, COALESCE(j.terms_days, c.payment_terms_days)
 		  FROM customer_jobs j
 		  JOIN customers c ON c.id = j.customer_id
-		 WHERE j.id = $1`, jobID).Scan(&own, &terms)
+		 WHERE j.id = $1 AND j.customer_id = $2`, jobID, customerID).Scan(&own, &terms)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return JobTerms{}, ErrNotFound
@@ -327,9 +339,9 @@ func (r *Repository) JobEffectiveTerms(ctx context.Context, jobID string) (JobTe
 
 // JobLimitForCustomer reads a job's own credit limit together with the customer's own limit.
 //
-// It is the pair the ceiling rule needs: a job's own limit may never exceed the customer's, because
-// the customer's exposure includes every job it holds. Both figures are read in one statement so
-// the pair cannot be read at two different instants.
+// Kept for wave 3 JA-3 (where the POS and order credit gate checks a job-tagged sale against
+// min(job limit, customer limit) and sums exposure across the customer's jobs). Both figures are
+// read in one statement so the pair cannot be read at two different instants.
 func (r *Repository) JobLimitForCustomer(ctx context.Context, customerID, jobID string) (jobLimit *int64, customerLimit int64, err error) {
 	if r.pool == nil {
 		return nil, 0, errNoDB

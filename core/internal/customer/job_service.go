@@ -45,7 +45,7 @@ type jobStore interface {
 	CloseJob(ctx context.Context, customerID, jobID string, reach AccountReach) (Job, error)
 	ListJobs(ctx context.Context, customerID string, reach AccountReach) ([]Job, error)
 	GetJob(ctx context.Context, customerID, jobID string, reach AccountReach) (Job, bool, error)
-	JobEffectiveTerms(ctx context.Context, jobID string) (JobTerms, error)
+	JobEffectiveTerms(ctx context.Context, customerID, jobID string) (JobTerms, error)
 	JobStatusForCustomer(ctx context.Context, customerID, jobID string) (string, error)
 }
 
@@ -151,10 +151,15 @@ func (s *Service) CreateJob(ctx context.Context, customerID string, in JobCreate
 	if err != nil {
 		return Job{}, err
 	}
-	// THE CEILING. A job's own limit may never exceed the customer's own, because the customer's
-	// exposure includes every job it holds.
-	if err := jobLimitCeiling(fields.CreditLimitCents, acct.CreditLimitCents); err != nil {
-		return Job{}, err
+	if fields.CreditLimitCents != nil {
+		if !s.PositionAllowed(ctx, branchID) {
+			return Job{}, httpx.BadRequestf("the account position is hidden for you, so a job's own limit cannot be set here")
+		}
+		// THE CEILING. A job's own limit may never exceed the customer's own, because the customer's
+		// exposure includes every job it holds.
+		if err := jobLimitCeiling(fields.CreditLimitCents, acct.CreditLimitCents); err != nil {
+			return Job{}, err
+		}
 	}
 	return s.jobs.InsertJob(ctx, JobWrite{
 		CustomerID: customerID,
@@ -272,10 +277,15 @@ func (s *Service) EditJob(ctx context.Context, customerID, jobID string, in JobE
 	if err != nil {
 		return Job{}, err
 	}
-	// THE CEILING, on the edit as well: a job's own limit may never exceed the customer's own,
-	// and an edit that raised it above the ceiling is refused in words.
-	if err := jobLimitCeiling(fields.CreditLimitCents, acct.CreditLimitCents); err != nil {
-		return Job{}, err
+	// THE CEILING runs only when the edit sets the limit, so a customer limit lowered later
+	// never blocks an unrelated edit of the job or clearing the job's own limit.
+	if in.CreditLimitCents.Present && in.CreditLimitCents.Value != nil {
+		if !s.PositionAllowed(ctx, current.BranchID) {
+			return Job{}, httpx.BadRequestf("the account position is hidden for you, so a job's own limit cannot be set here")
+		}
+		if err := jobLimitCeiling(fields.CreditLimitCents, acct.CreditLimitCents); err != nil {
+			return Job{}, err
+		}
 	}
 	return s.jobs.UpdateJob(ctx, customerID, current.JobID, fields, reach)
 }
@@ -442,18 +452,25 @@ func (s *Service) CloseJob(ctx context.Context, customerID, jobID string) (Job, 
 //
 // A job that does not exist is not found. A job with no own terms is not an error and not zero: it
 // reads the customer's terms, and the customer's own terms are the customer's business.
-func (s *Service) EffectiveTerms(ctx context.Context, jobID string) (JobTerms, error) {
+func (s *Service) EffectiveTerms(ctx context.Context, customerID, jobID string) (JobTerms, error) {
 	if s.jobs == nil {
 		return JobTerms{}, ErrJobStoreNotConfigured
 	}
+	customerID = strings.TrimSpace(customerID)
 	jobID = strings.TrimSpace(jobID)
+	if customerID == "" {
+		return JobTerms{}, httpx.BadRequestf("customer id is required")
+	}
+	if _, err := uuid.Parse(customerID); err != nil {
+		return JobTerms{}, httpx.BadRequestf("customer id must be a uuid")
+	}
 	if jobID == "" {
 		return JobTerms{}, httpx.BadRequestf("job id is required")
 	}
 	if _, err := uuid.Parse(jobID); err != nil {
 		return JobTerms{}, httpx.BadRequestf("job id must be a uuid")
 	}
-	return s.jobs.JobEffectiveTerms(ctx, jobID)
+	return s.jobs.JobEffectiveTerms(ctx, customerID, jobID)
 }
 
 // ErrJobClosed is the refusal a CLOSED job answers with. It is its own sentinel and not the
@@ -478,8 +495,14 @@ func (s *Service) JobOpenForCustomer(ctx context.Context, customerID, jobID stri
 	if customerID == "" {
 		return httpx.BadRequestf("customer id is required")
 	}
+	if _, err := uuid.Parse(customerID); err != nil {
+		return httpx.BadRequestf("customer id must be a uuid")
+	}
 	if jobID == "" {
 		return httpx.BadRequestf("job id is required")
+	}
+	if _, err := uuid.Parse(jobID); err != nil {
+		return httpx.BadRequestf("job id must be a uuid")
 	}
 	status, err := s.jobs.JobStatusForCustomer(ctx, customerID, jobID)
 	if err != nil {

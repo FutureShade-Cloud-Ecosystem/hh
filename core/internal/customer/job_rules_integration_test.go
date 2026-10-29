@@ -41,6 +41,7 @@ func TestIntegration_JobRules_LimitAboveTheCustomerIsRefused(t *testing.T) {
 	svc := NewService(repo).WithJobs(repo)
 
 	f := plantJobWorld(t, pool)
+	svc.WithPositionGate(&branchGate{allow: map[string]bool{f.branchA: true, f.branchB: true}})
 	global := identity.StaffContext{UserID: f.userA, Scope: identity.ScopeGlobal}
 	ctx = identity.ContextWithStaff(ctx, global)
 
@@ -142,6 +143,7 @@ func TestIntegration_JobRules_EffectiveTermsAreRedLegsTwoAndThree(t *testing.T) 
 	svc := NewService(repo).WithJobs(repo)
 
 	f := plantJobWorld(t, pool)
+	svc.WithPositionGate(&branchGate{allow: map[string]bool{f.branchA: true, f.branchB: true}})
 	global := identity.StaffContext{UserID: f.userA, Scope: identity.ScopeGlobal}
 	ctx = identity.ContextWithStaff(ctx, global)
 
@@ -161,7 +163,7 @@ func TestIntegration_JobRules_EffectiveTermsAreRedLegsTwoAndThree(t *testing.T) 
 	if err != nil {
 		t.Fatalf("open the job that shares the customer's terms: %v", err)
 	}
-	terms, err := svc.EffectiveTerms(ctx, shared.JobID)
+	terms, err := svc.EffectiveTerms(ctx, f.customerID, shared.JobID)
 	if err != nil {
 		t.Fatalf("read the effective terms of the job: %v", err)
 	}
@@ -180,7 +182,7 @@ func TestIntegration_JobRules_EffectiveTermsAreRedLegsTwoAndThree(t *testing.T) 
 	if err != nil {
 		t.Fatalf("open the job with its own terms: %v", err)
 	}
-	terms, err = svc.EffectiveTerms(ctx, ownJob.JobID)
+	terms, err = svc.EffectiveTerms(ctx, f.customerID, ownJob.JobID)
 	if err != nil {
 		t.Fatalf("read the effective terms of the job: %v", err)
 	}
@@ -189,6 +191,12 @@ func TestIntegration_JobRules_EffectiveTermsAreRedLegsTwoAndThree(t *testing.T) 
 	}
 	if !terms.Own {
 		t.Fatal("a job with its own terms answered as if they were the customer's")
+	}
+
+	// A job of another customer is not the customer's job at all (P3-3).
+	otherCustomer := plantJobCustomer(t, pool, "JA1-TERMS-OTHER-"+randSuffix())
+	if _, err := svc.EffectiveTerms(ctx, otherCustomer, shared.JobID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("EffectiveTerms for another customer: got %v, want ErrNotFound", err)
 	}
 
 	// The terms the job is dated by are on the wire too, so a screen reads one number.
@@ -211,6 +219,7 @@ func TestIntegration_JobRules_ClosedJobIsRefused(t *testing.T) {
 	svc := NewService(repo).WithJobs(repo)
 
 	f := plantJobWorld(t, pool)
+	svc.WithPositionGate(&branchGate{allow: map[string]bool{f.branchA: true, f.branchB: true}})
 	global := identity.StaffContext{UserID: f.userA, Scope: identity.ScopeGlobal}
 	ctx = identity.ContextWithStaff(ctx, global)
 
@@ -332,5 +341,187 @@ func TestIntegration_JobRules_RehomeMovesOpenAndClosedJobs(t *testing.T) {
 	}
 	if distinctBranches != 1 {
 		t.Fatalf("distinct branch_id count after update re-home = %d, want 1", distinctBranches)
+	}
+}
+
+// TestIntegration_JobRules_HiddenPositionRefusesSettingJobLimit (P3-1): a caller for whom
+// PositionAllowed is false cannot set a job's own credit limit on create or edit. The refusal is
+// in words, with no figures, closing the ceiling bisection oracle.
+func TestIntegration_JobRules_HiddenPositionRefusesSettingJobLimit(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	hidden := &branchGate{allow: map[string]bool{}}
+	svc := NewService(repo).WithJobs(repo).WithPositionGate(hidden)
+
+	f := plantJobWorld(t, pool)
+	ctx = identity.ContextWithStaff(ctx, identity.StaffContext{UserID: f.userA, Scope: identity.ScopeGlobal})
+
+	limit := int64(200000)
+	_, err := svc.CreateJob(ctx, f.customerID, JobCreateInput{
+		JobNo: "J-HID-1", Name: "Mill job", BranchID: f.branchA, CreditLimitCents: &limit,
+	})
+	if err == nil {
+		t.Fatal("CreateJob with a limit was accepted when PositionAllowed is false")
+	}
+	var bad httpx.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("CreateJob refusal is not a client error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "position") {
+		t.Fatalf("CreateJob refusal is not in position words: %v", err)
+	}
+	if strings.Contains(err.Error(), "200000") || strings.Contains(err.Error(), "500000") {
+		t.Fatalf("CreateJob refusal quotes figures: %v", err)
+	}
+
+	_, err = svc.EditJob(ctx, f.customerID, f.jobID, JobEditInput{CreditLimitCents: optionalInt64(limit)})
+	if err == nil {
+		t.Fatal("EditJob setting a limit was accepted when PositionAllowed is false")
+	}
+	if !errors.As(err, &bad) {
+		t.Fatalf("EditJob refusal is not a client error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "position") {
+		t.Fatalf("EditJob refusal is not in position words: %v", err)
+	}
+	if strings.Contains(err.Error(), "200000") || strings.Contains(err.Error(), "500000") {
+		t.Fatalf("EditJob refusal quotes figures: %v", err)
+	}
+}
+
+// TestIntegration_JobRules_LoweredCustomerLimitAllowsUnrelatedEdit (P3-2): when a customer's
+// credit limit is lowered below a job's existing limit, an edit that does not set the limit
+// (such as renaming the job or clearing the limit) still lands, while an edit that sets a limit
+// above the lowered customer limit is refused.
+func TestIntegration_JobRules_LoweredCustomerLimitAllowsUnrelatedEdit(t *testing.T) {
+	bg := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	f := plantJobWorld(t, pool)
+	admit := &branchGate{allow: map[string]bool{f.branchA: true, f.branchB: true}}
+	svc := NewService(repo).WithJobs(repo).WithPositionGate(admit)
+	ctx := identity.ContextWithStaff(bg, identity.StaffContext{UserID: f.userA, Scope: identity.ScopeGlobal})
+
+	if _, err := svc.EditJob(ctx, f.customerID, f.jobID, JobEditInput{CreditLimitCents: optionalInt64(400000)}); err != nil {
+		t.Fatalf("set initial job limit: %v", err)
+	}
+	if _, err := pool.Exec(bg, `UPDATE customers SET credit_limit_cents = 100000 WHERE id = $1`, f.customerID); err != nil {
+		t.Fatalf("lower customer limit: %v", err)
+	}
+
+	name := "Renamed after customer limit lowered"
+	edited, err := svc.EditJob(ctx, f.customerID, f.jobID, JobEditInput{Name: &name})
+	if err != nil {
+		t.Fatalf("unrelated name edit after customer limit lowered: %v", err)
+	}
+	if edited.Name != name {
+		t.Fatalf("name edit did not land: %q", edited.Name)
+	}
+	if edited.CreditLimitCents == nil || *edited.CreditLimitCents != 400000 {
+		t.Fatalf("job limit changed on a name edit: %v", edited.CreditLimitCents)
+	}
+
+	// Setting a new limit above the lowered customer limit is still refused.
+	if _, err := svc.EditJob(ctx, f.customerID, f.jobID, JobEditInput{CreditLimitCents: optionalInt64(200000)}); err == nil {
+		t.Fatal("setting a limit above the lowered customer limit was accepted")
+	}
+
+	// Clearing the job's own limit so it shares the customer's again is allowed.
+	cleared, err := svc.EditJob(ctx, f.customerID, f.jobID, JobEditInput{CreditLimitCents: OptionalValue[int64]{Present: true, Value: nil}})
+	if err != nil {
+		t.Fatalf("clearing the job limit after customer limit lowered: %v", err)
+	}
+	if cleared.CreditLimitCents != nil {
+		t.Fatalf("job limit was not cleared: %v", cleared.CreditLimitCents)
+	}
+}
+
+// TestIntegration_JobRules_JobOpenForCustomerMalformedUUIDIsBadRequest (P3-3): JobOpenForCustomer
+// parses jobID as a uuid and answers 400 on a malformed one rather than reaching Postgres as 22P02.
+func TestIntegration_JobRules_JobOpenForCustomerMalformedUUIDIsBadRequest(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	svc := NewService(repo).WithJobs(repo)
+	f := plantJobWorld(t, pool)
+
+	err := svc.JobOpenForCustomer(ctx, f.customerID, "not-a-uuid")
+	var bad httpx.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("JobOpenForCustomer with malformed jobID: got %v, want BadRequestError", err)
+	}
+	err = svc.JobOpenForCustomer(ctx, "not-a-uuid", f.jobID)
+	if !errors.As(err, &bad) {
+		t.Fatalf("JobOpenForCustomer with malformed customerID: got %v, want BadRequestError", err)
+	}
+}
+
+// TestIntegration_JobRules_WriteGuardsCeilingInTheSameStatement (P3-4): InsertJob and UpdateJob
+// guard the customer's credit limit in the write statement itself, so a concurrent lowering of
+// the customer's limit between GetAccount and the write cannot leave a new limit above the ceiling.
+func TestIntegration_JobRules_WriteGuardsCeilingInTheSameStatement(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	f := plantJobWorld(t, pool)
+
+	above := int64(600000)
+	_, err := repo.InsertJob(ctx, JobWrite{
+		CustomerID: f.customerID,
+		BranchID:   f.branchA,
+		JobNo:      "J-STMT-CEIL",
+		CreatedBy:  f.userA,
+		Fields:     JobFields{Name: "Guarded insert", CreditLimitCents: &above},
+	})
+	var bad httpx.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("InsertJob above customer ceiling at statement level: got %v, want BadRequestError", err)
+	}
+
+	_, err = repo.UpdateJob(ctx, f.customerID, f.jobID, JobFields{
+		Name:             "Guarded update",
+		CreditLimitCents: &above,
+	}, AccountReach{BranchIDs: []string{f.branchA}})
+	if !errors.As(err, &bad) {
+		t.Fatalf("UpdateJob above customer ceiling at statement level: got %v, want BadRequestError", err)
+	}
+}
+
+// TestIntegration_JobRules_JobLimitForCustomerReadsBothFiguresForJA3 (P3-5): JobLimitForCustomer
+// reads the job's own limit and the customer's limit in one statement for wave 3 JA-3, scoped to
+// the customer.
+func TestIntegration_JobRules_JobLimitForCustomerReadsBothFiguresForJA3(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	f := plantJobWorld(t, pool)
+
+	jl, cl, err := repo.JobLimitForCustomer(ctx, f.customerID, f.jobID)
+	if err != nil {
+		t.Fatalf("JobLimitForCustomer on shared-limit job: %v", err)
+	}
+	if jl != nil || cl != 500000 {
+		t.Fatalf("got jobLimit=%v customerLimit=%d, want nil and 500000", jl, cl)
+	}
+
+	own := int64(250000)
+	if _, err := repo.UpdateJob(ctx, f.customerID, f.jobID, JobFields{
+		Name:             "Riverside driveway",
+		CreditLimitCents: &own,
+	}, AccountReach{BranchIDs: []string{f.branchA}}); err != nil {
+		t.Fatalf("set job limit: %v", err)
+	}
+	jl, cl, err = repo.JobLimitForCustomer(ctx, f.customerID, f.jobID)
+	if err != nil {
+		t.Fatalf("JobLimitForCustomer on own-limit job: %v", err)
+	}
+	if jl == nil || *jl != own || cl != 500000 {
+		t.Fatalf("got jobLimit=%v customerLimit=%d, want %d and 500000", jl, cl, own)
+	}
+
+	otherCustomer := plantJobCustomer(t, pool, "JA1-LIMIT-OTHER-"+randSuffix())
+	if _, _, err := repo.JobLimitForCustomer(ctx, otherCustomer, f.jobID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("JobLimitForCustomer for another customer: got %v, want ErrNotFound", err)
 	}
 }
