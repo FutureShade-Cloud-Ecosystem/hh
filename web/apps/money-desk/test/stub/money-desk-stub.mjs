@@ -1184,6 +1184,20 @@ async function handle(req, res) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return refuse(res, 400, "as_of must be YYYY-MM-DD");
     return send(res, 200, purchasingWorld.apAging(asOf));
   }
+  // The year's T5018 report and its file (the core's GET /api/v1/purchasing/t5018 and
+  // /api/v1/purchasing/t5018.csv, W3-T51). The year is the dealer's own: absent year means the
+  // current house year, and a year that is not a year is refused in the core's words.
+  if (method === "GET" && (path === "/api/v1/purchasing/t5018" || path === "/api/v1/purchasing/t5018.csv")) {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const raw = q.get("year");
+    if (raw !== null && !/^\d{4}$/.test(raw)) return refuse(res, 400, "the T5018 year must be a year, as four digits");
+    const year = raw === null ? Number(dayOffset(0).slice(0, 4)) : Number(raw);
+    if (path.endsWith(".csv")) {
+      res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="t5018-${year}.csv"` });
+      return res.end(purchasingWorld.t5018Csv(year));
+    }
+    return send(res, 200, purchasingWorld.t5018Report(year));
+  }
   if (method === "GET" && path === "/api/v1/billing/ar/worklist") {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const chip = q.get("chip") ?? "all";

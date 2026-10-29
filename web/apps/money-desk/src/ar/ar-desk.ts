@@ -41,8 +41,9 @@ import {
 } from "./ar-views.js";
 import type { WorkspaceTab } from "./ar-workspace.js";
 import { formatWorkspaceMoney } from "./ar-workspace.js";
-import { renderPayables } from "./ap-views.js";
-import type { PayablesBoardModel, PurchasingAPAgingPage } from "./ap-logic.js";
+import { payablesViewNav, renderPayables, renderT5018 } from "./ap-views.js";
+import type { PayablesBoardModel, PayablesView, PurchasingAPAgingPage } from "./ap-logic.js";
+import { currentYear, t5018Filename, type PurchasingT5018Report, type T5018Model } from "./t5018-logic.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -88,6 +89,16 @@ export class ArDesk {
   #payablesError = "";
   #payablesAsOf = "";
   #payablesOpenKey: string | null = null;
+  // The Payables area carries two views (W3-T51): the open AP board, and the T5018 year report
+  // the CRA's form is filled from. The view is the operator's, and the area's own nav says which.
+  #payablesView: PayablesView = "aging";
+  // The T5018 view's own state: the read, the year it is for, and the file on its way.
+  #t5018State: "loading" | "ready" | "error" = "loading";
+  #t5018Report: PurchasingT5018Report | null = null;
+  #t5018Error = "";
+  #t5018Year = 0;
+  #t5018Downloading = false;
+  #t5018Notice = "";
   #landing: DeskModel["landing"] = null;
   #aging: DeskModel["aging"] = [];
   #rows: readonly BillingRegisterRow[] = [];
@@ -292,6 +303,20 @@ export class ArDesk {
         return true;
       case "payables-reload":
         void this.#loadPayables();
+        return true;
+      case "payables-view":
+        this.#payablesView = attr("data-view") === "t5018" ? "t5018" : "aging";
+        this.#payablesOpenKey = null;
+        this.#host.repaint();
+        if (this.#payablesView === "t5018" && this.#t5018Report === null) {
+          void this.#loadT5018();
+        }
+        return true;
+      case "t5018-reload":
+        void this.#loadT5018();
+        return true;
+      case "t5018-csv":
+        void this.#downloadT5018();
         return true;
       case "card":
         this.#cardFilter = this.#cardFilter === attr("data-card-id") ? null : attr("data-card-id");
@@ -636,6 +661,16 @@ export class ArDesk {
       void this.#loadPayables();
       return;
     }
+    if (control.getAttribute("data-field") === "t5018-year") {
+      // The year the report is for: the operator picks it and the report reads it again.
+      const raw = (control as HTMLInputElement).value.trim();
+      if (raw === "") return;
+      const year = Number.parseInt(raw, 10);
+      if (!Number.isInteger(year) || year < 1970 || year > 9999) return;
+      this.#t5018Year = year;
+      void this.#loadT5018();
+      return;
+    }
     if (control.getAttribute("data-field") === "place-hold-account") {
       const sel = (control as HTMLSelectElement).selectedOptions[0];
       const customerId = sel?.getAttribute("data-id") ?? (control as HTMLSelectElement).value;
@@ -662,6 +697,12 @@ export class ArDesk {
     // The board's as of control shows the day the books were read as of, so the operator sees
     // which day the figures are and can pick another one.
     if (this.#payablesAsOf !== "") this.#host.setField("payables-asof", this.#payablesAsOf);
+    // The T5018 view's year picker shows the year the report answered for, so the operator sees
+    // which year the figures are and can pick another one. Before the first answer it shows the
+    // dealer's current year, the year the report will answer for.
+    if (this.#payablesView === "t5018") {
+      this.#host.setField("t5018-year", String(this.#t5018Year === 0 ? currentYear() : this.#t5018Year));
+    }
     const account = this.#account;
     if (account === null) return;
     if (this.#fillPending) {
@@ -720,6 +761,49 @@ export class ArDesk {
     this.#payablesPage = got.value;
     this.#payablesAsOf = got.value.as_of;
     this.#payablesError = "";
+    this.#host.repaint();
+  }
+
+  /**
+   * The year's T5018 report, read from the purchasing route. The route answers the year it read,
+   * so the picker settles on the route's year and not on one the screen guessed.
+   */
+  async #loadT5018(): Promise<void> {
+    this.#t5018State = "loading";
+    this.#t5018Error = "";
+    this.#host.repaint();
+    const got = await this.#api.t5018(this.#t5018Year === 0 ? {} : { year: this.#t5018Year });
+    if (!got.ok) {
+      this.#t5018State = "error";
+      this.#t5018Error = refusalWords("the T5018 report", got.error, got.status);
+      this.#host.repaint();
+      return;
+    }
+    this.#t5018State = "ready";
+    this.#t5018Report = got.value;
+    this.#t5018Year = got.value.year;
+    this.#t5018Error = "";
+    this.#host.repaint();
+  }
+
+  /**
+   * The report as the file a bookkeeper hands the contractor's book: the core's own CSV answer,
+   * fetched as text, so the file says what the screen says and the server's file is the file.
+   */
+  async #downloadT5018(): Promise<void> {
+    if (this.#t5018Downloading) return;
+    this.#t5018Downloading = true;
+    this.#t5018Notice = "";
+    this.#host.repaint();
+    const got = await this.#api.t5018Csv(this.#t5018Year === 0 ? {} : { year: this.#t5018Year });
+    this.#t5018Downloading = false;
+    if (!got.ok) {
+      this.#t5018Notice = refusalWords("the T5018 file", got.error, got.status);
+      this.#host.repaint();
+      return;
+    }
+    this.#host.download(got.value, t5018Filename(this.#t5018Year === 0 ? currentYear() : this.#t5018Year));
+    this.#t5018Notice = "The file is the core's own export of this year.";
     this.#host.repaint();
   }
 
@@ -1569,12 +1653,28 @@ export class ArDesk {
   }
 
   /**
-   * The Payables board as the Money Desk's own area (src/ar/ap-views.ts). The board is the open
-   * AP read from the purchasing route; it stands beside the receivables desk in the area switch,
-   * so it is rendered on its own and carries no view nav of that desk's.
+   * The Payables area as the Money Desk's own screen (src/ar/ap-views.ts): the open AP board and
+   * the T5018 year report. The area stands beside the receivables desk in the area switch, so it
+   * is rendered on its own; it carries its own view nav for its two views, which is the way in
+   * from one to the other.
    */
   renderPayablesArea(): TemplateResult {
-    return renderPayables(this.#payablesModel());
+    if (this.#payablesView === "t5018") {
+      return html`${payablesViewNav(this.#payablesView)}${renderT5018(this.#t5018Model())}`;
+    }
+    return html`${payablesViewNav(this.#payablesView)}${renderPayables(this.#payablesModel())}`;
+  }
+
+  /** The T5018 view's own state: the read, the year it is for, and the file on its way. */
+  #t5018Model(): T5018Model {
+    return {
+      state: this.#t5018State,
+      report: this.#t5018Report,
+      error: this.#t5018Error,
+      year: this.#t5018Year === 0 ? currentYear() : this.#t5018Year,
+      downloading: this.#t5018Downloading,
+      notice: this.#t5018Notice,
+    };
   }
 
   /** Reads the board when its area opens, the way every other area reads its own screen. */

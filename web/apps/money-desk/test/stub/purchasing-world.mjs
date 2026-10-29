@@ -43,8 +43,15 @@ const DOCUMENTS = [
   { n: 10, payee: 6, doc: "LC-2207", kind: "LANDED_COST", landed: "DUTY", po: "PO-1108", issued: -105, due: -75, total: 112_000 },
 ];
 
-/** The band each of the core's bucket keys holds its money in. */
-const BUCKET_FIELD = {
+// The vendors the Financial Controller has marked as subcontractors (W3-T51), with the CRA
+// business number each one gave (the second gave none, so the report says the number is missing)
+// and what the year paid them. These are the same invented vendors the board reads.
+const SUBCONTRACTORS = [
+  { n: 1, name: "Ironwood Timber Supply (demo)", no: "V-1001", number: "123456789", paid: 482_500 },
+  { n: 2, name: "Meadowlark Landscape Lighting (demo)", no: "V-1003", number: "", paid: 88_750 },
+];
+
+/** The band each of the core's bucket keys holds its money in. */const BUCKET_FIELD = {
   CURRENT: "current_cents",
   DAYS_30: "days_30_cents",
   DAYS_60: "days_60_cents",
@@ -165,10 +172,47 @@ export function createPurchasingWorld({ dayOffset }) {
     return { as_of: asOf, ...bands, total_cents: total, items, next_cursor: null };
   }
 
+  /** The year's T5018 report: the marked vendors, their business numbers and what the year paid them. */
+  function t5018Report(year) {
+    const items = [];
+    let total = 0;
+    for (const sub of SUBCONTRACTORS) {
+      items.push({
+        vendor_id: payeeId(sub.n),
+        vendor_no: sub.no,
+        name: sub.name,
+        business_number: sub.number,
+        business_number_missing: sub.number === "",
+        paid_cents: sub.paid,
+      });
+      total += sub.paid;
+    }
+    return { year, items, total_cents: total };
+  }
+
+  /** The same report as the file a bookkeeper hands the contractor's book: the core's own CSV shape. */
+  function t5018Csv(year) {
+    const report = t5018Report(year);
+    const rows = [["vendor_no", "vendor_name", "business_number", "paid_cents"]];
+    for (const row of report.items) {
+      rows.push([row.vendor_no, row.name, row.business_number_missing ? "(missing)" : row.business_number, String(row.paid_cents)]);
+    }
+    rows.push([]);
+    rows.push(["Total", "", "", String(report.total_cents)]);
+    return `${rows.map((row) => row.map(csvCell).join(",")).join("\n")}\n`;
+  }
+
   /** Puts the world back to the start; the empty scenario holds no documents at all. */
   function reset(kind = "full") {
     documents = kind === "empty" ? [] : DOCUMENTS;
   }
 
-  return { apAging, reset };
+  return { apAging, t5018Report, t5018Csv, reset };
+}
+
+/** A CSV cell, quoted the way a CSV quotes a cell that carries a comma or a quote. */
+function csvCell(value) {
+  const text = String(value);
+  if (!/[",\n]/.test(text)) return text;
+  return `"${text.replace(/"/g, '""')}"`;
 }

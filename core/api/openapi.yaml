@@ -53439,6 +53439,8 @@ components:
         - name
         - payment_terms_days
         - is_active
+        - is_t5018_subcontractor
+        - business_number
       properties:
         id:
           type: string
@@ -53504,6 +53506,8 @@ components:
         - payment_terms_days
         - order_email
         - is_active
+        - is_t5018_subcontractor
+        - business_number
       properties:
         id:
           type: string

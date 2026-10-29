@@ -1766,7 +1766,7 @@ components:
       description: >-
         The projection purchasing needs of a vendor, supplied by the vendor
         directory seam; purchasing owns no vendor SQL.
-      required: [id, vendor_no, name, payment_terms_days, is_active]
+      required: [id, vendor_no, name, payment_terms_days, is_active, is_t5018_subcontractor, business_number]
       properties:
         id: { type: string, format: uuid }
         vendor_no: { type: string }
@@ -1827,7 +1827,7 @@ components:
         The vendor record as the master writes answer it: the directory
         projection plus the ordering email on the record. order_email
         empty is a real answer, no address on file.
-      required: [id, vendor_no, name, payment_terms_days, order_email, is_active]
+      required: [id, vendor_no, name, payment_terms_days, order_email, is_active, is_t5018_subcontractor, business_number]
       properties:
         id: { type: string, format: uuid }
         vendor_no: { type: string }

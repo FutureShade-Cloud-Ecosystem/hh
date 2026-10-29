@@ -4,9 +4,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  canSetT5018,
   contactBody,
   filterVendors,
   mappingBody,
+  t5018Body,
   vendorBody,
   vendorRows,
   refWords,
@@ -87,4 +89,25 @@ test("a wall refusal names who may change a vendor", () => {
   assert.match(refusalWords("vendor", "Forbidden", 403), /Adding and changing vendors/);
   assert.equal(refusalWords("vendor", "vendor name is required", 400), "Vendor name is required.");
   assert.equal(refusalWords("vendor", "not found", 404), "Not found.");
+});
+
+test("the T5018 mark is offered to the Financial Controller's seat and to no other", () => {
+  assert.equal(canSetT5018("financial_controller"), true, "the controller's seat holds the mark");
+  assert.equal(canSetT5018("super_admin"), true, "the platform role rides above every wall");
+  for (const seat of ["procurement_manager", "payables_receivables", "branch_manager", "general_manager", "yard_manager", ""]) {
+    assert.equal(canSetT5018(seat), false, `${seat} must not be offered the mark`);
+  }
+});
+
+test("the T5018 body always says the mark, and the number only when it changed", () => {
+  const current = { is_t5018_subcontractor: false, business_number: "123456789" };
+  const same = t5018Body({ isSubcontractor: false, businessNumber: "123456789" }, current);
+  assert.equal(same.ok, true);
+  assert.deepEqual(same.body, { is_subcontractor: false }, "an unchanged number is not said");
+  const marked = t5018Body({ isSubcontractor: true, businessNumber: "123456789" }, current);
+  assert.deepEqual(marked.body, { is_subcontractor: true });
+  const cleared = t5018Body({ isSubcontractor: false, businessNumber: "" }, current);
+  assert.deepEqual(cleared.body, { is_subcontractor: false, business_number: "" }, "an emptied number is said, and it clears");
+  const spaces = t5018Body({ isSubcontractor: true, businessNumber: "123 456 789" }, { is_t5018_subcontractor: false, business_number: "" });
+  assert.deepEqual(spaces.body, { is_subcontractor: true, business_number: "123456789" }, "the number is read as the form prints it");
 });
