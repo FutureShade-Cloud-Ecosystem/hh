@@ -142,7 +142,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "bare-array": [{ file: LEDGER, test: "a bare array where the contract says a page is refused, never half read" }],
   "phone-decision": [{ file: LEDGER, test: "on a phone a chosen request brings its decision into view" }],
   "liens-areas": [
-    { file: LIENS, test: "the General Manager's area switch holds Liens and Compliance, and the controller's holds all six" },
+    { file: LIENS, test: "the General Manager's area switch holds Liens and Compliance, and the controller's holds all eight" },
     { file: LIENS, test: "Payables and Receivables reads the jobs and the calendar and is offered no write" },
     { file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed set of thirteen" },
   ],
