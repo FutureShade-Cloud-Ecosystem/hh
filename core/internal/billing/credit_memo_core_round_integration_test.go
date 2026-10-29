@@ -476,7 +476,11 @@ func TestIntegration_CreditMemoRound_AnOverThresholdCreditOfAPaidInvoiceIsApprov
 func TestIntegration_CreditMemoRound_TheApprovalReChecksTheCapUnderTheLock(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
-	tag := ns(t)
+	// FLAKE-13: the tag's clock digits once read 926427256, and the refusal words embed the
+	// invoice number, so the guard below saw 42725 in a correct refusal. The pin keeps that
+	// shape always present, so the guard must classify by the error's own kind, never by
+	// substring luck.
+	tag := ns(t) + "-42725"
 	cust := seedCustomer(t, pool, tag)
 	inv := seedInvoice(t, pool, cust, tag, invSpec{
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
