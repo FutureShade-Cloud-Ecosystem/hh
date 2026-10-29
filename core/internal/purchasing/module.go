@@ -423,6 +423,18 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/purchasing/bills/{id}/payments", g.RequireManager(h.staff(h.payBill)))
 	r.Handle("GET /api/v1/purchasing/ap-aging", g.RequireManager(h.staff(h.apAging)))
 
+	// W3 payment runs. The run is the AP clerk's propose, review and pay over a branch's open
+	// bills, and every one of its doors moves money or decides what money moves: RequireManager
+	// throughout, including the two reads, the list being a worklist of cheques about to go out and
+	// the document carrying every amount on it. The pay itself goes bill by bill through the
+	// bill payments door beside this block, one key per bill, so the run writes no journal of its
+	// own and the books keep the one payment path they already had.
+	r.Handle("POST /api/v1/purchasing/payment-runs", g.RequireManager(h.staff(h.proposePaymentRun)))
+	r.Handle("GET /api/v1/purchasing/payment-runs", g.RequireManager(h.staff(h.listPaymentRuns)))
+	r.Handle("GET /api/v1/purchasing/payment-runs/{id}", g.RequireManager(h.staff(h.getPaymentRun)))
+	r.Handle("PUT /api/v1/purchasing/payment-runs/{id}", g.RequireManager(h.staff(h.updatePaymentRun)))
+	r.Handle("POST /api/v1/purchasing/payment-runs/{id}/pay", g.RequireManager(h.staff(h.payPaymentRun)))
+
 	r.Handle("GET /api/v1/purchasing/tolerance", g.RequireStaff(h.staff(h.getTolerance)))
 	r.Handle("PUT /api/v1/purchasing/tolerance", g.RequireAdmin(h.staff(h.setTolerance)))
 

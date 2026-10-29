@@ -22615,6 +22615,182 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/purchasing/payment-runs:
+    post:
+      operationId: purchasingProposePaymentRun
+      tags:
+        - staff-purchasing
+      x-addition: "W3: the payment run's propose door, the open bills due on or before a house day becoming a run's selection; the ERP keyed supplier payment batches by hand"
+      summary: Propose a payment run from the open bills due by a house day
+      description: The posted bills of one branch, due on or before the named house day (a bill with no due date falls back to its bill date), narrowed to one vendor when vendor_id is named, each at its open amount, become a DRAFT run's lines. A proposal that would select nothing is refused rather than written as an empty run. pay_date is the house day the run's payments will be dated, today's house day when omitted.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingProposePaymentRunRequest"
+      responses:
+        "201":
+          description: The proposed run with its selection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPaymentRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/PurchasingUnprocessable"
+    get:
+      operationId: purchasingListPaymentRuns
+      tags:
+        - staff-purchasing
+      x-addition: "W3: the payment run list, a worklist of cheques about to go out; the ERP keyed supplier payment batches by hand"
+      summary: List payment runs
+      description: "Branch fenced runs, newest first, optionally by status. Every door of the run is a manager door, the list included: it is a worklist of payments about to go out and every row carries the amounts on it."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PurchasingPaymentRunStatus"
+      responses:
+        "200":
+          description: The page of payment runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPaymentRunPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/purchasing/payment-runs/{id}:
+    get:
+      operationId: purchasingGetPaymentRun
+      tags:
+        - staff-purchasing
+      x-addition: "W3: the payment run document with its selection and what the pay did; the ERP keyed supplier payment batches by hand"
+      summary: Read one payment run
+      description: "The run with its lines: what the review selected (amount_cents) beside what the pay actually moved (paid_cents), or the reason a line was skipped. A run outside the caller's branch reach answers the same 404 as a missing one."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The payment run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPaymentRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: purchasingUpdatePaymentRun
+      tags:
+        - staff-purchasing
+      x-addition: "W3: the payment run's review door, whole bills off or amounts down while the run is still a proposal; the ERP keyed supplier payment batches by hand"
+      summary: Review a draft payment run
+      description: Removes whole bills from the selection and lowers line amounts, never above the bill's open amount as it stands while the review lands. A PAID run is finished and refuses review, and a body that names nothing to change, names a bill twice, or names a bill that is not on the run is refused.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingUpdatePaymentRunRequest"
+      responses:
+        "200":
+          description: The reviewed run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPaymentRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/purchasing/payment-runs/{id}/pay:
+    post:
+      operationId: purchasingPayPaymentRun
+      tags:
+        - staff-purchasing
+      x-addition: "W3: the payment run's pay door, every selected bill through the bill payment path under one key per bill; the ERP keyed supplier payment batches by hand"
+      summary: Pay a payment run
+      description: "Pays every still selected bill through the bill payment path, one payment per bill under the key run:<run id>:<bill id>, dated the run's pay date. Paying a run twice pays nothing twice: a PAID run answers itself, and each line's key replays its first payment. A bill paid elsewhere between the review and the pay is paid for at most its open amount, or skipped with a reason on its line. The body is empty, the run carries its own pay date."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The run after the pay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPaymentRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/purchasing/tolerance:
     get:
       operationId: purchasingGetTolerance
@@ -29392,6 +29568,12 @@ components:
                   message:
                     type: string
                     description: 'The dollar sentence, for example "This door takes the whole balance: $93.00 is owed, $50.00 was entered."'
+    PurchasingUnprocessable:
+      description: "A well-formed body the business refuses: the propose door's answer when its filter selects no open bill, so an empty run is never written. The Error envelope carries the refusal in words."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   schemas:
     Error:
       type: object
@@ -54683,6 +54865,226 @@ components:
           type:
             - string
             - "null"
+    PurchasingPaymentRunStatus:
+      type: string
+      description: The payment run lifecycle (migration 0454 CHECK)
+      enum:
+        - DRAFT
+        - PAID
+    PurchasingPaymentRunLineStatus:
+      type: string
+      description: One line's pay outcome (migration 0454 CHECK)
+      enum:
+        - SELECTED
+        - PAID
+        - SKIPPED
+    PurchasingPaymentRunLine:
+      type: object
+      description: One selected bill on a run, the reviewed selection beside what actually moved
+      required:
+        - id
+        - seq
+        - bill_id
+        - amount_cents
+        - status
+        - paid_cents
+      properties:
+        id:
+          type: string
+          format: uuid
+        seq:
+          type: integer
+          format: int32
+        bill_id:
+          type: string
+          format: uuid
+        bill_no:
+          type: string
+        vendor_id:
+          type: string
+          format: uuid
+        vendor_name:
+          type: string
+        due_date:
+          type: string
+          format: date
+        amount_cents:
+          type: integer
+          format: int64
+          description: The reviewed selection, at most the bill's open amount when it was lowered
+        status:
+          $ref: "#/components/schemas/PurchasingPaymentRunLineStatus"
+        paid_cents:
+          type: integer
+          format: int64
+          description: What the pay actually moved, at most amount_cents; zero on a skipped line
+        skip_reason:
+          type: string
+          description: Why a SKIPPED line was skipped (paid elsewhere, voided), in words
+    PurchasingPaymentRun:
+      type: object
+      description: "The payment run document: the proposal's filter, the reviewed selection, and what the pay did. Every payment on it went through the bill payment path under the line's own key."
+      required:
+        - id
+        - branch_id
+        - status
+        - due_on
+        - pay_date
+        - total_cents
+        - paid_cents
+        - created_at
+        - lines
+      properties:
+        id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/PurchasingPaymentRunStatus"
+        due_on:
+          type: string
+          format: date
+          description: The house day the proposal selected bills due on or before
+        vendor_id:
+          type: string
+          format: uuid
+          description: The proposal's vendor filter, absent when the run spans the branch's vendors
+        pay_date:
+          type: string
+          format: date
+          description: The house day every payment the run writes is dated
+        total_cents:
+          type: integer
+          format: int64
+          description: The selection's total, the lines' amount_cents summed
+        paid_cents:
+          type: integer
+          format: int64
+          description: What the pay moved, the lines' paid_cents summed
+        paid_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: When the run paid; null while it is a draft
+        created_at:
+          type: string
+          format: date-time
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PurchasingPaymentRunLine"
+    PurchasingPaymentRunSummary:
+      type: object
+      description: One run of the list, the run without its lines
+      required:
+        - id
+        - branch_id
+        - status
+        - due_on
+        - pay_date
+        - line_count
+        - total_cents
+        - paid_cents
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/PurchasingPaymentRunStatus"
+        due_on:
+          type: string
+          format: date
+        vendor_id:
+          type: string
+          format: uuid
+        pay_date:
+          type: string
+          format: date
+        line_count:
+          type: integer
+          format: int32
+        total_cents:
+          type: integer
+          format: int64
+        paid_cents:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+    PurchasingPaymentRunPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PurchasingPaymentRunSummary"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
+    PurchasingProposePaymentRunRequest:
+      type: object
+      required:
+        - branch_id
+        - due_on
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+          description: The run's branch, a payment run being one branch's cheques
+        due_on:
+          type: string
+          format: date
+          description: The house day the run selects bills due on or before
+        vendor_id:
+          type: string
+          format: uuid
+          description: Narrows the proposal to one vendor; absent means every vendor of the branch
+        pay_date:
+          type: string
+          format: date
+          description: The house day the payments will be dated; absent means today's house day
+    PurchasingPaymentRunLineAmount:
+      type: object
+      required:
+        - bill_id
+        - amount_cents
+      properties:
+        bill_id:
+          type: string
+          format: uuid
+        amount_cents:
+          type: integer
+          format: int64
+          description: The lowered selection, positive and never above the bill's open amount
+    PurchasingUpdatePaymentRunRequest:
+      type: object
+      description: The review of a draft run; at least one of the two lists must name something
+      properties:
+        remove:
+          type: array
+          description: Whole bills to take off the run
+          items:
+            type: string
+            format: uuid
+        lower:
+          type: array
+          description: Lines to lower, each never above its bill's open amount
+          items:
+            $ref: "#/components/schemas/PurchasingPaymentRunLineAmount"
     LandedCost:
       type: object
       description: "The landed-cost header. All cad figures are CAD: the conversion of the document currency happens at capture, so the GL and the inventory valuation only ever see CAD."

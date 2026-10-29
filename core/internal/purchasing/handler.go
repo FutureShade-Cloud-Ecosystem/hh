@@ -331,6 +331,68 @@ func (h *Handler) apAging(w http.ResponseWriter, r *http.Request, caller guards.
 	httpx.WriteJSON(w, http.StatusOK, page)
 }
 
+// proposePaymentRun is POST /api/v1/purchasing/payment-runs: the open bills due on or before a
+// house day become a DRAFT run's lines, one per bill at its open amount.
+func (h *Handler) proposePaymentRun(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in ProposePaymentRunRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	run, err := h.svc.ProposePaymentRun(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, run)
+}
+
+// listPaymentRuns is GET /api/v1/purchasing/payment-runs?branch_id=&status=.
+func (h *Handler) listPaymentRuns(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	q := r.URL.Query()
+	items, err := h.svc.ListPaymentRuns(r.Context(), q.Get("branch_id"), q.Get("status"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil})
+}
+
+func (h *Handler) getPaymentRun(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	run, err := h.svc.GetPaymentRun(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, run)
+}
+
+// updatePaymentRun is PUT /api/v1/purchasing/payment-runs/{id}: the review, whole bills off or
+// amounts down, nothing above the bill's open.
+func (h *Handler) updatePaymentRun(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in UpdatePaymentRunRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	run, err := h.svc.UpdatePaymentRun(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, run)
+}
+
+// payPaymentRun is POST /api/v1/purchasing/payment-runs/{id}/pay: every selected bill through
+// PayBill under the line's own key. The body is empty, the run carries its own pay date, and a
+// second press answers the first pay and writes nothing.
+func (h *Handler) payPaymentRun(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	run, err := h.svc.PayPaymentRun(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, run)
+}
+
 func (h *Handler) getTolerance(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	t, err := h.svc.GetTolerance(r.Context(), r.URL.Query().Get("branch_id"))
 	if err != nil {

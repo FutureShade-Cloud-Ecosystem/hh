@@ -28,12 +28,13 @@ test("two fresh generations are byte-identical and match the committed tree", ()
   try {
     const out1 = generate(one);
     const out2 = generate(two);
-    // 792 operations: main's 785 (FW1-04's bankrecRecordCutover and bankrecCutoverPreview,
+    // 797 operations: main's 785 (FW1-04's bankrecRecordCutover and bankrecCutoverPreview,
     // FW1-07's inventory controller exceptions read, paymentsVoidPayment, and the routes before
     // them) plus this lane's billingApplyCredit and billingReverseCreditApplication, plus W2-6b's
     // three counter reason code routes (the list read, the add and the edit), plus W2-9a's
-    // purchasingGetAPAging and purchasingPayBill: 792.
-    if (!out1.includes("792 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
+    // purchasingGetAPAging and purchasingPayBill, plus W3's five payment run doors (the propose,
+    // the list read, the document read, the review and the pay): 797.
+    if (!out1.includes("797 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
     const a = snapshot(one);
     const b = snapshot(two);
     const c = snapshot(committed);
