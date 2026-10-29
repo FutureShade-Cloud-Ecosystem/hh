@@ -5,7 +5,7 @@
 
 import type { PurchasingAPAgingPage, PurchasingAddLineRequest, PurchasingApplyWarrantyCreditRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingCreateVendorRequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPayBillRequest, PurchasingPolicy, PurchasingPostBillRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingTolerance, PurchasingTransitionRequest, PurchasingUpdateLineRequest, PurchasingUpdateVendorRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorMaster, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient, type ApiCallOptions } from "../http.js";
+import { ApiClient, type ApiCallOptions, type ApiKeyedCallOptions } from "../http.js";
 
 export async function purchasingGetAPAging(
   client: ApiClient,
@@ -67,17 +67,21 @@ export async function purchasingGetBill(
   });
 }
 
+// The document lets this call carry an Idempotency-Key: call.idempotencyKey, a UUID chosen
+// once per acceptance and resent unchanged on every retry of it (never a new key per try), so a retry after a
+// timeout answers the first outcome instead of recording a second one.
 export async function purchasingPayBill(
   client: ApiClient,
   id: string | number,
   body: PurchasingPayBillRequest,
-  call?: ApiCallOptions
+  call?: ApiKeyedCallOptions
 ): Promise<Result<PurchasingBillDetail>> {
   return client.request<PurchasingBillDetail>({
     method: "POST",
     path: "/api/v1/purchasing/bills/{id}/payments",
     pathParams: { id },
     body,
+    idempotencyKey: call?.idempotencyKey,
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "purchasingPayBill",

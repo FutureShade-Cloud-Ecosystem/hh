@@ -983,6 +983,14 @@ paths:
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: >-
+            A key chosen once per payment press and resent unchanged on every
+            retry of it. A re-press under the same key answers the first
+            payment; the same key on another bill is refused.
+          schema: { type: string, minLength: 1, maxLength: 200 }
       requestBody:
         required: true
         content:
