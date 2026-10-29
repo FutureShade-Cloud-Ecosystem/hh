@@ -726,11 +726,14 @@ paths:
     post:
       operationId: glExport
       tags: [staff-gl]
-      summary: Run the GP-parity export for a fiscal period
+      summary: Run the export for a period, the parity draft or one target package
       description: >-
-        Produces the parity batch for the period. The shipped export is a
-        parity draft (extract artifacts pending cutover confirmation), which
-        is_draft carries on the result.
+        Produces the export batch for the period. With no target the export is
+        the parity draft (extract artifacts pending cutover confirmation), which
+        is_draft carries on the result. With a target it is the accounting
+        package export for that package: every account with movement in the
+        period must be mapped for the target, and one unmapped account refuses
+        the export in words naming it.
       x-role: requireAdmin
       x-access:
         surfaces: [money-desk]
@@ -1975,10 +1978,27 @@ components:
         notes: { type: string }
     GlExportBody:
       type: object
+      description: >-
+        The period pick is counted on the dealer's house days (the fiscal
+        periods the ledger files by): a month is itself, a quarter is its three
+        consecutive months starting in January, and neither is the whole year.
+        A month and a quarter together are refused.
       required: [year, month, branch_id]
       properties:
         year: { type: integer, format: int32 }
         month: { type: integer, format: int32, minimum: 1, maximum: 12 }
+        quarter:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 4
+          description: Narrows the pick to the quarter's three months
+        target:
+          type: string
+          enum: [QUICKBOOKS_ONLINE, SAGE_50]
+          description: >-
+            Absent is the GP-parity draft. A named target is the accounting
+            package export, and demands a full mapping for the period
         branch_id:
           type: string
           format: uuid

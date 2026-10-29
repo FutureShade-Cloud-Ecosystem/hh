@@ -55,8 +55,9 @@ type fakeStore struct {
 	plBranchRows  []PLBranchRow
 	headOffice    string
 	seq           int
-	markers       map[int]bool // the year end markers the fake holds (FW1-09g)
-	periodYear    int          // the year the fake's one period sits in (FW1-09h: the reopen reads the year)
+	markers       map[int]bool      // the year end markers the fake holds (FW1-09g)
+	periodYear    int               // the year the fake's one period sits in (FW1-09h: the reopen reads the year)
+	unmapped      []UnmappedAccount // the movement accounts UnmappedMovementAccounts answers (the export's refusal)
 }
 
 func newFakeStore() *fakeStore {
@@ -471,8 +472,14 @@ func (f *fakeStore) InsertExportBatch(_ context.Context, _, _ int, _, _ string, 
 	f.seq++
 	return fmt.Sprintf("batch-%d", f.seq), nil
 }
-func (f *fakeStore) ExportRows(_ context.Context, _, _ int, _ string) ([]ExportRow, error) {
+func (f *fakeStore) ExportRows(_ context.Context, _ int, _ []int, _ string) ([]ExportRow, error) {
 	return nil, nil
+}
+
+// UnmappedMovementAccounts answers the rows a test plants on the fake, so the export's mapping
+// refusal is provable with no database.
+func (f *fakeStore) UnmappedMovementAccounts(_ context.Context, _ int, _ []int, _, _ string) ([]UnmappedAccount, error) {
+	return f.unmapped, nil
 }
 
 // - the accounting package export's account mapping (W3 AX-1) -

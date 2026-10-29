@@ -2059,16 +2059,23 @@ func (r *Repository) InsertExportBatch(ctx context.Context, year, month int, for
 	return id, nil
 }
 
-func (r *Repository) ExportRows(ctx context.Context, year, month int, branchID string) ([]ExportRow, error) {
+// ExportRows reads one period's posted lines for the export: the fiscal year, the pick's months
+// (an empty slice is the whole year), and the branch scope ("" = consolidated).
+func (r *Repository) ExportRows(ctx context.Context, year int, months []int, branchID string) ([]ExportRow, error) {
 	if r.pool == nil {
 		return nil, errNoDB
+	}
+	if months == nil {
+		months = []int{}
 	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT entry_no, COALESCE(to_char(posted_at,'YYYY-MM-DD'),''), account_code::text, account_name,
 		        COALESCE(debit_cents,0), COALESCE(credit_cents,0), COALESCE(memo,'')
 		 FROM v_gl_detail
-		 WHERE period_year = $1 AND ($2 <= 0 OR period_month = $2) AND ($3 = '' OR branch_id = $3::uuid)
-		 ORDER BY entry_no, account_code`, year, month, branchID)
+		 WHERE period_year = $1
+		   AND (cardinality($2::int[]) = 0 OR period_month = ANY($2::int[]))
+		   AND ($3 = '' OR branch_id = $3::uuid)
+		 ORDER BY entry_no, account_code`, year, months, branchID)
 	if err != nil {
 		return nil, fmt.Errorf("gl: export rows: %w", err)
 	}
@@ -2080,6 +2087,38 @@ func (r *Repository) ExportRows(ctx context.Context, year, month int, branchID s
 			return nil, fmt.Errorf("gl: scan export row: %w", err)
 		}
 		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// UnmappedMovementAccounts answers, in code order, every account with a posted line in the period
+// that carries no mapping row for the target: the export refuses and names these, in words.
+func (r *Repository) UnmappedMovementAccounts(ctx context.Context, year int, months []int, branchID, target string) ([]UnmappedAccount, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if months == nil {
+		months = []int{}
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT DISTINCT d.account_code, d.account_name
+		   FROM v_gl_detail d
+		  WHERE d.period_year = $1
+		    AND (cardinality($2::int[]) = 0 OR d.period_month = ANY($2::int[]))
+		    AND ($3 = '' OR d.branch_id = $3::uuid)
+		    AND NOT EXISTS (SELECT 1 FROM gl_account_mapping m WHERE m.target = $4 AND m.account_code = d.account_code)
+		  ORDER BY d.account_code`, year, months, branchID, target)
+	if err != nil {
+		return nil, fmt.Errorf("gl: unmapped movement accounts: %w", err)
+	}
+	defer rows.Close()
+	var out []UnmappedAccount
+	for rows.Next() {
+		var u UnmappedAccount
+		if err := rows.Scan(&u.AccountCode, &u.AccountName); err != nil {
+			return nil, fmt.Errorf("gl: scan unmapped account: %w", err)
+		}
+		out = append(out, u)
 	}
 	return out, rows.Err()
 }

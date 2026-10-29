@@ -3200,9 +3200,11 @@ type GlPolicy struct {
 }
 
 type GlExportBody struct {
-	Year     int32  `json:"year"`
-	Month    int32  `json:"month"`
-	BranchId string `json:"branch_id"`
+	Year     int32   `json:"year"`
+	Month    int32   `json:"month"`
+	Quarter  *int32  `json:"quarter,omitempty"`
+	Target   *string `json:"target,omitempty"`
+	BranchId string  `json:"branch_id"`
 }
 
 type GlExportResult struct {

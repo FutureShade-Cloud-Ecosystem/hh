@@ -2710,6 +2710,8 @@ export type GlPolicy = {
 export type GlExportBody = {
   year: number;
   month: number;
+  quarter?: number;
+  target?: "QUICKBOOKS_ONLINE" | "SAGE_50";
   branch_id: string;
 };
 export type GlExportResult = {
