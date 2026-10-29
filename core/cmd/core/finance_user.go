@@ -83,22 +83,22 @@ const financeUserDefaultRole = "financial_controller"
 // finance box and the staging kind, the sign in must be the console
 // exchange, and the database itself must carry the box kind mark. Each
 // refusal is one line naming the check, never a value.
-func financeBoxReady(ctx context.Context, getenv func(string) string, pool *pgxpool.Pool) error {
+func financeBoxReady(ctx context.Context, role string, getenv func(string) string, pool *pgxpool.Pool) error {
 	if strings.TrimSpace(getenv(envBoxKind)) != boxKindFinance {
-		return fmt.Errorf("finance-user: %s must name the finance box", envBoxKind)
+		return fmt.Errorf("%s: %s must name the finance box", role, envBoxKind)
 	}
 	if strings.TrimSpace(getenv(envAppEnv)) != "staging" {
-		return fmt.Errorf("finance-user: %s must be staging", envAppEnv)
+		return fmt.Errorf("%s: %s must be staging", role, envAppEnv)
 	}
 	if strings.TrimSpace(getenv(envSigninMode)) != "console" {
-		return fmt.Errorf("finance-user: %s must be console", envSigninMode)
+		return fmt.Errorf("%s: %s must be console", role, envSigninMode)
 	}
 	kind, err := settings.NewDealerConfigReader(pool).BoxKind(ctx)
 	if err != nil {
-		return fmt.Errorf("finance-user: the database box kind (%s) could not be read: %w", settings.KeyBoxKind, err)
+		return fmt.Errorf("%s: the database box kind (%s) could not be read: %w", role, settings.KeyBoxKind, err)
 	}
 	if kind != boxKindFinance {
-		return fmt.Errorf("finance-user: the database is not marked as a finance box (%s)", settings.KeyBoxKind)
+		return fmt.Errorf("%s: the database is not marked as a finance box (%s)", role, settings.KeyBoxKind)
 	}
 	return nil
 }
@@ -171,7 +171,7 @@ func financeUserRole(args []string, stdout, stderr io.Writer, getenv func(string
 	}
 	defer pool.Close()
 
-	if err := financeBoxReady(ctx, getenv, pool); err != nil {
+	if err := financeBoxReady(ctx, "finance-user", getenv, pool); err != nil {
 		return err
 	}
 	if *applyFromEnv {

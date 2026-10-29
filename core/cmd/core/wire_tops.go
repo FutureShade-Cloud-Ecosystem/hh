@@ -157,6 +157,10 @@ type topsSpine struct {
 	posSvc *pos.Service
 	// assistSvc is held so the demo serve can read which limits the wiring gave it (demoRefuseAssistWithoutDemoLimits).
 	assistSvc *assist.Service
+	// taxSvc is the tax engine the tops wiring built, held so a composition that must
+	// read the engine's own reconcile (the finance box's read only check) runs the
+	// engine this box serves and not a second copy of it.
+	taxSvc *tax.Service
 }
 
 // feedbackActorNames resolves a linked ERP user id to the display name and
@@ -881,6 +885,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		posHandler:    posHandler,
 		posSvc:        posSvc,
 		assistSvc:     assistSvc,
+		taxSvc:        taxSvc,
 	}
 }
 
