@@ -85,13 +85,19 @@ var demoEnvDenyNames = []string{
 	// The finance box's people (W2-2): they are the finance box's, a demo
 	// box has none, and a demo box carrying the list refuses the boot.
 	"HH_FINANCE_USERS",
-	// The finance world's dump names (W2-1b): the address, the digest and
-	// the fetch credential of the world the finance box restores. A demo box
-	// never restores a world, so a demo box carrying any of them refuses the
-	// boot, and the credential never rides an ordinary deployment.
+	// The finance world's dump names (W2-1b): the file, the address, the
+	// digest and the fetch credential of the world the finance box restores.
+	// A demo box never restores a world, so a demo box carrying any of them
+	// refuses the boot, and the credential never rides an ordinary
+	// deployment.
+	"HH_FINANCE_WORLD_FILE",
 	"HH_FINANCE_WORLD_URL",
 	"HH_FINANCE_WORLD_SHA256",
 	"HH_FINANCE_WORLD_TOKEN",
+	// The directory the world reset writes its dump file under (W2 reset fix
+	// r1): the dump is on disk, never on the shared memory tmpfs. A demo box
+	// never resets a world, so a demo box carrying it refuses the boot.
+	"HH_FINANCE_RESET_DIR",
 }
 
 // demoEnvCardProcessorVar and demoEnvCardProcessorValue: the card
@@ -260,9 +266,14 @@ var envInventoryFixture = []string{
 	"HH_ACCEPTANCE_SIGN_KEY_ID",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS_ID",
+	"HH_FINANCE_WORLD_FILE",
 	"HH_FINANCE_WORLD_SHA256",
 	"HH_FINANCE_WORLD_TOKEN",
 	"HH_FINANCE_WORLD_URL",
+	// The directory the world reset writes its dump file under (W2 reset fix
+	// r1): the dump is on disk, never on the shared memory tmpfs, so the box
+	// does not depend on a shared memory size it does not control.
+	"HH_FINANCE_RESET_DIR",
 	"HOS_ASSIST_ANTHROPIC_API_KEY",
 	"HOS_ASSIST_CLAIMS_KEY",
 	"HOS_ASSIST_PRO_READER_DATABASE_URL",
