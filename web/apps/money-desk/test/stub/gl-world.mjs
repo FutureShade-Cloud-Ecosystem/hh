@@ -130,6 +130,39 @@ const periodRows = () =>
       : { id: IDS.period(month), year: FY, month, status: "OPEN" };
   });
 
+// The older books the register reach legs plant (W2-10): a box that has run for years holds journals
+// past the register's first hundred. These post in fiscal 2025, numbered from 101 so no register label
+// collides with the demo year's rows, spread across the year's months so a posted date range splits
+// them, and posted on a mid afternoon so the day a range reads is the day the stamp carries. Plain
+// words, no dealer names. The stub's own list does not sort these into the demo year's answers unless
+// the cursor rules put them there.
+const OLDER_FY = 2025;
+function olderJournal(i) {
+  const entryNo = 101 + i;
+  const month = (i % 12) + 1;
+  const day = ((i * 7) % 27) + 1;
+  const posted = new Date(Date.UTC(OLDER_FY, month - 1, day, 14, 0, 0)).toISOString();
+  return {
+    id: `7a1e0000-0000-4000-9000-${String(1000 + i).padStart(12, "0")}`,
+    fiscal_year: OLDER_FY,
+    entry_no: entryNo,
+    period_id: IDS.periodFor(OLDER_FY, month),
+    source: "MANUAL",
+    memo: `Yard materials for the ${MONTH_WORDS[month - 1]} ${OLDER_FY} pour (demo)`,
+    status: "POSTED",
+    derived_status: "POSTED",
+    posted_at: posted,
+    branch_id: IDS.pointLoma,
+    created_at: posted,
+    lines: [
+      { line_no: 1, account_code: "5200", account_name: CHART["5200"][0], debit_cents: 1200, credit_cents: 0, memo: "materials" },
+      { line_no: 2, account_code: "1000", account_name: CHART["1000"][0], debit_cents: 0, credit_cents: 1200, memo: "materials" },
+    ],
+  };
+}
+
+const MONTH_WORDS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
 const accountRows = () =>
   Object.entries(CHART).map(([code, [name, type]], i) => ({
     id: `a0000000-0000-4000-9000-${String(i + 1).padStart(12, "0")}`,
@@ -366,6 +399,15 @@ export function createGlWorld() {
   };
 
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  // The core's dateParam parses YYYY-MM-DD with a strict calendar read, so 2025-13-01 and
+  // 2025-02-30 are caller garbage, refused as one. This mirrors it: shape first, then a
+  // round trip through the clock that keeps only real days and never throws on the rest.
+  const calendarDay = (v) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+    const day = new Date(`${v}T00:00:00Z`);
+    return !Number.isNaN(day.getTime()) && day.toISOString().slice(0, 10) === v;
+  };
 
 
   // ---- the rest of the ledger: chart, journals, recurring, periods, checks, policy, export ----------
@@ -913,6 +955,22 @@ export function createGlWorld() {
       world.postingQueue = Array.isArray(asked.items) ? asked.items : [];
       return { status: 200, body: { ok: true, count: world.postingQueue.length } };
     }
+    // The register reach legs' planter (W2-10). {count: n} adds n older fiscal 2025 journals to the
+    // seeded books, so a leg runs a ledger of more than the register's first hundred; {empty: true}
+    // clears the books to nothing at all, the empty core the blank check runs against. Every other
+    // leg resets the world and never calls this, so the seeded answers stand. The path wears the
+    // journals namespace because this is the line the stub server forwards here in one piece; the
+    // world's own _stub controls beside the reset answer before the caller is read, and so does this.
+    if (req.method === "POST" && path === "/api/v1/gl/journals/_stub/planter") {
+      const asked = JSON.parse(bodyText || "{}");
+      if (asked.empty === true) {
+        world.journals = [];
+        return { status: 200, body: { ok: true, journals: 0 } };
+      }
+      const count = Number.isInteger(asked.count) && asked.count > 0 ? asked.count : 0;
+      for (let i = 0; i < count; i += 1) world.journals.push(olderJournal(i));
+      return { status: 200, body: { ok: true, journals: world.journals.length } };
+    }
     if (req.method === "GET" && path === "/api/v1/branches") return { status: 200, body: branches() };
     const caller = callerOf(req);
     // The surface config read the desk makes for the dealer's legacy import source. The source field
@@ -981,13 +1039,51 @@ export function createGlWorld() {
         return say(400, "late_posted must be true or false");
       }
       const late = lateParam === null || lateParam === "" ? null : lateParam === "true";
+      // The posted_at range (DIB-204), the way the core takes it: YYYY-MM-DD, an empty bound is
+      // unbounded on that side, a malformed value is refused in the core's words before the books are
+      // asked, and a bounded side only matches rows that carry a posted date (a draft has none).
+      for (const key of ["date_from", "date_to"]) {
+        const value = url.searchParams.get(key) ?? "";
+        if (value !== "" && !calendarDay(value)) return say(400, `invalid ${key} (want YYYY-MM-DD)`);
+      }
+      const dateFrom = url.searchParams.get("date_from") ?? "";
+      const dateTo = url.searchParams.get("date_to") ?? "";
+      // The page (HH-3.2 B4), the way the core reads it: limit defaults to 50 and clamps to [1, 200],
+      // the cursor is the minted v1: token over the fiscal_year/entry_no pair the list orders by, a
+      // cursor that is present but not one this world minted is refused rather than read as page one,
+      // and the page is fetched one row past the limit to learn whether a further page exists.
+      const asked = Number(url.searchParams.get("limit") ?? "");
+      const limit = Number.isInteger(asked) && asked > 0 ? Math.min(asked, 200) : 50;
+      const token = url.searchParams.get("cursor") ?? "";
+      let cursorKey = "";
+      if (token !== "") {
+        const decoded = Buffer.from(token, "base64url").toString("utf8");
+        if (!decoded.startsWith("v1:")) return say(400, "cursor is malformed");
+        cursorKey = decoded.slice(3);
+        const pair = cursorKey.split("/");
+        if (pair.length !== 2 || !pair.every((n) => /^\d+$/.test(n))) return say(400, "cursor is malformed");
+      }
+      const [cursorFy, cursorEn] = cursorKey === "" ? [0, 0] : cursorKey.split("/").map(Number);
       const at = url.searchParams.get("branch_id") ?? "";
       const rows = [...world.journals]
         .filter((j) => wanted === null || wanted === "" || j.derived_status === wanted)
         .filter((j) => late === null || latePosted(j) === late)
         .filter((j) => at === "" || j.branch_id === at)
-        .sort((a, b) => b.entry_no - a.entry_no);
-      return { status: 200, body: { items: rows.map(read), next_cursor: null, limit: 100 } };
+        .filter((j) => dateFrom === "" || (j.posted_at !== undefined && j.posted_at.slice(0, 10) >= dateFrom))
+        .filter((j) => dateTo === "" || (j.posted_at !== undefined && j.posted_at.slice(0, 10) <= dateTo))
+        .filter((j) => cursorKey === "" || j.fiscal_year < cursorFy || (j.fiscal_year === cursorFy && j.entry_no < cursorEn))
+        .sort((a, b) => b.fiscal_year - a.fiscal_year || b.entry_no - a.entry_no);
+      const more = rows.length > limit;
+      const page = more ? rows.slice(0, limit) : rows;
+      const last = more ? page[page.length - 1] : undefined;
+      return {
+        status: 200,
+        body: {
+          items: page.map(read),
+          next_cursor: last === undefined ? null : Buffer.from(`v1:${last.fiscal_year}/${last.entry_no}`, "utf8").toString("base64url"),
+          limit,
+        },
+      };
     }
     const one = path.match(/^\/api\/v1\/gl\/journals\/([^/]+)$/);
     if (req.method === "GET" && one) {
