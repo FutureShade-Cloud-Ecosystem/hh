@@ -28,34 +28,36 @@ async function shot(page: Page, theme: string, width: number, name: string): Pro
   await page.screenshot({ path: join(dir, `${name}-${theme}-${width}.png`), fullPage: true });
 }
 
+/** The band's account menu, and the theme tap in it, for the dark half. */
+async function charcoalOn(page: Page, theme: string): Promise<void> {
+  if (theme !== "charcoal") return;
+  await page.locator("hh-shell-header button.account").click();
+  await page.getByRole("button", { name: "Theme: Light" }).click();
+  // The band's account menu stays open after the theme tap, and on a phone it hangs over the area
+  // switch. Escape closes it, the way it closes in every menu of the house.
+  await page.keyboard.press("Escape");
+}
+
+/** The board, and a payee's open items, with the Pay control on the vendor bill. */
+async function openPayeePage(page: Page): Promise<void> {
+  await page.locator("nav[aria-label='Money Desk areas']").getByRole("button", { name: "Payables", exact: true }).click();
+  await expect(page.locator("[data-payables-aging]")).toBeVisible();
+  await page.locator("[data-payee-row]", { hasText: "Saltmarsh Fasteners (demo)" }).getByRole("button").click();
+  await expect(page.locator("[data-payables-lines]")).toBeVisible();
+}
+
 for (const size of SIZES) {
   for (const theme of THEMES) {
     test(`the Pay form at ${size.width} px, ${theme}`, async ({ page, request }) => {
       test.setTimeout(120_000);
       await page.setViewportSize(size);
-      const charcoalOn = async (on: Page = page) => {
-        if (theme === "charcoal") {
-          await on.locator("hh-shell-header button.account").click();
-          await on.getByRole("button", { name: "Theme: Light" }).click();
-        }
-      };
-      // The band's account menu stays open after the theme tap, and on a phone it hangs over
-      // the area switch. Escape closes it, the way it closes in every menu of the house.
-      const closeAccountMenu = async (on: Page = page) => {
-        await on.keyboard.press("Escape");
-      };
-
       // The Pay control is a manager's, so the form is photographed as the Financial Controller
       // sees it.
       await openDesk(page, request, "controller");
-      await charcoalOn();
-      await closeAccountMenu();
+      await charcoalOn(page, theme);
 
       // The board, and a payee's open items: the vendor bill with the Pay control on it.
-      await page.locator("nav[aria-label='Money Desk areas']").getByRole("button", { name: "Payables", exact: true }).click();
-      await expect(page.locator("[data-payables-aging]")).toBeVisible();
-      await page.locator("[data-payee-row]", { hasText: "Saltmarsh Fasteners (demo)" }).getByRole("button").click();
-      await expect(page.locator("[data-payables-lines]")).toBeVisible();
+      await openPayeePage(page);
       await shot(page, theme, size.width, "pay-control");
 
       // The form itself, open on the part paid bill.
@@ -64,4 +66,28 @@ for (const size of SIZES) {
       await shot(page, theme, size.width, "pay-form");
     });
   }
+}
+
+// The unknown outcome: the answer to a payment that landed is lost on the way back, so the money
+// may or may not have moved. The form says so, in the desk's own words.
+for (const theme of THEMES) {
+  test(`the unknown outcome at 1280 px, ${theme}`, async ({ page, request }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openDesk(page, request, "controller");
+    await charcoalOn(page, theme);
+    await openPayeePage(page);
+    await page.locator("[data-line-row]", { hasText: "B-4107" }).getByRole("button", { name: "Pay" }).click();
+    await expect(page.locator("[data-pay-form]")).toBeVisible();
+
+    // The stub records the payment and the answer never comes back.
+    await page.route("**/api/v1/purchasing/bills/*/payments", async (route) => {
+      await route.fetch();
+      await route.abort("connectionreset");
+    });
+    await page.locator("[data-field='pay-amount']").fill("100.00");
+    await page.locator("[data-action='payables-pay-send']").click();
+    await expect(page.locator("[data-pay-error]")).toContainText("may or may not have been recorded");
+    await shot(page, theme, 1280, "pay-unknown");
+  });
 }

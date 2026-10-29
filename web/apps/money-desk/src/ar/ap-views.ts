@@ -155,12 +155,15 @@ function payablesAging(page: PurchasingAPAgingPage): TemplateResult {
  * server re-refuses; the control is simply not on the row for a role the route would refuse. A
  * landed cost line carries no Pay control in this round: it is owed to the carrier or the broker,
  * not to a supplier, and the route pays a vendor bill.
+ *
+ * The row being paid wears the desk's own selected row style, so the person paying a bill can see
+ * which row the open form belongs to.
  */
-function payeeLineRow(item: PurchasingAPAgingItem, asOf: string, onCarrier: boolean, canPay: boolean): TemplateResult {
+function payeeLineRow(item: PurchasingAPAgingItem, asOf: string, onCarrier: boolean, canPay: boolean, paying: boolean): TemplateResult {
   const late = daysPastDue(item.due_date, asOf);
   const payable = canPay && item.kind === "VENDOR_BILL";
   return html`
-    <tr data-line-row data-doc-kind="${item.kind}">
+    <tr data-line-row data-doc-kind="${item.kind}" aria-current="${paying ? "true" : "false"}">
       <td>
         <span class="who">${item.ref_no}</span>
         <span class="dim small">${documentKindWord(item, onCarrier)}</span>
@@ -246,7 +249,7 @@ function payablesPayee(page: PurchasingAPAgingPage, row: PurchasingAPAgingRow, m
           </thead>
           <tbody>
             ${rowItems(row).map((item) => html`
-              ${payeeLineRow(item, page.as_of, carrier, canPay)}
+              ${payeeLineRow(item, page.as_of, carrier, canPay, model.pay !== null && model.pay.billId === item.id)}
               ${model.pay !== null && model.pay.billId === item.id
                 ? html`<tr class="pay-form-row"><td colspan="4">${payForm(model, row.vendor_name)}</td></tr>`
                 : nothing}
@@ -260,7 +263,9 @@ function payablesPayee(page: PurchasingAPAgingPage, row: PurchasingAPAgingRow, m
           </tfoot>
         </table>
       </div>
-      <p class="dim small foot">Landed costs are owed to the carrier or broker, not to the supplier.</p>
+      ${carrier
+        ? html`<p class="dim small foot">Landed costs are owed to the carrier or broker, not to the supplier.</p>`
+        : nothing}
     </section>
   `;
 }

@@ -1,14 +1,14 @@
 // The Payables board paying a vendor bill, walked in a real browser against the stub.
 //
 // The stub answers the route the core answers (POST /api/v1/purchasing/bills/{id}/payments): the
-// key rides the Idempotency-Key header, one key per press, a key spent on this bill is a replay
-// that writes nothing, a key spent on another bill is a conflict, a press with no key is refused,
-// and the role gate is the core's own (a manage level route on the money desk, so the Payables and
-// Receivables role is turned away by it).
+// key rides the Idempotency-Key header, one key per bill while its outcome is unknown, a key spent
+// on this bill is a replay that writes nothing, a key spent on another bill is a conflict, a press
+// with no key is refused, and the role gate is the core's own (a manage level route on the money
+// desk, so the Payables and Receivables role is turned away by it).
 //
 // Every leg reads the figures on the screen, so a screen that renders nothing, or a route that
 // answers nothing, fails the leg instead of passing it.
-import { test, expect, openDesk, resetStub, dayFromToday, receivablesHandoff } from "./helpers.js";
+import { test, expect, openDesk, resetStub, dayFromToday, dayWords, receivablesHandoff } from "./helpers.js";
 import type { Page } from "@playwright/test";
 
 /** The cents a figure reads: "$13,482.50" is 1348250. */
@@ -100,7 +100,9 @@ test("a double press with the same key pays once", async ({ page, request }) => 
   await page.locator("[data-action='payables-pay-send']").click();
   await expect(page.locator("[data-pay-form]")).toHaveCount(0);
   expect(key).not.toBe("");
-  // The money moved once.
+  // The money moved once. The board and the payee read the books again, so the leg waits for the
+  // re-read before it reads the total: the form closes before the books come back.
+  await expect(page.locator("[data-line-row]", { hasText: "B-4107" })).toContainText("$460.00");
   expect(centsOf(await page.locator("[data-payee-lines-total]").innerText())).toBe(before - 10_000);
 
   // The same key again, the way a retry after a lost answer sends it: the server answers the first
@@ -207,4 +209,263 @@ test("the route turns the Payables and Receivables role away", async ({ request 
     data: { amount_cents: 10_000, paid_at: `${dayFromToday(0)}T12:00:00Z`, note: "" },
   });
   expect(refused.status()).toBe(403);
+});
+
+test("a lost answer, then Cancel and Pay again, pays once", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+  const before = centsOf(await page.locator("[data-payee-lines-total]").innerText());
+
+  await openPayForm(page, "B-4107");
+  // The stub records the payment and the answer never comes back: the money moved and the desk
+  // never heard so.
+  let drop = true;
+  await page.route("**/api/v1/purchasing/bills/*/payments", async (route) => {
+    if (drop) {
+      drop = false;
+      await route.fetch();
+      await route.abort("connectionreset");
+      return;
+    }
+    await route.continue();
+  });
+  await page.locator("[data-field='pay-amount']").fill("100.00");
+  await page.locator("[data-action='payables-pay-send']").click();
+
+  // The form says the outcome is unknown. It never says nothing was changed: the money may have
+  // moved, and the person must not be told otherwise.
+  await expect(page.locator("[data-pay-error]")).toBeVisible();
+  await expect(page.locator("[data-pay-error]")).toContainText("may or may not have been recorded");
+  await expect(page.locator("[data-pay-error]")).not.toContainText("Nothing was changed");
+
+  // The books are read again, so the open amount on the screen is the server's: the payment
+  // landed and the bill has that much less open.
+  await expect(page.locator("[data-payee-lines-total]")).toContainText("$775.00");
+  // The form carries that figure too, not the one it was opened with.
+  await expect(page.locator("[data-pay-target]")).toContainText("The open amount is $460.00");
+
+  // The person cancels and pays again from a fresh form.
+  await page.locator("[data-action='payables-pay-cancel']").click();
+  await expect(page.locator("[data-pay-form]")).toHaveCount(0);
+  await openPayForm(page, "B-4107");
+  await page.locator("[data-field='pay-amount']").fill("100.00");
+  await page.locator("[data-action='payables-pay-send']").click();
+  await expect(page.locator("[data-pay-form]")).toHaveCount(0);
+
+  // The money moved once: the second press carried the first press's key, so the core answered
+  // the first payment and wrote nothing.
+  const after = centsOf(await page.locator("[data-payee-lines-total]").innerText());
+  expect(before - after).toBe(10_000);
+});
+
+test("a server that answers 5xx leaves the outcome unknown too, and the key is held across a Cancel", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+  const before = centsOf(await page.locator("[data-payee-lines-total]").innerText());
+  await openPayForm(page, "B-4107");
+
+  const keys: string[] = [];
+  page.on("request", (req) => {
+    if (req.url().includes("/api/v1/purchasing/bills/") && req.url().endsWith("/payments")) {
+      keys.push(req.headers()["idempotency-key"] ?? "");
+    }
+  });
+  // The server faults: the answer is not lost, it is a fault, and the money may have moved either
+  // way.
+  await page.route("**/api/v1/purchasing/bills/*/payments", async (route) => {
+    await route.fulfill({ status: 500, contentType: "text/plain", body: "the server fell over" });
+  });
+  await page.locator("[data-field='pay-amount']").fill("100.00");
+  await page.locator("[data-action='payables-pay-send']").click();
+  await expect(page.locator("[data-pay-error]")).toContainText("may or may not have been recorded");
+  await expect(page.locator("[data-pay-error]")).not.toContainText("Nothing was changed");
+  expect(keys.length).toBe(1);
+
+  // The person cancels and pays again: the same key goes out, so the money moves once.
+  await page.locator("[data-action='payables-pay-cancel']").click();
+  await expect(page.locator("[data-pay-form]")).toHaveCount(0);
+  await page.unroute("**/api/v1/purchasing/bills/*/payments");
+  await openPayForm(page, "B-4107");
+  await page.locator("[data-field='pay-amount']").fill("100.00");
+  await page.locator("[data-action='payables-pay-send']").click();
+  await expect(page.locator("[data-pay-form]")).toHaveCount(0);
+  expect(keys.length).toBe(2);
+  expect(keys[1]).toBe(keys[0]);
+  await expect(page.locator("[data-line-row]", { hasText: "B-4107" })).toContainText("$460.00");
+  expect(centsOf(await page.locator("[data-payee-lines-total]").innerText())).toBe(before - 10_000);
+});
+
+test("the desk refuses an amount above the open amount, and asks the server nothing", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+  await openPayForm(page, "B-4107");
+
+  // B-4107 has $560.00 open.
+  let asked = 0;
+  page.on("request", (req) => {
+    if (req.url().includes("/api/v1/purchasing/bills/") && req.url().endsWith("/payments")) asked += 1;
+  });
+  await page.locator("[data-field='pay-amount']").fill("600.00");
+  await page.locator("[data-action='payables-pay-send']").click();
+
+  // The desk stops it in its own words, and the server is never asked, so a stale open amount
+  // cannot turn a mistyped amount into a refused payment.
+  await expect(page.locator("[data-pay-error]")).toContainText("The amount cannot be more than the open amount, $560.00");
+  expect(asked).toBe(0);
+});
+
+test("a retry after a lost answer is never stopped by the desk's own cap", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+  const before = centsOf(await page.locator("[data-payee-lines-total]").innerText());
+  await openPayForm(page, "B-4107");
+
+  // The answer is lost on the way back, and the payment landed.
+  await page.route("**/api/v1/purchasing/bills/*/payments", async (route) => {
+    await route.fetch();
+    await route.abort("connectionreset");
+  });
+  await page.locator("[data-field='pay-amount']").fill("460.00");
+  await page.locator("[data-action='payables-pay-send']").click();
+  await expect(page.locator("[data-pay-error]")).toContainText("may or may not have been recorded");
+
+  // The books are read again: the bill has $100.00 open now, less than the $460.00 that was sent.
+  await expect(page.locator("[data-pay-target]")).toContainText("The open amount is $100.00");
+  await expect(page.locator("[data-line-row]", { hasText: "B-4107" })).toContainText("$100.00");
+
+  // The person presses again. The desk's own cap would stop an amount above what the bill has
+  // open, but this press is the same payment again, so it goes to the core, which answers the
+  // first payment and writes nothing.
+  await page.unroute("**/api/v1/purchasing/bills/*/payments");
+  await page.locator("[data-action='payables-pay-send']").click();
+  await expect(page.locator("[data-pay-form]")).toHaveCount(0);
+  expect(centsOf(await page.locator("[data-payee-lines-total]").innerText())).toBe(before - 46_000);
+});
+
+test("a retry after a lost answer carries the same key, so the money moves once", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+  await openPayForm(page, "B-4107");
+  const before = centsOf(await page.locator("[data-payee-lines-total]").innerText());
+
+  // The keys the presses carried, read off the requests the desk made.
+  const keys: string[] = [];
+  page.on("request", (req) => {
+    if (req.url().includes("/api/v1/purchasing/bills/") && req.url().endsWith("/payments")) {
+      keys.push(req.headers()["idempotency-key"] ?? "");
+    }
+  });
+  // The first press never reaches the stub: the answer is lost before the money is asked for.
+  await page.route("**/api/v1/purchasing/bills/*/payments", async (route) => {
+    await route.abort("connectionreset");
+  });
+  await page.locator("[data-field='pay-amount']").fill("100.00");
+  await page.locator("[data-action='payables-pay-send']").click();
+  await expect(page.locator("[data-pay-error]")).toBeVisible();
+  expect(keys.length).toBe(1);
+  expect(keys[0]).not.toBe("");
+
+  // The person presses again: the desk sends the same key, so the core judges the second press
+  // against the first one, and the money moves once.
+  await page.unroute("**/api/v1/purchasing/bills/*/payments");
+  await page.locator("[data-action='payables-pay-send']").click();
+  await expect(page.locator("[data-pay-form]")).toHaveCount(0);
+  expect(keys.length).toBe(2);
+  expect(keys[1]).toBe(keys[0]);
+  // The books are read again before the leg reads the total: the form closes before they come back.
+  await expect(page.locator("[data-line-row]", { hasText: "B-4107" })).toContainText("$460.00");
+  expect(centsOf(await page.locator("[data-payee-lines-total]").innerText())).toBe(before - 10_000);
+});
+
+test("a payment dated ahead of today still takes the bill's room, the way the core counts it", async ({ request }) => {
+  await resetStub(request);
+  // B-4108 is $315.00 with nothing paid against it. A payment dated tomorrow is a PAID instalment
+  // and the core counts every one of them, whatever day it carries.
+  const future = await request.post(`/api/v1/purchasing/bills/${B4108}/payments`, {
+    headers: { authorization: `Bearer ${demoToken("controller")}`, "Idempotency-Key": "a-payment-dated-tomorrow" },
+    data: { amount_cents: 20_000, paid_at: `${dayFromToday(1)}T12:00:00Z`, note: "" },
+  });
+  expect(future.ok()).toBe(true);
+
+  // The next press asks for more than the bill has left, and the core refuses it in its own words.
+  const over = await request.post(`/api/v1/purchasing/bills/${B4108}/payments`, {
+    headers: { authorization: `Bearer ${demoToken("controller")}`, "Idempotency-Key": "a-second-payment-dated-tomorrow" },
+    data: { amount_cents: 20_000, paid_at: `${dayFromToday(1)}T12:00:00Z`, note: "" },
+  });
+  expect(over.status()).toBe(409);
+  expect((await over.json()).error).toBe("purchasing: payment of 20000 cents exceeds open balance 11500 cents on bill B-4108");
+});
+
+test("the landed cost footnote is on a carrier's page and on no other", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+
+  // A carrier's page: the money on it is a landed cost, so the footnote belongs there.
+  await openPayee(page, "Northwind Freight Lines (demo)");
+  await expect(page.locator("section[aria-label='Open items'] p.foot")).toContainText(
+    "Landed costs are owed to the carrier or broker, not to the supplier.",
+  );
+
+  // A plain vendor's page: there is no landed cost there, so the footnote would contradict the page.
+  await page.locator("[data-action='payables-back']").click();
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+  await expect(page.locator("section[aria-label='Open items'] p.foot")).toHaveCount(0);
+});
+
+test("the board and the payee page write a day in the desk's one words, never as digits", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+
+  // The board's own day, in the desk's words.
+  const foot = page.locator("[data-payables-foot]");
+  await expect(foot).toContainText(`As of ${dayWords(dayFromToday(0))}`);
+  await expect(foot).not.toContainText(/\d{1,2}\/\d{1,2}\/\d{4}/);
+
+  // The payee page's own day, in the same words.
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+  const lines = page.locator("table.paylines tfoot");
+  await expect(lines).toContainText(`as of ${dayWords(dayFromToday(0))}`);
+  await expect(lines).not.toContainText(/\d{1,2}\/\d{1,2}\/\d{4}/);
+});
+
+test("the row being paid is marked as the one being paid, in the desk's own selected row style", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+
+  const row = page.locator("[data-line-row]", { hasText: "B-4107" });
+  const other = page.locator("[data-line-row]", { hasText: "B-4108" });
+  await expect(row).toHaveAttribute("aria-current", "false");
+
+  // The Pay form is open on that bill, so its row wears the desk's selected row ground and the other
+  // rows do not.
+  await openPayForm(page, "B-4107");
+  await expect(row).toHaveAttribute("aria-current", "true");
+  const marked = await row.locator("td").first().evaluate((el) => getComputedStyle(el).backgroundColor);
+  const unmarked = await other.locator("td").first().evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(marked).not.toBe(unmarked);
+});
+
+test("the Pay control is the same compact size on a phone as on a wide screen", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+
+  const pay = page.locator("[data-action='payables-pay']").first();
+  await expect(pay).toBeVisible();
+  const wide = await pay.boundingBox();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const phone = await pay.boundingBox();
+  expect(wide).not.toBeNull();
+  expect(phone).not.toBeNull();
+
+  // The same control and the same size on a phone: a word beside the amount it moves, not a button
+  // that weighs more than the row it sits in.
+  expect(Math.round(phone!.height)).toBe(Math.round(wide!.height));
+  expect(Math.round(phone!.height)).toBeLessThan(44);
 });

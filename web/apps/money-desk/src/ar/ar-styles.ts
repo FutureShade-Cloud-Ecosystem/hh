@@ -357,6 +357,10 @@ const receivablesStyles = css`
     td > .link.small { min-height: 44px; padding: 0; }
     .areas .gl-tab { min-height: 44px; }
     hos-app-header { --hh-header-control-min: 44px; }
+    /* The Pay control on a payee's open items keeps the desk's compact size on a phone too: it is a
+       word beside the amount it moves, not a primary action, and at the 44 px bar it weighs more than
+       the row it sits in. It is the same control, the same size, as on a wide screen. */
+    table.paylines .row-actions .small-btn { min-height: 32px; }
   }
 `;
 

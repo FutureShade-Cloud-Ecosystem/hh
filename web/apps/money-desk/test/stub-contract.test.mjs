@@ -586,6 +586,14 @@ test("the open AP and the bill payment answer in the contract's shapes, and the 
   refused(await call("POST", PAY_BILL_OTHER, body, { Authorization: `Bearer ${CONTROLLER_TOKEN}`, "Idempotency-Key": "contract-leg-key" }), 409, "idempotency key already used for another bill's payment");
   // An amount above the open balance is refused in the core's words.
   refused(await call("POST", PAY_BILL, { ...body, amount_cents: 99_999_999 }, { Authorization: `Bearer ${CONTROLLER_TOKEN}`, "Idempotency-Key": "over-key" }), 409, "exceeds open balance");
+  // The core judges a payment against the sum of the bill's PAID instalments, every one of them,
+  // whatever day the instalment carries: a payment dated ahead of today takes the room it needs
+  // now, even though the board, read as of today, still shows the bill open until that day.
+  const dated = await call("POST", PAY_BILL_OTHER, { ...body, amount_cents: 20_000, paid_at: `${later(1)}T12:00:00Z` }, { Authorization: `Bearer ${CONTROLLER_TOKEN}`, "Idempotency-Key": "dated-key" });
+  assert.equal(dated.status, 200);
+  const datedOver = await call("POST", PAY_BILL_OTHER, { ...body, amount_cents: 20_000, paid_at: `${later(1)}T12:00:00Z` }, { Authorization: `Bearer ${CONTROLLER_TOKEN}`, "Idempotency-Key": "dated-second-key" });
+  assert.equal(datedOver.status, 409);
+  assert.equal(datedOver.json.error, "purchasing: payment of 20000 cents exceeds open balance 11500 cents on bill B-4108");
   // The role gate is the core's own: the route is a manage level route on the money desk and the
   // Payables and Receivables role is at work on that surface.
   const clerk = await call("POST", PAY_BILL, body, { Authorization: `Bearer ${CLERK_TOKEN}`, "Idempotency-Key": "clerk-key" });

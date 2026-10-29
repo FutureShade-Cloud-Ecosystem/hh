@@ -99,6 +99,20 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
     return paid;
   }
 
+  /**
+   * Everything paid against a document, whatever day it was paid on.
+   *
+   * The core judges a payment against the sum of the bill's PAID instalments (the core's
+   * PaidBillCentsTx), and it counts every one of them, whatever day the instalment carries. So a
+   * payment dated ahead of today still takes the bill's room, even though the board, read as of
+   * today, still shows the bill open until that day comes.
+   */
+  function paidTotal(doc) {
+    let paid = doc.paid ?? 0;
+    for (const payment of payments.get(doc.n) ?? []) paid += payment.amount;
+    return paid;
+  }
+
   /** The open AP as of a calendar day: one row per payee, its bands, its total and its items. */
   function apAging(asOf) {
     const items = [];
@@ -201,7 +215,9 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
     }
     const doc = documents.find((d) => billId(d.n) === id);
     if (doc === undefined) return { status: 404, error: "purchasing: bill not found" };
-    const open = doc.total - paidBy(doc, dayOffset(0));
+    // The core's cap: the sum of the bill's PAID instalments, every one of them, so a payment
+    // dated ahead of today still takes the room it needs.
+    const open = doc.total - paidTotal(doc);
     if (amount > open) return { status: 409, error: `purchasing: payment of ${amount} cents exceeds open balance ${open} cents on bill ${doc.doc}` };
     // The payment lands on the day it carries: the instant's own day in the house zone.
     const on = body.paid_at === undefined || body.paid_at === "" ? dayOffset(0) : houseDay(new Date(body.paid_at));
