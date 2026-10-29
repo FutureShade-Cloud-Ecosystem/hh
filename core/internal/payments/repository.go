@@ -122,7 +122,9 @@ func (r *Repository) ListMethods(ctx context.Context, customerID string) ([]Paym
 	}
 	defer rows.Close()
 
-	var out []PaymentMethod
+	// An empty answer is the empty slice, never nil: a nil slice marshals as null, and a
+	// second caller beyond the portal handler would inherit the null.
+	out := []PaymentMethod{}
 	for rows.Next() {
 		m, err := scanMethod(rows)
 		if err != nil {
@@ -679,7 +681,9 @@ func (r *Repository) ListPayments(ctx context.Context, customerID string) ([]Pay
 	}
 	defer rows.Close()
 
-	var out []Payment
+	// An empty answer is the empty slice, never nil: a nil slice marshals as null, and a
+	// second caller beyond the portal handler would inherit the null.
+	out := []Payment{}
 	for rows.Next() {
 		p, err := scanPayment(rows)
 		if err != nil {
@@ -737,6 +741,11 @@ func (r *Repository) FindByGatewayRef(ctx context.Context, customerID, ref strin
 // A portal-initiated allocation has no staff allocator and surfaces with empty by/name.
 func (r *Repository) allocationsByPayment(ctx context.Context, paymentIDs []string) (map[string][]Allocation, error) {
 	out := make(map[string][]Allocation, len(paymentIDs))
+	for _, id := range paymentIDs {
+		// An empty answer is the empty slice, never nil: ListPayments and the sync feed
+		// marshal the model's json tags, and a nil slice marshals as null.
+		out[id] = []Allocation{}
+	}
 	if len(paymentIDs) == 0 {
 		return out, nil
 	}
