@@ -312,6 +312,7 @@ var migrationTopics = map[string]string{
 	"0435_payment_payouts":                 "payments",
 	"0447_credit_application_keys":         "billing",
 	"0451_till_counter_reason_codes":       "till",
+	"0454_credit_change_requests":          "billing",
 }
 
 // multiTopicSplits states the per-object attribution inside the five
@@ -410,6 +411,7 @@ var ownedObjects = map[string]string{
 	"count_reason_codes":              "invcount",          // 0040_inventory_counts
 	"count_sheets":                    "invcount",          // 0040_inventory_counts
 	"credit_application_keys":         "billing",           // 0447_credit_application_keys (the apply door's idempotency keys; the key is the primary key)
+	"credit_change_requests":          "billing",           // 0454_credit_change_requests
 	"credit_holds":                    "payments",          // 0035_nsf_credit_hold
 	"customer_ar_notes":               "billing",           // 0405_customer_ar_workspace
 	"customer_category_overrides":     "pricing",           // 0023_pricing

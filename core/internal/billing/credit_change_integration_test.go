@@ -1,0 +1,288 @@
+//go:build integration
+
+package billing
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+)
+
+type creditChangeIntRig struct {
+	pool           *pgxpool.Pool
+	repo           *Repository
+	svc            *CreditChangeService
+	customerID     string
+	branchID       string
+	userSalesMgr   string
+	userBranchMgr  string
+	userBranchMgr2 string
+	userController string
+	userGM         string
+	userClerk      string
+}
+
+func newCreditChangeIntRig(t *testing.T, initialLimitCents int64) *creditChangeIntRig {
+	t.Helper()
+	ctx := context.Background()
+	pool := intPool(t)
+
+	var branchID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE loc_type = 'BRANCH' LIMIT 1`).Scan(&branchID); err != nil {
+		t.Skipf("no seeded BRANCH: %v", err)
+	}
+	suffix := fmt.Sprintf("cc1-%d", time.Now().UnixNano())
+
+	var customerID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO customers (account_no, name, customer_type, home_branch_id, payment_terms_days, credit_limit_cents)
+		 VALUES ($1, $2, 'CONTRACTOR', $3::uuid, 30, $4)
+		 RETURNING id::text`,
+		"ACC-"+suffix, "Contractor "+suffix, branchID, initialLimitCents).Scan(&customerID); err != nil {
+		t.Fatalf("seed customer: %v", err)
+	}
+
+	seedUser := func(tag string) string {
+		var uid string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO users (email, display_name, password_hash, status)
+			 VALUES ($1, $2, 'hash', 'ACTIVE')
+			 RETURNING id::text`,
+			fmt.Sprintf("%s-%s@example.test", tag, suffix), "Staff "+tag).Scan(&uid); err != nil {
+			t.Fatalf("seed user %s: %v", tag, err)
+		}
+		return uid
+	}
+
+	uSales := seedUser("salesmgr")
+	uBM1 := seedUser("bm1")
+	uBM2 := seedUser("bm2")
+	uFC := seedUser("fc")
+	uGM := seedUser("gm")
+	uClerk := seedUser("clerk")
+
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM credit_change_requests WHERE customer_id = $1::uuid`, customerID)
+		_, _ = pool.Exec(c, `DELETE FROM credit_holds WHERE customer_id = $1::uuid`, customerID)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, customerID)
+		for _, uid := range []string{uSales, uBM1, uBM2, uFC, uGM, uClerk} {
+			_, _ = pool.Exec(c, `DELETE FROM users WHERE id = $1::uuid`, uid)
+		}
+	})
+
+	repo := NewRepository(pool)
+	custRepo := customer.NewRepository(pool)
+	custSvc := customer.NewService(custRepo).WithWriter(custRepo)
+	auditSvc := audit.NewService(audit.NewRepository(pool), nil)
+	svc := NewCreditChangeService(repo, NewCustomerCreditStore(custSvc)).WithAudit(auditSvc)
+
+	return &creditChangeIntRig{
+		pool:           pool,
+		repo:           repo,
+		svc:            svc,
+		customerID:     customerID,
+		branchID:       branchID,
+		userSalesMgr:   uSales,
+		userBranchMgr:  uBM1,
+		userBranchMgr2: uBM2,
+		userController: uFC,
+		userGM:         uGM,
+		userClerk:      uClerk,
+	}
+}
+
+func (r *creditChangeIntRig) currentLimit(t *testing.T) int64 {
+	t.Helper()
+	var limit int64
+	if err := r.pool.QueryRow(context.Background(),
+		`SELECT credit_limit_cents FROM customers WHERE id = $1::uuid`, r.customerID).Scan(&limit); err != nil {
+		t.Fatalf("read customer credit limit: %v", err)
+	}
+	return limit
+}
+
+func TestCreditChangeIntegration_AllLegsAndAuditTrail(t *testing.T) {
+	rig := newCreditChangeIntRig(t, 2000000) // $20,000.00
+	ctx := context.Background()
+
+	salesMgrCtx := ccCallerCtx(rig.userSalesMgr, "SALES_MANAGER", identity.TierManager, identity.ScopeBranch, rig.branchID)
+	bm1Ctx := ccCallerCtx(rig.userBranchMgr, RoleBranchManager, identity.TierManager, identity.ScopeBranch, rig.branchID)
+	bm2Ctx := ccCallerCtx(rig.userBranchMgr2, RoleBranchManager, identity.TierManager, identity.ScopeBranch, rig.branchID)
+	fcCtx := ccCallerCtx(rig.userController, RoleFinancialController, identity.TierLeadership, identity.ScopeGlobal, "")
+	gmCtx := ccCallerCtx(rig.userGM, RoleGeneralManager, identity.TierLeadership, identity.ScopeGlobal, "")
+	clerkCtx := ccCallerCtx(rig.userClerk, "INSIDE_SALES", identity.TierFrontline, identity.ScopeBranch, rig.branchID)
+
+	// Leg 5: Clerk cannot request an increase.
+	_, err := rig.svc.Request(clerkCtx, CreateCreditChangeInput{
+		CustomerID:    rig.customerID,
+		NewLimitCents: i64Ptr(2500000),
+		Reason:        "clerk attempt",
+	})
+	if !errors.Is(err, ErrCreditChangeForbidden) {
+		t.Fatalf("clerk request: got %v, want ErrCreditChangeForbidden", err)
+	}
+
+	// Leg 1: Manager lowers limit from $20,000 to $10,000 -> applied at once.
+	dec, err := rig.svc.Request(bm1Ctx, CreateCreditChangeInput{
+		CustomerID:    rig.customerID,
+		NewLimitCents: i64Ptr(1000000),
+		Reason:        "lower exposure",
+	})
+	if err != nil {
+		t.Fatalf("decrease request: %v", err)
+	}
+	if dec.Status != CreditChangeStatusApplied || rig.currentLimit(t) != 1000000 {
+		t.Fatalf("after decrease: status=%q limit=%d, want APPLIED and 1000000", dec.Status, rig.currentLimit(t))
+	}
+
+	// Leg 1b: Manager places credit hold -> applied at once.
+	holdReq, err := rig.svc.Request(bm1Ctx, CreateCreditChangeInput{
+		CustomerID: rig.customerID,
+		PlaceHold:  true,
+		HoldKind:   HoldManual,
+		Reason:     "disputed account review",
+	})
+	if err != nil {
+		t.Fatalf("hold request: %v", err)
+	}
+	if holdReq.Status != CreditChangeStatusApplied || holdReq.HoldID == "" {
+		t.Fatalf("hold request: status=%q hold_id=%q, want APPLIED with hold_id", holdReq.Status, holdReq.HoldID)
+	}
+
+	// Leg 2: Increase by $15,000 (from $10,000 to $25,000, <= $25,000 threshold) -> PENDING, 1 approval applies.
+	inc1, err := rig.svc.Request(salesMgrCtx, CreateCreditChangeInput{
+		CustomerID:    rig.customerID,
+		NewLimitCents: i64Ptr(2500000),
+		Reason:        "contract expansion",
+	})
+	if err != nil {
+		t.Fatalf("request $15k increase: %v", err)
+	}
+	if inc1.Status != CreditChangeStatusPending || inc1.RequiredApprovals != 1 || rig.currentLimit(t) != 1000000 {
+		t.Fatalf("inc1: status=%q required=%d limit=%d", inc1.Status, inc1.RequiredApprovals, rig.currentLimit(t))
+	}
+
+	// Leg 4a: Requester cannot approve their own request.
+	if _, err := rig.svc.Approve(salesMgrCtx, inc1.ID, DecideCreditChangeInput{Note: "self"}); !errors.Is(err, ErrCreditChangeSelfApproval) {
+		t.Fatalf("self approve: got %v, want ErrCreditChangeSelfApproval", err)
+	}
+
+	// Branch manager approves -> APPLIED at once.
+	inc1Approved, err := rig.svc.Approve(bm1Ctx, inc1.ID, DecideCreditChangeInput{Note: "verified"})
+	if err != nil {
+		t.Fatalf("approve $15k increase: %v", err)
+	}
+	if inc1Approved.Status != CreditChangeStatusApplied || rig.currentLimit(t) != 2500000 {
+		t.Fatalf("after 1st approval on <=25k: status=%q limit=%d, want APPLIED and 2500000", inc1Approved.Status, rig.currentLimit(t))
+	}
+
+	// Leg 3: Increase by $30,000 (from $25,000 to $55,000, > $25,000 threshold) -> requires 2 approvals.
+	inc2, err := rig.svc.Request(salesMgrCtx, CreateCreditChangeInput{
+		CustomerID:    rig.customerID,
+		NewLimitCents: i64Ptr(5500000),
+		Reason:        "commercial subdivision",
+	})
+	if err != nil {
+		t.Fatalf("request $30k increase: %v", err)
+	}
+	if inc2.Status != CreditChangeStatusPending || inc2.RequiredApprovals != 2 {
+		t.Fatalf("inc2: status=%q required=%d, want PENDING and 2", inc2.Status, inc2.RequiredApprovals)
+	}
+
+	// First approval by branch manager -> stays PENDING, limit stays 2500000.
+	afterFirst, err := rig.svc.Approve(bm1Ctx, inc2.ID, DecideCreditChangeInput{Note: "branch ok"})
+	if err != nil {
+		t.Fatalf("first approve $30k: %v", err)
+	}
+	if afterFirst.Status != CreditChangeStatusPending || rig.currentLimit(t) != 2500000 {
+		t.Fatalf("after first approval on >25k: status=%q limit=%d, want PENDING and 2500000", afterFirst.Status, rig.currentLimit(t))
+	}
+
+	// Leg 4b: Same person cannot approve twice.
+	if _, err := rig.svc.Approve(bm1Ctx, inc2.ID, DecideCreditChangeInput{Note: "twice"}); !errors.Is(err, ErrCreditChangeDuplicateApprover) {
+		t.Fatalf("duplicate approver: got %v, want ErrCreditChangeDuplicateApprover", err)
+	}
+
+	// Another branch manager cannot perform the second approval (must be Financial Controller or General Manager).
+	if _, err := rig.svc.Approve(bm2Ctx, inc2.ID, DecideCreditChangeInput{Note: "peer bm"}); !errors.Is(err, ErrCreditChangeRoleForbidden) {
+		t.Fatalf("second approval by branch manager: got %v, want ErrCreditChangeRoleForbidden", err)
+	}
+
+	// Financial Controller performs second approval -> APPLIED, limit becomes 5500000.
+	afterSecond, err := rig.svc.Approve(fcCtx, inc2.ID, DecideCreditChangeInput{Note: "controller approved"})
+	if err != nil {
+		t.Fatalf("second approve $30k: %v", err)
+	}
+	if afterSecond.Status != CreditChangeStatusApplied || rig.currentLimit(t) != 5500000 {
+		t.Fatalf("after second approval: status=%q limit=%d, want APPLIED and 5500000", afterSecond.Status, rig.currentLimit(t))
+	}
+	if afterSecond.FirstApprovedBy != rig.userBranchMgr || afterSecond.SecondApprovedBy != rig.userController {
+		t.Fatalf("approvers = (%q, %q), want (%q, %q)",
+			afterSecond.FirstApprovedBy, afterSecond.SecondApprovedBy, rig.userBranchMgr, rig.userController)
+	}
+
+	// Leg 6: Verify audit_log rows in Postgres carry before, after, requested_by, first_approved_by, second_approved_by.
+	var (
+		beforeCents int64
+		afterCents  int64
+		reqBy       string
+		firstBy     string
+		secondBy    string
+	)
+	if err := rig.pool.QueryRow(ctx, `
+		SELECT (changes->>'before')::bigint,
+		       (changes->>'after')::bigint,
+		       COALESCE(changes->>'requested_by', ''),
+		       COALESCE(changes->>'first_approved_by', ''),
+		       COALESCE(changes->>'second_approved_by', '')
+		  FROM audit_log
+		 WHERE entity_type = 'customer'
+		   AND entity_id = $1
+		   AND action = $2
+		   AND changes->>'field' = 'credit_limit_cents'
+		 ORDER BY seq DESC
+		 LIMIT 1`,
+		rig.customerID, ActCreditChangeApplied).Scan(&beforeCents, &afterCents, &reqBy, &firstBy, &secondBy); err != nil {
+		t.Fatalf("read audit_log row: %v", err)
+	}
+	if beforeCents != 2500000 || afterCents != 5500000 || reqBy != rig.userSalesMgr || firstBy != rig.userBranchMgr || secondBy != rig.userController {
+		t.Fatalf("audit_log = before:%d after:%d req:%q first:%q second:%q",
+			beforeCents, afterCents, reqBy, firstBy, secondBy)
+	}
+
+	// Also verify dealer-configurable thresholds in ar_credit_policy.
+	if err := rig.repo.SetCreditChangeThresholds(ctx, "", 500000, 1000000); err != nil {
+		t.Fatalf("SetCreditChangeThresholds: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rig.repo.SetCreditChangeThresholds(context.Background(), "", DefaultCreditIncreaseFirstThresholdCents, DefaultCreditIncreaseSecondThresholdCents)
+	})
+	// With second threshold lowered to $10,000 (1000000 cents), a $15,000 increase now requires 2 approvals.
+	incCustom, err := rig.svc.Request(salesMgrCtx, CreateCreditChangeInput{
+		CustomerID:    rig.customerID,
+		NewLimitCents: i64Ptr(7000000),
+		Reason:        "custom threshold check",
+	})
+	if err != nil {
+		t.Fatalf("request under custom threshold: %v", err)
+	}
+	if incCustom.RequiredApprovals != 2 {
+		t.Fatalf("custom threshold required_approvals = %d, want 2", incCustom.RequiredApprovals)
+	}
+	rejected, err := rig.svc.Reject(gmCtx, incCustom.ID, DecideCreditChangeInput{Reason: "declined"})
+	if err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	if rejected.Status != CreditChangeStatusRejected || rig.currentLimit(t) != 5500000 {
+		t.Fatalf("after reject: status=%q limit=%d, want REJECTED and 5500000", rejected.Status, rig.currentLimit(t))
+	}
+}

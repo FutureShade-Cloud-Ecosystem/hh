@@ -292,6 +292,53 @@ func (r *Repository) UpdateBillingAddress(ctx context.Context, customerID string
 	return r.ResolveAccount(ctx, customerID)
 }
 
+// UpdateCreditLimit overwrites a customer's credit_limit_cents in a counter-first transaction
+// (LockCustomersSeqTx before the customer row lock, matching UpdateBillingAddress) and returns
+// the previous credit limit in cents.
+func (r *Repository) UpdateCreditLimit(ctx context.Context, customerID string, newLimitCents int64) (int64, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("update credit_limit_cents for %q: %w", customerID, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := LockCustomersSeqTx(ctx, tx); err != nil {
+		return 0, err
+	}
+	var prev int64
+	if err := tx.QueryRow(ctx,
+		`SELECT credit_limit_cents FROM customers WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+		customerID).Scan(&prev); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "22P02" {
+			return 0, ErrNotFound
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("read credit_limit_cents for %q: %w", customerID, err)
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE customers SET credit_limit_cents = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL`,
+		customerID, newLimitCents)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "22P02" {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("update credit_limit_cents for %q: %w", customerID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return 0, ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit credit_limit_cents for %q: %w", customerID, err)
+	}
+	return prev, nil
+}
+
 // orEmptyObject maps a nil address to a non-nil empty map so it serializes as {} (never
 // null) into the JSONB column.
 func orEmptyObject(m map[string]any) map[string]any {

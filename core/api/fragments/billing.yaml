@@ -472,6 +472,163 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ar/credit-changes:
+    get:
+      operationId: billingListCreditChanges
+      tags: [staff-billing]
+      summary: List credit change requests within the caller's branch reach
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: customer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [PENDING, APPROVED, APPLIED, REJECTED]
+      responses:
+        "200":
+          description: The credit change requests page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditChangePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: billingRequestCreditChange
+      tags: [staff-billing]
+      summary: Request a customer credit limit change or credit hold
+      description: >-
+        A manager may lower a customer's credit limit or place a credit hold at
+        once. A credit limit increase above the first dealer threshold requires
+        one approver up to the second dealer threshold and two approvers above
+        it.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreditChangeInput"
+      responses:
+        "201":
+          description: The created credit change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditChangeRequest"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/credit-changes/{id}:
+    get:
+      operationId: billingGetCreditChange
+      tags: [staff-billing]
+      summary: Read one credit change request by id
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The credit change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditChangeRequest"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/credit-changes/{id}/approve:
+    post:
+      operationId: billingApproveCreditChange
+      tags: [staff-billing]
+      summary: Approve a pending credit limit increase request
+      description: >-
+        Records the caller's approval on a pending credit change request. Enforces
+        separation of duties (the requester cannot approve their own request and
+        the same person cannot approve twice) and the dealer's threshold role
+        requirements.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreditChangeDecideInput"
+      responses:
+        "200":
+          description: The updated credit change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditChangeRequest"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ar/credit-changes/{id}/reject:
+    post:
+      operationId: billingRejectCreditChange
+      tags: [staff-billing]
+      summary: Reject a pending credit limit increase request
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreditChangeDecideInput"
+      responses:
+        "200":
+          description: The rejected credit change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditChangeRequest"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /api/v1/ar/register/invoices/{id}/send:
     post:
       operationId: billingSendInvoice
@@ -4632,3 +4789,89 @@ components:
         days_90_plus_cents: { type: integer, format: int64 }
         open_cents: { type: integer, format: int64 }
         overdue_cents: { type: integer, format: int64 }
+    BillingCreditChangeInput:
+      type: object
+      required: [customer_id, reason]
+      properties:
+        customer_id: { type: string, format: uuid }
+        new_limit_cents:
+          type: integer
+          format: int64
+          minimum: 0
+        place_hold: { type: boolean }
+        hold_kind:
+          type: string
+          enum: [NSF, AR_AGING, CREDIT_LIMIT, COD, MANUAL]
+        reason:
+          type: string
+          minLength: 1
+    BillingCreditChangeDecideInput:
+      type: object
+      properties:
+        note: { type: string }
+        reason: { type: string }
+    BillingCreditChangeRequest:
+      type: object
+      required:
+        - id
+        - customer_id
+        - change_kind
+        - previous_limit_cents
+        - delta_cents
+        - reason
+        - status
+        - required_approvals
+        - first_threshold_cents
+        - second_threshold_cents
+        - requested_by
+        - requested_at
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        change_kind:
+          type: string
+          enum: [LIMIT_CHANGE, HOLD]
+        previous_limit_cents: { type: integer, format: int64 }
+        new_limit_cents: { type: integer, format: int64 }
+        delta_cents: { type: integer, format: int64 }
+        hold_kind:
+          type: string
+          enum: [NSF, AR_AGING, CREDIT_LIMIT, COD, MANUAL]
+        hold_id: { type: string, format: uuid }
+        reason: { type: string }
+        status:
+          type: string
+          enum: [PENDING, APPROVED, APPLIED, REJECTED]
+        required_approvals: { type: integer, format: int32 }
+        first_threshold_cents: { type: integer, format: int64 }
+        second_threshold_cents: { type: integer, format: int64 }
+        requested_by: { type: string, format: uuid }
+        requested_by_role: { type: string }
+        requested_at: { type: string, format: date-time }
+        first_approved_by: { type: string, format: uuid }
+        first_approved_by_role: { type: string }
+        first_approved_at: { type: string, format: date-time }
+        first_approval_note: { type: string }
+        second_approved_by: { type: string, format: uuid }
+        second_approved_by_role: { type: string }
+        second_approved_at: { type: string, format: date-time }
+        second_approval_note: { type: string }
+        rejected_by: { type: string, format: uuid }
+        rejected_by_role: { type: string }
+        rejected_at: { type: string, format: date-time }
+        rejection_reason: { type: string }
+        applied_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    BillingCreditChangePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BillingCreditChangeRequest" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }

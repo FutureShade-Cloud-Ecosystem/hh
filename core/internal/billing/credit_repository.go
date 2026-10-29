@@ -29,13 +29,15 @@ func (r *Repository) CreditPolicy(ctx context.Context, branchID string) (CreditP
 	var bid *string
 	err := r.pool.QueryRow(ctx,
 		`SELECT COALESCE(branch_id::text,''), aging_bucket_days, aging_threshold_cents, aging_hold_enabled,
-		        limit_hold_enabled, limit_tolerance_cents, cod_enforced, auto_hold_enabled
+		        limit_hold_enabled, limit_tolerance_cents, cod_enforced, auto_hold_enabled,
+		        increase_first_threshold_cents, increase_second_threshold_cents
 		   FROM ar_credit_policy
 		  WHERE branch_id = NULLIF($1, '')::uuid OR branch_id IS NULL
 		  ORDER BY branch_id NULLS LAST
 		  LIMIT 1`, branchID).
 		Scan(&bid, &p.AgingBucketDays, &p.AgingThresholdCents, &p.AgingHoldEnabled,
-			&p.LimitHoldEnabled, &p.LimitToleranceCents, &p.CODEnforced, &p.AutoHoldEnabled)
+			&p.LimitHoldEnabled, &p.LimitToleranceCents, &p.CODEnforced, &p.AutoHoldEnabled,
+			&p.IncreaseFirstThresholdCents, &p.IncreaseSecondThresholdCents)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CreditPolicy{}, errors.New("billing: no ar_credit_policy row, migration 0104 seeds the org default")
@@ -70,6 +72,35 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 		branchID, enabled)
 	if err != nil {
 		return fmt.Errorf("billing: set auto_hold_enabled: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		if branchID == "" {
+			return errors.New("billing: no ar_credit_policy org default row, migration 0104 seeds it")
+		}
+		return errors.New("billing: this branch has no credit policy row of its own, it inherits the org default, so change the org setting")
+	}
+	return nil
+}
+
+// SetCreditChangeThresholds updates the dealer-configurable increase approval thresholds
+// on ar_credit_policy (0454). Like SetAutoHoldEnabled, branchID "" targets the org default
+// row (branch_id IS NULL), or an existing branch policy row when branchID is non-empty.
+func (r *Repository) SetCreditChangeThresholds(ctx context.Context, branchID string, firstThresholdCents, secondThresholdCents int64) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	if firstThresholdCents < 0 || secondThresholdCents < firstThresholdCents {
+		return errors.New("billing: invalid credit change thresholds")
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE ar_credit_policy
+		    SET increase_first_threshold_cents = $2,
+		        increase_second_threshold_cents = $3,
+		        updated_at = now()
+		  WHERE ($1 = '' AND branch_id IS NULL) OR branch_id = NULLIF($1, '')::uuid`,
+		branchID, firstThresholdCents, secondThresholdCents)
+	if err != nil {
+		return fmt.Errorf("billing: set credit change thresholds: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		if branchID == "" {
