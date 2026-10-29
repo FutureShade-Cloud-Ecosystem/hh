@@ -68,6 +68,12 @@ type exemption struct {
 //
 // Keys are paths relative to the backend module root, slash-separated.
 var allowlisted = map[string]exemption{
+	// -- the synthetic world (W2-1b, -tags finworld): the clock is mapped onto the world's fixed dates --
+	"cmd/core/finworld_driver_integration_test.go": {[]string{"time.Now()"},
+		"the world's day targets are fixed 2025 dates, and the leg computes shift := target - time.Now() on every run, so the evening guard's clock lands on the target whatever the calendar; the pin is the point, never a deadline."},
+	"cmd/core/finworld_ap_read_test.go": {[]string{"time.Now()"},
+		"the world's data is dated from a fixed 2025-10-01 day 0, and the read is AS OF time.Now() plus a minute, which is always after every dated row, so the comparison's outcome cannot change with the calendar."},
+
 	// -- real clock is used for UNIQUENESS, never as a date --------------------------------------
 	"internal/quote/qd1_ownership_integration_test.go": {[]string{"time.Now()"},
 		"time.Now().UnixNano() only mints unique row tags; every date compared is the test's own fixed `now`, passed explicitly (the edit_integration_test.go pattern)."},

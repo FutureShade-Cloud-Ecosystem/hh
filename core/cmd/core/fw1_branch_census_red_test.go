@@ -365,9 +365,14 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 			if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {
 				return nil
 			}
-			fileAST, perr := parser.ParseFile(fset, path, nil, 0)
+			fileAST, perr := parser.ParseFile(fset, path, nil, parser.ParseComments)
 			if perr != nil {
 				return fmt.Errorf("parse %s: %w", rel, perr)
+			}
+			// A file that builds only under the finworld tag (W2-1b's synthetic world harness) is never in
+			// a production binary, so it writes nothing the census guards.
+			if censusBuildsOnlyUnderTag(fileAST, "finworld") {
+				return nil
 			}
 			pkgDir := filepath.ToSlash(filepath.Dir(rel))
 			pkgName := fileAST.Name.Name

@@ -353,6 +353,45 @@ export function periodStatusWord(status: string): string {
   return status === "OPEN" ? "Open" : status === "CLOSED" ? "Closed" : status;
 }
 
+// ---- the journal register's window -----------------------------------------------------------------
+
+/** What the register asks the core for: the applied posted date range and, after the first page, the core's next cursor. */
+export interface JournalWindow {
+  readonly dateFrom: string;
+  readonly dateTo: string;
+  readonly cursor?: string;
+}
+
+/** The register's page size: the newest hundred first, then a page at a time. */
+export const REGISTER_PAGE = 100;
+
+/**
+ * The query the generated client is handed: an empty bound is unbounded and sends no key at all, and
+ * a page after the first carries the core's cursor. The core answers date_from and date_to in
+ * YYYY-MM-DD (the date input's own shape) and the cursor it minted on the page before.
+ */
+export function journalListParams(window: JournalWindow): { limit: number; date_from?: string; date_to?: string; cursor?: string } {
+  return {
+    limit: REGISTER_PAGE,
+    ...(window.dateFrom === "" ? {} : { date_from: window.dateFrom }),
+    ...(window.dateTo === "" ? {} : { date_to: window.dateTo }),
+    ...(window.cursor === undefined || window.cursor === "" ? {} : { cursor: window.cursor }),
+  };
+}
+
+/** The page's way to the next page: the core's cursor, or "" when the register is at its end. */
+export function nextCursorOf(page: { next_cursor?: string | null }): string {
+  return typeof page.next_cursor === "string" && page.next_cursor !== "" ? page.next_cursor : "";
+}
+
+/** The window's words: what is loaded, said once beside the fields that change it. */
+export function rangeWords(dateFrom: string, dateTo: string): string {
+  if (dateFrom !== "" && dateTo !== "") return `Showing journals posted ${dateFrom} through ${dateTo}.`;
+  if (dateFrom !== "") return `Showing journals posted ${dateFrom} or later.`;
+  if (dateTo !== "") return `Showing journals posted through ${dateTo}.`;
+  return "";
+}
+
 // ---- the late posted list -------------------------------------------------------------------------
 
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

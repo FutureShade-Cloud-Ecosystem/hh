@@ -13,6 +13,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -55,40 +56,54 @@ func migrateRole(getenv func(string) string) error {
 	}
 	defer pool.Close()
 
+	if _, err := applyMigrations(ctx, pool, os.Stdout); err != nil {
+		return err
+	}
+	log.Info("migrations complete")
+	return nil
+}
+
+// applyMigrations applies the frozen migration set to a pool and answers how
+// many migrations it applied. It is the migration step itself, so the
+// migrate role and the finance box's world reset run one implementation: the
+// reset applies the same files in the same order, forward only, and asks for
+// the per file lines on its own writer.
+func applyMigrations(ctx context.Context, pool *pgxpool.Pool, applied io.Writer) (int, error) {
+	// The bookkeeping table is the migration step's own: a restored world
+	// carries the one it had, and a world that never had one gets it here.
 	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 	)`); err != nil {
-		return fmt.Errorf("migrate: bookkeeping table: %w", err)
+		return 0, fmt.Errorf("migrate: bookkeeping table: %w", err)
 	}
-
 	files, err := filepath.Glob("db/migrations/*.sql")
 	if err != nil || len(files) == 0 {
-		log.Info("migrate: no migration files found", "glob_err", err)
-		return nil
+		return 0, nil
 	}
 	sort.Strings(files)
 
+	count := 0
 	for _, f := range files {
 		version := strings.TrimSuffix(filepath.Base(f), ".sql")
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)`, version).Scan(&exists); err != nil {
-			return fmt.Errorf("migrate: check %s: %w", version, err)
+			return count, fmt.Errorf("migrate: check %s: %w", version, err)
 		}
 		if exists {
 			continue
 		}
 		body, err := os.ReadFile(f)
 		if err != nil {
-			return fmt.Errorf("migrate: read %s: %w", f, err)
+			return count, fmt.Errorf("migrate: read %s: %w", f, err)
 		}
 		tx, err := pool.Begin(ctx)
 		if err != nil {
-			return fmt.Errorf("migrate: begin %s: %w", version, err)
+			return count, fmt.Errorf("migrate: begin %s: %w", version, err)
 		}
 		if _, err := tx.Exec(ctx, string(body)); err != nil {
 			_ = tx.Rollback(ctx)
-			return fmt.Errorf("migrate: apply failed %s: %w", version, err)
+			return count, fmt.Errorf("migrate: apply failed %s: %w", version, err)
 		}
 		// A file that switches role (SET ROLE, SET LOCAL ROLE) must RESET ROLE before it
 		// ends: the bookkeeping below must run as the migrating role, and an object a
@@ -99,23 +114,23 @@ func migrateRole(getenv func(string) string) error {
 		var current, session string
 		if err := tx.QueryRow(ctx, `SELECT current_user::text, session_user::text`).Scan(&current, &session); err != nil {
 			_ = tx.Rollback(ctx)
-			return fmt.Errorf("migrate: role check %s: %w", version, err)
+			return count, fmt.Errorf("migrate: role check %s: %w", version, err)
 		}
 		if current != session {
 			_ = tx.Rollback(ctx)
-			return fmt.Errorf("migrate: %s left the role set (current user %q, session user %q): a migration that uses SET ROLE or SET LOCAL ROLE must RESET ROLE before the file ends", version, current, session)
+			return count, fmt.Errorf("migrate: %s left the role set (current user %q, session user %q): a migration that uses SET ROLE or SET LOCAL ROLE must RESET ROLE before the file ends", version, current, session)
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES($1)`, version); err != nil {
 			_ = tx.Rollback(ctx)
-			return fmt.Errorf("migrate: record failed %s: %w", version, err)
+			return count, fmt.Errorf("migrate: record failed %s: %w", version, err)
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("migrate: commit failed %s: %w", version, err)
+			return count, fmt.Errorf("migrate: commit failed %s: %w", version, err)
 		}
-		fmt.Printf("applied %s\n", version)
+		fmt.Fprintf(applied, "applied %s\n", version)
+		count++
 	}
-	log.Info("migrations complete")
-	return nil
+	return count, nil
 }
 
 // MigrationsAppliedCount reads the database's migration bookkeeping the way
