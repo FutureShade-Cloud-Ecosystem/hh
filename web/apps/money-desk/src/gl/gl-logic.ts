@@ -384,13 +384,49 @@ export function nextCursorOf(page: { next_cursor?: string | null }): string {
   return typeof page.next_cursor === "string" && page.next_cursor !== "" ? page.next_cursor : "";
 }
 
-/** The window's words: what is loaded, said once beside the fields that change it. */
+/**
+ * The window's words: what is loaded, said once beside the fields that change it. The days are said in
+ * the desk's own date words, the same words the register's posted column reads (dayWords), never the
+ * core's ISO digits: a date that sits beside a date field reads the way the desk reads dates.
+ */
 export function rangeWords(dateFrom: string, dateTo: string): string {
-  if (dateFrom !== "" && dateTo !== "") return `Showing journals posted ${dateFrom} through ${dateTo}.`;
-  if (dateFrom !== "") return `Showing journals posted ${dateFrom} or later.`;
-  if (dateTo !== "") return `Showing journals posted through ${dateTo}.`;
+  if (dateFrom !== "" && dateTo !== "") return `Showing journals posted ${dayWords(dateFrom)} through ${dayWords(dateTo)}.`;
+  if (dateFrom !== "") return `Showing journals posted ${dayWords(dateFrom)} or later.`;
+  if (dateTo !== "") return `Showing journals posted through ${dayWords(dateTo)}.`;
   return "";
 }
+
+/**
+ * The count the register's filters show: how many of the loaded rows carry that status. The core
+ * answers no total for the register, so this is the count of the rows the desk has loaded, and the
+ * line under the chips says so once, while the core's cursor says more rows are still to come.
+ */
+export function statusCountWord(count: number): string {
+  return String(count);
+}
+
+/**
+ * What the counts are of, said once under the chips. The core's register answers no total, so a
+ * count is of the rows the desk has loaded; the line is there only while more rows are still to
+ * come, and at the end of the register it drops away with the caveat it carried.
+ */
+export function countsNoteWords(loaded: number): string {
+  return `Counts are of the ${loaded} journals loaded; Show more loads the rest.`;
+}
+
+/**
+ * What "Pending approval" means to a bookkeeper: the desk works the label out from the journal's own
+ * amount and the policy's threshold, so the words say that plainly and name no mechanism.
+ */
+export const PENDING_APPROVAL_NOTE =
+  "Pending approval means the journal is a draft someone entered and its amount is at or over the approval threshold in the policy, so it waits for another approver to post it.";
+
+/**
+ * The same thing, said in the detail pane where one journal is read: the register's note, without
+ * the opening that names the label.
+ */
+export const PENDING_APPROVAL_WHY =
+  "It is a draft someone entered and its amount is at or over the approval threshold in the policy, so it waits for another approver to post it.";
 
 // ---- the late posted list -------------------------------------------------------------------------
 
