@@ -24,8 +24,10 @@ const glWorld = createGlWorld();
 // The statements slice's world (periods, the five statements, aging, saved packs), answered by its own module.
 const finstmtWorld = createFinstmtWorld();
 // The bank reconciliation slice's world (accounts, statement lines, matches, rules, months), answered by its own
-// module; its starting point preview reads the ledger's posted journals from the ledger world, one ledger.
-const bankrecWorld = createBankrecWorld({ ledgerPosted: glWorld.postedJournals });
+// module; its starting point preview reads the ledger's posted journals from the ledger world, one ledger, and a
+// match posts its clearing journal into that same ledger. A lodgement that carries its own journal (the till
+// posted at lodgement) plants that journal in the ledger world at fresh and at every reset.
+const bankrecWorld = createBankrecWorld({ ledgerPosted: glWorld.postedJournals, postLedger: glWorld.postExternalJournal, plantLedger: glWorld.plantPostedJournal });
 // The tax administration slice's world (rates, profiles, config, evidence, recompute, recon), answered by its own module.
 const taxWorld = createTaxWorld();
 // The liens and compliance slice's world (jobs, the holdback ledger, documents, the calendar, the roster), answered by its own module.
@@ -1091,11 +1093,6 @@ async function handle(req, res) {
     const body = await readBody(req);
     parkedApplyMs = Math.max(0, Number(body?.ms ?? 0));
     return send(res, 200, { ok: true, parkedApplyMs });
-  }
-  if (method === "POST" && path === "/_stub/post-to-bank") {
-    const body = await readBody(req);
-    const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
-    return send(res, answer.status, answer.body);
   }
   if (method === "POST" && path === "/_stub/outstanding-items") {
     const body = await readBody(req);
