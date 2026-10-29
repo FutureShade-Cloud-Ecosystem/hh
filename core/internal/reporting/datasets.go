@@ -33,7 +33,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 // -- the row types -------------------------------------------------------------------
@@ -157,6 +162,113 @@ func (s *Service) WithDatasetSalesSource(src SalesSource) *Service { s.dsSales =
 
 // WithDatasetStockSource binds inventory's on hand read.
 func (s *Service) WithDatasetStockSource(src StockSource) *Service { s.dsStock = src; return s }
+
+// DatasetRoleGate is the role gate's own seam (satisfied by *authz.RoleGate) for checking whether
+// the caller holds the access the dataset's owning route names.
+type DatasetRoleGate interface {
+	Holds(ctx context.Context, platformUserID, orgID string, access authz.RouteAccess) (bool, error)
+}
+
+// WithDatasetRoleGate binds the role gate that checks each dataset against its owner route's surface.
+func (s *Service) WithDatasetRoleGate(g DatasetRoleGate) *Service { s.dsGate = g; return s }
+
+// WithRoleConfig binds the loaded role configuration for service-level dataset reads.
+func (s *Service) WithRoleConfig(cfg *roleconfig.Config) *Service { s.roleCfg = cfg; return s }
+
+// datasetOwnerRoutes maps each curated dataset to the owner route whose x-access annotation gates it:
+// ar, ap, and gl on money-desk read; sales on GET /api/v1/ar/register (money-desk read); stock on
+// GET /api/v1/inventory/on-hand (buying-and-stock read).
+var datasetOwnerRoutes = map[string]struct {
+	method string
+	path   string
+}{
+	"ar":    {method: "GET", path: "/api/v1/ar/aging"},
+	"ap":    {method: "GET", path: "/api/v1/purchasing/ap-aging"},
+	"gl":    {method: "GET", path: "/api/v1/gl/trial-balance"},
+	"sales": {method: "GET", path: "/api/v1/ar/register"},
+	"stock": {method: "GET", path: "/api/v1/inventory/on-hand"},
+}
+
+// DatasetAccessFor returns the authz.RouteAccess of the route that owns the named dataset's facts.
+func DatasetAccessFor(set string) (authz.RouteAccess, bool) {
+	owner, ok := datasetOwnerRoutes[set]
+	if !ok {
+		return authz.RouteAccess{}, false
+	}
+	return authz.RouteAccessFor(owner.method, owner.path)
+}
+
+var (
+	defaultRoleCfgOnce sync.Once
+	defaultRoleCfg     *roleconfig.Config
+	defaultRoleCfgErr  error
+)
+
+func fallbackRoleConfig() (*roleconfig.Config, error) {
+	defaultRoleCfgOnce.Do(func() {
+		defaultRoleCfg, defaultRoleCfgErr = roleconfig.Default()
+	})
+	return defaultRoleCfg, defaultRoleCfgErr
+}
+
+// authorizeDataset checks that the caller holds the surface and level of the route that owns the set's
+// facts. On an HTTP request carrying authz.StaffScope and a wired DatasetRoleGate, it asks
+// DatasetRoleGate.Holds directly; for an in-process service call carrying StaffContext, it checks
+// roleconfig.Config.Holds over the same RouteAccess.
+func (s *Service) authorizeDataset(ctx context.Context, set string, c identity.StaffContext) error {
+	access, ok := DatasetAccessFor(set)
+	if !ok {
+		return ErrDatasetRoleForbidden
+	}
+	if s.dsGate != nil {
+		if scope, hasScope := authz.StaffScopeFrom(ctx); hasScope && scope.PlatformUserID != "" && scope.OrgID != "" {
+			held, err := s.dsGate.Holds(ctx, scope.PlatformUserID, scope.OrgID, access)
+			if err != nil {
+				return err
+			}
+			if !held {
+				return ErrDatasetRoleForbidden
+			}
+			return nil
+		}
+		if c.RoleCode == "" {
+			return ErrDatasetRoleForbidden
+		}
+	}
+	cfg := s.roleCfg
+	if cfg == nil {
+		var err error
+		cfg, err = fallbackRoleConfig()
+		if err != nil {
+			return err
+		}
+	}
+	if c.RoleCode == "SUPER_ADMIN" ||
+		c.RoleCode == authz.PlatformRoleSuperAdmin ||
+		c.RoleCode == authz.PlatformRoleDealerAdmin ||
+		c.RoleCode == authz.PlatformRoleFBOperator {
+		if access.List == "" {
+			return nil
+		}
+	}
+	role, ok := identity.CanonicalForERPCode(c.RoleCode)
+	if !ok && roleconfig.IsRole(c.RoleCode) {
+		role = c.RoleCode
+	}
+	if role == "" {
+		return ErrDatasetRoleForbidden
+	}
+	for _, surface := range access.Surfaces {
+		held, err := cfg.Holds(role, surface, access.Level)
+		if err != nil {
+			return err
+		}
+		if held {
+			return nil
+		}
+	}
+	return ErrDatasetRoleForbidden
+}
 
 // -- the catalog ----------------------------------------------------------------------
 
@@ -367,6 +479,9 @@ func (s *Service) RunDataset(ctx context.Context, set string, q DatasetQuery) (D
 	cols, ok := datasetCatalog[set]
 	if !ok {
 		return DatasetResult{}, ErrNotFound
+	}
+	if err := s.authorizeDataset(ctx, set, c); err != nil {
+		return DatasetResult{}, err
 	}
 	meta := datasetLabels[set]
 

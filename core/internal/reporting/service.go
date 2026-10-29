@@ -28,6 +28,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 // Service is reporting's rules layer.
@@ -43,6 +44,9 @@ type Service struct {
 	dsGL    GLJournalSource
 	dsSales SalesSource
 	dsStock StockSource
+	// dsGate and roleCfg check each curated data set against the surface that owns its facts.
+	dsGate  DatasetRoleGate
+	roleCfg *roleconfig.Config
 	// callerFrom reads the guard-stamped staff caller. Injectable so unit tests can pose as a scoped or
 	// global caller with no HTTP round trip (the finstmt/landedcost/gl idiom).
 	callerFrom func(context.Context) (identity.StaffContext, bool)

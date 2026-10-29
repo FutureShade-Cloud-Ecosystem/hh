@@ -18,6 +18,7 @@ import (
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"net/http"
 	"strconv"
@@ -434,6 +435,8 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusNotFound, "not found")
 	case errors.Is(err, ErrUnauthorized):
 		httpx.Error(w, http.StatusUnauthorized, "authentication required")
+	case errors.Is(err, ErrDatasetRoleForbidden):
+		authz.RefuseForbidden(w)
 	case errors.Is(err, ErrForbidden):
 		httpx.Error(w, http.StatusForbidden, "this report is outside your branch scope")
 	case errors.Is(err, ErrNoDatabase):

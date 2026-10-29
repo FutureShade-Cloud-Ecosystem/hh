@@ -13,11 +13,14 @@ package reporting
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 // -- fake sources -------------------------------------------------------------
@@ -77,7 +80,7 @@ func datasetTestService(ar *fakeARSource) *Service {
 		WithDatasetStockSource(&fakeStockSource{}).
 		withCaller(func(context.Context) (identity.StaffContext, bool) {
 			return identity.StaffContext{
-				UserID: "user-1", RoleCode: "CONTROLLER", Tier: identity.TierLeadership,
+				UserID: "user-1", RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership,
 				Scope: identity.ScopeGlobal, Status: "ACTIVE",
 			}, true
 		})
@@ -408,10 +411,135 @@ func TestRunDataset_AnUnwiredSourceIsNamedNotHidden(t *testing.T) {
 						WithDatasetSalesSource(&fakeSalesSource{}).
 						WithDatasetARSource(&fakeARSource{}).
 						withCaller(func(context.Context) (identity.StaffContext, bool) {
-			return identity.StaffContext{UserID: "u", Scope: identity.ScopeGlobal, Status: "ACTIVE"}, true
+			return identity.StaffContext{
+				UserID: "u", RoleCode: "FINANCIAL_CONTROLLER",
+				Scope: identity.ScopeGlobal, Status: "ACTIVE",
+			}, true
 		})
 	_, err := svc.RunDataset(context.Background(), "stock", DatasetQuery{Columns: []string{"value_cents"}})
 	if err == nil || !strings.Contains(err.Error(), "stock") {
 		t.Fatalf("an unwired source answers with the set named, got: %v", err)
+	}
+}
+
+type roleSourceFunc func(ctx context.Context, platformUserID, orgID string) ([]string, error)
+
+func (f roleSourceFunc) ResolveRoles(ctx context.Context, platformUserID, orgID string) ([]string, error) {
+	return f(ctx, platformUserID, orgID)
+}
+
+func TestRunDataset_EachSetAgreesWithItsOwnerRouteAcrossEveryRole(t *testing.T) {
+	owners := []struct {
+		set    string
+		method string
+		path   string
+		query  DatasetQuery
+	}{
+		{
+			set: "ar", method: "GET", path: "/api/v1/ar/aging",
+			query: DatasetQuery{Columns: []string{"total_cents"}},
+		},
+		{
+			set: "ap", method: "GET", path: "/api/v1/purchasing/ap-aging",
+			query: DatasetQuery{Columns: []string{"open_cents"}},
+		},
+		{
+			set: "gl", method: "GET", path: "/api/v1/gl/trial-balance",
+			query: DatasetQuery{
+				Columns: []string{"debit_cents"},
+				Filters: []DatasetFilter{
+					{Column: "fiscal_year", Op: "eq", Values: []any{1971}},
+					{Column: "fiscal_month", Op: "eq", Values: []any{3}},
+				},
+			},
+		},
+		{
+			set: "sales", method: "GET", path: "/api/v1/ar/register",
+			query: DatasetQuery{
+				Columns: []string{"line_total_cents"},
+				Filters: []DatasetFilter{
+					{Column: "invoice_date", Op: "ge", Values: []any{"1971-03-01"}},
+					{Column: "invoice_date", Op: "le", Values: []any{"1971-03-31"}},
+				},
+			},
+		},
+		{
+			set: "stock", method: "GET", path: "/api/v1/inventory/on-hand",
+			query: DatasetQuery{Columns: []string{"value_cents"}},
+		},
+	}
+
+	cfg, err := roleconfig.Default()
+	if err != nil {
+		t.Fatalf("roleconfig.Default: %v", err)
+	}
+	gate, err := authz.NewRoleGate(&authz.Gate{}, roleSourceFunc(func(_ context.Context, userID, _ string) ([]string, error) {
+		return []string{userID}, nil
+	}), cfg)
+	if err != nil {
+		t.Fatalf("NewRoleGate: %v", err)
+	}
+
+	for _, o := range owners {
+		ownerAccess, ok := authz.RouteAccessFor(o.method, o.path)
+		if !ok {
+			t.Fatalf("set %s owner route %s %s has no RouteAccess in apigen.Routes", o.set, o.method, o.path)
+		}
+
+		for _, role := range roleconfig.Roles() {
+			t.Run(o.set+"/"+role, func(t *testing.T) {
+				ctx := authz.WithStaffScope(context.Background(), authz.StaffScope{
+					PlatformUserID: role,
+					OrgID:          "org-1",
+				})
+				ownerAllowed, err := gate.Holds(ctx, role, "org-1", ownerAccess)
+				if err != nil {
+					t.Fatalf("owner route Holds(%s %s, %s): %v", o.method, o.path, role, err)
+				}
+
+				svc := datasetTestService(&fakeARSource{}).
+					WithDatasetRoleGate(gate).
+					WithRoleConfig(cfg).
+					withCaller(func(context.Context) (identity.StaffContext, bool) {
+						return identity.StaffContext{
+							UserID:   "user-" + role,
+							RoleCode: role,
+							Scope:    identity.ScopeGlobal,
+							Status:   "ACTIVE",
+						}, true
+					})
+				_, err = svc.RunDataset(ctx, o.set, o.query)
+				setAllowed := err == nil
+				if !setAllowed && !errors.Is(err, ErrForbidden) {
+					t.Fatalf("set %s role %s returned unexpected non-forbidden error: %v", o.set, role, err)
+				}
+				if setAllowed != ownerAllowed {
+					t.Fatalf("set %s role %s: RunDataset allowed=%v (err=%v), owner route (%s %s) allowed=%v",
+						o.set, role, setAllowed, err, o.method, o.path, ownerAllowed)
+				}
+
+				// The in-process service path (no StaffScope on ctx, roleconfig.Config.Holds over StaffContext.RoleCode)
+				// must answer the same across every role and every set.
+				svcNoScope := datasetTestService(&fakeARSource{}).
+					WithRoleConfig(cfg).
+					withCaller(func(context.Context) (identity.StaffContext, bool) {
+						return identity.StaffContext{
+							UserID:   "user-" + role,
+							RoleCode: role,
+							Scope:    identity.ScopeGlobal,
+							Status:   "ACTIVE",
+						}, true
+					})
+				_, err = svcNoScope.RunDataset(context.Background(), o.set, o.query)
+				noScopeAllowed := err == nil
+				if !noScopeAllowed && !errors.Is(err, ErrForbidden) {
+					t.Fatalf("set %s role %s (roleconfig path) returned unexpected non-forbidden error: %v", o.set, role, err)
+				}
+				if noScopeAllowed != ownerAllowed {
+					t.Fatalf("set %s role %s (roleconfig path): RunDataset allowed=%v (err=%v), owner route (%s %s) allowed=%v",
+						o.set, role, noScopeAllowed, err, o.method, o.path, ownerAllowed)
+				}
+			})
+		}
 	}
 }

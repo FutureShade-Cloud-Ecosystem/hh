@@ -502,6 +502,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL, roleCfg)
 	ops := wireOperations(r, pool, g, log, money, getenv("CORE_STREAM_TICKET_KEY"), belt.outbox)
 	tops := wireTops(r, pool, g, log, money, ops, cfg, roleCfg, belt)
+	tops.reportingSvc.WithDatasetRoleGate(roleGate)
 	// The demo dealer's name and brand reach the contractor answers too: the
 	// portal service's login and refresh config is the demo seed's, so the
 	// Pro apps read Gable Landscape Supply there as on the public route

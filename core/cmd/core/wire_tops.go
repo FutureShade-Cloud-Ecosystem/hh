@@ -161,6 +161,9 @@ type topsSpine struct {
 	// read the engine's own reconcile (the finance box's read only check) runs the
 	// engine this box serves and not a second copy of it.
 	taxSvc *tax.Service
+	// reportingSvc is held so the composition root can bind the role gate onto
+	// RunDataset after the tops modules are constructed.
+	reportingSvc *reporting.Service
 }
 
 // feedbackActorNames resolves a linked ERP user id to the display name and
@@ -740,6 +743,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	reportingSvc := reporting.NewService(reporting.NewRepository(pool)).
 		WithLogger(log).
 		WithAudit(auditSvc).
+		WithRoleConfig(roleCfg).
 		WithRepAssignments(w6bRepAssignmentReader{svc: ops.messagingSvc}).
 		WithDatasetARSource(dsSources).
 		WithDatasetAPSource(dsSources).
@@ -900,6 +904,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		posSvc:        posSvc,
 		assistSvc:     assistSvc,
 		taxSvc:        taxSvc,
+		reportingSvc:  reportingSvc,
 	}
 }
 

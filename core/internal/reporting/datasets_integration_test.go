@@ -200,7 +200,7 @@ func dsService(t *testing.T, pool *pgxpool.Pool) *Service {
 func dsGlobalCtx(ctx context.Context, t *testing.T, pool *pgxpool.Pool) context.Context {
 	t.Helper()
 	return identity.ContextWithStaff(ctx, identity.StaffContext{
-		UserID: fixtureActor(t, pool), RoleCode: "CONTROLLER", Tier: identity.TierLeadership,
+		UserID: fixtureActor(t, pool), RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership,
 		Scope: identity.ScopeGlobal, Status: "ACTIVE",
 	})
 }

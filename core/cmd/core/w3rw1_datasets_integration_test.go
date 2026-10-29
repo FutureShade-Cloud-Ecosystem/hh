@@ -62,7 +62,7 @@ func TestIntegration_W3RW1_TheCompositionRootWiresTheDatasetSources(t *testing.T
 		t.Fatalf("no seeded user to act as: %v", err)
 	}
 	global := identity.ContextWithStaff(ctx, identity.StaffContext{
-		UserID: actor, RoleCode: "CONTROLLER", Tier: identity.TierLeadership,
+		UserID: actor, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership,
 		Scope: identity.ScopeGlobal, Status: "ACTIVE",
 	})
 	scopedTRT := identity.ContextWithStaff(ctx, identity.StaffContext{
