@@ -47,6 +47,7 @@ type LandedCostPayable struct {
 	DutyCadCents     int64
 	HandlingCadCents int64
 	TotalCadCents    int64
+	PaidCadCents     int64
 	ChargeKind       string
 	PayeeLabel       string
 	CreatedAt        time.Time
@@ -426,7 +427,8 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 			return APAgingPage{}, err
 		}
 		for _, lc := range payables {
-			if lc.TotalCadCents <= 0 {
+			openCents := lc.TotalCadCents - lc.PaidCadCents
+			if lc.TotalCadCents <= 0 || openCents <= 0 {
 				continue
 			}
 			lcDay := lc.CreatedAt.In(loc).Format("2006-01-02")
@@ -452,8 +454,8 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 				BillDate:         lcDay,
 				DueDate:          lcDay,
 				TotalCents:       lc.TotalCadCents,
-				PaidCents:        0,
-				OpenCents:        lc.TotalCadCents,
+				PaidCents:        lc.PaidCadCents,
+				OpenCents:        openCents,
 				FreightCadCents:  lc.FreightCadCents,
 				DutyCadCents:     lc.DutyCadCents,
 				HandlingCadCents: lc.HandlingCadCents,
@@ -475,7 +477,7 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 				HandlingCadCents: lc.HandlingCadCents,
 				OpenItems:        []APAgingItem{item},
 			}
-			addBucketCents(&row, &page, bucket, lc.TotalCadCents)
+			addBucketCents(&row, &page, bucket, openCents)
 			page.Items = append(page.Items, row)
 		}
 	}

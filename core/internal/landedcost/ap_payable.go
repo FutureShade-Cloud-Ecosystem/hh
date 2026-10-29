@@ -12,7 +12,8 @@ import (
 )
 
 // OutstandingPayableCentsAsOf returns the landed-cost payable still owed at asOf: the CAD total of
-// every document applied on or before asOf and not yet voided at asOf.
+// every document applied on or before asOf and not yet voided at asOf, less what the world settled
+// on or before asOf.
 //
 // The landed_costs header carries no applied_at/voided_at columns, so the read rides the status
 // stamps SetStatusTx writes: a POSTED (or retro-adjusted) header's updated_at is its apply, a
@@ -33,13 +34,20 @@ func (r *Repository) OutstandingPayableCentsAsOf(ctx context.Context, asOf time.
 	}
 	var total int64
 	if err := r.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(freight_cad_cents + duty_cad_cents + handling_cad_cents), 0)
+		SELECT COALESCE(SUM(
+			     CASE
+			       WHEN (status IN ('POSTED', 'RETRO_ADJUSTED') AND updated_at <= $1)
+			              OR (status = 'VOIDED' AND updated_at > $1)
+			         THEN freight_cad_cents + duty_cad_cents + handling_cad_cents
+			         ELSE 0
+			       END
+			     - CASE
+			       WHEN settled_at IS NOT NULL AND settled_at <= $1
+			         THEN settled_cad_cents
+			         ELSE 0
+			       END), 0)
 		  FROM landed_costs
-		 WHERE created_at <= $1
-		   AND (
-		         (status IN ('POSTED', 'RETRO_ADJUSTED') AND updated_at <= $1)
-		      OR (status = 'VOIDED' AND updated_at > $1)
-		       )`, asOf).Scan(&total); err != nil {
+		 WHERE created_at <= $1`, asOf).Scan(&total); err != nil {
 		return 0, fmt.Errorf("landedcost: outstanding payable as of %s: %w", asOf.Format("2006-01-02 15:04:05"), err)
 	}
 	return total, nil
@@ -60,6 +68,7 @@ type OpenPayable struct {
 	DutyCadCents     int64     `json:"duty_cad_cents"`
 	HandlingCadCents int64     `json:"handling_cad_cents"`
 	TotalCadCents    int64     `json:"total_cad_cents"`
+	PaidCadCents     int64     `json:"paid_cad_cents"`
 	ChargeKind       string    `json:"charge_kind"`
 	PayeeLabel       string    `json:"payee_label"`
 	CreatedAt        time.Time `json:"created_at"`
@@ -112,6 +121,7 @@ func (s *Service) OpenPayablesAsOf(ctx context.Context, asOf time.Time, branchID
 			CreatedAt:     r.createdAt, UpdatedAt: r.updatedAt,
 		}
 		p.ChargeKind, p.PayeeLabel = classifyLandedPayable(r.payeeName, p.PORef, p.FreightCadCents, p.DutyCadCents, p.HandlingCadCents)
+		p.PaidCadCents = r.paidAsOf(ctx, asOf, s.journalClock)
 		out = append(out, p)
 	}
 	return out, nil
@@ -132,8 +142,33 @@ type openPayableRow struct {
 	handling      int64
 	status        string
 	glJournalID   string
+	settledCents  int64
+	settledAt     time.Time
 	createdAt     time.Time
 	updatedAt     time.Time
+}
+
+// paidAsOf answers how much of the row's payable counts as paid at asOf. The
+// settlement counts from its journal's effective instant (the settle key, the
+// same rule the AP aging reads a bill's payment by); with the clock unwired or
+// the journal missing, the row's own settled_at keeps the rule the seam
+// replaced.
+func (r openPayableRow) paidAsOf(ctx context.Context, asOf time.Time, clock JournalClock) int64 {
+	if r.settledCents == 0 {
+		return 0
+	}
+	if clock != nil {
+		if eff, found, err := clock.JournalEffectiveInstantByKey(ctx, "landedcost.settle:"+r.id); err == nil && found {
+			if !eff.After(asOf) {
+				return r.settledCents
+			}
+			return 0
+		}
+	}
+	if r.settledAt.IsZero() || r.settledAt.After(asOf) {
+		return 0
+	}
+	return r.settledCents
 }
 
 func (r openPayableRow) total() int64 { return r.freight + r.duty + r.handling }
@@ -212,7 +247,9 @@ func (r *Repository) OpenPayableRows(ctx context.Context, branchIDs []string, gl
 		       COALESCE(lc.payee_vendor_id::text, ''), COALESCE(v.name, ''),
 		       lc.branch_id::text, trim(lc.currency),
 		       lc.freight_cad_cents, lc.duty_cad_cents, lc.handling_cad_cents,
-		       lc.status, COALESCE(lc.gl_journal_id::text, ''), lc.created_at, lc.updated_at
+		       lc.status, COALESCE(lc.gl_journal_id::text, ''),
+		       lc.settled_cad_cents, COALESCE(lc.settled_at, '0001-01-01'::timestamptz),
+		       lc.created_at, lc.updated_at
 		  FROM landed_costs lc
 		  LEFT JOIN vendors v ON v.id = lc.payee_vendor_id
 		 WHERE lc.status IN ('POSTED', 'RETRO_ADJUSTED', 'VOIDED')
@@ -232,7 +269,7 @@ func (r *Repository) OpenPayableRows(ctx context.Context, branchIDs []string, gl
 		if err := rows.Scan(
 			&r.id, &r.poID, &r.poRef, &r.payeeVendorID, &r.payeeName, &r.branchID, &r.currency,
 			&r.freight, &r.duty, &r.handling,
-			&r.status, &r.glJournalID, &r.createdAt, &r.updatedAt,
+			&r.status, &r.glJournalID, &r.settledCents, &r.settledAt, &r.createdAt, &r.updatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("landedcost: scan open payable row: %w", err)
 		}

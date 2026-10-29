@@ -114,6 +114,7 @@ const (
 	FinWorldEventVendorBill            FinWorldEventKind = "VENDOR_BILL"
 	FinWorldEventVendorPayment         FinWorldEventKind = "VENDOR_PAYMENT"
 	FinWorldEventLandedCost            FinWorldEventKind = "LANDED_COST"
+	FinWorldEventLandedCostSettle      FinWorldEventKind = "LANDED_COST_SETTLE"
 	FinWorldEventStockTransfer         FinWorldEventKind = "STOCK_TRANSFER"
 	FinWorldEventManualJournal         FinWorldEventKind = "MANUAL_JOURNAL"
 	FinWorldEventBankStatement         FinWorldEventKind = "BANK_STATEMENT"
@@ -256,33 +257,34 @@ type FinWorldTradingDay struct {
 
 // FinWorldEvent is a single ordered business event on a trading day.
 type FinWorldEvent struct {
-	GlobalSeq       int                           `json:"global_seq"`
-	DaySeq          int                           `json:"day_seq"`
-	EventKey        string                        `json:"event_key"`
-	Date            string                        `json:"date"`
-	OccurredAt      string                        `json:"occurred_at"`
-	BranchCode      string                        `json:"branch_code,omitempty"`
-	Kind            FinWorldEventKind             `json:"kind"`
-	TillOpen        *FinWorldTillOpenEvent        `json:"till_open,omitempty"`
-	TillPaidInOut   *FinWorldTillPaidInOutEvent   `json:"till_paid_in_out,omitempty"`
-	TillCount       *FinWorldTillCountEvent       `json:"till_count,omitempty"`
-	TillComplete    *FinWorldTillCompleteEvent    `json:"till_complete,omitempty"`
-	Sale            *FinWorldSaleEvent            `json:"sale,omitempty"`
-	Return          *FinWorldReturnEvent          `json:"return,omitempty"`
-	CreditMemo      *FinWorldCreditMemoEvent      `json:"credit_memo,omitempty"`
-	AccountReceipt  *FinWorldAccountReceiptEvent  `json:"account_receipt,omitempty"`
-	NSFBounce       *FinWorldNSFBounceEvent       `json:"nsf_bounce,omitempty"`
-	Lodgement       *FinWorldLodgementEvent       `json:"lodgement,omitempty"`
-	CardSettlement  *FinWorldCardSettlementEvent  `json:"card_settlement,omitempty"`
-	PurchaseReceipt *FinWorldPurchaseReceiptEvent `json:"purchase_receipt,omitempty"`
-	VendorBill      *FinWorldVendorBillEvent      `json:"vendor_bill,omitempty"`
-	VendorPayment   *FinWorldVendorPaymentEvent   `json:"vendor_payment,omitempty"`
-	LandedCost      *FinWorldLandedCostEvent      `json:"landed_cost,omitempty"`
-	StockTransfer   *FinWorldStockTransferEvent   `json:"stock_transfer,omitempty"`
-	ManualJournal   *FinWorldManualJournalEvent   `json:"manual_journal,omitempty"`
-	BankStatement   *FinWorldBankStatementEvent   `json:"bank_statement,omitempty"`
-	PeriodClose     *FinWorldPeriodCloseEvent     `json:"period_close,omitempty"`
-	YearClose       *FinWorldYearCloseEvent       `json:"year_close,omitempty"`
+	GlobalSeq        int                            `json:"global_seq"`
+	DaySeq           int                            `json:"day_seq"`
+	EventKey         string                         `json:"event_key"`
+	Date             string                         `json:"date"`
+	OccurredAt       string                         `json:"occurred_at"`
+	BranchCode       string                         `json:"branch_code,omitempty"`
+	Kind             FinWorldEventKind              `json:"kind"`
+	TillOpen         *FinWorldTillOpenEvent         `json:"till_open,omitempty"`
+	TillPaidInOut    *FinWorldTillPaidInOutEvent    `json:"till_paid_in_out,omitempty"`
+	TillCount        *FinWorldTillCountEvent        `json:"till_count,omitempty"`
+	TillComplete     *FinWorldTillCompleteEvent     `json:"till_complete,omitempty"`
+	Sale             *FinWorldSaleEvent             `json:"sale,omitempty"`
+	Return           *FinWorldReturnEvent           `json:"return,omitempty"`
+	CreditMemo       *FinWorldCreditMemoEvent       `json:"credit_memo,omitempty"`
+	AccountReceipt   *FinWorldAccountReceiptEvent   `json:"account_receipt,omitempty"`
+	NSFBounce        *FinWorldNSFBounceEvent        `json:"nsf_bounce,omitempty"`
+	Lodgement        *FinWorldLodgementEvent        `json:"lodgement,omitempty"`
+	CardSettlement   *FinWorldCardSettlementEvent   `json:"card_settlement,omitempty"`
+	PurchaseReceipt  *FinWorldPurchaseReceiptEvent  `json:"purchase_receipt,omitempty"`
+	VendorBill       *FinWorldVendorBillEvent       `json:"vendor_bill,omitempty"`
+	VendorPayment    *FinWorldVendorPaymentEvent    `json:"vendor_payment,omitempty"`
+	LandedCost       *FinWorldLandedCostEvent       `json:"landed_cost,omitempty"`
+	LandedCostSettle *FinWorldLandedCostSettleEvent `json:"landed_cost_settle,omitempty"`
+	StockTransfer    *FinWorldStockTransferEvent    `json:"stock_transfer,omitempty"`
+	ManualJournal    *FinWorldManualJournalEvent    `json:"manual_journal,omitempty"`
+	BankStatement    *FinWorldBankStatementEvent    `json:"bank_statement,omitempty"`
+	PeriodClose      *FinWorldPeriodCloseEvent      `json:"period_close,omitempty"`
+	YearClose        *FinWorldYearCloseEvent        `json:"year_close,omitempty"`
 }
 
 // FinWorldTillOpenEvent opens a till session at the start of a trading day.
@@ -581,6 +583,18 @@ type FinWorldLandedCostEvent struct {
 	VoidOfLandedCostKey string `json:"void_of_landed_cost_key,omitempty"`
 	VoidedDate          string `json:"voided_date,omitempty"`
 	VoidReason          string `json:"void_reason,omitempty"`
+}
+
+// FinWorldLandedCostSettleEvent settles a landed cost's payable with its payee
+// vendor on the vendor's terms: the cheque clears on the day the event sits
+// on, the same day the bank statement carries it and the payable leaves the
+// AP aging.
+type FinWorldLandedCostSettleEvent struct {
+	LandedCostKey  string `json:"landed_cost_key"`
+	PayeeVendorNo  string `json:"payee_vendor_no"`
+	BranchCode     string `json:"branch_code"`
+	ChargeCadCents int64  `json:"charge_cad_cents"`
+	SettledDate    string `json:"settled_date"`
 }
 
 // FinWorldTransferLine is one product line on an inter-branch stock transfer.

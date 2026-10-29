@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -34,14 +35,16 @@ func nullStr(s string) any {
 
 const landedCols = `id::text, COALESCE(po_id::text, ''), po_ref, COALESCE(payee_vendor_id::text, ''), branch_id::text, currency, fx_rate::float8,
 	freight_cents, duty_cents, handling_cents, freight_cad_cents, duty_cad_cents, handling_cad_cents,
-	allocation_basis, exclude_special_buys, status, COALESCE(retro_of_id::text, ''),
+	allocation_basis, exclude_special_buys, status, settled_cad_cents, COALESCE(settled_at, '0001-01-01'::timestamptz),
+	COALESCE(retro_of_id::text, ''),
 	COALESCE(gl_journal_id::text, ''), created_at`
 
 func scanLanded(row pgx.Row) (LandedCost, error) {
 	var lc LandedCost
 	err := row.Scan(&lc.ID, &lc.POID, &lc.PORef, &lc.PayeeVendorID, &lc.BranchID, &lc.Currency, &lc.FXRate,
 		&lc.FreightCents, &lc.DutyCents, &lc.HandlingCents, &lc.FreightCadCents, &lc.DutyCadCents,
-		&lc.HandlingCadCents, &lc.AllocationBasis, &lc.ExcludeSpecialBuys, &lc.Status, &lc.RetroOfID,
+		&lc.HandlingCadCents, &lc.AllocationBasis, &lc.ExcludeSpecialBuys, &lc.Status, &lc.SettledCadCents, &lc.SettledAt,
+		&lc.RetroOfID,
 		&lc.GLJournalID, &lc.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
 		return LandedCost{}, errNotFound
@@ -276,6 +279,18 @@ func (r *Repository) InsertAllocationTx(ctx context.Context, tx pgx.Tx, landedCo
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		landedCostID, nullStr(a.POLineID), nullStr(a.ProductID), a.BasisWeight, a.AllocatedCadCents, a.SoldThroughCadCents, pre); err != nil {
 		return fmt.Errorf("landedcost: insert allocation: %w", err)
+	}
+	return nil
+}
+
+// SettleTx stamps the payable's settlement inside the tx: the CAD amount paid
+// and the instant it was paid (0455). The caller has already re-read the row
+// FOR UPDATE and seen it unsettled.
+func (r *Repository) SettleTx(ctx context.Context, tx pgx.Tx, id string, settledCadCents int64, at time.Time) error {
+	if _, err := tx.Exec(ctx,
+		`UPDATE landed_costs SET settled_cad_cents = $2, settled_at = $3, updated_at = now()
+		 WHERE id = $1`, id, settledCadCents, at); err != nil {
+		return fmt.Errorf("landedcost: settle: %w", err)
 	}
 	return nil
 }

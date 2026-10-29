@@ -1082,6 +1082,15 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 				return fmt.Errorf("%s drain: %w", ev.EventKey, err)
 			}
 
+		case FinWorldEventLandedCostSettle:
+			st := ev.LandedCostSettle
+			if err := finworldExecuteLandedCostSettle(ctx, h, st, docTime); err != nil {
+				return fmt.Errorf("%s (%s): %w", ev.EventKey, st.LandedCostKey, err)
+			}
+			if err := h.drain(ctx); err != nil {
+				return fmt.Errorf("%s drain: %w", ev.EventKey, err)
+			}
+
 		case FinWorldEventStockTransfer:
 			st := ev.StockTransfer
 			if err := finworldExecuteStockTransfer(ctx, h, st, prodBySKU); err != nil {
@@ -1665,6 +1674,23 @@ func finworldExecuteLandedCost(ctx context.Context, h *finworldHarness, lc *FinW
 	}
 	_, err = h.callWithToken(h.managerToken, "apply landed cost "+lc.LandedCostKey, http.MethodPost, "/api/v1/landed-costs/"+created.ID+"/apply", nil)
 	return err
+}
+
+// finworldExecuteLandedCostSettle pays a landed cost's payable on the payee
+// vendor's terms through the landed cost's own settle route: the DR 2100 /
+// CR 1000 journal posts at the cheque's own date, keyed landedcost.settle, so
+// the AP aging reads the payment the same rule it reads a bill's payment by.
+func finworldExecuteLandedCostSettle(ctx context.Context, h *finworldHarness, st *FinWorldLandedCostSettleEvent, docTime time.Time) error {
+	var lcID string
+	if err := h.pool.QueryRow(ctx, `SELECT id::text FROM landed_costs WHERE po_ref = $1`, st.LandedCostKey).Scan(&lcID); err != nil {
+		return fmt.Errorf("lookup landed cost %s for settlement: %w", st.LandedCostKey, err)
+	}
+	if _, err := h.callWithToken(h.managerToken, "settle landed cost "+st.LandedCostKey, http.MethodPost, "/api/v1/landed-costs/"+lcID+"/settle", map[string]any{
+		"paid_at": docTime.Format(time.RFC3339),
+	}); err != nil {
+		return err
+	}
+	return h.drain(ctx)
 }
 
 func finworldExecuteStockTransfer(
@@ -2291,6 +2317,19 @@ func finworldResolveBankMatchTarget(ctx context.Context, pool *pgxpool.Pool, ref
 		var jid string
 		if err := pool.QueryRow(ctx, `SELECT j.id::text FROM gl_journals j JOIN purchasing_bills b ON b.id = j.source_ref_id WHERE b.bill_no = $1 AND j.source = 'PAYMENT'`, ref).Scan(&jid); err != nil {
 			return "", "", fmt.Errorf("lookup vendor payment journal %s: %w", ref, err)
+		}
+		return "JOURNAL", jid, nil
+
+	case strings.HasPrefix(ref, "LCPAY-"):
+		lcKey := strings.TrimPrefix(ref, "LCPAY-")
+		var jid string
+		if err := pool.QueryRow(ctx, `
+			SELECT j.id::text
+			  FROM gl_journals j
+			  JOIN landed_costs lc ON lc.id = j.source_ref_id
+			 WHERE j.source = 'PAYMENT'
+			   AND lc.po_ref = $1`, lcKey).Scan(&jid); err != nil {
+			return "", "", fmt.Errorf("lookup landed cost settlement journal %s: %w", ref, err)
 		}
 		return "JOURNAL", jid, nil
 

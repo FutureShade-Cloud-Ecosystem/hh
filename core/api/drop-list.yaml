@@ -16,6 +16,8 @@ drops:
     reason: "Not a route: a comment line in order/activity.go:27 quoting an API framing the surface exists to hide. The literal grep cannot tell comments from registrations."
 
 additions:
+  - route: "POST /api/v1/landed-costs/{id}/settle"
+    reason: "W2-1d: the landed cost's own settlement. The payable the apply posts to AP is paid on the payee vendor's terms, the payment journal keyed landedcost.settle, and the AP aging reads it by the same rule it reads a bill's payment."
   - route: "GET /api/v1/bankrec/accounts/{id}/cutover"
     reason: "FW1-04 round 3: the starting point form's read of the ledger's entries on or before a cut over date and the book balance they make; the ERP reconciled by hand and had no starting point."
   - route: "POST /api/v1/bankrec/accounts/{id}/cutover"

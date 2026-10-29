@@ -238,6 +238,20 @@ var finworldBrokerVendors = []FinWorldVendor{
 	{VendorNo: "V-BORDER", Name: "Bayshore Border Services Inc.", Kind: "BROKER", PaymentTermsDays: finworldVendorTermsDays},
 }
 
+// finworldIntendedLatePayableCount is how many of the world's landed cost
+// payables stay open past their terms on purpose: a handful, each named in the
+// plan's intended late list with the bookkeeper's reason a Controller would
+// read on the aging.
+const finworldIntendedLatePayableCount = 3
+
+// finworldIntendedLatePayableReasons are those reasons, in the order the first
+// landed costs of the year take them.
+var finworldIntendedLatePayableReasons = []string{
+	"The carrier is disputing the fuel surcharge on this delivery",
+	"Held pending the carrier's credit for the damaged pallet",
+	"The broker is re-billing under a corrected customs entry",
+}
+
 // finworldHSTOn mirrors tax.hstOn in core/internal/tax/model.go:355 (half-up integer rounding).
 func finworldHSTOn(subtotalCents int64, rateBps int) int64 {
 	if subtotalCents <= 0 || rateBps <= 0 {
@@ -1059,12 +1073,38 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 	// small set of hauliers and brokers a real dealer keeps.
 	carrierSeq := 0
 	brokerSeq := 0
+	// The applied landed cost counter and the slots a later void reverses: the
+	// world's intended late payables are the first few applied landed costs
+	// whose payables survive the year un-voided.
+	appliedLandedCostSeq := 0
+	voidedAppliedSlots := map[int]bool{}
+	for _, slot := range landedCostSlots {
+		if slot.VoidOfSlot >= 0 {
+			voidedAppliedSlots[slot.VoidOfSlot] = true
+		}
+	}
+	// The settlements the plan owes on a later trading day, keyed by that
+	// day's index: the plan emits each one on the day the cheque clears.
+	pendingLandedCostSettlements := map[int][]*FinWorldLandedCostSettleEvent{}
 
 	// Helper to format an America/Toronto RFC3339 timestamp on dateStr at hour:min:sec.
 	formatOccurredAt := func(dateStr string, hour, minute, second int) string {
 		parsed, _ := time.ParseInLocation("2006-01-02", dateStr, loc)
 		ts := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), hour, minute, second, 0, loc)
 		return ts.Format(time.RFC3339)
+	}
+
+	// finworldTradingDayAtOrAfter answers the plan's first trading day on or
+	// after the given day, or -1 when the plan is already over.
+	finworldTradingDayAtOrAfter := func(day string) int {
+		for mIdx := range plan.Months {
+			for dIdx := range plan.Months[mIdx].TradingDays {
+				if plan.Months[mIdx].TradingDays[dIdx].Date >= day {
+					return plan.Months[mIdx].TradingDays[dIdx].TradingDayIndex
+				}
+			}
+		}
+		return -1
 	}
 
 	// pickLandedCostReceipt chooses the purchase receipt a landed cost attaches to: the same
@@ -1201,11 +1241,13 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 		var monthVendorBills []*FinWorldVendorBillEvent
 		var monthDeferredBills []*FinWorldVendorBillEvent
 		var monthNSFBounces []*FinWorldNSFBounceEvent
+		var monthLandedCostSettlements []*FinWorldLandedCostSettleEvent
 
 		for dIdx := 0; dIdx < numDays; dIdx++ {
 			td := &m.TradingDays[dIdx]
 			daySeq := 0
 			globalDay := td.TradingDayIndex
+			landedCostTodaySettles := 0
 
 			appendEvent := func(branchCode string, kind FinWorldEventKind, hour, min, sec int) *FinWorldEvent {
 				globalSeq++
@@ -1239,6 +1281,17 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				}
 				pendingDeferredPayments = nil
 			}
+
+			// The landed cost payables the plan settles today, on the payee
+			// vendor's terms: the cheque clears the same day the statement
+			// carries it and the payable leaves the aging.
+			for _, st := range pendingLandedCostSettlements[globalDay] {
+				stEv := appendEvent(st.BranchCode, FinWorldEventLandedCostSettle, 11, (landedCostTodaySettles)%45, 0)
+				stEv.LandedCostSettle = st
+				landedCostTodaySettles++
+				monthLandedCostSettlements = append(monthLandedCostSettlements, st)
+			}
+			delete(pendingLandedCostSettlements, globalDay)
 
 			// 7a. Morning: open 2 tills per branch.
 			sessionKeyByBranchTill := make(map[string][2]string)
@@ -2374,6 +2427,47 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					carrierSeq++
 				}
 				lcKey := fmt.Sprintf("lc-s%d-%04d", seed, landedCostSeq)
+				// The payable is paid on the payee's terms: the cheque clears
+				// on the first trading day at or after the due date. The
+				// year's first few payables that survive the year un-voided
+				// stay open on purpose, each named in the plan's intended
+				// late list with the bookkeeper's reason.
+				settleOn := ""
+				if !voidedAppliedSlots[slotIdx] {
+					appliedLandedCostSeq++
+					if appliedLandedCostSeq <= finworldIntendedLatePayableCount {
+						plan.IntendedLatePayables = append(plan.IntendedLatePayables, FinWorldIntendedLatePayable{
+							LandedCostKey: lcKey,
+							Reason:        finworldIntendedLatePayableReasons[(appliedLandedCostSeq-1)%len(finworldIntendedLatePayableReasons)],
+						})
+					} else {
+						appliedDay, _ := time.ParseInLocation("2006-01-02", td.Date, loc)
+						dueDay := appliedDay.AddDate(0, 0, payee.PaymentTermsDays)
+						if settleIdx := finworldTradingDayAtOrAfter(dueDay.Format("2006-01-02")); settleIdx >= 0 {
+							settleOn = plan.Months[0].TradingDays[0].Date
+							for mIdx2 := range plan.Months {
+								found := false
+								for dIdx2 := range plan.Months[mIdx2].TradingDays {
+									if plan.Months[mIdx2].TradingDays[dIdx2].TradingDayIndex == settleIdx {
+										settleOn = plan.Months[mIdx2].TradingDays[dIdx2].Date
+										found = true
+										break
+									}
+								}
+								if found {
+									break
+								}
+							}
+							pendingLandedCostSettlements[settleIdx] = append(pendingLandedCostSettlements[settleIdx], &FinWorldLandedCostSettleEvent{
+								LandedCostKey:  lcKey,
+								PayeeVendorNo:  payee.VendorNo,
+								BranchCode:     slot.BranchCode,
+								ChargeCadCents: 0, // stamped below once the charge is known
+								SettledDate:    settleOn,
+							})
+						}
+					}
+				}
 				ev := appendEvent(slot.BranchCode, FinWorldEventLandedCost, 16, minute, 0)
 				ev.LandedCost = &FinWorldLandedCostEvent{
 					LandedCostKey:      lcKey,
@@ -2398,6 +2492,14 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					Status:             "POSTED",
 				}
 				landedCostBySlot[slotIdx] = ev.LandedCost
+				ev.LandedCost.SettledOnDate = settleOn
+				if settleIdx := finworldTradingDayAtOrAfter(ev.LandedCost.SettledOnDate); settleIdx >= 0 && ev.LandedCost.SettledOnDate != "" {
+					for _, st := range pendingLandedCostSettlements[settleIdx] {
+						if st.LandedCostKey == lcKey {
+							st.ChargeCadCents = ev.LandedCost.ChargeCadCents
+						}
+					}
+				}
 
 				bs := m.Summary.ByBranch[slot.BranchCode]
 				bs.LandedCosts++
@@ -2641,6 +2743,12 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				priorOutstandingBills = append(monthVendorBills[billSplit:], monthDeferredBills...)
 				if mIdx+1 < len(plan.Months) {
 					pendingDeferredPayments = append(pendingDeferredPayments, monthDeferredBills...)
+				}
+
+				// Every landed cost settlement cheque cleared on the statement,
+				// each matched to its own settlement journal.
+				for _, st := range monthLandedCostSettlements {
+					addStmtLine(td.Date, "LANDED_COST_PAYMENT", st.LandedCostKey, "LCPAY-"+st.LandedCostKey, "Carrier or broker cheque", -st.ChargeCadCents)
 				}
 
 				// Monthly bank service fee.

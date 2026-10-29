@@ -214,13 +214,26 @@ func finworldCensusLatePayables(plan *FinWorldPlanT) []finworldLatePayableFindin
 		intended[ip.LandedCostKey] = ip.Reason
 	}
 
+	// A payable the plan later voided no longer exists: the void reversed it,
+	// so it is neither owed nor late.
+	voidedKeys := map[string]bool{}
+	for mIdx := range plan.Months {
+		for dIdx := range plan.Months[mIdx].TradingDays {
+			for _, ev := range plan.Months[mIdx].TradingDays[dIdx].Events {
+				if lc := ev.LandedCost; lc != nil && lc.Status == "VOIDED" && lc.VoidOfLandedCostKey != "" {
+					voidedKeys[lc.VoidOfLandedCostKey] = true
+				}
+			}
+		}
+	}
+
 	var late []finworldLatePayableFinding
 	lateKeys := map[string]bool{}
 	for mIdx := range plan.Months {
 		for dIdx := range plan.Months[mIdx].TradingDays {
 			for _, ev := range plan.Months[mIdx].TradingDays[dIdx].Events {
 				lc := ev.LandedCost
-				if lc == nil || lc.Status != "POSTED" {
+				if lc == nil || lc.Status != "POSTED" || voidedKeys[lc.LandedCostKey] {
 					continue
 				}
 				applied, perr := time.ParseInLocation("2006-01-02", lc.AppliedDate, time.UTC)

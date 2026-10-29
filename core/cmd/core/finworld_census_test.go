@@ -66,31 +66,37 @@ func TestFinWorldCensusMemoProblems(t *testing.T) {
 	}
 }
 
-// The late payable rule: an open payable more than 90 days past its terms is a
-// finding unless the plan names it as intended with a reason; an entry naming
-// no real late payable is itself a finding.
+// The late payable rule: a payable the world settled on its terms is no
+// finding, an open payable more than 90 days past its terms is one unless the
+// plan names it as intended with a reason, and an entry naming no real late
+// payable is itself a finding.
 func TestFinWorldCensusLatePayables(t *testing.T) {
 	plan := finworldCensusTestPlan(t)
 
-	// The world's own landed costs run eleven months, so on the plan as it
-	// stands (nothing settles them, nothing is marked intended) the census
-	// finds late payables.
-	if got := finworldCensusLatePayables(plan); len(got) == 0 {
-		t.Fatalf("the plan's own landed costs carry no late payable findings; the census would pass an unpaid books world")
+	// The world as it stands pays its payables on their terms and names its
+	// handful of intended late ones: no findings.
+	if got := finworldCensusLatePayables(plan); len(got) != 0 {
+		t.Fatalf("the plan's own books carry late payable findings: %v", got)
 	}
 
-	// Marking one as intended with a reason takes its finding away, but an
-	// entry naming no late payable at all is refused.
-	plan.IntendedLatePayables = []FinWorldIntendedLatePayable{
-		{LandedCostKey: "lc-s1-9999", Reason: "the carrier is disputing the fuel surcharge"},
-	}
+	// Strike the intended list and the handful turn into findings again.
+	intended := plan.IntendedLatePayables
+	plan.IntendedLatePayables = nil
 	got := finworldCensusLatePayables(plan)
-	var namedNotFound bool
+	if len(got) < len(intended) {
+		t.Fatalf("striking the intended list left %d findings, want at least the %d it named", len(got), len(intended))
+	}
+	plan.IntendedLatePayables = intended
+
+	// An entry naming no late payable at all is refused.
+	plan.IntendedLatePayables = append(plan.IntendedLatePayables, FinWorldIntendedLatePayable{
+		LandedCostKey: "lc-s1-9999", Reason: "the carrier is disputing the fuel surcharge",
+	})
+	got = finworldCensusLatePayables(plan)
+	namedNotFound := false
 	for _, f := range got {
-		if strings.Contains(f.Why, "does not mark") || strings.Contains(f.Why, "is not one") {
-			if strings.Contains(f.LandedCostKey, "9999") {
-				namedNotFound = true
-			}
+		if strings.Contains(f.LandedCostKey, "9999") {
+			namedNotFound = true
 		}
 	}
 	if !namedNotFound {

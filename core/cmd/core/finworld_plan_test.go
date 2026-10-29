@@ -847,3 +847,103 @@ func TestFinWorldPlan_LandedCostsNameTheirPayees(t *testing.T) {
 		}
 	}
 }
+
+// TestFinWorldPlan_PayablesPaidOnTheirTerms (W2-1d item 4): every un-voided
+// landed cost payable settles on the payee vendor's terms, on a trading day,
+// for the charge it carries; a handful stay open on purpose, each named with
+// its reason; and the settlement events sit on the day they name.
+func TestFinWorldPlan_PayablesPaidOnTheirTerms(t *testing.T) {
+	anchor := YearMonth{Year: 2026, Month: 9}
+	plan, err := FinWorldPlan(1, anchor, finworldTestDealerName)
+	if err != nil {
+		t.Fatalf("FinWorldPlan(1, %s) failed: %v", anchor, err)
+	}
+
+	termsByNo := map[string]int{}
+	for _, v := range plan.Vendors {
+		termsByNo[v.VendorNo] = v.PaymentTermsDays
+	}
+	voidedKeys := map[string]bool{}
+	settleEvents := map[string]*FinWorldLandedCostSettleEvent{}
+	for mIdx := range plan.Months {
+		for dIdx := range plan.Months[mIdx].TradingDays {
+			td := &plan.Months[mIdx].TradingDays[dIdx]
+			for _, ev := range td.Events {
+				if lc := ev.LandedCost; lc != nil && lc.Status == "VOIDED" && lc.VoidOfLandedCostKey != "" {
+					voidedKeys[lc.VoidOfLandedCostKey] = true
+				}
+				if st := ev.LandedCostSettle; st != nil {
+					if settleEvents[st.LandedCostKey] != nil {
+						t.Errorf("landed cost %s settles twice", st.LandedCostKey)
+					}
+					settleEvents[st.LandedCostKey] = st
+					if st.SettledDate != td.Date {
+						t.Errorf("settlement for %s sits on %s but names %s", st.LandedCostKey, td.Date, st.SettledDate)
+					}
+					if st.ChargeCadCents <= 0 {
+						t.Errorf("settlement for %s carries %d cents, want the charge it pays", st.LandedCostKey, st.ChargeCadCents)
+					}
+				}
+			}
+		}
+	}
+
+	applied := 0
+	for mIdx := range plan.Months {
+		for dIdx := range plan.Months[mIdx].TradingDays {
+			for _, ev := range plan.Months[mIdx].TradingDays[dIdx].Events {
+				lc := ev.LandedCost
+				if lc == nil || lc.Status != "POSTED" || voidedKeys[lc.LandedCostKey] {
+					continue
+				}
+				applied++
+				appliedDay, err := time.ParseInLocation("2006-01-02", lc.AppliedDate, time.UTC)
+				if err != nil {
+					t.Fatalf("landed cost %s applied date %q: %v", lc.LandedCostKey, lc.AppliedDate, err)
+				}
+				dueDay := appliedDay.AddDate(0, 0, termsByNo[lc.PayeeVendorNo])
+				st := settleEvents[lc.LandedCostKey]
+				if st == nil {
+					// Open on purpose, or the cheque clears past the plan's end.
+					if lc.SettledOnDate != "" {
+						t.Errorf("landed cost %s names settle day %s but carries no settlement event", lc.LandedCostKey, lc.SettledOnDate)
+					}
+					continue
+				}
+				if lc.SettledOnDate != st.SettledDate {
+					t.Errorf("landed cost %s names settle day %s, its event names %s", lc.LandedCostKey, lc.SettledOnDate, st.SettledDate)
+				}
+				if st.ChargeCadCents != lc.ChargeCadCents {
+					t.Errorf("settlement for %s pays %d cents, the charge is %d", st.LandedCostKey, st.ChargeCadCents, lc.ChargeCadCents)
+				}
+				settleDay, err := time.ParseInLocation("2006-01-02", st.SettledDate, time.UTC)
+				if err != nil {
+					t.Fatalf("settlement %s settle date %q: %v", st.LandedCostKey, st.SettledDate, err)
+				}
+				if settleDay.Before(dueDay) {
+					t.Errorf("settlement for %s clears %s, ahead of the terms' due date %s", st.LandedCostKey, st.SettledDate, dueDay.Format("2006-01-02"))
+				}
+			}
+		}
+	}
+
+	intended := map[string]string{}
+	for _, ip := range plan.IntendedLatePayables {
+		if strings.TrimSpace(ip.Reason) == "" {
+			t.Errorf("intended late payable %s names no reason", ip.LandedCostKey)
+		}
+		intended[ip.LandedCostKey] = ip.Reason
+	}
+	if len(intended) == 0 || len(intended) > 8 {
+		t.Errorf("the plan marks %d payables as intended late; a handful, named, is the rule", len(intended))
+	}
+	for key := range intended {
+		if settleEvents[key] != nil {
+			t.Errorf("intended late payable %s also carries a settlement; it must stay open", key)
+		}
+		if voidedKeys[key] {
+			t.Errorf("intended late payable %s was voided later; a reversed payable is not a late one", key)
+		}
+	}
+	t.Logf("applied=%d settled=%d intendedLate=%d", applied, len(settleEvents), len(intended))
+}

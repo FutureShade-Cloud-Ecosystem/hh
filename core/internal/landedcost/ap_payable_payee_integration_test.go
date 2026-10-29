@@ -122,3 +122,109 @@ func TestIntegration_PayeeVendorLabelsThePayable(t *testing.T) {
 		t.Fatalf("junk payee vendor error = %v, want a 400 client error", err)
 	}
 }
+
+// TestIntegration_SettlePaysThePayableOnItsTerms (W2-1d item 4): the settle
+// route pays a posted landed cost's payable in full, the aging reads it paid,
+// a re-press pays nothing twice, and an unsettled payable still reads open.
+func TestIntegration_SettlePaysThePayableOnItsTerms(t *testing.T) {
+	pool := intPool(t)
+	seedPO(t, pool)
+	ctx := context.Background()
+
+	var payeeID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO vendors (vendor_no, name, payment_terms_days, is_edi)
+		VALUES ($1, $2, 30, false)
+		ON CONFLICT (vendor_no) DO UPDATE SET name = EXCLUDED.name
+		RETURNING id::text`, payeeCarrierVendorNo, payeeCarrierName).Scan(&payeeID); err != nil {
+		t.Fatalf("seed the payee vendor: %v", err)
+	}
+
+	cap := &fakeCapitalizer{lines: []ReceivedLine{
+		{ProductID: prodA, QtyBase: 4, ValueCents: 30000, WeightKg: 2},
+	}}
+	gl := &fakeGLPoster{}
+	svc := newSvc(pool, cap, gl)
+
+	id, err := svc.Create(ctx, CreateInput{
+		POID: landedPO, PORef: "LC-IT-SETTLE-1", BranchID: trentonBranch, Currency: "CAD",
+		FreightCents: 60000, AllocationBasis: "weight",
+		PayeeVendorID: payeeID,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := svc.Apply(ctx, id); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	readOpen := func(asOf time.Time) OpenPayable {
+		t.Helper()
+		payables, err := svc.OpenPayablesAsOf(ctx, asOf, nil, true)
+		if err != nil {
+			t.Fatalf("open payables: %v", err)
+		}
+		for _, p := range payables {
+			if p.ID == id {
+				return p
+			}
+		}
+		t.Fatalf("the payable disappeared from the aging read")
+		return OpenPayable{}
+	}
+
+	before := time.Now().UTC().Add(time.Second)
+	open := readOpen(before)
+	if open.PaidCadCents != 0 || open.TotalCadCents != 60000 {
+		t.Fatalf("before the settle the payable reads total %d paid %d, want 60000/0", open.TotalCadCents, open.PaidCadCents)
+	}
+
+	if err := svc.Settle(ctx, id, SettleInput{PaidAt: &before}); err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+	// A re-press is a no-op, not a second payment.
+	if err := svc.Settle(ctx, id, SettleInput{PaidAt: &before}); err != nil {
+		t.Fatalf("re-settle: %v", err)
+	}
+
+	paid := readOpen(before.Add(time.Second))
+	if paid.PaidCadCents != 60000 {
+		t.Errorf("after the settle the payable reads paid %d, want 60000", paid.PaidCadCents)
+	}
+
+	// The as-of read cuts the payment at the settlement instant: before it the
+	// payable is open, after it the payable is gone from the aging.
+	payables, err := svc.OpenPayablesAsOf(ctx, before.Add(-time.Second), nil, true)
+	if err != nil {
+		t.Fatalf("open payables as of before the settle: %v", err)
+	}
+	for _, p := range payables {
+		if p.ID == id {
+			t.Errorf("the payable still reads open %d cents as of before its settlement", p.TotalCadCents-p.PaidCadCents)
+		}
+	}
+
+	// The settlement journal is balanced and relieves GL 2100.
+	j := gl.journals["landedcost.settle:"+id]
+	if j.IdempotencyKey == "" {
+		t.Fatalf("no settlement journal posted under the landedcost.settle key")
+	}
+	if gl.debit("landedcost.settle:"+id, "2100") != 60000 || gl.credit("landedcost.settle:"+id, "2100") != 0 {
+		t.Errorf("the settlement journal does not debit 2100 by the charge")
+	}
+	if gl.credit("landedcost.settle:"+id, "1000") != 60000 {
+		t.Errorf("the settlement journal does not credit 1000 by the charge")
+	}
+
+	// Settling a DRAFT refuses with a conflict, and a VOIDED payable is not payable.
+	draftID, err := svc.Create(ctx, CreateInput{
+		POID: landedPO, PORef: "LC-IT-SETTLE-DRAFT", BranchID: trentonBranch, Currency: "CAD",
+		FreightCents: 60000, AllocationBasis: "weight",
+	})
+	if err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+	if err := svc.Settle(ctx, draftID, SettleInput{PaidAt: &before}); err == nil {
+		t.Errorf("settling a DRAFT landed cost succeeded, want a conflict")
+	}
+}

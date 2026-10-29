@@ -547,6 +547,61 @@ func (s *Service) Void(ctx context.Context, id string) error {
 	})
 }
 
+// Settle pays a posted landed cost's payable in full: it stamps the header
+// with the CAD amount and the instant it was paid, and posts the DR 2100 /
+// CR 1000 settlement journal inside the same transaction (idempotent on its
+// landedcost.settle key), so the AP aging reads the payment from the
+// settlement journal's effective instant the same rule it reads a bill's
+// payment by, and the payable leaves GL 2100 the day the cheque clears. A
+// re-press is a no-op: an already settled payable pays once.
+func (s *Service) Settle(ctx context.Context, id string, in SettleInput) error {
+	lc, err := s.guardBranch(ctx, id)
+	if err != nil {
+		return err
+	}
+	switch lc.Status {
+	case StatusPosted, StatusRetroAdjusted:
+	default:
+		return clientErr(409, "landedcost: cannot settle a %s landed cost", lc.Status)
+	}
+	if lc.SettledCadCents > 0 {
+		return nil // already settled, the re-press pays nothing twice
+	}
+	total := lc.totalCadCents()
+	if total <= 0 {
+		return clientErr(409, "landedcost: landed cost carries no payable to settle")
+	}
+	at := s.clock()
+	if in.PaidAt != nil && !in.PaidAt.IsZero() {
+		at = in.PaidAt.UTC()
+	}
+	return s.repo.WithinTx(ctx, func(tx pgx.Tx) error {
+		locked, err := s.repo.LockForUpdateTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if locked.SettledCadCents > 0 {
+			return nil // a concurrent settle won the row, pay once
+		}
+		if err := s.repo.SettleTx(ctx, tx, id, total, at); err != nil {
+			return err
+		}
+		_, err = s.postJournalTx(ctx, tx, glJournal{
+			key:    "landedcost.settle:" + id,
+			source: glSourcePayment,
+			refID:  id,
+			memo:   "Landed cost paid",
+			branch: lc.BranchID,
+			at:     at,
+			lines: []glLine{
+				{acct: acctFreightPayable, debit: total, memo: "pay freight and duty payable"},
+				{acct: glAccountCash, credit: total, memo: "carrier or broker cheque"},
+			},
+		})
+		return err
+	})
+}
+
 // - seam helpers -
 
 func (s *Service) receivedLines(ctx context.Context, poID string) ([]ReceivedLine, error) {
