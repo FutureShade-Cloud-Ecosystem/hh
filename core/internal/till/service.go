@@ -807,7 +807,9 @@ func (s *Service) deriveZReport(ctx context.Context, sess TillSession) (ZReport,
 
 	// Per-tender variance, derived. Cash and cheque are physically (blind) counted; card/EFT/OTHER are
 	// processor-confirmed captures, so their actual = expected captures (variance 0), D-A03-9.
-	var perTender []TenderTotal
+	// An empty drawer answers the empty array, never nil: per_tender is a contract array and the
+	// Counter Till's close screen maps over it.
+	perTender := []TenderTotal{}
 	for _, method := range []string{MethodCash, MethodCheque, MethodCard, MethodEFT, MethodOther} {
 		exp, hasExp := expected[method]
 		act, hasAct := actuals[method]
