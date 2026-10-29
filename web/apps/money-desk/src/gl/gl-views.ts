@@ -383,7 +383,7 @@ function journalsView(model: GlModel): TemplateResult {
           <div class="gl-filters" role="group" aria-label="Filter journals">
             ${FILTERS.map((f) => html`<button type="button" class="gl-filter" data-action="gl-filter" data-filter=${f.id} aria-pressed="${model.journalFilter === f.id ? "true" : "false"}">${f.word}${f.id === "all" ? nothing : html` ${statusCountWord(model.journals.filter((j) => filterMatches(f.id, j)).length)}`}</button>`)}
           </div>
-          ${model.journalsNext !== "" ? html`<p class="gl-note gl-counts-note" data-counts-note>${countsNoteWords(model.journals.length)}</p>` : nothing}
+          ${model.journalsNext !== "" ? html`<p class="gl-dim gl-counts-note" data-counts-note>${countsNoteWords(model.journals.length)}</p>` : nothing}
         </div>
         ${dateRange(model)}
         ${rows.length === 0
