@@ -74,7 +74,7 @@ func TestIntegration_FinanceResetLockPreflight(t *testing.T) {
 	// actually holds in pg_locks before a ROLLBACK.
 	catalog := financeLocksTestCatalog(t, ctx, pool)
 	statements := financeLocksTestStatements(dump)
-	estimate := catalog + statements
+	estimate := catalog + 3*statements
 	perTransaction, connections, prepared := financeLocksTestServer(t, ctx, pool)
 	capacity := perTransaction * (connections + prepared)
 
@@ -200,27 +200,46 @@ func financeLocksTestMeasured(t *testing.T, dsn string, dump []byte) int {
 	return 0
 }
 
-// financeLocksTestCatalog answers the objects the box's three schemas hold,
-// with the leg's own query: the relations, the functions and the named types
-// the box owns today.
+// financeLocksTestCatalog answers the catalog objects a drop of the box's
+// three schemas locks today, with the leg's own query: every pg_class row in
+// the three schemas, their TOAST tables and TOAST indexes, pg_proc, pg_type
+// (row and array types included), pg_constraint, pg_attrdef, pg_trigger,
+// pg_rewrite and pg_policy.
 func financeLocksTestCatalog(t *testing.T, ctx context.Context, pool *pgxpool.Pool) int {
 	t.Helper()
-	var relations, functions, types int
+	var relations, toastTables, toastIndexes, functions, types, constraints, defaults, triggers, rewrites, policies int
 	err := pool.QueryRow(ctx, `
 		SELECT
 		  (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-		    WHERE n.nspname = ANY(ARRAY['public','ai','ai_pro'])
-		      AND c.relkind IN ('r','p','v','m','S','f','i')),
+		    WHERE n.nspname = ANY(ARRAY['public','ai','ai_pro'])),
+		  (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		    WHERE n.nspname = ANY(ARRAY['public','ai','ai_pro']) AND c.reltoastrelid <> 0),
+		  (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		    JOIN pg_index i ON i.indrelid = c.reltoastrelid
+		    WHERE n.nspname = ANY(ARRAY['public','ai','ai_pro']) AND c.reltoastrelid <> 0),
 		  (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 		    WHERE n.nspname = ANY(ARRAY['public','ai','ai_pro'])),
 		  (SELECT count(*) FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
-		    WHERE n.nspname = ANY(ARRAY['public','ai','ai_pro'])
-		      AND (t.typtype IN ('e','d','r') OR (t.typtype = 'c' AND t.typrelid = 0)))`,
-	).Scan(&relations, &functions, &types)
+		    WHERE n.nspname = ANY(ARRAY['public','ai','ai_pro'])),
+		  (SELECT count(*) FROM pg_constraint con JOIN pg_namespace n ON n.oid = con.connamespace
+		    WHERE n.nspname = ANY(ARRAY['public','ai','ai_pro'])),
+		  (SELECT count(*) FROM pg_attrdef ad JOIN pg_class c ON c.oid = ad.adrelid
+		    JOIN pg_namespace n ON n.oid = c.relnamespace
+		    WHERE n.nspname = ANY(ARRAY['public','ai','ai_pro'])),
+		  (SELECT count(*) FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid
+		    JOIN pg_namespace n ON n.oid = c.relnamespace
+		    WHERE n.nspname = ANY(ARRAY['public','ai','ai_pro'])),
+		  (SELECT count(*) FROM pg_rewrite rw JOIN pg_class c ON c.oid = rw.ev_class
+		    JOIN pg_namespace n ON n.oid = c.relnamespace
+		    WHERE n.nspname = ANY(ARRAY['public','ai','ai_pro'])),
+		  (SELECT count(*) FROM pg_policy pol JOIN pg_class c ON c.oid = pol.polrelid
+		    JOIN pg_namespace n ON n.oid = c.relnamespace
+		    WHERE n.nspname = ANY(ARRAY['public','ai','ai_pro']))`,
+	).Scan(&relations, &toastTables, &toastIndexes, &functions, &types, &constraints, &defaults, &triggers, &rewrites, &policies)
 	if err != nil {
 		t.Fatalf("the box's own catalog: %v", err)
 	}
-	return relations + functions + types
+	return relations + toastTables + toastIndexes + functions + types + constraints + defaults + triggers + rewrites + policies
 }
 
 // financeLocksTestServer answers the server's own lock table: the three

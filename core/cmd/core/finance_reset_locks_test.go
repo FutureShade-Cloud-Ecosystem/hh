@@ -67,10 +67,11 @@ CREATE TABLE this_row_is_data (id bigint);
 }
 
 func TestFinanceResetLockEstimate(t *testing.T) {
-	// The estimate is the box's own objects plus the dump's own statements:
+	// The estimate is the catalog objects a drop of the box's own schemas
+	// locks now, plus three locks per CREATE or ALTER head in the dump:
 	// the one transaction holds the locks of both.
-	if got := financeResetLockEstimate(1384, 2044); got != 3428 {
-		t.Fatalf("the estimate is %d, want 3428", got)
+	if got := financeResetLockEstimate(9034, 2040); got != 15154 {
+		t.Fatalf("the estimate is %d, want 15154", got)
 	}
 }
 
@@ -97,7 +98,7 @@ func TestFinanceResetLocksFit(t *testing.T) {
 func TestFinanceResetLockRefusal(t *testing.T) {
 	// The estimate is computed from the catalog and dump counts, never
 	// planted, against a default server's nominal table of 6,400 slots.
-	estimate := financeResetLockEstimate(1384, 2044)
+	estimate := financeResetLockEstimate(9034, 2040)
 	capacity := financeResetLockCapacity(64, 100, 0)
 	locks := financeResetLocks{
 		Estimate:       estimate,
@@ -138,7 +139,7 @@ func TestFinanceResetLockRefusal(t *testing.T) {
 func TestFinanceResetLockSuggestedSetting(t *testing.T) {
 	// The setting that holds twice the estimate, rounded up to a power of
 	// two, and never below the box's own floor.
-	estimate := financeResetLockEstimate(1384, 2044)
+	estimate := financeResetLockEstimate(9034, 2040)
 	locks := financeResetLocks{Estimate: estimate, Capacity: 6400, Connections: 100}
 	if got := locks.SuggestedSetting(); got != 512 {
 		t.Fatalf("the suggested setting for an estimate of %d is %d, want 512", estimate, got)

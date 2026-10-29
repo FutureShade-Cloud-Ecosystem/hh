@@ -15,17 +15,28 @@ package main
 //
 // So the reset asks the server what it can hold BEFORE it drops anything:
 //
-//   - the estimate is the objects the box's three schemas hold now (read from
-//     the catalog) plus the dump's own object statements (the CREATE and
-//     ALTER heads outside the world's data, the lines the transaction guard's
-//     statement reader already walks);
+//   - the estimate is the catalog objects a drop of the box's three schemas
+//     locks now (every pg_class row in public, ai and ai_pro, their TOAST
+//     tables and TOAST indexes, pg_proc, pg_type with row and array types
+//     included, pg_constraint, pg_attrdef, pg_trigger, pg_rewrite and
+//     pg_policy) plus the dump's own CREATE and ALTER heads outside the
+//     world's data weighted by 3 locks per head;
+//   - the weights come from measuring pg_locks on the real world inside the
+//     reset's single transaction before a ROLLBACK: the drop side held 9,135
+//     locks across 1,384 top-level relations, functions and named types (about
+//     6.6 per object, accounted for by the TOAST relations, row and array
+//     types, constraints, column defaults, triggers, rewrite rules and
+//     policies), and the create side held 5,918 locks across 2,065 CREATE and
+//     ALTER heads (about 2.9 per head, rounded up to 3);
 //   - the capacity is the server's own lock table;
 //   - a table that cannot hold TWICE the estimate is refused, in words,
 //     naming the estimate, the capacity and the setting to raise.
 //
 // Twice, because the one transaction holds the world's locks and the box's
 // own at the same time: a table that holds only one of them is a table that
-// runs out half way through the restore.
+// runs out half way through the restore. On the box and in CI (512 locks per
+// transaction x 100 connections = 51,200 slots), twice the calibrated estimate
+// (about 30,300 slots) fits with room to spare.
 
 import (
 	"context"
@@ -91,33 +102,62 @@ func financeResetDumpObjectStatements(dump []byte) int {
 	return count
 }
 
+// financeResetDumpStatementLocks is the measured lock weight of one CREATE or
+// ALTER head in the world's dump: restoring the real world into an empty
+// database held 5,918 locks across 2,065 heads (about 2.9 locks per head,
+// rounded up to 3).
+const financeResetDumpStatementLocks = 3
+
 // financeResetLockEstimate answers the locks the one transaction is expected
-// to hold: the objects the box's own schemas hold now, plus the dump's own
-// object statements. The one transaction holds both at once: it drops what
-// the box holds and creates what the world carries.
+// to hold: the catalog objects a drop of the box's own schemas locks now, plus
+// the dump's own CREATE and ALTER heads weighted by the locks each head takes.
+// The one transaction holds both at once: it drops what the box holds and
+// creates what the world carries.
 func financeResetLockEstimate(catalogObjects, dumpStatements int) int {
-	return catalogObjects + dumpStatements
+	return catalogObjects + financeResetDumpStatementLocks*dumpStatements
 }
 
-// financeResetCatalogObjects answers how many objects the box's three
-// schemas hold right now, read from the catalog: the relations (the tables,
-// the views, the sequences and the indexes), the functions and the named
-// types. Each one of them is an object the restore's transaction locks.
+// financeResetCatalogObjects answers how many catalog objects a drop of the
+// box's three schemas locks right now: every pg_class row in the three
+// schemas, their TOAST tables and TOAST indexes, pg_proc, pg_type (row and
+// array types included), pg_constraint, pg_attrdef, pg_trigger, pg_rewrite
+// and pg_policy.
 func financeResetCatalogObjects(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 	const q = `
 		SELECT
 		  (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-		    WHERE n.nspname = ANY($1) AND c.relkind IN ('r','p','v','m','S','f','i')),
+		    WHERE n.nspname = ANY($1)),
+		  (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		    WHERE n.nspname = ANY($1) AND c.reltoastrelid <> 0),
+		  (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		    JOIN pg_index i ON i.indrelid = c.reltoastrelid
+		    WHERE n.nspname = ANY($1) AND c.reltoastrelid <> 0),
 		  (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 		    WHERE n.nspname = ANY($1)),
 		  (SELECT count(*) FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
-		    WHERE n.nspname = ANY($1)
-		      AND (t.typtype IN ('e','d','r') OR (t.typtype = 'c' AND t.typrelid = 0)))`
-	var relations, functions, types int
-	if err := pool.QueryRow(ctx, q, financeResetBoxSchemas).Scan(&relations, &functions, &types); err != nil {
+		    WHERE n.nspname = ANY($1)),
+		  (SELECT count(*) FROM pg_constraint con JOIN pg_namespace n ON n.oid = con.connamespace
+		    WHERE n.nspname = ANY($1)),
+		  (SELECT count(*) FROM pg_attrdef ad JOIN pg_class c ON c.oid = ad.adrelid
+		    JOIN pg_namespace n ON n.oid = c.relnamespace
+		    WHERE n.nspname = ANY($1)),
+		  (SELECT count(*) FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid
+		    JOIN pg_namespace n ON n.oid = c.relnamespace
+		    WHERE n.nspname = ANY($1)),
+		  (SELECT count(*) FROM pg_rewrite rw JOIN pg_class c ON c.oid = rw.ev_class
+		    JOIN pg_namespace n ON n.oid = c.relnamespace
+		    WHERE n.nspname = ANY($1)),
+		  (SELECT count(*) FROM pg_policy pol JOIN pg_class c ON c.oid = pol.polrelid
+		    JOIN pg_namespace n ON n.oid = c.relnamespace
+		    WHERE n.nspname = ANY($1))`
+	var relations, toastTables, toastIndexes, functions, types, constraints, defaults, triggers, rewrites, policies int
+	if err := pool.QueryRow(ctx, q, financeResetBoxSchemas).Scan(
+		&relations, &toastTables, &toastIndexes, &functions, &types,
+		&constraints, &defaults, &triggers, &rewrites, &policies,
+	); err != nil {
 		return 0, fmt.Errorf("finance-reset: the box's own catalog could not be read: %w", err)
 	}
-	return relations + functions + types, nil
+	return relations + toastTables + toastIndexes + functions + types + constraints + defaults + triggers + rewrites + policies, nil
 }
 
 // financeResetLocksOf answers the server's lock table and the reset's own
