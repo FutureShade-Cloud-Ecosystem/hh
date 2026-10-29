@@ -29,10 +29,22 @@
 // schema is dropped, so a refusal anywhere before the restore leaves the
 // database exactly as it was.
 //
+// The restore runs in ONE transaction, and that one transaction holds
+// thousands of locks: one restore of the real world measured 15,053 of them,
+// against a server's nominal lock table of 6,400 slots (64 locks per
+// transaction x 100 connections). So the reset asks the server what its lock
+// table can hold BEFORE it drops anything: it estimates what the one
+// transaction needs (the objects the box's three schemas hold now, read from
+// the catalog, plus the dump's own object statements) and refuses a server
+// whose table cannot hold twice that estimate, in words, naming the
+// estimate, the capacity and the setting to raise. A box that is refused
+// there keeps every table and every row it had.
+//
 // The reset prints counts only: how many bytes the decoded dump carried, how
 // many schemas it dropped, how many migrations it applied, how many tables
-// came back and how many audit rows it wrote. It writes no world value
-// anywhere.
+// came back, how many audit rows it wrote, and the lock table's own numbers:
+// the locks the one transaction is estimated to need and the slots the server
+// holds. It writes no world value anywhere.
 //
 // After the restore succeeds, the reset records the restored world's sha256
 // inside the box, in the same transaction as its audit row, through the
@@ -138,6 +150,16 @@ dump is never held on the shared memory tmpfs, whose size the platform
 sizes, not the box. A refusal before the restore leaves the database as it
 was.
 
+The restore runs in ONE transaction, and that one transaction holds thousands
+of locks. Before it drops anything the reset asks the server what its lock
+table can hold (max_locks_per_transaction x (max_connections +
+max_prepared_transactions)) and estimates what the transaction needs (the
+objects the box's three schemas hold now, plus the dump's own object
+statements). A server whose table cannot hold twice that estimate is refused
+in words, naming the estimate, the capacity and the setting to raise, and the
+box keeps every table and every row it had. The counts line carries the
+estimate and the capacity every time, refused or not.
+
 The dump does not have to carry the box's people. The live box's users are
 applied again at its next boot from HH_FINANCE_USERS, so the reset does not
 need to keep identity rows.
@@ -236,6 +258,20 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	if !strings.EqualFold(got, expected) {
 		return fmt.Errorf("finance-reset: the dump's sha256 is not the one %s names: nothing was dropped", envFinanceWorldSHA)
 	}
+	// The lock pre-flight: the restore runs in ONE transaction, and that one
+	// transaction holds thousands of locks. The server's lock table is a
+	// fixed number of slots, so a server whose table cannot hold twice what
+	// the transaction needs is told BEFORE anything is dropped, in words,
+	// naming the estimate, the capacity and the setting to raise. A box
+	// that is refused here keeps every table and every row it had.
+	locks, err := financeResetLocksOf(ctx, pool, dump)
+	if err != nil {
+		return err
+	}
+	if !locks.Fits() {
+		fmt.Fprintln(stdout, financeResetCountsLine(len(dump), 0, 0, 0, 0, locks))
+		return locks.Refusal()
+	}
 	// The dump is mapped onto the box's own roles before it is written: the
 	// world's dump carries the build database's assist role names and the
 	// build's migrating role, and the box's database has its own.
@@ -315,9 +351,19 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	if err := financeResetAudit(ctx, pool2, orgSlug, strings.ToLower(expected)); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "dump_bytes=%d schemas_dropped=%d migrations_applied=%d tables_restored=%d audit_rows=1\n",
-		len(dump), len(schemas), applied, tables)
+	fmt.Fprintln(stdout, financeResetCountsLine(len(dump), len(schemas), applied, tables, 1, locks))
 	return nil
+}
+
+// financeResetCountsLine answers the one line the reset prints: the counts of
+// what it did, and the lock table's own numbers.
+//
+// The lock numbers are on the line every time, refused or not: a reset that
+// ran and a reset that refused both carry the estimate and the capacity, so
+// the operator reads the same line either way.
+func financeResetCountsLine(dumpBytes, schemas, migrations, tables, audits int, locks financeResetLocks) string {
+	return fmt.Sprintf("dump_bytes=%d schemas_dropped=%d migrations_applied=%d tables_restored=%d audit_rows=%d locks_estimated=%d lock_capacity=%d",
+		dumpBytes, schemas, migrations, tables, audits, locks.Estimate, locks.Capacity)
 }
 
 // financeResetConfirm checks the -confirm against this box's org and answers
