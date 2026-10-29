@@ -22526,6 +22526,53 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/purchasing/bills/{id}/payments:
+    post:
+      operationId: purchasingPayBill
+      tags:
+        - staff-purchasing
+      x-addition: "W2-9a round 2: the vendor bill payment door over PayBill; the ERP keyed supplier payments by hand"
+      summary: Record a supplier payment against a posted vendor bill
+      description: "Idempotent on the required Idempotency-Key header: a re-press under the same key returns the first payment and writes nothing. The payment's journal is dated by paid_at, absent meaning now in the dealer's house zone. A payment over the bill's open balance is refused with nothing written, and a bill outside the caller's branch reach answers the same 404 as a missing bill."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: A key chosen once per payment press and resent unchanged on every retry of it. A re-press under the same key answers the first payment; the same key on another bill is refused.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingPayBillRequest"
+      responses:
+        "200":
+          description: The bill with its instalments after the payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingBillDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/purchasing/ap-aging:
     get:
       operationId: purchasingGetAPAging
@@ -22533,7 +22580,7 @@ paths:
         - staff-purchasing
       x-addition: "W2-9a: the AP aging worklist over open vendor bills and open landed-cost payables in the dealer's house zone, tying to GL 2100; no ERP source route"
       summary: Read the AP aging worklist as of an instant
-      description: Open accounts payable as of an instant in the dealer's house zone, absent as_of meaning now. Each vendor row carries its posted bills less supplier payments as of the instant, bucketed across the five aging buckets, and each open landed-cost payable appears on its own row marked as landed cost. The aging total equals the net credit balance of GL 2100 as of the same instant.
+      description: "Open accounts payable as of an instant in the dealer's house zone, absent as_of meaning now. Each vendor row carries its posted bills less supplier payments as of the instant, bucketed across the five aging buckets, and each open landed-cost payable appears on its own row marked as landed cost. A document counts from its posting journal's effective instant, the GL's own late filing rule. The aging is the subledger: it grows only by posted vendor bills and open landed-cost payables, so a 2100 credit that is neither (a MANUAL or ADJUSTMENT accrual, another module's posting) shows as a tie difference against the net credit balance of GL 2100 as of the same instant, never as an aging row."
       x-role: requireManager
       x-access:
         surfaces:
@@ -54243,6 +54290,21 @@ components:
         accept_variance:
           type: boolean
           description: The recorded, deliberate acceptance a VARIANCE bill needs to post
+        note:
+          type: string
+    PurchasingPayBillRequest:
+      type: object
+      required:
+        - amount_cents
+      properties:
+        amount_cents:
+          type: integer
+          format: int64
+          description: The payment amount in cents; the open balance caps it
+        paid_at:
+          type: string
+          format: date-time
+          description: The payment's own instant; absent means now in the dealer's house zone
         note:
           type: string
     PurchasingSetToleranceRequest:

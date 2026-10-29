@@ -7965,6 +7965,12 @@ type PurchasingPostBillRequest struct {
 	Note           *string `json:"note,omitempty"`
 }
 
+type PurchasingPayBillRequest struct {
+	AmountCents int64      `json:"amount_cents"`
+	PaidAt      *time.Time `json:"paid_at,omitempty"`
+	Note        *string    `json:"note,omitempty"`
+}
+
 type PurchasingSetToleranceRequest struct {
 	BranchId               *string `json:"branch_id,omitempty"`
 	QtyTolerancePct        float64 `json:"qty_tolerance_pct"`

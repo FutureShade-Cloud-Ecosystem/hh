@@ -49,6 +49,19 @@ func (a itLandedPayables) OpenPayablesAsOf(ctx context.Context, asOf time.Time, 
 	return out, nil
 }
 
+// itLandedClock mirrors itGLClock for landedcost's journal clock seam, so a landed
+// cost payable counts from its apply journal's effective instant exactly as the
+// production wiring answers it.
+type itLandedClock struct{ svc *gl.Service }
+
+func (a itLandedClock) JournalEffectiveInstants(ctx context.Context, journalIDs []string) (map[string]time.Time, error) {
+	return a.svc.JournalEffectiveInstants(ctx, journalIDs)
+}
+
+func (a itLandedClock) JournalEffectiveInstantByKey(ctx context.Context, key string) (time.Time, bool, error) {
+	return a.svc.JournalEffectiveInstantByKey(ctx, key)
+}
+
 type apAgingTestRig struct {
 	*harness
 	landedSvc *landedcost.Service
@@ -72,7 +85,8 @@ func newAPAgingRig(t *testing.T) *apAgingTestRig {
 		WithRuleResolver(invRuleBridge{svc: glSvc})
 	landedSvc := landedcost.NewService(landedcost.NewRepository(h.pool)).
 		WithCapitalizer(landedBridge{svc: invSvc}).
-		WithGLPoster(landedGLBridge{svc: glSvc})
+		WithGLPoster(landedGLBridge{svc: glSvc}).
+		WithJournalClock(itLandedClock{svc: glSvc})
 
 	h.svc.WithLandedCoster(itLanded{svc: landedSvc}).
 		WithLandedCostPayables(itLandedPayables{svc: landedSvc})
@@ -562,28 +576,35 @@ func TestIntegration_W29A_Sub4_PrincipalReds_OpenLandedCostAndAsOfPayments(t *te
 	rig := newAPAgingRig(t)
 	reach := BranchReach{BranchIDs: []string{branchTRT}}
 
-	// Derive all instants relative to the current dealer clock so the test never ages into a fixed-date bomb:
-	// - asOfCutoff = 30 days ago (end of house day)
-	// - Bill Date for both bills = 44 days ago (14 days before asOfCutoff)
-	// - Bill PaidBefore: 35000 cents, due 35 days ago, paid in full 33 days ago (3 days before asOfCutoff)
-	// - Bill PaidAfter:  60000 cents, due 75 days ago (45 days past due at asOfCutoff -> DAYS_60), paid in full 25 days ago (5 days after asOfCutoff)
-	// - Open Landed Cost: 9500 cents duty applied 40 days ago (10 days before asOfCutoff -> DAYS_30)
-	// - asOfAfterBothPaid = 20 days ago (after both payments).
+	// Derive all instants anchored on the FIRST OF THE CURRENT MONTH so the test never ages into a fixed-date
+	// bomb and never stamps a posting journal outside the month it was filed in: the round 2b rule counts a
+	// document from its posting journal's effective instant, and a journal whose document date sits in a month
+	// other than its filed period counts only from that period's end. Every JOURNAL stamp below (the bills'
+	// document dates, the payments' paid_at, the landed cost's apply journal) therefore sits in the current,
+	// open month, while the row stamps that carry no journal (the landed cost's created day, the buckets' due
+	// dates) may reach back further:
+	// - F = the first of the current month; asOfCutoff = F+10 (end of house day)
+	// - Bill document dates = F-35 (the previous month, ensured OPEN, so the journals are not late filed)
+	// - Bill PaidBefore: 35000 cents, due F-35+5... due 35 days before the cutoff, paid in full at F+7 (before the cutoff)
+	// - Bill PaidAfter:  60000 cents, due F-35 (45 days past due at the cutoff -> DAYS_60), paid in full at F+15 (after the cutoff)
+	// - Open Landed Cost: 9500 cents duty, created F (10 days before the cutoff -> DAYS_30), apply journal stamped F+1
+	// - asOfAfterBothPaid = F+20 (after both payments).
 	nowLocal := time.Now().In(rig.zone)
+	firstOfMonth := time.Date(nowLocal.Year(), nowLocal.Month(), 1, 0, 0, 0, 0, rig.zone)
 	dayAt := func(daysOffset int, hour, min, sec, nsec int) time.Time {
-		d := nowLocal.AddDate(0, 0, daysOffset)
+		d := firstOfMonth.AddDate(0, 0, daysOffset)
 		rig.ensurePeriod(t, d.Year(), int(d.Month()))
 		return time.Date(d.Year(), d.Month(), d.Day(), hour, min, sec, nsec, rig.zone)
 	}
 
-	billDateStr := dayAt(-44, 12, 0, 0, 0).Format("2006-01-02")
-	dueBeforeStr := dayAt(-35, 12, 0, 0, 0).Format("2006-01-02")
-	dueAfterStr := dayAt(-75, 12, 0, 0, 0).Format("2006-01-02")
+	billDateStr := dayAt(-35, 12, 0, 0, 0).Format("2006-01-02")
+	dueBeforeStr := dayAt(-25, 12, 0, 0, 0).Format("2006-01-02")
+	dueAfterStr := dayAt(-35, 12, 0, 0, 0).Format("2006-01-02")
 
 	poBefore, billPaidBefore := rig.createReceivedPOAndPostBill(t, "sub4-paid-before", 35000, billDateStr, dueBeforeStr)
 	_, billPaidAfter := rig.createReceivedPOAndPostBill(t, "sub4-paid-after", 60000, billDateStr, dueAfterStr)
 
-	paidBeforeAt := dayAt(-33, 14, 0, 0, 0)
+	paidBeforeAt := dayAt(7, 14, 0, 0, 0)
 	if _, err := rig.svc.PayBill(rig.ctx, billPaidBefore.ID, PayBillRequest{
 		AmountCents:    35000,
 		PaidAt:         paidBeforeAt,
@@ -593,7 +614,7 @@ func TestIntegration_W29A_Sub4_PrincipalReds_OpenLandedCostAndAsOfPayments(t *te
 		t.Fatalf("PayBill(billPaidBefore): %v", err)
 	}
 
-	paidAfterAt := dayAt(-25, 14, 0, 0, 0)
+	paidAfterAt := dayAt(15, 14, 0, 0, 0)
 	if _, err := rig.svc.PayBill(rig.ctx, billPaidAfter.ID, PayBillRequest{
 		AmountCents:    60000,
 		PaidAt:         paidAfterAt,
@@ -604,7 +625,7 @@ func TestIntegration_W29A_Sub4_PrincipalReds_OpenLandedCostAndAsOfPayments(t *te
 	}
 
 	lcID := rig.createOpenLandedCost(t, poBefore, 0, 9500)
-	lcAppliedAt := dayAt(-40, 11, 0, 0, 0)
+	lcAppliedAt := dayAt(1, 11, 0, 0, 0)
 	if _, err := rig.pool.Exec(rig.ctx, `
 		UPDATE landed_costs
 		   SET created_at = $2, updated_at = $2
@@ -618,7 +639,7 @@ func TestIntegration_W29A_Sub4_PrincipalReds_OpenLandedCostAndAsOfPayments(t *te
 		t.Fatalf("stamp landed_cost journal posted_at: %v", err)
 	}
 
-	asOfCutoff := dayAt(-30, 23, 59, 59, int(time.Second-time.Nanosecond))
+	asOfCutoff := dayAt(10, 23, 59, 59, int(time.Second-time.Nanosecond))
 	pageCutoff, err := rig.svc.APAging(rig.ctx, asOfCutoff, reach)
 	if err != nil {
 		t.Fatalf("APAging(asOfCutoff): %v", err)
@@ -661,8 +682,8 @@ func TestIntegration_W29A_Sub4_PrincipalReds_OpenLandedCostAndAsOfPayments(t *te
 			pageCutoff.TotalCents, pageCutoff.Days30Cents, pageCutoff.Days60Cents)
 	}
 
-	// And after both bills are paid (20 days ago), billPaidAfter no longer shows, leaving only the open landed cost (9500 cents).
-	asOfAfterBoth := dayAt(-20, 23, 59, 59, int(time.Second-time.Nanosecond))
+	// And after both bills are paid (F+20), billPaidAfter no longer shows, leaving only the open landed cost (9500 cents).
+	asOfAfterBoth := dayAt(20, 23, 59, 59, int(time.Second-time.Nanosecond))
 	pageAfterBoth, err := rig.svc.APAging(rig.ctx, asOfAfterBoth, reach)
 	if err != nil {
 		t.Fatalf("APAging(asOfAfterBoth): %v", err)

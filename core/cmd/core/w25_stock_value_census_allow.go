@@ -104,13 +104,16 @@ const w25TestHelperKey = "test_helpers|*|*"
 // The round 7 verb-kinding leg's own probe fixtures (two UPDATE and two DELETE writers) are scanned
 // like any other test helper site, so the count is 99: the round 5 tree's 95 plus those 4.
 // The round 10 leg's planted const writer probe (S5's P3-5) is one more site: the count is 100.
-const w25TestHelperSiteCount = 100
+// W2-9a's two composition tests (w29a_ap_aging and w29ar2b_late_filed_bill) each clean up their product's
+// stock_moves and product_branch_costs rows: four more sites, so the count is 104.
+const w25TestHelperSiteCount = 104
 
 // w25OnHandTestHelperKey is the allowance bucket for every on-hand writer found in *_test.go files.
 const w25OnHandTestHelperKey = "test_helpers_on_hand|*|*"
 
 // w25OnHandTestHelperSiteCount is the exact number of on-hand writer sites found in *_test.go files.
-const w25OnHandTestHelperSiteCount = 74
+// W2-9a's two composition tests each clean up their product's stock_balances rows: 76.
+const w25OnHandTestHelperSiteCount = 76
 
 // w25CensusResult is the census answer: every site found, grouped by key, and every allowance key that
 // no live site matches.
