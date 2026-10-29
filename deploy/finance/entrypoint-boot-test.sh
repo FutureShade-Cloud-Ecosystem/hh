@@ -280,17 +280,29 @@ esac
 BIN="$SCRATCH/bin"
 mkdir -p "$BIN"
 
-# The stand-in core: it records the role it was asked to run and answers the
-# state the leg wants.
+# The stand-in core: it records the role it was asked to run, whether the
+# world fetch credential rode its environment (never its value), and answers
+# the state the leg wants.
 cat > "$BIN/core" <<'STUB'
 #!/bin/sh
 printf 'core %s\n' "$*" >> "$STUB_RECORD"
+printf 'envtok=%s\n' "${HH_FINANCE_WORLD_TOKEN:+set}" >> "$STUB_RECORD"
 case "$1" in
 	finance-box-state)
 		printf '%s\n' "$STUB_STATE"
 		;;
 	finance-box-check)
 		[ "$STUB_CHECK" = pass ] || exit 1
+		;;
+	finance-reset)
+		if [ "$STUB_RESET" = skip ]; then
+			printf 'already on world %s\n' "$HH_FINANCE_WORLD_SHA256"
+		fi
+		[ "$STUB_RESET" = pass ] || [ "$STUB_RESET" = skip ] || exit 1
+		;;
+	finance-check)
+		printf '%s\n' "$STUB_CHECK_LINES"
+		[ "$STUB_CHECKRUN" = pass ] || exit 1
 		;;
 esac
 exit 0
@@ -320,14 +332,19 @@ chmod 0600 "$SCRATCH/session.pem"
 cp deploy/finance/Caddyfile.template "$SCRATCH/finance-root/templates/Caddyfile.template"
 
 run_box() {
-	# run_box STATE CHECK: runs the entrypoint with the stand-ins and prints
-	# what it said.
+	# run_box STATE CHECK [NAME=VALUE ...]: runs the entrypoint with the
+	# stand-ins and prints what it said. The NAME=VALUE pairs ride the boot's
+	# environment (the world reset legs set HH_FINANCE_RESET_CONFIRM and the
+	# world names this way).
 	rm -f "$SCRATCH/record"
+	state="$1"
+	check="$2"
+	shift 2
 	env \
 		PATH="$BIN:$PATH" \
 		STUB_RECORD="$SCRATCH/record" \
-		STUB_STATE="$1" \
-		STUB_CHECK="$2" \
+		STUB_STATE="$state" \
+		STUB_CHECK="$check" \
 		DATABASE_URL='postgres://boxuser:boxpass@127.0.0.1:57726/finance_box?sslmode=disable' \
 		APP_ENV=staging \
 		HH_BOX_KIND=finance \
@@ -352,6 +369,7 @@ run_box() {
 		HH_WEB_CONSOLE_PROJECT_ID=finbox-test-project \
 		HH_WEB_DEALER_NAME='Invented Test Dealer' \
 		FINANCE_ROOT="$SCRATCH/finance-root" \
+		"$@" \
 		sh deploy/finance/entrypoint.sh 2>&1 || true
 }
 
@@ -465,6 +483,226 @@ esac
 case "$record" in
 	*"core finance-seed"*) fail "a foreign database was seeded: $record" ;;
 	*) pass "a foreign database is not seeded" ;;
+esac
+
+# -- the world reset at boot ----------------------------------------------------
+#
+# HH_FINANCE_RESET_CONFIRM set: the boot runs core finance-reset -once after
+# the box checks and before the serve, refuses before any fetch when the
+# confirm does not name the box's org, and never lets the fetch credential
+# reach a command line or a log line. Unset: none of this runs.
+
+WORLD_SHA=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+# Set and matching: the reset runs once, after the box kind check and the
+# migrate, and before the serve. The world names ride the environment: the
+# record is every child's command line, so the credential appearing there
+# would be a command line leak.
+out="$(run_box finance pass \
+	HH_FINANCE_RESET_CONFIRM=finbox \
+	HH_FINANCE_WORLD_URL=https://storage.example.test/world.dump \
+	HH_FINANCE_WORLD_SHA256="$WORLD_SHA" \
+	HH_FINANCE_WORLD_TOKEN=rb-sentinel-token-value \
+	STUB_RESET=pass)"
+record="$(cat "$SCRATCH/record" 2>/dev/null || true)"
+case "$record" in
+	*"core finance-reset -once -confirm finbox"*) pass "a matching confirm runs the world reset once" ;;
+	*) fail "a matching confirm did not run the world reset: $record" ;;
+esac
+reset_line="$(printf '%s\n' "$record" | grep -n 'core finance-reset' | head -n 1 | cut -d: -f1)"
+migrate_line="$(printf '%s\n' "$record" | grep -n 'core migrate' | head -n 1 | cut -d: -f1)"
+serve_line="$(printf '%s\n' "$record" | grep -n 'core serve' | head -n 1 | cut -d: -f1)"
+if [ -n "$reset_line" ] && [ -n "$migrate_line" ] && [ "$reset_line" -gt "$migrate_line" ]; then
+	pass "the world reset runs after the box checks and the migrate"
+else
+	fail "the world reset does not run after the box checks and the migrate (reset line ${reset_line:-none}, migrate line ${migrate_line:-none})"
+fi
+if [ -n "$reset_line" ] && [ -n "$serve_line" ] && [ "$reset_line" -lt "$serve_line" ]; then
+	pass "the world reset runs before the serve"
+else
+	fail "the world reset does not run before the serve (reset line ${reset_line:-none}, serve line ${serve_line:-none})"
+fi
+case "$record" in
+	*rb-sentinel-token-value*) fail "the fetch credential reached a command line: $record" ;;
+	*) pass "the fetch credential never reaches a command line" ;;
+esac
+case "$out" in
+	*rb-sentinel-token-value*) fail "the fetch credential reached the log: $out" ;;
+	*) pass "the fetch credential never reaches the log" ;;
+esac
+reset_line="$(printf '%s\n' "$record" | grep -n 'core finance-reset' | head -n 1 | cut -d: -f1)"
+if [ -n "$reset_line" ] && [ "$(printf '%s\n' "$record" | sed -n "$((reset_line + 1))p")" = 'envtok=set' ]; then
+	pass "the fetch credential reaches the reset through its environment"
+else
+	fail "the reset did not see the credential in its environment (line after the reset: $(printf '%s\n' "$record" | sed -n "$((reset_line + 1))p"))"
+fi
+
+# Set and not matching: refused before the reset runs, so before any fetch,
+# and the box does not serve.
+out="$(run_box finance pass \
+	HH_FINANCE_RESET_CONFIRM=not-this-box \
+	HH_FINANCE_WORLD_URL=https://storage.example.test/world.dump \
+	HH_FINANCE_WORLD_SHA256="$WORLD_SHA" \
+	HH_FINANCE_WORLD_TOKEN=rb-sentinel-token-value \
+	STUB_RESET=pass)"
+record="$(cat "$SCRATCH/record" 2>/dev/null || true)"
+case "$record" in
+	*"core finance-reset"*) fail "the reset ran although the confirm does not name the box's org: $record" ;;
+	*) pass "a mismatched confirm refuses before the reset runs, so before any fetch" ;;
+esac
+case "$out" in
+	*HH_FINANCE_RESET_CONFIRM*) pass "the mismatch refusal names the variable" ;;
+	*) fail "the mismatch refusal does not name the variable: $out" ;;
+esac
+case "$out" in
+	*not-this-box*) fail "the mismatch refusal prints a value: $out" ;;
+	*) pass "the mismatch refusal prints no value" ;;
+esac
+case "$record" in
+	*"core serve"*) fail "the box served after the mismatch refusal: $record" ;;
+	*) pass "the mismatched boot does not serve" ;;
+esac
+
+# The reset fails: the boot refuses, naming the step, and does not serve.
+out="$(run_box finance pass \
+	HH_FINANCE_RESET_CONFIRM=finbox \
+	HH_FINANCE_WORLD_URL=https://storage.example.test/world.dump \
+	HH_FINANCE_WORLD_SHA256="$WORLD_SHA" \
+	HH_FINANCE_WORLD_TOKEN=rb-sentinel-token-value \
+	STUB_RESET=fail)"
+record="$(cat "$SCRATCH/record" 2>/dev/null || true)"
+case "$record" in
+	*"core finance-reset"*) pass "the failed reset ran and its failure was seen" ;;
+	*) fail "the failed reset never ran: $record" ;;
+esac
+case "$out" in
+	*"the world reset"*) pass "the refusal names the step" ;;
+	*) fail "the refusal does not name the step: $out" ;;
+esac
+case "$out" in
+	*rb-sentinel-token-value*) fail "the failure log carries the credential: $out" ;;
+	*) pass "the failure log carries no value" ;;
+esac
+case "$record" in
+	*"core serve"*) fail "the box served after the reset failed: $record" ;;
+	*) pass "the failed reset does not serve" ;;
+esac
+
+# The world revision's digest is required with the confirm: a boot naming
+# the world but no digest refuses before the reset runs, and does not serve.
+out="$(run_box finance pass \
+	HH_FINANCE_RESET_CONFIRM=finbox \
+	HH_FINANCE_WORLD_SHA256=)"
+record="$(cat "$SCRATCH/record" 2>/dev/null || true)"
+case "$record" in
+	*"core finance-reset"*) fail "the reset ran with no digest named: $record" ;;
+	*) pass "a missing digest refuses before the reset runs" ;;
+esac
+case "$out" in
+	*HH_FINANCE_WORLD_SHA256*) pass "the missing digest refusal names the variable" ;;
+	*) fail "the missing digest refusal does not name the variable: $out" ;;
+esac
+case "$record" in
+	*"core serve"*) fail "the box served after the missing digest refusal: $record" ;;
+	*) pass "the missing digest boot does not serve" ;;
+esac
+
+# Unset: none of the reset runs, and the boot is as it ever was.
+out="$(run_box finance pass \
+	HH_FINANCE_WORLD_URL=https://storage.example.test/world.dump \
+	HH_FINANCE_WORLD_SHA256="$WORLD_SHA" \
+	HH_FINANCE_WORLD_TOKEN=rb-sentinel-token-value \
+	STUB_RESET=pass)"
+record="$(cat "$SCRATCH/record" 2>/dev/null || true)"
+case "$record" in
+	*"core finance-reset"*) fail "the reset ran with the variable unset: $record" ;;
+	*) pass "the variable unset runs no reset" ;;
+esac
+case "$out" in
+	*finance-check:*) fail "the check ran with the variable unset: $out" ;;
+	*) pass "the variable unset runs no check" ;;
+esac
+case "$record" in
+	*"core serve"*) pass "the variable unset boots to the serve" ;;
+	*) fail "the variable unset did not boot to the serve: $record" ;;
+esac
+
+# -- the check at boot ------------------------------------------------------------
+#
+# While the variable is set, the check runs after the reset or the skip and
+# every tie line lands in the log with the finance-check prefix. A FAIL is
+# logged, not fatal: the box still serves, so the principal can read it.
+
+# After a reset: two tie lines, both prefixed, the check between the reset
+# and the serve.
+out="$(run_box finance pass \
+	HH_FINANCE_RESET_CONFIRM=finbox \
+	HH_FINANCE_WORLD_URL=https://storage.example.test/world.dump \
+	HH_FINANCE_WORLD_SHA256="$WORLD_SHA" \
+	HH_FINANCE_WORLD_TOKEN=rb-sentinel-token-value \
+	STUB_RESET=pass \
+	STUB_CHECKRUN=pass \
+	STUB_CHECK_LINES='2026-10 ar_aging_to_gl_1100 PASS
+2026-10 stock_to_gl_1200 PASS')"
+record="$(cat "$SCRATCH/record" 2>/dev/null || true)"
+case "$out" in
+	*"finance-check: 2026-10 ar_aging_to_gl_1100 PASS"*) pass "the check's first tie line is logged with the prefix" ;;
+	*) fail "the check's first tie line is not in the log: $out" ;;
+esac
+case "$out" in
+	*"finance-check: 2026-10 stock_to_gl_1200 PASS"*) pass "the check's second tie line is logged with the prefix" ;;
+	*) fail "the check's second tie line is not in the log: $out" ;;
+esac
+reset_line="$(printf '%s\n' "$record" | grep -n 'core finance-reset' | head -n 1 | cut -d: -f1)"
+check_line="$(printf '%s\n' "$record" | grep -n 'core finance-check' | head -n 1 | cut -d: -f1)"
+serve_line="$(printf '%s\n' "$record" | grep -n 'core serve' | head -n 1 | cut -d: -f1)"
+if [ -n "$reset_line" ] && [ -n "$check_line" ] && [ "$check_line" -gt "$reset_line" ]; then
+	pass "the check runs after the reset"
+else
+	fail "the check does not run after the reset (reset line ${reset_line:-none}, check line ${check_line:-none})"
+fi
+if [ -n "$check_line" ] && [ -n "$serve_line" ] && [ "$check_line" -lt "$serve_line" ]; then
+	pass "the check runs before the serve"
+else
+	fail "the check does not run before the serve (check line ${check_line:-none}, serve line ${serve_line:-none})"
+fi
+
+# After a skip: the check still runs.
+out="$(run_box finance pass \
+	HH_FINANCE_RESET_CONFIRM=finbox \
+	HH_FINANCE_WORLD_URL=https://storage.example.test/world.dump \
+	HH_FINANCE_WORLD_SHA256="$WORLD_SHA" \
+	HH_FINANCE_WORLD_TOKEN=rb-sentinel-token-value \
+	STUB_RESET=skip \
+	STUB_CHECKRUN=pass \
+	STUB_CHECK_LINES='2026-10 ar_aging_to_gl_1100 PASS')"
+record="$(cat "$SCRATCH/record" 2>/dev/null || true)"
+case "$out" in
+	*"already on world $WORLD_SHA"*) pass "the skip ran before the check" ;;
+	*) fail "the skip did not run: $out" ;;
+esac
+case "$out" in
+	*"finance-check: 2026-10 ar_aging_to_gl_1100 PASS"*) pass "the check runs after a skip" ;;
+	*) fail "the check did not run after a skip: $out" ;;
+esac
+
+# A planted FAIL is logged, not fatal: the box still serves.
+out="$(run_box finance pass \
+	HH_FINANCE_RESET_CONFIRM=finbox \
+	HH_FINANCE_WORLD_URL=https://storage.example.test/world.dump \
+	HH_FINANCE_WORLD_SHA256="$WORLD_SHA" \
+	HH_FINANCE_WORLD_TOKEN=rb-sentinel-token-value \
+	STUB_RESET=pass \
+	STUB_CHECKRUN=fail \
+	STUB_CHECK_LINES='2026-10 outbox_drained FAIL 2 two events are waiting')"
+record="$(cat "$SCRATCH/record" 2>/dev/null || true)"
+case "$out" in
+	*"finance-check: 2026-10 outbox_drained FAIL 2 two events are waiting"*) pass "a planted FAIL appears as FAIL with the prefix" ;;
+	*) fail "a planted FAIL is not in the log: $out" ;;
+esac
+case "$record" in
+	*"core serve"*) pass "a FAILing check does not refuse the boot: the box serves" ;;
+	*) fail "a FAILing check refused the boot: $record" ;;
 esac
 
 if [ "$FAILURES" -ne 0 ]; then

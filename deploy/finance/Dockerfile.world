@@ -1,0 +1,17 @@
+# Dockerfile.world: the world layer on top of the finance image.
+#
+# The repository holds no world data. The principal builds this layer from a
+# scratch build context that carries exactly one dump file, never committed,
+# and pushes the result to the private registry:
+#
+#   docker build -f deploy/finance/Dockerfile.world -t <the box image> <scratch context>
+#
+# The scratch context holds one file, world.sql.gz: a gzip of the world
+# dump, whose sha256 of the decoded SQL is the digest HH_FINANCE_WORLD_SHA256
+# names on the box. The result is the finance image plus that one world at
+# /srv/world/world.sql.gz, so the finance-reset role reads the world from
+# the box itself and no store, address or fetch credential exists anywhere
+# on the boot path. The FROM tag below is the finance image this layer rides
+# on; the principal names the registry's tag at build time.
+FROM hh-finance-box
+COPY world.sql.gz /srv/world/world.sql.gz

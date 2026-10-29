@@ -187,8 +187,11 @@ type Service struct {
 	landed LandedCoster
 	gl     GLPoster
 	rules  RuleResolver
-	audit  audit.Recorder
-	log    *slog.Logger
+	// apPayments supplies the settlement side of the AP subledger read (ap_subledger.go), satisfied by
+	// the composition over the GL; nil keeps OpenAPCentsAsOf refusing closed.
+	apPayments APPaymentsReader
+	audit      audit.Recorder
+	log        *slog.Logger
 	// callerFrom resolves the trusted, server-stamped acting staff member every branch-scoped read/mutation
 	// gates against. Mirrors landedcost.Service.callerFrom.
 	callerFrom func(context.Context) (identity.StaffContext, bool)

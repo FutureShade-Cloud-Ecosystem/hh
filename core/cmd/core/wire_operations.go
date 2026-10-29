@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/attachments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
@@ -247,19 +249,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// The PO sender stays the module's unwired default by the pin's own
 	// recorded decision (no transport is wired on this server; the send
 	// is recorded FAILED in words rather than DELIVERED into a log).
-	purchasingSvc := purchasing.NewService(purchasing.NewRepository(pool)).
-		WithZone(newDealerZone(pool)).
+	purchasingSvc := finworldPurchasingComposition(pool, log, auditSvc).
 		WithStockReceiver(w4cStockReceiver{svc: inventorySvc}).
-		WithVendors(w4cVendorDirectory{pool: pool}).
 		WithLandedCoster(w4cLandedCoster{svc: landedcostSvc}).
 		WithLandedCostPayables(w4cLandedCoster{svc: landedcostSvc}).
 		WithGLJournalClock(w4cGLJournalClock{svc: spine.glSvc}).
 		WithGLPoster(w4cGLPoster{svc: spine.glSvc}).
 		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
-		WithAudit(auditSvc).
-		WithLogger(log).
-		WithBranches(item5BranchDirectory{pool: pool}).
-		WithVendorAddresses(item5VendorAddressBook{pool: pool}).
 		WithWarrantyCreditReader(w4cWarrantyCreditReader{pool: pool})
 	purchasing.NewHandler(purchasingSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
@@ -921,6 +917,47 @@ func (a invcountGLPoster) PostJournal(ctx context.Context, in invcount.GLJournal
 		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
 	}
 	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, DocumentDate: in.DocumentDate, Lines: lines})
+}
+
+// finworldPurchasingComposition builds the purchasing service the way the production wiring does,
+// with the shared pool-level seams: the dealer zone, the vendors projection, the branch directory,
+// the vendor address book and the AP subledger's settlement reader over the ledger. The caller adds
+// the request-shaped seams (stock receiver, landed cost, GL poster, rules) it needs.
+func finworldPurchasingComposition(pool *pgxpool.Pool, log *slog.Logger, auditSvc *audit.Service) *purchasing.Service {
+	return purchasing.NewService(purchasing.NewRepository(pool)).
+		WithZone(newDealerZone(pool)).
+		WithVendors(w4cVendorDirectory{pool: pool}).
+		WithAPPaymentsReader(glPaidAPReader{pool: pool, accountCode: "2100"}).
+		WithAudit(auditSvc).
+		WithLogger(log).
+		WithBranches(item5BranchDirectory{pool: pool}).
+		WithVendorAddresses(item5VendorAddressBook{pool: pool})
+}
+
+// glPaidAPReader satisfies purchasing.APPaymentsReader over the ledger: the net of the
+// PAYMENT-source journals on the trade payables account, the settlements side of the AP subledger.
+// A supplier payment is a PAYMENT journal on the payables account; nothing else posts that
+// combination, so no idempotency-key pattern matching is needed.
+type glPaidAPReader struct {
+	pool        *pgxpool.Pool
+	accountCode string
+}
+
+func (r glPaidAPReader) PaidAPCentsAsOf(ctx context.Context, asOf time.Time) (int64, error) {
+	var paid int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(COALESCE(l.debit_cents, 0) - COALESCE(l.credit_cents, 0)), 0)
+		  FROM gl_journal_lines l
+		  JOIN gl_journals j ON j.id = l.journal_id
+		  JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE j.status = 'POSTED'
+		   AND j.source = 'PAYMENT'
+		   AND a.code = $1
+		   AND j.posted_at <= $2`, r.accountCode, asOf).Scan(&paid)
+	if err != nil {
+		return 0, fmt.Errorf("the supplier payment read: %w", err)
+	}
+	return paid, nil
 }
 
 // landedGLPoster satisfies landedcost.GLPoster over glSvc.PostExternal
