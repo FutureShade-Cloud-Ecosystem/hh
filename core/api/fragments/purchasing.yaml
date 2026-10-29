@@ -1936,7 +1936,7 @@ components:
         clerk holding the paper invoice can agree it with the screen. The AP
         bill surface is not behind the purchase-cost gate: a bill is what we
         owe and the people who read it are the people whose job is to pay it.
-      required: [id, bill_no, vendor_id, vendor_name, branch_id, po_id, po_no, status, match_state, bill_date, subtotal_cents, tax_cents, total_cents, currency, fx_rate, created_at]
+      required: [id, bill_no, vendor_id, vendor_name, branch_id, po_id, po_no, status, match_state, bill_date, subtotal_cents, tax_cents, total_cents, doc_total_cents, currency, fx_rate, created_at]
       properties:
         id: { type: string, format: uuid }
         bill_no:
@@ -1956,6 +1956,10 @@ components:
         subtotal_cents: { type: integer, format: int64 }
         tax_cents: { type: integer, format: int64 }
         total_cents: { type: integer, format: int64 }
+        doc_total_cents:
+          type: integer
+          format: int64
+          description: The bill total in its own currency (the currency field), the unit a payment's amount_cents is in
         currency:
           $ref: "#/components/schemas/PurchasingCurrency"
         fx_rate: { type: number }
@@ -2013,8 +2017,12 @@ components:
       allOf:
         - $ref: "#/components/schemas/PurchasingBill"
         - type: object
-          required: [lines, instalments]
+          required: [lines, instalments, doc_open_cents]
           properties:
+            doc_open_cents:
+              type: integer
+              format: int64
+              description: What is still owed in the bill's own currency; paying exactly this settles the bill
             lines:
               type: array
               items: { $ref: "#/components/schemas/PurchasingBillLine" }
@@ -2306,7 +2314,9 @@ components:
         amount_cents:
           type: integer
           format: int64
-          description: The payment amount in cents; the open balance caps it
+          description: >-
+            The payment amount in cents, in the bill's own currency (USD cents on a USD bill, CAD
+            cents on a CAD bill); the open document currency amount (doc_open_cents) caps it
         fx_rate:
           type: number
           description: The payment rate (CAD per 1 USD) for a USD bill; omitted on a CAD bill
@@ -2456,6 +2466,9 @@ components:
         - total_cents
         - paid_cents
         - open_cents
+        - currency
+        - doc_total_cents
+        - doc_open_cents
         - bucket
       properties:
         id: { type: string, format: uuid }
@@ -2477,6 +2490,16 @@ components:
         total_cents: { type: integer, format: int64 }
         paid_cents: { type: integer, format: int64 }
         open_cents: { type: integer, format: int64 }
+        currency:
+          $ref: "#/components/schemas/PurchasingCurrency"
+        doc_total_cents:
+          type: integer
+          format: int64
+          description: The item's total in its own currency (CAD on a landed cost payable)
+        doc_open_cents:
+          type: integer
+          format: int64
+          description: The open amount in its own currency; the amount a payment's amount_cents takes to settle a bill
         freight_cad_cents: { type: integer, format: int64 }
         duty_cad_cents: { type: integer, format: int64 }
         handling_cad_cents: { type: integer, format: int64 }

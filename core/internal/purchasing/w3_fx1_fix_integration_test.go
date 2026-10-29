@@ -71,3 +71,53 @@ func TestIntegration_W3FX1Fix_LegacyPartPaidUSDBillBackfill(t *testing.T) {
 		t.Fatalf("cleared CAD %d, want the bill's %d", cleared, bill.TotalCents)
 	}
 }
+
+// P2-2: the bill read and the AP aging item return the document currency, its total and the open
+// document currency amount; paying that open amount read back settles the bill to zero in 2100.
+func TestIntegration_W3FX1Fix_OpenDocumentAmountPaysBillToZero(t *testing.T) {
+	rig := newAPAgingRig(t)
+	now := time.Now().In(rig.zone)
+	rig.ensurePeriod(t, now.Year(), int(now.Month()))
+	day := now.Format("2006-01-02")
+	bill := rig.postUSDBillAt(t, "fx1f-open", day, now.AddDate(0, 0, 30).Format("2006-01-02"), 100_001, 1.3333, now)
+
+	if _, err := rig.svc.PayBill(rig.ctx, bill.ID, PayBillRequest{AmountCents: 33_333, FXRate: 1.3333, PaidAt: now.Add(time.Minute), IdempotencyKey: "fx1f-open-a-" + bill.ID}); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := rig.svc.GetBill(rig.ctx, bill.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Currency != "USD" || detail.DocTotalCents != 100_001 || detail.DocOpenCents != 66_668 {
+		t.Fatalf("bill read: currency %q doc total %d doc open %d, want USD 100001 66668", detail.Currency, detail.DocTotalCents, detail.DocOpenCents)
+	}
+
+	page, err := rig.svc.APAging(rig.ctx, now.Add(2*time.Minute), BranchReach{BranchIDs: []string{branchTRT}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var item *APAgingItem
+	for _, row := range page.Items {
+		for i := range row.OpenItems {
+			if row.OpenItems[i].ID == bill.ID {
+				item = &row.OpenItems[i]
+			}
+		}
+	}
+	if item == nil {
+		t.Fatal("bill missing from the aging")
+	}
+	if item.Currency != "USD" || item.DocTotalCents != 100_001 || item.DocOpenCents != detail.DocOpenCents {
+		t.Fatalf("aging item: currency %q doc total %d doc open %d", item.Currency, item.DocTotalCents, item.DocOpenCents)
+	}
+
+	if _, err := rig.svc.PayBill(rig.ctx, bill.ID, PayBillRequest{AmountCents: item.DocOpenCents, FXRate: 1.3333, PaidAt: now.Add(3 * time.Minute), IdempotencyKey: "fx1f-open-b-" + bill.ID}); err != nil {
+		t.Fatalf("pay the open document amount: %v", err)
+	}
+	if got := rig.billNetAP2100Cents(t, bill.ID); got != 0 {
+		t.Fatalf("2100 residual %d after paying the open document amount", got)
+	}
+	if got := rig.billOpenInAgingCents(t, bill.ID, now.Add(4*time.Minute)); got != 0 {
+		t.Fatalf("aging still shows CAD %d open", got)
+	}
+}

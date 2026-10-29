@@ -236,8 +236,9 @@ type Bill struct {
 	TotalCents    int64 `json:"total_cents"`
 	// DocTotalCents is the bill total in its own document currency (USD cents on a USD bill, CAD
 	// cents on a CAD bill), used by PayBill to apportion the bill's CAD 2100 liability over USD
-	// payments and clear the exact remainder on the final payment.
-	DocTotalCents int64 `json:"-"`
+	// payments and clear the exact remainder on the final payment. It is the unit PayBill's
+	// amount_cents is in.
+	DocTotalCents int64 `json:"doc_total_cents"`
 	// Currency/FXRate record what the VENDOR wrote and the rate we read it at. An AP clerk holding
 	// the paper invoice needs both to agree with the screen; without them a converted total looks
 	// like a transcription error.
@@ -284,6 +285,10 @@ type BillDetail struct {
 	Bill
 	Lines       []BillLine   `json:"lines"`
 	Instalments []Instalment `json:"instalments"`
+	// DocOpenCents is what is still owed in the bill's document currency (the bill's currency
+	// field): doc_total_cents less the document currency paid so far. Paying exactly this
+	// settles the bill.
+	DocOpenCents int64 `json:"doc_open_cents"`
 }
 
 // Tolerance is the resolved three-way-match tolerance for a branch (the branch row, else the org default).

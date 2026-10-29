@@ -81,23 +81,28 @@ type PayBillRequest struct {
 // APAgingItem is one open AP obligation (either an open vendor bill or an open
 // landed-cost payable) as of the requested instant.
 type APAgingItem struct {
-	ID               string `json:"id"`
-	Kind             string `json:"kind"`
-	IsLandedCost     bool   `json:"is_landed_cost"`
-	RefNo            string `json:"ref_no"`
-	BillNo           string `json:"bill_no,omitempty"`
-	POID             string `json:"po_id,omitempty"`
-	PONo             string `json:"po_no,omitempty"`
-	PORef            string `json:"po_ref,omitempty"`
-	BranchID         string `json:"branch_id"`
-	VendorID         string `json:"vendor_id,omitempty"`
-	VendorName       string `json:"vendor_name,omitempty"`
-	ChargeKind       string `json:"charge_kind,omitempty"`
-	BillDate         string `json:"bill_date"`
-	DueDate          string `json:"due_date"`
-	TotalCents       int64  `json:"total_cents"`
-	PaidCents        int64  `json:"paid_cents"`
-	OpenCents        int64  `json:"open_cents"`
+	ID           string `json:"id"`
+	Kind         string `json:"kind"`
+	IsLandedCost bool   `json:"is_landed_cost"`
+	RefNo        string `json:"ref_no"`
+	BillNo       string `json:"bill_no,omitempty"`
+	POID         string `json:"po_id,omitempty"`
+	PONo         string `json:"po_no,omitempty"`
+	PORef        string `json:"po_ref,omitempty"`
+	BranchID     string `json:"branch_id"`
+	VendorID     string `json:"vendor_id,omitempty"`
+	VendorName   string `json:"vendor_name,omitempty"`
+	ChargeKind   string `json:"charge_kind,omitempty"`
+	BillDate     string `json:"bill_date"`
+	DueDate      string `json:"due_date"`
+	TotalCents   int64  `json:"total_cents"`
+	PaidCents    int64  `json:"paid_cents"`
+	OpenCents    int64  `json:"open_cents"`
+	// Currency is the bill's document currency; DocTotalCents and DocOpenCents are in it, and
+	// DocOpenCents is the amount PayBill takes to settle the bill.
+	Currency         string `json:"currency"`
+	DocTotalCents    int64  `json:"doc_total_cents"`
+	DocOpenCents     int64  `json:"doc_open_cents"`
 	FreightCadCents  int64  `json:"freight_cad_cents,omitempty"`
 	DutyCadCents     int64  `json:"duty_cad_cents,omitempty"`
 	HandlingCadCents int64  `json:"handling_cad_cents,omitempty"`
@@ -164,6 +169,12 @@ type apBillCandidate struct {
 	PaidAts     []time.Time
 	PaidAmounts []int64
 	PaidCents   int64
+	// Currency and DocTotalCents are the bill's document currency and total in it; PaidDocAmounts
+	// aligns with PaidAmounts and PaidDocCents is its as-of sum.
+	Currency       string
+	DocTotalCents  int64
+	PaidDocAmounts []int64
+	PaidDocCents   int64
 }
 
 // PayBill records a supplier payment against a posted vendor bill and posts
@@ -462,22 +473,25 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 		}
 		bucket := bucketForDueDate(asOfDay, c.DueDate)
 		item := APAgingItem{
-			ID:           c.BillID,
-			Kind:         APItemKindBill,
-			IsLandedCost: false,
-			RefNo:        c.BillNo,
-			BillNo:       c.BillNo,
-			POID:         c.POID,
-			PONo:         c.PONo,
-			BranchID:     c.BranchID,
-			VendorID:     c.VendorID,
-			VendorName:   c.VendorName,
-			BillDate:     c.BillDate,
-			DueDate:      c.DueDate,
-			TotalCents:   c.TotalCents,
-			PaidCents:    c.PaidCents,
-			OpenCents:    openCents,
-			Bucket:       bucket,
+			ID:            c.BillID,
+			Kind:          APItemKindBill,
+			IsLandedCost:  false,
+			RefNo:         c.BillNo,
+			BillNo:        c.BillNo,
+			POID:          c.POID,
+			PONo:          c.PONo,
+			BranchID:      c.BranchID,
+			VendorID:      c.VendorID,
+			VendorName:    c.VendorName,
+			BillDate:      c.BillDate,
+			DueDate:       c.DueDate,
+			TotalCents:    c.TotalCents,
+			PaidCents:     c.PaidCents,
+			OpenCents:     openCents,
+			Currency:      c.Currency,
+			DocTotalCents: c.DocTotalCents,
+			DocOpenCents:  c.DocTotalCents - c.PaidDocCents,
+			Bucket:        bucket,
 		}
 
 		idx, exists := vendorIndex[c.VendorID]
@@ -538,6 +552,9 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 				TotalCents:       lc.TotalCadCents,
 				PaidCents:        0,
 				OpenCents:        lc.TotalCadCents,
+				Currency:         "CAD",
+				DocTotalCents:    lc.TotalCadCents,
+				DocOpenCents:     lc.TotalCadCents,
 				FreightCadCents:  lc.FreightCadCents,
 				DutyCadCents:     lc.DutyCadCents,
 				HandlingCadCents: lc.HandlingCadCents,
@@ -646,10 +663,14 @@ func (r *Repository) OpenBillsAsOf(ctx context.Context, reach BranchReach) ([]ap
 		       to_char(COALESCE(b.due_date, b.bill_date), 'YYYY-MM-DD'),
 		       b.total_cents,
 		       COALESCE(b.gl_journal_id::text, ''),
+		       b.currency::text, b.doc_total_cents,
 		       COALESCE((SELECT array_agg(i.paid_at ORDER BY i.paid_at, i.id)
 		           FROM purchasing_bill_instalments i
 		          WHERE i.bill_id = b.id AND i.status = 'PAID'), '{}'),
 		       COALESCE((SELECT array_agg(i.amount_cents ORDER BY i.paid_at, i.id)
+		           FROM purchasing_bill_instalments i
+		          WHERE i.bill_id = b.id AND i.status = 'PAID'), '{}'),
+		       COALESCE((SELECT array_agg(i.doc_amount_cents ORDER BY i.paid_at, i.id)
 		           FROM purchasing_bill_instalments i
 		          WHERE i.bill_id = b.id AND i.status = 'PAID'), '{}')
 		  FROM purchasing_bills b
@@ -673,7 +694,7 @@ func (r *Repository) OpenBillsAsOf(ctx context.Context, reach BranchReach) ([]ap
 			&c.VendorNo, &c.VendorName, &c.PaymentTermsDays,
 			&c.BranchID, &c.POID, &c.PONo,
 			&c.BillDate, &c.DueDate,
-			&c.TotalCents, &c.GLJournalID, &c.PaidAts, &c.PaidAmounts,
+			&c.TotalCents, &c.GLJournalID, &c.Currency, &c.DocTotalCents, &c.PaidAts, &c.PaidAmounts, &c.PaidDocAmounts,
 		); err != nil {
 			return nil, fmt.Errorf("purchasing: scan open bill as of: %w", err)
 		}
@@ -703,13 +724,15 @@ func (s *Service) applyJournalClock(ctx context.Context, candidates []apBillCand
 			if c.BillDate > day {
 				continue
 			}
-			var paid int64
+			var paid, paidDoc int64
 			for i, at := range c.PaidAts {
 				if !at.After(asOf) {
 					paid += c.PaidAmounts[i]
+					paidDoc += c.PaidDocAmounts[i]
 				}
 			}
 			c.PaidCents = paid
+			c.PaidDocCents = paidDoc
 			out = append(out, c)
 		}
 		return out, nil
@@ -750,7 +773,7 @@ func (s *Service) applyJournalClock(ctx context.Context, candidates []apBillCand
 		}
 		payments := payByRef[c.BillID]
 		used := make([]bool, len(payments))
-		var paid int64
+		var paid, paidDoc int64
 		for i, at := range c.PaidAts {
 			instant := at
 			for j := range payments {
@@ -765,9 +788,11 @@ func (s *Service) applyJournalClock(ctx context.Context, candidates []apBillCand
 			}
 			if !instant.After(asOf) {
 				paid += c.PaidAmounts[i]
+				paidDoc += c.PaidDocAmounts[i]
 			}
 		}
 		c.PaidCents = paid
+		c.PaidDocCents = paidDoc
 		out = append(out, c)
 	}
 	return out, nil

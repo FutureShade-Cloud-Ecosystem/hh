@@ -840,19 +840,25 @@ func (r *Repository) GetBill(ctx context.Context, id string) (BillDetail, error)
 	detail.Lines = lines
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT id::text, seq, to_char(due_date,'YYYY-MM-DD'), amount_cents, status, note
+		SELECT id::text, seq, to_char(due_date,'YYYY-MM-DD'), amount_cents, status, note, doc_amount_cents
 		  FROM purchasing_bill_instalments WHERE bill_id = $1 ORDER BY seq`, id)
 	if err != nil {
 		return BillDetail{}, fmt.Errorf("purchasing: instalments: %w", err)
 	}
 	defer rows.Close()
+	var paidDoc int64
 	for rows.Next() {
 		var in Instalment
-		if err := rows.Scan(&in.ID, &in.Seq, &in.DueDate, &in.AmountCents, &in.Status, &in.Note); err != nil {
+		var docAmount int64
+		if err := rows.Scan(&in.ID, &in.Seq, &in.DueDate, &in.AmountCents, &in.Status, &in.Note, &docAmount); err != nil {
 			return BillDetail{}, fmt.Errorf("purchasing: scan instalment: %w", err)
+		}
+		if in.Status == "PAID" {
+			paidDoc += docAmount
 		}
 		detail.Instalments = append(detail.Instalments, in)
 	}
+	detail.DocOpenCents = detail.DocTotalCents - paidDoc
 	return detail, rows.Err()
 }
 

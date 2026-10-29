@@ -7778,6 +7778,7 @@ type PurchasingBill struct {
 	SubtotalCents        int64                `json:"subtotal_cents"`
 	TaxCents             int64                `json:"tax_cents"`
 	TotalCents           int64                `json:"total_cents"`
+	DocTotalCents        int64                `json:"doc_total_cents"`
 	Currency             PurchasingCurrency   `json:"currency"`
 	FxRate               float64              `json:"fx_rate"`
 	GlJournalId          *string              `json:"gl_journal_id,omitempty"`
@@ -7816,8 +7817,9 @@ type PurchasingInstalment struct {
 
 type PurchasingBillDetail struct {
 	PurchasingBill
-	Lines       []PurchasingBillLine   `json:"lines"`
-	Instalments []PurchasingInstalment `json:"instalments"`
+	DocOpenCents int64                  `json:"doc_open_cents"`
+	Lines        []PurchasingBillLine   `json:"lines"`
+	Instalments  []PurchasingInstalment `json:"instalments"`
 }
 
 type PurchasingTolerance struct {
@@ -8046,27 +8048,30 @@ type PurchasingVendorSKUPage struct {
 }
 
 type PurchasingAPAgingItem struct {
-	Id               string  `json:"id"`
-	Kind             string  `json:"kind"`
-	IsLandedCost     bool    `json:"is_landed_cost"`
-	RefNo            string  `json:"ref_no"`
-	BillNo           *string `json:"bill_no,omitempty"`
-	PoId             *string `json:"po_id,omitempty"`
-	PoNo             *string `json:"po_no,omitempty"`
-	PoRef            *string `json:"po_ref,omitempty"`
-	BranchId         string  `json:"branch_id"`
-	VendorId         *string `json:"vendor_id,omitempty"`
-	VendorName       *string `json:"vendor_name,omitempty"`
-	ChargeKind       *string `json:"charge_kind,omitempty"`
-	BillDate         string  `json:"bill_date"`
-	DueDate          string  `json:"due_date"`
-	TotalCents       int64   `json:"total_cents"`
-	PaidCents        int64   `json:"paid_cents"`
-	OpenCents        int64   `json:"open_cents"`
-	FreightCadCents  *int64  `json:"freight_cad_cents,omitempty"`
-	DutyCadCents     *int64  `json:"duty_cad_cents,omitempty"`
-	HandlingCadCents *int64  `json:"handling_cad_cents,omitempty"`
-	Bucket           string  `json:"bucket"`
+	Id               string             `json:"id"`
+	Kind             string             `json:"kind"`
+	IsLandedCost     bool               `json:"is_landed_cost"`
+	RefNo            string             `json:"ref_no"`
+	BillNo           *string            `json:"bill_no,omitempty"`
+	PoId             *string            `json:"po_id,omitempty"`
+	PoNo             *string            `json:"po_no,omitempty"`
+	PoRef            *string            `json:"po_ref,omitempty"`
+	BranchId         string             `json:"branch_id"`
+	VendorId         *string            `json:"vendor_id,omitempty"`
+	VendorName       *string            `json:"vendor_name,omitempty"`
+	ChargeKind       *string            `json:"charge_kind,omitempty"`
+	BillDate         string             `json:"bill_date"`
+	DueDate          string             `json:"due_date"`
+	TotalCents       int64              `json:"total_cents"`
+	PaidCents        int64              `json:"paid_cents"`
+	OpenCents        int64              `json:"open_cents"`
+	Currency         PurchasingCurrency `json:"currency"`
+	DocTotalCents    int64              `json:"doc_total_cents"`
+	DocOpenCents     int64              `json:"doc_open_cents"`
+	FreightCadCents  *int64             `json:"freight_cad_cents,omitempty"`
+	DutyCadCents     *int64             `json:"duty_cad_cents,omitempty"`
+	HandlingCadCents *int64             `json:"handling_cad_cents,omitempty"`
+	Bucket           string             `json:"bucket"`
 }
 
 type PurchasingAPAgingRow struct {
