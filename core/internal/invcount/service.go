@@ -293,6 +293,12 @@ func postCountedSheet(ctx context.Context, st countStore, sc StockCounter, gp GL
 
 // postSheetGL resolves the 1200 leg and the reason accounts, builds the balanced reason-coded journal from the
 // persisted (valued) lines, and posts it idempotently.
+//
+// The journal rides the count's own instant: the sheet's recorded post instant IS the instant the COUNT move the
+// post wrote carries (one transaction, one clock), so the variance journal and the move it books are cut at the
+// same moment. A month end between the two would find the two sides of one count on different sides of itself
+// and refuse that month by the count's whole variance (W2-5 fix r10, S5's P2-7). A re-press reads the same
+// recorded instant, so the journal carries the count's own moment and not the moment it was pressed again.
 func postSheetGL(ctx context.Context, st countStore, rr RuleResolver, sheet Sheet, sheetID string, gp GLPoster) error {
 	invAcct, err := rr.ResolveRule(ctx, "inventory.adjusted", "inventory", sheet.BranchID)
 	if err != nil {
@@ -310,7 +316,11 @@ func postSheetGL(ctx context.Context, st countStore, rr RuleResolver, sheet Shee
 	if err != nil {
 		return err
 	}
-	journal, err := buildAdjustmentJournal(sheetID, sheet.SheetNo, sheet.BranchID, invAcct, reasonAccounts, lines)
+	at, err := st.PostedInstant(ctx, sheetID)
+	if err != nil {
+		return err
+	}
+	journal, err := buildAdjustmentJournal(sheetID, sheet.SheetNo, sheet.BranchID, invAcct, reasonAccounts, lines, at)
 	if err != nil {
 		return err
 	}

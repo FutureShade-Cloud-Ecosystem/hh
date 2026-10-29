@@ -131,8 +131,13 @@ func qd1gPlantStaff(t *testing.T, q *qd1bFixture) *qd1gCensus {
 	}
 	plant("fxstaff-qd1g-seller", "")
 	t.Cleanup(func() {
+		// The rows the census planted are its own: the principals it minted carry the
+		// census's own address, and the principals it re-pointed at a kit row keep the kit's
+		// address and are not the census's to delete. A census row left behind is a row a
+		// later run meets with a fresh kit under the same subject.
 		_, _ = q.pool.Exec(context.Background(),
-			`DELETE FROM users WHERE platform_user_id LIKE 'fxstaff-qd1g-%'`)
+			`DELETE FROM users WHERE platform_user_id LIKE 'fxstaff-qd1g-%'
+			   OR email LIKE '%@census.invalid'`)
 	})
 	c.seller = qd1bUserID(t, q.pool, "fxstaff-qd1g-seller")
 	var branchUsers []string

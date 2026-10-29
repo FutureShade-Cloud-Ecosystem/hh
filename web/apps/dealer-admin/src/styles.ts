@@ -236,13 +236,17 @@ export const dealerStyles = css`
     background: transparent;
     color: var(--hh-text);
     font-size: 14px;
+    white-space: nowrap;
     cursor: pointer;
   }
   .btn:hover:not(:disabled) {
     border-color: var(--hh-accent-text);
   }
   .btn:disabled {
-    opacity: 0.6;
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    opacity: 1;
     cursor: default;
   }
   .btn-primary {
@@ -314,8 +318,10 @@ export const dealerStyles = css`
     letter-spacing: 0.08em;
     color: var(--hh-text-dim);
     font-weight: 600;
+    white-space: nowrap;
   }
-  tbody tr:last-child td {
+  tbody tr:last-child td,
+  tbody tr:last-child th {
     border-bottom: none;
   }
   .person {
@@ -804,15 +810,77 @@ export const dealerStyles = css`
 
   /* -- the role by surface grid -------------------------------------------------- */
 
-  /* The grid is an eleven column table (the job shapes' own column plus the
-     ten surfaces), so the wrap scrolls rather than squeezing a column into
-     nothing. A cell button keeps its words short: the count by kind, or the
-     registry default. */
   .cell-btn {
     white-space: nowrap;
   }
   tbody tr th[scope="row"] {
+    font-size: 14px;
     font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    white-space: normal;
+    color: var(--hh-text);
+  }
+
+  /* UX-118: at desk widths (> 900px) each job shape row in the curation grid
+     lays out its name and description across the top and its ten surfaces in a
+     five-column grid below, so all ten surfaces fit the card without sideways
+     scroll or 6-line descriptions. */
+  @media (min-width: 901px) {
+    .config-grid-table thead {
+      display: none;
+    }
+    .config-grid-table,
+    .config-grid-table tbody {
+      display: block;
+    }
+    .config-grid-table tbody tr {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: var(--hh-s-8);
+      padding: var(--hh-s-16) 0;
+      border-bottom: 1px solid var(--hh-hairline);
+    }
+    .config-grid-table tbody tr:last-child {
+      border-bottom: none;
+    }
+    .config-grid-table tbody th[scope="row"] {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: baseline;
+      gap: var(--hh-s-12);
+      flex-wrap: wrap;
+      padding: 0 0 var(--hh-s-4);
+      border: 0;
+      font-size: var(--hh-s-16);
+    }
+    .config-grid-table tbody th[scope="row"] .dim {
+      font-size: 14px;
+      font-weight: 400;
+    }
+    .config-grid-table tbody td {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--hh-s-4);
+      padding: var(--hh-s-8) var(--hh-s-12);
+      border: 1px solid var(--hh-hairline);
+      border-radius: var(--hh-radius-control);
+      background: var(--hh-row-alt);
+      min-width: 0;
+    }
+    .config-grid-table tbody td::before {
+      content: attr(data-label);
+      color: var(--hh-text-dim);
+      font-size: var(--hh-s-12);
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .config-grid-table tbody td .cell-btn {
+      max-width: 100%;
+    }
   }
 
   /* The editor's field rows: the add row's fields and its buttons ride one
@@ -875,7 +943,10 @@ export const dealerStyles = css`
     border-color: var(--hh-accent-text);
   }
   .role-card:disabled {
-    opacity: 0.6;
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    opacity: 1;
     cursor: default;
   }
   .role-card .mark {
@@ -924,9 +995,26 @@ export const dealerStyles = css`
   }
   .staff-email {
     font-size: 12px;
+    white-space: nowrap;
   }
   .staff-last-seen {
     font-size: 13px;
+    white-space: nowrap;
+  }
+  @media (min-width: 901px) {
+    .staff-table th,
+    .staff-table td {
+      padding: var(--hh-s-8) var(--hh-s-4);
+    }
+    .staff-table .person-cell {
+      gap: var(--hh-s-8);
+    }
+    .staff-table td.staff-role .select {
+      width: 100%;
+      max-width: 168px;
+      min-width: 0;
+      box-sizing: border-box;
+    }
   }
   /* -- the register's branch values --------------------------------------------------
      UX-106 round 2: the values sit in one group, so the card row's grid has
@@ -1083,6 +1171,7 @@ export const dealerStyles = css`
     border: 1px solid var(--hh-control-line);
     border-radius: var(--hh-radius-pill);
     font-size: 12px;
+    white-space: nowrap;
   }
   .badge-status {
     display: inline-block;
@@ -1090,6 +1179,7 @@ export const dealerStyles = css`
     border-radius: var(--hh-radius-pill);
     font-size: 12px;
     font-weight: 700;
+    white-space: nowrap;
   }
   .badge-active {
     background: color-mix(in srgb, var(--hh-success) 15%, transparent);
@@ -1123,6 +1213,7 @@ export const dealerStyles = css`
     font-weight: 600;
     text-align: center;
     min-width: 48px;
+    white-space: nowrap;
   }
   .matrix-cell-full {
     background: color-mix(in srgb, var(--hh-success) 15%, transparent);

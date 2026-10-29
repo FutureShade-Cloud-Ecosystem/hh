@@ -167,7 +167,10 @@ export class HosPosScanBox extends LitElement {
         letter-spacing: 0.04em;
       }
       input:disabled {
-        opacity: 0.6;
+        background: var(--hh-disabled-fill);
+        color: var(--hh-disabled-ink);
+        border-color: var(--hh-disabled-line);
+        opacity: 1;
       }
       input::placeholder {
         color: var(--hos-text-dim); /* rev 5: the UA default gray measured under 4.5:1 */
@@ -187,13 +190,14 @@ export class HosPosScanBox extends LitElement {
         border-color: var(--hos-stone-amber);
         color: var(--hos-stone-amber-text);
       }
-      /* UI-3 (visual NOTE 4): the one disabled rule, as the Complete sale button's: no fill, grey
-         ink and line, no fade. The primary posture (gold fill) must drop its fill too. */
+      /* UI-3 (visual NOTE 4): the one disabled rule, as the Complete sale button's: the grey
+         token swap. The primary posture (gold fill) must drop its fill too: a disabled control
+         never keeps a brand fill and never fades. */
       button:disabled,
       button.primary:disabled {
-        background: transparent;
-        border-color: var(--hos-line);
-        color: var(--hos-text-dim);
+        background: var(--hh-disabled-fill);
+        border-color: var(--hh-disabled-line);
+        color: var(--hh-disabled-ink);
         opacity: 1;
         cursor: not-allowed;
       }

@@ -132,6 +132,9 @@ const receivablesStyles = css`
   .who { display: block; font-weight: 700; }
   .empty { padding: var(--hh-s-24) var(--hh-s-8); display: grid; gap: var(--hh-s-8); justify-items: start; }
   .empty strong { font-size: 18px; }
+  /* The Payables empty state (W2-9b) sits on the card's own padding, so its words line up with
+     the card's label and the footnote under them instead of standing in from the edge. */
+  .empty[data-payables-empty] { padding: var(--hh-s-24) 0; }
   .holdbtns { display: inline-grid; gap: var(--hh-s-8); }
 
   /* Needs you. */
@@ -286,6 +289,40 @@ const receivablesStyles = css`
     table.stmt tbody td:nth-child(4) { grid-area: act; text-align: start; }
     table.holdtbl tr { grid-template-columns: minmax(0, 1fr); }
     table.holdtbl td.act { text-align: start; }
+    /* The Payables aging list (W2-9b) on a phone: one card per payee, its name and open total on
+       the first line the way the Receivables register puts its balance, then its five bands one
+       under the other, each naming itself over its figure, both left aligned, so the eye reads
+       down one column instead of across a zigzag. */
+    table.payaging tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "payee total" "b1 b1" "b2 b2" "b3 b3" "b4 b4" "b5 b5"; }
+    table.payaging tbody td, table.payaging tfoot td { display: block; padding: 0; border: 0; }
+    table.payaging tfoot tr { border-top: 1px solid var(--hh-text); }
+    table.payaging td:nth-child(1) { grid-area: payee; }
+    table.payaging td:nth-child(2) { grid-area: b1; }
+    table.payaging td:nth-child(3) { grid-area: b2; }
+    table.payaging td:nth-child(4) { grid-area: b3; }
+    table.payaging td:nth-child(5) { grid-area: b4; }
+    table.payaging td:nth-child(6) { grid-area: b5; }
+    table.payaging td:nth-child(7) { grid-area: total; text-align: end; }
+    /* A long payee name wraps inside its own column: the name and the open total share the
+       first line, and the name never runs under the figure. */
+    table.payaging td:nth-child(1) .link-row { display: block; max-width: 100%; }
+    table.payaging td:nth-child(1) .who { white-space: normal; overflow-wrap: anywhere; }
+    table.payaging td[data-band-label]::before { display: block; color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; content: attr(data-band-label); }
+    table.payaging td[data-band-label] { text-align: start; }
+    /* The open items list: the document and its open amount on the first line, the due date and
+       the marks under it, each naming itself. */
+    table.paylines tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "doc amount" "due due" "marks marks"; }
+    table.paylines tbody td:nth-child(1) { grid-area: doc; }
+    table.paylines tbody td:nth-child(2) { grid-area: due; }
+    table.paylines tbody td:nth-child(3) { grid-area: marks; }
+    table.paylines tbody td:nth-child(4) { grid-area: amount; text-align: end; }
+    table.paylines tbody td:nth-child(2)::before, table.paylines tbody td:nth-child(3)::before { display: block; color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+    table.paylines tbody td:nth-child(2)::before { content: "Due"; }
+    table.paylines tbody td:nth-child(3)::before { content: "Status"; }
+    /* The open total's rule is one line above the row, not two segments with a gap between them,
+       and the label sits flush with the rows above it. */
+    table.paylines tfoot tr { border-top: 1px solid var(--hh-text); }
+    table.paylines tfoot td { padding: var(--hh-s-12) 0; border-top: 0; }
     .holdbtns { display: flex; }
     .desk { padding: var(--hh-s-16) var(--hh-s-12) var(--hh-s-40); }
     .two, .inline-form, .credit-form { grid-template-columns: minmax(0, 1fr); }
@@ -321,7 +358,7 @@ const officeStyles = css`
   .inline-select { min-width: 200px; }
   .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-16); align-items: start; }
   .settings-grid > div { min-width: 0; }
-  .pick.held { background: var(--hh-disabled-fill); border-color: var(--hh-disabled-line); cursor: not-allowed; }
+  .pick.held { background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border-color: var(--hh-disabled-line); cursor: not-allowed; }
   @media (max-width: 1100px) {
     .settings-grid { grid-template-columns: minmax(0, 1fr); }
   }

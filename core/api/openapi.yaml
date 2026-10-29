@@ -18915,6 +18915,119 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/till/reason-codes:
+    get:
+      operationId: tillListReasonCodes
+      tags:
+        - staff-till
+      summary: Read the branch's counter reason codes
+      description: The codes the drawer may name on a paid in or a paid out, each with the GL account its movement posts to. A branch manager reads the list of their own branch, and the Financial Controller reads any branch.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - counter-till
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The branch's counter reason codes
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TillReasonCode"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: tillCreateReasonCode
+      tags:
+        - staff-till
+      summary: Add a counter reason code to a branch's list
+      description: The label the drawer sees, the direction the code may name, and the account its movement posts to. The code is stored as the branch's own, upper cased, so the drawer names it the way the list shows it.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - counter-till
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TillReasonCodeInput"
+      responses:
+        "201":
+          description: The created counter reason code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillReasonCode"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/till/reason-codes/{id}:
+    put:
+      operationId: tillEditReasonCode
+      tags:
+        - staff-till
+      summary: Edit a counter reason code the branch's list already holds
+      description: A field the body leaves out keeps the value the row carries, so a code is turned off without restating its label or its account.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - counter-till
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TillReasonCodeEdit"
+      responses:
+        "200":
+          description: The edited counter reason code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillReasonCode"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/till/policy:
     get:
       operationId: tillGetPolicy
@@ -22413,6 +22526,95 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/purchasing/bills/{id}/payments:
+    post:
+      operationId: purchasingPayBill
+      tags:
+        - staff-purchasing
+      x-addition: "W2-9a round 2: the vendor bill payment door over PayBill; the ERP keyed supplier payments by hand"
+      summary: Record a supplier payment against a posted vendor bill
+      description: "Idempotent on the required Idempotency-Key header: a re-press under the same key returns the first payment and writes nothing. The payment's journal is dated by paid_at, absent meaning now in the dealer's house zone. A payment over the bill's open balance is refused with nothing written, and a bill outside the caller's branch reach answers the same 404 as a missing bill."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: A key chosen once per payment press and resent unchanged on every retry of it. A re-press under the same key answers the first payment; the same key on another bill is refused.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingPayBillRequest"
+      responses:
+        "200":
+          description: The bill with its instalments after the payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingBillDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/purchasing/ap-aging:
+    get:
+      operationId: purchasingGetAPAging
+      tags:
+        - staff-purchasing
+      x-addition: "W2-9a: the AP aging worklist over open vendor bills and open landed-cost payables in the dealer's house zone, tying to GL 2100; no ERP source route"
+      summary: Read the AP aging worklist as of an instant
+      description: "Open accounts payable as of an instant in the dealer's house zone, absent as_of meaning now. Each vendor row carries its posted bills less supplier payments as of the instant, bucketed across the five aging buckets, and each open landed-cost payable appears on its own row marked as landed cost. A document counts from its posting journal's effective instant, the GL's own late filing rule. The aging is the subledger: it grows only by posted vendor bills and open landed-cost payables, so a 2100 credit that is neither (a MANUAL or ADJUSTMENT accrual, another module's posting) shows as a tie difference against the net credit balance of GL 2100 as of the same instant, never as an aging row."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: as_of
+          in: query
+          required: false
+          description: Read open AP as of this instant or house date; absent means now
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The AP aging page as of the instant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingAPAgingPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/purchasing/tolerance:
     get:
       operationId: purchasingGetTolerance
@@ -49724,6 +49926,87 @@ components:
             - OTHER
         reference:
           type: string
+    TillReasonCode:
+      type: object
+      description: One counter reason code on a branch's list
+      required:
+        - id
+        - branch_id
+        - code
+        - label
+        - movement_kind
+        - gl_account_code
+        - active
+      properties:
+        id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        label:
+          type: string
+        movement_kind:
+          type: string
+          enum:
+            - PAID_IN
+            - PAID_OUT
+            - BOTH
+        gl_account_code:
+          type: string
+        active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TillReasonCodeInput:
+      type: object
+      description: A code a manager adds to a branch's list
+      required:
+        - branch_id
+        - code
+        - label
+        - movement_kind
+        - gl_account_code
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        label:
+          type: string
+        movement_kind:
+          type: string
+          enum:
+            - PAID_IN
+            - PAID_OUT
+            - BOTH
+        gl_account_code:
+          type: string
+        active:
+          type: boolean
+    TillReasonCodeEdit:
+      type: object
+      description: A change to a row the list already holds; a field left out keeps the row's own value
+      properties:
+        label:
+          type: string
+        movement_kind:
+          type: string
+          enum:
+            - PAID_IN
+            - PAID_OUT
+            - BOTH
+        gl_account_code:
+          type: string
+        active:
+          type: boolean
     TillPolicy:
       type: object
       description: The branch variance threshold and close grain
@@ -49911,6 +50194,9 @@ components:
           type: string
         reference:
           type: string
+        reason_code:
+          type: string
+          description: The branch's counter reason code this movement names. The code says what the money is, and the code points at the account the movement posts to. It is required once the branch has a live code for that direction; a movement with no code still posts to 9999 Suspense.
     TillTenderActual:
       type: object
       description: One blind-counted method actual
@@ -54006,6 +54292,21 @@ components:
           description: The recorded, deliberate acceptance a VARIANCE bill needs to post
         note:
           type: string
+    PurchasingPayBillRequest:
+      type: object
+      required:
+        - amount_cents
+      properties:
+        amount_cents:
+          type: integer
+          format: int64
+          description: The payment amount in cents; the open balance caps it
+        paid_at:
+          type: string
+          format: date-time
+          description: The payment's own instant; absent means now in the dealer's house zone
+        note:
+          type: string
     PurchasingSetToleranceRequest:
       type: object
       required:
@@ -54181,6 +54482,207 @@ components:
         limit:
           type: integer
           format: int32
+    PurchasingAPAgingItem:
+      type: object
+      description: One open AP obligation (a vendor bill or a landed-cost payable) as of the requested instant
+      required:
+        - id
+        - kind
+        - is_landed_cost
+        - ref_no
+        - branch_id
+        - bill_date
+        - due_date
+        - total_cents
+        - paid_cents
+        - open_cents
+        - bucket
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+            - VENDOR_BILL
+            - LANDED_COST
+        is_landed_cost:
+          type: boolean
+        ref_no:
+          type: string
+        bill_no:
+          type: string
+        po_id:
+          type: string
+          format: uuid
+        po_no:
+          type: string
+        po_ref:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+        vendor_id:
+          type: string
+          format: uuid
+        vendor_name:
+          type: string
+        charge_kind:
+          type: string
+        bill_date:
+          type: string
+          format: date
+        due_date:
+          type: string
+          format: date
+        total_cents:
+          type: integer
+          format: int64
+        paid_cents:
+          type: integer
+          format: int64
+        open_cents:
+          type: integer
+          format: int64
+        freight_cad_cents:
+          type: integer
+          format: int64
+        duty_cad_cents:
+          type: integer
+          format: int64
+        handling_cad_cents:
+          type: integer
+          format: int64
+        bucket:
+          type: string
+          enum:
+            - CURRENT
+            - DAYS_30
+            - DAYS_60
+            - DAYS_60_TO_90
+            - DAYS_90_PLUS
+    PurchasingAPAgingRow:
+      type: object
+      description: "One row of the AP aging table: either a vendor with its open bills or an open landed-cost payable owed to its carrier or broker."
+      required:
+        - row_kind
+        - is_landed_cost
+        - vendor_name
+        - payment_terms_days
+        - current_cents
+        - days_30_cents
+        - days_60_cents
+        - days_60_to_90_cents
+        - days_90_plus_cents
+        - total_cents
+        - open_items
+      properties:
+        row_kind:
+          type: string
+          enum:
+            - VENDOR
+            - LANDED_COST
+        is_landed_cost:
+          type: boolean
+        vendor_id:
+          type: string
+          format: uuid
+        vendor_no:
+          type: string
+        vendor_name:
+          type: string
+        landed_cost_id:
+          type: string
+          format: uuid
+        po_id:
+          type: string
+          format: uuid
+        po_ref:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+        charge_kind:
+          type: string
+        due_date:
+          type: string
+          format: date
+        payment_terms_days:
+          type: integer
+          format: int32
+        freight_cad_cents:
+          type: integer
+          format: int64
+        duty_cad_cents:
+          type: integer
+          format: int64
+        handling_cad_cents:
+          type: integer
+          format: int64
+        current_cents:
+          type: integer
+          format: int64
+        days_30_cents:
+          type: integer
+          format: int64
+        days_60_cents:
+          type: integer
+          format: int64
+        days_60_to_90_cents:
+          type: integer
+          format: int64
+        days_90_plus_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+        open_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PurchasingAPAgingItem"
+    PurchasingAPAgingPage:
+      type: object
+      required:
+        - as_of
+        - current_cents
+        - days_30_cents
+        - days_60_cents
+        - days_60_to_90_cents
+        - days_90_plus_cents
+        - total_cents
+        - items
+        - next_cursor
+      properties:
+        as_of:
+          type: string
+          format: date
+        current_cents:
+          type: integer
+          format: int64
+        days_30_cents:
+          type: integer
+          format: int64
+        days_60_cents:
+          type: integer
+          format: int64
+        days_60_to_90_cents:
+          type: integer
+          format: int64
+        days_90_plus_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PurchasingAPAgingRow"
+        next_cursor:
+          type:
+            - string
+            - "null"
     LandedCost:
       type: object
       description: "The landed-cost header. All cad figures are CAD: the conversion of the document currency happens at capture, so the GL and the inventory valuation only ever see CAD."

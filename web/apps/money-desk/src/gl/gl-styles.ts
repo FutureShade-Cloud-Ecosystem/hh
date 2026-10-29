@@ -68,7 +68,10 @@ export const glStyles = css`
   .gl-choice-held::before { border-style: dashed; }
   .gl-choice-title { font-weight: 700; }
   .gl-choice-line { font-size: 14px; color: var(--hh-text-dim); }
-  .gl-choice-held { background: var(--hh-field); color: var(--hh-text-dim); border-style: dashed; }
+  /* The held choice is not offered: the grey triple, the dashed edge kept on
+     the kit's findable line. The words beside it say why it is held. */
+  .gl-choice-held { /* hh-disabled-state: a choice the person cannot take. */
+    background: var(--hh-disabled-fill); color: var(--hh-disabled-ink); border-style: dashed; }
   .gl-field { display: grid; gap: var(--hh-s-4); font-size: 14px; color: var(--hh-text-dim); font-weight: 600; margin-bottom: var(--hh-s-12); }
   .gl-field textarea, .gl-field input, .gl-field select { font: inherit; font-size: 16px; padding: var(--hh-s-12); background: var(--hh-field); color: var(--hh-text); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); width: 100%; box-sizing: border-box; min-height: 44px; }
   .gl-field textarea:focus-visible, .gl-field input:focus-visible, .gl-field select:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
@@ -84,6 +87,12 @@ export const glStyles = css`
   .gl-filters { display: flex; flex-wrap: wrap; gap: var(--hh-s-4); }
   .gl-filter { min-height: 36px; padding: 0 var(--hh-s-12); border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid var(--hh-control-line); font-size: 14px; }
   .gl-filter[aria-pressed="true"] { border-color: var(--hh-focus-ring); font-weight: 700; background: var(--hh-row-alt); }
+  /* The register's date range: the field's own input on the filter row's line, the apply press a pill
+     beside it at the field's own height so the row reads as one control. */
+  .gl-range { display: flex; flex-wrap: wrap; gap: var(--hh-s-12); align-items: end; margin: 0 0 var(--hh-s-12); }
+  .gl-range .gl-field { margin-bottom: 0; }
+  .gl-range input[type="date"] { width: auto; }
+  .gl-range .gl-filter { min-height: 44px; }
   .gl-link { white-space: nowrap; background: transparent; border: 0; padding: var(--hh-s-4) 0; min-height: 36px; color: var(--hh-accent-text); font-weight: 700; text-decoration: underline; }
   .gl-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--hh-s-4) var(--hh-s-24); margin: 0 0 var(--hh-s-12); }
   .gl-facts dt { color: var(--hh-text-dim); }
@@ -137,7 +146,7 @@ export const glStyles = css`
     .gl-grow { grid-column: auto; }
     .gl-tiles-three { grid-template-columns: minmax(0, 1fr); }
     .gl-tab { padding: 0 var(--hh-s-12); font-size: 14px; }
-    .gl-col-type, .gl-col-name { display: none; }
+    .gl-col-type, .gl-col-name, .gl-col-posted { display: none; }
     .gl-name-narrow { display: block; color: var(--hh-text-dim); font-size: 12px; }
     .gl-panel { padding: var(--hh-s-16); }
     .gl-panel table { font-size: 13px; }

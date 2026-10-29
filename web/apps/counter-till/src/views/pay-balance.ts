@@ -154,6 +154,17 @@ export const payBalanceStyles = [heldOrderStyles, css`
     border-color: var(--hos-stone-amber);
     font-weight: 600;
   }
+  /* A tender tile that is chosen and held is a disabled control. The selected
+     rule above is three classes to the primitive's one, so the stone amber
+     edge would survive the refusal. The pair is restated in the grey triple
+     here. */
+  .pay-balance .tenders button[aria-pressed="true"]:disabled {
+    background: var(--hh-disabled-fill);
+    border-color: var(--hh-disabled-line);
+    color: var(--hh-disabled-ink);
+    opacity: 1;
+    cursor: not-allowed;
+  }
   .pay-balance .wholeamount {
     text-align: end;
     font-size: 18px;

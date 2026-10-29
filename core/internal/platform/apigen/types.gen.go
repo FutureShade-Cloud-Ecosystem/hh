@@ -6595,6 +6595,34 @@ type TillSlipCandidate struct {
 	Reference   string `json:"reference"`
 }
 
+type TillReasonCode struct {
+	Id            string     `json:"id"`
+	BranchId      string     `json:"branch_id"`
+	Code          string     `json:"code"`
+	Label         string     `json:"label"`
+	MovementKind  string     `json:"movement_kind"`
+	GlAccountCode string     `json:"gl_account_code"`
+	Active        bool       `json:"active"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+type TillReasonCodeInput struct {
+	BranchId      string `json:"branch_id"`
+	Code          string `json:"code"`
+	Label         string `json:"label"`
+	MovementKind  string `json:"movement_kind"`
+	GlAccountCode string `json:"gl_account_code"`
+	Active        *bool  `json:"active,omitempty"`
+}
+
+type TillReasonCodeEdit struct {
+	Label         *string `json:"label,omitempty"`
+	MovementKind  *string `json:"movement_kind,omitempty"`
+	GlAccountCode *string `json:"gl_account_code,omitempty"`
+	Active        *bool   `json:"active,omitempty"`
+}
+
 type TillPolicy struct {
 	BranchId               string `json:"branch_id"`
 	VarianceThresholdCents int64  `json:"variance_threshold_cents"`
@@ -6645,11 +6673,12 @@ type TillOpenLookup struct {
 }
 
 type TillMovementInput struct {
-	MovementType string `json:"movement_type"`
-	Method       string `json:"method"`
-	AmountCents  int64  `json:"amount_cents"`
-	Reason       string `json:"reason"`
-	Reference    string `json:"reference"`
+	MovementType string  `json:"movement_type"`
+	Method       string  `json:"method"`
+	AmountCents  int64   `json:"amount_cents"`
+	Reason       string  `json:"reason"`
+	Reference    string  `json:"reference"`
+	ReasonCode   *string `json:"reason_code,omitempty"`
 }
 
 type TillTenderActual struct {
@@ -7936,6 +7965,12 @@ type PurchasingPostBillRequest struct {
 	Note           *string `json:"note,omitempty"`
 }
 
+type PurchasingPayBillRequest struct {
+	AmountCents int64      `json:"amount_cents"`
+	PaidAt      *time.Time `json:"paid_at,omitempty"`
+	Note        *string    `json:"note,omitempty"`
+}
+
 type PurchasingSetToleranceRequest struct {
 	BranchId               *string `json:"branch_id,omitempty"`
 	QtyTolerancePct        float64 `json:"qty_tolerance_pct"`
@@ -8007,6 +8042,67 @@ type PurchasingVendorSKUPage struct {
 	Items      []PurchasingVendorSKU `json:"items"`
 	NextCursor *string               `json:"next_cursor,omitempty"`
 	Limit      *int32                `json:"limit,omitempty"`
+}
+
+type PurchasingAPAgingItem struct {
+	Id               string  `json:"id"`
+	Kind             string  `json:"kind"`
+	IsLandedCost     bool    `json:"is_landed_cost"`
+	RefNo            string  `json:"ref_no"`
+	BillNo           *string `json:"bill_no,omitempty"`
+	PoId             *string `json:"po_id,omitempty"`
+	PoNo             *string `json:"po_no,omitempty"`
+	PoRef            *string `json:"po_ref,omitempty"`
+	BranchId         string  `json:"branch_id"`
+	VendorId         *string `json:"vendor_id,omitempty"`
+	VendorName       *string `json:"vendor_name,omitempty"`
+	ChargeKind       *string `json:"charge_kind,omitempty"`
+	BillDate         string  `json:"bill_date"`
+	DueDate          string  `json:"due_date"`
+	TotalCents       int64   `json:"total_cents"`
+	PaidCents        int64   `json:"paid_cents"`
+	OpenCents        int64   `json:"open_cents"`
+	FreightCadCents  *int64  `json:"freight_cad_cents,omitempty"`
+	DutyCadCents     *int64  `json:"duty_cad_cents,omitempty"`
+	HandlingCadCents *int64  `json:"handling_cad_cents,omitempty"`
+	Bucket           string  `json:"bucket"`
+}
+
+type PurchasingAPAgingRow struct {
+	RowKind          string                  `json:"row_kind"`
+	IsLandedCost     bool                    `json:"is_landed_cost"`
+	VendorId         *string                 `json:"vendor_id,omitempty"`
+	VendorNo         *string                 `json:"vendor_no,omitempty"`
+	VendorName       string                  `json:"vendor_name"`
+	LandedCostId     *string                 `json:"landed_cost_id,omitempty"`
+	PoId             *string                 `json:"po_id,omitempty"`
+	PoRef            *string                 `json:"po_ref,omitempty"`
+	BranchId         *string                 `json:"branch_id,omitempty"`
+	ChargeKind       *string                 `json:"charge_kind,omitempty"`
+	DueDate          *string                 `json:"due_date,omitempty"`
+	PaymentTermsDays int32                   `json:"payment_terms_days"`
+	FreightCadCents  *int64                  `json:"freight_cad_cents,omitempty"`
+	DutyCadCents     *int64                  `json:"duty_cad_cents,omitempty"`
+	HandlingCadCents *int64                  `json:"handling_cad_cents,omitempty"`
+	CurrentCents     int64                   `json:"current_cents"`
+	Days30Cents      int64                   `json:"days_30_cents"`
+	Days60Cents      int64                   `json:"days_60_cents"`
+	Days60To90Cents  int64                   `json:"days_60_to_90_cents"`
+	Days90PlusCents  int64                   `json:"days_90_plus_cents"`
+	TotalCents       int64                   `json:"total_cents"`
+	OpenItems        []PurchasingAPAgingItem `json:"open_items"`
+}
+
+type PurchasingAPAgingPage struct {
+	AsOf            string                 `json:"as_of"`
+	CurrentCents    int64                  `json:"current_cents"`
+	Days30Cents     int64                  `json:"days_30_cents"`
+	Days60Cents     int64                  `json:"days_60_cents"`
+	Days60To90Cents int64                  `json:"days_60_to_90_cents"`
+	Days90PlusCents int64                  `json:"days_90_plus_cents"`
+	TotalCents      int64                  `json:"total_cents"`
+	Items           []PurchasingAPAgingRow `json:"items"`
+	NextCursor      *string                `json:"next_cursor"`
 }
 
 type LandedCost struct {
