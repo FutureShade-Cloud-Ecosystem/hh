@@ -6886,6 +6886,11 @@ export type PurchasingPostBillRequest = {
   accept_variance?: boolean;
   note?: string;
 };
+export type PurchasingPayBillRequest = {
+  amount_cents: number;
+  paid_at?: string;
+  note?: string;
+};
 export type PurchasingSetToleranceRequest = {
   branch_id?: string;
   qty_tolerance_pct: number;
@@ -6946,6 +6951,64 @@ export type PurchasingVendorSKUPage = {
   items: PurchasingVendorSKU[];
   next_cursor?: string | null;
   limit?: number;
+};
+export type PurchasingAPAgingItem = {
+  id: string;
+  kind: "VENDOR_BILL" | "LANDED_COST";
+  is_landed_cost: boolean;
+  ref_no: string;
+  bill_no?: string;
+  po_id?: string;
+  po_no?: string;
+  po_ref?: string;
+  branch_id: string;
+  vendor_id?: string;
+  vendor_name?: string;
+  charge_kind?: string;
+  bill_date: string;
+  due_date: string;
+  total_cents: number;
+  paid_cents: number;
+  open_cents: number;
+  freight_cad_cents?: number;
+  duty_cad_cents?: number;
+  handling_cad_cents?: number;
+  bucket: "CURRENT" | "DAYS_30" | "DAYS_60" | "DAYS_60_TO_90" | "DAYS_90_PLUS";
+};
+export type PurchasingAPAgingRow = {
+  row_kind: "VENDOR" | "LANDED_COST";
+  is_landed_cost: boolean;
+  vendor_id?: string;
+  vendor_no?: string;
+  vendor_name: string;
+  landed_cost_id?: string;
+  po_id?: string;
+  po_ref?: string;
+  branch_id?: string;
+  charge_kind?: string;
+  due_date?: string;
+  payment_terms_days: number;
+  freight_cad_cents?: number;
+  duty_cad_cents?: number;
+  handling_cad_cents?: number;
+  current_cents: number;
+  days_30_cents: number;
+  days_60_cents: number;
+  days_60_to_90_cents: number;
+  days_90_plus_cents: number;
+  total_cents: number;
+  open_items: PurchasingAPAgingItem[];
+};
+export type PurchasingAPAgingPage = {
+  as_of: string;
+  current_cents: number;
+  days_30_cents: number;
+  days_60_cents: number;
+  days_60_to_90_cents: number;
+  days_90_plus_cents: number;
+  total_cents: number;
+  items: PurchasingAPAgingRow[];
+  next_cursor: string | null;
 };
 export type LandedCost = {
   id: string;
