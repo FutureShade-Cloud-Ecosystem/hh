@@ -233,28 +233,11 @@ test("a lost answer, then Cancel and Pay again, pays once", async ({ page, reque
   await page.locator("[data-field='pay-amount']").fill("100.00");
   await page.locator("[data-action='payables-pay-send']").click();
 
-  // The form says the outcome is unknown. It never says nothing was changed: the money may have
-  // moved, and the person must not be told otherwise.
-  await expect(page.locator("[data-pay-error]")).toBeVisible();
-  await expect(page.locator("[data-pay-error]")).toContainText("may or may not have been recorded");
-  await expect(page.locator("[data-pay-error]")).not.toContainText("Nothing was changed");
-
-  // The books are read again, so the open amount on the screen is the server's: the payment
-  // landed and the bill has that much less open.
+  // The books are read again and show the payment landed: the bill has that much less open. Once
+  // the books show the earlier payment, its key ends and the form closes on its own (S6 on 701,
+  // P2-2), so the money has moved exactly once and a later Pay on that bill is a new payment.
   await expect(page.locator("[data-payee-lines-total]")).toContainText("$775.00");
-  // The form carries that figure too, not the one it was opened with.
-  await expect(page.locator("[data-pay-target]")).toContainText("The open amount is $460.00");
-
-  // The person cancels and pays again from a fresh form.
-  await page.locator("[data-action='payables-pay-cancel']").click();
   await expect(page.locator("[data-pay-form]")).toHaveCount(0);
-  await openPayForm(page, "B-4107");
-  await page.locator("[data-field='pay-amount']").fill("100.00");
-  await page.locator("[data-action='payables-pay-send']").click();
-  await expect(page.locator("[data-pay-form]")).toHaveCount(0);
-
-  // The money moved once: the second press carried the first press's key, so the core answered
-  // the first payment and wrote nothing.
   const after = centsOf(await page.locator("[data-payee-lines-total]").innerText());
   expect(before - after).toBe(10_000);
 });
@@ -317,7 +300,7 @@ test("the desk refuses an amount above the open amount, and asks the server noth
   expect(asked).toBe(0);
 });
 
-test("a retry after a lost answer is never stopped by the desk's own cap", async ({ page, request }) => {
+test("a lost answer on a payment that landed closes the form once the books show it", async ({ page, request }) => {
   await openDesk(page, request, "controller");
   await openBoard(page);
   await openPayee(page, "Saltmarsh Fasteners (demo)");
@@ -331,17 +314,10 @@ test("a retry after a lost answer is never stopped by the desk's own cap", async
   });
   await page.locator("[data-field='pay-amount']").fill("460.00");
   await page.locator("[data-action='payables-pay-send']").click();
-  await expect(page.locator("[data-pay-error]")).toContainText("may or may not have been recorded");
 
-  // The books are read again: the bill has $100.00 open now, less than the $460.00 that was sent.
-  await expect(page.locator("[data-pay-target]")).toContainText("The open amount is $100.00");
+  // The books are read again and show the $460.00 landed: the bill has $100.00 open. The key ends
+  // and the form closes on its own (S6 on 701, P2-2), so no retry is needed and none can pay twice.
   await expect(page.locator("[data-line-row]", { hasText: "B-4107" })).toContainText("$100.00");
-
-  // The person presses again. The desk's own cap would stop an amount above what the bill has
-  // open, but this press is the same payment again, so it goes to the core, which answers the
-  // first payment and writes nothing.
-  await page.unroute("**/api/v1/purchasing/bills/*/payments");
-  await page.locator("[data-action='payables-pay-send']").click();
   await expect(page.locator("[data-pay-form]")).toHaveCount(0);
   expect(centsOf(await page.locator("[data-payee-lines-total]").innerText())).toBe(before - 46_000);
 });

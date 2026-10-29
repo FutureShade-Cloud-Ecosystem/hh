@@ -321,15 +321,19 @@ export class ArDesk {
         // a fresh form on that bill sends the same payment and the core answers the first one.
         const item = this.#payablesItem(attr("data-bill-id"));
         if (item === null) return true;
+        // A bill that holds an earlier press whose outcome is unknown opens on that same payment: its
+        // key and its amount (S6 on 701, P2-2). A different amount under a held key would be swallowed
+        // as a replay of the first, so the form sends only the earlier payment until the key ends.
+        const held = heldPayment(this.#payBillKeys.get(item.id));
         this.#pay = {
           billId: item.id,
           billNo: item.ref_no,
           openCents: item.open_cents,
-          amountText: centsToField(item.open_cents),
+          amountText: centsToField(held === null ? item.open_cents : held.cents),
           paidOn: houseDay(),
           note: "",
-          key: this.#payBillKeys.get(item.id) ?? newKey(),
-          error: "",
+          key: held === null ? newKey() : held.key,
+          error: held === null ? "" : heldPaymentWords(held.cents),
         };
         this.#payFillPending = true;
         this.#clearMessages();
@@ -829,7 +833,15 @@ export class ArDesk {
     // The key this press carries: the bill's held key when it has one (an earlier press whose
     // outcome is still unknown), else the form's own key, which is held from here, so a retry
     // after a lost answer sends the same payment and the core answers the first one.
-    const heldKey = this.#payBillKeys.get(form.billId);
+    const held = heldPayment(this.#payBillKeys.get(form.billId));
+    const heldKey = held?.key;
+    // Under a held key only the earlier payment may be sent again: a different amount would be
+    // answered as a replay of the first and silently never written (S6 on 701, P2-2).
+    if (held !== null && cents !== held.cents) {
+      this.#pay = { ...form, error: heldPaymentWords(held.cents) };
+      this.#host.repaint();
+      return;
+    }
     // The desk's own cap holds a new ask: the amount never goes above what the bill has open. A
     // press under a held key is not a new ask, it is the same one again, so it goes to the core
     // whatever it says: the core answers the earlier press if it landed, and judges this one if it
@@ -845,7 +857,7 @@ export class ArDesk {
     this.#payBusy = true;
     this.#host.repaint();
     const key = heldKey ?? form.key;
-    if (heldKey === undefined) this.#payBillKeys.set(form.billId, key);
+    if (heldKey === undefined) this.#payBillKeys.set(form.billId, heldPaymentValue(key, cents));
     const got = await this.#api.payBill(form.billId, { amountCents: cents, paidAt: dayInstant(day, houseZone()), note }, key);
     this.#payBusy = false;
     if (!got.ok) {
@@ -854,7 +866,9 @@ export class ArDesk {
         // The answer was lost or the server failed: the payment may or may not have landed, so the
         // form says so and the key stays held. The books are read again, so the open amount on the
         // screen is the server's and the person can see what actually moved.
-        this.#pay = { ...form, error: outcome.words };
+        // The supplier payment's own words, not the receivables desk's: a replay of the earlier press is
+        // answered with that payment, never refused, so the words never promise the server will say so.
+        this.#pay = { ...form, error: heldPaymentWords(cents) };
         this.#host.repaint();
         await this.#loadPayables();
         // The form carries the bill's open amount as the books now say it, not the figure it was
@@ -863,7 +877,16 @@ export class ArDesk {
         // carry.
         const open = this.#payablesItem(form.billId);
         const current = this.#pay;
-        if (current !== null && open !== null) {
+        // The books show the earlier payment landed when the bill's open amount fell by at least its
+        // amount, or the bill left the open list: the key ends and the form closes, so the next Pay on
+        // that bill is a new payment with a new key.
+        if (open === null || form.openCents - open.open_cents >= cents) {
+          this.#payBillKeys.delete(form.billId);
+          if (current !== null && current.billId === form.billId) this.#pay = null;
+          this.#host.repaint();
+          return;
+        }
+        if (current !== null) {
           this.#pay = { ...current, openCents: open.open_cents };
           this.#host.repaint();
         }
@@ -1829,4 +1852,22 @@ export function deterministicPaylinkToken(
   }
   const hex = (h1 >>> 0).toString(16).padStart(8, "0") + (h2 >>> 0).toString(16).padStart(8, "0");
   return hex.slice(0, 16);
+}
+
+/** A bill's held press: its key and the amount it carried, kept as one record value ("key|cents"). */
+function heldPaymentValue(key: string, cents: number): string {
+  return `${key}|${cents}`;
+}
+
+function heldPayment(value: string | undefined): { key: string; cents: number } | null {
+  if (value === undefined) return null;
+  const bar = value.lastIndexOf("|");
+  if (bar < 0) return null;
+  const cents = Number(value.slice(bar + 1));
+  if (!Number.isInteger(cents) || cents <= 0) return null;
+  return { key: value.slice(0, bar), cents };
+}
+
+function heldPaymentWords(cents: number): string {
+  return `An earlier payment of ${formatMoney(cents)} on this bill may or may not have been recorded. Check the bill's open amount above. Press Record the payment to send that same payment again: if it was already recorded, it is not recorded twice. A different amount waits until the earlier payment shows on the bill.`;
 }
