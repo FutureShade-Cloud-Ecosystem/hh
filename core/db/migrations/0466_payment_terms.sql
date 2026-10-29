@@ -69,6 +69,23 @@ ON CONFLICT (code) DO NOTHING;
 -- know the master yet carries none and is read from its own days.
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS terms_code TEXT REFERENCES payment_terms(code);
 
+-- Negative payment_terms_days cannot name a term and are refused naming the customer number.
+DO $$
+DECLARE
+    v_acct TEXT;
+    v_days INTEGER;
+BEGIN
+    SELECT account_no, payment_terms_days
+      INTO v_acct, v_days
+      FROM customers
+     WHERE payment_terms_days < 0
+     ORDER BY account_no
+     LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION '0466: customer % carries negative payment_terms_days (%)', v_acct, v_days;
+    END IF;
+END $$;
+
 -- A customer whose days name no standard term keeps those days as a custom net, and the custom
 -- net is a row in the master: the code a customer carries must name a term that exists.
 INSERT INTO payment_terms (code, name, net_days)

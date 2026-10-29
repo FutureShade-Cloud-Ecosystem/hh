@@ -15,6 +15,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -331,5 +333,122 @@ func TestIntegration_TermsFor_TheLoadDoorWritesTheCodeBesideTheDays(t *testing.T
 	}
 	if days != 30 {
 		t.Fatalf("the loaded customer carries %d days, want 30", days)
+	}
+}
+
+func TestIntegration_TermsFor_ReloadWithUnchangedDaysKeepsDiscountCode(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	svc := NewService(repo).WithWriter(repo)
+
+	acct, err := svc.CreateCustomer(ctx, CreateInput{
+		AccountNo: tm1AccountNo("TM1-RELOAD-DISC"), Name: "Reload Discount Yard", PaymentTermsDays: termsDays(30),
+	})
+	if err != nil {
+		t.Fatalf("create the customer on thirty days: %v", err)
+	}
+	tm1Cleanup(t, pool, acct.CustomerID)
+
+	if _, err := svc.SetTerms(ctx, acct.CustomerID, Terms2PctNet30); err != nil {
+		t.Fatalf("put the customer on 2/10 net 30: %v", err)
+	}
+
+	// 1. Reload by account_no conflict with unchanged 30 days: 2/10 net 30 stays 2/10 net 30.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin reload transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := (CustomerLoadWriter{}).Apply(ctx, tx, load.Write{
+		LegacyID: acct.AccountNo,
+		OrgID:    "4442a800-0000-4000-8000-00000000e001",
+		Record: map[string]any{
+			"account_no": acct.AccountNo, "name": "Reload Discount Yard", "payment_terms_days": 30,
+		},
+	}); err != nil {
+		t.Fatalf("reload customer by account_no with unchanged days: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit reload transaction: %v", err)
+	}
+
+	terms, err := svc.TermsFor(ctx, acct.CustomerID)
+	if err != nil {
+		t.Fatalf("read terms after account_no reload: %v", err)
+	}
+	if terms.Code != Terms2PctNet30 {
+		t.Fatalf("reload by account_no with unchanged 30 days overwrote discount code: got %q, want %q", terms.Code, Terms2PctNet30)
+	}
+	if terms.DiscountBps != 200 || terms.DiscountDays != 10 {
+		t.Fatalf("reload by account_no lost discount window: got %dbps/%dd, want 200bps/10d", terms.DiscountBps, terms.DiscountDays)
+	}
+
+	// 2. Reload by RowID with unchanged 30 days: 2/10 net 30 still stays 2/10 net 30.
+	tx2, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin RowID reload transaction: %v", err)
+	}
+	defer func() { _ = tx2.Rollback(ctx) }()
+	if _, err := (CustomerLoadWriter{}).Apply(ctx, tx2, load.Write{
+		LegacyID: acct.AccountNo,
+		RowID:    acct.CustomerID,
+		OrgID:    "4442a800-0000-4000-8000-00000000e001",
+		Record: map[string]any{
+			"account_no": acct.AccountNo, "name": "Reload Discount Yard", "payment_terms_days": 30,
+		},
+	}); err != nil {
+		t.Fatalf("reload customer by RowID with unchanged days: %v", err)
+	}
+	if err := tx2.Commit(ctx); err != nil {
+		t.Fatalf("commit RowID reload transaction: %v", err)
+	}
+
+	terms, err = svc.TermsFor(ctx, acct.CustomerID)
+	if err != nil {
+		t.Fatalf("read terms after RowID reload: %v", err)
+	}
+	if terms.Code != Terms2PctNet30 {
+		t.Fatalf("reload by RowID with unchanged 30 days overwrote discount code: got %q, want %q", terms.Code, Terms2PctNet30)
+	}
+}
+
+func TestIntegration_TermsFor_NegativeDaysRefusedAtTheLoadDoorInWords(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_, err = (CustomerLoadWriter{}).Apply(ctx, tx, load.Write{
+		LegacyID: tm1AccountNo("TM1-NEG-LOAD"),
+		OrgID:    "4442a800-0000-4000-8000-00000000e001",
+		Record: map[string]any{
+			"account_no": tm1AccountNo("TM1-NEG-LOAD"), "name": "Negative Days Yard", "payment_terms_days": -15,
+		},
+	})
+	var ref *load.Refusal
+	if !errors.As(err, &ref) {
+		t.Fatalf("expected *load.Refusal for negative payment_terms_days, got %v", err)
+	}
+	if ref.Field != "payment_terms_days" || !strings.Contains(ref.Detail, "zero or more") {
+		t.Fatalf("unexpected refusal for negative payment_terms_days: %+v", ref)
+	}
+
+	_, err = EnsureAccount(ctx, pool, PinnedAccount{
+		ID:               "c7999999-0000-4000-9000-000000000099",
+		AccountNo:        tm1AccountNo("TM1-NEG-PIN"),
+		Name:             "Negative Pinned Yard",
+		CustomerType:     "CONTRACTOR",
+		PaymentTermsDays: -15,
+	})
+	if err == nil {
+		t.Fatal("EnsureAccount accepted negative PaymentTermsDays")
+	}
+	if strings.Contains(err.Error(), "SQLSTATE") || !strings.Contains(err.Error(), "zero or more") {
+		t.Fatalf("EnsureAccount did not refuse negative days in words: %v", err)
 	}
 }

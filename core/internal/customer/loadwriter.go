@@ -196,7 +196,11 @@ func (w CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write)
 				customer_type = EXCLUDED.customer_type,
 				home_branch_id = EXCLUDED.home_branch_id,
 				payment_terms_days = EXCLUDED.payment_terms_days,
-				terms_code = EXCLUDED.terms_code,
+				terms_code = CASE
+					WHEN customers.payment_terms_days = EXCLUDED.payment_terms_days
+					THEN COALESCE(customers.terms_code, EXCLUDED.terms_code)
+					ELSE EXCLUDED.terms_code
+				END,
 				credit_limit_cents = EXCLUDED.credit_limit_cents,
 				is_active = EXCLUDED.is_active,
 				billing_address = COALESCE($8::jsonb, customers.billing_address),
@@ -272,7 +276,13 @@ func (w CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write)
 			is_active = $8, billing_address = COALESCE($9::jsonb, billing_address),
 			metadata = (metadata - 'sales_rep_user_ids') || $10::jsonb,
 			org_id = $11::uuid, seq = (SELECT next_value FROM cseq),
-			idempotency_key = NULLIF($12, '')::uuid, terms_code = $13, updated_at = now()
+			idempotency_key = NULLIF($12, '')::uuid,
+			terms_code = CASE
+				WHEN customers.payment_terms_days = $6
+				THEN COALESCE(customers.terms_code, $13)
+				ELSE $13
+			END,
+			updated_at = now()
 		WHERE id = $1::uuid AND (org_id IS NULL OR org_id = $11::uuid)
 		  AND account_no = COALESCE(NULLIF($2, ''), account_no)
 		RETURNING id::text`,
@@ -478,6 +488,9 @@ func EnsureAccount(ctx context.Context, db Execer, a PinnedAccount) (created boo
 	}
 	if !validCustomerType(a.CustomerType) {
 		return false, fmt.Errorf("customer: invalid customer_type %q", a.CustomerType)
+	}
+	if a.PaymentTermsDays < 0 {
+		return false, errors.New("customer: payment_terms_days must be zero or more")
 	}
 	// The sequence CTE draws its number whether or not the insert lands, so a
 	// row that is already there is recognised first and a re-run draws nothing.

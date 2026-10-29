@@ -17,6 +17,9 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,5 +225,31 @@ func TestIntegration_TheSeededCustomersCarryMasterTermsCodes(t *testing.T) {
 	}
 	if len(bad) > 0 {
 		t.Fatalf("seeded customers with days missing a valid master terms_code: %v", bad)
+	}
+}
+
+// TestIntegration_Migration0466_RefusesNegativePaymentTermsDaysNamingCustomer proves that
+// migration 0466_payment_terms.sql refuses a pre-existing customer row with negative
+// payment_terms_days with a clear error naming the customer number.
+func TestIntegration_Migration0466_RefusesNegativePaymentTermsDaysNamingCustomer(t *testing.T) {
+	ctx := context.Background()
+	pool := freshMigratedDBWithout(t, "s4fin2tm1neg", "0466_payment_terms.sql")
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO customers (account_no, name, customer_type, payment_terms_days)
+		VALUES ('CUST-NEG-15', 'Negative Days Customer', 'CONTRACTOR', -15)`); err != nil {
+		t.Fatalf("insert pre-0466 customer with negative payment_terms_days: %v", err)
+	}
+
+	migBody, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", "0466_payment_terms.sql"))
+	if err != nil {
+		t.Fatalf("read 0466_payment_terms.sql: %v", err)
+	}
+	_, err = pool.Exec(ctx, string(migBody))
+	if err == nil {
+		t.Fatal("0466_payment_terms.sql accepted a customer with negative payment_terms_days")
+	}
+	if !strings.Contains(err.Error(), "CUST-NEG-15") {
+		t.Fatalf("0466_payment_terms.sql error did not name customer CUST-NEG-15: %v", err)
 	}
 }
