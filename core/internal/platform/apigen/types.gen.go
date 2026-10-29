@@ -608,6 +608,36 @@ type BillingCreditApplicationLine struct {
 	BalanceAfterCents int64  `json:"balance_after_cents"`
 }
 
+type BillingWriteOffInput struct {
+	InvoiceId      string `json:"invoice_id"`
+	Reason         string `json:"reason"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type BillingWriteOff struct {
+	WriteOffId  string `json:"write_off_id"`
+	InvoiceId   string `json:"invoice_id"`
+	InvoiceNo   string `json:"invoice_no"`
+	AmountCents int64  `json:"amount_cents"`
+	LimitCents  int64  `json:"limit_cents"`
+	Replayed    bool   `json:"replayed"`
+}
+
+type BillingWriteOffReversalInput struct {
+	InvoiceId  string `json:"invoice_id"`
+	WriteOffId string `json:"write_off_id"`
+	Reason     string `json:"reason"`
+}
+
+type BillingWriteOffReversed struct {
+	WriteOffId               string `json:"write_off_id"`
+	InvoiceId                string `json:"invoice_id"`
+	InvoiceNo                string `json:"invoice_no"`
+	RestoredCents            int64  `json:"restored_cents"`
+	InvoiceBalanceAfterCents int64  `json:"invoice_balance_after_cents"`
+	Replayed                 bool   `json:"replayed"`
+}
+
 type BillingCreditApplication struct {
 	ApplicationId        string                         `json:"application_id"`
 	CreditKind           string                         `json:"credit_kind"`

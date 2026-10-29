@@ -292,3 +292,7 @@ additions:
     reason: "W2-9a: the AP aging worklist over open vendor bills and open landed-cost payables in the dealer's house zone, tying to GL 2100 as of any instant; the ERP had no AP aging route; no ERP source route."
   - route: "POST /api/v1/purchasing/bills/{id}/payments"
     reason: "W2-9a round 2: the vendor bill payment door over PayBill, idempotent on the Idempotency-Key header; the ERP keyed supplier payments by hand; no ERP source route."
+  - route: "POST /api/v1/ar/write-offs"
+    reason: "W3 item 0.10: a manager writes off an invoice's remaining balance with a reason under the branch's small balance limit (the controller passes it), posting DR bad debt expense and CR 1100; the ERP wrote small balances off by hand; no ERP source route."
+  - route: "POST /api/v1/ar/write-offs/reverse"
+    reason: "W3 item 0.10: a manager reverses a write off once with a reason, restoring the invoice balance, the subledger and the books; the ERP had no undo for a written off invoice; no ERP source route."
