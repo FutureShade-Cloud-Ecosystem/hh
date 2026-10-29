@@ -299,10 +299,11 @@ func TestApplyReceived_ARefusalMidwayLeavesNothingApplied(t *testing.T) {
 	}
 }
 
-// An amount over what the selected invoices can take is refused in words with the ceiling named,
-// and writes nothing. The ceiling is the payable (balance less holdback), the same figure the per
-// invoice route offers.
-func TestApplyReceived_OverTheSelectedInvoicesIsRefused(t *testing.T) {
+// An amount over what the selected invoices can take is no longer refused (W3 item 0.10): the
+// invoices take their payable (balance less holdback, the same figure the per invoice route offers),
+// oldest first, and the remainder is the account's on account credit, one negative receipt_change
+// row keyed to the payment, branch stamped, named by the answer's unapplied cents.
+func TestApplyReceived_OverTheSelectedInvoicesLeavesTheRestOnAccount(t *testing.T) {
 	w := newApplyWorld(t)
 	ctx := context.Background()
 	a := w.invoice(t, w.customerID, "O1", 90, 60, 10000)
@@ -310,23 +311,32 @@ func TestApplyReceived_OverTheSelectedInvoicesIsRefused(t *testing.T) {
 	if _, err := w.pool.Exec(ctx, `UPDATE invoices SET holdback_cents = 3000 WHERE id = $1::uuid`, b); err != nil {
 		t.Fatalf("plant holdback: %v", err)
 	}
-	_, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+	ans, err := w.repo.ApplyReceived(ctx, ApplyRequest{
 		CustomerID: w.customerID, Method: "CASH", IdempotencyKey: w.tag,
 		InvoiceIDs: []string{a, b}, AmountCents: 17001,
 	})
-	if err == nil {
-		t.Fatal("an amount over the selected invoices' payable must be refused")
+	if err != nil {
+		t.Fatalf("the over amount lands: %v", err)
 	}
-	var bad httpx.BadRequestError
-	if !errors.As(err, &bad) {
-		t.Fatalf("the over refusal is a bad request in words, got %T %v", err, err)
+	if ans.AppliedCents != 15000 || ans.UnappliedCents != 2001 {
+		t.Fatalf("the invoices take 15000 and 2001 rests on account, got %d and %d", ans.AppliedCents, ans.UnappliedCents)
 	}
-	if !strings.Contains(bad.Msg, "the selected invoices can take at most 15000 cents right now") {
-		t.Fatalf("the refusal names the ceiling: %q", bad.Msg)
+	if ba, sa := w.invoiceState(t, a); ba != 0 || sa != "PAID" {
+		t.Fatalf("the first invoice closed, got %d %s", ba, sa)
 	}
-	payments, allocations, _, _ := w.moneyRowCounts(t, w.customerID)
-	if payments != 0 || allocations != 0 {
-		t.Fatalf("the over refusal writes nothing: %d payments %d allocations", payments, allocations)
+	if bb, sb := w.invoiceState(t, b); bb != 3000 || sb != "PARTIALLY_PAID" {
+		t.Fatalf("the second invoice took its payable 5000 (8000 less the 3000 holdback) and holds its holdback, got %d %s", bb, sb)
+	}
+	var changeSum int64
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_cents), 0)
+		  FROM customer_transactions
+		 WHERE source_type = 'receipt_change' AND customer_id = $1::uuid`, w.customerID).
+		Scan(&changeSum); err != nil {
+		t.Fatalf("read the change row: %v", err)
+	}
+	if changeSum != -2001 {
+		t.Fatalf("the remainder sits on the account as -2001, got %d", changeSum)
 	}
 }
 
@@ -435,8 +445,9 @@ func TestApplyReceived_APreviewUnderASpentKeyAnswersAsAPreview(t *testing.T) {
 
 // Two applies against the same invoice serialise: the payments counter row is taken before any
 // invoice row (the one money lock order), so the two never interleave their rows. The leg's amounts
-// fit only once: whichever apply lands second must refuse on the ceiling, never a deadlock, and the
-// invoice's balance moves by exactly what one apply could take.
+// overfill the invoice on purpose: whichever apply lands second takes only what the first left
+// (W3 item 0.10) and rests the difference on the account, never a deadlock, and the invoice's
+// balance moves by exactly the whole 10000 while the overpay waits on account.
 func TestApplyReceived_TwoConcurrentAppliesAgainstOneInvoiceSerialise(t *testing.T) {
 	w := newApplyWorld(t)
 	ctx := context.Background()
@@ -457,8 +468,7 @@ func TestApplyReceived_TwoConcurrentAppliesAgainstOneInvoiceSerialise(t *testing
 		}(i)
 	}
 	wg.Wait()
-	landed, refused := 0, 0
-	refusalWords := ""
+	landed := 0
 	for _, err := range errs {
 		switch {
 		case err == nil:
@@ -467,27 +477,29 @@ func TestApplyReceived_TwoConcurrentAppliesAgainstOneInvoiceSerialise(t *testing
 			t.Fatalf("the invoice exists and is the account's: %v", err)
 		default:
 			// A 40P01 or a connection level failure here is the deadlock this leg exists to catch:
-			// the refusal this leg expects is the ceiling's own words.
-			var bad httpx.BadRequestError
-			if !errors.As(err, &bad) {
-				t.Fatalf("a concurrent apply must serialise or refuse on the ceiling, got %v", err)
-			}
-			refused++
-			refusalWords = bad.Msg
+			// neither apply has anything left to refuse on, one takes 6000 and the other takes the
+			// 4000 left and rests 2000 on the account.
+			t.Fatalf("both concurrent applies land, serialised: %v", err)
 		}
 	}
-	if landed != 1 || refused != 1 {
-		t.Fatalf("exactly one apply of 6000 lands against a 10000 invoice and one refuses: landed %d refused %d (%q)", landed, refused, refusalWords)
+	if landed != 2 {
+		t.Fatalf("both applies of 6000 land against a 10000 invoice, got %d", landed)
 	}
-	if !strings.Contains(refusalWords, "can take at most 4000 cents") {
-		t.Fatalf("the second apply names the ceiling the first apply left: %q", refusalWords)
+	if b, s := w.invoiceState(t, inv); b != 0 || s != "PAID" {
+		t.Fatalf("the invoice moved to the whole 10000 PAID, got %d %s", b, s)
 	}
-	if b, s := w.invoiceState(t, inv); b != 4000 || s != "PARTIALLY_PAID" {
-		t.Fatalf("the invoice moved once, to 4000 PARTIALLY_PAID, got %d %s", b, s)
+	var changeSum int64
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
+		 WHERE source_type = 'receipt_change' AND customer_id = $1::uuid`, w.customerID).Scan(&changeSum); err != nil {
+		t.Fatalf("read the change group: %v", err)
+	}
+	if changeSum != -2000 {
+		t.Fatalf("the second apply's 2000 over the first apply's remainder rests on the account, got %d", changeSum)
 	}
 	payments, allocations, _, _ := w.moneyRowCounts(t, w.customerID)
-	if payments != 1 || allocations != 1 {
-		t.Fatalf("one payment row and one allocation survive the race, got %d and %d", payments, allocations)
+	if payments != 2 || allocations != 2 {
+		t.Fatalf("two payment rows and two allocations survive the race, got %d and %d", payments, allocations)
 	}
 }
 
@@ -643,8 +655,9 @@ func TestApplyReceived_APreviewMovesNoRowNoEventAndNoSequence(t *testing.T) {
 
 // The preview and the apply of one body (item 127): when nothing moved in between the apply
 // answers the split the preview answered, line for line, and when the balances moved between the
-// preview and the apply the apply says so in words (its own ceiling refusal names the figure the
-// moved balances leave), never a silent different split.
+// preview and the apply the apply answers the moved balances' own split, with what they can no
+// longer take resting on the account (W3 item 0.10), never a silent different split of the same
+// money.
 func TestApplyReceived_PreviewAndApplyAgreeOnAnUnchangedBodyAndTheMovedBalancesSaySo(t *testing.T) {
 	w := newApplyWorld(t)
 	ctx := context.Background()
@@ -681,7 +694,8 @@ func TestApplyReceived_PreviewAndApplyAgreeOnAnUnchangedBodyAndTheMovedBalancesS
 	}
 
 	// The moved half: another payment lands between the preview and the apply, and the apply of the
-	// same body refuses in words with the ceiling the moved balances leave.
+	// same body answers the moved balances' own split, with the money they can no longer take left
+	// on account (W3 item 0.10) instead of refusing on the ceiling they moved.
 	moved := w.invoice(t, w.customerID, "MOV-O", 90, 60, 10000)
 	movedYoung := w.invoice(t, w.customerID, "MOV-Y", 30, 10, 8000)
 	ask := ApplyRequest{
@@ -697,23 +711,36 @@ func TestApplyReceived_PreviewAndApplyAgreeOnAnUnchangedBodyAndTheMovedBalancesS
 	}); err != nil {
 		t.Fatalf("the payment that moves the balances: %v", err)
 	}
-	_, err = w.repo.ApplyReceived(ctx, ask)
-	if err == nil {
-		t.Fatal("the apply of a body whose balances moved below it must refuse")
+	ans, err := w.repo.ApplyReceived(ctx, ask)
+	if err != nil {
+		t.Fatalf("the apply of a body whose balances moved answers the moved split: %v", err)
 	}
-	var bad httpx.BadRequestError
-	if !errors.As(err, &bad) {
-		t.Fatalf("the refusal is in words, got %T %v", err, err)
+	// The mover took 8000 of the old invoice, so the named pair can take 2000 + 8000 = 10000 and
+	// the last 5000 rests on the account.
+	if ans.AppliedCents != 10000 || ans.UnappliedCents != 5000 {
+		t.Fatalf("the moved balances' split is 10000 applied and 5000 on account, got %d and %d", ans.AppliedCents, ans.UnappliedCents)
 	}
-	if !strings.Contains(bad.Msg, "the selected invoices can take at most 10000 cents right now") {
-		t.Fatalf("the refusal names the ceiling the moved balances leave: %q", bad.Msg)
+	if bm, sm := w.invoiceState(t, moved); bm != 0 || sm != "PAID" {
+		t.Fatalf("the moved invoice closed on the moved split's 2000, got %d %s", bm, sm)
+	}
+	if by, _ := w.invoiceState(t, movedYoung); by != 0 {
+		t.Fatalf("the moved young invoice closed on its 8000, got %d", by)
 	}
 	var keyRows int
 	if err := w.pool.QueryRow(ctx, `SELECT COUNT(*) FROM payments WHERE idempotency_key = $1`, w.tag+"-m").Scan(&keyRows); err != nil {
 		t.Fatalf("count by key: %v", err)
 	}
-	if keyRows != 0 {
-		t.Fatalf("the refused apply burned no key, found %d rows", keyRows)
+	if keyRows != 1 {
+		t.Fatalf("the apply landed once under its key, found %d rows", keyRows)
+	}
+	var changeSum int64
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
+		 WHERE source_type = 'receipt_change' AND customer_id = $1::uuid`, w.customerID).Scan(&changeSum); err != nil {
+		t.Fatalf("read the change group: %v", err)
+	}
+	if changeSum != -5000 {
+		t.Fatalf("the money the moved balances could not take rests on the account as -5000, got %d", changeSum)
 	}
 }
 
