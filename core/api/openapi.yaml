@@ -22545,7 +22545,7 @@ paths:
         - name: Idempotency-Key
           in: header
           required: true
-          description: A key chosen once per payment press and resent unchanged on every retry of it. A re-press under the same key answers the first payment; the same key on another bill is refused.
+          description: A key chosen once per payment press and resent unchanged on every retry of it. The key is the caller's own free text of 1 to 200 characters, not necessarily a UUID (a caller may name what the payment pays); a missing or over long key is refused with a 400. A re-press under the same key answers the first payment; the same key on another bill is refused.
           schema:
             type: string
             minLength: 1

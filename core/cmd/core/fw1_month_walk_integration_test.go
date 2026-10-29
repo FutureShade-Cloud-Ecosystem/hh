@@ -910,6 +910,7 @@ func (w *fw1Walk) tieSeams() TieSeams {
 	return TieSeams{
 		Querier: w.pool,
 		GL:      w.money.glSvc,
+		GLClock: w.money.glSvc,
 		GLStore: gl.NewRepository(w.pool),
 		Billing: billing.NewRepository(w.pool),
 		Tax: tax.NewService(tax.NewRepository(w.pool)).
