@@ -1872,5 +1872,5 @@ function heldPayment(value: string | undefined): { key: string; cents: number } 
 }
 
 function heldPaymentWords(cents: number): string {
-  return `An earlier payment of ${formatMoney(cents)} on this bill may or may not have been recorded. Check the bill's open amount above. Press Record the payment to send that same payment again: if it was already recorded, it is not recorded twice. A different amount waits until the earlier payment shows on the bill.`;
+  return `An earlier payment of ${formatMoney(cents)} on this bill may or may not have been recorded. Check the bill's open amount above. Press Record the payment again to send the same payment; the books will say if the first press was already recorded. A different amount waits until the earlier payment shows on the bill.`;
 }

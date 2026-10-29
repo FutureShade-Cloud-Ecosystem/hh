@@ -104,3 +104,42 @@ test("a payment that did not land holds its key and its amount: a different amou
   await expect(page.locator("[data-payee-lines-total]")).toContainText("$775.00");
   expect(before - centsOf(await page.locator("[data-payee-lines-total]").innerText())).toBe(10_000);
 });
+
+// Sonnet's visual read of 701 (round 2): the words of a lost answer, the amount field's alignment
+// and the phone's touch height.
+test("a lost answer says to press Record the payment again, in the desk's words and with no engine word", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+  await openPayForm(page, "B-4107");
+  await page.route("**/api/v1/purchasing/bills/*/payments", async (route) => {
+    await route.abort("connectionreset");
+  });
+  await page.locator("[data-field='pay-amount']").fill("100.00");
+  await page.locator("[data-action='payables-pay-send']").click();
+  const error = page.locator("[data-pay-error]");
+  await expect(error).toContainText("Press Record the payment again to send the same payment; the books will say if the first press was already recorded.");
+  await expect(error).not.toContainText(/\bkey\b/i);
+});
+
+test("the Pay form's amount is right aligned in tabular figures", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+  await openPayForm(page, "B-4107");
+  const style = await page.locator("[data-field='pay-amount']").evaluate((el) => {
+    const css = getComputedStyle(el);
+    return { align: css.textAlign, figures: css.fontVariantNumeric };
+  });
+  expect(["right", "end"]).toContain(style.align);
+  expect(style.figures).toContain("tabular-nums");
+});
+
+test("the Pay control is at least 44 px high on a phone", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+  const box = await page.locator("[data-line-row]", { hasText: "B-4107" }).getByRole("button", { name: "Pay" }).boundingBox();
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+});

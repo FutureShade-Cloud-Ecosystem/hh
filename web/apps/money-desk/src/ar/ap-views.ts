@@ -207,7 +207,7 @@ function payForm(model: PayablesBoardModel, payee: string): TemplateResult {
       <p class="callout" data-pay-target>${payTargetWords(form.billNo, payee, form.openCents)}</p>
       <label>
         <span>Amount to pay <span class="dim small">(up to ${formatMoney(form.openCents)})</span></span>
-        <input type="text" inputmode="decimal" data-field="pay-amount" placeholder="Such as 250.00" autocomplete="off" />
+        <input type="text" class="amount" inputmode="decimal" data-field="pay-amount" placeholder="Such as 250.00" autocomplete="off" />
       </label>
       <label>
         <span>Day it was paid</span>

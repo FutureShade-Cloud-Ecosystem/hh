@@ -427,7 +427,7 @@ test("the row being paid is marked as the one being paid, in the desk's own sele
   expect(marked).not.toBe(unmarked);
 });
 
-test("the Pay control is the same compact size on a phone as on a wide screen", async ({ page, request }) => {
+test("the Pay control keeps the desk's compact size on a wide screen and meets the 44 px bar on a phone", async ({ page, request }) => {
   await openDesk(page, request, "controller");
   await openBoard(page);
   await openPayee(page, "Saltmarsh Fasteners (demo)");
@@ -440,8 +440,7 @@ test("the Pay control is the same compact size on a phone as on a wide screen", 
   expect(wide).not.toBeNull();
   expect(phone).not.toBeNull();
 
-  // The same control and the same size on a phone: a word beside the amount it moves, not a button
-  // that weighs more than the row it sits in.
-  expect(Math.round(phone!.height)).toBe(Math.round(wide!.height));
-  expect(Math.round(phone!.height)).toBeLessThan(44);
+  // A finger needs 44 px on a phone (UX-29); a wide screen keeps the compact control.
+  expect(Math.round(wide!.height)).toBeLessThan(44);
+  expect(Math.round(phone!.height)).toBeGreaterThanOrEqual(44);
 });
