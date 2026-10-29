@@ -268,9 +268,14 @@ func newHarness(t *testing.T) *harness {
 	invSvc := inventory.NewService(inventory.NewRepository(pool)).
 		WithGLPoster(invGLBridge{svc: glSvc}).
 		WithRuleResolver(invRuleBridge{svc: glSvc})
+	// The landed cost journal clock is wired as production wires it (wire_operations), so a
+	// landed cost payable counts from its own journal's effective instant, never from the row's
+	// timestamps: those are the database's clock, which the evening guard's leg shifts apart
+	// from the test's own clock (the W29A Sub2 red under the guard).
 	landedSvc := landedcost.NewService(landedcost.NewRepository(pool)).
 		WithCapitalizer(landedBridge{svc: invSvc}).
-		WithGLPoster(landedGLBridge{svc: glSvc})
+		WithGLPoster(landedGLBridge{svc: glSvc}).
+		WithJournalClock(itLandedClock{svc: glSvc})
 
 	svc := NewService(NewRepository(pool)).
 		WithStockReceiver(itStock{svc: invSvc}).
