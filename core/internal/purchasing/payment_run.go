@@ -367,7 +367,20 @@ func (s *Service) PayPaymentRun(ctx context.Context, runID string) (PaymentRun, 
 // payRunLine pays one selected bill through PayBill and answers the line's outcome. The bill's
 // state and open balance are read fresh at the moment of the press: the run pays at most what the
 // bill still owes, and a bill that no longer owes anything is skipped with the reason in words.
+//
+// THE LINE'S OWN KEY COMES FIRST. A pay that stopped between a bill's payment and the run's
+// record of it leaves the line undecided while the money has already moved, so an open amount
+// read first would take the run's own payment for someone else's: a 10000 the run paid would be
+// recorded SKIPPED, and a 7000 it paid would be recorded PAID 3000. The journal under the
+// line's own key is the truth about what that line moved, so it is read before any open amount.
 func (s *Service) payRunLine(ctx context.Context, runID string, ln PaymentRunLine, paidAt time.Time) (string, int64, string, error) {
+	amount, paid, err := s.runKeyPayment(ctx, runID, ln.BillID)
+	if err != nil {
+		return "", 0, "", err
+	}
+	if paid {
+		return RunLinePaid, amount, "", nil
+	}
 	state, open, err := s.repo.BillPayState(ctx, ln.BillID)
 	if err != nil {
 		return "", 0, "", err
@@ -378,7 +391,7 @@ func (s *Service) payRunLine(ctx context.Context, runID string, ln PaymentRunLin
 	if open <= 0 {
 		return RunLineSkipped, 0, "bill was paid in full elsewhere", nil
 	}
-	amount := ln.AmountCents
+	amount = ln.AmountCents
 	if amount > open {
 		amount = open
 	}
@@ -398,6 +411,40 @@ func (s *Service) payRunLine(ctx context.Context, runID string, ln PaymentRunLin
 		return "", 0, "", err
 	}
 	return RunLinePaid, amount, "", nil
+}
+
+// runKeyPayment answers what the run's own key for billID already moved: the amount the journal
+// under that key carries, found false when the key has moved nothing yet.
+//
+// The key is read through the GL's journal seam, never from a GL table. With the seam unwired the
+// key cannot be judged and the line falls back to the open amount read: PayBill's own replay
+// judgement degrades the same way, and the journal's key index still refuses a second payment
+// under one key.
+func (s *Service) runKeyPayment(ctx context.Context, runID, billID string) (int64, bool, error) {
+	if s.journalClock == nil {
+		return 0, false, nil
+	}
+	key := glPaymentKeyPrefix + runKey(runID, billID)
+	ref, found, err := s.journalClock.JournalSourceRefByKey(ctx, key)
+	if err != nil {
+		return 0, false, err
+	}
+	if !found {
+		return 0, false, nil
+	}
+	if ref != billID {
+		// The key is spent on another bill's payment, so it is not this line's payment: the
+		// same judgement PayBill makes under the same key.
+		return 0, false, conflict("purchasing: the payment key %s was spent on another bill's payment", key)
+	}
+	amount, found, err := s.journalClock.JournalAmountByKey(ctx, key)
+	if err != nil {
+		return 0, false, err
+	}
+	if !found {
+		return 0, false, nil
+	}
+	return amount, true, nil
 }
 
 // runKey is the per line payment key the run pays under: run:<run id>:<bill id>. One bill, one

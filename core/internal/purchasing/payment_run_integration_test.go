@@ -12,6 +12,13 @@ package purchasing
 //  4. a bill partly paid elsewhere after review is paid only its rest, and a bill paid in full
 //     elsewhere is skipped with a reason;
 //  5. a clerk is refused on every route, and a branch outside the caller's reach is not found.
+//
+// The three legs of the PR 702 fix round ride here too, the review of S2 (Opus) on that PR:
+//
+//  6. an interrupted pay (the bill's payment landed, the run's record of it did not) leaves the run
+//     recording what its own key already moved, never the bill's open amount;
+//  7. a review naming another branch's bill is refused as not found, with no figures;
+//  8. a pay date the books would refuse is refused at propose and at update, in words.
 
 import (
 	"context"
@@ -654,5 +661,112 @@ func TestIntegration_W3_PaymentRunRoutes_RequireManagerAndFence(t *testing.T) {
 	}
 	if n := countRunPaymentJournals(t, h, proposed.ID); n != 1 {
 		t.Fatalf("W3 payment runs red: the run wrote %d payment journals after the re-pay, want 1", n)
+	}
+}
+
+// TestIntegration_W3_PaymentRun_InterruptedPay_RecordsWhatTheRunPaid is S2's P2 on PR 702, both of
+// its probes. A pay that stopped between a bill's payment and the run's record of it left the
+// line undecided while the run's own key had already moved the money. The retry read the bill's
+// open amount first and took the run's own payment for someone else's: a 10000 the run paid was
+// recorded SKIPPED, and a 7000 it paid was recorded PAID 3000.
+//
+// THE LINE'S OWN KEY DECIDES THE LINE. The journal under run:<run id>:<bill id> is the truth
+// about what that line moved, so it is read before any open amount.
+func TestIntegration_W3_PaymentRun_InterruptedPay_RecordsWhatTheRunPaid(t *testing.T) {
+	h := newHarness(t)
+	zone, err := time.LoadLocation("America/Toronto")
+	if err != nil {
+		t.Fatalf("load dealer zone: %v", err)
+	}
+	todayStr := time.Now().In(zone).Format("2006-01-02")
+	paidAt, err := time.ParseInLocation("2006-01-02", todayStr, zone)
+	if err != nil {
+		t.Fatalf("parse the house day: %v", err)
+	}
+
+	// Probe A, the full amount: the run's key paid the whole 10000 bill. Probe B, the part
+	// amount: the bill is 10000 and the review lowers the line to 7000.
+	billA := postBillForVendor(t, h, h.vendor, "prun-intr-a", 10000, todayStr, todayStr)
+	billB := postBillForVendor(t, h, h.vendor, "prun-intr-b", 10000, todayStr, todayStr)
+
+	run, err := h.svc.ProposePaymentRun(h.ctx, ProposePaymentRunRequest{
+		BranchID: branchTRT, DueOn: todayStr, PayDate: todayStr,
+	})
+	if err != nil {
+		t.Fatalf("W3 payment runs red: ProposePaymentRun: %v", err)
+	}
+	cleanupRun(t, h.pool, run.ID)
+	if len(run.Lines) != 2 {
+		t.Fatalf("W3 payment runs red: proposed run has %d lines, want bills A and B", len(run.Lines))
+	}
+
+	// The review lowers bill B to 7000, the part amount probe.
+	run, err = h.svc.UpdatePaymentRun(h.ctx, run.ID, UpdatePaymentRunRequest{
+		Lower: []PaymentRunLineAmount{{BillID: billB.ID, AmountCents: 7000}},
+	})
+	if err != nil {
+		t.Fatalf("W3 payment runs red: UpdatePaymentRun: %v", err)
+	}
+
+	// THE INTERRUPTED PAY: each bill's payment lands under the run's own key, and the run's
+	// record of the line never lands.
+	if _, err := h.svc.PayBill(h.ctx, billA.ID, PayBillRequest{
+		AmountCents: 10000, PaidAt: paidAt, Note: "Payment run " + run.ID,
+		IdempotencyKey: runKey(run.ID, billA.ID),
+	}); err != nil {
+		t.Fatalf("W3 payment runs red: the interrupted payment on bill A: %v", err)
+	}
+	if _, err := h.svc.PayBill(h.ctx, billB.ID, PayBillRequest{
+		AmountCents: 7000, PaidAt: paidAt, Note: "Payment run " + run.ID,
+		IdempotencyKey: runKey(run.ID, billB.ID),
+	}); err != nil {
+		t.Fatalf("W3 payment runs red: the interrupted payment on bill B: %v", err)
+	}
+
+	// The pay is pressed again. The run records what its own keys already moved.
+	paid, err := h.svc.PayPaymentRun(h.ctx, run.ID)
+	if err != nil {
+		t.Fatalf("W3 payment runs red: PayPaymentRun after the interrupted pay: %v", err)
+	}
+	var aLine, bLine *PaymentRunLine
+	for i := range paid.Lines {
+		switch paid.Lines[i].BillID {
+		case billA.ID:
+			aLine = &paid.Lines[i]
+		case billB.ID:
+			bLine = &paid.Lines[i]
+		}
+	}
+	if aLine == nil || aLine.Status != RunLinePaid || aLine.PaidCents != 10000 {
+		t.Fatalf("W3 payment runs red: bill A's run line = %+v, want PAID at the 10000 its own key moved", aLine)
+	}
+	if bLine == nil || bLine.Status != RunLinePaid || bLine.PaidCents != 7000 {
+		t.Fatalf("W3 payment runs red: bill B's run line = %+v, want PAID at the 7000 its own key moved", bLine)
+	}
+	if paid.Status != RunPaid || paid.PaidCents != 17000 {
+		t.Fatalf("W3 payment runs red: paid run = (%s, %d), want (PAID, 17000)", paid.Status, paid.PaidCents)
+	}
+
+	// The books moved once each: one instalment per bill, one journal per key, and the money
+	// the run recorded is the money that moved.
+	for _, tc := range []struct {
+		billID string
+		want   int64
+	}{{billA.ID, 10000}, {billB.ID, 7000}} {
+		if got := countPaidInstalments(t, h, tc.billID); got != 1 {
+			t.Fatalf("W3 payment runs red: bill %s carries %d paid instalments, want exactly 1", tc.billID, got)
+		}
+		var sum int64
+		if err := h.pool.QueryRow(h.ctx,
+			`SELECT COALESCE(SUM(amount_cents),0) FROM purchasing_bill_instalments WHERE bill_id = $1 AND status = 'PAID'`,
+			tc.billID).Scan(&sum); err != nil {
+			t.Fatal(err)
+		}
+		if sum != tc.want {
+			t.Fatalf("W3 payment runs red: bill %s was paid %d cents, want exactly %d", tc.billID, sum, tc.want)
+		}
+	}
+	if n := countRunPaymentJournals(t, h, run.ID); n != 2 {
+		t.Fatalf("W3 payment runs red: the run's keys sit on %d journals, want 2 (bill A and bill B, one each)", n)
 	}
 }
