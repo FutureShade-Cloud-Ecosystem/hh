@@ -398,6 +398,7 @@ test("apply route: the preview splits oldest first whatever the list order and w
   assert.equal(preview.json.preview, true);
   assert.equal(preview.json.payment_no, undefined);
   assert.equal(preview.json.unapplied_cents, 0);
+  assert.equal(preview.json.on_account_cents, 0);
   assert.deepEqual(preview.json.lines.map((l) => l.invoice_id), [oldest.id, youngest.id], "the server's split is oldest first, not the list's order");
   assert.deepEqual(preview.json.lines.map((l) => l.outcome), ["CLOSES", "PART"]);
   assert.equal(preview.json.lines[0].applied_cents, oldest.balance_cents);
@@ -467,7 +468,7 @@ test("apply route: a replayed key is judged against its own body", async () => {
   assert.equal(still.json.totals.balance_cents, mine[0].balance_cents - 1000);
 });
 
-test("apply route: the split and the ceiling subtract the retained holdback, as the core's walk does", async () => {
+test("apply route: the split subtracts the retained holdback and answers any excess as on_account_cents, as the core's walk does", async () => {
   await reset();
   const register = await call("GET", "/api/v1/ar/register?chip=all");
   const held = register.json.items.find((r) => r.invoice_no === "INV-1008");
@@ -477,21 +478,35 @@ test("apply route: the split and the ceiling subtract the retained holdback, as 
   assert.equal(detail.json.totals.payable_cents, held.balance_cents - 30000, "payable is the balance less the retained holdback");
   const payable = held.balance_cents - 30000;
   const body = { customer_id: held.customer_id, method: "CHEQUE", reference: "c", invoice_ids: [held.id], idempotency_key: "h-1", preview: false };
-  // The ceiling counts the payable, never the balance.
-  const over = await call("POST", APPLY, { ...body, amount_cents: payable + 1 });
-  refused(over, 422, "the selected invoices can take at most ");
-  assert.ok(over.json.error.endsWith(`${payable} cents right now; refresh and retry`), over.json.error);
-  // The full payable leaves the retained holdback owing: the line stays PART, with nothing further payable on the invoice.
-  const posted = await call("POST", APPLY, { ...body, amount_cents: payable });
+  // The walk counts the payable, never the balance, and leaves any excess on the account as a credit.
+  const overPreview = await call("POST", APPLY, { ...body, amount_cents: payable + 1, preview: true });
+  assert.equal(overPreview.status, 200);
+  holds("BillingApplyPaymentAnswer", overPreview.json);
+  assert.equal(overPreview.json.applied_cents, payable);
+  assert.equal(overPreview.json.unapplied_cents, 1);
+  assert.equal(overPreview.json.on_account_cents, 1);
+  // The full payable leaves the retained holdback owing: the line stays PART, with nothing further payable on the invoice, and any excess goes to on_account_cents.
+  const posted = await call("POST", APPLY, { ...body, amount_cents: payable + 2500 });
   assert.equal(posted.status, 200);
+  holds("BillingApplyPaymentAnswer", posted.json);
+  assert.equal(posted.json.applied_cents, payable);
+  assert.equal(posted.json.unapplied_cents, 2500);
+  assert.equal(posted.json.on_account_cents, 2500);
   const line = posted.json.lines[0];
   assert.equal(line.applied_cents, payable);
   assert.equal(line.outcome, "PART");
   assert.equal(line.balance_after_cents, 30000);
   assert.equal(line.stays_open_cents, 0);
   const spent = await call("POST", APPLY, { ...body, idempotency_key: "h-2", amount_cents: 100 });
-  refused(spent, 422, "the selected invoices can take at most ");
-  assert.ok(spent.json.error.endsWith("0 cents right now; refresh and retry"), spent.json.error);
+  assert.equal(spent.status, 200);
+  holds("BillingApplyPaymentAnswer", spent.json);
+  assert.equal(spent.json.applied_cents, 0);
+  assert.equal(spent.json.unapplied_cents, 100);
+  assert.equal(spent.json.on_account_cents, 100);
+  assert.equal(spent.json.lines[0].applied_cents, 0);
+  assert.equal(spent.json.lines[0].outcome, "NONE");
+  assert.equal(spent.json.lines[0].balance_after_cents, 30000);
+  assert.equal(spent.json.lines[0].stays_open_cents, 0);
 });
 
 test("apply route: refusals are the core's words and leave nothing applied", async () => {
@@ -512,13 +527,16 @@ test("apply route: refusals are the core's words and leave nothing applied", asy
   const foreign = await call("POST", APPLY, { ...base, invoice_ids: [mine[0].id, other.id] });
   refused(foreign, 404, "no such invoice: ");
   assert.ok(foreign.json.error.endsWith(other.id));
-  const over = await call("POST", APPLY, { ...base, amount_cents: 99_999_999, invoice_ids: [mine[0].id] });
-  refused(over, 422, "the selected invoices can take at most ");
-  assert.ok(over.json.error.endsWith(`${mine[0].balance_cents} cents right now; refresh and retry`));
   const after = await call("GET", `/api/v1/ar/register/invoices/${mine[0].id}`);
   assert.equal(after.json.totals.balance_cents, mine[0].balance_cents);
+  // An overpayment closes the invoice and answers the excess as on_account_cents, with no refusal.
+  const over = await call("POST", APPLY, { ...base, amount_cents: mine[0].balance_cents + 4000 });
+  assert.equal(over.status, 200);
+  holds("BillingApplyPaymentAnswer", over.json);
+  assert.equal(over.json.applied_cents, mine[0].balance_cents);
+  assert.equal(over.json.unapplied_cents, 4000);
+  assert.equal(over.json.on_account_cents, 4000);
   // A paid invoice is not open.
-  assert.equal((await call("POST", APPLY, { ...base, amount_cents: mine[0].balance_cents })).status, 200);
   const closed = await call("POST", APPLY, { ...base, idempotency_key: "x-2" });
   refused(closed, 422, "is not open; a payment applies to a finalized or partially paid invoice");
   assert.ok(closed.json.error.startsWith(`invoice ${mine[0].invoice_no} (paid) is not open`));
