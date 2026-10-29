@@ -194,6 +194,13 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// One key is one payment across every bill: two presses under the same key
+	// serialize here, so the second sees the first's journal and is judged a
+	// replay or a key spent elsewhere, never a second payment (S2 round 2 P2).
+	if err := s.repo.LockPaymentKeyTx(ctx, tx, glPaymentKeyPrefix+key); err != nil {
+		return BillDetail{}, err
+	}
+
 	bill, err := s.repo.BillForUpdate(ctx, tx, billID)
 	if err != nil {
 		return BillDetail{}, err
@@ -272,6 +279,16 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 	return s.GetBill(ctx, billID)
 }
 
+// LockPaymentKeyTx holds a transaction scoped advisory lock on a payment's
+// idempotency key, so concurrent presses under one key run one at a time. It
+// touches no table.
+func (r *Repository) LockPaymentKeyTx(ctx context.Context, tx pgx.Tx, key string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, key); err != nil {
+		return fmt.Errorf("purchasing: lock the payment key: %w", err)
+	}
+	return nil
+}
+
 // PaidBillCentsTx returns the sum of PAID instalments on billID within tx.
 func (r *Repository) PaidBillCentsTx(ctx context.Context, tx pgx.Tx, billID string) (int64, error) {
 	if r.pool == nil {
@@ -306,7 +323,7 @@ func (r *Repository) RecordBillPaymentTx(ctx context.Context, tx pgx.Tx, billID,
 		INSERT INTO purchasing_bill_instalments (bill_id, seq, due_date, amount_cents, status, paid_at, note)
 		VALUES ($1, $2, $3::date, $4, 'PAID', $5, $6)
 		RETURNING id::text`,
-		billID, nextSeq, dueDate, amountCents, paidAt, nullStr(note),
+		billID, nextSeq, dueDate, amountCents, paidAt, note,
 	).Scan(&id); err != nil {
 		return "", fmt.Errorf("purchasing: insert paid instalment: %w", err)
 	}
