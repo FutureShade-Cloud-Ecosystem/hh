@@ -225,6 +225,7 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/tax/config", g.RequireAdmin(h.staff(h.updateConfig)))
 	r.Handle("POST /api/v1/tax/recompute", g.RequireAdmin(h.staff(h.recompute)))
 	r.Handle("GET /api/v1/tax/recon", g.RequireManager(h.staff(h.recon)))
+	r.Handle("GET /api/v1/tax/worksheet", g.RequireManager(h.staff(h.worksheet)))
 
 	// Evidence (MASKED-only serialization) + A-21 evidence audit (VIEW/CHANGE/DOWNLOAD) + the tcrd relief gate.
 	// Capture is staff (a cashier attaches evidence at the counter); reads/downloads are manager-gated.

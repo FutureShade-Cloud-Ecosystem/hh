@@ -3758,6 +3758,7 @@ type TaxConfig struct {
 	BranchId             *string `json:"branch_id,omitempty"`
 	HstRegistrationNo    string  `json:"hst_registration_no"`
 	RoundMode            string  `json:"round_mode"`
+	FilingFrequency      *string `json:"filing_frequency,omitempty"`
 	AvalaraEnabled       bool    `json:"avalara_enabled"`
 	PostalRoutingEnabled bool    `json:"postal_routing_enabled"`
 	Notes                *string `json:"notes,omitempty"`
@@ -3824,6 +3825,45 @@ type TaxReconReport struct {
 	GlOntarioCents         int64   `json:"gl_ontario_cents"`
 	VarianceCents          int64   `json:"variance_cents"`
 	TiedOut                bool    `json:"tied_out"`
+}
+
+type TaxWorksheetLine struct {
+	LineNo        string  `json:"line_no"`
+	Label         string  `json:"label"`
+	AmountCents   int64   `json:"amount_cents"`
+	EnteredByHand bool    `json:"entered_by_hand"`
+	Note          *string `json:"note,omitempty"`
+}
+
+type TaxWorksheet struct {
+	Year                          int32              `json:"year"`
+	FilingFrequency               string             `json:"filing_frequency"`
+	Quarter                       *int32             `json:"quarter,omitempty"`
+	Month                         *int32             `json:"month,omitempty"`
+	FromDate                      string             `json:"from_date"`
+	ToDate                        string             `json:"to_date"`
+	BranchId                      *string            `json:"branch_id,omitempty"`
+	Line101SalesCents             int64              `json:"line_101_sales_cents"`
+	Line103CollectedCents         int64              `json:"line_103_collected_cents"`
+	Line104AdjustmentsCents       int64              `json:"line_104_adjustments_cents"`
+	Line105TotalHstCents          int64              `json:"line_105_total_hst_cents"`
+	Line106ItcsCents              int64              `json:"line_106_itcs_cents"`
+	Line107ItcAdjustmentsCents    int64              `json:"line_107_itc_adjustments_cents"`
+	Line108TotalItcsCents         int64              `json:"line_108_total_itcs_cents"`
+	Line109NetTaxCents            int64              `json:"line_109_net_tax_cents"`
+	Line110InstalmentsCents       int64              `json:"line_110_instalments_cents"`
+	Line111RebatesCents           int64              `json:"line_111_rebates_cents"`
+	Line112TotalOtherCreditsCents int64              `json:"line_112_total_other_credits_cents"`
+	Line113BalanceCents           int64              `json:"line_113_balance_cents"`
+	Line114RefundClaimedCents     int64              `json:"line_114_refund_claimed_cents"`
+	Line115AmountOwingCents       int64              `json:"line_115_amount_owing_cents"`
+	InvoiceHstCents               int64              `json:"invoice_hst_cents"`
+	ReturnTaxCents                int64              `json:"return_tax_cents"`
+	GlPayableCents                int64              `json:"gl_payable_cents"`
+	VarianceCents                 int64              `json:"variance_cents"`
+	TiedOut                       bool               `json:"tied_out"`
+	ManualEntryNote               string             `json:"manual_entry_note"`
+	Lines                         []TaxWorksheetLine `json:"lines"`
 }
 
 type InventoryStockMove struct {

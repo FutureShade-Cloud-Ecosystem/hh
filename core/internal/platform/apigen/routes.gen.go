@@ -705,6 +705,7 @@ var Routes = []Route{
 	{Method: "POST", Path: "/api/v1/tax/recompute", OperationID: "taxRecompute", Tag: "staff-tax", XRole: "requireAdmin", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "admin", List: ""},
 	{Method: "GET", Path: "/api/v1/tax/recon", OperationID: "taxReconcile", Tag: "staff-tax", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},
 	{Method: "GET", Path: "/api/v1/tax/review-queue", OperationID: "taxReviewQueue", Tag: "staff-tax", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},
+	{Method: "GET", Path: "/api/v1/tax/worksheet", OperationID: "taxGetWorksheet", Tag: "staff-tax", XRole: "requireManager", Bearer: "staff", Addition: true, Surfaces: []string{"money-desk"}, Level: "read", List: ""},
 	{Method: "POST", Path: "/api/v1/tenant/accept-invite", OperationID: "tenantAcceptInvite", Tag: "tenant-auth", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/v1/tenant/addresses", OperationID: "tenantListAddresses", Tag: "tenant-addresses", XRole: "capability:view_orders_deliveries", Bearer: "tenant", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/v1/tenant/addresses/{id}", OperationID: "tenantGetAddress", Tag: "tenant-addresses", XRole: "capability:view_orders_deliveries", Bearer: "tenant", Addition: false, Surfaces: nil, Level: "", List: ""},

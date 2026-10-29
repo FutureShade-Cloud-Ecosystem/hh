@@ -4,14 +4,21 @@ package tax
 
 import (
 	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	gl "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	auth "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -254,5 +261,78 @@ func TestIntegration_HST1_WorksheetAllFiveLegs(t *testing.T) {
 
 	if !strings.Contains(wsYr.ManualEntryNote, "entered by hand") {
 		t.Errorf("manual_entry_note = %q, want wording naming lines entered by hand", wsYr.ManualEntryNote)
+	}
+}
+
+func mountedWorksheetGet(t *testing.T, pool *pgxpool.Pool, caller identity.StaffContext, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	svc := NewService(NewRepository(pool)).
+		WithSalesHSTs(billing.NewRepository(pool)).
+		WithReturnHSTs(pos.NewRepository(pool)).
+		WithBillITCs(purchasing.NewRepository(pool)).
+		WithGLBalances(fw11GLBal{svc: glSvc})
+	h := NewHandler(svc, slog.New(slog.DiscardHandler))
+
+	sg := testkit.NewStaffGuards(t)
+	roleID, _ := identity.CanonicalForERPCode(caller.RoleCode)
+	sg.SetAuthority(auth.StaffAuthority{
+		RoleID:   roleID,
+		Tier:     int(caller.Tier),
+		Scope:    identity.CanonicalScope(caller.Scope),
+		Branches: fenceBranchList(caller.Branches),
+	})
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, sg.Guards)
+
+	r := httptest.NewRequest(http.MethodGet, path, nil)
+	r.Header.Set("Authorization", "Bearer "+sg.Bearer(t))
+	r.Header.Set("X-Org", testkit.OrgNorthSlug)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, r)
+	return rec
+}
+
+func TestIntegration_HST1_WorksheetRouteAndBranchFence(t *testing.T) {
+	pool := intPool(t)
+	t.Cleanup(pool.Close)
+	hst1Ensure2092(t, pool)
+	ctx := context.Background()
+
+	_, _ = pool.Exec(ctx, `DELETE FROM tax_config WHERE branch_id = $1::uuid`, fenceTrenton)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM tax_config WHERE branch_id = $1::uuid`, fenceTrenton)
+	})
+
+	kingston := identity.StaffContext{
+		UserID: fenceSeedUser(t, pool), RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager,
+		Scope: identity.ScopeBranch, Status: identity.StatusActive,
+		Branches: map[string]bool{fenceKingston: true},
+	}
+	controller := identity.StaffContext{
+		UserID: fenceSeedUser(t, pool), RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive,
+	}
+
+	if got := mountedWorksheetGet(t, pool, kingston, "/api/v1/tax/worksheet?year=2092&quarter=2&branch_id="+fenceTrenton).Code; got != http.StatusForbidden {
+		t.Errorf("GET Trenton's worksheet as a Kingston-only manager = %d, want 403", got)
+	}
+	if got := mountedWorksheetGet(t, pool, kingston, "/api/v1/tax/worksheet?year=2092&quarter=2").Code; got != http.StatusForbidden {
+		t.Errorf("GET the consolidated worksheet as a Kingston-only manager = %d, want 403", got)
+	}
+	if got := mountedWorksheetGet(t, pool, kingston, "/api/v1/tax/worksheet?year=2092&quarter=2&branch_id="+fenceKingston).Code; got != http.StatusOK {
+		t.Errorf("GET Kingston's own worksheet as a Kingston-only manager = %d, want 200", got)
+	}
+
+	rec := mountedWorksheetGet(t, pool, controller, "/api/v1/tax/worksheet?year=2092&quarter=2&branch_id="+fenceTrenton)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET Trenton's worksheet as the Controller = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var ws Worksheet
+	if err := json.Unmarshal(rec.Body.Bytes(), &ws); err != nil {
+		t.Fatalf("unmarshal worksheet: %v", err)
+	}
+	if ws.FilingFrequency != "QUARTERLY" || ws.FromDate != "2092-04-01" || ws.ToDate != "2092-06-30" || !ws.TiedOut {
+		t.Errorf("worksheet response = %+v, want QUARTERLY 2092-04-01..2092-06-30 tied_out=true", ws)
 	}
 }
