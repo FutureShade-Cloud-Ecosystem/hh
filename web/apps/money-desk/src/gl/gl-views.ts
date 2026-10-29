@@ -10,7 +10,8 @@
 // and trial balance screens.
 import { html, nothing, type TemplateResult } from "lit";
 import type { Branch, GlJournal, GlTrialBalanceResult, IdentityApproval } from "@hardscapehouse/api-client";
-import { approvalKind, approvalTitle, canDecide, dayWords, detailWords, entryLabel, floorFigures, floorWords, journalTone, journalWord, monthWord, rangeWords, systemJournalNote } from "./gl-logic.js";
+import { sourceWord } from "../shared/source-words.js";
+import { approvalKind, approvalTitle, canDecide, countsNoteWords, dayWords, detailWords, entryLabel, floorFigures, floorWords, journalTone, journalWord, monthWord, PENDING_APPROVAL_NOTE, PENDING_APPROVAL_WHY, rangeWords, statusCountWord, systemJournalNote } from "./gl-logic.js";
 import { formatMoney } from "./gl-money.js";
 import { chartView, checksView, composerView, confirmFor, linesTable, periodsView, policyView, recurringView, type BooksModel } from "./gl-books.js";
 
@@ -126,7 +127,14 @@ export function tabsFor(mode: "controller" | "reader"): ReadonlyArray<{ id: GlTa
 
 function tabs(model: GlModel): TemplateResult {
   const pending = model.journals.filter((j) => j.derived_status === "PENDING_APPROVAL").length;
-  const count = (id: GlTab): number | null => (id === "approvals" ? model.approvals.length : id === "journals" && pending > 0 ? pending : null);
+  // The approvals tab counts the queue the core answered whole; the journals tab counts the parked
+  // journals among the loaded rows. The line under the chips says once what those counts are of.
+  const count = (id: GlTab): string | null =>
+    id === "approvals"
+      ? String(model.approvals.length)
+      : id === "journals" && pending > 0
+        ? statusCountWord(pending)
+        : null;
   return html`
     <nav class="gl-tabs" aria-label="Ledger views">
       ${tabsFor(model.books.mode).map((t) => {
@@ -326,9 +334,9 @@ function journalDetail(model: GlModel): TemplateResult {
         ${pill(journalTone(journal.derived_status), journalWord(journal.derived_status))}
       </div>
       <dl class="gl-facts">
-        <dt>Source</dt><dd>${journal.source === "MANUAL" ? "Manual" : journal.source}</dd>
+        <dt>Source</dt><dd>${sourceWord(journal.source)}</dd>
         ${where !== "" ? html`<dt>Branch</dt><dd>${where}</dd>` : nothing}
-        ${pending ? html`<dt>Why it waits</dt><dd>At or over the approval threshold (GL policy).</dd>` : nothing}
+        ${pending ? html`<dt>Why it waits</dt><dd>${PENDING_APPROVAL_WHY}</dd>` : nothing}
         ${reverses !== undefined ? html`<dt>Reverses</dt><dd data-reverses>${entryLabel(reverses)}</dd>` : nothing}
       </dl>
       ${journalLines(journal)}
@@ -373,8 +381,9 @@ function journalsView(model: GlModel): TemplateResult {
         <div class="gl-panel-head">
           <h3>Journals</h3>
           <div class="gl-filters" role="group" aria-label="Filter journals">
-            ${FILTERS.map((f) => html`<button type="button" class="gl-filter" data-action="gl-filter" data-filter=${f.id} aria-pressed="${model.journalFilter === f.id ? "true" : "false"}">${f.word}${f.id === "all" ? nothing : html` ${model.journals.filter((j) => filterMatches(f.id, j)).length}`}</button>`)}
+            ${FILTERS.map((f) => html`<button type="button" class="gl-filter" data-action="gl-filter" data-filter=${f.id} aria-pressed="${model.journalFilter === f.id ? "true" : "false"}">${f.word}${f.id === "all" ? nothing : html` ${statusCountWord(model.journals.filter((j) => filterMatches(f.id, j)).length)}`}</button>`)}
           </div>
+          ${model.journalsNext !== "" ? html`<p class="gl-dim gl-counts-note" data-counts-note>${countsNoteWords(model.journals.length)}</p>` : nothing}
         </div>
         ${dateRange(model)}
         ${rows.length === 0
@@ -388,7 +397,7 @@ function journalsView(model: GlModel): TemplateResult {
                       (j) => html`<tr aria-current="${model.selectedJournal === j.id ? "true" : "false"}">
                         <td class="gl-nowrap"><button type="button" class="gl-link" data-action="gl-select-journal" data-id=${j.id} data-journal-id=${j.id}>${entryLabel(j)}</button></td>
                         <td class="gl-nowrap gl-col-posted" data-posted>${postedWords(j)}</td>
-                        <td>${j.memo}<span class="gl-name-narrow" data-posted-narrow>${postedWords(j)}</span><span class="gl-row-detail">${j.source === "MANUAL" ? "Manual" : j.source}</span></td>
+                        <td>${j.memo}<span class="gl-name-narrow gl-nowrap" data-posted-narrow>${postedWords(j)}</span><span class="gl-row-detail gl-source">${sourceWord(j.source)}</span></td>
                         <td>${pill(journalTone(j.derived_status), journalWord(j.derived_status))}</td>
                       </tr>`,
                     )}
@@ -399,7 +408,7 @@ function journalsView(model: GlModel): TemplateResult {
         ${model.journalsNext !== ""
           ? html`<div class="gl-actions"><button type="button" class="btn btn-secondary" data-action="gl-show-more" data-show-more ?disabled=${model.reaching}>Show more journals</button></div>`
           : nothing}
-        <p class="gl-note">Pending approval is a derived label: a manual draft at or over the threshold. Nothing writes it to the row.</p>
+        <p class="gl-note">${PENDING_APPROVAL_NOTE}</p>
       </section>
       <div class="gl-stack">${journalDetail(model)}</div>
     </div>
