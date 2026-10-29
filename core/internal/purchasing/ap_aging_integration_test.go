@@ -216,26 +216,31 @@ func TestIntegration_W29A_Sub1_APAgingRule(t *testing.T) {
 	rig := newAPAgingRig(t)
 	reach := BranchReach{BranchIDs: []string{branchTRT}}
 
-	// The reference instant is the last second of today's house day in America/Toronto, which is
-	// already tomorrow in UTC: the dealer house day boundary, exercised with the five buckets. It
-	// must also come after every event this test posts at the real clock: a landed cost counts from
-	// its apply journal's effective instant (W2-9a round 2b), and that journal is posted now. A fixed
-	// 22:30 failed every run after 22:30 house time, when the apply journal is later than the instant
-	// it is read as of; the aging was right to leave it out (main's red on f8a3873e).
+	// The reference instant is the last second of the house day ten days from the
+	// run's own house day. It is still the day end the buckets read against (that
+	// day's 23:59:59 America/Toronto is the next UTC day and stays on its own house
+	// day), and it is always far past every event this test posts at the real clock,
+	// so the run can never fail by posting inside the instant it reads as of. The
+	// earlier anchor, today's own 23:59:59, failed exactly there: a run whose last
+	// events reached the wall clock inside the reference second read its own landed
+	// cost out of the aging, because the landed cost counts from its apply journal's
+	// effective instant and that journal is posted now (the red under a clock pinned
+	// to 23:59:58: buckets short exactly the 7500 cent landed cost).
 	nowLocal := time.Now().In(rig.zone)
-	asOf := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 23, 59, 59, 0, rig.zone)
-	asOfDay := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, time.UTC)
+	asOfDay := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 10)
+	asOf := time.Date(asOfDay.Year(), asOfDay.Month(), asOfDay.Day(), 23, 59, 59, 0, rig.zone)
 
 	dayStr := func(offsetDays int) string {
 		return asOfDay.AddDate(0, 0, offsetDays).Format("2006-01-02")
 	}
 
 	// Five bills on the same vendor spanning all five bucket boundaries relative to asOfDay:
-	// - Current: due today (offset 0, must stay CURRENT at the end of the house day even though UTC is tomorrow)
-	// - Days 30: due 30 days ago (offset -30, upper bound of 1..30)
-	// - Days 60: due 31 days ago (offset -31, lower bound of 31..60)
-	// - Days 60 to 90: due 61 days ago (offset -61, lower bound of 61..90)
-	// - Days 90 plus: due 91 days ago (offset -91, lower bound of 91+)
+	// - Current: due on the reference day (offset 0, must stay CURRENT at the end of that house day
+	//   even though its end is the next UTC day)
+	// - Days 30: due 30 days before it (offset -30, upper bound of 1..30)
+	// - Days 60: due 31 days before it (offset -31, lower bound of 31..60)
+	// - Days 60 to 90: due 61 days before it (offset -61, lower bound of 61..90)
+	// - Days 90 plus: due 91 days before it (offset -91, lower bound of 91+)
 	poCur, billCur := rig.createReceivedPOAndPostBill(t, "sub1-cur", 10000, dayStr(0), dayStr(0))
 	_, _ = rig.createReceivedPOAndPostBill(t, "sub1-d30", 20000, dayStr(-30), dayStr(-30))
 	_, _ = rig.createReceivedPOAndPostBill(t, "sub1-d60", 30000, dayStr(-31), dayStr(-31))
@@ -254,8 +259,13 @@ func TestIntegration_W29A_Sub1_APAgingRule(t *testing.T) {
 	}
 
 	// Attach and apply an open landed cost of 7500 cents freight on poCur before asOf.
+	// Its row timestamps are left as the service stamped them: with the journal clock
+	// wired, the payable counts from its apply journal's effective instant, and its
+	// bucket day is the row's own creation day, the run's own day, ten days before
+	// the reference day, so DAYS_30. The old backdate of created_at and updated_at
+	// is dead weight since the clock: inclusion never reads the row's timestamps,
+	// and the bucket day needs no steering.
 	lcID := rig.createOpenLandedCost(t, poCur, 7500, 0)
-	_, _ = rig.pool.Exec(rig.ctx, `UPDATE landed_costs SET created_at = $2, updated_at = $2 WHERE id = $1::uuid`, lcID, payTime)
 
 	page, err := rig.svc.APAging(rig.ctx, asOf, reach)
 	if err != nil {
@@ -264,14 +274,14 @@ func TestIntegration_W29A_Sub1_APAgingRule(t *testing.T) {
 
 	// Expected totals:
 	// Vendor bills open: 6000 (CURRENT) + 20000 (30) + 30000 (60) + 40000 (60_90) + 50000 (90+) = 146000
-	// Landed cost open: 7500 (CURRENT, dated today)
+	// Landed cost open: 7500 (DAYS_30, created on the run's own day, ten days before the reference day)
 	// Grand total: 153500
 	if page.AsOf != dayStr(0) {
 		t.Fatalf("W2-9a sub1 red: page.AsOf = %q, want house day %q", page.AsOf, dayStr(0))
 	}
-	if page.CurrentCents != 13500 || page.Days30Cents != 20000 || page.Days60Cents != 30000 ||
+	if page.CurrentCents != 6000 || page.Days30Cents != 27500 || page.Days60Cents != 30000 ||
 		page.Days60To90Cents != 40000 || page.Days90PlusCents != 50000 || page.TotalCents != 153500 {
-		t.Fatalf("W2-9a sub1 red: buckets = (cur=%d d30=%d d60=%d d6090=%d d90p=%d total=%d), want (13500 20000 30000 40000 50000 153500)",
+		t.Fatalf("W2-9a sub1 red: buckets = (cur=%d d30=%d d60=%d d6090=%d d90p=%d total=%d), want (6000 27500 30000 40000 50000 153500)",
 			page.CurrentCents, page.Days30Cents, page.Days60Cents, page.Days60To90Cents, page.Days90PlusCents, page.TotalCents)
 	}
 
@@ -295,8 +305,8 @@ func TestIntegration_W29A_Sub1_APAgingRule(t *testing.T) {
 	if lcRow == nil {
 		t.Fatalf("W2-9a sub1 red: landed cost row %s missing from AP aging", lcID)
 	}
-	if lcRow.RowKind != APRowKindLandedCost || !lcRow.IsLandedCost || lcRow.TotalCents != 7500 || lcRow.CurrentCents != 7500 {
-		t.Fatalf("W2-9a sub1 red: landed cost row = %+v, want row_kind=LANDED_COST is_landed_cost=true total=7500 current=7500", *lcRow)
+	if lcRow.RowKind != APRowKindLandedCost || !lcRow.IsLandedCost || lcRow.TotalCents != 7500 || lcRow.Days30Cents != 7500 {
+		t.Fatalf("W2-9a sub1 red: landed cost row = %+v, want row_kind=LANDED_COST is_landed_cost=true total=7500 days_30=7500", *lcRow)
 	}
 
 	bal, err := rig.svc.APBalanceAsOf(rig.ctx, asOf, branchTRT)
