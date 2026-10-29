@@ -135,6 +135,12 @@ type operationsSpine struct {
 	syncEngine *sync.Engine
 }
 
+// The GL service is the till's account postability seam (W2-6b fix round 1): the chart's own read about
+// an account code, asked when a manager writes a reason code. The composition root wires it in below;
+// this line keeps the wiring honest at build time, so the seam can never be wired to something that
+// stopped answering it.
+var _ till.AccountPostabilityChecker = (*gl.Service)(nil)
+
 func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, spine *moneySpine, streamTicketKey string, smsOutbox *messagingprovider.Outbox) *operationsSpine {
 	ops := &operationsSpine{}
 	link := linkedUserID(pool)
@@ -153,7 +159,20 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	tillRepo := till.NewRepository(pool)
 	tillSvc := till.NewService(tillRepo).
 		WithAudit(auditSvc).
-		WithAuditTrail(auditSvc)
+		WithAuditTrail(auditSvc).
+		// W2-6b fix round 1: the till asks the chart whether the account a reason code names is one the
+		// chart holds and keeps live. The GL service answers over its own account read, so the till asks
+		// the chart instead of reading a GL table. Unwired, a reason code that names an account is
+		// refused (fail closed), never waved through.
+		WithAccountPostability(spine.glSvc)
+	// W2-6b: the counter reason codes. The GL asks the till (the till owns the list) for the account
+	// a movement's reason code points at, so no GL statement names a till table. Unwired, a movement
+	// that names a code refuses to post rather than posting to suspense.
+	spine.glSvc.WithCounterAccounts(tillRepo)
+	// W2-6b fix round 3: the chart's retire guard asks the till (the till owns the list) which LIVE
+	// codes name an account, so an account a live code needs is never retired under it. Unwired, the
+	// guard cannot check the account and the chart refuses to retire it.
+	spine.glSvc.WithCounterAccountUses(tillRepo)
 	tillHandler := till.NewHandler(tillSvc, log).WithUserLinker(link).WithCustomerReach(newCustomerWall(pool))
 	if !tillHandler.CustomerReachWired() {
 		panic("till: customer reach not wired - payment attempts would record against any named account")
@@ -891,7 +910,9 @@ func (a lienGLPoster) PostJournal(ctx context.Context, in lien.GLJournal) (strin
 }
 
 // invcountGLPoster satisfies invcount.GLPoster over glSvc.PostExternal
-// (the reason-coded variance journal).
+// (the reason-coded variance journal). The document date rides: the count's variance
+// journal is dated at the count's own instant, the one its COUNT move carries, so the two
+// sides of one count are cut at the same moment (W2-5 fix r10, S5's P2-7).
 type invcountGLPoster struct{ svc *gl.Service }
 
 func (a invcountGLPoster) PostJournal(ctx context.Context, in invcount.GLJournal) (string, error) {
@@ -899,7 +920,7 @@ func (a invcountGLPoster) PostJournal(ctx context.Context, in invcount.GLJournal
 	for i, l := range in.Lines {
 		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
 	}
-	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, DocumentDate: in.DocumentDate, Lines: lines})
 }
 
 // landedGLPoster satisfies landedcost.GLPoster over glSvc.PostExternal
@@ -916,12 +937,12 @@ func landedGLExtLines(in []landedcost.GLLine) []gl.ExternalLine {
 }
 
 func (a landedGLPoster) PostJournal(ctx context.Context, in landedcost.GLJournal) (string, error) {
-	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: landedGLExtLines(in.Lines)})
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, DocumentDate: in.DocumentDate, Lines: landedGLExtLines(in.Lines)})
 }
 
 // PostJournalTx is PostJournal through the caller's transaction (gl.Service.PostExternalTx).
 func (a landedGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in landedcost.GLJournal) (string, error) {
-	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: landedGLExtLines(in.Lines)})
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, DocumentDate: in.DocumentDate, Lines: landedGLExtLines(in.Lines)})
 }
 
 // warrantyGLPoster satisfies warranty.GLPoster over glSvc.PostExternal
@@ -1709,16 +1730,16 @@ func (a landedAdapter) ReceivedLinesForPO(ctx context.Context, poID string) ([]l
 	return out, nil
 }
 
-func (a landedAdapter) CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (int64, error) {
-	return a.svc.CapitalizeLandedCostTx(ctx, tx, productID, branchID, allocatedCadCents)
+func (a landedAdapter) CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64, at time.Time, sourceRefID string) (int64, error) {
+	return a.svc.CapitalizeLandedCostTx(ctx, tx, productID, branchID, allocatedCadCents, at, sourceRefID)
 }
 
-func (a landedAdapter) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (int64, int64, bool, error) {
-	return a.svc.CapitalizeLandedCostSnapTx(ctx, tx, productID, branchID, allocatedCadCents)
+func (a landedAdapter) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64, at time.Time, sourceRefID string) (int64, int64, bool, error) {
+	return a.svc.CapitalizeLandedCostSnapTx(ctx, tx, productID, branchID, allocatedCadCents, at, sourceRefID)
 }
 
-func (a landedAdapter) RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64) (int64, error) {
-	return a.svc.RestoreLandedCostTx(ctx, tx, productID, branchID, snapAvg, absorbed)
+func (a landedAdapter) RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64, at time.Time, sourceRefID string) (int64, error) {
+	return a.svc.RestoreLandedCostTx(ctx, tx, productID, branchID, snapAvg, absorbed, at, sourceRefID)
 }
 
 // w4cStockReceiver satisfies purchasing.StockReceiver over

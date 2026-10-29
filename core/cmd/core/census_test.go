@@ -32,16 +32,17 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	// 692: the base's 681, main's routes (FW1-01's glOpenYear, FW1-12a's two
+	// 695: the base's 681, main's routes (FW1-01's glOpenYear, FW1-12a's two
 	// credit memo doors, FW1-04's bankrecRecordCutover and bankrecCutoverPreview,
 	// FW1-07's controllerExceptions, paymentsVoidPayment), FW1-12b's two
 	// credit application doors (billingApplyCredit and
-	// billingReverseCreditApplication), W2-9a's purchasingGetAPAging, and W2-9a
-	// round 2's purchasingPayBill. Both
+	// billingReverseCreditApplication), W2-6b's three counter reason code
+	// routes (tillListReasonCodes, tillCreateReasonCode and tillEditReasonCode),
+	// W2-9a's purchasingGetAPAging and W2-9a round 2's purchasingPayBill. Both
 	// sides' routes are kept; the count is what merge.mjs reports on the
 	// assembled document.
-	if staff != 692 {
-		t.Fatalf("census staff operations: %d, want the document's 692 (main's routes plus purchasingGetAPAging and purchasingPayBill)", staff)
+	if staff != 695 {
+		t.Fatalf("census staff operations: %d, want the document's 695 (main's routes plus purchasingGetAPAging and purchasingPayBill)", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }

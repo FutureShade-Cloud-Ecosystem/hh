@@ -22,14 +22,12 @@ type preflightFail struct{ words string }
 // runClosePreFlight answers one line per failing check, empty when the month
 // is clean to seal. The instants are the dealer's zone's, read through the
 // store's BusinessZone (round 4, S3's P2: the same zone the posting path files
-// months by, never a hard coded default). The AR tie reads INCEPTION-TO-DATE
-// balances at the FIRST INSTANT OF THE NEXT MONTH (the month's end in the
-// dealer's terms), the same basis the AR tie-out reads, so a month that ties
-// at its end refuses for no later postings. The STOCK tie reads BOTH sides at
-// the same instant (FW1-09e): the stock ledger's own value now against GL
-// 1200 as of the service's clock now, because inventory answers no as of read
-// yet. A tie that read one side at the month's end and the other now refused
-// every correct month whose next month had moved the stock. The queue reads
+// months by, never a hard coded default). The AR tie and the STOCK tie both
+// read INCEPTION-TO-DATE balances at the FIRST INSTANT OF THE NEXT MONTH (the
+// month's end in the dealer's terms): the stock ledger answers its own value
+// as of that instant over its movement ledger (W2-5), so a month that tied at
+// its end is never refused by a later month's movement, and a month that was
+// out of tie at its end is never passed by a later correction. The queue reads
 // the month's own window, [month start, next month start). The DRAWER check reads
 // the month's END (the first instant of the next month), not the month's window,
 // and counts the drawers opened by then that are NOT YET COMPLETED: a drawer
@@ -56,17 +54,17 @@ func (s *Service) runClosePreFlight(ctx context.Context, year, month int) []stri
 		}
 	}
 	if s.stockValue != nil {
-		// Both sides at the same instant (FW1-09e). The stock ledger answers one figure, today's,
-		// so 1200 is read as of the service's clock now, never as of the month's end: a tie that
-		// read one side at the month's end and the other now refused every correct month whose
-		// next month had moved the stock.
-		stock, err := s.stockValue.StockValueCents(ctx, "")
+		// Both sides at the month's end (W2-5). The stock ledger answers its own value as of
+		// the first instant of the next month, over its movement ledger, so the tie pins the
+		// month end in both directions: a later movement refuses no month that tied at its
+		// end, and a later correction passes no month that was out of tie at its end.
+		stock, err := s.stockValue.StockValueCents(ctx, nextMonth, "")
 		if err != nil {
 			fails = append(fails, fmt.Sprintf("the stock ledger could not be read (%v)", err))
-		} else if gl, _, gerr := s.store.AccountBalanceAsOf(ctx, "1200", s.clock(), ""); gerr != nil {
+		} else if gl, _, gerr := s.store.AccountBalanceAsOf(ctx, "1200", nextMonth, ""); gerr != nil {
 			fails = append(fails, fmt.Sprintf("GL 1200 could not be read (%v)", gerr))
 		} else if stock != gl {
-			fails = append(fails, fmt.Sprintf("stock is out of tie with 1200 by %s (both read now: the stock ledger holds %s, 1200 holds %s; the stock tie reads both sides at the same instant until inventory answers an as of month end read)",
+			fails = append(fails, fmt.Sprintf("stock is out of tie with 1200 by %s (both read at the month's end: the stock ledger holds %s, 1200 holds %s)",
 				usdCents(stock-gl), usdCents(stock), usdCents(gl)))
 		}
 	}

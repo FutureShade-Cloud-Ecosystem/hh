@@ -8,6 +8,7 @@ package inventory
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -34,16 +35,21 @@ func (s *Service) ReceivedLinesForPO(ctx context.Context, poID string) ([]Receiv
 // return, routing the un-absorbed remainder (no on-hand, or integer-cent rounding) to COGS so the GL never
 // drifts from the perpetual subledger (S3 W6 B1/B2). Signature widened from the scaffold stub during W6
 // remediation, internal seam, both sides ours.
-func (s *Service) CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (int64, error) {
-	return s.capitalizeLanded(ctx, tx, productID, branchID, allocatedCadCents)
+//
+// `at` and `sourceRefID` name the EVENT: the instant the capitalization happened and the landed-cost document it
+// belongs to. The capitalization books a VALUE ONLY move (0453, W2-5B) carrying the exact cents the caller's GL
+// 1200 debit books, at `at`, so the close pre flight's stock tie and account 1200 cut the same event at the same
+// instant. The caller reads its own clock ONCE per operation and passes that instant here and to its journal.
+func (s *Service) CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64, at time.Time, sourceRefID string) (int64, error) {
+	return s.capitalizeLanded(ctx, tx, productID, branchID, allocatedCadCents, at, sourceRefID)
 }
 
 // CapitalizeLandedCostSnapTx is CapitalizeLandedCostTx plus the exact pre-Apply average it capitalized over, the
 // snapshot the landedcost Void path persists (0058 landed_cost_allocations.pre_apply_avg_unit_cost) and restores via
 // RestoreLandedCostTx so an Apply/Void round-trip reproduces the WAC to the cent even for sub-unit fractional on-hand
 // (L8 MAJOR). Internal seam, both sides ours. Returns (absorbed, snapAvg, hadCostRow).
-func (s *Service) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (int64, int64, bool, error) {
-	return s.capitalizeLandedSnap(ctx, tx, productID, branchID, allocatedCadCents)
+func (s *Service) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64, at time.Time, sourceRefID string) (int64, int64, bool, error) {
+	return s.capitalizeLandedSnap(ctx, tx, productID, branchID, allocatedCadCents, at, sourceRefID)
 }
 
 // RestoreLandedCostTx reverses a landed-cost capitalization on Void by removing EXACTLY `absorbed`, the value this
@@ -51,6 +57,6 @@ func (s *Service) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, pro
 // the value drained from inventory) the caller books as the CR 1200 leg. Removing the exact capitalized amount is the
 // GENERAL cent-exact inverse for every intervening scenario (nothing / receipt / sale) and never emits a negative leg;
 // snapAvg is used only for the drift-0 restore when on-hand is unchanged since Apply. Internal seam, both sides ours.
-func (s *Service) RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64) (int64, error) {
-	return s.restoreLandedCost(ctx, tx, productID, branchID, snapAvg, absorbed)
+func (s *Service) RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64, at time.Time, sourceRefID string) (int64, error) {
+	return s.restoreLandedCost(ctx, tx, productID, branchID, snapAvg, absorbed, at, sourceRefID)
 }
