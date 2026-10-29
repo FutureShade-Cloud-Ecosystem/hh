@@ -1,4 +1,4 @@
--- 0454_fx_realised_gain_loss.sql
+-- 0462_fx_realised_gain_loss.sql
 --
 -- W3-FX1: realised FX gain or loss at supplier bill payment (decision 1.9, FROM-PRINCIPAL 153).
 --
