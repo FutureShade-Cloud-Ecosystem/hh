@@ -195,7 +195,7 @@ func buildPaymentProposal(line StatementLine, rule MatchRule, e settlementExplan
 			Source:         "ADJUSTMENT",
 			SourceRefID:    line.ID,
 			IdempotencyKey: journalKey(line.ID),
-			Memo:           "Deposit, " + line.Description,
+			Memo:           depositJournalMemo(line.Description),
 			BranchID:       e.BranchID,
 			DocumentDate:   statementDocDate(line.TxnDate),
 			Lines:          lines,
@@ -227,7 +227,7 @@ func buildLodgementProposal(line StatementLine, rule MatchRule, l Lodgement) pro
 		Source:         "ADJUSTMENT",
 		SourceRefID:    line.ID,
 		IdempotencyKey: journalKey(line.ID),
-		Memo:           "Deposit, " + line.Description,
+		Memo:           depositJournalMemo(line.Description),
 		BranchID:       l.BranchID,
 		DocumentDate:   statementDocDate(line.TxnDate),
 		Lines: []gl.ExternalLine{
@@ -259,7 +259,7 @@ func manualJournal(line StatementLine, targetType, method, branchID string, carr
 		}
 		return gl.ExternalJournal{
 			Source: "ADJUSTMENT", SourceRefID: line.ID, IdempotencyKey: journalKey(line.ID),
-			Memo: "Deposit, " + line.Description, BranchID: branchID,
+			Memo: depositJournalMemo(line.Description), BranchID: branchID,
 			DocumentDate: statementDocDate(line.TxnDate),
 			Lines: []gl.ExternalLine{
 				{AccountCode: AcctBank, DebitCents: line.AmountCents, Memo: depositMemo},
@@ -273,7 +273,7 @@ func manualJournal(line StatementLine, targetType, method, branchID string, carr
 		}
 		return gl.ExternalJournal{
 			Source: "ADJUSTMENT", SourceRefID: line.ID, IdempotencyKey: journalKey(line.ID),
-			Memo: "Deposit, " + line.Description, BranchID: branchID,
+			Memo: depositJournalMemo(line.Description), BranchID: branchID,
 			DocumentDate: statementDocDate(line.TxnDate),
 			Lines: []gl.ExternalLine{
 				{AccountCode: AcctBank, DebitCents: line.AmountCents, Memo: "bank deposit (lodgement)"},
@@ -374,6 +374,17 @@ func journalKey(lineID string) string { return "bankrec:line:" + lineID }
 // is never deduped against the clearing post).
 func clearingKey(matchID string) string { return "bankrec:match:" + matchID }
 func unmatchKey(matchID string) string  { return "bankrec:unmatch:" + matchID }
+
+// depositJournalMemo builds the clearing journal's memo in a bookkeeper's words:
+// "Deposit, <description>" when the bank line carries a description, or
+// "Deposit" alone when the description is blank (never a trailing bare comma).
+func depositJournalMemo(desc string) string {
+	d := strings.TrimSpace(desc)
+	if d == "" {
+		return "Deposit"
+	}
+	return "Deposit, " + d
+}
 
 func normalizeRef(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
 

@@ -575,9 +575,6 @@ func (s *Service) Settle(ctx context.Context, id string, in SettleInput) error {
 	default:
 		return clientErr(409, "landedcost: cannot settle a %s landed cost", lc.Status)
 	}
-	if lc.SettledCadCents > 0 {
-		return nil // already settled, the re-press pays nothing twice
-	}
 	total := lc.totalCadCents()
 	if total <= 0 {
 		return clientErr(409, "landedcost: landed cost carries no payable to settle")
@@ -585,6 +582,16 @@ func (s *Service) Settle(ctx context.Context, id string, in SettleInput) error {
 	at := s.clock()
 	if in.PaidAt != nil && !in.PaidAt.IsZero() {
 		at = in.PaidAt.UTC()
+		appliedAt, err := s.appliedInstant(ctx, lc)
+		if err != nil {
+			return err
+		}
+		if at.Truncate(time.Microsecond).Before(appliedAt.Truncate(time.Microsecond)) {
+			return clientErr(http.StatusBadRequest, "landedcost: paid_at cannot precede the landed cost's apply")
+		}
+	}
+	if lc.SettledCadCents > 0 {
+		return nil // already settled, the re-press pays nothing twice
 	}
 	return s.repo.WithinTx(ctx, func(tx pgx.Tx) error {
 		locked, err := s.repo.LockForUpdateTx(ctx, tx, id)
@@ -616,6 +623,31 @@ func (s *Service) Settle(ctx context.Context, id string, in SettleInput) error {
 		})
 		return err
 	})
+}
+
+// appliedInstant returns the instant a POSTED or RETRO_ADJUSTED landed cost's
+// payable took effect: its posting journal's effective instant when the GL
+// journal clock is wired, or the row's own apply stamp (updated_at for POSTED,
+// created_at for RETRO_ADJUSTED) when the clock is unwired.
+func (s *Service) appliedInstant(ctx context.Context, lc LandedCost) (time.Time, error) {
+	if s.journalClock != nil {
+		if lc.GLJournalID != "" {
+			instants, err := s.journalClock.JournalEffectiveInstants(ctx, []string{lc.GLJournalID})
+			if err != nil {
+				return time.Time{}, err
+			}
+			if eff, ok := instants[lc.GLJournalID]; ok && !eff.IsZero() {
+				return eff, nil
+			}
+		}
+		if eff, found, err := s.journalClock.JournalEffectiveInstantByKey(ctx, "landedcost.apply:"+lc.ID); err == nil && found && !eff.IsZero() {
+			return eff, nil
+		}
+	}
+	if lc.Status == StatusPosted && !lc.UpdatedAt.IsZero() {
+		return lc.UpdatedAt, nil
+	}
+	return lc.CreatedAt, nil
 }
 
 // - seam helpers -

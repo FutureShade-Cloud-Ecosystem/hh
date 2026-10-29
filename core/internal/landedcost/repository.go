@@ -37,7 +37,7 @@ const landedCols = `id::text, COALESCE(po_id::text, ''), po_ref, COALESCE(payee_
 	freight_cents, duty_cents, handling_cents, freight_cad_cents, duty_cad_cents, handling_cad_cents,
 	allocation_basis, exclude_special_buys, status, settled_cad_cents, COALESCE(settled_at, '0001-01-01'::timestamptz),
 	COALESCE(retro_of_id::text, ''),
-	COALESCE(gl_journal_id::text, ''), created_at`
+	COALESCE(gl_journal_id::text, ''), created_at, updated_at`
 
 func scanLanded(row pgx.Row) (LandedCost, error) {
 	var lc LandedCost
@@ -45,7 +45,7 @@ func scanLanded(row pgx.Row) (LandedCost, error) {
 		&lc.FreightCents, &lc.DutyCents, &lc.HandlingCents, &lc.FreightCadCents, &lc.DutyCadCents,
 		&lc.HandlingCadCents, &lc.AllocationBasis, &lc.ExcludeSpecialBuys, &lc.Status, &lc.SettledCadCents, &lc.SettledAt,
 		&lc.RetroOfID,
-		&lc.GLJournalID, &lc.CreatedAt)
+		&lc.GLJournalID, &lc.CreatedAt, &lc.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
 		return LandedCost{}, errNotFound
 	}
@@ -285,10 +285,11 @@ func (r *Repository) InsertAllocationTx(ctx context.Context, tx pgx.Tx, landedCo
 
 // SettleTx stamps the payable's settlement inside the tx: the CAD amount paid
 // and the instant it was paid (0459). The caller has already re-read the row
-// FOR UPDATE and seen it unsettled.
+// FOR UPDATE and seen it unsettled. updated_at is left at the status flip's
+// stamp so the clockless as-of rule keeps the apply instant.
 func (r *Repository) SettleTx(ctx context.Context, tx pgx.Tx, id string, settledCadCents int64, at time.Time) error {
 	if _, err := tx.Exec(ctx,
-		`UPDATE landed_costs SET settled_cad_cents = $2, settled_at = $3, updated_at = now()
+		`UPDATE landed_costs SET settled_cad_cents = $2, settled_at = $3
 		 WHERE id = $1`, id, settledCadCents, at); err != nil {
 		return fmt.Errorf("landedcost: settle: %w", err)
 	}

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -197,15 +198,20 @@ func TestIntegration_SettlePaysThePayableOnItsTerms(t *testing.T) {
 		t.Errorf("after the settle the payable reads paid %d, want 60000", paid.PaidCadCents)
 	}
 
-	// The as-of read cuts the payment at the settlement instant: before it the
-	// payable is open, after it the payable is gone from the aging.
-	payables, err := svc.OpenPayablesAsOf(ctx, before.Add(-time.Second), nil, true)
+	// The as-of read cuts the payment at the settlement instant: before the
+	// apply the payable is not owed yet, between the apply and the settlement
+	// it reads open, and after the settlement it reads paid.
+	stillOpen := readOpen(before.Add(-500 * time.Millisecond))
+	if stillOpen.PaidCadCents != 0 || stillOpen.TotalCadCents != 60000 {
+		t.Errorf("as of between apply and settle the payable reads total %d paid %d, want 60000/0", stillOpen.TotalCadCents, stillOpen.PaidCadCents)
+	}
+	payables, err := svc.OpenPayablesAsOf(ctx, time.Now().UTC().Add(-time.Hour), nil, true)
 	if err != nil {
-		t.Fatalf("open payables as of before the settle: %v", err)
+		t.Fatalf("open payables as of before the apply: %v", err)
 	}
 	for _, p := range payables {
 		if p.ID == id {
-			t.Errorf("the payable still reads open %d cents as of before its settlement", p.TotalCadCents-p.PaidCadCents)
+			t.Errorf("the payable reads open %d cents as of before its apply", p.TotalCadCents-p.PaidCadCents)
 		}
 	}
 
@@ -481,5 +487,166 @@ func TestIntegration_VoidRacingSettleExactlyOneWinsAndBooksTie(t *testing.T) {
 				t.Errorf("race %s: inventory tie broken: GL 1200 = %d, subledger = %d", name, net1200, cap.caps[prodA])
 			}
 		})
+	}
+}
+
+// TestIntegration_SettlePreservesApplyInstantForAsOfReads (W3 P3-1): SettleTx
+// must not overwrite updated_at on the header, because the clockless as-of rule
+// (countsAsOf and OutstandingPayableCentsAsOf) reads updated_at as a POSTED
+// landed cost's apply instant. After Settle runs, an as-of read at an instant
+// between the apply and the settle must still count the payable as open.
+func TestIntegration_SettlePreservesApplyInstantForAsOfReads(t *testing.T) {
+	pool := intPool(t)
+	seedPO(t, pool)
+	ctx := context.Background()
+
+	cap := &fakeCapitalizer{lines: []ReceivedLine{
+		{ProductID: prodA, QtyBase: 4, ValueCents: 30000, WeightKg: 2},
+	}}
+	gl := &fakeGLPoster{}
+	svc := newSvc(pool, cap, gl)
+
+	baseOut, err := svc.OutstandingPayableCentsAsOf(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("baseline outstanding: %v", err)
+	}
+
+	id, err := svc.Create(ctx, CreateInput{
+		POID: landedPO, PORef: "LC-P31-APPLY-INSTANT", BranchID: trentonBranch, Currency: "CAD",
+		FreightCents: 60000, AllocationBasis: "weight",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := svc.Apply(ctx, id); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	time.Sleep(30 * time.Millisecond)
+	between := time.Now().UTC()
+	time.Sleep(30 * time.Millisecond)
+
+	paidAt := time.Now().UTC().Add(time.Second)
+	if err := svc.Settle(ctx, id, SettleInput{PaidAt: &paidAt}); err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+
+	payables, err := svc.OpenPayablesAsOf(ctx, between, nil, true)
+	if err != nil {
+		t.Fatalf("open payables at between: %v", err)
+	}
+	var found *OpenPayable
+	for i := range payables {
+		if payables[i].ID == id {
+			found = &payables[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("payable %s disappeared from OpenPayablesAsOf at the instant between apply and settle (Settle overwrote updated_at)", id)
+	}
+	if found.TotalCadCents != 60000 || found.PaidCadCents != 0 {
+		t.Errorf("at between: total=%d paid=%d, want 60000/0", found.TotalCadCents, found.PaidCadCents)
+	}
+
+	outBetween, err := svc.OutstandingPayableCentsAsOf(ctx, between)
+	if err != nil {
+		t.Fatalf("outstanding at between: %v", err)
+	}
+	if outBetween-baseOut != 60000 {
+		t.Errorf("OutstandingPayableCentsAsOf at between delta = %d, want 60000", outBetween-baseOut)
+	}
+}
+
+// TestIntegration_SettlementColumnsCarryCheckConstraint (W3 P3-2): migration
+// 0459 places a CHECK on landed_costs(settled_cad_cents, settled_at) so a
+// negative amount, a positive amount with NULL settled_at, a zero amount with
+// non-NULL settled_at, or an amount not equal to the payable total is refused
+// by the schema.
+func TestIntegration_SettlementColumnsCarryCheckConstraint(t *testing.T) {
+	pool := intPool(t)
+	seedPO(t, pool)
+	ctx := context.Background()
+
+	svc := newSvc(pool, &fakeCapitalizer{}, &fakeGLPoster{})
+	id, err := svc.Create(ctx, CreateInput{
+		POID: landedPO, PORef: "LC-P32-CHECK", BranchID: trentonBranch, Currency: "CAD",
+		FreightCents: 60000, AllocationBasis: "weight",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	now := time.Now().UTC()
+	badCases := []struct {
+		name  string
+		cents int64
+		at    any
+	}{
+		{name: "negative_settled_cents", cents: -1, at: now},
+		{name: "positive_cents_with_null_settled_at", cents: 60000, at: nil},
+		{name: "zero_cents_with_non_null_settled_at", cents: 0, at: now},
+		{name: "positive_cents_not_equal_to_total", cents: 30000, at: now},
+	}
+	for _, tc := range badCases {
+		_, err := pool.Exec(ctx, `UPDATE landed_costs SET settled_cad_cents = $2, settled_at = $3 WHERE id = $1`, id, tc.cents, tc.at)
+		if err == nil {
+			// Reset back to valid before continuing so a partial pass doesn't poison the row.
+			_, _ = pool.Exec(ctx, `UPDATE landed_costs SET settled_cad_cents = 0, settled_at = NULL WHERE id = $1`, id)
+			t.Errorf("%s: UPDATE succeeded, want check constraint violation (23514)", tc.name)
+			continue
+		}
+		var pg *pgconn.PgError
+		if !errors.As(err, &pg) || pg.Code != "23514" {
+			t.Errorf("%s: err = %v, want Postgres check violation 23514", tc.name, err)
+		}
+	}
+}
+
+// TestIntegration_SettleRefusesPaidAtBeforeApply (W3 P3-4): Settle refuses a
+// paid_at earlier than the landed cost's apply in words, leaving the payable
+// open and posting no journal.
+func TestIntegration_SettleRefusesPaidAtBeforeApply(t *testing.T) {
+	pool := intPool(t)
+	seedPO(t, pool)
+	ctx := context.Background()
+
+	cap := &fakeCapitalizer{lines: []ReceivedLine{
+		{ProductID: prodA, QtyBase: 4, ValueCents: 30000, WeightKg: 2},
+	}}
+	gl := &fakeGLPoster{}
+	svc := newSvc(pool, cap, gl)
+
+	id, err := svc.Create(ctx, CreateInput{
+		POID: landedPO, PORef: "LC-P34-PAID-BEFORE-APPLY", BranchID: trentonBranch, Currency: "CAD",
+		FreightCents: 60000, AllocationBasis: "weight",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := svc.Apply(ctx, id); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	beforeApply := time.Now().UTC().Add(-time.Minute)
+	err = svc.Settle(ctx, id, SettleInput{PaidAt: &beforeApply})
+	if err == nil {
+		t.Fatalf("Settle with paid_at before apply succeeded, want a 400 refusal in words")
+	}
+	if got := statusOf(err); got < 400 || got >= 500 {
+		t.Errorf("Settle with paid_at before apply status = %d (%v), want 4xx", got, err)
+	}
+	if !strings.Contains(err.Error(), "paid_at") || !strings.Contains(err.Error(), "apply") {
+		t.Errorf("Settle with paid_at before apply error = %q, want words naming paid_at and apply", err.Error())
+	}
+	if _, exists := gl.journals["landedcost.settle:"+id]; exists {
+		t.Errorf("refused settle posted a journal under landedcost.settle:%s", id)
+	}
+	got, err := svc.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.SettledCadCents != 0 {
+		t.Errorf("after refused settle: SettledCadCents = %d, want 0", got.SettledCadCents)
 	}
 }

@@ -14,7 +14,16 @@
 
 ALTER TABLE landed_costs
   ADD COLUMN IF NOT EXISTS settled_cad_cents BIGINT NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ,
+  DROP CONSTRAINT IF EXISTS landed_costs_settlement_check,
+  ADD CONSTRAINT landed_costs_settlement_check CHECK (
+    (settled_cad_cents = 0 AND settled_at IS NULL)
+    OR (
+      settled_cad_cents > 0
+      AND settled_cad_cents = freight_cad_cents + duty_cad_cents + handling_cad_cents
+      AND settled_at IS NOT NULL
+    )
+  );
 
 COMMENT ON COLUMN landed_costs.settled_cad_cents IS
   'the CAD amount paid the payee vendor; 0 while the payable is open';

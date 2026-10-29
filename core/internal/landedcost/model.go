@@ -64,6 +64,7 @@ type LandedCost struct {
 	RetroOfID       string    `json:"retro_of_id,omitempty"`
 	GLJournalID     string    `json:"gl_journal_id,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"-"`
 }
 
 // totalCadCents is the CAD landed cost to apportion (freight + duty + handling, already CAD).
