@@ -146,7 +146,7 @@ export const glStyles = css`
     .gl-grow { grid-column: auto; }
     .gl-tiles-three { grid-template-columns: minmax(0, 1fr); }
     .gl-tab { padding: 0 var(--hh-s-12); font-size: 14px; }
-    .gl-col-type, .gl-col-name { display: none; }
+    .gl-col-type, .gl-col-name, .gl-col-posted { display: none; }
     .gl-name-narrow { display: block; color: var(--hh-text-dim); font-size: 12px; }
     .gl-panel { padding: var(--hh-s-16); }
     .gl-panel table { font-size: 13px; }
