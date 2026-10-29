@@ -351,7 +351,9 @@ paths:
         idempotency key (a retry posts once). One payment applies to one
         branch's invoices: a list spanning two branches is refused in words,
         because the payment, its subledger rows and its journal all carry one
-        branch. An amount over the selected invoices' payable, an invoice of
+        branch. An amount over the selected invoices' payable is applied oldest
+        first up to each invoice's payable and the remainder stays on the
+        customer's account as a credit (`on_account_cents`). An invoice of
         another account, an invoice outside the caller's branch reach and a not
         open invoice are all refused in words
         with nothing applied. preview true answers the same split without
@@ -394,10 +396,9 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422":
           description: >-
-            The payment is refused in words with nothing applied: an amount over
-            the selected invoices' payable, an invoice that is not open, an empty
-            or oversized list, the same invoice named twice, a customer id or
-            invoice id that is not a uuid, a list spanning
+            The payment is refused in words with nothing applied: an invoice that
+            is not open, an empty or oversized list, the same invoice named twice,
+            a customer id or invoice id that is not a uuid, a list spanning
             more than one branch
           content:
             application/json:
@@ -3357,7 +3358,7 @@ components:
     BillingApplyPaymentAnswer:
       type: object
       description: The payment (absent on a preview) and the server's split per invoice, oldest first
-      required: [preview, amount_cents, applied_cents, unapplied_cents, lines, replayed]
+      required: [preview, amount_cents, applied_cents, unapplied_cents, on_account_cents, lines, replayed]
       properties:
         preview: { type: boolean }
         payment_id: { type: string, format: uuid }
@@ -3365,6 +3366,10 @@ components:
         amount_cents: { type: integer, format: int64 }
         applied_cents: { type: integer, format: int64 }
         unapplied_cents: { type: integer, format: int64 }
+        on_account_cents:
+          type: integer
+          format: int64
+          description: The remainder that stayed on the customer's account as a credit (0 when the invoices took it all)
         lines:
           type: array
           items:

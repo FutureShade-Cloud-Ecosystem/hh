@@ -155,8 +155,8 @@ func TestApplyReceived_OnePaymentSplitsAcrossThreeInvoices(t *testing.T) {
 	if ans.Lines[2].Outcome != ApplyOutcomeNone || ans.Lines[2].AppliedCents != 0 || ans.Lines[2].BalanceAfterCents != 10000 {
 		t.Fatalf("the youngest is untouched and says so: %+v", ans.Lines[2])
 	}
-	if ans.AppliedCents != 40000 || ans.UnappliedCents != 0 {
-		t.Fatalf("the whole payment is applied: applied %d unapplied %d", ans.AppliedCents, ans.UnappliedCents)
+	if ans.AppliedCents != 40000 || ans.UnappliedCents != 0 || ans.OnAccountCents != 0 {
+		t.Fatalf("the whole payment is applied: applied %d unapplied %d on_account %d", ans.AppliedCents, ans.UnappliedCents, ans.OnAccountCents)
 	}
 
 	// The ledger, not the answer, is the witness.
@@ -318,8 +318,9 @@ func TestApplyReceived_OverTheSelectedInvoicesLeavesTheRestOnAccount(t *testing.
 	if err != nil {
 		t.Fatalf("the over amount lands: %v", err)
 	}
-	if ans.AppliedCents != 15000 || ans.UnappliedCents != 2001 {
-		t.Fatalf("the invoices take 15000 and 2001 rests on account, got %d and %d", ans.AppliedCents, ans.UnappliedCents)
+	if ans.AppliedCents != 15000 || ans.UnappliedCents != 2001 || ans.OnAccountCents != 2001 {
+		t.Fatalf("the invoices take 15000 and 2001 rests on account, got applied %d unapplied %d on_account %d",
+			ans.AppliedCents, ans.UnappliedCents, ans.OnAccountCents)
 	}
 	if ba, sa := w.invoiceState(t, a); ba != 0 || sa != "PAID" {
 		t.Fatalf("the first invoice closed, got %d %s", ba, sa)

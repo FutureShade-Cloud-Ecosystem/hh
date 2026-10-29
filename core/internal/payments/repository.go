@@ -605,6 +605,7 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 	}
 	ans.Lines = lines
 	ans.UnappliedCents = ans.AmountCents - ans.AppliedCents
+	ans.OnAccountCents = ans.UnappliedCents
 	return ans, nil
 }
 

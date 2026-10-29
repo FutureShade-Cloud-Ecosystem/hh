@@ -120,6 +120,7 @@ type ApplyAnswer struct {
 	AmountCents    int64       `json:"amount_cents"`
 	AppliedCents   int64       `json:"applied_cents"`
 	UnappliedCents int64       `json:"unapplied_cents"`
+	OnAccountCents int64       `json:"on_account_cents"`
 	Lines          []ApplyLine `json:"lines"`
 	Replayed       bool        `json:"replayed"`
 }
@@ -252,7 +253,7 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	named := append([]string(nil), in.InvoiceIDs...)
 	sort.Strings(named)
 	p, claimed, err := settleReceipt(ctx, tx, ReceiptRequest{
-		CustomerID: in.CustomerID, Method: in.Method, Reference: in.Reference,
+		CustomerID: in.CustomerID, BranchID: rows[0].BranchID, Method: in.Method, Reference: in.Reference,
 		IdempotencyKey: in.IdempotencyKey, ReceivedBy: in.ReceivedBy,
 		Allocations: allocs, NamedInvoices: named, ChangeCents: change,
 	})
@@ -272,10 +273,11 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	if err := tx.Commit(ctx); err != nil {
 		return ApplyAnswer{}, fmt.Errorf("apply: commit: %w", err)
 	}
+	unapplied := in.AmountCents - sumApplied(lines)
 	return ApplyAnswer{
 		PaymentID: p.ID, PaymentNo: p.PaymentNo, AmountCents: in.AmountCents,
-		AppliedCents: sumApplied(lines), UnappliedCents: in.AmountCents - sumApplied(lines),
-		Lines: lines,
+		AppliedCents: sumApplied(lines), UnappliedCents: unapplied,
+		OnAccountCents: change, Lines: lines,
 	}, nil
 }
 
@@ -301,9 +303,10 @@ func (r *Repository) previewApply(ctx context.Context, in ApplyRequest) (ApplyAn
 	// whatever the named invoices cannot take left as the unapplied change the apply leaves on
 	// account.
 	lines, _ := allocateOldestFirst(rows, in.AmountCents)
+	unapplied := in.AmountCents - sumApplied(lines)
 	return ApplyAnswer{
 		Preview: true, AmountCents: in.AmountCents, AppliedCents: sumApplied(lines),
-		UnappliedCents: in.AmountCents - sumApplied(lines), Lines: lines,
+		UnappliedCents: unapplied, OnAccountCents: unapplied, Lines: lines,
 	}, nil
 }
 
