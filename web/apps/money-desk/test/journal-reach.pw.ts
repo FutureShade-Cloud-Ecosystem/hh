@@ -2,7 +2,9 @@
 // than the register's first hundred, Show more follows the core's next cursor
 // and appends the older page, the posted date range reaches a journal the first
 // hundred cannot show, changing the range starts from the first page again, and
-// the status filters keep working on the loaded window.
+// the status filters keep working on the loaded window. W2-10b adds the leg that
+// reads the posted date back off a row: a posted journal in the desk's own day
+// words, and a draft's plain Not posted.
 //
 // The blank check (principal item 386): each leg must fail on an empty screen
 // and on an empty core, each on its own, so a leg that passes against nothing
@@ -97,6 +99,19 @@ test("a posted date range reaches an older journal, and changing it starts from 
   await expect(register.getByRole("button", { name: "JE-0106" })).toHaveCount(0);
 });
 
+test("each register row shows when it posted, and a draft shows Not posted", async ({ page, request }) => {
+  await openRegister(page, request);
+  const register = page.getByRole("table", { name: "Journal register" });
+  const rowOf = (label: string) => register.locator("tbody tr").filter({ has: page.getByRole("button", { name: label }) });
+  // The stub world's stamps read back in the desk's own day words: the July invoice booked in August
+  // carries July 18 and the opening balances August 11, the stamp's own day in the house zone.
+  await expect(rowOf("JE-0002").locator("[data-posted]")).toHaveText("Jul 18, 2026");
+  await expect(rowOf("JE-0001").locator("[data-posted]")).toHaveText("Aug 11, 2026");
+  // A draft carries no posted date: plain words in the muted ink, never null, Invalid Date or a blank cell.
+  await expect(rowOf("JE-0005").locator("[data-posted]")).toHaveText("Not posted");
+  await expect(rowOf("JE-0006").locator("[data-posted]")).toHaveText("Not posted");
+});
+
 test("the status filters keep working on the loaded window", async ({ page, request }) => {
   await openRegister(page, request);
   const register = page.getByRole("table", { name: "Journal register" });
@@ -139,4 +154,19 @@ test("a refused range read keeps the shown range, and the same dates can be trie
   await page.getByRole("button", { name: "Apply dates" }).click();
   await expect(register.locator("tbody tr")).toHaveCount(11);
   await expect(register.getByRole("button", { name: "JE-0106" })).toBeVisible();
+});
+
+test("at 390 the register keeps its status in view: the posted date moves under the memo", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openRegister(page, request);
+  const register = page.getByRole("table", { name: "Journal register" });
+  const rowOf = (label: string) => register.locator("tbody tr").filter({ has: page.getByRole("button", { name: label }) });
+  await expect(rowOf("JE-0002")).toBeVisible();
+  // No sideways scroll hides a status: the register's scroller is no wider than its card.
+  const overflow = await page.locator(".gl-scroll").first().evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  // The date still reads on a phone, under the memo, and a draft still says Not posted.
+  await expect(rowOf("JE-0002").locator("[data-posted-narrow]")).toBeVisible();
+  await expect(rowOf("JE-0002").locator("[data-posted-narrow]")).toHaveText("Jul 18, 2026");
+  await expect(rowOf("JE-0005").locator("[data-posted-narrow]")).toHaveText("Not posted");
 });
