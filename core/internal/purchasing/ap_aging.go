@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -254,6 +255,12 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 		if math.IsNaN(in.FXRate) || math.IsInf(in.FXRate, 0) || in.FXRate <= 0 {
 			return BillDetail{}, badReq("purchasing: fx_rate is required and must be positive when paying a USD bill")
 		}
+		if dec := rateDecimals(in.FXRate); dec > maxRateDecimals {
+			return BillDetail{}, badReq("purchasing: fx_rate has %d decimals; at most %d are kept, so enter it with %d or fewer", dec, maxRateDecimals, maxRateDecimals)
+		}
+		if bill.FXRate > 0 && (in.FXRate > bill.FXRate*maxPayRateFactor || in.FXRate < bill.FXRate/maxPayRateFactor) {
+			return BillDetail{}, badReq("purchasing: fx_rate %v is more than %vx away from the bill's own rate %v; check it was typed right", in.FXRate, maxPayRateFactor, bill.FXRate)
+		}
 		payFX = in.FXRate
 	} else if math.IsNaN(in.FXRate) || math.IsInf(in.FXRate, 0) || in.FXRate < 0 || (in.FXRate != 0 && in.FXRate != 1) {
 		return BillDetail{}, badReq("purchasing: CAD bill payment must not carry a non-unit fx_rate (got %v)", in.FXRate)
@@ -292,7 +299,14 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 			apCadCents = proRataHalfToEven(bill.TotalCents, in.AmountCents, billDocTotal)
 		}
 		payRateMicros := int64(math.Round(payFX * 1_000_000))
-		cashCadCents = proRataHalfToEven(in.AmountCents, payRateMicros, 1_000_000)
+		billRateMicros := int64(math.Round(bill.FXRate * 1_000_000))
+		if payRateMicros == billRateMicros {
+			// Paid at the bill's own rate: the cash is exactly the CAD the bill carries for this
+			// payment, so rounding at bill entry never shows up as a realised gain or loss.
+			cashCadCents = apCadCents
+		} else {
+			cashCadCents = proRataHalfToEven(in.AmountCents, payRateMicros, 1_000_000)
+		}
 	}
 	fxDiffCents := cashCadCents - apCadCents
 
@@ -346,6 +360,23 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 		return BillDetail{}, fmt.Errorf("purchasing: commit supplier payment: %w", err)
 	}
 	return s.GetBill(ctx, billID)
+}
+
+// maxRateDecimals is the precision a payment rate keeps (purchasing_bill_instalments.fx_rate is
+// NUMERIC(12,6)); maxPayRateFactor bounds a payment rate against the bill's own, so a typed 138 for
+// 1.38 is refused rather than paid out a hundredfold.
+const (
+	maxRateDecimals  = 6
+	maxPayRateFactor = 2.0
+)
+
+// rateDecimals counts the decimals the caller wrote in a rate.
+func rateDecimals(rate float64) int {
+	str := strconv.FormatFloat(rate, 'f', -1, 64)
+	if i := strings.IndexByte(str, '.'); i >= 0 {
+		return len(str) - i - 1
+	}
+	return 0
 }
 
 // proRataHalfToEven computes (totalCents * partCents) / wholeCents rounded half

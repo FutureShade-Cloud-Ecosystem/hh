@@ -22,6 +22,12 @@ import (
 // posts it through the service seam, and registers cleanup for the PO, bill, and payment journals.
 func (rig *apAgingTestRig) postUSDBillAt(t *testing.T, tag, billDate, dueDate string, usdCents int64, fxRate float64, postedAt time.Time) BillDetail {
 	t.Helper()
+	return rig.postUSDBillQtyAt(t, tag, billDate, dueDate, usdCents, 1, fxRate, postedAt)
+}
+
+// postUSDBillQtyAt is postUSDBillAt for a line of qty units at unitUSDCents each.
+func (rig *apAgingTestRig) postUSDBillQtyAt(t *testing.T, tag, billDate, dueDate string, usdCents int64, qty float64, fxRate float64, postedAt time.Time) BillDetail {
+	t.Helper()
 	if d, err := time.Parse("2006-01-02", billDate); err == nil {
 		rig.ensurePeriod(t, d.Year(), int(d.Month()))
 	}
@@ -34,7 +40,7 @@ func (rig *apAgingTestRig) postUSDBillAt(t *testing.T, tag, billDate, dueDate st
 		BranchID: branchTRT,
 		Currency: "USD",
 		FXRate:   fxRate,
-		Lines:    []AddLineParams{{ProductID: prod, QtyOrderedBase: 1, UOM: "EA", UnitCostCents: usdCents}},
+		Lines:    []AddLineParams{{ProductID: prod, QtyOrderedBase: qty, UOM: "EA", UnitCostCents: usdCents}},
 	})
 	if err != nil {
 		t.Fatalf("CreatePO(%s): %v", tag, err)
@@ -45,7 +51,7 @@ func (rig *apAgingTestRig) postUSDBillAt(t *testing.T, tag, billDate, dueDate st
 	}
 	lineID := po.Lines[0].ID
 	if _, err := rig.svc.Receive(rig.ctx, po.ID, ReceiveRequest{
-		Lines: []ReceiveLineParams{{POLineID: lineID, QtyBase: 1}},
+		Lines: []ReceiveLineParams{{POLineID: lineID, QtyBase: qty}},
 	}); err != nil {
 		t.Fatalf("Receive PO(%s): %v", tag, err)
 	}
@@ -60,7 +66,7 @@ func (rig *apAgingTestRig) postUSDBillAt(t *testing.T, tag, billDate, dueDate st
 		Lines: []BillLineParams{
 			{
 				POLineID:      lineID,
-				QtyBilledBase: 1,
+				QtyBilledBase: qty,
 				UnitCostCents: usdCents,
 			},
 		},
@@ -332,14 +338,15 @@ func TestIntegration_W3FX1_RealisedFXGainOrLossAtPayment(t *testing.T) {
 				// Final payment of remaining 33,254 USD cents (30+50+33333+33333+33254 = 100000).
 				// Pro rata alone would be 135000 * 33254 / 100000 = 44892.90 -> 44893 (over-clearing 2100 by 1 cent).
 				// Last payment clears exact remainder: 135000 - (40+68+45000+45000) = 44892.
-				// Cash at 1.35: 33254 * 1.35 = 44892.90 -> 44893 -> FX loss = 1.
+				// Paid at the bill's own rate 1.35, so the cash is the CAD the bill carries for it and
+				// the cent of pro rata rounding posts no FX.
 				name:       "p5-final-remainder",
 				usdCents:   33_254,
 				fxRate:     1.35,
 				paidAt:     payInstant.Add(4 * time.Minute),
 				wantAPDr:   44_892,
-				wantCashCr: 44_893,
-				wantFXDr:   1,
+				wantCashCr: 44_892,
+				wantFXDr:   0,
 				wantFXCr:   0,
 				wantRemCAD: 0,
 			},

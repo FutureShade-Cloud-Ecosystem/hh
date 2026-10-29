@@ -3,6 +3,8 @@
 package purchasing
 
 import (
+	"errors"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -119,5 +121,66 @@ func TestIntegration_W3FX1Fix_OpenDocumentAmountPaysBillToZero(t *testing.T) {
 	}
 	if got := rig.billOpenInAgingCents(t, bill.ID, now.Add(4*time.Minute)); got != 0 {
 		t.Fatalf("aging still shows CAD %d open", got)
+	}
+}
+
+// P3-2: a payment at the bill's own rate posts no FX, even when the bill's CAD was rounded per unit
+// at entry (100 units at USD 10.01 and 1.3333: CAD 13.35 a unit, CAD 1,335.00 the bill).
+func TestIntegration_W3FX1Fix_SameRatePaymentPostsNoRoundingFX(t *testing.T) {
+	rig := newAPAgingRig(t)
+	now := time.Now().In(rig.zone)
+	rig.ensurePeriod(t, now.Year(), int(now.Month()))
+	bill := rig.postUSDBillQtyAt(t, "fx1f-same", now.Format("2006-01-02"), now.AddDate(0, 0, 30).Format("2006-01-02"), 1001, 100, 1.3333, now)
+	key := "fx1f-same-" + bill.ID
+	if _, err := rig.svc.PayBill(rig.ctx, bill.ID, PayBillRequest{AmountCents: bill.DocTotalCents, FXRate: 1.3333, PaidAt: now.Add(time.Minute), IdempotencyKey: key}); err != nil {
+		t.Fatal(err)
+	}
+	legs := rig.paymentJournalLegs(t, key)
+	if fx, ok := legs["6310"]; ok && (fx[0] != 0 || fx[1] != 0) {
+		t.Fatalf("same rate posted FX %v (legs %v)", fx, legs)
+	}
+	if got := rig.billNetAP2100Cents(t, bill.ID); got != 0 {
+		t.Fatalf("2100 residual %d", got)
+	}
+}
+
+// P3-3: a payment rate far from the bill's own, or with more than six decimals, is refused in words.
+func TestIntegration_W3FX1Fix_PaymentRateBoundAndDecimals(t *testing.T) {
+	rig := newAPAgingRig(t)
+	now := time.Now().In(rig.zone)
+	rig.ensurePeriod(t, now.Year(), int(now.Month()))
+	bill := rig.postUSDBillAt(t, "fx1f-rate", now.Format("2006-01-02"), now.AddDate(0, 0, 30).Format("2006-01-02"), 100_000, 1.35, now)
+	for _, tc := range []struct {
+		name string
+		rate float64
+		want string
+	}{
+		{"typed 138 for 1.38", 138, "fx_rate"},
+		{"far below", 0.5, "fx_rate"},
+		{"seven decimals", 1.3512345, "decimal"},
+	} {
+		_, err := rig.svc.PayBill(rig.ctx, bill.ID, PayBillRequest{AmountCents: 1000, FXRate: tc.rate, PaidAt: now.Add(time.Minute), IdempotencyKey: "fx1f-rate-" + tc.name + bill.ID})
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want a refusal naming %q", tc.name, err, tc.want)
+			continue
+		}
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != http.StatusBadRequest {
+			t.Errorf("%s: err %v is not a 400", tc.name, err)
+		}
+	}
+	if _, err := rig.svc.PayBill(rig.ctx, bill.ID, PayBillRequest{AmountCents: 1000, FXRate: 1.351234, PaidAt: now.Add(2 * time.Minute), IdempotencyKey: "fx1f-rate-ok-" + bill.ID}); err != nil {
+		t.Fatalf("six decimals near the bill's rate: %v", err)
+	}
+}
+
+// P3-4: the migration's own error text names its own number.
+func TestW3FX1Fix_MigrationErrorNamesItself(t *testing.T) {
+	raw, err := os.ReadFile("../../db/migrations/0462_fx_realised_gain_loss.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "'0454:") || !strings.Contains(string(raw), "'0462:") {
+		t.Fatal("0462's RAISE EXCEPTION text must name 0462")
 	}
 }

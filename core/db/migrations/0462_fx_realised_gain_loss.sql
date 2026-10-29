@@ -38,7 +38,7 @@ BEGIN
      AND pr.branch_id IS NULL
      AND a.id IS NULL;
   IF v_bad IS NOT NULL THEN
-    RAISE EXCEPTION '0454: vendor.bill.posted fx_gain_loss rule points at missing/inactive gl_accounts: %', v_bad;
+    RAISE EXCEPTION '0462: vendor.bill.posted fx_gain_loss rule points at missing/inactive gl_accounts: %', v_bad;
   END IF;
 END $$;
 
