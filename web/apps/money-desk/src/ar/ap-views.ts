@@ -11,7 +11,7 @@ import { PAYABLES_BANDS, isLandedCostRow, landedCostWords, rowItems, rowKey, typ
 import { asOfDay, bucketWord, daysLateWord, daysPastDue, pastDueMarkWord, relativeDay, statusTone, statusWord, type Mark } from "./ar-logic.js";
 import { formatMoney } from "./ar-money.js";
 import { markPill } from "./ar-views.js";
-import { businessNumberWords, t5018Rows, t5018VendorsWord, type T5018Model } from "./t5018-logic.js";
+import { businessNumberWords, t5018EmptyKind, t5018Rows, type T5018Model } from "./t5018-logic.js";
 
 /** One band of the board's five. */
 type Band = (typeof PAYABLES_BANDS)[number];
@@ -272,13 +272,14 @@ export function payablesViewNav(view: PayablesView): TemplateResult {
 function t5018Panel(model: T5018Model): TemplateResult {
   const report = model.report;
   const rows = report === null ? [] : t5018Rows(report);
+  const emptyKind = report === null ? null : t5018EmptyKind(report);
   return html`
     <section class="panel" aria-label="T5018 subcontractor payments">
       <div class="panel-head">
         <h3>T5018 subcontractor payments</h3>
         <div class="tools">
           <label>Year<input type="number" min="1970" max="9999" step="1" data-field="t5018-year" aria-label="The year to report on" /></label>
-          <button type="button" class="btn btn-secondary" data-action="t5018-csv" ?disabled=${model.downloading}>
+          <button type="button" class="btn btn-secondary" data-action="t5018-csv" ?disabled=${model.downloading || emptyKind !== null}>
             ${model.downloading ? "Preparing the file" : "Download CSV"}
           </button>
         </div>
@@ -290,18 +291,24 @@ function t5018Panel(model: T5018Model): TemplateResult {
               <p class="alert alert-error" role="alert" data-error>${model.error}</p>
               <div class="actions"><button type="button" class="btn btn-secondary" data-action="t5018-reload">Try again</button></div>
             `
-          : rows.length === 0
+          : emptyKind === "none-marked"
             ? html`
-                <div class="empty" data-t5018-empty>
-                  <strong>No subcontractor payments for ${report.year}.</strong>
-                  <span class="dim">${t5018VendorsWord(0)}. A vendor is marked on its own record in Buying and Stock.</span>
+                <div class="empty" data-t5018-empty="none-marked">
+                  <strong>No vendor is marked yet.</strong>
+                  <span class="dim">A vendor is marked as a subcontractor on its own record in Buying and Stock.</span>
                 </div>
               `
             : html`
+                ${emptyKind === "none-paid"
+                  ? html`<div class="empty" data-t5018-empty="none-paid">
+                      <strong>Nothing was paid to marked vendors in ${report.year}.</strong>
+                      <span class="dim">The marked vendors are listed below with their CRA business numbers.</span>
+                    </div>`
+                  : nothing}
                 <div class="scroll">
                   <table class="stack t5018" data-t5018-table>
                     <thead>
-                      <tr><th>Vendor</th><th>Business number</th><th class="num">Paid in ${report.year}</th></tr>
+                      <tr><th>Vendor</th><th>CRA business number</th><th class="num">Paid in ${report.year}</th></tr>
                     </thead>
                     <tbody>
                       ${rows.map(
@@ -311,7 +318,9 @@ function t5018Panel(model: T5018Model): TemplateResult {
                               <span class="who">${row.name}</span>
                               <span class="dim small">${row.vendor_no}</span>
                             </td>
-                            <td data-t5018-number>${businessNumberWords(row)}</td>
+                            <td data-t5018-number data-label="CRA business number">${row.business_number_missing
+                              ? html`<span class="pill pill-watch" data-t5018-missing>${businessNumberWords(row)}</span>`
+                              : businessNumberWords(row)}</td>
                             <td class="num" data-t5018-paid>${formatMoney(row.paid_cents)}</td>
                           </tr>
                         `,

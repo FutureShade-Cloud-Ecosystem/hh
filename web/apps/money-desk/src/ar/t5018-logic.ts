@@ -45,7 +45,7 @@ export function t5018Filename(year: number): string {
  * lines on it and a form with none on it are different things to say.
  */
 export function t5018VendorsWord(count: number): string {
-  if (count === 0) return "no vendor is marked as a subcontractor";
+  if (count === 0) return "No vendor is marked as a subcontractor";
   if (count === 1) return "1 vendor is marked as a subcontractor";
   return `${count} vendors are marked as subcontractors`;
 }
@@ -57,6 +57,16 @@ export function t5018VendorsWord(count: number): string {
 export function businessNumberWords(row: PurchasingT5018Row): string {
   if (row.business_number_missing) return "(missing)";
   return row.business_number;
+}
+
+/**
+ * Which empty a year is. The report lists every marked vendor, paid or not, so no rows means no
+ * vendor is marked yet, and rows that total nothing mean the marked vendors were not paid that
+ * year. Those are two different claims, so the screen says each in its own words.
+ */
+export function t5018EmptyKind(report: PurchasingT5018Report): "none-marked" | "none-paid" | null {
+  if (report.items.length === 0) return "none-marked";
+  return report.total_cents === 0 ? "none-paid" : null;
 }
 
 /** The rows the screen shows: the route's order, which is the vendor's name in order. */

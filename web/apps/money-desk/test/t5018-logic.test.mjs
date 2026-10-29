@@ -3,7 +3,7 @@
 // figures the route sends and never adds them up (the no-app-money gate reads this folder too).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { businessNumberWords, t5018Filename, t5018Rows, t5018VendorsWord } from "../src/ar/t5018-logic.ts";
+import { businessNumberWords, t5018EmptyKind, t5018Filename, t5018Rows, t5018VendorsWord } from "../src/ar/t5018-logic.ts";
 
 const ROW = {
   vendor_id: "11111111-1111-4111-8111-111111111111",
@@ -25,11 +25,17 @@ test("a contractor with no business number says so rather than showing a blank",
 });
 
 test("the count of marked vendors is said the way a person says it", () => {
-  assert.equal(t5018VendorsWord(0), "no vendor is marked as a subcontractor");
+  assert.equal(t5018VendorsWord(0), "No vendor is marked as a subcontractor");
   assert.equal(t5018VendorsWord(1), "1 vendor is marked as a subcontractor");
   assert.equal(t5018VendorsWord(4), "4 vendors are marked as subcontractors");
 });
 
 test("the file is named for the year it covers", () => {
   assert.equal(t5018Filename(2026), "t5018-2026.csv");
+});
+
+test("an empty year says which of its two empties it is", () => {
+  assert.equal(t5018EmptyKind({ year: 2026, items: [], total_cents: 0 }), "none-marked");
+  assert.equal(t5018EmptyKind({ year: 2026, items: [{ ...ROW, paid_cents: 0 }], total_cents: 0 }), "none-paid");
+  assert.equal(t5018EmptyKind({ year: 2026, items: [ROW], total_cents: 125000 }), null);
 });
