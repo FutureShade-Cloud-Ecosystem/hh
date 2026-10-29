@@ -160,7 +160,7 @@ func TestApplyRoute_AnswersTheServersSplitPerInvoice(t *testing.T) {
 	if second["invoice_id"] != mid || second["applied_cents"] != float64(5000) || second["outcome"] != "PART" || second["balance_after_cents"] != float64(15000) {
 		t.Fatalf("the next takes the remainder in part: %v", second)
 	}
-	if body["amount_cents"] != float64(35000) || body["applied_cents"] != float64(35000) || body["unapplied_cents"] != float64(0) {
+	if body["amount_cents"] != float64(35000) || body["applied_cents"] != float64(35000) || body["unapplied_cents"] != float64(0) || body["on_account_cents"] != float64(0) {
 		t.Fatalf("the whole payment is applied: %v", body)
 	}
 	if body["replayed"] != false {
@@ -288,7 +288,7 @@ func TestApplyRoute_RefusalsInWordsLeaveNothingApplied(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("the over amount answers the split, got status %d body %v", code, body)
 	}
-	if got := body["applied_cents"]; got != float64(10000) || body["unapplied_cents"] != float64(1) {
+	if got := body["applied_cents"]; got != float64(10000) || body["unapplied_cents"] != float64(1) || body["on_account_cents"] != float64(1) {
 		t.Fatalf("the answer splits 10000 applied and 1 on account, got %v", body)
 	}
 	if b, s := invoiceBalance(t, w.pool, open); b != 0 || s != "PAID" {

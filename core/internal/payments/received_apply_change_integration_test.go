@@ -123,8 +123,9 @@ func TestApplyReceived_OverAppliedCashLeavesOnAccountCredit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the over applied receipt lands: %v", err)
 	}
-	if ans.AppliedCents != 10000 || ans.UnappliedCents != 2500 {
-		t.Fatalf("the split says 10000 applied and 2500 on account, got %d and %d", ans.AppliedCents, ans.UnappliedCents)
+	if ans.AppliedCents != 10000 || ans.UnappliedCents != 2500 || ans.OnAccountCents != 2500 {
+		t.Fatalf("the split says 10000 applied and 2500 on account, got applied %d unapplied %d on_account %d",
+			ans.AppliedCents, ans.UnappliedCents, ans.OnAccountCents)
 	}
 	if b, s := w.invoiceState(inv); b != 0 || s != "PAID" {
 		t.Fatalf("the invoice closed on its share, got %d %s", b, s)
@@ -137,14 +138,15 @@ func TestApplyReceived_OverAppliedCashLeavesOnAccountCredit(t *testing.T) {
 		ans.PaymentID).Scan(&rowAmount, &changeCents); err != nil {
 		t.Fatalf("read the payment row: %v", err)
 	}
-	if rowAmount != 12500 || changeCents != 2500 {
-		t.Fatalf("the payment row carries the whole receipt and names its change, got amount %d change %d", rowAmount, changeCents)
+	if rowAmount != 12500 || changeCents != 2500 || changeCents != ans.OnAccountCents {
+		t.Fatalf("the payment row carries the whole receipt and names its change, got amount %d change %d on_account %d",
+			rowAmount, changeCents, ans.OnAccountCents)
 	}
 
 	// The on account credit is one negative receipt_change row keyed to the payment, on the payment's
-	// own branch.
-	if got := w.changeGroupSum(ans.PaymentID); got != -2500 {
-		t.Fatalf("the account holds the overpayment as -2500, got %d", got)
+	// own branch, matching the answer's on_account_cents.
+	if got := w.changeGroupSum(ans.PaymentID); got != -2500 || -got != ans.OnAccountCents {
+		t.Fatalf("the account holds the overpayment as -2500 matching on_account_cents %d, got %d", ans.OnAccountCents, got)
 	}
 	var branch string
 	if err := w.r.obs.QueryRow(context.Background(), `

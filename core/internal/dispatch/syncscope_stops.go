@@ -356,6 +356,47 @@ func stopCreateFields(fields map[string]any) error {
 	return nil
 }
 
+// stopCreateShape is the body-only half of the pushed create's checks: the
+// writable field set, the order uuid, the scheduling date, the run uuid and
+// the payload id shape. It reads nothing and honours no fence (the order
+// brief, the run read and the driver arm are Create's own reads), so the
+// bound key gate can run it before the hidden refusal (UX-116): an invalid
+// body then meets these refusals under a spent key and a free one. The
+// refusals are exactly the ones Create answers.
+func stopCreateShape(fields map[string]any) (orderID, date, runID, id string, err error) {
+	if err := stopCreateFields(fields); err != nil {
+		return "", "", "", "", err
+	}
+	orderID, _ = fields["order_id"].(string)
+	if !looksLikeUUID(orderID) {
+		return "", "", "", "", fmt.Errorf("dispatch: order_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	date = strings.TrimSpace(fmt.Sprint(fields["scheduled_date"]))
+	if date == "" || !validDate(date) {
+		return "", "", "", "", fmt.Errorf("dispatch: scheduled_date must be YYYY-MM-DD: %w", sync.ErrOpRefused)
+	}
+	runID, _ = fields["run_id"].(string)
+	if runID != "" && !looksLikeUUID(runID) {
+		return "", "", "", "", fmt.Errorf("dispatch: run_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	id, err = syncCreateID(fields)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	return orderID, date, runID, id, nil
+}
+
+// ValidateCreate answers the pushed create's body shape without the order
+// read, the run read, the driver arm or a write: the engine's bound key
+// gate calls it before the hidden refusal (UX-116). The refusals are
+// exactly Create's.
+func (s *StopsSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	_, _, _, _, err := stopCreateShape(fields)
+	return err
+}
+
+var _ sync.CreateBodyValidator = (*StopsSyncStore)(nil)
+
 // stopWriteFields is the field set a pushed update may declare on a
 // stop: the status move and the failure reason that rides a FAILED
 // move. DELIVERED is not reachable through sync (it is reachable only
@@ -390,7 +431,8 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 	if _, _, ok := stopScopePredicate(f, d); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
-	if err := stopCreateFields(fields); err != nil {
+	orderID, date, runID, id, err := stopCreateShape(fields)
+	if err != nil {
 		return sync.RowState{}, err
 	}
 	// A held driver's writes land on their own runs alone: a stop that
@@ -398,10 +440,6 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 	// back), and a colleague's run is refused below as absent.
 	if heldRunID, _ := fields["run_id"].(string); d.driver && heldRunID == "" {
 		return sync.RowState{}, refused(fmt.Errorf("a driver schedules stops onto their own run"))
-	}
-	orderID, _ := fields["order_id"].(string)
-	if !looksLikeUUID(orderID) {
-		return sync.RowState{}, fmt.Errorf("dispatch: order_id must be a uuid: %w", sync.ErrOpRefused)
 	}
 	if s.orders == nil {
 		return sync.RowState{}, fmt.Errorf("dispatch: order seam not configured: %w", sync.ErrOpRefused)
@@ -425,16 +463,10 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 	case "CANCELLED", "CLOSED":
 		return sync.RowState{}, refused(fmt.Errorf("order is %s and cannot be scheduled", brief.Status))
 	}
-	date := strings.TrimSpace(fmt.Sprint(fields["scheduled_date"]))
-	if date == "" || !validDate(date) {
-		return sync.RowState{}, fmt.Errorf("dispatch: scheduled_date must be YYYY-MM-DD: %w", sync.ErrOpRefused)
-	}
-	runID, _ := fields["run_id"].(string)
+	// The date and run uuid shapes are stopCreateShape's checks, run before
+	// the order brief there; here the shape stands proven.
 	var runBranch, runDate, runStatus, runDriver string
 	if runID != "" {
-		if !looksLikeUUID(runID) {
-			return sync.RowState{}, fmt.Errorf("dispatch: run_id must be a uuid: %w", sync.ErrOpRefused)
-		}
 		if err := s.pool.QueryRow(ctx,
 			`SELECT branch_id::text, to_char(scheduled_date,'YYYY-MM-DD'), status, COALESCE(driver_id::text,'')
 			 FROM delivery_runs WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`,
@@ -461,10 +493,8 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 			return sync.RowState{}, refused(fmt.Errorf("stops cannot be added to a %s run", runStatus))
 		}
 	}
-	id, err := syncCreateID(fields)
-	if err != nil {
-		return sync.RowState{}, err
-	}
+	// The payload id shape is stopCreateShape's check, run before the order
+	// brief there; here the shape stands proven.
 	actor := syncActor(ctx, s.link, f.Actor)
 	str := func(k string) string { v, _ := fields[k].(string); return v }
 
