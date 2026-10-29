@@ -1,10 +1,11 @@
 // The ledger slice's state and its presses. The Financial Controller's desk:
 // the approvals queue it decides (floor requests, parked journals, freight
-// and the credit exceptions), the journal register with its new journal,
-// void and reverse, the chart of accounts, the trial balance with its month
-// and export, the fiscal periods with their close and reopen, the checks and
-// the policy. Payables and Receivables holds the same desk as a reader: the
-// reads, none of the writes, and the words saying who may.
+// and the credit exceptions), the journal register with its posted date range,
+// show more, new journal, void and reverse, the chart of accounts, the trial
+// balance with its month and export, the fiscal periods with their close and
+// reopen, the checks and the policy. Payables and Receivables holds the same
+// desk as a reader: the reads, none of the writes, and the words saying who
+// may.
 //
 // The app holds no authority of its own. Who may decide a request is the
 // server's answer; the one rule the screen shows before a press is the four
@@ -19,7 +20,7 @@
 import { html, type TemplateResult } from "lit";
 import type { Branch, GlAccount, GlBisTrackTieoutReport, GlJournal, GlPeriod, GlPolicy, GlRecurringTemplate, GlTieoutState, GlTrialBalanceResult, IdentityApproval } from "@hardscapehouse/api-client";
 import type { Result } from "@hardscapehouse/api-client";
-import type { GlApi } from "./gl-api.js";
+import { MAX_PAGES, type GlApi } from "./gl-api.js";
 import type { BooksModel, Confirm, Review, Section } from "./gl-books.js";
 import { branchChoices } from "./gl-books.js";
 import { canDecide, checkDraft, latePostedRow, periodName, postingQueueBannerWords, refusalWords, type DraftLine, type LatePostedRow } from "./gl-logic.js";
@@ -61,6 +62,13 @@ export class GlDesk {
   #journals: GlJournal[] = [];
   #journalFilter: JournalFilter = "all";
   #selectedJournal: string | null = null;
+  // The register's window: the applied posted date range ("" is unbounded on that side), the core's
+  // cursor to the page after the loaded rows ("" is the end), and whether a page is on its way. The
+  // register is the newest hundred first; Show more appends a page, and a changed range starts over.
+  #journalFrom = "";
+  #journalTo = "";
+  #journalsNext = "";
+  #reaching = false;
   // The parked journal behind a selected journal request, read for its lines.
   #approvalJournal: GlJournal | null = null;
   #trial: GlTrialBalanceResult | null = null;
@@ -110,7 +118,7 @@ export class GlDesk {
     const controller = this.#mode === "controller";
     const [approvals, journals, trial, branches, legacyImport, postingQueue] = await Promise.all([
       controller ? this.#api.pendingApprovals() : Promise.resolve<Result<IdentityApproval[]>>({ ok: true, value: [] }),
-      this.#api.journals(),
+      this.#api.journalsPage({ dateFrom: this.#journalFrom, dateTo: this.#journalTo }),
       this.#api.trialBalance(this.#trialBranch, this.#trialYear, this.#trialMonth),
       this.#api.branches(),
       this.#api.legacyImportSource(),
@@ -129,7 +137,9 @@ export class GlDesk {
       return;
     }
     this.#approvals = approvals.value;
-    this.#journals = journals.ok ? journals.value : [];
+    // A refused register read clears the window: the register never keeps rows it cannot vouch for.
+    this.#journals = journals.ok ? journals.value.items : [];
+    this.#journalsNext = journals.ok ? journals.value.nextCursor : "";
     this.#trial = trial.ok ? trial.value : null;
     if (trial.ok) this.#trialYear = trial.value.fiscal_year;
     this.#branches = branches.ok ? branches.value : [];
@@ -291,6 +301,12 @@ export class GlDesk {
         this.#notice = "";
         this.#confirm = null;
         this.#host.repaint();
+        return true;
+      case "gl-journal-range":
+        void this.#applyJournalRange();
+        return true;
+      case "gl-show-more":
+        void this.#showMoreJournals();
         return true;
       case "gl-approve-journal": {
         // A parked journal is approved through its request, which posts it.
@@ -538,9 +554,74 @@ export class GlDesk {
     this.#lineCount = 2;
   }
 
+  // ---- the register's window ---------------------------------------------------------------------
+
+  /**
+   * The range press: the fields are read the way every form field is, and a changed range starts the
+   * register from the first page again. The fields carry YYYY-MM-DD or "", both the core's own shape.
+   */
+  async #applyJournalRange(): Promise<void> {
+    const from = this.#host.field("journal-from").trim();
+    const to = this.#host.field("journal-to").trim();
+    if (from === this.#journalFrom && to === this.#journalTo) return;
+    this.#reaching = true;
+    this.#host.repaint();
+    const answer = await this.#api.journalsPage({ dateFrom: from, dateTo: to });
+    this.#reaching = false;
+    if (answer.ok) {
+      // The range is the register's only once its rows are, so a refusal leaves the shown range
+      // and its cursor standing, and the same dates can be pressed again.
+      this.#journalFrom = from;
+      this.#journalTo = to;
+      this.#journals = answer.value.items;
+      this.#journalsNext = answer.value.nextCursor;
+      this.#error = "";
+    } else {
+      this.#error = refusalWords("journals", answer.error, answer.status ?? 0);
+    }
+    this.#host.repaint();
+  }
+
+  /** Show more: the core's next cursor is followed one page at a time, and the page is appended. */
+  async #showMoreJournals(): Promise<void> {
+    if (this.#journalsNext === "" || this.#reaching || this.#busy) return;
+    const cursor = this.#journalsNext;
+    this.#reaching = true;
+    this.#host.repaint();
+    const answer = await this.#api.journalsPage({ dateFrom: this.#journalFrom, dateTo: this.#journalTo, cursor });
+    this.#reaching = false;
+    if (answer.ok) {
+      // A reread that landed while this page was in flight may already hold some of its rows.
+      const held = new Set(this.#journals.map((j) => j.id));
+      this.#journals = [...this.#journals, ...answer.value.items.filter((j) => !held.has(j.id))];
+      this.#journalsNext = answer.value.nextCursor;
+      this.#error = "";
+    } else {
+      this.#error = refusalWords("journals", answer.error, answer.status ?? 0);
+    }
+    this.#host.repaint();
+  }
+
+  /**
+   * Rereads the window the register holds, from the first page back to at least the rows it showed, so
+   * the register shows the truth after a lost answer. A refusal here keeps the rows on screen: this
+   * read is the second look, and the first look's answer is the one the person saw.
+   */
   async #refreshJournals(): Promise<void> {
-    const journals = await this.#api.journals();
-    if (journals.ok) this.#journals = journals.value;
+    const wanted = this.#journals.length;
+    const rows: GlJournal[] = [];
+    let cursor = "";
+    let next = "";
+    for (let pages = 0; pages <= MAX_PAGES; pages += 1) {
+      const answer = await this.#api.journalsPage({ dateFrom: this.#journalFrom, dateTo: this.#journalTo, ...(cursor === "" ? {} : { cursor }) });
+      if (!answer.ok) return;
+      rows.push(...answer.value.items);
+      next = answer.value.nextCursor;
+      if (next === "" || rows.length >= wanted) break;
+      cursor = next;
+    }
+    this.#journals = rows;
+    this.#journalsNext = next;
     this.#host.repaint();
   }
 
@@ -787,6 +868,10 @@ export class GlDesk {
       approvalJournal: this.#approvalJournal,
       journals: this.#journals,
       journalFilter: this.#journalFilter,
+      journalFrom: this.#journalFrom,
+      journalTo: this.#journalTo,
+      journalsNext: this.#journalsNext,
+      reaching: this.#reaching,
       selectedJournal: this.#selectedJournal,
       trial: this.#trial,
       trialBranch: this.#trialBranch,

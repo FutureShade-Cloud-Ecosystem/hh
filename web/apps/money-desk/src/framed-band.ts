@@ -9,6 +9,7 @@ export const FRAMED_BAND_APP = "Money Desk";
 /** The surface label for one desk area: receivables is the board's default. */
 export function framedBandSurface(area: string): string {
   if (area === "ledger") return "Approvals and ledger";
+  if (area === "payables") return "Payables";
   if (area === "statements") return "Statements";
   if (area === "bank") return "Bank reconciliation";
   if (area === "tax") return "Tax";

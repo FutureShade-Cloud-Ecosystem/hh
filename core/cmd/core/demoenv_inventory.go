@@ -78,9 +78,26 @@ var demoEnvDenyNames = []string{
 	// The finance box mark (W2-2): it names a deployment kind a demo box
 	// never is, so a demo box carrying it refuses the boot.
 	"HH_BOX_KIND",
+	// The evening guard's simulated clock shift (W2-1b): a demo box tells
+	// the time, it does not move it, so a demo box carrying a shift refuses
+	// the boot.
+	"HH_CLOCK_SHIFT_SECONDS",
 	// The finance box's people (W2-2): they are the finance box's, a demo
 	// box has none, and a demo box carrying the list refuses the boot.
 	"HH_FINANCE_USERS",
+	// The finance world's dump names (W2-1b): the file, the address, the
+	// digest and the fetch credential of the world the finance box restores.
+	// A demo box never restores a world, so a demo box carrying any of them
+	// refuses the boot, and the credential never rides an ordinary
+	// deployment.
+	"HH_FINANCE_WORLD_FILE",
+	"HH_FINANCE_WORLD_URL",
+	"HH_FINANCE_WORLD_SHA256",
+	"HH_FINANCE_WORLD_TOKEN",
+	// The directory the world reset writes its dump file under (W2 reset fix
+	// r1): the dump is on disk, never on the shared memory tmpfs. A demo box
+	// never resets a world, so a demo box carrying it refuses the boot.
+	"HH_FINANCE_RESET_DIR",
 }
 
 // demoEnvCardProcessorVar and demoEnvCardProcessorValue: the card
@@ -117,6 +134,8 @@ var demoEnvAllowNames = []string{
 	"HH_WEB_CONSOLE_PROJECT_ID",
 	"HH_WEB_CORE_BASE_URL",
 	"HH_WEB_DEALER_MARK",
+	// The world's dealer name is the finance one-shot's plan dealer, the
+	// same public fact the web runtime carries.
 	"HH_WEB_DEALER_NAME",
 	"HH_WEB_MODE",
 	"HH_WEB_ORG",
@@ -233,14 +252,28 @@ var envInventoryFixture = []string{
 	"DEMO_MODE",
 	"ERP_BASE_URL",
 	"HH_BOX_KIND",
+	// The evening guard's simulated clock shift (W2-1b): whole seconds added to every time.Now in
+	// the world's day processes. A demo box carries no shifted clock.
+	"HH_CLOCK_SHIFT_SECONDS",
 	"HH_DEMO_MINT_ADDRESS_CEILING",
 	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
 	"HH_FINANCE_USERS",
+	// The world's dealer name (W2-1b): the finworld driver's plan dealer, read beside HH_WEB_ORG's
+	// finance one-shot use.
+	"HH_WEB_DEALER_NAME",
 	"HH_WEB_ORG",
 	"HH_ACCEPTANCE_SIGN_KEY",
 	"HH_ACCEPTANCE_SIGN_KEY_ID",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS_ID",
+	"HH_FINANCE_WORLD_FILE",
+	"HH_FINANCE_WORLD_SHA256",
+	"HH_FINANCE_WORLD_TOKEN",
+	"HH_FINANCE_WORLD_URL",
+	// The directory the world reset writes its dump file under (W2 reset fix
+	// r1): the dump is on disk, never on the shared memory tmpfs, so the box
+	// does not depend on a shared memory size it does not control.
+	"HH_FINANCE_RESET_DIR",
 	"HOS_ASSIST_ANTHROPIC_API_KEY",
 	"HOS_ASSIST_CLAIMS_KEY",
 	"HOS_ASSIST_PRO_READER_DATABASE_URL",

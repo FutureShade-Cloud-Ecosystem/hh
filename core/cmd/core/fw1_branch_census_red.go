@@ -74,6 +74,12 @@ const fw1OutboxReadKind = "read:events_outbox"
 // core/internal/gl. Guarded by TestFW1NonGLJournalWriterCallSitesComplete.
 var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 	{
+		File:         "core/cmd/core/fw1_ties.go",
+		Func:         "TieOutboxDrained",
+		Kind:         fw1OutboxReadKind,
+		BranchSource: "it reads the outbox, it writes no journal (the box's read only check asks whether any posting event is still waiting or dead lettered)",
+	},
+	{
 		File:         "core/cmd/core/credit_memo_wire.go",
 		Func:         "(creditMemoParkerAdapter).ParkCreditMemo",
 		Kind:         "ParkExternalJournalTx",
@@ -348,6 +354,12 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		Func:         "(*Service).saleInTx",
 		Kind:         "emit:tax.relief.assessed",
 		BranchSource: "in.BranchID (sale input branch, also written to orders.branch_id in the same tx) in tax.relief.assessed outbox payload (FW1-08b)",
+	},
+	{
+		File:         "core/internal/purchasing/ap_aging.go",
+		Func:         "(*Service).PayBill",
+		Kind:         "PostJournalTx",
+		BranchSource: "bill.BranchID from purchasing_bills.branch_id (NOT NULL)",
 	},
 	{
 		File:         "core/internal/purchasing/service.go",
