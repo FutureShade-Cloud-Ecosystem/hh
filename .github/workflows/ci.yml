@@ -510,6 +510,21 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: core/go.mod
+      - name: Pin the Postgres client tools to the server's major (16)
+        # The reset legs dump a world with pg_dump and restore it with psql into the
+        # Postgres 16 service above, the way the finance box does on Postgres 16. A
+        # runner whose default client is newer writes settings a 16 server does not
+        # know (pg_dump 17 writes SET transaction_timeout), so the job pins the
+        # client to the server's own major, and a runner upgrade cannot move it.
+        run: |
+          set -euo pipefail
+          if [ ! -x /usr/lib/postgresql/16/bin/pg_dump ]; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q postgresql-client-16
+          fi
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+          /usr/lib/postgresql/16/bin/pg_dump --version
+          /usr/lib/postgresql/16/bin/psql --version
       - name: Vet the integration tag shape
         # Repository-wide under the tag, which includes every package
         # the suite step below leaves out: one stray field in one
