@@ -454,7 +454,15 @@ func (s *Service) ApplyVendorCredit(ctx context.Context, creditID string, in App
 		return VendorCreditDetail{}, conflict("purchasing: bill %s is %s; a credit can only be applied to a POSTED bill", bill.BillNo, bill.Status)
 	}
 
-	creditOpen := credit.TotalCents - credit.AppliedCents
+	// The credit's applied sum is read in its own statement, after the credit's row lock is held:
+	// the locking read's snapshot was taken before it waited for the lock, so a press that waited
+	// behind another would not see that press's application and could spend the credit twice
+	// (S6 on 704, P1-1). A new statement sees every application committed before the lock.
+	applied, err := s.repo.AppliedCreditCentsTx(ctx, tx, credit.ID)
+	if err != nil {
+		return VendorCreditDetail{}, err
+	}
+	creditOpen := credit.TotalCents - applied
 	if in.AmountCents > creditOpen {
 		return VendorCreditDetail{}, conflict("purchasing: application of %d cents exceeds the credit's open %d cents on %s",
 			in.AmountCents, creditOpen, credit.CreditNo)
@@ -753,6 +761,23 @@ func (r *Repository) VendorCreditApplicationByKeyTx(ctx context.Context, tx pgx.
 		return "", "", false, fmt.Errorf("purchasing: read the application this key named: %w", err)
 	}
 	return creditID, billID, true, nil
+}
+
+// AppliedCreditCentsTx returns the sum of a credit's applications within tx, read in its own
+// statement so it sees every application committed before the caller's lock.
+func (r *Repository) AppliedCreditCentsTx(ctx context.Context, tx pgx.Tx, creditID string) (int64, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	var sum int64
+	if err := r.q(tx).QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_cents), 0)
+		  FROM purchasing_vendor_credit_applications
+		 WHERE credit_id = $1`, creditID,
+	).Scan(&sum); err != nil {
+		return 0, fmt.Errorf("purchasing: sum applied credit cents: %w", err)
+	}
+	return sum, nil
 }
 
 // CreditedBillCentsTx returns the sum of every application's cents on billID within tx, the part of
