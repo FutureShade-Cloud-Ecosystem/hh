@@ -35,11 +35,11 @@ import {
   REPORTS,
   reportWord,
   scopeLabel,
-  sourceWord,
   TABS,
   tabTitle,
   type StmtTab,
 } from "./finstmt-logic.js";
+import { sourceWord } from "../shared/source-words.js";
 
 export type TabStatus = "idle" | "loading" | "ready" | "error";
 
