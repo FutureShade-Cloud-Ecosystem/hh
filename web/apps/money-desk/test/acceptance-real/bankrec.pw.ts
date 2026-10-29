@@ -1,31 +1,33 @@
-// The Money Desk's bank reconciliation against the REAL core (W2-4 (d), wave 2).
+// The Money Desk's bank reconciliation against the REAL core (W2-4 (d), wave 2, the join round).
 //
 // WHAT THIS SPEC IS: the Financial Controller's bank reconciliation area on a real core box, read the way the
-// controller reads it. The month the world signed off reads zero difference, the statement lines and their matches
-// are the core's own, and the month's sign off state is closed. Every money figure the screen shows is held
-// against the core's own answer for that figure.
+// controller reads it. Every money figure the screen shows is held against the core's own answer for that figure.
 //
-// THE ASSUMPTIONS ABOUT (a) (the harness, W2-4-HARNESS-INTERFACE-r1.md). Each one names what the fold must hold,
-// so a mismatch shows up there and not in the run:
-//  1. ./session exports asStaff(context, who) and coreURL(), as the interface says. asStaff puts the world's named
-//     staff user of that role on the browser context, so the next page.goto lands signed in on the real core.
-//     This spec signs in as the Financial Controller, the role the bank area is for.
-//  2. ./world exports the world's known figures as named constants, each with a one line comment. This spec reads
-//     the world's signed off month, its open month and its zero difference from there, and hard codes no figure of
-//     its own.
-//  3. The box serves the Money Desk at /money-desk/ (deploy/demo/Caddyfile.template:139, deploy/finance/
-//     Caddyfile.template:67), and the config's base URL names the app's own path, so this spec goes to "./" and
-//     stays under it. If (a)'s config names the box's root instead, the spec tries the box's own path too.
-//  4. The core's API answers this spec needs are the ones the desk itself asks for: GET /api/v1/bankrec/accounts,
-//     GET /api/v1/bankrec/reconciliations, GET /api/v1/bankrec/lines and GET /api/v1/bankrec/matches. This spec
-//     reads them from the answers the desk received, so it needs no bearer of its own and holds to whichever
-//     session (a)'s helper makes. If (a)'s helper hands the spec a token, the same figures can be read straight
-//     from coreURL().
-//  5. The world's anchor month is 2026-09 and the world closes every month before it (the wave 2 round 2 notes:
-//     seed 1, anchor 2026-09), so the month signed off at zero difference is the one before the anchor.
+// TWO WORLDS, ONE SWITCH (the join round). (d) was written against W2-1b's world, where a month was signed off at
+// zero difference. Today's finance seed signs off NO month: world.ts's SIGNED_OFF_BANK_MONTH is the empty string,
+// and the harness's own leg 3 ("a signed off bank month: what today's seed truly holds") shows what the box answers.
+// So each leg here carries both branches, as (c)'s periods leg does:
 //
-// THE RED: this spec runs under the stub and fails there, because the stub's world is not the core's. The stub
-// holds no reconciliation at all, so the signed off month is not there to read.
+//   - THE SEED'S BRANCH (SIGNED_OFF_BANK_MONTH === ""): what today's seed truly holds. No month is reconciled, so
+//     no month is signed off and no month reads zero difference; the desk offers the starting point; the figures
+//     the desk does show are the core's own figures.
+//   - THE WORLD'S BRANCH: the world's signed off month at zero difference, its report's figures and its matched
+//     lines, the assertions (d) was written with.
+//
+// The switch is one constant in world.ts, and the world's own anchors take over with it: while OPEN_MONTH_ANCHOR is
+// empty the specs read the box's own month at run time, and when it carries a month they read that month.
+//
+// A BRANCH THAT CAN PASS ON A BLANK IS NOT A LEG (FROM-PRINCIPAL 386). Every leg here fails on an empty screen
+// alone and on an empty core alone, each on its own:
+//
+//   - EMPTY SCREEN ALONE: the seed branch asserts the desk's own elements (the empty month's block, the starting
+//     point form, the account card, the empty lines block). A screen that shows nothing has none of them.
+//   - EMPTY CORE ALONE: the seed branch asserts the core's own answer (its bank and card accounts, by count and by
+//     the bank account's name) before it reads the screen, so a core that answers with nothing fails on the count.
+//
+// THE RED: this spec runs under the stub and fails there, because the stub's world is not the core's. The stub holds
+// three demo accounts where the seed holds nine, and seven statement lines where the seed holds none, so each leg
+// fails on the core's own figures and never on a missing session.
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import type {
   BankRecAccount,
@@ -37,7 +39,16 @@ import type {
 import { formatMoney } from "../../src/bankrec/bankrec-money.js";
 import { matchMethodWord, targetWord } from "../../src/bankrec/bankrec-logic.js";
 import { asStaff, coreURL } from "./session.js";
-import { OPEN_MONTH, SIGNED_OFF_BANK_MONTH, SIGNED_OFF_VARIANCE_CENTS } from "./world.js";
+import { readBoxMonth, staffHeaders } from "./box-read.js";
+import {
+  BANKREC_ACCOUNT_COUNT,
+  BANKREC_BANK_ACCOUNT_NAME,
+  BANKREC_RECONCILIATION_COUNT,
+  BANKREC_STATEMENT_LINE_COUNT,
+  OPEN_MONTH_ANCHOR,
+  SIGNED_OFF_BANK_MONTH,
+  SIGNED_OFF_VARIANCE_CENTS,
+} from "./world.js";
 
 /** One answer the core sent: its route, the query it carried and its body. */
 interface CoreAnswer {
@@ -96,6 +107,15 @@ async function coreAnswer(core: CoreAnswers, path: string, query?: Record<string
   return list[list.length - 1];
 }
 
+/** The query the core's own last answer for a route carried, so a spec can hold the desk's own call to the core's
+ *  own account: the desk asked for the lines of one account, and the answer names that account. */
+function answerParams(core: CoreAnswers, path: string, query?: Record<string, string>): URLSearchParams {
+  const list = core.answers
+    .filter((answer) => answer.path === path)
+    .filter((answer) => query === undefined || Object.entries(query).every(([key, value]) => answer.params.get(key) === value));
+  return need(list[list.length - 1], `the core answered ${path}`).params;
+}
+
 /** Where the desk's app may be served: under the base URL, or at the box's own path. */
 function appPaths(baseURL: string | undefined): string[] {
   const path = baseURL === undefined ? "" : new URL(baseURL).pathname.replace(/\/+$/, "");
@@ -117,7 +137,9 @@ async function openDesk(page: Page, context: BrowserContext, baseURL: string | u
     try {
       await area.waitFor({ state: "visible", timeout: 15_000 });
       await area.click();
-      await expect(page.locator("[data-account-id]").first()).toBeVisible();
+      // The area's own accounts panel, not an account card: a core that answers with no accounts at all still
+      // opens the area, and the leg then fails on the core's own figure rather than in this helper.
+      await page.locator("[data-br-accounts]").waitFor({ state: "visible", timeout: 15_000 });
       return;
     } catch {
       // The desk is not at this path; the next one is where the box serves it.
@@ -139,6 +161,18 @@ function bankAccount(accounts: BankRecAccount[]): BankRecAccount {
   );
 }
 
+/**
+ * THE WORLD'S BANK ACCOUNT, as the core answers it.
+ *
+ * The name is the world's own, so a core that answers with another world's accounts fails here. The count of the
+ * accounts is the seed's branch's own figure, read before anything else (see the legs).
+ */
+function worldBank(accounts: BankRecAccount[]): BankRecAccount {
+  const bank = bankAccount(accounts);
+  expect(bank.name, "the world's bank account").toBe(BANKREC_BANK_ACCOUNT_NAME);
+  return bank;
+}
+
 /** The core's own reconciliation for a month of the account. */
 function reconOf(recons: BankRecReconciliation[], month: string): BankRecReconciliation {
   const { year, month: number } = monthOf(month);
@@ -148,15 +182,57 @@ function reconOf(recons: BankRecReconciliation[], month: string): BankRecReconci
   );
 }
 
-test("the month the world signed off reads zero difference, and the desk says so", async ({ page, context }, testInfo) => {
+test("the month the world signed off reads zero difference, and the desk says so", async ({
+  page,
+  context,
+  request,
+}, testInfo) => {
+  const headers = staffHeaders(page);
   const core = watchCore(page);
   await openDesk(page, context, testInfo.project.use.baseURL);
+  const boxMonth = await readBoxMonth(request, await headers);
+  // The world's open month, or the box's own month while the world names none (no month literal, FROM-PRINCIPAL 389).
+  const openMonth = OPEN_MONTH_ANCHOR === "" ? boxMonth : OPEN_MONTH_ANCHOR;
 
   const accounts = (await coreAnswer(core, "/api/v1/bankrec/accounts")) as BankRecAccount[];
-  const bank = bankAccount(accounts);
+  if (SIGNED_OFF_BANK_MONTH === "") {
+    // THE CORE'S OWN ACCOUNTS, FIRST, BEFORE ANY OTHER ANSWER IS READ. A core that answers with nothing at all
+    // fails on this figure, here, and not on a later wait for an answer the desk never asks for: with no account
+    // the desk never asks for the account's months at all.
+    expect(accounts.length, "the core lists the world's bank and card accounts").toBe(BANKREC_ACCOUNT_COUNT);
+  }
   const recons = (await coreAnswer(core, "/api/v1/bankrec/reconciliations")) as BankRecReconciliation[];
 
-  // The core's own answer: the month is signed off, and it reads zero difference.
+  if (SIGNED_OFF_BANK_MONTH === "") {
+    // TODAY'S SEED: THE BOX SIGNS OFF NO MONTH AT ALL.
+    //
+    // THE CORE'S OWN ANSWER: it holds no reconciliation, for any month, for any account. The finance seed opens no
+    // month and signs none off, so there is no month that could read zero difference.
+    expect(recons.length, `the core holds no reconciliation at all (the box's own month is ${boxMonth})`).toBe(
+      BANKREC_RECONCILIATION_COUNT,
+    );
+    for (const recon of recons) {
+      expect(recon.status, "the seed signs no month off").not.toBe("COMPLETED");
+    }
+
+    // THE CORE'S OWN ACCOUNTS: the world's bank account among them.
+    const bank = worldBank(accounts);
+
+    // THE SCREEN SAYS THE SAME: no month is open for the account, and the desk offers the starting point because
+    // no month has signed off. The starting point form is the desk's own answer to a box with nothing reconciled.
+    await expect(page.locator("[data-empty-recons]"), "no month is open for the account").toBeVisible();
+    await expect(page.locator("[data-recon-id]"), "no month row is shown").toHaveCount(0);
+    await expect(page.locator("[data-cutover-form]"), "the desk offers the starting point").toBeVisible();
+    await expect(page.locator("[data-cutover-closed]"), "the starting point is not closed off").toHaveCount(0);
+
+    // The desk's account is the core's account: the card carries the core's own id, so the empty state above is
+    // about this account's month and not about a box with no accounts at all.
+    await expect(page.locator(`[data-account-id='${bank.id}']`), "the desk shows the core's bank account").toBeVisible();
+    return;
+  }
+
+  // THE WORLD'S OWN MONTH.
+  const bank = worldBank(accounts);
   const signedOff = reconOf(recons, SIGNED_OFF_BANK_MONTH);
   expect(signedOff.status, "the world signed the month off").toBe("COMPLETED");
   expect(signedOff.variance_cents, "a signed off month reads zero difference").toBe(SIGNED_OFF_VARIANCE_CENTS);
@@ -164,9 +240,9 @@ test("the month the world signed off reads zero difference, and the desk says so
   expect(signedOff.completed_at ?? "", "the sign off carries the day it was signed").not.toBe("");
 
   // The world's open month is never signed off.
-  const open = monthOf(OPEN_MONTH);
+  const open = monthOf(openMonth);
   for (const recon of recons.filter((r) => r.year === open.year && r.month === open.month)) {
-    expect(recon.status, `the world's open month ${OPEN_MONTH} is never signed off`).toBe("OPEN");
+    expect(recon.status, `the world's open month ${openMonth} is never signed off`).toBe("OPEN");
   }
 
   // The screen says the same: signed off, balanced, and closed to changes.
@@ -174,15 +250,52 @@ test("the month the world signed off reads zero difference, and the desk says so
   await expect(row).toContainText("Signed off");
   await expect(row).toContainText("Balanced");
   await expect(row.getByRole("button"), "a signed off month carries no buttons").toHaveCount(0);
+  // The desk works on the core's bank account, so the signed off month is on the account the core named.
+  await expect(page.locator(`[data-account-id='${bank.id}']`), "the desk shows the core's bank account").toBeVisible();
 });
 
-test("the month's figures on the screen are the core's own figures", async ({ page, context }, testInfo) => {
+test("the month's figures on the screen are the core's own figures", async ({
+  page,
+  context,
+  request,
+}, testInfo) => {
+  const headers = staffHeaders(page);
   const core = watchCore(page);
   await openDesk(page, context, testInfo.project.use.baseURL);
+  const boxMonth = await readBoxMonth(request, await headers);
 
   const accounts = (await coreAnswer(core, "/api/v1/bankrec/accounts")) as BankRecAccount[];
-  const bank = bankAccount(accounts);
+  if (SIGNED_OFF_BANK_MONTH === "") {
+    // THE CORE'S OWN ACCOUNTS, FIRST: a core that answers with nothing at all fails on this figure, here, and not
+    // on a later wait for an answer the desk never asks for.
+    expect(accounts.length, "the core lists the world's bank and card accounts").toBe(BANKREC_ACCOUNT_COUNT);
+  }
   const recons = (await coreAnswer(core, "/api/v1/bankrec/reconciliations")) as BankRecReconciliation[];
+
+  if (SIGNED_OFF_BANK_MONTH === "") {
+    // TODAY'S SEED: THERE IS NO MONTH, SO THERE ARE NO MONTH'S FIGURES.
+    //
+    // The core holds no reconciliation, so the desk shows no report and no month row: a report for a month the
+    // core does not hold would be a figure of the desk's own making.
+    expect(recons.length, `the core holds no reconciliation at all (the box's own month is ${boxMonth})`).toBe(
+      BANKREC_RECONCILIATION_COUNT,
+    );
+    await expect(page.locator("[data-recon-report]"), "no month's report is shown").toHaveCount(0);
+    await expect(page.locator("[data-recon-id]"), "no month row is shown").toHaveCount(0);
+    await expect(page.locator("[data-recon-card]"), "no month card is shown").toHaveCount(0);
+
+    // THE FIGURES THE DESK DOES SHOW ARE THE CORE'S OWN: the account card's unmatched count and the account's
+    // own name, both read from the core's own answer.
+    const bank = worldBank(accounts);
+    const card = page.locator(`[data-account-id='${bank.id}']`);
+    await expect(card, "the desk shows the core's bank account").toBeVisible();
+    await expect(card, "the desk shows the core's account name").toContainText(bank.name);
+    await expect(card).toContainText(bank.unmatched_lines === 0 ? "All matched" : `${bank.unmatched_lines} lines unmatched`);
+    return;
+  }
+
+  // THE WORLD'S OWN MONTH.
+  const bank = worldBank(accounts);
   const signedOff = reconOf(recons, SIGNED_OFF_BANK_MONTH);
 
   // The reconciliation report: every figure the core answered with, the way the screen reads it.
@@ -203,9 +316,23 @@ test("the month's figures on the screen are the core's own figures", async ({ pa
   await expect(card).toContainText(bank.unmatched_lines === 0 ? "All matched" : `${bank.unmatched_lines} lines unmatched`);
 });
 
-test("the statement lines and their matches are the core's, and the desk shows each match", async ({ page, context }, testInfo) => {
+test("the statement lines and their matches are the core's, and the desk shows each match", async ({
+  page,
+  context,
+  request,
+}, testInfo) => {
+  const headers = staffHeaders(page);
   const core = watchCore(page);
   await openDesk(page, context, testInfo.project.use.baseURL);
+  const boxMonth = await readBoxMonth(request, await headers);
+
+  // THE CORE'S OWN ACCOUNTS, FIRST: a core that answers with nothing at all fails on this figure, here, and not
+  // on a later wait for an answer the desk never asks for (with no account the desk asks for no statement).
+  const accounts = (await coreAnswer(core, "/api/v1/bankrec/accounts")) as BankRecAccount[];
+  if (SIGNED_OFF_BANK_MONTH === "") {
+    expect(accounts.length, "the core lists the world's bank and card accounts").toBe(BANKREC_ACCOUNT_COUNT);
+  }
+
   await tab(page, "match");
 
   // The world's matched lines, the filter the desk offers for them.
@@ -213,6 +340,33 @@ test("the statement lines and their matches are the core's, and the desk shows e
   // The core's answer to the filtered call: the query rides with the answer, so the lines the desk asked for with
   // the filter are the ones read here, never the unfiltered page that came before it.
   const lines = (await coreAnswer(core, "/api/v1/bankrec/lines", { status: "MATCHED" })) as BankRecStatementLinePage;
+
+  // THE CORE'S OWN ANSWER, FIRST. The desk asked for the lines of one account, and the answer names that account:
+  // the empty state below is about this account's statement and not about a box with no accounts at all.
+  const asked = answerParams(core, "/api/v1/bankrec/lines", { status: "MATCHED" });
+  const bank = worldBank(accounts);
+  expect(asked.get("bank_account_id"), "the desk asked the core for the bank account's own statement").toBe(bank.id);
+
+  if (SIGNED_OFF_BANK_MONTH === "") {
+    // TODAY'S SEED: THE FINANCE SEED IMPORTS NO STATEMENT.
+    //
+    // The core's own answer: it holds no statement line for the account, so there is no line to match, no match
+    // history and nothing unmatched. The answer to the filtered call is the one that says so.
+    expect(lines.items.length, `the core holds no statement line (the box's own month is ${boxMonth})`).toBe(
+      BANKREC_STATEMENT_LINE_COUNT,
+    );
+    expect(lines.next_cursor ?? null, "no more lines wait behind the page").toBeNull();
+
+    // THE SCREEN SAYS THE SAME, in the desk's own words for the state that was asked for: the filter is on, so
+    // the empty block is the filtered one, and it is not the unfiltered "import a statement first".
+    const empty = page.locator("[data-empty-lines]");
+    await expect(empty, "the desk holds no statement line").toBeVisible();
+    await expect(empty, "the desk's own words for the filtered state").toContainText("Nothing is in this state");
+    await expect(page.locator("[data-line-id]"), "no line row is shown").toHaveCount(0);
+    await expect(page.locator("[data-action='br-more-lines']"), "no more lines wait behind the page").toHaveCount(0);
+    return;
+  }
+
   const rows = page.locator("[data-line-id]");
   await expect(rows).toHaveCount(lines.items.length);
 

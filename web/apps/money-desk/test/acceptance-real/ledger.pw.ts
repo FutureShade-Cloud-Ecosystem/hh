@@ -76,10 +76,10 @@
 // year the trial balance is showing, which is the core's own current year. The world's month end
 // therefore has to fall in that year, and the spec says so in the open if it does not.
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
-import { asStaff, coreURL } from "./session.js";
+import { asStaff } from "./session.js";
+import { coreRead, readBoxMonth, staffHeaders, type StaffHeaders } from "./box-read.js";
 import {
   AR_CONTROL_ACCOUNT_CODE,
-  BOOT_MONTH_INVOICE_NO,
   LEDGER_JOURNAL_ENTRY_NO,
   LEDGER_JOURNAL_FISCAL_YEAR,
   LEDGER_JOURNAL_MEMO,
@@ -88,7 +88,6 @@ import {
   OPEN_MONTH_ANCHOR,
   SIGNED_OFF_BANK_MONTH,
   YEAR_END_MARKED_YEAR,
-  monthOfDate,
 } from "./world.js";
 
 // ---- the core's own answers, the shapes the routes serve -----------------------------------------
@@ -137,18 +136,6 @@ interface CoreJournalPage {
   next_cursor?: string | null;
 }
 
-/** The AR register's read: the rows it lists and the date it reports. */
-interface CoreARRegister {
-  items: { invoice_no: string; issue_date: string }[];
-  as_of: string;
-}
-
-/** The bearer and the org the app itself sent, so a direct read reads the core as the app reads it. */
-interface StaffHeaders {
-  readonly authorization: string;
-  readonly org: string;
-}
-
 // ---- the helpers ----------------------------------------------------------------------------------
 
 const MONTH_NAMES = [
@@ -195,59 +182,6 @@ function readMoney(text: string): number {
   const trimmed = text.trim().replace(/^\$/, "").replace(/,/g, "");
   if (trimmed === "") return 0;
   return Math.round(Number(trimmed) * 100);
-}
-
-/** The bearer and the org the app sent on its own first authorised call to the core. */
-function staffHeaders(page: Page): Promise<StaffHeaders> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("the app sent no authorised call to the core")), 60_000);
-    page.on("request", (request) => {
-      void request.allHeaders().then((headers) => {
-        const authorization = headers["authorization"];
-        if (authorization === undefined || authorization === "") return;
-        clearTimeout(timer);
-        resolve({ authorization, org: headers["x-org"] ?? "" });
-      });
-    });
-  });
-}
-
-/** One read of the core, the way the app reads it: the bearer it sent, on the box's own base URL. */
-async function coreRead<T>(request: APIRequestContext, headers: StaffHeaders, path: string): Promise<T> {
-  const response = await request.get(`${coreURL()}${path}`, {
-    headers: {
-      authorization: headers.authorization,
-      ...(headers.org === "" ? {} : { "x-org": headers.org }),
-    },
-  });
-  if (!response.ok()) {
-    throw new Error(`the core refused ${path} with ${response.status()}: ${await response.text()}`);
-  }
-  return (await response.json()) as T;
-}
-
-/**
- * THE BOX'S OWN MONTH (YYYY-MM), read from the core at run time.
- *
- * The seed's AR movement lands in the month the box booted, and the seed names that month on
- * the demo invoice it plants dated CURRENT_DATE: that invoice's own issue date is fixed when
- * the migrations ran, so it names the boot month however long after that the spec runs. It is
- * the month the $700.00 movement is in, so a trial balance read for it carries the seed's
- * rows.
- *
- * The core's own reported date is the fallback, for a box whose register does not carry that
- * invoice: it is the box's wall clock, so it drifts with the run, and the movement's own month
- * does not.
- */
-async function readBoxMonth(request: APIRequestContext, headers: StaffHeaders): Promise<string> {
-  const register = await coreRead<CoreARRegister>(
-    request,
-    headers,
-    `/api/v1/ar/register?q=${encodeURIComponent(BOOT_MONTH_INVOICE_NO)}&limit=100`,
-  );
-  const seeded = register.items.find((row) => row.invoice_no === BOOT_MONTH_INVOICE_NO);
-  if (seeded !== undefined) return monthOfDate(seeded.issue_date);
-  return monthOfDate(register.as_of);
 }
 
 /**
