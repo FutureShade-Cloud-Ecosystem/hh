@@ -96,3 +96,77 @@ func TestFinanceResetWriteDump(t *testing.T) {
 		t.Fatalf("the dump file is still there after the remover ran: %v", err)
 	}
 }
+
+func TestFinanceResetTransactionSafe(t *testing.T) {
+	// The world's own statements are all allowed inside the reset's
+	// transaction.
+	safe := `CREATE TABLE public.customers (id integer NOT NULL);
+CREATE INDEX customers_id ON public.customers (id);
+CREATE VIEW ai.orders AS SELECT 1;
+CREATE FUNCTION ai.claims() RETURNS jsonb AS $body$
+BEGIN
+      RETURN '{}'::jsonb;
+END;
+$body$ LANGUAGE plpgsql;
+CREATE POLICY assist_staff_orders ON public.orders TO assist_view_owner_finworld USING (true);
+ALTER TABLE public.orders ADD CONSTRAINT orders_pkey PRIMARY KEY (id);
+GRANT SELECT ON public.orders TO assist_view_owner_finworld;
+COPY public.customers (id) FROM stdin;
+1
+\.
+ALTER DEFAULT PRIVILEGES FOR ROLE assist_view_owner_finworld REVOKE ALL ON FUNCTIONS FROM PUBLIC;
+`
+	if err := financeResetTransactionSafe([]byte(safe)); err != nil {
+		t.Fatalf("the world's own statements were refused: %v", err)
+	}
+
+	// The statements that may not run inside a transaction are refused
+	// before anything is dropped.
+	for _, statement := range []string{
+		"CREATE DATABASE other;",
+		"CREATE INDEX CONCURRENTLY customers_id ON public.customers (id);",
+		"VACUUM public.customers;",
+		"CLUSTER public.customers USING customers_pkey;",
+		"ALTER SYSTEM SET work_mem = '8MB';",
+		"CREATE TABLESPACE other LOCATION '/tmp';",
+		"SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;",
+	} {
+		if err := financeResetTransactionSafe([]byte(statement)); err == nil {
+			t.Fatalf("the statement %q was accepted inside the reset's transaction", statement)
+		}
+	}
+}
+
+// TestFinanceResetCopyStartIsRecognised is item 5: the copy block's
+// detection compared an upper cased line against a mixed case spelling, so
+// it never matched and the world's own data was read as script.
+func TestFinanceResetCopyStartIsRecognised(t *testing.T) {
+	for _, line := range []string{
+		"COPY public.customers (id) FROM stdin;",
+		"COPY public.customers (id) FROM STDIN;",
+		"copy public.customers (id) from stdin;",
+	} {
+		if !financeResetCopyStart(strings.TrimSpace(line)) {
+			t.Fatalf("the copy block %q was not recognised", line)
+		}
+	}
+	if financeResetCopyStart("COPY public.customers (id) FROM 'other';") {
+		t.Fatalf("a line that does not open a copy block was taken for one")
+	}
+}
+
+// TestFinanceResetNonDataLinesLeavesTheWorldsDataAlone is item 5: the
+// world's own data is never read as script, so a data row that opens with
+// the name of a statement that may not run inside a transaction may not make
+// the reset refuse.
+func TestFinanceResetNonDataLinesLeavesTheWorldsDataAlone(t *testing.T) {
+	dump := []byte("COPY public.customers (id, note) FROM stdin;\n1\tVACUUM is only a word here\n\\.\nSELECT 1;\n")
+	if err := financeResetTransactionSafe(dump); err != nil {
+		t.Fatalf("the world's own data was read as script: %v", err)
+	}
+	for _, line := range financeResetNonDataLines(dump) {
+		if strings.Contains(line, "is only a word here") {
+			t.Fatalf("the world's own data was read as script:\n%s", line)
+		}
+	}
+}

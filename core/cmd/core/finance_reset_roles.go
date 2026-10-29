@@ -108,10 +108,15 @@ func financeResetBuildSuffix(dump []byte) (string, error) {
 		strings.Join(suffixes, ", "))
 }
 
-// financeResetStatementLines answers the dump's statement lines: every line
-// that carries SQL the reset may rewrite, with the COPY blocks left out. A
-// COPY block's rows are the world's own data and are never touched.
-func financeResetStatementLines(dump []byte) []string {
+// financeResetNonDataLines answers the dump's lines that are not the world's
+// own data: the statements, the comments and the bodies of the world's own
+// functions. A COPY block's rows are the world's business data and are never
+// touched.
+//
+// The world's functions belong here: a function body may carry a role name
+// or a statement that may not run inside a transaction, and both are part of
+// the world's shape, not part of its data.
+func financeResetNonDataLines(dump []byte) []string {
 	var lines []string
 	inCopy := false
 	for _, line := range strings.Split(string(dump), "\n") {
@@ -126,7 +131,18 @@ func financeResetStatementLines(dump []byte) []string {
 			inCopy = true
 			continue
 		}
-		if !financeResetIsStatement(trimmed) {
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// financeResetStatementLines answers the dump's statement lines: every line
+// that carries SQL the reset may rewrite in a statement position, with the
+// COPY blocks left out.
+func financeResetStatementLines(dump []byte) []string {
+	var lines []string
+	for _, line := range financeResetNonDataLines(dump) {
+		if !financeResetIsStatement(strings.TrimSpace(line)) {
 			continue
 		}
 		lines = append(lines, line)
@@ -135,9 +151,13 @@ func financeResetStatementLines(dump []byte) []string {
 }
 
 // financeResetCopyStart answers whether a line opens a COPY block.
+//
+// The line is upper cased first and the spelling is the upper cased one: a
+// mixed case spelling here never matches, and a copy block that is never
+// recognised is the world's own data read as script.
 func financeResetCopyStart(trimmed string) bool {
 	upper := strings.ToUpper(trimmed)
-	return strings.HasPrefix(upper, "COPY ") && strings.HasSuffix(upper, "FROM stdin;")
+	return strings.HasPrefix(upper, "COPY ") && strings.HasSuffix(upper, "FROM STDIN;")
 }
 
 // financeResetIsStatement answers whether a line carries SQL that names a

@@ -262,19 +262,14 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	if err := financeResetOwnershipPossible(ctx, pool, financeResetOwnerRoles(dump)); err != nil {
 		return err
 	}
-	// The dump is written to disk BEFORE anything is dropped. The file is the
-	// only copy the restore reads, so a write that fails, a disk that is full
-	// or a directory that cannot be made is a refusal with the box still
-	// standing: a reset that drops first and writes second empties the box
-	// and leaves no way back.
-	dumpPath, cleanupDump, err := financeResetWriteDump(financeResetDumpDirectory(getenv), mapped)
-	if err != nil {
-		return err
-	}
-	defer cleanupDump()
 	// The schemas the dump owns: the public schema every dump of this tree's
 	// world carries, and every schema the dump creates for itself.
 	schemas := dumpOwnedSchemas(dump)
+	// Every statement the dump carries has to be one that may run inside the
+	// reset's transaction, and the check runs before anything is dropped.
+	if err := financeResetTransactionSafe(dump); err != nil {
+		return err
+	}
 	// The recreated public schema has to carry the initdb shape, and giving
 	// a schema to pg_database_owner needs a role the box's role can set.
 	// The check runs before the drop, so a box that cannot carry the shape
@@ -282,10 +277,21 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	if err := financeResetPublicShapePossible(ctx, pool); err != nil {
 		return err
 	}
-	dropped, err := financeResetDropSchemas(ctx, pool, schemas)
+	// The script is written to disk BEFORE anything is dropped. The file is
+	// the only copy the restore reads, so a write that fails, a disk that is
+	// full or a directory that cannot be made is a refusal with the box
+	// still standing: a reset that drops first and writes second empties the
+	// box and leaves no way back.
+	dumpPath, cleanupDump, err := financeResetWriteDump(financeResetDumpDirectory(getenv), financeResetRestoreScript(mapped, schemas))
 	if err != nil {
 		return err
 	}
+	defer cleanupDump()
+	// The drop, the recreate and the restore are ONE transaction: psql runs
+	// the script with --single-transaction and ON_ERROR_STOP, so a failure
+	// part way through the restore rolls the drop back with it. The box
+	// keeps the tables and the rows it had; it is never empty and never
+	// half restored.
 	if err := financeResetRestore(ctx, dsn, dumpPath); err != nil {
 		return err
 	}
@@ -309,7 +315,7 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 		return err
 	}
 	fmt.Fprintf(stdout, "dump_bytes=%d schemas_dropped=%d migrations_applied=%d tables_restored=%d audit_rows=1\n",
-		len(dump), dropped, applied, tables)
+		len(dump), len(schemas), applied, tables)
 	return nil
 }
 
@@ -447,16 +453,59 @@ func dumpOwnedSchemas(dump []byte) []string {
 	return append([]string{"public"}, out...)
 }
 
-// financeResetDropSchemas drops the schemas the dump owns and answers how
-// many it dropped. It runs only after the dump's sha256 matched and after
-// the dump file was written on disk.
-func financeResetDropSchemas(ctx context.Context, pool *pgxpool.Pool, schemas []string) (int, error) {
-	dropped := 0
-	for _, name := range schemas {
-		if _, err := pool.Exec(ctx, fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", pgx.Identifier{name}.Sanitize())); err != nil {
-			return dropped, fmt.Errorf("finance-reset: the schema %s could not be dropped: %w", name, err)
+// financeResetUnsafeInTransaction are the statement heads that may not run
+// inside a transaction block. The world's dump carries none of them, and the
+// reset refuses before it writes anything if one is there: the restore runs
+// in one transaction, and a statement that may not run inside one would
+// refuse the script half way through.
+var financeResetUnsafeInTransaction = []string{
+	"CREATE DATABASE",
+	"DROP DATABASE",
+	"CREATE INDEX CONCURRENTLY",
+	"REINDEX CONCURRENTLY",
+	"VACUUM",
+	"CLUSTER",
+	"ALTER SYSTEM",
+	"CREATE TABLESPACE",
+	"DROP TABLESPACE",
+	"SET TRANSACTION",
+}
+
+// financeResetTransactionSafe answers whether every statement the dump
+// carries may run inside the reset's transaction. The world's dump is a
+// pg_dump of one database: it creates tables, indexes, views, functions,
+// policies and triggers, copies the rows in and grants the privileges, and
+// every one of those runs inside a transaction. It carries no CREATE
+// DATABASE, no CREATE INDEX CONCURRENTLY, no VACUUM, no CLUSTER, no ALTER
+// SYSTEM, no tablespace work and no transaction control: the BEGIN and END
+// lines in it are the bodies of its plpgsql functions.
+func financeResetTransactionSafe(dump []byte) error {
+	for _, line := range financeResetNonDataLines(dump) {
+		upper := strings.ToUpper(strings.TrimSpace(line))
+		for _, head := range financeResetUnsafeInTransaction {
+			if strings.HasPrefix(upper, head) {
+				return fmt.Errorf("finance-reset: the world's dump carries a statement that may not run inside the reset's transaction (%s): the reset refuses before it drops anything", head)
+			}
 		}
-		dropped++
+	}
+	return nil
+}
+
+// financeResetRestoreScript answers the script the restore runs: the box's
+// own schemas are dropped, the public schema is recreated with the initdb
+// shape, and the world's dump is restored, all inside ONE transaction.
+//
+// psql runs the file with --single-transaction and ON_ERROR_STOP, so a
+// failure anywhere rolls the whole script back: the box keeps the tables and
+// the rows it had, and it is never left empty and never half restored.
+func financeResetRestoreScript(mapped []byte, schemas []string) []byte {
+	var b strings.Builder
+	b.WriteString("-- The world reset: the drop and the restore are one transaction.\n")
+	b.WriteString("-- A failure anywhere in this file leaves the box as it was.\n")
+	for _, name := range schemas {
+		b.WriteString("DROP SCHEMA IF EXISTS ")
+		b.WriteString(pgx.Identifier{name}.Sanitize())
+		b.WriteString(" CASCADE;\n")
 	}
 	// The public schema is the one the dump does not create for itself: its
 	// tables are named public.something, so the schema has to be there, and
@@ -467,45 +516,16 @@ func financeResetDropSchemas(ctx context.Context, pool *pgxpool.Pool, schemas []
 	// database view owner role: a role that does not own public and that
 	// reads public's tables. Without the grant that role holds no USAGE on
 	// the schema, and the first migration that touches public from a non
-	// owner role refuses with permission denied for schema public. The shape
-	// is restored here, right after the recreate, so the migrations the reset
-	// runs next see the schema the box's first migrate saw.
-	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS public"); err != nil {
-		return dropped, fmt.Errorf("finance-reset: the public schema could not be recreated: %w", err)
-	}
-	if _, err := pool.Exec(ctx, "ALTER SCHEMA public OWNER TO pg_database_owner"); err != nil {
-		return dropped, fmt.Errorf("finance-reset: the public schema could not be given its initdb owner: %w", err)
-	}
-	if err := financeResetPublicGrant(ctx, pool); err != nil {
-		return dropped, err
-	}
-	return dropped, nil
-}
-
-// financeResetPublicGrant gives PUBLIC the USAGE on the public schema that
-// initdb gives it. The grant is made as pg_database_owner, the role initdb
-// makes the grantor, so the schema's ACL is the one a fresh database has:
-// pg_database_owner holds USAGE and CREATE on it, and PUBLIC holds USAGE and
-// nothing else.
-func financeResetPublicGrant(ctx context.Context, pool *pgxpool.Pool) error {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("finance-reset: the public schema could not be given its initdb grant: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE pg_database_owner`); err != nil {
-		return fmt.Errorf("finance-reset: the public schema could not be given its initdb grant: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `GRANT USAGE ON SCHEMA public TO PUBLIC`); err != nil {
-		return fmt.Errorf("finance-reset: the public schema could not be given its initdb grant: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
-		return fmt.Errorf("finance-reset: the public schema could not be given its initdb grant: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("finance-reset: the public schema could not be given its initdb grant: %w", err)
-	}
-	return nil
+	// owner role refuses with permission denied for schema public. The grant
+	// is made as pg_database_owner, the role initdb makes the grantor, so
+	// the schema's ACL is the one a fresh database has.
+	b.WriteString("CREATE SCHEMA IF NOT EXISTS public;\n")
+	b.WriteString("ALTER SCHEMA public OWNER TO pg_database_owner;\n")
+	b.WriteString("SET LOCAL ROLE pg_database_owner;\n")
+	b.WriteString("GRANT USAGE ON SCHEMA public TO PUBLIC;\n")
+	b.WriteString("RESET ROLE;\n")
+	b.Write(mapped)
+	return []byte(b.String())
 }
 
 // financeResetPublicShapePossible answers whether the reset can give the
@@ -616,7 +636,7 @@ func financeResetRestore(ctx context.Context, dsn, dumpPath string) error {
 		return fmt.Errorf("finance-reset: %w", err)
 	}
 	defer cleanup()
-	cmd := exec.CommandContext(ctx, "psql", "-v", "ON_ERROR_STOP=1", "-f", dumpPath)
+	cmd := exec.CommandContext(ctx, "psql", "-v", "ON_ERROR_STOP=1", "--single-transaction", "-f", dumpPath)
 	cmd.Env = append(os.Environ(), "PGSERVICEFILE="+servicePath, "PGSERVICE="+pgServiceName)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -676,15 +696,29 @@ func financeResetAudit(ctx context.Context, pool *pgxpool.Pool, orgSlug, worldSH
 	return nil
 }
 
-// firstLine is the first line of a text, with the database URL replaced by a
-// name: an error message is the one line guaranteed to reach a log, and a
-// database URL carries the password.
+// firstLine is the one line of a command's output that reaches a log: the
+// line the tool marked as the error, or the first line when it marked none.
+// A database URL carries the password, so it is replaced by a name.
+//
+// The error line and not the first line, because a database answers with
+// notices first: a restore that drops a schema says how much it took with
+// it before it says what went wrong, and the log has to carry the what.
 func firstLine(text, dsn string) string {
-	line := text
-	if i := strings.IndexByte(line, '\n'); i >= 0 {
-		line = line[:i]
+	first := ""
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if first == "" {
+			first = line
+		}
+		if strings.Contains(line, "ERROR:") || strings.Contains(line, "FATAL:") {
+			first = line
+			break
+		}
 	}
-	line = strings.TrimSpace(line)
+	line := first
 	if dsn != "" {
 		line = strings.ReplaceAll(line, dsn, "the database url")
 	}
