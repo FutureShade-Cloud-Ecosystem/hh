@@ -10,7 +10,7 @@
 // and trial balance screens.
 import { html, nothing, type TemplateResult } from "lit";
 import type { Branch, GlJournal, GlTrialBalanceResult, IdentityApproval } from "@hardscapehouse/api-client";
-import { approvalKind, approvalTitle, canDecide, detailWords, entryLabel, floorFigures, floorWords, journalTone, journalWord, monthWord, rangeWords, systemJournalNote } from "./gl-logic.js";
+import { approvalKind, approvalTitle, canDecide, dayWords, detailWords, entryLabel, floorFigures, floorWords, journalTone, journalWord, monthWord, rangeWords, systemJournalNote } from "./gl-logic.js";
 import { formatMoney } from "./gl-money.js";
 import { chartView, checksView, composerView, confirmFor, linesTable, periodsView, policyView, recurringView, type BooksModel } from "./gl-books.js";
 
@@ -358,6 +358,12 @@ function dateRange(model: GlModel): TemplateResult {
   `;
 }
 
+/** When a journal posted, in the desk's own day words; a draft carries no stamp and says so plainly. A phone shows
+ *  it under the memo instead of in its own column (the narrow rule in gl-styles.ts). */
+function postedWords(j: GlJournal): TemplateResult | string {
+  return j.posted_at === undefined || j.posted_at === null ? html`<span class="gl-dim">Not posted</span>` : dayWords(j.posted_at);
+}
+
 function journalsView(model: GlModel): TemplateResult {
   const rows = model.journals.filter((j) => filterMatches(model.journalFilter, j));
   return html`
@@ -376,12 +382,13 @@ function journalsView(model: GlModel): TemplateResult {
           : html`
               <div class="gl-scroll">
                 <table aria-label="Journal register">
-                  <thead><tr><th>#</th><th>Memo</th><th>Status</th></tr></thead>
+                  <thead><tr><th>#</th><th class="gl-col-posted">Posted</th><th>Memo</th><th>Status</th></tr></thead>
                   <tbody>
                     ${rows.map(
                       (j) => html`<tr aria-current="${model.selectedJournal === j.id ? "true" : "false"}">
                         <td class="gl-nowrap"><button type="button" class="gl-link" data-action="gl-select-journal" data-id=${j.id} data-journal-id=${j.id}>${entryLabel(j)}</button></td>
-                        <td>${j.memo}<span class="gl-row-detail">${j.source === "MANUAL" ? "Manual" : j.source}</span></td>
+                        <td class="gl-nowrap gl-col-posted" data-posted>${postedWords(j)}</td>
+                        <td>${j.memo}<span class="gl-name-narrow" data-posted-narrow>${postedWords(j)}</span><span class="gl-row-detail">${j.source === "MANUAL" ? "Manual" : j.source}</span></td>
                         <td>${pill(journalTone(j.derived_status), journalWord(j.derived_status))}</td>
                       </tr>`,
                     )}
