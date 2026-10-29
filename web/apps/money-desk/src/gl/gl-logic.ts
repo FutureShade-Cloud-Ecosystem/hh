@@ -353,6 +353,81 @@ export function periodStatusWord(status: string): string {
   return status === "OPEN" ? "Open" : status === "CLOSED" ? "Closed" : status;
 }
 
+// ---- the journal register's window -----------------------------------------------------------------
+
+/** What the register asks the core for: the applied posted date range and, after the first page, the core's next cursor. */
+export interface JournalWindow {
+  readonly dateFrom: string;
+  readonly dateTo: string;
+  readonly cursor?: string;
+}
+
+/** The register's page size: the newest hundred first, then a page at a time. */
+export const REGISTER_PAGE = 100;
+
+/**
+ * The query the generated client is handed: an empty bound is unbounded and sends no key at all, and
+ * a page after the first carries the core's cursor. The core answers date_from and date_to in
+ * YYYY-MM-DD (the date input's own shape) and the cursor it minted on the page before.
+ */
+export function journalListParams(window: JournalWindow): { limit: number; date_from?: string; date_to?: string; cursor?: string } {
+  return {
+    limit: REGISTER_PAGE,
+    ...(window.dateFrom === "" ? {} : { date_from: window.dateFrom }),
+    ...(window.dateTo === "" ? {} : { date_to: window.dateTo }),
+    ...(window.cursor === undefined || window.cursor === "" ? {} : { cursor: window.cursor }),
+  };
+}
+
+/** The page's way to the next page: the core's cursor, or "" when the register is at its end. */
+export function nextCursorOf(page: { next_cursor?: string | null }): string {
+  return typeof page.next_cursor === "string" && page.next_cursor !== "" ? page.next_cursor : "";
+}
+
+/**
+ * The window's words: what is loaded, said once beside the fields that change it. The days are said in
+ * the desk's own date words, the same words the register's posted column reads (dayWords), never the
+ * core's ISO digits: a date that sits beside a date field reads the way the desk reads dates.
+ */
+export function rangeWords(dateFrom: string, dateTo: string): string {
+  if (dateFrom !== "" && dateTo !== "") return `Showing journals posted ${dayWords(dateFrom)} through ${dayWords(dateTo)}.`;
+  if (dateFrom !== "") return `Showing journals posted ${dayWords(dateFrom)} or later.`;
+  if (dateTo !== "") return `Showing journals posted through ${dayWords(dateTo)}.`;
+  return "";
+}
+
+/**
+ * The count the register's filters show: how many of the loaded rows carry that status. The core
+ * answers no total for the register, so this is the count of the rows the desk has loaded, and the
+ * line under the chips says so once, while the core's cursor says more rows are still to come.
+ */
+export function statusCountWord(count: number): string {
+  return String(count);
+}
+
+/**
+ * What the counts are of, said once under the chips. The core's register answers no total, so a
+ * count is of the rows the desk has loaded; the line is there only while more rows are still to
+ * come, and at the end of the register it drops away with the caveat it carried.
+ */
+export function countsNoteWords(loaded: number): string {
+  return `Counts are of the ${loaded} journals loaded; Show more loads the rest.`;
+}
+
+/**
+ * What "Pending approval" means to a bookkeeper: the desk works the label out from the journal's own
+ * amount and the policy's threshold, so the words say that plainly and name no mechanism.
+ */
+export const PENDING_APPROVAL_NOTE =
+  "Pending approval means the journal is a draft someone entered and its amount is at or over the approval threshold in the policy, so it waits for another approver to post it.";
+
+/**
+ * The same thing, said in the detail pane where one journal is read: the register's note, without
+ * the opening that names the label.
+ */
+export const PENDING_APPROVAL_WHY =
+  "It is a draft someone entered and its amount is at or over the approval threshold in the policy, so it waits for another approver to post it.";
+
 // ---- the late posted list -------------------------------------------------------------------------
 
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

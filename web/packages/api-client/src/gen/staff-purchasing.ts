@@ -3,9 +3,24 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PurchasingAddLineRequest, PurchasingApplyWarrantyCreditRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingCreateVendorRequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPolicy, PurchasingPostBillRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingTolerance, PurchasingTransitionRequest, PurchasingUpdateLineRequest, PurchasingUpdateVendorRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorMaster, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
+import type { PurchasingAPAgingPage, PurchasingAddLineRequest, PurchasingApplyWarrantyCreditRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingCreateVendorRequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPayBillRequest, PurchasingPolicy, PurchasingPostBillRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingTolerance, PurchasingTransitionRequest, PurchasingUpdateLineRequest, PurchasingUpdateVendorRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorMaster, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient, type ApiCallOptions } from "../http.js";
+import { ApiClient, type ApiCallOptions, type ApiKeyedCallOptions } from "../http.js";
+
+export async function purchasingGetAPAging(
+  client: ApiClient,
+  opts?: { cursor?: string; limit?: number; branch_id?: string; as_of?: string },
+  call?: ApiCallOptions
+): Promise<Result<PurchasingAPAgingPage>> {
+  return client.request<PurchasingAPAgingPage>({
+    method: "GET",
+    path: "/api/v1/purchasing/ap-aging",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingGetAPAging",
+  });
+}
 
 export async function purchasingListBills(
   client: ApiClient,
@@ -49,6 +64,27 @@ export async function purchasingGetBill(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "purchasingGetBill",
+  });
+}
+
+// The document lets this call carry an Idempotency-Key: call.idempotencyKey, a UUID chosen
+// once per acceptance and resent unchanged on every retry of it (never a new key per try), so a retry after a
+// timeout answers the first outcome instead of recording a second one.
+export async function purchasingPayBill(
+  client: ApiClient,
+  id: string | number,
+  body: PurchasingPayBillRequest,
+  call?: ApiKeyedCallOptions
+): Promise<Result<PurchasingBillDetail>> {
+  return client.request<PurchasingBillDetail>({
+    method: "POST",
+    path: "/api/v1/purchasing/bills/{id}/payments",
+    pathParams: { id },
+    body,
+    idempotencyKey: call?.idempotencyKey,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingPayBill",
   });
 }
 

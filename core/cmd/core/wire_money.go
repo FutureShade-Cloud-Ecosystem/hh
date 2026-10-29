@@ -419,6 +419,11 @@ func (a glRuleAdapter) ResolveRuleTx(ctx context.Context, tx pgx.Tx, eventType, 
 
 // invGLPoster satisfies inventory's GL poster over gl's external posting
 // seam (carried verbatim).
+//
+// The journal's DOCUMENT DATE rides through (W2-5 fix round 8, S5's P2-2): inventory
+// names the instant the movement happened, and the GL files the journal under it, so
+// the stock ledger and 1200 are cut at the same moment. A zero date rides the GL's
+// own clock, which is what every caller did before the date existed.
 type invGLPoster struct{ svc *gl.Service }
 
 func (a invGLPoster) PostJournal(ctx context.Context, in inventory.GLJournal) (string, error) {
@@ -426,12 +431,13 @@ func (a invGLPoster) PostJournal(ctx context.Context, in inventory.GLJournal) (s
 	for i, l := range in.Lines {
 		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
 	}
-	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, DocumentDate: in.DocumentDate, Lines: lines})
 }
 
 // glStockValueAdapter satisfies gl's close pre flight stock seam over inventory
-// (FW1-09b): the stock ledger side of the 1200 tie check, the weighted average
-// value of everything on hand.
+// (FW1-09b, W2-5): the stock ledger side of the 1200 tie check, the weighted average
+// value of everything on hand as of the instant the pre flight names (the month's end),
+// answered over the inventory movement ledger.
 //
 // An empty branch id means the COMPANY, the way gl's other consolidated reads read it (the 1200 balance
 // and the AR balance both take an empty branch id for the whole book). The consolidated value is ONE
@@ -446,8 +452,8 @@ func (a invGLPoster) PostJournal(ctx context.Context, in inventory.GLJournal) (s
 // computed by the core"). A named branch reads the same statement scoped to that branch.
 type glStockValueAdapter struct{ svc *inventory.Service }
 
-func (a glStockValueAdapter) StockValueCents(ctx context.Context, branchID string) (int64, error) {
-	return a.svc.StockValueCents(ctx, branchID)
+func (a glStockValueAdapter) StockValueCents(ctx context.Context, asOf time.Time, branchID string) (int64, error) {
+	return a.svc.StockValueAsOfCents(ctx, asOf, branchID)
 }
 
 // tillDrawerAdapter satisfies gl's close pre flight drawer seam over the till
@@ -464,7 +470,7 @@ func (a invGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in inventory.
 	for i, l := range in.Lines {
 		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
 	}
-	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, DocumentDate: in.DocumentDate, Lines: lines})
 }
 
 // w5aQuoteStockReserver satisfies quote's stock reservation seam over

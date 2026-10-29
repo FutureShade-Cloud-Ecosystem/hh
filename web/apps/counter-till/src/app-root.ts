@@ -38,6 +38,7 @@ import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostS
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bandIdentity } from "./band-identity.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import {
   TillClient,
@@ -1381,10 +1382,12 @@ export class CounterTillApp extends HHElement {
         });
         this.#bandWatch.observe(band);
       }
-      band.org = this.#dealerName;
-      // The DEMO marker keeps the old banner's rule: only once the flows route has answered with cards, or on the till itself.
+      const identity = bandIdentity(servedConsoleConfig(), this.#dealerName);
+      band.org = identity.org;
+      // The DEMO marker keeps the old banner's rule on a demo page: only once the flows route has answered with
+      // cards, or on the till itself. A dealer's own box (console mode) is never DEMO (item 371).
       const demoFlows = this.#entryFlowsState();
-      band.demo = this.#surface === "terminal" || (demoFlows.kind === "ready" && demoFlows.flows.length > 0);
+      band.demo = identity.demo && (this.#surface === "terminal" || (demoFlows.kind === "ready" && demoFlows.flows.length > 0));
       band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#signedInRoleLabel());
       band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#route));
       band.groups = [];

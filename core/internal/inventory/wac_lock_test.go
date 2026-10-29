@@ -12,6 +12,7 @@ package inventory
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestWACLock_ReceiptTakesLockBeforeRMW(t *testing.T) {
@@ -37,7 +38,7 @@ func TestWACLock_CapitalizeTakesLock(t *testing.T) {
 	f.cost[key(product, branch)] = 500
 	s := NewService(nil).withStore(f)
 
-	if _, _, _, err := s.capitalizeLandedSnap(ctx, nil, product, branch, 2700); err != nil {
+	if _, _, _, err := s.capitalizeLandedSnap(ctx, nil, product, branch, 2700, time.Now(), ""); err != nil {
 		t.Fatalf("capitalizeLandedSnap: %v", err)
 	}
 	if got := f.lockedBefore[key(product, branch)]; got != 1 {
@@ -54,12 +55,12 @@ func TestWACLock_RestoreTakesLock(t *testing.T) {
 	s := NewService(nil).withStore(f)
 
 	// Apply then Void round-trip; the Void path (restoreLandedCost) must also take the lock.
-	absorbed, snapAvg, _, err := s.capitalizeLandedSnap(ctx, nil, product, branch, 2700)
+	absorbed, snapAvg, _, err := s.capitalizeLandedSnap(ctx, nil, product, branch, 2700, time.Now(), "")
 	if err != nil {
 		t.Fatalf("capitalizeLandedSnap: %v", err)
 	}
 	before := f.lockedBefore[key(product, branch)]
-	if _, err := s.restoreLandedCost(ctx, nil, product, branch, snapAvg, absorbed); err != nil {
+	if _, err := s.restoreLandedCost(ctx, nil, product, branch, snapAvg, absorbed, time.Now(), ""); err != nil {
 		t.Fatalf("restoreLandedCost: %v", err)
 	}
 	if got := f.lockedBefore[key(product, branch)] - before; got != 1 {

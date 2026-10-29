@@ -21,6 +21,7 @@ package inventory
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // buildCapJournal reconstructs the three-leg capitalization journal the landedcost caller posts from this seam's
@@ -70,7 +71,7 @@ func TestCapitalizeLanded_ClampNeverOverAbsorbs(t *testing.T) {
 		f.cost[key(product, branch)] = c.oldAvg
 		s := NewService(nil).withStore(f)
 
-		absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, c.alloc)
+		absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, c.alloc, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: capitalizeLanded: %v", c, err)
 		}
@@ -121,7 +122,7 @@ func TestCapitalizeLanded_Sweep(t *testing.T) {
 				f.cost[key(product, branch)] = oldAvg
 				s := NewService(nil).withStore(f)
 
-				absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, alloc)
+				absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, alloc, time.Now(), "")
 				if err != nil {
 					t.Fatalf("onHand=%d oldAvg=%d alloc=%d: %v", onHand, oldAvg, alloc, err)
 				}
@@ -191,7 +192,7 @@ func TestCapitalizeLanded_TiesGL1200ToSubledger(t *testing.T) {
 		f.cost[key(product, branch)] = c.oldAvg
 		s := NewService(nil).withStore(f)
 
-		absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, c.alloc)
+		absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, c.alloc, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: capitalizeLanded: %v", c, err)
 		}
@@ -226,7 +227,7 @@ func TestCapitalizeLanded_TieSweep(t *testing.T) {
 				f.cost[key(product, branch)] = oldAvg
 				s := NewService(nil).withStore(f)
 
-				absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, alloc)
+				absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, alloc, time.Now(), "")
 				if err != nil {
 					t.Fatalf("onHand=%.2f oldAvg=%d alloc=%d: %v", onHand, oldAvg, alloc, err)
 				}
@@ -277,12 +278,12 @@ func TestCapitalizeLanded_ApplyVoidRoundTripRestoresWAC(t *testing.T) {
 		s := NewService(nil).withStore(f)
 
 		// Apply.
-		absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, c.freight)
+		absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, c.freight, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: apply: %v", c, err)
 		}
 		// Void reverses the stored allocation (== absorbed), exactly as landedcost.Void does.
-		if _, err := s.capitalizeLanded(ctx, nil, product, branch, -absorbed); err != nil {
+		if _, err := s.capitalizeLanded(ctx, nil, product, branch, -absorbed, time.Now(), ""); err != nil {
 			t.Fatalf("%+v: void: %v", c, err)
 		}
 		if got := f.cost[key(product, branch)]; got != c.oldAvg {
@@ -326,7 +327,7 @@ func TestCapitalizeLanded_VoidAfterSaleNeverNegativeWAC(t *testing.T) {
 		s := NewService(nil).withStore(f)
 
 		// Apply over the full on-hand; store what the subledger absorbed (the allocation row landedcost keeps).
-		absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, c.freight)
+		absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, c.freight, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: apply: %v", c, err)
 		}
@@ -336,7 +337,7 @@ func TestCapitalizeLanded_VoidAfterSaleNeverNegativeWAC(t *testing.T) {
 		priorAvg := f.cost[key(product, branch)]
 
 		// Void reverses the FULL stored allocation over the now-small on-hand.
-		reversed, err := s.capitalizeLanded(ctx, nil, product, branch, -absorbed)
+		reversed, err := s.capitalizeLanded(ctx, nil, product, branch, -absorbed, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: void: %v", c, err)
 		}
@@ -382,11 +383,11 @@ func TestCapitalizeLanded_FractionalRoundTripRestoresWAC(t *testing.T) {
 		f.cost[key(product, branch)] = c.oldAvg
 		s := NewService(nil).withStore(f)
 
-		absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, c.freight)
+		absorbed, err := s.capitalizeLanded(ctx, nil, product, branch, c.freight, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: apply: %v", c, err)
 		}
-		if _, err := s.capitalizeLanded(ctx, nil, product, branch, -absorbed); err != nil {
+		if _, err := s.capitalizeLanded(ctx, nil, product, branch, -absorbed, time.Now(), ""); err != nil {
 			t.Fatalf("%+v: void: %v", c, err)
 		}
 		if got := f.cost[key(product, branch)]; got != c.oldAvg {
@@ -430,11 +431,11 @@ func TestCapitalizeLanded_SnapshotRestoreZeroDriftAllCases(t *testing.T) {
 		fl.onhand[key(product, branch)] = c.onHand
 		fl.cost[key(product, branch)] = c.oldAvg
 		sl := NewService(nil).withStore(fl)
-		absL, err := sl.capitalizeLanded(ctx, nil, product, branch, c.freight)
+		absL, err := sl.capitalizeLanded(ctx, nil, product, branch, c.freight, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: legacy apply: %v", c, err)
 		}
-		if _, err := sl.capitalizeLanded(ctx, nil, product, branch, -absL); err != nil {
+		if _, err := sl.capitalizeLanded(ctx, nil, product, branch, -absL, time.Now(), ""); err != nil {
 			t.Fatalf("%+v: legacy void: %v", c, err)
 		}
 		if got := fl.cost[key(product, branch)] - c.oldAvg; got != c.legacyDrift {
@@ -447,7 +448,7 @@ func TestCapitalizeLanded_SnapshotRestoreZeroDriftAllCases(t *testing.T) {
 		f.cost[key(product, branch)] = c.oldAvg
 		s := NewService(nil).withStore(f)
 
-		absorbed, snapAvg, hadCost, err := s.capitalizeLandedSnap(ctx, nil, product, branch, c.freight)
+		absorbed, snapAvg, hadCost, err := s.capitalizeLandedSnap(ctx, nil, product, branch, c.freight, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: apply: %v", c, err)
 		}
@@ -456,7 +457,7 @@ func TestCapitalizeLanded_SnapshotRestoreZeroDriftAllCases(t *testing.T) {
 		}
 		// Void removes exactly `absorbed`; on-hand is unchanged since Apply, so the seam takes the drift-0 verbatim
 		// path and restores the exact snapshot (as landedcost.Void does when HasPreApplyAvg).
-		reversed, err := s.restoreLandedCost(ctx, nil, product, branch, snapAvg, absorbed)
+		reversed, err := s.restoreLandedCost(ctx, nil, product, branch, snapAvg, absorbed, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: void restore: %v", c, err)
 		}
@@ -499,7 +500,7 @@ func TestRestoreLandedCost_VoidAfterSaleNeverNegativeAndTies(t *testing.T) {
 		f.cost[key(product, branch)] = c.oldAvg
 		s := NewService(nil).withStore(f)
 
-		absorbed, snapAvg, _, err := s.capitalizeLandedSnap(ctx, nil, product, branch, c.freight)
+		absorbed, snapAvg, _, err := s.capitalizeLandedSnap(ctx, nil, product, branch, c.freight, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: apply: %v", c, err)
 		}
@@ -511,7 +512,7 @@ func TestRestoreLandedCost_VoidAfterSaleNeverNegativeAndTies(t *testing.T) {
 			t.Fatalf("%+v: curValue: %v", c, err)
 		}
 
-		reversed, err := s.restoreLandedCost(ctx, nil, product, branch, snapAvg, absorbed)
+		reversed, err := s.restoreLandedCost(ctx, nil, product, branch, snapAvg, absorbed, time.Now(), "")
 		if err != nil {
 			t.Fatalf("%+v: void restore: %v", c, err)
 		}
@@ -560,7 +561,7 @@ func TestRestoreLandedCost_VoidAfterReceiptReversesExactAbsorbedNoOverReversal(t
 	f.cost[key(product, branch)] = 100 // pre-Apply WAC 100 → snap
 	s := NewService(nil).withStore(f)
 
-	absorbed, snapAvg, _, err := s.capitalizeLandedSnap(ctx, nil, product, branch, 5000)
+	absorbed, snapAvg, _, err := s.capitalizeLandedSnap(ctx, nil, product, branch, 5000, time.Now(), "")
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -576,7 +577,7 @@ func TestRestoreLandedCost_VoidAfterReceiptReversesExactAbsorbedNoOverReversal(t
 	// Intervening RECEIPT: 90 units land at the post-Apply avg → on-hand 10 → 100 (value grows, WAC unchanged).
 	f.onhand[key(product, branch)] = 100
 
-	reversed, err := s.restoreLandedCost(ctx, nil, product, branch, snapAvg, absorbed)
+	reversed, err := s.restoreLandedCost(ctx, nil, product, branch, snapAvg, absorbed, time.Now(), "")
 	if err != nil {
 		t.Fatalf("void restore: %v", err)
 	}
@@ -593,4 +594,36 @@ func TestRestoreLandedCost_VoidAfterReceiptReversesExactAbsorbedNoOverReversal(t
 		t.Fatalf("over-reversal: %d > absorbed %d", -reversed, absorbed)
 	}
 	_ = postApplyAvg
+}
+
+// TestRestoreLandedCost_VoidRoundingNeverOverReverses (W2-5c, the finance world's November close): on the
+// absorbed-based drain path the new WAC is round(remaining/onHand), and rounding DOWN realizes up to onHand/2
+// cents less value than `remaining`, so the drain could take MORE than Apply absorbed. The caller clamps its
+// 1200 credit at the capitalized total, so the subledger then fell further than 1200 did: the world's void of
+// 1,386.90 drained 1,388.40, and November's close refused by -1.50. The drain must stay within absorbed, with
+// the remainder to COGS like any other under-reversal, and the reported delta must be the upserted WAC's own.
+func TestRestoreLandedCost_VoidRoundingNeverOverReverses(t *testing.T) {
+	ctx := context.Background()
+	const product, branch = "p", "b"
+
+	f := newFakeStore()
+	f.onhand[key(product, branch)] = 300
+	f.cost[key(product, branch)] = 1000 // current value 300,000
+	s := NewService(nil).withStore(f)
+
+	// snapAvg 990 keeps the drift-0 path out: 300,000 − 151 is not round(990×300).
+	const absorbed = 151
+	reversed, err := s.restoreLandedCost(ctx, nil, product, branch, 990, absorbed, time.Now(), "")
+	if err != nil {
+		t.Fatalf("void restore: %v", err)
+	}
+	if -reversed > absorbed {
+		t.Fatalf("over-reversal: drained %d > absorbed %d (round(299849/300)=999 realizes 299,700)", -reversed, absorbed)
+	}
+	if reversed > 0 {
+		t.Fatalf("a void raised the stock value by %d", reversed)
+	}
+	if got := f.cost[key(product, branch)]*300 - 300000; got != reversed {
+		t.Fatalf("reported delta %d is not the upserted WAC's realized delta %d", reversed, got)
+	}
 }

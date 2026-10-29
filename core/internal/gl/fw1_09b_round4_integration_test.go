@@ -193,7 +193,7 @@ func (f *fw1TieSpy) ARBalanceCents(_ context.Context, asOf time.Time, _ string) 
 // fw1FixedStock answers one fixed stock value.
 type fw1FixedStock struct{ cents int64 }
 
-func (f fw1FixedStock) StockValueCents(_ context.Context, _ string) (int64, error) {
+func (f fw1FixedStock) StockValueCents(_ context.Context, _ time.Time, _ string) (int64, error) {
 	return f.cents, nil
 }
 
@@ -201,7 +201,7 @@ func (f fw1FixedStock) StockValueCents(_ context.Context, _ string) (int64, erro
 // open drawers in December and the year end still seals the year today. After
 // the fix the year end runs the pre flight for every month it will seal and
 // refuses in words naming the month, and the stock side says in words that it
-// reads today's stock value.
+// reads the month's end (W2-5's as of read, the basis both sides share).
 func TestIntegration_FW1_09bR4_TheYearEndRunsThePreFlight(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
@@ -232,7 +232,7 @@ func TestIntegration_FW1_09bR4_TheYearEndRunsThePreFlight(t *testing.T) {
 		t.Fatalf("the year end sealed a year with three open drawers in December; it must run the pre flight")
 	}
 	msg := err.Error()
-	for _, want := range []string{"3076-12", "3 till drawers", "today's stock value"} {
+	for _, want := range []string{"3076-12", "3 till drawers", "the month's end"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("the refusal %q does not name %q", msg, want)
 		}

@@ -47,7 +47,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -182,15 +181,6 @@ func (p *fw1Probe) run(fn func(fw1TB)) (failed bool, msgs []string) {
 	}()
 	fn(p)
 	return len(p.errs) > 0, p.errs
-}
-
-func fw1Dollars(c int64) string { return fmt.Sprintf("$%.2f", float64(c)/100) }
-
-// fw1StaffCtx is the global staff context the GL's close and tie reads stamp their actor from.
-func fw1StaffCtx(ctx context.Context) context.Context {
-	return staffctx.ContextWithStaff(ctx, staffctx.StaffContext{
-		UserID: "d7000000-0000-4000-9000-000000000006", Scope: staffctx.ScopeGlobal, Status: staffctx.StatusActive,
-	})
 }
 
 // fw1ControllerCtx is the walk's Financial Controller. FW1-09c (FROM-PRINCIPAL 222) narrowed the year
@@ -914,215 +904,99 @@ func TestFW1MonthWalk(t *testing.T) {
 
 // -- the assertions, one per wave brief item -----------------------------------------
 
-// 1. AR aging total equals GL 1100, inception to date, to the cent.
+// tieSeams are the production seams the shared ties read through: the walk's
+// own wired services over the walk's own pool.
+func (w *fw1Walk) tieSeams() TieSeams {
+	return TieSeams{
+		Querier: w.pool,
+		GL:      w.money.glSvc,
+		GLStore: gl.NewRepository(w.pool),
+		Billing: billing.NewRepository(w.pool),
+		Tax: tax.NewService(tax.NewRepository(w.pool)).
+			WithSalesHSTs(billing.NewRepository(w.pool)).
+			WithReturnHSTs(pos.NewRepository(w.pool)).
+			WithBillITCs(purchasing.NewRepository(w.pool)).
+			WithGLBalances(glBalanceAdapter{svc: w.money.glSvc}),
+		Branches: []string{fw1TRT, fw1KGN},
+	}
+}
+
+// tieMonth is the walk's trading month: the month the AR, stock, HST and
+// statement ties read.
+func (w *fw1Walk) tieMonth() TieMonth {
+	return TieMonth{
+		Year: w.year, Month: w.month, MonthEnd: w.monthEnd,
+		BankAccountID:       w.bankAccountID,
+		ExcludeLodgementIDs: []string{w.lodgedChequeMovementID},
+		ExcludeInvoiceIDs:   w.seededInvoiceID,
+	}
+}
+
+// tieBankMonth is the walk's bank month: the last ended month, the one the
+// bank story trades in and signs off.
+func (w *fw1Walk) tieBankMonth() TieMonth {
+	m := w.tieMonth()
+	m.Year = w.bankYear
+	m.Month = w.bankMonth
+	m.MonthEnd = w.bankMonthEnd
+	return m
+}
+
+// 1. AR aging total equals GL 1100, inception to date, to the cent. The rule
+// is in the shared ties (fw1_ties.go); the walk calls it and keeps the
+// assertion.
 func (w *fw1Walk) assertARAgingTies(t fw1TB) {
-	ctx := staffctx.ContextWithStaff(context.Background(), staffctx.StaffContext{
-		UserID: "fw1-walk", Scope: staffctx.ScopeGlobal, Status: staffctx.StatusActive,
-	})
-	rows, err := billing.NewCreditService(billing.NewRepository(w.pool)).Aging(ctx, w.monthEnd, "")
+	res, err := TieARAgingToGL1100(context.Background(), w.tieSeams(), w.tieMonth())
 	if err != nil {
-		t.Fatalf("the aging read: %v", err)
+		t.Fatalf("the AR aging tie: %v", err)
 	}
-	var aging int64
-	for _, r := range rows {
-		aging += r.TotalCents
-	}
-	gl1100, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(context.Background(), "1100", w.monthEnd, "")
-	if err != nil {
-		t.Fatalf("the GL 1100 read: %v", err)
-	}
-	if aging != gl1100 {
-		t.Errorf("AR aging total %s does not tie to GL 1100 %s (inception to date): the aging is %s %s",
-			fw1Dollars(aging), fw1Dollars(gl1100),
-			shorter(aging, gl1100), byDollars(aging-gl1100))
+	if !res.Pass {
+		t.Errorf("%s", res.Detail)
 	}
 }
 
 // 2. Each customer's statement balance equals their aging, their customer_transactions
-// subledger, and their independent documents and receipts in the walk.
+// subledger, and their independent documents and receipts in the walk. The run is the
+// walk's own story; the rule is in the shared ties.
 func (w *fw1Walk) createStatementTies(t fw1TB) {
 	ctx := context.Background()
 	sctx := staffctx.ContextWithStaff(ctx, staffctx.StaffContext{
 		UserID: "fw1-walk", Scope: staffctx.ScopeGlobal, Status: staffctx.StatusActive,
 	})
-	rows, err := billing.NewCreditService(billing.NewRepository(w.pool)).Aging(sctx, w.monthEnd, "")
-	if err != nil {
-		t.Fatalf("the aging read: %v", err)
-	}
-	if len(rows) == 0 {
-		t.Fatal("the walk left no AR to tie")
-	}
-	_, stmts, err := billing.NewStatementService(billing.NewRepository(w.pool)).GenerateRun(sctx, "MASS", "", w.monthEnd, "d7000000-0000-4000-9000-000000000006")
-	if err != nil {
+	if _, _, err := billing.NewStatementService(billing.NewRepository(w.pool)).GenerateRun(sctx, "MASS", "", w.monthEnd, "d7000000-0000-4000-9000-000000000006"); err != nil {
 		t.Fatalf("the statement run: %v", err)
 	}
-	agingByCust := map[string]int64{}
-	custSet := map[string]bool{}
-	for _, r := range rows {
-		agingByCust[r.CustomerID] = r.TotalCents
-		custSet[r.CustomerID] = true
-	}
-	stmtByCust := map[string]int64{}
-	for _, s := range stmts {
-		stmtByCust[s.CustomerID] = s.ClosingCents
-		custSet[s.CustomerID] = true
-	}
-	unionRows, err := w.pool.Query(ctx, `
-		SELECT DISTINCT customer_id::text FROM customer_transactions
-		UNION
-		SELECT DISTINCT customer_id::text FROM invoices WHERE status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents != 0`)
+	res, err := TieStatementsToAging(ctx, w.tieSeams(), w.tieMonth())
 	if err != nil {
-		t.Fatalf("the customer union read: %v", err)
+		t.Fatalf("the statement tie: %v", err)
 	}
-	for unionRows.Next() {
-		var cid string
-		if err := unionRows.Scan(&cid); err != nil {
-			t.Fatal(err)
-		}
-		custSet[cid] = true
+	if !res.Applicable {
+		t.Fatalf("the walk left no AR to tie")
 	}
-	unionRows.Close()
-
-	type custEntry struct {
-		id     string
-		acctNo string
-	}
-	var custs []custEntry
-	for cid := range custSet {
-		var acctNo string
-		if err := w.pool.QueryRow(ctx, `SELECT account_no FROM customers WHERE id = $1`, cid).Scan(&acctNo); err != nil {
-			t.Fatalf("customer account_no for %s: %v", cid, err)
-		}
-		custs = append(custs, custEntry{id: cid, acctNo: acctNo})
-	}
-	sort.Slice(custs, func(i, j int) bool { return custs[i].acctNo < custs[j].acctNo })
-
-	for _, c := range custs {
-		var subledger int64
-		if err := w.pool.QueryRow(ctx, `
-			SELECT COALESCE(SUM(amount_cents), 0)
-			  FROM customer_transactions
-			 WHERE customer_id = $1 AND occurred_at <= $2`, c.id, w.monthEnd).Scan(&subledger); err != nil {
-			t.Fatalf("the customer_transactions subledger read for %s: %v", c.acctNo, err)
-		}
-		// Independent net receivable from the customer's documents (invoices and credit memos)
-		// and receipts (including bounced cheque NSF fee records in payment_nsf net of live
-		// payments.metadata->'nsf_fee_allocations' settlements per FW1-06a) in the walk.
-		var docsAndReceipts int64
-		if err := w.pool.QueryRow(ctx, `
-			SELECT COALESCE((
-			    SELECT SUM(balance_cents) FROM invoices
-			     WHERE customer_id = $1 AND status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
-			), 0) + COALESCE((
-			    SELECT SUM(
-			        pn.fee_cents - COALESCE((
-			            SELECT SUM((p2.metadata->'nsf_fee_allocations'->>pn.id::text)::bigint)
-			              FROM payments p2
-			             WHERE p2.customer_id = pn.customer_id
-			               AND p2.reversed_at IS NULL
-			               AND p2.reverses_payment_id IS NULL
-			               AND p2.status <> 'BOUNCED'
-			               AND (p2.metadata->'nsf_fee_allocations'->>pn.id::text) IS NOT NULL
-			        ), 0)
-			    )
-			      FROM payment_nsf pn
-			     WHERE pn.customer_id = $1
-			), 0)`, c.id).Scan(&docsAndReceipts); err != nil {
-			t.Fatalf("the independent documents and receipts read for %s: %v", c.acctNo, err)
-		}
-		lines, err := billing.NewRepository(w.pool).StatementLines(ctx, c.id, w.monthEnd, billing.AllBranches)
-		if err != nil {
-			t.Fatalf("the statement lines for %s: %v", c.acctNo, err)
-		}
-		var walked int64
-		if len(lines) > 0 {
-			walked = lines[len(lines)-1].BalanceRun
-		}
-		stmt := stmtByCust[c.id]
-		aging := agingByCust[c.id]
-		if stmt != docsAndReceipts || walked != docsAndReceipts || aging != docsAndReceipts || subledger != docsAndReceipts {
-			t.Errorf("%s: statement closing %s, printed line walk %s, aging %s, customer_transactions subledger %s do not tie to independent documents and receipts %s (aging vs subledger %s; statement closing vs printed walk %s; subledger vs documents %s)",
-				c.acctNo, fw1Dollars(stmt), fw1Dollars(walked), fw1Dollars(aging), fw1Dollars(subledger), fw1Dollars(docsAndReceipts),
-				byDollars(aging-subledger), byDollars(stmt-walked), byDollars(subledger-docsAndReceipts))
-		}
+	if !res.Pass {
+		t.Errorf("%s", res.Detail)
 	}
 }
 
-// 3. Stock value equals GL 1200.
+// 3. Stock value equals GL 1200. The rule is in the shared ties.
 func (w *fw1Walk) assertStockTies(t fw1TB) {
-	var stock int64
-	if err := w.pool.QueryRow(context.Background(), `
-		SELECT COALESCE(ROUND(SUM(sb.on_hand_base * c.avg_unit_cost_cents))::bigint, 0)
-		  FROM stock_balances sb
-		  JOIN product_branch_costs c ON c.product_id = sb.product_id AND c.branch_id = sb.branch_id
-		 WHERE sb.on_hand_base != 0`).Scan(&stock); err != nil {
-		t.Fatalf("stock value: %v", err)
-	}
-	gl1200, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(context.Background(), "1200", w.monthEnd, "")
+	res, err := TieStockToGL1200(context.Background(), w.tieSeams(), w.tieMonth())
 	if err != nil {
-		t.Fatalf("the GL 1200 read: %v", err)
+		t.Fatalf("the stock tie: %v", err)
 	}
-	if stock != gl1200 {
-		t.Errorf("stock value %s does not tie to GL 1200 %s: the ledger is %s the shelves by %s",
-			fw1Dollars(stock), fw1Dollars(gl1200), shorter(stock, gl1200), byDollars(stock-gl1200))
+	if !res.Pass {
+		t.Errorf("%s", res.Detail)
 	}
 }
 
-// 4. The HST reconcile ties.
-//
-// Note on what the walk's own leg proves: buildInvoiceFinalized posts GL 2200 from the same
-// invoices.tax_cents column, so comparing GL 2200's month movement against SUM(invoices.tax_cents)
-// less vendor bill ITC is a posting completeness check (proving every walk document's tax reached
-// GL 2200), not a rate check on its own. Alongside it, svc.ReconcileReport compares GL 2200
-// payable against the tax engine's collected tax decisions.
+// 4. The HST reconcile ties. The rule is in the shared ties.
 func (w *fw1Walk) assertHSTTies(t fw1TB) {
-	ctx := context.Background()
-	var gl2200Move, docSalesHST, billITC int64
-	if err := w.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(COALESCE(l.credit_cents, 0) - COALESCE(l.debit_cents, 0)), 0)
-		  FROM gl_journal_lines l
-		  JOIN gl_journals j ON j.id = l.journal_id
-		  JOIN gl_accounts a ON a.id = l.account_id
-		  JOIN fiscal_periods fp ON fp.id = j.period_id
-		 WHERE a.code = '2200' AND j.status = 'POSTED' AND fp.year = $1 AND fp.month = $2`,
-		w.year, w.month).Scan(&gl2200Move); err != nil {
-		t.Fatalf("the GL 2200 month movement read: %v", err)
-	}
-	if err := w.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(tax_cents), 0)
-		  FROM invoices
-		 WHERE status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
-		   AND NOT (id::text = ANY($1))`, w.seededInvoiceID).Scan(&docSalesHST); err != nil {
-		t.Fatalf("the month documents HST read: %v", err)
-	}
-	if err := w.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(tax_cents), 0)
-		  FROM purchasing_bills
-		 WHERE status = 'POSTED'`).Scan(&billITC); err != nil {
-		t.Fatalf("the vendor bill ITC read: %v", err)
-	}
-	netDocHST := docSalesHST - billITC
-	if gl2200Move != netDocHST {
-		t.Errorf("GL 2200 month movement %s does not tie to the month's documents HST %s (sales and credit memos HST %s less vendor bill ITC %s): GL 2200 is %s by %s",
-			fw1Dollars(gl2200Move), fw1Dollars(netDocHST), fw1Dollars(docSalesHST), fw1Dollars(billITC),
-			shorter(gl2200Move, netDocHST), byDollars(gl2200Move-netDocHST))
-	}
-	// The reconcile reads its document sides through the owning modules' seams, wired here over the
-	// real repositories exactly as wire_tops wires them; an unwired seam refuses the reconcile
-	// rather than answering a silent zero.
-	svc := tax.NewService(tax.NewRepository(w.pool)).
-		WithSalesHSTs(billing.NewRepository(w.pool)).
-		WithReturnHSTs(pos.NewRepository(w.pool)).
-		WithBillITCs(purchasing.NewRepository(w.pool)).
-		WithGLBalances(glBalanceAdapter{svc: w.money.glSvc})
-	rep, err := svc.ReconcileReport(ctx, w.year, w.month, "")
+	res, err := TieHSTMovementToDocuments(context.Background(), w.tieSeams(), w.tieMonth())
 	if err != nil {
-		t.Fatalf("the HST reconcile: %v", err)
+		t.Fatalf("the HST tie: %v", err)
 	}
-	if rep.VarianceCents != 0 || !rep.TiedOut {
-		t.Errorf("the HST reconcile does not tie for %04d-%02d: GL 2200 payable %s against %s collected on tax decisions, a variance of %s (%s)",
-			w.year, w.month, fw1Dollars(rep.GLPayableCents), fw1Dollars(rep.CollectedCents), fw1Dollars(rep.VarianceCents),
-			shorter(rep.GLPayableCents, rep.CollectedCents))
+	if !res.Pass {
+		t.Errorf("%s", res.Detail)
 	}
 }
 
@@ -1292,41 +1166,15 @@ func (w *fw1Walk) assertBankLodgementMatchPostsNothing(t fw1TB) {
 
 func (w *fw1Walk) assertBankMonth(t fw1TB) {
 	ctx := context.Background()
-	// The GL side reads the bank month's own end. The walk's bank journals carry the bank
-	// month's document dates and posted_at rides the document date, so the as-of read at the
-	// bank month's end sees exactly the month's bank story.
-	gl1000, _, err := gl.NewRepository(w.pool).AccountBalanceAsOf(ctx, "1000", w.bankMonthEnd, "")
+	// The walk's own story: the outstanding items the bank month carries are the ones the walk
+	// planted. The reads themselves are the shared ties' (fw1_ties.go), the same reads the bank
+	// tie makes.
+	depositInTransit, err := TieDepositsInTransit(ctx, w.tieSeams(), w.tieBankMonth())
 	if err != nil {
-		t.Fatalf("the GL 1000 read: %v", err)
-	}
-	var depositInTransit, outstandingCheques int64
-	if err := w.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(tm.amount_cents), 0)
-		  FROM till_movements tm
-		 WHERE tm.movement_type = 'LODGEMENT'
-		   AND tm.id <> $1::uuid
-		   AND NOT EXISTS (
-		       SELECT 1 FROM bank_matches bm
-		        WHERE bm.target_type = 'LODGEMENT'
-		          AND bm.target_ref_id = tm.id
-		          AND bm.unmatched_at IS NULL
-		   )`, w.lodgedChequeMovementID).Scan(&depositInTransit); err != nil {
 		t.Fatalf("the deposits in transit read: %v", err)
 	}
-	if err := w.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(l.credit_cents), 0)
-		  FROM gl_journal_lines l
-		  JOIN gl_journals j ON j.id = l.journal_id
-		  JOIN gl_accounts a ON a.id = l.account_id
-		 WHERE a.code = '1000'
-		   AND j.status = 'POSTED'
-		   AND COALESCE(l.credit_cents, 0) > 0
-		   AND COALESCE(j.idempotency_key, '') NOT LIKE 'payment.bounced:%'
-		   AND NOT EXISTS (
-		       SELECT 1 FROM bank_matches bm
-		        WHERE (bm.journal_id = j.id OR (bm.target_type = 'JOURNAL' AND bm.target_ref_id = j.id))
-		          AND bm.unmatched_at IS NULL
-		   )`).Scan(&outstandingCheques); err != nil {
+	outstandingCheques, err := TieOutstandingCheques(ctx, w.tieSeams())
+	if err != nil {
 		t.Fatalf("the outstanding cheques read: %v", err)
 	}
 	if depositInTransit != w.depositInTransitCents || outstandingCheques != w.outstandingChequeCents {
@@ -1351,13 +1199,13 @@ func (w *fw1Walk) assertBankMonth(t fw1TB) {
 			fw1Dollars(rec.StatementBalanceCents), fw1Dollars(w.statementBalanceCents))
 	}
 	// Standard bank reconciliation tie: statement balance + deposits in transit - outstanding cheques = book balance (GL 1000).
-	adjustedBank := rec.StatementBalanceCents + depositInTransit - outstandingCheques
-	if rec.VarianceCents != 0 || adjustedBank != gl1000 {
-		t.Errorf("the bank month %04d-%02d does not tie at zero: statement %s plus %s deposit in transit less %s outstanding cheques = %s against GL 1000 at the month's end %s (the ledger side is %s by %s; OpenReconciliation reports variance %s)",
-			w.bankYear, w.bankMonth,
-			fw1Dollars(rec.StatementBalanceCents), fw1Dollars(depositInTransit),
-			fw1Dollars(outstandingCheques), fw1Dollars(adjustedBank), fw1Dollars(gl1000),
-			shorter(gl1000, adjustedBank), byDollars(gl1000-adjustedBank), fw1Dollars(rec.VarianceCents))
+	// The rule is in the shared ties; the walk opens and signs off the reconciliation itself.
+	res, err := TieBankReconciliationAtZero(ctx, w.tieSeams(), w.tieBankMonth())
+	if err != nil {
+		t.Fatalf("the bank month tie: %v", err)
+	}
+	if !res.Pass {
+		t.Errorf("%s", res.Detail)
 	}
 	completed, err := svc.CompleteReconciliation(ctx, rec.ID, "d7000000-0000-4000-9000-000000000006")
 	if err != nil || completed.Status != bankrec.ReconCompleted {
@@ -1367,53 +1215,29 @@ func (w *fw1Walk) assertBankMonth(t fw1TB) {
 }
 
 // 6. Every journal line carries a branch, and the branch trial balances sum to the consolidated one.
+// The branchless count is the walk's own snapshot (taken before the year end close posts its
+// own lines); the trial balance rule is in the shared ties.
 func (w *fw1Walk) assertBranchOnEveryLine(t fw1TB) {
 	if w.nullBranchLines != 0 {
 		t.Errorf("%d posted journal lines carry no branch (the GL side of the tie is the lines without a branch)", w.nullBranchLines)
 	}
-	cons, err := w.money.glSvc.TrialBalance(fw1StaffCtx(context.Background()), w.year, w.month, "")
+	res, err := TieBranchTrialBalancesToConsolidated(context.Background(), w.tieSeams(), w.tieMonth())
 	if err != nil {
-		t.Fatalf("the consolidated trial balance: %v", err)
+		t.Fatalf("the branch tie: %v", err)
 	}
-	var sumDebit, sumCredit int64
-	for _, b := range []string{fw1TRT, fw1KGN} {
-		tb, err := w.money.glSvc.TrialBalance(fw1StaffCtx(context.Background()), w.year, w.month, b)
-		if err != nil {
-			t.Fatalf("the %s trial balance: %v", b, err)
-		}
-		sumDebit += tb.TotalDebit
-		sumCredit += tb.TotalCredit
-	}
-	if sumDebit != cons.TotalDebit || sumCredit != cons.TotalCredit {
-		t.Errorf("the branch trial balances sum to %s debit and %s credit against the consolidated %s debit and %s credit (the branches are %s the whole by %s)",
-			fw1Dollars(sumDebit), fw1Dollars(sumCredit), fw1Dollars(cons.TotalDebit), fw1Dollars(cons.TotalCredit),
-			shorter(sumDebit, cons.TotalDebit), byDollars(sumDebit-cons.TotalDebit))
+	if !res.Pass {
+		t.Errorf("%s", res.Detail)
 	}
 }
 
-// 7. No journal is waiting or dead lettered.
+// 7. No journal is waiting or dead lettered. The rule is in the shared ties.
 func (w *fw1Walk) assertNothingWaiting(t fw1TB) {
-	var pending, dead int
-	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM events_outbox WHERE status = 'PENDING'`).Scan(&pending); err != nil {
-		t.Fatalf("the waiting read: %v", err)
+	res, err := TieOutboxDrained(context.Background(), w.tieSeams(), w.tieMonth())
+	if err != nil {
+		t.Fatalf("the outbox tie: %v", err)
 	}
-	if err := w.pool.QueryRow(context.Background(), `SELECT count(*) FROM events_outbox WHERE status = 'DEAD'`).Scan(&dead); err != nil {
-		t.Fatalf("the dead letter read: %v", err)
-	}
-	if pending != 0 || dead != 0 {
-		var topics []string
-		rows, err := w.pool.Query(context.Background(), `SELECT DISTINCT topic FROM events_outbox WHERE status IN ('PENDING','DEAD')`)
-		if err == nil {
-			for rows.Next() {
-				var topic string
-				if err := rows.Scan(&topic); err == nil {
-					topics = append(topics, topic)
-				}
-			}
-			rows.Close()
-		}
-		t.Errorf("%d journal events are waiting and %d are dead lettered after the consumer's pass (topics: %s)",
-			pending, dead, strings.Join(topics, ", "))
+	if !res.Pass {
+		t.Errorf("%s", res.Detail)
 	}
 }
 
@@ -1486,17 +1310,18 @@ func (w *fw1Walk) assertWalkMonthAndNextYearPeriodsOpen(t fw1TB) {
 //     them (the GL repository's ensureFiscalYearTx), so the close has periods to seal. A posting
 //     dated in a year with no period rows files late into the next open month, so the periods come
 //     first;
-//   - the year's opening stock, the stock the dealer holds today, because the close's pre flight
-//     ties the company's stock against the company's 1200 at the month's end and the stock side
-//     reads today's value until the inventory module answers an as of read;
 //   - one revenue journal and one expense journal through PostExternal, the production posting
-//     seam, each stamped with a branch, so the year carries a P&L for the close to sweep;
-//   - the current year's mirror of that opening stock, so the stock the closed year opened with is
-//     not opened twice and the walk's own month close still ties.
+//     seam, each stamped with a branch, so the year carries a P&L for the close to sweep.
 //
-// The plant leaves the walk's own books as they were: the mirror cancels the duplicate at 1200 and
-// at 3000, so the walk's month close's pre flight still ties and the walk's own figures read the
-// same after the plant as before it.
+// The year carries no stock of its own and needs no stock plant: the close's pre flight ties the
+// company's stock against the company's 1200 at each month's end (W2-5), the stock ledger answers
+// as of that month end over its own movement ledger, and every movement on the books stands in the
+// current year, after every month end the closed year owns. Both sides of the year's stock tie
+// therefore read zero at each of its month ends: the year that holds no stock ties with no plant
+// at all. The stock plant this leg grew for the now-based tie (the year's opening stock plus the
+// current year's mirror) went redundant the moment the read became as of the month end, and it
+// breaks under the as-of read, because it books the stock the dealer holds TODAY inside the
+// closed year's opening.
 func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 	ctx := context.Background()
 	// The walk's own year is still running: closing it would seal the months still ahead, so the
@@ -1561,23 +1386,9 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 		 ON CONFLICT (year, month) DO NOTHING`, closedYear); err != nil {
 		t.Fatalf("planting the closed year %d's fiscal periods: %v", closedYear, err)
 	}
-	// The stock the dealer holds today, read through the production seam the close's pre flight
-	// reads it through, so the plant carries the figure the close's own tie will look for.
-	stock, err := w.money.inventorySvc.StockValueCents(ctx, "")
-	if err != nil {
-		t.Fatalf("the company's stock value: %v", err)
-	}
 	const plantedRevenue, plantedExpense = int64(100000), int64(40000)
 	openedAt := time.Date(closedYear, time.January, 15, 12, 0, 0, 0, time.UTC)
 	for _, p := range []gl.ExternalJournal{
-		{
-			Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:year-end-plant:opening:%d", closedYear),
-			Memo: "the closed year's opening stock", BranchID: fw1TRT, DocumentDate: openedAt,
-			Lines: []gl.ExternalLine{
-				{AccountCode: "1200", DebitCents: stock, Memo: "opening stock"},
-				{AccountCode: "3000", CreditCents: stock, Memo: "opening equity"},
-			},
-		},
 		{
 			Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:year-end-plant:revenue:%d", closedYear),
 			Memo: "the closed year's revenue", BranchID: fw1TRT, DocumentDate: openedAt,
@@ -1592,17 +1403,6 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 			Lines: []gl.ExternalLine{
 				{AccountCode: "6100", DebitCents: plantedExpense, Memo: "the year's rent"},
 				{AccountCode: "1000", CreditCents: plantedExpense, Memo: "the year's cash paid out"},
-			},
-		},
-		{
-			// The current year's mirror of that opening stock: the stock the closed year opened
-			// with is the stock the walk's own books already carry, so the current year does not
-			// open it a second time. It rides the clock, so it lands in the walk's own month.
-			Source: "MANUAL", IdempotencyKey: fmt.Sprintf("fw1:year-end-plant:mirror:%d", closedYear),
-			Memo: "the current year does not open the stock the closed year carries", BranchID: fw1TRT,
-			Lines: []gl.ExternalLine{
-				{AccountCode: "3000", DebitCents: stock, Memo: "opening equity"},
-				{AccountCode: "1200", CreditCents: stock, Memo: "the stock the closed year opened with"},
 			},
 		},
 	} {
@@ -1696,12 +1496,19 @@ func (w *fw1Walk) assertYearEndClose(t fw1TB) {
 	if walkOpen != walkTotal {
 		t.Errorf("the year end close of %d left %d of the walk's own year %d's %d periods OPEN, want the walk's own year left open", closedYear, walkOpen, w.year, walkTotal)
 	}
-	after := income()
-	for code, amt := range before {
-		if after[code] != amt {
-			t.Errorf("the year end close changed the closed year's income statement: account %s held %s before the close and %s after (%s)",
-				code, fw1Dollars(amt), fw1Dollars(after[code]), byDollars(after[code]-amt))
-		}
+	// The closed year's income statement is the one the close left behind. The rule is in the
+	// shared ties, which take the reading the walk took before the close and compare it with
+	// the one the close left.
+	closedYearMonth := w.tieMonth()
+	closedYearMonth.Year = closedYear
+	closedYearMonth.Month = 12
+	closedYearMonth.IncomeBefore = before
+	tieRes, err := TieClosedYearIncomeStatementUnchanged(context.Background(), w.tieSeams(), closedYearMonth)
+	if err != nil {
+		t.Fatalf("the year end income statement tie: %v", err)
+	}
+	if !tieRes.Pass {
+		t.Errorf("%s", tieRes.Detail)
 	}
 }
 
@@ -1754,20 +1561,4 @@ func TestFW1WalkRedEmptyOnWaveFinal(t *testing.T) {
 	if len(fw1WalkRed) != 0 {
 		t.Fatalf("FW1_WAVE_FINAL=1 requires fw1WalkRed to be empty, but %d line(s) remain: %v", len(fw1WalkRed), fw1WalkRed)
 	}
-}
-
-// shorter says which of two figures is the smaller, in words.
-func shorter(a, b int64) string {
-	if a < b {
-		return "short"
-	}
-	return "over"
-}
-
-// byDollars renders a delta as a signed dollar amount.
-func byDollars(c int64) string {
-	if c < 0 {
-		return "-" + fw1Dollars(-c)
-	}
-	return fw1Dollars(c)
 }

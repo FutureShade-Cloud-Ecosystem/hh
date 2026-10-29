@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, offeredChips, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pickCeilingWords, refusalWords, relativeDay, reopenedInvoiceNos, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, asOfDay, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, offeredChips, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pastDueMarkWord, pickCeilingWords, refusalWords, relativeDay, reopenedInvoiceNos, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
 import { houseDay, resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
@@ -410,4 +410,21 @@ test("a bounced payment's reopened list names each invoice once, from the applic
   );
   // A payment nothing was applied to reopens nothing.
   assert.deepEqual(reopenedInvoiceNos([]), []);
+});
+
+test("the day reads the way the as of control reads it, never as the ISO digits", () => {
+  // The picker shows M/D/YYYY, so a date beside it reads the same way.
+  assert.equal(asOfDay("2026-10-28"), "10/28/2026");
+  assert.equal(asOfDay("2026-01-05"), "1/5/2026");
+  assert.equal(asOfDay("2026-12-31"), "12/31/2026");
+  // A day that is not the ISO shape is left alone rather than mangled.
+  assert.equal(asOfDay("not a day"), "not a day");
+});
+
+test("the past due word is the register's own, whatever the day count", () => {
+  assert.equal(pastDueMarkWord(18), "18d past due");
+  assert.equal(pastDueMarkWord(1), "1d past due");
+  assert.equal(pastDueMarkWord(0), "0d past due");
+  // A count that is not a whole number of days reads as the days it is.
+  assert.equal(pastDueMarkWord(18.4), "18d past due");
 });

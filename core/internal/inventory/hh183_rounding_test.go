@@ -12,6 +12,7 @@ import (
 	"context"
 	"math"
 	"testing"
+	"time"
 )
 
 // recvHalfCent runs one full receipt through the fake store and returns the move it wrote.
@@ -223,7 +224,7 @@ func TestCapitalizeLanded_HalfCentProduct_RoundsUp(t *testing.T) {
 	f.cost[key(product, branch)] = 750
 	s := NewService(nil).withStore(f)
 
-	absorbed, err := s.capitalizeLanded(context.Background(), nil, product, branch, 100)
+	absorbed, err := s.capitalizeLanded(context.Background(), nil, product, branch, 100, time.Now(), "")
 	if err != nil {
 		t.Fatalf("capitalizeLanded: %v", err)
 	}
@@ -245,7 +246,7 @@ func TestRestoreLandedCost_HalfCentProduct_RoundsUp(t *testing.T) {
 	f.cost[key(product, branch)] = 750
 	s := NewService(nil).withStore(f)
 
-	delta, err := s.restoreLandedCost(context.Background(), nil, product, branch, 0, 218)
+	delta, err := s.restoreLandedCost(context.Background(), nil, product, branch, 0, 218, time.Now(), "")
 	if err != nil {
 		t.Fatalf("restoreLandedCost: %v", err)
 	}
