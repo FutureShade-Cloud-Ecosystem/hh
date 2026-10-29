@@ -47,6 +47,27 @@ ALTER DEFAULT PRIVILEGES FOR ROLE assist_claims_owner_finworld REVOKE ALL ON FUN
 ALTER DEFAULT PRIVILEGES FOR ROLE assist_view_owner_finworld REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres GRANT ALL ON FUNCTIONS TO app_function_users_finworld;
+
+--
+-- Name: ai; Type: SCHEMA; Schema: -; Owner: postgres
+--
+
+CREATE POLICY assist_staff_orders ON public.orders TO assist_view_owner_finworld USING (true);
+
+--
+-- Name: claims(); Type: FUNCTION; Schema: ai; Owner: assist_claims_owner_finworld
+--
+
+CREATE FUNCTION ai.claims() RETURNS jsonb AS $body$
+BEGIN
+      IF session_user = 'assist_login_finworld' AND c.audience <> 'staff' THEN
+         RETURN NULL;
+      END IF;
+      IF session_user = 'assist_pro_login_finworld' AND c.audience <> 'pro' THEN
+         RETURN NULL;
+      END IF;
+END;
+$body$ LANGUAGE plpgsql;
 `
 
 func TestFinanceResetBuildSuffix(t *testing.T) {
@@ -101,6 +122,24 @@ func TestFinanceResetMapRoles(t *testing.T) {
 	// role name is data, not a statement.
 	if !strings.Contains(text, "1\tassist_view_owner_finworld is only a name here") {
 		t.Fatalf("the mapping touched the world's own data:\n%s", text)
+	}
+
+	// The row level security policies name the assist role, and so they are
+	// mapped: a policy left on the build's role holds nothing on the box.
+	want := "CREATE POLICY assist_staff_orders ON public.orders TO assist_view_owner_finbox USING (true);"
+	if !strings.Contains(text, want) {
+		t.Fatalf("the mapped dump does not carry %q:\n%s", want, text)
+	}
+
+	// The world's own functions compare session_user against the login role
+	// names, so those names are part of the world's shape and are mapped too.
+	for _, want := range []string{
+		"IF session_user = 'assist_login_finbox' AND c.audience <> 'staff' THEN",
+		"IF session_user = 'assist_pro_login_finbox' AND c.audience <> 'pro' THEN",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("the mapped dump does not carry %q:\n%s", want, text)
+		}
 	}
 }
 

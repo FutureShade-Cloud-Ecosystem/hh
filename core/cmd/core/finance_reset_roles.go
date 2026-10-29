@@ -87,7 +87,7 @@ var financeResetStatementPrefixes = []string{
 // drops anything.
 func financeResetBuildSuffix(dump []byte) (string, error) {
 	found := map[string]bool{}
-	for _, line := range financeResetStatementLines(dump) {
+	for _, line := range financeResetNonDataLines(dump) {
 		for _, m := range financeResetAssistRoleShape.FindAllStringSubmatch(line, -1) {
 			found[m[2]] = true
 		}
@@ -115,7 +115,9 @@ func financeResetBuildSuffix(dump []byte) (string, error) {
 //
 // The world's functions belong here: a function body may carry a role name
 // or a statement that may not run inside a transaction, and both are part of
-// the world's shape, not part of its data.
+// the world's shape, not part of its data. The claims function compares
+// session_user against the login role names, and those names are part of the
+// world's shape too.
 func financeResetNonDataLines(dump []byte) []string {
 	var lines []string
 	inCopy := false
@@ -199,26 +201,33 @@ func financeResetMapRoles(dump []byte, buildSuffix, boxSuffix, restoringRole str
 			inCopy = true
 			continue
 		}
-		if !financeResetIsStatement(trimmed) {
-			continue
+		mapped := line
+		// The role names are mapped on every line that is not the world's
+		// own data: a grant, a row level security policy, a default
+		// privileges statement, an owner statement, and the world's own
+		// functions, whose claims function compares session_user against the
+		// login role names.
+		if buildSuffix != "" && buildSuffix != boxSuffix {
+			mapped = financeResetAssistRoleShape.ReplaceAllStringFunc(mapped, func(name string) string {
+				m := financeResetAssistRoleShape.FindStringSubmatch(name)
+				if m == nil || m[2] != buildSuffix {
+					return name
+				}
+				return m[1] + boxSuffix
+			})
 		}
-		mapped := financeResetMapRoleNames(line, buildSuffix, boxSuffix, restoringRole)
+		// The statement positions the role names sit in are mapped on their
+		// own: the default privileges statements and the owner statements.
+		if financeResetIsStatement(trimmed) {
+			mapped = financeResetMapRolePositions(mapped, buildSuffix, boxSuffix, restoringRole)
+		}
 		lines[i] = mapped
 	}
 	return []byte(strings.Join(lines, "\n")), nil
 }
 
-// financeResetMapRoleNames maps the role names of one statement line.
-func financeResetMapRoleNames(line, buildSuffix, boxSuffix, restoringRole string) string {
-	if buildSuffix != "" && buildSuffix != boxSuffix {
-		line = financeResetAssistRoleShape.ReplaceAllStringFunc(line, func(name string) string {
-			m := financeResetAssistRoleShape.FindStringSubmatch(name)
-			if m == nil || m[2] != buildSuffix {
-				return name
-			}
-			return m[1] + boxSuffix
-		})
-	}
+// financeResetMapRolePositions maps the role names of one statement line.
+func financeResetMapRolePositions(line, buildSuffix, boxSuffix, restoringRole string) string {
 	// The default privileges statements name the role the defaults belong to.
 	// The box's own restoring role takes their place: it is the role that
 	// will create what the box holds from now on, and the only role whose

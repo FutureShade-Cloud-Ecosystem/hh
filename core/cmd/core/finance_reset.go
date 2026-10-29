@@ -259,7 +259,8 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	}
 	// The box's own role has to be able to hand the world's objects over to
 	// the assist roles: a role may only give an object to a role it can set.
-	if err := financeResetOwnershipPossible(ctx, pool, financeResetOwnerRoles(dump)); err != nil {
+	// The roles are the box's own, the ones the mapping names.
+	if err := financeResetOwnershipPossible(ctx, pool, financeResetOwnerRoles(mapped)); err != nil {
 		return err
 	}
 	// The schemas the dump owns: the public schema every dump of this tree's
