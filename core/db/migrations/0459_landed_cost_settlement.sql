@@ -1,4 +1,4 @@
--- 0455: W2-1d item 4, the landed-cost payable is paid on its terms.
+-- 0459: W2-1d item 4, the landed-cost payable is paid on its terms.
 --
 -- A landed cost posts its freight/duty/handling payable to GL 2100 and nothing
 -- ever relieved it: the payable sat open on the aging forever, and a real

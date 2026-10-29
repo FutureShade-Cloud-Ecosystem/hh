@@ -284,7 +284,7 @@ func (r *Repository) InsertAllocationTx(ctx context.Context, tx pgx.Tx, landedCo
 }
 
 // SettleTx stamps the payable's settlement inside the tx: the CAD amount paid
-// and the instant it was paid (0455). The caller has already re-read the row
+// and the instant it was paid (0459). The caller has already re-read the row
 // FOR UPDATE and seen it unsettled.
 func (r *Repository) SettleTx(ctx context.Context, tx pgx.Tx, id string, settledCadCents int64, at time.Time) error {
 	if _, err := tx.Exec(ctx,

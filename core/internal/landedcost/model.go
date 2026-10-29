@@ -56,7 +56,7 @@ type LandedCost struct {
 	AllocationBasis    string  `json:"allocation_basis"`
 	ExcludeSpecialBuys bool    `json:"exclude_special_buys"`
 	Status             string  `json:"status"`
-	// SettledCadCents and SettledAt carry the payable's settlement (0455): the
+	// SettledCadCents and SettledAt carry the payable's settlement (0459): the
 	// CAD amount paid the payee vendor and the instant it was paid. Zero and
 	// NULL while the payable is open.
 	SettledCadCents int64     `json:"settled_cad_cents,omitempty"`
