@@ -211,15 +211,19 @@ func (rig *apAgingTestRig) createOpenLandedCost(t *testing.T, po PODetail, freig
 //     marked as landed cost (is_landed_cost=true, row_kind=LANDED_COST), reached through the
 //     landedcost seam and never folded into the vendor's bill row.
 //  3. The five aging buckets (current, 1-30, 31-60, 61-90, 91+) and the dealer house day rule
-//     (22:30 America/Toronto on day D is 02:30 UTC on D+1, and stays on day D).
+//     (23:59:59 America/Toronto on day D is the next UTC day, and stays on day D).
 func TestIntegration_W29A_Sub1_APAgingRule(t *testing.T) {
 	rig := newAPAgingRig(t)
 	reach := BranchReach{BranchIDs: []string{branchTRT}}
 
-	// Choose a reference instant at 22:30 America/Toronto today (which is 02:30 UTC tomorrow),
-	// exercising the dealer house day boundary at the same time as the five aging buckets.
+	// The reference instant is the last second of today's house day in America/Toronto, which is
+	// already tomorrow in UTC: the dealer house day boundary, exercised with the five buckets. It
+	// must also come after every event this test posts at the real clock: a landed cost counts from
+	// its apply journal's effective instant (W2-9a round 2b), and that journal is posted now. A fixed
+	// 22:30 failed every run after 22:30 house time, when the apply journal is later than the instant
+	// it is read as of; the aging was right to leave it out (main's red on f8a3873e).
 	nowLocal := time.Now().In(rig.zone)
-	asOf := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 22, 30, 0, 0, rig.zone)
+	asOf := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 23, 59, 59, 0, rig.zone)
 	asOfDay := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, time.UTC)
 
 	dayStr := func(offsetDays int) string {
@@ -227,7 +231,7 @@ func TestIntegration_W29A_Sub1_APAgingRule(t *testing.T) {
 	}
 
 	// Five bills on the same vendor spanning all five bucket boundaries relative to asOfDay:
-	// - Current: due today (offset 0, must stay CURRENT at 22:30 Toronto even though UTC is tomorrow)
+	// - Current: due today (offset 0, must stay CURRENT at the end of the house day even though UTC is tomorrow)
 	// - Days 30: due 30 days ago (offset -30, upper bound of 1..30)
 	// - Days 60: due 31 days ago (offset -31, lower bound of 31..60)
 	// - Days 60 to 90: due 61 days ago (offset -61, lower bound of 61..90)
