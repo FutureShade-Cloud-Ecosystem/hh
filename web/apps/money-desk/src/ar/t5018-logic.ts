@@ -69,6 +69,11 @@ export function t5018EmptyKind(report: PurchasingT5018Report): "none-marked" | "
   return report.total_cents === 0 ? "none-paid" : null;
 }
 
+/** True when the contractor gave no business number, so the screen can flag it as a warning. */
+export function businessNumberIsMissing(row: PurchasingT5018Row): boolean {
+  return row.business_number_missing;
+}
+
 /** The rows the screen shows: the route's order, which is the vendor's name in order. */
 export function t5018Rows(report: PurchasingT5018Report): readonly PurchasingT5018Row[] {
   return report.items;

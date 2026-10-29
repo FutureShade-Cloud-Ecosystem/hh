@@ -131,6 +131,7 @@ function t5018Panel(model: VendorsModel, vendor: PurchasingVendor): TemplateResu
         </label>
       </div>
       <div class="actions end">
+        <span class="dim" data-t5018-save-hint>Saves only this block</span>
         <button type="button" class="btn btn-secondary" data-action="save-t5018" ?disabled=${model.busy}>Save the T5018 record</button>
       </div>
       <p class="foot dim">${vendor.is_t5018_subcontractor ? "This vendor is on the T5018 report." : "This vendor is not on the T5018 report."}</p>

@@ -11,7 +11,7 @@ import { PAYABLES_BANDS, isLandedCostRow, landedCostWords, rowItems, rowKey, typ
 import { asOfDay, bucketWord, daysLateWord, daysPastDue, pastDueMarkWord, relativeDay, statusTone, statusWord, type Mark } from "./ar-logic.js";
 import { formatMoney } from "./ar-money.js";
 import { markPill } from "./ar-views.js";
-import { businessNumberWords, t5018EmptyKind, t5018Rows, type T5018Model } from "./t5018-logic.js";
+import { businessNumberIsMissing, businessNumberWords, t5018EmptyKind, t5018Rows, type T5018Model } from "./t5018-logic.js";
 
 /** One band of the board's five. */
 type Band = (typeof PAYABLES_BANDS)[number];
@@ -318,7 +318,7 @@ function t5018Panel(model: T5018Model): TemplateResult {
                               <span class="who">${row.name}</span>
                               <span class="dim small">${row.vendor_no}</span>
                             </td>
-                            <td data-t5018-number data-label="CRA business number">${row.business_number_missing
+                            <td data-t5018-number data-label="CRA business number">${businessNumberIsMissing(row)
                               ? html`<span class="pill pill-watch" data-t5018-missing>${businessNumberWords(row)}</span>`
                               : businessNumberWords(row)}</td>
                             <td class="num" data-t5018-paid>${formatMoney(row.paid_cents)}</td>
