@@ -1219,7 +1219,7 @@ paths:
       tags:
         - staff-billing
       summary: Record one received payment across the account's open invoices
-      description: "The caller names the money (amount, method, reference) and a list of the account's open invoices; the server allocates it oldest first in one transaction: one payment row, its payment_allocations, one journal by the idempotency key (a retry posts once). One payment applies to one branch's invoices: a list spanning two branches is refused in words, because the payment, its subledger rows and its journal all carry one branch. An amount over the selected invoices' payable, an invoice of another account, an invoice outside the caller's branch reach and a not open invoice are all refused in words with nothing applied. preview true answers the same split without writing anything, and never reads the key: a preview under a key an apply already spent answers the fresh split against the live balances, not the recorded payment's replay. The branch reach refusal answers as not found, the same 404 as a missing invoice. A replayed key is judged like a first attempt, and then against its own body, and the replay judgement runs before the body is validated: an invoice it paid that is outside the caller's branch reach answers 404, a key that recorded a payment for another account, or for a different payment (another amount, method, reference or invoice list), is refused 409 Conflict, and the same body under the same key answers the first result and writes nothing. Pre-write validation refusals (the shape of the body itself) answer 422, so a client tells a spent key from a malformed body by status alone."
+      description: "The caller names the money (amount, method, reference) and a list of the account's open invoices; the server allocates it oldest first in one transaction: one payment row, its payment_allocations, one journal by the idempotency key (a retry posts once). One payment applies to one branch's invoices: a list spanning two branches is refused in words, because the payment, its subledger rows and its journal all carry one branch. An amount over the selected invoices' payable is applied oldest first up to each invoice's payable and the remainder stays on the customer's account as a credit (`on_account_cents`). An invoice of another account, an invoice outside the caller's branch reach and a not open invoice are all refused in words with nothing applied. preview true answers the same split without writing anything, and never reads the key: a preview under a key an apply already spent answers the fresh split against the live balances, not the recorded payment's replay. The branch reach refusal answers as not found, the same 404 as a missing invoice. A replayed key is judged like a first attempt, and then against its own body, and the replay judgement runs before the body is validated: an invoice it paid that is outside the caller's branch reach answers 404, a key that recorded a payment for another account, or for a different payment (another amount, method, reference or invoice list), is refused 409 Conflict, and the same body under the same key answers the first result and writes nothing. Pre-write validation refusals (the shape of the body itself) answer 422, so a client tells a spent key from a malformed body by status alone."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -1251,7 +1251,7 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
         "422":
-          description: "The payment is refused in words with nothing applied: an amount over the selected invoices' payable, an invoice that is not open, an empty or oversized list, the same invoice named twice, a customer id or invoice id that is not a uuid, a list spanning more than one branch"
+          description: "The payment is refused in words with nothing applied: an invoice that is not open, an empty or oversized list, the same invoice named twice, a customer id or invoice id that is not a uuid, a list spanning more than one branch"
           content:
             application/json:
               schema:
@@ -1330,6 +1330,92 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BillingCreditApplicationReversed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/ar/write-offs:
+    post:
+      operationId: billingWriteOffInvoice
+      tags:
+        - staff-billing
+      summary: Write off an invoice's remaining balance under the branch's small balance limit
+      description: Manager only, reason required. The limit is a branch setting on the credit policy with the org default of 2500 cents; a balance over it is refused for a manager and allowed only for the controller role. The write off posts DR bad debt expense and CR accounts receivable and is reversible once.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingWriteOffInput"
+      responses:
+        "200":
+          description: Replayed write off result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOff"
+        "201":
+          description: Invoice written off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOff"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/ar/write-offs/reverse:
+    post:
+      operationId: billingReverseWriteOff
+      tags:
+        - staff-billing
+      summary: Reverse a write off, restoring the invoice balance and the books
+      description: "Manager only, reason required, once: a write off already reversed is refused. The reversal restores the invoice's balance and status, nets the subledger rows to zero, and posts DR accounts receivable and CR bad debt expense."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingWriteOffReversalInput"
+      responses:
+        "200":
+          description: Replayed reversal result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOffReversed"
+        "201":
+          description: Write off reversed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOffReversed"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -10882,6 +10968,61 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaxReconReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/tax/worksheet:
+    get:
+      operationId: taxGetWorksheet
+      tags:
+        - staff-tax
+      summary: Read the CRA GST/HST return worksheet for a filing period
+      description: Read-only CRA GST/HST return worksheet (lines 101 through 115) for a filing period and branch scope, derived from the tax engine's document seams and the GL seam. The filing period span follows the dealer's filing_frequency setting on tax_config (QUARTERLY by default, or MONTHLY or YEARLY).
+      x-addition: "HST-1: the read-only CRA GST/HST return worksheet over the tax engine's document seams and the GL seam; no ERP source route"
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: true
+          description: The filing year
+          schema:
+            type: integer
+            format: int32
+        - name: quarter
+          in: query
+          required: false
+          description: The filing quarter (1..4) when filing_frequency is QUARTERLY
+          schema:
+            type: integer
+            format: int32
+        - name: month
+          in: query
+          required: false
+          description: The filing month (1..12) when filing_frequency is MONTHLY, or a month inside the quarter
+          schema:
+            type: integer
+            format: int32
+        - name: branch_id
+          in: query
+          required: false
+          description: Limit the worksheet to one branch
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The CRA GST/HST return worksheet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxWorksheet"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -22545,7 +22686,7 @@ paths:
         - name: Idempotency-Key
           in: header
           required: true
-          description: A key chosen once per payment press and resent unchanged on every retry of it. A re-press under the same key answers the first payment; the same key on another bill is refused.
+          description: A key chosen once per payment press and resent unchanged on every retry of it. The key is the caller's own free text of 1 to 200 characters, not necessarily a UUID (a caller may name what the payment pays); a missing or over long key is refused with a 400. A re-press under the same key answers the first payment; the same key on another bill is refused.
           schema:
             type: string
             minLength: 1
@@ -31541,6 +31682,87 @@ components:
         balance_after_cents:
           type: integer
           format: int64
+    BillingWriteOffInput:
+      type: object
+      required:
+        - invoice_id
+        - reason
+        - idempotency_key
+      properties:
+        invoice_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        idempotency_key:
+          type: string
+    BillingWriteOff:
+      type: object
+      required:
+        - write_off_id
+        - invoice_id
+        - invoice_no
+        - amount_cents
+        - limit_cents
+        - replayed
+      properties:
+        write_off_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        limit_cents:
+          type: integer
+          format: int64
+        replayed:
+          type: boolean
+    BillingWriteOffReversalInput:
+      type: object
+      required:
+        - invoice_id
+        - write_off_id
+        - reason
+      properties:
+        invoice_id:
+          type: string
+          format: uuid
+        write_off_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+    BillingWriteOffReversed:
+      type: object
+      required:
+        - write_off_id
+        - invoice_id
+        - invoice_no
+        - restored_cents
+        - invoice_balance_after_cents
+        - replayed
+      properties:
+        write_off_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        restored_cents:
+          type: integer
+          format: int64
+        invoice_balance_after_cents:
+          type: integer
+          format: int64
+        replayed:
+          type: boolean
     BillingCreditApplication:
       type: object
       required:
@@ -32096,6 +32318,7 @@ components:
         - amount_cents
         - applied_cents
         - unapplied_cents
+        - on_account_cents
         - lines
         - replayed
       properties:
@@ -32115,6 +32338,10 @@ components:
         unapplied_cents:
           type: integer
           format: int64
+        on_account_cents:
+          type: integer
+          format: int64
+          description: The remainder that stayed on the customer's account as a credit (0 when the invoices took it all)
         lines:
           type: array
           items:
@@ -41146,6 +41373,13 @@ components:
           enum:
             - INVOICE_TOTAL
             - PER_LINE
+        filing_frequency:
+          type: string
+          enum:
+            - QUARTERLY
+            - MONTHLY
+            - YEARLY
+          description: The dealer's GST/HST return filing period setting (QUARTERLY by default)
         avalara_enabled:
           type: boolean
           description: Dormant stub; kept for a later wave
@@ -41342,6 +41576,141 @@ components:
           description: The GL movement minus the documents' net (collected less returns less input tax); zero means tied out
         tied_out:
           type: boolean
+    TaxWorksheetLine:
+      type: object
+      description: One CRA GST/HST return line on the worksheet
+      required:
+        - line_no
+        - label
+        - amount_cents
+        - entered_by_hand
+      properties:
+        line_no:
+          type: string
+        label:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        entered_by_hand:
+          type: boolean
+        note:
+          type: string
+    TaxWorksheet:
+      type: object
+      description: Read-only CRA GST/HST return worksheet (lines 101 through 115) for a filing period and branch scope, derived from the tax engine's document seams and the GL seam.
+      required:
+        - year
+        - filing_frequency
+        - from_date
+        - to_date
+        - line_101_sales_cents
+        - line_103_collected_cents
+        - line_104_adjustments_cents
+        - line_105_total_hst_cents
+        - line_106_itcs_cents
+        - line_107_itc_adjustments_cents
+        - line_108_total_itcs_cents
+        - line_109_net_tax_cents
+        - line_110_instalments_cents
+        - line_111_rebates_cents
+        - line_112_total_other_credits_cents
+        - line_113_balance_cents
+        - line_114_refund_claimed_cents
+        - line_115_amount_owing_cents
+        - invoice_hst_cents
+        - return_tax_cents
+        - gl_payable_cents
+        - variance_cents
+        - tied_out
+        - manual_entry_note
+        - lines
+      properties:
+        year:
+          type: integer
+          format: int32
+        filing_frequency:
+          type: string
+          enum:
+            - QUARTERLY
+            - MONTHLY
+            - YEARLY
+        quarter:
+          type: integer
+          format: int32
+        month:
+          type: integer
+          format: int32
+        from_date:
+          type: string
+          format: date
+        to_date:
+          type: string
+          format: date
+        branch_id:
+          type: string
+        line_101_sales_cents:
+          type: integer
+          format: int64
+        line_103_collected_cents:
+          type: integer
+          format: int64
+        line_104_adjustments_cents:
+          type: integer
+          format: int64
+        line_105_total_hst_cents:
+          type: integer
+          format: int64
+        line_106_itcs_cents:
+          type: integer
+          format: int64
+        line_107_itc_adjustments_cents:
+          type: integer
+          format: int64
+        line_108_total_itcs_cents:
+          type: integer
+          format: int64
+        line_109_net_tax_cents:
+          type: integer
+          format: int64
+        line_110_instalments_cents:
+          type: integer
+          format: int64
+        line_111_rebates_cents:
+          type: integer
+          format: int64
+        line_112_total_other_credits_cents:
+          type: integer
+          format: int64
+        line_113_balance_cents:
+          type: integer
+          format: int64
+        line_114_refund_claimed_cents:
+          type: integer
+          format: int64
+        line_115_amount_owing_cents:
+          type: integer
+          format: int64
+        invoice_hst_cents:
+          type: integer
+          format: int64
+        return_tax_cents:
+          type: integer
+          format: int64
+        gl_payable_cents:
+          type: integer
+          format: int64
+        variance_cents:
+          type: integer
+          format: int64
+        tied_out:
+          type: boolean
+        manual_entry_note:
+          type: string
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxWorksheetLine"
     InventoryStockMove:
       type: object
       description: One immutable ledger line; corrections are compensating moves

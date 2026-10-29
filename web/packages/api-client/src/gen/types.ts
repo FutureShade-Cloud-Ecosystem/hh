@@ -522,6 +522,32 @@ export type BillingCreditApplicationLine = {
   outcome: "CLOSES" | "PART";
   balance_after_cents: number;
 };
+export type BillingWriteOffInput = {
+  invoice_id: string;
+  reason: string;
+  idempotency_key: string;
+};
+export type BillingWriteOff = {
+  write_off_id: string;
+  invoice_id: string;
+  invoice_no: string;
+  amount_cents: number;
+  limit_cents: number;
+  replayed: boolean;
+};
+export type BillingWriteOffReversalInput = {
+  invoice_id: string;
+  write_off_id: string;
+  reason: string;
+};
+export type BillingWriteOffReversed = {
+  write_off_id: string;
+  invoice_id: string;
+  invoice_no: string;
+  restored_cents: number;
+  invoice_balance_after_cents: number;
+  replayed: boolean;
+};
 export type BillingCreditApplication = {
   application_id: string;
   credit_kind: "MEMO" | "ACCOUNT";
@@ -669,6 +695,7 @@ export type BillingApplyPaymentAnswer = {
   amount_cents: number;
   applied_cents: number;
   unapplied_cents: number;
+  on_account_cents: number;
   lines: BillingApplyPaymentLine[];
   replayed: boolean;
 };
@@ -3181,6 +3208,7 @@ export type TaxConfig = {
   branch_id?: string;
   hst_registration_no: string;
   round_mode: "INVOICE_TOTAL" | "PER_LINE";
+  filing_frequency?: "QUARTERLY" | "MONTHLY" | "YEARLY";
   avalara_enabled: boolean;
   postal_routing_enabled: boolean;
   notes?: string;
@@ -3240,6 +3268,43 @@ export type TaxReconReport = {
   gl_ontario_cents: number;
   variance_cents: number;
   tied_out: boolean;
+};
+export type TaxWorksheetLine = {
+  line_no: string;
+  label: string;
+  amount_cents: number;
+  entered_by_hand: boolean;
+  note?: string;
+};
+export type TaxWorksheet = {
+  year: number;
+  filing_frequency: "QUARTERLY" | "MONTHLY" | "YEARLY";
+  quarter?: number;
+  month?: number;
+  from_date: string;
+  to_date: string;
+  branch_id?: string;
+  line_101_sales_cents: number;
+  line_103_collected_cents: number;
+  line_104_adjustments_cents: number;
+  line_105_total_hst_cents: number;
+  line_106_itcs_cents: number;
+  line_107_itc_adjustments_cents: number;
+  line_108_total_itcs_cents: number;
+  line_109_net_tax_cents: number;
+  line_110_instalments_cents: number;
+  line_111_rebates_cents: number;
+  line_112_total_other_credits_cents: number;
+  line_113_balance_cents: number;
+  line_114_refund_claimed_cents: number;
+  line_115_amount_owing_cents: number;
+  invoice_hst_cents: number;
+  return_tax_cents: number;
+  gl_payable_cents: number;
+  variance_cents: number;
+  tied_out: boolean;
+  manual_entry_note: string;
+  lines: TaxWorksheetLine[];
 };
 export type InventoryStockMove = {
   id: string;

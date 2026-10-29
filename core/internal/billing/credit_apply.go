@@ -20,8 +20,10 @@ package billing
 // 'payment_nsf' family, and the fee's charge and its payment share a group. The door must name the
 // families it accepts, and they are the two a producer writes when it gives the customer value back:
 //
-//   · 'pos_return'   the POS store credit remainder (pos/returns.go), a CREDIT_MEMO row.
+//   · 'pos_return'      the POS store credit remainder (pos/returns.go), a CREDIT_MEMO row.
 //   · 'deposit_cancel' the deposit cancel credit back (billing/deposit_cancel.go), an ADJUSTMENT row.
+//   · 'receipt_change' the unapplied remainder of a receipt larger than its invoices (W3 item 0.10,
+//     payments' applyAllocations), an ADJUSTMENT row keyed to the payment.
 //
 // 'payment_nsf' is a DEBT the customer owes, never a credit, and every other family is a document
 // side or an amount already accounted for. A row in a family the door does not accept answers the
@@ -156,13 +158,14 @@ const (
 //
 // A credit is not "any group whose sum is negative": a negative row can be money the customer PAID
 // rather than money the customer HOLDS (the NSF fee payment row is exactly that, and the fee's
-// charge and its payment share a group). These two are the families a producer writes when it
-// gives the customer value back: the POS store credit remainder ('pos_return') and the deposit
-// cancel credit back ('deposit_cancel'). 'payment_nsf' is a debt, never a credit.
+// charge and its payment share a group). These are the families a producer writes when it gives the
+// customer value back: the POS store credit remainder ('pos_return'), the deposit cancel credit
+// back ('deposit_cancel') and the unapplied remainder of a receipt larger than its invoices
+// ('receipt_change', W3 item 0.10). 'payment_nsf' is a debt, never a credit.
 //
 // The MEMO arm is the other kind of credit and it is a document, not a family: a CREDIT_MEMO
 // invoice whose balance is a negative magnitude.
-var creditAccountFamilies = []string{"pos_return", "deposit_cancel"}
+var creditAccountFamilies = []string{"pos_return", "deposit_cancel", "receipt_change"}
 
 // creditGroupTxnTypes are the kinds a credit GROUP is read with: the 0009 AR vocabulary, the list
 // the aging (agingSelect), ARBalanceCents, the statement, the account read and the deposit cancel

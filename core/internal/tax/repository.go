@@ -279,7 +279,7 @@ func (r *Repository) GetEvidence(ctx context.Context, id string) (Evidence, bool
 
 // -- config --------------------------------------------------------------------
 
-const configCols = `COALESCE(branch_id::text,''), hst_registration_no, round_mode, avalara_enabled, postal_routing_enabled, notes`
+const configCols = `COALESCE(branch_id::text,''), hst_registration_no, round_mode, COALESCE(NULLIF(filing_frequency,''),'QUARTERLY'), avalara_enabled, postal_routing_enabled, notes`
 
 func (r *Repository) GetConfig(ctx context.Context, branchID string) (Config, error) {
 	if r.pool == nil {
@@ -290,13 +290,13 @@ func (r *Repository) GetConfig(ctx context.Context, branchID string) (Config, er
 		SELECT `+configCols+` FROM tax_config
 		WHERE (branch_id IS NOT DISTINCT FROM $1::uuid)
 		LIMIT 1`, nullStr(branchID)).Scan(
-		&c.BranchID, &c.HSTRegistrationNo, &c.RoundMode, &c.AvalaraEnabled, &c.PostalRoutingEnabled, &c.Notes)
+		&c.BranchID, &c.HSTRegistrationNo, &c.RoundMode, &c.FilingFrequency, &c.AvalaraEnabled, &c.PostalRoutingEnabled, &c.Notes)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Fall back to the org-default row when a branch has no override.
 		if branchID != "" {
 			return r.GetConfig(ctx, "")
 		}
-		return Config{RoundMode: "INVOICE_TOTAL"}, nil
+		return Config{RoundMode: "INVOICE_TOTAL", FilingFrequency: string(FilingQuarterly)}, nil
 	}
 	if err != nil {
 		return Config{}, fmt.Errorf("tax: get config: %w", err)
@@ -313,30 +313,32 @@ func (r *Repository) UpsertConfig(ctx context.Context, c Config) (Config, error)
 	if c.BranchID == "" {
 		tag, err := r.pool.Exec(ctx, `
 			UPDATE tax_config SET hst_registration_no = $1, round_mode = $2, avalara_enabled = $3,
-			  postal_routing_enabled = $4, notes = COALESCE(NULLIF($5,''), notes), updated_at = now()
+			  postal_routing_enabled = $4, notes = COALESCE(NULLIF($5,''), notes),
+			  filing_frequency = COALESCE(NULLIF($6,''), filing_frequency), updated_at = now()
 			WHERE branch_id IS NULL`,
-			c.HSTRegistrationNo, c.RoundMode, c.AvalaraEnabled, c.PostalRoutingEnabled, c.Notes)
+			c.HSTRegistrationNo, c.RoundMode, c.AvalaraEnabled, c.PostalRoutingEnabled, c.Notes, c.FilingFrequency)
 		if err != nil {
 			return Config{}, fmt.Errorf("tax: update config: %w", err)
 		}
 		if tag.RowsAffected() == 0 {
 			if _, err := r.pool.Exec(ctx, `
-				INSERT INTO tax_config (branch_id, hst_registration_no, round_mode, avalara_enabled, postal_routing_enabled)
-				VALUES (NULL,$1,$2,$3,$4)`,
-				c.HSTRegistrationNo, c.RoundMode, c.AvalaraEnabled, c.PostalRoutingEnabled); err != nil {
+				INSERT INTO tax_config (branch_id, hst_registration_no, round_mode, filing_frequency, avalara_enabled, postal_routing_enabled)
+				VALUES (NULL,$1,$2,COALESCE(NULLIF($3,''),'QUARTERLY'),$4,$5)`,
+				c.HSTRegistrationNo, c.RoundMode, c.FilingFrequency, c.AvalaraEnabled, c.PostalRoutingEnabled); err != nil {
 				return Config{}, fmt.Errorf("tax: insert config: %w", err)
 			}
 		}
 		return r.GetConfig(ctx, "")
 	}
 	if _, err := r.pool.Exec(ctx, `
-		INSERT INTO tax_config (branch_id, hst_registration_no, round_mode, avalara_enabled, postal_routing_enabled)
-		VALUES ($1::uuid,$2,$3,$4,$5)
+		INSERT INTO tax_config (branch_id, hst_registration_no, round_mode, filing_frequency, avalara_enabled, postal_routing_enabled)
+		VALUES ($1::uuid,$2,$3,COALESCE(NULLIF($4,''),'QUARTERLY'),$5,$6)
 		ON CONFLICT (branch_id) DO UPDATE SET
 		  hst_registration_no = EXCLUDED.hst_registration_no, round_mode = EXCLUDED.round_mode,
+		  filing_frequency = COALESCE(NULLIF($4,''), tax_config.filing_frequency),
 		  avalara_enabled = EXCLUDED.avalara_enabled, postal_routing_enabled = EXCLUDED.postal_routing_enabled,
 		  updated_at = now()`,
-		c.BranchID, c.HSTRegistrationNo, c.RoundMode, c.AvalaraEnabled, c.PostalRoutingEnabled); err != nil {
+		c.BranchID, c.HSTRegistrationNo, c.RoundMode, c.FilingFrequency, c.AvalaraEnabled, c.PostalRoutingEnabled); err != nil {
 		return Config{}, fmt.Errorf("tax: upsert branch config: %w", err)
 	}
 	return r.GetConfig(ctx, c.BranchID)

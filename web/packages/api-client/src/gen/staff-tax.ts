@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { TaxConfig, TaxEvidence, TaxEvidenceCapture, TaxEvidenceList, TaxPendingProfileList, TaxRate, TaxRateList, TaxRecomputeRequest, TaxRecomputeResult, TaxReconReport, TaxReliefEligibility, TaxStatusCardProfile, TaxStatusCardProfileList } from "./types.js";
+import type { TaxConfig, TaxEvidence, TaxEvidenceCapture, TaxEvidenceList, TaxPendingProfileList, TaxRate, TaxRateList, TaxRecomputeRequest, TaxRecomputeResult, TaxReconReport, TaxReliefEligibility, TaxStatusCardProfile, TaxStatusCardProfileList, TaxWorksheet } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -216,5 +216,20 @@ export async function taxReviewQueue(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "taxReviewQueue",
+  });
+}
+
+export async function taxGetWorksheet(
+  client: ApiClient,
+  opts: { year: number; quarter?: number; month?: number; branch_id?: string },
+  call?: ApiCallOptions
+): Promise<Result<TaxWorksheet>> {
+  return client.request<TaxWorksheet>({
+    method: "GET",
+    path: "/api/v1/tax/worksheet",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "taxGetWorksheet",
   });
 }
