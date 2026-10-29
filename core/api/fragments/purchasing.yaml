@@ -2722,15 +2722,25 @@ components:
       type: object
       description: >-
         One calendar year of the CRA Form T5018: the vendors the Financial
-        Controller marked as subcontractors, what the year paid them, and the
-        contractor's business number.
-      required: [year, items, total_cents]
+        Controller marked as subcontractors, their Box 22 services share of
+        payments (tax included), their pre-tax services subtotal against the
+        $500 threshold, and the contractor's business number.
+      required: [year, rule_note, items, total_cents, box_22_total_cents]
       properties:
         year: { type: integer, format: int32 }
+        rule_note:
+          type: string
+          description: >-
+            States in words that T5018 applies only where construction is more
+            than half the dealer's business income
         total_cents:
           type: integer
           format: int64
-          description: The year's total across every row, in cents
+          description: The year's Box 22 total across every row, in cents
+        box_22_total_cents:
+          type: integer
+          format: int64
+          description: The year's Box 22 total across every row, tax included, in cents
         items:
           type: array
           items: { $ref: "#/components/schemas/PurchasingT5018Row" }
@@ -2740,7 +2750,19 @@ components:
       description: >-
         One marked vendor's line in the year's report. A marked vendor nobody
         was paid this year is on the report with paid_cents zero.
-      required: [vendor_id, vendor_no, name, business_number, business_number_missing, paid_cents]
+      required:
+        - vendor_id
+        - vendor_no
+        - name
+        - business_number
+        - business_number_missing
+        - paid_cents
+        - box_22_cents
+        - services_subtotal_cents
+        - under_threshold
+        - threshold_note
+        - unmarked_line_count
+        - unmarked_lines_note
       properties:
         vendor_id: { type: string, format: uuid }
         vendor_no: { type: string }
@@ -2758,7 +2780,28 @@ components:
         paid_cents:
           type: integer
           format: int64
-          description: What the year paid the vendor through PayBill, in cents
+          description: What the year paid the vendor for services through PayBill, tax included, in cents
+        box_22_cents:
+          type: integer
+          format: int64
+          description: Box 22 services share of the amount paid in the year, tax included, in cents
+        services_subtotal_cents:
+          type: integer
+          format: int64
+          description: Services subtotal before tax summed over the year, in cents
+        under_threshold:
+          type: boolean
+          description: True when services_subtotal_cents is under $500.00 (50000 cents)
+        threshold_note:
+          type: string
+          description: Marks a vendor under the $500.00 pre-tax threshold ("under the $500 threshold, no slip")
+        unmarked_line_count:
+          type: integer
+          format: int32
+          description: Count of bill lines on paid bills in the year not marked goods or services
+        unmarked_lines_note:
+          type: string
+          description: Per-vendor note when unmarked bill lines are counted as services until marked
 
     # --- landed cost -----------------------------------------------------------
 

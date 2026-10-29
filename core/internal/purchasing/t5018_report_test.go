@@ -99,3 +99,50 @@ func TestT5018ReportCSV_TheFileCarriesTheRowsTheMarkAndTheTotal(t *testing.T) {
 		t.Fatalf("the total reads %q, want the year's total", lines[4])
 	}
 }
+
+// TestT5018ProRataAndPaymentShare_HalfToEvenAndCRARules proves the pure pro-rata banker's rounding
+// and the five CRA rules (goods-only excluded, mixed services share, $480 + 13% HST under $500
+// threshold, Box 22 carries the tax, unmarked line counts as services with its note).
+func TestT5018ProRataAndPaymentShare_HalfToEvenAndCRARules(t *testing.T) {
+	// Half-to-even ties: 0.5 -> 0 (even), 1.5 -> 2 (even), 2.5 -> 2 (even), 3.5 -> 4 (even).
+	if got := t5018ProRataCents(1, 1, 2); got != 0 {
+		t.Fatalf("0.5 half-to-even = %d, want 0", got)
+	}
+	if got := t5018ProRataCents(3, 1, 2); got != 2 {
+		t.Fatalf("1.5 half-to-even = %d, want 2", got)
+	}
+	if got := t5018ProRataCents(5, 1, 2); got != 2 {
+		t.Fatalf("2.5 half-to-even = %d, want 2", got)
+	}
+	if got := t5018ProRataCents(7, 1, 2); got != 4 {
+		t.Fatalf("3.5 half-to-even = %d, want 4", got)
+	}
+
+	// Leg 1: goods-only bill contributes nothing.
+	if b22, svc := t5018PaymentShare(90400, 80000, 90400, 0); b22 != 0 || svc != 0 {
+		t.Fatalf("goods-only share = (%d, %d), want (0, 0)", b22, svc)
+	}
+
+	// Leg 2: mixed bill ($600 services + $400 goods = $1,000 subtotal, + $130 HST = $1,130 paid).
+	if b22, svc := t5018PaymentShare(113000, 100000, 113000, 60000); b22 != 67800 || svc != 60000 {
+		t.Fatalf("mixed share = (box22=%d, svc=%d), want (67800, 60000)", b22, svc)
+	}
+
+	// Legs 3 & 4: $480.00 services + 13% HST ($62.40) = $542.40 paid -> Box 22 = 54240, pre-tax = 48000 (< 50000).
+	b22, svc := t5018PaymentShare(54240, 48000, 54240, 48000)
+	if b22 != 54240 || svc != 48000 {
+		t.Fatalf("$480 + HST share = (box22=%d, svc=%d), want (54240, 48000)", b22, svc)
+	}
+	row := finalizeT5018Row(T5018Row{
+		VendorID: "v-under", VendorNo: "VM-0010", Name: "Under Threshold",
+		BusinessNumber: "123456789", Box22Cents: b22, ServicesSubtotalCents: svc,
+		UnmarkedLineCount: 1,
+	})
+	if !row.UnderThreshold || row.ThresholdNote != T5018UnderThresholdNote {
+		t.Fatalf("under-threshold row = %+v, want UnderThreshold=true and note %q", row, T5018UnderThresholdNote)
+	}
+	wantUnmarked := "1 bill lines are not marked goods or services; they are counted as services until marked"
+	if row.UnmarkedLinesNote != wantUnmarked {
+		t.Fatalf("unmarked_lines_note = %q, want %q", row.UnmarkedLinesNote, wantUnmarked)
+	}
+}

@@ -8117,9 +8117,11 @@ type PurchasingAPAgingPage struct {
 }
 
 type PurchasingT5018Report struct {
-	Year       int32                `json:"year"`
-	TotalCents int64                `json:"total_cents"`
-	Items      []PurchasingT5018Row `json:"items"`
+	Year            int32                `json:"year"`
+	RuleNote        string               `json:"rule_note"`
+	TotalCents      int64                `json:"total_cents"`
+	Box22TotalCents int64                `json:"box_22_total_cents"`
+	Items           []PurchasingT5018Row `json:"items"`
 }
 
 type PurchasingT5018Row struct {
@@ -8129,6 +8131,12 @@ type PurchasingT5018Row struct {
 	BusinessNumber        string `json:"business_number"`
 	BusinessNumberMissing bool   `json:"business_number_missing"`
 	PaidCents             int64  `json:"paid_cents"`
+	Box22Cents            int64  `json:"box_22_cents"`
+	ServicesSubtotalCents int64  `json:"services_subtotal_cents"`
+	UnderThreshold        bool   `json:"under_threshold"`
+	ThresholdNote         string `json:"threshold_note"`
+	UnmarkedLineCount     int32  `json:"unmarked_line_count"`
+	UnmarkedLinesNote     string `json:"unmarked_lines_note"`
 }
 
 type LandedCost struct {
