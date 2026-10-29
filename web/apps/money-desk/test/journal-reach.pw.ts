@@ -155,3 +155,18 @@ test("a refused range read keeps the shown range, and the same dates can be trie
   await expect(register.locator("tbody tr")).toHaveCount(11);
   await expect(register.getByRole("button", { name: "JE-0106" })).toBeVisible();
 });
+
+test("at 390 the register keeps its status in view: the posted date moves under the memo", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openRegister(page, request);
+  const register = page.getByRole("table", { name: "Journal register" });
+  const rowOf = (label: string) => register.locator("tbody tr").filter({ has: page.getByRole("button", { name: label }) });
+  await expect(rowOf("JE-0002")).toBeVisible();
+  // No sideways scroll hides a status: the register's scroller is no wider than its card.
+  const overflow = await page.locator(".gl-scroll").first().evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  // The date still reads on a phone, under the memo, and a draft still says Not posted.
+  await expect(rowOf("JE-0002").locator("[data-posted-narrow]")).toBeVisible();
+  await expect(rowOf("JE-0002").locator("[data-posted-narrow]")).toHaveText("Jul 18, 2026");
+  await expect(rowOf("JE-0005").locator("[data-posted-narrow]")).toHaveText("Not posted");
+});
