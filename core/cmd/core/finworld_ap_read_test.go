@@ -2,23 +2,52 @@
 
 package main
 
-// The AP tie's read goes through the purchasing module's own seam: the open AP in cents as of an
-// instant, posted bills less the supplier payments settled against them, with the settlement side
-// injected by the composition over the ledger. No purchasing SQL lives in cmd/core. This test plants
-// an unpaid bill through the real routes and holds the read honest against it and against a payment.
+// The AP tie's read goes through the purchasing module's own seam: the AP aging, the open AP in
+// cents as of an instant, grown only by posted vendor bills and open landed cost payables. No
+// purchasing SQL lives in cmd/core. This test plants an unpaid bill through the real routes and
+// holds the aging honest against it and against a supplier payment settled through the payment
+// door.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 )
+
+// finworldCallPayBill pays a bill through the production payment door with its replay key. The
+// key rides the Idempotency-Key header, so this helper is h.call with one header added.
+func finworldCallPayBill(h *finworldHarness, step, billID string, amountCents int64, key string) ([]byte, error) {
+	body, err := json.Marshal(map[string]any{
+		"amount_cents": amountCents,
+		"note":         "ap read probe settlement",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: marshal body: %w", step, err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/purchasing/bills/"+billID+"/payments", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+h.token)
+	req.Header.Set(authz.HeaderXOrg, finworldOrgSlug)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", key)
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, req)
+	if rec.Code >= 300 {
+		return nil, fmt.Errorf("%s: POST bill payment refused with HTTP %d: %s", step, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	return rec.Body.Bytes(), nil
+}
 
 func TestFinWorldOpenAPReadPlantedBill(t *testing.T) {
 	ctx := context.Background()
@@ -44,10 +73,12 @@ func TestFinWorldOpenAPReadPlantedBill(t *testing.T) {
 	}
 
 	svc := finworldPurchasingComposition(pool, slog.Default(), nil)
-	// The bill's date is a payload column but the payment journal posts at the process clock, so the
+	// The aging is the tie's read. This composition wires no landed cost payables and the fresh
+	// world plants none, so the total is the open vendor bills alone.
+	// The bill's date is a payload column but the payment settles at the process clock, so the
 	// as-of instant has to sit past both.
 	asOf := time.Now().Add(time.Minute)
-	openBefore, err := svc.OpenAPCentsAsOf(ctx, asOf)
+	openBefore, err := svc.APAging(ctx, asOf, purchasing.BranchReach{Global: true})
 	if err != nil {
 		t.Fatalf("open AP read before the plant: %v", err)
 	}
@@ -123,32 +154,25 @@ func TestFinWorldOpenAPReadPlantedBill(t *testing.T) {
 	}
 
 	// The planted unpaid bill shows in the read: the open AP rose by exactly its 25000.
-	openAfterBill, err := svc.OpenAPCentsAsOf(ctx, asOf)
+	openAfterBill, err := svc.APAging(ctx, asOf, purchasing.BranchReach{Global: true})
 	if err != nil {
 		t.Fatalf("open AP read after the bill: %v", err)
 	}
-	if openAfterBill-openBefore != 25000 {
-		t.Fatalf("the planted unpaid bill moved the open AP by %d, want exactly 25000", openAfterBill-openBefore)
+	if openAfterBill.TotalCents-openBefore.TotalCents != 25000 {
+		t.Fatalf("the planted unpaid bill moved the open AP by %d, want exactly 25000", openAfterBill.TotalCents-openBefore.TotalCents)
 	}
 
-	// A supplier payment settled against trade payables drops the read by exactly its amount.
-	if _, err := h.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
-		Source:         "PAYMENT",
-		IdempotencyKey: "finworld:apread:0001",
-		Memo:           "ap read probe supplier cheque",
-		BranchID:       branchID,
-		Lines: []gl.ExternalLine{
-			{AccountCode: "2100", DebitCents: 10000, Memo: "settlement"},
-			{AccountCode: "1000", CreditCents: 10000, Memo: "cheque"},
-		},
-	}); err != nil {
-		t.Fatalf("payment journal: %v", err)
+	// A supplier payment settled against the bill drops the read by exactly its amount: the
+	// payment door records the paid instalment the aging subtracts. A raw journal on 2100 moves
+	// the tie, never the aging, so the settlement rides the real door.
+	if _, err := finworldCallPayBill(h, "pay bill", billRes.ID, 10000, "finworld:apread:0001"); err != nil {
+		t.Fatalf("pay bill: %v", err)
 	}
-	openAfterPay, err := svc.OpenAPCentsAsOf(ctx, asOf)
+	openAfterPay, err := svc.APAging(ctx, asOf, purchasing.BranchReach{Global: true})
 	if err != nil {
 		t.Fatalf("open AP read after the payment: %v", err)
 	}
-	if openAfterPay != openAfterBill-10000 {
-		t.Fatalf("the payment moved the open AP by %d, want exactly 10000", openAfterBill-openAfterPay)
+	if openAfterPay.TotalCents != openAfterBill.TotalCents-10000 {
+		t.Fatalf("the payment moved the open AP by %d, want exactly 10000", openAfterBill.TotalCents-openAfterPay.TotalCents)
 	}
 }

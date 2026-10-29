@@ -17,6 +17,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 )
 
 // finworldLandedCostSchedule is the plan's first landed-cost application, the first void, and the
@@ -442,10 +443,15 @@ func TestFinWorldDriver_OpenAPAcrossMonthEndLeg(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse %s: %v", at.cutoff, err)
 		}
-		open, err := svc.OpenAPCentsAsOf(ctx, cut.Add(23*time.Hour))
+		// The aging is the tie's read. The old read was posted bills less supplier payments, which
+		// excluded landed cost, and this composition wires no landed cost payables, so the aging
+		// carries none either and there is nothing to subtract: both figures are the open vendor
+		// bills alone, which is what the plan's deferred bills are.
+		page, err := svc.APAging(ctx, cut.Add(23*time.Hour), purchasing.BranchReach{Global: true})
 		if err != nil {
 			t.Fatalf("open AP read at %s: %v", at.name, err)
 		}
+		open := page.TotalCents
 		want := wantOct
 		if at.cutoff != "2025-10-31" {
 			want = wantNov
