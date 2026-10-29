@@ -158,6 +158,21 @@ func TestIntegration_FinanceReset(t *testing.T) {
 	}
 	dump := financeResetDump(t, worldDSN)
 	worldCounts := financeCheckCounts(t, ctx, worldPool)
+	// The check's answer on the world before it is dumped: the reset must put
+	// back books that answer the check line for line. The walk's world is a
+	// test story, not a full twelve month world (it posts into months it runs
+	// no statements for), so "every tie passes" is the world lane's gate and
+	// "the same lines after as before" is the reset's.
+	var worldCheck bytes.Buffer
+	worldTx, err := worldPool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		t.Fatalf("the world's read only transaction: %v", err)
+	}
+	if _, err := financeCheckRunWired(ctx, worldPool, worldTx, &worldCheck, nil); err != nil {
+		_ = worldTx.Rollback(ctx)
+		t.Fatalf("the check on the world before the dump: %v", err)
+	}
+	_ = worldTx.Rollback(ctx)
 
 	// A second revision of the same world: one comment line appended to the
 	// dump changes the digest and restores the same world, so a leg can prove
@@ -303,7 +318,8 @@ func TestIntegration_FinanceReset(t *testing.T) {
 		t.Fatalf("the reset wrote %d audit row(s), one is the trail", audits)
 	}
 
-	// The check passes on the restored world. The transaction is closed when
+	// The check answers on the restored world exactly as it answered on the
+	// world before the dump. The transaction is closed when
 	// the check is done, the way the role itself closes it: the legs below
 	// reset the world again, and an open read transaction holds the share
 	// locks the next drop schema waits for.
@@ -317,13 +333,13 @@ func TestIntegration_FinanceReset(t *testing.T) {
 		t.Fatalf("the read only transaction: %v", err)
 	}
 	out.Reset()
-	failed, err := financeCheckRunWired(ctx, restored, tx, out, nil)
+	_, err = financeCheckRunWired(ctx, restored, tx, out, nil)
 	_ = tx.Rollback(ctx)
 	if err != nil {
 		t.Fatalf("the check on the restored world: %v", err)
 	}
-	if failed != 0 {
-		t.Fatalf("the check found %d failing tie(s) on the restored world:\n%s", failed, out.String())
+	if out.String() != worldCheck.String() {
+		t.Fatalf("the check on the restored world does not answer as it did on the world:\nbefore:\n%s\nafter:\n%s", worldCheck.String(), out.String())
 	}
 
 	// Leg 5: the recorded world. The reset recorded the restored world's
