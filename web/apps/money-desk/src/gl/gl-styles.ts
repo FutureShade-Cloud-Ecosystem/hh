@@ -82,6 +82,9 @@ export const glStyles = css`
   .gl-panel-head .gl-actions { margin-bottom: 0; }
   .gl-confirm > .gl-actions:last-child { margin-bottom: 0; }
   .gl-note { margin: var(--hh-s-8) 0 0; padding: var(--hh-s-12) var(--hh-s-16); border-radius: var(--hh-radius-control); background: color-mix(in srgb, var(--hh-accent) 18%, var(--hh-card)); color: var(--hh-text); font-size: 14px; }
+  /* The line that says what the chip counts are of stands on its own row under the chips: the chips
+     are a control row and the note is not a control. */
+  .gl-counts-note { flex: 1 0 100%; }
 
   /* Journals and the trial balance. */
   .gl-filters { display: flex; flex-wrap: wrap; gap: var(--hh-s-4); }
@@ -152,6 +155,9 @@ export const glStyles = css`
        it takes the desk's smallest step of type. The cell gives the day two pixels less than the day
        needs, and a day that breaks after its comma is a day nobody reads. */
     [data-posted-narrow] { font-size: 11px; }
+    /* The source word shares that line with the day, so it is the same size: the lesser fact is not
+       the larger line. */
+    .gl-row-detail.gl-source { font-size: 11px; }
     .gl-panel { padding: var(--hh-s-16); }
     .gl-panel table { font-size: 13px; }
     .gl-panel th, .gl-panel td { padding: var(--hh-s-8) var(--hh-s-4); }

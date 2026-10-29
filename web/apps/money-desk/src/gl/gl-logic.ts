@@ -398,12 +398,20 @@ export function rangeWords(dateFrom: string, dateTo: string): string {
 
 /**
  * The count the register's filters show: how many of the loaded rows carry that status. The core
- * answers no total for the register, so while its cursor says more rows are still to come the count is
- * of the loaded rows only, and the words say so. At the end of the register the loaded rows are the
- * whole of them, and the count stands alone.
+ * answers no total for the register, so this is the count of the rows the desk has loaded, and the
+ * line under the chips says so once, while the core's cursor says more rows are still to come.
  */
-export function statusCountWord(count: number, nextCursor: string): string {
-  return nextCursor === "" ? String(count) : `${count} of the loaded`;
+export function statusCountWord(count: number): string {
+  return String(count);
+}
+
+/**
+ * What the counts are of, said once under the chips. The core's register answers no total, so a
+ * count is of the rows the desk has loaded; the line is there only while more rows are still to
+ * come, and at the end of the register it drops away with the caveat it carried.
+ */
+export function countsNoteWords(loaded: number): string {
+  return `Counts are of the ${loaded} journals loaded; Show more loads the rest.`;
 }
 
 /**
@@ -412,6 +420,13 @@ export function statusCountWord(count: number, nextCursor: string): string {
  */
 export const PENDING_APPROVAL_NOTE =
   "Pending approval means the journal is a draft someone entered and its amount is at or over the approval threshold in the policy, so it waits for another approver to post it.";
+
+/**
+ * The same thing, said in the detail pane where one journal is read: the register's note, without
+ * the opening that names the label.
+ */
+export const PENDING_APPROVAL_WHY =
+  "It is a draft someone entered and its amount is at or over the approval threshold in the policy, so it waits for another approver to post it.";
 
 // ---- the late posted list -------------------------------------------------------------------------
 
