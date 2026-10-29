@@ -251,6 +251,16 @@ func (s *Service) UpdatePaymentRun(ctx context.Context, runID string, in UpdateP
 		}
 	}
 	for _, l := range in.Lower {
+		// THE RUN'S OWN LINES DECIDE WHAT A REVIEW MAY NAME. A bill the run does not hold is
+		// refused as not found before any figure about it is read, so naming another branch's
+		// bill can never answer with that bill's open amount.
+		held, err := s.repo.RunLineHeldTx(ctx, tx, runID, l.BillID)
+		if err != nil {
+			return PaymentRun{}, err
+		}
+		if !held {
+			return PaymentRun{}, errNotFound
+		}
 		open, err := s.repo.BillOpenCentsTx(ctx, tx, l.BillID)
 		if err != nil {
 			return PaymentRun{}, err
@@ -665,7 +675,8 @@ func (r *Repository) PaymentRunLinesTx(ctx context.Context, tx pgx.Tx, runID str
 }
 
 // DeleteRunLineByBillTx removes the run's line for billID. A bill that is not on the run is
-// refused in words, never a silent no-op.
+// refused as not found: the run's own lines decide what a review may name, and the refusal
+// carries no figure about a bill the caller may not know.
 func (r *Repository) DeleteRunLineByBillTx(ctx context.Context, tx pgx.Tx, runID, billID string) error {
 	if r.pool == nil {
 		return errNoDB
@@ -677,13 +688,28 @@ func (r *Repository) DeleteRunLineByBillTx(ctx context.Context, tx pgx.Tx, runID
 		return fmt.Errorf("purchasing: delete payment run line: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return badReq("purchasing: bill %s is not on this run", billID)
+		return errNotFound
 	}
 	return nil
 }
 
+// RunLineHeldTx answers whether the run holds a line for billID. The read is scoped to the run,
+// so a bill the run does not hold is simply absent: no figure about it is ever read.
+func (r *Repository) RunLineHeldTx(ctx context.Context, tx pgx.Tx, runID, billID string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var held bool
+	if err := r.q(tx).QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM purchasing_payment_run_lines WHERE run_id = $1::uuid AND bill_id = $2::uuid)`,
+		runID, billID).Scan(&held); err != nil {
+		return false, fmt.Errorf("purchasing: read the payment run line: %w", err)
+	}
+	return held, nil
+}
+
 // UpdateRunLineAmountTx lowers the run's line for billID. A bill that is not on the run is
-// refused in words.
+// refused as not found, the same answer the review gives before it reads any figure.
 func (r *Repository) UpdateRunLineAmountTx(ctx context.Context, tx pgx.Tx, runID, billID string, amountCents int64) error {
 	if r.pool == nil {
 		return errNoDB
@@ -696,7 +722,7 @@ func (r *Repository) UpdateRunLineAmountTx(ctx context.Context, tx pgx.Tx, runID
 		return fmt.Errorf("purchasing: update payment run line: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return badReq("purchasing: bill %s is not on this run", billID)
+		return errNotFound
 	}
 	return nil
 }

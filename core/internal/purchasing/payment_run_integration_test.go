@@ -23,6 +23,7 @@ package purchasing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -768,5 +769,71 @@ func TestIntegration_W3_PaymentRun_InterruptedPay_RecordsWhatTheRunPaid(t *testi
 	}
 	if n := countRunPaymentJournals(t, h, run.ID); n != 2 {
 		t.Fatalf("W3 payment runs red: the run's keys sit on %d journals, want 2 (bill A and bill B, one each)", n)
+	}
+}
+
+// TestIntegration_W3_PaymentRun_Review_RefusesAnotherBranchsBillWithNoFigures is S2's P3 on
+// PR 702: a review naming another branch's bill answered with that bill's open amount. The run's
+// own lines decide what a review may name, so the bill is refused as not found, with no figures.
+func TestIntegration_W3_PaymentRun_Review_RefusesAnotherBranchsBillWithNoFigures(t *testing.T) {
+	h := newHarness(t)
+	zone, err := time.LoadLocation("America/Toronto")
+	if err != nil {
+		t.Fatalf("load dealer zone: %v", err)
+	}
+	todayStr := time.Now().In(zone).Format("2006-01-02")
+
+	// One due bill in Trenton, the run's own bill, and one in Kingston, another branch's payable.
+	postBillForVendor(t, h, h.vendor, "prun-leak-trt", 12000, todayStr, todayStr)
+	billKGN := postKGNBill(t, h, "prun-leak-kgn", 21000, todayStr)
+
+	// A Trenton manager: the branch fence is in play, and the Kingston bill is out of reach.
+	h.svc.withCaller(scopedCaller(h.user, branchTRT))
+
+	run, err := h.svc.ProposePaymentRun(h.ctx, ProposePaymentRunRequest{
+		BranchID: branchTRT, DueOn: todayStr, PayDate: todayStr,
+	})
+	if err != nil {
+		t.Fatalf("W3 payment runs red: ProposePaymentRun: %v", err)
+	}
+	cleanupRun(t, h.pool, run.ID)
+
+	// Naming the Kingston bill in the review is refused, and the refusal carries no figures.
+	_, err = h.svc.UpdatePaymentRun(h.ctx, run.ID, UpdatePaymentRunRequest{
+		Lower: []PaymentRunLineAmount{{BillID: billKGN.ID, AmountCents: 999999999}},
+	})
+	if err == nil {
+		t.Fatalf("W3 payment runs red: naming another branch's bill in the review was accepted")
+	}
+	if strings.Contains(err.Error(), "21000") {
+		t.Fatalf("W3 payment runs red: the refusal carried another branch's open amount: %v", err)
+	}
+	if !errors.Is(err, errNotFound) {
+		t.Fatalf("W3 payment runs red: the review answered %v, want the bill refused as not found", err)
+	}
+
+	// The same bill named for removal is refused the same way, with no figures either.
+	_, err = h.svc.UpdatePaymentRun(h.ctx, run.ID, UpdatePaymentRunRequest{
+		Remove: []string{billKGN.ID},
+	})
+	if err == nil {
+		t.Fatalf("W3 payment runs red: removing another branch's bill from the review was accepted")
+	}
+	if strings.Contains(err.Error(), "21000") {
+		t.Fatalf("W3 payment runs red: the refusal carried another branch's open amount: %v", err)
+	}
+	if !errors.Is(err, errNotFound) {
+		t.Fatalf("W3 payment runs red: the review answered %v, want the bill refused as not found", err)
+	}
+
+	// The run's own bill is still reviewable, and the refusal changed nothing on the run.
+	own, err := h.svc.UpdatePaymentRun(h.ctx, run.ID, UpdatePaymentRunRequest{
+		Lower: []PaymentRunLineAmount{{BillID: run.Lines[0].BillID, AmountCents: 11000}},
+	})
+	if err != nil {
+		t.Fatalf("W3 payment runs red: the review of the run's own bill: %v", err)
+	}
+	if len(own.Lines) != 1 || own.Lines[0].AmountCents != 11000 {
+		t.Fatalf("W3 payment runs red: reviewed run lines = %+v, want the one bill at 11000", own.Lines)
 	}
 }
