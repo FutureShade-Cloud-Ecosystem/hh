@@ -6,6 +6,7 @@ package purchasing
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -511,5 +512,98 @@ func assertBalanced(t *testing.T, legs map[string][2]int64) {
 	}
 	if dr == 0 {
 		t.Fatal("journal has no legs")
+	}
+}
+
+// TestIntegration_Bill_SupplyKindAndMigrationBackfill proves the 0467 supply_kind column on
+// purchasing_bill_lines: PO matched lines default to GOODS, lines with no PO take the clerk's
+// choice (GOODS or SERVICES) or stay NULL (unmarked) when omitted, and the migration backfill
+// marks existing po_line_id IS NOT NULL rows GOODS while leaving po_line_id IS NULL rows NULL.
+func TestIntegration_Bill_SupplyKindAndMigrationBackfill(t *testing.T) {
+	h := newHarness(t)
+	product := h.newProduct(t, "supplykind")
+	po := h.orderedPO(t, product, 10, 1000)
+	lineID := po.Lines[0].ID
+
+	if _, err := h.svc.Receive(h.ctx, po.ID, ReceiveRequest{
+		Lines: []ReceiveLineParams{{POLineID: lineID, QtyBase: 10}},
+	}); err != nil {
+		t.Fatalf("receive: %v", err)
+	}
+
+	// A word outside GOODS and SERVICES is refused before anything is written.
+	if _, err := h.svc.CreateBill(h.ctx, CreateBillRequest{
+		BillNo: billNo("badkind"), POID: po.ID,
+		Lines: []BillLineParams{
+			{Description: "grading", QtyBilledBase: 1, UnitCostCents: 5000, SupplyKind: "FREIGHT"},
+		},
+	}); err == nil {
+		t.Fatal("an unknown supply_kind must be refused")
+	} else if got := statusOf(err); got != 400 {
+		t.Fatalf("status = %d, want 400 (%v)", got, err)
+	}
+
+	bill, err := h.svc.CreateBill(h.ctx, CreateBillRequest{
+		BillNo: billNo("supplykind"), POID: po.ID,
+		Lines: []BillLineParams{
+			{POLineID: lineID, QtyBilledBase: 10, UnitCostCents: 1000},
+			{Description: "extra pallets", QtyBilledBase: 1, UnitCostCents: 2000, SupplyKind: "goods"},
+			{Description: "subcontractor grading", QtyBilledBase: 1, UnitCostCents: 15000, SupplyKind: SupplyKindServices},
+			{Description: "unmarked charge", QtyBilledBase: 1, UnitCostCents: 3000},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create bill: %v", err)
+	}
+	if len(bill.Lines) != 4 {
+		t.Fatalf("got %d lines, want 4", len(bill.Lines))
+	}
+	if bill.Lines[0].SupplyKind != SupplyKindGoods {
+		t.Fatalf("line 1 (PO matched) supply_kind = %q, want %q", bill.Lines[0].SupplyKind, SupplyKindGoods)
+	}
+	if bill.Lines[1].SupplyKind != SupplyKindGoods {
+		t.Fatalf("line 2 (no PO, GOODS chosen) supply_kind = %q, want %q", bill.Lines[1].SupplyKind, SupplyKindGoods)
+	}
+	if bill.Lines[2].SupplyKind != SupplyKindServices {
+		t.Fatalf("line 3 (no PO, SERVICES chosen) supply_kind = %q, want %q", bill.Lines[2].SupplyKind, SupplyKindServices)
+	}
+	if bill.Lines[3].SupplyKind != "" {
+		t.Fatalf("line 4 (no PO, nothing chosen) supply_kind = %q, want empty (unmarked)", bill.Lines[3].SupplyKind)
+	}
+
+	// Prove the 0467 migration backfill directly: set both the PO matched line and the unmarked
+	// no-PO line to NULL, run 0467_bill_line_supply_kind.sql, and read the column back.
+	if _, err := h.pool.Exec(h.ctx,
+		`UPDATE purchasing_bill_lines SET supply_kind = NULL WHERE id IN ($1, $2)`,
+		bill.Lines[0].ID, bill.Lines[3].ID,
+	); err != nil {
+		t.Fatalf("reset supply_kind to NULL before backfill: %v", err)
+	}
+	migSQL, err := os.ReadFile("../../db/migrations/0467_bill_line_supply_kind.sql")
+	if err != nil {
+		t.Fatalf("read 0467 migration: %v", err)
+	}
+	if _, err := h.pool.Exec(h.ctx, string(migSQL)); err != nil {
+		t.Fatalf("apply 0467 migration: %v", err)
+	}
+
+	var poKind *string
+	if err := h.pool.QueryRow(h.ctx,
+		`SELECT supply_kind FROM purchasing_bill_lines WHERE id = $1`, bill.Lines[0].ID,
+	).Scan(&poKind); err != nil {
+		t.Fatalf("read backfilled PO line: %v", err)
+	}
+	if poKind == nil || *poKind != SupplyKindGoods {
+		t.Fatalf("after 0467 backfill, PO line supply_kind = %v, want %q", poKind, SupplyKindGoods)
+	}
+
+	var noPOKind *string
+	if err := h.pool.QueryRow(h.ctx,
+		`SELECT supply_kind FROM purchasing_bill_lines WHERE id = $1`, bill.Lines[3].ID,
+	).Scan(&noPOKind); err != nil {
+		t.Fatalf("read backfilled no-PO line: %v", err)
+	}
+	if noPOKind != nil {
+		t.Fatalf("after 0467 backfill, no-PO line supply_kind = %q, want NULL", *noPOKind)
 	}
 }

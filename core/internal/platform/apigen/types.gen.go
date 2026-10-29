@@ -7812,6 +7812,7 @@ type PurchasingBillLine struct {
 	MatchState         PurchasingMatchState `json:"match_state"`
 	QtyVarianceBase    float64              `json:"qty_variance_base"`
 	PriceVarianceCents int64                `json:"price_variance_cents"`
+	SupplyKind         *string              `json:"supply_kind,omitempty"`
 }
 
 type PurchasingInstalment struct {
@@ -7961,6 +7962,7 @@ type PurchasingBillLineRequest struct {
 	Description   string  `json:"description"`
 	QtyBilledBase float64 `json:"qty_billed_base"`
 	UnitCostCents int64   `json:"unit_cost_cents"`
+	SupplyKind    *string `json:"supply_kind,omitempty"`
 }
 
 type PurchasingInstalmentRequest struct {

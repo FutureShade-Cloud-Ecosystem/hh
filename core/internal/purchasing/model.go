@@ -49,6 +49,13 @@ const (
 	BillVoid   = "VOID"
 )
 
+// Bill line supply kinds for the CRA T5018 Statement of Contract Payments (migration 0467).
+// An empty string means the line is unmarked (NULL in purchasing_bill_lines.supply_kind).
+const (
+	SupplyKindGoods    = "GOODS"
+	SupplyKindServices = "SERVICES"
+)
+
 // The GL event type + line roles the bill journal resolves through (posting_rules, migration 0122). Never a
 // literal account code, a branch may point its variance somewhere else with one row.
 const (
@@ -269,6 +276,7 @@ type BillLine struct {
 	MatchState         string  `json:"match_state"`
 	QtyVarianceBase    float64 `json:"qty_variance_base"`
 	PriceVarianceCents int64   `json:"price_variance_cents"`
+	SupplyKind         string  `json:"supply_kind,omitempty"`
 }
 
 // Instalment is one scheduled payment against a bill.
@@ -401,6 +409,7 @@ type BillLineParams struct {
 	Description   string  `json:"description"`
 	QtyBilledBase float64 `json:"qty_billed_base"`
 	UnitCostCents int64   `json:"unit_cost_cents"`
+	SupplyKind    string  `json:"supply_kind,omitempty"`
 }
 
 // InstalmentParams is one scheduled payment. Σ amounts must equal the bill total.

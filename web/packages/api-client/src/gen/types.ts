@@ -6759,6 +6759,7 @@ export type PurchasingBillLine = {
   match_state: PurchasingMatchState;
   qty_variance_base: number;
   price_variance_cents: number;
+  supply_kind?: "GOODS" | "SERVICES";
 };
 export type PurchasingInstalment = {
   id: string;
@@ -6884,6 +6885,7 @@ export type PurchasingBillLineRequest = {
   description: string;
   qty_billed_base: number;
   unit_cost_cents: number;
+  supply_kind?: "GOODS" | "SERVICES";
 };
 export type PurchasingInstalmentRequest = {
   due_date: string;
