@@ -134,6 +134,17 @@ type TieSeams struct {
 	// payments PayBill recorded, plus the landed cost payables, as of an
 	// instant. It is the AP subledger the 2100 tie reads.
 	AP tieAPAging
+	// GLClock is the GL module's own as-of filing rule (the GL service's
+	// JournalEffectiveInstants). The 2100 naming reads the rule through it, so
+	// the filed period rule lives once, in gl, and never as the naming's own
+	// copy of its SQL (W3 item 6).
+	GLClock tieGLJournalClock
+}
+
+// tieGLJournalClock is the one read of the GL's as-of filing rule the ties
+// need: each named POSTED journal's effective instant. *gl.Service answers it.
+type tieGLJournalClock interface {
+	JournalEffectiveInstants(ctx context.Context, journalIDs []string) (map[string]time.Time, error)
 }
 
 // tieAPAging is the one purchasing read the AP tie needs.
@@ -270,43 +281,68 @@ func TieAPAgingToGL2100(ctx context.Context, seams TieSeams, m TieMonth) (TieRes
 }
 
 // tieAPOtherJournals names the posted journals on 2100, as of the month's end by
-// the GL's own effective instant (a journal filed late counts from the end of
-// its filed period, the rule gl/repository.go keeps),
-// that no vendor bill, PayBill payment or landed cost document posted: the
-// entries the Controller reconciles against the aging. It names at most ten.
+// the GL's own effective instant, that no vendor bill, PayBill payment or landed
+// cost document posted: the entries the Controller reconciles against the aging.
+// It names at most ten.
+//
+// The as-of cut is the GL module's own rule, read through the seam
+// (JournalEffectiveInstants, W3 item 6): a journal filed late counts from the end
+// of its filed period, the rule gl/repository.go keeps and the only copy of it.
+// The naming's own read carries `posted_at <= the month's end` as a pre-filter
+// only, because the GL's rule never counts a journal before its posted_at, so no
+// journal outside the read could name.
 func tieAPOtherJournals(ctx context.Context, seams TieSeams, m TieMonth) (string, error) {
+	if seams.GLClock == nil {
+		return "", fmt.Errorf("the 2100 journals read: no GL journal clock is wired for the naming")
+	}
 	rows, err := seams.Querier.Query(ctx, `
-		SELECT j.entry_no::text, j.source, COALESCE(j.memo, ''),
+		SELECT j.id::text, j.entry_no::text, j.source, COALESCE(j.memo, ''),
 		       SUM(COALESCE(l.credit_cents, 0) - COALESCE(l.debit_cents, 0))::bigint
 		  FROM gl_journal_lines l
 		  JOIN gl_journals j ON j.id = l.journal_id
 		  JOIN gl_accounts a ON a.id = l.account_id
-		  JOIN fiscal_periods fp ON fp.id = j.period_id
 		 WHERE a.code = '2100' AND j.status = 'POSTED'
-		   AND (CASE WHEN date_trunc('month', j.posted_at AT TIME ZONE 'America/Toronto') = make_date(fp.year, fp.month, 1)
-		             THEN j.posted_at
-		             ELSE (make_date(fp.year, fp.month, 1)::timestamp + INTERVAL '1 month') AT TIME ZONE 'America/Toronto' END) <= $1
+		   AND j.posted_at <= $1
 		   AND j.idempotency_key NOT LIKE 'purchasing.bill:%'
 		   AND j.idempotency_key NOT LIKE 'purchasing.bill.payment:%'
 		   AND j.idempotency_key NOT LIKE 'landedcost.%'
 		 GROUP BY j.id, j.entry_no, j.source, j.memo, j.posted_at
-		 ORDER BY j.posted_at, j.id
-		 LIMIT 11`, m.MonthEnd)
+		 ORDER BY j.posted_at, j.id`, m.MonthEnd)
 	if err != nil {
 		return "", fmt.Errorf("the 2100 journals read: %w", err)
 	}
 	defer rows.Close()
-	var named []string
+	type candidate struct {
+		id    string
+		words string
+	}
+	var candidates []candidate
+	var ids []string
 	for rows.Next() {
+		var c candidate
 		var entry, source, memo string
 		var credit int64
-		if err := rows.Scan(&entry, &source, &memo, &credit); err != nil {
+		if err := rows.Scan(&c.id, &entry, &source, &memo, &credit); err != nil {
 			return "", fmt.Errorf("the 2100 journals scan: %w", err)
 		}
-		named = append(named, fmt.Sprintf("journal %s (%s, %q, %s)", entry, source, memo, fw1Dollars(credit)))
+		c.words = fmt.Sprintf("journal %s (%s, %q, %s)", entry, source, memo, fw1Dollars(credit))
+		candidates = append(candidates, c)
+		ids = append(ids, c.id)
 	}
 	if err := rows.Err(); err != nil {
-		return "", err
+		return "", fmt.Errorf("the 2100 journals read: %w", err)
+	}
+	instants, err := seams.GLClock.JournalEffectiveInstants(ctx, ids)
+	if err != nil {
+		return "", fmt.Errorf("the 2100 journals read: the GL's filing rule: %w", err)
+	}
+	var named []string
+	for _, c := range candidates {
+		eff, ok := instants[c.id]
+		if !ok || eff.After(m.MonthEnd) {
+			continue
+		}
+		named = append(named, c.words)
 	}
 	if len(named) == 0 {
 		return "none", nil
