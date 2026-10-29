@@ -312,7 +312,7 @@ var migrationTopics = map[string]string{
 	"0435_payment_payouts":                 "payments",
 	"0447_credit_application_keys":         "billing",
 	"0451_till_counter_reason_codes":       "till",
-	"0454_customer_jobs":                   "customer",
+	"0460_customer_jobs":                   "customer",
 }
 
 // multiTopicSplits states the per-object attribution inside the five
@@ -415,7 +415,7 @@ var ownedObjects = map[string]string{
 	"customer_ar_notes":               "billing",           // 0405_customer_ar_workspace
 	"customer_category_overrides":     "pricing",           // 0023_pricing
 	"customer_contacts":               "customer",          // 0006_customers
-	"customer_jobs":                   "customer",          // 0454_customer_jobs
+	"customer_jobs":                   "customer",          // 0460_customer_jobs
 	"customer_quote":                  "customerquote",     // 0214_new_entities_and_pricing
 	"customer_sms_prefs":              "messagingprovider", // 0109_customer_sms_prefs
 	"customer_transactions":           "billing",           // 0009_invoices_ar

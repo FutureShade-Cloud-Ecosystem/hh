@@ -1,4 +1,4 @@
--- 0454: customer_jobs, the job account under a customer (wave 3 JA-1, decision 1.1 A).
+-- 0460: customer_jobs, the job account under a customer (wave 3 JA-1, decision 1.1 A).
 --
 -- A job is a site of work under one customer: it carries its own ship to address, PO reference and
 -- contact, and may carry its own credit limit and payment terms. A job shares the customer's limit

@@ -2,7 +2,7 @@ package customer
 
 // job_repository.go, the pgx persistence of the job accounts (wave 3 JA-1, decision 1.1 A).
 //
-// The table is this module's own (customer_jobs, migration 0454), so every statement here reads or
+// The table is this module's own (customer_jobs, migration 0460), so every statement here reads or
 // writes customer_jobs and nothing else: the branch fence is a predicate on the job's own
 // branch_id, the account's own limit and terms are read through this module's own customers table
 // when a rule needs them, and no other module's table is touched.
@@ -23,7 +23,7 @@ import (
 )
 
 // ErrDuplicateJobNo is returned when a job number is already taken under the same customer (the
-// customer_jobs_job_no_per_customer constraint, migration 0454). Exported so the handler maps it
+// customer_jobs_job_no_per_customer constraint, migration 0460). Exported so the handler maps it
 // to a 409 with clear words, the same shape ErrDuplicateAccountNo already has in this module.
 var ErrDuplicateJobNo = errors.New("customer: job number already in use for this customer")
 
@@ -126,7 +126,7 @@ func (r *Repository) InsertJob(ctx context.Context, w JobWrite) (Job, error) {
 		w.Fields.CreditLimitCents, w.Fields.TermsDays,
 		w.Fields.SubstantialPerformanceDate, w.Fields.LastSupplyDate, w.CreatedBy).Scan(&id)
 	if err != nil {
-		// The job number is unique PER CUSTOMER (migration 0454): a collision is the caller's
+		// The job number is unique PER CUSTOMER (migration 0460): a collision is the caller's
 		// mistake, not a server fault, so it is the sentinel the handler maps to a 409.
 		if isUniqueViolation(err) {
 			return Job{}, ErrDuplicateJobNo
