@@ -514,17 +514,28 @@ jobs:
         # The reset legs dump a world with pg_dump and restore it with psql into the
         # Postgres 16 service above, the way the finance box does on Postgres 16. A
         # runner whose default client is newer writes settings a 16 server does not
-        # know (pg_dump 17 writes SET transaction_timeout), so the job pins the
-        # client to the server's own major, and a runner upgrade cannot move it.
+        # know (pg_dump 17 writes SET transaction_timeout), and the runner's own apt
+        # may carry no 16 client at all. So pg_dump and psql run from the service's
+        # own pinned image (the same digest), through two small wrappers first on
+        # PATH: a runner upgrade cannot move them, and nothing is installed.
+        env:
+          PG16_IMAGE: mirror.gcr.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         run: |
           set -euo pipefail
-          if [ ! -x /usr/lib/postgresql/16/bin/pg_dump ]; then
-            sudo apt-get update -q
-            sudo apt-get install -y -q postgresql-client-16
-          fi
-          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
-          /usr/lib/postgresql/16/bin/pg_dump --version
-          /usr/lib/postgresql/16/bin/psql --version
+          bin="$RUNNER_TEMP/pg16bin"
+          mkdir -p "$bin"
+          for tool in pg_dump psql; do
+            cat > "$bin/$tool" <<WRAP
+          #!/bin/sh
+          exec docker run --rm -i --network host -v /tmp:/tmp -v /dev/shm:/dev/shm -v "$RUNNER_TEMP:$RUNNER_TEMP" \\
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE -e PGSSLMODE -e PGOPTIONS -e PGSERVICE -e PGSERVICEFILE \\
+            "$PG16_IMAGE" $tool "\$@"
+          WRAP
+            chmod +x "$bin/$tool"
+          done
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/pg_dump" --version
+          "$bin/psql" --version
       - name: Vet the integration tag shape
         # Repository-wide under the tag, which includes every package
         # the suite step below leaves out: one stray field in one
