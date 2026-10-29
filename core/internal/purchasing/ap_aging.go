@@ -224,6 +224,18 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 			if journalRef != bill.ID {
 				return BillDetail{}, conflict("purchasing: idempotency key already used for another bill's payment")
 			}
+			// The key's payment is on the books, so only its own amount replays:
+			// a press naming another amount is a client bug, and answering it
+			// with the first payment would read the bug as a successful payment
+			// it never made.
+			firstAmount, amtFound, amtErr := s.journalClock.JournalAmountByKey(ctx, glPaymentKeyPrefix+key)
+			if amtErr != nil {
+				return BillDetail{}, amtErr
+			}
+			if !amtFound || firstAmount != in.AmountCents {
+				return BillDetail{}, conflict("purchasing: idempotency key already used for a payment of %d cents on bill %s; the same key cannot pay %d cents (one key is one payment)",
+					firstAmount, bill.BillNo, in.AmountCents)
+			}
 			return s.GetBill(ctx, billID)
 		}
 	}
