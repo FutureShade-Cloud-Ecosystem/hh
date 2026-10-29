@@ -15,6 +15,7 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"go/build/constraint"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -146,9 +147,14 @@ func w25FindInventoryWriters(coreRoot string) ([]w25InventoryWriterSite, error) 
 // methods.
 func w25GoInventoryWriters(path, rel string) ([]w25InventoryWriterSite, error) {
 	fset := token.NewFileSet()
-	fileAST, err := parser.ParseFile(fset, path, nil, 0)
+	fileAST, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", rel, err)
+	}
+	// A file that builds only under the finworld tag (W2-1b's synthetic world harness) is never in a
+	// production binary, so it writes no inventory value the as of read meets.
+	if censusBuildsOnlyUnderTag(fileAST, "finworld") {
+		return nil, nil
 	}
 	var sites []w25InventoryWriterSite
 	for _, decl := range fileAST.Decls {
@@ -329,4 +335,26 @@ func w25TypeString(expr ast.Expr) string {
 		return w25TypeString(t.X) + "." + t.Sel.Name
 	}
 	return "?"
+}
+
+// censusBuildsOnlyUnderTag reports whether a file's build constraint holds only when tag is set: the
+// constraint is false with no tags and true with tag alone. The source censuses skip such a file,
+// since it is never in a production binary.
+func censusBuildsOnlyUnderTag(f *ast.File, tag string) bool {
+	for _, cg := range f.Comments {
+		if cg.Pos() >= f.Package {
+			break
+		}
+		for _, c := range cg.List {
+			if !constraint.IsGoBuild(c.Text) {
+				continue
+			}
+			expr, err := constraint.Parse(c.Text)
+			if err != nil {
+				return false
+			}
+			return !expr.Eval(func(string) bool { return false }) && expr.Eval(func(t string) bool { return t == tag })
+		}
+	}
+	return false
 }

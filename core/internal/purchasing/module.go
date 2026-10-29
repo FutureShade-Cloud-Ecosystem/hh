@@ -187,8 +187,11 @@ type Service struct {
 	landed LandedCoster
 	gl     GLPoster
 	rules  RuleResolver
-	audit  audit.Recorder
-	log    *slog.Logger
+	// apPayments supplies the settlement side of the AP subledger read (ap_subledger.go), satisfied by
+	// the composition over the GL; nil keeps OpenAPCentsAsOf refusing closed.
+	apPayments APPaymentsReader
+	audit      audit.Recorder
+	log        *slog.Logger
 	// callerFrom resolves the trusted, server-stamped acting staff member every branch-scoped read/mutation
 	// gates against. Mirrors landedcost.Service.callerFrom.
 	callerFrom func(context.Context) (identity.StaffContext, bool)
@@ -219,6 +222,8 @@ type Service struct {
 	poSender  POSender
 
 	warrantyCredit WarrantyCreditReader
+	landedPayables LandedCostPayableReader
+	journalClock   GLJournalClock
 
 	// now is the injected clock. The document stamps a printed-at time, and a document that read
 	// the wall clock directly could not be rendered identically twice in a test.
@@ -413,6 +418,10 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/purchasing/bills", g.RequireManager(h.staff(h.createBill)))
 	r.Handle("GET /api/v1/purchasing/bills/{id}", g.RequireStaff(h.staff(h.getBill)))
 	r.Handle("POST /api/v1/purchasing/bills/{id}/post", g.RequireManager(h.staff(h.postBill)))
+	// W2-9a round 2. Paying a bill moves money out the door: RequireManager like
+	// the post beside it, and the replay key rides the Idempotency-Key header.
+	r.Handle("POST /api/v1/purchasing/bills/{id}/payments", g.RequireManager(h.staff(h.payBill)))
+	r.Handle("GET /api/v1/purchasing/ap-aging", g.RequireManager(h.staff(h.apAging)))
 
 	r.Handle("GET /api/v1/purchasing/tolerance", g.RequireStaff(h.staff(h.getTolerance)))
 	r.Handle("PUT /api/v1/purchasing/tolerance", g.RequireAdmin(h.staff(h.setTolerance)))

@@ -55,7 +55,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: core <serve|worker|migrate|seed|finance-seed|finance-box-check|finance-box-state|finance-user|demoseed|assist-billing-export> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: core <serve|worker|migrate|seed|finance-seed|finance-box-check|finance-box-state|finance-user|demoseed|assist-billing-export|finance-check|finance-reset> [flags]")
 		os.Exit(2)
 	}
 	// Demo-only roles (the demo build's serve, the demo one-shots) answer
@@ -108,6 +108,16 @@ func main() {
 		}
 	case "finance-user":
 		if err := financeUserRole(os.Args[2:], os.Stdout, os.Stderr, os.Getenv); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "finance-check":
+		if err := financeCheckRole(os.Args[2:], os.Stdout, os.Stderr, os.Getenv); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "finance-reset":
+		if err := financeResetRole(os.Args[2:], os.Stdout, os.Stderr, os.Getenv); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

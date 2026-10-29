@@ -175,7 +175,7 @@ function messages(model: DeskModel): TemplateResult {
   `;
 }
 
-function markPill(mark: Mark): TemplateResult {
+export function markPill(mark: Mark): TemplateResult {
   return html`<span class="pill pill-${mark.tone} ${mark.dashed ? "pill-dashed" : ""}">${mark.word}</span>`;
 }
 
@@ -204,12 +204,11 @@ function segmented(label: string, items: readonly { id: string; word: string }[]
   `;
 }
 
-function tabsBar(model: DeskModel): TemplateResult {
+export function tabsBar(model: DeskModel): TemplateResult {
   const tab = (id: Tab, word: string): TemplateResult => html`<button type="button" class="tab" data-action="tab" data-tab="${id}" aria-current="${model.tab === id ? "true" : "false"}">${word}</button>`;
   return html`
     <nav class="tabs" aria-label="Money Desk views">
       ${tab("receivables", "Receivables")} ${tab("statements", "Statements")} ${tab("holds", "Credit holds")} ${tab("reminders", "Reminders")} ${tab("settings", "Settings")}
-      <span class="tab tab-later" aria-disabled="true">Payables ${later()}</span>
     </nav>
   `;
 }

@@ -82,11 +82,20 @@ export const glStyles = css`
   .gl-panel-head .gl-actions { margin-bottom: 0; }
   .gl-confirm > .gl-actions:last-child { margin-bottom: 0; }
   .gl-note { margin: var(--hh-s-8) 0 0; padding: var(--hh-s-12) var(--hh-s-16); border-radius: var(--hh-radius-control); background: color-mix(in srgb, var(--hh-accent) 18%, var(--hh-card)); color: var(--hh-text); font-size: 14px; }
+  /* The line that says what the chip counts are of stands on its own row under the chips: the chips
+     are a control row and the note is not a control. */
+  .gl-counts-note { flex: 1 0 100%; }
 
   /* Journals and the trial balance. */
   .gl-filters { display: flex; flex-wrap: wrap; gap: var(--hh-s-4); }
   .gl-filter { min-height: 36px; padding: 0 var(--hh-s-12); border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid var(--hh-control-line); font-size: 14px; }
   .gl-filter[aria-pressed="true"] { border-color: var(--hh-focus-ring); font-weight: 700; background: var(--hh-row-alt); }
+  /* The register's date range: the field's own input on the filter row's line, the apply press a pill
+     beside it at the field's own height so the row reads as one control. */
+  .gl-range { display: flex; flex-wrap: wrap; gap: var(--hh-s-12); align-items: end; margin: 0 0 var(--hh-s-12); }
+  .gl-range .gl-field { margin-bottom: 0; }
+  .gl-range input[type="date"] { width: auto; }
+  .gl-range .gl-filter { min-height: 44px; }
   .gl-link { white-space: nowrap; background: transparent; border: 0; padding: var(--hh-s-4) 0; min-height: 36px; color: var(--hh-accent-text); font-weight: 700; text-decoration: underline; }
   .gl-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--hh-s-4) var(--hh-s-24); margin: 0 0 var(--hh-s-12); }
   .gl-facts dt { color: var(--hh-text-dim); }
@@ -140,8 +149,15 @@ export const glStyles = css`
     .gl-grow { grid-column: auto; }
     .gl-tiles-three { grid-template-columns: minmax(0, 1fr); }
     .gl-tab { padding: 0 var(--hh-s-12); font-size: 14px; }
-    .gl-col-type, .gl-col-name { display: none; }
+    .gl-col-type, .gl-col-name, .gl-col-posted { display: none; }
     .gl-name-narrow { display: block; color: var(--hh-text-dim); font-size: 12px; }
+    /* The register's posted day, on its own line under the memo: the day stays whole on that line, so
+       it takes the desk's smallest step of type. The cell gives the day two pixels less than the day
+       needs, and a day that breaks after its comma is a day nobody reads. */
+    [data-posted-narrow] { font-size: 11px; }
+    /* The source word shares that line with the day, so it is the same size: the lesser fact is not
+       the larger line. */
+    .gl-row-detail.gl-source { font-size: 11px; }
     .gl-panel { padding: var(--hh-s-16); }
     .gl-panel table { font-size: 13px; }
     .gl-panel th, .gl-panel td { padding: var(--hh-s-8) var(--hh-s-4); }

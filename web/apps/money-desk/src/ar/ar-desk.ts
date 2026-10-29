@@ -41,6 +41,8 @@ import {
 } from "./ar-views.js";
 import type { WorkspaceTab } from "./ar-workspace.js";
 import { formatWorkspaceMoney } from "./ar-workspace.js";
+import { renderPayables } from "./ap-views.js";
+import type { PayablesBoardModel, PurchasingAPAgingPage } from "./ap-logic.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -76,6 +78,16 @@ export class ArDesk {
   #phase: "loading" | "ready" | "error" = "loading";
   #loadError = "";
   #tab: Tab = "receivables";
+
+  // The Payables board (src/ar/ap-views.ts): the open AP by payee, read from the purchasing
+  // route. It loads when the tab is opened, not with the desk, so the receivables desk is no
+  // slower for a screen nobody asked for. The day the books are read as of is the operator's
+  // to pick; the route answers the figures for that day.
+  #payablesState: "loading" | "ready" | "error" = "loading";
+  #payablesPage: PurchasingAPAgingPage | null = null;
+  #payablesError = "";
+  #payablesAsOf = "";
+  #payablesOpenKey: string | null = null;
   #landing: DeskModel["landing"] = null;
   #aging: DeskModel["aging"] = [];
   #rows: readonly BillingRegisterRow[] = [];
@@ -194,7 +206,10 @@ export class ArDesk {
     if (landing.ok) this.#landing = landing.value;
     if (aging.ok) this.#aging = aging.value.items;
     if (register.ok) this.#rows = register.value.items;
-    if (bounced.ok) this.#bounced = bounced.value.items;
+    // The core's bounced queue answers a null items on an empty queue (its shape
+    // census records the handler as tillListBouncedPayments), and a null here
+    // took the whole landing down with it. The model's list is an array.
+    if (bounced.ok) this.#bounced = bounced.value.items ?? [];
     if (holds.ok) this.#holds = holds.value.items;
     if (branches.ok) this.#branches = branches.value;
     this.#phase = "ready";
@@ -208,7 +223,7 @@ export class ArDesk {
     if (landing.ok) this.#landing = landing.value;
     if (aging.ok) this.#aging = aging.value.items;
     if (register.ok) this.#rows = register.value.items;
-    if (bounced.ok) this.#bounced = bounced.value.items;
+    if (bounced.ok) this.#bounced = bounced.value.items ?? [];
     if (holds.ok) this.#holds = holds.value.items;
     await this.#refreshSelection();
   }
@@ -269,6 +284,17 @@ export class ArDesk {
         return true;
       case "tab":
         void this.#goTab(attr("data-tab") as Tab);
+        return true;
+      case "payables-open":
+        this.#payablesOpenKey = attr("data-payee-id");
+        this.#host.repaint();
+        return true;
+      case "payables-back":
+        this.#payablesOpenKey = null;
+        this.#host.repaint();
+        return true;
+      case "payables-reload":
+        void this.#loadPayables();
         return true;
       case "card":
         this.#cardFilter = this.#cardFilter === attr("data-card-id") ? null : attr("data-card-id");
@@ -604,6 +630,15 @@ export class ArDesk {
   /** A change (the field is left): the amount reads back as money, formatted only. */
   change(control: Element): void {
     if (this.#office.change(control)) return;
+    if (control.getAttribute("data-field") === "payables-asof") {
+      // The day the books are read as of: the operator picks it and the board reads it again.
+      const day = (control as HTMLInputElement).value;
+      if (day === "") return;
+      this.#payablesAsOf = day;
+      this.#payablesOpenKey = null;
+      void this.#loadPayables();
+      return;
+    }
     if (control.getAttribute("data-field") === "place-hold-account") {
       const sel = (control as HTMLSelectElement).selectedOptions[0];
       const customerId = sel?.getAttribute("data-id") ?? (control as HTMLSelectElement).value;
@@ -627,6 +662,9 @@ export class ArDesk {
       this.#reveal = "";
       this.#host.reveal(selector);
     }
+    // The board's as of control shows the day the books were read as of, so the operator sees
+    // which day the figures are and can pick another one.
+    if (this.#payablesAsOf !== "") this.#host.setField("payables-asof", this.#payablesAsOf);
     const account = this.#account;
     if (account === null) return;
     if (this.#fillPending) {
@@ -663,6 +701,29 @@ export class ArDesk {
     if (tab === "reminders") await this.#office.openReminders();
     if (tab === "settings") await this.#office.openSettings();
     if (tab === "holds") await this.#office.openHolds();
+  }
+
+  /**
+   * The open AP, read from the purchasing route. The route answers the day the books are read
+   * as of: no day named means today's books. A refusal reads in words, the way every other read
+   * on this desk does, and the board keeps the last page it was given rather than showing a
+   * half drawn screen.
+   */
+  async #loadPayables(): Promise<void> {
+    this.#payablesState = "loading";
+    this.#host.repaint();
+    const got = await this.#api.apAging(this.#payablesAsOf === "" ? {} : { as_of: this.#payablesAsOf });
+    if (!got.ok) {
+      this.#payablesState = "error";
+      this.#payablesError = refusalWords("payables", got.error, got.status);
+      this.#host.repaint();
+      return;
+    }
+    this.#payablesState = "ready";
+    this.#payablesPage = got.value;
+    this.#payablesAsOf = got.value.as_of;
+    this.#payablesError = "";
+    this.#host.repaint();
   }
 
   async #loadPaid(): Promise<void> {
@@ -1508,6 +1569,38 @@ export class ArDesk {
     if (model.tab === "settings") return html`${renderSettings(model)}`;
     if (model.tab === "holds") return html`${renderHolds(model)}`;
     return html`${renderHome(model)}`;
+  }
+
+  /**
+   * The Payables board as the Money Desk's own area (src/ar/ap-views.ts). The board is the open
+   * AP read from the purchasing route; it stands beside the receivables desk in the area switch,
+   * so it is rendered on its own and carries no view nav of that desk's.
+   */
+  renderPayablesArea(): TemplateResult {
+    return renderPayables(this.#payablesModel());
+  }
+
+  /** Reads the board when its area opens, the way every other area reads its own screen. */
+  openPayables(): void {
+    void this.#loadPayables();
+  }
+
+  /** Leaving the board closes the payee whose open items were open. */
+  closePayables(): void {
+    if (this.#payablesOpenKey === null) return;
+    this.#payablesOpenKey = null;
+    this.#host.repaint();
+  }
+
+  /** The board's own state: the read, the day it is read as of, and the row open. */
+  #payablesModel(): PayablesBoardModel {
+    return {
+      state: this.#payablesState,
+      page: this.#payablesPage,
+      error: this.#payablesError,
+      asOf: this.#payablesAsOf,
+      openRowKey: this.#payablesOpenKey,
+    };
   }
 
   /**

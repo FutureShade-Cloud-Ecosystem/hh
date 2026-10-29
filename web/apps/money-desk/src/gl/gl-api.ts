@@ -41,9 +41,10 @@ import {
   type Result,
 } from "@hardscapehouse/api-client";
 import { serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { journalListParams, nextCursorOf, type JournalWindow } from "./gl-logic.js";
 
 /** A hard stop on cursor following, so a server that never ends cannot hold the desk. */
-const MAX_PAGES = 50;
+export const MAX_PAGES = 50;
 
 export class GlApi {
   readonly #client: ApiClient;
@@ -77,11 +78,16 @@ export class GlApi {
     return staffGl.glGetJournal(this.#client, id);
   }
 
-  async journals(): Promise<Result<GlJournal[]>> {
-    const answer = await staffGl.glListJournals(this.#client, { limit: 100 });
+  /**
+   * One page of the journal register, the newest hundred first, within the applied posted date range:
+   * the rows and the core's way to the page after them, "" when this page is the end. The caller
+   * follows that cursor one page at a time and appends; the desk's own reads stay the contract's pages.
+   */
+  async journalsPage(window: JournalWindow): Promise<Result<{ items: GlJournal[]; nextCursor: string }>> {
+    const answer = await staffGl.glListJournals(this.#client, journalListParams(window));
     if (!answer.ok) return answer;
     if (!Array.isArray(answer.value.items)) return { ok: false, error: "The journal register was not readable." };
-    return { ok: true, value: answer.value.items };
+    return { ok: true, value: { items: answer.value.items, nextCursor: nextCursorOf(answer.value) } };
   }
 
   /** The journals that carry a date from a closed month and landed in an open one: the Controller's late posted list. */

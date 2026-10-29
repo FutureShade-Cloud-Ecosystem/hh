@@ -296,6 +296,45 @@ case "$state" in
 esac
 
 # --------------------------------------------------------------------------
+# Step 5b: the world reset, once per world. When HH_FINANCE_RESET_CONFIRM is
+# set and non empty, the box resets to the world revision the environment
+# names: the reset itself records the restored world's sha256 and a matching
+# run answers already on world and changes nothing, so a boot on the same
+# revision costs no read and no drop. The variable must name this box's own
+# org (it must equal HH_WEB_ORG): a mismatch refuses here, before any fetch,
+# naming the variable and never a value. The world rides in the image: the
+# reset reads the single *.sql.gz in /srv/world/, so this step needs
+# HH_FINANCE_RESET_CONFIRM and HH_FINANCE_WORLD_SHA256 only, and no store,
+# address or fetch credential exists on the boot path at all. The reset runs
+# after the box kind check and before the finance user list is applied,
+# because the dump does not carry the box's people: a reset that ran after
+# the apply would wipe the people the boot just applied, so the apply below
+# lands on the restored world. Any failure refuses the boot, naming the
+# step, and the box does not serve. With the variable unset, none of this
+# runs and the boot is as it ever was.
+# --------------------------------------------------------------------------
+if [ -n "${HH_FINANCE_RESET_CONFIRM:-}" ]; then
+	if [ "$HH_FINANCE_RESET_CONFIRM" != "$HH_WEB_ORG" ]; then
+		fail "HH_FINANCE_RESET_CONFIRM does not name this box's org (it must equal HH_WEB_ORG): the world reset refuses before any fetch, and the box does not serve"
+	fi
+	if [ -z "${HH_FINANCE_WORLD_SHA256:-}" ]; then
+		fail "HH_FINANCE_WORLD_SHA256 is not set: the world reset needs the world revision's digest to check the dump before anything is dropped, and the entrypoint refuses to start the reset without it"
+	fi
+	log "the world reset runs (HH_FINANCE_RESET_CONFIRM is set): the box resets to the world revision the environment names, once per world"
+	if ! core finance-reset -once -confirm "$HH_FINANCE_RESET_CONFIRM"; then
+		fail "the world reset (core finance-reset) failed: the box refuses to boot and does not serve"
+	fi
+	# The read only check runs after the reset or the skip: every tie line
+	# lands in the log with the finance-check prefix. A FAIL is logged, not
+	# fatal: the check reads the world the reset just put back, the box still
+	# serves, and the principal can read the lines. The check's own summary
+	# already carries the word, so a line that starts with it is normalized
+	# to one prefix instead of two.
+	log "the finance check runs: every tie line is logged with the finance-check prefix, and a FAIL is logged, not fatal, so the box still serves"
+	core finance-check 2>&1 | sed -e 's/^finance-check: //' -e 's/^/finance-check: /' || true
+fi
+
+# --------------------------------------------------------------------------
 # Step 5a: the box's finance users, applied from the list the environment
 # carries. Every entry is provisioned and every finance person the list left
 # out is revoked, in one transaction, so the box is the list. The apply is
