@@ -21,10 +21,12 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
@@ -476,7 +478,11 @@ func TestIntegration_CreditMemoRound_AnOverThresholdCreditOfAPaidInvoiceIsApprov
 func TestIntegration_CreditMemoRound_TheApprovalReChecksTheCapUnderTheLock(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
-	tag := ns(t)
+	// FLAKE-13: the tag's clock digits once read 926427256, and the refusal words embed the
+	// invoice number, so the guard below saw 42725 in a correct refusal. The pin keeps that
+	// shape always present, so the guard must classify by the error's own kind, never by
+	// substring luck.
+	tag := ns(t) + "-42725"
 	cust := seedCustomer(t, pool, tag)
 	inv := seedInvoice(t, pool, cust, tag, invSpec{
 		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 13_000,
@@ -515,7 +521,11 @@ func TestIntegration_CreditMemoRound_TheApprovalReChecksTheCapUnderTheLock(t *te
 		_ = ftx.Rollback(ctx)
 		t.Fatal("fw1-12a core red: the approval approved a credit whose room was taken while it waited")
 	}
-	if strings.Contains(err.Error(), "operator is not unique") || strings.Contains(err.Error(), "42725") {
+	// FLAKE-13: the SQL state is read from the error's own kind, never from the words: a
+	// correct cap refusal quotes the invoice number, and the tag's clock digits once read
+	// 926427256, which the old bare substring check took for SQLSTATE 42725.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && (pgErr.Code == "42725" || strings.Contains(pgErr.Message, "operator is not unique")) {
 		_ = ftx.Rollback(ctx)
 		t.Fatalf("fw1-12a core red: the re-check answered the approval's broken SQL (%v), want the cap's own words", err)
 	}
