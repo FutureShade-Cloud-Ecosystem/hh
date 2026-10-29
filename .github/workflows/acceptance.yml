@@ -346,8 +346,11 @@ jobs:
       # (the config and box.sh compute the same pair), so no fixed numbers
       # are needed on a runner of its own.
       MDREAL_IMAGE: hh-accept-finance
-      MDREAL_STATE: ${{ runner.temp }}/mdreal-state
+      # MDREAL_STATE is set in the first step: the runner context (runner.temp) is not
+      # available in a job's env, and naming it there made this whole workflow file invalid.
     steps:
+      - name: Name the run's state directory
+        run: echo "MDREAL_STATE=$RUNNER_TEMP/mdreal-state" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@v4
       - name: Set up Node
