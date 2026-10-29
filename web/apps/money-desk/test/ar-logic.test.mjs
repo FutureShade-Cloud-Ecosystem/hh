@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, asOfDay, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, offeredChips, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pastDueMarkWord, pickCeilingWords, refusalWords, relativeDay, reopenedInvoiceNos, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, dayWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, offeredChips, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pastDueMarkWord, pickCeilingWords, refusalWords, relativeDay, reopenedInvoiceNos, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
 import { houseDay, resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
@@ -412,13 +412,14 @@ test("a bounced payment's reopened list names each invoice once, from the applic
   assert.deepEqual(reopenedInvoiceNos([]), []);
 });
 
-test("the day reads the way the as of control reads it, never as the ISO digits", () => {
-  // The picker shows M/D/YYYY, so a date beside it reads the same way.
-  assert.equal(asOfDay("2026-10-28"), "10/28/2026");
-  assert.equal(asOfDay("2026-01-05"), "1/5/2026");
-  assert.equal(asOfDay("2026-12-31"), "12/31/2026");
+test("a day reads in the desk's one vocabulary, never as the ISO digits", () => {
+  // Every date a person reads in the desk wears these words: the GL ledger's and the bank rec's
+  // alike, so one day is written one way on every screen.
+  assert.equal(dayWords("2026-10-28"), "Oct 28, 2026");
+  assert.equal(dayWords("2026-01-05"), "Jan 5, 2026");
+  assert.equal(dayWords("2026-12-31"), "Dec 31, 2026");
   // A day that is not the ISO shape is left alone rather than mangled.
-  assert.equal(asOfDay("not a day"), "not a day");
+  assert.equal(dayWords("not a day"), "not a day");
 });
 
 test("the past due word is the register's own, whatever the day count", () => {

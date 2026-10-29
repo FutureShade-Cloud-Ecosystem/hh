@@ -10,6 +10,7 @@
 //
 // Money is the server's: the board reads the figures the route sends and never adds them up, the
 // same rule the receivables slice holds (test/no-app-money.test.mjs).
+import { formatMoney } from "./ar-money.js";
 
 /** One open AP obligation on a row: a vendor bill, or a landed cost payable to a carrier or broker. */
 export type PurchasingAPAgingItem = {
@@ -78,6 +79,64 @@ export interface PayablesBoardModel {
   readonly asOf: string;
   /** The row whose open items are open, or nothing. */
   readonly openRowKey: string | null;
+  /** The bill whose Pay form is open, or nothing. */
+  readonly pay: PayBillForm | null;
+  /** The role the desk is signed in as: it decides whether the Pay control is on the row. */
+  readonly roleCode: string;
+  /** True while a payment is on its way: the press waits, and the form says so. */
+  readonly busy: boolean;
+}
+
+/**
+ * The Pay form on one open vendor bill: the amount, the day it was paid, the note, and the key the
+ * press carries. The key is minted when the form opens and is sent again on every retry, so a
+ * double press pays once and a lost answer is retried under the same key.
+ */
+export interface PayBillForm {
+  /** The bill's own id: the route's path carries it. */
+  readonly billId: string;
+  /** The bill's own number, so the form says which bill it is paying. */
+  readonly billNo: string;
+  /** What the bill has open: the cap on the amount. */
+  readonly openCents: number;
+  /** The amount as the person typed it, read back as money when the field is left. */
+  readonly amountText: string;
+  /** The day the payment was made: the house day by default. */
+  readonly paidOn: string;
+  /** The note, free text, for the file. */
+  readonly note: string;
+  /** The press's key: one per open form, sent again on every retry. */
+  readonly key: string;
+  /** What the server said, in words, when it refused. */
+  readonly error: string;
+}
+
+/**
+ * The roles that may pay a vendor bill: the money desk at Manage and above (the default role
+ * configuration matrix, the money desk surface).
+ *
+ * The route is the core's own gate, a manage level route on the money desk, so the Payables and
+ * Receivables role (at work on that surface) is turned away by it. The server re-refuses: this
+ * only hides the control from a role the route would refuse, the same posture the desk takes
+ * with the credit hold's lift.
+ */
+export function canPayBills(roleCode: string): boolean {
+  return roleCode === "financial_controller" || roleCode === "general_manager";
+}
+
+/** What the form says about the bill it is paying: which bill, to whom, and what is open on it. */
+export function payTargetWords(billNo: string, payee: string, openCents: number): string {
+  return `Paying ${billNo} to ${payee}. The open amount is ${formatMoney(openCents)}.`;
+}
+
+/** The words when the amount asked for is more than the bill has open. */
+export function payOverOpenWords(openCents: number): string {
+  return `The amount cannot be more than the open amount, ${formatMoney(openCents)}.`;
+}
+
+/** The words when the amount box holds nothing the desk can read as money. */
+export function payAmountWords(): string {
+  return "The amount must be a number of dollars, such as 250.00.";
 }
 
 /**

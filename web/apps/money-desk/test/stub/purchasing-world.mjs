@@ -78,10 +78,26 @@ function bandOf(daysOverdue) {
   return "DAYS_90_PLUS";
 }
 
-export function createPurchasingWorld({ dayOffset }) {
+export function createPurchasingWorld({ dayOffset, houseDay }) {
   // The documents the world holds. The empty scenario holds none, so the board reads the
   // shape of a dealer who owes nothing on that day.
   let documents = DOCUMENTS;
+  // The payments the route recorded, by bill: what was paid, on what day, and the note it went
+  // with. A payment lands on its own day, so a bill paid after the day the books are read as of
+  // is still open on that day.
+  const payments = new Map();
+  // The key every press carried: one key is one payment across every bill, so a key spent on one
+  // bill is a conflict on another, and a key spent on this bill is a replay that writes nothing.
+  const keys = new Map();
+
+  /** What has been paid against a document on the day the books are read as of. */
+  function paidBy(doc, asOf) {
+    let paid = doc.paid === undefined || dayOffset(doc.paid_on) > asOf ? 0 : doc.paid;
+    for (const payment of payments.get(doc.n) ?? []) {
+      if (payment.on <= asOf) paid += payment.amount;
+    }
+    return paid;
+  }
 
   /** The open AP as of a calendar day: one row per payee, its bands, its total and its items. */
   function apAging(asOf) {
@@ -114,7 +130,7 @@ export function createPurchasingWorld({ dayOffset }) {
         if (dayOffset(doc.issued) > asOf) continue;
         // A payment after the day the books are read as of has not happened yet on that day,
         // so the bill is still open there.
-        const paid = doc.paid === undefined || dayOffset(doc.paid_on) > asOf ? 0 : doc.paid;
+        const paid = paidBy(doc, asOf);
         const open = doc.total - paid;
         if (open <= 0) continue;
         const landed = doc.kind === "LANDED_COST";
@@ -165,10 +181,76 @@ export function createPurchasingWorld({ dayOffset }) {
     return { as_of: asOf, ...bands, total_cents: total, items, next_cursor: null };
   }
 
+  /**
+   * One payment against one bill: the core's POST /api/v1/purchasing/bills/{id}/payments.
+   *
+   * The key is judged first, the way the core judges it: a key already spent on this bill is a
+   * replay, which answers the first payment and writes nothing, and a key spent on another bill is
+   * a conflict. Then the amount: it must be positive, and it must not be more than the bill has
+   * open. The refusal words are the core's own sentences.
+   */
+  function payBill(id, body, key) {
+    if (key === "") return { status: 400, error: "purchasing: idempotency_key is required on a bill payment (one key per press)" };
+    const amount = Number(body.amount_cents);
+    if (!Number.isInteger(amount) || amount <= 0) return { status: 400, error: "purchasing: payment amount_cents must be positive" };
+    const spent = keys.get(key);
+    if (spent !== undefined) {
+      if (spent.id !== id) return { status: 409, error: "purchasing: idempotency key already used for another bill's payment" };
+      // A replay of this bill's own payment: the first outcome, and nothing written.
+      return { status: 200, body: billDetail(spent.id) };
+    }
+    const doc = documents.find((d) => billId(d.n) === id);
+    if (doc === undefined) return { status: 404, error: "purchasing: bill not found" };
+    const open = doc.total - paidBy(doc, dayOffset(0));
+    if (amount > open) return { status: 409, error: `purchasing: payment of ${amount} cents exceeds open balance ${open} cents on bill ${doc.doc}` };
+    // The payment lands on the day it carries: the instant's own day in the house zone.
+    const on = body.paid_at === undefined || body.paid_at === "" ? dayOffset(0) : houseDay(new Date(body.paid_at));
+    payments.set(doc.n, [...(payments.get(doc.n) ?? []), { amount, on, note: body.note ?? "" }]);
+    keys.set(key, { id, amount });
+    return { status: 200, body: billDetail(id) };
+  }
+
+  /** The bill as the route answers it: the header, its lines and the instalments it carries. */
+  function billDetail(id) {
+    const doc = documents.find((d) => billId(d.n) === id);
+    const payee = PAYEES.find((p) => p.n === doc.payee);
+    const instalments = (payments.get(doc.n) ?? []).map((payment, index) => ({
+      id: `${billId(doc.n)}-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      seq: index + 1,
+      due_date: dayOffset(doc.due),
+      amount_cents: payment.amount,
+      status: "PAID",
+      note: payment.note,
+    }));
+    return {
+      id: billId(doc.n),
+      bill_no: doc.doc,
+      vendor_id: payeeId(doc.payee),
+      vendor_name: payee.name,
+      branch_id: branchId(),
+      po_id: "",
+      po_no: "",
+      status: "POSTED",
+      match_state: "MATCHED",
+      bill_date: dayOffset(doc.issued),
+      due_date: dayOffset(doc.due),
+      subtotal_cents: doc.total,
+      tax_cents: 0,
+      total_cents: doc.total,
+      currency: "CAD",
+      fx_rate: 1,
+      created_at: `${dayOffset(doc.issued)}T12:00:00Z`,
+      lines: [],
+      instalments,
+    };
+  }
+
   /** Puts the world back to the start; the empty scenario holds no documents at all. */
   function reset(kind = "full") {
     documents = kind === "empty" ? [] : DOCUMENTS;
+    payments.clear();
+    keys.clear();
   }
 
-  return { apAging, reset };
+  return { apAging, payBill, reset };
 }

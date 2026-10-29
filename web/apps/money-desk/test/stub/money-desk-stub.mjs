@@ -17,7 +17,7 @@ import { createTaxWorld } from "./tax-world.mjs";
 import { createLienWorld } from "./lien-world.mjs";
 import { createAssistWorld } from "./assist-world.mjs";
 import { createPurchasingWorld } from "./purchasing-world.mjs";
-import { houseDayOffset } from "../house-day.mjs";
+import { houseDay, houseDayOffset } from "../house-day.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
@@ -33,7 +33,7 @@ const lienWorld = createLienWorld();
 // The TanyAI panel's staff assist routes (PANEL-API r1), answered by its own module.
 const assistWorld = createAssistWorld();
 // The purchasing slice's world (the open AP the Payables board reads), answered by its own module.
-const purchasingWorld = createPurchasingWorld({ dayOffset: (n) => dayOffset(n) });
+const purchasingWorld = createPurchasingWorld({ dayOffset: (n) => dayOffset(n), houseDay: (at) => houseDay(at) });
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
@@ -123,6 +123,35 @@ function isController(req) {
   } catch {
     return false;
   }
+}
+
+// The caller the token names, read the way the walled moves read it: the token's sub carries the
+// user's id, and the user record carries the role the core's gates judge.
+function callerOf(req) {
+  const token = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
+    for (const user of Object.values(USERS)) {
+      if (user.user_id === payload.sub) return user;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+// The roles whose money desk level reaches Manage (the default role configuration matrix, the
+// money desk row). The Payables and Receivables role is at Work on that surface, so a manage
+// level route on the money desk turns it away, the way the core's role gate does.
+const MONEY_DESK_MANAGERS = new Set(["financial_controller", "general_manager"]);
+
+// The core's own gate for a manage level route on the money desk: the caller is a manager (tier
+// one or two) and the role's own money desk level reaches Manage.
+function managesMoneyDesk(req) {
+  const caller = callerOf(req);
+  if (caller === null) return false;
+  if (caller.tier < 1 || caller.tier > 2) return false;
+  return MONEY_DESK_MANAGERS.has(caller.role_code);
 }
 
 // A token with the shape the app reads an expiry from: three parts, the
@@ -1183,6 +1212,22 @@ async function handle(req, res) {
     const asOf = q.get("as_of") ?? dayOffset(0);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return refuse(res, 400, "as_of must be YYYY-MM-DD");
     return send(res, 200, purchasingWorld.apAging(asOf));
+  }
+  // One payment against a vendor bill (the core's POST /api/v1/purchasing/bills/{id}/payments).
+  // The key rides the Idempotency-Key header, one key per press: a key already spent on this bill
+  // is a replay that writes nothing, a key spent on another bill is a conflict, and a press with
+  // no key at all is refused. The role gate is the core's own: a manage level route on the money
+  // desk, so the Payables and Receivables role is turned away by it.
+  if (method === "POST" && /^\/api\/v1\/purchasing\/bills\/[^/]+\/payments$/.test(path)) {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    if (!managesMoneyDesk(req)) return refuse(res, 403, "Forbidden");
+    const body = await readBody(req);
+    if (body === null) return refuse(res, 400, "invalid_json");
+    const id = path.split("/")[5] ?? "";
+    const key = String(req.headers["idempotency-key"] ?? "").trim();
+    const answer = purchasingWorld.payBill(id, body, key);
+    if (answer.status === 200) return send(res, 200, answer.body);
+    return refuse(res, answer.status, answer.error);
   }
   if (method === "GET" && path === "/api/v1/billing/ar/worklist") {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");

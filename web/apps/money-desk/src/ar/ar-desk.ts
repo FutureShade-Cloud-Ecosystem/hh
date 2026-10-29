@@ -14,8 +14,8 @@ import { html, type TemplateResult } from "lit";
 import type { BillingCustomerWorkspace, BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
-import { canLiftHolds, creditCheck, creditWords, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
-import { formatMoney, parseAmountToCents } from "./ar-money.js";
+import { canLiftHolds, creditCheck, creditWords, dayInstant, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
+import { centsToField, formatMoney, parseAmountToCents } from "./ar-money.js";
 import { OfficeDesk, type OfficeHost } from "./office-desk.js";
 import { AttemptKeys, reminderRunWords, sweepWords } from "./office-logic.js";
 import {
@@ -42,7 +42,8 @@ import {
 import type { WorkspaceTab } from "./ar-workspace.js";
 import { formatWorkspaceMoney } from "./ar-workspace.js";
 import { renderPayables } from "./ap-views.js";
-import type { PayablesBoardModel, PurchasingAPAgingPage } from "./ap-logic.js";
+import { payAmountWords, payOverOpenWords, type PayablesBoardModel, type PayBillForm, type PurchasingAPAgingItem, type PurchasingAPAgingPage } from "./ap-logic.js";
+import { houseDay, houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -88,6 +89,16 @@ export class ArDesk {
   #payablesError = "";
   #payablesAsOf = "";
   #payablesOpenKey: string | null = null;
+  // The number of the newest read of the open AP: only that read may answer, so a slow answer for
+  // an earlier day never replaces the newer pick.
+  #payablesLoads = 0;
+  // The Pay form on one open vendor bill: the amount, the day, the note, and the key the press
+  // carries. The key is minted when the form opens and sent again on every retry, so a double
+  // press pays once and a retry after a lost answer is judged against the first press.
+  #pay: PayBillForm | null = null;
+  #payBusy = false;
+  /** The form's fields are filled once, when it opens: after that the person types in them. */
+  #payFillPending = false;
   #landing: DeskModel["landing"] = null;
   #aging: DeskModel["aging"] = [];
   #rows: readonly BillingRegisterRow[] = [];
@@ -284,14 +295,44 @@ export class ArDesk {
         return true;
       case "payables-open":
         this.#payablesOpenKey = attr("data-payee-id");
+        // Another payee's open items: the Pay form belonged to the one that was open.
+        this.#pay = null;
         this.#host.repaint();
         return true;
       case "payables-back":
         this.#payablesOpenKey = null;
+        this.#pay = null;
         this.#host.repaint();
         return true;
       case "payables-reload":
         void this.#loadPayables();
+        return true;
+      case "payables-pay": {
+        // The Pay form opens on one open bill: the amount it has open, the house day, and the key
+        // this press will carry. A bill the board no longer holds opens no form.
+        const item = this.#payablesItem(attr("data-bill-id"));
+        if (item === null) return true;
+        this.#pay = {
+          billId: item.id,
+          billNo: item.ref_no,
+          openCents: item.open_cents,
+          amountText: centsToField(item.open_cents),
+          paidOn: houseDay(),
+          note: "",
+          key: newKey(),
+          error: "",
+        };
+        this.#payFillPending = true;
+        this.#clearMessages();
+        this.#host.repaint();
+        return true;
+      }
+      case "payables-pay-cancel":
+        this.#pay = null;
+        this.#host.repaint();
+        return true;
+      case "payables-pay-send":
+        void this.#sendPayment();
         return true;
       case "card":
         this.#cardFilter = this.#cardFilter === attr("data-card-id") ? null : attr("data-card-id");
@@ -662,6 +703,13 @@ export class ArDesk {
     // The board's as of control shows the day the books were read as of, so the operator sees
     // which day the figures are and can pick another one.
     if (this.#payablesAsOf !== "") this.#host.setField("payables-asof", this.#payablesAsOf);
+    // The Pay form's fields are filled once, when it opens: the amount it has open and the house
+    // day. After that the person types in them, so nothing is written over their typing.
+    if (this.#payFillPending && this.#pay !== null) {
+      this.#payFillPending = false;
+      this.#host.setField("pay-amount", this.#pay.amountText);
+      this.#host.setField("pay-date", this.#pay.paidOn);
+    }
     const account = this.#account;
     if (account === null) return;
     if (this.#fillPending) {
@@ -705,11 +753,16 @@ export class ArDesk {
    * as of: no day named means today's books. A refusal reads in words, the way every other read
    * on this desk does, and the board keeps the last page it was given rather than showing a
    * half drawn screen.
+   *
+   * Each read carries its own number, and only the newest one may answer: a slow answer for an
+   * earlier day never replaces the newer pick the operator made while it was on the way.
    */
   async #loadPayables(): Promise<void> {
+    const load = ++this.#payablesLoads;
     this.#payablesState = "loading";
     this.#host.repaint();
     const got = await this.#api.apAging(this.#payablesAsOf === "" ? {} : { as_of: this.#payablesAsOf });
+    if (load !== this.#payablesLoads) return;
     if (!got.ok) {
       this.#payablesState = "error";
       this.#payablesError = refusalWords("payables", got.error, got.status);
@@ -721,6 +774,63 @@ export class ArDesk {
     this.#payablesAsOf = got.value.as_of;
     this.#payablesError = "";
     this.#host.repaint();
+  }
+
+  /**
+   * The open bill the Pay form is about: the one the board holds with that id, or nothing. The
+   * board is the only record of what is open, so the form never carries a figure of its own.
+   */
+  #payablesItem(billId: string): PurchasingAPAgingItem | null {
+    const page = this.#payablesPage;
+    if (page === null) return null;
+    for (const row of page.items) {
+      for (const item of row.open_items) {
+        if (item.id === billId) return item;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * One payment against one open vendor bill.
+   *
+   * The amount is the person's, read from the form, and it never goes above what the bill has
+   * open: the desk says so in words rather than sending an ask the route would refuse. The day is
+   * the person's too, and it goes on the wire as the dealer's own house day. The key is the form's
+   * own, sent again on every retry, so a double press pays once.
+   *
+   * A refusal keeps the form and says the server's words. A payment that lands closes the form and
+   * reads the books again: the board and the payee carry the server's figures from then on.
+   */
+  async #sendPayment(): Promise<void> {
+    const form = this.#pay;
+    if (form === null || this.#payBusy) return;
+    const cents = parseAmountToCents(this.#host.field("pay-amount"));
+    if (cents === null) {
+      this.#pay = { ...form, error: payAmountWords() };
+      this.#host.repaint();
+      return;
+    }
+    if (cents > form.openCents) {
+      this.#pay = { ...form, error: payOverOpenWords(form.openCents) };
+      this.#host.repaint();
+      return;
+    }
+    const paidOn = this.#host.field("pay-date");
+    const day = paidOn === "" ? houseDay() : paidOn;
+    const note = this.#host.field("pay-note");
+    this.#payBusy = true;
+    this.#host.repaint();
+    const got = await this.#api.payBill(form.billId, { amountCents: cents, paidAt: dayInstant(day, houseZone()), note }, form.key);
+    this.#payBusy = false;
+    if (!got.ok) {
+      this.#pay = { ...form, error: refusalWords("pay", got.error, got.status) };
+      this.#host.repaint();
+      return;
+    }
+    this.#pay = null;
+    this.#host.repaint();
+    await this.#loadPayables();
   }
 
   async #loadPaid(): Promise<void> {
@@ -1582,14 +1692,15 @@ export class ArDesk {
     void this.#loadPayables();
   }
 
-  /** Leaving the board closes the payee whose open items were open. */
+  /** Leaving the board closes the payee whose open items were open, and the form that was on it. */
   closePayables(): void {
+    this.#pay = null;
     if (this.#payablesOpenKey === null) return;
     this.#payablesOpenKey = null;
     this.#host.repaint();
   }
 
-  /** The board's own state: the read, the day it is read as of, and the row open. */
+  /** The board's own state: the read, the day it is read as of, the row open, and the Pay form. */
   #payablesModel(): PayablesBoardModel {
     return {
       state: this.#payablesState,
@@ -1597,6 +1708,9 @@ export class ArDesk {
       error: this.#payablesError,
       asOf: this.#payablesAsOf,
       openRowKey: this.#payablesOpenKey,
+      pay: this.#pay,
+      roleCode: this.#who.roleCode,
+      busy: this.#payBusy,
     };
   }
 

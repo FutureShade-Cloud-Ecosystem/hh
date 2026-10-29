@@ -123,6 +123,7 @@ const WHO_MAY: Record<string, string> = {
     "Releasing a credit hold is for the Financial Controller or the General Manager. Payables and Receivables can see the hold, chase the account and record the payment that clears it.",
   "approve-journal":
     "Approving a parked journal is for the Financial Controller or the General Manager. Payables and Receivables can see what is waiting but cannot decide it.",
+  pay: "Paying a vendor bill is for the Financial Controller or the General Manager. Payables and Receivables reads the open AP and the bills that are owed.",
 };
 
 const SERVER_PREFIX = /^[a-z][a-z0-9]*: /;
@@ -406,15 +407,43 @@ export function daysPastDue(date: string, asOf: string): number {
   return Math.max(0, dayNumber(asOf) - dayNumber(date));
 }
 
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
 /**
- * The day as the as of control shows it: the picker's own format, never the ISO digits the
- * route sends. A date that sits beside the control reads the way the control reads, so the
- * operator sees one format for one day.
+ * A day in the desk's one vocabulary: "Oct 28, 2026". Every date a person reads in the desk wears
+ * these words, the GL ledger's and the bank rec's alike (gl-logic.ts, bankrec-logic.ts), so one
+ * day is written one way on every screen. The core sends a date as its own digits; the day is
+ * read from those digits, never through a zone.
  */
-export function asOfDay(day: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
-  if (m === null) return day;
-  return `${Number(m[2])}/${Number(m[3])}/${m[1]}`;
+export function dayWords(value: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  const month = m === null ? undefined : MONTHS_SHORT[Number(m[2]) - 1];
+  if (m === null || month === undefined) return value;
+  return `${month} ${Number(m[3])}, ${m[1]}`;
+}
+
+/**
+ * The offset the dealer's zone is on at a day, in the wire's own "-04:00" shape. The zone is the
+ * dealer's own (the served config, the Ontario default until it is served) and the offset is read
+ * through Intl, never guessed from the machine's clock.
+ */
+function zoneOffset(zone: string, day: string): string {
+  const at = new Date(`${day}T12:00:00Z`);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" }).formatToParts(at);
+  const name = parts.find((part) => part.type === "timeZoneName")?.value ?? "GMT+00:00";
+  const match = /GMT([+-]\d{2})(?::(\d{2}))?/.exec(name);
+  if (match === null) return "+00:00";
+  return `${match[1] ?? "+00"}:${match[2] ?? "00"}`;
+}
+
+/**
+ * A calendar day as the instant a write carries: the day's own noon in the dealer's zone, so the
+ * write lands on the day the person picked, in the books and on the aging, and on no other day. A
+ * day is the dealer's house day, never UTC's: the same day at UTC midnight is the evening before
+ * in the dealer's own books.
+ */
+export function dayInstant(day: string, zone: string): string {
+  return `${day}T12:00:00${zoneOffset(zone, day)}`;
 }
 
 /**
