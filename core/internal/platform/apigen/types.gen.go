@@ -8982,6 +8982,51 @@ type ReportingSavedViewPage struct {
 	Limit      *int32               `json:"limit,omitempty"`
 }
 
+type ReportingDatasetColumn struct {
+	Name   string `json:"name"`
+	Label  string `json:"label"`
+	Kind   string `json:"kind"`
+	Filter bool   `json:"filter"`
+	Group  bool   `json:"group"`
+	Sum    bool   `json:"sum"`
+}
+
+type ReportingDataset struct {
+	Set         string                   `json:"set"`
+	Label       string                   `json:"label"`
+	Description string                   `json:"description"`
+	AsOf        bool                     `json:"as_of"`
+	Columns     []ReportingDatasetColumn `json:"columns"`
+}
+
+type ReportingDatasetCatalog struct {
+	Items []ReportingDataset `json:"items"`
+}
+
+type ReportingDatasetFilter struct {
+	Column string `json:"column"`
+	Op     string `json:"op"`
+	Values []any  `json:"values"`
+}
+
+type ReportingDatasetQuery struct {
+	Columns []string                  `json:"columns"`
+	Filters *[]ReportingDatasetFilter `json:"filters,omitempty"`
+	GroupBy *[]string                 `json:"group_by,omitempty"`
+	AsOf    *string                   `json:"as_of,omitempty"`
+}
+
+type ReportingDatasetResult struct {
+	Set      string                   `json:"set"`
+	Label    string                   `json:"label"`
+	Columns  []ReportingDatasetColumn `json:"columns"`
+	Rows     [][]any                  `json:"rows"`
+	RowCount int32                    `json:"row_count"`
+	Totals   map[string]any           `json:"totals"`
+	Query    ReportingDatasetQuery    `json:"query"`
+	RunAt    time.Time                `json:"run_at"`
+}
+
 type ReportingCommissionRule struct {
 	Id            string    `json:"id"`
 	RepUserId     string    `json:"rep_user_id"`

@@ -7782,6 +7782,45 @@ export type ReportingSavedViewPage = {
   next_cursor?: string | null;
   limit?: number;
 };
+export type ReportingDatasetColumn = {
+  name: string;
+  label: string;
+  kind: "text" | "int" | "cents" | "qty" | "date" | "bool";
+  filter: boolean;
+  group: boolean;
+  sum: boolean;
+};
+export type ReportingDataset = {
+  set: "ar" | "ap" | "gl" | "sales" | "stock";
+  label: string;
+  description: string;
+  as_of: boolean;
+  columns: ReportingDatasetColumn[];
+};
+export type ReportingDatasetCatalog = {
+  items: ReportingDataset[];
+};
+export type ReportingDatasetFilter = {
+  column: string;
+  op: "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "in";
+  values: unknown[];
+};
+export type ReportingDatasetQuery = {
+  columns: string[];
+  filters?: ReportingDatasetFilter[];
+  group_by?: string[];
+  as_of?: string;
+};
+export type ReportingDatasetResult = {
+  set: string;
+  label: string;
+  columns: ReportingDatasetColumn[];
+  rows: unknown[][];
+  row_count: number;
+  totals: { [key: string]: unknown };
+  query: ReportingDatasetQuery;
+  run_at: string;
+};
 export type ReportingCommissionRule = {
   id: string;
   rep_user_id: string;

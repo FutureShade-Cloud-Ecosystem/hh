@@ -36,6 +36,13 @@ type Service struct {
 	log   *slog.Logger
 	audit audit.Recorder
 	reps  RepAssignmentReader
+	// The curated data set sources (W3-RW1): one owning module's read per set, bound at the
+	// composition root. An unbound source answers 503 with the set named, never an empty read.
+	dsAR    ARAgingSource
+	dsAP    APAgingSource
+	dsGL    GLJournalSource
+	dsSales SalesSource
+	dsStock StockSource
 	// callerFrom reads the guard-stamped staff caller. Injectable so unit tests can pose as a scoped or
 	// global caller with no HTTP round trip (the finstmt/landedcost/gl idiom).
 	callerFrom func(context.Context) (identity.StaffContext, bool)

@@ -16,6 +16,10 @@ drops:
     reason: "Not a route: a comment line in order/activity.go:27 quoting an API framing the surface exists to hide. The literal grep cannot tell comments from registrations."
 
 additions:
+  - route: "GET /api/v1/reporting/datasets"
+    reason: "W3-RW1: the report writer's curated data set catalog, the five sets and the columns each may filter, group or sum; the ERP report writer ran free queries and had no catalog to refuse them."
+  - route: "POST /api/v1/reporting/datasets/{set}/read"
+    reason: "W3-RW1: the one read per curated data set, columns from the catalog, filters and a group by, each set read through its owning module's own seam; the ERP report writer ran free queries, this refuses anything outside the catalog."
   - route: "GET /api/v1/bankrec/accounts/{id}/cutover"
     reason: "FW1-04 round 3: the starting point form's read of the ledger's entries on or before a cut over date and the book balance they make; the ERP reconciled by hand and had no starting point."
   - route: "POST /api/v1/bankrec/accounts/{id}/cutover"

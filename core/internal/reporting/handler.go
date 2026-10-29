@@ -50,6 +50,10 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/reporting/saved-views", g.RequireStaff(h.staff(h.listSavedViews)))
 	r.Handle("POST /api/v1/reporting/saved-views", g.RequireStaff(h.staff(h.saveView)))
 	r.Handle("DELETE /api/v1/reporting/saved-views/{id}", g.RequireStaff(h.staff(h.deleteView)))
+	// Curated data sets (W3-RW1). The catalog is metadata, staff may see it; a READ of the books is a
+	// manager's act, like every run, export and print above.
+	r.Handle("GET /api/v1/reporting/datasets", g.RequireStaff(h.staff(h.listDatasets)))
+	r.Handle("POST /api/v1/reporting/datasets/{set}/read", g.RequireManager(h.staff(h.readDataset)))
 	// Commissions.
 	r.Handle("GET /api/v1/reporting/commission/rules", g.RequireManager(h.staff(h.listRules)))
 	r.Handle("POST /api/v1/reporting/commission/rules", g.RequireAdmin(h.staff(h.createRule)))
@@ -385,6 +389,38 @@ func (h *Handler) commissionAccruals(w http.ResponseWriter, r *http.Request, cal
 	httpx.WriteJSON(w, http.StatusOK, acc)
 }
 
+// -- curated data sets --------------------------------------------------------
+
+// listDatasets serves the five sets with their column catalogs: what a read may name, filter, group
+// and sum. The catalog is the contract; nothing here can run anything.
+func (h *Handler) listDatasets(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	sets, err := h.svc.DatasetCatalog(r.Context())
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": sets})
+}
+
+// readDataset runs one curated read. The body is the query: columns from the set's catalog, filters
+// with the operators the catalog carries, a group by over the groupable columns, and, where the set
+// has one, the house day. POST because the query is structured, and read because that is all it does.
+func (h *Handler) readDataset(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var q DatasetQuery
+	dec := json.NewDecoder(r.Body)
+	dec.UseNumber() // money and counts never ride a float on the way in
+	if err := dec.Decode(&q); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid JSON body: the read needs columns, and optionally filters, group_by and as_of")
+		return
+	}
+	res, err := h.svc.RunDataset(r.Context(), r.PathValue("set"), q)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
 // -- error mapping ------------------------------------------------------------
 
 // fail is the ONE place a domain error becomes a status code. Written once so a new route cannot
@@ -402,6 +438,8 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusForbidden, "this report is outside your branch scope")
 	case errors.Is(err, ErrNoDatabase):
 		httpx.Error(w, http.StatusServiceUnavailable, "reporting is unavailable (no database)")
+	case errors.Is(err, ErrDatasetUnwired):
+		httpx.Error(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, ErrColumnDrift):
 		// A development error reaching a caller. 500 is right, nothing the caller did caused it and
 		// nothing they can change will fix it, and the message names the report so the log is findable.

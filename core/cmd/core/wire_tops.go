@@ -727,11 +727,25 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	quoteAssistSvc.WithAI(quoteRails)
 	quoteassist.NewHandler(quoteAssistSvc).WithUserLinker(link).RegisterRoutes(r, g)
 
-	// SWARM-W6-B: reporting and commissions.
+	// SWARM-W6-B: reporting and commissions. W3-RW1 binds the five curated data set sources beside
+	// the same service: each set reads its owning module's own fenced read (w3rw1_dataset_sources.go),
+	// and the one adapter value satisfies all five consumer-declared interfaces.
+	dsSources := w3rw1DatasetSources{
+		credit:   w3bCreditSvc,
+		invoices: billingRepo,
+		ap:       ops.purchasingSvc,
+		gl:       spine.glSvc,
+		stock:    inventorySvc,
+	}
 	reportingSvc := reporting.NewService(reporting.NewRepository(pool)).
 		WithLogger(log).
 		WithAudit(auditSvc).
-		WithRepAssignments(w6bRepAssignmentReader{svc: ops.messagingSvc})
+		WithRepAssignments(w6bRepAssignmentReader{svc: ops.messagingSvc}).
+		WithDatasetARSource(dsSources).
+		WithDatasetAPSource(dsSources).
+		WithDatasetGLSource(dsSources).
+		WithDatasetSalesSource(dsSources).
+		WithDatasetStockSource(dsSources)
 	reporting.NewHandler(reportingSvc).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// DIB-478: the assist deep readers over every landed service.

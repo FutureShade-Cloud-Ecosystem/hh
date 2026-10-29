@@ -17,6 +17,9 @@ var (
 	// ErrNoDatabase, scaffold/offline mode. Answered as 503, not 500: nothing is broken, the module
 	// simply has nothing to read.
 	ErrNoDatabase = errors.New("reporting: no database")
+	// ErrDatasetUnwired, a curated data set whose owning module's read is not bound in this
+	// deployment. Like ErrNoDatabase it answers 503: nothing is broken, the set has no source here.
+	ErrDatasetUnwired = errors.New("reporting: data set source not wired")
 	// ErrColumnDrift, the database returned a column set that is not the template's declared allowlist.
 	// This is a DEVELOPMENT error surfaced at runtime rather than a caller error, and it fails the run
 	// rather than returning the undeclared data. See runner.go.
