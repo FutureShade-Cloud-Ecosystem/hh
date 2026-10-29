@@ -33,10 +33,10 @@ test("a page's next cursor reads as the cursor string, and the end reads as empt
   assert.equal(nextCursorOf({ next_cursor: "" }), "");
 });
 
-test("the window's words say what is loaded, and no range says nothing", () => {
-  assert.equal(rangeWords("2025-06-01", "2025-06-30"), "Showing journals posted 2025-06-01 through 2025-06-30.");
-  assert.equal(rangeWords("2025-06-01", ""), "Showing journals posted 2025-06-01 or later.");
-  assert.equal(rangeWords("", "2025-06-30"), "Showing journals posted through 2025-06-30.");
+test("the window's words say what is loaded in the desk's own date words, and no range says nothing", () => {
+  assert.equal(rangeWords("2025-06-01", "2025-06-30"), "Showing journals posted Jun 1, 2025 through Jun 30, 2025.");
+  assert.equal(rangeWords("2025-06-01", ""), "Showing journals posted Jun 1, 2025 or later.");
+  assert.equal(rangeWords("", "2025-06-30"), "Showing journals posted through Jun 30, 2025.");
   assert.equal(rangeWords("", ""), "");
 });
 
