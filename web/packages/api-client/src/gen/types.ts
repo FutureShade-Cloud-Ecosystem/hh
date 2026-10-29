@@ -6761,6 +6761,63 @@ export type PurchasingInstalment = {
   note: string;
 };
 export type PurchasingBillDetail = PurchasingBill & { lines: PurchasingBillLine[]; instalments: PurchasingInstalment[] };
+export type PurchasingVendorCreditStatus = "DRAFT" | "POSTED";
+export type PurchasingVendorCredit = {
+  id: string;
+  credit_no: string;
+  vendor_id: string;
+  vendor_name: string;
+  branch_id: string;
+  bill_id?: string;
+  bill_no?: string;
+  po_id?: string;
+  po_no?: string;
+  status: PurchasingVendorCreditStatus;
+  credit_date: string;
+  total_cents: number;
+  applied_cents: number;
+  open_cents: number;
+  gl_journal_id?: string;
+  posted_at?: string | null;
+  created_at: string;
+};
+export type PurchasingVendorCreditLine = {
+  line_no: number;
+  account_code: string;
+  description: string;
+  amount_cents: number;
+};
+export type PurchasingVendorCreditApplication = {
+  id: string;
+  bill_id: string;
+  bill_no: string;
+  amount_cents: number;
+  applied_at: string;
+};
+export type PurchasingVendorCreditDetail = PurchasingVendorCredit & { lines: PurchasingVendorCreditLine[]; applications: PurchasingVendorCreditApplication[] };
+export type PurchasingVendorCreditPage = {
+  items: PurchasingVendorCredit[];
+  next_cursor?: string | null;
+  limit?: number;
+};
+export type PurchasingCreateVendorCreditRequest = {
+  vendor_id: string;
+  branch_id: string;
+  credit_no: string;
+  bill_id?: string;
+  po_id?: string;
+  credit_date?: string;
+  lines: PurchasingVendorCreditLineRequest[];
+};
+export type PurchasingVendorCreditLineRequest = {
+  account_code?: string;
+  description?: string;
+  amount_cents: number;
+};
+export type PurchasingApplyVendorCreditRequest = {
+  bill_id: string;
+  amount_cents: number;
+};
 export type PurchasingTolerance = {
   branch_id?: string;
   qty_tolerance_pct: number;

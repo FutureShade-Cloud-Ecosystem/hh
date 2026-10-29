@@ -7820,6 +7820,77 @@ type PurchasingBillDetail struct {
 	Instalments []PurchasingInstalment `json:"instalments"`
 }
 
+// PurchasingVendorCreditStatus is the document's enum: "DRAFT", "POSTED".
+type PurchasingVendorCreditStatus string
+
+type PurchasingVendorCredit struct {
+	Id           string                       `json:"id"`
+	CreditNo     string                       `json:"credit_no"`
+	VendorId     string                       `json:"vendor_id"`
+	VendorName   string                       `json:"vendor_name"`
+	BranchId     string                       `json:"branch_id"`
+	BillId       *string                      `json:"bill_id,omitempty"`
+	BillNo       *string                      `json:"bill_no,omitempty"`
+	PoId         *string                      `json:"po_id,omitempty"`
+	PoNo         *string                      `json:"po_no,omitempty"`
+	Status       PurchasingVendorCreditStatus `json:"status"`
+	CreditDate   string                       `json:"credit_date"`
+	TotalCents   int64                        `json:"total_cents"`
+	AppliedCents int64                        `json:"applied_cents"`
+	OpenCents    int64                        `json:"open_cents"`
+	GlJournalId  *string                      `json:"gl_journal_id,omitempty"`
+	PostedAt     *time.Time                   `json:"posted_at,omitempty"`
+	CreatedAt    time.Time                    `json:"created_at"`
+}
+
+type PurchasingVendorCreditLine struct {
+	LineNo      int32  `json:"line_no"`
+	AccountCode string `json:"account_code"`
+	Description string `json:"description"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+type PurchasingVendorCreditApplication struct {
+	Id          string    `json:"id"`
+	BillId      string    `json:"bill_id"`
+	BillNo      string    `json:"bill_no"`
+	AmountCents int64     `json:"amount_cents"`
+	AppliedAt   time.Time `json:"applied_at"`
+}
+
+type PurchasingVendorCreditDetail struct {
+	PurchasingVendorCredit
+	Lines        []PurchasingVendorCreditLine        `json:"lines"`
+	Applications []PurchasingVendorCreditApplication `json:"applications"`
+}
+
+type PurchasingVendorCreditPage struct {
+	Items      []PurchasingVendorCredit `json:"items"`
+	NextCursor *string                  `json:"next_cursor,omitempty"`
+	Limit      *int32                   `json:"limit,omitempty"`
+}
+
+type PurchasingCreateVendorCreditRequest struct {
+	VendorId   string                              `json:"vendor_id"`
+	BranchId   string                              `json:"branch_id"`
+	CreditNo   string                              `json:"credit_no"`
+	BillId     *string                             `json:"bill_id,omitempty"`
+	PoId       *string                             `json:"po_id,omitempty"`
+	CreditDate *string                             `json:"credit_date,omitempty"`
+	Lines      []PurchasingVendorCreditLineRequest `json:"lines"`
+}
+
+type PurchasingVendorCreditLineRequest struct {
+	AccountCode *string `json:"account_code,omitempty"`
+	Description *string `json:"description,omitempty"`
+	AmountCents int64   `json:"amount_cents"`
+}
+
+type PurchasingApplyVendorCreditRequest struct {
+	BillId      string `json:"bill_id"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
 type PurchasingTolerance struct {
 	BranchId               *string `json:"branch_id,omitempty"`
 	QtyTolerancePct        float64 `json:"qty_tolerance_pct"`

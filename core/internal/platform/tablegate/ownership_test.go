@@ -578,6 +578,9 @@ var ownedObjects = map[string]string{
 	"purchasing_pos":                  "purchasing",        // 0120_purchasing_core
 	"purchasing_receipt_lines":        "purchasing",        // 0120_purchasing_core
 	"purchasing_receipts":             "purchasing",        // 0120_purchasing_core
+	"purchasing_vendor_credit_applications": "purchasing",  // 0454_purchasing_vendor_credits
+	"purchasing_vendor_credit_lines":  "purchasing",         // 0454_purchasing_vendor_credits
+	"purchasing_vendor_credits":       "purchasing",         // 0454_purchasing_vendor_credits
 	"purchasing_vendor_contacts":      "purchasing",        // 0197_purchasing_vendor_order
 	"purchasing_vendor_skus":          "purchasing",        // 0197_purchasing_vendor_order
 	"quantity_break_headers":          "pricing",           // 0023_pricing
