@@ -406,6 +406,26 @@ export function daysPastDue(date: string, asOf: string): number {
   return Math.max(0, dayNumber(asOf) - dayNumber(date));
 }
 
+/**
+ * The day as the as of control shows it: the picker's own format, never the ISO digits the
+ * route sends. A date that sits beside the control reads the way the control reads, so the
+ * operator sees one format for one day.
+ */
+export function asOfDay(day: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
+  if (m === null) return day;
+  return `${Number(m[2])}/${Number(m[3])}/${m[1]}`;
+}
+
+/**
+ * The past due status word, the register's own: "18d past due". The word a pill carries when
+ * the document is past its due day, so every status in the desk says the same thing the same
+ * way.
+ */
+export function pastDueMarkWord(daysOverdue: number): string {
+  return `${Math.max(0, Math.floor(daysOverdue))}d past due`;
+}
+
 export interface Mark {
   readonly word: string;
   readonly tone: Tone;
@@ -421,7 +441,7 @@ export function rowMarks(row: { status: string; days_overdue?: number | undefine
   const marks: Mark[] = [];
   const daysOverdue = row.days_overdue ?? 0;
   const overdue = daysOverdue > 0 && row.status !== "PAID";
-  if (overdue) marks.push({ word: `${daysOverdue}d past due`, tone: "stop", dashed: false });
+  if (overdue) marks.push({ word: pastDueMarkWord(daysOverdue), tone: "stop", dashed: false });
   else if (row.status === "DISPUTED") marks.push({ word: "disputed", tone: "info", dashed: false });
   else marks.push({ word: statusWord(row.status).toLowerCase(), tone: statusTone(row.status), dashed: false });
   if (typeof row.promised_date === "string" && row.promised_date !== "") marks.push({ word: "promise open", tone: "watch", dashed: true });

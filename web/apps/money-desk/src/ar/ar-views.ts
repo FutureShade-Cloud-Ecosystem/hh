@@ -175,7 +175,7 @@ function messages(model: DeskModel): TemplateResult {
   `;
 }
 
-function markPill(mark: Mark): TemplateResult {
+export function markPill(mark: Mark): TemplateResult {
   return html`<span class="pill pill-${mark.tone} ${mark.dashed ? "pill-dashed" : ""}">${mark.word}</span>`;
 }
 

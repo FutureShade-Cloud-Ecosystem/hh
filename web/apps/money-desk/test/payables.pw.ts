@@ -8,7 +8,7 @@
 //
 // The last leg is the contract's own: the board is walked on a response whose keys are the
 // contract's, and it fails on any key the board reads that the contract does not name.
-import { test, expect, openDesk, dayFromToday, receivablesHandoff } from "./helpers.js";
+import { test, expect, openDesk, dayFromToday, pickerDay, receivablesHandoff } from "./helpers.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { AP_AGING_FIXTURE, AP_AGING_KEYS } from "./ap-aging-contract.js";
@@ -67,7 +67,8 @@ test("the board opens on the open AP: the five bands, the payee rows and the day
   // The rows are the most overdue first, the desk's own rule for an aging view.
   await expect(page.locator("[data-payee-row]").first()).toContainText("Meadowlark Landscape Lighting (demo)");
   await expect(page.locator("[data-field='payables-asof']")).toHaveValue(dayFromToday(0));
-  await expect(page.locator("[data-payables-foot]")).toContainText("As of " + dayFromToday(0));
+  // The footnote date reads the way the as of control reads it, never as the ISO digits.
+  await expect(page.locator("[data-payables-foot]")).toContainText("As of " + pickerDay(dayFromToday(0)));
 });
 
 test("the bucket totals sum to the total, on every payee row and on the whole book", async ({ page, request }) => {
@@ -119,10 +120,66 @@ test("a landed cost line is marked as landed cost, on its own payee row", async 
   await expect(page.locator("[data-line-row]", { hasText: "B-3301" })).toContainText("3 days ago");
   const line = page.locator("[data-line-row][data-doc-kind='LANDED_COST']");
   await expect(line).toHaveCount(1);
+  // The landed cost is a type, so it rides the document's own line beside what it was for.
   await expect(line).toContainText("Landed cost");
   await expect(line).toContainText("Freight");
   await expect(line).toContainText("PO-1042");
   await expect(line).toContainText("$780.00");
+});
+
+test("a carrier's own bill says so, and the footnote beside it does not contradict it", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openBoard(page);
+  await page.locator("[data-payee-row]", { hasText: "Northwind Freight Lines (demo)" }).getByRole("button").click();
+  // The carrier's own invoice is not a vendor's bill: it says it is the carrier's.
+  await expect(page.locator("[data-line-row]", { hasText: "B-3301" })).toContainText("Carrier bill");
+  // And the page's own words say the same thing, so nothing on it reads as a contradiction.
+  await expect(page.locator("section[aria-label='Open items'] .foot")).toContainText("Landed costs are owed to the carrier or broker, not to the supplier.");
+  // A plain vendor's bill still says bill.
+  await page.getByRole("button", { name: "‹ Payables" }).click();
+  await page.locator("[data-payee-row]", { hasText: "Saltmarsh Fasteners (demo)" }).getByRole("button").click();
+  await expect(page.locator("[data-line-row]", { hasText: "B-4107" })).toContainText("Bill");
+  await expect(page.locator("[data-line-row]", { hasText: "B-4107" })).not.toContainText("Carrier bill");
+});
+
+test("the status says how late the document is, and a late document never says open", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openBoard(page);
+  await page.locator("[data-payee-row]", { hasText: "Northwind Freight Lines (demo)" }).getByRole("button").click();
+  // B-3301 fell due three days ago: its status is the register's own past due word, not open.
+  const bill = page.locator("[data-line-row]", { hasText: "B-3301" });
+  await expect(bill).toContainText("3d past due");
+  await expect(bill).not.toContainText("open");
+  // The landed cost line is late too, and says so in the same words.
+  const landed = page.locator("[data-line-row][data-doc-kind='LANDED_COST']");
+  await expect(landed).toContainText("33d past due");
+  await expect(landed).not.toContainText("open");
+});
+
+test("the two oldest bands carry the desk's aging colour, and a zero carries none", async ({ page, request }) => {
+  await openDesk(page, request);
+  // The desk's own aging tiles, the colours the board borrows.
+  await page.locator("nav[aria-label='Money Desk areas']").getByRole("button", { name: "Receivables", exact: true }).click();
+  await expect(page.locator("[data-card]")).toHaveCount(4);
+  const tileColour = async (title: string): Promise<string> =>
+    page.locator("[data-card]").filter({ hasText: title }).locator(".tile-figure").evaluate((el) => getComputedStyle(el).color);
+  const escalation = await tileColour("90 days and over");
+  const late = await tileColour("61 to 89 days");
+  expect(escalation).not.toBe(late);
+
+  await openBoard(page);
+  const bandColour = async (band: string): Promise<string> =>
+    page.locator(`[data-band-head='${band}']`).evaluate((el) => getComputedStyle(el).color);
+  // The headings and the money in them wear the same colour the tiles wear.
+  expect(await bandColour("DAYS_90_PLUS")).toBe(escalation);
+  expect(await bandColour("DAYS_60_TO_90")).toBe(late);
+  const over90 = page.locator("[data-band-cell='DAYS_90_PLUS']");
+  expect(await over90.first().evaluate((el) => getComputedStyle(el).color)).toBe(escalation);
+  expect(await page.locator("[data-band-cell='DAYS_60_TO_90']").nth(2).evaluate((el) => getComputedStyle(el).color)).toBe(late);
+  // A zero keeps the plain ink: a column of red zeros says nothing.
+  const plain = await page.locator("[data-band-cell='CURRENT']").first().evaluate((el) => getComputedStyle(el).color);
+  expect(await over90.nth(2).evaluate((el) => getComputedStyle(el).color)).toBe(plain);
+  expect(await page.locator("[data-band-cell='DAYS_60_TO_90']").first().evaluate((el) => getComputedStyle(el).color)).toBe(plain);
 });
 
 test("a bill and a landed cost line are never folded into one another", async ({ page, request }) => {
@@ -134,10 +191,13 @@ test("a bill and a landed cost line are never folded into one another", async ({
   const lines = page.locator("[data-line-row]");
   await expect(lines).toHaveCount(2);
   await expect(lines.first()).toContainText("Bill");
-  // The part paid bill says so, and says what has been paid against it.
-  await expect(page.locator("[data-line-row]", { hasText: "B-4107" })).toContainText("Part paid");
-  await expect(page.locator("[data-line-row]", { hasText: "B-4107" })).toContainText("$400.00 paid");
-  await expect(page.locator("[data-line-row]", { hasText: "B-4107" })).toContainText("$560.00");
+  // The part paid bill says what has been paid against it, beside the document kind, and its
+  // status says how late it is: the register's past due word, never "open".
+  const partPaid = page.locator("[data-line-row]", { hasText: "B-4107" });
+  await expect(partPaid).toContainText("$400.00 paid");
+  await expect(partPaid).toContainText("$560.00");
+  await expect(partPaid).toContainText("20d past due");
+  await expect(partPaid).not.toContainText("Part paid");
 });
 
 test("the board says so when nothing is open as of that day", async ({ page, request }) => {
@@ -145,8 +205,11 @@ test("the board says so when nothing is open as of that day", async ({ page, req
   await request.post("/_stub/scenario", { data: { name: "empty" } });
   await openBoard(page);
   await expect(page.locator("[data-payables-empty]")).toContainText("No open AP as of this day.");
+  await expect(page.locator("[data-payables-empty]")).toContainText(pickerDay(dayFromToday(0)));
   await expect(page.locator("[data-payee-row]")).toHaveCount(0);
   await expect(page.locator("[data-payables-total]")).toHaveCount(0);
+  // The footnote under an empty board says nothing worth saying, so it is not there.
+  await expect(page.locator("[data-payables-foot]")).toHaveCount(0);
 });
 
 test("the as of control reads the books as of the day the operator picks", async ({ page, request }) => {
@@ -156,7 +219,8 @@ test("the as of control reads the books as of the day the operator picks", async
   const field = page.locator("[data-field='payables-asof']");
   await field.fill(dayFromToday(-200));
   await expect(page.locator("[data-payables-empty]")).toContainText("No open AP as of this day.");
-  await expect(page.locator("[data-payables-foot]")).toContainText("As of " + dayFromToday(-200));
+  await expect(page.locator("[data-payables-empty]")).toContainText(pickerDay(dayFromToday(-200)));
+  await expect(page.locator("[data-payables-foot]")).toHaveCount(0);
 });
 
 test("the blank check: every board state says what it is, and none of them renders blank", async ({ page, request }) => {

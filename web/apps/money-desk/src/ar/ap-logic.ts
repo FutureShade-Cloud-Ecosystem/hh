@@ -82,14 +82,18 @@ export interface PayablesBoardModel {
 
 /**
  * The bands, in the desk's one vocabulary, with the contract's field on each. The word is the
- * screen's, the field is the route's, and the key is the core's own key for the band.
+ * screen's, the field is the route's, and the key is the core's own key for the band. The two
+ * oldest bands carry the desk's aging signal: the signal is the class the Receivables aging tile
+ * carries for the same age, so the two screens colour the same age the same way and the board
+ * invents no colour of its own. The band name always rides with it, so the colour never carries
+ * the meaning alone.
  */
 export const PAYABLES_BANDS = [
-  { key: "CURRENT", field: "current_cents", word: "Current" },
-  { key: "DAYS_30", field: "days_30_cents", word: "1 to 30 days" },
-  { key: "DAYS_60", field: "days_60_cents", word: "31 to 60 days" },
-  { key: "DAYS_60_TO_90", field: "days_60_to_90_cents", word: "61 to 90 days" },
-  { key: "DAYS_90_PLUS", field: "days_90_plus_cents", word: "Over 90 days" },
+  { key: "CURRENT", field: "current_cents", word: "Current", signal: "" },
+  { key: "DAYS_30", field: "days_30_cents", word: "1 to 30 days", signal: "" },
+  { key: "DAYS_60", field: "days_60_cents", word: "31 to 60 days", signal: "" },
+  { key: "DAYS_60_TO_90", field: "days_60_to_90_cents", word: "61 to 90 days", signal: "tile-late" },
+  { key: "DAYS_90_PLUS", field: "days_90_plus_cents", word: "Over 90 days", signal: "tile-escalation" },
 ] as const;
 
 /** The words a landed cost line wears for what it was for: freight, duty or handling. */

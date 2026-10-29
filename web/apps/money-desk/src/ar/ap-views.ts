@@ -8,8 +8,53 @@
 // figure of its own: the route's row totals and the route's book totals are what show.
 import { html, nothing, type TemplateResult } from "lit";
 import { PAYABLES_BANDS, isLandedCostRow, landedCostWords, rowItems, rowKey, type PayablesBoardModel, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
-import { bucketWord, daysLateWord, daysPastDue, relativeDay } from "./ar-logic.js";
+import { asOfDay, bucketWord, daysLateWord, daysPastDue, pastDueMarkWord, relativeDay, statusTone, statusWord, type Mark } from "./ar-logic.js";
 import { formatMoney } from "./ar-money.js";
+import { markPill } from "./ar-views.js";
+
+/** One band of the board's five. */
+type Band = (typeof PAYABLES_BANDS)[number];
+
+/**
+ * The band's signal class: the desk's own class for that age, the one the Receivables aging tile
+ * carries (tile-late for 61 to 90 days, tile-escalation for over 90 days). The board uses the
+ * desk's class, so both screens colour the same age the same way.
+ */
+function bandClass(band: Band, base: string): string {
+  return band.signal === "" ? base : `${base} ${band.signal}`;
+}
+
+/**
+ * A band cell's class: the signal rides the money that is there, never a zero. A column of red
+ * zeros says nothing, so a cell with no money in it keeps the plain ink.
+ */
+function bandCellClass(band: Band, cents: number): string {
+  return cents === 0 ? "num" : bandClass(band, "num");
+}
+
+/**
+ * The status a document wears, the register's own vocabulary: a document past its due day says
+ * the day count, a part paid bill says so, an open one says open. A landed cost is a type and
+ * rides the document's own line, never this column.
+ */
+function statusMark(item: PurchasingAPAgingItem, late: number): Mark {
+  if (late > 0) return { word: pastDueMarkWord(late), tone: "stop", dashed: false };
+  if (item.paid_cents > 0) return { word: statusWord("PARTIALLY_PAID").toLowerCase(), tone: statusTone("PARTIALLY_PAID"), dashed: false };
+  return { word: statusWord("OPEN").toLowerCase(), tone: statusTone("OPEN"), dashed: false };
+}
+
+/**
+ * The document's own line: what the document is. A landed cost is a type and rides here, beside
+ * the charge it was for; a bill on a carrier is the carrier's own invoice, so it says so.
+ */
+function documentKindWord(item: PurchasingAPAgingItem, onCarrier: boolean): string {
+  if (item.is_landed_cost) {
+    const kind = landedCostWords(item.charge_kind)[0];
+    return kind === undefined ? "Landed cost" : `Landed cost · ${kind}`;
+  }
+  const bill = onCarrier ? "Carrier bill" : "Bill";
+  return item.paid_cents > 0 ? `${bill} · ${formatMoney(item.paid_cents)} paid` : bill;
+}
 
 // ---- the aging list ----------------------------------------------------------------------------
 
@@ -29,7 +74,7 @@ function payeeRow(row: PurchasingAPAgingRow): TemplateResult {
         <button type="button" class="link-row" data-action="payables-open" data-payee-id="${key}"><span class="who">${row.vendor_name}</span></button>
         <span class="dim small">${isLandedCostRow(row) ? "Landed cost carrier" : `Net ${row.payment_terms_days}`}</span>
       </td>
-      ${PAYABLES_BANDS.map((band) => html`<td class="num" data-band-cell="${band.key}" data-band-label="${band.word}">${formatMoney(row[band.field])}</td>`)}
+      ${PAYABLES_BANDS.map((band) => html`<td class="${bandCellClass(band, row[band.field])}" data-band-cell="${band.key}" data-band-label="${band.word}">${formatMoney(row[band.field])}</td>`)}
       <td class="num"><b data-payee-total>${formatMoney(row.total_cents)}</b></td>
     </tr>
   `;
@@ -67,7 +112,7 @@ function payablesAging(page: PurchasingAPAgingPage): TemplateResult {
         ? html`
             <div class="empty" data-payables-empty>
               <strong>No open AP as of this day.</strong>
-              <span class="dim">Nothing is owed to a vendor, a carrier or a broker on ${page.as_of}.</span>
+              <span class="dim">Nothing is owed to a vendor, a carrier or a broker on ${asOfDay(page.as_of)}.</span>
             </div>
           `
         : html`
@@ -76,7 +121,7 @@ function payablesAging(page: PurchasingAPAgingPage): TemplateResult {
                 <thead>
                   <tr>
                     <th>Payee</th>
-                    ${PAYABLES_BANDS.map((band) => html`<th class="num" data-band-head="${band.key}">${band.word}</th>`)}
+                    ${PAYABLES_BANDS.map((band) => html`<th class="${bandClass(band, "num")}" data-band-head="${band.key}">${band.word}</th>`)}
                     <th class="num">Open total</th>
                   </tr>
                 </thead>
@@ -86,14 +131,16 @@ function payablesAging(page: PurchasingAPAgingPage): TemplateResult {
                 <tfoot>
                   <tr>
                     <td><b>Open AP</b></td>
-                    ${PAYABLES_BANDS.map((band) => html`<td class="num" data-band-total="${band.key}" data-band-label="${band.word}">${formatMoney(page[band.field])}</td>`)}
+                    ${PAYABLES_BANDS.map((band) => html`<td class="${bandCellClass(band, page[band.field])}" data-band-total="${band.key}" data-band-label="${band.word}">${formatMoney(page[band.field])}</td>`)}
                     <td class="num"><b data-payables-total>${formatMoney(page.total_cents)}</b></td>
                   </tr>
                 </tfoot>
               </table>
             </div>
           `}
-      <p class="dim small foot" data-payables-foot>As of ${page.as_of} · ${payeesOwe(rows.length)} · a landed cost rides its own payee row, never a vendor's bill.</p>
+      ${rows.length === 0
+        ? nothing
+        : html`<p class="dim small foot" data-payables-foot>As of ${asOfDay(page.as_of)} · ${payeesOwe(rows.length)}.</p>`}
     </section>
   `;
 }
@@ -101,15 +148,13 @@ function payablesAging(page: PurchasingAPAgingPage): TemplateResult {
 // ---- a payee's open items ----------------------------------------------------------------------
 
 /** One open document: a bill, or a landed cost line to a carrier or a broker. */
-function payeeLineRow(item: PurchasingAPAgingItem, asOf: string): TemplateResult {
-  const landed = item.is_landed_cost;
-  const kind = landedCostWords(item.charge_kind)[0] ?? "Landed cost";
+function payeeLineRow(item: PurchasingAPAgingItem, asOf: string, onCarrier: boolean): TemplateResult {
   const late = daysPastDue(item.due_date, asOf);
   return html`
     <tr data-line-row data-doc-kind="${item.kind}">
       <td>
         <span class="who">${item.ref_no}</span>
-        <span class="dim small">${landed ? kind : item.paid_cents > 0 ? `Bill · ${formatMoney(item.paid_cents)} paid` : "Bill"}</span>
+        <span class="dim small">${documentKindWord(item, onCarrier)}</span>
       </td>
       <td class="nowrap due-col">
         <div class="due-line">${relativeDay(item.due_date, asOf)}</div>
@@ -123,13 +168,7 @@ function payeeLineRow(item: PurchasingAPAgingItem, asOf: string): TemplateResult
           : nothing}
       </td>
       <td>
-        <span class="marks">
-          ${landed
-            ? html`<span class="pill pill-info" data-landed-cost>Landed cost</span>`
-            : item.paid_cents > 0
-              ? html`<span class="pill pill-watch">Part paid</span>`
-              : html`<span class="pill pill-plain">Open</span>`}
-        </span>
+        <span class="marks">${markPill(statusMark(item, late))}</span>
       </td>
       <td class="num">${formatMoney(item.open_cents)}</td>
     </tr>
@@ -137,6 +176,7 @@ function payeeLineRow(item: PurchasingAPAgingItem, asOf: string): TemplateResult
 }
 
 function payablesPayee(page: PurchasingAPAgingPage, row: PurchasingAPAgingRow): TemplateResult {
+  const carrier = isLandedCostRow(row);
   return html`
     <button type="button" class="link back" data-action="payables-back">‹ Payables</button>
     <div class="head">
@@ -156,17 +196,17 @@ function payablesPayee(page: PurchasingAPAgingPage, row: PurchasingAPAgingRow): 
             <tr><th>Document</th><th>Due</th><th>Status</th><th class="num">Open amount</th></tr>
           </thead>
           <tbody>
-            ${rowItems(row).map((item) => payeeLineRow(item, page.as_of))}
+            ${rowItems(row).map((item) => payeeLineRow(item, page.as_of, carrier))}
           </tbody>
           <tfoot>
             <tr>
-              <td colspan="3"><b>Open total</b> <span class="dim small">as of ${page.as_of}</span></td>
+              <td colspan="3"><b>Open total</b> <span class="dim small">as of ${asOfDay(page.as_of)}</span></td>
               <td class="num"><b data-payee-lines-total>${formatMoney(row.total_cents)}</b></td>
             </tr>
           </tfoot>
         </table>
       </div>
-      <p class="dim small foot">A landed cost line is owed to its carrier or broker and never folds into a vendor's bill.</p>
+      <p class="dim small foot">Landed costs are owed to the carrier or broker, not to the supplier.</p>
     </section>
   `;
 }
@@ -188,7 +228,7 @@ export function renderPayables(board: PayablesBoardModel): TemplateResult {
     <div class="head">
       <div>
         <h1>Payables</h1>
-        <p class="dim">Open AP by payee, the most overdue first. A landed cost rides its own line and its own payee.</p>
+        <p class="dim">Open payables by payee, most overdue first. Freight, duty and brokerage are listed under the carrier or broker they are owed to.</p>
       </div>
     </div>
     ${board.state === "loading"
