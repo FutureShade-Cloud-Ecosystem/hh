@@ -173,3 +173,54 @@ func TestIntegration_Cust1008_InvoicesOnFreshSeededDBAndWithNoCode(t *testing.T)
 		t.Fatalf("the invoice writer writes a NULL terms_code when TermsFor answers no code: got %q", *uncodedCode)
 	}
 }
+
+// TestIntegration_TheSeededCustomersCarryMasterTermsCodes proves that after migrate and seed,
+// every customer with payment_terms_days carries a terms_code that names a row in payment_terms.
+func TestIntegration_TheSeededCustomersCarryMasterTermsCodes(t *testing.T) {
+	ctx := context.Background()
+	pool := freshMigratedDB(t, "s4fin2tm1seed")
+	seedBody, err := seedFS.ReadFile("dibbits_seed.sql")
+	if err != nil {
+		t.Fatalf("read dibbits_seed.sql: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(seedBody)); err != nil {
+		t.Fatalf("apply dibbits_seed.sql: %v", err)
+	}
+
+	var total int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM customers WHERE payment_terms_days IS NOT NULL`).Scan(&total); err != nil {
+		t.Fatalf("count customers with days: %v", err)
+	}
+	if total == 0 {
+		t.Fatal("migrated and seeded database has no customers with payment_terms_days")
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT c.account_no, c.payment_terms_days, COALESCE(c.terms_code, ''), COALESCE(t.code, ''), COALESCE(t.net_days, -1)
+		  FROM customers c
+		  LEFT JOIN payment_terms t ON t.code = c.terms_code
+		 WHERE c.payment_terms_days IS NOT NULL
+		   AND (c.terms_code IS NULL OR t.code IS NULL OR t.net_days <> c.payment_terms_days)
+		 ORDER BY c.account_no`)
+	if err != nil {
+		t.Fatalf("query customers missing a master terms code: %v", err)
+	}
+	defer rows.Close()
+
+	var bad []string
+	for rows.Next() {
+		var acct string
+		var days, masterDays int
+		var code, masterCode string
+		if err := rows.Scan(&acct, &days, &code, &masterCode, &masterDays); err != nil {
+			t.Fatalf("scan customer row: %v", err)
+		}
+		bad = append(bad, acct+"(days="+itoa(days)+",code="+code+",master="+masterCode+")")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate customer rows: %v", err)
+	}
+	if len(bad) > 0 {
+		t.Fatalf("seeded customers with days missing a valid master terms_code: %v", bad)
+	}
+}
