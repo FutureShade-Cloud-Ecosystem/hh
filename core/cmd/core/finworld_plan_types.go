@@ -590,11 +590,14 @@ type FinWorldLandedCostEvent struct {
 // on, the same day the bank statement carries it and the payable leaves the
 // AP aging.
 type FinWorldLandedCostSettleEvent struct {
-	LandedCostKey  string `json:"landed_cost_key"`
-	PayeeVendorNo  string `json:"payee_vendor_no"`
-	BranchCode     string `json:"branch_code"`
-	ChargeCadCents int64  `json:"charge_cad_cents"`
-	SettledDate    string `json:"settled_date"`
+	LandedCostKey string `json:"landed_cost_key"`
+	PayeeVendorNo string `json:"payee_vendor_no"`
+	BranchCode    string `json:"branch_code"`
+	// PayableCadCents is the whole payable the settle route relieves: the
+	// freight, the duty and the handling the document carries, the same figure
+	// the module's settle journal credits the bank by.
+	PayableCadCents int64  `json:"payable_cad_cents"`
+	SettledDate     string `json:"settled_date"`
 }
 
 // FinWorldTransferLine is one product line on an inter-branch stock transfer.

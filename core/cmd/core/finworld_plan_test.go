@@ -880,8 +880,8 @@ func TestFinWorldPlan_PayablesPaidOnTheirTerms(t *testing.T) {
 					if st.SettledDate != td.Date {
 						t.Errorf("settlement for %s sits on %s but names %s", st.LandedCostKey, td.Date, st.SettledDate)
 					}
-					if st.ChargeCadCents <= 0 {
-						t.Errorf("settlement for %s carries %d cents, want the charge it pays", st.LandedCostKey, st.ChargeCadCents)
+					if st.PayableCadCents <= 0 {
+						t.Errorf("settlement for %s carries %d cents, want the payable it pays", st.LandedCostKey, st.PayableCadCents)
 					}
 				}
 			}
@@ -913,8 +913,8 @@ func TestFinWorldPlan_PayablesPaidOnTheirTerms(t *testing.T) {
 				if lc.SettledOnDate != st.SettledDate {
 					t.Errorf("landed cost %s names settle day %s, its event names %s", lc.LandedCostKey, lc.SettledOnDate, st.SettledDate)
 				}
-				if st.ChargeCadCents != lc.ChargeCadCents {
-					t.Errorf("settlement for %s pays %d cents, the charge is %d", st.LandedCostKey, st.ChargeCadCents, lc.ChargeCadCents)
+				if want := lc.FreightCents + lc.DutyCents + lc.HandlingCents; st.PayableCadCents != want {
+					t.Errorf("settlement for %s pays %d cents, the payable is %d", st.LandedCostKey, st.PayableCadCents, want)
 				}
 				settleDay, err := time.ParseInLocation("2006-01-02", st.SettledDate, time.UTC)
 				if err != nil {

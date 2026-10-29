@@ -2459,11 +2459,11 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 								}
 							}
 							pendingLandedCostSettlements[settleIdx] = append(pendingLandedCostSettlements[settleIdx], &FinWorldLandedCostSettleEvent{
-								LandedCostKey:  lcKey,
-								PayeeVendorNo:  payee.VendorNo,
-								BranchCode:     slot.BranchCode,
-								ChargeCadCents: 0, // stamped below once the charge is known
-								SettledDate:    settleOn,
+								LandedCostKey:   lcKey,
+								PayeeVendorNo:   payee.VendorNo,
+								BranchCode:      slot.BranchCode,
+								PayableCadCents: 0, // stamped below once the charge is known
+								SettledDate:     settleOn,
 							})
 						}
 					}
@@ -2496,7 +2496,9 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				if settleIdx := finworldTradingDayAtOrAfter(ev.LandedCost.SettledOnDate); settleIdx >= 0 && ev.LandedCost.SettledOnDate != "" {
 					for _, st := range pendingLandedCostSettlements[settleIdx] {
 						if st.LandedCostKey == lcKey {
-							st.ChargeCadCents = ev.LandedCost.ChargeCadCents
+							// The whole payable: the freight, the duty and the
+							// handling, what the settle journal relieves 2100 by.
+							st.PayableCadCents = ev.LandedCost.FreightCents + ev.LandedCost.DutyCents + ev.LandedCost.HandlingCents
 						}
 					}
 				}
@@ -2748,7 +2750,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				// Every landed cost settlement cheque cleared on the statement,
 				// each matched to its own settlement journal.
 				for _, st := range monthLandedCostSettlements {
-					addStmtLine(td.Date, "LANDED_COST_PAYMENT", st.LandedCostKey, "LCPAY-"+st.LandedCostKey, "Carrier or broker cheque", -st.ChargeCadCents)
+					addStmtLine(td.Date, "LANDED_COST_PAYMENT", st.LandedCostKey, "LCPAY-"+st.LandedCostKey, "Carrier or broker cheque", -st.PayableCadCents)
 				}
 
 				// Monthly bank service fee.
