@@ -1,4 +1,4 @@
--- 0454: vendor credits, the supplier credit note (wave 3 item 0.8).
+-- 0456: vendor credits, the supplier credit note (wave 3 item 0.8).
 --
 -- THE DOCUMENT. A vendor ships pavers back, doubles an invoice by mistake, or agrees a price
 -- adjustment after the bill posted: the supplier sends a credit note, and until now that note had
