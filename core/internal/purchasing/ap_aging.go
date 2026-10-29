@@ -172,6 +172,13 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 	if key == "" {
 		return BillDetail{}, badReq("purchasing: idempotency_key is required on a bill payment (one key per press)")
 	}
+	// The contract's own bound (the Idempotency-Key header's maxLength 200),
+	// enforced here and not only declared: a longer key never reaches the GL, so
+	// a key of a few thousand bytes is a 400 in words, not a 500 off the journal
+	// key's index.
+	if len(key) > 200 {
+		return BillDetail{}, badReq("purchasing: idempotency_key is limited to 200 characters (the contract's maxLength)")
+	}
 	if in.AmountCents <= 0 {
 		return BillDetail{}, badReq("purchasing: payment amount_cents must be positive")
 	}
