@@ -522,6 +522,32 @@ export type BillingCreditApplicationLine = {
   outcome: "CLOSES" | "PART";
   balance_after_cents: number;
 };
+export type BillingWriteOffInput = {
+  invoice_id: string;
+  reason: string;
+  idempotency_key: string;
+};
+export type BillingWriteOff = {
+  write_off_id: string;
+  invoice_id: string;
+  invoice_no: string;
+  amount_cents: number;
+  limit_cents: number;
+  replayed: boolean;
+};
+export type BillingWriteOffReversalInput = {
+  invoice_id: string;
+  write_off_id: string;
+  reason: string;
+};
+export type BillingWriteOffReversed = {
+  write_off_id: string;
+  invoice_id: string;
+  invoice_no: string;
+  restored_cents: number;
+  invoice_balance_after_cents: number;
+  replayed: boolean;
+};
 export type BillingCreditApplication = {
   application_id: string;
   credit_kind: "MEMO" | "ACCOUNT";

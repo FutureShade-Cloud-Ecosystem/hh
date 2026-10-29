@@ -1340,6 +1340,92 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/ar/write-offs:
+    post:
+      operationId: billingWriteOffInvoice
+      tags:
+        - staff-billing
+      summary: Write off an invoice's remaining balance under the branch's small balance limit
+      description: Manager only, reason required. The limit is a branch setting on the credit policy with the org default of 2500 cents; a balance over it is refused for a manager and allowed only for the controller role. The write off posts DR bad debt expense and CR accounts receivable and is reversible once.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingWriteOffInput"
+      responses:
+        "200":
+          description: Replayed write off result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOff"
+        "201":
+          description: Invoice written off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOff"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/ar/write-offs/reverse:
+    post:
+      operationId: billingReverseWriteOff
+      tags:
+        - staff-billing
+      summary: Reverse a write off, restoring the invoice balance and the books
+      description: "Manager only, reason required, once: a write off already reversed is refused. The reversal restores the invoice's balance and status, nets the subledger rows to zero, and posts DR accounts receivable and CR bad debt expense."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingWriteOffReversalInput"
+      responses:
+        "200":
+          description: Replayed reversal result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOffReversed"
+        "201":
+          description: Write off reversed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOffReversed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/ar/register/invoices/{id}/send:
     post:
       operationId: billingSendInvoice
@@ -22600,7 +22686,7 @@ paths:
         - name: Idempotency-Key
           in: header
           required: true
-          description: A key chosen once per payment press and resent unchanged on every retry of it. A re-press under the same key answers the first payment; the same key on another bill is refused.
+          description: A key chosen once per payment press and resent unchanged on every retry of it. The key is the caller's own free text of 1 to 200 characters, not necessarily a UUID (a caller may name what the payment pays); a missing or over long key is refused with a 400. A re-press under the same key answers the first payment; the same key on another bill is refused.
           schema:
             type: string
             minLength: 1
@@ -31434,6 +31520,87 @@ components:
         balance_after_cents:
           type: integer
           format: int64
+    BillingWriteOffInput:
+      type: object
+      required:
+        - invoice_id
+        - reason
+        - idempotency_key
+      properties:
+        invoice_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        idempotency_key:
+          type: string
+    BillingWriteOff:
+      type: object
+      required:
+        - write_off_id
+        - invoice_id
+        - invoice_no
+        - amount_cents
+        - limit_cents
+        - replayed
+      properties:
+        write_off_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        limit_cents:
+          type: integer
+          format: int64
+        replayed:
+          type: boolean
+    BillingWriteOffReversalInput:
+      type: object
+      required:
+        - invoice_id
+        - write_off_id
+        - reason
+      properties:
+        invoice_id:
+          type: string
+          format: uuid
+        write_off_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+    BillingWriteOffReversed:
+      type: object
+      required:
+        - write_off_id
+        - invoice_id
+        - invoice_no
+        - restored_cents
+        - invoice_balance_after_cents
+        - replayed
+      properties:
+        write_off_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        restored_cents:
+          type: integer
+          format: int64
+        invoice_balance_after_cents:
+          type: integer
+          format: int64
+        replayed:
+          type: boolean
     BillingCreditApplication:
       type: object
       required:
