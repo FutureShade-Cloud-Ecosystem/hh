@@ -1,4 +1,4 @@
--- 0457: AR write offs.
+-- 0454: AR write offs.
 --
 -- A manager writes off an invoice's remaining balance, with a reason, under a small balance limit.
 -- The write off posts DR a bad debt expense account and CR 1100, so the aging and GL 1100 move by

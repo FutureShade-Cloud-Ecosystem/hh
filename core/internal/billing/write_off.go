@@ -19,7 +19,7 @@ package billing
 //
 // -- THE LIMIT -------------------------------------------------------------------------------------
 // A small balance limit keeps a desk from writing off a debt that deserves a collections call. The
-// limit is a BRANCH setting on ar_credit_policy (write_off_limit_cents, 0457), read the way every
+// limit is a BRANCH setting on ar_credit_policy (write_off_limit_cents, 0454), read the way every
 // other policy figure there is read: the branch's own row when one exists, otherwise the org
 // default row (which the column default gives 2500, $25.00). A write off above the limit is refused
 // in words naming the limit, unless the caller holds the controller role (the request carries the
@@ -430,7 +430,7 @@ SELECT write_off_limit_cents
  LIMIT 1`, invBranch).Scan(&limit)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return WriteOffResult{}, errors.New("billing: no ar_credit_policy row, migration 0104 seeds the org default and 0457 its write off limit")
+			return WriteOffResult{}, errors.New("billing: no ar_credit_policy row, migration 0104 seeds the org default and 0454 its write off limit")
 		}
 		return WriteOffResult{}, fmt.Errorf("write off: read the branch's limit: %w", err)
 	}

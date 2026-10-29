@@ -99,7 +99,7 @@ type CreditPolicy struct {
 	LimitToleranceCents int64  `json:"limit_tolerance_cents"`
 	CODEnforced         bool   `json:"cod_enforced"`
 	AutoHoldEnabled     bool   `json:"auto_hold_enabled"`
-	// WriteOffLimitCents is the branch's small balance write off limit (0457): the largest balance a
+	// WriteOffLimitCents is the branch's small balance write off limit (0454): the largest balance a
 	// manager may write off at this branch, the org default (2500, $25.00) when the branch carries
 	// no row of its own. Only the controller passes it.
 	WriteOffLimitCents int64 `json:"write_off_limit_cents"`
