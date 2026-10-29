@@ -95,10 +95,13 @@ func TestFinanceResetLocksFit(t *testing.T) {
 }
 
 func TestFinanceResetLockRefusal(t *testing.T) {
-	// The measured world: 15,053 locks against a nominal table of 6,400.
+	// The estimate is computed from the catalog and dump counts, never
+	// planted, against a default server's nominal table of 6,400 slots.
+	estimate := financeResetLockEstimate(1384, 2044)
+	capacity := financeResetLockCapacity(64, 100, 0)
 	locks := financeResetLocks{
-		Estimate:       15053,
-		Capacity:       6400,
+		Estimate:       estimate,
+		Capacity:       capacity,
 		PerTransaction: 64,
 		Connections:    100,
 		Prepared:       0,
@@ -110,12 +113,12 @@ func TestFinanceResetLockRefusal(t *testing.T) {
 	msg := err.Error()
 	t.Logf("the refusal reads: %s", msg)
 	// The estimate.
-	if !strings.Contains(msg, "15053") {
-		t.Fatalf("the refusal does not name the estimate: %q", msg)
+	if !strings.Contains(msg, strconv.Itoa(estimate)) {
+		t.Fatalf("the refusal does not name the estimate %d: %q", estimate, msg)
 	}
 	// The capacity.
-	if !strings.Contains(msg, "6400") {
-		t.Fatalf("the refusal does not name the capacity: %q", msg)
+	if !strings.Contains(msg, strconv.Itoa(capacity)) {
+		t.Fatalf("the refusal does not name the capacity %d: %q", capacity, msg)
 	}
 	// The setting to raise.
 	if !strings.Contains(msg, "-c max_locks_per_transaction=") {
@@ -135,9 +138,10 @@ func TestFinanceResetLockRefusal(t *testing.T) {
 func TestFinanceResetLockSuggestedSetting(t *testing.T) {
 	// The setting that holds twice the estimate, rounded up to a power of
 	// two, and never below the box's own floor.
-	locks := financeResetLocks{Estimate: 15053, Capacity: 6400, Connections: 100}
+	estimate := financeResetLockEstimate(1384, 2044)
+	locks := financeResetLocks{Estimate: estimate, Capacity: 6400, Connections: 100}
 	if got := locks.SuggestedSetting(); got != 512 {
-		t.Fatalf("the suggested setting for an estimate of 15053 is %d, want 512", got)
+		t.Fatalf("the suggested setting for an estimate of %d is %d, want 512", estimate, got)
 	}
 	// A world that needs more than the floor gets a setting above it.
 	big := financeResetLocks{Estimate: 40000, Capacity: 6400, Connections: 100}
@@ -145,12 +149,12 @@ func TestFinanceResetLockSuggestedSetting(t *testing.T) {
 		t.Fatalf("the suggested setting for an estimate of 40000 is %d, want more than the floor %d", got, financeResetLockSettingFloor)
 	}
 	// The setting it names really does hold twice the estimate.
-	for _, estimate := range []int{1, 100, 3428, 15053, 40000, 250000} {
-		l := financeResetLocks{Estimate: estimate, Capacity: 6400, Connections: 100}
+	for _, est := range []int{1, 100, estimate, 40000, 250000} {
+		l := financeResetLocks{Estimate: est, Capacity: 6400, Connections: 100}
 		setting := l.SuggestedSetting()
 		capacity := financeResetLockCapacity(setting, 100, 0)
-		if capacity < 2*estimate {
-			t.Fatalf("the suggested setting %d holds %d slots, less than twice the estimate %d", setting, capacity, estimate)
+		if capacity < 2*est {
+			t.Fatalf("the suggested setting %d holds %d slots, less than twice the estimate %d", setting, capacity, est)
 		}
 	}
 }

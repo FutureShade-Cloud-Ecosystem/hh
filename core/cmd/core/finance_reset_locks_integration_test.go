@@ -27,6 +27,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -68,15 +70,29 @@ func TestIntegration_FinanceResetLockPreflight(t *testing.T) {
 		t.Fatalf("the box's own row: %v", err)
 	}
 
-	// The leg's own numbers.
+	// The leg's own numbers, and the locks the reset's one transaction
+	// actually holds in pg_locks before a ROLLBACK.
 	catalog := financeLocksTestCatalog(t, ctx, pool)
 	statements := financeLocksTestStatements(dump)
 	estimate := catalog + statements
 	perTransaction, connections, prepared := financeLocksTestServer(t, ctx, pool)
 	capacity := perTransaction * (connections + prepared)
 
-	t.Logf("the server's lock table: max_locks_per_transaction %d x (max_connections %d + max_prepared_transactions %d) = %d slots; the estimate is %d (%d objects in the box's schemas + %d statements in the dump)",
-		perTransaction, connections, prepared, capacity, estimate, catalog, statements)
+	gotCatalog, err := financeResetCatalogObjects(ctx, pool)
+	if err != nil {
+		t.Fatalf("financeResetCatalogObjects: %v", err)
+	}
+	gotStatements := financeResetDumpObjectStatements(dump)
+	gotEstimate := financeResetLockEstimate(gotCatalog, gotStatements)
+	measured := financeLocksTestMeasured(t, worldDSN, dump)
+
+	t.Logf("the server's lock table: max_locks_per_transaction %d x (max_connections %d + max_prepared_transactions %d) = %d slots; the estimate is %d (%d objects in the box's schemas, %d statements in the dump); one transaction held %d locks in pg_locks",
+		perTransaction, connections, prepared, capacity, gotEstimate, gotCatalog, gotStatements, measured)
+
+	if gotEstimate < measured {
+		t.Fatalf("financeResetLockEstimate answers %d (%d catalog objects, %d dump statements), less than the %d locks the one transaction held in pg_locks",
+			gotEstimate, gotCatalog, gotStatements, measured)
+	}
 
 	env := finEnvFor(dsn, nil, map[string]string{
 		envFinanceWorldFile: worldFile,
@@ -138,6 +154,50 @@ func TestIntegration_FinanceResetLockPreflight(t *testing.T) {
 	if got := financeLocksTestField(t, line, "lock_capacity="); got != capacity {
 		t.Fatalf("the counts line reads a capacity of %d, want the leg's own %d", got, capacity)
 	}
+}
+
+// financeLocksTestMeasured runs the reset's own shape in one transaction
+// (drop public, ai and ai_pro CASCADE, create public, then restore the dump),
+// counts this backend's rows in pg_locks before a ROLLBACK, and leaves the
+// box's database untouched.
+func financeLocksTestMeasured(t *testing.T, dsn string, dump []byte) int {
+	t.Helper()
+	servicePath, cleanup, err := libpqServiceFile(dsn)
+	if err != nil {
+		t.Fatalf("the libpq service file: %v", err)
+	}
+	defer cleanup()
+	var script bytes.Buffer
+	script.WriteString("BEGIN;\n")
+	script.WriteString("DROP SCHEMA IF EXISTS public, ai, ai_pro CASCADE;\n")
+	script.WriteString("CREATE SCHEMA public;\n")
+	script.Write(dump)
+	script.WriteString("\nSELECT 'locks_held=' || count(*) FROM pg_locks WHERE pid = pg_backend_pid();\n")
+	script.WriteString("ROLLBACK;\n")
+	scriptPath := filepath.Join(t.TempDir(), "measure-locks.sql")
+	if err := os.WriteFile(scriptPath, script.Bytes(), 0600); err != nil {
+		t.Fatalf("writing the lock measurement script: %v", err)
+	}
+	cmd := exec.Command("psql", "-v", "ON_ERROR_STOP=1", "-tAq", "-f", scriptPath)
+	cmd.Env = append(os.Environ(), "PGSERVICEFILE="+servicePath, "PGSERVICE="+pgServiceName)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("measuring the reset's locks: %v (%s)", err, stderr.String())
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if after, ok := strings.CutPrefix(line, "locks_held="); ok {
+			n, err := strconv.Atoi(after)
+			if err != nil {
+				t.Fatalf("the measured lock count is not a number: %q", line)
+			}
+			return n
+		}
+	}
+	t.Fatalf("the lock measurement script printed no locks_held line: %q", string(out))
+	return 0
 }
 
 // financeLocksTestCatalog answers the objects the box's three schemas hold,
