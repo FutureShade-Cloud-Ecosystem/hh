@@ -774,3 +774,76 @@ func TestFinWorldPlan_NamesAreUniqueRealSoundingNames(t *testing.T) {
 		}
 	}
 }
+
+// TestFinWorldPlan_LandedCostsNameTheirPayees (W2-1d item 3): a freight
+// charge names a carrier and a duty charge names a broker, every carrier and
+// broker is a vendor with a real name, and a void mirrors the payee of the
+// landed cost it reverses.
+func TestFinWorldPlan_LandedCostsNameTheirPayees(t *testing.T) {
+	anchor := YearMonth{Year: 2026, Month: 9}
+	plan, err := FinWorldPlan(1, anchor, finworldTestDealerName)
+	if err != nil {
+		t.Fatalf("FinWorldPlan(1, %s) failed: %v", anchor, err)
+	}
+
+	kindByNo := map[string]string{}
+	for _, v := range plan.Vendors {
+		kindByNo[v.VendorNo] = v.Kind
+		if v.Kind != "SUPPLIER" && v.Kind != "CARRIER" && v.Kind != "BROKER" {
+			t.Errorf("vendor %s carries kind %q", v.VendorNo, v.Kind)
+		}
+	}
+	carriers, brokers := 0, 0
+	for _, v := range plan.Vendors {
+		switch v.Kind {
+		case "CARRIER":
+			carriers++
+		case "BROKER":
+			brokers++
+		}
+	}
+	if carriers == 0 || brokers == 0 {
+		t.Fatalf("the plan carries %d carriers and %d brokers, the landed costs need both", carriers, brokers)
+	}
+
+	byKey := map[string]*FinWorldLandedCostEvent{}
+	for mIdx := range plan.Months {
+		for dIdx := range plan.Months[mIdx].TradingDays {
+			for _, ev := range plan.Months[mIdx].TradingDays[dIdx].Events {
+				lc := ev.LandedCost
+				if lc == nil {
+					continue
+				}
+				byKey[lc.LandedCostKey] = lc
+				if lc.PayeeVendorNo == "" {
+					t.Errorf("landed cost %s (%s) names no payee vendor", lc.LandedCostKey, lc.ChargeKind)
+					continue
+				}
+				want := "CARRIER"
+				if lc.ChargeKind == "DUTY" {
+					want = "BROKER"
+				}
+				if got := kindByNo[lc.PayeeVendorNo]; got != want {
+					t.Errorf("landed cost %s (%s) names payee %s of kind %q, want a %s", lc.LandedCostKey, lc.ChargeKind, lc.PayeeVendorNo, got, want)
+				}
+			}
+		}
+	}
+	if len(byKey) == 0 {
+		t.Fatal("the plan carries no landed cost events")
+	}
+
+	// A void carries the payee of the landed cost it reverses.
+	for _, lc := range byKey {
+		if lc.Status != "VOIDED" {
+			continue
+		}
+		orig, ok := byKey[lc.VoidOfLandedCostKey]
+		if !ok {
+			t.Fatalf("void %s names missing original %s", lc.LandedCostKey, lc.VoidOfLandedCostKey)
+		}
+		if lc.PayeeVendorNo != orig.PayeeVendorNo {
+			t.Errorf("void %s names payee %s, its original names %s", lc.LandedCostKey, lc.PayeeVendorNo, orig.PayeeVendorNo)
+		}
+	}
+}

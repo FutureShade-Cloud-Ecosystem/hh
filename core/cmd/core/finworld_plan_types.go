@@ -555,6 +555,11 @@ type FinWorldLandedCostEvent struct {
 	PurchaseOrderKey   string `json:"purchase_order_key"`
 	BranchCode         string `json:"branch_code"`
 	VendorNo           string `json:"vendor_no"`
+	// PayeeVendorNo names the vendor the charge is owed to: a freight carrier
+	// for a FREIGHT charge, a customs broker for a DUTY one. The driver posts
+	// the create route with that vendor's id, so the AP aging labels the
+	// payable with the carrier's or broker's own name.
+	PayeeVendorNo      string `json:"payee_vendor_no,omitempty"`
 	Currency           string `json:"currency"`
 	FXRateBps          int    `json:"fx_rate_bps"`
 	ChargeKind         string `json:"charge_kind"` // "FREIGHT" or "DUTY"

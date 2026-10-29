@@ -377,6 +377,15 @@ var allowlist = []allowlistEntry{
 		reason: "tie-out and balance reads go through the 0034 views over the GL's own tables (stated in the file header) and approver lists join users for display names",
 	},
 	{
+		module: "landedcost",
+		file:   "core/internal/landedcost/ap_payable.go",
+		tables: []string{"vendors"},
+		// the statement's own comment: the AP aging must label the payable
+		// with the payee's name, so the open payable rows LEFT JOIN the
+		// vendors table the create route's payee_vendor_id names; read only.
+		reason: "the open payable read joins vendors for the payee vendor's display name (0454 payee_vendor_id), the label the AP aging shows; a row that names no payee degrades to its PO reference",
+	},
+	{
 		module: "identity",
 		file:   "core/internal/identity/populate.go",
 		tables: []string{"dispatch_drivers", "portal_users"},

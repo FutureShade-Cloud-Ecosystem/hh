@@ -54712,6 +54712,10 @@ components:
           format: uuid
         po_ref:
           type: string
+        payee_vendor_id:
+          type: string
+          format: uuid
+          description: The freight carrier or customs broker the charge is owed to, so the AP aging labels the payable with the vendor's name. Absent on rows written before the header named its payee, whose label falls back to the PO reference.
         branch_id:
           type: string
           format: uuid
@@ -54764,6 +54768,10 @@ components:
           format: uuid
         po_ref:
           type: string
+        payee_vendor_id:
+          type: string
+          format: uuid
+          description: The freight carrier or customs broker the charge is owed to; the aging labels the payable with the vendor's name
         branch_id:
           type: string
           format: uuid

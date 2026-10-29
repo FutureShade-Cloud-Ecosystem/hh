@@ -52,6 +52,8 @@ type OpenPayable struct {
 	ID               string    `json:"id"`
 	POID             string    `json:"po_id"`
 	PORef            string    `json:"po_ref"`
+	PayeeVendorID    string    `json:"payee_vendor_id,omitempty"`
+	PayeeVendorName  string    `json:"payee_vendor_name,omitempty"`
 	BranchID         string    `json:"branch_id"`
 	Currency         string    `json:"currency"`
 	FreightCadCents  int64     `json:"freight_cad_cents"`
@@ -103,12 +105,13 @@ func (s *Service) OpenPayablesAsOf(ctx context.Context, asOf time.Time, branchID
 			continue
 		}
 		p := OpenPayable{
-			ID: r.id, POID: r.poID, PORef: r.poRef, BranchID: r.branchID, Currency: r.currency,
+			ID: r.id, POID: r.poID, PORef: r.poRef, PayeeVendorID: r.payeeVendorID, PayeeVendorName: r.payeeName,
+			BranchID: r.branchID, Currency: r.currency,
 			FreightCadCents: r.freight, DutyCadCents: r.duty, HandlingCadCents: r.handling,
 			TotalCadCents: r.freight + r.duty + r.handling,
 			CreatedAt:     r.createdAt, UpdatedAt: r.updatedAt,
 		}
-		p.ChargeKind, p.PayeeLabel = classifyLandedPayable(p.PORef, p.FreightCadCents, p.DutyCadCents, p.HandlingCadCents)
+		p.ChargeKind, p.PayeeLabel = classifyLandedPayable(r.payeeName, p.PORef, p.FreightCadCents, p.DutyCadCents, p.HandlingCadCents)
 		out = append(out, p)
 	}
 	return out, nil
@@ -117,18 +120,20 @@ func (s *Service) OpenPayablesAsOf(ctx context.Context, asOf time.Time, branchID
 // openPayableRow is one landed_costs row that owes, or owed, a payable: the raw
 // material the as-of rule reads. The as-of decision is the caller's.
 type openPayableRow struct {
-	id          string
-	poID        string
-	poRef       string
-	branchID    string
-	currency    string
-	freight     int64
-	duty        int64
-	handling    int64
-	status      string
-	glJournalID string
-	createdAt   time.Time
-	updatedAt   time.Time
+	id            string
+	poID          string
+	poRef         string
+	payeeVendorID string
+	payeeName     string
+	branchID      string
+	currency      string
+	freight       int64
+	duty          int64
+	handling      int64
+	status        string
+	glJournalID   string
+	createdAt     time.Time
+	updatedAt     time.Time
 }
 
 func (r openPayableRow) total() int64 { return r.freight + r.duty + r.handling }
@@ -203,10 +208,13 @@ func (r *Repository) OpenPayableRows(ctx context.Context, branchIDs []string, gl
 	}
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT lc.id::text, lc.po_id::text, lc.po_ref, lc.branch_id::text, trim(lc.currency),
+		SELECT lc.id::text, lc.po_id::text, lc.po_ref,
+		       COALESCE(lc.payee_vendor_id::text, ''), COALESCE(v.name, ''),
+		       lc.branch_id::text, trim(lc.currency),
 		       lc.freight_cad_cents, lc.duty_cad_cents, lc.handling_cad_cents,
 		       lc.status, COALESCE(lc.gl_journal_id::text, ''), lc.created_at, lc.updated_at
 		  FROM landed_costs lc
+		  LEFT JOIN vendors v ON v.id = lc.payee_vendor_id
 		 WHERE lc.status IN ('POSTED', 'RETRO_ADJUSTED', 'VOIDED')
 		   AND (lc.freight_cad_cents + lc.duty_cad_cents + lc.handling_cad_cents) > 0
 		   AND ($1::boolean OR lc.branch_id = ANY($2::uuid[]))
@@ -222,7 +230,7 @@ func (r *Repository) OpenPayableRows(ctx context.Context, branchIDs []string, gl
 	for rows.Next() {
 		var r openPayableRow
 		if err := rows.Scan(
-			&r.id, &r.poID, &r.poRef, &r.branchID, &r.currency,
+			&r.id, &r.poID, &r.poRef, &r.payeeVendorID, &r.payeeName, &r.branchID, &r.currency,
 			&r.freight, &r.duty, &r.handling,
 			&r.status, &r.glJournalID, &r.createdAt, &r.updatedAt,
 		); err != nil {
@@ -236,13 +244,26 @@ func (r *Repository) OpenPayableRows(ctx context.Context, branchIDs []string, gl
 	return out, nil
 }
 
-func classifyLandedPayable(poRef string, freightCad, dutyCad, handlingCad int64) (string, string) {
+// classifyLandedPayable names the charge and its payee. A landed cost that
+// names its carrier or broker labels the payable with that vendor's name, the
+// way a real dealer's books do; the PO reference is the fallback for rows
+// written before 0454 only.
+func classifyLandedPayable(payeeName, poRef string, freightCad, dutyCad, handlingCad int64) (string, string) {
 	switch {
 	case dutyCad > 0 && freightCad == 0 && handlingCad == 0:
-		return "DUTY", fmt.Sprintf("Customs Broker (%s)", poRef)
+		return "DUTY", landedPayeeLabel(payeeName, "Customs Broker", poRef)
 	case dutyCad > 0 && freightCad > 0:
-		return "FREIGHT_AND_DUTY", fmt.Sprintf("Carrier / Broker (%s)", poRef)
+		return "FREIGHT_AND_DUTY", landedPayeeLabel(payeeName, "Carrier / Broker", poRef)
 	default:
-		return "FREIGHT", fmt.Sprintf("Freight Carrier (%s)", poRef)
+		return "FREIGHT", landedPayeeLabel(payeeName, "Freight Carrier", poRef)
 	}
+}
+
+// landedPayeeLabel prefers the payee vendor's own name; a row that names no
+// payee keeps the role word over its PO reference.
+func landedPayeeLabel(payeeName, kindWord, poRef string) string {
+	if payeeName != "" {
+		return payeeName
+	}
+	return fmt.Sprintf("%s (%s)", kindWord, poRef)
 }

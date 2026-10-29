@@ -40,6 +40,7 @@ type LandedCost struct {
 	ID                 string    `json:"id"`
 	POID               string    `json:"po_id"`
 	PORef              string    `json:"po_ref"`
+	PayeeVendorID      string    `json:"payee_vendor_id,omitempty"`
 	BranchID           string    `json:"branch_id"`
 	Currency           string    `json:"currency"`
 	FXRate             float64   `json:"fx_rate"`
@@ -67,8 +68,12 @@ func (lc LandedCost) totalCadCents() int64 {
 // base used to split capitalize-vs-sold-through at RetroAdjust time (the frozen Capitalizer seam surfaces no
 // on-hand reader, so the split basis is captured here, see the deviation note).
 type CreateInput struct {
-	POID               string       `json:"po_id"`
-	PORef              string       `json:"po_ref"`
+	POID  string `json:"po_id"`
+	PORef string `json:"po_ref"`
+	// PayeeVendorID names the freight carrier or customs broker the charge is
+	// owed to, so the AP aging labels the payable with the vendor's name. The
+	// PO reference stays the label's fallback for rows that name no payee.
+	PayeeVendorID      string       `json:"payee_vendor_id"`
 	BranchID           string       `json:"branch_id"`
 	Currency           string       `json:"currency"`
 	FXRate             float64      `json:"fx_rate"`

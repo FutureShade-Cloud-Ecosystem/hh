@@ -1075,7 +1075,7 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 
 		case FinWorldEventLandedCost:
 			lcEv := ev.LandedCost
-			if err := finworldExecuteLandedCost(ctx, h, lcEv); err != nil {
+			if err := finworldExecuteLandedCost(ctx, h, lcEv, vendorByNo); err != nil {
 				return fmt.Errorf("%s (%s): %w", ev.EventKey, lcEv.LandedCostKey, err)
 			}
 			if err := h.drain(ctx); err != nil {
@@ -1613,7 +1613,7 @@ func finworldExecuteVendorPayment(ctx context.Context, h *finworldHarness, vp *F
 // names. Every route is RequireManager, and the driver posts them with the branch_manager token it
 // already links for approvals. The world key rides po_ref at create so a later void (a fresh
 // process, a later simulated day) resolves the applied document.
-func finworldExecuteLandedCost(ctx context.Context, h *finworldHarness, lc *FinWorldLandedCostEvent) error {
+func finworldExecuteLandedCost(ctx context.Context, h *finworldHarness, lc *FinWorldLandedCostEvent, vendorByNo map[string]string) error {
 	branchID, err := finworldBranchID(lc.BranchCode)
 	if err != nil {
 		return err
@@ -1637,9 +1637,14 @@ func finworldExecuteLandedCost(ctx context.Context, h *finworldHarness, lc *FinW
 		 WHERE p.notes = $1`, lc.PurchaseReceiptKey).Scan(&poID); err != nil {
 		return fmt.Errorf("lookup receiving document for receipt %s: %w", lc.PurchaseReceiptKey, err)
 	}
+	payeeVendorID := vendorByNo[lc.PayeeVendorNo]
+	if payeeVendorID == "" {
+		return fmt.Errorf("landed cost %s names unknown payee vendor %s", lc.LandedCostKey, lc.PayeeVendorNo)
+	}
 	out, err := h.callWithToken(h.managerToken, "create landed cost "+lc.LandedCostKey, http.MethodPost, "/api/v1/landed-costs", map[string]any{
 		"po_id":                poID,
 		"po_ref":               lc.LandedCostKey,
+		"payee_vendor_id":      payeeVendorID,
 		"branch_id":            branchID,
 		"currency":             lc.Currency,
 		"fx_rate":              float64(lc.FXRateBps) / 10000,

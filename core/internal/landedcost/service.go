@@ -61,6 +61,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	lc := LandedCost{
 		POID:               in.POID,
 		PORef:              in.PORef,
+		PayeeVendorID:      strings.TrimSpace(in.PayeeVendorID),
 		BranchID:           in.BranchID,
 		Currency:           currency,
 		FXRate:             fx,

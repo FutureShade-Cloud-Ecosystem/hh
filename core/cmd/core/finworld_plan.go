@@ -222,6 +222,22 @@ var finworldCatalogueSpecs = []finworldCatalogueSpec{
 	{"a7000000-0000-4000-9000-000000000030", "DBS-PM-BORANJA", "Permacon Boranja Slab", "SLABSTEP", "PC", "SF", "V-PERMACON", 2200, 1804, 1100, 65, 800, 360, 260, 130, 300, 150},
 }
 
+// finworldCarrierNames are the freight carriers the world's landed costs name
+// as payees, built from the word lists: a business name a person would give a
+// haulier, with no counter. The vendor numbers are ids, not names.
+var finworldCarrierVendors = []FinWorldVendor{
+	{VendorNo: "V-HAULAGE", Name: "Cairnbrook Freight Lines Ltd.", Kind: "CARRIER", PaymentTermsDays: finworldVendorTermsDays},
+	{VendorNo: "V-CARTAGE", Name: "Limestone Ridge Cartage Inc.", Kind: "CARRIER", PaymentTermsDays: finworldVendorTermsDays},
+	{VendorNo: "V-ROADWAY", Name: "Harbour Point Transport Co.", Kind: "CARRIER", PaymentTermsDays: finworldVendorTermsDays},
+}
+
+// finworldBrokerVendors are the customs brokers the world's duty charges name
+// as payees, built from the word lists the same way.
+var finworldBrokerVendors = []FinWorldVendor{
+	{VendorNo: "V-CUSTOMS", Name: "Granite Valley Customs Brokerage Ltd.", Kind: "BROKER", PaymentTermsDays: finworldVendorTermsDays},
+	{VendorNo: "V-BORDER", Name: "Bayshore Border Services Inc.", Kind: "BROKER", PaymentTermsDays: finworldVendorTermsDays},
+}
+
 // finworldHSTOn mirrors tax.hstOn in core/internal/tax/model.go:355 (half-up integer rounding).
 func finworldHSTOn(subtotalCents int64, rateBps int) int64 {
 	if subtotalCents <= 0 || rateBps <= 0 {
@@ -869,9 +885,10 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 	// 5b. Build the vendors. The catalogue's goods suppliers are the invented
 	// dealer's established vendors, named exactly as the embedded catalogue
 	// seed names them, and the plan verifies every pair against that seed at
-	// construction. The world's carriers and brokers join them as vendors in
-	// W2-1d item 3, with names of the plan's own; no vendor is ever named
-	// with its vendor number or a counter.
+	// construction. The landed costs' freight carriers and customs brokers
+	// join them as vendors with names of the plan's own, because a landed cost
+	// names its payee and the aging labels the payable with that vendor's
+	// name. No vendor is ever named with its vendor number or a counter.
 	vendorNameByNo := map[string]string{}
 	for _, vn := range finworldVendorSeedNames {
 		vendorNameByNo[vn.VendorNo] = vn.Name
@@ -881,17 +898,26 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 	}
 	seenVendor := map[string]bool{}
 	plan.Vendors = []FinWorldVendor{}
-	for _, spec := range finworldCatalogueSpecs {
-		if seenVendor[spec.VendorNo] {
-			continue
+	appendVendor := func(v FinWorldVendor) {
+		if seenVendor[v.VendorNo] {
+			return
 		}
-		seenVendor[spec.VendorNo] = true
-		plan.Vendors = append(plan.Vendors, FinWorldVendor{
+		seenVendor[v.VendorNo] = true
+		plan.Vendors = append(plan.Vendors, v)
+	}
+	for _, spec := range finworldCatalogueSpecs {
+		appendVendor(FinWorldVendor{
 			VendorNo:         spec.VendorNo,
 			Name:             vendorNameByNo[spec.VendorNo],
 			Kind:             "SUPPLIER",
 			PaymentTermsDays: finworldVendorTermsDays,
 		})
+	}
+	for _, v := range finworldCarrierVendors {
+		appendVendor(v)
+	}
+	for _, v := range finworldBrokerVendors {
+		appendVendor(v)
 	}
 
 	// 6. Build the 12 months and their non-Sunday trading days in America/Toronto.
@@ -1028,6 +1054,11 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 	// The purchase receipts a landed cost can attach to, in the order they were received.
 	var landedCostReceipts []*finworldLandedCostReceipt
 	landedCostSeq := 0
+	// The payee rotations: each applied landed cost names the next carrier or
+	// broker in turn, so the books spread the freight and duty across the
+	// small set of hauliers and brokers a real dealer keeps.
+	carrierSeq := 0
+	brokerSeq := 0
 
 	// Helper to format an America/Toronto RFC3339 timestamp on dateStr at hour:min:sec.
 	formatOccurredAt := func(dateStr string, hour, minute, second int) string {
@@ -2274,6 +2305,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 						PurchaseOrderKey:    orig.PurchaseOrderKey,
 						BranchCode:          orig.BranchCode,
 						VendorNo:            orig.VendorNo,
+						PayeeVendorNo:       orig.PayeeVendorNo,
 						Currency:            orig.Currency,
 						FXRateBps:           orig.FXRateBps,
 						ChargeKind:          orig.ChargeKind,
@@ -2333,6 +2365,14 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				chargeCadCents := (chargeCents*finworldLandedCostFXRateBps + 5000) / 10000
 
 				landedCostSeq++
+				var payee FinWorldVendor
+				if slot.ChargeKind == "DUTY" {
+					payee = finworldBrokerVendors[brokerSeq%len(finworldBrokerVendors)]
+					brokerSeq++
+				} else {
+					payee = finworldCarrierVendors[carrierSeq%len(finworldCarrierVendors)]
+					carrierSeq++
+				}
 				lcKey := fmt.Sprintf("lc-s%d-%04d", seed, landedCostSeq)
 				ev := appendEvent(slot.BranchCode, FinWorldEventLandedCost, 16, minute, 0)
 				ev.LandedCost = &FinWorldLandedCostEvent{
@@ -2341,6 +2381,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					PurchaseOrderKey:   rcpt.PurchaseOrderKey,
 					BranchCode:         slot.BranchCode,
 					VendorNo:           rcpt.VendorNo,
+					PayeeVendorNo:      payee.VendorNo,
 					Currency:           "CAD",
 					FXRateBps:          finworldLandedCostFXRateBps,
 					ChargeKind:         slot.ChargeKind,

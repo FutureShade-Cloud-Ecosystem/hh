@@ -8109,6 +8109,7 @@ type LandedCost struct {
 	Id                 string             `json:"id"`
 	PoId               string             `json:"po_id"`
 	PoRef              string             `json:"po_ref"`
+	PayeeVendorId      *string            `json:"payee_vendor_id,omitempty"`
 	BranchId           string             `json:"branch_id"`
 	Currency           PurchasingCurrency `json:"currency"`
 	FxRate             float64            `json:"fx_rate"`
@@ -8129,6 +8130,7 @@ type LandedCost struct {
 type LandedCostCreateRequest struct {
 	PoId               *string                 `json:"po_id,omitempty"`
 	PoRef              *string                 `json:"po_ref,omitempty"`
+	PayeeVendorId      *string                 `json:"payee_vendor_id,omitempty"`
 	BranchId           string                  `json:"branch_id"`
 	Currency           *PurchasingCurrency     `json:"currency,omitempty"`
 	FxRate             *float64                `json:"fx_rate,omitempty"`
