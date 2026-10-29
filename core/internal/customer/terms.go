@@ -201,33 +201,32 @@ func (s *Service) SetTerms(ctx context.Context, customerID string, code string) 
 
 // TermsFor reads the terms one customer is sold on.
 //
-// The customer's terms code names the row. A customer that carries no code (one written by a
-// path that does not know the master yet) is read from its own days: the standard term for
-// those days, and a custom net in words when no standard term names them. Never a silent
-// default of some other term.
+// The customer's terms code names the row in the master. A customer that carries no code on
+// standard days joins the standard master row for those days; with no code and non-standard
+// days, TermsFor answers the days with no code. TermsFor stays a read and never writes.
 func (r *Repository) TermsFor(ctx context.Context, customerID string) (Terms, error) {
 	if r.pool == nil {
 		return Terms{}, errNoDB
 	}
-	var days int
 	var t Terms
 	err := r.pool.QueryRow(ctx, `
-		SELECT c.payment_terms_days,
-		       COALESCE(t.code, ''), COALESCE(t.name, ''), COALESCE(t.net_days, 0),
+		SELECT COALESCE(t.code, ''), COALESCE(t.name, ''), COALESCE(t.net_days, c.payment_terms_days),
 		       COALESCE(t.discount_bps, 0), COALESCE(t.discount_days, 0)
 		  FROM customers c
-		  LEFT JOIN payment_terms t ON t.code = c.terms_code
+		  LEFT JOIN payment_terms t
+		    ON t.code = COALESCE(c.terms_code, CASE c.payment_terms_days
+		                  WHEN 0  THEN 'RECEIPT'
+		                  WHEN 15 THEN 'NET15'
+		                  WHEN 30 THEN 'NET30'
+		                  WHEN 45 THEN 'NET45'
+		                END)
 		 WHERE c.id = $1`,
-		customerID).Scan(&days, &t.Code, &t.Name, &t.NetDays, &t.DiscountBps, &t.DiscountDays)
+		customerID).Scan(&t.Code, &t.Name, &t.NetDays, &t.DiscountBps, &t.DiscountDays)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Terms{}, ErrNotFound
 		}
 		return Terms{}, fmt.Errorf("read the terms of customer %q: %w", customerID, err)
-	}
-	if t.Code == "" {
-		code, name := TermsForDays(days)
-		t.Code, t.Name, t.NetDays = code, name, days
 	}
 	return t, nil
 }

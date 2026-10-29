@@ -97,3 +97,79 @@ func TestIntegration_TheInvoiceIsDatedByTheCustomersTerms(t *testing.T) {
 		t.Fatalf("the invoice carries the code it was dated by: got %v, want %s", code, customer.Terms2PctNet30)
 	}
 }
+
+// TestIntegration_Cust1008_InvoicesOnFreshSeededDBAndWithNoCode proves S2's case: on a fresh
+// migrated and seeded database, invoicing CUST-1008 (60 days) through the production writer and
+// the real terms read succeeds and is due in 60 house days, and when the customer carries no
+// terms code on non-standard days, TermsFor answers the days with no code and the invoice writer
+// writes a NULL terms_code.
+func TestIntegration_Cust1008_InvoicesOnFreshSeededDBAndWithNoCode(t *testing.T) {
+	ctx := context.Background()
+	pool := freshMigratedDB(t, "s4fin2tm1c1008")
+	seedBody, err := seedFS.ReadFile("dibbits_seed.sql")
+	if err != nil {
+		t.Fatalf("read dibbits_seed.sql: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(seedBody)); err != nil {
+		t.Fatalf("apply dibbits_seed.sql: %v", err)
+	}
+
+	const cust1008 = "c7000000-0000-4000-9000-000000000008"
+	at := time.Date(2026, 1, 5, 2, 30, 0, 0, time.UTC)
+	writer := newInvoiceWriter(pool).
+		WithOrderSource(tm1OrderSource{customer: cust1008}).
+		WithClock(func() time.Time { return at })
+
+	doc, err := writer.InvoiceOrder(ctx, "cust1008-seeded")
+	if err != nil {
+		t.Fatalf("raise the invoice for CUST-1008 on a fresh migrated and seeded database: %v", err)
+	}
+	var issue, due string
+	if err := pool.QueryRow(ctx,
+		`SELECT issue_date::text, due_date::text FROM invoices WHERE id = $1::uuid`,
+		doc.InvoiceID).Scan(&issue, &due); err != nil {
+		t.Fatalf("read the raised invoice for CUST-1008: %v", err)
+	}
+	if issue != "2026-01-04" {
+		t.Fatalf("the invoice is dated the house day: got %s, want 2026-01-04", issue)
+	}
+	if due != "2026-03-05" {
+		t.Fatalf("CUST-1008 is due 60 house days later: got %s, want 2026-03-05", due)
+	}
+
+	// With no code on the customer and non-standard days (60), TermsFor answers the days with
+	// no code and the invoice writer writes a NULL terms_code.
+	if _, err := pool.Exec(ctx, `UPDATE customers SET terms_code = NULL WHERE id = $1::uuid`, cust1008); err != nil {
+		t.Fatalf("clear CUST-1008 terms_code: %v", err)
+	}
+	repo := customer.NewRepository(pool)
+	svc := customer.NewService(repo).WithWriter(repo)
+	terms, err := svc.TermsFor(ctx, cust1008)
+	if err != nil {
+		t.Fatalf("read the terms of uncoded CUST-1008: %v", err)
+	}
+	if terms.Code != "" {
+		t.Fatalf("an uncoded 60-day customer answers no code: got %q, want empty", terms.Code)
+	}
+	if terms.NetDays != 60 {
+		t.Fatalf("an uncoded 60-day customer answers 60 net days: got %d, want 60", terms.NetDays)
+	}
+
+	uncodedDoc, err := writer.InvoiceOrder(ctx, "cust1008-uncoded")
+	if err != nil {
+		t.Fatalf("raise the invoice for uncoded CUST-1008: %v", err)
+	}
+	var uncodedDue string
+	var uncodedCode *string
+	if err := pool.QueryRow(ctx,
+		`SELECT due_date::text, terms_code FROM invoices WHERE id = $1::uuid`,
+		uncodedDoc.InvoiceID).Scan(&uncodedDue, &uncodedCode); err != nil {
+		t.Fatalf("read the uncoded invoice for CUST-1008: %v", err)
+	}
+	if uncodedDue != "2026-03-05" {
+		t.Fatalf("the uncoded 60-day invoice is due 60 house days later: got %s, want 2026-03-05", uncodedDue)
+	}
+	if uncodedCode != nil {
+		t.Fatalf("the invoice writer writes a NULL terms_code when TermsFor answers no code: got %q", *uncodedCode)
+	}
+}

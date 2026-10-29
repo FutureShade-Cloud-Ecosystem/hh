@@ -153,6 +153,37 @@ func TestIntegration_TermsFor_DaysThatNameNoTermStayACustomNet(t *testing.T) {
 	}
 }
 
+func TestIntegration_TermsFor_UncodedNonStandardDaysAnswerTheDaysWithNoCode(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	svc := NewService(repo).WithWriter(repo)
+
+	// A customer row carrying non-standard days (60) and no terms_code answers the days with
+	// no code: TermsFor stays a read, never writes a master row, and never returns a code the
+	// customer was not given.
+	var id string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO customers (account_no, name, customer_type, payment_terms_days, terms_code)
+		 VALUES ($1, 'Uncoded Sixty Day Yard', 'CONTRACTOR', 60, NULL)
+		 RETURNING id::text`,
+		tm1AccountNo("TM1-UNCODED60")).Scan(&id); err != nil {
+		t.Fatalf("insert uncoded 60-day customer: %v", err)
+	}
+	tm1Cleanup(t, pool, id)
+
+	terms, err := svc.TermsFor(ctx, id)
+	if err != nil {
+		t.Fatalf("read the terms of the uncoded 60-day customer: %v", err)
+	}
+	if terms.Code != "" {
+		t.Fatalf("an uncoded 60-day customer answers no code: got %q, want empty", terms.Code)
+	}
+	if terms.NetDays != 60 {
+		t.Fatalf("an uncoded 60-day customer answers %d net days, want 60", terms.NetDays)
+	}
+}
+
 func TestIntegration_TermsFor_TheCreatedCustomerCarriesItsCode(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
