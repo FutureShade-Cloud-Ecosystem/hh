@@ -264,8 +264,9 @@ func TestIntegration_TermsFor_TheLoadDoorWritesTheCodeBesideTheDays(t *testing.T
 	}
 	tm1Cleanup(t, pool, acct.CustomerID)
 
-	// The loader's write: the same account, the days the record carries. The loader writes on
-	// the caller's transaction, the way the load door's frame hands it one.
+	// The loader's write: the same account with THIRTY days, where the staff write left
+	// forty five. The load door writes on the caller's transaction, the way the load door's
+	// frame hands it one.
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin the loader's transaction: %v", err)
@@ -275,7 +276,7 @@ func TestIntegration_TermsFor_TheLoadDoorWritesTheCodeBesideTheDays(t *testing.T
 		LegacyID: acct.AccountNo,
 		OrgID:    "4442a800-0000-4000-8000-00000000e001",
 		Record: map[string]any{
-			"account_no": acct.AccountNo, "name": "Loaded Yard", "payment_terms_days": 45,
+			"account_no": acct.AccountNo, "name": "Loaded Yard", "payment_terms_days": 30,
 		},
 	}); err != nil {
 		t.Fatalf("the load door writes the customer: %v", err)
@@ -289,10 +290,15 @@ func TestIntegration_TermsFor_TheLoadDoorWritesTheCodeBesideTheDays(t *testing.T
 		acct.CustomerID).Scan(&code, &days); err != nil {
 		t.Fatalf("read the loaded customer: %v", err)
 	}
-	if code == nil || *code != TermsNet45 {
-		t.Fatalf("the loaded customer carries the code %v, want %q", code, TermsNet45)
+	// The code follows the days the load carried: a customer whose code and days disagreed
+	// would be dated by one door and not the other.
+	if code == nil {
+		t.Fatal("the loaded customer carries no terms code at all")
 	}
-	if days != 45 {
-		t.Fatalf("the loaded customer carries %d days, want 45", days)
+	if *code != TermsNet30 {
+		t.Fatalf("the loaded customer carries the code %q, want %q", *code, TermsNet30)
+	}
+	if days != 30 {
+		t.Fatalf("the loaded customer carries %d days, want 30", days)
 	}
 }
