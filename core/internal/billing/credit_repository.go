@@ -83,7 +83,7 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 }
 
 // SetCreditChangeThresholds updates the dealer-configurable increase approval thresholds
-// on ar_credit_policy (0454). Like SetAutoHoldEnabled, branchID "" targets the org default
+// on ar_credit_policy (0461). Like SetAutoHoldEnabled, branchID "" targets the org default
 // row (branch_id IS NULL), or an existing branch policy row when branchID is non-empty.
 func (r *Repository) SetCreditChangeThresholds(ctx context.Context, branchID string, firstThresholdCents, secondThresholdCents int64) error {
 	if r.pool == nil {

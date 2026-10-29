@@ -100,7 +100,7 @@ type CreditPolicy struct {
 	CODEnforced         bool   `json:"cod_enforced"`
 	AutoHoldEnabled     bool   `json:"auto_hold_enabled"`
 	// IncreaseFirstThresholdCents and IncreaseSecondThresholdCents are the per-dealer credit limit
-	// increase approval thresholds (0454). An increase above IncreaseFirstThresholdCents (default 0)
+	// increase approval thresholds (0461). An increase above IncreaseFirstThresholdCents (default 0)
 	// up to IncreaseSecondThresholdCents (default 2500000, $25,000.00) needs one approver (branch
 	// manager or Controller); an increase above IncreaseSecondThresholdCents needs a second approver
 	// (Controller or General Manager).

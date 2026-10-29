@@ -1,4 +1,4 @@
--- 0454: credit change requests and approvals.
+-- 0461: credit change requests and approvals.
 --
 -- A manager may lower a customer's credit limit or place a credit hold at once. An increase above
 -- the first dealer threshold (default 0 cents) up to the second dealer threshold (default 2500000
