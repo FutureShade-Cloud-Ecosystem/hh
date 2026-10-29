@@ -1986,7 +1986,14 @@ components:
       required: [year, month, branch_id]
       properties:
         year: { type: integer, format: int32 }
-        month: { type: integer, format: int32, minimum: 1, maximum: 12 }
+        month:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 12
+          description: >-
+            0 with no quarter is the whole year, the desk's Whole year pick;
+            1 to 12 is one month
         quarter:
           type: integer
           format: int32
