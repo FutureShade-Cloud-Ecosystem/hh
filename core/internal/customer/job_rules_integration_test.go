@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -244,5 +245,92 @@ func TestIntegration_JobRules_ClosedJobIsRefused(t *testing.T) {
 	otherCustomer := plantJobCustomer(t, pool, "JA1-RULES-OTHER-"+randSuffix())
 	if err := svc.JobOpenForCustomer(ctx, otherCustomer, other.JobID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a job of another customer answered %v, want not found", err)
+	}
+}
+
+// TestIntegration_JobRules_RehomeMovesOpenAndClosedJobs proves that re-homing a customer moves
+// its open and closed jobs to the new home in the same transaction, so the new home's caller
+// lists both and count(DISTINCT branch_id) over the customer's jobs is 1.
+func TestIntegration_JobRules_RehomeMovesOpenAndClosedJobs(t *testing.T) {
+	bg := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	svc := NewService(repo).WithJobs(repo)
+
+	f := plantJobWorld(t, pool)
+	global := identity.ContextWithStaff(bg, identity.StaffContext{UserID: f.userA, Scope: identity.ScopeGlobal})
+	acct, err := svc.GetAccount(global, f.customerID)
+	if err != nil {
+		t.Fatalf("read the customer: %v", err)
+	}
+
+	// Open a second job at branch A and close it, so the customer holds one OPEN job and one CLOSED job.
+	second, err := svc.CreateJob(global, f.customerID, JobCreateInput{
+		JobNo: "J-REHOME-2", Name: "Phase two", BranchID: f.branchA,
+	})
+	if err != nil {
+		t.Fatalf("open the second job: %v", err)
+	}
+	if _, err := svc.CloseJob(global, f.customerID, second.JobID); err != nil {
+		t.Fatalf("close the second job: %v", err)
+	}
+
+	rehome := func(rowID, branchID string) {
+		t.Helper()
+		tx, err := pool.Begin(bg)
+		if err != nil {
+			t.Fatalf("begin tx: %v", err)
+		}
+		defer func() { _ = tx.Rollback(bg) }()
+		_, err = (CustomerLoadWriter{}).Apply(bg, tx, load.Write{
+			OrgID:    fxLoadOrgID,
+			LegacyID: "CUST-REHOME",
+			RowID:    rowID,
+			Record:   map[string]any{"account_no": acct.AccountNo, "name": acct.Name},
+			Refs:     []load.RefMatch{{Kind: load.KindBranch, LegacyID: "BR", HHID: branchID}},
+		})
+		if err != nil {
+			t.Fatalf("re-home customer (rowID=%q) to %s: %v", rowID, branchID, err)
+		}
+		if err := tx.Commit(bg); err != nil {
+			t.Fatalf("commit re-home: %v", err)
+		}
+	}
+
+	// Re-home via the attach arm (loadwriter.go:189, RowID == "") to branch B.
+	rehome("", f.branchB)
+
+	ctxB := identity.ContextWithStaff(bg, identity.StaffContext{UserID: f.userB, Scope: identity.ScopeBranch, Branches: map[string]bool{f.branchB: true}})
+	jobsB, err := svc.ListJobs(ctxB, f.customerID)
+	if err != nil {
+		t.Fatalf("list jobs as new home B caller: %v", err)
+	}
+	if len(jobsB) != 2 {
+		t.Fatalf("new home B caller listed %d jobs, want 2 (open and closed)", len(jobsB))
+	}
+	var distinctBranches int
+	if err := pool.QueryRow(bg, `SELECT count(DISTINCT branch_id) FROM customer_jobs WHERE customer_id = $1`, f.customerID).Scan(&distinctBranches); err != nil {
+		t.Fatalf("count distinct branches: %v", err)
+	}
+	if distinctBranches != 1 {
+		t.Fatalf("distinct branch_id count after attach re-home = %d, want 1", distinctBranches)
+	}
+
+	// Re-home via the update arm (loadwriter.go:254, RowID == customerID) back to branch A.
+	rehome(f.customerID, f.branchA)
+
+	ctxA := identity.ContextWithStaff(bg, identity.StaffContext{UserID: f.userA, Scope: identity.ScopeBranch, Branches: map[string]bool{f.branchA: true}})
+	jobsA, err := svc.ListJobs(ctxA, f.customerID)
+	if err != nil {
+		t.Fatalf("list jobs as new home A caller: %v", err)
+	}
+	if len(jobsA) != 2 {
+		t.Fatalf("new home A caller listed %d jobs, want 2 (open and closed)", len(jobsA))
+	}
+	if err := pool.QueryRow(bg, `SELECT count(DISTINCT branch_id) FROM customer_jobs WHERE customer_id = $1`, f.customerID).Scan(&distinctBranches); err != nil {
+		t.Fatalf("count distinct branches: %v", err)
+	}
+	if distinctBranches != 1 {
+		t.Fatalf("distinct branch_id count after update re-home = %d, want 1", distinctBranches)
 	}
 }
