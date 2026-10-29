@@ -371,3 +371,78 @@ func TestCreditChangeIntegration_ApproveAndRejectRaced20Rounds(t *testing.T) {
 		}
 	}
 }
+
+// P2-2 Red leg (S2's probe on Postgres): customer at $45,000, request for $50,000 pending,
+// limit lowered to $0, one approval. The limit must not reach $50,000 on that single approval,
+// and the audit's "before" is the limit at approval ($0).
+func TestCreditChangeIntegration_JudgeOnCurrentLimitAtApproval(t *testing.T) {
+	rig := newCreditChangeIntRig(t, 4500000) // $45,000.00
+	ctx := context.Background()
+
+	salesMgrCtx := ccCallerCtx(rig.userSalesMgr, "SALES_MANAGER", identity.TierManager, identity.ScopeBranch, rig.branchID)
+	bm1Ctx := ccCallerCtx(rig.userBranchMgr, RoleBranchManager, identity.TierManager, identity.ScopeBranch, rig.branchID)
+	fcCtx := ccCallerCtx(rig.userController, RoleFinancialController, identity.TierLeadership, identity.ScopeGlobal, "")
+
+	req, err := rig.svc.Request(salesMgrCtx, CreateCreditChangeInput{
+		CustomerID:    rig.customerID,
+		NewLimitCents: i64Ptr(5000000),
+		Reason:        "modest top-up",
+	})
+	if err != nil {
+		t.Fatalf("request $50,000: %v", err)
+	}
+	if req.Status != CreditChangeStatusPending || req.RequiredApprovals != 1 {
+		t.Fatalf("after request: status=%q required=%d, want PENDING and 1", req.Status, req.RequiredApprovals)
+	}
+
+	dec, err := rig.svc.Request(salesMgrCtx, CreateCreditChangeInput{
+		CustomerID:    rig.customerID,
+		NewLimitCents: i64Ptr(0),
+		Reason:        "pause credit exposure",
+	})
+	if err != nil {
+		t.Fatalf("decrease to $0: %v", err)
+	}
+	if dec.Status != CreditChangeStatusApplied || rig.currentLimit(t) != 0 {
+		t.Fatalf("after decrease: status=%q limit=%d, want APPLIED and 0", dec.Status, rig.currentLimit(t))
+	}
+
+	afterFirst, err := rig.svc.Approve(bm1Ctx, req.ID, DecideCreditChangeInput{Note: "branch approval"})
+	if err != nil {
+		t.Fatalf("first approval: %v", err)
+	}
+	if got := rig.currentLimit(t); got != 0 {
+		t.Fatalf("customer limit after single approval = %d, want 0 (must not reach 5000000 on one approval)", got)
+	}
+	if afterFirst.Status != CreditChangeStatusPending || afterFirst.RequiredApprovals != 2 {
+		t.Fatalf("after first approval: status=%q required=%d, want PENDING and 2", afterFirst.Status, afterFirst.RequiredApprovals)
+	}
+	if afterFirst.PreviousLimitCents != 0 || afterFirst.DeltaCents != 5000000 {
+		t.Fatalf("after first approval: previous=%d delta=%d, want 0 and 5000000", afterFirst.PreviousLimitCents, afterFirst.DeltaCents)
+	}
+
+	afterSecond, err := rig.svc.Approve(fcCtx, req.ID, DecideCreditChangeInput{Note: "controller second approval"})
+	if err != nil {
+		t.Fatalf("second approval: %v", err)
+	}
+	if afterSecond.Status != CreditChangeStatusApplied || rig.currentLimit(t) != 5000000 {
+		t.Fatalf("after second approval: status=%q limit=%d, want APPLIED and 5000000", afterSecond.Status, rig.currentLimit(t))
+	}
+
+	var beforeCents, afterCents int64
+	if err := rig.pool.QueryRow(ctx, `
+		SELECT (changes->>'before')::bigint, (changes->>'after')::bigint
+		  FROM audit_log
+		 WHERE entity_type = 'customer'
+		   AND entity_id = $1
+		   AND action = $2
+		   AND changes->>'field' = 'credit_limit_cents'
+		 ORDER BY seq DESC
+		 LIMIT 1`,
+		rig.customerID, ActCreditChangeApplied).Scan(&beforeCents, &afterCents); err != nil {
+		t.Fatalf("read audit_log: %v", err)
+	}
+	if beforeCents != 0 || afterCents != 5000000 {
+		t.Fatalf("applied audit_log before/after = %d/%d, want 0/5000000", beforeCents, afterCents)
+	}
+}

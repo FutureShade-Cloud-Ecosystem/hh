@@ -459,6 +459,23 @@ func (s *CreditChangeService) Approve(ctx context.Context, id string, in DecideC
 			return ErrCreditChangeDuplicateApprover
 		}
 
+		if req.ChangeKind == CreditChangeKindLimit && req.NewLimitCents != nil {
+			cust, found, err := s.customers.CustomerCreditFacts(txCtx, req.CustomerID)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return ErrCreditChangeCustomerNotFound
+			}
+			req.PreviousLimitCents = cust.CreditLimitCents
+			req.DeltaCents = *req.NewLimitCents - cust.CreditLimitCents
+			if req.DeltaCents > req.SecondThresholdCents && req.RequiredApprovals < 2 {
+				req.RequiredApprovals = 2
+			} else if req.DeltaCents > req.FirstThresholdCents && req.RequiredApprovals < 1 {
+				req.RequiredApprovals = 1
+			}
+		}
+
 		if req.FirstApprovedBy == "" {
 			if !canFirstApproveCreditIncrease(caller.RoleCode) {
 				return ErrCreditChangeRoleForbidden
@@ -506,9 +523,12 @@ func (s *CreditChangeService) Approve(ctx context.Context, id string, in DecideC
 
 func (s *CreditChangeService) applyRequest(ctx context.Context, req *CreditChangeRequest, actorID string, now time.Time) error {
 	if req.ChangeKind == CreditChangeKindLimit && req.NewLimitCents != nil {
-		if _, err := s.customers.SetCustomerCreditLimit(ctx, req.CustomerID, *req.NewLimitCents); err != nil {
+		prev, err := s.customers.SetCustomerCreditLimit(ctx, req.CustomerID, *req.NewLimitCents)
+		if err != nil {
 			return err
 		}
+		req.PreviousLimitCents = prev
+		req.DeltaCents = *req.NewLimitCents - prev
 	} else if req.ChangeKind == CreditChangeKindHold {
 		holdID, _, err := s.store.PlaceHold(ctx, req.CustomerID, req.HoldKind, req.Reason, actorID)
 		if err != nil {

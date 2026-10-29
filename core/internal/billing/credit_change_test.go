@@ -531,3 +531,75 @@ func TestCreditChange_ApproveAndRejectRaced20Rounds(t *testing.T) {
 		}
 	}
 }
+
+// P2-2 Red leg (S2's probe): customer starts at $45,000, a request for $50,000 is pending
+// (+$5,000 at request time, 1 approver), then the limit is lowered to $0, then one approval
+// lands. The effective increase is now +$50,000 (above the $25,000 second threshold), so the
+// single approval records as the first of two, the limit stays $0 (must not reach $50,000 on
+// one approval), and the audit "before" is $0 (the limit at approval).
+func TestCreditChange_JudgeOnCurrentLimitAtApproval(t *testing.T) {
+	w, svc := newFakeCreditChangeWorld(4500000) // $45,000.00
+	salesMgrCtx := ccCallerCtx(ccUserSalesMgr, "SALES_MANAGER", identity.TierManager, identity.ScopeBranch, ccTestBranchA)
+	bmCtx := ccCallerCtx(ccUserBranchMgr, RoleBranchManager, identity.TierManager, identity.ScopeBranch, ccTestBranchA)
+	ctrlCtx := ccCallerCtx(ccUserCtrl, RoleFinancialController, identity.TierLeadership, identity.ScopeGlobal, "")
+
+	// 1. Sales manager requests $50,000 (+$5,000 from $45,000 -> 1 approval).
+	req, err := svc.Request(salesMgrCtx, CreateCreditChangeInput{
+		CustomerID:    ccTestCustomerID,
+		NewLimitCents: i64Ptr(5000000),
+		Reason:        "modest top-up",
+	})
+	if err != nil {
+		t.Fatalf("request $50,000: %v", err)
+	}
+	if req.Status != CreditChangeStatusPending || req.RequiredApprovals != 1 {
+		t.Fatalf("after request: status=%q required=%d, want PENDING and 1", req.Status, req.RequiredApprovals)
+	}
+
+	// 2. Sales manager lowers the limit to $0, which applies at once.
+	dec, err := svc.Request(salesMgrCtx, CreateCreditChangeInput{
+		CustomerID:    ccTestCustomerID,
+		NewLimitCents: i64Ptr(0),
+		Reason:        "pause credit exposure",
+	})
+	if err != nil {
+		t.Fatalf("decrease to $0: %v", err)
+	}
+	if dec.Status != CreditChangeStatusApplied || w.customers[ccTestCustomerID].CreditLimitCents != 0 {
+		t.Fatalf("after decrease: status=%q limit=%d, want APPLIED and 0", dec.Status, w.customers[ccTestCustomerID].CreditLimitCents)
+	}
+
+	// 3. Branch manager gives one approval. Because the current limit is $0, the effective
+	// delta is +$50,000 (> $25,000 second threshold), so 2 approvals are now required.
+	// The limit must stay $0 and must not reach $50,000 on that single approval.
+	afterFirst, err := svc.Approve(bmCtx, req.ID, DecideCreditChangeInput{Note: "branch approval"})
+	if err != nil {
+		t.Fatalf("first approval: %v", err)
+	}
+	if got := w.customers[ccTestCustomerID].CreditLimitCents; got != 0 {
+		t.Fatalf("customer limit after single approval = %d, want 0 (must not reach 5000000 on one approval)", got)
+	}
+	if afterFirst.Status != CreditChangeStatusPending || afterFirst.RequiredApprovals != 2 {
+		t.Fatalf("after first approval: status=%q required=%d, want PENDING and 2", afterFirst.Status, afterFirst.RequiredApprovals)
+	}
+	if afterFirst.PreviousLimitCents != 0 || afterFirst.DeltaCents != 5000000 {
+		t.Fatalf("after first approval: previous=%d delta=%d, want 0 and 5000000", afterFirst.PreviousLimitCents, afterFirst.DeltaCents)
+	}
+	firstAudit := w.audits[len(w.audits)-1]
+	if firstAudit.Extra["before"] != int64(0) || firstAudit.Extra["after"] != int64(5000000) {
+		t.Fatalf("first approval audit before/after = %v/%v, want 0/5000000", firstAudit.Extra["before"], firstAudit.Extra["after"])
+	}
+
+	// 4. Financial Controller gives the second approval -> applies $50,000 and audits before=0.
+	afterSecond, err := svc.Approve(ctrlCtx, req.ID, DecideCreditChangeInput{Note: "controller second approval"})
+	if err != nil {
+		t.Fatalf("second approval: %v", err)
+	}
+	if afterSecond.Status != CreditChangeStatusApplied || w.customers[ccTestCustomerID].CreditLimitCents != 5000000 {
+		t.Fatalf("after second approval: status=%q limit=%d, want APPLIED and 5000000", afterSecond.Status, w.customers[ccTestCustomerID].CreditLimitCents)
+	}
+	appliedAudit := w.audits[len(w.audits)-1]
+	if appliedAudit.Extra["before"] != int64(0) || appliedAudit.Extra["after"] != int64(5000000) {
+		t.Fatalf("applied audit before/after = %v/%v, want 0/5000000", appliedAudit.Extra["before"], appliedAudit.Extra["after"])
+	}
+}
