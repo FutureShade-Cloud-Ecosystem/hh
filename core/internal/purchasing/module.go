@@ -427,6 +427,11 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// the post beside it, and the replay key rides the Idempotency-Key header.
 	r.Handle("POST /api/v1/purchasing/bills/{id}/payments", g.RequireManager(h.staff(h.payBill)))
 	r.Handle("GET /api/v1/purchasing/ap-aging", g.RequireManager(h.staff(h.apAging)))
+	// The T5018 report and its CSV: the same door as the payables board beside it, because the
+	// report IS a payables read (the year's payments to the flagged subcontractors), and the same
+	// report must not be a wider door in its file form than in its screen form.
+	r.Handle("GET /api/v1/purchasing/t5018", g.RequireManager(h.staff(h.t5018Report)))
+	r.Handle("GET /api/v1/purchasing/t5018.csv", g.RequireManager(h.staff(h.t5018ReportCSV)))
 
 	r.Handle("GET /api/v1/purchasing/tolerance", g.RequireStaff(h.staff(h.getTolerance)))
 	r.Handle("PUT /api/v1/purchasing/tolerance", g.RequireAdmin(h.staff(h.setTolerance)))

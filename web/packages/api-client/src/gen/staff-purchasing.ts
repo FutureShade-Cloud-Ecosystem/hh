@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PurchasingAPAgingPage, PurchasingAddLineRequest, PurchasingApplyWarrantyCreditRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingCreateVendorRequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPayBillRequest, PurchasingPolicy, PurchasingPostBillRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingSetVendorT5018Request, PurchasingTolerance, PurchasingTransitionRequest, PurchasingUpdateLineRequest, PurchasingUpdateVendorRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorMaster, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
+import type { PurchasingAPAgingPage, PurchasingAddLineRequest, PurchasingApplyWarrantyCreditRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingCreateVendorRequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPayBillRequest, PurchasingPolicy, PurchasingPostBillRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingSetVendorT5018Request, PurchasingT5018Report, PurchasingTolerance, PurchasingTransitionRequest, PurchasingUpdateLineRequest, PurchasingUpdateVendorRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorMaster, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions, type ApiKeyedCallOptions } from "../http.js";
 
@@ -456,6 +456,37 @@ export async function purchasingListReceivingWorklist(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "purchasingListReceivingWorklist",
+  });
+}
+
+export async function purchasingT5018Report(
+  client: ApiClient,
+  opts?: { year?: number; branch_id?: string },
+  call?: ApiCallOptions
+): Promise<Result<PurchasingT5018Report>> {
+  return client.request<PurchasingT5018Report>({
+    method: "GET",
+    path: "/api/v1/purchasing/t5018",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingT5018Report",
+  });
+}
+
+export async function purchasingT5018ReportCSV(
+  client: ApiClient,
+  opts?: { year?: number; branch_id?: string },
+  call?: ApiCallOptions
+): Promise<Result<string>> {
+  return client.request<string>({
+    method: "GET",
+    path: "/api/v1/purchasing/t5018.csv",
+    query: opts,
+    textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingT5018ReportCSV",
   });
 }
 

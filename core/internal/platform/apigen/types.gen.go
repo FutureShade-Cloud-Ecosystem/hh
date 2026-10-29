@@ -8114,6 +8114,21 @@ type PurchasingAPAgingPage struct {
 	NextCursor      *string                `json:"next_cursor"`
 }
 
+type PurchasingT5018Report struct {
+	Year       int32                `json:"year"`
+	TotalCents int64                `json:"total_cents"`
+	Items      []PurchasingT5018Row `json:"items"`
+}
+
+type PurchasingT5018Row struct {
+	VendorId              string `json:"vendor_id"`
+	VendorNo              string `json:"vendor_no"`
+	Name                  string `json:"name"`
+	BusinessNumber        string `json:"business_number"`
+	BusinessNumberMissing bool   `json:"business_number_missing"`
+	PaidCents             int64  `json:"paid_cents"`
+}
+
 type LandedCost struct {
 	Id                 string             `json:"id"`
 	PoId               string             `json:"po_id"`

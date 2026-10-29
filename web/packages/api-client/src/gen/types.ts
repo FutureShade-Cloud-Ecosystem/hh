@@ -7018,6 +7018,19 @@ export type PurchasingAPAgingPage = {
   items: PurchasingAPAgingRow[];
   next_cursor: string | null;
 };
+export type PurchasingT5018Report = {
+  year: number;
+  total_cents: number;
+  items: PurchasingT5018Row[];
+};
+export type PurchasingT5018Row = {
+  vendor_id: string;
+  vendor_no: string;
+  name: string;
+  business_number: string;
+  business_number_missing: boolean;
+  paid_cents: number;
+};
 export type LandedCost = {
   id: string;
   po_id: string;

@@ -1100,6 +1100,88 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/purchasing/t5018:
+    get:
+      operationId: purchasingT5018Report
+      tags: [staff-purchasing]
+      x-addition: "W3-T51 row 153: the year's payments to the vendors the Controller marked as subcontractors, the CRA Form T5018's own reading; no ERP source route"
+      summary: Read the T5018 report for a calendar year
+      description: >-
+        One row per vendor the Financial Controller has marked as a
+        subcontractor, with the contractor's CRA business number and what the
+        year paid that vendor through a PayBill payment, and the year's total.
+        The year is the DEALER'S: absent year means the dealer's current house
+        year, and the year runs on the house zone, so a payment made at 22:00 on
+        the 31st of December is that year's payment even where UTC has already
+        rolled over. A contractor with no business number on file says so
+        through business_number_missing rather than leaving a blank cell a
+        reader would take for an oversight. A marked vendor nobody was paid
+        this year is on the report with nothing paid. Read only: the only thing
+        that changes a year's report is the mark on a vendor and the payments
+        PayBill records.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: false
+          description: The calendar year to report on; absent means the dealer's current house year
+          schema: { type: integer, format: int32 }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The year's report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingT5018Report"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/purchasing/t5018.csv:
+    get:
+      operationId: purchasingT5018ReportCSV
+      tags: [staff-purchasing]
+      x-addition: "W3-T51 row 153: the T5018 report as the file a bookkeeper hands the contractor's book; no ERP source route"
+      summary: Read the T5018 report for a calendar year as a CSV file
+      description: >-
+        The same report the screen reads, as a CSV file: one row per marked
+        vendor with its business number (or the word (missing) where the
+        contractor has not given one) and the year paid_cents, then the year's
+        total. Same door as the report itself, so the file is never a wider
+        answer than the screen.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: false
+          description: The calendar year to report on; absent means the dealer's current house year
+          schema: { type: integer, format: int32 }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The year's report as a CSV file
+          content:
+            text/csv:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /api/v1/purchasing/tolerance:
     get:
       operationId: purchasingGetTolerance
@@ -2627,6 +2709,48 @@ components:
           type: array
           items: { $ref: "#/components/schemas/PurchasingAPAgingRow" }
         next_cursor: { type: [string, "null"] }
+
+    PurchasingT5018Report:
+      type: object
+      description: >-
+        One calendar year of the CRA Form T5018: the vendors the Financial
+        Controller marked as subcontractors, what the year paid them, and the
+        contractor's business number.
+      required: [year, items, total_cents]
+      properties:
+        year: { type: integer, format: int32 }
+        total_cents:
+          type: integer
+          format: int64
+          description: The year's total across every row, in cents
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PurchasingT5018Row" }
+
+    PurchasingT5018Row:
+      type: object
+      description: >-
+        One marked vendor's line in the year's report. A marked vendor nobody
+        was paid this year is on the report with paid_cents zero.
+      required: [vendor_id, vendor_no, name, business_number, business_number_missing, paid_cents]
+      properties:
+        vendor_id: { type: string, format: uuid }
+        vendor_no: { type: string }
+        name: { type: string }
+        business_number:
+          type: string
+          description: >-
+            The contractor's CRA business number; empty when the contractor has
+            not given one
+        business_number_missing:
+          type: boolean
+          description: >-
+            The mark that the business number is not on file, so a blank cell
+            reads as what it is and not as an oversight
+        paid_cents:
+          type: integer
+          format: int64
+          description: What the year paid the vendor through PayBill, in cents
 
     # --- landed cost -----------------------------------------------------------
 
