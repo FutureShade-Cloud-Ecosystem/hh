@@ -175,3 +175,42 @@ SELECT COUNT(*) FILTER (WHERE status = 'PENDING' AND (attempts > 0 OR occurred_a
 	}
 	return waiting, dead, nil
 }
+
+// UnpostedForAccount answers how many outbox rows for the named topic stand
+// PENDING or DEAD and carry accountCode in payload->>'gl_account_code': the
+// GL chart retire guard's check that no unposted movement still carries the
+// account (W2-6b fix round 4). A nil pool answers zero (scaffold/offline mode).
+func (s *PgOutboxStore) UnpostedForAccount(ctx context.Context, topic, accountCode string) (int, error) {
+	if s.pool == nil || topic == "" || accountCode == "" {
+		return 0, nil
+	}
+	var n int
+	if err := s.pool.QueryRow(ctx, `
+SELECT count(*)
+  FROM events_outbox
+ WHERE topic = $1 AND status IN ('PENDING','DEAD') AND payload->>'gl_account_code' = $2`,
+		topic, accountCode).Scan(&n); err != nil {
+		return 0, fmt.Errorf("notify: unposted for account: %w", err)
+	}
+	return n, nil
+}
+
+// UnpostedForAccountTx reads UnpostedForAccount on the caller's transaction (W2-6b fix round 4, P3-1),
+// under the account row's lock.
+func (s *PgOutboxStore) UnpostedForAccountTx(ctx context.Context, tx pgx.Tx, topic, accountCode string) (int, error) {
+	if tx == nil {
+		return s.UnpostedForAccount(ctx, topic, accountCode)
+	}
+	if topic == "" || accountCode == "" {
+		return 0, nil
+	}
+	var n int
+	if err := tx.QueryRow(ctx, `
+SELECT count(*)
+  FROM events_outbox
+ WHERE topic = $1 AND status IN ('PENDING','DEAD') AND payload->>'gl_account_code' = $2`,
+		topic, accountCode).Scan(&n); err != nil {
+		return 0, fmt.Errorf("notify: unposted for account: %w", err)
+	}
+	return n, nil
+}

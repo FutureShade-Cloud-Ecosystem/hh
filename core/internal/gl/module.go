@@ -197,11 +197,12 @@ type AuditTxRecorder interface {
 // - close pre flight seams (FW1-09b; nil = the check is not wired and passes with no figures) -
 
 // StockValueReader is the stock ledger side of the close pre flight's 1200 tie check. Satisfied by
-// inventory.Service.SnapshotOnHand summed (the weighted average on-hand value), wired in cmd/core.
-// The branch id is the filter: the pre flight reads the COMPANY (an empty branch id), so the reader
-// answers with the consolidated value, and a named branch answers with that branch's (FW1-09d).
+// inventory.Service.StockValueAsOfCents (the weighted average value as of an instant), wired in
+// cmd/core. The pre flight reads the COMPANY at the month's end (an empty branch id, the first
+// instant of the next month), so the reader answers the consolidated value at that instant, and a
+// named branch answers with that branch's (FW1-09d, W2-5).
 type StockValueReader interface {
-	StockValueCents(ctx context.Context, branchID string) (int64, error)
+	StockValueCents(ctx context.Context, asOf time.Time, branchID string) (int64, error)
 }
 
 // TillDrawerReader is the till side of the close pre flight: how many till drawers were opened
@@ -214,6 +215,45 @@ type StockValueReader interface {
 // Satisfied by till.Repository, wired in cmd/core.
 type TillDrawerReader interface {
 	UncompletedDrawersOpenedBefore(ctx context.Context, before time.Time) (int, error)
+}
+
+// CounterAccountReader is the till side of the counter reason codes (W2-6b): the GL account a till
+// movement's reason code points at. The till owns the list of codes (migration 0451), so the gl asks
+// the till instead of reading a till table. A movement recorded since the account began travelling
+// with it (W2-6b fix round 3) carries its own account, so this read answers only for a movement
+// recorded before that. Satisfied by till.Repository, wired in cmd/core.
+type CounterAccountReader interface {
+	// CounterAccountCode answers the account code the named reason code points at, for that branch.
+	// found=false means the code is not on that branch, so the movement names no account.
+	CounterAccountCode(ctx context.Context, branchID, reasonCodeID string) (accountCode string, found bool, err error)
+}
+
+// CounterAccountUse is one LIVE counter reason code that names a GL account, and the branch it sits on.
+//
+// A code is a name and a branch count, never a person: the chart's refusal says which codes need the
+// account and how many branches they sit on.
+type CounterAccountUse struct {
+	// Code is the counter reason code, as the drawer names it.
+	Code string
+	// BranchID is the branch the code sits on. The same code may sit on several branches.
+	BranchID string
+}
+
+// CounterAccountUseReader is the till side of the counter reason codes, read the other way round: which
+// LIVE codes name a GL account. The chart's guard asks it before retiring an account (W2-6b fix round
+// 3): a movement naming a live code posts to the account that code points at, so retiring the account
+// under a live code would leave the drawer's money unposted and the journal dead lettered.
+//
+// The till owns the list of codes, so the gl asks the till instead of reading a till table. This is a
+// sibling seam of CounterAccountReader, and it is wired on its own: each read stays narrow, and each
+// says so when it is not wired. Satisfied by till.Repository, wired in cmd/core.
+type CounterAccountUseReader interface {
+	// ActiveCounterCodesForAccount answers the LIVE codes that name the account, with the branch each
+	// sits on. An empty answer means no live code names it, and the account may be retired.
+	ActiveCounterCodesForAccount(ctx context.Context, accountCode string) ([]CounterAccountUse, error)
+	// ActiveCounterCodesForAccountTx reads the LIVE codes on the caller's transaction (W2-6b fix
+	// round 4, P3-1), under the account row's lock.
+	ActiveCounterCodesForAccountTx(ctx context.Context, tx pgx.Tx, accountCode string) ([]CounterAccountUse, error)
 }
 
 // OutboxQueueReader is the outbox side of the close pre flight: posting events for the month that are
@@ -332,16 +372,18 @@ type Service struct {
 	audit           audit.Recorder
 	stockValue      StockValueReader
 	drawers         TillDrawerReader
-	preFlightQueue  OutboxQueueReader    // the pre flight's window read: how many posted events in the closing month are still waiting or dead lettered
-	approvalFiler   ApprovalFiler        // 0075: nil-able JE park → approvals-rail filing seam
-	standardRate    StandardRateReader   // the dealer's standard tax rate; nil is the Ontario 13 percent
-	taxWords        taxwords.Source      // the name of the dealer's tax in journal memos; nil is "HST"
-	approvalChecker ApprovalStateChecker // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
-	delivery        DeliveryReader       // round 2: the delivery fact the deposit release's date reads
-	auditTx         AuditTxRecorder      // round 2: the open year's audit, in the year's transaction
-	strictPreFlight bool                 // round 4: production refuses a close when a pre flight check is unwired; tests may pass nil
-	queue           OutboxQueue          // the posting queue's rows: the waiting/dead events the Controller lists and the banner counts (nil-able: unwired, the queue reads refuse)
-	branchFacts     BranchFacts          // the branch facts the head office branch reads and writes check their answer through (unwired, the set refuses: fail closed)
+	preFlightQueue  OutboxQueueReader       // the pre flight's window read: how many posted events in the closing month are still waiting or dead lettered
+	approvalFiler   ApprovalFiler           // 0075: nil-able JE park → approvals-rail filing seam
+	standardRate    StandardRateReader      // the dealer's standard tax rate; nil is the Ontario 13 percent
+	taxWords        taxwords.Source         // the name of the dealer's tax in journal memos; nil is "HST"
+	approvalChecker ApprovalStateChecker    // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
+	delivery        DeliveryReader          // round 2: the delivery fact the deposit release's date reads
+	auditTx         AuditTxRecorder         // round 2: the open year's audit, in the year's transaction
+	strictPreFlight bool                    // round 4: production refuses a close when a pre flight check is unwired; tests may pass nil
+	queue           OutboxQueue             // the posting queue's rows: the waiting/dead events the Controller lists and the banner counts (nil-able: unwired, the queue reads refuse)
+	branchFacts     BranchFacts             // the branch facts the head office branch reads and writes check their answer through (unwired, the set refuses: fail closed)
+	counterAccounts CounterAccountReader    // W2-6b: the till's counter reason codes and the account each points at (unwired, a movement that names a code refuses)
+	counterUses     CounterAccountUseReader // W2-6b fix round 3: the LIVE counter reason codes that name an account (unwired, the chart refuses to retire an account it cannot check)
 	log             *slog.Logger
 	now             func() time.Time
 	callerFrom      func(context.Context) (identity.StaffContext, bool)
@@ -512,6 +554,23 @@ func (s *Service) WithStockReader(r StockValueReader) *Service { s.stockValue = 
 
 // WithDrawerReader injects the till seam the close pre flight's open drawer check reads (FW1-09b).
 func (s *Service) WithDrawerReader(r TillDrawerReader) *Service { s.drawers = r; return s }
+
+// WithCounterAccounts injects the till seam the counter reason codes resolve through (W2-6b): the
+// account a movement's code points at. Unwired, a movement that names a code refuses to post rather
+// than posting to suspense, so a missing wire is loud.
+func (s *Service) WithCounterAccounts(r CounterAccountReader) *Service {
+	s.counterAccounts = r
+	return s
+}
+
+// WithCounterAccountUses injects the till seam the chart's retire guard reads (W2-6b fix round 3): the
+// LIVE counter reason codes that name an account. Unwired, the guard cannot check the account, and the
+// chart refuses to retire it: a missing wire is loud, and an account is never retired under a live
+// code that was never looked for.
+func (s *Service) WithCounterAccountUses(r CounterAccountUseReader) *Service {
+	s.counterUses = r
+	return s
+}
 
 // WithQueueReader injects the outbox seam the close pre flight's waiting/dead lettered check reads (FW1-09b).
 // It is the pre flight's OWN seam, distinct from the posting queue's read (WithPostingQueue): the pre flight

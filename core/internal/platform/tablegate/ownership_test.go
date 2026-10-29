@@ -311,6 +311,7 @@ var migrationTopics = map[string]string{
 	"0431_payment_reapplications":          "payments",
 	"0435_payment_payouts":                 "payments",
 	"0447_credit_application_keys":         "billing",
+	"0451_till_counter_reason_codes":       "till",
 }
 
 // multiTopicSplits states the per-object attribution inside the five
@@ -637,6 +638,7 @@ var ownedObjects = map[string]string{
 	"tax_evidence_doc":                "pos",               // 0029_pos_counter_sales
 	"tax_rates":                       "tax",               // 0042_tax_engine
 	"tax_status_card_profiles":        "tax",               // 0042_tax_engine
+	"till_counter_reason_codes":       "till",              // 0451_till_counter_reason_codes
 	"till_denomination_counts":        "till",              // 0028_till_drawer_ops
 	"till_lodgement_payments":         "till",              // 0441_till_lodgement_payments
 	"till_movements":                  "till",              // 0028_till_drawer_ops

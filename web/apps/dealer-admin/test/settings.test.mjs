@@ -22,6 +22,7 @@ import {
   workspaceArrangementWord,
   workspaceSplitError,
 } from "../src/settings-logic.js";
+import * as settingsLogic from "../src/settings-logic.js";
 
 // -- the forms' checks, in the core's own words --------------------------------------------------------
 
@@ -73,6 +74,8 @@ test("the policy history names who changed a knob, or somebody when the trail ca
   // UX-106 round 3: an actor the trail cannot name reads as a word, never as
   // the id's own first block.
   assert.equal(policyHistoryWho("da110000-0000-4000-9000-000000000001"), "Unknown actor");
+  assert.equal(settingsLogic.policyFieldWord?.("restocking_fee_bps"), "restocking fee");
+  assert.equal(settingsLogic.policyFieldWord?.("notes"), "notes");
 });
 
 // -- the refusals --------------------------------------------------------------------------------------

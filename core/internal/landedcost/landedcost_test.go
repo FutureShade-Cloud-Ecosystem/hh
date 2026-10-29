@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5"
@@ -45,7 +46,7 @@ func (f *fakeCapitalizer) ReceivedLinesForPO(_ context.Context, _ string) ([]Rec
 	return f.lines, nil
 }
 
-func (f *fakeCapitalizer) CapitalizeLandedCostTx(_ context.Context, _ pgx.Tx, productID, _ string, cadCents int64) (int64, error) {
+func (f *fakeCapitalizer) CapitalizeLandedCostTx(_ context.Context, _ pgx.Tx, productID, _ string, cadCents int64, _ time.Time, _ string) (int64, error) {
 	if f.onHandZero[productID] {
 		return 0, nil // nothing on hand → absorbed 0; caller expenses the share to COGS
 	}
@@ -58,7 +59,7 @@ func (f *fakeCapitalizer) CapitalizeLandedCostTx(_ context.Context, _ pgx.Tx, pr
 
 // CapitalizeLandedCostSnapTx mirrors CapitalizeLandedCostTx and returns a fixed pre-Apply snapshot (100) with a cost
 // row present, so the landedcost service persists a snapshot the Void path can restore.
-func (f *fakeCapitalizer) CapitalizeLandedCostSnapTx(_ context.Context, _ pgx.Tx, productID, _ string, cadCents int64) (int64, int64, bool, error) {
+func (f *fakeCapitalizer) CapitalizeLandedCostSnapTx(_ context.Context, _ pgx.Tx, productID, _ string, cadCents int64, _ time.Time, _ string) (int64, int64, bool, error) {
 	if f.onHandZero[productID] {
 		return 0, 0, false, nil // nothing on hand → absorbed 0, no cost row to snapshot
 	}
@@ -72,7 +73,7 @@ func (f *fakeCapitalizer) CapitalizeLandedCostSnapTx(_ context.Context, _ pgx.Tx
 // RestoreLandedCostTx models the exact-restore Void: it removes EXACTLY `absorbed` from the recorded cap and returns the
 // negative realized delta the Void journal books as CR 1200. Draining exactly the capitalized amount (never a delta over
 // current on-hand) is the general inverse that ties the reversal for nothing/receipt/sale between Apply and Void.
-func (f *fakeCapitalizer) RestoreLandedCostTx(_ context.Context, _ pgx.Tx, productID, _ string, _, absorbed int64) (int64, error) {
+func (f *fakeCapitalizer) RestoreLandedCostTx(_ context.Context, _ pgx.Tx, productID, _ string, _, absorbed int64, _ time.Time, _ string) (int64, error) {
 	if f.caps == nil {
 		f.caps = map[string]int64{}
 	}
@@ -228,7 +229,7 @@ func TestCapitalizeDispatch_FakeSeam(t *testing.T) {
 	}}
 	allocs := allocate(1000, BasisValue, fake.lines, true)
 	for _, a := range allocs {
-		if _, err := fake.CapitalizeLandedCostTx(context.Background(), nil, a.ProductID, "branch", a.AllocatedCadCents); err != nil {
+		if _, err := fake.CapitalizeLandedCostTx(context.Background(), nil, a.ProductID, "branch", a.AllocatedCadCents, time.Time{}, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -245,10 +246,10 @@ func TestVoidNetsToZero_FakeSeam(t *testing.T) {
 	}}
 	allocs := allocate(1000, BasisValue, fake.lines, true)
 	for _, a := range allocs { // apply
-		_, _ = fake.CapitalizeLandedCostTx(context.Background(), nil, a.ProductID, "b", a.AllocatedCadCents)
+		_, _ = fake.CapitalizeLandedCostTx(context.Background(), nil, a.ProductID, "b", a.AllocatedCadCents, time.Time{}, "")
 	}
 	for _, a := range allocs { // void → negate
-		_, _ = fake.CapitalizeLandedCostTx(context.Background(), nil, a.ProductID, "b", -a.AllocatedCadCents)
+		_, _ = fake.CapitalizeLandedCostTx(context.Background(), nil, a.ProductID, "b", -a.AllocatedCadCents, time.Time{}, "")
 	}
 	for pid, net := range fake.caps {
 		if net != 0 {

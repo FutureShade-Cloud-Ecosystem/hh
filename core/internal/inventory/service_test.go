@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func svcWith(f *fakeStore) *Service {
@@ -228,7 +229,7 @@ func TestCapitalizeLanded_RaisesAvgOverOnHand(t *testing.T) {
 	f.cost[key("p", "br-1")] = 1000
 	f.onhand[key("p", "br-1")] = 100
 	s := svcWith(f)
-	absorbed, err := s.capitalizeLanded(ctx, nil, "p", "br-1", 5000) // $50 over 100 units → +$0.50
+	absorbed, err := s.capitalizeLanded(ctx, nil, "p", "br-1", 5000, time.Now(), "") // $50 over 100 units → +$0.50
 	if err != nil {
 		t.Fatalf("capitalize: %v", err)
 	}
@@ -238,8 +239,18 @@ func TestCapitalizeLanded_RaisesAvgOverOnHand(t *testing.T) {
 	if got := f.cost[key("p", "br-1")]; got != 1050 {
 		t.Fatalf("want avg 1050, got %d", got)
 	}
-	if len(f.moves) != 0 {
+	// Capitalization moves no stock. It books ONE value only row (0453, W2-5B): zero quantity, no
+	// location, carrying the exact cents the GL 1200 debit books, so the close pre flight's stock
+	// tie can unwind it.
+	if len(f.moves) != 1 {
 		t.Fatalf("capitalization must not move stock, got %d moves", len(f.moves))
+	}
+	mv := f.moves[0]
+	if mv.MoveType != MoveValue || mv.QtyBase != 0 || mv.FromLocation != "" || mv.ToLocation != "" {
+		t.Fatalf("the capitalization's row must be a value only move, got %+v", mv)
+	}
+	if mv.ValueCents != absorbed {
+		t.Fatalf("the value move carries %d cents, want the absorbed %d (the exact cents the GL books)", mv.ValueCents, absorbed)
 	}
 }
 

@@ -23,13 +23,20 @@ type glStore interface {
 	// PostingAccountsTx is PostingAccounts read through the caller's transaction (no second pool connection).
 	PostingAccountsTx(ctx context.Context, tx pgx.Tx, eventType, branchID string) (map[string]string, error)
 	ListActiveRules(ctx context.Context) ([]RuleRef, error)
+	ListActiveRulesTx(ctx context.Context, tx pgx.Tx) ([]RuleRef, error)
 
 	// - chart of accounts -
 	ListAccounts(ctx context.Context) ([]Account, error)
 	AccountByCode(ctx context.Context, code string) (Account, bool, error)
+	// AccountByCodeTx reads the account row on the caller's transaction with FOR UPDATE (W2-6b fix
+	// round 4, P3-1), so DeactivateAccount and a till movement's record-time check serialise on the
+	// account row.
+	AccountByCodeTx(ctx context.Context, tx pgx.Tx, code string) (Account, bool, error)
 	InsertAccount(ctx context.Context, in CreateAccountInput) (Account, error)
 	DraftLineCountForAccountCode(ctx context.Context, code string) (int, error)
+	DraftLineCountForAccountCodeTx(ctx context.Context, tx pgx.Tx, code string) (int, error)
 	SetAccountActive(ctx context.Context, code string, active bool) (Account, error)
+	SetAccountActiveTx(ctx context.Context, tx pgx.Tx, code string, active bool) (Account, error)
 
 	// - journals (the shared persist path) -
 	InsertJournal(ctx context.Context, d journalDraft) (id string, created bool, err error)
