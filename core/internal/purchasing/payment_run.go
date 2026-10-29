@@ -141,8 +141,15 @@ func (s *Service) ProposePaymentRun(ctx context.Context, in ProposePaymentRunReq
 	if payDate == "" {
 		payDate = zone.Today(s.now)
 	}
-	if _, err := zone.ParseDay(payDate); err != nil {
+	payAt, err := zone.ParseDay(payDate)
+	if err != nil {
 		return PaymentRun{}, badReq("purchasing: pay_date must be a YYYY-MM-DD house day")
+	}
+	// THE PAY DATE IS JUDGED AT THE DESK, NOT ONLY AT THE PAY. A date the books would refuse
+	// (outside their open periods, or past the horizon they will open) is refused here in
+	// words, so a run is never proposed with a pay date that can only fail later.
+	if err := s.checkPayDate(ctx, payDate, payAt); err != nil {
+		return PaymentRun{}, err
 	}
 
 	candidates, err := s.repo.OpenBillsDueOn(ctx, branchID, dueOn, strings.TrimSpace(in.VendorID))
@@ -229,6 +236,12 @@ func (s *Service) UpdatePaymentRun(ctx context.Context, runID string, in UpdateP
 	if err != nil {
 		return PaymentRun{}, err
 	}
+	// The dealer's day, decided BEFORE the transaction opens (a zone read must not hold a
+	// connection beside the open transaction): the run's pay date is a house day in it.
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return PaymentRun{}, err
+	}
 	tx, err := s.repo.Begin(ctx)
 	if err != nil {
 		return PaymentRun{}, err
@@ -244,6 +257,16 @@ func (s *Service) UpdatePaymentRun(ctx context.Context, runID string, in UpdateP
 	}
 	if run.Status != RunDraft {
 		return PaymentRun{}, conflict("purchasing: payment run is %s, only a DRAFT run can be reviewed", run.Status)
+	}
+	// THE RUN'S PAY DATE IS JUDGED AGAIN AT THE REVIEW. The books' horizon moves, so a date
+	// that was postable when the run was proposed can fall outside it later, and the review
+	// refuses it in words rather than leaving the run to fail at the pay.
+	payAt, err := zone.ParseDay(run.PayDate)
+	if err != nil {
+		return PaymentRun{}, badReq("purchasing: the run's pay_date %q is not a house day", run.PayDate)
+	}
+	if err := s.checkPayDate(ctx, run.PayDate, payAt); err != nil {
+		return PaymentRun{}, err
 	}
 	for _, id := range in.Remove {
 		if err := s.repo.DeleteRunLineByBillTx(ctx, tx, runID, id); err != nil {
@@ -279,6 +302,24 @@ func (s *Service) UpdatePaymentRun(ctx context.Context, runID string, in UpdateP
 		"removed": len(in.Remove), "lowered": len(in.Lower),
 	})
 	return s.GetPaymentRun(ctx, runID)
+}
+
+// checkPayDate refuses a pay date the books would refuse, in words. The GL owns the rule (its
+// own fiscal periods, its own horizon), so the answer comes through the GL's posting window
+// seam and never from a GL table. With the seam unwired there is no horizon to read and the
+// date stands, the way the other optional seams degrade.
+func (s *Service) checkPayDate(ctx context.Context, payDate string, payAt time.Time) error {
+	if s.postingWindow == nil {
+		return nil
+	}
+	reason, err := s.postingWindow.PostingDateRefusal(ctx, payAt)
+	if err != nil {
+		return err
+	}
+	if reason == "" {
+		return nil
+	}
+	return unprocessable("purchasing: the pay date %s is not a date the books would post on: %s", payDate, reason)
 }
 
 // - the pay -

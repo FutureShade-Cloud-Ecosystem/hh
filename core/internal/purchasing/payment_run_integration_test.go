@@ -837,3 +837,81 @@ func TestIntegration_W3_PaymentRun_Review_RefusesAnotherBranchsBillWithNoFigures
 		t.Fatalf("W3 payment runs red: reviewed run lines = %+v, want the one bill at 11000", own.Lines)
 	}
 }
+
+// TestIntegration_W3_PaymentRun_PayDate_RefusedAtProposeAndUpdate is S2's P3 on PR 702: a pay
+// date the books would refuse was accepted at propose and failed only at the pay, where the run
+// stayed DRAFT with nothing paid and every press errored the same way. The date is judged at
+// the desk, in words, both when the run is proposed and when it is reviewed.
+func TestIntegration_W3_PaymentRun_PayDate_RefusedAtProposeAndUpdate(t *testing.T) {
+	h := newHarness(t)
+	zone, err := time.LoadLocation("America/Toronto")
+	if err != nil {
+		t.Fatalf("load dealer zone: %v", err)
+	}
+	todayStr := time.Now().In(zone).Format("2006-01-02")
+
+	// The books' own horizon: the latest year the books hold. The dates below are read from it,
+	// never hard coded, so the leg follows the books wherever they stand.
+	var maxYear int
+	if err := h.pool.QueryRow(h.ctx, `SELECT COALESCE(MAX(year),0) FROM fiscal_periods`).Scan(&maxYear); err != nil {
+		t.Fatal(err)
+	}
+	if maxYear == 0 {
+		t.Fatalf("the books hold no fiscal periods; this leg needs the migrated and seeded database")
+	}
+	far := fmt.Sprintf("%04d-01-15", maxYear+2)
+	next := fmt.Sprintf("%04d-01-15", maxYear+1)
+
+	postBillForVendor(t, h, h.vendor, "prun-date-a", 9000, todayStr, todayStr)
+
+	// The propose refuses the date the books would refuse, in words, and writes no run.
+	_, err = h.svc.ProposePaymentRun(h.ctx, ProposePaymentRunRequest{
+		BranchID: branchTRT, DueOn: todayStr, PayDate: far,
+	})
+	if err == nil {
+		t.Fatalf("W3 payment runs red: a pay date %s, two years past the books' latest year %d, was accepted at propose", far, maxYear)
+	}
+	if !strings.Contains(err.Error(), "pay date") {
+		t.Fatalf("W3 payment runs red: the refusal did not name the pay date: %v", err)
+	}
+	var farRuns int
+	if err := h.pool.QueryRow(h.ctx,
+		`SELECT count(*) FROM purchasing_payment_runs WHERE pay_date = $1::date`, far).Scan(&farRuns); err != nil {
+		t.Fatal(err)
+	}
+	if farRuns != 0 {
+		t.Fatalf("W3 payment runs red: the refused proposal wrote %d runs dated %s, want none", farRuns, far)
+	}
+
+	// The year the books would open at the latest is still a date they would post on.
+	opened, err := h.svc.ProposePaymentRun(h.ctx, ProposePaymentRunRequest{
+		BranchID: branchTRT, DueOn: todayStr, PayDate: next,
+	})
+	if err != nil {
+		t.Fatalf("W3 payment runs red: a pay date %s, one year past the books' latest year %d, was refused: %v", next, maxYear, err)
+	}
+	cleanupRun(t, h.pool, opened.ID)
+
+	// The review refuses a run whose pay date the books would refuse, in words. The state is the
+	// one the old propose left behind: a run holding a pay date past the books' horizon.
+	run, err := h.svc.ProposePaymentRun(h.ctx, ProposePaymentRunRequest{
+		BranchID: branchTRT, DueOn: todayStr, PayDate: todayStr,
+	})
+	if err != nil {
+		t.Fatalf("W3 payment runs red: ProposePaymentRun: %v", err)
+	}
+	cleanupRun(t, h.pool, run.ID)
+	if _, err := h.pool.Exec(h.ctx,
+		`UPDATE purchasing_payment_runs SET pay_date = $2::date WHERE id = $1`, run.ID, far); err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.svc.UpdatePaymentRun(h.ctx, run.ID, UpdatePaymentRunRequest{
+		Lower: []PaymentRunLineAmount{{BillID: run.Lines[0].BillID, AmountCents: 8000}},
+	})
+	if err == nil {
+		t.Fatalf("W3 payment runs red: the review of a run holding the pay date %s was accepted", far)
+	}
+	if !strings.Contains(err.Error(), "pay date") {
+		t.Fatalf("W3 payment runs red: the refusal did not name the pay date: %v", err)
+	}
+}

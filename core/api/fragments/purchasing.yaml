@@ -1067,7 +1067,8 @@ paths:
         date falls back to its bill date), narrowed to one vendor when vendor_id is named, each at
         its open amount, become a DRAFT run's lines. A proposal that would select nothing is
         refused rather than written as an empty run. pay_date is the house day the run's payments
-        will be dated, today's house day when omitted.
+        will be dated, today's house day when omitted, and a date the books would not post on is
+        refused here in words rather than only at the pay.
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
@@ -1164,7 +1165,9 @@ paths:
         Removes whole bills from the selection and lowers line amounts, never above the bill's open
         amount as it stands while the review lands. A PAID run is finished and refuses review, and
         a body that names nothing to change, names a bill twice, or names a bill that is not on the
-        run is refused.
+        run is refused. A bill the run does not hold is not found, so naming another branch's bill
+        answers without a figure. The run's pay date is judged again here: a date the books would
+        no longer post on is refused in words, never only at the pay.
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
@@ -1190,6 +1193,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/PurchasingUnprocessable" }
 
   /api/v1/purchasing/payment-runs/{id}/pay:
     post:
@@ -3020,7 +3024,8 @@ components:
       description: >-
         A well-formed body the business refuses: the propose door's answer
         when its filter selects no open bill, so an empty run is never
-        written. The Error envelope carries the refusal in words.
+        written, and the answer when the pay date is one the books would
+        not post on. The Error envelope carries the refusal in words.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

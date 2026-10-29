@@ -224,6 +224,10 @@ type Service struct {
 	warrantyCredit WarrantyCreditReader
 	landedPayables LandedCostPayableReader
 	journalClock   GLJournalClock
+	// postingWindow reads the GL's posting horizon: whether a payment dated on a house day
+	// would post at all. A payment run asks it before it takes a pay date, so a date the
+	// books would refuse is refused at the desk and not only at the pay.
+	postingWindow GLPostingWindow
 
 	// now is the injected clock. The document stamps a printed-at time, and a document that read
 	// the wall clock directly could not be rendered identically twice in a test.
