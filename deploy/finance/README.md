@@ -112,7 +112,7 @@ before the restore and every failure inside it leaves the box as it was.
 | the digest refusal | Everything it had. The dump's digest is not the one the environment names, so the reset stops before it writes the dump and before it drops anything: the tables, the rows and the recorded world are untouched. |
 | the write refusal | Everything it had. The dump file could not be written under the directory the reset was given, so the reset stops before the drop: the tables, the rows and the recorded world are untouched. |
 | a restore failure part way | Everything it had. The drop, the recreate and the restore are one transaction, so a failure part way through the restore rolls the drop back with it: the box is never empty and never half restored, and it records no world. |
-| a failure after the commit (the migration rerun) | The new world, committed, and no recorded world and no audit row yet. The box holds the world's tables and rows, and the migrations that follow the restore have not all run. The box records no world, so the next boot may reset again. |
+| a failure after the commit (the migration rerun) | The new world, committed, and no recorded world and no audit row yet. The box holds the world's tables and rows, and the migrations that follow the restore have not all run. The box records no world, so the boot refuses and the box is not serving: rerun the reset. A rerun is safe, and the next boot's own reset is one: the `-once` check finds no matching recorded digest, so it redoes the whole reset, which restores the same world again and records it. |
 
 ## The database's lock table
 

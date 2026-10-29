@@ -893,6 +893,10 @@ func (a glBalanceAdapter) GLBalanceThroughCents(ctx context.Context, accountCode
 	return a.svc.GLBalanceThroughCents(ctx, accountCode, year, month, branchID)
 }
 
+func (a glBalanceAdapter) GLRevenueCents(ctx context.Context, year, month int, branchID string) (int64, error) {
+	return a.svc.GLRevenueCents(ctx, year, month, branchID)
+}
+
 // lienGLPoster satisfies lien.GLPoster over glSvc.PostExternal (the
 // 1150/2350 holdback release journal).
 type lienGLPoster struct{ svc *gl.Service }
@@ -2094,6 +2098,10 @@ func (a w4cGLJournalClock) RefJournalInstants(ctx context.Context, source string
 
 func (a w4cGLJournalClock) JournalSourceRefByKey(ctx context.Context, key string) (string, bool, error) {
 	return a.svc.JournalSourceRefByKey(ctx, key)
+}
+
+func (a w4cGLJournalClock) JournalAmountByKey(ctx context.Context, key string) (int64, bool, error) {
+	return a.svc.JournalAmountByKey(ctx, key)
 }
 
 // w4cGLPoster satisfies purchasing.GLPoster over glSvc.PostExternal (the

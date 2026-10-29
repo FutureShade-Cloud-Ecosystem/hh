@@ -240,13 +240,6 @@ func TestApplyRoute_RefusalsInWordsLeaveNothingApplied(t *testing.T) {
 			code: http.StatusNotFound, words: "no such invoice",
 		},
 		{
-			name:   "an amount over the selected invoices",
-			caller: applyGlobalCaller(),
-			body: map[string]any{"customer_id": w.customerID, "method": "CASH", "amount_cents": 10001,
-				"invoice_ids": []string{open}, "idempotency_key": w.tag + "-c"},
-			code: http.StatusUnprocessableEntity, words: "the selected invoices can take at most 10000 cents right now",
-		},
-		{
 			name:   "an invoice that is not open",
 			caller: applyGlobalCaller(),
 			body: map[string]any{"customer_id": w.customerID, "method": "CASH", "amount_cents": 10000,
@@ -283,6 +276,32 @@ func TestApplyRoute_RefusalsInWordsLeaveNothingApplied(t *testing.T) {
 	}
 	if b, _ := invoiceBalance(t, w.pool, open); b != 10000 {
 		t.Fatalf("the open invoice is untouched, balance %d", b)
+	}
+
+	// An amount over the named invoice is no longer a refusal (W3 item 0.10): the route answers the
+	// split, the invoice closes, and the route's answer carries the unapplied cents the account now
+	// holds as its on account credit.
+	code, body := decodeApply(t, w.post(t, applyGlobalCaller(), map[string]any{
+		"customer_id": w.customerID, "method": "CASH", "amount_cents": 10001,
+		"invoice_ids": []string{open}, "idempotency_key": w.tag + "-over",
+	}))
+	if code != http.StatusOK {
+		t.Fatalf("the over amount answers the split, got status %d body %v", code, body)
+	}
+	if got := body["applied_cents"]; got != float64(10000) || body["unapplied_cents"] != float64(1) {
+		t.Fatalf("the answer splits 10000 applied and 1 on account, got %v", body)
+	}
+	if b, s := invoiceBalance(t, w.pool, open); b != 0 || s != "PAID" {
+		t.Fatalf("the invoice closed on its share, got %d %s", b, s)
+	}
+	var changeSum int64
+	if err := w.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
+		 WHERE source_type = 'receipt_change' AND customer_id = $1::uuid`, w.customerID).Scan(&changeSum); err != nil {
+		t.Fatalf("read the change row: %v", err)
+	}
+	if changeSum != -1 {
+		t.Fatalf("the one cent over rests on the account, got %d", changeSum)
 	}
 }
 

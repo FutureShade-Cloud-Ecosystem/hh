@@ -29,13 +29,13 @@ func (r *Repository) CreditPolicy(ctx context.Context, branchID string) (CreditP
 	var bid *string
 	err := r.pool.QueryRow(ctx,
 		`SELECT COALESCE(branch_id::text,''), aging_bucket_days, aging_threshold_cents, aging_hold_enabled,
-		        limit_hold_enabled, limit_tolerance_cents, cod_enforced, auto_hold_enabled
+		        limit_hold_enabled, limit_tolerance_cents, cod_enforced, auto_hold_enabled, write_off_limit_cents
 		   FROM ar_credit_policy
 		  WHERE branch_id = NULLIF($1, '')::uuid OR branch_id IS NULL
 		  ORDER BY branch_id NULLS LAST
 		  LIMIT 1`, branchID).
 		Scan(&bid, &p.AgingBucketDays, &p.AgingThresholdCents, &p.AgingHoldEnabled,
-			&p.LimitHoldEnabled, &p.LimitToleranceCents, &p.CODEnforced, &p.AutoHoldEnabled)
+			&p.LimitHoldEnabled, &p.LimitToleranceCents, &p.CODEnforced, &p.AutoHoldEnabled, &p.WriteOffLimitCents)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CreditPolicy{}, errors.New("billing: no ar_credit_policy row, migration 0104 seeds the org default")

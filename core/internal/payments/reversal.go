@@ -134,13 +134,15 @@ func (r *Repository) ReversePayment(ctx context.Context, in ReverseInput, now ti
 		alreadyReversed                      bool
 		isItselfAReversal                    bool
 		nsfAllocJSON                         []byte
+		changeCents                          int64
 	)
 	err = tx.QueryRow(ctx,
 		`SELECT COALESCE(customer_id::text,''), method, branch_id::text, status, amount_cents, received_at,
 		        reversed_at IS NOT NULL, reverses_payment_id IS NOT NULL,
-		        COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb)
+		        COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb),
+		        COALESCE((metadata->>'change_cents')::bigint, 0)
 		   FROM payments WHERE id = $1::uuid FOR UPDATE`, in.PaymentID).
-		Scan(&customerID, &method, &branchID, &status, &amount, &receivedAt, &alreadyReversed, &isItselfAReversal, &nsfAllocJSON)
+		Scan(&customerID, &method, &branchID, &status, &amount, &receivedAt, &alreadyReversed, &isItselfAReversal, &nsfAllocJSON, &changeCents)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Reversal{}, ErrNotFound
@@ -328,6 +330,23 @@ UPDATE invoices
 			return Reversal{}, fmt.Errorf("reverse: insert nsf fee contra subledger txn: %w", err)
 		}
 		reopened = append(reopened, nsfID)
+	}
+	// The unapplied change an over applied receipt left on account (W3 item 0.10) is part of the
+	// receipt's money, exactly as the invoices and the fees are: the reversing journal moves 1100
+	// by the payment's WHOLE amount, so the change's credit row is countered here, inside its own
+	// 'receipt_change' group (source_ref_id the ORIGINAL payment's id, the group the aging reads),
+	// or the subledger would stand -change against a 1100 that moved by the whole receipt. The
+	// account's credit ends: the money waits in 2310 for its owner instead, where the reversal's
+	// journal put it.
+	if changeCents > 0 {
+		runningAR += changeCents
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO customer_transactions
+			   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+			 VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'receipt_change', $4::uuid, $5::uuid, $6)`,
+			customerID, changeCents, runningAR, in.PaymentID, branchID, "reversal: "+in.Reason); err != nil {
+			return Reversal{}, fmt.Errorf("reverse: insert the change's contra subledger txn: %w", err)
+		}
 	}
 
 	// 5. Transactional outbox, in the SAME transaction as the reversal, so the GL books the reversing

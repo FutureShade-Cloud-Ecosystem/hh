@@ -139,11 +139,29 @@ func (f *fakeStore) GetEvidence(_ context.Context, id string) (Evidence, bool, e
 }
 func (f *fakeStore) GetConfig(_ context.Context, branchID string) (Config, error) {
 	if c, ok := f.config[branchID]; ok {
+		if c.FilingFrequency == "" {
+			c.FilingFrequency = string(FilingQuarterly)
+		}
 		return c, nil
 	}
-	return Config{RoundMode: "INVOICE_TOTAL"}, nil
+	if branchID != "" {
+		if c, ok := f.config[""]; ok {
+			if c.FilingFrequency == "" {
+				c.FilingFrequency = string(FilingQuarterly)
+			}
+			return c, nil
+		}
+	}
+	return Config{RoundMode: "INVOICE_TOTAL", FilingFrequency: string(FilingQuarterly)}, nil
 }
 func (f *fakeStore) UpsertConfig(_ context.Context, c Config) (Config, error) {
+	if c.FilingFrequency == "" {
+		if prev, ok := f.config[c.BranchID]; ok && prev.FilingFrequency != "" {
+			c.FilingFrequency = prev.FilingFrequency
+		} else {
+			c.FilingFrequency = string(FilingQuarterly)
+		}
+	}
 	f.config[c.BranchID] = c
 	return c, nil
 }
