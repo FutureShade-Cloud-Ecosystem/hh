@@ -29,7 +29,7 @@ import (
 )
 
 // The run lifecycle and the per line outcomes (purchasing_payment_runs.status,
-// purchasing_payment_run_lines.status, migration 0454).
+// purchasing_payment_run_lines.status, migration 0455).
 const (
 	RunDraft = "DRAFT"
 	RunPaid  = "PAID"
