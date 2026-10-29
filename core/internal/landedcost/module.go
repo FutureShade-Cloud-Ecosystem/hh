@@ -119,11 +119,12 @@ func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: po
 // Service is the landed-cost domain seam (allocation, USD→CAD, retro-adjustment). Sibling seams injected via
 // the With* options.
 type Service struct {
-	repo  *Repository
-	stock Capitalizer
-	gl    GLPoster
-	audit audit.Recorder
-	log   *slog.Logger
+	repo         *Repository
+	stock        Capitalizer
+	gl           GLPoster
+	journalClock JournalClock
+	audit        audit.Recorder
+	log          *slog.Logger
 	// callerFrom resolves the trusted, server-stamped acting staff member every branch-scoped read/mutation
 	// gates against (handler.go / service.go CanAccessBranch checks). Defaults to the identity guard-stamped
 	// caller; tests override via withCaller. Mirrors order.Service.callerFrom (order/service.go:68).
