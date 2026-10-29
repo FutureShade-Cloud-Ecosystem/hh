@@ -193,3 +193,41 @@ test("a wall refusal names who posts bills and who sets the rules", () => {
   assert.match(refusalWords("tolerance", "Forbidden", 403), /set by the super admin only/);
   assert.equal(refusalWords("bill", "bill is already POSTED", 409), "Bill is already POSTED.");
 });
+
+test("a bill line with no PO line carries its goods or services mark when chosen and leaves it off when unmarked", () => {
+  const services = billBody(
+    {
+      ...form({ lines: {} }),
+      extraLine: { description: "Subcontractor grading", qty: "1", cost: "480.00", supplyKind: "SERVICES" },
+    },
+    PO,
+  );
+  assert.equal(services.ok, true);
+  assert.deepEqual(services.body.lines, [
+    { description: "Subcontractor grading", qty_billed_base: 1, unit_cost_cents: 48000, supply_kind: "SERVICES" },
+  ]);
+
+  const goods = billBody(
+    {
+      ...form({ lines: {} }),
+      extraLine: { description: "Jobsite gravel", qty: "2", cost: "120.00", supplyKind: "GOODS" },
+    },
+    PO,
+  );
+  assert.equal(goods.ok, true);
+  assert.deepEqual(goods.body.lines, [
+    { description: "Jobsite gravel", qty_billed_base: 2, unit_cost_cents: 12000, supply_kind: "GOODS" },
+  ]);
+
+  const unmarked = billBody(
+    {
+      ...form({ lines: {} }),
+      extraLine: { description: "Site callout", qty: "1", cost: "95.00", supplyKind: "" },
+    },
+    PO,
+  );
+  assert.equal(unmarked.ok, true);
+  assert.deepEqual(unmarked.body.lines, [
+    { description: "Site callout", qty_billed_base: 1, unit_cost_cents: 9500 },
+  ]);
+});

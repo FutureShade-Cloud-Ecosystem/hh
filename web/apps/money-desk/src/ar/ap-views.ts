@@ -11,7 +11,17 @@ import { PAYABLES_BANDS, isLandedCostRow, landedCostWords, rowItems, rowKey, typ
 import { asOfDay, bucketWord, daysLateWord, daysPastDue, pastDueMarkWord, relativeDay, statusTone, statusWord, type Mark } from "./ar-logic.js";
 import { formatMoney } from "./ar-money.js";
 import { markPill } from "./ar-views.js";
-import { businessNumberIsMissing, businessNumberWords, t5018EmptyKind, t5018Rows, type T5018Model } from "./t5018-logic.js";
+import {
+  businessNumberIsMissing,
+  businessNumberWords,
+  t5018Box22Cents,
+  t5018EmptyKind,
+  t5018Rows,
+  t5018RuleNote,
+  t5018ThresholdWords,
+  t5018UnmarkedWords,
+  type T5018Model,
+} from "./t5018-logic.js";
 
 /** One band of the board's five. */
 type Band = (typeof PAYABLES_BANDS)[number];
@@ -308,7 +318,12 @@ function t5018Panel(model: T5018Model): TemplateResult {
                 <div class="scroll">
                   <table class="stack t5018" data-t5018-table>
                     <thead>
-                      <tr><th>Vendor</th><th>CRA business number</th><th class="num">Paid in ${report.year}</th></tr>
+                      <tr>
+                        <th>Vendor</th>
+                        <th>CRA business number</th>
+                        <th class="num">Paid in ${report.year}</th>
+                        <th class="num">Box 22</th>
+                      </tr>
                     </thead>
                     <tbody>
                       ${rows.map(
@@ -317,11 +332,18 @@ function t5018Panel(model: T5018Model): TemplateResult {
                             <td>
                               <span class="who">${row.name}</span>
                               <span class="dim small">${row.vendor_no}</span>
+                              ${t5018ThresholdWords(row) === ""
+                                ? nothing
+                                : html`<span class="dim small" data-t5018-threshold>${t5018ThresholdWords(row)}</span>`}
+                              ${t5018UnmarkedWords(row) === ""
+                                ? nothing
+                                : html`<span class="dim small" data-t5018-unmarked>${t5018UnmarkedWords(row)}</span>`}
                             </td>
                             <td data-t5018-number data-label="CRA business number">${businessNumberIsMissing(row)
                               ? html`<span class="pill pill-watch" data-t5018-missing>${businessNumberWords(row)}</span>`
                               : businessNumberWords(row)}</td>
-                            <td class="num" data-t5018-paid>${formatMoney(row.paid_cents)}</td>
+                            <td class="num" data-t5018-paid data-label="Paid in ${report.year}">${formatMoney(row.paid_cents)}</td>
+                            <td class="num" data-t5018-box22 data-label="Box 22">${formatMoney(t5018Box22Cents(row))}</td>
                           </tr>
                         `,
                       )}
@@ -329,7 +351,8 @@ function t5018Panel(model: T5018Model): TemplateResult {
                     <tfoot>
                       <tr>
                         <td colspan="2"><b>Paid to subcontractors in ${report.year}</b></td>
-                        <td class="num"><b data-t5018-total>${formatMoney(report.total_cents)}</b></td>
+                        <td class="num" data-label="Paid in ${report.year}"><b data-t5018-total>${formatMoney(report.total_cents)}</b></td>
+                        <td class="num" data-label="Box 22"><b data-t5018-box22-total>${formatMoney(report.box_22_total_cents)}</b></td>
                       </tr>
                     </tfoot>
                   </table>
@@ -350,6 +373,7 @@ export function renderT5018(model: T5018Model): TemplateResult {
       <div>
         <h1>T5018</h1>
         <p class="dim">What the dealer paid its subcontractors in a calendar year, for the CRA's Form T5018. Only the vendors the Financial Controller has marked are on it.</p>
+        <p class="dim" data-t5018-rule-note>${t5018RuleNote(model.report)}</p>
       </div>
     </div>
     ${t5018Panel(model)}

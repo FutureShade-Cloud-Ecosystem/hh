@@ -40,6 +40,8 @@ async function shoot(page: Page, name: string, theme: string, width: number): Pr
   await page.screenshot({ path: join(dir, `${name}-${theme}-${width}.png`), fullPage: true });
 }
 
+const RULE_NOTE = "T5018 applies only where construction is more than half the dealer's business income.";
+
 const ROW = {
   vendor_id: "11111111-1111-4111-8111-111111111111",
   vendor_no: "VM-0001",
@@ -47,6 +49,10 @@ const ROW = {
   business_number: "123456789",
   business_number_missing: false,
   paid_cents: 125000,
+  box_22_cents: 125000,
+  services_subtotal_cents: 110619,
+  under_threshold: false,
+  unmarked_line_count: 0,
 };
 
 for (const size of SIZES) {
@@ -57,16 +63,27 @@ for (const size of SIZES) {
       await openDesk(page, request);
       if (theme === "charcoal") await charcoal(page);
       await openReport(page);
+      await expect(page.locator("[data-t5018-rule-note]")).toHaveText(RULE_NOTE);
       const missing = page.locator("[data-t5018-missing]");
       await expect(missing.first()).toBeVisible();
       await expect(missing.first()).toHaveText("(missing)");
       await expect(missing.first()).toHaveClass(/pill-watch/);
       await expect(page.locator("[data-t5018-number]").first()).toHaveAttribute("data-label", "CRA business number");
+      await expect(page.locator("[data-t5018-box22]").first()).toHaveAttribute("data-label", "Box 22");
+      await expect(page.locator("[data-t5018-box22]")).toHaveCount(3);
+      await expect(page.locator("[data-t5018-box22-total]")).toHaveText("$6,045.40");
+      await expect(page.locator("[data-t5018-threshold]")).toHaveText("under the $500 threshold, no slip");
+      await expect(page.locator("[data-t5018-unmarked]")).toHaveText(
+        "1 bill lines are not marked goods or services; they are counted as services until marked",
+      );
       if (size.width < 600) {
         const label = await page.locator("[data-t5018-number]").first().evaluate((cell) => getComputedStyle(cell, "::before").content);
         expect(label).toContain("CRA business number");
+        const box22Label = await page.locator("[data-t5018-box22]").first().evaluate((cell) => getComputedStyle(cell, "::before").content);
+        expect(box22Label).toContain("Box 22");
       } else {
         await expect(page.locator("[data-t5018-table] thead")).toContainText("CRA business number");
+        await expect(page.locator("[data-t5018-table] thead")).toContainText("Box 22");
       }
       await expect(page.getByRole("button", { name: "Download CSV" })).toBeEnabled();
       await shoot(page, "report-filled", theme, size.width);
@@ -75,10 +92,11 @@ for (const size of SIZES) {
     test(`no vendor marked ${theme} ${size.width}`, async ({ page, request }) => {
       test.setTimeout(120_000);
       await page.setViewportSize(size);
-      await answerWith(page, { year: 2026, items: [], total_cents: 0 });
+      await answerWith(page, { year: 2026, rule_note: RULE_NOTE, items: [], total_cents: 0, box_22_total_cents: 0 });
       await openDesk(page, request);
       if (theme === "charcoal") await charcoal(page);
       await openReport(page);
+      await expect(page.locator("[data-t5018-rule-note]")).toHaveText(RULE_NOTE);
       const empty = page.locator("[data-t5018-empty]");
       await expect(empty).toHaveAttribute("data-t5018-empty", "none-marked");
       await expect(empty).toContainText("No vendor is marked yet");
@@ -90,10 +108,17 @@ for (const size of SIZES) {
     test(`nothing paid ${theme} ${size.width}`, async ({ page, request }) => {
       test.setTimeout(120_000);
       await page.setViewportSize(size);
-      await answerWith(page, { year: 2026, items: [{ ...ROW, paid_cents: 0 }], total_cents: 0 });
+      await answerWith(page, {
+        year: 2026,
+        rule_note: RULE_NOTE,
+        items: [{ ...ROW, paid_cents: 0, box_22_cents: 0, services_subtotal_cents: 0, under_threshold: true, threshold_note: "under the $500 threshold, no slip" }],
+        total_cents: 0,
+        box_22_total_cents: 0,
+      });
       await openDesk(page, request);
       if (theme === "charcoal") await charcoal(page);
       await openReport(page);
+      await expect(page.locator("[data-t5018-rule-note]")).toHaveText(RULE_NOTE);
       const empty = page.locator("[data-t5018-empty]");
       await expect(empty).toHaveAttribute("data-t5018-empty", "none-paid");
       await expect(empty).toContainText("Nothing was paid to marked vendors in 2026");

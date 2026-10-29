@@ -534,3 +534,16 @@ test("a body that is not JSON is the core's 400 on every route that reads one", 
   }
   assert.ok(coreSource.includes("the request body must be JSON"));
 });
+
+test("the T5018 report and its CSV answer in the contract's shape with Box 22, threshold and unmarked notes", async () => {
+  await reset();
+  const res = await call("GET", "/api/v1/purchasing/t5018?year=2026");
+  assert.equal(res.status, 200);
+  holds("PurchasingT5018Report", res.json);
+  assert.equal(res.json.rule_note, "T5018 applies only where construction is more than half the dealer's business income.");
+  assert.equal(res.json.items.length, 3);
+  const csv = await fetch(`${base}/api/v1/purchasing/t5018.csv?year=2026`, { headers: { Authorization: "Bearer stub-token", "X-Org": "hh-demo" } });
+  assert.equal(csv.status, 200);
+  const text = await csv.text();
+  assert.ok(text.startsWith("vendor_no,vendor_name,business_number,paid_cents,box_22_cents,services_subtotal_cents,under_threshold,threshold_note,unmarked_line_count,unmarked_lines_note\n"));
+});

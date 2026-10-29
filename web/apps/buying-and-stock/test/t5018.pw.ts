@@ -71,5 +71,25 @@ for (const size of SIZES) {
       await expect(page.locator("[data-t5018]")).toHaveCount(0);
       await shoot(page, "mark-other", theme, size.width);
     });
+
+    test(`bill entry offers goods or services on a line with no PO ${theme} ${size.width}`, async ({ page, request }) => {
+      test.setTimeout(120_000);
+      await page.setViewportSize(size);
+      await openAreaAs(page, request, AP, "Vendor bills");
+      if (theme === "charcoal") await charcoal(page);
+      await page.getByRole("button", { name: "Enter a bill" }).click();
+      await page.locator("[data-bill-po]").selectOption({ label: "PO-PLM-67 · Unilock (demo)" });
+      await page.locator("[data-bill-no-field]").fill("INV-9052");
+      await page.locator("[data-extra-desc]").fill("Subcontractor grading");
+      await page.locator("[data-extra-qty]").fill("1");
+      await page.locator("[data-extra-cost]").fill("480.00");
+      const group = page.getByRole("group", { name: "Goods or services" });
+      await expect(group.getByRole("button", { name: "Not marked" })).toHaveAttribute("aria-pressed", "true");
+      await group.getByRole("button", { name: "Services" }).click();
+      await expect(group.getByRole("button", { name: "Services" })).toHaveAttribute("aria-pressed", "true");
+      await shoot(page, "bill-entry-no-po", theme, size.width);
+      await page.getByRole("button", { name: "Enter the bill" }).click();
+      await expect(page.locator("[data-notice]")).toContainText("Entered bill INV-9052 as a draft.");
+    });
   }
 }
