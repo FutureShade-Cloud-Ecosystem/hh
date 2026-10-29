@@ -6590,6 +6590,8 @@ export type PurchasingVendor = {
   name: string;
   payment_terms_days: number;
   is_active: boolean;
+  is_t5018_subcontractor?: boolean;
+  business_number?: string;
 };
 export type PurchasingCreateVendorRequest = {
   name: string;
@@ -6602,6 +6604,10 @@ export type PurchasingUpdateVendorRequest = {
   order_email?: string;
   is_active?: boolean;
 };
+export type PurchasingSetVendorT5018Request = {
+  is_subcontractor: boolean;
+  business_number?: string;
+};
 export type PurchasingVendorMaster = {
   id: string;
   vendor_no: string;
@@ -6609,6 +6615,8 @@ export type PurchasingVendorMaster = {
   payment_terms_days: number;
   order_email: string;
   is_active: boolean;
+  is_t5018_subcontractor?: boolean;
+  business_number?: string;
 };
 export type PurchasingPO = {
   id: string;

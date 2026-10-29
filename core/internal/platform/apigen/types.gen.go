@@ -7618,11 +7618,13 @@ type LandedCostStatus string
 type LandedCostBasis string
 
 type PurchasingVendor struct {
-	Id               string `json:"id"`
-	VendorNo         string `json:"vendor_no"`
-	Name             string `json:"name"`
-	PaymentTermsDays int32  `json:"payment_terms_days"`
-	IsActive         bool   `json:"is_active"`
+	Id                   string  `json:"id"`
+	VendorNo             string  `json:"vendor_no"`
+	Name                 string  `json:"name"`
+	PaymentTermsDays     int32   `json:"payment_terms_days"`
+	IsActive             bool    `json:"is_active"`
+	IsT5018Subcontractor *bool   `json:"is_t5018_subcontractor,omitempty"`
+	BusinessNumber       *string `json:"business_number,omitempty"`
 }
 
 type PurchasingCreateVendorRequest struct {
@@ -7638,13 +7640,20 @@ type PurchasingUpdateVendorRequest struct {
 	IsActive         *bool   `json:"is_active,omitempty"`
 }
 
+type PurchasingSetVendorT5018Request struct {
+	IsSubcontractor bool    `json:"is_subcontractor"`
+	BusinessNumber  *string `json:"business_number,omitempty"`
+}
+
 type PurchasingVendorMaster struct {
-	Id               string `json:"id"`
-	VendorNo         string `json:"vendor_no"`
-	Name             string `json:"name"`
-	PaymentTermsDays int32  `json:"payment_terms_days"`
-	OrderEmail       string `json:"order_email"`
-	IsActive         bool   `json:"is_active"`
+	Id                   string  `json:"id"`
+	VendorNo             string  `json:"vendor_no"`
+	Name                 string  `json:"name"`
+	PaymentTermsDays     int32   `json:"payment_terms_days"`
+	OrderEmail           string  `json:"order_email"`
+	IsActive             bool    `json:"is_active"`
+	IsT5018Subcontractor *bool   `json:"is_t5018_subcontractor,omitempty"`
+	BusinessNumber       *string `json:"business_number,omitempty"`
 }
 
 type PurchasingPO struct {

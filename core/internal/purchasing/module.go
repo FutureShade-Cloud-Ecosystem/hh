@@ -388,6 +388,11 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// already sit at: RequireManager, a vendor record being a commitment the business stands behind.
 	r.Handle("POST /api/v1/purchasing/vendors", g.RequireManager(h.staff(h.createVendor)))
 	r.Handle("PUT /api/v1/purchasing/vendors/{vendorID}", g.RequireManager(h.staff(h.setVendor)))
+	// The T5018 mark. The tier gate is RequireManager, as every vendor write is, and the WALL is
+	// the role gate's: this route's census row names money-desk at admin, and the Financial
+	// Controller is the decided matrix's only admin seat on money-desk, so every other role in the
+	// catalogue is refused before the handler runs (rolegate_t5018_test.go).
+	r.Handle("PUT /api/v1/purchasing/vendors/{vendorID}/t5018", g.RequireManager(h.staff(h.setVendorT5018)))
 
 	r.Handle("GET /api/v1/purchasing/pos", g.RequireStaff(h.staff(h.listPOs)))
 	r.Handle("POST /api/v1/purchasing/pos", g.RequireManager(h.staff(h.createPO)))

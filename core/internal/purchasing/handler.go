@@ -53,6 +53,22 @@ func (h *Handler) setVendor(w http.ResponseWriter, r *http.Request, caller guard
 	httpx.WriteJSON(w, http.StatusOK, v)
 }
 
+// setVendorT5018 writes the Financial Controller's subcontractor mark and the contractor's business
+// number on one vendor. The org stamp comes from the guard resolved scope on the caller, never from
+// a header or the body.
+func (h *Handler) setVendorT5018(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in SetVendorT5018Request
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	v, err := h.svc.SetVendorT5018(r.Context(), caller.OrgID, r.PathValue("vendorID"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
 func (h *Handler) listPOs(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	items, err := h.svc.ListPOs(r.Context(), r.URL.Query().Get("branch_id"), r.URL.Query().Get("status"))
 	if err != nil {

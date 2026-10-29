@@ -49,6 +49,12 @@ type VendorMaster struct {
 	// outbound send's address book reads. Empty is a real answer: no email on file.
 	OrderEmail string `json:"order_email"`
 	IsActive   bool   `json:"is_active"`
+	// IsT5018Subcontractor is the Financial Controller's mark on the vendor: the flag the year's
+	// T5018 report filters on. False is the default for every vendor that has never been marked.
+	IsT5018Subcontractor bool `json:"is_t5018_subcontractor"`
+	// BusinessNumber is the contractor's CRA business number, the other half of the T5018 form.
+	// Empty is a real answer: the contractor has not given one.
+	BusinessNumber string `json:"business_number"`
 }
 
 // CreateVendorRequest is the POST /purchasing/vendors body. PaymentTermsDays nil means the 30 day

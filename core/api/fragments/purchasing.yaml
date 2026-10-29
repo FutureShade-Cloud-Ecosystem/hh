@@ -108,6 +108,50 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/purchasing/vendors/{vendorID}/t5018:
+    put:
+      operationId: purchasingSetVendorT5018
+      tags: [staff-purchasing]
+      x-addition: "the T5018 subcontractor mark of row 153; no ERP source route"
+      summary: Set one vendor's T5018 subcontractor mark and business number
+      description: >-
+        The Financial Controller's own mark on a vendor, and the contractor's
+        CRA business number. is_subcontractor is required: the mark is what the
+        year's T5018 report filters on, so a body that does not say what the
+        mark is names nothing to set. business_number is optional; absent
+        leaves it as it stands and an empty string clears it. The wall is the
+        role gate's: this route names money-desk at admin, and the Financial
+        Controller is the matrix's only admin seat on money-desk, so every other
+        role is refused with the shared body before the handler runs. A vendor
+        another org owns answers 404 like an unknown id.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingSetVendorT5018Request"
+      responses:
+        "200":
+          description: The vendor after the mark was written
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorMaster"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/purchasing/pos:
     get:
       operationId: purchasingListPOs
@@ -1647,6 +1691,16 @@ components:
         name: { type: string }
         payment_terms_days: { type: integer, format: int32 }
         is_active: { type: boolean }
+        is_t5018_subcontractor:
+          type: boolean
+          description: >-
+            The Financial Controller's mark on the vendor: the flag the year's
+            T5018 report filters on. False for every vendor never marked.
+        business_number:
+          type: string
+          description: >-
+            The contractor's CRA business number; empty when the contractor has
+            not given one.
 
     PurchasingCreateVendorRequest:
       type: object
@@ -1672,6 +1726,19 @@ components:
         order_email: { type: string }
         is_active: { type: boolean }
 
+    PurchasingSetVendorT5018Request:
+      type: object
+      description: >-
+        is_subcontractor is required: the mark is what the year's T5018 report
+        filters on, so a body that does not say what the mark is names nothing
+        to set. business_number is optional; absent leaves it as it stands and
+        an empty string clears it. The business number is the CRA's own: nine
+        digits, with RC0001 after them for a program account.
+      required: [is_subcontractor]
+      properties:
+        is_subcontractor: { type: boolean }
+        business_number: { type: string }
+
     PurchasingVendorMaster:
       type: object
       description: >-
@@ -1686,6 +1753,16 @@ components:
         payment_terms_days: { type: integer, format: int32 }
         order_email: { type: string }
         is_active: { type: boolean }
+        is_t5018_subcontractor:
+          type: boolean
+          description: >-
+            The Financial Controller's mark on the vendor: the flag the year's
+            T5018 report filters on. False for every vendor never marked.
+        business_number:
+          type: string
+          description: >-
+            The contractor's CRA business number; empty when the contractor has
+            not given one.
 
     PurchasingPO:
       type: object
