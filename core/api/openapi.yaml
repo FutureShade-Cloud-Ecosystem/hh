@@ -8884,6 +8884,74 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/gl/export-mapping:
+    get:
+      operationId: glListAccountMapping
+      tags:
+        - staff-gl
+      summary: List the export account mapping, one target or every target
+      description: "The rows that point HH GL accounts at a target package's account codes (QuickBooks Online first, Sage 50 next). With no target query parameter the answer is every target's rows, ordered by target then account code. A manager read: the desk must see what the books export under."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: target
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - QUICKBOOKS_ONLINE
+              - SAGE_50
+          description: Absent or empty means every target
+      responses:
+        "200":
+          description: The mapping rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlAccountMappingPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      operationId: glSetAccountMapping
+      tags:
+        - staff-gl
+      summary: Point one HH account at a target package's account code
+      description: "The Financial Controller's act: the service refuses any other role in words, and the set is audited. The row upserts on (target, account_code), so re-setting an account moves its mapping and never grows a second row."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GlAccountMappingSet"
+      responses:
+        "200":
+          description: The mapping row as set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlAccountMapping"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/finstmt/income-statement:
     get:
       operationId: finstmtIncomeStatement
@@ -39322,6 +39390,59 @@ components:
           type: boolean
           description: True while the export ships as a parity draft pending cutover confirmation
         content:
+          type: string
+    GlAccountMapping:
+      type: object
+      description: One HH GL account's row in a target package's books
+      required:
+        - target
+        - account_code
+        - account_name
+        - package_account
+      properties:
+        target:
+          type: string
+          enum:
+            - QUICKBOOKS_ONLINE
+            - SAGE_50
+        account_code:
+          type: string
+        account_name:
+          type: string
+        package_account:
+          type: string
+    GlAccountMappingPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/GlAccountMapping"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
+    GlAccountMappingSet:
+      type: object
+      description: The set body; only the Financial Controller's caller is accepted
+      required:
+        - target
+        - account_code
+        - package_account
+      properties:
+        target:
+          type: string
+          enum:
+            - QUICKBOOKS_ONLINE
+            - SAGE_50
+        account_code:
+          type: string
+        package_account:
           type: string
     FinStmtStatementRow:
       type: object

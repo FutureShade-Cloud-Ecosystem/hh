@@ -3213,6 +3213,25 @@ type GlExportResult struct {
 	Content  string `json:"content"`
 }
 
+type GlAccountMapping struct {
+	Target         string `json:"target"`
+	AccountCode    string `json:"account_code"`
+	AccountName    string `json:"account_name"`
+	PackageAccount string `json:"package_account"`
+}
+
+type GlAccountMappingPage struct {
+	Items      []GlAccountMapping `json:"items"`
+	NextCursor *string            `json:"next_cursor,omitempty"`
+	Limit      *int32             `json:"limit,omitempty"`
+}
+
+type GlAccountMappingSet struct {
+	Target         string `json:"target"`
+	AccountCode    string `json:"account_code"`
+	PackageAccount string `json:"package_account"`
+}
+
 type FinStmtStatementRow struct {
 	AccountCode string `json:"account_code"`
 	AccountName string `json:"account_name"`

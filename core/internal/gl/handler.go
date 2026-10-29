@@ -619,3 +619,34 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request, _ guards.StaffC
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
+
+// - the accounting package export's account mapping (W3 AX-1) -
+
+func (h *Handler) listAccountMapping(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	rows, err := h.svc.ListAccountMapping(r.Context(), strings.TrimSpace(r.URL.Query().Get("target")))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if rows == nil {
+		rows = []AccountMapping{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": rows})
+}
+
+func (h *Handler) setAccountMapping(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	var b struct {
+		Target         string `json:"target"`
+		AccountCode    string `json:"account_code"`
+		PackageAccount string `json:"package_account"`
+	}
+	if !decodeJSON(w, r, &b) {
+		return
+	}
+	m, err := h.svc.SetAccountMapping(r.Context(), b.Target, b.AccountCode, b.PackageAccount)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, m)
+}

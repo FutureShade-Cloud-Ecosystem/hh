@@ -475,6 +475,21 @@ func (f *fakeStore) ExportRows(_ context.Context, _, _ int, _ string) ([]ExportR
 	return nil, nil
 }
 
+// - the accounting package export's account mapping (W3 AX-1) -
+
+func (f *fakeStore) ListAccountMapping(_ context.Context, _ string) ([]AccountMapping, error) {
+	return nil, nil
+}
+func (f *fakeStore) SetAccountMapping(_ context.Context, target, accountCode, packageAccount, _ string, record func(context.Context, pgx.Tx, AccountMapping) error) (AccountMapping, error) {
+	m := AccountMapping{ID: "mapping-fake", Target: target, AccountCode: accountCode, PackageAccount: packageAccount}
+	if record != nil {
+		if err := record(context.Background(), nil, m); err != nil {
+			return AccountMapping{}, err
+		}
+	}
+	return m, nil
+}
+
 // lastInserted returns the most recently inserted draft (nil if none).
 func (f *fakeStore) lastInserted() *journalDraft {
 	if len(f.inserted) == 0 {

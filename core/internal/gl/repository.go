@@ -2084,6 +2084,75 @@ func (r *Repository) ExportRows(ctx context.Context, year, month int, branchID s
 	return out, rows.Err()
 }
 
+// - the accounting package export's account mapping (W3 AX-1) -
+
+func (r *Repository) ListAccountMapping(ctx context.Context, target string) ([]AccountMapping, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT m.target, m.account_code::text, COALESCE(a.name, ''), m.package_account
+		   FROM gl_account_mapping m
+		   LEFT JOIN gl_accounts a ON a.code = m.account_code
+		  WHERE ($1 = '' OR m.target = $1)
+		  ORDER BY m.target, m.account_code`, target)
+	if err != nil {
+		return nil, fmt.Errorf("gl: list account mapping: %w", err)
+	}
+	defer rows.Close()
+	var out []AccountMapping
+	for rows.Next() {
+		var m AccountMapping
+		if err := rows.Scan(&m.Target, &m.AccountCode, &m.AccountName, &m.PackageAccount); err != nil {
+			return nil, fmt.Errorf("gl: scan account mapping: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// SetAccountMapping upserts one account's row for one target, then runs the record callback on the
+// SAME transaction with the row as written, so the audit row commits or rolls back with the mapping.
+// A re-set moves the one row the (target, account_code) unique carries, never a second one.
+func (r *Repository) SetAccountMapping(ctx context.Context, target, accountCode, packageAccount, actorID string, record func(context.Context, pgx.Tx, AccountMapping) error) (AccountMapping, error) {
+	if r.pool == nil {
+		return AccountMapping{}, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return AccountMapping{}, fmt.Errorf("gl: begin the mapping set: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var m AccountMapping
+	err = tx.QueryRow(ctx,
+		`WITH up AS (
+		   INSERT INTO gl_account_mapping (target, account_code, package_account, set_by)
+		   VALUES ($1, $2, $3, NULLIF($4, '')::uuid)
+		   ON CONFLICT (target, account_code)
+		   DO UPDATE SET package_account = EXCLUDED.package_account,
+		                 set_by          = EXCLUDED.set_by,
+		                 updated_at      = now()
+		   RETURNING id, target, account_code, package_account
+		 )
+		 SELECT up.id::text, up.target, up.account_code::text, COALESCE(a.name, ''), up.package_account
+		   FROM up
+		   LEFT JOIN gl_accounts a ON a.code = up.account_code`,
+		target, accountCode, packageAccount, actorID).
+		Scan(&m.ID, &m.Target, &m.AccountCode, &m.AccountName, &m.PackageAccount)
+	if err != nil {
+		return AccountMapping{}, fmt.Errorf("gl: set account mapping: %w", err)
+	}
+	if record != nil {
+		if err := record(ctx, tx, m); err != nil {
+			return AccountMapping{}, fmt.Errorf("gl: record the mapping set: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AccountMapping{}, fmt.Errorf("gl: commit the mapping set: %w", err)
+	}
+	return m, nil
+}
+
 // - DIB-360/361: approval configuration (0106 gl_approver_assignments + gl_policy write) -
 
 // SetJEThreshold writes the maker-checker threshold for a branch ("" = the org default row).

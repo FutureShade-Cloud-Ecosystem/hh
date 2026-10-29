@@ -292,3 +292,7 @@ additions:
     reason: "W2-9a: the AP aging worklist over open vendor bills and open landed-cost payables in the dealer's house zone, tying to GL 2100 as of any instant; the ERP had no AP aging route; no ERP source route."
   - route: "POST /api/v1/purchasing/bills/{id}/payments"
     reason: "W2-9a round 2: the vendor bill payment door over PayBill, idempotent on the Idempotency-Key header; the ERP keyed supplier payments by hand; no ERP source route."
+  - route: "GET /api/v1/gl/export-mapping"
+    reason: "W3 AX-1: the desk's read of the accounting package export's account mapping (each HH GL account to the target package's account code, QuickBooks Online first, Sage 50 next); the ERP exported by hand and had no mapping; no ERP source route."
+  - route: "PUT /api/v1/gl/export-mapping"
+    reason: "W3 AX-1: the Financial Controller's door to point one HH account at a target package's account code, upserted on (target, account_code) and audited; the ERP kept the mapping in a spreadsheet; no ERP source route."

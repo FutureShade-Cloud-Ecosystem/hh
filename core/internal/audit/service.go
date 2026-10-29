@@ -657,6 +657,15 @@ var allowedExtraKeys = map[string]bool{
 	// in the column (round 4, S2's P1).
 	"report": true,
 	"format": true,
+	// The gl export account mapping row (GL_ACCOUNT_MAPPING_SET, W3 AX-1): the target package's
+	// CHECK vocabulary word and the two account code words the row points between. Code shaped like
+	// report and format, never identifiers (an account code is a short digit run the redactor
+	// passes), and the row carries them because the trail must say which account moved under which
+	// package even after the row is re-set or its account retired. The row's entity_id is the
+	// mapping row's own uuid.
+	"export_target":   true,
+	"hh_account_code": true,
+	"package_account": true,
 }
 
 // redactCleartext returns the value with cleartext-looking identifiers stripped. A value is treated as

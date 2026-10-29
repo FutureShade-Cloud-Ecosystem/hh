@@ -83,7 +83,10 @@ import (
 // in census_test.go): a page shape added or removed must move this number
 // consciously, with the live half's report (the new operation is driven,
 // or the dropped one is named) as the evidence.
-const shapeCensusWantPages = 105
+// W3 AX-1 moved it to 106: glListAccountMapping joined the page shapes
+// (GlAccountMappingPage), its served answer allowlisted beside the chart
+// list's own entry.
+const shapeCensusWantPages = 106
 
 // shapeCensusAllowlist names (per the brief) the page shape operations
 // whose served answer already breaks the page shape, each with the reason
@@ -151,6 +154,7 @@ var shapeCensusAllowlist = map[string]string{
 	"billingListPaperPath":             "answers items (an array) with no next_cursor key (internal/billing/ar_landing_handler.go, ARLandingHandler.paperPath) against the contract's BillingPaperPathPage; the fix is the owning lane's",
 	"billingListRegister":              "answers items (nil guarded), counts and total with no next_cursor key (internal/billing/register_handler.go, RegisterHandler.register writes the RegisterPage struct (internal/billing/register_model.go), which carries no cursor field) against the contract's BillingRegisterPage; the fix is the owning lane's",
 	"glListAccounts":                   "answers items (nil guarded) with no next_cursor key (internal/gl/handler.go, Handler.listAccounts) against the contract's GlAccountPage; the fix is the owning lane's",
+	"glListAccountMapping":             "answers items (nil guarded) with no next_cursor key (internal/gl/handler.go, Handler.listAccountMapping, the chart list's own shape) against the contract's GlAccountMappingPage; the fix is the owning lane's",
 	"glListPeriods":                    "answers items (nil guarded) with no next_cursor key (internal/gl/handler.go, Handler.listPeriods) against the contract's GlPeriodPage; the fix is the owning lane's",
 	"glListRecurring":                  "answers items (an array) with no next_cursor key (internal/gl/handler.go, Handler.listRecurring) against the contract's GlRecurringTemplatePage; the fix is the owning lane's",
 	"glTieOut":                         "answers items (the tie out state rows) with no next_cursor key (internal/gl/handler.go, Handler.tieOut) against the contract's GlTieoutStatePage; the fix is the owning lane's",

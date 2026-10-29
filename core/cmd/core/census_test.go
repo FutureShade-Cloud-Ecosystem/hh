@@ -41,8 +41,10 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 	// W2-9a's purchasingGetAPAging and W2-9a round 2's purchasingPayBill. Both
 	// sides' routes are kept; the count is what merge.mjs reports on the
 	// assembled document.
-	if staff != 695 {
-		t.Fatalf("census staff operations: %d, want the document's 695 (main's routes plus purchasingGetAPAging and purchasingPayBill)", staff)
+	// W3 AX-1 adds the accounting package export's mapping doors
+	// (glListAccountMapping and glSetAccountMapping) to the same document.
+	if staff != 697 {
+		t.Fatalf("census staff operations: %d, want the document's 697 (main's routes plus purchasingGetAPAging, purchasingPayBill and the two export mapping doors)", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }
