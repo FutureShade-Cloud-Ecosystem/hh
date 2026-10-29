@@ -399,6 +399,10 @@ func (s *Service) GetJob(ctx context.Context, customerID, jobID string) (Job, er
 	if _, err := uuid.Parse(jobID); err != nil {
 		return Job{}, httpx.BadRequestf("job id must be a uuid")
 	}
+	// The customer is the first fence: the read, the close and the edit all sit behind it.
+	if _, err := s.GetAccount(ctx, customerID); err != nil {
+		return Job{}, err
+	}
 	job, found, err := s.jobs.GetJob(ctx, customerID, jobID, reach)
 	if err != nil {
 		return Job{}, err

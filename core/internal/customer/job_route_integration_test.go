@@ -16,6 +16,7 @@ package customer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -161,6 +162,53 @@ func TestIntegration_JobRoutes_AJobOfAnotherBranchIsNotFound(t *testing.T) {
 	after, _, _ = repo.GetJob(ctx, f.customerID, f.jobID, AccountReach{BranchIDs: []string{f.branchA}})
 	if after.Status != JobStatusOpen {
 		t.Fatalf("a close outside the reach closed the job: %q", after.Status)
+	}
+}
+
+// TestIntegration_JobRoutes_RehomedCustomerFencesReadAndClose proves the customer fence sits on
+// GetJob, EditJob and CloseJob alike: when a customer is re-homed from branch A to branch B, a
+// caller scoped to A can neither read nor close its job, and is answered not found.
+func TestIntegration_JobRoutes_RehomedCustomerFencesReadAndClose(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	svc := NewService(repo).WithJobs(repo)
+	h := NewHandler(svc, nil)
+
+	f := plantJobWorld(t, pool)
+	if _, err := pool.Exec(ctx, `UPDATE customers SET home_branch_id = $1 WHERE id = $2`, f.branchB, f.customerID); err != nil {
+		t.Fatalf("re-home the customer to branch B: %v", err)
+	}
+	callerA := identity.StaffContext{UserID: f.userA, Scope: identity.ScopeBranch, Branches: map[string]bool{f.branchA: true}}
+	ctxA := identity.ContextWithStaff(ctx, callerA)
+
+	if _, err := svc.GetJob(ctxA, f.customerID, f.jobID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetJob by old branch caller after re-home: got %v, want ErrNotFound", err)
+	}
+	rec := callJobRoute(h.getJob, http.MethodGet, f.customerID, f.jobID, callerA, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("getJob route by old branch caller after re-home: want 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	name := "Renamed"
+	if _, err := svc.EditJob(ctxA, f.customerID, f.jobID, JobEditInput{Name: &name}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("EditJob by old branch caller after re-home: got %v, want ErrNotFound", err)
+	}
+
+	if _, err := svc.CloseJob(ctxA, f.customerID, f.jobID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CloseJob by old branch caller after re-home: got %v, want ErrNotFound", err)
+	}
+	rec = callJobRoute(h.closeJob, http.MethodPost, f.customerID, f.jobID, callerA, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("closeJob route by old branch caller after re-home: want 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	stillOpen, err := repo.GetJobByID(ctx, f.jobID)
+	if err != nil {
+		t.Fatalf("read the job back: %v", err)
+	}
+	if stillOpen.Status != JobStatusOpen {
+		t.Fatalf("the old branch caller closed the job across the customer fence: status %q", stillOpen.Status)
 	}
 }
 
