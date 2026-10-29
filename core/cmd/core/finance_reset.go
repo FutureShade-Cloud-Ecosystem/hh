@@ -480,16 +480,40 @@ var financeResetUnsafeInTransaction = []string{
 // DATABASE, no CREATE INDEX CONCURRENTLY, no VACUUM, no CLUSTER, no ALTER
 // SYSTEM, no tablespace work and no transaction control: the BEGIN and END
 // lines in it are the bodies of its plpgsql functions.
+//
+// A head matches as whole words only: "SET transaction_timeout = 0;", which a
+// newer pg_dump writes, is a session setting and runs inside a transaction,
+// and it is not SET TRANSACTION. Top level transaction control (a COMMIT or
+// ROLLBACK statement on its own line) and a psql \connect would end or leave
+// the one transaction, so they are refused too. BEGIN and END lines are not
+// heads: they are the bodies of the dump's plpgsql functions.
 func financeResetTransactionSafe(dump []byte) error {
 	for _, line := range financeResetNonDataLines(dump) {
 		upper := strings.ToUpper(strings.TrimSpace(line))
 		for _, head := range financeResetUnsafeInTransaction {
-			if strings.HasPrefix(upper, head) {
+			if financeResetHeadMatches(upper, head) {
 				return fmt.Errorf("finance-reset: the world's dump carries a statement that may not run inside the reset's transaction (%s): the reset refuses before it drops anything", head)
 			}
 		}
+		switch {
+		case upper == "COMMIT;" || upper == "ROLLBACK;" || upper == "END TRANSACTION;":
+			return fmt.Errorf("finance-reset: the world's dump carries transaction control (%s): the reset refuses before it drops anything", upper)
+		case strings.HasPrefix(upper, `\CONNECT`) || strings.HasPrefix(upper, `\C `):
+			return fmt.Errorf("finance-reset: the world's dump carries a psql connection switch: the reset refuses before it drops anything")
+		}
 	}
 	return nil
+}
+
+// financeResetHeadMatches answers whether an upper cased line opens with the
+// head as whole words: the head is followed by the line's end, a space or a
+// semicolon, never by more of a longer word.
+func financeResetHeadMatches(upper, head string) bool {
+	if !strings.HasPrefix(upper, head) {
+		return false
+	}
+	rest := upper[len(head):]
+	return rest == "" || rest[0] == ' ' || rest[0] == ';' || rest[0] == '\t'
 }
 
 // financeResetRestoreScript answers the script the restore runs: the box's
