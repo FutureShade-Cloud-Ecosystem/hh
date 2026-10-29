@@ -694,10 +694,14 @@ type datasetPushdown struct {
 	salesFrom, salesTo time.Time
 }
 
+// maxSalesWindowDays bounds the sales dataset's issue-date window to one year (leap year inclusive).
+const maxSalesWindowDays = 366
+
 // validateDatasetFilters checks every filter against the catalog and splits the pushdowns out. The
 // returned list carries coerced values, ready to compare.
 func validateDatasetFilters(set string, cols []DatasetColumn, in []DatasetFilter) ([]datasetFilter, datasetPushdown, error) {
 	var pushdown datasetPushdown
+	seenCol := map[string]bool{}
 	out := make([]datasetFilter, 0, len(in))
 	for _, f := range in {
 		col, ok := datasetColumnByName(cols, f.Column)
@@ -732,22 +736,53 @@ func validateDatasetFilters(set string, cols []DatasetColumn, in []DatasetFilter
 		filter := datasetFilter{column: col, op: f.Op, values: vals}
 
 		// The pushdowns, consumed by the owning module's read instead of the Go side.
+		// A second filter on one column is refused in words, never silently overwritten or dropped.
 		switch {
-		case set == "gl" && col.Name == "fiscal_year" && f.Op == "eq":
+		case set == "gl" && col.Name == "fiscal_year":
+			if seenCol[col.Name] {
+				return nil, pushdown, errBadRequest("column %q is filtered twice in one read: give one filter per column", col.Name)
+			}
+			seenCol[col.Name] = true
+			if f.Op != "eq" {
+				return nil, pushdown, errBadRequest("the gl set's column %q takes eq (one fiscal year at a time), got %q", col.Name, f.Op)
+			}
 			pushdown.glYear = int(vals[0].(int64))
 			if pushdown.glYear <= 0 {
 				return nil, pushdown, errBadRequest("fiscal_year must be a whole year, got %d", pushdown.glYear)
 			}
-		case set == "gl" && col.Name == "fiscal_month" && f.Op == "eq":
+		case set == "gl" && col.Name == "fiscal_month":
+			if seenCol[col.Name] {
+				return nil, pushdown, errBadRequest("column %q is filtered twice in one read: give one filter per column", col.Name)
+			}
+			seenCol[col.Name] = true
+			if f.Op != "eq" {
+				return nil, pushdown, errBadRequest("the gl set's column %q takes eq, got %q", col.Name, f.Op)
+			}
 			pushdown.glMonth = int(vals[0].(int64))
 			if pushdown.glMonth < 1 || pushdown.glMonth > 12 {
 				return nil, pushdown, errBadRequest("fiscal_month must be a whole month between 1 and 12, got %d", pushdown.glMonth)
 			}
 		case set == "sales" && col.Name == "invoice_date" && f.Op == "ge":
+			if !pushdown.salesFrom.IsZero() {
+				return nil, pushdown, errBadRequest("column %q has two from (ge) filters in one read: give one from (ge) and one to (le)", col.Name)
+			}
 			pushdown.salesFrom = datasetDayStart(vals[0].(string))
 		case set == "sales" && col.Name == "invoice_date" && f.Op == "le":
+			if !pushdown.salesTo.IsZero() {
+				return nil, pushdown, errBadRequest("column %q has two to (le) filters in one read: give one from (ge) and one to (le)", col.Name)
+			}
+			pushdown.salesTo = datasetDayEnd(vals[0].(string))
+		case set == "sales" && col.Name == "invoice_date" && f.Op == "eq":
+			if !pushdown.salesFrom.IsZero() || !pushdown.salesTo.IsZero() {
+				return nil, pushdown, errBadRequest("column %q is filtered twice in one read: give eq for one day, or one from (ge) and one to (le)", col.Name)
+			}
+			pushdown.salesFrom = datasetDayStart(vals[0].(string))
 			pushdown.salesTo = datasetDayEnd(vals[0].(string))
 		default:
+			if seenCol[col.Name] {
+				return nil, pushdown, errBadRequest("column %q is filtered twice in one read: give one filter per column", col.Name)
+			}
+			seenCol[col.Name] = true
 			out = append(out, filter)
 		}
 	}
@@ -755,9 +790,21 @@ func validateDatasetFilters(set string, cols []DatasetColumn, in []DatasetFilter
 		return nil, pushdown, errBadRequest(
 			"the gl set reads one fiscal year at a time: give fiscal_year (for example fiscal_year eq 2026)")
 	}
-	if set == "sales" && (pushdown.salesFrom.IsZero() || pushdown.salesTo.IsZero()) {
-		return nil, pushdown, errBadRequest(
-			"the sales set reads a window of issue dates: give invoice_date from (ge) and to (le)")
+	if set == "sales" {
+		if pushdown.salesFrom.IsZero() || pushdown.salesTo.IsZero() {
+			return nil, pushdown, errBadRequest(
+				"the sales set reads a window of issue dates: give invoice_date from (ge) and to (le)")
+		}
+		if pushdown.salesTo.Before(pushdown.salesFrom) {
+			return nil, pushdown, errBadRequest(
+				"the sales set's invoice_date window has to (%s) before from (%s): from must be on or before to",
+				pushdown.salesTo.Format("2006-01-02"), pushdown.salesFrom.Format("2006-01-02"))
+		}
+		if pushdown.salesTo.Sub(pushdown.salesFrom) > maxSalesWindowDays*24*time.Hour {
+			return nil, pushdown, errBadRequest(
+				"the sales set's invoice_date window from %s to %s exceeds the %d day limit",
+				pushdown.salesFrom.Format("2006-01-02"), pushdown.salesTo.Format("2006-01-02"), maxSalesWindowDays)
+		}
 	}
 	return out, pushdown, nil
 }

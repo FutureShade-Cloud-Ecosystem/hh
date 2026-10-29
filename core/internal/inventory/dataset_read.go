@@ -30,6 +30,9 @@ import (
 // one state this read cannot answer in. Named so a consumer can say so.
 var ErrDatasetReadNotConfigured = errors.New("inventory: dataset read not configured (no repository)")
 
+// ErrDatasetCallerRequired refuses an unstamped context on the dataset stock read (fail closed).
+var ErrDatasetCallerRequired = errors.New("inventory: dataset read requires a stamped staff caller")
+
 // DatasetStockLine is one product's on hand at one branch, valued the way the valuation values it.
 type DatasetStockLine struct {
 	ProductID     string
@@ -44,9 +47,12 @@ func (s *Service) DatasetStockOnHand(ctx context.Context) ([]DatasetStockLine, e
 	if s == nil || s.repo == nil {
 		return nil, ErrDatasetReadNotConfigured
 	}
-	var reach any // nil binds SQL NULL, the every-branch arm
 	c, ok := identity.StaffContextFromContext(ctx)
-	if ok && c.Scope != identity.ScopeGlobal {
+	if !ok || c.UserID == "" {
+		return nil, ErrDatasetCallerRequired
+	}
+	var reach any // nil binds SQL NULL, the every-branch arm
+	if c.Scope != identity.ScopeGlobal {
 		ids := make([]string, 0, len(c.Branches))
 		for id, granted := range c.Branches {
 			if granted {

@@ -403,10 +403,13 @@ func (h *Handler) listDatasets(w http.ResponseWriter, r *http.Request, caller gu
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": sets})
 }
 
+const maxDatasetReadBody = 64 << 10 // 64 KiB
+
 // readDataset runs one curated read. The body is the query: columns from the set's catalog, filters
 // with the operators the catalog carries, a group by over the groupable columns, and, where the set
 // has one, the house day. POST because the query is structured, and read because that is all it does.
 func (h *Handler) readDataset(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxDatasetReadBody)
 	var q DatasetQuery
 	dec := json.NewDecoder(r.Body)
 	dec.UseNumber() // money and counts never ride a float on the way in

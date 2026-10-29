@@ -18,9 +18,15 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
+
+// ErrDatasetCallerRequired refuses an unstamped context on the dataset invoice lines read (fail closed).
+var ErrDatasetCallerRequired = errors.New("billing: dataset read requires a stamped staff caller")
 
 // DatasetSalesLine is one line of one live invoice, projected for the curated data set.
 type DatasetSalesLine struct {
@@ -47,7 +53,11 @@ func (r *Repository) DatasetInvoiceLines(ctx context.Context, from, to time.Time
 	if from.IsZero() || to.IsZero() {
 		return nil, fmt.Errorf("billing: the invoice lines read needs a window of issue dates (from and to)")
 	}
-	reach := reachFromContext(ctx)
+	c, ok := identity.StaffContextFromContext(ctx)
+	if !ok || c.UserID == "" {
+		return nil, ErrDatasetCallerRequired
+	}
+	reach := reachOfCaller(c)
 	rows, err := r.pool.Query(ctx, `
 		SELECT i.id::text, i.invoice_no, i.customer_id::text, i.branch_id::text,
 		       COALESCE(il.product_id::text, ''), i.source_kind,

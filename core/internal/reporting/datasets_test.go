@@ -2,7 +2,7 @@ package reporting
 
 // datasets_test.go, the report writer's curated data sets: the catalog's shape, the read engine's
 // arithmetic, and every refusal in words. These run DB-free over fake sources; the ties to the owning
-// modules live in datasets_integration_test.go.
+// modules live in cmd/core/w3rw1_datasets_integration_test.go over the production w3rw1DatasetSources.
 //
 // THE RULE THE TESTS PIN (W3-RW1): a read names its columns from the catalog, filters them with the
 // operators the catalog carries per column, and groups by the columns the catalog marks groupable.
@@ -286,6 +286,73 @@ func TestRunDataset_SalesNeedsADatedWindow(t *testing.T) {
 	_, err := svc.RunDataset(context.Background(), "sales", DatasetQuery{Columns: []string{"line_total_cents"}})
 	if err == nil || !strings.Contains(err.Error(), "invoice_date") {
 		t.Fatalf("the sales set refuses an unbounded read in words, got: %v", err)
+	}
+}
+
+func TestRunDataset_RefusesASecondFilterOnOneColumnInWords(t *testing.T) {
+	svc := datasetTestService(&fakeARSource{})
+	// Duplicate pushdown filter on fiscal_year must be refused in words, never silently dropped.
+	_, err := svc.RunDataset(context.Background(), "gl", DatasetQuery{
+		Columns: []string{"debit_cents"},
+		Filters: []DatasetFilter{
+			{Column: "fiscal_year", Op: "eq", Values: []any{1971}},
+			{Column: "fiscal_year", Op: "eq", Values: []any{1972}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "fiscal_year") {
+		t.Fatalf("a second filter on fiscal_year must be refused in words, got: %v", err)
+	}
+
+	// Duplicate filter on a regular column must be refused in words.
+	_, err = svc.RunDataset(context.Background(), "ar", DatasetQuery{
+		Columns: []string{"total_cents"},
+		Filters: []DatasetFilter{
+			{Column: "customer_id", Op: "eq", Values: []any{"c1"}},
+			{Column: "customer_id", Op: "eq", Values: []any{"c2"}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "customer_id") {
+		t.Fatalf("a second filter on customer_id must be refused in words, got: %v", err)
+	}
+
+	// Duplicate ge bound on sales invoice_date must be refused in words, never overwritten.
+	_, err = svc.RunDataset(context.Background(), "sales", DatasetQuery{
+		Columns: []string{"line_total_cents"},
+		Filters: []DatasetFilter{
+			{Column: "invoice_date", Op: "ge", Values: []any{"1971-03-01"}},
+			{Column: "invoice_date", Op: "ge", Values: []any{"1971-03-10"}},
+			{Column: "invoice_date", Op: "le", Values: []any{"1971-03-31"}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invoice_date") {
+		t.Fatalf("a second ge filter on invoice_date must be refused in words, got: %v", err)
+	}
+}
+
+func TestRunDataset_SalesRefusesInvertedOrOverwideWindowInWords(t *testing.T) {
+	svc := datasetTestService(&fakeARSource{})
+	// Inverted range (from > to).
+	_, err := svc.RunDataset(context.Background(), "sales", DatasetQuery{
+		Columns: []string{"line_total_cents"},
+		Filters: []DatasetFilter{
+			{Column: "invoice_date", Op: "ge", Values: []any{"1971-03-31"}},
+			{Column: "invoice_date", Op: "le", Values: []any{"1971-03-01"}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invoice_date") {
+		t.Fatalf("an inverted sales window must be refused in words, got: %v", err)
+	}
+
+	// Window wider than 366 days.
+	_, err = svc.RunDataset(context.Background(), "sales", DatasetQuery{
+		Columns: []string{"line_total_cents"},
+		Filters: []DatasetFilter{
+			{Column: "invoice_date", Op: "ge", Values: []any{"1970-01-01"}},
+			{Column: "invoice_date", Op: "le", Values: []any{"1972-01-01"}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invoice_date") {
+		t.Fatalf("a sales window wider than 366 days must be refused in words, got: %v", err)
 	}
 }
 
