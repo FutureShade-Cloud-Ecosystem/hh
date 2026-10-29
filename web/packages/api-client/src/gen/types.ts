@@ -695,6 +695,7 @@ export type BillingApplyPaymentAnswer = {
   amount_cents: number;
   applied_cents: number;
   unapplied_cents: number;
+  on_account_cents: number;
   lines: BillingApplyPaymentLine[];
   replayed: boolean;
 };
