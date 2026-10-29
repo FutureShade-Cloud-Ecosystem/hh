@@ -446,3 +446,90 @@ func TestCreditChangeIntegration_JudgeOnCurrentLimitAtApproval(t *testing.T) {
 		t.Fatalf("applied audit_log before/after = %d/%d, want 0/5000000", beforeCents, afterCents)
 	}
 }
+
+// P3 Red legs on Postgres:
+// 1. A second threshold of 0 is honoured, not read as unset.
+// 2. System hold kinds (NSF, AR_AGING, CREDIT_LIMIT, COD) cannot be placed by hand.
+// 3. A hold on a customer who already holds that kind answers with the existing hold, in words.
+func TestCreditChangeIntegration_ZeroSecondThresholdSystemHoldsAndExistingHold(t *testing.T) {
+	rig := newCreditChangeIntRig(t, 1000000)
+	ctx := context.Background()
+
+	salesMgrCtx := ccCallerCtx(rig.userSalesMgr, "SALES_MANAGER", identity.TierManager, identity.ScopeBranch, rig.branchID)
+	bm1Ctx := ccCallerCtx(rig.userBranchMgr, RoleBranchManager, identity.TierManager, identity.ScopeBranch, rig.branchID)
+	fcCtx := ccCallerCtx(rig.userController, RoleFinancialController, identity.TierLeadership, identity.ScopeGlobal, "")
+
+	// Leg 1: second threshold of 0 is honoured.
+	if err := rig.repo.SetCreditChangeThresholds(ctx, "", 0, 0); err != nil {
+		t.Fatalf("SetCreditChangeThresholds(0, 0): %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rig.repo.SetCreditChangeThresholds(context.Background(), "", DefaultCreditIncreaseFirstThresholdCents, DefaultCreditIncreaseSecondThresholdCents)
+	})
+	inc, err := rig.svc.Request(salesMgrCtx, CreateCreditChangeInput{
+		CustomerID:    rig.customerID,
+		NewLimitCents: i64Ptr(1010000), // +$100.00
+		Reason:        "zero second threshold check",
+	})
+	if err != nil {
+		t.Fatalf("request under 0/0 threshold: %v", err)
+	}
+	if inc.SecondThresholdCents != 0 || inc.RequiredApprovals != 2 {
+		t.Fatalf("under 0/0 threshold: second_threshold=%d required_approvals=%d, want 0 and 2", inc.SecondThresholdCents, inc.RequiredApprovals)
+	}
+	if _, err := rig.svc.Approve(bm1Ctx, inc.ID, DecideCreditChangeInput{Note: "bm"}); err != nil {
+		t.Fatalf("first approve under 0/0: %v", err)
+	}
+	if rig.currentLimit(t) != 1000000 {
+		t.Fatalf("limit moved after 1st approval under 0/0: got %d, want 1000000", rig.currentLimit(t))
+	}
+	if _, err := rig.svc.Approve(fcCtx, inc.ID, DecideCreditChangeInput{Note: "fc"}); err != nil {
+		t.Fatalf("second approve under 0/0: %v", err)
+	}
+	if rig.currentLimit(t) != 1010000 {
+		t.Fatalf("limit after 2nd approval under 0/0: got %d, want 1010000", rig.currentLimit(t))
+	}
+
+	// Leg 2: system hold kinds cannot be placed by hand.
+	for _, kind := range []string{HoldNSF, HoldARAging, HoldCreditLimit, HoldCOD} {
+		_, err := rig.svc.Request(bm1Ctx, CreateCreditChangeInput{
+			CustomerID: rig.customerID,
+			PlaceHold:  true,
+			HoldKind:   kind,
+			Reason:     "attempt system hold by hand",
+		})
+		if !errors.Is(err, ErrCreditChangeInvalidTarget) || !strings.Contains(err.Error(), "MANUAL") {
+			t.Fatalf("placing system hold kind %q by hand: got %v, want ErrCreditChangeInvalidTarget naming MANUAL", kind, err)
+		}
+	}
+
+	// Leg 3: a hold on a customer who already holds that kind answers with the existing hold, in words.
+	firstHold, err := rig.svc.Request(bm1Ctx, CreateCreditChangeInput{
+		CustomerID: rig.customerID,
+		PlaceHold:  true,
+		HoldKind:   HoldManual,
+		Reason:     "first manual hold",
+	})
+	if err != nil {
+		t.Fatalf("first manual hold: %v", err)
+	}
+	if firstHold.HoldID == "" {
+		t.Fatalf("first manual hold returned empty hold_id")
+	}
+
+	secondHold, err := rig.svc.Request(bm1Ctx, CreateCreditChangeInput{
+		CustomerID: rig.customerID,
+		PlaceHold:  true,
+		HoldKind:   HoldManual,
+		Reason:     "second manual hold while already held",
+	})
+	if err != nil {
+		t.Fatalf("second manual hold: %v", err)
+	}
+	if secondHold.HoldID != firstHold.HoldID {
+		t.Fatalf("second manual hold hold_id = %q, want existing %q", secondHold.HoldID, firstHold.HoldID)
+	}
+	if !strings.Contains(secondHold.FirstApprovalNote, "already") || !strings.Contains(secondHold.FirstApprovalNote, firstHold.HoldID) {
+		t.Fatalf("second manual hold note = %q, want existing hold named in words", secondHold.FirstApprovalNote)
+	}
+}

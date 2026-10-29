@@ -42,6 +42,7 @@ type fakeCreditChangeWorld struct {
 	requests    map[string]CreditChangeRequest
 	order       []string
 	holds       map[string]string
+	holdIDs     map[string]string
 	audits      []audit.SensitiveAccess
 	seq         int
 	afterSetLim func()
@@ -62,6 +63,7 @@ func newFakeCreditChangeWorld(initialLimitCents int64) (*fakeCreditChangeWorld, 
 		},
 		requests: map[string]CreditChangeRequest{},
 		holds:    map[string]string{},
+		holdIDs:  map[string]string{},
 	}
 	svc := NewCreditChangeService(w, w).WithAudit(w).WithClock(func() time.Time {
 		return time.Unix(1700000000, 0).UTC()
@@ -124,10 +126,28 @@ func (w *fakeCreditChangeWorld) CreditPolicy(ctx context.Context, _ string) (Cre
 
 func (w *fakeCreditChangeWorld) PlaceHold(ctx context.Context, customerID, kind, _, _ string) (string, bool, error) {
 	defer w.lockIfNoTx(ctx)()
+	if _, exists := w.holds[customerID]; exists {
+		return "", false, nil
+	}
 	w.seq++
 	id := fmt.Sprintf("33333333-3333-4333-8333-%012d", w.seq)
 	w.holds[customerID] = kind
+	w.holdIDs[customerID] = id
 	return id, true, nil
+}
+
+func (w *fakeCreditChangeWorld) ActiveHold(ctx context.Context, customerID string) (CreditHold, bool, error) {
+	defer w.lockIfNoTx(ctx)()
+	kind, ok := w.holds[customerID]
+	if !ok {
+		return CreditHold{}, false, nil
+	}
+	return CreditHold{
+		ID:         w.holdIDs[customerID],
+		CustomerID: customerID,
+		Status:     "ACTIVE",
+		Kind:       kind,
+	}, true, nil
 }
 
 func (w *fakeCreditChangeWorld) CreateCreditChangeRequest(ctx context.Context, req CreditChangeRequest) (CreditChangeRequest, error) {
@@ -601,5 +621,101 @@ func TestCreditChange_JudgeOnCurrentLimitAtApproval(t *testing.T) {
 	appliedAudit := w.audits[len(w.audits)-1]
 	if appliedAudit.Extra["before"] != int64(0) || appliedAudit.Extra["after"] != int64(5000000) {
 		t.Fatalf("applied audit before/after = %v/%v, want 0/5000000", appliedAudit.Extra["before"], appliedAudit.Extra["after"])
+	}
+}
+
+// P3-1 Red leg: a second threshold of 0 is honoured (every increase needs two approvers),
+// not read as unset ($25,000).
+func TestCreditChange_SecondThresholdOfZeroRequiresTwoApprovals(t *testing.T) {
+	w, svc := newFakeCreditChangeWorld(1000000)
+	w.policy.IncreaseFirstThresholdCents = 0
+	w.policy.IncreaseSecondThresholdCents = 0
+
+	salesMgrCtx := ccCallerCtx(ccUserSalesMgr, "SALES_MANAGER", identity.TierManager, identity.ScopeBranch, ccTestBranchA)
+	bmCtx := ccCallerCtx(ccUserBranchMgr, RoleBranchManager, identity.TierManager, identity.ScopeBranch, ccTestBranchA)
+	ctrlCtx := ccCallerCtx(ccUserCtrl, RoleFinancialController, identity.TierLeadership, identity.ScopeGlobal, "")
+
+	req, err := svc.Request(salesMgrCtx, CreateCreditChangeInput{
+		CustomerID:    ccTestCustomerID,
+		NewLimitCents: i64Ptr(1010000), // +$100.00
+		Reason:        "small increase under zero second threshold",
+	})
+	if err != nil {
+		t.Fatalf("request increase under 0/0 thresholds: %v", err)
+	}
+	if req.SecondThresholdCents != 0 || req.RequiredApprovals != 2 {
+		t.Fatalf("second_threshold=%d required_approvals=%d, want 0 and 2", req.SecondThresholdCents, req.RequiredApprovals)
+	}
+
+	afterFirst, err := svc.Approve(bmCtx, req.ID, DecideCreditChangeInput{Note: "first approval"})
+	if err != nil {
+		t.Fatalf("first approval: %v", err)
+	}
+	if afterFirst.Status != CreditChangeStatusPending || w.customers[ccTestCustomerID].CreditLimitCents != 1000000 {
+		t.Fatalf("after first approval: status=%q limit=%d, want PENDING and 1000000", afterFirst.Status, w.customers[ccTestCustomerID].CreditLimitCents)
+	}
+
+	afterSecond, err := svc.Approve(ctrlCtx, req.ID, DecideCreditChangeInput{Note: "second approval"})
+	if err != nil {
+		t.Fatalf("second approval: %v", err)
+	}
+	if afterSecond.Status != CreditChangeStatusApplied || w.customers[ccTestCustomerID].CreditLimitCents != 1010000 {
+		t.Fatalf("after second approval: status=%q limit=%d, want APPLIED and 1010000", afterSecond.Status, w.customers[ccTestCustomerID].CreditLimitCents)
+	}
+}
+
+// P3-2 Red leg: system hold kinds (NSF, AR_AGING, CREDIT_LIMIT, COD) cannot be placed by hand.
+func TestCreditChange_SystemHoldKindsCannotBePlacedByHand(t *testing.T) {
+	w, svc := newFakeCreditChangeWorld(1000000)
+	bmCtx := ccCallerCtx(ccUserBranchMgr, RoleBranchManager, identity.TierManager, identity.ScopeBranch, ccTestBranchA)
+
+	for _, kind := range []string{HoldNSF, HoldARAging, HoldCreditLimit, HoldCOD} {
+		_, err := svc.Request(bmCtx, CreateCreditChangeInput{
+			CustomerID: ccTestCustomerID,
+			PlaceHold:  true,
+			HoldKind:   kind,
+			Reason:     "attempt system hold by hand",
+		})
+		if !errors.Is(err, ErrCreditChangeInvalidTarget) || !strings.Contains(err.Error(), "MANUAL") {
+			t.Fatalf("placing system hold kind %q by hand: got %v, want ErrCreditChangeInvalidTarget naming MANUAL", kind, err)
+		}
+	}
+	if len(w.holds) != 0 {
+		t.Fatalf("holds placed = %d, want 0", len(w.holds))
+	}
+}
+
+// P3-3 Red leg: a hold on a customer who already holds that kind answers with the existing hold, in words.
+func TestCreditChange_HoldOnAlreadyHeldCustomerAnswersWithExistingHoldInWords(t *testing.T) {
+	_, svc := newFakeCreditChangeWorld(1000000)
+	bmCtx := ccCallerCtx(ccUserBranchMgr, RoleBranchManager, identity.TierManager, identity.ScopeBranch, ccTestBranchA)
+
+	first, err := svc.Request(bmCtx, CreateCreditChangeInput{
+		CustomerID: ccTestCustomerID,
+		PlaceHold:  true,
+		HoldKind:   HoldManual,
+		Reason:     "initial manual hold",
+	})
+	if err != nil {
+		t.Fatalf("first hold request: %v", err)
+	}
+	if first.HoldID == "" {
+		t.Fatalf("first hold request returned empty hold_id")
+	}
+
+	second, err := svc.Request(bmCtx, CreateCreditChangeInput{
+		CustomerID: ccTestCustomerID,
+		PlaceHold:  true,
+		HoldKind:   HoldManual,
+		Reason:     "second manual hold while already held",
+	})
+	if err != nil {
+		t.Fatalf("second hold request: %v", err)
+	}
+	if second.HoldID != first.HoldID {
+		t.Fatalf("second hold_id = %q, want existing hold_id %q", second.HoldID, first.HoldID)
+	}
+	if !strings.Contains(second.FirstApprovalNote, "already") || !strings.Contains(second.FirstApprovalNote, first.HoldID) {
+		t.Fatalf("second hold note = %q, want existing hold named in words", second.FirstApprovalNote)
 	}
 }

@@ -262,13 +262,42 @@ func canSecondApproveCreditIncrease(roleCode string) bool {
 	}
 }
 
-func validHoldKind(kind string) bool {
+func isSystemHoldKind(kind string) bool {
 	switch kind {
-	case HoldNSF, HoldARAging, HoldCreditLimit, HoldCOD, HoldManual:
+	case HoldNSF, HoldARAging, HoldCreditLimit, HoldCOD:
 		return true
 	default:
 		return false
 	}
+}
+
+type creditChangeActiveHoldReader interface {
+	ActiveHold(ctx context.Context, customerID string) (CreditHold, bool, error)
+}
+
+func (s *CreditChangeService) placeOrResolveHold(ctx context.Context, req *CreditChangeRequest, actorID string) error {
+	holdID, placed, err := s.store.PlaceHold(ctx, req.CustomerID, req.HoldKind, req.Reason, actorID)
+	if err != nil {
+		return err
+	}
+	if placed {
+		req.HoldID = holdID
+		return nil
+	}
+	if hr, ok := s.store.(creditChangeActiveHoldReader); ok {
+		existing, found, err := hr.ActiveHold(ctx, req.CustomerID)
+		if err != nil {
+			return err
+		}
+		if found {
+			req.HoldID = existing.ID
+			if existing.Kind != "" {
+				req.HoldKind = existing.Kind
+			}
+			req.FirstApprovalNote = fmt.Sprintf("customer already holds an active %s hold (%s)", req.HoldKind, existing.ID)
+		}
+	}
+	return nil
 }
 
 // Request creates a credit change request. A credit limit decrease or credit hold is applied at
@@ -312,7 +341,10 @@ func (s *CreditChangeService) Request(ctx context.Context, in CreateCreditChange
 		if holdKind == "" {
 			holdKind = HoldManual
 		}
-		if !validHoldKind(holdKind) {
+		if isSystemHoldKind(holdKind) {
+			return CreditChangeRequest{}, fmt.Errorf("%w: system hold kind %s is placed by the credit engine and cannot be placed by hand, use MANUAL", ErrCreditChangeInvalidTarget, holdKind)
+		}
+		if holdKind != HoldManual {
 			return CreditChangeRequest{}, ErrCreditChangeInvalidTarget
 		}
 	case !in.PlaceHold && strings.TrimSpace(in.HoldKind) == "" && in.NewLimitCents != nil && *in.NewLimitCents >= 0:
@@ -333,9 +365,6 @@ func (s *CreditChangeService) Request(ctx context.Context, in CreateCreditChange
 		firstThreshold = DefaultCreditIncreaseFirstThresholdCents
 	}
 	secondThreshold := pol.IncreaseSecondThresholdCents
-	if secondThreshold <= 0 && firstThreshold == 0 {
-		secondThreshold = DefaultCreditIncreaseSecondThresholdCents
-	}
 	if secondThreshold < firstThreshold {
 		secondThreshold = firstThreshold
 	}
@@ -376,11 +405,9 @@ func (s *CreditChangeService) Request(ctx context.Context, in CreateCreditChange
 				return CreditChangeRequest{}, err
 			}
 		} else if changeKind == CreditChangeKindHold {
-			holdID, _, err := s.store.PlaceHold(ctx, cust.CustomerID, holdKind, reason, caller.UserID)
-			if err != nil {
+			if err := s.placeOrResolveHold(ctx, &req, caller.UserID); err != nil {
 				return CreditChangeRequest{}, err
 			}
-			req.HoldID = holdID
 		}
 		req.AppliedAt = &now
 	}
@@ -530,11 +557,9 @@ func (s *CreditChangeService) applyRequest(ctx context.Context, req *CreditChang
 		req.PreviousLimitCents = prev
 		req.DeltaCents = *req.NewLimitCents - prev
 	} else if req.ChangeKind == CreditChangeKindHold {
-		holdID, _, err := s.store.PlaceHold(ctx, req.CustomerID, req.HoldKind, req.Reason, actorID)
-		if err != nil {
+		if err := s.placeOrResolveHold(ctx, req, actorID); err != nil {
 			return err
 		}
-		req.HoldID = holdID
 	}
 	req.Status = CreditChangeStatusApplied
 	req.AppliedAt = &now

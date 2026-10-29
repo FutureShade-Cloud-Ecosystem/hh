@@ -168,6 +168,7 @@ func (r *Repository) CreateCreditChangeRequest(ctx context.Context, req CreditCh
 			requested_by,
 			requested_by_role,
 			requested_at,
+			first_approval_note,
 			applied_at
 		) VALUES (
 			$1::uuid,
@@ -186,7 +187,8 @@ func (r *Repository) CreateCreditChangeRequest(ctx context.Context, req CreditCh
 			$14::uuid,
 			$15,
 			$16,
-			$17
+			$17,
+			$18
 		)
 		RETURNING `+creditChangeColumns,
 		req.CustomerID,
@@ -205,6 +207,7 @@ func (r *Repository) CreateCreditChangeRequest(ctx context.Context, req CreditCh
 		req.RequestedBy,
 		req.RequestedByRole,
 		req.RequestedAt,
+		req.FirstApprovalNote,
 		req.AppliedAt,
 	))
 	if err != nil {
