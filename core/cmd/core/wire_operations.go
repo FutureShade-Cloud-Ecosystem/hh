@@ -893,6 +893,10 @@ func (a glBalanceAdapter) GLBalanceThroughCents(ctx context.Context, accountCode
 	return a.svc.GLBalanceThroughCents(ctx, accountCode, year, month, branchID)
 }
 
+func (a glBalanceAdapter) GLRevenueCents(ctx context.Context, year, month int, branchID string) (int64, error) {
+	return a.svc.GLRevenueCents(ctx, year, month, branchID)
+}
+
 // lienGLPoster satisfies lien.GLPoster over glSvc.PostExternal (the
 // 1150/2350 holdback release journal).
 type lienGLPoster struct{ svc *gl.Service }
