@@ -74,12 +74,45 @@ through Caddy (it pings the database, 503 when the database is down).
    never sits on a command line: `psql` reads the connection from a libpq
    service file on the shared memory tmpfs, which the probe alone reads and
    which is removed as soon as the probe is done.
-7. The box's finance users are applied from the list:
+7. The world reset, once per world: when `HH_FINANCE_RESET_CONFIRM` is set
+   and non empty, it must equal `HH_WEB_ORG` (a mismatch refuses the boot
+   before any fetch, naming the variable and never a value), and
+   `HH_FINANCE_WORLD_SHA256` must name the world revision's digest (a boot
+   naming the world but no digest refuses the same way). The world rides in
+   the image: `core finance-reset -once` reads the single `*.sql.gz` in
+   `/srv/world/` (the world layer, `Dockerfile.world`, lands it there when
+   the principal builds the image), so this step needs those two names only,
+   and no store, address or fetch credential exists on the boot path. The
+   reset records the restored world's sha256 in `system_settings` through
+   the settings module, and a run whose world the box already carries
+   answers `already on world` and changes nothing, so a boot on the same
+   world revision costs no read and no drop. The digest is the sha256 of
+   the decoded SQL, not of the gzip. The reset runs before the user apply
+   because the dump does not carry the box's people: an apply the reset ran
+   after would be wiped by the restore. Any failure refuses the boot,
+   naming the step, and the box does not serve. With the variable unset,
+   none of this runs and the boot is as it ever was. After the reset or the
+   skip, `core finance-check` runs while the variable is set: every tie line
+   lands in the log with the `finance-check:` prefix, and a FAIL is logged,
+   not fatal, so the box still serves.
+8. The box's finance users are applied from the list:
    `core finance-user --apply-from-env` provisions every entry and revokes
    every finance person the list left out, in one transaction. The apply is
    convergent, so a boot with a changed list brings the box to the list and
    a boot with the same list changes nothing. The command prints ids and
    counts only, never an address.
+
+## What the box holds after a failure
+
+The reset never leaves the box half way between two worlds. Every refusal
+before the restore and every failure inside it leaves the box as it was.
+
+| The path | What the box holds after the failure |
+|---|---|
+| the digest refusal | Everything it had. The dump's digest is not the one the environment names, so the reset stops before it writes the dump and before it drops anything: the tables, the rows and the recorded world are untouched. |
+| the write refusal | Everything it had. The dump file could not be written under the directory the reset was given, so the reset stops before the drop: the tables, the rows and the recorded world are untouched. |
+| a restore failure part way | Everything it had. The drop, the recreate and the restore are one transaction, so a failure part way through the restore rolls the drop back with it: the box is never empty and never half restored, and it records no world. |
+| a failure after the commit (the migration rerun) | The new world, committed, and no recorded world and no audit row yet. The box holds the world's tables and rows, and the migrations that follow the restore have not all run. The box records no world, so the next boot may reset again. |
 
 ## The database role's rights
 
@@ -190,6 +223,14 @@ Optional:
   token window and the console JWT bound (sane defaults when unset)
 - `FINANCE_ROOT` - the image layout root (default `/srv`; exists so the
   entrypoint can run from a checkout)
+- `HH_FINANCE_RESET_DIR` - the directory the world reset writes its dump
+  file under (default `/var/lib/finance-box/reset`, made by the reset when
+  it is not there). The dump is on disk and never on the shared memory
+  tmpfs: the world's decoded dump is larger than the tmpfs the platform
+  sizes by default, and the reset must not depend on a size the box does
+  not control. The dump is written, and its digest checked, before any
+  schema is dropped, so a directory that cannot be written refuses the
+  reset with the box's data still in place.
 
 Never set on this box: `DEMO_MODE`, `DEMO_GATE_BCRYPT_HASH`,
 `ALLOW_SEED`, `CORE_LOAD_DOORS`, `CORE_JWKS_URL`, `HOS_CARD_PROCESSOR`,
@@ -211,9 +252,14 @@ guard refuses a live rail on a finance box), `CORE_SIGNIN_EMAIL_DOMAINS`.
   check then migrate).
 - `entrypoint-boot-test.sh` - the boot's own legs: the database URL is
   parsed into a libpq service file and never sits on a command line, the
-  ports written into the Caddy template are digits or the boot refuses, and
-  the database's shape (empty, unseeded, the finance box's own world, and
-  anything else) decides what the entrypoint runs.
+  ports written into the Caddy template are digits or the boot refuses, the
+  database's shape (empty, unseeded, the finance box's own world, and
+  anything else) decides what the entrypoint runs, and the world reset runs
+  once per world when `HH_FINANCE_RESET_CONFIRM` is set (matching, refusing
+  a mismatched confirm before any fetch, refusing a failed reset before the
+  serve, running nothing when unset, and never letting the fetch credential
+  reach a command line or the log), with the check's tie lines logged under
+  the `finance-check:` prefix and a FAIL logged, not fatal.
 
 Run each from a checkout:
 

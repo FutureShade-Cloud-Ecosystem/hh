@@ -16,6 +16,7 @@ import { createBankrecWorld } from "./bankrec-world.mjs";
 import { createTaxWorld } from "./tax-world.mjs";
 import { createLienWorld } from "./lien-world.mjs";
 import { createAssistWorld } from "./assist-world.mjs";
+import { createPurchasingWorld } from "./purchasing-world.mjs";
 import { houseDayOffset } from "../house-day.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
@@ -33,6 +34,8 @@ const taxWorld = createTaxWorld();
 const lienWorld = createLienWorld();
 // The TanyAI panel's staff assist routes (PANEL-API r1), answered by its own module.
 const assistWorld = createAssistWorld();
+// The purchasing slice's world (the open AP the Payables board reads), answered by its own module.
+const purchasingWorld = createPurchasingWorld({ dayOffset: (n) => dayOffset(n) });
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
@@ -247,6 +250,7 @@ const officeWorld = createOfficeWorld({
 function reset(kind = "full") {
   parkedApplyMs = 0;
   officeWorld.reset(kind);
+  purchasingWorld.reset(kind);
   const source = kind === "wide" ? [...INVOICES, ...WIDE_EXTRA] : INVOICES;
   world = {
     empty: kind === "empty",
@@ -1166,6 +1170,16 @@ async function handle(req, res) {
     if (body === null && (method === "POST" || method === "PUT")) return refuse(res, 400, "invalid_json");
     const answer = lienWorld.handle(req, url, JSON.stringify(body ?? {}));
     return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
+  }
+  // The open AP the Payables board reads (the core's GET /api/v1/purchasing/ap-aging, W2-9a).
+  // The day the books are read as of is a calendar day in the dealer's zone, the way the AR
+  // aging takes it, and the answer is the open AP per payee in the AR aging's bands: a landed
+  // cost payable to its carrier or broker is its own payee row, never folded into a vendor's bill.
+  if (method === "GET" && path === "/api/v1/purchasing/ap-aging") {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const asOf = q.get("as_of") ?? dayOffset(0);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return refuse(res, 400, "as_of must be YYYY-MM-DD");
+    return send(res, 200, purchasingWorld.apAging(asOf));
   }
   if (method === "GET" && path === "/api/v1/billing/ar/worklist") {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");

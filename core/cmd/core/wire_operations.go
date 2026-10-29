@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/attachments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
@@ -238,6 +240,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	landedcostSvc := landedcost.NewService(landedcost.NewRepository(pool)).
 		WithCapitalizer(landedAdapter{svc: inventorySvc}).
 		WithGLPoster(landedGLPoster{svc: spine.glSvc}).
+		WithJournalClock(w4cLandedJournalClock{svc: spine.glSvc}).
 		WithAudit(auditSvc)
 	landedcost.NewHandler(landedcostSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
@@ -246,17 +249,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// The PO sender stays the module's unwired default by the pin's own
 	// recorded decision (no transport is wired on this server; the send
 	// is recorded FAILED in words rather than DELIVERED into a log).
-	purchasingSvc := purchasing.NewService(purchasing.NewRepository(pool)).
-		WithZone(newDealerZone(pool)).
+	purchasingSvc := finworldPurchasingComposition(pool, log, auditSvc).
 		WithStockReceiver(w4cStockReceiver{svc: inventorySvc}).
-		WithVendors(w4cVendorDirectory{pool: pool}).
 		WithLandedCoster(w4cLandedCoster{svc: landedcostSvc}).
+		WithLandedCostPayables(w4cLandedCoster{svc: landedcostSvc}).
+		WithGLJournalClock(w4cGLJournalClock{svc: spine.glSvc}).
 		WithGLPoster(w4cGLPoster{svc: spine.glSvc}).
 		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
-		WithAudit(auditSvc).
-		WithLogger(log).
-		WithBranches(item5BranchDirectory{pool: pool}).
-		WithVendorAddresses(item5VendorAddressBook{pool: pool}).
 		WithWarrantyCreditReader(w4cWarrantyCreditReader{pool: pool})
 	purchasing.NewHandler(purchasingSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
@@ -918,6 +917,47 @@ func (a invcountGLPoster) PostJournal(ctx context.Context, in invcount.GLJournal
 		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
 	}
 	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, DocumentDate: in.DocumentDate, Lines: lines})
+}
+
+// finworldPurchasingComposition builds the purchasing service the way the production wiring does,
+// with the shared pool-level seams: the dealer zone, the vendors projection, the branch directory,
+// the vendor address book and the AP subledger's settlement reader over the ledger. The caller adds
+// the request-shaped seams (stock receiver, landed cost, GL poster, rules) it needs.
+func finworldPurchasingComposition(pool *pgxpool.Pool, log *slog.Logger, auditSvc *audit.Service) *purchasing.Service {
+	return purchasing.NewService(purchasing.NewRepository(pool)).
+		WithZone(newDealerZone(pool)).
+		WithVendors(w4cVendorDirectory{pool: pool}).
+		WithAPPaymentsReader(glPaidAPReader{pool: pool, accountCode: "2100"}).
+		WithAudit(auditSvc).
+		WithLogger(log).
+		WithBranches(item5BranchDirectory{pool: pool}).
+		WithVendorAddresses(item5VendorAddressBook{pool: pool})
+}
+
+// glPaidAPReader satisfies purchasing.APPaymentsReader over the ledger: the net of the
+// PAYMENT-source journals on the trade payables account, the settlements side of the AP subledger.
+// A supplier payment is a PAYMENT journal on the payables account; nothing else posts that
+// combination, so no idempotency-key pattern matching is needed.
+type glPaidAPReader struct {
+	pool        *pgxpool.Pool
+	accountCode string
+}
+
+func (r glPaidAPReader) PaidAPCentsAsOf(ctx context.Context, asOf time.Time) (int64, error) {
+	var paid int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(COALESCE(l.debit_cents, 0) - COALESCE(l.credit_cents, 0)), 0)
+		  FROM gl_journal_lines l
+		  JOIN gl_journals j ON j.id = l.journal_id
+		  JOIN gl_accounts a ON a.id = l.account_id
+		 WHERE j.status = 'POSTED'
+		   AND j.source = 'PAYMENT'
+		   AND a.code = $1
+		   AND j.posted_at <= $2`, r.accountCode, asOf).Scan(&paid)
+	if err != nil {
+		return 0, fmt.Errorf("the supplier payment read: %w", err)
+	}
+	return paid, nil
 }
 
 // landedGLPoster satisfies landedcost.GLPoster over glSvc.PostExternal
@@ -1984,6 +2024,76 @@ func (a w4cLandedCoster) CreateAndApply(ctx context.Context, in purchasing.Lande
 		return "", err
 	}
 	return id, nil
+}
+
+func (a w4cLandedCoster) OpenPayablesAsOf(ctx context.Context, asOf time.Time, branchIDs []string, global bool) ([]purchasing.LandedCostPayable, error) {
+	if a.svc == nil {
+		return nil, nil
+	}
+	rows, err := a.svc.OpenPayablesAsOf(ctx, asOf, branchIDs, global)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]purchasing.LandedCostPayable, len(rows))
+	for i, r := range rows {
+		out[i] = purchasing.LandedCostPayable{
+			ID:               r.ID,
+			POID:             r.POID,
+			PORef:            r.PORef,
+			BranchID:         r.BranchID,
+			Currency:         r.Currency,
+			FreightCadCents:  r.FreightCadCents,
+			DutyCadCents:     r.DutyCadCents,
+			HandlingCadCents: r.HandlingCadCents,
+			TotalCadCents:    r.TotalCadCents,
+			ChargeKind:       r.ChargeKind,
+			PayeeLabel:       r.PayeeLabel,
+			CreatedAt:        r.CreatedAt,
+			UpdatedAt:        r.UpdatedAt,
+		}
+	}
+	return out, nil
+}
+
+// w4cLandedJournalClock satisfies landedcost.JournalClock over the gl service's own
+// as-of filing rule (W2-9a round 2b, S2's P3 1): a landed cost payable counts from
+// its posting journal's effective instant, never from the row's creation stamp.
+type w4cLandedJournalClock struct{ svc *gl.Service }
+
+func (a w4cLandedJournalClock) JournalEffectiveInstants(ctx context.Context, journalIDs []string) (map[string]time.Time, error) {
+	return a.svc.JournalEffectiveInstants(ctx, journalIDs)
+}
+
+func (a w4cLandedJournalClock) JournalEffectiveInstantByKey(ctx context.Context, key string) (time.Time, bool, error) {
+	return a.svc.JournalEffectiveInstantByKey(ctx, key)
+}
+
+// w4cGLJournalClock satisfies purchasing.GLJournalClock over the gl service's own
+// as-of filing rule (W2-9a round 2b, S2's P2 1): a document counts from its posting
+// journal's effective instant, so the aging ties to GL 2100 for a bill filed late
+// into a later open month exactly as the GL's own account reads count it.
+type w4cGLJournalClock struct{ svc *gl.Service }
+
+func (a w4cGLJournalClock) JournalEffectiveInstants(ctx context.Context, journalIDs []string) (map[string]time.Time, error) {
+	return a.svc.JournalEffectiveInstants(ctx, journalIDs)
+}
+
+func (a w4cGLJournalClock) RefJournalInstants(ctx context.Context, source string, refIDs []string) ([]purchasing.GLRefJournalInstant, error) {
+	entries, err := a.svc.RefJournalInstants(ctx, source, refIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]purchasing.GLRefJournalInstant, 0)
+	for _, refs := range entries {
+		for _, e := range refs {
+			out = append(out, purchasing.GLRefJournalInstant{RefID: e.SourceRefID, PostedAt: e.PostedAt, EffectiveAt: e.EffectiveAt})
+		}
+	}
+	return out, nil
+}
+
+func (a w4cGLJournalClock) JournalSourceRefByKey(ctx context.Context, key string) (string, bool, error) {
+	return a.svc.JournalSourceRefByKey(ctx, key)
 }
 
 // w4cGLPoster satisfies purchasing.GLPoster over glSvc.PostExternal (the

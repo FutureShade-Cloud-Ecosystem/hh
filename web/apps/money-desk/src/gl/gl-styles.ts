@@ -87,6 +87,12 @@ export const glStyles = css`
   .gl-filters { display: flex; flex-wrap: wrap; gap: var(--hh-s-4); }
   .gl-filter { min-height: 36px; padding: 0 var(--hh-s-12); border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid var(--hh-control-line); font-size: 14px; }
   .gl-filter[aria-pressed="true"] { border-color: var(--hh-focus-ring); font-weight: 700; background: var(--hh-row-alt); }
+  /* The register's date range: the field's own input on the filter row's line, the apply press a pill
+     beside it at the field's own height so the row reads as one control. */
+  .gl-range { display: flex; flex-wrap: wrap; gap: var(--hh-s-12); align-items: end; margin: 0 0 var(--hh-s-12); }
+  .gl-range .gl-field { margin-bottom: 0; }
+  .gl-range input[type="date"] { width: auto; }
+  .gl-range .gl-filter { min-height: 44px; }
   .gl-link { white-space: nowrap; background: transparent; border: 0; padding: var(--hh-s-4) 0; min-height: 36px; color: var(--hh-accent-text); font-weight: 700; text-decoration: underline; }
   .gl-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--hh-s-4) var(--hh-s-24); margin: 0 0 var(--hh-s-12); }
   .gl-facts dt { color: var(--hh-text-dim); }
@@ -140,7 +146,7 @@ export const glStyles = css`
     .gl-grow { grid-column: auto; }
     .gl-tiles-three { grid-template-columns: minmax(0, 1fr); }
     .gl-tab { padding: 0 var(--hh-s-12); font-size: 14px; }
-    .gl-col-type, .gl-col-name { display: none; }
+    .gl-col-type, .gl-col-name, .gl-col-posted { display: none; }
     .gl-name-narrow { display: block; color: var(--hh-text-dim); font-size: 12px; }
     .gl-panel { padding: var(--hh-s-16); }
     .gl-panel table { font-size: 13px; }

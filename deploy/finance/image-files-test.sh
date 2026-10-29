@@ -48,6 +48,28 @@ else
 	failures=$((failures + 1))
 fi
 
+# The world layer is the finance image plus the one world dump the box resets
+# to: Dockerfile.world copies a single *.sql.gz into /srv/world/, where the
+# reset reads it with no store and no token. The repository holds no world
+# data; the principal builds this layer from a scratch context that carries
+# exactly one dump file, never committed. The layer names the image it rides
+# on, and the COPY lands inside /srv/world/ with the .sql.gz suffix the
+# reset scans for.
+world_dockerfile="$here/Dockerfile.world"
+if [ ! -f "$world_dockerfile" ]; then
+	echo "FAIL: Dockerfile.world is missing; the world layer has no definition"
+	failures=$((failures + 1))
+else
+	from_line="$(grep -c '^FROM ' "$world_dockerfile")"
+	copy_line="$(sed -n 's|^\(COPY .*\) /srv/world/\([A-Za-z0-9._-]*\.sql\.gz\)$|\1|p' "$world_dockerfile")"
+	if [ "$from_line" -eq 1 ] && [ -n "$copy_line" ]; then
+		echo "PASS: the world layer rides on one image and lands one dump in /srv/world/"
+	else
+		echo "FAIL: Dockerfile.world must have exactly one FROM and one COPY of a .sql.gz into /srv/world/"
+		failures=$((failures + 1))
+	fi
+fi
+
 if [ "$failures" -ne 0 ]; then
 	echo "$failures failure(s)"
 	exit 1
