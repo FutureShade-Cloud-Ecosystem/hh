@@ -1,9 +1,12 @@
 // UX-121: the register's narrow reading at 390 px. The posted day must stay on
 // one line and the source word must not break in the middle of a word, in the
-// light sheet and in the charcoal half alike.
+// light sheet and in the charcoal half alike. The source word and the day under
+// it share the cell on a phone, so they are one size: the lesser fact is not the
+// larger line.
 //
 // Red first: today the day ("Aug 23, 2026") wraps after the comma under the
-// memo, and the source word ADJUSTMENT breaks mid-word.
+// memo, the source word ADJUSTMENT breaks mid-word, and the source word reads
+// one step larger than the day under it.
 //
 // The legs measure the lines each cell takes, the way a person reads them: a
 // range over the cell's own words, one line box per line, so a word that
@@ -89,5 +92,32 @@ for (const theme of THEMES) {
     // The register still reads without a sideways scroll.
     const overflow = await page.locator(".gl-scroll").first().evaluate((el) => el.scrollWidth - el.clientWidth);
     expect(overflow, "the register scrolls sideways on a phone").toBeLessThanOrEqual(0);
+  });
+
+  // The size order: the posted day and the source word share the cell on a phone, and the lesser
+  // fact must not be the larger line.
+  test(`at 390 the source word and the posted day under it are the same size, ${theme}`, async ({ page, request }) => {
+    test.setTimeout(60_000);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openRegister(page, request);
+    if (theme === "charcoal") await charcoalOn(page);
+
+    const row = page
+      .getByRole("table", { name: "Journal register" })
+      .locator("tbody tr")
+      .filter({ hasNotText: "Not posted" })
+      .first();
+    const day = await row.locator("[data-posted-narrow]").evaluate((el) => ({
+      size: getComputedStyle(el).fontSize,
+      color: getComputedStyle(el).color,
+    }));
+    const source = await row.locator(".gl-row-detail").evaluate((el) => ({
+      size: getComputedStyle(el).fontSize,
+      color: getComputedStyle(el).color,
+    }));
+
+    expect(day.size, "the posted day has no size of its own").not.toBe("");
+    expect(source.size, `the source word is ${source.size} and the day under it is ${day.size}`).toBe(day.size);
+    expect(source.color, "the source word is not the muted meta word the day is").toBe(day.color);
   });
 }

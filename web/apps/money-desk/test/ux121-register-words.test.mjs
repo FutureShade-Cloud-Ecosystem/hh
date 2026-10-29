@@ -1,12 +1,13 @@
 // UX-121: the Money Desk's register words, read off the register itself. The
-// status counts say how many of the loaded rows carry them while the core's
-// cursor says more remain, the posted date range is said in the desk's own date
-// style, and the note on Pending approval says what it means to a bookkeeper.
+// chips carry plain counts and one line under them says once what those counts
+// are of, the posted date range is said in the desk's own date style, the note
+// on Pending approval says what it means to a bookkeeper, and the detail pane
+// says the same thing in the same words.
 //
-// Red first: today the counts claim a total ("Posted 98") while more rows are
-// still to come, the range says the core's ISO digits beside date inputs a
-// dealer reads as mm/dd/yyyy, and the note explains itself in engine words
-// ("Pending approval is a derived label ... Nothing writes it to the row").
+// Red first (round 2): today every chip says "of the loaded" in five words, so
+// the chip row wraps at 1440 and takes three rows at 390, and there is no line
+// under the chips at all. The detail pane still says "(GL policy)" beside the
+// register's plain words.
 //
 // The legs read the view's own markup (a Lit template walked as text), the way
 // test/fw1-01c-periods-ui.test.mjs reads the books screens, so the words are
@@ -121,22 +122,34 @@ function loadedPage() {
 
 // ---- the counts -------------------------------------------------------------------------------------
 
-test("the status counts say how many of the loaded rows carry them while the core's cursor says more remain", () => {
+test("the chips carry the plain count of the loaded rows, and say of nothing else", () => {
   const view = markup(views.renderGl(glModel({ journals: loadedPage(), journalsNext: "v1:2025/137" })));
-  assert.ok(view.includes("Posted 98 of the loaded"), "the Posted count claims a total while more rows remain");
-  assert.ok(view.includes("Pending 2 of the loaded"), "the Pending count claims a total while more rows remain");
-  assert.ok(!/Posted 98\b(?! of the loaded)/.test(view), "the Posted count still reads as a total of every posted journal");
+  assert.ok(view.includes("Posted 98"), "the Posted chip does not carry the plain count of the loaded rows");
+  assert.ok(view.includes("Pending 2"), "the Pending chip does not carry the plain count of the loaded rows");
+  assert.ok(!view.includes("of the loaded"), "a chip still says it is of the loaded rows, and says it four times over");
 });
 
-test("at the end of the register the counts stand alone, because then they are the whole of them", () => {
+test("one line under the chips says what the counts are of, while more rows are still to come", () => {
+  const view = markup(views.renderGl(glModel({ journals: loadedPage(), journalsNext: "v1:2025/137" })));
+  assert.ok(
+    view.includes("Counts are of the 100 journals loaded; Show more loads the rest."),
+    "the line under the chips does not say what the counts are of",
+  );
+});
+
+test("at the end of the register the line under the chips is gone, because then the counts are the whole of them", () => {
   const view = markup(views.renderGl(glModel({ journals: loadedPage(), journalsNext: "" })));
-  assert.ok(view.includes("Posted 98"), "the Posted count is missing at the end of the register");
-  assert.ok(!view.includes("of the loaded"), "the count still says it is of the loaded rows when the register is at its end");
+  assert.ok(!view.includes("Counts are of the"), "the line under the chips is still there at the end of the register");
+  assert.ok(view.includes("Posted 98"), "the Posted chip does not carry the plain count at the end of the register");
 });
 
-test("the tab's own count of the parked journals is honest the same way", () => {
+test("the tab's own count of the parked journals is a plain number too", () => {
   const view = markup(views.renderGl(glModel({ journals: loadedPage(), journalsNext: "v1:2025/137" })));
-  assert.ok(view.includes("2 of the loaded"), "the Journals tab claims a total of the parked journals while more remain");
+  assert.ok(
+    view.includes('<span class="gl-count">2</span>'),
+    "the Journals tab does not carry the plain count of the parked journals",
+  );
+  assert.ok(!view.includes("of the loaded"), "the Journals tab still says its count is of the loaded rows");
 });
 
 // ---- the date range ---------------------------------------------------------------------------------
@@ -169,5 +182,21 @@ test("the note on Pending approval says what it means to a bookkeeper", () => {
   assert.ok(
     view.includes("waits for another approver to post it"),
     "the note does not say that the journal waits for someone else to post it",
+  );
+});
+
+// ---- the detail pane --------------------------------------------------------------------------------
+
+test("the detail pane says why a journal waits in the same plain words as the register's note", () => {
+  const parked = journal(7, { status: "DRAFT", derived_status: "PENDING_APPROVAL", posted_at: null });
+  const view = markup(views.renderGl(glModel({ journals: [parked], selectedJournal: parked.id })));
+  assert.ok(!view.includes("GL policy"), "the detail pane still names the policy in engine words");
+  assert.ok(
+    view.includes("at or over the approval threshold in the policy"),
+    "the detail pane does not say what the amount is over",
+  );
+  assert.ok(
+    view.includes("waits for another approver to post it"),
+    "the detail pane does not say the journal waits for another approver",
   );
 });
