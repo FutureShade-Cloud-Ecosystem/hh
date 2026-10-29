@@ -70,24 +70,47 @@ for (const size of SIZES) {
 
 // The unknown outcome: the answer to a payment that landed is lost on the way back, so the money
 // may or may not have moved. The form says so, in the desk's own words.
-for (const theme of THEMES) {
-  test(`the unknown outcome at 1280 px, ${theme}`, async ({ page, request }) => {
-    test.setTimeout(120_000);
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await openDesk(page, request, "controller");
-    await charcoalOn(page, theme);
-    await openPayeePage(page);
-    await page.locator("[data-line-row]", { hasText: "B-4107" }).getByRole("button", { name: "Pay" }).click();
-    await expect(page.locator("[data-pay-form]")).toBeVisible();
+for (const size of [SIZES[0]!, SIZES[1]!]) {
+  for (const theme of THEMES) {
+    test(`the unknown outcome at ${size.width} px, ${theme}`, async ({ page, request }) => {
+      test.setTimeout(120_000);
+      await page.setViewportSize(size);
+      await openDesk(page, request, "controller");
+      await charcoalOn(page, theme);
+      await openPayeePage(page);
+      await page.locator("[data-line-row]", { hasText: "B-4107" }).getByRole("button", { name: "Pay" }).click();
+      await expect(page.locator("[data-pay-form]")).toBeVisible();
 
-    // The stub records the payment and the answer never comes back.
-    await page.route("**/api/v1/purchasing/bills/*/payments", async (route) => {
-      await route.fetch();
-      await route.abort("connectionreset");
+      // The request is lost on the way: the payment did not land, but the desk cannot know that, so
+      // the books still show the bill open and the form stays open with its error. (When the books
+      // show the payment landed, the form closes by design.)
+      await page.route("**/api/v1/purchasing/bills/*/payments", async (route) => {
+        await route.abort("connectionreset");
+      });
+      await page.locator("[data-field='pay-amount']").fill("100.00");
+      await page.locator("[data-action='payables-pay-send']").click();
+      await expect(page.locator("[data-pay-error]")).toContainText("may or may not have been recorded");
+      // The books are read again behind the error; the shot waits for the form and the error to be
+      // the last thing standing, so it shows both open.
+      await expect(page.locator("[data-pay-form]")).toBeVisible();
+      await page.waitForLoadState("networkidle");
+      await expect(page.locator("[data-pay-error]")).toBeVisible();
+      await page.locator("[data-pay-error]").scrollIntoViewIfNeeded();
+      await shot(page, theme, size.width, "pay-unknown");
     });
-    await page.locator("[data-field='pay-amount']").fill("100.00");
-    await page.locator("[data-action='payables-pay-send']").click();
-    await expect(page.locator("[data-pay-error]")).toContainText("may or may not have been recorded");
-    await shot(page, theme, 1280, "pay-unknown");
-  });
+  }
+}
+
+// A role that cannot pay (Payables and Receivables): the board and the bill with no Pay control.
+for (const size of [SIZES[0]!, SIZES[1]!]) {
+  for (const theme of THEMES) {
+    test(`a role that cannot pay at ${size.width} px, ${theme}`, async ({ page, request }) => {
+      test.setTimeout(120_000);
+      await page.setViewportSize(size);
+      await openDesk(page, request);
+      await charcoalOn(page, theme);
+      await openPayeePage(page);
+      await shot(page, theme, size.width, "pay-held-role");
+    });
+  }
 }
