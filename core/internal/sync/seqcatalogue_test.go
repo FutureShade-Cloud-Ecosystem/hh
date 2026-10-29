@@ -19,6 +19,7 @@ package sync
 import (
 	"fmt"
 	"go/ast"
+	"go/build/constraint"
 	"go/parser"
 	"go/token"
 	"os"
@@ -235,9 +236,14 @@ func parseTree(t testing.TB, roots []string) []goFile {
 				return nil
 			}
 			fset := token.NewFileSet()
-			f, perr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+			f, perr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution|parser.ParseComments)
 			if perr != nil {
 				return fmt.Errorf("parse %s: %w", path, perr)
+			}
+			// A file that builds only under the finworld tag (W2-1b's synthetic world harness) is never in
+			// a production binary, so the catalogue does not judge it.
+			if seqBuildsOnlyUnderTag(f, "finworld") {
+				return nil
 			}
 			out = append(out, goFile{path: path, fset: fset, file: f})
 			return nil
@@ -909,4 +915,24 @@ func TestSeqCatalogue_BiteCounterFirst(t *testing.T) {
 	if bad := counterFirstWriters(files, counterFirstTables, nil, nil); len(bad) != 1 {
 		t.Fatalf("a trigger relying pricing writer was not reported: %v", bad)
 	}
+}
+
+// seqBuildsOnlyUnderTag reports whether the file's build constraint holds only when tag is set.
+func seqBuildsOnlyUnderTag(f *ast.File, tag string) bool {
+	for _, cg := range f.Comments {
+		if cg.Pos() >= f.Package {
+			break
+		}
+		for _, c := range cg.List {
+			if !constraint.IsGoBuild(c.Text) {
+				continue
+			}
+			expr, err := constraint.Parse(c.Text)
+			if err != nil {
+				return false
+			}
+			return !expr.Eval(func(string) bool { return false }) && expr.Eval(func(t string) bool { return t == tag })
+		}
+	}
+	return false
 }

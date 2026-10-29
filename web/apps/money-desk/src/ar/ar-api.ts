@@ -51,6 +51,7 @@ import {
 } from "@hardscapehouse/api-client";
 
 import { OfficeApi } from "./office-api.js";
+import type { PurchasingAPAgingPage } from "./ap-logic.js";
 
 export type PaymentMethod = "CASH" | "CARD" | "CHEQUE" | "EFT";
 
@@ -84,6 +85,25 @@ export class ArApi {
    */
   aging(opts: { as_of?: string } = {}): Promise<Result<BillingAgingPage>> {
     return staffBilling.billingGetAging(this.#client, opts);
+  }
+
+  /**
+   * The open AP the Payables board reads: the core's GET /api/v1/purchasing/ap-aging, as of an
+   * instant in the dealer's house zone.
+   *
+   * Until W2-9a's contract is regenerated on main, the call goes through the client's own
+   * request seam over the same path and the same shape, the way the statements slice reads its
+   * export, so the generated tree stays untouched. When the contract lands, this one method
+   * becomes the generated operation and the shape below is replaced by the generated type
+   * (src/ar/ap-logic.ts holds the shape and the bands).
+   */
+  apAging(opts: { as_of?: string } = {}): Promise<Result<PurchasingAPAgingPage>> {
+    return this.#client.request<PurchasingAPAgingPage>({
+      method: "GET",
+      path: "/api/v1/purchasing/ap-aging",
+      query: opts,
+      operationId: "purchasingGetAPAging",
+    });
   }
 
   /** Every invoice of an account, the unpaid ones first and the paid ones after: the core's read with no chip. */

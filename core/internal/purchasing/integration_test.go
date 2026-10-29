@@ -117,6 +117,32 @@ func (a itLanded) CreateAndApply(ctx context.Context, in LandedCostDraft) (strin
 	return id, nil
 }
 
+func (a itLanded) OpenPayablesAsOf(ctx context.Context, asOf time.Time, branchIDs []string, global bool) ([]LandedCostPayable, error) {
+	rows, err := a.svc.OpenPayablesAsOf(ctx, asOf, branchIDs, global)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LandedCostPayable, len(rows))
+	for i, r := range rows {
+		out[i] = LandedCostPayable{
+			ID:               r.ID,
+			POID:             r.POID,
+			PORef:            r.PORef,
+			BranchID:         r.BranchID,
+			Currency:         r.Currency,
+			FreightCadCents:  r.FreightCadCents,
+			DutyCadCents:     r.DutyCadCents,
+			HandlingCadCents: r.HandlingCadCents,
+			TotalCadCents:    r.TotalCadCents,
+			ChargeKind:       r.ChargeKind,
+			PayeeLabel:       r.PayeeLabel,
+			CreatedAt:        r.CreatedAt,
+			UpdatedAt:        r.UpdatedAt,
+		}
+	}
+	return out, nil
+}
+
 type itGL struct{ svc *gl.Service }
 
 // itGL mirrors main.go's w4cGLPoster field for field, the document date included, so the legs read
@@ -130,6 +156,33 @@ func (a itGL) PostJournal(ctx context.Context, in GLJournal) (string, error) {
 		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
 		Memo: in.Memo, BranchID: in.BranchID, Lines: lines, DocumentDate: in.DocumentDate,
 	})
+}
+
+// itGLClock mirrors itGL for reads: the GL service's own as-of filing rule behind
+// purchasing's GLJournalClock seam, so the aging's inclusion instants are the
+// journals' effective instants exactly as the production wiring answers them.
+type itGLClock struct{ svc *gl.Service }
+
+func (a itGLClock) JournalEffectiveInstants(ctx context.Context, journalIDs []string) (map[string]time.Time, error) {
+	return a.svc.JournalEffectiveInstants(ctx, journalIDs)
+}
+
+func (a itGLClock) RefJournalInstants(ctx context.Context, source string, refIDs []string) ([]GLRefJournalInstant, error) {
+	entries, err := a.svc.RefJournalInstants(ctx, source, refIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]GLRefJournalInstant, 0)
+	for _, refs := range entries {
+		for _, e := range refs {
+			out = append(out, GLRefJournalInstant{RefID: e.SourceRefID, PostedAt: e.PostedAt, EffectiveAt: e.EffectiveAt})
+		}
+	}
+	return out, nil
+}
+
+func (a itGLClock) JournalSourceRefByKey(ctx context.Context, key string) (string, bool, error) {
+	return a.svc.JournalSourceRefByKey(ctx, key)
 }
 
 func (a itGL) PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error) {
@@ -166,6 +219,7 @@ type harness struct {
 	svc    *Service
 	inv    *inventory.Service
 	gl     *gl.Service
+	landed *landedcost.Service
 	vendor string
 	user   string
 	ctx    context.Context
@@ -214,19 +268,26 @@ func newHarness(t *testing.T) *harness {
 	invSvc := inventory.NewService(inventory.NewRepository(pool)).
 		WithGLPoster(invGLBridge{svc: glSvc}).
 		WithRuleResolver(invRuleBridge{svc: glSvc})
+	// The landed cost journal clock is wired as production wires it (wire_operations), so a
+	// landed cost payable counts from its own journal's effective instant, never from the row's
+	// timestamps: those are the database's clock, which the evening guard's leg shifts apart
+	// from the test's own clock (the W29A Sub2 red under the guard).
 	landedSvc := landedcost.NewService(landedcost.NewRepository(pool)).
 		WithCapitalizer(landedBridge{svc: invSvc}).
-		WithGLPoster(landedGLBridge{svc: glSvc})
+		WithGLPoster(landedGLBridge{svc: glSvc}).
+		WithJournalClock(itLandedClock{svc: glSvc})
 
 	svc := NewService(NewRepository(pool)).
 		WithStockReceiver(itStock{svc: invSvc}).
 		WithVendors(itVendors{pool: pool}).
 		WithLandedCoster(itLanded{svc: landedSvc}).
+		WithLandedCostPayables(itLanded{svc: landedSvc}).
 		WithGLPoster(itGL{svc: glSvc}).
 		WithRuleResolver(itRules{svc: glSvc}).
+		WithGLJournalClock(itGLClock{svc: glSvc}).
 		withCaller(func(context.Context) (identity.StaffContext, bool) { return globalCaller(user), true })
 
-	return &harness{pool: pool, svc: svc, inv: invSvc, gl: glSvc, vendor: vendor, user: user, ctx: ctx}
+	return &harness{pool: pool, svc: svc, inv: invSvc, gl: glSvc, landed: landedSvc, vendor: vendor, user: user, ctx: ctx}
 }
 
 // newProduct creates a throwaway product and registers its cleanup. Its own SKU means a test never competes
