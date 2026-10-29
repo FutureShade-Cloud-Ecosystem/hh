@@ -269,7 +269,9 @@ func TieAPAgingToGL2100(ctx context.Context, seams TieSeams, m TieMonth) (TieRes
 	return TieResult{Name: TieNameAPAging, Pass: variance == 0, Applicable: true, VarianceCents: variance, Detail: detail}, nil
 }
 
-// tieAPOtherJournals names the posted journals on 2100, up to the month's end,
+// tieAPOtherJournals names the posted journals on 2100, as of the month's end by
+// the GL's own effective instant (a journal filed late counts from the end of
+// its filed period, the rule gl/repository.go keeps),
 // that no vendor bill, PayBill payment or landed cost document posted: the
 // entries the Controller reconciles against the aging. It names at most ten.
 func tieAPOtherJournals(ctx context.Context, seams TieSeams, m TieMonth) (string, error) {
@@ -279,7 +281,11 @@ func tieAPOtherJournals(ctx context.Context, seams TieSeams, m TieMonth) (string
 		  FROM gl_journal_lines l
 		  JOIN gl_journals j ON j.id = l.journal_id
 		  JOIN gl_accounts a ON a.id = l.account_id
-		 WHERE a.code = '2100' AND j.status = 'POSTED' AND j.posted_at <= $1
+		  JOIN fiscal_periods fp ON fp.id = j.period_id
+		 WHERE a.code = '2100' AND j.status = 'POSTED'
+		   AND (CASE WHEN date_trunc('month', j.posted_at AT TIME ZONE 'America/Toronto') = make_date(fp.year, fp.month, 1)
+		             THEN j.posted_at
+		             ELSE (make_date(fp.year, fp.month, 1)::timestamp + INTERVAL '1 month') AT TIME ZONE 'America/Toronto' END) <= $1
 		   AND j.idempotency_key NOT LIKE 'purchasing.bill:%'
 		   AND j.idempotency_key NOT LIKE 'purchasing.bill.payment:%'
 		   AND j.idempotency_key NOT LIKE 'landedcost.%'

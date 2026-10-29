@@ -146,9 +146,13 @@ func TestIntegration_W29A_FinanceCheckAPTieLateFiledBill(t *testing.T) {
 	prodSeams := TieSeams{Querier: pool, GLStore: glRepo, AP: purchasingSvc, Zone: zone}
 	closed := TieMonth{Year: lastMonth.Year(), Month: int(lastMonth.Month()), MonthEnd: fcSeams.monthEnd(lastMonth.Year(), int(lastMonth.Month()))}
 	fcBefore, err := TieAPAgingToGL2100(ctx, fcSeams, closed)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	prodBefore, err := TieAPAgingToGL2100(ctx, prodSeams, closed)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	// A 2000 cent bill dated the 15th of the CLOSED month, posted today. The bill
 	// journal carries the bill's document date, so the GL files it late into the
 	// open month and counts it from that month's end.
@@ -197,9 +201,13 @@ func TestIntegration_W29A_FinanceCheckAPTieLateFiledBill(t *testing.T) {
 	}
 
 	fcAfter, err := TieAPAgingToGL2100(ctx, fcSeams, closed)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	prodAfter, err := TieAPAgingToGL2100(ctx, prodSeams, closed)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Logf("closed month %d-%02d: finance-check composition variance %d -> %d (pass=%v); production composition variance %d -> %d (pass=%v)",
 		closed.Year, closed.Month, fcBefore.VarianceCents, fcAfter.VarianceCents, fcAfter.Pass, prodBefore.VarianceCents, prodAfter.VarianceCents, prodAfter.Pass)
 	t.Logf("finance-check detail after: %s", fcAfter.Detail)

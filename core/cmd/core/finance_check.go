@@ -198,13 +198,19 @@ func financeCheckSeams(ctx context.Context, pool *pgxpool.Pool, querier tieQueri
 }
 
 // financeCheckAPAging is purchasing's AP aging composed the way the production
-// wiring composes it for the read: the dealer zone and the landed cost
-// payables through landedcost's own seam. The aging writes nothing.
+// wiring composes it for the read: the dealer zone, the landed cost payables
+// through landedcost's own seam, and both modules' GL journal clocks, so a
+// document counts from its own journal's effective instant exactly as GL 2100
+// counts it (a bill filed late into an open month counts from that month on).
+// The aging writes nothing.
 func financeCheckAPAging(pool *pgxpool.Pool) *purchasing.Service {
-	landedSvc := landedcost.NewService(landedcost.NewRepository(pool))
+	glSvc := gl.NewService(gl.NewRepository(pool).WithZone(newDealerZone(pool)))
+	landedSvc := landedcost.NewService(landedcost.NewRepository(pool)).
+		WithJournalClock(w4cLandedJournalClock{svc: glSvc})
 	return purchasing.NewService(purchasing.NewRepository(pool)).
 		WithZone(newDealerZone(pool)).
-		WithLandedCostPayables(w4cLandedCoster{svc: landedSvc})
+		WithLandedCostPayables(w4cLandedCoster{svc: landedSvc}).
+		WithGLJournalClock(w4cGLJournalClock{svc: glSvc})
 }
 
 // financeCheckBranches reads the branches the trial balances are read for.
