@@ -1,4 +1,4 @@
--- 0454: the terms master (FIN-WAVE3 1.3, wave 3 TM-1).
+-- 0466: the terms master (FIN-WAVE3 1.3, wave 3 TM-1).
 -- Owner: internal/customer. Additive, non-breaking, self-contained.
 --
 -- The dealer sells on terms. A term is a code, a name, the net days an invoice is due in, and

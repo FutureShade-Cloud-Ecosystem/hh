@@ -3,7 +3,7 @@ package customer
 // terms.go, the TERMS MASTER (wave 3, TM-1).
 //
 // The dealer sells on terms: a code, a name, the net days an invoice is due in, and the early
-// payment discount's rate and window. The master is this module's table (migration 0454) and a
+// payment discount's rate and window. The master is this module's table (migration 0466) and a
 // customer names the term it is sold on by its code.
 //
 // The six standard terms are seeded by the migration: RECEIPT (due on receipt), NET15, NET30,
@@ -62,7 +62,7 @@ const (
 const customTermsPrefix = "CUSTOM-NET-"
 
 // standardTerms is the dealer's standard terms: the code, the name the master carries for it,
-// and the net days. The names here are the names migration 0454 seeds, and
+// and the net days. The names here are the names migration 0466 seeds, and
 // TestIntegration_TermsFor_TheSeededMasterAndTheMappingAgree pins the two together.
 var standardTerms = []struct {
 	Code string

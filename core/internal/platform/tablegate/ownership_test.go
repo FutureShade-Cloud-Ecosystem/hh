@@ -312,7 +312,7 @@ var migrationTopics = map[string]string{
 	"0435_payment_payouts":                 "payments",
 	"0447_credit_application_keys":         "billing",
 	"0451_till_counter_reason_codes":       "till",
-	"0454_payment_terms":                   "customer",
+	"0466_payment_terms":                   "customer",
 }
 
 // multiTopicSplits states the per-object attribution inside the five
@@ -514,7 +514,7 @@ var ownedObjects = map[string]string{
 	"payment_nsf":                     "payments",          // 0035_nsf_credit_hold
 	"payment_reapplications":          "payments",          // 0431_payment_reapplications
 	"payment_payouts":                 "payments",          // 0435_payment_payouts
-	"payment_terms":                   "customer",          // 0454_payment_terms
+	"payment_terms":                   "customer",          // 0466_payment_terms
 	"payments":                        "payments",          // 0010_payments_till
 	"permission_approval_requests":    "identity",          // 0016_permission_approvals
 	"plan":                            "planflow",          // 0214_new_entities_and_pricing
