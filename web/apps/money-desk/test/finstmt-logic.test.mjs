@@ -26,9 +26,9 @@ import {
   refusalWords,
   reportWord,
   scopeLabel,
-  sourceWord,
   validatePack,
 } from "../src/finstmt/finstmt-logic.ts";
+import { sourceWord } from "../src/shared/source-words.ts";
 
 const INCOME = {
   year: 2000, month: 0, branch_id: "",
