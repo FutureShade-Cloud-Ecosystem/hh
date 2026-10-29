@@ -1,4 +1,4 @@
--- 0454: the accounting package export's account mapping (W3 AX-1, decision 1.6, audit GL-08).
+-- 0464: the accounting package export's account mapping (W3 AX-1, decision 1.6, audit GL-08).
 -- Each HH GL account maps to a target package's account code, per target: QuickBooks Online first,
 -- Sage 50 next. A third package is one more word in the CHECK, by a later forward migration. The
 -- mapping is read at export time, so a re-mapping answers in the next export, and every recorded

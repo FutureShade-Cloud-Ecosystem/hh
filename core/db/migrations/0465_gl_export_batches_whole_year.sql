@@ -1,4 +1,4 @@
--- 0455: the whole year export's batch word (W3 AX-1 item 3, audit GL-08).
+-- 0465: the whole year export's batch word (W3 AX-1 item 3, audit GL-08).
 -- gl_export_batches.month's check refused everything a batch can be but one month: the whole year
 -- export (the desk's Whole year pick, month 0) read every row of the year and then died recording
 -- its batch. 0 joins the check as the wider than a month word, the honest record for a year pick or

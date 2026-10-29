@@ -443,7 +443,7 @@ var ownedObjects = map[string]string{
 	"finstmt_schedules":               "finstmt",           // 0034_financial_statement_views
 	"fiscal_periods":                  "gl",                // 0007_gl_block
 	"gl_accounts":                     "gl",                // 0007_gl_block
-	"gl_account_mapping":              "gl",                // 0454_gl_account_mapping
+	"gl_account_mapping":              "gl",                // 0464_gl_account_mapping
 	"gl_approver_assignments":         "gl",                // 0106_approvals_and_reversals
 	"gl_entry_no_sequences":           "gl",                // 0119_gl_entry_no_sequence
 	"gl_export_batches":               "gl",                // 0032_gl_module
