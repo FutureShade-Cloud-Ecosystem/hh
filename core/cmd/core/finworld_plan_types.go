@@ -123,21 +123,44 @@ const (
 
 // FinWorldPlanT holds the deterministic 12-month business plan for a seed and anchor month.
 type FinWorldPlanT struct {
-	Seed                  uint64              `json:"seed"`
-	Anchor                YearMonth           `json:"anchor"`
-	StartMonth            YearMonth           `json:"start_month"`
-	FiscalYearEndMonth    YearMonth           `json:"fiscal_year_end_month"`
-	HouseZone             string              `json:"house_zone"`
-	StatutoryHolidaysNote string              `json:"statutory_holidays_note"`
-	TaxRoundingNote       string              `json:"tax_rounding_note"`
-	CatalogueSourceNote   string              `json:"catalogue_source_note"`
-	Dealer                FinWorldDealer      `json:"dealer"`
-	Branches              []FinWorldBranch    `json:"branches"`
-	Contractors           []FinWorldCustomer  `json:"contractors"`
-	Homeowners            []FinWorldCustomer  `json:"homeowners"`
-	Products              []FinWorldProduct   `json:"products"`
-	Months                []FinWorldMonthPlan `json:"months"`
-	Totals                FinWorldPlanSummary `json:"totals"`
+	Seed                  uint64                        `json:"seed"`
+	Anchor                YearMonth                     `json:"anchor"`
+	StartMonth            YearMonth                     `json:"start_month"`
+	FiscalYearEndMonth    YearMonth                     `json:"fiscal_year_end_month"`
+	HouseZone             string                        `json:"house_zone"`
+	StatutoryHolidaysNote string                        `json:"statutory_holidays_note"`
+	TaxRoundingNote       string                        `json:"tax_rounding_note"`
+	CatalogueSourceNote   string                        `json:"catalogue_source_note"`
+	Dealer                FinWorldDealer                `json:"dealer"`
+	Branches              []FinWorldBranch              `json:"branches"`
+	Contractors           []FinWorldCustomer            `json:"contractors"`
+	Homeowners            []FinWorldCustomer            `json:"homeowners"`
+	Vendors               []FinWorldVendor              `json:"vendors"`
+	Products              []FinWorldProduct             `json:"products"`
+	Months                []FinWorldMonthPlan           `json:"months"`
+	IntendedLatePayables  []FinWorldIntendedLatePayable `json:"intended_late_payables"`
+	Totals                FinWorldPlanSummary           `json:"totals"`
+}
+
+// FinWorldVendor is one vendor the world's books name: a goods supplier of the
+// catalogue, or (W2-1d) the freight carrier or customs broker a landed cost
+// names as its payee. The display name is what the aging and the PO screens
+// show, so it carries no vendor number and no counter.
+type FinWorldVendor struct {
+	VendorNo         string `json:"vendor_no"`
+	Name             string `json:"name"`
+	Kind             string `json:"kind"` // "SUPPLIER", "CARRIER" or "BROKER"
+	PaymentTermsDays int    `json:"payment_terms_days"`
+}
+
+// FinWorldIntendedLatePayable names one carrier or broker payable the plan
+// leaves open past its terms on purpose, with the bookkeeper's reason a
+// Controller would read on the aging. At most a handful are intended; the
+// world census fails on any payable past 90 days late the plan did not name
+// here.
+type FinWorldIntendedLatePayable struct {
+	LandedCostKey string `json:"landed_cost_key"`
+	Reason        string `json:"reason"`
 }
 
 // FinWorldDealer describes the invented Quinte-area building supply dealer.
@@ -527,24 +550,29 @@ type FinWorldVendorPaymentEvent struct {
 // reverses the landed cost named by VoidOfLandedCostKey, the way the module's Void reverses an
 // applied document. The module's statuses and bases are spelled exactly as the module spells them.
 type FinWorldLandedCostEvent struct {
-	LandedCostKey       string `json:"landed_cost_key"`
-	PurchaseReceiptKey  string `json:"purchase_receipt_key"`
-	PurchaseOrderKey    string `json:"purchase_order_key"`
-	BranchCode          string `json:"branch_code"`
-	VendorNo            string `json:"vendor_no"`
-	Currency            string `json:"currency"`
-	FXRateBps           int    `json:"fx_rate_bps"`
-	ChargeKind          string `json:"charge_kind"` // "FREIGHT" or "DUTY"
-	ChargeCents         int64  `json:"charge_cents"`
-	ChargeCadCents      int64  `json:"charge_cad_cents"`
-	FreightCents        int64  `json:"freight_cents"`
-	DutyCents           int64  `json:"duty_cents"`
-	HandlingCents       int64  `json:"handling_cents"`
-	AllocationBasis     string `json:"allocation_basis"`
-	ExcludeSpecialBuys  bool   `json:"exclude_special_buys"`
-	Description         string `json:"description"`
-	AppliedDate         string `json:"applied_date"`
-	Status              string `json:"status"`
+	LandedCostKey      string `json:"landed_cost_key"`
+	PurchaseReceiptKey string `json:"purchase_receipt_key"`
+	PurchaseOrderKey   string `json:"purchase_order_key"`
+	BranchCode         string `json:"branch_code"`
+	VendorNo           string `json:"vendor_no"`
+	Currency           string `json:"currency"`
+	FXRateBps          int    `json:"fx_rate_bps"`
+	ChargeKind         string `json:"charge_kind"` // "FREIGHT" or "DUTY"
+	ChargeCents        int64  `json:"charge_cents"`
+	ChargeCadCents     int64  `json:"charge_cad_cents"`
+	FreightCents       int64  `json:"freight_cents"`
+	DutyCents          int64  `json:"duty_cents"`
+	HandlingCents      int64  `json:"handling_cents"`
+	AllocationBasis    string `json:"allocation_basis"`
+	ExcludeSpecialBuys bool   `json:"exclude_special_buys"`
+	Description        string `json:"description"`
+	AppliedDate        string `json:"applied_date"`
+	Status             string `json:"status"`
+	// SettledOnDate is the trading day the plan settles the payable with its
+	// payee vendor, on the vendor's terms. Empty leaves the payable open; a
+	// payable still open more than 90 days past its due date must be named in
+	// the plan's IntendedLatePayables, or the world census fails.
+	SettledOnDate       string `json:"settled_on_date,omitempty"`
 	VoidOfLandedCostKey string `json:"void_of_landed_cost_key,omitempty"`
 	VoidedDate          string `json:"voided_date,omitempty"`
 	VoidReason          string `json:"void_reason,omitempty"`

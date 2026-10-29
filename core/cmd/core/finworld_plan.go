@@ -785,6 +785,27 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 		return len(plan.Products) - 1
 	}
 
+	// 5b. Build the vendors. The world's vendors are the catalogue's goods
+	// suppliers, and (W2-1d item 3) the freight carriers and customs brokers
+	// the landed costs name as payees. Today the vendor row's display name is
+	// still the vendor number itself (the driver inserts name = vendor_no);
+	// item 2 gives every vendor a real name from the word lists, and the
+	// census fails on the numbered shape until then.
+	vendorNoSeen := map[string]bool{}
+	plan.Vendors = []FinWorldVendor{}
+	for _, spec := range finworldCatalogueSpecs {
+		if vendorNoSeen[spec.VendorNo] {
+			continue
+		}
+		vendorNoSeen[spec.VendorNo] = true
+		plan.Vendors = append(plan.Vendors, FinWorldVendor{
+			VendorNo:         spec.VendorNo,
+			Name:             spec.VendorNo,
+			Kind:             "SUPPLIER",
+			PaymentTermsDays: finworldVendorTermsDays,
+		})
+	}
+
 	// 6. Build the 12 months and their non-Sunday trading days in America/Toronto.
 	plan.Months = make([]FinWorldMonthPlan, 12)
 	totalTradingDays := 0

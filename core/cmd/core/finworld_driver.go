@@ -522,8 +522,54 @@ func finworldMain(args []string, stdout, stderr io.Writer, getenv func(string) s
 		}
 		return nil
 
+	case "census":
+		// The world's books census (W2-1d item 1): builds the plan alone, no
+		// database, and fails on engine data where a dealer's books carry
+		// names, bookkeeper memos, or an unmeant late payable. The source scan
+		// walks the product code from the core tree above the working
+		// directory, so run this leg from inside a checkout.
+		fs := flag.NewFlagSet("finworld census", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		seed := fs.Uint64("seed", 1, "FinWorldPlan seed")
+		dealer := fs.String("dealer", finworldDefaultDealer(getenv), "dealer name")
+		anchor := fs.String("anchor", finworldDefaultAnchor, "plan anchor year month (YYYY-MM)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		anchorYM, err := finworldParseAnchor(*anchor)
+		if err != nil {
+			return err
+		}
+		plan, err := FinWorldPlan(*seed, *anchorYM, *dealer)
+		if err != nil {
+			return fmt.Errorf("FinWorldPlan: %w", err)
+		}
+		cwd, _ := os.Getwd()
+		res, err := finworldCensusPlan(plan, finworldFindCoreRoot(cwd))
+		if err != nil {
+			return fmt.Errorf("finworld census: %w", err)
+		}
+		for _, f := range res.Names {
+			fmt.Fprintf(stdout, "NAME %s\n", f)
+		}
+		for _, f := range res.Memos {
+			fmt.Fprintf(stdout, "MEMO %s\n", f)
+		}
+		for _, f := range res.LatePayables {
+			fmt.Fprintf(stdout, "LATE %s\n", f)
+		}
+		for _, f := range res.SourceMemos {
+			fmt.Fprintf(stdout, "SOURCE %s\n", f)
+		}
+		fmt.Fprintf(stdout, "finworld census: %d name(s), %d memo(s), %d late payable(s), %d source memo(s)\n",
+			len(res.Names), len(res.Memos), len(res.LatePayables), len(res.SourceMemos))
+		if !res.Clean() {
+			return fmt.Errorf("finworld census: the world's books do not read like a real dealer's")
+		}
+		return nil
+
 	default:
-		return fmt.Errorf("unknown finworld subcommand %q (want day, check or days)", sub)
+		return fmt.Errorf("unknown finworld subcommand %q (want day, check, days or census)", sub)
 	}
 }
 
