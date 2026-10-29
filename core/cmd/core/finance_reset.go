@@ -247,6 +247,12 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	if err != nil {
 		return err
 	}
+	// The mapping folds every default privileges statement onto the restoring
+	// role, so a dump that declares them FOR an assist role is refused first, in
+	// words, before anything is dropped.
+	if err := financeResetDefaultPrivilegesPossible(dump); err != nil {
+		return err
+	}
 	mapped, err := financeResetMapRoles(dump, buildSuffix, boxSuffix, restoringRole)
 	if err != nil {
 		return err
