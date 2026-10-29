@@ -7967,6 +7967,7 @@ type PurchasingPostBillRequest struct {
 
 type PurchasingPayBillRequest struct {
 	AmountCents int64      `json:"amount_cents"`
+	FxRate      *float64   `json:"fx_rate,omitempty"`
 	PaidAt      *time.Time `json:"paid_at,omitempty"`
 	Note        *string    `json:"note,omitempty"`
 }

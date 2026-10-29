@@ -693,14 +693,15 @@ const billCols = `b.id::text, b.bill_no::text, b.vendor_id::text, b.branch_id::t
 	to_char(b.bill_date,'YYYY-MM-DD'), COALESCE(to_char(b.due_date,'YYYY-MM-DD'),''),
 	b.subtotal_cents, b.tax_cents, b.total_cents,
 	COALESCE(b.gl_journal_id::text,''), b.posted_at, b.variance_accepted_note,
-	COALESCE(b.variance_accepted_by::text,''), b.created_at, b.currency::text, b.fx_rate::float8`
+	COALESCE(b.variance_accepted_by::text,''), b.created_at, b.currency::text, b.fx_rate::float8,
+	b.doc_total_cents`
 
 func scanBill(row pgx.Row) (Bill, error) {
 	var b Bill
 	err := row.Scan(&b.ID, &b.BillNo, &b.VendorID, &b.BranchID, &b.POID, &b.PONo, &b.Status, &b.MatchState,
 		&b.BillDate, &b.DueDate, &b.SubtotalCents, &b.TaxCents, &b.TotalCents,
 		&b.GLJournalID, &b.PostedAt, &b.VarianceNote, &b.VarianceByUser, &b.CreatedAt,
-		&b.Currency, &b.FXRate)
+		&b.Currency, &b.FXRate, &b.DocTotalCents)
 	return b, err
 }
 
@@ -714,6 +715,7 @@ type insertBillParams struct {
 	Subtotal  int64
 	Tax       int64
 	Total     int64
+	DocTotal  int64
 	Match     string
 	CreatedBy string
 	// DIB-421. Subtotal/Tax/Total above are ALREADY CAD, the bill is converted at entry, so the
@@ -735,16 +737,20 @@ func (r *Repository) InsertBill(ctx context.Context, tx pgx.Tx, in insertBillPar
 	if houseDay == "" {
 		houseDay = houseday.Today(nil)
 	}
+	docTotal := in.DocTotal
+	if docTotal <= 0 {
+		docTotal = in.Total
+	}
 	var id string
 	err := r.q(tx).QueryRow(ctx, `
 		INSERT INTO purchasing_bills (bill_no, vendor_id, branch_id, po_id, status, match_state, bill_date,
-		                              due_date, subtotal_cents, tax_cents, total_cents, created_by,
-		                              currency, fx_rate)
-		VALUES ($1,$2,$3,$4,'DRAFT',$5,COALESCE($6::date, $14::date),$7::date,$8,$9,$10,$11,$12,$13)
+		                              due_date, subtotal_cents, tax_cents, total_cents, doc_total_cents,
+		                              created_by, currency, fx_rate)
+		VALUES ($1,$2,$3,$4,'DRAFT',$5,COALESCE($6::date, $14::date),$7::date,$8,$9,$10,$15,$11,$12,$13)
 		RETURNING id::text`,
 		in.BillNo, in.VendorID, in.BranchID, nullStr(in.POID), in.Match, nullStr(in.BillDate),
 		nullStr(in.DueDate), in.Subtotal, in.Tax, in.Total, nullStr(in.CreatedBy),
-		in.Currency, in.FXRate, houseDay).Scan(&id)
+		in.Currency, in.FXRate, houseDay, docTotal).Scan(&id)
 	if isUniqueViolation(err) {
 		return "", conflict("purchasing: bill %q has already been entered for this vendor", in.BillNo)
 	}

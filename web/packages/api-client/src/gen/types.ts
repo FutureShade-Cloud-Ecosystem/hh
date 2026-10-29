@@ -6888,6 +6888,7 @@ export type PurchasingPostBillRequest = {
 };
 export type PurchasingPayBillRequest = {
   amount_cents: number;
+  fx_rate?: number;
   paid_at?: string;
   note?: string;
 };

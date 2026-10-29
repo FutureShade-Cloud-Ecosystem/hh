@@ -952,7 +952,7 @@ export const SCHEMA_DESCRIPTORS = {
   "PurchasingBillLineRequest": {"k":"object","req":["description","qty_billed_base","unit_cost_cents"],"props":{"po_line_id":{"k":"string"},"description":{"k":"string"},"qty_billed_base":{"k":"number"},"unit_cost_cents":{"k":"integer"}}},
   "PurchasingInstalmentRequest": {"k":"object","req":["due_date","amount_cents"],"props":{"due_date":{"k":"string"},"amount_cents":{"k":"integer"},"note":{"k":"string"}}},
   "PurchasingPostBillRequest": {"k":"object","req":[],"props":{"accept_variance":{"k":"boolean"},"note":{"k":"string"}}},
-  "PurchasingPayBillRequest": {"k":"object","req":["amount_cents"],"props":{"amount_cents":{"k":"integer"},"paid_at":{"k":"string"},"note":{"k":"string"}}},
+  "PurchasingPayBillRequest": {"k":"object","req":["amount_cents"],"props":{"amount_cents":{"k":"integer"},"fx_rate":{"k":"number"},"paid_at":{"k":"string"},"note":{"k":"string"}}},
   "PurchasingSetToleranceRequest": {"k":"object","req":["qty_tolerance_pct","price_tolerance_pct","price_tolerance_abs_cents"],"props":{"branch_id":{"k":"string"},"qty_tolerance_pct":{"k":"number"},"price_tolerance_pct":{"k":"number"},"price_tolerance_abs_cents":{"k":"integer"}}},
   "PurchasingSetPolicyRequest": {"k":"object","req":[],"props":{"branch_id":{"k":"string"},"cost_visibility":{"k":"ref","name":"PurchasingCostVisibility"},"untagged_fallback":{"k":"ref","name":"PurchasingUntaggedFallback"}}},
   "PurchasingSendPORequest": {"k":"object","req":[],"props":{"confirm_fallback":{"k":"boolean"},"idempotency_key":{"k":"string"}}},

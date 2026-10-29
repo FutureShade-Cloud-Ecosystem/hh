@@ -2307,6 +2307,9 @@ components:
           type: integer
           format: int64
           description: The payment amount in cents; the open balance caps it
+        fx_rate:
+          type: number
+          description: The payment rate (CAD per 1 USD) for a USD bill; omitted on a CAD bill
         paid_at:
           type: string
           format: date-time

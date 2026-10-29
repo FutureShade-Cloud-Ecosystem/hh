@@ -234,6 +234,10 @@ type Bill struct {
 	SubtotalCents int64 `json:"subtotal_cents"`
 	TaxCents      int64 `json:"tax_cents"`
 	TotalCents    int64 `json:"total_cents"`
+	// DocTotalCents is the bill total in its own document currency (USD cents on a USD bill, CAD
+	// cents on a CAD bill), used by PayBill to apportion the bill's CAD 2100 liability over USD
+	// payments and clear the exact remainder on the final payment.
+	DocTotalCents int64 `json:"-"`
 	// Currency/FXRate record what the VENDOR wrote and the rate we read it at. An AP clerk holding
 	// the paper invoice needs both to agree with the screen; without them a converted total looks
 	// like a transcription error.

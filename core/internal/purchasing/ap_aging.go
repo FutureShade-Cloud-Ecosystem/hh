@@ -3,6 +3,8 @@ package purchasing
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/big"
 	"strings"
 	"time"
 
@@ -23,9 +25,11 @@ const (
 	APItemKindBill       = "BILL"
 	APItemKindLandedCost = "LANDED_COST"
 
-	glSourcePayment = "PAYMENT"
-	glAccountCash   = "1000"
-	glAccountAPCode = "2100"
+	glSourcePayment     = "PAYMENT"
+	glAccountCash       = "1000"
+	glAccountAPCode     = "2100"
+	glAccountFXGainLoss = "6310"
+	roleFXGainLoss      = "fx_gain_loss"
 
 	// glPaymentKeyPrefix is the GL journal key namespace of PayBill: the caller's
 	// idempotency key rides the journal (purchasing.bill.payment:<key>), because the
@@ -68,6 +72,7 @@ func (s *Service) WithLandedCostPayables(r LandedCostPayableReader) *Service {
 // PayBillRequest records a part or full supplier payment against a posted bill.
 type PayBillRequest struct {
 	AmountCents    int64     `json:"amount_cents"`
+	FXRate         float64   `json:"fx_rate,omitempty"`
 	PaidAt         time.Time `json:"paid_at"`
 	Note           string    `json:"note"`
 	IdempotencyKey string    `json:"idempotency_key"`
@@ -232,20 +237,59 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 		return BillDetail{}, conflict("purchasing: bill %s is %s; only POSTED bills can be paid", bill.BillNo, bill.Status)
 	}
 
-	paidSoFar, err := s.repo.PaidBillCentsTx(ctx, tx, bill.ID)
+	isUSD := strings.EqualFold(strings.TrimSpace(bill.Currency), "USD")
+	payFX := 1.0
+	if isUSD {
+		if math.IsNaN(in.FXRate) || math.IsInf(in.FXRate, 0) || in.FXRate <= 0 {
+			return BillDetail{}, badReq("purchasing: fx_rate is required and must be positive when paying a USD bill")
+		}
+		payFX = in.FXRate
+	} else if math.IsNaN(in.FXRate) || math.IsInf(in.FXRate, 0) || in.FXRate < 0 || (in.FXRate != 0 && in.FXRate != 1) {
+		return BillDetail{}, badReq("purchasing: CAD bill payment must not carry a non-unit fx_rate (got %v)", in.FXRate)
+	}
+
+	clearedCadSoFar, paidDocSoFar, err := s.repo.PaidBillTotalsTx(ctx, tx, bill.ID)
 	if err != nil {
 		return BillDetail{}, err
 	}
-	if paidSoFar+in.AmountCents > bill.TotalCents {
-		return BillDetail{}, conflict("purchasing: payment of %d cents exceeds open balance %d cents on bill %s",
-			in.AmountCents, bill.TotalCents-paidSoFar, bill.BillNo)
+
+	billDocTotal := bill.TotalCents
+	if isUSD {
+		if bill.DocTotalCents > 0 {
+			billDocTotal = bill.DocTotalCents
+		} else if bill.FXRate > 0 {
+			billRateMicros := int64(math.Round(bill.FXRate * 1_000_000))
+			billDocTotal = proRataHalfToEven(bill.TotalCents, 1_000_000, billRateMicros)
+		}
 	}
+
+	paidSoFar := clearedCadSoFar
+	if isUSD {
+		paidSoFar = paidDocSoFar
+	}
+	if paidSoFar+in.AmountCents > billDocTotal {
+		return BillDetail{}, conflict("purchasing: payment of %d cents exceeds open balance %d cents on bill %s",
+			in.AmountCents, billDocTotal-paidSoFar, bill.BillNo)
+	}
+
+	apCadCents := in.AmountCents
+	cashCadCents := in.AmountCents
+	if isUSD {
+		if paidDocSoFar+in.AmountCents == billDocTotal {
+			apCadCents = bill.TotalCents - clearedCadSoFar
+		} else {
+			apCadCents = proRataHalfToEven(bill.TotalCents, in.AmountCents, billDocTotal)
+		}
+		payRateMicros := int64(math.Round(payFX * 1_000_000))
+		cashCadCents = proRataHalfToEven(in.AmountCents, payRateMicros, 1_000_000)
+	}
+	fxDiffCents := cashCadCents - apCadCents
 
 	dueDate := strings.TrimSpace(bill.DueDate)
 	if dueDate == "" {
 		dueDate = bill.BillDate
 	}
-	if _, err := s.repo.RecordBillPaymentTx(ctx, tx, bill.ID, dueDate, in.AmountCents, paidAt, strings.TrimSpace(in.Note)); err != nil {
+	if _, err := s.repo.RecordBillPaymentTx(ctx, tx, bill.ID, dueDate, apCadCents, in.AmountCents, payFX, paidAt, strings.TrimSpace(in.Note)); err != nil {
 		return BillDetail{}, err
 	}
 
@@ -256,6 +300,23 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 				apCode = resolved
 			}
 		}
+		lines := []GLLine{
+			{AccountCode: apCode, DebitCents: apCadCents, Memo: "AP payment " + bill.BillNo},
+			{AccountCode: glAccountCash, CreditCents: cashCadCents, Memo: "Supplier payment " + bill.BillNo},
+		}
+		if fxDiffCents != 0 {
+			fxCode := glAccountFXGainLoss
+			if s.rules != nil {
+				if resolved, rErr := s.rules.ResolveRuleTx(ctx, tx, eventBillPosted, roleFXGainLoss, bill.BranchID); rErr == nil && strings.TrimSpace(resolved) != "" {
+					fxCode = resolved
+				}
+			}
+			if fxDiffCents > 0 {
+				lines = append(lines, GLLine{AccountCode: fxCode, DebitCents: fxDiffCents, Memo: "Realised FX loss " + bill.BillNo})
+			} else {
+				lines = append(lines, GLLine{AccountCode: fxCode, CreditCents: -fxDiffCents, Memo: "Realised FX gain " + bill.BillNo})
+			}
+		}
 		_, err = s.gl.PostJournalTx(ctx, tx, GLJournal{
 			Source:         glSourcePayment,
 			SourceRefID:    bill.ID,
@@ -263,10 +324,7 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 			Memo:           "Supplier payment " + bill.BillNo,
 			BranchID:       bill.BranchID,
 			DocumentDate:   paidAt,
-			Lines: []GLLine{
-				{AccountCode: apCode, DebitCents: in.AmountCents, Memo: "AP payment " + bill.BillNo},
-				{AccountCode: glAccountCash, CreditCents: in.AmountCents, Memo: "Supplier payment " + bill.BillNo},
-			},
+			Lines:          lines,
 		})
 		if err != nil {
 			return BillDetail{}, fmt.Errorf("purchasing: post supplier payment journal: %w", err)
@@ -279,6 +337,24 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 	return s.GetBill(ctx, billID)
 }
 
+// proRataHalfToEven computes (totalCents * partCents) / wholeCents rounded half
+// to even in cents using exact integer arithmetic.
+func proRataHalfToEven(totalCents, partCents, wholeCents int64) int64 {
+	if wholeCents <= 0 || totalCents == 0 || partCents == 0 {
+		return 0
+	}
+	num := new(big.Int).Mul(big.NewInt(totalCents), big.NewInt(partCents))
+	den := big.NewInt(wholeCents)
+	quo, rem := new(big.Int).QuoRem(num, den, new(big.Int))
+	twoRem := new(big.Int).Lsh(rem, 1)
+	cmp := twoRem.Cmp(den)
+	q := quo.Int64()
+	if cmp > 0 || (cmp == 0 && q%2 != 0) {
+		q++
+	}
+	return q
+}
+
 // LockPaymentKeyTx holds a transaction scoped advisory lock on a payment's
 // idempotency key, so concurrent presses under one key run one at a time. It
 // touches no table.
@@ -289,25 +365,33 @@ func (r *Repository) LockPaymentKeyTx(ctx context.Context, tx pgx.Tx, key string
 	return nil
 }
 
-// PaidBillCentsTx returns the sum of PAID instalments on billID within tx.
-func (r *Repository) PaidBillCentsTx(ctx context.Context, tx pgx.Tx, billID string) (int64, error) {
+// PaidBillTotalsTx returns the sum of PAID instalments on billID within tx:
+// clearedCadCents is the sum of amount_cents (the 2100 CAD cleared so far) and
+// paidDocCents is the sum of doc_amount_cents (the paid amount in the bill's currency).
+func (r *Repository) PaidBillTotalsTx(ctx context.Context, tx pgx.Tx, billID string) (clearedCadCents, paidDocCents int64, err error) {
 	if r.pool == nil {
-		return 0, errNoDB
+		return 0, 0, errNoDB
 	}
-	var sum int64
 	if err := r.q(tx).QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount_cents), 0)
+		SELECT COALESCE(SUM(amount_cents), 0),
+		       COALESCE(SUM(COALESCE(NULLIF(doc_amount_cents, 0), amount_cents)), 0)
 		  FROM purchasing_bill_instalments
 		 WHERE bill_id = $1 AND status = 'PAID'`,
 		billID,
-	).Scan(&sum); err != nil {
-		return 0, fmt.Errorf("purchasing: sum paid instalments: %w", err)
+	).Scan(&clearedCadCents, &paidDocCents); err != nil {
+		return 0, 0, fmt.Errorf("purchasing: sum paid instalments: %w", err)
 	}
-	return sum, nil
+	return clearedCadCents, paidDocCents, nil
+}
+
+// PaidBillCentsTx returns the sum of PAID instalments on billID within tx.
+func (r *Repository) PaidBillCentsTx(ctx context.Context, tx pgx.Tx, billID string) (int64, error) {
+	cleared, _, err := r.PaidBillTotalsTx(ctx, tx, billID)
+	return cleared, err
 }
 
 // RecordBillPaymentTx inserts a PAID instalment row for a supplier payment against billID.
-func (r *Repository) RecordBillPaymentTx(ctx context.Context, tx pgx.Tx, billID, dueDate string, amountCents int64, paidAt time.Time, note string) (string, error) {
+func (r *Repository) RecordBillPaymentTx(ctx context.Context, tx pgx.Tx, billID, dueDate string, amountCadCents, docAmountCents int64, fxRate float64, paidAt time.Time, note string) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
 	}
@@ -320,10 +404,10 @@ func (r *Repository) RecordBillPaymentTx(ctx context.Context, tx pgx.Tx, billID,
 	}
 	var id string
 	if err := r.q(tx).QueryRow(ctx, `
-		INSERT INTO purchasing_bill_instalments (bill_id, seq, due_date, amount_cents, status, paid_at, note)
-		VALUES ($1, $2, $3::date, $4, 'PAID', $5, $6)
+		INSERT INTO purchasing_bill_instalments (bill_id, seq, due_date, amount_cents, doc_amount_cents, fx_rate, status, paid_at, note)
+		VALUES ($1, $2, $3::date, $4, $5, $6, 'PAID', $7, $8)
 		RETURNING id::text`,
-		billID, nextSeq, dueDate, amountCents, paidAt, note,
+		billID, nextSeq, dueDate, amountCadCents, docAmountCents, fxRate, paidAt, note,
 	).Scan(&id); err != nil {
 		return "", fmt.Errorf("purchasing: insert paid instalment: %w", err)
 	}
