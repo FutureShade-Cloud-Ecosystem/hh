@@ -198,6 +198,14 @@ export class MoneyDeskApp extends HHElement {
       field: (name) => named(name)?.value ?? "",
       reveal: (selector) => this.renderRoot.querySelector(selector)?.scrollIntoView({ block: "center", behavior: "smooth" }),
       focus: (selector) => this.renderRoot.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true }),
+      download: (filename, text) => {
+        const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(url);
+      },
     });
   }
 

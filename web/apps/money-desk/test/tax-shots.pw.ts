@@ -4,7 +4,7 @@
 //
 //   TAX_SHOT_DIR=/some/folder npx playwright test tax-shots
 import type { Page } from "@playwright/test";
-import { test, expect, openTax, tab } from "./tax-helpers.js";
+import { test, expect, openTax, tab, olderQuarter } from "./tax-helpers.js";
 import { join } from "node:path";
 
 const dir = process.env.TAX_SHOT_DIR ?? "";
@@ -16,9 +16,21 @@ const SIZES = [
 ];
 const THEMES = ["light", "brand"] as const;
 
+const WORKSHEET_SIZES = [
+  { width: 390, height: 844 },
+  { width: 1280, height: 800 },
+  { width: 1440, height: 900 },
+];
+const WORKSHEET_THEMES = ["light", "charcoal"] as const;
+
 async function shot(page: Page, theme: string, width: number, name: string): Promise<void> {
   await page.waitForLoadState("networkidle");
   await page.screenshot({ path: join(dir, `money-desk-tax__${name}__${theme}-${width}.png`), fullPage: true });
+}
+
+async function worksheetShot(page: Page, theme: string, width: number, name: string): Promise<void> {
+  await page.waitForLoadState("networkidle");
+  await page.screenshot({ path: join(dir, `${name}-${theme}-${width}.png`), fullPage: true });
 }
 
 for (const size of SIZES) {
@@ -30,6 +42,7 @@ for (const size of SIZES) {
       if (theme === "brand") {
         await page.locator("hh-shell-header button.account").click();
         await page.getByRole("button", { name: "Theme: Light" }).click();
+        await page.keyboard.press("Escape");
       }
       const take = (name: string) => shot(page, theme, size.width, name);
       await take("rates");
@@ -51,6 +64,34 @@ for (const size of SIZES) {
       await page.getByRole("button", { name: "Reconcile", exact: true }).click();
       await expect(page.locator("[data-recon-result]")).toBeVisible();
       await take("checks");
+      await tab(page, "worksheet");
+      await expect(page.locator("[data-worksheet-result]")).toBeVisible();
+      await take("worksheet");
+    });
+  }
+}
+
+for (const size of WORKSHEET_SIZES) {
+  for (const theme of WORKSHEET_THEMES) {
+    test(`GST/HST return at ${size.width} px, ${theme}`, async ({ page, request }) => {
+      test.setTimeout(120_000);
+      await page.setViewportSize(size);
+      await openTax(page, request);
+      if (theme === "charcoal") {
+        await page.locator("hh-shell-header button.account").click();
+        await page.getByRole("button", { name: "Theme: Light" }).click();
+        await page.keyboard.press("Escape");
+      }
+      await tab(page, "worksheet");
+      await expect(page.locator("[data-worksheet-result]")).toBeVisible();
+      await worksheetShot(page, theme, size.width, "worksheet-tied");
+
+      const oq = olderQuarter();
+      await page.getByLabel("Quarter").selectOption({ label: oq.label });
+      await page.getByRole("textbox", { name: "Year" }).fill(String(oq.year));
+      await page.getByRole("button", { name: "Show worksheet", exact: true }).click();
+      await expect(page.locator("[data-worksheet-tie-pill]")).toHaveText("Off by $851.50");
+      await worksheetShot(page, theme, size.width, "worksheet-variance");
     });
   }
 }

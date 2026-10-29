@@ -5,8 +5,9 @@ import { controllerHandoff, resetStub } from "./gl-helpers.js";
 
 export { expect, controllerHandoff, resetStub };
 
-// Words that must never reach a person on a tax screen (the demo tenant is American; the core's are Ontario's).
-export const OLD_WORDS = /\b(HST|GST|PST|CAD|Ontario|TCRD|band.card|First Nations?)\b|status card/i;
+// Words that must never reach a person on a tax screen (the demo tenant is American; the core's are Ontario's;
+// only the compound "GST/HST" on the GST/HST return tab is lawful).
+export const OLD_WORDS = /\b(?!GST\/HST\b)(?<!\bGST\/)(HST|GST)\b|\b(PST|CAD|Ontario|TCRD|band.card|First Nations?)\b|status card/i;
 
 /** The month before today, the way the desk and the stub cut it from the host's own clock. */
 export function priorMonth(): { year: number; month: number; words: string; first: string; last: string } {
@@ -22,6 +23,28 @@ export function priorMonth(): { year: number; month: number; words: string; firs
 export function olderMonth(): { year: number; month: number; words: string } {
   const before = new Date(new Date().getFullYear(), new Date().getMonth() - 2, 1);
   return { year: before.getFullYear(), month: before.getMonth() + 1, words: `${before.toLocaleString("en-US", { month: "long" })} ${before.getFullYear()}` };
+}
+
+const QUARTER_LABELS: Record<number, string> = {
+  1: "Q1 (Jan to Mar)",
+  2: "Q2 (Apr to Jun)",
+  3: "Q3 (Jul to Sep)",
+  4: "Q4 (Oct to Dec)",
+};
+
+/** The quarter holding the month before today: the quarter the GST/HST return ties out for. */
+export function priorQuarter(): { year: number; quarter: number; label: string } {
+  const m = priorMonth();
+  const quarter = Math.trunc((m.month - 1) / 3) + 1;
+  return { year: m.year, quarter, label: QUARTER_LABELS[quarter] ?? `Q${quarter}` };
+}
+
+/** The quarter before that one: the quarter whose GST/HST return has a GL 2200 variance. */
+export function olderQuarter(): { year: number; quarter: number; label: string } {
+  const pq = priorQuarter();
+  const year = pq.quarter === 1 ? pq.year - 1 : pq.year;
+  const quarter = pq.quarter === 1 ? 4 : pq.quarter - 1;
+  return { year, quarter, label: QUARTER_LABELS[quarter] ?? `Q${quarter}` };
 }
 
 /** A day offset from the host's own day, written year, month, day. */
@@ -50,7 +73,7 @@ export async function openTax(page: Page, request: APIRequestContext): Promise<v
   await expect(page.locator("[data-rate-id]")).toHaveCount(3);
 }
 
-export async function tab(page: Page, id: "rates" | "profiles" | "certificates" | "settings" | "checks"): Promise<void> {
+export async function tab(page: Page, id: "rates" | "profiles" | "certificates" | "settings" | "checks" | "worksheet"): Promise<void> {
   await page.locator(`[data-tab-id='${id}']`).click();
 }
 

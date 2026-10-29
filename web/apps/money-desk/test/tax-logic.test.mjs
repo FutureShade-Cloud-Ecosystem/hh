@@ -22,8 +22,12 @@ import {
   refusalWords,
   roundModeWord,
   varianceWords,
+  worksheetCsv,
+  worksheetCsvFilename,
+  worksheetPeriodWords,
+  worksheetTieWords,
 } from "../src/tax/tax-logic.ts";
-import { bpsToField, formatMoney, formatRate, parseRateToBps } from "../src/tax/tax-money.ts";
+import { bpsToField, centsDecimal, formatMoney, formatRate, parseRateToBps } from "../src/tax/tax-money.ts";
 
 test("a rate typed as a decimal becomes whole hundredths of a percent, never through a float", () => {
   assert.equal(parseRateToBps("7.75"), 775);
@@ -212,4 +216,87 @@ test("a sentence the screen does not know keeps the core's meaning in our words,
   assert.equal(refusalWords("load", "", 502), "The tax service did not answer. Reload to try again.");
   assert.equal(refusalWords("load", "Unauthorized", 401), "Your sign in has ended. Sign in again and retry.");
   assert.equal(refusalWords("load", "not found", 404), "Not found. Reload to see what is there now.");
+});
+
+test("W3-HST2: worksheet tie words, period words, CSV export and worksheet refusals", () => {
+  assert.equal(centsDecimal(0), "0.00");
+  assert.equal(centsDecimal(5), "0.05");
+  assert.equal(centsDecimal(383075), "3830.75");
+  assert.equal(centsDecimal(-85150), "-851.50");
+
+  assert.deepEqual(worksheetTieWords(0, true), {
+    word: "Tied to GL 2200",
+    tone: "good",
+    detail: "No variance. The return's net GST/HST matches GL 2200's movement for the period.",
+  });
+  assert.deepEqual(worksheetTieWords(85150, false), {
+    word: "Off by $851.50",
+    tone: "stop",
+    detail: "GL 2200 is $851.50 higher than the return's net GST/HST for the period.",
+  });
+  assert.deepEqual(worksheetTieWords(-1200, false), {
+    word: "Off by $12.00",
+    tone: "stop",
+    detail: "GL 2200 is $12.00 lower than the return's net GST/HST for the period.",
+  });
+
+  assert.equal(
+    worksheetPeriodWords({ year: 2026, filing_frequency: "QUARTERLY", quarter: 3, from_date: "2026-07-01", to_date: "2026-09-30" }),
+    "Q3 2026 (Jul 1, 2026 to Sep 30, 2026)",
+  );
+  assert.equal(
+    worksheetPeriodWords({ year: 2026, filing_frequency: "MONTHLY", month: 9, from_date: "2026-09-01", to_date: "2026-09-30" }),
+    "September 2026 (Sep 1, 2026 to Sep 30, 2026)",
+  );
+  assert.equal(
+    worksheetPeriodWords({ year: 2026, filing_frequency: "YEARLY", from_date: "2026-01-01", to_date: "2026-12-31" }),
+    "2026 (Jan 1, 2026 to Dec 31, 2026)",
+  );
+
+  const sample = {
+    year: 2026,
+    filing_frequency: "QUARTERLY",
+    quarter: 3,
+    from_date: "2026-07-01",
+    to_date: "2026-09-30",
+    line_101_sales_cents: 3618000,
+    line_103_collected_cents: 470375,
+    line_104_adjustments_cents: 0,
+    line_105_total_hst_cents: 470375,
+    line_106_itcs_cents: 87300,
+    line_107_itc_adjustments_cents: 0,
+    line_108_total_itcs_cents: 87300,
+    line_109_net_tax_cents: 383075,
+    line_110_instalments_cents: 0,
+    line_111_rebates_cents: 0,
+    line_112_total_other_credits_cents: 0,
+    line_113_balance_cents: 383075,
+    line_114_refund_claimed_cents: 0,
+    line_115_amount_owing_cents: 383075,
+    invoice_hst_cents: 482375,
+    return_tax_cents: 12000,
+    gl_payable_cents: 383075,
+    variance_cents: 0,
+    tied_out: true,
+    manual_entry_note: "Entered by hand note.",
+    lines: [
+      { line_no: "101", label: "Sales and other revenue", amount_cents: 3618000, entered_by_hand: false },
+      { line_no: "104", label: "Adjustments to GST/HST", amount_cents: 0, entered_by_hand: true },
+    ],
+  };
+  assert.equal(worksheetCsvFilename(sample), "gst-hst-return-2026-Q3.csv");
+  const csv = worksheetCsv(sample);
+  assert.ok(csv.includes('101,"Sales and other revenue","From the books",36180.00'));
+  assert.ok(csv.includes('104,"Adjustments to GST/HST","Entered by hand",0.00'));
+  assert.ok(csv.includes('GL_2200,"GL 2200 movement","From the books",3830.75'));
+  assert.ok(csv.includes('VARIANCE,"Variance to GL 2200","Tied to GL 2200",0.00'));
+
+  assert.equal(
+    refusalWords("worksheet", "tax: caller cannot access this branch", 403),
+    "This GST/HST return is outside your branch reach. Ask the Financial Controller.",
+  );
+  assert.equal(refusalWords("worksheet", "year required", 400), "Give the year for the GST/HST return.");
+  assert.equal(refusalWords("worksheet", "year must be 2000..2100", 400), "The year must be a four digit year between 2000 and 2100.");
+  assert.equal(refusalWords("worksheet", "quarter must be 1..4 for QUARTERLY filing", 400), "Choose a quarter from Q1 to Q4 for quarterly filing.");
+  assert.equal(refusalWords("worksheet", "month must be 1..12 for MONTHLY filing", 400), "Choose a month from January to December for monthly filing.");
 });

@@ -10,7 +10,8 @@
 // Port provenance: the reason, profile status and forced evidence words are the original app's
 // (app/src/tax-api.ts taxReasonWord and cardProfileStatusWord, app/src/tax-admin-logic.ts forcedEvidence), with the
 // words changed to the dealer's trade: a resale or exemption certificate, a signed statement, sales tax.
-import { formatMoney, formatRate } from "./tax-money.js";
+import type { TaxWorksheet } from "@hardscapehouse/api-client";
+import { centsDecimal, formatMoney, formatRate } from "./tax-money.js";
 
 export type Tone = "stop" | "watch" | "good" | "plain";
 
@@ -153,6 +154,68 @@ export function varianceWords(varianceCents: number): VarianceView {
   };
 }
 
+/**
+ * The GST/HST return worksheet's tie to GL 2200: tied out when variance_cents is zero, or the variance in words
+ * with its direction so a discrepancy never hides as a silent zero.
+ */
+export function worksheetTieWords(varianceCents: number, tiedOut?: boolean): VarianceView {
+  if (varianceCents === 0 && tiedOut !== false) {
+    return {
+      word: "Tied to GL 2200",
+      tone: "good",
+      detail: "No variance. The return's net GST/HST matches GL 2200's movement for the period.",
+    };
+  }
+  const size = formatMoney(Math.abs(varianceCents));
+  return {
+    word: `Off by ${size}`,
+    tone: "stop",
+    detail:
+      varianceCents >= 0
+        ? `GL 2200 is ${size} higher than the return's net GST/HST for the period.`
+        : `GL 2200 is ${size} lower than the return's net GST/HST for the period.`,
+  };
+}
+
+export function worksheetPeriodWords(worksheet: Pick<TaxWorksheet, "year" | "filing_frequency" | "quarter" | "month" | "from_date" | "to_date">): string {
+  const span = `${dayWords(worksheet.from_date)} to ${dayWords(worksheet.to_date)}`;
+  if (worksheet.filing_frequency === "MONTHLY" && worksheet.month && worksheet.month >= 1 && worksheet.month <= 12) {
+    return `${periodWords(worksheet.year, worksheet.month)} (${span})`;
+  }
+  if (worksheet.filing_frequency === "YEARLY") {
+    return `${worksheet.year} (${span})`;
+  }
+  const q = worksheet.quarter && worksheet.quarter >= 1 && worksheet.quarter <= 4 ? worksheet.quarter : 1;
+  return `Q${q} ${worksheet.year} (${span})`;
+}
+
+function csvCell(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+export function worksheetCsvFilename(worksheet: Pick<TaxWorksheet, "year" | "filing_frequency" | "quarter" | "month">): string {
+  if (worksheet.filing_frequency === "MONTHLY" && worksheet.month) {
+    return `gst-hst-return-${worksheet.year}-M${String(worksheet.month).padStart(2, "0")}.csv`;
+  }
+  if (worksheet.filing_frequency === "YEARLY") {
+    return `gst-hst-return-${worksheet.year}.csv`;
+  }
+  const q = worksheet.quarter ?? 1;
+  return `gst-hst-return-${worksheet.year}-Q${q}.csv`;
+}
+
+export function worksheetCsv(worksheet: TaxWorksheet): string {
+  const rows: string[] = ["line_no,label,source,amount"];
+  for (const wLine of worksheet.lines) {
+    const source = wLine.entered_by_hand ? "Entered by hand" : "From the books";
+    rows.push(`${wLine.line_no},${csvCell(wLine.label)},${csvCell(source)},${centsDecimal(wLine.amount_cents)}`);
+  }
+  const tie = worksheetTieWords(worksheet.variance_cents, worksheet.tied_out);
+  rows.push(`GL_2200,${csvCell("GL 2200 movement")},${csvCell("From the books")},${centsDecimal(worksheet.gl_payable_cents)}`);
+  rows.push(`VARIANCE,${csvCell("Variance to GL 2200")},${csvCell(tie.word)},${centsDecimal(worksheet.variance_cents)}`);
+  return `${rows.join("\n")}\n`;
+}
+
 // ---- dates and ids ------------------------------------------------------------------------------------
 
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -199,7 +262,7 @@ function sentence(text: string): string {
 
 const DOWN = "The tax service did not answer. Reload to try again.";
 
-export type TaxAction = "load" | "rate" | "profile" | "config" | "capture" | "evidence" | "recompute" | "recon";
+export type TaxAction = "load" | "rate" | "profile" | "config" | "capture" | "evidence" | "recompute" | "recon" | "worksheet";
 
 /** The words of the core's own codes in any sentence the core wrote; a person never reads a code. */
 function plainCodes(text: string): string {
@@ -227,6 +290,9 @@ export function refusalWords(action: TaxAction, message: string, status: number)
     return "The certificates are the whole dealer's book, so they are for someone who holds every branch. Ask the Financial Controller.";
   }
   if (status === 403 && lower.includes("cannot access this branch")) {
+    if (action === "worksheet") {
+      return "This GST/HST return is outside your branch reach. Ask the Financial Controller.";
+    }
     // The reconcile covers every branch unless a branch is named, so a branch-scoped caller is
     // refused (FW1-10); the screen itself asks for the whole company, so the way out is the
     // controller's, not a branch choice the screen does not offer.
@@ -273,9 +339,13 @@ export function refusalWords(action: TaxAction, message: string, status: number)
   }
   if (lower.includes("unknown card_profile_code")) return "Not recorded: that profile is not on file. Reload the profiles and choose one.";
   if (lower.includes("round_mode must be")) return "Choose how the tax is rounded: once on the invoice total, or on each line.";
+  if (lower.includes("filing_frequency must be")) return "Choose a filing frequency: quarterly, monthly or yearly.";
   if (lower.includes("dormant at w6")) return "Automatic tax lookup and postal routing are not available yet, so they cannot be turned on.";
   if (lower === "evidence not found") return "That certificate record is not there any more. Reload the list.";
-  if (lower === "year required") return "Give the year to reconcile.";
+  if (lower === "year required") return action === "worksheet" ? "Give the year for the GST/HST return." : "Give the year to reconcile.";
+  if (lower === "year must be 2000..2100") return "The year must be a four digit year between 2000 and 2100.";
+  if (lower === "quarter must be 1..4 for quarterly filing") return "Choose a quarter from Q1 to Q4 for quarterly filing.";
+  if (lower === "month must be 1..12 for monthly filing") return "Choose a month from January to December for monthly filing.";
   if (lower === "date must be yyyy-mm-dd") return "The date must be a real day, written year, month, day with dashes.";
   if (status === 404 || lower === "not found") return "Not found. Reload to see what is there now.";
   const words = sentence(plainCodes(message));
