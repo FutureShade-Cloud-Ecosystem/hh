@@ -21,10 +21,12 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
@@ -519,7 +521,11 @@ func TestIntegration_CreditMemoRound_TheApprovalReChecksTheCapUnderTheLock(t *te
 		_ = ftx.Rollback(ctx)
 		t.Fatal("fw1-12a core red: the approval approved a credit whose room was taken while it waited")
 	}
-	if strings.Contains(err.Error(), "operator is not unique") || strings.Contains(err.Error(), "42725") {
+	// FLAKE-13: the SQL state is read from the error's own kind, never from the words: a
+	// correct cap refusal quotes the invoice number, and the tag's clock digits once read
+	// 926427256, which the old bare substring check took for SQLSTATE 42725.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && (pgErr.Code == "42725" || strings.Contains(pgErr.Message, "operator is not unique")) {
 		_ = ftx.Rollback(ctx)
 		t.Fatalf("fw1-12a core red: the re-check answered the approval's broken SQL (%v), want the cap's own words", err)
 	}
