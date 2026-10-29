@@ -44,8 +44,8 @@ var (
 	_ reporting.StockSource     = w3rw1DatasetSources{}
 )
 
-func (a w3rw1DatasetSources) ReadARAging(ctx context.Context, asOf time.Time) ([]reporting.ARAgingLine, error) {
-	rows, err := a.credit.Aging(ctx, asOf, "")
+func (a w3rw1DatasetSources) ReadARAging(ctx context.Context, asOf string) ([]reporting.ARAgingLine, error) {
+	rows, err := a.credit.AgingForCaller(ctx, asOf, "")
 	if err != nil {
 		return nil, err
 	}
@@ -69,12 +69,8 @@ func (a w3rw1DatasetSources) ReadARAging(ctx context.Context, asOf time.Time) ([
 	return out, nil
 }
 
-func (a w3rw1DatasetSources) ReadAPAging(ctx context.Context, asOf time.Time) ([]reporting.APAgingLine, error) {
-	raw := ""
-	if !asOf.IsZero() {
-		raw = asOf.Format(time.RFC3339)
-	}
-	page, err := a.ap.APAgingForCaller(ctx, raw, "")
+func (a w3rw1DatasetSources) ReadAPAging(ctx context.Context, asOf string) ([]reporting.APAgingLine, error) {
+	page, err := a.ap.APAgingForCaller(ctx, asOf, "")
 	if err != nil {
 		return nil, err
 	}

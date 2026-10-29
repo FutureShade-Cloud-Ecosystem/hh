@@ -58,8 +58,8 @@ type dsSources struct {
 	stock    *inventory.Service
 }
 
-func (s dsSources) ReadARAging(ctx context.Context, asOf time.Time) ([]ARAgingLine, error) {
-	rows, err := s.credit.Aging(ctx, asOf, "")
+func (s dsSources) ReadARAging(ctx context.Context, asOf string) ([]ARAgingLine, error) {
+	rows, err := s.credit.AgingForCaller(ctx, asOf, "")
 	if err != nil {
 		return nil, err
 	}
@@ -83,12 +83,8 @@ func (s dsSources) ReadARAging(ctx context.Context, asOf time.Time) ([]ARAgingLi
 	return out, nil
 }
 
-func (s dsSources) ReadAPAging(ctx context.Context, asOf time.Time) ([]APAgingLine, error) {
-	raw := ""
-	if !asOf.IsZero() {
-		raw = asOf.Format(time.RFC3339)
-	}
-	page, err := s.ap.APAgingForCaller(ctx, raw, "")
+func (s dsSources) ReadAPAging(ctx context.Context, asOf string) ([]APAgingLine, error) {
+	page, err := s.ap.APAgingForCaller(ctx, asOf, "")
 	if err != nil {
 		return nil, err
 	}

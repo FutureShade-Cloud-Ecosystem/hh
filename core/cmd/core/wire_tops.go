@@ -486,7 +486,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// The AR console (DIB-65/52/166/170): credit and statement services,
 	// the month-end handler, the counter's aging reader, the AR landing
 	// half.
-	w3bCreditSvc := billing.NewCreditService(billingRepo).WithAudit(auditSvc)
+	w3bCreditSvc := billing.NewCreditService(billingRepo).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	w3bStatementSvc := billing.NewStatementService(billingRepo).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	monthEndHandler := billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
 		WithZone(newDealerZone(pool)).

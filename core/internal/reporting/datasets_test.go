@@ -27,17 +27,21 @@ import (
 
 type fakeARSource struct {
 	lines []ARAgingLine
-	asOf  time.Time
+	asOf  string
 }
 
-func (f *fakeARSource) ReadARAging(_ context.Context, asOf time.Time) ([]ARAgingLine, error) {
+func (f *fakeARSource) ReadARAging(_ context.Context, asOf string) ([]ARAgingLine, error) {
 	f.asOf = asOf
 	return f.lines, nil
 }
 
-type fakeAPSource struct{ lines []APAgingLine }
+type fakeAPSource struct {
+	lines []APAgingLine
+	asOf  string
+}
 
-func (f *fakeAPSource) ReadAPAging(context.Context, time.Time) ([]APAgingLine, error) {
+func (f *fakeAPSource) ReadAPAging(_ context.Context, asOf string) ([]APAgingLine, error) {
+	f.asOf = asOf
 	return f.lines, nil
 }
 
@@ -305,16 +309,25 @@ func TestRunDataset_ABranchOutsideTheReachIsForbidden(t *testing.T) {
 
 func TestRunDataset_PassesTheHouseDayToTheAgingSource(t *testing.T) {
 	ar := &fakeARSource{lines: []ARAgingLine{}}
-	svc := datasetTestService(ar)
+	ap := &fakeAPSource{lines: []APAgingLine{}}
+	svc := datasetTestService(ar).WithDatasetAPSource(ap)
 	if _, err := svc.RunDataset(context.Background(), "ar", DatasetQuery{
 		Columns: []string{"total_cents"},
 		AsOf:    "1971-03-15",
 	}); err != nil {
-		t.Fatalf("as_of read: %v", err)
+		t.Fatalf("ar as_of read: %v", err)
 	}
-	want := time.Date(1971, 3, 15, 12, 0, 0, 0, time.UTC)
-	if ar.asOf.IsZero() || ar.asOf.Format("2006-01-02") != want.Format("2006-01-02") {
-		t.Fatalf("the source must read the named house day, got %v", ar.asOf)
+	if ar.asOf != "1971-03-15" {
+		t.Fatalf("the AR source must receive the YYYY-MM-DD house day, got %q", ar.asOf)
+	}
+	if _, err := svc.RunDataset(context.Background(), "ap", DatasetQuery{
+		Columns: []string{"open_cents"},
+		AsOf:    "1971-03-15",
+	}); err != nil {
+		t.Fatalf("ap as_of read: %v", err)
+	}
+	if ap.asOf != "1971-03-15" {
+		t.Fatalf("the AP source must receive the YYYY-MM-DD house day, got %q", ap.asOf)
 	}
 }
 

@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -190,6 +191,7 @@ type CreditService struct {
 	store creditStore
 	audit audit.Recorder
 	clock func() time.Time
+	zone  houseday.Source
 	// autoHold is the DIB-483 write seam for the master switch (autohold.go). nil = the switch is
 	// unwired and the admin surface renders the setting read-only, rather than offering a control that
 	// would fail.
@@ -214,8 +216,14 @@ func NewCreditService(store creditStore) *CreditService {
 	if pr, ok := store.(registerPolicyReader); ok {
 		s.position = NewAccountPositionGate(pr)
 	}
+	if repo, ok := store.(*Repository); ok && repo != nil {
+		s.zone = repo.zone
+	}
 	return s
 }
+
+// WithZone binds the dealer's business day zone source for as-of aging reads.
+func (s *CreditService) WithZone(src houseday.Source) *CreditService { s.zone = src; return s }
 
 // WithAccountPosition binds the account position policy reader (UX-97).
 func (s *CreditService) WithAccountPosition(p AccountPositionReader) *CreditService {
@@ -240,6 +248,17 @@ func (s *CreditService) WithClock(now func() time.Time) *CreditService {
 		s.clock = now
 	}
 	return s
+}
+
+// AgingForCaller resolves rawAsOf (YYYY-MM-DD or empty for today) in the dealer's house zone using
+// parseAsOfFor, the same rule the month-end AR aging route runs, and returns the aging inside the
+// caller's branch reach.
+func (s *CreditService) AgingForCaller(ctx context.Context, rawAsOf, branchID string) ([]AgingRow, error) {
+	asOf, err := parseAsOfFor(ctx, s.zone, rawAsOf)
+	if err != nil {
+		return nil, err
+	}
+	return s.Aging(ctx, asOf, branchID)
 }
 
 // Aging returns the AR aging worklist as of a date, for the month-end view, inside the caller's

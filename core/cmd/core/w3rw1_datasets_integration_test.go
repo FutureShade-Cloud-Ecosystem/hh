@@ -43,7 +43,7 @@ func TestIntegration_W3RW1_TheCompositionRootWiresTheDatasetSources(t *testing.T
 
 	// The construction wire_tops.go makes, over the same owners.
 	dsSources := w3rw1DatasetSources{
-		credit:   billing.NewCreditService(billing.NewRepository(pool)),
+		credit:   billing.NewCreditService(billing.NewRepository(pool)).WithZone(newDealerZone(pool)),
 		invoices: billing.NewRepository(pool),
 		ap:       purchasing.NewService(purchasing.NewRepository(pool)),
 		gl:       gl.NewService(gl.NewRepository(pool)),
@@ -186,5 +186,232 @@ func TestIntegration_W3RW1_TheCompositionRootWiresTheDatasetSources(t *testing.T
 		if _, err := svc.RunDataset(global, run.set, run.query); err != nil {
 			t.Fatalf("the wired %s read: %v", run.set, err)
 		}
+	}
+}
+
+func TestIntegration_W3RW1_ARDatasetAsOfAgreesWithOwnerRouteAfterNoonUTC(t *testing.T) {
+	url, set := os.LookupEnv("DATABASE_URL")
+	if !set || url == "" {
+		t.Skip("DATABASE_URL is unset, the AR as_of house day leg needs a migrated + seeded database")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("integration DB unavailable: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	dsSources := w3rw1DatasetSources{
+		credit:   billing.NewCreditService(billing.NewRepository(pool)).WithZone(newDealerZone(pool)),
+		invoices: billing.NewRepository(pool),
+		ap:       purchasing.NewService(purchasing.NewRepository(pool)),
+		gl:       gl.NewService(gl.NewRepository(pool)),
+		stock:    inventory.NewService(inventory.NewRepository(pool)),
+	}
+	svc := reporting.NewService(reporting.NewRepository(pool)).
+		WithDatasetARSource(dsSources).
+		WithDatasetAPSource(dsSources).
+		WithDatasetGLSource(dsSources).
+		WithDatasetSalesSource(dsSources).
+		WithDatasetStockSource(dsSources)
+
+	var actor string
+	if err := pool.QueryRow(ctx,
+		`SELECT u.id::text FROM users u WHERE u.status='ACTIVE' ORDER BY u.created_at LIMIT 1`).Scan(&actor); err != nil {
+		t.Fatalf("no seeded user to act as: %v", err)
+	}
+	global := identity.ContextWithStaff(ctx, identity.StaffContext{
+		UserID: actor, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: "ACTIVE",
+	})
+
+	const (
+		day  = "1971-06-15"
+		cust = "b7a10000-0000-4000-8000-00000000d101"
+		inv  = "b7a10000-0000-4000-8000-00000000d102"
+	)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM invoices WHERE id=$1::uuid`, inv)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM customers WHERE id=$1::uuid`, cust)
+	})
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO customers (id, account_no, name, home_branch_id)
+		VALUES ($1::uuid, 'W3RW1-AR-NOON', 'w3rw1 ar house day account', $2::uuid)`, cust, fw1TRT); err != nil {
+		t.Fatalf("seed customer: %v", err)
+	}
+	// Planted at 15:00Z (11:00 EDT in America/Toronto), after noon UTC on day D.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO invoices (id, invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, holdback_cents, total_cents, balance_cents,
+		                      source_kind, created_at, finalized_at)
+		VALUES ($1::uuid, 'W3RW1-AR-NOON-1', $2::uuid, $3::uuid, 'FINALIZED', $4::date, $4::date,
+		        55_600, 0, 0, 55_600, 55_600, 'ORDER', '1971-06-15T15:00:00Z', '1971-06-15T15:00:00Z')`,
+		inv, cust, fw1TRT, day); err != nil {
+		t.Fatalf("seed invoice after noon UTC: %v", err)
+	}
+
+	// Owner route GET /api/v1/ar/aging?as_of=1971-06-15 resolves the day in the dealer zone via ParseAsOfFor.
+	ownerCut, err := billing.ParseAsOfFor(global, newDealerZone(pool), day)
+	if err != nil {
+		t.Fatalf("ParseAsOfFor(%s): %v", day, err)
+	}
+	ownerRows, err := dsSources.credit.Aging(global, ownerCut, "")
+	if err != nil {
+		t.Fatalf("owner AR aging: %v", err)
+	}
+	var ownerTotal int64
+	for _, r := range ownerRows {
+		if r.CustomerID == cust {
+			ownerTotal += r.TotalCents
+		}
+	}
+	if ownerTotal != 55_600 {
+		t.Fatalf("owner AR aging at as_of=%s = %d, want 55600", day, ownerTotal)
+	}
+
+	res, err := svc.RunDataset(global, "ar", reporting.DatasetQuery{
+		Columns: []string{"customer_id", "total_cents"},
+		Filters: []reporting.DatasetFilter{
+			{Column: "customer_id", Op: "eq", Values: []any{cust}},
+		},
+		AsOf: day,
+	})
+	if err != nil {
+		t.Fatalf("ar dataset read: %v", err)
+	}
+	got, _ := res.Totals["total_cents"].(int64)
+	if got != ownerTotal {
+		t.Fatalf("ar dataset total_cents at as_of=%s = %d, want owner route's %d (invoice finalized at 15:00Z after noon UTC on %s was dropped)",
+			day, got, ownerTotal, day)
+	}
+}
+
+func TestIntegration_W3RW1_APDatasetAsOfAgreesWithOwnerRouteAfterNoonUTC(t *testing.T) {
+	url, set := os.LookupEnv("DATABASE_URL")
+	if !set || url == "" {
+		t.Skip("DATABASE_URL is unset, the AP as_of house day leg needs a migrated + seeded database")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("integration DB unavailable: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	glSvc := gl.NewService(gl.NewRepository(pool))
+	apSvc := purchasing.NewService(purchasing.NewRepository(pool)).
+		WithGLJournalClock(w4cGLJournalClock{svc: glSvc})
+	dsSources := w3rw1DatasetSources{
+		credit:   billing.NewCreditService(billing.NewRepository(pool)),
+		invoices: billing.NewRepository(pool),
+		ap:       apSvc,
+		gl:       glSvc,
+		stock:    inventory.NewService(inventory.NewRepository(pool)),
+	}
+	svc := reporting.NewService(reporting.NewRepository(pool)).
+		WithDatasetARSource(dsSources).
+		WithDatasetAPSource(dsSources).
+		WithDatasetGLSource(dsSources).
+		WithDatasetSalesSource(dsSources).
+		WithDatasetStockSource(dsSources)
+
+	var actor string
+	if err := pool.QueryRow(ctx,
+		`SELECT u.id::text FROM users u WHERE u.status='ACTIVE' ORDER BY u.created_at LIMIT 1`).Scan(&actor); err != nil {
+		t.Fatalf("no seeded user to act as: %v", err)
+	}
+	global := identity.ContextWithStaff(ctx, identity.StaffContext{
+		UserID: actor, RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: "ACTIVE",
+	})
+
+	const (
+		day  = "1971-06-15"
+		vend = "b7a10000-0000-4000-8000-00000000d201"
+		bill = "b7a10000-0000-4000-8000-00000000d202"
+		jid  = "b7a10000-0000-4000-8000-00000000d203"
+		pid  = "b7a10000-0000-4000-8000-00000000d204"
+	)
+	var periodID string
+	var createdPeriod bool
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM fiscal_periods WHERE year=1971 AND month=6`).Scan(&periodID); err != nil {
+		periodID = pid
+		createdPeriod = true
+		if _, err := pool.Exec(ctx, `INSERT INTO fiscal_periods (id, year, month, status) VALUES ($1::uuid, 1971, 6, 'OPEN')`, periodID); err != nil {
+			t.Fatalf("seed fiscal period: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM purchasing_bills WHERE id=$1::uuid`, bill)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM gl_journals WHERE id=$1::uuid`, jid)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM vendors WHERE id=$1::uuid`, vend)
+		if createdPeriod {
+			_, _ = pool.Exec(context.Background(), `DELETE FROM fiscal_periods WHERE id=$1::uuid`, periodID)
+		}
+	})
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO vendors (id, vendor_no, name, payment_terms_days)
+		VALUES ($1::uuid, 'W3RW1-AP-NOON', 'w3rw1 ap house day vendor', 30)`, vend); err != nil {
+		t.Fatalf("seed vendor: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO gl_journals (id, fiscal_year, entry_no, period_id, source, memo, status, branch_id)
+		VALUES ($1::uuid, 1971, 987651, $2::uuid, 'MANUAL', 'w3rw1 ap house day journal', 'DRAFT', $3::uuid)`,
+		jid, periodID, fw1TRT); err != nil {
+		t.Fatalf("seed draft journal: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO gl_journal_lines (journal_id, line_no, account_id, branch_id, debit_cents, credit_cents)
+		VALUES ($1::uuid, 1, (SELECT id FROM gl_accounts WHERE code='5000'), $2::uuid, 44500, NULL),
+		       ($1::uuid, 2, (SELECT id FROM gl_accounts WHERE code='2100'), $2::uuid, NULL, 44500)`,
+		jid, fw1TRT); err != nil {
+		t.Fatalf("seed journal lines: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE gl_journals SET status='POSTED', posted_at='1971-06-15T15:00:00Z' WHERE id=$1::uuid`, jid); err != nil {
+		t.Fatalf("post journal after noon UTC: %v", err)
+	}
+	// Planted at 15:00Z (11:00 EDT in America/Toronto), after noon UTC on day D.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO purchasing_bills (id, bill_no, vendor_id, branch_id, status, match_state,
+		                              bill_date, due_date, subtotal_cents, tax_cents, total_cents,
+		                              gl_journal_id, created_at)
+		VALUES ($1::uuid, 'W3RW1-AP-NOON-1', $2::uuid, $3::uuid, 'POSTED', 'MATCHED',
+		        $4::date, '1971-07-15'::date, 44_500, 0, 44_500, $5::uuid, '1971-06-15T15:00:00Z')`,
+		bill, vend, fw1TRT, day, jid); err != nil {
+		t.Fatalf("seed purchasing_bill after noon UTC: %v", err)
+	}
+
+	// Owner route GET /api/v1/purchasing/ap-aging?as_of=1971-06-15 calls APAgingForCaller(ctx, "1971-06-15", "").
+	ownerPage, err := dsSources.ap.APAgingForCaller(global, day, "")
+	if err != nil {
+		t.Fatalf("owner AP aging: %v", err)
+	}
+	var ownerOpen int64
+	for _, row := range ownerPage.Items {
+		for _, it := range row.OpenItems {
+			if it.VendorID == vend {
+				ownerOpen += it.OpenCents
+			}
+		}
+	}
+	if ownerOpen != 44_500 {
+		t.Fatalf("owner AP aging at as_of=%s = %d, want 44500", day, ownerOpen)
+	}
+
+	res, err := svc.RunDataset(global, "ap", reporting.DatasetQuery{
+		Columns: []string{"vendor_id", "open_cents"},
+		Filters: []reporting.DatasetFilter{
+			{Column: "vendor_id", Op: "eq", Values: []any{vend}},
+		},
+		AsOf: day,
+	})
+	if err != nil {
+		t.Fatalf("ap dataset read: %v", err)
+	}
+	got, _ := res.Totals["open_cents"].(int64)
+	if got != ownerOpen {
+		t.Fatalf("ap dataset open_cents at as_of=%s = %d, want owner route's %d (bill posted at 15:00Z after noon UTC on %s was dropped)",
+			day, got, ownerOpen, day)
 	}
 }

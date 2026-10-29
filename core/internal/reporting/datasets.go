@@ -123,14 +123,16 @@ type StockOnHandLine struct {
 
 // -- the seams ------------------------------------------------------------------------
 
-// ARAgingSource is billing's own aging read, as a data set source.
+// ARAgingSource is billing's own aging read, as a data set source. asOf is the validated
+// YYYY-MM-DD house day (or empty for today), resolved in the dealer's calendar by the owner.
 type ARAgingSource interface {
-	ReadARAging(ctx context.Context, asOf time.Time) ([]ARAgingLine, error)
+	ReadARAging(ctx context.Context, asOf string) ([]ARAgingLine, error)
 }
 
-// APAgingSource is purchasing's own AP aging read, as a data set source.
+// APAgingSource is purchasing's own AP aging read, as a data set source. asOf is the validated
+// YYYY-MM-DD house day (or empty for today), resolved in the dealer's calendar by the owner.
 type APAgingSource interface {
-	ReadAPAging(ctx context.Context, asOf time.Time) ([]APAgingLine, error)
+	ReadAPAging(ctx context.Context, asOf string) ([]APAgingLine, error)
 }
 
 // GLJournalSource is gl's own posted journal lines read, as a data set source.
@@ -877,15 +879,14 @@ func datasetNumber(v any) (float64, bool) {
 	return 0, false
 }
 
-func parseDatasetAsOf(raw string) (time.Time, error) {
+func parseDatasetAsOf(raw string) (string, error) {
 	if raw == "" {
-		return time.Time{}, nil
+		return "", nil
 	}
-	d, err := time.Parse("2006-01-02", raw)
-	if err != nil || len(raw) != 10 {
-		return time.Time{}, errBadRequest("as_of must be a day (YYYY-MM-DD), and %q is not one", raw)
+	if _, err := time.Parse("2006-01-02", raw); err != nil || len(raw) != 10 {
+		return "", errBadRequest("as_of must be a day (YYYY-MM-DD), and %q is not one", raw)
 	}
-	return d.Add(12 * time.Hour), nil
+	return raw, nil
 }
 
 func datasetDayStart(day string) time.Time {
