@@ -45,6 +45,8 @@ type jobStore interface {
 	CloseJob(ctx context.Context, customerID, jobID string, reach AccountReach) (Job, error)
 	ListJobs(ctx context.Context, customerID string, reach AccountReach) ([]Job, error)
 	GetJob(ctx context.Context, customerID, jobID string, reach AccountReach) (Job, bool, error)
+	JobEffectiveTerms(ctx context.Context, jobID string) (JobTerms, error)
+	JobStatusForCustomer(ctx context.Context, customerID, jobID string) (string, error)
 }
 
 // WithJobs binds the job persistence seam. Returns the Service for chaining. A Service without it
@@ -149,6 +151,11 @@ func (s *Service) CreateJob(ctx context.Context, customerID string, in JobCreate
 	if err != nil {
 		return Job{}, err
 	}
+	// THE CEILING. A job's own limit may never exceed the customer's own, because the customer's
+	// exposure includes every job it holds.
+	if err := jobLimitCeiling(fields.CreditLimitCents, acct.CreditLimitCents); err != nil {
+		return Job{}, err
+	}
 	return s.jobs.InsertJob(ctx, JobWrite{
 		CustomerID: customerID,
 		BranchID:   branchID,
@@ -156,6 +163,22 @@ func (s *Service) CreateJob(ctx context.Context, customerID string, in JobCreate
 		CreatedBy:  caller.UserID,
 		Fields:     fields,
 	})
+}
+
+// jobLimitCeiling refuses a job's own credit limit that is above the customer's own.
+//
+// THE REFUSAL CARRIES NO FIGURES. The customer's credit limit is an account position figure, and
+// the dealer's account position policy decides who may see it; a refusal that quoted the limit
+// would hand over exactly what the policy hides. The words are the whole answer: a job's own
+// limit cannot be above the customer's own.
+func jobLimitCeiling(jobLimit *int64, customerLimit int64) error {
+	if jobLimit == nil {
+		return nil
+	}
+	if *jobLimit > customerLimit {
+		return httpx.BadRequestf("a job's own credit limit cannot exceed the customer's own credit limit")
+	}
+	return nil
 }
 
 // jobBranch resolves the branch the job sits at.
@@ -240,8 +263,18 @@ func (s *Service) EditJob(ctx context.Context, customerID, jobID string, in JobE
 	if err != nil {
 		return Job{}, err
 	}
+	// The customer's own limit is the ceiling the edit is measured against.
+	acct, err := s.GetAccount(ctx, customerID)
+	if err != nil {
+		return Job{}, err
+	}
 	fields, err := applyJobEdit(current, in)
 	if err != nil {
+		return Job{}, err
+	}
+	// THE CEILING, on the edit as well: a job's own limit may never exceed the customer's own,
+	// and an edit that raised it above the ceiling is refused in words.
+	if err := jobLimitCeiling(fields.CreditLimitCents, acct.CreditLimitCents); err != nil {
 		return Job{}, err
 	}
 	return s.jobs.UpdateJob(ctx, customerID, current.JobID, fields, reach)
@@ -393,4 +426,63 @@ func (s *Service) CloseJob(ctx context.Context, customerID, jobID string) (Job, 
 		return Job{}, err
 	}
 	return s.jobs.CloseJob(ctx, customerID, jobID, reach)
+}
+
+// EffectiveTerms answers the payment terms a job is dated by: the job's own when it carries them,
+// the customer's when it does not.
+//
+// IT IS THE ONE READ THE LATER WAVES USE. Wave 3 JA-2 dates an invoice by the job's terms, and
+// JA-3 checks a sale against the job's limit; neither of them should have to read the job row and
+// the customer row and work out the answer. The read says which of the two it answered (Own), so a
+// screen can tell the customer "this job carries its own terms" without a second read.
+//
+// A job that does not exist is not found. A job with no own terms is not an error and not zero: it
+// reads the customer's terms, and the customer's own terms are the customer's business.
+func (s *Service) EffectiveTerms(ctx context.Context, jobID string) (JobTerms, error) {
+	if s.jobs == nil {
+		return JobTerms{}, ErrJobStoreNotConfigured
+	}
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return JobTerms{}, httpx.BadRequestf("job id is required")
+	}
+	if _, err := uuid.Parse(jobID); err != nil {
+		return JobTerms{}, httpx.BadRequestf("job id must be a uuid")
+	}
+	return s.jobs.JobEffectiveTerms(ctx, jobID)
+}
+
+// ErrJobClosed is the refusal a CLOSED job answers with. It is its own sentinel and not the
+// generic not-found, because the two answers are different facts: a closed job is there and is
+// finished, and a job that is not there is not there.
+var ErrJobClosed = errors.New("customer: the job is closed")
+
+// JobOpenForCustomer refuses a job that is CLOSED as the job of any new document.
+//
+// IT IS THE DOOR WAVE 3 JA-2 OPENS A DOCUMENT ON. The answer is about the job's own status and
+// nothing else: the branch fence belongs to the document write that names the job, and a caller
+// with no staff row (a worker posting a document it was handed) must still be able to ask. A job of
+// another customer is not the customer's job at all, and is not found rather than closed.
+//
+// A closed job is refused, never reopened by asking.
+func (s *Service) JobOpenForCustomer(ctx context.Context, customerID, jobID string) error {
+	if s.jobs == nil {
+		return ErrJobStoreNotConfigured
+	}
+	customerID = strings.TrimSpace(customerID)
+	jobID = strings.TrimSpace(jobID)
+	if customerID == "" {
+		return httpx.BadRequestf("customer id is required")
+	}
+	if jobID == "" {
+		return httpx.BadRequestf("job id is required")
+	}
+	status, err := s.jobs.JobStatusForCustomer(ctx, customerID, jobID)
+	if err != nil {
+		return err
+	}
+	if status != JobStatusOpen {
+		return ErrJobClosed
+	}
+	return nil
 }

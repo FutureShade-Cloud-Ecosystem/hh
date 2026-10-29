@@ -51,12 +51,16 @@ type Job struct {
 	// CreditLimitCents is the job's own credit ceiling, nil when the job shares the customer's.
 	CreditLimitCents *int64 `json:"credit_limit_cents"`
 	// TermsDays is the job's own payment terms, nil when the job shares the customer's.
-	TermsDays *int   `json:"terms_days"`
-	Status    string `json:"status"`
+	TermsDays *int `json:"terms_days,omitempty"`
+	// EffectiveTermsDays is the terms the job is dated by: its own when it carries any, the
+	// customer's when it does not. It is computed in the read and never stored: the customer may
+	// edit their own terms later, and a job that shares them follows.
+	EffectiveTermsDays int    `json:"effective_terms_days"`
+	Status             string `json:"status"`
 	// SubstantialPerformanceDate and LastSupplyDate are the job's own lien dates, kept for wave 3
 	// JA-2. lien_jobs (migration 0038) is left alone; JA-2 links the two.
-	SubstantialPerformanceDate *time.Time `json:"substantial_performance_date"`
-	LastSupplyDate             *time.Time `json:"last_supply_date"`
+	SubstantialPerformanceDate *time.Time `json:"substantial_performance_date,omitempty"`
+	LastSupplyDate             *time.Time `json:"last_supply_date,omitempty"`
 	CreatedBy                  string     `json:"created_by"`
 	CreatedAt                  time.Time  `json:"created_at"`
 	UpdatedAt                  time.Time  `json:"updated_at"`

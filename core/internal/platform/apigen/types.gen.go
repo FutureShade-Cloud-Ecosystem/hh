@@ -1929,9 +1929,11 @@ type CustomerJob struct {
 	ContactPhone               *string         `json:"contact_phone,omitempty"`
 	CreditLimitCents           *int64          `json:"credit_limit_cents,omitempty"`
 	TermsDays                  *int32          `json:"terms_days,omitempty"`
+	EffectiveTermsDays         *int32          `json:"effective_terms_days,omitempty"`
 	Status                     string          `json:"status"`
 	SubstantialPerformanceDate *string         `json:"substantial_performance_date,omitempty"`
 	LastSupplyDate             *string         `json:"last_supply_date,omitempty"`
+	CreatedBy                  *string         `json:"created_by,omitempty"`
 	CreatedAt                  *time.Time      `json:"created_at,omitempty"`
 	UpdatedAt                  *time.Time      `json:"updated_at,omitempty"`
 }

@@ -190,6 +190,8 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusConflict, "job number already in use for this customer")
 	case errors.Is(err, ErrJobAlreadyClosed):
 		httpx.Error(w, http.StatusConflict, "the job is already closed")
+	case errors.Is(err, ErrJobClosed):
+		httpx.Error(w, http.StatusConflict, "the job is closed")
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "not found")
 	case errors.Is(err, ErrForbidden):

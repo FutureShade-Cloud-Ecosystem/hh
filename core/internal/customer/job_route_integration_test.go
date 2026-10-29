@@ -27,7 +27,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// plantJobRouteWorld plants the world these doors run against: a company-wide customer, two
+// plantJobWorld plants the world these doors run against: a company-wide customer, two
 // branches, a staff row the job's creator is stamped with, and a job at the first branch.
 type jobRouteFixture struct {
 	customerID string
@@ -54,7 +54,7 @@ func plantJobUser(t *testing.T, pool *pgxpool.Pool) string {
 	return id
 }
 
-func plantJobRouteWorld(t *testing.T, pool *pgxpool.Pool) jobRouteFixture {
+func plantJobWorld(t *testing.T, pool *pgxpool.Pool) jobRouteFixture {
 	t.Helper()
 	f := jobRouteFixture{
 		customerID: plantJobCustomer(t, pool, "JA1-ROUTE-"+randSuffix()),
@@ -88,7 +88,7 @@ func TestIntegration_JobRoutes_AJobOfAnotherBranchIsNotFound(t *testing.T) {
 	svc := NewService(repo).WithJobs(repo)
 	h := NewHandler(svc, nil)
 
-	f := plantJobRouteWorld(t, pool)
+	f := plantJobWorld(t, pool)
 	callerB := identity.StaffContext{UserID: f.userB, Scope: identity.ScopeBranch, Branches: map[string]bool{f.branchB: true}}
 	callerA := identity.StaffContext{UserID: f.userA, Scope: identity.ScopeBranch, Branches: map[string]bool{f.branchA: true}}
 
@@ -107,6 +107,11 @@ func TestIntegration_JobRoutes_AJobOfAnotherBranchIsNotFound(t *testing.T) {
 	if got["customer_id"] != f.customerID {
 		t.Fatalf("the job came back under another customer: %v", got)
 	}
+	// THE WIRE CARRIES THE DECLARED KEYS AND NOTHING ELSE. A key the document does not
+	// declare is a drift, and so is a declared key sent as null where the document says a
+	// figure: the job's own credit limit, terms and lien dates are absent when the job
+	// carries none, and the effective terms are always there.
+	assertJobWireKeys(t, got)
 
 	// The caller whose grants do not hold it is told nothing: 404, not 403.
 	rec = callJobRoute(h.getJob, http.MethodGet, f.customerID, f.jobID, callerB, "")
@@ -167,7 +172,7 @@ func TestIntegration_JobRoutes_TheDoorsWork(t *testing.T) {
 	svc := NewService(repo).WithJobs(repo)
 	h := NewHandler(svc, nil)
 
-	f := plantJobRouteWorld(t, pool)
+	f := plantJobWorld(t, pool)
 	callerA := identity.StaffContext{UserID: f.userA, Scope: identity.ScopeBranch, Branches: map[string]bool{f.branchA: true}}
 
 	// The create names the branch, because the customer is company-wide.
@@ -240,7 +245,7 @@ func TestIntegration_JobRoutes_BranchWallOnCreate(t *testing.T) {
 	svc := NewService(repo).WithJobs(repo)
 	h := NewHandler(svc, nil)
 
-	f := plantJobRouteWorld(t, pool)
+	f := plantJobWorld(t, pool)
 	callerB := identity.StaffContext{UserID: f.userB, Scope: identity.ScopeBranch, Branches: map[string]bool{f.branchB: true}}
 
 	rec := callJobRoute(h.createJob, http.MethodPost, f.customerID, "", callerB,
@@ -256,6 +261,32 @@ func TestIntegration_JobRoutes_BranchWallOnCreate(t *testing.T) {
 		`{"job_no":"J-ROUTE-4","name":"Mill job"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("a job with no branch: want 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// assertJobWireKeys pins the job's wire to the keys the document declares.
+//
+// The job in the fixture carries no own limit, no own terms and no lien dates, and no account
+// position gate is bound, so those keys are absent rather than null: absence and zero are
+// different accounts, and a null where the document says a figure is a drift.
+func assertJobWireKeys(t *testing.T, got map[string]any) {
+	t.Helper()
+	want := map[string]bool{
+		"job_id": true, "customer_id": true, "branch_id": true, "job_no": true,
+		"name": true, "ship_to_address": true, "po_reference": true,
+		"contact_name": true, "contact_email": true, "contact_phone": true,
+		"effective_terms_days": true, "status": true, "created_by": true,
+		"created_at": true, "updated_at": true,
+	}
+	for key := range got {
+		if !want[key] {
+			t.Fatalf("the job wire carries %q, which the document does not declare: %v", key, got)
+		}
+	}
+	for key := range want {
+		if _, ok := got[key]; !ok {
+			t.Fatalf("the job wire is missing %q: %v", key, got)
+		}
 	}
 }
 

@@ -1685,9 +1685,11 @@ export type CustomerJob = {
   contact_phone?: string;
   credit_limit_cents?: number;
   terms_days?: number;
+  effective_terms_days?: number;
   status: "OPEN" | "CLOSED";
   substantial_performance_date?: string;
   last_supply_date?: string;
+  created_by?: string;
   created_at?: string;
   updated_at?: string;
 };

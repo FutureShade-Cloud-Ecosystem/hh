@@ -58,15 +58,23 @@ type JobWrite struct {
 // jobColumns is the canonical SELECT list for a Job.
 //
 // credit_limit_cents and terms_days are nullable on purpose (a job with no own figure shares the
-// customer's), so they scan into pointers. substantial_performance_date and last_supply_date are
-// the job's own lien dates, kept for wave 3 JA-2. created_by is nullable (a staff member with no
+// customer's), so they scan into pointers. effective_terms_days is the one figure in the list that
+// is not stored: it is the job's own terms when the job carries any and the customer's when it does
+// not, and it is computed in the read so a job that shares the customer's terms follows the
+// customer when the customer edits them. substantial_performance_date and last_supply_date are the
+// job's own lien dates, kept for wave 3 JA-2. created_by is nullable (a staff member with no
 // linked ERP row cannot be attributed), so it is COALESCEd to an empty string, and the write
 // refuses an unattributable write rather than attributing it to nobody.
 const jobColumns = `j.id::text, j.customer_id::text, j.branch_id::text, j.job_no::text, j.name,
 	j.ship_to_address, j.po_reference, j.contact_name, COALESCE(j.contact_email::text, ''), j.contact_phone,
-	j.credit_limit_cents, j.terms_days, j.status,
+	j.credit_limit_cents, j.terms_days, COALESCE(j.terms_days, c.payment_terms_days), j.status,
 	j.substantial_performance_date, j.last_supply_date, COALESCE(j.created_by::text, ''),
 	j.created_at, j.updated_at`
+
+// jobFrom is the job's own row beside its customer's, which is where the effective terms come
+// from. The join is an inner one: a job always belongs to a customer (the FK says so), so there is
+// no job whose customer is missing.
+const jobFrom = `FROM customer_jobs j JOIN customers c ON c.id = j.customer_id`
 
 // scanJob reads one job row.
 func scanJob(row interface{ Scan(dest ...any) error }) (Job, error) {
@@ -79,7 +87,7 @@ func scanJob(row interface{ Scan(dest ...any) error }) (Job, error) {
 	if err := row.Scan(
 		&j.JobID, &j.CustomerID, &j.BranchID, &j.JobNo, &j.Name,
 		&addr, &j.POReference, &j.ContactName, &j.ContactEmail, &j.ContactPhone,
-		&j.CreditLimitCents, &j.TermsDays, &j.Status,
+		&j.CreditLimitCents, &j.TermsDays, &j.EffectiveTermsDays, &j.Status,
 		&perf, &lastSupply, &j.CreatedBy, &j.CreatedAt, &j.UpdatedAt,
 	); err != nil {
 		return Job{}, err
@@ -135,7 +143,7 @@ func (r *Repository) GetJobByID(ctx context.Context, jobID string) (Job, error) 
 	if r.pool == nil {
 		return Job{}, errNoDB
 	}
-	q := fmt.Sprintf("SELECT %s FROM customer_jobs j WHERE j.id = $1", jobColumns)
+	q := fmt.Sprintf("SELECT %s %s WHERE j.id = $1", jobColumns, jobFrom)
 	j, err := scanJob(r.pool.QueryRow(ctx, q, jobID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -156,10 +164,10 @@ func (r *Repository) GetJob(ctx context.Context, customerID, jobID string, reach
 		return Job{}, false, errNoDB
 	}
 	q := fmt.Sprintf(`SELECT %s
-	  FROM customer_jobs j
+	  %s
 	 WHERE j.id = $1
 	   AND j.customer_id = $2
-	   AND ($3::uuid[] IS NULL OR j.branch_id = ANY($3::uuid[]))`, jobColumns)
+	   AND ($3::uuid[] IS NULL OR j.branch_id = ANY($3::uuid[]))`, jobColumns, jobFrom)
 	j, err := scanJob(r.pool.QueryRow(ctx, q, jobID, customerID, reach.branchFilter()))
 	switch {
 	case err == nil:
@@ -181,10 +189,10 @@ func (r *Repository) ListJobs(ctx context.Context, customerID string, reach Acco
 		return nil, errNoDB
 	}
 	q := fmt.Sprintf(`SELECT %s
-	  FROM customer_jobs j
+	  %s
 	 WHERE j.customer_id = $1
 	   AND ($2::uuid[] IS NULL OR j.branch_id = ANY($2::uuid[]))
-	 ORDER BY j.created_at, j.job_no`, jobColumns)
+	 ORDER BY j.created_at, j.job_no`, jobColumns, jobFrom)
 	rows, err := r.pool.Query(ctx, q, customerID, reach.branchFilter())
 	if err != nil {
 		return nil, fmt.Errorf("customer: list the jobs of %q: %w", customerID, err)
@@ -343,7 +351,9 @@ func (r *Repository) JobLimitForCustomer(ctx context.Context, customerID, jobID 
 // JobStatusForCustomer reads the status of one job under one customer.
 //
 // It is the read behind JobOpenForCustomer: a closed job is refused as the job of any new
-// document, and the refusal is the job's own status rather than a guess.
+// document, and the refusal is the job's own status rather than a guess. It is scoped to the
+// customer on purpose: a job of another customer is not the customer's job at all, and the two
+// answers are different (a closed job, and a job that is not there).
 func (r *Repository) JobStatusForCustomer(ctx context.Context, customerID, jobID string) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB

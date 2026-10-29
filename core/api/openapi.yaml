@@ -35651,6 +35651,10 @@ components:
           type: integer
           format: int32
           description: The job's own payment terms. Absent when the job shares the customer's.
+        effective_terms_days:
+          type: integer
+          format: int32
+          description: "The terms the job is dated by: its own when it carries any, the customer's when it does not."
         status:
           type: string
           enum:
@@ -35664,6 +35668,9 @@ components:
           type: string
           format: date
           description: The job's own last supply date, kept for wave 3 JA-2
+        created_by:
+          type: string
+          description: The ERP staff member who opened the job
         created_at:
           type: string
           format: date-time
