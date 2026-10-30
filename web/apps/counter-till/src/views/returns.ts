@@ -281,6 +281,11 @@ export const returnsStyles = css`
     min-height: 44px;
     font-size: 12px;
   }
+  .returns .dispositions button .picked,
+  .returns .methods button .picked {
+    margin-left: 5px;
+    font-weight: 700;
+  }
   .returns .dispositions button[aria-pressed="true"] {
     border-color: var(--hh-accent);
     background: color-mix(in srgb, var(--hh-accent) 22%, transparent);
@@ -294,6 +299,7 @@ export const returnsStyles = css`
     background: var(--hh-disabled-fill);
     border-color: var(--hh-disabled-line);
     color: var(--hh-disabled-ink);
+    box-shadow: inset 0 0 0 1px var(--hh-disabled-ink);
     opacity: 1;
     cursor: not-allowed;
   }
@@ -404,6 +410,7 @@ export const returnsStyles = css`
     background: var(--hh-disabled-fill);
     border-color: var(--hh-disabled-line);
     color: var(--hh-disabled-ink);
+    box-shadow: inset 0 0 0 1px var(--hh-disabled-ink);
     opacity: 1;
     cursor: not-allowed;
   }
@@ -823,7 +830,7 @@ function renderLine(flow: ReturnsFlow, order: CustomerOrder, line: CustomerLine)
                   data-disposition=${disposition}
                   aria-pressed=${chosen === disposition ? "true" : "false"}
                 >
-                  ${DISPOSITION_WORDS[disposition]}
+                  ${DISPOSITION_WORDS[disposition]}${chosen === disposition ? html`<span class="picked" aria-hidden="true">&#10003;</span>` : nothing}
                 </button>
               `)}
             </div>
@@ -1022,7 +1029,7 @@ function renderRefundStep(flow: ReturnsFlow): TemplateResult {
                 aria-pressed=${flow.method === method ? "true" : "false"}
                 ?disabled=${!flow.railAvailable(method) || frozen}
               >
-                ${RAIL_LABELS[method]}
+                ${RAIL_LABELS[method]}${flow.method === method ? html`<span class="picked" aria-hidden="true">&#10003;</span>` : nothing}
               </button>
             `,
           )}
@@ -1132,7 +1139,7 @@ function renderSwapPanel(flow: ReturnsFlow): TemplateResult {
               .map(
                 (tender) => html`
                   <button type="button" class="btn-secondary" data-action="returns-swap-tender" data-tender=${tender} aria-pressed=${flow.swapTender === tender ? "true" : "false"} ?disabled=${frozen}>
-                    ${tender === "CASH" ? "Pay the rest in cash" : tender === "ACCOUNT" ? "Put the rest on the account" : "Pay the rest by card"}
+                    ${tender === "CASH" ? "Pay the rest in cash" : tender === "ACCOUNT" ? "Put the rest on the account" : "Pay the rest by card"}${flow.swapTender === tender ? html`<span class="picked" aria-hidden="true">&#10003;</span>` : nothing}
                   </button>
                 `,
               )}
