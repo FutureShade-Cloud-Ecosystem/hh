@@ -1561,6 +1561,33 @@ func (r *Repository) AccountBalance(ctx context.Context, code string, year, mont
 	return netDebit, normal, nil
 }
 
+// RevenueBalance sums the net posted credit balance on REVENUE accounts for (year, month, branchID),
+// excluding year-end CLOSING journals so line 101 of the GST/HST return worksheet still reads the
+// period's revenue after the fiscal year has been closed.
+func (r *Repository) RevenueBalance(ctx context.Context, year, month int, branchID string) (int64, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	var netCredit int64
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(COALESCE(l.credit_cents, 0) - COALESCE(l.debit_cents, 0)), 0)::bigint
+		   FROM gl_journals j
+		   JOIN gl_journal_lines l ON l.journal_id = j.id
+		   JOIN gl_accounts a      ON a.id = l.account_id
+		   JOIN fiscal_periods fp  ON fp.id = j.period_id
+		  WHERE j.status = 'POSTED'
+		    AND j.source <> 'CLOSING'
+		    AND a.account_type = 'REVENUE'
+		    AND fp.year = $1
+		    AND ($2 <= 0 OR fp.month = $2)
+		    AND ($3 = '' OR COALESCE(l.branch_id, j.branch_id) = $3::uuid)`,
+		year, month, branchID).Scan(&netCredit)
+	if err != nil {
+		return 0, fmt.Errorf("gl: revenue balance: %w", err)
+	}
+	return netCredit, nil
+}
+
 // AccountBalanceAsOf sums the POSTED net-debit of an account inception-to-date across EVERY fiscal year,
 // bounded by posted_at <= asOf. Unlike AccountBalance it drops the fiscal_year/month restriction, so an AR
 // balance carried across a year boundary is included on the GL side of the tie-out (the year-boundary fix).

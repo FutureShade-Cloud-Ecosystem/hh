@@ -139,6 +139,9 @@ type glStore interface {
 
 	// - balances (0034 views) -
 	AccountBalance(ctx context.Context, code string, year, month int, branchID string) (netDebit int64, normalBalance string, err error)
+	// RevenueBalance sums the net posted credit on REVENUE accounts for (year, month, branchID),
+	// excluding year-end CLOSING entries (HST-1 worksheet line 101).
+	RevenueBalance(ctx context.Context, year, month int, branchID string) (int64, error)
 	// AccountBalanceThrough is the cumulative through-period read the inventory tie-out's GL side
 	// takes (FW1-11); the fake answers it from the same rows.
 	AccountBalanceThrough(ctx context.Context, code string, year, month int, branchID string) (netDebit int64, normalBalance string, err error)

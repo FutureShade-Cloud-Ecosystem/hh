@@ -189,6 +189,14 @@ func (a itGLClock) JournalAmountByKey(ctx context.Context, key string) (int64, b
 	return a.svc.JournalAmountByKey(ctx, key)
 }
 
+// itGLWindow mirrors itGLClock for the posting horizon: the GL service's own answer to whether
+// a posting dated on an instant would file, the rule the pay date is judged against.
+type itGLWindow struct{ svc *gl.Service }
+
+func (a itGLWindow) PostingDateRefusal(ctx context.Context, at time.Time) (string, error) {
+	return a.svc.PostingDateRefusal(ctx, at)
+}
+
 func (a itGL) PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error) {
 	lines := make([]gl.ExternalLine, len(in.Lines))
 	for i, l := range in.Lines {
@@ -289,6 +297,7 @@ func newHarness(t *testing.T) *harness {
 		WithGLPoster(itGL{svc: glSvc}).
 		WithRuleResolver(itRules{svc: glSvc}).
 		WithGLJournalClock(itGLClock{svc: glSvc}).
+		WithGLPostingWindow(itGLWindow{svc: glSvc}).
 		withCaller(func(context.Context) (identity.StaffContext, bool) { return globalCaller(user), true })
 
 	return &harness{pool: pool, svc: svc, inv: invSvc, gl: glSvc, landed: landedSvc, vendor: vendor, user: user, ctx: ctx}
