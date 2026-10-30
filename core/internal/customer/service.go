@@ -52,6 +52,7 @@ const (
 type Service struct {
 	store    accountStore
 	writer   customerWriter
+	jobs     jobStore
 	country  CountrySource
 	position PositionGate
 }

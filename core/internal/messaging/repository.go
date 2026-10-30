@@ -2364,24 +2364,16 @@ func (r *Repository) RenameGroup(ctx context.Context, channelID, name, actorName
 // sync, so a hand removal would be undone and lie in between. A removal
 // never drops the room's last OWNER row (ErrLastOwner): the delete's own
 // predicate holds the owner count, so two concurrent removals cannot both
-// pass it. An absent row is not-found. The delete and its feed bump run
-// in ONE transaction: a failure of either leaves the member seated and
-// the feed unmoved, so the caller's error and the world always agree.
+// pass it. A row that is already gone answers the route's not-found: the
+// remove that got there first did the work, and a row that is gone says
+// nothing about owners (UX-111; the read moved inside the transaction so a
+// zero-row delete can no longer be mistaken for the refusal). The delete
+// and its feed bump run in ONE transaction: a failure of either leaves the
+// member seated and the feed unmoved, so the caller's error and the world
+// always agree.
 func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID string) error {
 	if r.pool == nil {
 		return errNoDB
-	}
-	var source string
-	if err := r.pool.QueryRow(ctx,
-		`SELECT source FROM msg_members WHERE channel_id = $1 AND user_id = $2`,
-		channelID, userID).Scan(&source); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errNotFound
-		}
-		return fmt.Errorf("resolve member: %w", err)
-	}
-	if source == SourceDerived {
-		return ErrDerivedMember
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -2403,6 +2395,35 @@ func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID 
 	if err := lockChannelForWrite(ctx, tx, channelID); err != nil {
 		return err
 	}
+	// The member row's source, read INSIDE the transaction, under the
+	// channel's lock the read above holds. It used to be read off the pool
+	// before the transaction opened, which let a remove that raced another
+	// remove of the same member read the row alive and then delete nothing:
+	// the zero-row delete was taken for the last-owner refusal, and the
+	// second caller got a 409 about a room whose owner was intact. Under
+	// the lock nothing can remove the row between this read and the delete
+	// below (every member path in this module takes the channel first), so
+	// each answer has one meaning: a read that finds no row is "already
+	// removed", and a delete that misses a row this read saw is the last
+	// owner.
+	var source string
+	err = tx.QueryRow(ctx,
+		`SELECT source FROM msg_members WHERE channel_id = $1 AND user_id = $2`,
+		channelID, userID).Scan(&source)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Already removed, by whichever remove got here first. That is
+			// not a conflict and says nothing about owners, so it answers
+			// the not-found this route has always answered for a member
+			// who is not there: the handler maps it to a 404 and the web
+			// already carries the words for one.
+			return errNotFound
+		}
+		return fmt.Errorf("resolve member: %w", err)
+	}
+	if source == SourceDerived {
+		return ErrDerivedMember
+	}
 	ct, err := tx.Exec(ctx, `
 		DELETE FROM msg_members m
 		WHERE m.channel_id = $1 AND m.user_id = $2 AND m.source = 'EXPLICIT'
@@ -2414,8 +2435,10 @@ func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID 
 		return fmt.Errorf("remove channel member: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		// The row is EXPLICIT (read above) and survived the predicate: it
-		// is the room's last OWNER.
+		// The row is EXPLICIT (read under the lock above) and survived the
+		// predicate: it is the room's last OWNER. Nothing can have removed
+		// the row between the read and this delete, because both hold the
+		// channel's lock this transaction already holds.
 		return ErrLastOwner
 	}
 	// The bump commits with the delete or not at all: the add side already

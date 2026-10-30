@@ -64,6 +64,14 @@ type ReceiptRequest struct {
 	// list, including an invoice the money never reached (no allocation row exists to remember it);
 	// nil falls back to the allocations, which are the per invoice settle's own named list.
 	NamedInvoices []string
+	// ChangeCents is the unapplied remainder of a receipt larger than the invoices it is applied to
+	// (W3 item 0.10): the server's own split computes it, never a caller, so only this file's apply
+	// sets it. The payment row carries the whole money that arrived (amount less nothing), the
+	// allocations carry what the invoices took, and the remainder lands as one negative
+	// 'receipt_change' row keyed to the payment, the account credit the aging shows and the credit
+	// application door takes later. Every other caller leaves it zero and settles exactly what it
+	// names, as before.
+	ChangeCents int64
 }
 
 // ReceiptOutcome is the settle's answer. Replayed=true means THIS REQUEST POSTED NOTHING.
@@ -218,18 +226,23 @@ func settleReceipt(ctx context.Context, tx pgx.Tx, in ReceiptRequest) (p Payment
 	// ON CONFLICT DO NOTHING against ux_payments_idempotency_key (0028). RETURNING yields no row when
 	// the key was already used, which is the whole guard, see the file header. The row also stamps
 	// the 0213 sync legs (the payments feed seq, the org off the branch's location), the settle's
-	// own posture: a counter receipt FOR a customer's account is that payer's history.
+	// own posture: a counter receipt FOR a customer's account is that payer's history. The amount is
+	// the WHOLE money that arrived, the allocations' total plus the unapplied change (W3 item 0.10),
+	// so the receipt journal credits 1100 with everything the customer handed over and the change
+	// row below carries the account's side of it. The change rides the row's metadata: the undo
+	// paths (reversal, void) read it there to give the change back beside the invoices.
 	row := tx.QueryRow(ctx, paymentsFeedSeqCTE+`
 INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, branch_id,
                       gateway_ref, received_by, idempotency_key, metadata, org_id, seq)
 		 VALUES (nextval('payment_no_seq')::text, $1, $2, $3, 'RECEIVED', $4, '', $5::uuid, $6,
 		         jsonb_build_object('reference', $7::text, 'source', 'AR_REGISTER',
-		                            'invoice_ids', to_jsonb($8::text[])),
+		                            'invoice_ids', to_jsonb($8::text[]))
+		         || CASE WHEN $9::bigint > 0 THEN jsonb_build_object('change_cents', $9::bigint) ELSE '{}'::jsonb END,
 		         (SELECT org_id FROM locations WHERE id = $4::uuid),
 		         (SELECT next_value FROM pseq))
 		 ON CONFLICT (idempotency_key) WHERE idempotency_key <> '' DO NOTHING
 		 RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, status, received_at`,
-		in.CustomerID, in.Method, total, branchID, receivedBy, in.IdempotencyKey, in.Reference, named)
+		in.CustomerID, in.Method, total+in.ChangeCents, branchID, receivedBy, in.IdempotencyKey, in.Reference, named, in.ChangeCents)
 	err = row.Scan(&p.ID, &p.PaymentNo, &pCustomerID, &p.Method, &p.AmountCents, &p.Status, &p.ReceivedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Payment{}, false, nil
@@ -241,7 +254,7 @@ INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, bra
 		p.CustomerID = *pCustomerID
 	}
 
-	if err := applyAllocations(ctx, tx, &p, in.CustomerID, in.Method, "", branchID, in.Allocations, in.ReceivedBy); err != nil {
+	if err := applyAllocations(ctx, tx, &p, in.CustomerID, in.Method, "", branchID, in.Allocations, in.ReceivedBy, in.ChangeCents); err != nil {
 		return Payment{}, false, err
 	}
 	return p, true, nil

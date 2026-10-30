@@ -94,6 +94,37 @@ func classifyAttestErr(err error) error {
 	return err
 }
 
+// attestationCreateShape is the body-only half of the attestation create's
+// checks: the form's field set, the stop uuid, the typed name and
+// affirmation shapes and the payload id shape. It reads nothing and honours
+// no fence (the stop read and the authority read are the door's own), so
+// the bound key gate can run it before the hidden refusal (UX-116): an
+// invalid body then meets these refusals under a spent key and a free one.
+// The refusals are exactly the ones createAttestation answers.
+func attestationCreateShape(fields map[string]any) error {
+	if err := attestationFields(fields); err != nil {
+		return err
+	}
+	stopID, _ := fields["stop_id"].(string)
+	if !looksLikeUUID(stopID) {
+		return fmt.Errorf("dispatch: stop_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	if _, err := syncCreateID(fields); err != nil {
+		return err
+	}
+	if raw, has := fields["received_by"]; has {
+		if _, ok := raw.(string); !ok {
+			return fmt.Errorf("dispatch: received_by must be text: %w", sync.ErrOpRefused)
+		}
+	}
+	if raw, has := fields["affirmed"]; has {
+		if _, ok := raw.(bool); !ok {
+			return fmt.Errorf("dispatch: affirmed must be true or false: %w", sync.ErrOpRefused)
+		}
+	}
+	return nil
+}
+
 // createAttestation applies one attestation create.
 func (s *PODSyncStore) createAttestation(ctx context.Context, f sync.ScopeFilter, d driverFence, key string, fields map[string]any) (sync.RowState, error) {
 	if err := attestationFields(fields); err != nil {

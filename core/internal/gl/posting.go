@@ -86,6 +86,10 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildOrderReturned(ctx, e.Payload)
 	case "pos.return.written_off":
 		draft, post, err = s.buildPosReturnWrittenOff(ctx, e.Payload)
+	case "ar.invoice.write_off":
+		draft, post, err = s.buildArInvoiceWriteOff(ctx, e.Payload)
+	case "ar.invoice.write_off_reversed":
+		draft, post, err = s.buildArInvoiceWriteOffReversed(ctx, e.Payload)
 	case "pos.sale.committed", "bank.recon.completed":
 		// No direct GL effect: a POS sale's revenue/cash post via its own invoice.finalized / payment.received
 		// events; bankrec posts its clearing journals directly through PostExternal. Ack to avoid double-count.
@@ -1676,20 +1680,22 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 		present[r.EventType][r.LineRole] = true
 	}
 	required := map[string][]string{
-		"invoice.finalized":      {"ar", "revenue", "tax"},
-		"payment.received":       {"cash", "ar", "card_clearing"},
-		"tax.relief.assessed":    {"hst_full", "fn_relief"},
-		"payment.bounced":        {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
-		"payment.reversed":       {"ar", "refund_payable"},
-		"payment.reapplied":      {"ar", "refund_payable"},
-		"payment.paid_out":       {"refund_payable", "drawer", "bank", "card_clearing", "write_off"},
-		"till.session.completed": {"over_short", "undeposited"},
-		"order.fulfilled":        {"cogs", "inventory"},
-		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
-		"order.returned":         {"inventory", "cogs"},
-		"deposit.released":       {"customer_deposit", "revenue"},
-		"deposit.cancelled":      {"customer_deposit", "ar", "other_income"},
-		"pos.return.written_off": {"expense", "cogs"},
+		"invoice.finalized":             {"ar", "revenue", "tax"},
+		"payment.received":              {"cash", "ar", "card_clearing"},
+		"tax.relief.assessed":           {"hst_full", "fn_relief"},
+		"payment.bounced":               {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
+		"payment.reversed":              {"ar", "refund_payable"},
+		"payment.reapplied":             {"ar", "refund_payable"},
+		"payment.paid_out":              {"refund_payable", "drawer", "bank", "card_clearing", "write_off"},
+		"till.session.completed":        {"over_short", "undeposited"},
+		"order.fulfilled":               {"cogs", "inventory"},
+		"pos.return.committed":          {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
+		"order.returned":                {"inventory", "cogs"},
+		"deposit.released":              {"customer_deposit", "revenue"},
+		"deposit.cancelled":             {"customer_deposit", "ar", "other_income"},
+		"pos.return.written_off":        {"expense", "cogs"},
+		"ar.invoice.write_off":          {"write_off_expense", "ar"},
+		"ar.invoice.write_off_reversed": {"write_off_expense", "ar"},
 	}
 	for et, roles := range required {
 		for _, role := range roles {
@@ -1702,4 +1708,123 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 		return fmt.Errorf("gl: %d posting-rule problem(s): %v", len(problems), problems)
 	}
 	return nil
+}
+
+// - the AR write off (W3 item 0.10) -
+
+// arInvoiceWriteOffPayload is the event billing emits beside a write off's
+// settlement: which invoice, which act, how much, and the act's own instant
+// (FW1-01b: the journal dates by the act, never by the consume).
+type arInvoiceWriteOffPayload struct {
+	InvoiceID   string    `json:"invoice_id"`
+	WriteOffID  string    `json:"write_off_id"`
+	AmountCents int64     `json:"amount_cents"`
+	Reason      string    `json:"reason"`
+	OccurredAt  time.Time `json:"occurred_at"`
+}
+
+// buildArInvoiceWriteOff posts the write off of an invoice's remaining
+// balance: DR the bad debt expense account (the chart's 5400, or the branch's
+// own override through the rule) / CR AR, balanced at the written off balance.
+// The amount rides the payload because the invoice's balance is already zero
+// when the consumer runs: the settlement and the event commit together, so the
+// payload is the act's own record of how much left.
+func (s *Service) buildArInvoiceWriteOff(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p arInvoiceWriteOffPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.invoice.write_off payload: %w", err)
+	}
+	if p.InvoiceID == "" || p.WriteOffID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.invoice.write_off missing invoice_id or write_off_id")
+	}
+	if p.AmountCents <= 0 {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.invoice.write_off has no amount")
+	}
+	if s.invoices == nil {
+		return journalDraft{}, false, fmt.Errorf("gl: invoice reader not configured")
+	}
+	a, err := s.invoices.InvoiceForGL(ctx, p.InvoiceID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	// Only an ordinary invoice may write off: a deposit document's exit is
+	// the deposit cancel's own booking, and a write off here would book the
+	// same money twice.
+	if a.SourceKind == "SUPPLIER_DEPOSIT" {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.invoice.write_off names invoice %s whose source_kind %q is a deposit document, its exit is the deposit cancel's", p.InvoiceID, a.SourceKind)
+	}
+	et := "ar.invoice.write_off"
+	rules, err := s.store.PostingAccounts(ctx, et, a.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	expenseCode, err := pick(rules, et, "write_off_expense")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	arCode, err := pick(rules, et, "ar")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourceInvoice,
+		SourceRefID:    p.InvoiceID,
+		IdempotencyKey: "ar.invoice.write_off:" + p.WriteOffID,
+		Memo:           "Write off " + a.InvoiceNo + ": " + p.Reason,
+		BranchID:       a.BranchID,
+		OccurredAt:     p.OccurredAt,
+		Lines: []draftLine{
+			dr(expenseCode, p.AmountCents, "bad debt written off"),
+			cr(arCode, p.AmountCents, "AR written off"),
+		},
+	}, true, nil
+}
+
+// buildArInvoiceWriteOffReversed posts the undo of a write off, once: DR AR /
+// CR the bad debt expense account, the write off's own journal in mirror
+// image on the same routing, on the reversal's own key so a replayed event
+// posts nothing.
+func (s *Service) buildArInvoiceWriteOffReversed(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p arInvoiceWriteOffPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.invoice.write_off_reversed payload: %w", err)
+	}
+	if p.InvoiceID == "" || p.WriteOffID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.invoice.write_off_reversed missing invoice_id or write_off_id")
+	}
+	if p.AmountCents <= 0 {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.invoice.write_off_reversed has no amount")
+	}
+	if s.invoices == nil {
+		return journalDraft{}, false, fmt.Errorf("gl: invoice reader not configured")
+	}
+	a, err := s.invoices.InvoiceForGL(ctx, p.InvoiceID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	et := "ar.invoice.write_off_reversed"
+	rules, err := s.store.PostingAccounts(ctx, et, a.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	expenseCode, err := pick(rules, et, "write_off_expense")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	arCode, err := pick(rules, et, "ar")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourceInvoice,
+		SourceRefID:    p.InvoiceID,
+		IdempotencyKey: "ar.invoice.write_off_reversed:" + p.WriteOffID,
+		Memo:           "Write off reversed " + a.InvoiceNo + ": " + p.Reason,
+		BranchID:       a.BranchID,
+		OccurredAt:     p.OccurredAt,
+		Lines: []draftLine{
+			dr(arCode, p.AmountCents, "AR restored (write off reversed)"),
+			cr(expenseCode, p.AmountCents, "bad debt written off, undone"),
+		},
+	}, true, nil
 }

@@ -222,6 +222,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// named at the registrar.
 	customerRepo := customer.NewRepository(pool)
 	customerSvc := customer.NewService(customerRepo).WithWriter(customerRepo).
+		// Wave 3 JA-1: the job accounts under a customer. The same repository is the job store,
+		// so the job rows are fenced by the same reach the account rows are.
+		WithJobs(customerRepo).
 		WithCountry(dealerCountryAdapter{r: settings.NewDealerConfigReader(pool)}).
 		// UX-97: the dealer's account position policy, the register's own gate.
 		WithPositionGate(billing.NewAccountPositionGate(billing.NewRepository(pool)))
@@ -527,6 +530,12 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithZone(newDealerZone(pool)).
 		WithUserLinker(link).RegisterRoutes(r, g)
 	billing.NewCreditApplyHandler(billing.NewCreditApplyService(billingRepo).WithAudit(auditSvc), log).
+		WithUserLinker(link).RegisterRoutes(r, g)
+	billing.NewCreditChangeHandler(
+		billing.NewCreditChangeService(billingRepo, billing.NewCustomerCreditStore(customerSvc)).WithAudit(auditSvc),
+		log,
+	).WithUserLinker(link).RegisterRoutes(r, g)
+	billing.NewWriteOffHandler(billing.NewWriteOffService(billingRepo).WithAudit(auditSvc), log).
 		WithUserLinker(link).RegisterRoutes(r, g)
 
 	// The dispatch gate seam (W3-C closes at the union): Swarm B's billing

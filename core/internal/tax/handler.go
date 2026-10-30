@@ -250,3 +250,30 @@ func (h *Handler) recon(w http.ResponseWriter, r *http.Request, caller guards.St
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
+
+func (h *Handler) worksheet(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	q := r.URL.Query()
+	branchID := q.Get("branch_id")
+	if (branchID == "" && caller.Scope != auth.ScopeGlobal) || (branchID != "" && !caller.CanAccessBranch(branchID)) {
+		httpx.Error(w, http.StatusForbidden, "tax: caller cannot access this branch")
+		return
+	}
+	year, _ := strconv.Atoi(q.Get("year"))
+	quarter, _ := strconv.Atoi(q.Get("quarter"))
+	month, _ := strconv.Atoi(q.Get("month"))
+	if year == 0 {
+		httpx.Error(w, http.StatusBadRequest, "year required")
+		return
+	}
+	out, err := h.svc.WorksheetReport(r.Context(), WorksheetPeriod{
+		Year:     year,
+		Quarter:  quarter,
+		Month:    month,
+		BranchID: branchID,
+	})
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}

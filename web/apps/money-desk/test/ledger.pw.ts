@@ -107,13 +107,15 @@ test("it reads the trial balance in balance, with the server's totals", async ({
   await expect(trial).toContainText("Trial balance");
   await expect(trial).toContainText("In balance");
   await expect(trial.getByRole("table", { name: "Trial balance rows" })).toContainText("Cash");
-  await expect(page.locator("[data-total-debit]")).toHaveText("$37,025.00");
-  await expect(page.locator("[data-total-credit]")).toHaveText("$37,025.00");
+  // The whole-year totals carry the till lodgement's own journal too (DR 1000 / CR 1020, $2,450.50 on both
+  // sides): $37,025.00 of seeded activity plus it.
+  await expect(page.locator("[data-total-debit]")).toHaveText("$39,475.50");
+  await expect(page.locator("[data-total-credit]")).toHaveText("$39,475.50");
   // The branch is chosen from the route's own branch_id, and what the core does not draw yet says so.
   await page.getByRole("button", { name: /^Julian/ }).click();
   await expect(page.locator("[data-trial]")).toContainText("No posted journals yet.");
   await page.getByRole("button", { name: "All branches" }).click();
-  await expect(page.locator("[data-total-debit]")).toHaveText("$37,025.00");
+  await expect(page.locator("[data-total-debit]")).toHaveText("$39,475.50");
   await expect(page.locator("[data-later-trial]")).toContainText("tie out");
   await expect(page.locator("[data-later-trial] .gl-later")).toHaveText("later");
 });

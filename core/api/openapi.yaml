@@ -1219,7 +1219,7 @@ paths:
       tags:
         - staff-billing
       summary: Record one received payment across the account's open invoices
-      description: "The caller names the money (amount, method, reference) and a list of the account's open invoices; the server allocates it oldest first in one transaction: one payment row, its payment_allocations, one journal by the idempotency key (a retry posts once). One payment applies to one branch's invoices: a list spanning two branches is refused in words, because the payment, its subledger rows and its journal all carry one branch. An amount over the selected invoices' payable, an invoice of another account, an invoice outside the caller's branch reach and a not open invoice are all refused in words with nothing applied. preview true answers the same split without writing anything, and never reads the key: a preview under a key an apply already spent answers the fresh split against the live balances, not the recorded payment's replay. The branch reach refusal answers as not found, the same 404 as a missing invoice. A replayed key is judged like a first attempt, and then against its own body, and the replay judgement runs before the body is validated: an invoice it paid that is outside the caller's branch reach answers 404, a key that recorded a payment for another account, or for a different payment (another amount, method, reference or invoice list), is refused 409 Conflict, and the same body under the same key answers the first result and writes nothing. Pre-write validation refusals (the shape of the body itself) answer 422, so a client tells a spent key from a malformed body by status alone."
+      description: "The caller names the money (amount, method, reference) and a list of the account's open invoices; the server allocates it oldest first in one transaction: one payment row, its payment_allocations, one journal by the idempotency key (a retry posts once). One payment applies to one branch's invoices: a list spanning two branches is refused in words, because the payment, its subledger rows and its journal all carry one branch. An amount over the selected invoices' payable is applied oldest first up to each invoice's payable and the remainder stays on the customer's account as a credit (`on_account_cents`). An invoice of another account, an invoice outside the caller's branch reach and a not open invoice are all refused in words with nothing applied. preview true answers the same split without writing anything, and never reads the key: a preview under a key an apply already spent answers the fresh split against the live balances, not the recorded payment's replay. The branch reach refusal answers as not found, the same 404 as a missing invoice. A replayed key is judged like a first attempt, and then against its own body, and the replay judgement runs before the body is validated: an invoice it paid that is outside the caller's branch reach answers 404, a key that recorded a payment for another account, or for a different payment (another amount, method, reference or invoice list), is refused 409 Conflict, and the same body under the same key answers the first result and writes nothing. Pre-write validation refusals (the shape of the body itself) answer 422, so a client tells a spent key from a malformed body by status alone."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -1251,7 +1251,7 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
         "422":
-          description: "The payment is refused in words with nothing applied: an amount over the selected invoices' payable, an invoice that is not open, an empty or oversized list, the same invoice named twice, a customer id or invoice id that is not a uuid, a list spanning more than one branch"
+          description: "The payment is refused in words with nothing applied: an invoice that is not open, an empty or oversized list, the same invoice named twice, a customer id or invoice id that is not a uuid, a list spanning more than one branch"
           content:
             application/json:
               schema:
@@ -1330,6 +1330,280 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BillingCreditApplicationReversed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/ar/write-offs:
+    post:
+      operationId: billingWriteOffInvoice
+      tags:
+        - staff-billing
+      summary: Write off an invoice's remaining balance under the branch's small balance limit
+      description: Manager only, reason required. The limit is a branch setting on the credit policy with the org default of 2500 cents; a balance over it is refused for a manager and allowed only for the controller role. The write off posts DR bad debt expense and CR accounts receivable and is reversible once.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingWriteOffInput"
+      responses:
+        "200":
+          description: Replayed write off result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOff"
+        "201":
+          description: Invoice written off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOff"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/ar/write-offs/reverse:
+    post:
+      operationId: billingReverseWriteOff
+      tags:
+        - staff-billing
+      summary: Reverse a write off, restoring the invoice balance and the books
+      description: "Manager only, reason required, once: a write off already reversed is refused. The reversal restores the invoice's balance and status, nets the subledger rows to zero, and posts DR accounts receivable and CR bad debt expense."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingWriteOffReversalInput"
+      responses:
+        "200":
+          description: Replayed reversal result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOffReversed"
+        "201":
+          description: Write off reversed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOffReversed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/ar/credit-changes:
+    get:
+      operationId: billingListCreditChanges
+      tags:
+        - staff-billing
+      summary: List credit change requests within the caller's branch reach
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: customer_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - PENDING
+              - APPROVED
+              - APPLIED
+              - REJECTED
+      responses:
+        "200":
+          description: The credit change requests page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditChangePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: billingRequestCreditChange
+      tags:
+        - staff-billing
+      summary: Request a customer credit limit change or credit hold
+      description: A manager may lower a customer's credit limit or place a credit hold at once. A credit limit increase above the first dealer threshold requires one approver up to the second dealer threshold and two approvers above it.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreditChangeInput"
+      responses:
+        "201":
+          description: The created credit change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditChangeRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/ar/credit-changes/{id}:
+    get:
+      operationId: billingGetCreditChange
+      tags:
+        - staff-billing
+      summary: Read one credit change request by id
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The credit change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditChangeRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/ar/credit-changes/{id}/approve:
+    post:
+      operationId: billingApproveCreditChange
+      tags:
+        - staff-billing
+      summary: Approve a pending credit limit increase request
+      description: Records the caller's approval on a pending credit change request. Enforces separation of duties (the requester cannot approve their own request and the same person cannot approve twice) and the dealer's threshold role requirements.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreditChangeDecideInput"
+      responses:
+        "200":
+          description: The updated credit change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditChangeRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/ar/credit-changes/{id}/reject:
+    post:
+      operationId: billingRejectCreditChange
+      tags:
+        - staff-billing
+      summary: Reject a pending credit limit increase request
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCreditChangeDecideInput"
+      responses:
+        "200":
+          description: The rejected credit change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditChangeRequest"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4616,6 +4890,187 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/customers/{id}/jobs:
+    get:
+      operationId: customerListJobs
+      tags:
+        - staff-customer
+      summary: List a customer's job accounts
+      description: "The jobs the customer holds, oldest first. The list is fenced by the caller's own grants: a job of a branch the caller cannot reach is not in the list, and a customer the caller cannot reach is not found at all."
+      x-addition: the list of a customer's job accounts, the split's first door; no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+          - quote-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The customer's jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CustomerJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: customerCreateJob
+      tags:
+        - staff-customer
+      summary: Open a job account under a customer
+      description: "The job number is the customer's own: two customers may each hold J-1, and one customer may not hold two, so a number already in use under this customer is a 409. The job's own credit limit may never exceed the customer's, and is refused in words when it does. The job's own payment terms and credit limit are left out when the job shares the customer's, and null is not zero."
+      x-addition: the door that opens a job account under a customer; no ERP source route
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - counter-till
+          - quote-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerJobCreate"
+      responses:
+        "201":
+          description: The opened job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/customers/{id}/jobs/{jobId}:
+    get:
+      operationId: customerGetJob
+      tags:
+        - staff-customer
+      summary: Read one job account of a customer
+      description: The job's own facts. A job of another branch, a job of another customer and a job that nobody has all answer 404, never a 403 that would confirm it exists.
+      x-addition: the read of one job account under a customer; no ERP source route
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+          - quote-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: The job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: customerEditJob
+      tags:
+        - staff-customer
+      summary: Edit a job account of a customer
+      description: A field left out keeps the job's own value. An explicit null on the job's own credit limit or payment terms clears it, so the job shares the customer's again. The job's own credit limit may never exceed the customer's, and is refused in words when it does.
+      x-addition: the edit of a job account under a customer; no ERP source route
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - counter-till
+          - quote-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/JobId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerJobEdit"
+      responses:
+        "200":
+          description: The job after the edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/customers/{id}/jobs/{jobId}/close:
+    post:
+      operationId: customerCloseJob
+      tags:
+        - staff-customer
+      summary: Close a job account of a customer
+      description: "A closed job reads and reports, and it takes no new document: the close is the door every later document has to come through. A job that is already closed is a 409, because the caller asked for a close that has already happened and should be told so."
+      x-addition: the door that closes a job account under a customer; no ERP source route
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - counter-till
+          - quote-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: The closed job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/pos/sales/{id}/receipt:
     get:
       operationId: printingGetReceipt
@@ -10882,6 +11337,61 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaxReconReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/tax/worksheet:
+    get:
+      operationId: taxGetWorksheet
+      tags:
+        - staff-tax
+      summary: Read the CRA GST/HST return worksheet for a filing period
+      description: Read-only CRA GST/HST return worksheet (lines 101 through 115) for a filing period and branch scope, derived from the tax engine's document seams and the GL seam. The filing period span follows the dealer's filing_frequency setting on tax_config (QUARTERLY by default, or MONTHLY or YEARLY).
+      x-addition: "HST-1: the read-only CRA GST/HST return worksheet over the tax engine's document seams and the GL seam; no ERP source route"
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: true
+          description: The filing year
+          schema:
+            type: integer
+            format: int32
+        - name: quarter
+          in: query
+          required: false
+          description: The filing quarter (1..4) when filing_frequency is QUARTERLY
+          schema:
+            type: integer
+            format: int32
+        - name: month
+          in: query
+          required: false
+          description: The filing month (1..12) when filing_frequency is MONTHLY, or a month inside the quarter
+          schema:
+            type: integer
+            format: int32
+        - name: branch_id
+          in: query
+          required: false
+          description: Limit the worksheet to one branch
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The CRA GST/HST return worksheet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxWorksheet"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -22545,7 +23055,7 @@ paths:
         - name: Idempotency-Key
           in: header
           required: true
-          description: A key chosen once per payment press and resent unchanged on every retry of it. A re-press under the same key answers the first payment; the same key on another bill is refused.
+          description: A key chosen once per payment press and resent unchanged on every retry of it. The key is the caller's own free text of 1 to 200 characters, not necessarily a UUID (a caller may name what the payment pays); a missing or over long key is refused with a 400. A re-press under the same key answers the first payment; the same key on another bill is refused.
           schema:
             type: string
             minLength: 1
@@ -22580,7 +23090,7 @@ paths:
         - staff-purchasing
       x-addition: "W2-9a: the AP aging worklist over open vendor bills and open landed-cost payables in the dealer's house zone, tying to GL 2100; no ERP source route"
       summary: Read the AP aging worklist as of an instant
-      description: "Open accounts payable as of an instant in the dealer's house zone, absent as_of meaning now. Each vendor row carries its posted bills less supplier payments as of the instant, bucketed across the five aging buckets, and each open landed-cost payable appears on its own row marked as landed cost. A document counts from its posting journal's effective instant, the GL's own late filing rule. The aging is the subledger: it grows only by posted vendor bills and open landed-cost payables, so a 2100 credit that is neither (a MANUAL or ADJUSTMENT accrual, another module's posting) shows as a tie difference against the net credit balance of GL 2100 as of the same instant, never as an aging row."
+      description: "Open accounts payable as of an instant in the dealer's house zone, absent as_of meaning now. Each vendor row carries its posted bills less supplier payments and the vendor credits applied to them as of the instant, bucketed across the five aging buckets, each open landed-cost payable appears on its own row marked as landed cost, and a vendor credit's unapplied open shows as a negative item on its vendor's row, so the aging still ties to GL 2100. A document counts from its posting journal's effective instant, the GL's own late filing rule. The aging is the subledger: it grows only by posted vendor bills and open landed-cost payables, so a 2100 credit that is neither (a MANUAL or ADJUSTMENT accrual, another module's posting) shows as a tie difference against the net credit balance of GL 2100 as of the same instant, never as an aging row."
       x-role: requireManager
       x-access:
         surfaces:
@@ -22615,6 +23125,346 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/purchasing/vendor-credits:
+    get:
+      operationId: purchasingListVendorCredits
+      tags:
+        - staff-purchasing
+      x-addition: "W3 item 0.8: the supplier credit note list; the ERP keyed credit notes by hand"
+      summary: List vendor credits
+      description: The supplier credit notes of one branch, narrowed by vendor and status when named. A credit outside the caller's branch reach is never listed.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: vendor_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PurchasingVendorCreditStatus"
+      responses:
+        "200":
+          description: The page of vendor credits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorCreditPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: purchasingCreateVendorCredit
+      tags:
+        - staff-purchasing
+      x-addition: "W3 item 0.8: the supplier credit note entry door; the ERP keyed credit notes by hand"
+      summary: Enter a supplier credit note against a vendor
+      description: "The credit is entered DRAFT against a vendor and a branch, carrying the supplier's own credit note number (unique per vendor, the duplicate entry control), a document date (absent meaning the dealer's house day), an optional original bill or PO reference, and lines that each name the account the credit puts its cents back on: the posting rules' inventory clearing or expense account for the branch, empty meaning the inventory clearing account. Nothing is owed back until the post."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingCreateVendorCreditRequest"
+      responses:
+        "201":
+          description: The created credit with its lines and applications
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorCreditDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/purchasing/vendor-credits/{id}/post:
+    post:
+      operationId: purchasingPostVendorCredit
+      tags:
+        - staff-purchasing
+      x-addition: "W3 item 0.8: the supplier credit note post door; the ERP keyed credit notes by hand"
+      summary: Post a vendor credit
+      description: "Posts the credit's journal through the GL seam, the bill read backwards: DR the accounts payable rule's account for the branch, CR the lines' accounts. The journal is dated by the credit's own document date, a calendar day in the dealer's house zone, and is idempotent on the credit id. An unapplied credit shows in the AP aging as a negative item on the vendor's row, so the aging still ties to GL 2100."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The credit after the post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorCreditDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/purchasing/vendor-credits/{id}/applications:
+    post:
+      operationId: purchasingApplyVendorCredit
+      tags:
+        - staff-purchasing
+      x-addition: "W3 item 0.8: the door that applies a credit to the vendor's open bills or holds it on account"
+      summary: Apply a vendor credit to one of the vendor's open bills
+      description: "Nets part of a POSTED credit against one of the same vendor's open POSTED bills in the same branch. An application moves no money and writes no journal: the credit's journal already debited accounts payable and the bill's credited it, so this moves the subledger opens only, the bill's open and the credit's open together. The amount is capped at both opens as they stand under the locks. Idempotent on the required Idempotency-Key header: a re-press under the same key returns the first application and writes nothing."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: A key chosen once per application press and resent unchanged on every retry of it. A re-press under the same key answers the first application; the same key on another credit or bill is refused.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingApplyVendorCreditRequest"
+      responses:
+        "200":
+          description: The credit after the application
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorCreditDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/purchasing/payment-runs:
+    post:
+      operationId: purchasingProposePaymentRun
+      tags:
+        - staff-purchasing
+      x-addition: "W3: the payment run's propose door, the open bills due on or before a house day becoming a run's selection; the ERP keyed supplier payment batches by hand"
+      summary: Propose a payment run from the open bills due by a house day
+      description: The posted bills of one branch, due on or before the named house day (a bill with no due date falls back to its bill date), narrowed to one vendor when vendor_id is named, each at its open amount, become a DRAFT run's lines. A proposal that would select nothing is refused rather than written as an empty run. pay_date is the house day the run's payments will be dated, today's house day when omitted, and a date the books would not post on is refused here in words rather than only at the pay.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingProposePaymentRunRequest"
+      responses:
+        "201":
+          description: The proposed run with its selection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPaymentRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/PurchasingUnprocessable"
+    get:
+      operationId: purchasingListPaymentRuns
+      tags:
+        - staff-purchasing
+      x-addition: "W3: the payment run list, a worklist of cheques about to go out; the ERP keyed supplier payment batches by hand"
+      summary: List payment runs
+      description: "Branch fenced runs, newest first, optionally by status. Every door of the run is a manager door, the list included: it is a worklist of payments about to go out and every row carries the amounts on it."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PurchasingPaymentRunStatus"
+      responses:
+        "200":
+          description: The page of payment runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPaymentRunPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/purchasing/payment-runs/{id}:
+    get:
+      operationId: purchasingGetPaymentRun
+      tags:
+        - staff-purchasing
+      x-addition: "W3: the payment run document with its selection and what the pay did; the ERP keyed supplier payment batches by hand"
+      summary: Read one payment run
+      description: "The run with its lines: what the review selected (amount_cents) beside what the pay actually moved (paid_cents), or the reason a line was skipped. A run outside the caller's branch reach answers the same 404 as a missing one."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The payment run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPaymentRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: purchasingUpdatePaymentRun
+      tags:
+        - staff-purchasing
+      x-addition: "W3: the payment run's review door, whole bills off or amounts down while the run is still a proposal; the ERP keyed supplier payment batches by hand"
+      summary: Review a draft payment run
+      description: "Removes whole bills from the selection and lowers line amounts, never above the bill's open amount as it stands while the review lands. A PAID run is finished and refuses review, and a body that names nothing to change, names a bill twice, or names a bill that is not on the run is refused. A bill the run does not hold is not found, so naming another branch's bill answers without a figure. The run's pay date is judged again here: a date the books would no longer post on is refused in words, never only at the pay."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingUpdatePaymentRunRequest"
+      responses:
+        "200":
+          description: The reviewed run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPaymentRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/PurchasingUnprocessable"
+  /api/v1/purchasing/payment-runs/{id}/pay:
+    post:
+      operationId: purchasingPayPaymentRun
+      tags:
+        - staff-purchasing
+      x-addition: "W3: the payment run's pay door, every selected bill through the bill payment path under one key per bill; the ERP keyed supplier payment batches by hand"
+      summary: Pay a payment run
+      description: "Pays every still selected bill through the bill payment path, one payment per bill under the key run:<run id>:<bill id>, dated the run's pay date. Paying a run twice pays nothing twice: a PAID run answers itself, and each line's key replays its first payment. A bill paid elsewhere between the review and the pay is paid for at most its open amount, or skipped with a reason on its line. The body is empty, the run carries its own pay date."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The run after the pay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPaymentRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/purchasing/tolerance:
     get:
       operationId: purchasingGetTolerance
@@ -23169,6 +24019,36 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/landed-costs/{id}/settle:
+    post:
+      operationId: landedCostSettle
+      tags:
+        - staff-landedcost
+      summary: Pay a landed cost's carrier or broker on its terms
+      description: The payable the apply posted to AP is paid in full and leaves GL 2100 the day the cheque clears. The AP aging reads the payment from the settlement journal's effective instant, the same rule it reads a bill's payment by. Settling a settled document is an idempotent no-op.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - buying-and-stock
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The status after the call (POSTED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandedCostStatusResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/landed-costs/{id}/void:
     post:
       operationId: landedCostVoid
@@ -29230,6 +30110,14 @@ components:
       description: One platform key from the roster
       schema:
         type: string
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      description: The job account's own id, under the customer in the path
+      schema:
+        type: string
+        format: uuid
     DashboardProfileParam:
       name: profile
       in: path
@@ -29392,6 +30280,12 @@ components:
                   message:
                     type: string
                     description: 'The dollar sentence, for example "This door takes the whole balance: $93.00 is owed, $50.00 was entered."'
+    PurchasingUnprocessable:
+      description: "A well-formed body the business refuses: the propose door's answer when its filter selects no open bill, so an empty run is never written, and the answer when the pay date is one the books would not post on. The Error envelope carries the refusal in words."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   schemas:
     Error:
       type: object
@@ -31379,6 +32273,87 @@ components:
         balance_after_cents:
           type: integer
           format: int64
+    BillingWriteOffInput:
+      type: object
+      required:
+        - invoice_id
+        - reason
+        - idempotency_key
+      properties:
+        invoice_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        idempotency_key:
+          type: string
+    BillingWriteOff:
+      type: object
+      required:
+        - write_off_id
+        - invoice_id
+        - invoice_no
+        - amount_cents
+        - limit_cents
+        - replayed
+      properties:
+        write_off_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        limit_cents:
+          type: integer
+          format: int64
+        replayed:
+          type: boolean
+    BillingWriteOffReversalInput:
+      type: object
+      required:
+        - invoice_id
+        - write_off_id
+        - reason
+      properties:
+        invoice_id:
+          type: string
+          format: uuid
+        write_off_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+    BillingWriteOffReversed:
+      type: object
+      required:
+        - write_off_id
+        - invoice_id
+        - invoice_no
+        - restored_cents
+        - invoice_balance_after_cents
+        - replayed
+      properties:
+        write_off_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        restored_cents:
+          type: integer
+          format: int64
+        invoice_balance_after_cents:
+          type: integer
+          format: int64
+        replayed:
+          type: boolean
     BillingCreditApplication:
       type: object
       required:
@@ -31934,6 +32909,7 @@ components:
         - amount_cents
         - applied_cents
         - unapplied_cents
+        - on_account_cents
         - lines
         - replayed
       properties:
@@ -31953,6 +32929,10 @@ components:
         unapplied_cents:
           type: integer
           format: int64
+        on_account_cents:
+          type: integer
+          format: int64
+          description: The remainder that stayed on the customer's account as a credit (0 when the invoices took it all)
         lines:
           type: array
           items:
@@ -34015,6 +34995,172 @@ components:
         overdue_cents:
           type: integer
           format: int64
+    BillingCreditChangeInput:
+      type: object
+      required:
+        - customer_id
+        - reason
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        new_limit_cents:
+          type: integer
+          format: int64
+          minimum: 0
+        place_hold:
+          type: boolean
+        hold_kind:
+          type: string
+          enum:
+            - NSF
+            - AR_AGING
+            - CREDIT_LIMIT
+            - COD
+            - MANUAL
+        reason:
+          type: string
+          minLength: 1
+    BillingCreditChangeDecideInput:
+      type: object
+      properties:
+        note:
+          type: string
+        reason:
+          type: string
+    BillingCreditChangeRequest:
+      type: object
+      required:
+        - id
+        - customer_id
+        - change_kind
+        - previous_limit_cents
+        - delta_cents
+        - reason
+        - status
+        - required_approvals
+        - first_threshold_cents
+        - second_threshold_cents
+        - requested_by
+        - requested_at
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        change_kind:
+          type: string
+          enum:
+            - LIMIT_CHANGE
+            - HOLD
+        previous_limit_cents:
+          type: integer
+          format: int64
+        new_limit_cents:
+          type: integer
+          format: int64
+        delta_cents:
+          type: integer
+          format: int64
+        hold_kind:
+          type: string
+          enum:
+            - NSF
+            - AR_AGING
+            - CREDIT_LIMIT
+            - COD
+            - MANUAL
+        hold_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        status:
+          type: string
+          enum:
+            - PENDING
+            - APPROVED
+            - APPLIED
+            - REJECTED
+        required_approvals:
+          type: integer
+          format: int32
+        first_threshold_cents:
+          type: integer
+          format: int64
+        second_threshold_cents:
+          type: integer
+          format: int64
+        requested_by:
+          type: string
+          format: uuid
+        requested_by_role:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+        first_approved_by:
+          type: string
+          format: uuid
+        first_approved_by_role:
+          type: string
+        first_approved_at:
+          type: string
+          format: date-time
+        first_approval_note:
+          type: string
+        second_approved_by:
+          type: string
+          format: uuid
+        second_approved_by_role:
+          type: string
+        second_approved_at:
+          type: string
+          format: date-time
+        second_approval_note:
+          type: string
+        rejected_by:
+          type: string
+          format: uuid
+        rejected_by_role:
+          type: string
+        rejected_at:
+          type: string
+          format: date-time
+        rejection_reason:
+          type: string
+        applied_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    BillingCreditChangePage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingCreditChangeRequest"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
     AssistArgSpec:
       type: object
       required:
@@ -35416,6 +36562,167 @@ components:
         phone_e164:
           type: string
           description: Required to grant when no number is on file; ignored on a revocation
+    CustomerJob:
+      type: object
+      description: "One job account under a customer. A job carries its own ship to address, PO reference and contact, and may carry its own credit limit and payment terms; a job with neither shares the CUSTOMER's figures, and null is not zero. The credit limit follows the dealer's account position policy: absent entirely, never 0, for a caller the policy refuses."
+      required:
+        - job_id
+        - customer_id
+        - branch_id
+        - job_no
+        - name
+        - status
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+          description: The branch the job sits at, and the branch the staff reads are fenced by
+        job_no:
+          type: string
+          description: The job number, unique under the customer and not under the dealer
+        name:
+          type: string
+        ship_to_address:
+          type: object
+          additionalProperties: true
+          description: The job's own delivery address, kept apart from the customer's billing address
+        po_reference:
+          type: string
+        contact_name:
+          type: string
+        contact_email:
+          type: string
+        contact_phone:
+          type: string
+        credit_limit_cents:
+          type: integer
+          format: int64
+          description: The job's own credit ceiling. Absent when the job shares the customer's, and absent for a caller the account position policy refuses.
+        terms_days:
+          type: integer
+          format: int32
+          description: The job's own payment terms. Absent when the job shares the customer's.
+        effective_terms_days:
+          type: integer
+          format: int32
+          description: "The terms the job is dated by: its own when it carries any, the customer's when it does not."
+        status:
+          type: string
+          enum:
+            - OPEN
+            - CLOSED
+        substantial_performance_date:
+          type: string
+          format: date
+          description: The job's own lien date, kept for wave 3 JA-2
+        last_supply_date:
+          type: string
+          format: date
+          description: The job's own last supply date, kept for wave 3 JA-2
+        created_by:
+          type: string
+          description: The ERP staff member who opened the job
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CustomerJobCreate:
+      type: object
+      description: The job's own facts. The job number is the customer's own and is unique under it. The credit limit and the payment terms are left out when the job shares the customer's; null is not zero, and a job's own credit limit may never exceed the customer's.
+      required:
+        - job_no
+        - name
+      properties:
+        job_no:
+          type: string
+        name:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+          description: "The branch the job sits at. Only a customer with no home branch needs it: a job under a customer homed at a branch sits at that branch."
+        ship_to_address:
+          type: object
+          additionalProperties: true
+        po_reference:
+          type: string
+        contact_name:
+          type: string
+        contact_email:
+          type: string
+        contact_phone:
+          type: string
+        credit_limit_cents:
+          type:
+            - integer
+            - "null"
+          format: int64
+          minimum: 0
+          description: The job's own credit ceiling; absent or null means the customer's own
+        terms_days:
+          type:
+            - integer
+            - "null"
+          format: int32
+          minimum: 0
+          description: The job's own payment terms; absent or null means the customer's own
+        substantial_performance_date:
+          type: string
+          format: date
+        last_supply_date:
+          type: string
+          format: date
+    CustomerJobEdit:
+      type: object
+      description: A change to a job the customer already holds. A field left out keeps the job's own value, and an explicit null on the job's own credit limit or payment terms clears it, so the job shares the customer's again.
+      properties:
+        name:
+          type: string
+        ship_to_address:
+          type: object
+          additionalProperties: true
+        po_reference:
+          type: string
+        contact_name:
+          type: string
+        contact_email:
+          type: string
+        contact_phone:
+          type: string
+        credit_limit_cents:
+          type:
+            - integer
+            - "null"
+          format: int64
+          minimum: 0
+          description: The job's own credit ceiling; null clears it back to the customer's own
+        terms_days:
+          type:
+            - integer
+            - "null"
+          format: int32
+          minimum: 0
+          description: The job's own payment terms; null clears it back to the customer's own
+        substantial_performance_date:
+          type:
+            - string
+            - "null"
+          format: date
+          description: The job's own lien date; null clears it
+        last_supply_date:
+          type:
+            - string
+            - "null"
+          format: date
+          description: The job's own last supply date; null clears it
     PrintingJob:
       type: object
       description: One row of the print queue
@@ -40984,6 +42291,13 @@ components:
           enum:
             - INVOICE_TOTAL
             - PER_LINE
+        filing_frequency:
+          type: string
+          enum:
+            - QUARTERLY
+            - MONTHLY
+            - YEARLY
+          description: The dealer's GST/HST return filing period setting (QUARTERLY by default)
         avalara_enabled:
           type: boolean
           description: Dormant stub; kept for a later wave
@@ -41180,6 +42494,141 @@ components:
           description: The GL movement minus the documents' net (collected less returns less input tax); zero means tied out
         tied_out:
           type: boolean
+    TaxWorksheetLine:
+      type: object
+      description: One CRA GST/HST return line on the worksheet
+      required:
+        - line_no
+        - label
+        - amount_cents
+        - entered_by_hand
+      properties:
+        line_no:
+          type: string
+        label:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        entered_by_hand:
+          type: boolean
+        note:
+          type: string
+    TaxWorksheet:
+      type: object
+      description: Read-only CRA GST/HST return worksheet (lines 101 through 115) for a filing period and branch scope, derived from the tax engine's document seams and the GL seam.
+      required:
+        - year
+        - filing_frequency
+        - from_date
+        - to_date
+        - line_101_sales_cents
+        - line_103_collected_cents
+        - line_104_adjustments_cents
+        - line_105_total_hst_cents
+        - line_106_itcs_cents
+        - line_107_itc_adjustments_cents
+        - line_108_total_itcs_cents
+        - line_109_net_tax_cents
+        - line_110_instalments_cents
+        - line_111_rebates_cents
+        - line_112_total_other_credits_cents
+        - line_113_balance_cents
+        - line_114_refund_claimed_cents
+        - line_115_amount_owing_cents
+        - invoice_hst_cents
+        - return_tax_cents
+        - gl_payable_cents
+        - variance_cents
+        - tied_out
+        - manual_entry_note
+        - lines
+      properties:
+        year:
+          type: integer
+          format: int32
+        filing_frequency:
+          type: string
+          enum:
+            - QUARTERLY
+            - MONTHLY
+            - YEARLY
+        quarter:
+          type: integer
+          format: int32
+        month:
+          type: integer
+          format: int32
+        from_date:
+          type: string
+          format: date
+        to_date:
+          type: string
+          format: date
+        branch_id:
+          type: string
+        line_101_sales_cents:
+          type: integer
+          format: int64
+        line_103_collected_cents:
+          type: integer
+          format: int64
+        line_104_adjustments_cents:
+          type: integer
+          format: int64
+        line_105_total_hst_cents:
+          type: integer
+          format: int64
+        line_106_itcs_cents:
+          type: integer
+          format: int64
+        line_107_itc_adjustments_cents:
+          type: integer
+          format: int64
+        line_108_total_itcs_cents:
+          type: integer
+          format: int64
+        line_109_net_tax_cents:
+          type: integer
+          format: int64
+        line_110_instalments_cents:
+          type: integer
+          format: int64
+        line_111_rebates_cents:
+          type: integer
+          format: int64
+        line_112_total_other_credits_cents:
+          type: integer
+          format: int64
+        line_113_balance_cents:
+          type: integer
+          format: int64
+        line_114_refund_claimed_cents:
+          type: integer
+          format: int64
+        line_115_amount_owing_cents:
+          type: integer
+          format: int64
+        invoice_hst_cents:
+          type: integer
+          format: int64
+        return_tax_cents:
+          type: integer
+          format: int64
+        gl_payable_cents:
+          type: integer
+          format: int64
+        variance_cents:
+          type: integer
+          format: int64
+        tied_out:
+          type: boolean
+        manual_entry_note:
+          type: string
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxWorksheetLine"
     InventoryStockMove:
       type: object
       description: One immutable ledger line; corrections are compensating moves
@@ -53932,6 +55381,214 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/PurchasingInstalment"
+    PurchasingVendorCreditStatus:
+      type: string
+      description: The vendor credit document status
+      enum:
+        - DRAFT
+        - POSTED
+    PurchasingVendorCredit:
+      type: object
+      description: A supplier credit note header. total_cents is the positive magnitude the supplier wrote; the sign lives in the journal and in the AP aging's negative item, never here. applied_cents is what the credit's applications have consumed and open_cents what is still held on account.
+      required:
+        - id
+        - credit_no
+        - vendor_id
+        - vendor_name
+        - branch_id
+        - status
+        - credit_date
+        - total_cents
+        - applied_cents
+        - open_cents
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        credit_no:
+          type: string
+          description: The supplier's own credit note number
+        vendor_id:
+          type: string
+          format: uuid
+        vendor_name:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+        bill_id:
+          type: string
+          format: uuid
+          description: The optional original bill the credit was entered against
+        bill_no:
+          type: string
+        po_id:
+          type: string
+          format: uuid
+        po_no:
+          type: string
+        status:
+          $ref: "#/components/schemas/PurchasingVendorCreditStatus"
+        credit_date:
+          type: string
+        total_cents:
+          type: integer
+          format: int64
+        applied_cents:
+          type: integer
+          format: int64
+        open_cents:
+          type: integer
+          format: int64
+        gl_journal_id:
+          type: string
+          format: uuid
+        posted_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    PurchasingVendorCreditLine:
+      type: object
+      description: One line of the credit, the account it puts its cents back on
+      required:
+        - line_no
+        - account_code
+        - description
+        - amount_cents
+      properties:
+        line_no:
+          type: integer
+          format: int32
+        account_code:
+          type: string
+          description: The posting rules' inventory clearing or expense account for the branch
+        description:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+    PurchasingVendorCreditApplication:
+      type: object
+      description: One netting of the credit against a bill; it moves no money and writes no journal
+      required:
+        - id
+        - bill_id
+        - bill_no
+        - amount_cents
+        - applied_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        bill_id:
+          type: string
+          format: uuid
+        bill_no:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        applied_at:
+          type: string
+          format: date-time
+    PurchasingVendorCreditDetail:
+      description: A vendor credit with its lines and applications
+      allOf:
+        - $ref: "#/components/schemas/PurchasingVendorCredit"
+        - type: object
+          required:
+            - lines
+            - applications
+          properties:
+            lines:
+              type: array
+              items:
+                $ref: "#/components/schemas/PurchasingVendorCreditLine"
+            applications:
+              type: array
+              items:
+                $ref: "#/components/schemas/PurchasingVendorCreditApplication"
+    PurchasingVendorCreditPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PurchasingVendorCredit"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
+    PurchasingCreateVendorCreditRequest:
+      type: object
+      required:
+        - vendor_id
+        - branch_id
+        - credit_no
+        - lines
+      properties:
+        vendor_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        credit_no:
+          type: string
+          description: The supplier's own credit note number, unique per vendor
+        bill_id:
+          type: string
+          format: uuid
+          description: The optional original bill; it must be the same vendor's bill at the same branch
+        po_id:
+          type: string
+          format: uuid
+          description: The optional purchase order reference; it must be the same vendor's order at the same branch
+        credit_date:
+          type: string
+          description: The document date, YYYY-MM-DD; absent means the dealer's house day
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PurchasingVendorCreditLineRequest"
+    PurchasingVendorCreditLineRequest:
+      type: object
+      description: One line of the credit the caller is entering
+      required:
+        - amount_cents
+      properties:
+        account_code:
+          type: string
+          description: Empty means the posting rules' inventory clearing account for the branch
+        description:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+    PurchasingApplyVendorCreditRequest:
+      type: object
+      required:
+        - bill_id
+        - amount_cents
+      properties:
+        bill_id:
+          type: string
+          format: uuid
+        amount_cents:
+          type: integer
+          format: int64
+          description: The cents to net; capped at the credit's open and the bill's open
     PurchasingTolerance:
       type: object
       description: The resolved three-way-match tolerance for a branch (the branch row, else the org default)
@@ -54709,6 +56366,226 @@ components:
           type:
             - string
             - "null"
+    PurchasingPaymentRunStatus:
+      type: string
+      description: The payment run lifecycle (migration 0454 CHECK)
+      enum:
+        - DRAFT
+        - PAID
+    PurchasingPaymentRunLineStatus:
+      type: string
+      description: One line's pay outcome (migration 0454 CHECK)
+      enum:
+        - SELECTED
+        - PAID
+        - SKIPPED
+    PurchasingPaymentRunLine:
+      type: object
+      description: One selected bill on a run, the reviewed selection beside what actually moved
+      required:
+        - id
+        - seq
+        - bill_id
+        - amount_cents
+        - status
+        - paid_cents
+      properties:
+        id:
+          type: string
+          format: uuid
+        seq:
+          type: integer
+          format: int32
+        bill_id:
+          type: string
+          format: uuid
+        bill_no:
+          type: string
+        vendor_id:
+          type: string
+          format: uuid
+        vendor_name:
+          type: string
+        due_date:
+          type: string
+          format: date
+        amount_cents:
+          type: integer
+          format: int64
+          description: The reviewed selection, at most the bill's open amount when it was lowered
+        status:
+          $ref: "#/components/schemas/PurchasingPaymentRunLineStatus"
+        paid_cents:
+          type: integer
+          format: int64
+          description: What the pay actually moved, at most amount_cents; zero on a skipped line
+        skip_reason:
+          type: string
+          description: Why a SKIPPED line was skipped (paid elsewhere, voided), in words
+    PurchasingPaymentRun:
+      type: object
+      description: "The payment run document: the proposal's filter, the reviewed selection, and what the pay did. Every payment on it went through the bill payment path under the line's own key."
+      required:
+        - id
+        - branch_id
+        - status
+        - due_on
+        - pay_date
+        - total_cents
+        - paid_cents
+        - created_at
+        - lines
+      properties:
+        id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/PurchasingPaymentRunStatus"
+        due_on:
+          type: string
+          format: date
+          description: The house day the proposal selected bills due on or before
+        vendor_id:
+          type: string
+          format: uuid
+          description: The proposal's vendor filter, absent when the run spans the branch's vendors
+        pay_date:
+          type: string
+          format: date
+          description: The house day every payment the run writes is dated
+        total_cents:
+          type: integer
+          format: int64
+          description: The selection's total, the lines' amount_cents summed
+        paid_cents:
+          type: integer
+          format: int64
+          description: What the pay moved, the lines' paid_cents summed
+        paid_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: When the run paid; null while it is a draft
+        created_at:
+          type: string
+          format: date-time
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PurchasingPaymentRunLine"
+    PurchasingPaymentRunSummary:
+      type: object
+      description: One run of the list, the run without its lines
+      required:
+        - id
+        - branch_id
+        - status
+        - due_on
+        - pay_date
+        - line_count
+        - total_cents
+        - paid_cents
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/PurchasingPaymentRunStatus"
+        due_on:
+          type: string
+          format: date
+        vendor_id:
+          type: string
+          format: uuid
+        pay_date:
+          type: string
+          format: date
+        line_count:
+          type: integer
+          format: int32
+        total_cents:
+          type: integer
+          format: int64
+        paid_cents:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+    PurchasingPaymentRunPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PurchasingPaymentRunSummary"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
+    PurchasingProposePaymentRunRequest:
+      type: object
+      required:
+        - branch_id
+        - due_on
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+          description: The run's branch, a payment run being one branch's cheques
+        due_on:
+          type: string
+          format: date
+          description: The house day the run selects bills due on or before
+        vendor_id:
+          type: string
+          format: uuid
+          description: Narrows the proposal to one vendor; absent means every vendor of the branch
+        pay_date:
+          type: string
+          format: date
+          description: The house day the payments will be dated; absent means today's house day
+    PurchasingPaymentRunLineAmount:
+      type: object
+      required:
+        - bill_id
+        - amount_cents
+      properties:
+        bill_id:
+          type: string
+          format: uuid
+        amount_cents:
+          type: integer
+          format: int64
+          description: The lowered selection, positive and never above the bill's open amount
+    PurchasingUpdatePaymentRunRequest:
+      type: object
+      description: The review of a draft run; at least one of the two lists must name something
+      properties:
+        remove:
+          type: array
+          description: Whole bills to take off the run
+          items:
+            type: string
+            format: uuid
+        lower:
+          type: array
+          description: Lines to lower, each never above its bill's open amount
+          items:
+            $ref: "#/components/schemas/PurchasingPaymentRunLineAmount"
     LandedCost:
       type: object
       description: "The landed-cost header. All cad figures are CAD: the conversion of the document currency happens at capture, so the GL and the inventory valuation only ever see CAD."
@@ -54738,6 +56615,10 @@ components:
           format: uuid
         po_ref:
           type: string
+        payee_vendor_id:
+          type: string
+          format: uuid
+          description: The freight carrier or customs broker the charge is owed to, so the AP aging labels the payable with the vendor's name. Absent on rows written before the header named its payee, whose label falls back to the PO reference.
         branch_id:
           type: string
           format: uuid
@@ -54790,6 +56671,10 @@ components:
           format: uuid
         po_ref:
           type: string
+        payee_vendor_id:
+          type: string
+          format: uuid
+          description: The freight carrier or customs broker the charge is owed to; the aging labels the payable with the vendor's name
         branch_id:
           type: string
           format: uuid
