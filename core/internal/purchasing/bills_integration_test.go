@@ -515,7 +515,7 @@ func assertBalanced(t *testing.T, legs map[string][2]int64) {
 	}
 }
 
-// TestIntegration_Bill_SupplyKindAndMigrationBackfill proves the 0467 supply_kind column on
+// TestIntegration_Bill_SupplyKindAndMigrationBackfill proves the 0468 supply_kind column on
 // purchasing_bill_lines: PO matched lines default to GOODS, lines with no PO take the clerk's
 // choice (GOODS or SERVICES) or stay NULL (unmarked) when omitted, and the migration backfill
 // marks existing po_line_id IS NOT NULL rows GOODS while leaving po_line_id IS NULL rows NULL.
@@ -571,7 +571,7 @@ func TestIntegration_Bill_SupplyKindAndMigrationBackfill(t *testing.T) {
 		t.Fatalf("line 4 (no PO, nothing chosen) supply_kind = %q, want empty (unmarked)", bill.Lines[3].SupplyKind)
 	}
 
-	// Prove the 0467 migration backfill inside a rolled-back transaction over a temp table named
+	// Prove the 0468 migration backfill inside a rolled-back transaction over a temp table named
 	// purchasing_bill_lines (in pg_temp, shadowing public.purchasing_bill_lines), so the shared
 	// database table is never locked or rewritten.
 	tx, err := h.pool.Begin(h.ctx)
@@ -596,12 +596,12 @@ func TestIntegration_Bill_SupplyKindAndMigrationBackfill(t *testing.T) {
 		t.Fatalf("seed temp purchasing_bill_lines: %v", err)
 	}
 
-	migSQL, err := os.ReadFile("../../db/migrations/0467_bill_line_supply_kind.sql")
+	migSQL, err := os.ReadFile("../../db/migrations/0468_bill_line_supply_kind.sql")
 	if err != nil {
-		t.Fatalf("read 0467 migration: %v", err)
+		t.Fatalf("read 0468 migration: %v", err)
 	}
 	if _, err := tx.Exec(h.ctx, string(migSQL)); err != nil {
-		t.Fatalf("apply 0467 migration on temp table: %v", err)
+		t.Fatalf("apply 0468 migration on temp table: %v", err)
 	}
 
 	var poKind *string
@@ -611,7 +611,7 @@ func TestIntegration_Bill_SupplyKindAndMigrationBackfill(t *testing.T) {
 		t.Fatalf("read backfilled PO line: %v", err)
 	}
 	if poKind == nil || *poKind != SupplyKindGoods {
-		t.Fatalf("after 0467 backfill, PO line supply_kind = %v, want %q", poKind, SupplyKindGoods)
+		t.Fatalf("after 0468 backfill, PO line supply_kind = %v, want %q", poKind, SupplyKindGoods)
 	}
 
 	var noPOKind *string
@@ -621,7 +621,7 @@ func TestIntegration_Bill_SupplyKindAndMigrationBackfill(t *testing.T) {
 		t.Fatalf("read backfilled no-PO line: %v", err)
 	}
 	if noPOKind != nil {
-		t.Fatalf("after 0467 backfill, no-PO line supply_kind = %q, want NULL", *noPOKind)
+		t.Fatalf("after 0468 backfill, no-PO line supply_kind = %q, want NULL", *noPOKind)
 	}
 
 	// Verify the shared public.purchasing_bill_lines table took no DDL lock from the backfill check.

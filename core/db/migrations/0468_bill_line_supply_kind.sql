@@ -1,4 +1,4 @@
--- 0467_bill_line_supply_kind.sql
+-- 0468_bill_line_supply_kind.sql
 --
 -- Marks each purchasing bill line as goods or services for the CRA T5018 Statement of Contract
 -- Payments. A PO matched line is goods received against a purchase order, so existing rows with

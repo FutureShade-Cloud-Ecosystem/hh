@@ -49,7 +49,7 @@ const (
 	BillVoid   = "VOID"
 )
 
-// Bill line supply kinds for the CRA T5018 Statement of Contract Payments (migration 0467).
+// Bill line supply kinds for the CRA T5018 Statement of Contract Payments (migration 0468).
 // An empty string means the line is unmarked (NULL in purchasing_bill_lines.supply_kind).
 const (
 	SupplyKindGoods    = "GOODS"
