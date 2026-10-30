@@ -28,6 +28,9 @@ async function shoot(page: Page, name: string, theme: string, width: number): Pr
 async function openVendor(page: Page): Promise<void> {
   await page.locator("[data-vendor-row]").first().locator("button").first().click();
   await expect(page.locator("[data-vendor-panel]")).toBeVisible();
+  const detailsTab = await page.locator("[data-vendor-panel] nav.tabs").getByRole("button", { name: "Details" }).boundingBox();
+  const codesTab = await page.locator("[data-vendor-panel] nav.tabs").getByRole("button", { name: "Vendor codes" }).boundingBox();
+  expect(Math.abs((detailsTab?.y ?? 0) - (codesTab?.y ?? 999))).toBeLessThan(5);
 }
 
 for (const size of SIZES) {
@@ -97,6 +100,10 @@ for (const size of SIZES) {
       }
       await page.locator("[data-bill-no-field]").fill("INV-9052");
       await page.locator("[data-extra-desc]").fill("Subcontractor grading");
+      if (size.width >= 1280) {
+        const descBox = await page.locator("[data-extra-desc]").boundingBox();
+        expect(descBox?.width ?? 0).toBeGreaterThanOrEqual(260);
+      }
       await page.locator("[data-extra-qty]").fill("1");
       await page.locator("[data-extra-cost]").fill("480.00");
       const group = page.getByRole("group", { name: "Goods or services" });
