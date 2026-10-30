@@ -316,6 +316,10 @@ func TestFinanceResetGuardAllowsSQLStandardFunctionBodies(t *testing.T) {
 	for _, dangerous := range []string{
 		"CREATE FUNCTION public.h() RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT 1; END;\nCOMMIT;\n",
 		"CREATE FUNCTION public.h() RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT 1; END;\n\\c other\n",
+		// S15 on PR 726: psql reads BEGIN ATOMIC as a body only after CREATE FUNCTION or PROCEDURE.
+		// Anywhere else its semicolons end statements, so the COMMIT here is a statement of its own.
+		"SELECT 'x' AS begin_atomic_bait, 1 FROM (SELECT 1) AS s WHERE true; SELECT BEGIN ATOMIC;\nCOMMIT;\nEND;\n",
+		"SELECT 1 AS BEGIN, 2 AS ATOMIC;\nCOMMIT;\nEND;\n",
 	} {
 		if err := financeResetTransactionSafe([]byte(dangerous)); err == nil {
 			t.Fatalf("a statement after the SQL standard function body was accepted: %q", dangerous)

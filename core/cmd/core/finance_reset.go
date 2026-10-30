@@ -620,12 +620,18 @@ func financeResetStatements(dump []byte) ([]string, error) {
 	// never stands first.
 	beginAtomic := 0
 	atBodyStart := false
+	// head holds the first words of the statement being read: psql opens a SQL
+	// standard body only after CREATE [OR REPLACE] FUNCTION or PROCEDURE, so a
+	// BEGIN ATOMIC anywhere else is plain words and its semicolons still end
+	// the statement (S15 on PR 726).
+	var head []string
 
 	flush := func() {
 		if norm := financeResetNormaliseStatement(buf.String()); norm != "" {
 			statements = append(statements, norm)
 		}
 		buf.Reset()
+		head = head[:0]
 	}
 
 	// endWord settles the word that ends at the boundary byte the loop is
@@ -637,7 +643,10 @@ func financeResetStatements(dump []byte) ([]string, error) {
 		}
 		w := string(word)
 		word = word[:0]
-		if prevWord == "BEGIN" && w == "ATOMIC" {
+		if beginAtomic == 0 && len(head) < 4 {
+			head = append(head, w)
+		}
+		if prevWord == "BEGIN" && w == "ATOMIC" && (beginAtomic > 0 || financeResetRoutineHead(head)) {
 			beginAtomic++
 			atBodyStart = true
 			prevWord = w
@@ -1101,4 +1110,16 @@ func firstLine(text, dsn string) string {
 		line = line[:300]
 	}
 	return line
+}
+
+// financeResetRoutineHead answers whether a statement's first words create a
+// function or a procedure, the only statements psql reads a SQL standard body
+// (BEGIN ATOMIC ... END) in: CREATE FUNCTION, CREATE PROCEDURE, and both with
+// OR REPLACE.
+func financeResetRoutineHead(head []string) bool {
+	if len(head) >= 2 && head[0] == "CREATE" && (head[1] == "FUNCTION" || head[1] == "PROCEDURE") {
+		return true
+	}
+	return len(head) >= 4 && head[0] == "CREATE" && head[1] == "OR" && head[2] == "REPLACE" &&
+		(head[3] == "FUNCTION" || head[3] == "PROCEDURE")
 }
