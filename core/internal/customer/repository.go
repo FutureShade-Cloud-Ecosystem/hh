@@ -93,10 +93,44 @@ func scanContact(row interface {
 	return c, nil
 }
 
+type callerTxKey struct{}
+
+// WithCallerTx carries a caller's open pgx.Tx in context so customer reads and credit limit
+// writes participate in the caller's transaction without opening a second pool connection.
+func WithCallerTx(ctx context.Context, tx pgx.Tx) context.Context {
+	if tx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, callerTxKey{}, tx)
+}
+
+func callerTxFrom(ctx context.Context) pgx.Tx {
+	if ctx == nil {
+		return nil
+	}
+	tx, _ := ctx.Value(callerTxKey{}).(pgx.Tx)
+	return tx
+}
+
 // ResolveAccount loads the account facts for one customer id. Account.BalanceCents
 // is left at 0 here (the BFF composes it from billing.OpenBalanceCents); this module
-// does not read customer_transactions.
+// does not read customer_transactions. When a caller transaction is carried on ctx
+// (WithCallerTx), the read locks the customer counter and row FOR UPDATE on that tx.
 func (r *Repository) ResolveAccount(ctx context.Context, customerID string) (Account, error) {
+	if tx := callerTxFrom(ctx); tx != nil {
+		if err := LockCustomersSeqTx(ctx, tx); err != nil {
+			return Account{}, err
+		}
+		q := fmt.Sprintf("SELECT %s FROM customers WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", accountColumns)
+		a, err := scanAccount(tx.QueryRow(ctx, q, customerID))
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Account{}, ErrNotFound
+			}
+			return Account{}, fmt.Errorf("resolve account %q: %w", customerID, err)
+		}
+		return a, nil
+	}
 	if r.pool == nil {
 		return Account{}, errNoDB
 	}
@@ -290,6 +324,61 @@ func (r *Repository) UpdateBillingAddress(ctx context.Context, customerID string
 		return Account{}, fmt.Errorf("update billing_address for %q: %w", customerID, err)
 	}
 	return r.ResolveAccount(ctx, customerID)
+}
+
+// UpdateCreditLimit overwrites a customer's credit_limit_cents in a counter-first transaction
+// (LockCustomersSeqTx before the customer row lock, matching UpdateBillingAddress) and returns
+// the previous credit limit in cents. When a caller transaction is carried on ctx (WithCallerTx),
+// the counter lock, row lock, and update run on that transaction and commit with it.
+func (r *Repository) UpdateCreditLimit(ctx context.Context, customerID string, newLimitCents int64) (int64, error) {
+	tx := callerTxFrom(ctx)
+	ownTx := tx == nil
+	if ownTx {
+		if r.pool == nil {
+			return 0, errNoDB
+		}
+		var err error
+		tx, err = r.pool.Begin(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("update credit_limit_cents for %q: %w", customerID, err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+	}
+	if err := LockCustomersSeqTx(ctx, tx); err != nil {
+		return 0, err
+	}
+	var prev int64
+	if err := tx.QueryRow(ctx,
+		`SELECT credit_limit_cents FROM customers WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+		customerID).Scan(&prev); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "22P02" {
+			return 0, ErrNotFound
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("read credit_limit_cents for %q: %w", customerID, err)
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE customers SET credit_limit_cents = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL`,
+		customerID, newLimitCents)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "22P02" {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("update credit_limit_cents for %q: %w", customerID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return 0, ErrNotFound
+	}
+	if ownTx {
+		if err := tx.Commit(ctx); err != nil {
+			return 0, fmt.Errorf("commit credit_limit_cents for %q: %w", customerID, err)
+		}
+	}
+	return prev, nil
 }
 
 // orEmptyObject maps a nil address to a non-nil empty map so it serializes as {} (never

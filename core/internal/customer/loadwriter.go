@@ -206,8 +206,13 @@ func (w CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write)
 		if err != nil {
 			return "", fmt.Errorf("customer: load write: %w", err)
 		}
-		if !inserted && in.Attached != nil {
-			in.Attached()
+		if !inserted {
+			if err := rehomeCustomerJobsTx(ctx, tx, id, homeBranch); err != nil {
+				return "", err
+			}
+			if in.Attached != nil {
+				in.Attached()
+			}
 		}
 		return id, nil
 	}
@@ -277,7 +282,28 @@ func (w CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write)
 	if err != nil {
 		return "", fmt.Errorf("customer: load update: %w", err)
 	}
+	if err := rehomeCustomerJobsTx(ctx, tx, id, homeBranch); err != nil {
+		return "", err
+	}
 	return id, nil
+}
+
+// rehomeCustomerJobsTx moves a homed customer's open and closed jobs to the
+// customer's new home branch inside the same transaction. An unhomed customer's
+// jobs name their own branch and stay where they sit.
+func rehomeCustomerJobsTx(ctx context.Context, tx pgx.Tx, customerID, homeBranch string) error {
+	if homeBranch == "" {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE customer_jobs
+		   SET branch_id = $2::uuid, updated_at = now()
+		 WHERE customer_id = $1::uuid
+		   AND branch_id IS DISTINCT FROM $2::uuid`,
+		customerID, homeBranch); err != nil {
+		return fmt.Errorf("customer: re-home jobs: %w", err)
+	}
+	return nil
 }
 
 // orgMismatch is the refusal for a row another org owns: the load never

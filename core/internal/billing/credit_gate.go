@@ -99,6 +99,13 @@ type CreditPolicy struct {
 	LimitToleranceCents int64  `json:"limit_tolerance_cents"`
 	CODEnforced         bool   `json:"cod_enforced"`
 	AutoHoldEnabled     bool   `json:"auto_hold_enabled"`
+	// IncreaseFirstThresholdCents and IncreaseSecondThresholdCents are the per-dealer credit limit
+	// increase approval thresholds (0461). An increase above IncreaseFirstThresholdCents (default 0)
+	// up to IncreaseSecondThresholdCents (default 2500000, $25,000.00) needs one approver (branch
+	// manager or Controller); an increase above IncreaseSecondThresholdCents needs a second approver
+	// (Controller or General Manager).
+	IncreaseFirstThresholdCents  int64 `json:"increase_first_threshold_cents"`
+	IncreaseSecondThresholdCents int64 `json:"increase_second_threshold_cents"`
 	// WriteOffLimitCents is the branch's small balance write off limit (0454): the largest balance a
 	// manager may write off at this branch, the org default (2500, $25.00) when the branch carries
 	// no row of its own. Only the controller passes it.
