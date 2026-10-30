@@ -154,8 +154,8 @@ func t5018YearWindow(year int, zone houseday.Zone) (time.Time, time.Time, error)
 // marked it a subcontractor, not because a payment happened to exist; a vendor with no payments is
 // a line with a zero on it, and dropping the line would hide a contractor the dealer still owes.
 //
-// The payments are the PAID instalments, the ones PayBill wrote, and the branch fence sits in the
-// subquery beside the year, so a branch the caller cannot see contributes nothing.
+// The payments are the PAID instalments, the ones PayBill wrote, each at the cash that left the bank, and the branch
+// fence sits in the payments query beside the year, so a branch the caller cannot see contributes nothing.
 func (r *Repository) T5018Report(ctx context.Context, orgID string, start, end time.Time, reach BranchReach) ([]T5018Row, error) {
 	if r == nil || r.pool == nil {
 		return nil, errNoDB
@@ -164,25 +164,52 @@ func (r *Repository) T5018Report(ctx context.Context, orgID string, start, end t
 	if branchIDs == nil {
 		branchIDs = []string{}
 	}
+	// The cash that left the bank, per PAID instalment, summed in Go: a foreign bill's instalment
+	// holds the CAD it cleared at the BILL's rate, so its cash is the payment's own amount at the
+	// payment's own rate, through the same half to even rounding PayBill credits 1000 with. A CAD
+	// bill's instalment is its cash already.
+	payRows, err := r.pool.Query(ctx, `
+		SELECT b.vendor_id::text, b.currency::text, i.amount_cents, COALESCE(i.doc_amount_cents, 0),
+		       round(COALESCE(i.fx_rate, 1) * 1000000)::bigint
+		  FROM purchasing_bill_instalments i
+		  JOIN purchasing_bills b ON b.id = i.bill_id
+		  JOIN vendors pv ON pv.id = b.vendor_id
+		 WHERE pv.org_id = $1::uuid
+		   AND i.status = 'PAID'
+		   AND i.paid_at >= $2::timestamptz
+		   AND i.paid_at <  $3::timestamptz
+		   AND ($4::boolean OR b.branch_id = ANY($5::uuid[]))`,
+		orgID, start, end, reach.Global, branchIDs)
+	if err != nil {
+		return nil, fmt.Errorf("purchasing: the T5018 report: %w", err)
+	}
+	paid := map[string]int64{}
+	for payRows.Next() {
+		var vendorID, currency string
+		var amountCents, docCents, rateMicros int64
+		if err := payRows.Scan(&vendorID, &currency, &amountCents, &docCents, &rateMicros); err != nil {
+			payRows.Close()
+			return nil, fmt.Errorf("purchasing: the T5018 report: %w", err)
+		}
+		cash := amountCents
+		if currency != "CAD" {
+			cash = proRataHalfToEven(docCents, rateMicros, 1_000_000)
+		}
+		paid[vendorID] += cash
+	}
+	payRows.Close()
+	if err := payRows.Err(); err != nil {
+		return nil, fmt.Errorf("purchasing: the T5018 report: %w", err)
+	}
+
 	rows, err := r.pool.Query(ctx, `
-		SELECT v.id::text, v.vendor_no::text, v.name, COALESCE(v.business_number, ''),
-		       COALESCE(p.paid_cents, 0)
+		SELECT v.id::text, v.vendor_no::text, v.name, COALESCE(v.business_number, '')
 		  FROM vendors v
-		  LEFT JOIN (
-		       SELECT b.vendor_id, SUM(i.amount_cents) AS paid_cents
-		         FROM purchasing_bill_instalments i
-		         JOIN purchasing_bills b ON b.id = i.bill_id
-		        WHERE i.status = 'PAID'
-		          AND i.paid_at >= $2::timestamptz
-		          AND i.paid_at <  $3::timestamptz
-		          AND ($4::boolean OR b.branch_id = ANY($5::uuid[]))
-		        GROUP BY b.vendor_id
-		  ) p ON p.vendor_id = v.id
 		 WHERE v.org_id = $1::uuid
 		   AND v.is_t5018_subcontractor
 		   AND v.deleted_at IS NULL
 		 ORDER BY v.name ASC, v.id ASC`,
-		orgID, start, end, reach.Global, branchIDs)
+		orgID)
 	if err != nil {
 		return nil, fmt.Errorf("purchasing: the T5018 report: %w", err)
 	}
@@ -191,9 +218,10 @@ func (r *Repository) T5018Report(ctx context.Context, orgID string, start, end t
 	out := make([]T5018Row, 0)
 	for rows.Next() {
 		var row T5018Row
-		if err := rows.Scan(&row.VendorID, &row.VendorNo, &row.Name, &row.BusinessNumber, &row.PaidCents); err != nil {
+		if err := rows.Scan(&row.VendorID, &row.VendorNo, &row.Name, &row.BusinessNumber); err != nil {
 			return nil, fmt.Errorf("purchasing: the T5018 report: %w", err)
 		}
+		row.PaidCents = paid[row.VendorID]
 		row.BusinessNumberMissing = strings.TrimSpace(row.BusinessNumber) == ""
 		out = append(out, row)
 	}
