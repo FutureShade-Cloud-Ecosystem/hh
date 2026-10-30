@@ -137,14 +137,17 @@ reads a green gate as more than it is:
 
 - **The value leg.** A value is parsed into its terms, not searched. The fill,
   the ink and the edge must BE the grey token; no other colour may ride beside
-  them, and no image layer rides beside them either, so a disabled control
-  cannot paint an image. A brand colour is refused in EVERY declaration of a
-  disabled rule, whatever the property, so a brand edge in a shorthand, a
-  brand glyph in an svg's `fill`, a brand accent and a brand shadow are all
-  named. LIMIT: the brand refusal reads the accent family, the brand family,
-  the contractor alias of the brand family (`--cbrand`, `--cbrand-on`) and the
-  till's stone amber. A brand token outside those families (the quote blue
-  family, a numbered brand token) is not refused by that leg.
+  them, and no image layer rides beside the fill either, so the fill of a
+  disabled control cannot be an image. A brand colour is refused in EVERY
+  declaration of a disabled rule, whatever the property, so a brand edge in a
+  shorthand, a brand glyph in an svg's `fill`, a brand accent and a brand
+  shadow are all named. LIMITS: the brand refusal reads the accent family,
+  the brand family, the contractor alias of the brand family (`--cbrand`,
+  `--cbrand-on`) and the till's stone amber, and a brand token outside those
+  families (the quote blue family, a numbered brand token) is not refused by
+  that leg; the image refusal reads the fill, the background image, the border
+  image and the list style image, and an image in another property (a
+  `mask-image`, a `border-image-source` longhand) is not refused by that leg.
 - **The template leg.** A class that a template proves is a disabled state is
   held to the swap whether or not it carries the `hh-disabled-state` marker.
   The scan reads a class set from a variable, a `classMap`, a `disabled=`

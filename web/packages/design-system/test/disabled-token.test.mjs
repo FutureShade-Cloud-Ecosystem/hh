@@ -80,8 +80,11 @@
 //        - THE IMAGE LAYER. A disabled control could paint an image and
 //          pass: an image layer carries no colour for the colour leg to
 //          read, and `border-image` and `list-style-image` were never read
-//          at all. An image layer is named now, in every property that can
-//          carry one, and a brand-free `none` is still fine.
+//          at all. An image layer is named now in the properties the gate
+//          reads (the fill, the background image, the border image and the
+//          list style image), and a brand-free `none` is still fine. An
+//          image in another property (a `mask-image`, a `border-image-source`
+//          longhand) is not refused by that leg, and the README says so.
 //        - THE CONTRACTOR ALIAS. The brand family is carried under another
 //          name in the contractor layer (`--cbrand`, `--cbrand-on`), and the
 //          brand refusal did not read it.
