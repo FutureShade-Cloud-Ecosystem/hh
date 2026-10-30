@@ -106,8 +106,9 @@ async function tabIds(page: Page): Promise<string[]> {
  * same holds for a tab. Each tab is read again before it is clicked, so a list that
  * changes under the walk cannot leave the spec clicking a tab that is gone.
  */
-async function walkTheDesk(page: Page): Promise<void> {
+async function walkTheDesk(page: Page): Promise<{ areas: number; tabs: number }> {
   const areas = await areaIds(page);
+  let tabClicks = 0;
   for (let round = 0; round < ROUNDS; round += 1) {
     for (const area of areas) {
       const areaButton = page.locator(`[data-action="area"][data-area="${area}"]`);
@@ -122,9 +123,11 @@ async function walkTheDesk(page: Page): Promise<void> {
         const tabButton = page.locator(`[data-tab-id="${next}"]`);
         await tabButton.click();
         await expect(tabButton, `the tab ${next} to be the open one`).toHaveAttribute("aria-current", "true");
+        tabClicks += 1;
       }
     }
   }
+  return { areas: areas.length, tabs: tabClicks };
 }
 
 test("the desk exchanges once for the page load, and moving around it spends nothing", async ({ page }) => {
@@ -139,7 +142,11 @@ test("the desk exchanges once for the page load, and moving around it spends not
 
   // 2. THE NAVIGATION. Two rounds over every area of the switch and up to six
   // tabs of each: the areas and the tabs are read off the page, never typed.
-  await walkTheDesk(page);
+  // The walk pins its own coverage: more than one area and at least one tab, so a desk that lost its switch or
+  // its tabs cannot pass the navigation half of the claim without exercising it.
+  const walked = await walkTheDesk(page);
+  expect(walked.areas, "the areas the walk visited").toBeGreaterThan(1);
+  expect(walked.tabs, "the tabs the walk clicked").toBeGreaterThan(0);
   const afterNavigation = tally.count();
   expect(afterNavigation, FIGURE_NAVIGATION).toBe(afterFirstLoad);
 

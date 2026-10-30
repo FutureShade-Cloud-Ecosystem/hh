@@ -25,12 +25,13 @@ const PAGE = 100;
 const blank = process.env.JOURNAL_REACH_BLANK ?? "";
 
 /**
- * THE BLANK SENTINEL: the edge a blank leg looks for when the books hold
- * nothing at all. It has to be a label no row can carry, so a blank leg fails
- * on the label itself and not on the blanking having worked: the blank check's
- * teeth are the label, not the emptying. JE-0000 would not do: the stub's
- * planted lodgement journal really carries that label, so a blank leg could be
- * satisfied by a row that is really there.
+ * THE BLANK SENTINEL: the edge openRegister answers when the books hold nothing
+ * at all. It has to be a label no row can carry. JE-0000 would not do: the
+ * stub's planted lodgement journal really carries that label. Where the teeth
+ * are: in the unmarked run, the leg's own "no button named the sentinel" check
+ * holds against a register that really holds the JE-0000 row; a blank leg does
+ * not get that far, it fails earlier, in openRegister, when no register table
+ * is drawn at all.
  */
 const BLANK_SENTINEL = "JE-none";
 
@@ -69,7 +70,11 @@ async function openRegister(page: Page, request: APIRequestContext): Promise<str
   await expect(page.getByRole("table", { name: "Journal register" })).toBeVisible();
   return edge;
 }
-const before = (label: string) => `JE-${String(Number(label.slice(3)) - 1).padStart(4, "0")}`;
+/** The entry just before a label; a label with no number (the blank sentinel) has no neighbour and answers itself. */
+const before = (label: string) => {
+  const n = Number(label.slice(3));
+  return Number.isInteger(n) ? `JE-${String(n - 1).padStart(4, "0")}` : label;
+};
 
 test("show more reaches a journal older than the first hundred and opens it", async ({ page, request }) => {
   const edge = await openRegister(page, request);
@@ -79,9 +84,8 @@ test("show more reaches a journal older than the first hundred and opens it", as
   await expect(register.getByRole("button", { name: edge })).toBeVisible();
   await expect(register.getByRole("button", { name: before(edge) })).toHaveCount(0);
   await expect(register.getByRole("button", { name: "JE-0101" })).toHaveCount(0);
-  // The blank sentinel is a label no row can carry, so a blank leg fails on the label itself and not on the
-  // blanking having worked. The register holds the world's own rows here, the planted lodgement's own JE-0000
-  // among them, so this is where a sentinel that a row really carries would show.
+  // The blank sentinel is a label no row can carry. The register holds the world's own rows here, the planted
+  // lodgement's own JE-0000 among them, so this is where a sentinel that a row really carries would show.
   await expect(register.getByRole("button", { name: BLANK_SENTINEL })).toHaveCount(0);
   const more = page.locator("[data-show-more]");
   await expect(more).toBeVisible();
