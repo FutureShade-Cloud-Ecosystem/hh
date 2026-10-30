@@ -72,11 +72,15 @@ for (const size of SIZES) {
       await expect(page.locator("[data-t5018-box22]").first()).toHaveAttribute("data-label", "Box 22");
       await expect(page.locator("[data-t5018-box22]")).toHaveCount(3);
       await expect(page.locator("[data-t5018-box22-total]")).toHaveText("$6,045.40");
-      await expect(page.locator("[data-t5018-threshold]")).toHaveText("under the $500 threshold, no slip");
+      await expect(page.locator("[data-t5018-threshold]")).toHaveText(
+        "Services before tax $480.00: under the $500 slip threshold, no slip.",
+      );
       await expect(page.locator("[data-t5018-unmarked]")).toHaveText(
         "1 bill line is not marked goods or services; it is counted as services until marked",
       );
-      await expect(page.locator("[data-t5018-services-only]")).toHaveText("Box 22 counts services only");
+      await expect(page.locator("[data-t5018-services-only]")).toHaveText(
+        "Box 22 counts services only; $209.50 of goods is not counted.",
+      );
       if (size.width < 600) {
         const label = await page.locator("[data-t5018-number]").first().evaluate((cell) => getComputedStyle(cell, "::before").content);
         expect(label).toContain("CRA business number");

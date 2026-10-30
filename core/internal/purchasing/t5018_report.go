@@ -50,7 +50,15 @@ const T5018ThresholdCents int64 = 50000
 
 // T5018UnderThresholdNote marks a subcontractor vendor whose pre-tax services subtotal for the
 // year is under $500.00.
-const T5018UnderThresholdNote = "under the $500 threshold, no slip"
+const T5018UnderThresholdNote = "under the $500 slip threshold, no slip."
+
+// T5018GoodsSharePrefix opens the note on a mixed bill whose paid total includes goods excluded
+// from Box 22.
+const T5018GoodsSharePrefix = "Box 22 counts services only;"
+
+// T5018GoodsShareSuffix closes the note on a mixed bill whose paid total includes goods excluded
+// from Box 22.
+const T5018GoodsShareSuffix = "of goods is not counted."
 
 // T5018NothingPaidNote marks a subcontractor vendor who was paid nothing during the year.
 const T5018NothingPaidNote = "nothing paid this year"
@@ -191,6 +199,32 @@ func t5018UnmarkedLinesNote(n int) string {
 	return fmt.Sprintf("%d bill lines are not marked goods or services; they are counted as services until marked", n)
 }
 
+// t5018FormatDollars formats integer cents as dollars and cents (for example, 48000 -> "$480.00").
+func t5018FormatDollars(cents int64) string {
+	sign := ""
+	if cents < 0 {
+		sign = "-"
+		cents = -cents
+	}
+	dollars := strconv.FormatInt(cents/100, 10)
+	for i := len(dollars) - 3; i > 0; i -= 3 {
+		dollars = dollars[:i] + "," + dollars[i:]
+	}
+	return fmt.Sprintf("%s$%s.%02d", sign, dollars, cents%100)
+}
+
+// t5018UnderThresholdNote formats the per-vendor under-threshold note naming the pre-tax services
+// subtotal the $500 test is on.
+func t5018UnderThresholdNote(servicesSubtotalCents int64) string {
+	return fmt.Sprintf("Services before tax %s: %s", t5018FormatDollars(servicesSubtotalCents), T5018UnderThresholdNote)
+}
+
+// t5018GoodsShareNote formats the per-vendor note when a mixed bill's paid total includes goods
+// not counted in Box 22.
+func t5018GoodsShareNote(goodsShareCents int64) string {
+	return fmt.Sprintf("%s %s %s", T5018GoodsSharePrefix, t5018FormatDollars(goodsShareCents), T5018GoodsShareSuffix)
+}
+
 // finalizeT5018Row stamps the derived marks and notes on a vendor's T5018 row.
 func finalizeT5018Row(row T5018Row) T5018Row {
 	row.BusinessNumberMissing = strings.TrimSpace(row.BusinessNumber) == ""
@@ -198,7 +232,9 @@ func finalizeT5018Row(row T5018Row) T5018Row {
 	if row.PaidCents == 0 && row.Box22Cents == 0 {
 		row.ThresholdNote = T5018NothingPaidNote
 	} else if row.UnderThreshold {
-		row.ThresholdNote = T5018UnderThresholdNote
+		row.ThresholdNote = t5018UnderThresholdNote(row.ServicesSubtotalCents)
+	} else if row.PaidCents > row.Box22Cents {
+		row.ThresholdNote = t5018GoodsShareNote(row.PaidCents - row.Box22Cents)
 	} else {
 		row.ThresholdNote = ""
 	}

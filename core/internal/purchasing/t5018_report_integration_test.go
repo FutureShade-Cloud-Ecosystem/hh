@@ -225,8 +225,11 @@ func TestIntegration_T5018Report_TheCSVIsTheReportInItsFileForm(t *testing.T) {
 	if !strings.Contains(text, fmt.Sprintf("%d", paid)) {
 		t.Fatalf("the file carries no paid cents:\n%s", text)
 	}
-	if !strings.Contains(text, T5018UnderThresholdNote) {
-		t.Fatalf("the file carries no under-threshold mark:\n%s", text)
+	if !strings.Contains(text, "Services before tax $250.00: under the $500 slip threshold, no slip.") {
+		t.Fatalf("the file carries no pre-tax under-threshold mark:\n%s", text)
+	}
+	if !strings.Contains(text, T5018NothingPaidNote) {
+		t.Fatalf("the file carries no nothing-paid mark:\n%s", text)
 	}
 }
 
@@ -355,9 +358,10 @@ func TestIntegration_T5018Report_CRAServicesShareThresholdTaxAndUnmarkedLines(t 
 	if rGoods.PaidCents != 90400 || rGoods.Box22Cents != 0 || rGoods.ServicesSubtotalCents != 0 {
 		t.Fatalf("goods-only vendor = %+v, want PaidCents=90400, Box22Cents=0, ServicesSubtotalCents=0", rGoods)
 	}
-	if !rGoods.UnderThreshold || rGoods.ThresholdNote != T5018UnderThresholdNote {
+	wantGoodsThreshold := "Services before tax $0.00: under the $500 slip threshold, no slip."
+	if !rGoods.UnderThreshold || rGoods.ThresholdNote != wantGoodsThreshold {
 		t.Fatalf("goods-only vendor threshold = %v / %q, want true / %q",
-			rGoods.UnderThreshold, rGoods.ThresholdNote, T5018UnderThresholdNote)
+			rGoods.UnderThreshold, rGoods.ThresholdNote, wantGoodsThreshold)
 	}
 
 	// Leg 2 assertions: mixed bill counts its services part in Box 22, PaidCents carries the full
@@ -374,8 +378,9 @@ func TestIntegration_T5018Report_CRAServicesShareThresholdTaxAndUnmarkedLines(t 
 		t.Fatalf("mixed vendor paid_cents = %d, box_22_cents = %d, diff = %d, want 113000, 67800, goodsShare = %d",
 			rMixed.PaidCents, rMixed.Box22Cents, rMixed.PaidCents-rMixed.Box22Cents, goodsShare)
 	}
-	if rMixed.UnderThreshold || rMixed.ThresholdNote != "" {
-		t.Fatalf("mixed vendor threshold = %v / %q, want false / empty", rMixed.UnderThreshold, rMixed.ThresholdNote)
+	wantMixedNote := "Box 22 counts services only; $452.00 of goods is not counted."
+	if rMixed.UnderThreshold || rMixed.ThresholdNote != wantMixedNote {
+		t.Fatalf("mixed vendor threshold = %v / %q, want false / %q", rMixed.UnderThreshold, rMixed.ThresholdNote, wantMixedNote)
 	}
 
 	// Legs 3 & 4 assertions: $480.00 + 13% HST ($542.40) is under threshold, and Box 22 carries the tax.
@@ -386,9 +391,10 @@ func TestIntegration_T5018Report_CRAServicesShareThresholdTaxAndUnmarkedLines(t 
 	if rUnder.ServicesSubtotalCents != 48000 {
 		t.Fatalf("under-threshold vendor services_subtotal_cents = %d, want 48000", rUnder.ServicesSubtotalCents)
 	}
-	if !rUnder.UnderThreshold || rUnder.ThresholdNote != T5018UnderThresholdNote {
+	wantUnderNote := "Services before tax $480.00: under the $500 slip threshold, no slip."
+	if !rUnder.UnderThreshold || rUnder.ThresholdNote != wantUnderNote {
 		t.Fatalf("under-threshold vendor = %v / %q, want true / %q",
-			rUnder.UnderThreshold, rUnder.ThresholdNote, T5018UnderThresholdNote)
+			rUnder.UnderThreshold, rUnder.ThresholdNote, wantUnderNote)
 	}
 	if rUnder.Box22Cents != 54240 || rUnder.PaidCents != 54240 {
 		t.Fatalf("under-threshold vendor box_22_cents = %d (paid_cents = %d), want 54240 (tax included)",

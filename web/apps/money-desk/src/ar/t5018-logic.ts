@@ -10,6 +10,7 @@
 // sends is the total the screen shows.
 
 import type { PurchasingT5018Report, PurchasingT5018Row } from "@hardscapehouse/api-client";
+import { formatMoney } from "./ar-money.js";
 
 export type { PurchasingT5018Report, PurchasingT5018Row };
 
@@ -98,9 +99,18 @@ export function t5018Box22Cents(row: PurchasingT5018Row): number {
 
 /** The server's under-threshold or nothing-paid words when a subcontractor's pre-tax services are under $500. */
 export function t5018ThresholdWords(row: PurchasingT5018Row): string {
-  if (row.paid_cents === 0 && row.box_22_cents === 0) return "nothing paid this year";
+  if (row.paid_cents === 0 && row.box_22_cents === 0) {
+    return row.threshold_note !== undefined &&
+      row.threshold_note !== "" &&
+      !row.threshold_note.startsWith("Services before tax") &&
+      !row.threshold_note.startsWith("under the $500")
+      ? row.threshold_note
+      : "nothing paid this year";
+  }
   if (!row.under_threshold) return "";
-  return row.threshold_note !== undefined && row.threshold_note !== "" ? row.threshold_note : "under the $500 threshold, no slip";
+  return row.threshold_note !== undefined && row.threshold_note !== ""
+    ? row.threshold_note
+    : `Services before tax ${formatMoney(row.services_subtotal_cents)}: under the $500 slip threshold, no slip.`;
 }
 
 /** The server's unmarked bill lines words when a subcontractor has paid lines with no goods/services mark. */
@@ -109,8 +119,11 @@ export function t5018UnmarkedWords(row: PurchasingT5018Row): string {
   return row.unmarked_lines_note ?? "";
 }
 
-/** Short note when a row's Box 22 differs from its total paid because Box 22 counts services only. */
+/** The server's note when a row's Box 22 differs from its total paid because Box 22 counts services only. */
 export function t5018ServicesOnlyWords(row: PurchasingT5018Row): string {
   if (row.paid_cents === row.box_22_cents) return "";
+  if (!row.under_threshold && row.threshold_note !== undefined && row.threshold_note !== "") {
+    return row.threshold_note;
+  }
   return "Box 22 counts services only";
 }

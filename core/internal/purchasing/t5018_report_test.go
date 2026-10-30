@@ -78,14 +78,14 @@ func TestT5018ReportCSV_TheFileCarriesTheRowsTheMarkAndTheTotal(t *testing.T) {
 				VendorID: "v-1", VendorNo: "VM-0001", Name: "Marked, With A Number",
 				BusinessNumber: "123456789", BusinessNumberMissing: false,
 				PaidCents: 125000, Box22Cents: 104050, ServicesSubtotalCents: 92080,
-				UnderThreshold: false, ThresholdNote: "",
+				UnderThreshold: false, ThresholdNote: "Box 22 counts services only; $209.50 of goods is not counted.",
 				UnmarkedLineCount: 2, UnmarkedLinesNote: unmarkedWords,
 			},
 			{
 				VendorID: "v-2", VendorNo: "VM-0002", Name: "Marked, Under Threshold Without A Number",
 				BusinessNumber: "", BusinessNumberMissing: true,
 				PaidCents: 54240, Box22Cents: 54240, ServicesSubtotalCents: 48000,
-				UnderThreshold: true, ThresholdNote: T5018UnderThresholdNote,
+				UnderThreshold: true, ThresholdNote: "Services before tax $480.00: under the $500 slip threshold, no slip.",
 				UnmarkedLineCount: 0, UnmarkedLinesNote: "",
 			},
 		},
@@ -108,11 +108,12 @@ func TestT5018ReportCSV_TheFileCarriesTheRowsTheMarkAndTheTotal(t *testing.T) {
 	if lines[1] != wantCols {
 		t.Fatalf("the column head reads %q, want %q", lines[1], wantCols)
 	}
-	if !strings.Contains(lines[2], "123456789") || !strings.Contains(lines[2], "125000,104050,92080,false,,2,") || !strings.Contains(lines[2], unmarkedWords) {
-		t.Fatalf("the first row reads %q, want business number, paid, box 22, services subtotal and unmarked words", lines[2])
+	if !strings.Contains(lines[2], "123456789") || !strings.Contains(lines[2], "125000,104050,92080,false,Box 22 counts services only; $209.50 of goods is not counted.,2,") || !strings.Contains(lines[2], unmarkedWords) {
+		t.Fatalf("the first row reads %q, want business number, paid, box 22, services subtotal, goods share words and unmarked words", lines[2])
 	}
-	if !strings.Contains(lines[3], T5018MissingNumber) || !strings.Contains(lines[3], "54240,54240,48000,true,\""+T5018UnderThresholdNote+"\",0,") {
-		t.Fatalf("the second row reads %q, want the missing mark, box 22 with tax, services subtotal before tax, and the under $500 mark", lines[3])
+	wantUnderWords := "Services before tax $480.00: under the $500 slip threshold, no slip."
+	if !strings.Contains(lines[3], T5018MissingNumber) || !strings.Contains(lines[3], "54240,54240,48000,true,\""+wantUnderWords+"\",0,") {
+		t.Fatalf("the second row reads %q, want the missing mark, box 22 with tax, services subtotal before tax, and %q", lines[3], wantUnderWords)
 	}
 	if lines[4] != "" {
 		t.Fatalf("the separator line reads %q, want a blank line", lines[4])
@@ -161,6 +162,10 @@ func TestT5018ProRataAndPaymentShare_HalfToEvenAndCRARules(t *testing.T) {
 			t.Fatalf("mixed row paid=%d box22=%d diff=%d, want paid=113000 box22=67800 goodsShare=%d",
 				mixedRow.PaidCents, mixedRow.Box22Cents, mixedRow.PaidCents-mixedRow.Box22Cents, goodsShare)
 		}
+		wantGoodsNote := "Box 22 counts services only; $452.00 of goods is not counted."
+		if mixedRow.ThresholdNote != wantGoodsNote {
+			t.Fatalf("mixed row threshold_note = %q, want %q", mixedRow.ThresholdNote, wantGoodsNote)
+		}
 	}
 
 	// Legs 3 & 4: $480.00 services + 13% HST ($62.40) = $542.40 paid -> Box 22 = 54240, pre-tax = 48000 (< 50000).
@@ -173,8 +178,9 @@ func TestT5018ProRataAndPaymentShare_HalfToEvenAndCRARules(t *testing.T) {
 		BusinessNumber: "123456789", PaidCents: 54240, Box22Cents: b22, ServicesSubtotalCents: svc,
 		UnmarkedLineCount: 1,
 	})
-	if !row.UnderThreshold || row.ThresholdNote != T5018UnderThresholdNote {
-		t.Fatalf("under-threshold row = %+v, want UnderThreshold=true and note %q", row, T5018UnderThresholdNote)
+	wantThresholdNote := "Services before tax $480.00: under the $500 slip threshold, no slip."
+	if !row.UnderThreshold || row.ThresholdNote != wantThresholdNote {
+		t.Fatalf("under-threshold row = %+v, want UnderThreshold=true and note %q", row, wantThresholdNote)
 	}
 	wantUnmarked := "1 bill line is not marked goods or services; it is counted as services until marked"
 	if row.UnmarkedLinesNote != wantUnmarked {

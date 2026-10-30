@@ -16,6 +16,12 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { houseDayOffset } from "./house-day.mjs";
+import {
+  T5018_GOODS_SHARE_PREFIX,
+  T5018_GOODS_SHARE_SUFFIX,
+  T5018_NOTHING_PAID_NOTE,
+  T5018_UNDER_THRESHOLD_NOTE,
+} from "./stub/purchasing-world.mjs";
 import { SCHEMA_DESCRIPTORS } from "../../../packages/api-client/src/testing.ts";
 import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 
@@ -547,6 +553,24 @@ test("the T5018 report and its CSV answer in the contract's shape and match the 
   assert.ok(t5018Go.includes("report.TotalCents += row.PaidCents"), "the core must sum PaidCents into TotalCents");
   assert.ok(!t5018Go.includes("row.PaidCents = row.Box22Cents"), "the core must not overwrite PaidCents with Box22Cents");
 
+  const coreConst = (name) => {
+    const m = t5018Go.match(new RegExp(`const\\s+${name}\\s*=\\s*"([^"]+)"`));
+    assert.ok(m !== null, `the core's t5018_report.go must declare ${name}`);
+    return m[1];
+  };
+  assert.equal(T5018_NOTHING_PAID_NOTE, coreConst("T5018NothingPaidNote"), "the stub's nothing-paid words must match the core's T5018NothingPaidNote");
+  assert.equal(T5018_UNDER_THRESHOLD_NOTE, coreConst("T5018UnderThresholdNote"), "the stub's under-threshold tail must match the core's T5018UnderThresholdNote");
+  assert.equal(T5018_GOODS_SHARE_PREFIX, coreConst("T5018GoodsSharePrefix"), "the stub's goods-share prefix must match the core's T5018GoodsSharePrefix");
+  assert.equal(T5018_GOODS_SHARE_SUFFIX, coreConst("T5018GoodsShareSuffix"), "the stub's goods-share suffix must match the core's T5018GoodsShareSuffix");
+  assert.ok(
+    t5018Go.includes('fmt.Sprintf("Services before tax %s: %s", t5018FormatDollars(servicesSubtotalCents), T5018UnderThresholdNote)'),
+    "the core must format the under-threshold note with Services before tax and the pre-tax figure",
+  );
+  assert.ok(
+    t5018Go.includes('fmt.Sprintf("%s %s %s", T5018GoodsSharePrefix, t5018FormatDollars(goodsShareCents), T5018GoodsShareSuffix)'),
+    "the core must format the mixed-bill goods share note with T5018GoodsSharePrefix, the goods figure and T5018GoodsShareSuffix",
+  );
+
   const res = await call("GET", "/api/v1/purchasing/t5018?year=2026");
   assert.equal(res.status, 200);
   holds("PurchasingT5018Report", res.json);
@@ -555,12 +579,19 @@ test("the T5018 report and its CSV answer in the contract's shape and match the 
   const mixed = res.json.items.find((r) => r.paid_cents !== r.box_22_cents);
   assert.ok(mixed !== undefined, "the stub's mixed subcontractor row shows Paid in <year> and Box 22 apart");
   assert.equal(mixed.paid_cents - mixed.box_22_cents, 20_950, "Paid and Box 22 on the mixed bill differ by the goods share");
+  assert.equal(
+    mixed.threshold_note,
+    "Box 22 counts services only; $209.50 of goods is not counted.",
+    "Meadowlark's threshold_note names the $209.50 goods share excluded from Box 22",
+  );
   assert.equal(res.json.total_cents - res.json.box_22_total_cents, 20_950);
-  for (const row of res.json.items) {
-    if (row.under_threshold) {
-      assert.ok(t5018Go.includes(`"${row.threshold_note}"`), "the threshold_note must come from the core's source");
-    }
-  }
+  const under = res.json.items.find((r) => r.under_threshold);
+  assert.ok(under !== undefined, "the stub's report includes a vendor under the $500 pre-tax threshold");
+  assert.equal(
+    under.threshold_note,
+    "Services before tax $480.00: under the $500 slip threshold, no slip.",
+    "the under-threshold vendor's threshold_note names the $480.00 pre-tax services figure and the $500 slip threshold",
+  );
 
   const csvRes = await fetch(`${base}/api/v1/purchasing/t5018.csv?year=2026`, { headers: { Authorization: "Bearer stub-token", "X-Org": "hh-demo" } });
   assert.equal(csvRes.status, 200);

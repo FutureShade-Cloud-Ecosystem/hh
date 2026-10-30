@@ -93,10 +93,30 @@ const SUBCONTRACTORS = [
   },
 ];
 
-const T5018_RULE_NOTE = "T5018 applies only where construction is more than half the dealer's business income.";
+export const T5018_RULE_NOTE = "T5018 applies only where construction is more than half the dealer's business income.";
 const T5018_THRESHOLD_CENTS = 50_000;
-const T5018_UNDER_THRESHOLD_NOTE = "under the $500 threshold, no slip";
-const T5018_NOTHING_PAID_NOTE = "nothing paid this year";
+export const T5018_UNDER_THRESHOLD_NOTE = "under the $500 slip threshold, no slip.";
+export const T5018_GOODS_SHARE_PREFIX = "Box 22 counts services only;";
+export const T5018_GOODS_SHARE_SUFFIX = "of goods is not counted.";
+export const T5018_NOTHING_PAID_NOTE = "nothing paid this year";
+
+/** Formats integer cents as dollars and cents, matching the core's t5018FormatDollars. */
+function t5018FormatDollars(cents) {
+  const abs = Math.abs(cents);
+  const dollars = Math.trunc(abs / 100).toLocaleString("en-US");
+  const rem = String(abs % 100).padStart(2, "0");
+  return `${cents < 0 ? "-" : ""}$${dollars}.${rem}`;
+}
+
+/** The core's t5018UnderThresholdNote. */
+function t5018UnderThresholdNote(servicesSubtotalCents) {
+  return `Services before tax ${t5018FormatDollars(servicesSubtotalCents)}: ${T5018_UNDER_THRESHOLD_NOTE}`;
+}
+
+/** The core's t5018GoodsShareNote. */
+function t5018GoodsShareNote(goodsShareCents) {
+  return `${T5018_GOODS_SHARE_PREFIX} ${t5018FormatDollars(goodsShareCents)} ${T5018_GOODS_SHARE_SUFFIX}`;
+}
 
 /** The core's t5018ProRataCents (half to even in integer cents). */
 function t5018ProRataCents(amountCents, partCents, wholeCents) {
@@ -278,6 +298,14 @@ export function createPurchasingWorld({ dayOffset }) {
         unmarkedLineCount += unmarked;
       }
       const underThreshold = servicesSubtotalCents < T5018_THRESHOLD_CENTS;
+      let thresholdNote = "";
+      if (paidCents === 0 && box22Cents === 0) {
+        thresholdNote = T5018_NOTHING_PAID_NOTE;
+      } else if (underThreshold) {
+        thresholdNote = t5018UnderThresholdNote(servicesSubtotalCents);
+      } else if (paidCents > box22Cents) {
+        thresholdNote = t5018GoodsShareNote(paidCents - box22Cents);
+      }
       items.push({
         vendor_id: payeeId(sub.n),
         vendor_no: sub.no,
@@ -288,7 +316,7 @@ export function createPurchasingWorld({ dayOffset }) {
         box_22_cents: box22Cents,
         services_subtotal_cents: servicesSubtotalCents,
         under_threshold: underThreshold,
-        threshold_note: paidCents === 0 && box22Cents === 0 ? T5018_NOTHING_PAID_NOTE : underThreshold ? T5018_UNDER_THRESHOLD_NOTE : "",
+        threshold_note: thresholdNote,
         unmarked_line_count: unmarkedLineCount,
         unmarked_lines_note: t5018UnmarkedLinesNote(unmarkedLineCount),
       });
