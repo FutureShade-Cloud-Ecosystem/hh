@@ -11,8 +11,10 @@
 // not a hand tokenizer: a regular expression, a template expression or a
 // call that spans lines is a node in the tree and cannot hide a call. It
 // reads three things and fails naming each offender:
-//   1. every listen call in every source file under web/, whatever extension
-//      it carries: the host it names must be the loopback. The reach is the
+//   1. every listen call in every source file under web/ that carries a
+//      source extension (.mjs, .js, .cjs, .mts, .cts, .ts, .tsx, .jsx; the
+//      .d.ts family holds no code and is not read): the host it names must
+//      be the loopback, and every host key of an options object is judged. The reach is the
 //      whole tree and not only an app's own test directory, because the pro
 //      kit's stub, the api client's transport tests and the design system's
 //      harness all start a server, and a wildcard bind in any of them must be
@@ -39,8 +41,21 @@
 // listen, const l = server.listen), a host the gate cannot read, and a vite
 // command it cannot read are each named as a shape the gate cannot prove.
 //
-// The allow list holds one entry, for one reason, and an entry that stops
-// being needed fails the gate too, so it cannot rot into a wide hole.
+// A file the parser reports diagnostics for fails the gate, naming the file
+// and the first diagnostic: a tree the parser recovered badly from is not a
+// tree the gate has read.
+//
+// The allow list holds one entry, for one reason, pinned to the one call it
+// exists for, and an entry that stops being needed fails the gate too, so it
+// cannot rot into a wide hole.
+//
+// The gate's stated limits, which it does not enforce and does not claim to:
+//   - a computed key (server[name](), server["lis" + "ten"]()) and a listener
+//     that is not a .listen call (a WebSocketServer, hono's serve, a dgram
+//     socket);
+//   - vite started programmatically (createServer, preview), a server.host in
+//     a vite config, "npm run dev -- --host" (the script is read, the extra
+//     argument is not), and a server other than vite in a webServer command.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -59,20 +74,23 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 // The extensions a source file can carry. A stub or a config can be written
 // in any of them, and a gate that read only one would miss a listener in the
 // others: web/apps/front-door/test/free-ports.ts already holds .listen calls.
-const SOURCE_EXTENSIONS = new Set([".mjs", ".ts", ".tsx", ".js", ".cjs"]);
+const SOURCE_EXTENSIONS = new Set([".mjs", ".mts", ".cts", ".ts", ".tsx", ".js", ".cjs", ".jsx"]);
 
-// The directories the tree installs or builds. They hold no source of ours,
-// and reading them would only be slow.
-const GENERATED = new Set([
-  "node_modules",
-  "dist",
-  "build",
-  "coverage",
-  "playwright-report",
-  "test-results",
-  ".git",
-  ".vite",
-]);
+// A declaration file (.d.ts, .d.mts, .d.cts) holds types and no code.
+function isSourceFile(file) {
+  return SOURCE_EXTENSIONS.has(extname(file)) && !/\.d\.[mc]?ts$/.test(file);
+}
+
+// Two kinds of directory are skipped. node_modules and .git are skipped at any
+// depth: they hold no source of ours. The output directories a package's own
+// tooling writes (dist, build, coverage and the like) are skipped only when
+// they sit directly beside a package.json, which is where a build writes
+// them. A directory of one of those names inside a test directory
+// (test/build/s.mjs) is source and is read. I chose the package.json rule
+// over reading git's tracked list because the gate then needs no git and
+// reads a fresh checkout and a working tree alike.
+const ALWAYS_SKIPPED = new Set(["node_modules", ".git"]);
+const OUTPUT_DIRECTORIES = new Set(["dist", "build", "coverage", "playwright-report", "test-results", ".vite"]);
 
 // The allow list: one entry, and the reason it exists.
 //
@@ -81,10 +99,18 @@ const GENERATED = new Set([
 // container's own network. box.sh publishes that container on 127.0.0.1 only,
 // so the published port is never reachable off this host. A console double
 // that binds only its own container's loopback would answer nothing at all.
+//
+// The entry is pinned to that one call: the host it names and the first line
+// of the call as written. Any other listener in the file, and a second copy
+// of that call, is judged like every other.
 const ALLOWED = new Map([
   [
     "web/apps/money-desk/test/acceptance-real/console-double.mjs",
-    "it runs inside the box's container and box.sh publishes that container on 127.0.0.1 only",
+    {
+      host: "0.0.0.0",
+      call: 'server.listen(port, "0.0.0.0", () => {',
+      reason: "it runs inside the box's container and box.sh publishes that container on 127.0.0.1 only",
+    },
   ],
 ]);
 
@@ -95,8 +121,11 @@ function repoPath(file) {
 }
 
 function filesUnder(dir, out = []) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (GENERATED.has(entry.name)) continue;
+  const entries = readdirSync(dir, { withFileTypes: true });
+  const isPackageRoot = entries.some((entry) => entry.name === "package.json" && !entry.isDirectory());
+  for (const entry of entries) {
+    if (ALWAYS_SKIPPED.has(entry.name)) continue;
+    if (isPackageRoot && entry.isDirectory() && OUTPUT_DIRECTORIES.has(entry.name)) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) filesUnder(full, out);
     else out.push(full);
@@ -107,7 +136,7 @@ function filesUnder(dir, out = []) {
 // Every source file under web/: a stub, a Playwright configuration or a
 // harness factory can be written in any of them, in an app or in a package.
 function webSourceFilesUnder(root) {
-  return filesUnder(root).filter((file) => SOURCE_EXTENSIONS.has(extname(file)));
+  return filesUnder(root).filter(isSourceFile);
 }
 
 function webSourceFiles() {
@@ -125,7 +154,11 @@ function packageFiles() {
 
 // The parse diagnostics of one file, each with its line and message.
 function parseProblemsIn(text, name) {
-  return [];
+  const sf = parse(text, name);
+  return sf.parseDiagnostics.map((diagnostic) => ({
+    line: sf.getLineAndCharacterOfPosition(diagnostic.start ?? 0).line + 1,
+    message: ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+  }));
 }
 
 // The listeners one file holds that the gate names, after the allow list.
@@ -134,7 +167,7 @@ function listenerOffendersIn(rel, text, file = rel) {
   const offenders = [];
   let used = false;
   for (const offender of listenersIn(text, file)) {
-    if (allowed !== undefined) {
+    if (allowed !== undefined && !used && offender.host === allowed.host && offender.call === allowed.call) {
       used = true;
       continue;
     }
@@ -146,7 +179,7 @@ function listenerOffendersIn(rel, text, file = rel) {
 function parse(text, name) {
   const kind = name.endsWith(".tsx")
     ? ts.ScriptKind.TSX
-    : name.endsWith(".ts")
+    : /\.[mc]?ts$/.test(name)
       ? ts.ScriptKind.TS
       : ts.ScriptKind.JSX;
   return ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true, kind);
@@ -339,14 +372,18 @@ function hostOf(call, bindings, sf) {
     if (first.properties.some((property) => ts.isSpreadAssignment(property))) {
       return unprovable("its options object spreads another object");
     }
+    // Node uses the last host key and a reader the first, so every one is
+    // judged: the first that is not the loopback is the one named.
+    const judged = [];
     for (const property of first.properties) {
       const key = property.name !== undefined && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) ? property.name.text : null;
       if (key !== "host") continue;
-      if (ts.isShorthandPropertyAssignment(property)) return hostFrom(property.name, bindings, sf);
-      if (ts.isPropertyAssignment(property)) return hostFrom(property.initializer, bindings, sf);
-      return unprovable("its host is not a property the gate reads");
+      if (ts.isShorthandPropertyAssignment(property)) judged.push(hostFrom(property.name, bindings, sf));
+      else if (ts.isPropertyAssignment(property)) judged.push(hostFrom(property.initializer, bindings, sf));
+      else judged.push(unprovable("its host is not a property the gate reads"));
     }
-    return { host: null, why: "its options object names no host" };
+    if (judged.length === 0) return { host: null, why: "its options object names no host" };
+    return judged.find((one) => one.host === null || !LOOPBACK_HOSTS.has(one.host)) ?? judged[0];
   }
   if (args.length < 2) return { host: null, why: "it names a port and no host" };
   const second = bare(args[1]);
@@ -372,7 +409,9 @@ function listenersIn(text, name = "probe.mjs") {
       const callee = bare(node.expression);
       if (ts.isPropertyAccessExpression(callee) && isListenName(callee.name)) {
         const { host, why } = hostOf(node, bindings, sf);
-        if (host === null || !LOOPBACK_HOSTS.has(host)) out.push({ line: lineAt(sf, callee.name), host, why });
+        if (host === null || !LOOPBACK_HOSTS.has(host)) {
+          out.push({ line: lineAt(sf, callee.name), host, why, call: node.getText(sf).split("\n")[0] });
+        }
         return;
       }
     }
@@ -434,16 +473,46 @@ function isViteWord(word) {
   return /(^|[\\/])vite(\.js|\.mjs)?$/.test(word);
 }
 
-function hostOfWords(words) {
+// A word of a shell command with the quotes, the closing parenthesis and the
+// semicolon around it taken off, and an @version taken off the name: the word
+// 'vite@5 and the word "vite are the vite binary.
+function cleanWord(word) {
+  return word.replace(/^['"`(]+|['"`);]+$/g, "").replace(/(?<=.)@[\w.^~*-]+$/, "");
+}
+
+// The commands a shell line holds, each as its cleaned words. A semicolon, an
+// &&, a | and a lone & end one command and begin the next, so a command's
+// words never run into the next command's.
+function commandsOf(text) {
+  const commands = [[]];
+  for (const raw of text.replace(/[;&|]+/g, " ; ").split(/\s+/)) {
+    if (raw === "") continue;
+    if (raw === ";") {
+      commands.push([]);
+      continue;
+    }
+    const word = cleanWord(raw);
+    if (word !== "") commands[commands.length - 1].push(word);
+  }
+  return commands.filter((words) => words.length > 0);
+}
+
+const unquote = (value) => value.replace(/^['"`]+|['"`]+$/g, "");
+
+// Every host a command names, in order: each --host is judged and not only
+// the first.
+function hostsOfWords(words) {
+  const hosts = [];
   for (let i = 0; i < words.length; i += 1) {
     const word = words[i];
     if (word === "--host") {
       const value = words[i + 1];
-      return value === undefined || value.startsWith("-") ? "" : value;
+      hosts.push(value === undefined || value.startsWith("-") ? "" : unquote(value));
+    } else if (word.startsWith("--host=")) {
+      hosts.push(unquote(word.slice("--host=".length)));
     }
-    if (word.startsWith("--host=")) return word.slice("--host=".length);
   }
-  return null;
+  return hosts;
 }
 
 function loopbackWord(host) {
@@ -467,9 +536,11 @@ function bindsAnInterface(words) {
   return sub !== "build" && sub !== "optimize";
 }
 
+// The commands of a shell line that start vite, each as its words, and null
+// when none does.
 function viteCommandOf(text) {
-  const words = text.split(/\s+/).filter((word) => word !== "");
-  return words.some(isViteWord) ? words : null;
+  const found = commandsOf(text).filter((words) => words.some(isViteWord));
+  return found.length > 0 ? found : null;
 }
 
 // Whether a string literal is the module specifier of an import, an export
@@ -501,8 +572,8 @@ function viteOffendersIn(text, rel, properties = new Set(), name = rel) {
 
   function judge(node, words) {
     if (!bindsAnInterface(words)) return;
-    const host = hostOfWords(words);
-    if (host !== null && loopbackWord(host)) return;
+    const hosts = hostsOfWords(words);
+    if (hosts.length > 0 && hosts.every(loopbackWord)) return;
     offenders.push({ line: lineAt(sf, node), why: words.join(" ") });
   }
 
@@ -530,10 +601,10 @@ function viteOffendersIn(text, rel, properties = new Set(), name = rel) {
       if ((ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) && isModuleSpecifier(expr)) return;
       const folded = foldStringShallow(expr);
       if (folded !== null) {
-        const words = viteCommandOf(folded.text);
-        if (words !== null) {
+        const commands = viteCommandOf(folded.text);
+        if (commands !== null) {
           holdsVite = true;
-          judge(expr, words);
+          for (const words of commands) judge(expr, words);
           return;
         }
       }
@@ -614,11 +685,11 @@ function packageScriptOffendersIn(text, rel = "package.json") {
   const offenders = [];
   for (const [script, command] of Object.entries(json.scripts ?? {})) {
     if (typeof command !== "string") continue;
-    const words = command.split(/\s+/).filter((word) => word !== "");
-    if (!words.some(isViteWord)) continue;
-    const host = hostOfWords(words);
-    if (host === null || loopbackWord(host)) continue;
-    offenders.push({ rel, line: 1, why: `script ${script}: ${command}` });
+    for (const words of viteCommandOf(command) ?? []) {
+      if (hostsOfWords(words).every(loopbackWord)) continue;
+      offenders.push({ rel, line: 1, why: `script ${script}: ${command}` });
+      break;
+    }
   }
   return offenders;
 }
@@ -634,7 +705,7 @@ test("every test listener under web names a loopback host", () => {
     if (result.used) used.add(rel);
     for (const offender of result.offenders) offenders.push(`${rel}:${offender.line} ${offender.why}`);
   }
-  for (const [rel, reason] of ALLOWED) {
+  for (const [rel, { reason }] of ALLOWED) {
     if (!used.has(rel)) stale.push(`${rel} is on the allow list but names a loopback host now, so the entry is stale (${reason})`);
   }
   assert.deepEqual(
@@ -643,6 +714,15 @@ test("every test listener under web names a loopback host", () => {
     `every test listener must name 127.0.0.1, localhost or ::1 as its host:\n${offenders.join("\n")}`,
   );
   assert.deepEqual(stale, [], `the allow list must hold only the listeners that still need it:\n${stale.join("\n")}`);
+});
+
+test("every source file under web parses without a diagnostic", () => {
+  const problems = [];
+  for (const file of webSourceFiles()) {
+    const [first] = parseProblemsIn(readFileSync(file, "utf8"), file);
+    if (first !== undefined) problems.push(`${repoPath(file)}:${first.line} ${first.message}`);
+  }
+  assert.deepEqual(problems, [], `a file the parser reports on is not a file the gate has read:\n${problems.join("\n")}`);
 });
 
 test("every vite command under web names the loopback host", () => {

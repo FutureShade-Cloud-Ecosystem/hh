@@ -36,6 +36,11 @@ const PROBE_TIMEOUT_MS = 1500;
 // instead of hanging.
 const STOP_TIMEOUT_MS = 5000;
 
+// How long the cleanup waits for the exit after it ended the child itself. A
+// stub that traps SIGTERM would keep that wait open for as long as it lives,
+// so this wait has a bound too, and the failure names the child.
+const KILL_TIMEOUT_MS = 3000;
+
 let child;
 let closed;
 let bound;
@@ -109,28 +114,36 @@ before(async () => {
 // (child.kill() on the process it spawned) and waits for its exit, so no
 // listener of the leg survives a failing run, and it reports the stub that
 // would not stop.
-async function stopStub(proc, exited, timeoutMs = STOP_TIMEOUT_MS) {
+async function stopStub(proc, exited, timeoutMs = STOP_TIMEOUT_MS, killTimeoutMs = KILL_TIMEOUT_MS) {
   proc.stdin.end();
+  if (await exitsWithin(exited, timeoutMs)) return;
+  proc.kill();
+  const ended = await exitsWithin(exited, killTimeoutMs);
+  proc.stdout?.destroy();
+  proc.stderr?.destroy();
+  if (!ended) {
+    throw new Error(
+      `the stub (pid ${proc.pid}) did not close within ${timeoutMs} ms of its standard input ending, and it is still running ${killTimeoutMs} ms after the leg ended it: it ignores the kill`,
+    );
+  }
+  throw new Error(
+    `the stub did not close within ${timeoutMs} ms of its standard input ending, so the leg ended the child it spawned`,
+  );
+}
+
+// Whether the exit promise settles within the bound.
+async function exitsWithin(exited, ms) {
   let timer;
-  let stopped = false;
   try {
-    stopped = await Promise.race([
+    return await Promise.race([
       exited.then(() => true),
       new Promise((resolve) => {
-        timer = setTimeout(() => resolve(false), timeoutMs);
+        timer = setTimeout(() => resolve(false), ms);
       }),
     ]);
   } finally {
     clearTimeout(timer);
   }
-  if (stopped) return;
-  proc.kill();
-  await exited;
-  proc.stdout?.destroy();
-  proc.stderr?.destroy();
-  throw new Error(
-    `the stub did not close within ${timeoutMs} ms of its standard input ending, so the leg ended the child it spawned`,
-  );
 }
 
 after(async () => {
@@ -230,6 +243,7 @@ const SCRATCH_STUB = [
 function scratchPort(scratch) {
   return new Promise((resolve, reject) => {
     scratch.once("error", reject);
+    scratch.once("close", (code) => reject(new Error(`the scratch exited with ${code} before it named a port`)));
     scratch.stdout.on("data", (chunk) => {
       const found = /scratch listening on (\d+)/.exec(String(chunk));
       if (found !== null) resolve(Number(found[1]));
