@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingARWorklistResponse, BillingAccountPaymentPolicy, BillingAccountPaymentPolicyInput, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingPage, BillingApplyCreditInput, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreateHoldRequest, BillingCreditApplication, BillingCreditApplicationReversed, BillingCreditHold, BillingCreditHoldPage, BillingCreditMemoInput, BillingCreditMemoQuote, BillingCreditMemoQuoteInput, BillingCreditMemoResult, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromisePage, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderEnrolInput, BillingReminderEnrolResult, BillingReminderExemptInput, BillingReminderInput, BillingReminderResult, BillingReminderRulePage, BillingReminderSend, BillingReminderSendPage, BillingReverseCreditApplicationInput, BillingSendPaylinkRequest, BillingSendPaylinkResult, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementPreview, BillingStatementRunRequest, BillingStatementRunResult, PaymentCardAttemptSummary } from "./types.js";
+import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingARWorklistResponse, BillingAccountPaymentPolicy, BillingAccountPaymentPolicyInput, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingPage, BillingApplyCreditInput, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreateHoldRequest, BillingCreditApplication, BillingCreditApplicationReversed, BillingCreditChangeDecideInput, BillingCreditChangeInput, BillingCreditChangePage, BillingCreditChangeRequest, BillingCreditHold, BillingCreditHoldPage, BillingCreditMemoInput, BillingCreditMemoQuote, BillingCreditMemoQuoteInput, BillingCreditMemoResult, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromisePage, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderEnrolInput, BillingReminderEnrolResult, BillingReminderExemptInput, BillingReminderInput, BillingReminderResult, BillingReminderRulePage, BillingReminderSend, BillingReminderSendPage, BillingReverseCreditApplicationInput, BillingSendPaylinkRequest, BillingSendPaylinkResult, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementPreview, BillingStatementRunRequest, BillingStatementRunResult, BillingWriteOff, BillingWriteOffInput, BillingWriteOffReversalInput, BillingWriteOffReversed, PaymentCardAttemptSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -49,6 +49,85 @@ export async function billingPutAutoHold(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "billingPutAutoHold",
+  });
+}
+
+export async function billingListCreditChanges(
+  client: ApiClient,
+  opts?: { cursor?: string; limit?: number; customer_id?: string; branch_id?: string; status?: "PENDING" | "APPROVED" | "APPLIED" | "REJECTED" },
+  call?: ApiCallOptions
+): Promise<Result<BillingCreditChangePage>> {
+  return client.request<BillingCreditChangePage>({
+    method: "GET",
+    path: "/api/v1/ar/credit-changes",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingListCreditChanges",
+  });
+}
+
+export async function billingRequestCreditChange(
+  client: ApiClient,
+  body: BillingCreditChangeInput,
+  call?: ApiCallOptions
+): Promise<Result<BillingCreditChangeRequest>> {
+  return client.request<BillingCreditChangeRequest>({
+    method: "POST",
+    path: "/api/v1/ar/credit-changes",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingRequestCreditChange",
+  });
+}
+
+export async function billingGetCreditChange(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<BillingCreditChangeRequest>> {
+  return client.request<BillingCreditChangeRequest>({
+    method: "GET",
+    path: "/api/v1/ar/credit-changes/{id}",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingGetCreditChange",
+  });
+}
+
+export async function billingApproveCreditChange(
+  client: ApiClient,
+  id: string | number,
+  body: BillingCreditChangeDecideInput,
+  call?: ApiCallOptions
+): Promise<Result<BillingCreditChangeRequest>> {
+  return client.request<BillingCreditChangeRequest>({
+    method: "POST",
+    path: "/api/v1/ar/credit-changes/{id}/approve",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingApproveCreditChange",
+  });
+}
+
+export async function billingRejectCreditChange(
+  client: ApiClient,
+  id: string | number,
+  body: BillingCreditChangeDecideInput,
+  call?: ApiCallOptions
+): Promise<Result<BillingCreditChangeRequest>> {
+  return client.request<BillingCreditChangeRequest>({
+    method: "POST",
+    path: "/api/v1/ar/credit-changes/{id}/reject",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingRejectCreditChange",
   });
 }
 
@@ -784,6 +863,40 @@ export async function billingGetStatementRun(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "billingGetStatementRun",
+  });
+}
+
+// The document also declares success as 201; the client
+// types the lowest declared success code (200).
+export async function billingWriteOffInvoice(
+  client: ApiClient,
+  body: BillingWriteOffInput,
+  call?: ApiCallOptions
+): Promise<Result<BillingWriteOff>> {
+  return client.request<BillingWriteOff>({
+    method: "POST",
+    path: "/api/v1/ar/write-offs",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingWriteOffInvoice",
+  });
+}
+
+// The document also declares success as 201; the client
+// types the lowest declared success code (200).
+export async function billingReverseWriteOff(
+  client: ApiClient,
+  body: BillingWriteOffReversalInput,
+  call?: ApiCallOptions
+): Promise<Result<BillingWriteOffReversed>> {
+  return client.request<BillingWriteOffReversed>({
+    method: "POST",
+    path: "/api/v1/ar/write-offs/reverse",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingReverseWriteOff",
   });
 }
 

@@ -517,7 +517,10 @@ jobs:
         # know (pg_dump 17 writes SET transaction_timeout), and the runner's own apt
         # may carry no 16 client at all. So pg_dump and psql run from the service's
         # own pinned image (the same digest), through two small wrappers first on
-        # PATH: a runner upgrade cannot move them, and nothing is installed.
+        # PATH: a runner upgrade cannot move them, and nothing is installed. The
+        # wrappers forward only the PG* connection and service variables listed
+        # below and mount /tmp, /dev/shm and RUNNER_TEMP, so a caller passes
+        # absolute paths under those; PGPASSFILE or a relative path fails loudly.
         env:
           PG16_IMAGE: mirror.gcr.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         run: |
@@ -543,13 +546,15 @@ jobs:
         # shared server answers "out of shared memory". The finance box runs with
         # max_locks_per_transaction = 512, so the job's service does too: the setting is
         # written with ALTER SYSTEM, the service container restarts to take it, and the
-        # step waits until the server reports it.
+        # step waits until the server reports it. The restart names the container by the
+        # job's own service id, never by its published port: GitHub hands the step the
+        # exact container, so another container publishing the same port (a self-hosted
+        # runner's neighbour) can neither take its place nor be restarted by mistake.
         run: |
           set -euo pipefail
           url="postgres://postgres:postgres@127.0.0.1:5599/postgres?sslmode=disable"
           psql "$url" -v ON_ERROR_STOP=1 -q -c "ALTER SYSTEM SET max_locks_per_transaction = 512"
-          cid="$(docker ps -q --filter publish=5599)"
-          docker restart "$cid" >/dev/null
+          docker restart "${{ job.services.postgres.id }}" >/dev/null
           for _ in $(seq 1 90); do
             if [ "$(psql "$url" -tAc 'SHOW max_locks_per_transaction' 2>/dev/null || true)" = "512" ]; then
               break

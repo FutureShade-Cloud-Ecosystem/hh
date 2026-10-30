@@ -543,3 +543,74 @@ func TestIntegration_T5018Report_OneBillPaidInTwoInstalmentsAcrossHouseYears(t *
 			r1.Box22Cents+r2.Box22Cents, r1.ServicesSubtotalCents+r2.ServicesSubtotalCents)
 	}
 }
+
+// TestIntegration_T5018Report_ForeignPaymentIsTheCashThatLeftTheBank: a USD bill entered at 1.35
+// and paid at 1.40 sends CAD 1,400.00 from the bank, and that is what the report and its CSV
+// say; the CAD the payment cleared on the bill (1,350.00) is not the figure. A CAD bill paid the
+// same year still shows its CAD.
+func TestIntegration_T5018Report_ForeignPaymentIsTheCashThatLeftTheBank(t *testing.T) {
+	rig := newAPAgingRig(t)
+	h := rig.harness
+	org := h.orgID(t)
+	nowLocal := time.Now().In(rig.zone)
+	year := nowLocal.Year()
+	vendorID := rig.vendor
+	yes := true
+	number := "123456789RC0001"
+	if _, err := h.svc.SetVendorT5018(h.ctx, org, vendorID, SetVendorT5018Request{IsSubcontractor: &yes, BusinessNumber: &number}); err != nil {
+		t.Fatalf("mark vendor: %v", err)
+	}
+	t.Cleanup(func() {
+		no := false
+		_, _ = h.svc.SetVendorT5018(context.Background(), org, vendorID, SetVendorT5018Request{IsSubcontractor: &no})
+	})
+	read := func() T5018Row {
+		t.Helper()
+		report, err := h.svc.T5018ReportForCaller(h.ctx, org, fmt.Sprintf("%d", year), "")
+		if err != nil {
+			t.Fatalf("the T5018 report: %v", err)
+		}
+		row, ok := t5018Row(report, vendorID)
+		if !ok {
+			t.Fatalf("the marked vendor has no row")
+		}
+		return row
+	}
+	before := read().PaidCents
+
+	billDate := nowLocal.Format("2006-01-02")
+	dueDate := nowLocal.AddDate(0, 0, 30).Format("2006-01-02")
+	bill := rig.postUSDBillAt(t, "t5018-fx", billDate, dueDate, 100_000, 1.35, nowLocal)
+	if _, err := h.svc.PayBill(h.ctx, bill.ID, PayBillRequest{
+		AmountCents:    100_000,
+		FXRate:         1.40,
+		PaidAt:         nowLocal.Add(time.Minute),
+		Note:           "USD wire at 1.40",
+		IdempotencyKey: "t5018-fx-pay-" + bill.ID,
+	}); err != nil {
+		t.Fatalf("pay the USD bill: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		key := "purchasing.bill.payment:t5018-fx-pay-" + bill.ID
+		_, _ = h.pool.Exec(bg, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE idempotency_key = $1)`, key)
+		_, _ = h.pool.Exec(bg, `DELETE FROM gl_journals WHERE idempotency_key = $1`, key)
+	})
+	cad := t5018PayOne(t, h, vendorID, 25000, nowLocal.Add(2*time.Minute), "fxcad")
+
+	row := read()
+	if got, want := row.PaidCents-before, int64(140_000)+cad; got != want {
+		t.Fatalf("the report carries %d cents for the USD payment and the CAD one, want %d (USD 1,000.00 at 1.40 is CAD 1,400.00)", got, want)
+	}
+	report, err := h.svc.T5018ReportForCaller(h.ctx, org, fmt.Sprintf("%d", year), "")
+	if err != nil {
+		t.Fatalf("the T5018 report: %v", err)
+	}
+	body, err := EncodeT5018ReportCSV(report)
+	if err != nil {
+		t.Fatalf("encode the report: %v", err)
+	}
+	if !strings.Contains(string(body), fmt.Sprintf(",%d\n", row.PaidCents)) {
+		t.Fatalf("the CSV does not carry the vendor's %d cents:\n%s", row.PaidCents, body)
+	}
+}

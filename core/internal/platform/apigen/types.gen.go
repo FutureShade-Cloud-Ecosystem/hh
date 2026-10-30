@@ -608,6 +608,36 @@ type BillingCreditApplicationLine struct {
 	BalanceAfterCents int64  `json:"balance_after_cents"`
 }
 
+type BillingWriteOffInput struct {
+	InvoiceId      string `json:"invoice_id"`
+	Reason         string `json:"reason"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type BillingWriteOff struct {
+	WriteOffId  string `json:"write_off_id"`
+	InvoiceId   string `json:"invoice_id"`
+	InvoiceNo   string `json:"invoice_no"`
+	AmountCents int64  `json:"amount_cents"`
+	LimitCents  int64  `json:"limit_cents"`
+	Replayed    bool   `json:"replayed"`
+}
+
+type BillingWriteOffReversalInput struct {
+	InvoiceId  string `json:"invoice_id"`
+	WriteOffId string `json:"write_off_id"`
+	Reason     string `json:"reason"`
+}
+
+type BillingWriteOffReversed struct {
+	WriteOffId               string `json:"write_off_id"`
+	InvoiceId                string `json:"invoice_id"`
+	InvoiceNo                string `json:"invoice_no"`
+	RestoredCents            int64  `json:"restored_cents"`
+	InvoiceBalanceAfterCents int64  `json:"invoice_balance_after_cents"`
+	Replayed                 bool   `json:"replayed"`
+}
+
 type BillingCreditApplication struct {
 	ApplicationId        string                         `json:"application_id"`
 	CreditKind           string                         `json:"credit_kind"`
@@ -770,6 +800,7 @@ type BillingApplyPaymentAnswer struct {
 	AmountCents    int64                     `json:"amount_cents"`
 	AppliedCents   int64                     `json:"applied_cents"`
 	UnappliedCents int64                     `json:"unapplied_cents"`
+	OnAccountCents int64                     `json:"on_account_cents"`
 	Lines          []BillingApplyPaymentLine `json:"lines"`
 	Replayed       bool                      `json:"replayed"`
 }
@@ -1413,6 +1444,60 @@ type BillingStatementPreviewAging struct {
 	OverdueCents    int64 `json:"overdue_cents"`
 }
 
+type BillingCreditChangeInput struct {
+	CustomerId    string  `json:"customer_id"`
+	NewLimitCents *int64  `json:"new_limit_cents,omitempty"`
+	PlaceHold     *bool   `json:"place_hold,omitempty"`
+	HoldKind      *string `json:"hold_kind,omitempty"`
+	Reason        string  `json:"reason"`
+}
+
+type BillingCreditChangeDecideInput struct {
+	Note   *string `json:"note,omitempty"`
+	Reason *string `json:"reason,omitempty"`
+}
+
+type BillingCreditChangeRequest struct {
+	Id                   string     `json:"id"`
+	CustomerId           string     `json:"customer_id"`
+	BranchId             *string    `json:"branch_id,omitempty"`
+	ChangeKind           string     `json:"change_kind"`
+	PreviousLimitCents   int64      `json:"previous_limit_cents"`
+	NewLimitCents        *int64     `json:"new_limit_cents,omitempty"`
+	DeltaCents           int64      `json:"delta_cents"`
+	HoldKind             *string    `json:"hold_kind,omitempty"`
+	HoldId               *string    `json:"hold_id,omitempty"`
+	Reason               string     `json:"reason"`
+	Status               string     `json:"status"`
+	RequiredApprovals    int32      `json:"required_approvals"`
+	FirstThresholdCents  int64      `json:"first_threshold_cents"`
+	SecondThresholdCents int64      `json:"second_threshold_cents"`
+	RequestedBy          string     `json:"requested_by"`
+	RequestedByRole      *string    `json:"requested_by_role,omitempty"`
+	RequestedAt          time.Time  `json:"requested_at"`
+	FirstApprovedBy      *string    `json:"first_approved_by,omitempty"`
+	FirstApprovedByRole  *string    `json:"first_approved_by_role,omitempty"`
+	FirstApprovedAt      *time.Time `json:"first_approved_at,omitempty"`
+	FirstApprovalNote    *string    `json:"first_approval_note,omitempty"`
+	SecondApprovedBy     *string    `json:"second_approved_by,omitempty"`
+	SecondApprovedByRole *string    `json:"second_approved_by_role,omitempty"`
+	SecondApprovedAt     *time.Time `json:"second_approved_at,omitempty"`
+	SecondApprovalNote   *string    `json:"second_approval_note,omitempty"`
+	RejectedBy           *string    `json:"rejected_by,omitempty"`
+	RejectedByRole       *string    `json:"rejected_by_role,omitempty"`
+	RejectedAt           *time.Time `json:"rejected_at,omitempty"`
+	RejectionReason      *string    `json:"rejection_reason,omitempty"`
+	AppliedAt            *time.Time `json:"applied_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+type BillingCreditChangePage struct {
+	Items      []BillingCreditChangeRequest `json:"items"`
+	NextCursor *string                      `json:"next_cursor,omitempty"`
+	Limit      *int32                       `json:"limit,omitempty"`
+}
+
 type AssistArgSpec struct {
 	Name     string `json:"name"`
 	Label    string `json:"label"`
@@ -1914,6 +1999,56 @@ type CustomerSMSConsent struct {
 type CustomerSMSConsentUpdate struct {
 	Consent   bool   `json:"consent"`
 	PhoneE164 string `json:"phone_e164"`
+}
+
+type CustomerJob struct {
+	JobId                      string          `json:"job_id"`
+	CustomerId                 string          `json:"customer_id"`
+	BranchId                   string          `json:"branch_id"`
+	JobNo                      string          `json:"job_no"`
+	Name                       string          `json:"name"`
+	ShipToAddress              *map[string]any `json:"ship_to_address,omitempty"`
+	PoReference                *string         `json:"po_reference,omitempty"`
+	ContactName                *string         `json:"contact_name,omitempty"`
+	ContactEmail               *string         `json:"contact_email,omitempty"`
+	ContactPhone               *string         `json:"contact_phone,omitempty"`
+	CreditLimitCents           *int64          `json:"credit_limit_cents,omitempty"`
+	TermsDays                  *int32          `json:"terms_days,omitempty"`
+	EffectiveTermsDays         *int32          `json:"effective_terms_days,omitempty"`
+	Status                     string          `json:"status"`
+	SubstantialPerformanceDate *string         `json:"substantial_performance_date,omitempty"`
+	LastSupplyDate             *string         `json:"last_supply_date,omitempty"`
+	CreatedBy                  *string         `json:"created_by,omitempty"`
+	CreatedAt                  *time.Time      `json:"created_at,omitempty"`
+	UpdatedAt                  *time.Time      `json:"updated_at,omitempty"`
+}
+
+type CustomerJobCreate struct {
+	JobNo                      string          `json:"job_no"`
+	Name                       string          `json:"name"`
+	BranchId                   *string         `json:"branch_id,omitempty"`
+	ShipToAddress              *map[string]any `json:"ship_to_address,omitempty"`
+	PoReference                *string         `json:"po_reference,omitempty"`
+	ContactName                *string         `json:"contact_name,omitempty"`
+	ContactEmail               *string         `json:"contact_email,omitempty"`
+	ContactPhone               *string         `json:"contact_phone,omitempty"`
+	CreditLimitCents           *int64          `json:"credit_limit_cents,omitempty"`
+	TermsDays                  *int32          `json:"terms_days,omitempty"`
+	SubstantialPerformanceDate *string         `json:"substantial_performance_date,omitempty"`
+	LastSupplyDate             *string         `json:"last_supply_date,omitempty"`
+}
+
+type CustomerJobEdit struct {
+	Name                       *string         `json:"name,omitempty"`
+	ShipToAddress              *map[string]any `json:"ship_to_address,omitempty"`
+	PoReference                *string         `json:"po_reference,omitempty"`
+	ContactName                *string         `json:"contact_name,omitempty"`
+	ContactEmail               *string         `json:"contact_email,omitempty"`
+	ContactPhone               *string         `json:"contact_phone,omitempty"`
+	CreditLimitCents           *int64          `json:"credit_limit_cents,omitempty"`
+	TermsDays                  *int32          `json:"terms_days,omitempty"`
+	SubstantialPerformanceDate *string         `json:"substantial_performance_date,omitempty"`
+	LastSupplyDate             *string         `json:"last_supply_date,omitempty"`
 }
 
 type PrintingJob struct {
@@ -3758,6 +3893,7 @@ type TaxConfig struct {
 	BranchId             *string `json:"branch_id,omitempty"`
 	HstRegistrationNo    string  `json:"hst_registration_no"`
 	RoundMode            string  `json:"round_mode"`
+	FilingFrequency      *string `json:"filing_frequency,omitempty"`
 	AvalaraEnabled       bool    `json:"avalara_enabled"`
 	PostalRoutingEnabled bool    `json:"postal_routing_enabled"`
 	Notes                *string `json:"notes,omitempty"`
@@ -3824,6 +3960,45 @@ type TaxReconReport struct {
 	GlOntarioCents         int64   `json:"gl_ontario_cents"`
 	VarianceCents          int64   `json:"variance_cents"`
 	TiedOut                bool    `json:"tied_out"`
+}
+
+type TaxWorksheetLine struct {
+	LineNo        string  `json:"line_no"`
+	Label         string  `json:"label"`
+	AmountCents   int64   `json:"amount_cents"`
+	EnteredByHand bool    `json:"entered_by_hand"`
+	Note          *string `json:"note,omitempty"`
+}
+
+type TaxWorksheet struct {
+	Year                          int32              `json:"year"`
+	FilingFrequency               string             `json:"filing_frequency"`
+	Quarter                       *int32             `json:"quarter,omitempty"`
+	Month                         *int32             `json:"month,omitempty"`
+	FromDate                      string             `json:"from_date"`
+	ToDate                        string             `json:"to_date"`
+	BranchId                      *string            `json:"branch_id,omitempty"`
+	Line101SalesCents             int64              `json:"line_101_sales_cents"`
+	Line103CollectedCents         int64              `json:"line_103_collected_cents"`
+	Line104AdjustmentsCents       int64              `json:"line_104_adjustments_cents"`
+	Line105TotalHstCents          int64              `json:"line_105_total_hst_cents"`
+	Line106ItcsCents              int64              `json:"line_106_itcs_cents"`
+	Line107ItcAdjustmentsCents    int64              `json:"line_107_itc_adjustments_cents"`
+	Line108TotalItcsCents         int64              `json:"line_108_total_itcs_cents"`
+	Line109NetTaxCents            int64              `json:"line_109_net_tax_cents"`
+	Line110InstalmentsCents       int64              `json:"line_110_instalments_cents"`
+	Line111RebatesCents           int64              `json:"line_111_rebates_cents"`
+	Line112TotalOtherCreditsCents int64              `json:"line_112_total_other_credits_cents"`
+	Line113BalanceCents           int64              `json:"line_113_balance_cents"`
+	Line114RefundClaimedCents     int64              `json:"line_114_refund_claimed_cents"`
+	Line115AmountOwingCents       int64              `json:"line_115_amount_owing_cents"`
+	InvoiceHstCents               int64              `json:"invoice_hst_cents"`
+	ReturnTaxCents                int64              `json:"return_tax_cents"`
+	GlPayableCents                int64              `json:"gl_payable_cents"`
+	VarianceCents                 int64              `json:"variance_cents"`
+	TiedOut                       bool               `json:"tied_out"`
+	ManualEntryNote               string             `json:"manual_entry_note"`
+	Lines                         []TaxWorksheetLine `json:"lines"`
 }
 
 type InventoryStockMove struct {
@@ -7787,6 +7962,7 @@ type PurchasingBill struct {
 	SubtotalCents        int64                `json:"subtotal_cents"`
 	TaxCents             int64                `json:"tax_cents"`
 	TotalCents           int64                `json:"total_cents"`
+	DocTotalCents        int64                `json:"doc_total_cents"`
 	Currency             PurchasingCurrency   `json:"currency"`
 	FxRate               float64              `json:"fx_rate"`
 	GlJournalId          *string              `json:"gl_journal_id,omitempty"`
@@ -7826,8 +8002,80 @@ type PurchasingInstalment struct {
 
 type PurchasingBillDetail struct {
 	PurchasingBill
-	Lines       []PurchasingBillLine   `json:"lines"`
-	Instalments []PurchasingInstalment `json:"instalments"`
+	DocOpenCents int64                  `json:"doc_open_cents"`
+	Lines        []PurchasingBillLine   `json:"lines"`
+	Instalments  []PurchasingInstalment `json:"instalments"`
+}
+
+// PurchasingVendorCreditStatus is the document's enum: "DRAFT", "POSTED".
+type PurchasingVendorCreditStatus string
+
+type PurchasingVendorCredit struct {
+	Id           string                       `json:"id"`
+	CreditNo     string                       `json:"credit_no"`
+	VendorId     string                       `json:"vendor_id"`
+	VendorName   string                       `json:"vendor_name"`
+	BranchId     string                       `json:"branch_id"`
+	BillId       *string                      `json:"bill_id,omitempty"`
+	BillNo       *string                      `json:"bill_no,omitempty"`
+	PoId         *string                      `json:"po_id,omitempty"`
+	PoNo         *string                      `json:"po_no,omitempty"`
+	Status       PurchasingVendorCreditStatus `json:"status"`
+	CreditDate   string                       `json:"credit_date"`
+	TotalCents   int64                        `json:"total_cents"`
+	AppliedCents int64                        `json:"applied_cents"`
+	OpenCents    int64                        `json:"open_cents"`
+	GlJournalId  *string                      `json:"gl_journal_id,omitempty"`
+	PostedAt     *time.Time                   `json:"posted_at,omitempty"`
+	CreatedAt    time.Time                    `json:"created_at"`
+}
+
+type PurchasingVendorCreditLine struct {
+	LineNo      int32  `json:"line_no"`
+	AccountCode string `json:"account_code"`
+	Description string `json:"description"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+type PurchasingVendorCreditApplication struct {
+	Id          string    `json:"id"`
+	BillId      string    `json:"bill_id"`
+	BillNo      string    `json:"bill_no"`
+	AmountCents int64     `json:"amount_cents"`
+	AppliedAt   time.Time `json:"applied_at"`
+}
+
+type PurchasingVendorCreditDetail struct {
+	PurchasingVendorCredit
+	Lines        []PurchasingVendorCreditLine        `json:"lines"`
+	Applications []PurchasingVendorCreditApplication `json:"applications"`
+}
+
+type PurchasingVendorCreditPage struct {
+	Items      []PurchasingVendorCredit `json:"items"`
+	NextCursor *string                  `json:"next_cursor,omitempty"`
+	Limit      *int32                   `json:"limit,omitempty"`
+}
+
+type PurchasingCreateVendorCreditRequest struct {
+	VendorId   string                              `json:"vendor_id"`
+	BranchId   string                              `json:"branch_id"`
+	CreditNo   string                              `json:"credit_no"`
+	BillId     *string                             `json:"bill_id,omitempty"`
+	PoId       *string                             `json:"po_id,omitempty"`
+	CreditDate *string                             `json:"credit_date,omitempty"`
+	Lines      []PurchasingVendorCreditLineRequest `json:"lines"`
+}
+
+type PurchasingVendorCreditLineRequest struct {
+	AccountCode *string `json:"account_code,omitempty"`
+	Description *string `json:"description,omitempty"`
+	AmountCents int64   `json:"amount_cents"`
+}
+
+type PurchasingApplyVendorCreditRequest struct {
+	BillId      string `json:"bill_id"`
+	AmountCents int64  `json:"amount_cents"`
 }
 
 type PurchasingTolerance struct {
@@ -7978,6 +8226,7 @@ type PurchasingPostBillRequest struct {
 
 type PurchasingPayBillRequest struct {
 	AmountCents int64      `json:"amount_cents"`
+	FxRate      *float64   `json:"fx_rate,omitempty"`
 	PaidAt      *time.Time `json:"paid_at,omitempty"`
 	Note        *string    `json:"note,omitempty"`
 }
@@ -8056,27 +8305,30 @@ type PurchasingVendorSKUPage struct {
 }
 
 type PurchasingAPAgingItem struct {
-	Id               string  `json:"id"`
-	Kind             string  `json:"kind"`
-	IsLandedCost     bool    `json:"is_landed_cost"`
-	RefNo            string  `json:"ref_no"`
-	BillNo           *string `json:"bill_no,omitempty"`
-	PoId             *string `json:"po_id,omitempty"`
-	PoNo             *string `json:"po_no,omitempty"`
-	PoRef            *string `json:"po_ref,omitempty"`
-	BranchId         string  `json:"branch_id"`
-	VendorId         *string `json:"vendor_id,omitempty"`
-	VendorName       *string `json:"vendor_name,omitempty"`
-	ChargeKind       *string `json:"charge_kind,omitempty"`
-	BillDate         string  `json:"bill_date"`
-	DueDate          string  `json:"due_date"`
-	TotalCents       int64   `json:"total_cents"`
-	PaidCents        int64   `json:"paid_cents"`
-	OpenCents        int64   `json:"open_cents"`
-	FreightCadCents  *int64  `json:"freight_cad_cents,omitempty"`
-	DutyCadCents     *int64  `json:"duty_cad_cents,omitempty"`
-	HandlingCadCents *int64  `json:"handling_cad_cents,omitempty"`
-	Bucket           string  `json:"bucket"`
+	Id               string             `json:"id"`
+	Kind             string             `json:"kind"`
+	IsLandedCost     bool               `json:"is_landed_cost"`
+	RefNo            string             `json:"ref_no"`
+	BillNo           *string            `json:"bill_no,omitempty"`
+	PoId             *string            `json:"po_id,omitempty"`
+	PoNo             *string            `json:"po_no,omitempty"`
+	PoRef            *string            `json:"po_ref,omitempty"`
+	BranchId         string             `json:"branch_id"`
+	VendorId         *string            `json:"vendor_id,omitempty"`
+	VendorName       *string            `json:"vendor_name,omitempty"`
+	ChargeKind       *string            `json:"charge_kind,omitempty"`
+	BillDate         string             `json:"bill_date"`
+	DueDate          string             `json:"due_date"`
+	TotalCents       int64              `json:"total_cents"`
+	PaidCents        int64              `json:"paid_cents"`
+	OpenCents        int64              `json:"open_cents"`
+	Currency         PurchasingCurrency `json:"currency"`
+	DocTotalCents    int64              `json:"doc_total_cents"`
+	DocOpenCents     int64              `json:"doc_open_cents"`
+	FreightCadCents  *int64             `json:"freight_cad_cents,omitempty"`
+	DutyCadCents     *int64             `json:"duty_cad_cents,omitempty"`
+	HandlingCadCents *int64             `json:"handling_cad_cents,omitempty"`
+	Bucket           string             `json:"bucket"`
 }
 
 type PurchasingAPAgingRow struct {
@@ -8116,6 +8368,77 @@ type PurchasingAPAgingPage struct {
 	NextCursor      *string                `json:"next_cursor"`
 }
 
+// PurchasingPaymentRunStatus is the document's enum: "DRAFT", "PAID".
+type PurchasingPaymentRunStatus string
+
+// PurchasingPaymentRunLineStatus is the document's enum: "SELECTED", "PAID", "SKIPPED".
+type PurchasingPaymentRunLineStatus string
+
+type PurchasingPaymentRunLine struct {
+	Id          string                         `json:"id"`
+	Seq         int32                          `json:"seq"`
+	BillId      string                         `json:"bill_id"`
+	BillNo      *string                        `json:"bill_no,omitempty"`
+	VendorId    *string                        `json:"vendor_id,omitempty"`
+	VendorName  *string                        `json:"vendor_name,omitempty"`
+	DueDate     *string                        `json:"due_date,omitempty"`
+	AmountCents int64                          `json:"amount_cents"`
+	Status      PurchasingPaymentRunLineStatus `json:"status"`
+	PaidCents   int64                          `json:"paid_cents"`
+	SkipReason  *string                        `json:"skip_reason,omitempty"`
+}
+
+type PurchasingPaymentRun struct {
+	Id         string                     `json:"id"`
+	BranchId   string                     `json:"branch_id"`
+	Status     PurchasingPaymentRunStatus `json:"status"`
+	DueOn      string                     `json:"due_on"`
+	VendorId   *string                    `json:"vendor_id,omitempty"`
+	PayDate    string                     `json:"pay_date"`
+	TotalCents int64                      `json:"total_cents"`
+	PaidCents  int64                      `json:"paid_cents"`
+	PaidAt     *time.Time                 `json:"paid_at,omitempty"`
+	CreatedAt  time.Time                  `json:"created_at"`
+	Lines      []PurchasingPaymentRunLine `json:"lines"`
+	LeftOut    *[]string                  `json:"left_out,omitempty"`
+}
+
+type PurchasingPaymentRunSummary struct {
+	Id         string                     `json:"id"`
+	BranchId   string                     `json:"branch_id"`
+	Status     PurchasingPaymentRunStatus `json:"status"`
+	DueOn      string                     `json:"due_on"`
+	VendorId   *string                    `json:"vendor_id,omitempty"`
+	PayDate    string                     `json:"pay_date"`
+	LineCount  int32                      `json:"line_count"`
+	TotalCents int64                      `json:"total_cents"`
+	PaidCents  int64                      `json:"paid_cents"`
+	CreatedAt  time.Time                  `json:"created_at"`
+}
+
+type PurchasingPaymentRunPage struct {
+	Items      []PurchasingPaymentRunSummary `json:"items"`
+	NextCursor *string                       `json:"next_cursor,omitempty"`
+	Limit      *int32                        `json:"limit,omitempty"`
+}
+
+type PurchasingProposePaymentRunRequest struct {
+	BranchId string  `json:"branch_id"`
+	DueOn    string  `json:"due_on"`
+	VendorId *string `json:"vendor_id,omitempty"`
+	PayDate  *string `json:"pay_date,omitempty"`
+}
+
+type PurchasingPaymentRunLineAmount struct {
+	BillId      string `json:"bill_id"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+type PurchasingUpdatePaymentRunRequest struct {
+	Remove *[]string                         `json:"remove,omitempty"`
+	Lower  *[]PurchasingPaymentRunLineAmount `json:"lower,omitempty"`
+}
+
 type PurchasingT5018Report struct {
 	Year            int32                `json:"year"`
 	RuleNote        string               `json:"rule_note"`
@@ -8143,6 +8466,7 @@ type LandedCost struct {
 	Id                 string             `json:"id"`
 	PoId               string             `json:"po_id"`
 	PoRef              string             `json:"po_ref"`
+	PayeeVendorId      *string            `json:"payee_vendor_id,omitempty"`
 	BranchId           string             `json:"branch_id"`
 	Currency           PurchasingCurrency `json:"currency"`
 	FxRate             float64            `json:"fx_rate"`
@@ -8163,6 +8487,7 @@ type LandedCost struct {
 type LandedCostCreateRequest struct {
 	PoId               *string                 `json:"po_id,omitempty"`
 	PoRef              *string                 `json:"po_ref,omitempty"`
+	PayeeVendorId      *string                 `json:"payee_vendor_id,omitempty"`
 	BranchId           string                  `json:"branch_id"`
 	Currency           *PurchasingCurrency     `json:"currency,omitempty"`
 	FxRate             *float64                `json:"fx_rate,omitempty"`

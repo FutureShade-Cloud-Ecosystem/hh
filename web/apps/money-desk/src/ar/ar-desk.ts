@@ -14,8 +14,8 @@ import { html, type TemplateResult } from "lit";
 import type { BillingCustomerWorkspace, BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
-import { canLiftHolds, creditCheck, creditWords, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
-import { formatMoney, parseAmountToCents } from "./ar-money.js";
+import { canLiftHolds, creditCheck, creditWords, dayInstant, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
+import { centsToField, formatMoney, parseAmountToCents } from "./ar-money.js";
 import { OfficeDesk, type OfficeHost } from "./office-desk.js";
 import { AttemptKeys, reminderRunWords, sweepWords } from "./office-logic.js";
 import {
@@ -42,7 +42,8 @@ import {
 import type { WorkspaceTab } from "./ar-workspace.js";
 import { formatWorkspaceMoney } from "./ar-workspace.js";
 import { payablesViewNav, renderPayables, renderT5018 } from "./ap-views.js";
-import type { PayablesBoardModel, PayablesView, PurchasingAPAgingPage } from "./ap-logic.js";
+import { billOpenInOwnCurrency, isForeignBill, parseRate, payAmountWords, payOverOpenWords, payRateWords, type PayablesBoardModel, type PayBillForm, type PayablesView, type PurchasingAPAgingItem, type PurchasingAPAgingPage } from "./ap-logic.js";
+import { houseDay, houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { currentYear, t5018Filename, type PurchasingT5018Report, type T5018Model } from "./t5018-logic.js";
 
 export interface DeskHost {
@@ -99,6 +100,18 @@ export class ArDesk {
   #t5018Year = 0;
   #t5018Downloading = false;
   #t5018Notice = "";
+  // The number of the newest read of the open AP: only that read may answer, so a slow answer for
+  // an earlier day never replaces the newer pick.
+  #payablesLoads = 0;
+  // The Pay form on one open vendor bill: the amount, the day, the note, and the key the press
+  // carries. The key is minted when the form opens and sent again on every retry, so a double
+  // press pays once and a retry after a lost answer is judged against the first press.
+  #pay: PayBillForm | null = null;
+  /** Bills whose earlier payment the books showed landed after its form had closed: the next form says so. */
+  readonly #payLanded = new Map<string, number>();
+  #payBusy = false;
+  /** The form's fields are filled once, when it opens: after that the person types in them. */
+  #payFillPending = false;
   #landing: DeskModel["landing"] = null;
   #aging: DeskModel["aging"] = [];
   #rows: readonly BillingRegisterRow[] = [];
@@ -136,6 +149,12 @@ export class ArDesk {
   // never sees it. The route refuses a changed body under a spent key in words, so a lost answer can never post
   // the same money twice, and a payment on another account never touches this one's key.
   readonly #payPins: HeldKeys;
+  // One pending payment per vendor bill: the key is minted when the payment is first sent and sent
+  // again for every retry, until the outcome is known. While the outcome is unknown (a lost answer,
+  // a 5xx) the key is held across a Cancel and across a reload, so the next Pay on that bill
+  // carries the same key and the core answers the first payment: the money cannot move twice. It
+  // rides the same throw safe session mirror the accounts' held keys ride, in its own record.
+  readonly #payBillKeys: HeldKeys;
   /** The office: statement run read back, AP contacts, reminders, dispute, settings (office-desk.ts). */
   readonly #office: OfficeDesk;
   #promiseKey = newKey();
@@ -160,6 +179,7 @@ export class ArDesk {
     this.#host = host;
     this.#who = who;
     this.#payPins = new HeldKeys(who.userId);
+    this.#payBillKeys = new HeldKeys(who.userId, undefined, "bills.");
     const officeHost: OfficeHost = {
       repaint: () => host.repaint(),
       reveal: (selector) => {
@@ -298,10 +318,13 @@ export class ArDesk {
         return true;
       case "payables-open":
         this.#payablesOpenKey = attr("data-payee-id");
+        // Another payee's open items: the Pay form belonged to the one that was open.
+        this.#pay = null;
         this.#host.repaint();
         return true;
       case "payables-back":
         this.#payablesOpenKey = null;
+        this.#pay = null;
         this.#host.repaint();
         return true;
       case "payables-reload":
@@ -320,6 +343,45 @@ export class ArDesk {
         return true;
       case "t5018-csv":
         void this.#downloadT5018();
+        return true;
+      case "payables-pay": {
+        // The Pay form opens on one open bill: the amount it has open, the house day, and the key
+        // this press will carry. A bill the board no longer holds opens no form. The key is the
+        // bill's own held key when it has one (an earlier press whose outcome is still unknown), so
+        // a fresh form on that bill sends the same payment and the core answers the first one.
+        const item = this.#payablesItem(attr("data-bill-id"));
+        if (item === null) return true;
+        // A bill that holds an earlier press whose outcome is unknown opens on that same payment: its
+        // key and its amount (S6 on 701, P2-2). A different amount under a held key would be swallowed
+        // as a replay of the first, so the form sends only the earlier payment until the key ends.
+        const held = heldPayment(this.#payBillKeys.get(item.id));
+        this.#pay = {
+          billId: item.id,
+          billNo: item.ref_no,
+          openCents: billOpenInOwnCurrency(item),
+          currency: item.currency ?? "CAD",
+          amountText: centsToField(held === null ? billOpenInOwnCurrency(item) : held.cents),
+          paidOn: houseDay(),
+          note: "",
+          key: held === null ? newKey() : held.key,
+          error: held === null ? "" : heldPaymentWords(held.cents),
+          earlierLandedCents: this.#payLanded.get(item.id) ?? null,
+        };
+        this.#payLanded.delete(item.id);
+        this.#payFillPending = true;
+        this.#clearMessages();
+        this.#host.repaint();
+        return true;
+      }
+      case "payables-pay-cancel":
+        // The form closes, but the bill's key stays held while its outcome is unknown: the next Pay
+        // on that bill carries the same key, so the money cannot move twice.
+        this.#pay = null;
+        this.#host.repaint();
+        return true;
+      case "payables-pay-send":
+        if (this.#pay !== null && this.#pay.landedCents != null) return true;
+        void this.#sendPayment();
         return true;
       case "card":
         this.#cardFilter = this.#cardFilter === attr("data-card-id") ? null : attr("data-card-id");
@@ -706,6 +768,13 @@ export class ArDesk {
     if (this.#payablesView === "t5018") {
       this.#host.setField("t5018-year", String(this.#t5018Year === 0 ? currentYear() : this.#t5018Year));
     }
+    // The Pay form's fields are filled once, when it opens: the amount it has open and the house
+    // day. After that the person types in them, so nothing is written over their typing.
+    if (this.#payFillPending && this.#pay !== null) {
+      this.#payFillPending = false;
+      this.#host.setField("pay-amount", this.#pay.amountText);
+      this.#host.setField("pay-date", this.#pay.paidOn);
+    }
     const account = this.#account;
     if (account === null) return;
     if (this.#fillPending) {
@@ -749,11 +818,16 @@ export class ArDesk {
    * as of: no day named means today's books. A refusal reads in words, the way every other read
    * on this desk does, and the board keeps the last page it was given rather than showing a
    * half drawn screen.
+   *
+   * Each read carries its own number, and only the newest one may answer: a slow answer for an
+   * earlier day never replaces the newer pick the operator made while it was on the way.
    */
   async #loadPayables(): Promise<void> {
+    const load = ++this.#payablesLoads;
     this.#payablesState = "loading";
     this.#host.repaint();
     const got = await this.#api.apAging(this.#payablesAsOf === "" ? {} : { as_of: this.#payablesAsOf });
+    if (load !== this.#payablesLoads) return;
     if (!got.ok) {
       this.#payablesState = "error";
       this.#payablesError = refusalWords("payables", got.error, got.status);
@@ -808,6 +882,138 @@ export class ArDesk {
     this.#host.download(got.value, t5018Filename(this.#t5018Year === 0 ? currentYear() : this.#t5018Year));
     this.#t5018Notice = "The file is the core's own export of this year.";
     this.#host.repaint();
+  }
+
+  /**
+   * The open bill the Pay form is about: the one the board holds with that id, or nothing. The
+   * board is the only record of what is open, so the form never carries a figure of its own.
+   */
+  #payablesItem(billId: string): PurchasingAPAgingItem | null {
+    const page = this.#payablesPage;
+    if (page === null) return null;
+    for (const row of page.items) {
+      for (const item of row.open_items) {
+        if (item.id === billId) return item;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * One payment against one open vendor bill.
+   *
+   * The amount is the person's, read from the form, and it never goes above what the bill has
+   * open: the desk says so in words rather than sending an ask the route would refuse. The day is
+   * the person's too, and it goes on the wire as the dealer's own house day. The key is the bill's
+   * own, held until the route answers and sent again on every retry, so a double press pays once
+   * and a retry after a lost answer is judged against the first press.
+   *
+   * A refusal keeps the form and says the server's words. A lost answer (no answer at all, or a 5xx)
+   * is not a refusal: the money may have moved, so the form says the outcome is unknown, the key
+   * stays held across a Cancel, and the board and the payee read the books again, so what is on the
+   * screen is the server's. A payment that lands closes the form and reads the books again: the
+   * board and the payee carry the server's figures from then on.
+   */
+  async #sendPayment(): Promise<void> {
+    const form = this.#pay;
+    if (form === null || this.#payBusy) return;
+    const cents = parseAmountToCents(this.#host.field("pay-amount"));
+    if (cents === null) {
+      this.#pay = { ...form, error: payAmountWords() };
+      this.#host.repaint();
+      return;
+    }
+    // The key this press carries: the bill's held key when it has one (an earlier press whose
+    // outcome is still unknown), else the form's own key, which is held from here, so a retry
+    // after a lost answer sends the same payment and the core answers the first one.
+    const held = heldPayment(this.#payBillKeys.get(form.billId));
+    const heldKey = held?.key;
+    // Under a held key only the earlier payment may be sent again: a different amount would be
+    // answered as a replay of the first and silently never written (S6 on 701, P2-2).
+    if (held !== null && cents !== held.cents) {
+      this.#pay = { ...form, error: heldPaymentWords(held.cents) };
+      this.#host.repaint();
+      return;
+    }
+    // The desk's own cap holds a new ask: the amount never goes above what the bill has open. A
+    // press under a held key is not a new ask, it is the same one again, so it goes to the core
+    // whatever it says: the core answers the earlier press if it landed, and judges this one if it
+    // did not.
+    if (heldKey === undefined && cents > form.openCents) {
+      this.#pay = { ...form, error: payOverOpenWords(form.openCents, form.currency) };
+      this.#host.repaint();
+      return;
+    }
+    // A bill that is not CAD is paid at the rate the person typed; the desk converts nothing, it
+    // only refuses a rate it cannot read before anything is sent, and the core judges the rest.
+    let fxRate: number | undefined;
+    if (isForeignBill(form.currency)) {
+      const rate = parseRate(this.#host.field("pay-rate"));
+      if (rate === null) {
+        this.#pay = { ...form, error: payRateWords(form.currency) };
+        this.#host.repaint();
+        return;
+      }
+      fxRate = rate;
+    }
+    const paidOn = this.#host.field("pay-date");
+    const day = paidOn === "" ? houseDay() : paidOn;
+    const note = this.#host.field("pay-note");
+    this.#payBusy = true;
+    this.#host.repaint();
+    const key = heldKey ?? form.key;
+    if (heldKey === undefined) this.#payBillKeys.set(form.billId, heldPaymentValue(key, cents));
+    const got = await this.#api.payBill(form.billId, { amountCents: cents, paidAt: dayInstant(day, houseZone()), note, fxRate }, key);
+    this.#payBusy = false;
+    if (!got.ok) {
+      const outcome = paymentOutcome(got.error, got.status, heldKey !== undefined);
+      if (outcome.kind === "unknown") {
+        // The answer was lost or the server failed: the payment may or may not have landed, so the
+        // form says so and the key stays held. The books are read again, so the open amount on the
+        // screen is the server's and the person can see what actually moved.
+        // The supplier payment's own words, not the receivables desk's: a replay of the earlier press is
+        // answered with that payment, never refused, so the words never promise the server will say so.
+        this.#pay = { ...form, error: heldPaymentWords(cents) };
+        this.#host.repaint();
+        await this.#loadPayables();
+        // The form carries the bill's open amount as the books now say it, not the figure it was
+        // opened with: the money may have moved, and the row above the form says so. A Cancel that
+        // landed while the books were coming back closes the form for good, so there is nothing to
+        // carry.
+        const open = this.#payablesItem(form.billId);
+        const current = this.#pay;
+        // The books show the earlier payment landed when the bill's open amount fell by at least its
+        // amount, or the bill left the open list: the key ends and the form closes, so the next Pay on
+        // that bill is a new payment with a new key.
+        if (open === null || form.openCents - billOpenInOwnCurrency(open) >= cents) {
+          this.#payBillKeys.delete(form.billId);
+          // The form says so and waits for the person's own Close (S6 on 701, P2-3): the last words
+          // on screen invited a second press, so a silent close would let a fresh Pay send the same
+          // money again under a new key. A form already closed leaves the word for the next one.
+          if (current !== null && current.billId === form.billId) {
+            this.#pay = { ...current, openCents: open === null ? 0 : billOpenInOwnCurrency(open), error: "", landedCents: cents };
+          } else {
+            this.#payLanded.set(form.billId, cents);
+          }
+          this.#host.repaint();
+          return;
+        }
+        if (current !== null) {
+          this.#pay = { ...current, openCents: billOpenInOwnCurrency(open) };
+          this.#host.repaint();
+        }
+        return;
+      }
+      // A refusal wrote nothing, so the key ends and the next press on that bill is a new payment.
+      this.#payBillKeys.delete(form.billId);
+      this.#pay = { ...form, error: refusalWords("pay", got.error, got.status) };
+      this.#host.repaint();
+      return;
+    }
+    this.#payBillKeys.delete(form.billId);
+    this.#pay = null;
+    this.#host.repaint();
+    await this.#loadPayables();
   }
 
   async #loadPaid(): Promise<void> {
@@ -1042,6 +1248,7 @@ export class ArDesk {
     this.#payPins.delete(account.customerId);
     const r = result.value;
     const done = r.lines.filter((l) => l.outcome !== "NONE").map((l) => `${formatMoney(l.applied_cents)} on ${l.invoice_no}, balance now ${formatMoney(l.balance_after_cents)}`);
+    if (r.on_account_cents > 0) done.push(`${formatMoney(r.on_account_cents)} more than these invoices could take stays on the customer's account as a credit`);
     this.#notice = `Payment ${r.payment_no ?? "recorded"} ${r.replayed ? "was already applied" : "applied"}: ${done.join("; ")}.`;
     // The notice carries the only words saying the money is recorded, so a phone brings it into view as
     // the error branches do (after the unknown outcome's exit this is the screen's one honest sentence).
@@ -1685,14 +1892,15 @@ export class ArDesk {
     void this.#loadPayables();
   }
 
-  /** Leaving the board closes the payee whose open items were open. */
+  /** Leaving the board closes the payee whose open items were open, and the form that was on it. */
   closePayables(): void {
+    this.#pay = null;
     if (this.#payablesOpenKey === null) return;
     this.#payablesOpenKey = null;
     this.#host.repaint();
   }
 
-  /** The board's own state: the read, the day it is read as of, and the row open. */
+  /** The board's own state: the read, the day it is read as of, the row open, and the Pay form. */
   #payablesModel(): PayablesBoardModel {
     return {
       state: this.#payablesState,
@@ -1700,6 +1908,9 @@ export class ArDesk {
       error: this.#payablesError,
       asOf: this.#payablesAsOf,
       openRowKey: this.#payablesOpenKey,
+      pay: this.#pay,
+      roleCode: this.#who.roleCode,
+      busy: this.#payBusy,
     };
   }
 
@@ -1770,4 +1981,22 @@ export function deterministicPaylinkToken(
   }
   const hex = (h1 >>> 0).toString(16).padStart(8, "0") + (h2 >>> 0).toString(16).padStart(8, "0");
   return hex.slice(0, 16);
+}
+
+/** A bill's held press: its key and the amount it carried, kept as one record value ("key|cents"). */
+function heldPaymentValue(key: string, cents: number): string {
+  return `${key}|${cents}`;
+}
+
+function heldPayment(value: string | undefined): { key: string; cents: number } | null {
+  if (value === undefined) return null;
+  const bar = value.lastIndexOf("|");
+  if (bar < 0) return null;
+  const cents = Number(value.slice(bar + 1));
+  if (!Number.isInteger(cents) || cents <= 0) return null;
+  return { key: value.slice(0, bar), cents };
+}
+
+function heldPaymentWords(cents: number): string {
+  return `An earlier payment of ${formatMoney(cents)} on this bill may or may not have been recorded. Check the bill's open amount above. Press Record the payment again to send the same payment; the books will say if the first press was already recorded. A different amount waits until the earlier payment shows on the bill.`;
 }

@@ -264,19 +264,30 @@ func (s *messagesSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeF
 	return s.repo.syncMessageExists(ctx, id)
 }
 
+// ValidateCreate answers the create body's shape (the channel named, a
+// nonempty body) without the room fence or a write: the engine's bound key
+// gate calls it before the hidden refusal, so an invalid body meets this
+// refusal under a spent key and a free one. The words are exactly Create's.
+func (s *messagesSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	if channelID, _ := fields["channel_id"].(string); channelID == "" {
+		return syncRefused(fmt.Errorf("channel_id is required"))
+	}
+	if body, _ := fields["body"].(string); body == "" {
+		return syncRefused(fmt.Errorf("message body is empty"))
+	}
+	return nil
+}
+
 func (s *messagesSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
 	uid, ok := syncFeedUser(ctx, s.link, f)
 	if !ok {
 		return sync.RowState{}, syncRefused(fmt.Errorf("no linked staff user for the caller"))
 	}
+	if err := s.ValidateCreate(ctx, f, fields); err != nil {
+		return sync.RowState{}, err
+	}
 	channelID, _ := fields["channel_id"].(string)
-	if channelID == "" {
-		return sync.RowState{}, syncRefused(fmt.Errorf("channel_id is required"))
-	}
 	body, _ := fields["body"].(string)
-	if body == "" {
-		return sync.RowState{}, syncRefused(fmt.Errorf("message body is empty"))
-	}
 	if !admitsRoom(ctx, s.fence, uid, channelID) {
 		// The seam's plain refusal, with no module suffix. The engine's
 		// bound key gate answers a key this caller may not read the very
@@ -382,20 +393,32 @@ func (s *acksSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilte
 	return s.repo.syncAckExists(ctx, id)
 }
 
+// ValidateCreate answers the create body's shape (the message named, a
+// method of the module's vocabulary) without a write: the engine's bound key
+// gate calls it before the hidden refusal, so an invalid body meets this
+// refusal under a spent key and a free one. The words are exactly Create's.
+func (s *acksSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	if messageID, _ := fields["message_id"].(string); messageID == "" {
+		return syncRefused(fmt.Errorf("message_id is required"))
+	}
+	method, _ := fields["method"].(string)
+	if _, ok := normalizeAckMethod(method); !ok {
+		return syncRefused(fmt.Errorf("ack method must be one of TAP, QUICK_REPLY, VOICE"))
+	}
+	return nil
+}
+
 func (s *acksSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
 	uid, ok := syncFeedUser(ctx, s.link, f)
 	if !ok {
 		return sync.RowState{}, syncRefused(fmt.Errorf("no linked staff user for the caller"))
 	}
+	if err := s.ValidateCreate(ctx, f, fields); err != nil {
+		return sync.RowState{}, err
+	}
 	messageID, _ := fields["message_id"].(string)
-	if messageID == "" {
-		return sync.RowState{}, syncRefused(fmt.Errorf("message_id is required"))
-	}
 	method, _ := fields["method"].(string)
-	m, ok := normalizeAckMethod(method)
-	if !ok {
-		return sync.RowState{}, syncRefused(fmt.Errorf("ack method must be one of TAP, QUICK_REPLY, VOICE"))
-	}
+	m, _ := normalizeAckMethod(method)
 	id, seq, err := s.repo.syncAckCreate(ctx, uid, messageID, m, key)
 	if err != nil {
 		// The seam's plain words, as the messages scope's create answers
@@ -422,8 +445,15 @@ func (s *acksSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key 
 // module's own merge and escalation rules -
 
 type notifyPrefsSyncStore struct {
-	repo *Repository
-	link syncLinker
+	repo  *Repository
+	link  syncLinker
+	fence roomFence
+}
+
+// WithRoomFence binds the money room fence to the notify_prefs feed.
+func (s *notifyPrefsSyncStore) WithRoomFence(f roomFence) *notifyPrefsSyncStore {
+	s.fence = f
+	return s
 }
 
 // NewNotifyPrefsSyncStore builds the notify_prefs Store
@@ -491,6 +521,36 @@ func (s *notifyPrefsSyncStore) BoundEntityExists(ctx context.Context, f sync.Sco
 	return s.repo.syncPrefsExists(ctx, id)
 }
 
+// prefsPatchShape is the body-only half of the prefs write's checks: the
+// channel the patch tunes and the mode vocabulary. It reads nothing and
+// honours no fence (the current row read and the tier read are the write's
+// own), so the bound key gate can run it before the hidden refusal
+// (UX-116): an invalid body then meets these refusals under a spent key and
+// a free one. The refusals are exactly the ones the write answers.
+func prefsPatchShape(fields map[string]any) (string, error) {
+	channelID, _ := fields["channel_id"].(string)
+	if channelID == "" {
+		return "", syncRefused(fmt.Errorf("channel_id is required"))
+	}
+	if mode, ok := fields["mode"].(string); ok {
+		if _, ok := normalizeMode(mode); !ok {
+			return "", syncRefused(fmt.Errorf("mode must be one of ALL, MENTIONS, MUTED"))
+		}
+	}
+	return channelID, nil
+}
+
+// ValidateCreate answers the pushed pref patch's body shape without the
+// current row read, the tier read or a write: the engine's bound key gate
+// calls it before the hidden refusal (UX-116). The refusals are exactly the
+// write's.
+func (s *notifyPrefsSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	_, err := prefsPatchShape(fields)
+	return err
+}
+
+var _ sync.CreateBodyValidator = (*notifyPrefsSyncStore)(nil)
+
 // Create and Write share the one write a pref row admits: the module's own
 // merge-then-upsert over the caller's current row (an omitted field keeps
 // the current value, never coerces), with the escalation-mute refusal the
@@ -500,9 +560,20 @@ func (s *notifyPrefsSyncStore) write(ctx context.Context, f sync.ScopeFilter, ke
 	if !ok {
 		return sync.RowState{}, syncRefused(fmt.Errorf("no linked staff user for the caller"))
 	}
-	channelID, _ := fields["channel_id"].(string)
-	if channelID == "" {
-		return sync.RowState{}, syncRefused(fmt.Errorf("channel_id is required"))
+	channelID, err := prefsPatchShape(fields)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	// Assert membership before the tier read, the current-row read or the
+	// write, matching the order Service.SetNotifyPrefs uses on the REST door
+	// (UX-122). A non-member meets the same bare sync.ErrRowNotFound a missing
+	// channel answers, so the push cannot tell the two apart.
+	member, err := s.repo.IsMember(ctx, channelID, uid)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if !member || !admitsRoom(ctx, s.fence, uid, channelID) {
+		return sync.RowState{}, sync.ErrRowNotFound
 	}
 	patch := PrefsPatch{
 		DesktopEnabled:     boolField(fields, "desktop_enabled"),
@@ -517,6 +588,9 @@ func (s *notifyPrefsSyncStore) write(ctx context.Context, f sync.ScopeFilter, ke
 	if silencingPatch(patch) {
 		tier, err := s.repo.ChannelTier(ctx, channelID)
 		if err != nil {
+			if isRepoNotFound(err) {
+				return sync.RowState{}, sync.ErrRowNotFound
+			}
 			return sync.RowState{}, err
 		}
 		if unmutableTier(tier) {
@@ -533,6 +607,9 @@ func (s *notifyPrefsSyncStore) write(ctx context.Context, f sync.ScopeFilter, ke
 	}
 	id, seq, err := s.repo.syncPrefsWrite(ctx, merged, key)
 	if err != nil {
+		if isRepoNotFound(err) {
+			return sync.RowState{}, sync.ErrRowNotFound
+		}
 		return sync.RowState{}, err
 	}
 	return sync.RowState{ID: id, Seq: seq}, nil
@@ -556,8 +633,16 @@ func (s *notifyPrefsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id
 	if !found {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
-	if _, ok := fields["channel_id"].(string); !ok {
+	if ch, ok := fields["channel_id"].(string); !ok || ch == "" {
 		fields["channel_id"] = row.ChannelID
+	} else if ch != row.ChannelID {
+		member, err := s.repo.IsMember(ctx, row.ChannelID, uid)
+		if err != nil {
+			return sync.RowState{}, err
+		}
+		if !member || !admitsRoom(ctx, s.fence, uid, row.ChannelID) {
+			return sync.RowState{}, sync.ErrRowNotFound
+		}
 	}
 	return s.write(ctx, f, key, fields)
 }

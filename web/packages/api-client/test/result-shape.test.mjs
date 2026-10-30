@@ -53,17 +53,17 @@ test("every generated operation's signature returns Promise<Result<...>>", (t) =
     emitted.length + variants.length,
     "one scanned function per emitted manifest route and per declared body variant",
   );
-  // 796 scanned / 795 emitted / 796 in the manifest: main's 786 / 785 / 786 (FW1-04's bankrec
-  // cutover pair, FW1-07's inventory controller exceptions read, paymentsVoidPayment, and the
-  // routes before them), this lane's billingApplyCredit and billingReverseCreditApplication, and
-  // W2-6b's three counter reason code routes (the list read, the add and the edit), and W2-9a's
-  // purchasingGetAPAging and purchasingPayBill: 793 / 792 / 793, and W3-T51's three T5018 routes
+  // 819 scanned / 818 emitted / 819 in the manifest: JA-1's 811 / 810 / 811 (main's routes, the
+  // write off, vendor credit and payment run doors, taxGetWorksheet, landedCostSettle and the five
+  // job doors) plus W3-CC1's five credit change request and approval routes
+  // (billingListCreditChanges, billingRequestCreditChange, billingGetCreditChange,
+  // billingApproveCreditChange, billingRejectCreditChange), plus W3-T51's three T5018 routes
   // (purchasingSetVendorT5018, purchasingT5018Report and purchasingT5018ReportCSV):
-  // 796 / 795 / 796.
-  assert.equal(operations, 796, "the document's operation count minus the excluded stream, plus the declared body variant");
-  assert.equal(emitted.length, 795, "the document's operation count minus the excluded stream");
+  // 819 / 818 / 819.
+  assert.equal(operations, 819, "the document's operation count minus the excluded stream, plus the declared body variant");
+  assert.equal(emitted.length, 818, "the document's operation count minus the excluded stream");
   assert.deepEqual(variants, ["feedbackCreateMultipart"], "the only multi content type body is feedbackCreate's multipart form");
-  assert.equal(ROUTES.length, 796, "the manifest census keeps the full route table");
+  assert.equal(ROUTES.length, 819, "the manifest census keeps the full route table");
 });
 
 test("each declared body variant resolves to a live generated function beside its operation", (t) => {

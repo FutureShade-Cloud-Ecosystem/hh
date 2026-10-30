@@ -368,6 +368,12 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		BranchSource: "bill.BranchID from purchasing_bills.branch_id (NOT NULL)",
 	},
 	{
+		File:         "core/internal/purchasing/vendor_credit.go",
+		Func:         "(*Service).PostVendorCredit",
+		Kind:         "PostJournalTx",
+		BranchSource: "credit.BranchID from purchasing_vendor_credits.branch_id (NOT NULL)",
+	},
+	{
 		File:         "core/internal/till/recon_seam.go",
 		Func:         "(*Repository).OpenLodgements",
 		Kind:         fw1OutboxReadKind,

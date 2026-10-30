@@ -7,8 +7,8 @@
 // Every figure is the server's, formatted. The board never adds a bucket up and never takes a
 // figure of its own: the route's row totals and the route's book totals are what show.
 import { html, nothing, type TemplateResult } from "lit";
-import { PAYABLES_BANDS, isLandedCostRow, landedCostWords, rowItems, rowKey, type PayablesBoardModel, type PayablesView, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
-import { asOfDay, bucketWord, daysLateWord, daysPastDue, pastDueMarkWord, relativeDay, statusTone, statusWord, type Mark } from "./ar-logic.js";
+import { PAYABLES_BANDS, canPayBills, formatBillMoney, isForeignBill, isLandedCostRow, landedCostWords, payEarlierLandedWords, payLandedWords, payTargetWords, rowItems, rowKey, type PayablesBoardModel, type PayablesView, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
+import { bucketWord, daysLateWord, daysPastDue, dayWords, pastDueMarkWord, relativeDay, statusTone, statusWord, type Mark } from "./ar-logic.js";
 import { formatMoney } from "./ar-money.js";
 import { markPill } from "./ar-views.js";
 import {
@@ -124,7 +124,7 @@ function payablesAging(page: PurchasingAPAgingPage): TemplateResult {
         ? html`
             <div class="empty" data-payables-empty>
               <strong>No open AP as of this day.</strong>
-              <span class="dim">Nothing is owed to a vendor, a carrier or a broker on ${asOfDay(page.as_of)}.</span>
+              <span class="dim">Nothing is owed to a vendor, a carrier or a broker on ${dayWords(page.as_of)}.</span>
             </div>
           `
         : html`
@@ -152,18 +152,30 @@ function payablesAging(page: PurchasingAPAgingPage): TemplateResult {
           `}
       ${rows.length === 0
         ? nothing
-        : html`<p class="dim small foot" data-payables-foot>As of ${asOfDay(page.as_of)} · ${payeesOwe(rows.length)}.</p>`}
+        : html`<p class="dim small foot" data-payables-foot>As of ${dayWords(page.as_of)} · ${payeesOwe(rows.length)}.</p>`}
     </section>
   `;
 }
 
 // ---- a payee's open items ----------------------------------------------------------------------
 
-/** One open document: a bill, or a landed cost line to a carrier or a broker. */
-function payeeLineRow(item: PurchasingAPAgingItem, asOf: string, onCarrier: boolean): TemplateResult {
+/**
+ * One open document: a bill, or a landed cost line to a carrier or a broker.
+ *
+ * A vendor bill carries the Pay control, and only a manager's: paying a vendor bill is a manage
+ * level route on the money desk, so the Payables and Receivables role is turned away by it. The
+ * server re-refuses; the control is simply not on the row for a role the route would refuse. A
+ * landed cost line carries no Pay control in this round: it is owed to the carrier or the broker,
+ * not to a supplier, and the route pays a vendor bill.
+ *
+ * The row being paid wears the desk's own selected row style, so the person paying a bill can see
+ * which row the open form belongs to.
+ */
+function payeeLineRow(item: PurchasingAPAgingItem, asOf: string, onCarrier: boolean, canPay: boolean, paying: boolean): TemplateResult {
   const late = daysPastDue(item.due_date, asOf);
+  const payable = canPay && item.kind === "VENDOR_BILL";
   return html`
-    <tr data-line-row data-doc-kind="${item.kind}">
+    <tr data-line-row data-doc-kind="${item.kind}" aria-current="${paying ? "true" : "false"}">
       <td>
         <span class="who">${item.ref_no}</span>
         <span class="dim small">${documentKindWord(item, onCarrier)}</span>
@@ -182,13 +194,65 @@ function payeeLineRow(item: PurchasingAPAgingItem, asOf: string, onCarrier: bool
       <td>
         <span class="marks">${markPill(statusMark(item, late))}</span>
       </td>
-      <td class="num">${formatMoney(item.open_cents)}</td>
+      <td class="num">
+        ${formatMoney(item.open_cents)}
+        ${payable
+          ? html`<span class="row-actions"><button type="button" class="btn btn-secondary small-btn" data-action="payables-pay" data-bill-id="${item.id}">Pay</button></span>`
+          : nothing}
+      </td>
     </tr>
   `;
 }
 
-function payablesPayee(page: PurchasingAPAgingPage, row: PurchasingAPAgingRow): TemplateResult {
+/**
+ * The Pay form on one open bill. It says which bill it is paying, to whom, and what is open on it,
+ * before the press: the person paying a vendor reads the amount they are about to move.
+ *
+ * The amount starts at the open amount and never goes above it: the form caps what it sends at
+ * what the bill has open, so a press cannot ask for more than the bill carries.
+ */
+function payForm(model: PayablesBoardModel, payee: string): TemplateResult {
+  const form = model.pay;
+  if (form === null) return html``;
+  return html`
+    ${form.landedCents != null ? html`
+    <form class="pay-form" data-pay-form aria-label="Pay a vendor bill">
+      <p class="callout" role="status" data-pay-landed>${payLandedWords(form.landedCents)}</p>
+      <div class="actions">
+        <button type="button" class="btn btn-secondary" data-action="payables-pay-cancel">Close</button>
+      </div>
+    </form>` : html`
+    <form class="pay-form" data-pay-form aria-label="Pay a vendor bill">
+      ${form.earlierLandedCents != null ? html`<p class="callout" role="status" data-pay-earlier>${payEarlierLandedWords(form.earlierLandedCents)}</p>` : nothing}
+      <p class="callout" data-pay-target>${payTargetWords(form.billNo, payee, form.openCents, form.currency)}</p>
+      <label>
+        <span>Amount to pay${isForeignBill(form.currency) ? html` in ${form.currency.toUpperCase()}` : nothing} <span class="dim small">(up to ${formatBillMoney(form.openCents, form.currency)})</span></span>
+        <input type="text" class="amount" inputmode="decimal" data-field="pay-amount" placeholder="Such as 250.00" autocomplete="off" />
+      </label>
+      ${isForeignBill(form.currency) ? html`<label>
+        <span>Rate paid at <span class="dim small">(CAD for one ${form.currency.toUpperCase()})</span></span>
+        <input type="text" inputmode="decimal" data-field="pay-rate" placeholder="Such as 1.3500" autocomplete="off" />
+      </label>` : nothing}
+      <label>
+        <span>Day it was paid</span>
+        <input type="date" data-field="pay-date" />
+      </label>
+      <label>
+        <span>Note (optional)</span>
+        <input type="text" data-field="pay-note" placeholder="Such as the cheque number" autocomplete="off" />
+      </label>
+      ${form.error === "" ? nothing : html`<p class="alert alert-error" role="alert" data-pay-error>${form.error}</p>`}
+      <div class="actions">
+        <button type="button" class="btn btn-primary" data-action="payables-pay-send" ?disabled=${model.busy}>Record the payment</button>
+        <button type="button" class="btn btn-secondary" data-action="payables-pay-cancel">Cancel</button>
+      </div>
+    </form>`}
+  `;
+}
+
+function payablesPayee(page: PurchasingAPAgingPage, row: PurchasingAPAgingRow, model: PayablesBoardModel): TemplateResult {
   const carrier = isLandedCostRow(row);
+  const canPay = canPayBills(model.roleCode);
   return html`
     <button type="button" class="link back" data-action="payables-back">‹ Payables</button>
     <div class="head">
@@ -208,17 +272,24 @@ function payablesPayee(page: PurchasingAPAgingPage, row: PurchasingAPAgingRow): 
             <tr><th>Document</th><th>Due</th><th>Status</th><th class="num">Open amount</th></tr>
           </thead>
           <tbody>
-            ${rowItems(row).map((item) => payeeLineRow(item, page.as_of, carrier))}
+            ${rowItems(row).map((item) => html`
+              ${payeeLineRow(item, page.as_of, carrier, canPay, model.pay !== null && model.pay.billId === item.id)}
+              ${model.pay !== null && model.pay.billId === item.id
+                ? html`<tr class="pay-form-row"><td colspan="4">${payForm(model, row.vendor_name)}</td></tr>`
+                : nothing}
+            `)}
           </tbody>
           <tfoot>
             <tr>
-              <td colspan="3"><b>Open total</b> <span class="dim small">as of ${asOfDay(page.as_of)}</span></td>
+              <td colspan="3"><b>Open total</b> <span class="dim small">as of ${dayWords(page.as_of)}</span></td>
               <td class="num"><b data-payee-lines-total>${formatMoney(row.total_cents)}</b></td>
             </tr>
           </tfoot>
         </table>
       </div>
-      <p class="dim small foot">Landed costs are owed to the carrier or broker, not to the supplier.</p>
+      ${carrier
+        ? html`<p class="dim small foot">Landed costs are owed to the carrier or broker, not to the supplier.</p>`
+        : nothing}
     </section>
   `;
 }
@@ -234,7 +305,7 @@ export function renderPayables(board: PayablesBoardModel): TemplateResult {
   const page = board.page;
   if (board.openRowKey !== null && page !== null) {
     const row = page.items.find((item) => rowKey(item) === board.openRowKey);
-    if (row !== undefined) return html`${payablesPayee(page, row)}`;
+    if (row !== undefined) return html`${payablesPayee(page, row, board)}`;
   }
   return html`
     <div class="head">

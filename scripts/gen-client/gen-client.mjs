@@ -844,7 +844,7 @@ for (const tag of tagNames) {
         notes.push("// server never logs it.");
       }
       if (op.idempotencyHeader) {
-        notes.push("// The document lets this call carry an Idempotency-Key: call.idempotencyKey, a UUID chosen");
+        notes.push("// The document lets this call carry an Idempotency-Key: call.idempotencyKey, a key chosen");
         notes.push("// once per acceptance and resent unchanged on every retry of it (never a new key per try), so a retry after a");
         notes.push("// timeout answers the first outcome instead of recording a second one.");
       }

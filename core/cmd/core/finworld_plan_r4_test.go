@@ -443,9 +443,11 @@ func TestFinWorldPlan_LandedCostsLeaveTheRestOfTheWorldAlone(t *testing.T) {
 	// The money pin rides the tree's own base world. Round 4 pinned round 3's
 	// 414779960 / 53695286 / 468475246; the driver's round 2 world moved the sales money (the
 	// reorder multiples, the payment method draws and the tax consistent line building) while the
-	// document counts and the returns held, so the merged tree re-pins here. The invariant under
-	// test is unchanged: the landed-cost stream is the plan's own PCG stream and these figures are
-	// whatever the non-landed-cost world carries, so any future change to either side trips it.
+	// document counts and the returns held, so the merged tree re-pinned here. W2-1d item 2 left
+	// these figures alone: the contractors' unique names draw from the plan's own name stream, not
+	// the world's, so the sales side never moved. The invariant under test is unchanged: the
+	// landed-cost stream is the plan's own PCG stream and these figures are whatever the
+	// non-landed-cost world carries, so any future change to either side trips it.
 	if salesSubtotal != 418148682 || salesTax != 54133056 || salesTotal != 472281738 {
 		t.Fatalf("the plan carries sales %d subtotal, %d tax, %d total cents, the merged world's base carried 418148682, 54133056 and 472281738",
 			salesSubtotal, salesTax, salesTotal)

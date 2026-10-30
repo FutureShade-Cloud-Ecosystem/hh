@@ -224,5 +224,6 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/landed-costs/{id}/preview", g.RequireStaff(h.staff(h.preview)))
 	r.Handle("POST /api/v1/landed-costs/{id}/apply", g.RequireManager(h.staff(h.apply)))
 	r.Handle("POST /api/v1/landed-costs/{id}/retro", g.RequireManager(h.staff(h.retro)))
+	r.Handle("POST /api/v1/landed-costs/{id}/settle", g.RequireManager(h.staff(h.settle)))
 	r.Handle("POST /api/v1/landed-costs/{id}/void", g.RequireManager(h.staff(h.void)))
 }
