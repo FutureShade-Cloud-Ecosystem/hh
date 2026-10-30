@@ -23650,6 +23650,36 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/landed-costs/{id}/settle:
+    post:
+      operationId: landedCostSettle
+      tags:
+        - staff-landedcost
+      summary: Pay a landed cost's carrier or broker on its terms
+      description: The payable the apply posted to AP is paid in full and leaves GL 2100 the day the cheque clears. The AP aging reads the payment from the settlement journal's effective instant, the same rule it reads a bill's payment by. Settling a settled document is an idempotent no-op.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - buying-and-stock
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The status after the call (POSTED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandedCostStatusResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/landed-costs/{id}/void:
     post:
       operationId: landedCostVoid
@@ -55855,6 +55885,10 @@ components:
           format: uuid
         po_ref:
           type: string
+        payee_vendor_id:
+          type: string
+          format: uuid
+          description: The freight carrier or customs broker the charge is owed to, so the AP aging labels the payable with the vendor's name. Absent on rows written before the header named its payee, whose label falls back to the PO reference.
         branch_id:
           type: string
           format: uuid
@@ -55907,6 +55941,10 @@ components:
           format: uuid
         po_ref:
           type: string
+        payee_vendor_id:
+          type: string
+          format: uuid
+          description: The freight carrier or customs broker the charge is owed to; the aging labels the payable with the vendor's name
         branch_id:
           type: string
           format: uuid

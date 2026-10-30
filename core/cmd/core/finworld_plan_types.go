@@ -114,6 +114,7 @@ const (
 	FinWorldEventVendorBill            FinWorldEventKind = "VENDOR_BILL"
 	FinWorldEventVendorPayment         FinWorldEventKind = "VENDOR_PAYMENT"
 	FinWorldEventLandedCost            FinWorldEventKind = "LANDED_COST"
+	FinWorldEventLandedCostSettle      FinWorldEventKind = "LANDED_COST_SETTLE"
 	FinWorldEventStockTransfer         FinWorldEventKind = "STOCK_TRANSFER"
 	FinWorldEventManualJournal         FinWorldEventKind = "MANUAL_JOURNAL"
 	FinWorldEventBankStatement         FinWorldEventKind = "BANK_STATEMENT"
@@ -123,21 +124,44 @@ const (
 
 // FinWorldPlanT holds the deterministic 12-month business plan for a seed and anchor month.
 type FinWorldPlanT struct {
-	Seed                  uint64              `json:"seed"`
-	Anchor                YearMonth           `json:"anchor"`
-	StartMonth            YearMonth           `json:"start_month"`
-	FiscalYearEndMonth    YearMonth           `json:"fiscal_year_end_month"`
-	HouseZone             string              `json:"house_zone"`
-	StatutoryHolidaysNote string              `json:"statutory_holidays_note"`
-	TaxRoundingNote       string              `json:"tax_rounding_note"`
-	CatalogueSourceNote   string              `json:"catalogue_source_note"`
-	Dealer                FinWorldDealer      `json:"dealer"`
-	Branches              []FinWorldBranch    `json:"branches"`
-	Contractors           []FinWorldCustomer  `json:"contractors"`
-	Homeowners            []FinWorldCustomer  `json:"homeowners"`
-	Products              []FinWorldProduct   `json:"products"`
-	Months                []FinWorldMonthPlan `json:"months"`
-	Totals                FinWorldPlanSummary `json:"totals"`
+	Seed                  uint64                        `json:"seed"`
+	Anchor                YearMonth                     `json:"anchor"`
+	StartMonth            YearMonth                     `json:"start_month"`
+	FiscalYearEndMonth    YearMonth                     `json:"fiscal_year_end_month"`
+	HouseZone             string                        `json:"house_zone"`
+	StatutoryHolidaysNote string                        `json:"statutory_holidays_note"`
+	TaxRoundingNote       string                        `json:"tax_rounding_note"`
+	CatalogueSourceNote   string                        `json:"catalogue_source_note"`
+	Dealer                FinWorldDealer                `json:"dealer"`
+	Branches              []FinWorldBranch              `json:"branches"`
+	Contractors           []FinWorldCustomer            `json:"contractors"`
+	Homeowners            []FinWorldCustomer            `json:"homeowners"`
+	Vendors               []FinWorldVendor              `json:"vendors"`
+	Products              []FinWorldProduct             `json:"products"`
+	Months                []FinWorldMonthPlan           `json:"months"`
+	IntendedLatePayables  []FinWorldIntendedLatePayable `json:"intended_late_payables"`
+	Totals                FinWorldPlanSummary           `json:"totals"`
+}
+
+// FinWorldVendor is one vendor the world's books name: a goods supplier of the
+// catalogue, or (W2-1d) the freight carrier or customs broker a landed cost
+// names as its payee. The display name is what the aging and the PO screens
+// show, so it carries no vendor number and no counter.
+type FinWorldVendor struct {
+	VendorNo         string `json:"vendor_no"`
+	Name             string `json:"name"`
+	Kind             string `json:"kind"` // "SUPPLIER", "CARRIER" or "BROKER"
+	PaymentTermsDays int    `json:"payment_terms_days"`
+}
+
+// FinWorldIntendedLatePayable names one carrier or broker payable the plan
+// leaves open past its terms on purpose, with the bookkeeper's reason a
+// Controller would read on the aging. At most a handful are intended; the
+// world census fails on any payable past 90 days late the plan did not name
+// here.
+type FinWorldIntendedLatePayable struct {
+	LandedCostKey string `json:"landed_cost_key"`
+	Reason        string `json:"reason"`
 }
 
 // FinWorldDealer describes the invented Quinte-area building supply dealer.
@@ -233,33 +257,34 @@ type FinWorldTradingDay struct {
 
 // FinWorldEvent is a single ordered business event on a trading day.
 type FinWorldEvent struct {
-	GlobalSeq       int                           `json:"global_seq"`
-	DaySeq          int                           `json:"day_seq"`
-	EventKey        string                        `json:"event_key"`
-	Date            string                        `json:"date"`
-	OccurredAt      string                        `json:"occurred_at"`
-	BranchCode      string                        `json:"branch_code,omitempty"`
-	Kind            FinWorldEventKind             `json:"kind"`
-	TillOpen        *FinWorldTillOpenEvent        `json:"till_open,omitempty"`
-	TillPaidInOut   *FinWorldTillPaidInOutEvent   `json:"till_paid_in_out,omitempty"`
-	TillCount       *FinWorldTillCountEvent       `json:"till_count,omitempty"`
-	TillComplete    *FinWorldTillCompleteEvent    `json:"till_complete,omitempty"`
-	Sale            *FinWorldSaleEvent            `json:"sale,omitempty"`
-	Return          *FinWorldReturnEvent          `json:"return,omitempty"`
-	CreditMemo      *FinWorldCreditMemoEvent      `json:"credit_memo,omitempty"`
-	AccountReceipt  *FinWorldAccountReceiptEvent  `json:"account_receipt,omitempty"`
-	NSFBounce       *FinWorldNSFBounceEvent       `json:"nsf_bounce,omitempty"`
-	Lodgement       *FinWorldLodgementEvent       `json:"lodgement,omitempty"`
-	CardSettlement  *FinWorldCardSettlementEvent  `json:"card_settlement,omitempty"`
-	PurchaseReceipt *FinWorldPurchaseReceiptEvent `json:"purchase_receipt,omitempty"`
-	VendorBill      *FinWorldVendorBillEvent      `json:"vendor_bill,omitempty"`
-	VendorPayment   *FinWorldVendorPaymentEvent   `json:"vendor_payment,omitempty"`
-	LandedCost      *FinWorldLandedCostEvent      `json:"landed_cost,omitempty"`
-	StockTransfer   *FinWorldStockTransferEvent   `json:"stock_transfer,omitempty"`
-	ManualJournal   *FinWorldManualJournalEvent   `json:"manual_journal,omitempty"`
-	BankStatement   *FinWorldBankStatementEvent   `json:"bank_statement,omitempty"`
-	PeriodClose     *FinWorldPeriodCloseEvent     `json:"period_close,omitempty"`
-	YearClose       *FinWorldYearCloseEvent       `json:"year_close,omitempty"`
+	GlobalSeq        int                            `json:"global_seq"`
+	DaySeq           int                            `json:"day_seq"`
+	EventKey         string                         `json:"event_key"`
+	Date             string                         `json:"date"`
+	OccurredAt       string                         `json:"occurred_at"`
+	BranchCode       string                         `json:"branch_code,omitempty"`
+	Kind             FinWorldEventKind              `json:"kind"`
+	TillOpen         *FinWorldTillOpenEvent         `json:"till_open,omitempty"`
+	TillPaidInOut    *FinWorldTillPaidInOutEvent    `json:"till_paid_in_out,omitempty"`
+	TillCount        *FinWorldTillCountEvent        `json:"till_count,omitempty"`
+	TillComplete     *FinWorldTillCompleteEvent     `json:"till_complete,omitempty"`
+	Sale             *FinWorldSaleEvent             `json:"sale,omitempty"`
+	Return           *FinWorldReturnEvent           `json:"return,omitempty"`
+	CreditMemo       *FinWorldCreditMemoEvent       `json:"credit_memo,omitempty"`
+	AccountReceipt   *FinWorldAccountReceiptEvent   `json:"account_receipt,omitempty"`
+	NSFBounce        *FinWorldNSFBounceEvent        `json:"nsf_bounce,omitempty"`
+	Lodgement        *FinWorldLodgementEvent        `json:"lodgement,omitempty"`
+	CardSettlement   *FinWorldCardSettlementEvent   `json:"card_settlement,omitempty"`
+	PurchaseReceipt  *FinWorldPurchaseReceiptEvent  `json:"purchase_receipt,omitempty"`
+	VendorBill       *FinWorldVendorBillEvent       `json:"vendor_bill,omitempty"`
+	VendorPayment    *FinWorldVendorPaymentEvent    `json:"vendor_payment,omitempty"`
+	LandedCost       *FinWorldLandedCostEvent       `json:"landed_cost,omitempty"`
+	LandedCostSettle *FinWorldLandedCostSettleEvent `json:"landed_cost_settle,omitempty"`
+	StockTransfer    *FinWorldStockTransferEvent    `json:"stock_transfer,omitempty"`
+	ManualJournal    *FinWorldManualJournalEvent    `json:"manual_journal,omitempty"`
+	BankStatement    *FinWorldBankStatementEvent    `json:"bank_statement,omitempty"`
+	PeriodClose      *FinWorldPeriodCloseEvent      `json:"period_close,omitempty"`
+	YearClose        *FinWorldYearCloseEvent        `json:"year_close,omitempty"`
 }
 
 // FinWorldTillOpenEvent opens a till session at the start of a trading day.
@@ -527,27 +552,52 @@ type FinWorldVendorPaymentEvent struct {
 // reverses the landed cost named by VoidOfLandedCostKey, the way the module's Void reverses an
 // applied document. The module's statuses and bases are spelled exactly as the module spells them.
 type FinWorldLandedCostEvent struct {
-	LandedCostKey       string `json:"landed_cost_key"`
-	PurchaseReceiptKey  string `json:"purchase_receipt_key"`
-	PurchaseOrderKey    string `json:"purchase_order_key"`
-	BranchCode          string `json:"branch_code"`
-	VendorNo            string `json:"vendor_no"`
-	Currency            string `json:"currency"`
-	FXRateBps           int    `json:"fx_rate_bps"`
-	ChargeKind          string `json:"charge_kind"` // "FREIGHT" or "DUTY"
-	ChargeCents         int64  `json:"charge_cents"`
-	ChargeCadCents      int64  `json:"charge_cad_cents"`
-	FreightCents        int64  `json:"freight_cents"`
-	DutyCents           int64  `json:"duty_cents"`
-	HandlingCents       int64  `json:"handling_cents"`
-	AllocationBasis     string `json:"allocation_basis"`
-	ExcludeSpecialBuys  bool   `json:"exclude_special_buys"`
-	Description         string `json:"description"`
-	AppliedDate         string `json:"applied_date"`
-	Status              string `json:"status"`
+	LandedCostKey      string `json:"landed_cost_key"`
+	PurchaseReceiptKey string `json:"purchase_receipt_key"`
+	PurchaseOrderKey   string `json:"purchase_order_key"`
+	BranchCode         string `json:"branch_code"`
+	VendorNo           string `json:"vendor_no"`
+	// PayeeVendorNo names the vendor the charge is owed to: a freight carrier
+	// for a FREIGHT charge, a customs broker for a DUTY one. The driver posts
+	// the create route with that vendor's id, so the AP aging labels the
+	// payable with the carrier's or broker's own name.
+	PayeeVendorNo      string `json:"payee_vendor_no,omitempty"`
+	Currency           string `json:"currency"`
+	FXRateBps          int    `json:"fx_rate_bps"`
+	ChargeKind         string `json:"charge_kind"` // "FREIGHT" or "DUTY"
+	ChargeCents        int64  `json:"charge_cents"`
+	ChargeCadCents     int64  `json:"charge_cad_cents"`
+	FreightCents       int64  `json:"freight_cents"`
+	DutyCents          int64  `json:"duty_cents"`
+	HandlingCents      int64  `json:"handling_cents"`
+	AllocationBasis    string `json:"allocation_basis"`
+	ExcludeSpecialBuys bool   `json:"exclude_special_buys"`
+	Description        string `json:"description"`
+	AppliedDate        string `json:"applied_date"`
+	Status             string `json:"status"`
+	// SettledOnDate is the trading day the plan settles the payable with its
+	// payee vendor, on the vendor's terms. Empty leaves the payable open; a
+	// payable still open more than 90 days past its due date must be named in
+	// the plan's IntendedLatePayables, or the world census fails.
+	SettledOnDate       string `json:"settled_on_date,omitempty"`
 	VoidOfLandedCostKey string `json:"void_of_landed_cost_key,omitempty"`
 	VoidedDate          string `json:"voided_date,omitempty"`
 	VoidReason          string `json:"void_reason,omitempty"`
+}
+
+// FinWorldLandedCostSettleEvent settles a landed cost's payable with its payee
+// vendor on the vendor's terms: the cheque clears on the day the event sits
+// on, the same day the bank statement carries it and the payable leaves the
+// AP aging.
+type FinWorldLandedCostSettleEvent struct {
+	LandedCostKey string `json:"landed_cost_key"`
+	PayeeVendorNo string `json:"payee_vendor_no"`
+	BranchCode    string `json:"branch_code"`
+	// PayableCadCents is the whole payable the settle route relieves: the
+	// freight, the duty and the handling the document carries, the same figure
+	// the module's settle journal credits the bank by.
+	PayableCadCents int64  `json:"payable_cad_cents"`
+	SettledDate     string `json:"settled_date"`
 }
 
 // FinWorldTransferLine is one product line on an inter-branch stock transfer.

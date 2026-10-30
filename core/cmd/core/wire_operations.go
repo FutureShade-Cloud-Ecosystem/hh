@@ -2051,6 +2051,7 @@ func (a w4cLandedCoster) OpenPayablesAsOf(ctx context.Context, asOf time.Time, b
 			DutyCadCents:     r.DutyCadCents,
 			HandlingCadCents: r.HandlingCadCents,
 			TotalCadCents:    r.TotalCadCents,
+			PaidCadCents:     r.PaidCadCents,
 			ChargeKind:       r.ChargeKind,
 			PayeeLabel:       r.PayeeLabel,
 			CreatedAt:        r.CreatedAt,

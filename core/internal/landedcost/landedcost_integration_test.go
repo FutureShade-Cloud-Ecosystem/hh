@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,9 +58,14 @@ func intPool(t *testing.T) *pgxpool.Pool {
 
 // fakeGLPoster records posted journals, deduped on the idempotency key (mirrors the GL provider). It returns
 // an EMPTY journal id so the landed_costs.gl_journal_id FK stays NULL (no real gl_journals row exists here).
-type fakeGLPoster struct{ journals map[string]GLJournal }
+type fakeGLPoster struct {
+	mu       sync.Mutex
+	journals map[string]GLJournal
+}
 
 func (f *fakeGLPoster) PostJournal(_ context.Context, in GLJournal) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.journals == nil {
 		f.journals = map[string]GLJournal{}
 	}
@@ -76,6 +82,8 @@ func (f *fakeGLPoster) PostJournalTx(_ context.Context, _ pgx.Tx, in GLJournal) 
 }
 
 func (f *fakeGLPoster) debit(key, acct string) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var t int64
 	for _, l := range f.journals[key].Lines {
 		if l.AccountCode == acct {
@@ -86,6 +94,8 @@ func (f *fakeGLPoster) debit(key, acct string) int64 {
 }
 
 func (f *fakeGLPoster) credit(key, acct string) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var t int64
 	for _, l := range f.journals[key].Lines {
 		if l.AccountCode == acct {

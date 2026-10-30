@@ -7195,6 +7195,7 @@ export type LandedCost = {
   id: string;
   po_id: string;
   po_ref: string;
+  payee_vendor_id?: string;
   branch_id: string;
   currency: PurchasingCurrency;
   fx_rate: number;
@@ -7214,6 +7215,7 @@ export type LandedCost = {
 export type LandedCostCreateRequest = {
   po_id?: string;
   po_ref?: string;
+  payee_vendor_id?: string;
   branch_id: string;
   currency?: PurchasingCurrency;
   fx_rate?: number;
