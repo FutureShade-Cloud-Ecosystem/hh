@@ -524,10 +524,9 @@ func TestIntegration_CreditMemoRound_TheApprovalReChecksTheCapUnderTheLock(t *te
 	// FLAKE-13: the SQL state is read from the error's own kind, never from the words: a
 	// correct cap refusal quotes the invoice number, and the tag's clock digits once read
 	// 926427256, which the old bare substring check took for SQLSTATE 42725.
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && (pgErr.Code == "42725" || strings.Contains(pgErr.Message, "operator is not unique")) {
+	if state, broken := brokenSQLState(err); broken {
 		_ = ftx.Rollback(ctx)
-		t.Fatalf("fw1-12a core red: the re-check answered the approval's broken SQL (%v), want the cap's own words", err)
+		t.Fatalf("fw1-12a core red: the re-check answered the approval's broken SQL (state %s, %v), want the cap's own words", state, err)
 	}
 	_ = ftx.Rollback(ctx)
 	var status string
@@ -537,4 +536,20 @@ func TestIntegration_CreditMemoRound_TheApprovalReChecksTheCapUnderTheLock(t *te
 	if status != "DRAFT" {
 		t.Fatalf("the refused credit's memo reads %s, want DRAFT", status)
 	}
+}
+
+// brokenSQLState reads the SQL state from the error's own kind: the code of a *pgconn.PgError,
+// never a substring of the words. It returns the state and true when the error is one of the
+// broken SQL answers the approval's re-check must never give: 42725 is "operator is not unique"
+// and 42702 is "column reference is ambiguous", which a re-check that joins two tables raises.
+func brokenSQLState(err error) (string, bool) {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return "", false
+	}
+	switch pgErr.Code {
+	case "42725", "42702":
+		return pgErr.Code, true
+	}
+	return "", false
 }

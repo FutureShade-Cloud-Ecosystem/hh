@@ -8,6 +8,7 @@ import (
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"net/http"
+	"strconv"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
@@ -51,6 +52,57 @@ func (h *Handler) setVendor(w http.ResponseWriter, r *http.Request, caller guard
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
+// setVendorT5018 writes the Financial Controller's subcontractor mark and the contractor's business
+// number on one vendor. The org stamp comes from the guard resolved scope on the caller, never from
+// a header or the body.
+func (h *Handler) setVendorT5018(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in SetVendorT5018Request
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	v, err := h.svc.SetVendorT5018(r.Context(), caller.OrgID, r.PathValue("vendorID"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
+// t5018Report reads the year's T5018 report: the flagged vendors and what the year paid them.
+func (h *Handler) t5018Report(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	report, err := h.svc.T5018ReportForCaller(r.Context(), caller.OrgID,
+		r.URL.Query().Get("year"), r.URL.Query().Get("branch_id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, report)
+}
+
+// t5018ReportCSV is the same report, the other encoder: the file a bookkeeper hands the
+// contractor's book.
+func (h *Handler) t5018ReportCSV(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	report, err := h.svc.T5018ReportForCaller(r.Context(), caller.OrgID,
+		r.URL.Query().Get("year"), r.URL.Query().Get("branch_id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	body, err := EncodeT5018ReportCSV(report)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	// The file is named for the year it covers, so a bookkeeper with three of them in a downloads
+	// folder can tell them apart without opening any of them.
+	w.Header().Set("Content-Disposition", `attachment; filename="t5018-`+strconv.Itoa(report.Year)+`.csv"`)
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 func (h *Handler) listPOs(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
@@ -384,6 +436,68 @@ func (h *Handler) listVendorCredits(w http.ResponseWriter, r *http.Request, call
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, page)
+}
+
+// proposePaymentRun is POST /api/v1/purchasing/payment-runs: the open bills due on or before a
+// house day become a DRAFT run's lines, one per bill at its open amount.
+func (h *Handler) proposePaymentRun(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in ProposePaymentRunRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	run, err := h.svc.ProposePaymentRun(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, run)
+}
+
+// listPaymentRuns is GET /api/v1/purchasing/payment-runs?branch_id=&status=.
+func (h *Handler) listPaymentRuns(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	q := r.URL.Query()
+	items, err := h.svc.ListPaymentRuns(r.Context(), q.Get("branch_id"), q.Get("status"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil})
+}
+
+func (h *Handler) getPaymentRun(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	run, err := h.svc.GetPaymentRun(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, run)
+}
+
+// updatePaymentRun is PUT /api/v1/purchasing/payment-runs/{id}: the review, whole bills off or
+// amounts down, nothing above the bill's open.
+func (h *Handler) updatePaymentRun(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in UpdatePaymentRunRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	run, err := h.svc.UpdatePaymentRun(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, run)
+}
+
+// payPaymentRun is POST /api/v1/purchasing/payment-runs/{id}/pay: every selected bill through
+// PayBill under the line's own key. The body is empty, the run carries its own pay date, and a
+// second press answers the first pay and writes nothing.
+func (h *Handler) payPaymentRun(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	run, err := h.svc.PayPaymentRun(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, run)
 }
 
 func (h *Handler) getTolerance(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {

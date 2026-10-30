@@ -13,7 +13,7 @@
 // which keep the typed values in the desk so a repaint, or a move to another tab, never loses them. The one
 // exception is the certificate number: it is read from its field at the press, sent once, and never kept.
 import { html, type TemplateResult } from "lit";
-import type { TaxConfig, TaxEvidence, TaxReasonCode, TaxReconReport, TaxRecomputeResult, TaxReliefEligibility, TaxRate, TaxStatusCardProfile } from "@hardscapehouse/api-client";
+import type { TaxConfig, TaxEvidence, TaxReasonCode, TaxReconReport, TaxRecomputeResult, TaxReliefEligibility, TaxRate, TaxStatusCardProfile, TaxWorksheet } from "@hardscapehouse/api-client";
 import type { TaxApi, ProfileInput, RateInput } from "./tax-api.js";
 import {
   areaForNewRows,
@@ -29,6 +29,8 @@ import {
   REASONS,
   ROUND_MODES,
   roundModeWord,
+  worksheetCsv,
+  worksheetCsvFilename,
 } from "./tax-logic.js";
 import { bpsToField, formatRate, parseRateToBps } from "./tax-money.js";
 import { renderTax, type ConfirmView, type TaxModel, type TxTab } from "./tax-views.js";
@@ -43,6 +45,8 @@ export interface TaxHost {
   readonly reveal: (selector: string) => void;
   /** Puts the keyboard on the first element matching the selector. */
   readonly focus: (selector: string) => void;
+  /** Downloads a file to the browser. */
+  readonly download?: (filename: string, text: string) => void;
 }
 
 type Pending =
@@ -88,6 +92,9 @@ const KEPT_FIELDS = [
   "tx-s-notes",
   "tx-r-month",
   "tx-r-year",
+  "tx-w-quarter",
+  "tx-w-month",
+  "tx-w-year",
   "tx-c-from",
   "tx-c-to",
 ] as const;
@@ -109,6 +116,8 @@ export class TaxDesk {
   #downloaded = false;
   #recon: TaxReconReport | null = null;
   #recompute: TaxRecomputeResult | null = null;
+  #worksheet: TaxWorksheet | null = null;
+  #worksheetLoaded = false;
   #confirm: ConfirmView | null = null;
   #pending: Pending | null = null;
   #busy = false;
@@ -128,6 +137,9 @@ export class TaxDesk {
     this.#form["tx-p-status"] = "ACTIVE";
     this.#form["tx-r-year"] = String(prior.year);
     this.#form["tx-r-month"] = String(prior.month);
+    this.#form["tx-w-year"] = String(prior.year);
+    this.#form["tx-w-quarter"] = String(Math.trunc((prior.month - 1) / 3) + 1);
+    this.#form["tx-w-month"] = String(prior.month);
     this.#form["tx-c-from"] = prior.first;
     this.#form["tx-c-to"] = prior.last;
   }
@@ -239,7 +251,7 @@ export class TaxDesk {
     switch (action) {
       case "tx-tab": {
         const tab = control.getAttribute("data-tab");
-        if (tab === "rates" || tab === "profiles" || tab === "certificates" || tab === "settings" || tab === "checks") void this.#openTab(tab);
+        if (tab === "rates" || tab === "profiles" || tab === "certificates" || tab === "settings" || tab === "checks" || tab === "worksheet") void this.#openTab(tab);
         return true;
       }
       case "tx-reload":
@@ -288,6 +300,12 @@ export class TaxDesk {
       case "tx-recon-run":
         void this.#runRecon();
         return true;
+      case "tx-worksheet-run":
+        void this.#runWorksheet();
+        return true;
+      case "tx-worksheet-csv":
+        this.#exportWorksheetCsv();
+        return true;
       case "tx-evidence-filter":
         void this.#filterEvidence();
         return true;
@@ -328,7 +346,7 @@ export class TaxDesk {
     if (control instanceof HTMLInputElement && control.type !== "checkbox" && (KEPT_FIELDS as readonly string[]).includes(name)) {
       this.#form[name] = control.value;
       // The hints read the typed text; nothing else needs a repaint per key.
-      if (name === "tx-rate" || name === "tx-p-rate" || name === "tx-r-year") this.#host.repaint();
+      if (name === "tx-rate" || name === "tx-p-rate" || name === "tx-r-year" || name === "tx-w-year") this.#host.repaint();
     }
   }
 
@@ -369,6 +387,9 @@ export class TaxDesk {
     if (tab === "certificates" && !this.#evidenceLoaded) {
       await this.#loadEvidence();
       this.#host.repaint();
+    }
+    if (tab === "worksheet" && !this.#worksheetLoaded) {
+      await this.#runWorksheet();
     }
   }
 
@@ -530,6 +551,42 @@ export class TaxDesk {
       this.#say(refusalWords("recon", answer.error, answer.status ?? 0), "");
     }
     this.#host.repaint();
+  }
+
+  async #runWorksheet(): Promise<void> {
+    if (this.#busy) return;
+    const yearText = (this.#form["tx-w-year"] ?? "").trim();
+    const year = Number(yearText);
+    if (!/^\d{4}$/.test(yearText) || year < 2000 || year > 2100) {
+      return this.#refuse("The year must be a four digit year between 2000 and 2100. Nothing was sent.");
+    }
+    const freq = this.#config?.filing_frequency ?? "QUARTERLY";
+    const quarter = Number(this.#form["tx-w-quarter"] ?? "1");
+    const month = Number(this.#form["tx-w-month"] ?? "1");
+    this.#clearMessages();
+    this.#busy = true;
+    this.#host.repaint();
+    const answer = await this.#api.worksheet({
+      year,
+      ...(freq === "QUARTERLY" ? { quarter: Number.isInteger(quarter) ? quarter : 1 } : {}),
+      ...(freq === "MONTHLY" ? { month: Number.isInteger(month) ? month : 1 } : {}),
+    });
+    this.#busy = false;
+    this.#worksheetLoaded = true;
+    if (answer.ok) {
+      this.#worksheet = answer.value;
+      this.#say("", "");
+    } else {
+      this.#worksheet = null;
+      this.#say(refusalWords("worksheet", answer.error, answer.status ?? 0), "");
+    }
+    this.#host.repaint();
+  }
+
+  #exportWorksheetCsv(): void {
+    const worksheet = this.#worksheet;
+    if (worksheet === null) return;
+    this.#host.download?.(worksheetCsvFilename(worksheet), worksheetCsv(worksheet));
   }
 
   // ---- the second press --------------------------------------------------------------------------------
@@ -742,6 +799,7 @@ export class TaxDesk {
       downloaded: this.#downloaded,
       recon: this.#recon,
       recompute: this.#recompute,
+      worksheet: this.#worksheet,
       confirm: this.#confirm,
       form: this.#form,
       busy: this.#busy,

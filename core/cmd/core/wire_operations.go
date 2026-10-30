@@ -254,6 +254,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithLandedCoster(w4cLandedCoster{svc: landedcostSvc}).
 		WithLandedCostPayables(w4cLandedCoster{svc: landedcostSvc}).
 		WithGLJournalClock(w4cGLJournalClock{svc: spine.glSvc}).
+		WithGLPostingWindow(w4cGLPostingWindow{svc: spine.glSvc}).
 		WithGLPoster(w4cGLPoster{svc: spine.glSvc}).
 		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
 		WithWarrantyCreditReader(w4cWarrantyCreditReader{pool: pool})
@@ -1797,7 +1798,8 @@ func (a w4cStockReceiver) ReceiveDocumentTx(ctx context.Context, tx pgx.Tx, rece
 // package owns that table.
 type w4cVendorDirectory struct{ pool *pgxpool.Pool }
 
-const w4cVendorCols = `id::text, vendor_no::text, name, payment_terms_days, is_active`
+const w4cVendorCols = `id::text, vendor_no::text, name, payment_terms_days, is_active,
+	is_t5018_subcontractor, COALESCE(business_number, '')`
 
 func (a w4cVendorDirectory) ListVendors(ctx context.Context) ([]purchasing.Vendor, error) {
 	if a.pool == nil {
@@ -1811,7 +1813,8 @@ func (a w4cVendorDirectory) ListVendors(ctx context.Context) ([]purchasing.Vendo
 	var out []purchasing.Vendor
 	for rows.Next() {
 		var v purchasing.Vendor
-		if err := rows.Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive); err != nil {
+		if err := rows.Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive,
+			&v.IsT5018Subcontractor, &v.BusinessNumber); err != nil {
 			return nil, fmt.Errorf("vendor directory: scan: %w", err)
 		}
 		out = append(out, v)
@@ -1825,7 +1828,8 @@ func (a w4cVendorDirectory) Vendor(ctx context.Context, vendorID string) (purcha
 	}
 	var v purchasing.Vendor
 	err := a.pool.QueryRow(ctx, `SELECT `+w4cVendorCols+` FROM vendors WHERE id = $1`, vendorID).
-		Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive)
+		Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive,
+			&v.IsT5018Subcontractor, &v.BusinessNumber)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return purchasing.Vendor{}, purchasing.ErrUnknownVendor
 	}
@@ -2050,6 +2054,7 @@ func (a w4cLandedCoster) OpenPayablesAsOf(ctx context.Context, asOf time.Time, b
 			DutyCadCents:     r.DutyCadCents,
 			HandlingCadCents: r.HandlingCadCents,
 			TotalCadCents:    r.TotalCadCents,
+			PaidCadCents:     r.PaidCadCents,
 			ChargeKind:       r.ChargeKind,
 			PayeeLabel:       r.PayeeLabel,
 			CreatedAt:        r.CreatedAt,
@@ -2102,6 +2107,15 @@ func (a w4cGLJournalClock) JournalSourceRefByKey(ctx context.Context, key string
 
 func (a w4cGLJournalClock) JournalAmountByKey(ctx context.Context, key string) (int64, bool, error) {
 	return a.svc.JournalAmountByKey(ctx, key)
+}
+
+// w4cGLPostingWindow satisfies purchasing.GLPostingWindow over the gl service's own posting
+// horizon: the GL owns the fiscal periods, so the GL answers whether a payment dated on a house
+// day would post at all, and why not when it would not.
+type w4cGLPostingWindow struct{ svc *gl.Service }
+
+func (a w4cGLPostingWindow) PostingDateRefusal(ctx context.Context, at time.Time) (string, error) {
+	return a.svc.PostingDateRefusal(ctx, at)
 }
 
 // w4cGLPoster satisfies purchasing.GLPoster over glSvc.PostExternal (the

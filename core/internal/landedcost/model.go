@@ -29,32 +29,42 @@ const (
 	acctFreightPayable = "2100" // the freight/duty/handling owed (Accounts Payable)
 )
 
-// GL journal source (the 0007 source CHECK set). A landed cost attaches to a PO receipt.
+// GL journal source (the 0007 source CHECK set). A landed cost attaches to a PO receipt; its
+// settlement rides the same PAYMENT source a vendor bill's payment rides.
 const (
 	glSourcePOReceipt  = "PO_RECEIPT"
 	glSourceAdjustment = "ADJUSTMENT"
+	glSourcePayment    = "PAYMENT"
+	glAccountCash      = "1000"
 )
 
 // LandedCost is the landed_costs header projection.
 type LandedCost struct {
-	ID                 string    `json:"id"`
-	POID               string    `json:"po_id"`
-	PORef              string    `json:"po_ref"`
-	BranchID           string    `json:"branch_id"`
-	Currency           string    `json:"currency"`
-	FXRate             float64   `json:"fx_rate"`
-	FreightCents       int64     `json:"freight_cents"`
-	DutyCents          int64     `json:"duty_cents"`
-	HandlingCents      int64     `json:"handling_cents"`
-	FreightCadCents    int64     `json:"freight_cad_cents"`
-	DutyCadCents       int64     `json:"duty_cad_cents"`
-	HandlingCadCents   int64     `json:"handling_cad_cents"`
-	AllocationBasis    string    `json:"allocation_basis"`
-	ExcludeSpecialBuys bool      `json:"exclude_special_buys"`
-	Status             string    `json:"status"`
-	RetroOfID          string    `json:"retro_of_id,omitempty"`
-	GLJournalID        string    `json:"gl_journal_id,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                 string  `json:"id"`
+	POID               string  `json:"po_id"`
+	PORef              string  `json:"po_ref"`
+	PayeeVendorID      string  `json:"payee_vendor_id,omitempty"`
+	BranchID           string  `json:"branch_id"`
+	Currency           string  `json:"currency"`
+	FXRate             float64 `json:"fx_rate"`
+	FreightCents       int64   `json:"freight_cents"`
+	DutyCents          int64   `json:"duty_cents"`
+	HandlingCents      int64   `json:"handling_cents"`
+	FreightCadCents    int64   `json:"freight_cad_cents"`
+	DutyCadCents       int64   `json:"duty_cad_cents"`
+	HandlingCadCents   int64   `json:"handling_cad_cents"`
+	AllocationBasis    string  `json:"allocation_basis"`
+	ExcludeSpecialBuys bool    `json:"exclude_special_buys"`
+	Status             string  `json:"status"`
+	// SettledCadCents and SettledAt carry the payable's settlement (0459): the
+	// CAD amount paid the payee vendor and the instant it was paid. Zero and
+	// NULL while the payable is open.
+	SettledCadCents int64     `json:"settled_cad_cents,omitempty"`
+	SettledAt       time.Time `json:"settled_at,omitempty"`
+	RetroOfID       string    `json:"retro_of_id,omitempty"`
+	GLJournalID     string    `json:"gl_journal_id,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"-"`
 }
 
 // totalCadCents is the CAD landed cost to apportion (freight + duty + handling, already CAD).
@@ -67,8 +77,12 @@ func (lc LandedCost) totalCadCents() int64 {
 // base used to split capitalize-vs-sold-through at RetroAdjust time (the frozen Capitalizer seam surfaces no
 // on-hand reader, so the split basis is captured here, see the deviation note).
 type CreateInput struct {
-	POID               string       `json:"po_id"`
-	PORef              string       `json:"po_ref"`
+	POID  string `json:"po_id"`
+	PORef string `json:"po_ref"`
+	// PayeeVendorID names the freight carrier or customs broker the charge is
+	// owed to, so the AP aging labels the payable with the vendor's name. The
+	// PO reference stays the label's fallback for rows that name no payee.
+	PayeeVendorID      string       `json:"payee_vendor_id"`
 	BranchID           string       `json:"branch_id"`
 	Currency           string       `json:"currency"`
 	FXRate             float64      `json:"fx_rate"`
@@ -86,6 +100,13 @@ type OnHandLine struct {
 	ProductID  string  `json:"product_id"`
 	POLineID   string  `json:"po_line_id"`
 	OnHandBase float64 `json:"on_hand_base"`
+}
+
+// SettleInput is the POST /landed-costs/{id}/settle body. paid_at names the
+// instant the carrier or broker was paid; absent, the settle rides the
+// service's own clock.
+type SettleInput struct {
+	PaidAt *time.Time `json:"paid_at"`
 }
 
 // Allocation is one apportioned share of a landed cost (one row of landed_cost_allocations).

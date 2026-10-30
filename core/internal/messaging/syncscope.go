@@ -445,8 +445,15 @@ func (s *acksSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key 
 // module's own merge and escalation rules -
 
 type notifyPrefsSyncStore struct {
-	repo *Repository
-	link syncLinker
+	repo  *Repository
+	link  syncLinker
+	fence roomFence
+}
+
+// WithRoomFence binds the money room fence to the notify_prefs feed.
+func (s *notifyPrefsSyncStore) WithRoomFence(f roomFence) *notifyPrefsSyncStore {
+	s.fence = f
+	return s
 }
 
 // NewNotifyPrefsSyncStore builds the notify_prefs Store
@@ -557,6 +564,17 @@ func (s *notifyPrefsSyncStore) write(ctx context.Context, f sync.ScopeFilter, ke
 	if err != nil {
 		return sync.RowState{}, err
 	}
+	// Assert membership before the tier read, the current-row read or the
+	// write, matching the order Service.SetNotifyPrefs uses on the REST door
+	// (UX-122). A non-member meets the same bare sync.ErrRowNotFound a missing
+	// channel answers, so the push cannot tell the two apart.
+	member, err := s.repo.IsMember(ctx, channelID, uid)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if !member || !admitsRoom(ctx, s.fence, uid, channelID) {
+		return sync.RowState{}, sync.ErrRowNotFound
+	}
 	patch := PrefsPatch{
 		DesktopEnabled:     boolField(fields, "desktop_enabled"),
 		EscalationOverride: boolField(fields, "escalation_override"),
@@ -570,6 +588,9 @@ func (s *notifyPrefsSyncStore) write(ctx context.Context, f sync.ScopeFilter, ke
 	if silencingPatch(patch) {
 		tier, err := s.repo.ChannelTier(ctx, channelID)
 		if err != nil {
+			if isRepoNotFound(err) {
+				return sync.RowState{}, sync.ErrRowNotFound
+			}
 			return sync.RowState{}, err
 		}
 		if unmutableTier(tier) {
@@ -586,6 +607,9 @@ func (s *notifyPrefsSyncStore) write(ctx context.Context, f sync.ScopeFilter, ke
 	}
 	id, seq, err := s.repo.syncPrefsWrite(ctx, merged, key)
 	if err != nil {
+		if isRepoNotFound(err) {
+			return sync.RowState{}, sync.ErrRowNotFound
+		}
 		return sync.RowState{}, err
 	}
 	return sync.RowState{ID: id, Seq: seq}, nil
@@ -609,8 +633,16 @@ func (s *notifyPrefsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id
 	if !found {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
-	if _, ok := fields["channel_id"].(string); !ok {
+	if ch, ok := fields["channel_id"].(string); !ok || ch == "" {
 		fields["channel_id"] = row.ChannelID
+	} else if ch != row.ChannelID {
+		member, err := s.repo.IsMember(ctx, row.ChannelID, uid)
+		if err != nil {
+			return sync.RowState{}, err
+		}
+		if !member || !admitsRoom(ctx, s.fence, uid, row.ChannelID) {
+			return sync.RowState{}, sync.ErrRowNotFound
+		}
 	}
 	return s.write(ctx, f, key, fields)
 }

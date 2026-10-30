@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { ReportingAccrual, ReportingAttributionCheck, ReportingCommissionComputeRequest, ReportingCommissionPeriod, ReportingCommissionPeriodPage, ReportingCommissionRule, ReportingCommissionRulePage, ReportingPrintRequest, ReportingResult, ReportingRun, ReportingRunPage, ReportingSavedView, ReportingSavedViewPage, ReportingSavedViewWrite, ReportingTemplate, ReportingTemplateCatalog } from "./types.js";
+import type { ReportingAccrual, ReportingAttributionCheck, ReportingCommissionComputeRequest, ReportingCommissionPeriod, ReportingCommissionPeriodPage, ReportingCommissionRule, ReportingCommissionRulePage, ReportingDatasetCatalog, ReportingDatasetQuery, ReportingDatasetResult, ReportingPrintRequest, ReportingResult, ReportingRun, ReportingRunPage, ReportingSavedView, ReportingSavedViewPage, ReportingSavedViewWrite, ReportingTemplate, ReportingTemplateCatalog } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -173,6 +173,36 @@ export async function reportingPrintCommissionRun(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "reportingPrintCommissionRun",
+  });
+}
+
+export async function reportingListDatasets(
+  client: ApiClient,
+  call?: ApiCallOptions
+): Promise<Result<ReportingDatasetCatalog>> {
+  return client.request<ReportingDatasetCatalog>({
+    method: "GET",
+    path: "/api/v1/reporting/datasets",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "reportingListDatasets",
+  });
+}
+
+export async function reportingReadDataset(
+  client: ApiClient,
+  set: string | number,
+  body: ReportingDatasetQuery,
+  call?: ApiCallOptions
+): Promise<Result<ReportingDatasetResult>> {
+  return client.request<ReportingDatasetResult>({
+    method: "POST",
+    path: "/api/v1/reporting/datasets/{set}/read",
+    pathParams: { set },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "reportingReadDataset",
   });
 }
 

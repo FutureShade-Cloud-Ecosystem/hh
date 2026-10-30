@@ -66,6 +66,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/moneyutil"
@@ -304,8 +305,21 @@ type InvoiceWriter struct {
 	delivered DeliveredOrderReader // deposit_release.go; nil = the deposit sweep skips
 	journals  JournalKeyReader     // deposit_release.go; nil = the deposit sweep skips
 	audit     audit.Recorder       // deposit_cancel.go; nil = the settlement audits nothing
+	terms     TermsReader          // terms.go; nil = the caller's own resolved terms
 	now       func() time.Time
 	zone      houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
+}
+
+// WithTerms binds the terms seam: the terms a customer's invoice is dated by, read from the
+// customer module's master.
+//
+// Unbound, the writer dates the document by the terms the caller resolved on the facts, exactly
+// as it did before the master existed. Bound, the master is the answer: the document carries the
+// customer's own terms, and a customer on a discount term is dated by that term's net days and
+// carries the term's discount window.
+func (w *InvoiceWriter) WithTerms(r TermsReader) *InvoiceWriter {
+	w.terms = r
+	return w
 }
 
 // WithZone binds the dealer's business day zone source: the issue and due days of every document the
@@ -568,6 +582,19 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 	if terms < 0 {
 		terms = defaultTermsDays
 	}
+	// The terms the document is dated by: the customer's own terms from the master when the
+	// seam is bound. The master is the answer, so the days the caller resolved cannot date a
+	// document by terms the customer is not sold on, and a customer on a discount term carries
+	// that term rather than the bare days.
+	var docTerms customer.Terms
+	if w.terms != nil {
+		t, err := w.terms.TermsFor(ctx, f.CustomerID)
+		if err != nil {
+			return InvoiceDoc{}, err
+		}
+		docTerms = t
+		terms = t.NetDays
+	}
 	// The document's days are the dealer's, decided here on the writer's clock and bound: between
 	// the UTC day change and the house zone's own the database session's CURRENT_DATE is a day the
 	// yard has not reached, so an evening invoice would be dated tomorrow and age a day early from
@@ -579,6 +606,21 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 	}
 	issueDate := zone.Today(w.now)
 	dueDate := zone.AddDays(w.now, terms)
+	// The discount runs until the terms' own window is out, counted in house days from the same
+	// day the document is issued. A term with no discount carries no window, and the document
+	// carries no discount day.
+	var discountDate *string
+	if docTerms.DiscountDays > 0 {
+		d := zone.AddDays(w.now, docTerms.DiscountDays)
+		discountDate = &d
+	}
+	// The terms the document carries: the code it was dated by, so the document names the term
+	// it was raised under and not the terms of the day after.
+	var termsCode *string
+	if docTerms.Code != "" {
+		code := docTerms.Code
+		termsCode = &code
+	}
 
 	var doc InvoiceDoc
 	var covered *InvoiceDoc
@@ -630,16 +672,18 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 		// and a DRAFT invoice is a promise to remember to finalize it that nobody keeps.
 		err := tx.QueryRow(ctx, invoiceWriterSeqCTE+`
 INSERT INTO invoices (id, invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
+                      discount_date, terms_code,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
                       doc_type, source_kind, idempotency_key, closes_order, org_id, seq, metadata)
 VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), '#INV-' || nextval('invoice_no_seq'),
-        $2, $3, $4, 'FINALIZED', $5, $6,
+        $2, $3, $4, 'FINALIZED', $5, $6, $14, $15,
         $7, $8, $9, $9, now(), 'INVOICE', $10, $11, $12,
         (SELECT org_id FROM locations WHERE id = $4::uuid),
         (SELECT next_value FROM iseq), $13::jsonb)
 RETURNING id::text, invoice_no`,
 			docID, f.CustomerID, nullUUID(f.OrderID), f.BranchID, issueDate, dueDate,
 			subtotal, quote.TaxCents, total, sourceKind, idemKey, f.ClosesOrder, headerMetadata(f),
+			discountDate, termsCode,
 		).Scan(&invoiceID, &invoiceNo)
 		if err != nil {
 			return fmt.Errorf("insert invoice: %w", err)

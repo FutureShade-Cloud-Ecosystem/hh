@@ -3,6 +3,9 @@ package purchasing
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,9 +27,11 @@ const (
 	APItemKindLandedCost   = "LANDED_COST"
 	APItemKindVendorCredit = "VENDOR_CREDIT"
 
-	glSourcePayment = "PAYMENT"
-	glAccountCash   = "1000"
-	glAccountAPCode = "2100"
+	glSourcePayment     = "PAYMENT"
+	glAccountCash       = "1000"
+	glAccountAPCode     = "2100"
+	glAccountFXGainLoss = "6310"
+	roleFXGainLoss      = "fx_gain_loss"
 
 	// glPaymentKeyPrefix is the GL journal key namespace of PayBill: the caller's
 	// idempotency key rides the journal (purchasing.bill.payment:<key>), because the
@@ -48,6 +53,7 @@ type LandedCostPayable struct {
 	DutyCadCents     int64
 	HandlingCadCents int64
 	TotalCadCents    int64
+	PaidCadCents     int64
 	ChargeKind       string
 	PayeeLabel       string
 	CreatedAt        time.Time
@@ -69,6 +75,7 @@ func (s *Service) WithLandedCostPayables(r LandedCostPayableReader) *Service {
 // PayBillRequest records a part or full supplier payment against a posted bill.
 type PayBillRequest struct {
 	AmountCents    int64     `json:"amount_cents"`
+	FXRate         float64   `json:"fx_rate,omitempty"`
 	PaidAt         time.Time `json:"paid_at"`
 	Note           string    `json:"note"`
 	IdempotencyKey string    `json:"idempotency_key"`
@@ -77,23 +84,28 @@ type PayBillRequest struct {
 // APAgingItem is one open AP obligation (either an open vendor bill or an open
 // landed-cost payable) as of the requested instant.
 type APAgingItem struct {
-	ID               string `json:"id"`
-	Kind             string `json:"kind"`
-	IsLandedCost     bool   `json:"is_landed_cost"`
-	RefNo            string `json:"ref_no"`
-	BillNo           string `json:"bill_no,omitempty"`
-	POID             string `json:"po_id,omitempty"`
-	PONo             string `json:"po_no,omitempty"`
-	PORef            string `json:"po_ref,omitempty"`
-	BranchID         string `json:"branch_id"`
-	VendorID         string `json:"vendor_id,omitempty"`
-	VendorName       string `json:"vendor_name,omitempty"`
-	ChargeKind       string `json:"charge_kind,omitempty"`
-	BillDate         string `json:"bill_date"`
-	DueDate          string `json:"due_date"`
-	TotalCents       int64  `json:"total_cents"`
-	PaidCents        int64  `json:"paid_cents"`
-	OpenCents        int64  `json:"open_cents"`
+	ID           string `json:"id"`
+	Kind         string `json:"kind"`
+	IsLandedCost bool   `json:"is_landed_cost"`
+	RefNo        string `json:"ref_no"`
+	BillNo       string `json:"bill_no,omitempty"`
+	POID         string `json:"po_id,omitempty"`
+	PONo         string `json:"po_no,omitempty"`
+	PORef        string `json:"po_ref,omitempty"`
+	BranchID     string `json:"branch_id"`
+	VendorID     string `json:"vendor_id,omitempty"`
+	VendorName   string `json:"vendor_name,omitempty"`
+	ChargeKind   string `json:"charge_kind,omitempty"`
+	BillDate     string `json:"bill_date"`
+	DueDate      string `json:"due_date"`
+	TotalCents   int64  `json:"total_cents"`
+	PaidCents    int64  `json:"paid_cents"`
+	OpenCents    int64  `json:"open_cents"`
+	// Currency is the bill's document currency; DocTotalCents and DocOpenCents are in it, and
+	// DocOpenCents is the amount PayBill takes to settle the bill.
+	Currency         string `json:"currency"`
+	DocTotalCents    int64  `json:"doc_total_cents"`
+	DocOpenCents     int64  `json:"doc_open_cents"`
 	FreightCadCents  int64  `json:"freight_cad_cents,omitempty"`
 	DutyCadCents     int64  `json:"duty_cad_cents,omitempty"`
 	HandlingCadCents int64  `json:"handling_cad_cents,omitempty"`
@@ -160,6 +172,12 @@ type apBillCandidate struct {
 	PaidAts     []time.Time
 	PaidAmounts []int64
 	PaidCents   int64
+	// Currency and DocTotalCents are the bill's document currency and total in it; PaidDocAmounts
+	// aligns with PaidAmounts and PaidDocCents is its as-of sum.
+	Currency       string
+	DocTotalCents  int64
+	PaidDocAmounts []int64
+	PaidDocCents   int64
 }
 
 // PayBill records a supplier payment against a posted vendor bill and posts
@@ -252,27 +270,81 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 		return BillDetail{}, conflict("purchasing: bill %s is %s; only POSTED bills can be paid", bill.BillNo, bill.Status)
 	}
 
-	paidSoFar, err := s.repo.PaidBillCentsTx(ctx, tx, bill.ID)
+	isUSD := strings.EqualFold(strings.TrimSpace(bill.Currency), "USD")
+	payFX := 1.0
+	if isUSD {
+		if math.IsNaN(in.FXRate) || math.IsInf(in.FXRate, 0) || in.FXRate <= 0 {
+			return BillDetail{}, badReq("purchasing: fx_rate is required and must be positive when paying a USD bill")
+		}
+		if dec := rateDecimals(in.FXRate); dec > maxRateDecimals {
+			return BillDetail{}, badReq("purchasing: fx_rate has %d decimals; at most %d are kept, so enter it with %d or fewer", dec, maxRateDecimals, maxRateDecimals)
+		}
+		if bill.FXRate > 0 && (in.FXRate > bill.FXRate*maxPayRateFactor || in.FXRate < bill.FXRate/maxPayRateFactor) {
+			return BillDetail{}, badReq("purchasing: fx_rate %v is more than %vx away from the bill's own rate %v; check it was typed right", in.FXRate, maxPayRateFactor, bill.FXRate)
+		}
+		payFX = in.FXRate
+	} else if math.IsNaN(in.FXRate) || math.IsInf(in.FXRate, 0) || in.FXRate < 0 || (in.FXRate != 0 && in.FXRate != 1) {
+		return BillDetail{}, badReq("purchasing: CAD bill payment must not carry a non-unit fx_rate (got %v)", in.FXRate)
+	}
+
+	clearedCadSoFar, paidDocSoFar, err := s.repo.PaidBillTotalsTx(ctx, tx, bill.ID)
 	if err != nil {
 		return BillDetail{}, err
 	}
 	// The vendor's credits applied to this bill have consumed part of its open
 	// already (a netting inside AP, no payment): paying on top of that would
-	// overpay the supplier for goods a credit note already settled.
+	// overpay the supplier for goods a credit note already settled. A credit and its
+	// application are CAD cents, so they come off the bill's CAD open at once and off
+	// a USD bill's document open at the bill's own rate (billDocOpen).
 	credited, err := s.repo.CreditedBillCentsTx(ctx, tx, bill.ID)
 	if err != nil {
 		return BillDetail{}, err
 	}
-	if paidSoFar+credited+in.AmountCents > bill.TotalCents {
-		return BillDetail{}, conflict("purchasing: payment of %d cents exceeds open balance %d cents on bill %s",
-			in.AmountCents, bill.TotalCents-paidSoFar-credited, bill.BillNo)
+	openCad := bill.TotalCents - clearedCadSoFar - credited
+
+	billDocTotal := bill.TotalCents
+	if isUSD {
+		if bill.DocTotalCents > 0 {
+			billDocTotal = bill.DocTotalCents
+		} else if bill.FXRate > 0 {
+			billRateMicros := int64(math.Round(bill.FXRate * 1_000_000))
+			billDocTotal = proRataHalfToEven(bill.TotalCents, 1_000_000, billRateMicros)
+		}
 	}
+
+	openAmount := openCad
+	if isUSD {
+		openAmount = billDocOpen(bill.TotalCents, billDocTotal, paidDocSoFar, credited, openCad)
+	}
+	if in.AmountCents > openAmount {
+		return BillDetail{}, conflict("purchasing: payment of %d cents exceeds open balance %d cents on bill %s",
+			in.AmountCents, openAmount, bill.BillNo)
+	}
+
+	apCadCents := in.AmountCents
+	cashCadCents := in.AmountCents
+	if isUSD {
+		if in.AmountCents == openAmount {
+			apCadCents = openCad
+		} else {
+			apCadCents = proRataHalfToEven(bill.TotalCents, in.AmountCents, billDocTotal)
+			if apCadCents > openCad {
+				apCadCents = openCad
+			}
+		}
+		payRateMicros := int64(math.Round(payFX * 1_000_000))
+		// The cash is always what the bank pays: the payment's USD at the payment's rate. At the
+		// bill's own rate, any difference from the CAD the bill carries is rounding at bill entry, and
+		// it posts to the FX account like any other difference, so 1000 always ties to the bank.
+		cashCadCents = proRataHalfToEven(in.AmountCents, payRateMicros, 1_000_000)
+	}
+	fxDiffCents := cashCadCents - apCadCents
 
 	dueDate := strings.TrimSpace(bill.DueDate)
 	if dueDate == "" {
 		dueDate = bill.BillDate
 	}
-	if _, err := s.repo.RecordBillPaymentTx(ctx, tx, bill.ID, dueDate, in.AmountCents, paidAt, strings.TrimSpace(in.Note)); err != nil {
+	if _, err := s.repo.RecordBillPaymentTx(ctx, tx, bill.ID, dueDate, apCadCents, in.AmountCents, payFX, paidAt, strings.TrimSpace(in.Note)); err != nil {
 		return BillDetail{}, err
 	}
 
@@ -283,6 +355,23 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 				apCode = resolved
 			}
 		}
+		lines := []GLLine{
+			{AccountCode: apCode, DebitCents: apCadCents, Memo: "AP payment " + bill.BillNo},
+			{AccountCode: glAccountCash, CreditCents: cashCadCents, Memo: "Supplier payment " + bill.BillNo},
+		}
+		if fxDiffCents != 0 {
+			fxCode := glAccountFXGainLoss
+			if s.rules != nil {
+				if resolved, rErr := s.rules.ResolveRuleTx(ctx, tx, eventBillPosted, roleFXGainLoss, bill.BranchID); rErr == nil && strings.TrimSpace(resolved) != "" {
+					fxCode = resolved
+				}
+			}
+			if fxDiffCents > 0 {
+				lines = append(lines, GLLine{AccountCode: fxCode, DebitCents: fxDiffCents, Memo: "Realised FX loss " + bill.BillNo})
+			} else {
+				lines = append(lines, GLLine{AccountCode: fxCode, CreditCents: -fxDiffCents, Memo: "Realised FX gain " + bill.BillNo})
+			}
+		}
 		_, err = s.gl.PostJournalTx(ctx, tx, GLJournal{
 			Source:         glSourcePayment,
 			SourceRefID:    bill.ID,
@@ -290,10 +379,7 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 			Memo:           "Supplier payment " + bill.BillNo,
 			BranchID:       bill.BranchID,
 			DocumentDate:   paidAt,
-			Lines: []GLLine{
-				{AccountCode: apCode, DebitCents: in.AmountCents, Memo: "AP payment " + bill.BillNo},
-				{AccountCode: glAccountCash, CreditCents: in.AmountCents, Memo: "Supplier payment " + bill.BillNo},
-			},
+			Lines:          lines,
 		})
 		if err != nil {
 			return BillDetail{}, fmt.Errorf("purchasing: post supplier payment journal: %w", err)
@@ -306,6 +392,57 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 	return s.GetBill(ctx, billID)
 }
 
+// billDocOpen is what a USD bill still owes in its document currency: the document total, less
+// the USD paid, less the applied credits converted at the bill's own rate (its CAD total over its
+// document total). A bill with no CAD open owes nothing, so a credit that clears the CAD clears
+// the document amount whatever the rounding. PayBill, the aging and the payment run's open
+// amount all read it, so they agree on the same remaining amount.
+func billDocOpen(totalCad, docTotal, paidDoc, creditedCad, openCad int64) int64 {
+	if openCad <= 0 {
+		return 0
+	}
+	open := docTotal - paidDoc - proRataHalfToEven(creditedCad, docTotal, totalCad)
+	if open < 0 {
+		return 0
+	}
+	return open
+}
+
+// maxRateDecimals is the precision a payment rate keeps (purchasing_bill_instalments.fx_rate is
+// NUMERIC(12,6)); maxPayRateFactor bounds a payment rate against the bill's own, so a typed 138 for
+// 1.38 is refused rather than paid out a hundredfold.
+const (
+	maxRateDecimals  = 6
+	maxPayRateFactor = 2.0
+)
+
+// rateDecimals counts the decimals the caller wrote in a rate.
+func rateDecimals(rate float64) int {
+	str := strconv.FormatFloat(rate, 'f', -1, 64)
+	if i := strings.IndexByte(str, '.'); i >= 0 {
+		return len(str) - i - 1
+	}
+	return 0
+}
+
+// proRataHalfToEven computes (totalCents * partCents) / wholeCents rounded half
+// to even in cents using exact integer arithmetic.
+func proRataHalfToEven(totalCents, partCents, wholeCents int64) int64 {
+	if wholeCents <= 0 || totalCents == 0 || partCents == 0 {
+		return 0
+	}
+	num := new(big.Int).Mul(big.NewInt(totalCents), big.NewInt(partCents))
+	den := big.NewInt(wholeCents)
+	quo, rem := new(big.Int).QuoRem(num, den, new(big.Int))
+	twoRem := new(big.Int).Lsh(rem, 1)
+	cmp := twoRem.Cmp(den)
+	q := quo.Int64()
+	if cmp > 0 || (cmp == 0 && q%2 != 0) {
+		q++
+	}
+	return q
+}
+
 // LockPaymentKeyTx holds a transaction scoped advisory lock on a payment's
 // idempotency key, so concurrent presses under one key run one at a time. It
 // touches no table.
@@ -316,25 +453,33 @@ func (r *Repository) LockPaymentKeyTx(ctx context.Context, tx pgx.Tx, key string
 	return nil
 }
 
-// PaidBillCentsTx returns the sum of PAID instalments on billID within tx.
-func (r *Repository) PaidBillCentsTx(ctx context.Context, tx pgx.Tx, billID string) (int64, error) {
+// PaidBillTotalsTx returns the sum of PAID instalments on billID within tx:
+// clearedCadCents is the sum of amount_cents (the 2100 CAD cleared so far) and
+// paidDocCents is the sum of doc_amount_cents (the paid amount in the bill's currency).
+func (r *Repository) PaidBillTotalsTx(ctx context.Context, tx pgx.Tx, billID string) (clearedCadCents, paidDocCents int64, err error) {
 	if r.pool == nil {
-		return 0, errNoDB
+		return 0, 0, errNoDB
 	}
-	var sum int64
 	if err := r.q(tx).QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount_cents), 0)
+		SELECT COALESCE(SUM(amount_cents), 0),
+		       COALESCE(SUM(doc_amount_cents), 0)
 		  FROM purchasing_bill_instalments
 		 WHERE bill_id = $1 AND status = 'PAID'`,
 		billID,
-	).Scan(&sum); err != nil {
-		return 0, fmt.Errorf("purchasing: sum paid instalments: %w", err)
+	).Scan(&clearedCadCents, &paidDocCents); err != nil {
+		return 0, 0, fmt.Errorf("purchasing: sum paid instalments: %w", err)
 	}
-	return sum, nil
+	return clearedCadCents, paidDocCents, nil
+}
+
+// PaidBillCentsTx returns the sum of PAID instalments on billID within tx.
+func (r *Repository) PaidBillCentsTx(ctx context.Context, tx pgx.Tx, billID string) (int64, error) {
+	cleared, _, err := r.PaidBillTotalsTx(ctx, tx, billID)
+	return cleared, err
 }
 
 // RecordBillPaymentTx inserts a PAID instalment row for a supplier payment against billID.
-func (r *Repository) RecordBillPaymentTx(ctx context.Context, tx pgx.Tx, billID, dueDate string, amountCents int64, paidAt time.Time, note string) (string, error) {
+func (r *Repository) RecordBillPaymentTx(ctx context.Context, tx pgx.Tx, billID, dueDate string, amountCadCents, docAmountCents int64, fxRate float64, paidAt time.Time, note string) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
 	}
@@ -347,10 +492,10 @@ func (r *Repository) RecordBillPaymentTx(ctx context.Context, tx pgx.Tx, billID,
 	}
 	var id string
 	if err := r.q(tx).QueryRow(ctx, `
-		INSERT INTO purchasing_bill_instalments (bill_id, seq, due_date, amount_cents, status, paid_at, note)
-		VALUES ($1, $2, $3::date, $4, 'PAID', $5, $6)
+		INSERT INTO purchasing_bill_instalments (bill_id, seq, due_date, amount_cents, doc_amount_cents, fx_rate, status, paid_at, note)
+		VALUES ($1, $2, $3::date, $4, $5, $6, 'PAID', $7, $8)
 		RETURNING id::text`,
-		billID, nextSeq, dueDate, amountCents, paidAt, note,
+		billID, nextSeq, dueDate, amountCadCents, docAmountCents, fxRate, paidAt, note,
 	).Scan(&id); err != nil {
 		return "", fmt.Errorf("purchasing: insert paid instalment: %w", err)
 	}
@@ -430,23 +575,30 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 			continue
 		}
 		bucket := bucketForDueDate(asOfDay, c.DueDate)
+		docOpen := openCents
+		if strings.EqualFold(strings.TrimSpace(c.Currency), "USD") {
+			docOpen = billDocOpen(c.TotalCents, c.DocTotalCents, c.PaidDocCents, appliedByBill[c.BillID], openCents)
+		}
 		item := APAgingItem{
-			ID:           c.BillID,
-			Kind:         APItemKindBill,
-			IsLandedCost: false,
-			RefNo:        c.BillNo,
-			BillNo:       c.BillNo,
-			POID:         c.POID,
-			PONo:         c.PONo,
-			BranchID:     c.BranchID,
-			VendorID:     c.VendorID,
-			VendorName:   c.VendorName,
-			BillDate:     c.BillDate,
-			DueDate:      c.DueDate,
-			TotalCents:   c.TotalCents,
-			PaidCents:    c.PaidCents,
-			OpenCents:    openCents,
-			Bucket:       bucket,
+			ID:            c.BillID,
+			Kind:          APItemKindBill,
+			IsLandedCost:  false,
+			RefNo:         c.BillNo,
+			BillNo:        c.BillNo,
+			POID:          c.POID,
+			PONo:          c.PONo,
+			BranchID:      c.BranchID,
+			VendorID:      c.VendorID,
+			VendorName:    c.VendorName,
+			BillDate:      c.BillDate,
+			DueDate:       c.DueDate,
+			TotalCents:    c.TotalCents,
+			PaidCents:     c.PaidCents,
+			OpenCents:     openCents,
+			Currency:      c.Currency,
+			DocTotalCents: c.DocTotalCents,
+			DocOpenCents:  docOpen,
+			Bucket:        bucket,
 		}
 
 		idx, exists := vendorIndex[c.VendorID]
@@ -524,7 +676,8 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 			return APAgingPage{}, err
 		}
 		for _, lc := range payables {
-			if lc.TotalCadCents <= 0 {
+			openCents := lc.TotalCadCents - lc.PaidCadCents
+			if lc.TotalCadCents <= 0 || openCents <= 0 {
 				continue
 			}
 			lcDay := lc.CreatedAt.In(loc).Format("2006-01-02")
@@ -550,8 +703,11 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 				BillDate:         lcDay,
 				DueDate:          lcDay,
 				TotalCents:       lc.TotalCadCents,
-				PaidCents:        0,
-				OpenCents:        lc.TotalCadCents,
+				PaidCents:        lc.PaidCadCents,
+				OpenCents:        openCents,
+				Currency:         "CAD",
+				DocTotalCents:    lc.TotalCadCents,
+				DocOpenCents:     openCents,
 				FreightCadCents:  lc.FreightCadCents,
 				DutyCadCents:     lc.DutyCadCents,
 				HandlingCadCents: lc.HandlingCadCents,
@@ -573,7 +729,7 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 				HandlingCadCents: lc.HandlingCadCents,
 				OpenItems:        []APAgingItem{item},
 			}
-			addBucketCents(&row, &page, bucket, lc.TotalCadCents)
+			addBucketCents(&row, &page, bucket, openCents)
 			page.Items = append(page.Items, row)
 		}
 	}
@@ -660,10 +816,14 @@ func (r *Repository) OpenBillsAsOf(ctx context.Context, reach BranchReach) ([]ap
 		       to_char(COALESCE(b.due_date, b.bill_date), 'YYYY-MM-DD'),
 		       b.total_cents,
 		       COALESCE(b.gl_journal_id::text, ''),
+		       b.currency::text, b.doc_total_cents,
 		       COALESCE((SELECT array_agg(i.paid_at ORDER BY i.paid_at, i.id)
 		           FROM purchasing_bill_instalments i
 		          WHERE i.bill_id = b.id AND i.status = 'PAID'), '{}'),
 		       COALESCE((SELECT array_agg(i.amount_cents ORDER BY i.paid_at, i.id)
+		           FROM purchasing_bill_instalments i
+		          WHERE i.bill_id = b.id AND i.status = 'PAID'), '{}'),
+		       COALESCE((SELECT array_agg(i.doc_amount_cents ORDER BY i.paid_at, i.id)
 		           FROM purchasing_bill_instalments i
 		          WHERE i.bill_id = b.id AND i.status = 'PAID'), '{}')
 		  FROM purchasing_bills b
@@ -687,7 +847,7 @@ func (r *Repository) OpenBillsAsOf(ctx context.Context, reach BranchReach) ([]ap
 			&c.VendorNo, &c.VendorName, &c.PaymentTermsDays,
 			&c.BranchID, &c.POID, &c.PONo,
 			&c.BillDate, &c.DueDate,
-			&c.TotalCents, &c.GLJournalID, &c.PaidAts, &c.PaidAmounts,
+			&c.TotalCents, &c.GLJournalID, &c.Currency, &c.DocTotalCents, &c.PaidAts, &c.PaidAmounts, &c.PaidDocAmounts,
 		); err != nil {
 			return nil, fmt.Errorf("purchasing: scan open bill as of: %w", err)
 		}
@@ -717,13 +877,15 @@ func (s *Service) applyJournalClock(ctx context.Context, candidates []apBillCand
 			if c.BillDate > day {
 				continue
 			}
-			var paid int64
+			var paid, paidDoc int64
 			for i, at := range c.PaidAts {
 				if !at.After(asOf) {
 					paid += c.PaidAmounts[i]
+					paidDoc += c.PaidDocAmounts[i]
 				}
 			}
 			c.PaidCents = paid
+			c.PaidDocCents = paidDoc
 			out = append(out, c)
 		}
 		return out, nil
@@ -764,7 +926,7 @@ func (s *Service) applyJournalClock(ctx context.Context, candidates []apBillCand
 		}
 		payments := payByRef[c.BillID]
 		used := make([]bool, len(payments))
-		var paid int64
+		var paid, paidDoc int64
 		for i, at := range c.PaidAts {
 			instant := at
 			for j := range payments {
@@ -779,9 +941,11 @@ func (s *Service) applyJournalClock(ctx context.Context, candidates []apBillCand
 			}
 			if !instant.After(asOf) {
 				paid += c.PaidAmounts[i]
+				paidDoc += c.PaidDocAmounts[i]
 			}
 		}
 		c.PaidCents = paid
+		c.PaidDocCents = paidDoc
 		out = append(out, c)
 	}
 	return out, nil

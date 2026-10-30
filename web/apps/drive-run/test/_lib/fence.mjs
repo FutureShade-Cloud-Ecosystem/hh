@@ -98,6 +98,30 @@ export function exemptBundleHit(hit) {
 }
 
 /**
+ * The payload scan's one named exemption, with its reason, so a gate that grew
+ * a hole states the hole's shape and the guard test beside it holds the shape
+ * narrow:
+ *   the settings substrate's cost_hidden   the caller's OWN screen layout: the
+ *                      user asked for the cost column to be hidden. The flag is
+ *                      a boolean, it hides money rather than carrying any, and
+ *                      the contract requires it on every surface config answer
+ *                      (SettingsWorkspaceView), so the core is right to send it
+ *                      and the scan is wrong to read it as money.
+ *
+ * The guard holds it narrow: the key must be exactly cost_hidden, it must sit
+ * directly in the workspace view, and its value must be a boolean. A flag
+ * outside that view, a flag carrying a figure, and a field named cost
+ * anywhere still trip the fence.
+ */
+export function exemptPayloadKey(path, key, value) {
+  if (key !== "cost_hidden") return false;
+  // Exactly the surface config answer's own top-level workspace view ("$" is the scan's root), never an
+  // object that is merely named workspace deeper in a payload.
+  if (path !== "$.workspace") return false;
+  return typeof value === "boolean";
+}
+
+/**
  * The same fence over a JSON payload the server sent: the KEYS are scanned
  * for the money words (a word inside a customer's name or a sentence is data,
  * not a field), and the string values for a figure that reads as money. Text
@@ -118,7 +142,9 @@ export function scanPayload(name, text) {
       for (const [key, child] of Object.entries(value)) {
         const lower = withoutSpacing(`${key}:`).toLowerCase();
         for (const word of MONEY_WORDS) {
-          if (lower.includes(word)) hits.push({ file: name, kind: "word", word, count: 1, window: `${path}.${key}` });
+          if (!lower.includes(word)) continue;
+          if (exemptPayloadKey(path, key, child)) continue;
+          hits.push({ file: name, kind: "word", word, count: 1, window: `${path}.${key}` });
         }
         walk(child, `${path}.${key}`);
       }

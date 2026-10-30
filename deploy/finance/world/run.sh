@@ -104,7 +104,9 @@ fi
 echo "run.sh: waiting for Postgres on 127.0.0.1:${PG_PORT}..."
 READY=0
 for _ in $(seq 1 60); do
-	if docker exec "$CONTAINER_NAME" pg_isready -U postgres -d finworld >/dev/null 2>&1; then
+	# Over TCP: the image's first start runs a temporary server on the socket only while it creates
+	# finworld, so a socket check can answer before that server stops and the reset below collides.
+	if docker exec "$CONTAINER_NAME" pg_isready -h 127.0.0.1 -U postgres -d finworld >/dev/null 2>&1; then
 		READY=1
 		break
 	fi

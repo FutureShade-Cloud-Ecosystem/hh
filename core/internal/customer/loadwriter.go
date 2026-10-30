@@ -177,17 +177,30 @@ func (w CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write)
 		// over: the guard leaves it untouched and the item refuses. The
 		// existing metadata keys are kept, ours set.
 		var inserted bool
+		// The customer's terms: the code the loaded days name, and the row that code names, so
+		// the code a loaded customer carries always names a term that exists. The code and the
+		// days are written together: a customer whose code and days disagreed would be dated by
+		// one door and not the other.
+		code, codeName := TermsForDays(terms)
+		if err := ensureTermsRow(ctx, tx, code, codeName, terms); err != nil {
+			return "", err
+		}
 		err = tx.QueryRow(ctx, customerSeqCTE+`
 			INSERT INTO customers (account_no, name, customer_type, home_branch_id, payment_terms_days,
 			                       credit_limit_cents, is_active, billing_address, metadata,
-			                       org_id, seq, idempotency_key)
+			                       org_id, seq, idempotency_key, terms_code)
 			VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7, COALESCE($8::jsonb, '{}'::jsonb), $9::jsonb,
-			        $10::uuid, (SELECT next_value FROM cseq), NULLIF($11, '')::uuid)
+			        $10::uuid, (SELECT next_value FROM cseq), NULLIF($11, '')::uuid, $12)
 			ON CONFLICT (account_no) DO UPDATE SET
 				name = EXCLUDED.name,
 				customer_type = EXCLUDED.customer_type,
 				home_branch_id = EXCLUDED.home_branch_id,
 				payment_terms_days = EXCLUDED.payment_terms_days,
+				terms_code = CASE
+					WHEN customers.payment_terms_days = EXCLUDED.payment_terms_days
+					THEN COALESCE(customers.terms_code, EXCLUDED.terms_code)
+					ELSE EXCLUDED.terms_code
+				END,
 				credit_limit_cents = EXCLUDED.credit_limit_cents,
 				is_active = EXCLUDED.is_active,
 				billing_address = COALESCE($8::jsonb, customers.billing_address),
@@ -199,15 +212,20 @@ func (w CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write)
 			WHERE customers.org_id IS NULL OR customers.org_id = EXCLUDED.org_id
 			RETURNING id::text, (xmax = 0)`,
 			accountNo, name, custType, homeBranch, terms, limit, active, addrJSON, string(metaJSON),
-			in.OrgID, in.DerivedKey).Scan(&id, &inserted)
+			in.OrgID, in.DerivedKey, code).Scan(&id, &inserted)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", orgMismatch(in)
 		}
 		if err != nil {
 			return "", fmt.Errorf("customer: load write: %w", err)
 		}
-		if !inserted && in.Attached != nil {
-			in.Attached()
+		if !inserted {
+			if err := rehomeCustomerJobsTx(ctx, tx, id, homeBranch); err != nil {
+				return "", err
+			}
+			if in.Attached != nil {
+				in.Attached()
+			}
 		}
 		return id, nil
 	}
@@ -248,6 +266,14 @@ func (w CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write)
 			return "", fmt.Errorf("customer: load update: %w", err)
 		}
 	}
+	// The customer's terms: the code the loaded days name, and the row that code names. The
+	// update arm writes the days the record carries, and the code beside them, so the two
+	// cannot disagree: a customer whose code and days disagreed would be dated by one door and
+	// not the other.
+	code, codeName := TermsForDays(terms)
+	if err := ensureTermsRow(ctx, tx, code, codeName, terms); err != nil {
+		return "", err
+	}
 	err = tx.QueryRow(ctx, customerSeqCTE+`
 		UPDATE customers SET
 			name = $3, customer_type = $4,
@@ -255,12 +281,18 @@ func (w CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write)
 			is_active = $8, billing_address = COALESCE($9::jsonb, billing_address),
 			metadata = (metadata - 'sales_rep_user_ids') || $10::jsonb,
 			org_id = $11::uuid, seq = (SELECT next_value FROM cseq),
-			idempotency_key = NULLIF($12, '')::uuid, updated_at = now()
+			idempotency_key = NULLIF($12, '')::uuid,
+			terms_code = CASE
+				WHEN customers.payment_terms_days = $6
+				THEN COALESCE(customers.terms_code, $13)
+				ELSE $13
+			END,
+			updated_at = now()
 		WHERE id = $1::uuid AND (org_id IS NULL OR org_id = $11::uuid)
 		  AND account_no = COALESCE(NULLIF($2, ''), account_no)
 		RETURNING id::text`,
 		in.RowID, accountNo, name, custType, homeBranch, terms, limit, active, addrJSON, string(metaJSON),
-		in.OrgID, in.DerivedKey).Scan(&id)
+		in.OrgID, in.DerivedKey, code).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Gone, or owned by another org: say which, never overwrite.
 		var exists bool
@@ -277,7 +309,28 @@ func (w CustomerLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write)
 	if err != nil {
 		return "", fmt.Errorf("customer: load update: %w", err)
 	}
+	if err := rehomeCustomerJobsTx(ctx, tx, id, homeBranch); err != nil {
+		return "", err
+	}
 	return id, nil
+}
+
+// rehomeCustomerJobsTx moves a homed customer's open and closed jobs to the
+// customer's new home branch inside the same transaction. An unhomed customer's
+// jobs name their own branch and stay where they sit.
+func rehomeCustomerJobsTx(ctx context.Context, tx pgx.Tx, customerID, homeBranch string) error {
+	if homeBranch == "" {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE customer_jobs
+		   SET branch_id = $2::uuid, updated_at = now()
+		 WHERE customer_id = $1::uuid
+		   AND branch_id IS DISTINCT FROM $2::uuid`,
+		customerID, homeBranch); err != nil {
+		return fmt.Errorf("customer: re-home jobs: %w", err)
+	}
+	return nil
 }
 
 // orgMismatch is the refusal for a row another org owns: the load never
@@ -462,6 +515,9 @@ func EnsureAccount(ctx context.Context, db Execer, a PinnedAccount) (created boo
 	if !validCustomerType(a.CustomerType) {
 		return false, fmt.Errorf("customer: invalid customer_type %q", a.CustomerType)
 	}
+	if a.PaymentTermsDays < 0 {
+		return false, errors.New("customer: payment_terms_days must be zero or more")
+	}
 	// The sequence CTE draws its number whether or not the insert lands, so a
 	// row that is already there is recognised first and a re-run draws nothing.
 	var one int
@@ -471,14 +527,20 @@ func EnsureAccount(ctx context.Context, db Execer, a PinnedAccount) (created boo
 	case !errors.Is(err, pgx.ErrNoRows):
 		return false, fmt.Errorf("customer: pinned account read: %w", err)
 	}
+	// The customer's terms: the code the pinned days name, and the row that code names, so the
+	// code a pinned customer carries always names a term that exists.
+	code, codeName := TermsForDays(a.PaymentTermsDays)
+	if err := ensureTermsRow(ctx, db, code, codeName, a.PaymentTermsDays); err != nil {
+		return false, err
+	}
 	tag, err := db.Exec(ctx, customerSeqCTE+`
 		INSERT INTO customers (id, account_no, name, customer_type, home_branch_id,
-		                       payment_terms_days, credit_limit_cents, org_id, seq)
+		                       payment_terms_days, credit_limit_cents, org_id, seq, terms_code)
 		VALUES ($1::uuid, $2, $3, $4, NULLIF($5, '')::uuid, $6, $7, NULLIF($8, '')::uuid,
-		        (SELECT next_value FROM cseq))
+		        (SELECT next_value FROM cseq), $9)
 		ON CONFLICT (id) DO NOTHING`,
 		a.ID, a.AccountNo, a.Name, a.CustomerType, a.HomeBranchID,
-		a.PaymentTermsDays, a.CreditLimitCents, a.OrgID)
+		a.PaymentTermsDays, a.CreditLimitCents, a.OrgID, code)
 	if err != nil {
 		return false, fmt.Errorf("customer: pinned account write: %w", err)
 	}

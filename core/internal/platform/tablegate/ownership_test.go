@@ -312,6 +312,10 @@ var migrationTopics = map[string]string{
 	"0435_payment_payouts":                 "payments",
 	"0447_credit_application_keys":         "billing",
 	"0451_till_counter_reason_codes":       "till",
+	"0457_purchasing_payment_runs":         "purchasing",
+	"0460_customer_jobs":                   "customer",
+	"0466_payment_terms":                   "customer",
+	"0461_credit_change_requests":          "billing",
 }
 
 // multiTopicSplits states the per-object attribution inside the five
@@ -418,6 +422,9 @@ var ownedObjects = map[string]string{
 	"customer_sms_prefs":                    "messagingprovider", // 0109_customer_sms_prefs
 	"customer_transactions":                 "billing",           // 0009_invoices_ar
 	"customers":                             "customer",          // 0006_customers
+	"credit_change_requests":                "billing",           // 0461_credit_change_requests
+	"customer_jobs":                         "customer",          // 0460_customer_jobs
+	"payment_terms":                         "customer",          // 0466_payment_terms
 	"dashboard_gallery_entries":             "dashboard",         // 0208_widget_gallery
 	"dashboard_needs_sources":               "dashboard",         // 0201_dashboard_widgets
 	"dashboard_profile_home":                "dashboard",         // 0141_dashboard_profile_home
@@ -443,6 +450,7 @@ var ownedObjects = map[string]string{
 	"finstmt_schedules":                     "finstmt",           // 0034_financial_statement_views
 	"fiscal_periods":                        "gl",                // 0007_gl_block
 	"gl_accounts":                           "gl",                // 0007_gl_block
+	"gl_account_mapping":                    "gl",                // 0464_gl_account_mapping
 	"gl_approver_assignments":               "gl",                // 0106_approvals_and_reversals
 	"gl_entry_no_sequences":                 "gl",                // 0119_gl_entry_no_sequence
 	"gl_export_batches":                     "gl",                // 0032_gl_module
@@ -572,6 +580,8 @@ var ownedObjects = map[string]string{
 	"purchasing_bill_lines":                 "purchasing",        // 0121_purchasing_ap_bills
 	"purchasing_bills":                      "purchasing",        // 0121_purchasing_ap_bills
 	"purchasing_match_tolerance":            "purchasing",        // 0121_purchasing_ap_bills
+	"purchasing_payment_run_lines":          "purchasing",        // 0457_purchasing_payment_runs
+	"purchasing_payment_runs":               "purchasing",        // 0457_purchasing_payment_runs
 	"purchasing_po_lines":                   "purchasing",        // 0120_purchasing_core
 	"purchasing_po_sends":                   "purchasing",        // 0197_purchasing_vendor_order
 	"purchasing_policy":                     "purchasing",        // 0197_purchasing_vendor_order

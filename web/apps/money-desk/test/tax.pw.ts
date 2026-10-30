@@ -3,8 +3,14 @@
 // the certificates on file, opened, checked and downloaded, and a new one recorded with its number masked; the
 // company wide settings; the reconciliation to the ledger and the recompute; every refusal in words with none of
 // the core's Ontario words; the loading, empty and failed states; the phone; and the keyboard.
-import { test, expect, openTax, tab, resetStub, controllerHandoff, screenText, OLD_WORDS, priorMonth, olderMonth, dayFromToday, dayWords, ORDER_ONE } from "./tax-helpers.js";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { test, expect, openTax, tab, resetStub, controllerHandoff, screenText, OLD_WORDS, priorMonth, olderMonth, priorQuarter, olderQuarter, dayFromToday, dayWords, ORDER_ONE } from "./tax-helpers.js";
 import { receivablesHandoff } from "./helpers.js";
+import { TAX_WORKSHEET_ALLOWED_KEYS, TAX_WORKSHEET_FIXTURE, TAX_WORKSHEET_KEYS, TAX_WORKSHEET_LINE_KEYS } from "./tax-worksheet-contract.js";
+import { renderTax } from "../src/tax/tax-views.js";
+import { worksheetCsv, worksheetCsvFilename, worksheetPeriodWords, worksheetTieWords } from "../src/tax/tax-logic.js";
 import type { Page } from "@playwright/test";
 
 const rowOf = (page: Page, attr: string, text: string) => page.locator(`[${attr}]`).filter({ hasText: text });
@@ -550,11 +556,13 @@ test("on a phone every tab becomes cards and none scrolls the page sideways", as
   await expect(page.locator("[data-rate-card]")).toHaveCount(3);
   await expect(page.locator("table[aria-label='Rate table']")).toBeHidden();
   await expect(page.locator("[data-rate-card]").first()).toBeVisible();
-  for (const id of ["profiles", "certificates", "settings", "checks"] as const) {
+  for (const id of ["profiles", "certificates", "settings", "checks", "worksheet"] as const) {
     await tab(page, id);
     await expect(page.locator(`[data-tab-id='${id}']`)).toHaveAttribute("aria-current", "true");
     expect(await sideways(), `${id} scrolls sideways`).toBe(false);
   }
+  await expect(page.locator("[data-worksheet-card]")).toHaveCount(14);
+  await expect(page.locator("table[aria-label='GST/HST return lines']")).toBeHidden();
   await tab(page, "profiles");
   await expect(page.locator("[data-profile-card]")).toHaveCount(3);
   await tab(page, "certificates");
@@ -593,4 +601,292 @@ test("every control works from the keyboard and focus lands on the confirm step"
     return getComputedStyle(el).outlineStyle;
   });
   expect(outline).not.toBe("none");
+});
+
+test("W3-HST2 leg 1: the GST/HST return view follows filing_frequency, shows the route's figures, and marks lines 104 and 107 as entered by hand", async ({ page, request }) => {
+  await openTax(page, request);
+  const pq = priorQuarter();
+  const pm = priorMonth();
+  await page.getByRole("button", { name: "GST/HST return", exact: true }).click();
+  await expect(page.locator("[data-tab-id='worksheet']")).toHaveAttribute("aria-current", "true");
+  await expect(page.getByLabel("Quarter")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Year" })).toHaveValue(String(pq.year));
+
+  const lines = page.locator("tr[data-worksheet-line]");
+  await expect(lines).toHaveCount(14);
+  await expect(page.locator("tr[data-worksheet-line='101']")).toContainText("Sales and other revenue");
+  await expect(page.locator("tr[data-worksheet-line='101'] [data-line-amount]")).toHaveText("$36,180.00");
+  await expect(page.locator("tr[data-worksheet-line='101'] [data-line-source]")).toHaveText("From the books");
+
+  await expect(page.locator("tr[data-worksheet-line='103']")).toContainText("GST/HST collected or collectible");
+  await expect(page.locator("tr[data-worksheet-line='103'] [data-line-amount]")).toHaveText("$4,703.75");
+
+  await expect(page.locator("tr[data-worksheet-line='104']")).toContainText("Adjustments to GST/HST");
+  await expect(page.locator("tr[data-worksheet-line='104'] [data-line-source]")).toHaveText("Entered by hand");
+  await expect(page.locator("tr[data-worksheet-line='104'] [data-line-amount]")).toHaveText("$0.00");
+
+  await expect(page.locator("tr[data-worksheet-line='105'] [data-line-amount]")).toHaveText("$4,703.75");
+  await expect(page.locator("tr[data-worksheet-line='106'] [data-line-amount]")).toHaveText("$873.00");
+
+  await expect(page.locator("tr[data-worksheet-line='107']")).toContainText("ITC adjustments and other adjustments");
+  await expect(page.locator("tr[data-worksheet-line='107'] [data-line-source]")).toHaveText("Entered by hand");
+  await expect(page.locator("tr[data-worksheet-line='107'] [data-line-amount]")).toHaveText("$0.00");
+
+  await expect(page.locator("tr[data-worksheet-line='108'] [data-line-amount]")).toHaveText("$873.00");
+  await expect(page.locator("tr[data-worksheet-line='109'] [data-line-amount]")).toHaveText("$3,830.75");
+  await expect(page.locator("tr[data-worksheet-line='110'] [data-line-source]")).toHaveText("Entered by hand");
+  await expect(page.locator("tr[data-worksheet-line='111'] [data-line-source]")).toHaveText("Entered by hand");
+  await expect(page.locator("tr[data-worksheet-line='113'] [data-line-amount]")).toHaveText("$3,830.75");
+  await expect(page.locator("tr[data-worksheet-line='114'] [data-line-amount]")).toHaveText("$0.00");
+  await expect(page.locator("tr[data-worksheet-line='115'] [data-line-amount]")).toHaveText("$3,830.75");
+  await expect(page.locator("[data-manual-entry-note]")).toHaveText("Lines 104, 107, 110, 111, 205 and 405 are entered by hand on the CRA return.");
+
+  // When the dealer's filing_frequency is MONTHLY, the period picker shows Month instead of Quarter.
+  await page.route("**/api/v1/tax/config", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        hst_registration_no: "SR-DEMO-0001",
+        round_mode: "INVOICE_TOTAL",
+        filing_frequency: "MONTHLY",
+        avalara_enabled: false,
+        postal_routing_enabled: false,
+      }),
+    }),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Tax", exact: true }).click();
+  await tab(page, "worksheet");
+  await expect(page.getByLabel("Month")).toBeVisible();
+  await expect(page.getByLabel("Quarter")).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Year" })).toHaveValue(String(pm.year));
+});
+
+test("W3-HST2 leg 2: a variance to GL 2200 shows in words, never as a silent zero", async ({ page, request }) => {
+  await openTax(page, request);
+  const oq = olderQuarter();
+  await tab(page, "worksheet");
+  await expect(page.locator("[data-worksheet-tie-pill]")).toHaveText("Tied out");
+  await expect(page.locator("[data-worksheet-tie]")).toHaveText("No variance. The return's net GST/HST matches the movement of the GST/HST payable account (GL 2200) for the period.");
+  await expect(page.locator("[data-worksheet-gl]")).toHaveText("$3,830.75");
+
+  await page.getByLabel("Quarter").selectOption({ label: oq.label });
+  await page.getByRole("textbox", { name: "Year" }).fill(String(oq.year));
+  await page.getByRole("button", { name: "Show worksheet", exact: true }).click();
+  await expect(page.locator("[data-worksheet-tie-pill]")).toHaveText("Off by $851.50");
+  await expect(page.locator("[data-worksheet-tie]")).toHaveText("The GST/HST payable account (GL 2200) is $851.50 higher than the return's net GST/HST for the period.");
+  await expect(page.locator("[data-worksheet-gl]")).toHaveText("$3,899.00");
+
+  // A bad year is held in the browser and sends nothing.
+  await page.getByRole("textbox", { name: "Year" }).fill("nineteen");
+  await page.getByRole("button", { name: "Show worksheet", exact: true }).click();
+  await expect(page.locator("[data-error]")).toContainText("The year must be a four digit year between 2000 and 2100. Nothing was sent.");
+});
+
+test("W3-HST2 leg 3: the CSV export equals the screen's CRA lines and GL 2200 tie", async ({ page, request }) => {
+  await openTax(page, request);
+  const pq = priorQuarter();
+  await tab(page, "worksheet");
+  await expect(page.locator("tr[data-worksheet-line]")).toHaveCount(14);
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download CSV", exact: true }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe(`gst-hst-return-${pq.year}-Q${pq.quarter}.csv`);
+  const filePath = await download.path();
+  expect(filePath).toBeTruthy();
+  const csv = readFileSync(filePath!, "utf8");
+  const csvLines = csv.trim().split("\n");
+  expect(csvLines[0]).toBe("line_no,label,source,amount");
+
+  const screenRows = await page.locator("tr[data-worksheet-line]").evaluateAll((rows) =>
+    rows.map((r) => ({
+      lineNo: r.getAttribute("data-worksheet-line") ?? "",
+      label: r.querySelector("[data-line-label]")?.textContent?.trim() ?? "",
+      source: r.querySelector("[data-line-source]")?.textContent?.trim() ?? "",
+      amount: r.querySelector("[data-line-amount]")?.textContent?.trim() ?? "",
+    })),
+  );
+  expect(screenRows).toHaveLength(14);
+  for (let i = 0; i < screenRows.length; i += 1) {
+    const row = screenRows[i]!;
+    const rawAmount = row.amount.replace(/[$,]/g, "");
+    expect(csvLines[i + 1]).toBe(`${row.lineNo},"${row.label}","${row.source}",${rawAmount}`);
+  }
+  expect(csv).toContain('GL_2200,"GST/HST payable account movement (GL 2200)","From the books",3830.75');
+  expect(csv).toContain('VARIANCE,"Variance to the GST/HST payable account (GL 2200)","Tied out",0.00');
+});
+
+test("W3-HST2 leg 4: a clerk who cannot read tax sees no view, and a refused worksheet read names who may read it", async ({ page, request }) => {
+  await resetStub(request);
+  await page.addInitScript(receivablesHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-card]")).toHaveCount(4);
+  await expect(page.getByRole("button", { name: "Tax", exact: true })).toHaveCount(0);
+  await expect(page.locator("nav.areas").getByRole("button", { name: /Tax/ })).toHaveCount(0);
+  await expect(page.locator("[data-tab-id='worksheet']")).toHaveCount(0);
+  await expect(page.locator("[data-worksheet-result]")).toHaveCount(0);
+
+  // A refused read on the worksheet route names who may read it and shows no lines.
+  const ctlPage = await page.context().newPage();
+  await ctlPage.addInitScript(controllerHandoff);
+  await ctlPage.route("**/api/v1/tax/worksheet*", (route) =>
+    route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "tax: caller cannot access this branch" }) }),
+  );
+  await ctlPage.goto("/");
+  await ctlPage.getByRole("button", { name: "Tax", exact: true }).click();
+  await tab(ctlPage, "worksheet");
+  await expect(ctlPage.locator("[data-error]")).toContainText("This GST/HST return is outside your branch reach.");
+  await expect(ctlPage.locator("tr[data-worksheet-line]")).toHaveCount(0);
+  await ctlPage.close();
+});
+
+test("W3-HST2 contract: the GST/HST return view reads only keys the TaxWorksheet contract declares", async ({ page, request }) => {
+  await resetStub(request);
+  const pq = priorQuarter();
+  const hdr = Buffer.from(JSON.stringify({ alg: "ES256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ sub: "de110000-0000-4000-9000-000000000008", exp: Math.floor(Date.now() / 1000) + 3600 })).toString("base64url");
+  const answer = await request.get(`/api/v1/tax/worksheet?year=${pq.year}&quarter=${pq.quarter}`, {
+    headers: { authorization: `Bearer ${hdr}.${payload}.c2ln` },
+  });
+  expect(answer.status()).toBe(200);
+  const served = (await answer.json()) as { lines: Record<string, unknown>[] } & Record<string, unknown>;
+  expect(Object.keys(served).filter((key) => !(TAX_WORKSHEET_KEYS as readonly string[]).includes(key))).toEqual([]);
+  for (const line of served.lines) {
+    expect(Object.keys(line).filter((key) => !(TAX_WORKSHEET_LINE_KEYS as readonly string[]).includes(key))).toEqual([]);
+  }
+
+  // Runtime Proxy walk: every property the view and logic read off TaxWorksheet and TaxWorksheetLine is recorded.
+  const proxyReads = new Set<string>();
+  const wrapProxy = <T extends object>(target: T): T =>
+    new Proxy(target, {
+      get(obj, prop, receiver) {
+        if (typeof prop === "string" && !Array.isArray(obj) && !(prop in Object.prototype)) {
+          proxyReads.add(prop);
+        }
+        const val = Reflect.get(obj, prop, receiver);
+        if (Array.isArray(val)) {
+          return val.map((item) => (item !== null && typeof item === "object" ? wrapProxy(item as object) : item));
+        }
+        return val !== null && typeof val === "object" ? wrapProxy(val as object) : val;
+      },
+    });
+  const proxiedWorksheet = wrapProxy(structuredClone(TAX_WORKSHEET_FIXTURE));
+  worksheetTieWords(proxiedWorksheet.variance_cents);
+  worksheetPeriodWords(proxiedWorksheet);
+  worksheetCsvFilename(proxiedWorksheet);
+  worksheetCsv(proxiedWorksheet);
+  renderTax({
+    phase: "ready",
+    tab: "worksheet",
+    today: "2026-10-29",
+    rates: [],
+    profiles: [],
+    queue: [],
+    config: {
+      hst_registration_no: "SR-DEMO-0001",
+      round_mode: "INVOICE_TOTAL",
+      filing_frequency: "QUARTERLY",
+      avalara_enabled: false,
+      postal_routing_enabled: false,
+    },
+    evidence: [],
+    evidenceLoaded: false,
+    selected: null,
+    check: null,
+    downloaded: false,
+    recon: null,
+    recompute: null,
+    worksheet: proxiedWorksheet,
+    confirm: null,
+    form: { "tx-w-year": "2026", "tx-w-quarter": "3", "tx-w-month": "9" },
+    busy: false,
+    error: "",
+    notice: "",
+  });
+  expect(proxyReads.size).toBeGreaterThan(0);
+  expect([...proxyReads].filter((k) => !TAX_WORKSHEET_ALLOWED_KEYS.has(k))).toEqual([]);
+
+  await page.addInitScript(controllerHandoff);
+  await page.route("**/api/v1/tax/worksheet*", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TAX_WORKSHEET_FIXTURE) }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tax", exact: true }).click();
+  await tab(page, "worksheet");
+  await expect(page.locator("tr[data-worksheet-line]")).toHaveCount(TAX_WORKSHEET_FIXTURE.lines.length);
+
+  const here = dirname(fileURLToPath(import.meta.url));
+  const sources = [
+    readFileSync(join(here, "../src/tax/tax-views.ts"), "utf8"),
+    readFileSync(join(here, "../src/tax/tax-logic.ts"), "utf8"),
+    readFileSync(join(here, "../src/tax/tax-desk.ts"), "utf8"),
+  ].join("\n");
+  const reads = new Set<string>();
+  const re = /\b(?:worksheet|wLine)\??\.([a-z_][a-z0-9_]*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sources)) !== null) {
+    if (m[1]) reads.add(m[1]);
+  }
+  expect(reads.size).toBeGreaterThan(0);
+  const undeclared = [...reads].filter((k) => !TAX_WORKSHEET_ALLOWED_KEYS.has(k));
+  expect(undeclared).toEqual([]);
+});
+
+// Sonnet's visual read of 721 (round 2).
+test("721 visual: the subtitle follows the tab, and the worksheet's tiles hold their figures on one line", async ({ page, request }) => {
+  await openTax(page, request);
+  const subtitle = page.locator("[data-tax-subtitle]");
+  await expect(subtitle).toContainText("California sales tax; US dollars.");
+  await tab(page, "worksheet");
+  await expect(subtitle).toHaveText(/^Canadian GST\/HST, Canadian dollars\./);
+  await expect(subtitle).not.toContainText("California");
+  await expect(page.locator("[data-worksheet-result]")).toBeVisible();
+
+  // The account is named, with its number as a hint.
+  await expect(page.locator("[data-worksheet-result] .tx-stat-label").nth(4)).toContainText("GST/HST payable account movement");
+  await expect(page.locator("[data-worksheet-result] .tx-stat-label").nth(5)).toContainText("Tie to the GST/HST payable account");
+
+  // A wide screen: every tile's label has the same height, so the six figures sit at one height.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const tops = await page.locator("[data-worksheet-result] .tx-stat-figure").evaluateAll((els) =>
+    els.map((el) => Math.round(el.getBoundingClientRect().top - (el.closest(".tx-stat")?.getBoundingClientRect().top ?? 0))),
+  );
+  // Within a pixel: the pill's inline box rounds half a pixel apart from a number's.
+  expect(Math.max(...tops) - Math.min(...tops), `figure offsets ${tops.join(",")}`).toBeLessThanOrEqual(1);
+});
+
+test("721 visual: the worksheet's hand entry note is the desk's own notice, in the watch colour", async ({ page, request }) => {
+  await openTax(page, request);
+  await tab(page, "worksheet");
+  const border = await page.locator("[data-manual-entry-note]").evaluate((el) => getComputedStyle(el).borderTopColor);
+  const watch = await page.locator("[data-worksheet-result]").evaluate((el) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--hh-state-watch)";
+    el.appendChild(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  expect(border).toBe(watch);
+});
+
+test("721 visual: on a phone the active area chip is scrolled fully into view", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openTax(page, request);
+  const box = await page.locator("nav[aria-label='Money Desk areas'] [aria-current='true']").boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+
+  // No chip is cut at the strip's left edge: each chip is wholly inside it or wholly outside.
+  const cut = await page.locator("nav[aria-label='Money Desk areas']").evaluate((nav) => {
+    const edge = nav.getBoundingClientRect().left;
+    return [...nav.children].filter((c) => {
+      const r = c.getBoundingClientRect();
+      return r.left < edge - 0.5 && r.right > edge + 0.5;
+    }).length;
+  });
+  expect(cut).toBe(0);
 });

@@ -198,6 +198,14 @@ export class MoneyDeskApp extends HHElement {
       field: (name) => named(name)?.value ?? "",
       reveal: (selector) => this.renderRoot.querySelector(selector)?.scrollIntoView({ block: "center", behavior: "smooth" }),
       focus: (selector) => this.renderRoot.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true }),
+      download: (filename, text) => {
+        const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(url);
+      },
     });
   }
 
@@ -439,10 +447,7 @@ export class MoneyDeskApp extends HHElement {
     if (action === "area") {
       const area = control?.getAttribute("data-area");
       if (AREAS.some((id) => id === area) && this.#areas().includes(area as Area)) {
-        // Leaving the payables board closes the payee whose open items were open.
-        if (area !== "payables") this.#ar.closePayables();
-        this.#area = area as Area;
-        this.#openArea();
+        this.#goArea(area as Area);
         this.requestUpdate();
       }
       return;
@@ -585,6 +590,9 @@ export class MoneyDeskApp extends HHElement {
     if (this.#area === "tax") this.#tax.afterRender();
     if (this.#area === "liens") this.#lien.afterRender();
     if (this.#area === "compliance") this.#compliance.afterRender();
+    this.#alignAreaStrip();
+    // A press scrolls the strip to its own chip after this render: align again once that has settled.
+    requestAnimationFrame(() => this.#alignAreaStrip());
     this.#wireTanyai();
     // The framed band (GAPS-r2 row G1): the board's white band, the ONE band
     // when the desk stands alone; framed by the Work shell, the host's band is
@@ -644,8 +652,7 @@ export class MoneyDeskApp extends HHElement {
     if (ref.kind !== "customer" || !this.#holdsReceivables()) return;
     this.#tanyai()?.hide();
     if (this.#area !== "receivables") {
-      this.#area = "receivables";
-      this.#openArea();
+      this.#goArea("receivables");
     }
     const open = document.createElement("button");
     open.setAttribute("data-action", "open-account");
@@ -703,7 +710,17 @@ export class MoneyDeskApp extends HHElement {
     this.#compliance = this.#newComplianceDesk();
     this.#glLoaded = false;
     const held = this.#areas();
-    this.#area = this.#isController() ? "ledger" : held.includes("receivables") ? "receivables" : (held[0] ?? "receivables");
+    this.#goArea(this.#isController() ? "ledger" : held.includes("receivables") ? "receivables" : (held[0] ?? "receivables"));
+  }
+
+  /**
+   * The way into an area. Every road into an area goes through here, so leaving the payables board
+   * closes the payee whose open items were open, whichever road the operator took: the area switch
+   * above, the assistant panel's own record, or the sign in that lands the desk.
+   */
+  #goArea(area: Area): void {
+    if (area !== "payables") this.#ar.closePayables();
+    this.#area = area;
     this.#openArea();
   }
 
@@ -745,6 +762,29 @@ export class MoneyDeskApp extends HHElement {
   private renderThemeControl(): TemplateResult {
     const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
     return html`<button type="button" class="btn btn-secondary" data-action="theme" data-testid="theme-control">${label}</button>`;
+  }
+
+  /**
+   * On a phone the area switch is one strip that scrolls. The active chip is brought fully into view and the strip
+   * starts on a chip's own edge, so no chip is cut mid word at the left (the chip before the active one leads).
+   */
+  #alignAreaStrip(): void {
+    const strip = this.renderRoot.querySelector<HTMLElement>("nav.areas");
+    if (strip === null || strip.scrollWidth <= strip.clientWidth) return;
+    const active = strip.querySelector<HTMLElement>("[aria-current='true']");
+    if (active === null) return;
+    // Try the chip before the active one, then each earlier chip, until one can stand at the strip's left edge (the strip
+    // cannot scroll past its end) with the active chip still wholly inside the strip on the right.
+    // The lead chip stands on the strip's own edge, so the chip before it is wholly hidden, not a sliver in the padding.
+    const edge = strip.getBoundingClientRect().left;
+    let lead: Element | null = active.previousElementSibling ?? active;
+    while (lead !== null) {
+      strip.scrollLeft = Math.max(0, strip.scrollLeft + lead.getBoundingClientRect().left - edge);
+      const fitsLeft = Math.abs(lead.getBoundingClientRect().left - edge) <= 1 || strip.scrollLeft === 0;
+      const fitsActive = active.getBoundingClientRect().right <= strip.getBoundingClientRect().right;
+      if (fitsLeft && fitsActive) return;
+      lead = lead === active ? null : lead.previousElementSibling;
+    }
   }
 
   // The desks the role holds, as the area switch: the controller's eight, Payables and Receivables' five and the General
