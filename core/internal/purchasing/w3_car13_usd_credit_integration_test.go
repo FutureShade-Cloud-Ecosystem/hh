@@ -83,48 +83,103 @@ func TestIntegration_W3Car13_USDBillWithCreditPaysRemainingDocAmount(t *testing.
 	}
 }
 
-// TestIntegration_W3Car13_RunOpenAgreesWithPayBill: the run proposes the CAD open PayBill's own
-// guard sees (total, less cleared, less credited) for a USD bill with a credit applied.
-func TestIntegration_W3Car13_RunOpenAgreesWithPayBill(t *testing.T) {
+// runLineFor finds a run's line for billID.
+func runLineFor(run PaymentRun, billID string) *PaymentRunLine {
+	for i := range run.Lines {
+		if run.Lines[i].BillID == billID {
+			return &run.Lines[i]
+		}
+	}
+	return nil
+}
+
+// A payment run takes CAD bills only (the lead's ruling on the run's gap): the proposal leaves a
+// USD bill out and says so in words, and the run over the CAD bill pays and completes.
+func TestIntegration_W3Car13_RunProposesOnlyCADAndNamesTheUSDBill(t *testing.T) {
 	rig := newVCRig(t)
 	today := time.Now().In(rig.zone).Format("2006-01-02")
-	bill := rig.postUSDBillAt(t, "car13run", today, today, 100_000, 1.35, time.Time{})
-	credit := rig.createPostedCredit(t, "car13run", branchTRT, 27_000)
-	if _, err := rig.svc.ApplyVendorCredit(rig.ctx, credit.ID, ApplyVendorCreditRequest{
-		BillID: bill.ID, AmountCents: 27_000, IdempotencyKey: "car13run-apply",
-	}); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
+	_, cad := rig.createReceivedPOAndPostBill(t, "car13runcad", 50_000, today, today)
+	usd := rig.postUSDBillAt(t, "car13runusd", today, today, 100_000, 1.35, time.Time{})
+
 	run, err := rig.svc.ProposePaymentRun(rig.ctx, ProposePaymentRunRequest{BranchID: branchTRT, DueOn: today, VendorID: rig.vendor})
 	if err != nil {
 		t.Fatalf("propose: %v", err)
 	}
 	cleanupRun(t, rig.pool, run.ID)
-	var line *PaymentRunLine
-	for i := range run.Lines {
-		if run.Lines[i].BillID == bill.ID {
-			line = &run.Lines[i]
+	if runLineFor(run, cad.ID) == nil {
+		t.Fatalf("W3-Car13 red: the run holds no line for the CAD bill: %+v", run.Lines)
+	}
+	if runLineFor(run, usd.ID) != nil {
+		t.Fatalf("W3-Car13 red: the run proposed the USD bill %s", usd.BillNo)
+	}
+	want := usd.BillNo + " is billed in USD: pay it from its bill with the day's rate"
+	found := false
+	for _, w := range run.LeftOut {
+		if w == want {
+			found = true
 		}
 	}
-	if line == nil {
-		t.Fatalf("W3-Car13 red: the run holds no line for the USD bill: %+v", run.Lines)
+	if !found {
+		t.Fatalf("W3-Car13 red: left_out %q does not name the USD bill as %q", run.LeftOut, want)
 	}
-	_, open, err := rig.svc.repo.BillPayState(rig.ctx, bill.ID)
+
+	paid, err := rig.svc.PayPaymentRun(rig.ctx, run.ID)
 	if err != nil {
-		t.Fatalf("BillPayState: %v", err)
+		t.Fatalf("W3-Car13 red: the run's pay: %v", err)
 	}
-	if line.AmountCents != open || open != 108_000 {
-		t.Fatalf("W3-Car13 red: run line %d cents, BillPayState open %d, want both 108000 (PayBill's CAD open)", line.AmountCents, open)
+	if paid.Status != RunPaid {
+		t.Fatalf("W3-Car13 red: run status %s after the pay, want %s", paid.Status, RunPaid)
 	}
-	// The run carries no payment rate, and PayBill takes a USD bill's amount in USD at a rate: the
-	// pay is refused in words and moves no money. Paying USD bills from a run needs a rule for the
-	// rate and the amount that this car does not invent (see the report).
-	_, err = rig.svc.PayPaymentRun(rig.ctx, run.ID)
-	if err == nil || !strings.Contains(err.Error(), "fx_rate is required") {
-		t.Fatalf("W3-Car13: the run's pay of a USD bill: %v, want the refusal naming fx_rate", err)
+	if ln := runLineFor(paid, cad.ID); ln == nil || ln.Status != RunLinePaid || ln.PaidCents != 50_000 {
+		t.Fatalf("W3-Car13 red: the CAD line after the pay: %+v", ln)
 	}
-	if got := rig.billNetAP2100Cents(t, bill.ID); got != 135_000 {
-		t.Fatalf("W3-Car13: bill 2100 net %d after the refused run pay, want 135000", got)
+	if got := rig.billNetAP2100Cents(t, usd.ID); got != 135_000 {
+		t.Fatalf("W3-Car13 red: the USD bill's 2100 net %d after the run, want 135000 (untouched)", got)
+	}
+}
+
+// A USD bill's line planted on a run directly (a run proposed before the ruling, or a bill whose
+// currency was edited) is skipped with the reason while the CAD line pays and the run completes.
+func TestIntegration_W3Car13_RunSkipsAPlantedUSDLineAndPaysTheRest(t *testing.T) {
+	rig := newVCRig(t)
+	today := time.Now().In(rig.zone).Format("2006-01-02")
+	_, cad := rig.createReceivedPOAndPostBill(t, "car13plantcad", 50_000, today, today)
+	usd := rig.postUSDBillAt(t, "car13plantusd", today, today, 100_000, 1.35, time.Time{})
+
+	run, err := rig.svc.ProposePaymentRun(rig.ctx, ProposePaymentRunRequest{BranchID: branchTRT, DueOn: today, VendorID: rig.vendor})
+	if err != nil {
+		t.Fatalf("propose: %v", err)
+	}
+	cleanupRun(t, rig.pool, run.ID)
+	tx, err := rig.svc.repo.Begin(rig.ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if err := rig.svc.repo.InsertPaymentRunLine(rig.ctx, tx, run.ID, len(run.Lines)+1, usd.ID, 135_000); err != nil {
+		_ = tx.Rollback(rig.ctx)
+		t.Fatalf("plant the USD line: %v", err)
+	}
+	if err := tx.Commit(rig.ctx); err != nil {
+		t.Fatalf("commit the planted line: %v", err)
+	}
+
+	paid, err := rig.svc.PayPaymentRun(rig.ctx, run.ID)
+	if err != nil {
+		t.Fatalf("W3-Car13 red: a planted USD line refused the whole run: %v", err)
+	}
+	if paid.Status != RunPaid {
+		t.Fatalf("W3-Car13 red: run status %s, want %s", paid.Status, RunPaid)
+	}
+	if ln := runLineFor(paid, cad.ID); ln == nil || ln.Status != RunLinePaid || ln.PaidCents != 50_000 {
+		t.Fatalf("W3-Car13 red: the CAD line: %+v", ln)
+	}
+	ln := runLineFor(paid, usd.ID)
+	wantReason := usd.BillNo + " is billed in USD: pay it from its bill with the day's rate"
+	if ln == nil || ln.Status != RunLineSkipped || ln.SkipReason != wantReason || ln.PaidCents != 0 {
+		t.Fatalf("W3-Car13 red: the USD line %+v, want SKIPPED with %q", ln, wantReason)
+	}
+	if got := rig.billNetAP2100Cents(t, usd.ID); got != 135_000 {
+		t.Fatalf("W3-Car13 red: the USD bill's 2100 net %d, want 135000 (untouched)", got)
 	}
 }
 

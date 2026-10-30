@@ -7261,6 +7261,7 @@ export type PurchasingPaymentRun = {
   paid_at?: string | null;
   created_at: string;
   lines: PurchasingPaymentRunLine[];
+  left_out?: string[];
 };
 export type PurchasingPaymentRunSummary = {
   id: string;

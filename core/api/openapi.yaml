@@ -56477,6 +56477,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PurchasingPaymentRunLine"
+        left_out:
+          type: array
+          items:
+            type: string
+          description: "Only the proposal's own answer carries it: one sentence for each open bill the run left out because it is not billed in CAD, naming the bill and its currency. A payment run takes CAD bills only; such a bill is paid from its own bill with the day's rate."
     PurchasingPaymentRunSummary:
       type: object
       description: One run of the list, the run without its lines

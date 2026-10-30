@@ -8389,6 +8389,7 @@ type PurchasingPaymentRun struct {
 	PaidAt     *time.Time                 `json:"paid_at,omitempty"`
 	CreatedAt  time.Time                  `json:"created_at"`
 	Lines      []PurchasingPaymentRunLine `json:"lines"`
+	LeftOut    *[]string                  `json:"left_out,omitempty"`
 }
 
 type PurchasingPaymentRunSummary struct {
