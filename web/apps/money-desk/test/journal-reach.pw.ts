@@ -24,12 +24,22 @@ const FIRST_PLANTED_ENTRY = 101;
 const PAGE = 100;
 const blank = process.env.JOURNAL_REACH_BLANK ?? "";
 
+/**
+ * THE BLANK SENTINEL: the edge a blank leg looks for when the books hold
+ * nothing at all. It has to be a label no row can carry, so a blank leg fails
+ * on the label itself and not on the blanking having worked: the blank check's
+ * teeth are the label, not the emptying. JE-0000 would not do: the stub's
+ * planted lodgement journal really carries that label, so a blank leg could be
+ * satisfied by a row that is really there.
+ */
+const BLANK_SENTINEL = "JE-0000";
+
 /** Plants the older books (or empties them, for the blank core), signs in, and stands on the register.
  *  Answers the oldest label the first page holds, derived from the world: the register lists the demo
  *  year's rows (the seeded journals and any another desk plants, such as a lodgement's own) ahead of the
  *  older year's, so the first hundred reach down to the planted entry that many rows short of the newest. */
 async function openRegister(page: Page, request: APIRequestContext): Promise<string> {
-  let edge = "JE-0000";
+  let edge = BLANK_SENTINEL;
   await resetStub(request);
   if (blank === "core") {
     const emptied = await request.post("/api/v1/gl/journals/_stub/planter", {
@@ -69,6 +79,10 @@ test("show more reaches a journal older than the first hundred and opens it", as
   await expect(register.getByRole("button", { name: edge })).toBeVisible();
   await expect(register.getByRole("button", { name: before(edge) })).toHaveCount(0);
   await expect(register.getByRole("button", { name: "JE-0101" })).toHaveCount(0);
+  // The blank sentinel is a label no row can carry, so a blank leg fails on the label itself and not on the
+  // blanking having worked. The register holds the world's own rows here, the planted lodgement's own JE-0000
+  // among them, so this is where a sentinel that a row really carries would show.
+  await expect(register.getByRole("button", { name: BLANK_SENTINEL })).toHaveCount(0);
   const more = page.locator("[data-show-more]");
   await expect(more).toBeVisible();
   await expect(more).toContainText("Show more journals");
