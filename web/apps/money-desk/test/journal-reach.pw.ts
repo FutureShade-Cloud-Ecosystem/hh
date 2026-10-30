@@ -32,7 +32,7 @@ const blank = process.env.JOURNAL_REACH_BLANK ?? "";
  * planted lodgement journal really carries that label, so a blank leg could be
  * satisfied by a row that is really there.
  */
-const BLANK_SENTINEL = "JE-0000";
+const BLANK_SENTINEL = "JE-none";
 
 /** Plants the older books (or empties them, for the blank core), signs in, and stands on the register.
  *  Answers the oldest label the first page holds, derived from the world: the register lists the demo
