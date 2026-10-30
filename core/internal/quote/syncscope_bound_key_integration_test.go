@@ -21,6 +21,7 @@ package quote
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -238,11 +239,13 @@ func TestUX108R2QuotesBinderKeepsItsBoundAnswer(t *testing.T) {
 	}
 }
 
-// TestUX108R2QuotesGoneRowKeepsItsBoundAnswer: a quote that is gone for
-// everyone keeps the bound answer (PR 640's rule). The gate hides a key only
-// for a LIVE row a caller cannot see; a withdrawn quote is gone, so the key
-// keeps its own answer and the caller is not told the row is gone.
-func TestUX108R2QuotesGoneRowKeepsItsBoundAnswer(t *testing.T) {
+// TestUX114QuotesGoneRowRefusesANonBinder: UX-114 on the quotes scope, the
+// leg UX-108's merge made runnable. A withdrawn quote is gone for everyone,
+// and with BoundEntityExists on the store the engine refuses a non binder
+// replaying the bound key with the absent key's answer, whole: the status,
+// the seq, the error words and the envelope are the never-bound key's. The
+// binder keeps the bound answer, and nothing writes twice.
+func TestUX114QuotesGoneRowRefusesANonBinder(t *testing.T) {
 	f := newSyncFixture(t)
 	ctx := context.Background()
 	qd1cPublish(t, qd1Cfg)
@@ -254,8 +257,11 @@ func TestUX108R2QuotesGoneRowKeepsItsBoundAnswer(t *testing.T) {
 	engine, info := ux108R2Engine(t, f)
 
 	bound := uuid.NewString()
+	fresh := uuid.NewString()
+	freshDelete := uuid.NewString()
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(ctx, `DELETE FROM sync_op_hashes WHERE client_id = ANY($1::uuid[])`, []string{bound})
+		_, _ = f.pool.Exec(ctx, `DELETE FROM sync_op_hashes WHERE client_id = ANY($1::uuid[])`,
+			[]string{bound, fresh, freshDelete})
 	})
 	// A DRAFT quote, the only kind that may be withdrawn through sync.
 	quoteID, _ := ux108R2Plant(t, f, managerID, testkit.BranchNorthAID, "DRAFT", "")
@@ -269,11 +275,50 @@ func TestUX108R2QuotesGoneRowKeepsItsBoundAnswer(t *testing.T) {
 		t.Fatalf("the manager withdraws its own draft: %v", err)
 	}
 
-	replay := ux108R2Push(t, engine, info, ux108As(testkit.SubInsideSales), op)
-	if replay.Status != "applied" {
-		t.Errorf("a gone row keeps the bound answer: %+v", replay)
+	inside := ux108As(testkit.SubInsideSales)
+
+	// The update replay: the bound key and a never-bound key with the same
+	// body answer alike, field for field, and the refusal is the seam's.
+	boundAnswer := ux108R2Push(t, engine, info, inside, op)
+	neverOp := op
+	neverOp.ClientId = fresh
+	neverAnswer := ux108R2Push(t, engine, info, inside, neverOp)
+	ux108R2SameAnswer(t, "the bound key and a never-bound key on a gone row, the update", boundAnswer, neverAnswer)
+	if boundAnswer.Status != "rejected" || boundAnswer.Error == nil || *boundAnswer.Error != ux108R2Refusal {
+		t.Errorf("a non binder's update replay on a gone row is the indistinguishable refusal: %+v", boundAnswer)
 	}
-	if replay.Error != nil && *replay.Error == ux108R2Refusal {
-		t.Errorf("a gone row is not refused as unreadable: %+v", replay)
+
+	// The delete replay: the same pair, the same equality.
+	delOp := apigen.SyncPushOperation{ClientId: bound, Op: "delete", Payload: map[string]any{"id": quoteID}}
+	boundDelete := ux108R2Push(t, engine, info, inside, delOp)
+	neverDelete := delOp
+	neverDelete.ClientId = freshDelete
+	neverDeleteAnswer := ux108R2Push(t, engine, info, inside, neverDelete)
+	ux108R2SameAnswer(t, "the bound key and a never-bound key on a gone row, the delete", boundDelete, neverDeleteAnswer)
+
+	// The binder keeps the bound answer: applied, the tombstone's seq, no
+	// second write, one ledger row.
+	replay := ux108R2Push(t, engine, info, ux108As(testkit.SubSalesManager), op)
+	if replay.Status != "applied" || replay.Seq == nil || *replay.Seq <= *first.Seq {
+		t.Errorf("the binder's own replay keeps the bound answer on a gone row: %+v", replay)
+	}
+	var deletedAt *time.Time
+	var validity string
+	if err := f.pool.QueryRow(ctx,
+		`SELECT deleted_at, COALESCE(valid_until::text,'') FROM quotes WHERE id = $1`, quoteID).
+		Scan(&deletedAt, &validity); err != nil {
+		t.Fatalf("read the quote back: %v", err)
+	}
+	if deletedAt == nil || validity != ux108Date(30) {
+		t.Errorf("the replay wrote nothing: deleted_at %v validity %q", deletedAt, validity)
+	}
+	var ledgerRows int
+	if err := f.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sync_op_hashes WHERE client_id = ANY($1::uuid[])`,
+		[]string{bound, fresh, freshDelete}).Scan(&ledgerRows); err != nil {
+		t.Fatalf("count the probe's ledger rows: %v", err)
+	}
+	if ledgerRows != 1 {
+		t.Errorf("the replay binds nothing new: %d ledger rows, want 1", ledgerRows)
 	}
 }

@@ -23,6 +23,10 @@ export interface VendorsModel {
   /** The email the last save answered with: the list never carries it. */
   readonly savedEmail: string | null;
   readonly clearEmail: boolean;
+  /** True when the signed in seat may mark a vendor a subcontractor: the Controller's own mark. */
+  readonly canSetT5018: boolean;
+  /** The mark as the screen holds it, before it is saved. */
+  readonly t5018Mark: boolean;
   readonly contact: PurchasingVendorContactResult | null;
   readonly codes: readonly PurchasingVendorSKU[] | null;
   readonly products: readonly Product[];
@@ -103,6 +107,38 @@ function lookup(model: VendorsModel): TemplateResult {
 
 // ---- the vendor ------------------------------------------------------------------------------------------------
 
+/**
+ * The T5018 record on the vendor's own page: the mark and the contractor's CRA business number.
+ *
+ * The mark is the Financial Controller's, so the control is offered only to that seat: the core's
+ * wall is the authority, and a seat that would be refused is not offered the control at all. The
+ * record has its own save, because it is its own door: the vendor's name and terms are a buyer's
+ * to correct, and the mark is the Controller's.
+ */
+function t5018Panel(model: VendorsModel, vendor: PurchasingVendor): TemplateResult {
+  if (!model.canSetT5018) {
+    return html`<p class="foot dim" data-t5018-note>The subcontractor mark for the CRA's Form T5018 is the Financial Controller's to set.</p>`;
+  }
+  return html`
+    <div data-t5018>
+      <h3 class="sub">T5018 subcontractor</h3>
+      <p class="dim">The CRA's Form T5018 names the subcontractors a dealer paid during a year. Marking a vendor here puts it on that year's report.</p>
+      ${checkBox("This vendor is a subcontractor (T5018)", "toggle-t5018", model.t5018Mark)}
+      <div class="forms">
+        <label>CRA business number
+          <input type="text" inputmode="numeric" autocomplete="off" data-field="v-bn" data-v-bn />
+          <span class="dim">Nine digits, with RC0001 after them for a program account. Leave blank if the contractor has not given one.</span>
+        </label>
+      </div>
+      <div class="actions end">
+        <span class="dim" data-t5018-save-hint>Saves only this block</span>
+        <button type="button" class="btn btn-secondary" data-action="save-t5018" ?disabled=${model.busy}>Save the T5018 record</button>
+      </div>
+      <p class="foot dim">${vendor.is_t5018_subcontractor ? "This vendor is on the T5018 report." : "This vendor is not on the T5018 report."}</p>
+    </div>
+  `;
+}
+
 function detailsForm(model: VendorsModel, vendor: PurchasingVendor | "new"): TemplateResult {
   const isNew = vendor === "new";
   return html`
@@ -126,6 +162,7 @@ function detailsForm(model: VendorsModel, vendor: PurchasingVendor | "new"): Tem
       </label>
       ${isNew ? nothing : checkBox("Clear the email on file", "toggle-clear-email", model.clearEmail)}
     </div>
+    ${isNew ? nothing : t5018Panel(model, vendor)}
     ${errorNote(model.error)}
     <div class="actions end">
       ${isNew ? html`<button type="button" class="btn btn-secondary" data-action="close-vendor" ?disabled=${model.busy}>Cancel</button>` : nothing}

@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { GlAccount, GlAccountCreate, GlAccountPage, GlBisTrackTieoutReport, GlCloseYearBody, GlExportBody, GlExportResult, GlJournal, GlJournalCreate, GlJournalPage, GlPeriod, GlPeriodPage, GlPeriodReopenBody, GlPolicy, GlPostingQueueCounts, GlPostingQueuePage, GlReasonBody, GlRecurringTemplatePage, GlTieoutStatePage, GlTrialBalanceResult, GlYearCloseResult, GlYearOpenResult } from "./types.js";
+import type { GlAccount, GlAccountCreate, GlAccountMapping, GlAccountMappingPage, GlAccountMappingSet, GlAccountPage, GlBisTrackTieoutReport, GlCloseYearBody, GlExportBody, GlExportResult, GlJournal, GlJournalCreate, GlJournalPage, GlPeriod, GlPeriodPage, GlPeriodReopenBody, GlPolicy, GlPostingQueueCounts, GlPostingQueuePage, GlReasonBody, GlRecurringTemplatePage, GlTieoutStatePage, GlTrialBalanceResult, GlYearCloseResult, GlYearOpenResult } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -64,6 +64,36 @@ export async function glExport(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "glExport",
+  });
+}
+
+export async function glListAccountMapping(
+  client: ApiClient,
+  opts?: { target?: "QUICKBOOKS_ONLINE" | "SAGE_50" },
+  call?: ApiCallOptions
+): Promise<Result<GlAccountMappingPage>> {
+  return client.request<GlAccountMappingPage>({
+    method: "GET",
+    path: "/api/v1/gl/export-mapping",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "glListAccountMapping",
+  });
+}
+
+export async function glSetAccountMapping(
+  client: ApiClient,
+  body: GlAccountMappingSet,
+  call?: ApiCallOptions
+): Promise<Result<GlAccountMapping>> {
+  return client.request<GlAccountMapping>({
+    method: "PUT",
+    path: "/api/v1/gl/export-mapping",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "glSetAccountMapping",
   });
 }
 

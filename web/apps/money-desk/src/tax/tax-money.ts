@@ -17,6 +17,14 @@ export function formatMoney(cents: number | null | undefined): string {
   return formatDollars(cents);
 }
 
+/** Plain decimal dollars for CSV export ("3830.75", "-851.50"): string slicing, no division. */
+export function centsDecimal(cents: number | null | undefined): string {
+  if (typeof cents !== "number" || !Number.isInteger(cents)) return "";
+  const sign = cents < 0 ? "-" : "";
+  const digits = String(Math.abs(cents)).padStart(3, "0");
+  return `${sign}${digits.slice(0, -2)}.${digits.slice(-2)}`;
+}
+
 /** 775 reads "7.75%", 0 reads "0%", 1000 reads "10%", 5 reads "0.05%"; anything not a whole number reads the placeholder. */
 export function formatRate(bps: number | null | undefined): string {
   if (typeof bps !== "number" || !Number.isInteger(bps) || bps < 0) return RATE_PLACEHOLDER;

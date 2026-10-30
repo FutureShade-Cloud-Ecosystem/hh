@@ -161,6 +161,9 @@ type topsSpine struct {
 	// read the engine's own reconcile (the finance box's read only check) runs the
 	// engine this box serves and not a second copy of it.
 	taxSvc *tax.Service
+	// reportingSvc is held so the composition root can bind the role gate onto
+	// RunDataset after the tops modules are constructed.
+	reportingSvc *reporting.Service
 }
 
 // feedbackActorNames resolves a linked ERP user id to the display name and
@@ -222,6 +225,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// named at the registrar.
 	customerRepo := customer.NewRepository(pool)
 	customerSvc := customer.NewService(customerRepo).WithWriter(customerRepo).
+		// Wave 3 JA-1: the job accounts under a customer. The same repository is the job store,
+		// so the job rows are fenced by the same reach the account rows are.
+		WithJobs(customerRepo).
 		WithCountry(dealerCountryAdapter{r: settings.NewDealerConfigReader(pool)}).
 		// UX-97: the dealer's account position policy, the register's own gate.
 		WithPositionGate(billing.NewAccountPositionGate(billing.NewRepository(pool)))
@@ -483,7 +489,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// The AR console (DIB-65/52/166/170): credit and statement services,
 	// the month-end handler, the counter's aging reader, the AR landing
 	// half.
-	w3bCreditSvc := billing.NewCreditService(billingRepo).WithAudit(auditSvc)
+	w3bCreditSvc := billing.NewCreditService(billingRepo).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	w3bStatementSvc := billing.NewStatementService(billingRepo).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	monthEndHandler := billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
 		WithZone(newDealerZone(pool)).
@@ -527,6 +533,12 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithZone(newDealerZone(pool)).
 		WithUserLinker(link).RegisterRoutes(r, g)
 	billing.NewCreditApplyHandler(billing.NewCreditApplyService(billingRepo).WithAudit(auditSvc), log).
+		WithUserLinker(link).RegisterRoutes(r, g)
+	billing.NewCreditChangeHandler(
+		billing.NewCreditChangeService(billingRepo, billing.NewCustomerCreditStore(customerSvc)).WithAudit(auditSvc),
+		log,
+	).WithUserLinker(link).RegisterRoutes(r, g)
+	billing.NewWriteOffHandler(billing.NewWriteOffService(billingRepo).WithAudit(auditSvc), log).
 		WithUserLinker(link).RegisterRoutes(r, g)
 
 	// The dispatch gate seam (W3-C closes at the union): Swarm B's billing
@@ -727,11 +739,26 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	quoteAssistSvc.WithAI(quoteRails)
 	quoteassist.NewHandler(quoteAssistSvc).WithUserLinker(link).RegisterRoutes(r, g)
 
-	// SWARM-W6-B: reporting and commissions.
+	// SWARM-W6-B: reporting and commissions. W3-RW1 binds the five curated data set sources beside
+	// the same service: each set reads its owning module's own fenced read (w3rw1_dataset_sources.go),
+	// and the one adapter value satisfies all five consumer-declared interfaces.
+	dsSources := w3rw1DatasetSources{
+		credit:   w3bCreditSvc,
+		invoices: billingRepo,
+		ap:       ops.purchasingSvc,
+		gl:       spine.glSvc,
+		stock:    inventorySvc,
+	}
 	reportingSvc := reporting.NewService(reporting.NewRepository(pool)).
 		WithLogger(log).
 		WithAudit(auditSvc).
-		WithRepAssignments(w6bRepAssignmentReader{svc: ops.messagingSvc})
+		WithRoleConfig(roleCfg).
+		WithRepAssignments(w6bRepAssignmentReader{svc: ops.messagingSvc}).
+		WithDatasetARSource(dsSources).
+		WithDatasetAPSource(dsSources).
+		WithDatasetGLSource(dsSources).
+		WithDatasetSalesSource(dsSources).
+		WithDatasetStockSource(dsSources)
 	reporting.NewHandler(reportingSvc).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// DIB-478: the assist deep readers over every landed service.
@@ -886,6 +913,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		posSvc:        posSvc,
 		assistSvc:     assistSvc,
 		taxSvc:        taxSvc,
+		reportingSvc:  reportingSvc,
 	}
 }
 

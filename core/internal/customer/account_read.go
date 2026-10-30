@@ -46,15 +46,7 @@ func (s *Service) GetAccount(ctx context.Context, customerID string) (Account, e
 	if !ok {
 		return Account{}, ErrLookupNotConfigured
 	}
-	reach := AccountReach{Global: caller.Scope == identity.ScopeGlobal}
-	if !reach.Global {
-		reach.BranchIDs = make([]string, 0, len(caller.Branches))
-		for id, granted := range caller.Branches {
-			if granted {
-				reach.BranchIDs = append(reach.BranchIDs, id)
-			}
-		}
-	}
+	reach := reachFromCaller(caller)
 	acct, found, err := rs.GetAccountScoped(ctx, customerID, reach)
 	if err != nil {
 		return Account{}, err
@@ -63,4 +55,23 @@ func (s *Service) GetAccount(ctx context.Context, customerID string) (Account, e
 		return Account{}, ErrNotFound
 	}
 	return acct, nil
+}
+
+// reachFromCaller projects the guard-resolved caller's branch authority onto a read.
+//
+// It is the ONE place the reach is built, so the account read and the job reads cannot drift
+// apart: a global caller reaches every branch, and a scoped caller reaches exactly the branches
+// its grants name.
+func reachFromCaller(caller identity.StaffContext) AccountReach {
+	reach := AccountReach{Global: caller.Scope == identity.ScopeGlobal}
+	if reach.Global {
+		return reach
+	}
+	reach.BranchIDs = make([]string, 0, len(caller.Branches))
+	for id, granted := range caller.Branches {
+		if granted {
+			reach.BranchIDs = append(reach.BranchIDs, id)
+		}
+	}
+	return reach
 }

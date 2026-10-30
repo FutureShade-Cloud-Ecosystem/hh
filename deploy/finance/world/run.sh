@@ -86,20 +86,27 @@ mv -f "${FAKETIME_FILE}.tmp" "$FAKETIME_FILE" || exit 1
 if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || true)" != "true" ]; then
 	docker rm -f -v "$CONTAINER_NAME" >/dev/null 2>&1 || true
 	echo "run.sh: starting faketime Postgres container ${CONTAINER_NAME} on 127.0.0.1:${PG_PORT}..."
+	# The image is pinned to the box's own major (16) at the digest CI's
+	# postgres service pins (main's PR 699), so the world's pg_dump writes the
+	# dump the box's own 16 client restores: an unpinned 16-alpine floats its
+	# minor, and a dump a newer pg_dump writes can carry metacommands an older
+	# psql refuses (the PR694 S5 read's P3 2).
 	docker run -d \
 		--name "$CONTAINER_NAME" \
 		-p "127.0.0.1:${PG_PORT}:5432" \
 		-e POSTGRES_PASSWORD=postgres \
 		-e POSTGRES_DB=finworld \
 		-v "${FAKETIME_DIR}:/etc/faketime" \
-		postgres:16-alpine \
+		mirror.gcr.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea \
 		sh -c 'apk add --no-cache libfaketime >/dev/null && LD_PRELOAD=/usr/lib/faketime/libfaketime.so.1 FAKETIME_TIMESTAMP_FILE=/etc/faketime/clock FAKETIME_NO_CACHE=1 exec docker-entrypoint.sh postgres' || exit 1
 fi
 
 echo "run.sh: waiting for Postgres on 127.0.0.1:${PG_PORT}..."
 READY=0
 for _ in $(seq 1 60); do
-	if docker exec "$CONTAINER_NAME" pg_isready -U postgres -d finworld >/dev/null 2>&1; then
+	# Over TCP: the image's first start runs a temporary server on the socket only while it creates
+	# finworld, so a socket check can answer before that server stops and the reset below collides.
+	if docker exec "$CONTAINER_NAME" pg_isready -h 127.0.0.1 -U postgres -d finworld >/dev/null 2>&1; then
 		READY=1
 		break
 	fi

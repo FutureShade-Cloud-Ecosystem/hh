@@ -75,11 +75,23 @@ export function olderMonth() {
   const before = new Date(new Date().getFullYear(), new Date().getMonth() - 2, 1);
   return { year: before.getFullYear(), month: before.getMonth() + 1 };
 }
+/** The quarter holding the month before today: the quarter the GST/HST worksheet ties out for. */
+export function taxQuarter() {
+  const m = taxMonth();
+  return { year: m.year, quarter: Math.trunc((m.month - 1) / 3) + 1 };
+}
+/** The quarter before that one: the quarter whose GST/HST worksheet has a GL 2200 variance. */
+export function olderQuarter() {
+  const tq = taxQuarter();
+  return tq.quarter === 1 ? { year: tq.year - 1, quarter: 4 } : { year: tq.year, quarter: tq.quarter - 1 };
+}
 
 // The tie out the stub holds, in cents: the month before today ties; the month before that is off.
 // The tied month carries one document marked as an opening balance (FROM-PRINCIPAL 177): it sits
 // outside collected and is named on its own line; the older month carries none.
 export const RECON = { tiedCollectedCents: 482_375, tiedReturnsCents: 12_000, tiedITCsCents: 87_300, tiedOpeningCount: 1, tiedOpeningCents: 18_000, olderCollectedCents: 391_250, olderReturnsCents: 5_000, olderITCsCents: 81_500, olderLedgerCents: 389_900, olderOpeningCount: 0, olderOpeningCents: 0 };
+export const WORKSHEET = { tiedSalesCents: 3_618_000, olderSalesCents: 2_971_150 };
+const MANUAL_ENTRY_NOTE = "Lines 101, 103, 105, 106, 108, 109, 112, 113, 114 and 115 are derived from the books. Lines 104 (GST/HST adjustments), 107 (ITC adjustments), 110 (instalments), 111 (rebates), 205 (GST/HST due on the purchase of real property or other taxable supplies) and 405 (other GST/HST to be self-assessed) are not tracked in the books and are entered by hand on the CRA return.";
 
 // Go's %q of a string, close enough for the reason codes the tests send (printable ASCII with quotes escaped).
 const goQuote = (s) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -106,7 +118,7 @@ function fresh() {
       { id: IDS.profileNonprofit, code: "EXEMPT_ORG", name: "Exempt organization certificate", rate_bps: 0, requires_photo: true, requires_number: true, requires_attestation: true, status: "ACTIVE" },
       { id: IDS.profileFarm, code: "FARM", name: "Agricultural exemption", rate_bps: 775, requires_photo: false, requires_number: true, requires_attestation: true, status: "PENDING", notes: "Waiting to be ratified." },
     ],
-    config: { hst_registration_no: "SR-DEMO-0001", round_mode: "INVOICE_TOTAL", avalara_enabled: false, postal_routing_enabled: false, notes: "" },
+    config: { hst_registration_no: "SR-DEMO-0001", round_mode: "INVOICE_TOTAL", filing_frequency: "QUARTERLY", avalara_enabled: false, postal_routing_enabled: false, notes: "" },
     evidence: [
       { id: IDS.evidenceOne, profile_id: "", card_profile_id: IDS.profileResale, order_id: IDS.orderOne, photo_ref: "evidence/resale-1.jpg", number_mask: "•••• 4821", attestation: true, tcrd_expiry: addDays(200), captured_by: IDS.controller, created_at: `${addDays(-9)}T09:30:00Z`, seq: 1 },
       { id: IDS.evidenceTwo, profile_id: "", card_profile_id: IDS.profileResale, order_id: IDS.orderTwo, photo_ref: "evidence/resale-2.jpg", number_mask: "•••• 9034", attestation: true, tcrd_expiry: addDays(-20), captured_by: IDS.controller, created_at: `${addDays(-6)}T14:05:00Z`, seq: 2 },
@@ -178,7 +190,7 @@ export function createTaxWorld() {
     return out;
   };
   const configView = (c) => {
-    const out = { hst_registration_no: c.hst_registration_no, round_mode: c.round_mode, avalara_enabled: c.avalara_enabled, postal_routing_enabled: c.postal_routing_enabled };
+    const out = { hst_registration_no: c.hst_registration_no, round_mode: c.round_mode, filing_frequency: c.filing_frequency, avalara_enabled: c.avalara_enabled, postal_routing_enabled: c.postal_routing_enabled };
     if (c.notes) out.notes = c.notes;
     return out;
   };
@@ -307,8 +319,19 @@ export function createTaxWorld() {
   function updateConfig(input) {
     const mode = input.round_mode || "INVOICE_TOTAL";
     if (mode !== "INVOICE_TOTAL" && mode !== "PER_LINE") return clientError(400, "round_mode must be INVOICE_TOTAL or PER_LINE");
+    const freq = input.filing_frequency ?? "";
+    if (freq !== "" && freq !== "QUARTERLY" && freq !== "MONTHLY" && freq !== "YEARLY") {
+      return clientError(400, "filing_frequency must be QUARTERLY, MONTHLY or YEARLY");
+    }
     if (input.avalara_enabled === true || input.postal_routing_enabled === true) return clientError(400, "avalara/postal routing are dormant at W6 and cannot be enabled");
-    world.config = { hst_registration_no: input.hst_registration_no ?? "", round_mode: mode, avalara_enabled: false, postal_routing_enabled: false, notes: input.notes ? input.notes : world.config.notes };
+    world.config = {
+      hst_registration_no: input.hst_registration_no ?? "",
+      round_mode: mode,
+      filing_frequency: freq || world.config.filing_frequency || "QUARTERLY",
+      avalara_enabled: false,
+      postal_routing_enabled: false,
+      notes: input.notes ? input.notes : world.config.notes,
+    };
     return { status: 200, body: configView(world.config) };
   }
 
@@ -360,6 +383,143 @@ export function createTaxWorld() {
     // FW1-11: the three document lines ride apart, and the variance nets them against 2200's movement.
     const netDocs = collected - returns - itcs;
     const out = { year, month, collected_cents: collected, return_tax_cents: returns, input_tax_cents: itcs, opening_balance_count: openingCount, opening_balance_hst_cents: openingCents, gl_payable_cents: ledger, gl_federal_cents: 0, gl_ontario_cents: 0, variance_cents: ledger - netDocs, tied_out: ledger - netDocs === 0 };
+    const branch = url.searchParams.get("branch_id");
+    if (branch) out.branch_id = branch;
+    return { status: 200, body: out };
+  }
+
+  function worksheet(url) {
+    const year = Number(url.searchParams.get("year") ?? 0);
+    const quarterParam = Number(url.searchParams.get("quarter") ?? 0);
+    const monthParam = Number(url.searchParams.get("month") ?? 0);
+    if (!Number.isInteger(year) || year === 0) return clientError(400, "year required");
+    if (year < 2000 || year > 2100) return clientError(400, "year must be 2000..2100");
+    const freq = world.config.filing_frequency || "QUARTERLY";
+    let startMonth = 1;
+    let endMonth = 12;
+    let qOut = 0;
+    let mOut = 0;
+    if (freq === "QUARTERLY") {
+      let q = Number.isInteger(quarterParam) ? quarterParam : 0;
+      if (q === 0 && Number.isInteger(monthParam) && monthParam >= 1 && monthParam <= 12) {
+        q = Math.trunc((monthParam - 1) / 3) + 1;
+      }
+      if (q < 1 || q > 4) return clientError(400, "quarter must be 1..4 for QUARTERLY filing");
+      startMonth = (q - 1) * 3 + 1;
+      endMonth = startMonth + 2;
+      qOut = q;
+    } else if (freq === "MONTHLY") {
+      const m = Number.isInteger(monthParam) ? monthParam : 0;
+      if (m < 1 || m > 12) return clientError(400, "month must be 1..12 for MONTHLY filing");
+      startMonth = m;
+      endMonth = m;
+      mOut = m;
+    } else if (freq === "YEARLY") {
+      startMonth = 1;
+      endMonth = 12;
+    } else {
+      return clientError(400, `unsupported filing_frequency ${goQuote(freq)}`);
+    }
+
+    const fromDate = `${year}-${pad(startMonth)}-01`;
+    const toDate = new Date(Date.UTC(year, endMonth, 0)).toISOString().slice(0, 10);
+
+    const priorM = taxMonth();
+    const olderM = olderMonth();
+    const priorQ = taxQuarter();
+    const olderQ = olderQuarter();
+
+    let salesCents = 0;
+    let invoiceHSTCents = 0;
+    let returnTaxCents = 0;
+    let itcsCents = 0;
+    let gl2200 = 0;
+    const isTied =
+      (freq === "QUARTERLY" && year === priorQ.year && qOut === priorQ.quarter) ||
+      (freq === "MONTHLY" && year === priorM.year && mOut === priorM.month) ||
+      (freq === "YEARLY" && year === priorM.year);
+    const isOff =
+      (freq === "QUARTERLY" && year === olderQ.year && qOut === olderQ.quarter) ||
+      (freq === "MONTHLY" && year === olderM.year && mOut === olderM.month) ||
+      (freq === "YEARLY" && year === priorM.year - 1);
+
+    if (isTied) {
+      salesCents = WORKSHEET.tiedSalesCents;
+      invoiceHSTCents = RECON.tiedCollectedCents;
+      returnTaxCents = RECON.tiedReturnsCents;
+      itcsCents = RECON.tiedITCsCents;
+      gl2200 = invoiceHSTCents - returnTaxCents - itcsCents;
+    } else if (isOff) {
+      salesCents = WORKSHEET.olderSalesCents;
+      invoiceHSTCents = RECON.olderCollectedCents;
+      returnTaxCents = RECON.olderReturnsCents;
+      itcsCents = RECON.olderITCsCents;
+      gl2200 = RECON.olderLedgerCents;
+    }
+
+    const line101 = salesCents;
+    const line103 = invoiceHSTCents - returnTaxCents;
+    const line104 = 0;
+    const line105 = line103 + line104;
+    const line106 = itcsCents;
+    const line107 = 0;
+    const line108 = line106 + line107;
+    const line109 = line105 - line108;
+    const line110 = 0;
+    const line111 = 0;
+    const line112 = line110 + line111;
+    const line113 = line109 - line112;
+    const line114 = line113 < 0 ? -line113 : 0;
+    const line115 = line113 < 0 ? 0 : line113;
+
+    const variance = gl2200 - (line105 - line108);
+
+    const lines = [
+      { line_no: "101", label: "Sales and other revenue", amount_cents: line101, entered_by_hand: false, note: "Posted net revenue on REVENUE accounts for the filing period, excluding year-end closing entries." },
+      { line_no: "103", label: "GST/HST collected or collectible", amount_cents: line103, entered_by_hand: false, note: "Finalized customer invoices less credit memos and POS returns in the filing period." },
+      { line_no: "104", label: "Adjustments to GST/HST", amount_cents: line104, entered_by_hand: true, note: "Entered by hand on the CRA return when a manual GST/HST adjustment applies." },
+      { line_no: "105", label: "Total GST/HST and adjustments", amount_cents: line105, entered_by_hand: false, note: "Line 103 plus line 104." },
+      { line_no: "106", label: "Input tax credits (ITCs)", amount_cents: line106, entered_by_hand: false, note: "GST/HST paid or payable on posted vendor bills in the filing period." },
+      { line_no: "107", label: "ITC adjustments and other adjustments", amount_cents: line107, entered_by_hand: true, note: "Entered by hand on the CRA return when a manual ITC adjustment applies." },
+      { line_no: "108", label: "Total ITCs and adjustments", amount_cents: line108, entered_by_hand: false, note: "Line 106 plus line 107." },
+      { line_no: "109", label: "Net tax", amount_cents: line109, entered_by_hand: false, note: "Line 105 less line 108." },
+      { line_no: "110", label: "Instalments and other annual filer payments", amount_cents: line110, entered_by_hand: true, note: "Entered by hand on the CRA return when instalments were remitted for the period." },
+      { line_no: "111", label: "Rebates", amount_cents: line111, entered_by_hand: true, note: "Entered by hand on the CRA return when a GST/HST rebate is claimed on the return." },
+      { line_no: "112", label: "Total other credits", amount_cents: line112, entered_by_hand: false, note: "Line 110 plus line 111." },
+      { line_no: "113", label: "Balance", amount_cents: line113, entered_by_hand: false, note: "Line 109 less line 112." },
+      { line_no: "114", label: "Refund claimed", amount_cents: line114, entered_by_hand: false, note: "Refund when line 113 is negative." },
+      { line_no: "115", label: "Amount owing", amount_cents: line115, entered_by_hand: false, note: "Balance due when line 113 is positive." },
+    ];
+
+    const out = {
+      year,
+      filing_frequency: freq,
+      from_date: fromDate,
+      to_date: toDate,
+      line_101_sales_cents: line101,
+      line_103_collected_cents: line103,
+      line_104_adjustments_cents: line104,
+      line_105_total_hst_cents: line105,
+      line_106_itcs_cents: line106,
+      line_107_itc_adjustments_cents: line107,
+      line_108_total_itcs_cents: line108,
+      line_109_net_tax_cents: line109,
+      line_110_instalments_cents: line110,
+      line_111_rebates_cents: line111,
+      line_112_total_other_credits_cents: line112,
+      line_113_balance_cents: line113,
+      line_114_refund_claimed_cents: line114,
+      line_115_amount_owing_cents: line115,
+      invoice_hst_cents: invoiceHSTCents,
+      return_tax_cents: returnTaxCents,
+      gl_payable_cents: gl2200,
+      variance_cents: variance,
+      tied_out: variance === 0,
+      manual_entry_note: MANUAL_ENTRY_NOTE,
+      lines,
+    };
+    if (qOut > 0) out.quarter = qOut;
+    if (mOut > 0) out.month = mOut;
     const branch = url.searchParams.get("branch_id");
     if (branch) out.branch_id = branch;
     return { status: 200, body: out };
@@ -436,6 +596,12 @@ export function createTaxWorld() {
         if (!caller.global && branch === "") return clientError(403, "tax: caller cannot access this branch");
         if (!caller.global && branch !== "b0000000-0000-4000-8000-000000000001") return clientError(403, "tax: caller cannot access this branch");
         return recon(url);
+      }
+      case "GET /api/v1/tax/worksheet": {
+        const branch = url.searchParams.get("branch_id") ?? "";
+        if (!caller.global && branch === "") return clientError(403, "tax: caller cannot access this branch");
+        if (!caller.global && branch !== "b0000000-0000-4000-8000-000000000001") return clientError(403, "tax: caller cannot access this branch");
+        return worksheet(url);
       }
       default:
         return null;

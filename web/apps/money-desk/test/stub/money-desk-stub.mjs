@@ -17,15 +17,17 @@ import { createTaxWorld } from "./tax-world.mjs";
 import { createLienWorld } from "./lien-world.mjs";
 import { createAssistWorld } from "./assist-world.mjs";
 import { createPurchasingWorld } from "./purchasing-world.mjs";
-import { houseDayOffset } from "../house-day.mjs";
+import { houseDay, houseDayOffset } from "../house-day.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
 // The statements slice's world (periods, the five statements, aging, saved packs), answered by its own module.
 const finstmtWorld = createFinstmtWorld();
 // The bank reconciliation slice's world (accounts, statement lines, matches, rules, months), answered by its own
-// module; its starting point preview reads the ledger's posted journals from the ledger world, one ledger.
-const bankrecWorld = createBankrecWorld({ ledgerPosted: glWorld.postedJournals });
+// module; its starting point preview reads the ledger's posted journals from the ledger world, one ledger, and a
+// match posts its clearing journal into that same ledger. A lodgement that carries its own journal (the till
+// posted at lodgement) plants that journal in the ledger world at fresh and at every reset.
+const bankrecWorld = createBankrecWorld({ ledgerPosted: glWorld.postedJournals, postLedger: glWorld.postExternalJournal, plantLedger: glWorld.plantPostedJournal });
 // The tax administration slice's world (rates, profiles, config, evidence, recompute, recon), answered by its own module.
 const taxWorld = createTaxWorld();
 // The liens and compliance slice's world (jobs, the holdback ledger, documents, the calendar, the roster), answered by its own module.
@@ -33,7 +35,7 @@ const lienWorld = createLienWorld();
 // The TanyAI panel's staff assist routes (PANEL-API r1), answered by its own module.
 const assistWorld = createAssistWorld();
 // The purchasing slice's world (the open AP the Payables board reads), answered by its own module.
-const purchasingWorld = createPurchasingWorld({ dayOffset: (n) => dayOffset(n) });
+const purchasingWorld = createPurchasingWorld({ dayOffset: (n) => dayOffset(n), houseDay: (at) => houseDay(at) });
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
@@ -123,6 +125,35 @@ function isController(req) {
   } catch {
     return false;
   }
+}
+
+// The caller the token names, read the way the walled moves read it: the token's sub carries the
+// user's id, and the user record carries the role the core's gates judge.
+function callerOf(req) {
+  const token = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
+    for (const user of Object.values(USERS)) {
+      if (user.user_id === payload.sub) return user;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+// The roles whose money desk level reaches Manage (the default role configuration matrix, the
+// money desk row). The Payables and Receivables role is at Work on that surface, so a manage
+// level route on the money desk turns it away, the way the core's role gate does.
+const MONEY_DESK_MANAGERS = new Set(["financial_controller", "general_manager"]);
+
+// The core's own gate for a manage level route on the money desk: the caller is a manager (tier
+// one or two) and the role's own money desk level reaches Manage.
+function managesMoneyDesk(req) {
+  const caller = callerOf(req);
+  if (caller === null) return false;
+  if (caller.tier < 1 || caller.tier > 2) return false;
+  return MONEY_DESK_MANAGERS.has(caller.role_code);
 }
 
 // A token with the shape the app reads an expiry from: three parts, the
@@ -1084,18 +1115,13 @@ async function handle(req, res) {
   if (method === "GET" && path === "/_stub/finstmt-calls") return send(res, 200, { calls: finstmtWorld.calls(), exports: finstmtWorld.exports(), year: finstmtWorld.fiscalYear });
   if (method === "POST" && path === "/_stub/scenario") {
     const body = await readBody(req);
-    reset(["empty", "wide", "pro", "unwired"].includes(body?.name) ? body.name : "full");
+    reset(["empty", "wide", "pro", "unwired", "usd"].includes(body?.name) ? body.name : "full");
     return send(res, 200, { ok: true });
   }
   if (method === "POST" && path === "/_stub/park-apply") {
     const body = await readBody(req);
     parkedApplyMs = Math.max(0, Number(body?.ms ?? 0));
     return send(res, 200, { ok: true, parkedApplyMs });
-  }
-  if (method === "POST" && path === "/_stub/post-to-bank") {
-    const body = await readBody(req);
-    const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
-    return send(res, answer.status, answer.body);
   }
   if (method === "POST" && path === "/_stub/outstanding-items") {
     const body = await readBody(req);
@@ -1184,6 +1210,36 @@ async function handle(req, res) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return refuse(res, 400, "as_of must be YYYY-MM-DD");
     return send(res, 200, purchasingWorld.apAging(asOf));
   }
+  // The year's T5018 report and its file (the core's GET /api/v1/purchasing/t5018 and
+  // /api/v1/purchasing/t5018.csv, W3-T51). The year is the dealer's own: absent year means the
+  // current house year, and a year that is not a year is refused in the core's words.
+  if (method === "GET" && (path === "/api/v1/purchasing/t5018" || path === "/api/v1/purchasing/t5018.csv")) {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const raw = q.get("year");
+    if (raw !== null && !/^\d{4}$/.test(raw)) return refuse(res, 400, "the T5018 year must be a year, as four digits");
+    const year = raw === null ? Number(dayOffset(0).slice(0, 4)) : Number(raw);
+    if (path.endsWith(".csv")) {
+      res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="t5018-${year}.csv"` });
+      return res.end(purchasingWorld.t5018Csv(year));
+    }
+    return send(res, 200, purchasingWorld.t5018Report(year));
+  }
+  // One payment against a vendor bill (the core's POST /api/v1/purchasing/bills/{id}/payments).
+  // The key rides the Idempotency-Key header, one key per press: a key already spent on this bill
+  // is a replay that writes nothing, a key spent on another bill is a conflict, and a press with
+  // no key at all is refused. The role gate is the core's own: a manage level route on the money
+  // desk, so the Payables and Receivables role is turned away by it.
+  if (method === "POST" && /^\/api\/v1\/purchasing\/bills\/[^/]+\/payments$/.test(path)) {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    if (!managesMoneyDesk(req)) return refuse(res, 403, "Forbidden");
+    const body = await readBody(req);
+    if (body === null) return refuse(res, 400, "invalid_json");
+    const id = path.split("/")[5] ?? "";
+    const key = String(req.headers["idempotency-key"] ?? "").trim();
+    const answer = purchasingWorld.payBill(id, body, key);
+    if (answer.status === 200) return send(res, 200, answer.body);
+    return refuse(res, answer.status, answer.error);
+  }
   if (method === "GET" && path === "/api/v1/billing/ar/worklist") {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const chip = q.get("chip") ?? "all";
@@ -1197,10 +1253,10 @@ async function handle(req, res) {
   // core/internal/payments received_apply.go), its checks in the core's order and its sentences word for word:
   // the service's key check, then the replay judgement (never on a preview) BEFORE the request's own checks,
   // then the locks in id order (a missing or another account's invoice is a 404, one not open is refused), then
-  // one branch per payment, then the ceiling. An unreadable body is a 400, a spent key's conflict is a 409, and
+  // one branch per payment. An unreadable body is a 400, a spent key's conflict is a 409, and
   // every other refusal is a 422 but the 404. The split is the server's: oldest
   // first by issue date, due date, invoice number and id whatever order the list came in, one line per named
-  // invoice, unapplied always zero. A preview takes the same walk and writes nothing, and never reads the key.
+  // invoice, and any excess stays on the account as on_account_cents. A preview takes the same walk and writes nothing, and never reads the key.
   if (method === "POST" && path === "/api/v1/ar/payments/apply") {
     const body = await readBody(req);
     if (body === null) return refuse(res, 400, "the request body must be JSON");
@@ -1282,15 +1338,13 @@ async function handle(req, res) {
       picked.push(inv);
     }
     if (new Set(picked.map((inv) => branchOf(inv.acct))).size > 1) return refuse(res, 422, "one payment applies to one branch's invoices; record a payment per branch");
-    const capacity = picked.reduce((t, inv) => t + payableOf(inv), 0);
-    if (body.amount_cents > capacity) return refuse(res, 422, `the selected invoices can take at most ${capacity} cents right now; refresh and retry`);
     let left = body.amount_cents;
     const lines = oldestFirst(picked).map((inv) => {
       const take = Math.min(left, payableOf(inv));
       left -= take;
       return lineFor(inv, take);
     });
-    const answer = { preview, amount_cents: body.amount_cents, applied_cents: body.amount_cents - left, unapplied_cents: left, lines, replayed: false };
+    const answer = { preview, amount_cents: body.amount_cents, applied_cents: body.amount_cents - left, unapplied_cents: left, on_account_cents: left, lines, replayed: false };
     if (preview) return send(res, 200, answer);
     // The parked writer answers late, after every refusal walk has run: the park is a writer
     // mid flight (holding the payments counter in the core's terms), never a change in the
