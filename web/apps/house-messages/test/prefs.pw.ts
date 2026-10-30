@@ -149,6 +149,8 @@ test("while a notification choice is out, the chosen segment and chosen switch c
   await page.getByRole("button", { name: "Notifications" }).click();
   const s = sheet(page);
   await expect(s).toBeVisible();
+  await s.locator("[data-pref='escalation_override']").click();
+  await expect(s.locator("[data-pref='escalation_override']")).toHaveAttribute("aria-pressed", "false");
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
