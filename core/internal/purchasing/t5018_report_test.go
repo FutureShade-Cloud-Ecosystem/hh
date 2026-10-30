@@ -63,19 +63,34 @@ func TestT5018YearWindow_TheHalfOpenEdgeKeepsTheYearsApart(t *testing.T) {
 }
 
 // TestT5018ReportCSV_TheFileCarriesTheRowsTheMarkAndTheTotal: the CSV is the report the screen
-// reads, in its file form. A contractor with no business number on file says so in the cell
-// rather than leaving a blank a reader would take for an oversight, and the year paid cents and
-// the year's total are both in the file.
+// reads, in its file form. It opens with the construction income sentence as a header line, then
+// the column names carrying Box 22 (with tax), the services subtotal before tax, the under $500
+// mark and words, and the unmarked lines count and words. A contractor with no business number on
+// file says so in the cell rather than leaving a blank a reader would take for an oversight, and
+// the year paid cents, Box 22 cents and the year's totals are all in the file.
 func TestT5018ReportCSV_TheFileCarriesTheRowsTheMarkAndTheTotal(t *testing.T) {
+	unmarkedWords := t5018UnmarkedLinesNote(2)
 	report := T5018Report{
-		Year: 2026,
+		Year:     2026,
+		RuleNote: T5018ConstructionIncomeNote,
 		Items: []T5018Row{
-			{VendorID: "v-1", VendorNo: "VM-0001", Name: "Marked, With A Number",
-				BusinessNumber: "123456789", BusinessNumberMissing: false, PaidCents: 125000},
-			{VendorID: "v-2", VendorNo: "VM-0002", Name: "Marked, Without A Number",
-				BusinessNumber: "", BusinessNumberMissing: true, PaidCents: 0},
+			{
+				VendorID: "v-1", VendorNo: "VM-0001", Name: "Marked, With A Number",
+				BusinessNumber: "123456789", BusinessNumberMissing: false,
+				PaidCents: 125000, Box22Cents: 104050, ServicesSubtotalCents: 92080,
+				UnderThreshold: false, ThresholdNote: "",
+				UnmarkedLineCount: 2, UnmarkedLinesNote: unmarkedWords,
+			},
+			{
+				VendorID: "v-2", VendorNo: "VM-0002", Name: "Marked, Under Threshold Without A Number",
+				BusinessNumber: "", BusinessNumberMissing: true,
+				PaidCents: 54240, Box22Cents: 54240, ServicesSubtotalCents: 48000,
+				UnderThreshold: true, ThresholdNote: T5018UnderThresholdNote,
+				UnmarkedLineCount: 0, UnmarkedLinesNote: "",
+			},
 		},
-		TotalCents: 125000,
+		TotalCents:      179240,
+		Box22TotalCents: 158290,
 	}
 	body, err := EncodeT5018ReportCSV(report)
 	if err != nil {
@@ -83,20 +98,28 @@ func TestT5018ReportCSV_TheFileCarriesTheRowsTheMarkAndTheTotal(t *testing.T) {
 	}
 	text := string(body)
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	if len(lines) != 5 {
-		t.Fatalf("the file holds %d lines, want a head, two rows, a blank and a total:\n%s", len(lines), text)
+	if len(lines) != 6 {
+		t.Fatalf("the file holds %d lines, want the rule note header, the column head, two rows, a blank and a total:\n%s", len(lines), text)
 	}
-	if !strings.HasPrefix(lines[0], "vendor_no,") {
-		t.Fatalf("the head reads %q, want the column names", lines[0])
+	if lines[0] != T5018ConstructionIncomeNote {
+		t.Fatalf("the header line reads %q, want %q", lines[0], T5018ConstructionIncomeNote)
 	}
-	if !strings.Contains(lines[1], "123456789") || !strings.Contains(lines[1], "125000") {
-		t.Fatalf("the first row reads %q, want the business number and the year paid cents", lines[1])
+	wantCols := "vendor_no,vendor_name,business_number,paid_cents,box_22_cents,services_subtotal_cents,under_threshold,threshold_note,unmarked_line_count,unmarked_lines_note"
+	if lines[1] != wantCols {
+		t.Fatalf("the column head reads %q, want %q", lines[1], wantCols)
 	}
-	if !strings.Contains(lines[2], T5018MissingNumber) {
-		t.Fatalf("the second row reads %q, want the missing mark", lines[2])
+	if !strings.Contains(lines[2], "123456789") || !strings.Contains(lines[2], "125000,104050,92080,false,,2,") || !strings.Contains(lines[2], unmarkedWords) {
+		t.Fatalf("the first row reads %q, want business number, paid, box 22, services subtotal and unmarked words", lines[2])
 	}
-	if !strings.Contains(lines[4], "Total") || !strings.Contains(lines[4], "125000") {
-		t.Fatalf("the total reads %q, want the year's total", lines[4])
+	if !strings.Contains(lines[3], T5018MissingNumber) || !strings.Contains(lines[3], "54240,54240,48000,true,\""+T5018UnderThresholdNote+"\",0,") {
+		t.Fatalf("the second row reads %q, want the missing mark, box 22 with tax, services subtotal before tax, and the under $500 mark", lines[3])
+	}
+	if lines[4] != "" {
+		t.Fatalf("the separator line reads %q, want a blank line", lines[4])
+	}
+	wantTotal := "Total,,,179240,158290,,,,,"
+	if lines[5] != wantTotal {
+		t.Fatalf("the total reads %q, want %q", lines[5], wantTotal)
 	}
 }
 

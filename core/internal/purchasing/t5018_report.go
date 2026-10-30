@@ -345,13 +345,36 @@ func (r *Repository) T5018Report(ctx context.Context, orgID string, start, end t
 	return out, nil
 }
 
-// EncodeT5018ReportCSV is the report as a CSV: the year, one row per flagged vendor, and the
-// year's total. A contractor with no business number on file says so in the cell rather than
-// leaving a blank a reader would take for an oversight.
+// t5018CSVColumns is the column header row of the T5018 CSV export.
+var t5018CSVColumns = []string{
+	"vendor_no",
+	"vendor_name",
+	"business_number",
+	"paid_cents",
+	"box_22_cents",
+	"services_subtotal_cents",
+	"under_threshold",
+	"threshold_note",
+	"unmarked_line_count",
+	"unmarked_lines_note",
+}
+
+// EncodeT5018ReportCSV is the report as a CSV: the construction-income rule note as a header line,
+// the column header row, one row per flagged vendor with Box 22 (with tax), the services subtotal
+// before tax, the under $500 mark and note, and the unmarked lines count and words, then a blank
+// line and the year's totals. A contractor with no business number on file says so in the cell
+// rather than leaving a blank a reader would take for an oversight.
 func EncodeT5018ReportCSV(report T5018Report) ([]byte, error) {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
-	if err := w.Write([]string{"vendor_no", "vendor_name", "business_number", "paid_cents"}); err != nil {
+	ruleNote := strings.TrimSpace(report.RuleNote)
+	if ruleNote == "" {
+		ruleNote = T5018ConstructionIncomeNote
+	}
+	if err := w.Write([]string{ruleNote}); err != nil {
+		return nil, err
+	}
+	if err := w.Write(t5018CSVColumns); err != nil {
 		return nil, err
 	}
 	for _, row := range report.Items {
@@ -359,14 +382,36 @@ func EncodeT5018ReportCSV(report T5018Report) ([]byte, error) {
 		if row.BusinessNumberMissing {
 			number = T5018MissingNumber
 		}
-		if err := w.Write([]string{row.VendorNo, row.Name, number, strconv.FormatInt(row.PaidCents, 10)}); err != nil {
+		if err := w.Write([]string{
+			row.VendorNo,
+			row.Name,
+			number,
+			strconv.FormatInt(row.PaidCents, 10),
+			strconv.FormatInt(row.Box22Cents, 10),
+			strconv.FormatInt(row.ServicesSubtotalCents, 10),
+			strconv.FormatBool(row.UnderThreshold),
+			row.ThresholdNote,
+			strconv.Itoa(row.UnmarkedLineCount),
+			row.UnmarkedLinesNote,
+		}); err != nil {
 			return nil, err
 		}
 	}
 	if err := w.Write(nil); err != nil {
 		return nil, err
 	}
-	if err := w.Write([]string{"Total", "", "", strconv.FormatInt(report.TotalCents, 10)}); err != nil {
+	if err := w.Write([]string{
+		"Total",
+		"",
+		"",
+		strconv.FormatInt(report.TotalCents, 10),
+		strconv.FormatInt(report.Box22TotalCents, 10),
+		"",
+		"",
+		"",
+		"",
+		"",
+	}); err != nil {
 		return nil, err
 	}
 	w.Flush()

@@ -243,18 +243,22 @@ export function createPurchasingWorld({ dayOffset }) {
   /** The same report as the file a bookkeeper hands the contractor's book: the core's own CSV shape. */
   function t5018Csv(year) {
     const report = t5018Report(year);
-    const rows = [[
-      "vendor_no",
-      "vendor_name",
-      "business_number",
-      "paid_cents",
-      "box_22_cents",
-      "services_subtotal_cents",
-      "under_threshold",
-      "threshold_note",
-      "unmarked_line_count",
-      "unmarked_lines_note",
-    ]];
+    const ruleNote = report.rule_note || T5018_RULE_NOTE;
+    const rows = [
+      [ruleNote],
+      [
+        "vendor_no",
+        "vendor_name",
+        "business_number",
+        "paid_cents",
+        "box_22_cents",
+        "services_subtotal_cents",
+        "under_threshold",
+        "threshold_note",
+        "unmarked_line_count",
+        "unmarked_lines_note",
+      ],
+    ];
     for (const row of report.items) {
       rows.push([
         row.vendor_no,

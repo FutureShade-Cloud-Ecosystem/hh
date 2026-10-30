@@ -22,7 +22,7 @@ import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
 
-const coreSource = ["billing", "payments", "till", join("platform", "authz"), join("platform", "httpx")]
+const coreSource = ["billing", "payments", "purchasing", "till", join("platform", "authz"), join("platform", "httpx")]
   .flatMap((dir) =>
     readdirSync(join(coreInternal, dir))
       .filter((f) => f.endsWith(".go") && !f.endsWith("_test.go"))
@@ -535,15 +535,53 @@ test("a body that is not JSON is the core's 400 on every route that reads one", 
   assert.ok(coreSource.includes("the request body must be JSON"));
 });
 
-test("the T5018 report and its CSV answer in the contract's shape with Box 22, threshold and unmarked notes", async () => {
+test("the T5018 report and its CSV answer in the contract's shape and match the core's CSV columns, header line and route answer", async () => {
   await reset();
+  const t5018Go = readFileSync(join(coreInternal, "purchasing", "t5018_report.go"), "utf8");
+  const colBlock = t5018Go.match(/t5018CSVColumns\s*=\s*\[\]string\{([^}]+)\}/);
+  assert.ok(colBlock !== null, "the core's t5018_report.go must declare t5018CSVColumns");
+  const coreCols = [...colBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(coreCols.includes("box_22_cents") && coreCols.includes("services_subtotal_cents") && coreCols.includes("under_threshold") && coreCols.includes("threshold_note") && coreCols.includes("unmarked_lines_note"));
+
   const res = await call("GET", "/api/v1/purchasing/t5018?year=2026");
   assert.equal(res.status, 200);
   holds("PurchasingT5018Report", res.json);
-  assert.equal(res.json.rule_note, "T5018 applies only where construction is more than half the dealer's business income.");
+  assert.ok(t5018Go.includes(`"${res.json.rule_note}"`), "the report's rule_note must come from the core's source");
   assert.equal(res.json.items.length, 3);
-  const csv = await fetch(`${base}/api/v1/purchasing/t5018.csv?year=2026`, { headers: { Authorization: "Bearer stub-token", "X-Org": "hh-demo" } });
-  assert.equal(csv.status, 200);
-  const text = await csv.text();
-  assert.ok(text.startsWith("vendor_no,vendor_name,business_number,paid_cents,box_22_cents,services_subtotal_cents,under_threshold,threshold_note,unmarked_line_count,unmarked_lines_note\n"));
+  for (const row of res.json.items) {
+    if (row.under_threshold) {
+      assert.ok(t5018Go.includes(`"${row.threshold_note}"`), "the threshold_note must come from the core's source");
+    }
+  }
+
+  const csvRes = await fetch(`${base}/api/v1/purchasing/t5018.csv?year=2026`, { headers: { Authorization: "Bearer stub-token", "X-Org": "hh-demo" } });
+  assert.equal(csvRes.status, 200);
+  const text = await csvRes.text();
+  const lines = text.trimEnd().split("\n");
+  const csvQuote = (v) => {
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  assert.equal(lines[0], csvQuote(res.json.rule_note), "the CSV opens with the core's construction income sentence as a header line");
+  assert.equal(lines[1], coreCols.join(","), "the CSV column header matches the core's t5018CSVColumns");
+  res.json.items.forEach((row, i) => {
+    const expectedRow = [
+      row.vendor_no,
+      row.name,
+      row.business_number_missing ? "(missing)" : row.business_number,
+      String(row.paid_cents),
+      String(row.box_22_cents),
+      String(row.services_subtotal_cents),
+      row.under_threshold ? "true" : "false",
+      row.threshold_note ?? "",
+      String(row.unmarked_line_count),
+      row.unmarked_lines_note ?? "",
+    ].map(csvQuote).join(",");
+    assert.equal(lines[2 + i], expectedRow, `CSV row ${i} matches the route answer`);
+  });
+  assert.equal(lines[2 + res.json.items.length], "");
+  assert.equal(
+    lines[3 + res.json.items.length],
+    ["Total", "", "", String(res.json.total_cents), String(res.json.box_22_total_cents), "", "", "", "", ""].join(","),
+  );
 });

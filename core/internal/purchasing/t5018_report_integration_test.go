@@ -213,14 +213,20 @@ func TestIntegration_T5018Report_TheCSVIsTheReportInItsFileForm(t *testing.T) {
 		t.Fatalf("encode the report: %v", err)
 	}
 	text := string(body)
-	if !strings.Contains(text, "vendor_no,vendor_name,business_number,paid_cents") {
-		t.Fatalf("the file has no head:\n%s", text)
+	if !strings.HasPrefix(text, T5018ConstructionIncomeNote+"\n") {
+		t.Fatalf("the file has no construction income header line:\n%s", text)
+	}
+	if !strings.Contains(text, "vendor_no,vendor_name,business_number,paid_cents,box_22_cents,services_subtotal_cents,under_threshold,threshold_note,unmarked_line_count,unmarked_lines_note") {
+		t.Fatalf("the file has no CRA column head:\n%s", text)
 	}
 	if !strings.Contains(text, T5018MissingNumber) {
 		t.Fatalf("the file carries no missing mark:\n%s", text)
 	}
 	if !strings.Contains(text, fmt.Sprintf("%d", paid)) {
 		t.Fatalf("the file carries no paid cents:\n%s", text)
+	}
+	if !strings.Contains(text, T5018UnderThresholdNote) {
+		t.Fatalf("the file carries no under-threshold mark:\n%s", text)
 	}
 }
 
