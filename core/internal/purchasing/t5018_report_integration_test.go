@@ -614,3 +614,123 @@ func TestIntegration_T5018Report_ForeignPaymentIsTheCashThatLeftTheBank(t *testi
 		t.Fatalf("the CSV does not carry the vendor's %d cents:\n%s", row.PaidCents, body)
 	}
 }
+
+// postUSDMixedBill posts a USD bill entered at fxRate whose one PO line is the services and whose
+// second, charge only line is the goods, each marked.
+func (rig *apAgingTestRig) postUSDMixedBill(t *testing.T, tag string, servicesUSD, goodsUSD int64, fxRate float64, at time.Time) BillDetail {
+	t.Helper()
+	day := at.Format("2006-01-02")
+	rig.ensurePeriod(t, at.Year(), int(at.Month()))
+	prod := rig.newProduct(t, tag)
+	po, err := rig.svc.CreatePO(rig.ctx, CreatePORequest{
+		VendorID: rig.vendor, BranchID: branchTRT, Currency: "USD", FXRate: fxRate,
+		Lines: []AddLineParams{{ProductID: prod, QtyOrderedBase: 1, UOM: "EA", UnitCostCents: servicesUSD}},
+	})
+	if err != nil {
+		t.Fatalf("CreatePO(%s): %v", tag, err)
+	}
+	rig.cleanupPO(t, po.ID)
+	if _, err := rig.svc.Transition(rig.ctx, po.ID, StatusOrdered); err != nil {
+		t.Fatalf("order PO(%s): %v", tag, err)
+	}
+	lineID := po.Lines[0].ID
+	if _, err := rig.svc.Receive(rig.ctx, po.ID, ReceiveRequest{Lines: []ReceiveLineParams{{POLineID: lineID, QtyBase: 1}}}); err != nil {
+		t.Fatalf("receive PO(%s): %v", tag, err)
+	}
+	created, err := rig.svc.CreateBill(rig.ctx, CreateBillRequest{
+		BillNo: billNo(tag), POID: po.ID, BillDate: day, DueDate: day, Currency: "USD", FXRate: fxRate,
+		Lines: []BillLineParams{
+			{POLineID: lineID, Description: "labour", QtyBilledBase: 1, UnitCostCents: servicesUSD, SupplyKind: SupplyKindServices},
+			{Description: "materials", QtyBilledBase: 1, UnitCostCents: goodsUSD, SupplyKind: SupplyKindGoods},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateBill(%s): %v", tag, err)
+	}
+	posted, err := rig.svc.PostBill(rig.ctx, created.ID, PostBillRequest{AcceptVariance: true, Note: "t5018 usd mixed"})
+	if err != nil {
+		t.Fatalf("PostBill(%s): %v", tag, err)
+	}
+	return posted
+}
+
+// TestIntegration_T5018Report_CashRuleOnAForeignMixedBill: a USD mixed bill to a marked
+// subcontractor, entered at 1.35 and paid at 1.40. "Paid in the year" and box 22 run over the
+// cash that left the bank (CAD at 1.40); the $500 threshold is on the services subtotal before
+// tax in CAD at the bill's own rate (1.35). The screen and the CSV carry the same figures.
+func TestIntegration_T5018Report_CashRuleOnAForeignMixedBill(t *testing.T) {
+	rig := newAPAgingRig(t)
+	h := rig.harness
+	org := h.orgID(t)
+	nowLocal := time.Now().In(rig.zone)
+	vendorID := rig.vendor
+	yes := true
+	number := "123456789RC0001"
+	if _, err := h.svc.SetVendorT5018(h.ctx, org, vendorID, SetVendorT5018Request{IsSubcontractor: &yes, BusinessNumber: &number}); err != nil {
+		t.Fatalf("mark vendor: %v", err)
+	}
+	t.Cleanup(func() {
+		no := false
+		_, _ = h.svc.SetVendorT5018(context.Background(), org, vendorID, SetVendorT5018Request{IsSubcontractor: &no})
+	})
+	read := func() (T5018Report, T5018Row) {
+		t.Helper()
+		report, err := h.svc.T5018ReportForCaller(h.ctx, org, fmt.Sprintf("%d", nowLocal.Year()), "")
+		if err != nil {
+			t.Fatalf("the T5018 report: %v", err)
+		}
+		row, ok := t5018Row(report, vendorID)
+		if !ok {
+			t.Fatalf("the marked vendor has no row")
+		}
+		return report, row
+	}
+	pay := func(bill BillDetail, usd int64, at time.Time) {
+		t.Helper()
+		key := "t5018-cash-pay-" + bill.ID
+		t.Cleanup(func() {
+			bg := context.Background()
+			_, _ = h.pool.Exec(bg, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE idempotency_key = $1)`, "purchasing.bill.payment:"+key)
+			_, _ = h.pool.Exec(bg, `DELETE FROM gl_journals WHERE idempotency_key = $1`, "purchasing.bill.payment:"+key)
+		})
+		if _, err := h.svc.PayBill(h.ctx, bill.ID, PayBillRequest{AmountCents: usd, FXRate: 1.40, PaidAt: at, Note: "USD wire at 1.40", IdempotencyKey: key}); err != nil {
+			t.Fatalf("pay the USD bill: %v", err)
+		}
+	}
+
+	// Leg 1: services USD 600.00 and goods USD 400.00 (CAD 810.00 and 540.00 at 1.35), paid USD 1,000.00
+	// at 1.40: cash CAD 1,400.00, of which the services share is 810/1350 = 840.00.
+	_, base := read()
+	pay(rig.postUSDMixedBill(t, "t5018cash1", 60_000, 40_000, 1.35, nowLocal), 100_000, nowLocal.Add(time.Minute))
+	report, row := read()
+	if got := row.PaidCents - base.PaidCents; got != 140_000 {
+		t.Fatalf("paid in the year moved by %d, want the cash 140000", got)
+	}
+	if got := row.Box22Cents - base.Box22Cents; got != 84_000 {
+		t.Fatalf("box 22 moved by %d, want the services share of the cash 84000", got)
+	}
+	if got := row.ServicesSubtotalCents - base.ServicesSubtotalCents; got != 81_000 {
+		t.Fatalf("the services subtotal moved by %d, want CAD 810.00 at the bill's own rate 81000", got)
+	}
+
+	// Leg 2: services USD 360.00 (CAD 486.00 at 1.35, under $500; CAD 504.00 at the payment's 1.40)
+	// and goods USD 640.00. The threshold is on the bill's rate, so this payment adds 48600.
+	pay(rig.postUSDMixedBill(t, "t5018cash2", 36_000, 64_000, 1.35, nowLocal), 100_000, nowLocal.Add(2*time.Minute))
+	report, row2 := read()
+	if got := row2.ServicesSubtotalCents - row.ServicesSubtotalCents; got != 48_600 {
+		t.Fatalf("the services subtotal moved by %d, want CAD 486.00 at the bill's own rate 48600", got)
+	}
+	if got := row2.Box22Cents - row.Box22Cents; got != 50_400 {
+		t.Fatalf("box 22 moved by %d, want 486/1350 of the cash 50400", got)
+	}
+
+	// One computation path: the CSV carries the row's figures.
+	body, err := EncodeT5018ReportCSV(report)
+	if err != nil {
+		t.Fatalf("encode the report: %v", err)
+	}
+	want := fmt.Sprintf(",%d,%d,%d,", row2.PaidCents, row2.Box22Cents, row2.ServicesSubtotalCents)
+	if !strings.Contains(string(body), want) {
+		t.Fatalf("the CSV does not carry %q:\n%s", want, body)
+	}
+}
