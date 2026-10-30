@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, asOfDay, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, offeredChips, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pastDueMarkWord, pickCeilingWords, refusalWords, relativeDay, reopenedInvoiceNos, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, cardShown, bucketLabelFor, bucketWord, canLiftHolds, creditCheck, creditWords, dayWords, lineWords, cardCovers, cardTitleFor, holdKindWord, holdMarks, MAX_APPLY_INVOICES, offeredChips, onAccountWords, overpaymentPreview, paymentOutcome, paymentReferenceRequired, pastDueMarkWord, pickCeilingWords, refusalWords, relativeDay, reopenedInvoiceNos, rowMarks, statusTone, statusWord, validatePromise, worklistActionWord, pastDueLine } from "../src/ar/ar-logic.ts";
 import { houseDay, resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
@@ -99,9 +99,9 @@ test("a payment whose answer was lost or came back 5xx says the outcome is unkno
 });
 
 test("a worded 4xx is a refusal in the route's own words, and says the payment was not recorded", () => {
-  const over = paymentOutcome("the selected invoices can take at most 96000 cents right now; refresh and retry", 422);
-  assert.equal(over.kind, "refused");
-  assert.equal(over.words, "The payment was not recorded. The selected invoices can take at most $960.00 right now; refresh and retry.");
+  const closed = paymentOutcome("invoice INV-1010 (paid) is not open; a payment applies to a finalized or partially paid invoice", 422);
+  assert.equal(closed.kind, "refused");
+  assert.equal(closed.words, "The payment was not recorded. Invoice INV-1010 (paid) is not open; a payment applies to a finalized or partially paid invoice.");
   const missing = paymentOutcome("no such invoice: 0b1c2d3e", 404);
   assert.equal(missing.kind, "refused");
   assert.equal(missing.words, "The payment was not recorded. No such invoice: 0b1c2d3e.");
@@ -254,7 +254,7 @@ test("a 4xx that is not the payment route's own refusal keeps a held key: the ou
   assert.ok(mangled.words.startsWith("The earlier press may or may not have been recorded."), mangled.words);
   // The route's own worded refusal still ends the key while one is held, and with no key held the
   // same statuses keep their long standing reading.
-  assert.equal(paymentOutcome("the selected invoices can take at most 96000 cents right now; refresh and retry", 422, true).kind, "refused");
+  assert.equal(paymentOutcome("invoice INV-1010 (paid) is not open; a payment applies to a finalized or partially paid invoice", 422, true).kind, "refused");
   assert.equal(paymentOutcome("no such invoice: 0b1c2d3e", 404, false).kind, "refused");
 });
 
@@ -295,11 +295,13 @@ test("the worklist has one plain action label per server recommendation", () => 
   assert.equal(worklistActionWord("open_account"), "Open account");
 });
 
-test("an overpayment banner comes from the server preview, never browser money math", () => {
-  assert.equal(overpaymentPreview(null, "The selected invoices can take at most 96000 cents right now; refresh and retry"), true);
+test("an overpayment banner comes from the server's on_account_cents, never browser money math", () => {
+  assert.equal(overpaymentPreview({ unapplied_cents: 4000, on_account_cents: 4000 }, ""), true);
   assert.equal(overpaymentPreview({ unapplied_cents: 1 }, ""), true);
-  assert.equal(overpaymentPreview({ unapplied_cents: 0 }, ""), false);
+  assert.equal(overpaymentPreview({ unapplied_cents: 0, on_account_cents: 0 }, ""), false);
   assert.equal(overpaymentPreview(null, "The server could not be reached"), false);
+  assert.equal(onAccountWords(4000), "$40.00 more than these invoices could take stays on the customer's account as a credit.");
+  assert.equal(onAccountWords(0), "");
 });
 
 test("a one day range says 1 day, and a card whose tier range runs backwards is not shown", () => {
@@ -412,13 +414,14 @@ test("a bounced payment's reopened list names each invoice once, from the applic
   assert.deepEqual(reopenedInvoiceNos([]), []);
 });
 
-test("the day reads the way the as of control reads it, never as the ISO digits", () => {
-  // The picker shows M/D/YYYY, so a date beside it reads the same way.
-  assert.equal(asOfDay("2026-10-28"), "10/28/2026");
-  assert.equal(asOfDay("2026-01-05"), "1/5/2026");
-  assert.equal(asOfDay("2026-12-31"), "12/31/2026");
+test("a day reads in the desk's one vocabulary, never as the ISO digits", () => {
+  // Every date a person reads in the desk wears these words: the GL ledger's and the bank rec's
+  // alike, so one day is written one way on every screen.
+  assert.equal(dayWords("2026-10-28"), "Oct 28, 2026");
+  assert.equal(dayWords("2026-01-05"), "Jan 5, 2026");
+  assert.equal(dayWords("2026-12-31"), "Dec 31, 2026");
   // A day that is not the ISO shape is left alone rather than mangled.
-  assert.equal(asOfDay("not a day"), "not a day");
+  assert.equal(dayWords("not a day"), "not a day");
 });
 
 test("the past due word is the register's own, whatever the day count", () => {

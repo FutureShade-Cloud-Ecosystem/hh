@@ -141,14 +141,16 @@ func (r *Repository) VoidPayment(ctx context.Context, in VoidInput, now time.Tim
 		onATillSession                                  bool
 		gatewayRef                                      string
 		nsfAllocJSON                                    []byte
+		changeCents                                     int64
 	)
 	err = tx.QueryRow(ctx,
 		`SELECT COALESCE(customer_id::text,''), method, branch_id::text, status, amount_cents, received_at,
 		        payment_no::text, reversed_at IS NOT NULL, reverses_payment_id IS NOT NULL,
 		        till_session_id IS NOT NULL, COALESCE(gateway_ref,''),
-		        COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb)
+		        COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb),
+		        COALESCE((metadata->>'change_cents')::bigint, 0)
 		   FROM payments WHERE id = $1::uuid FOR UPDATE`, in.PaymentID).
-		Scan(&customerID, &method, &branchID, &status, &amount, &receivedAt, &paymentNo, &alreadyReversed, &isItselfAReversal, &onATillSession, &gatewayRef, &nsfAllocJSON)
+		Scan(&customerID, &method, &branchID, &status, &amount, &receivedAt, &paymentNo, &alreadyReversed, &isItselfAReversal, &onATillSession, &gatewayRef, &nsfAllocJSON, &changeCents)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Void{}, ErrNotFound
@@ -302,6 +304,23 @@ UPDATE invoices
 				 VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'payment_nsf', $4::uuid, $5::uuid, $6)`,
 				customerID, feeAmt, runningAR, nsfID, branchID, "voided receipt: "+in.Reason); err != nil {
 				return Void{}, fmt.Errorf("void: insert nsf fee subledger txn: %w", err)
+			}
+		}
+	}
+	// The unapplied change an over applied receipt left on account (W3 item 0.10) is given back
+	// beside the invoices and the fees, the same rule: the receipt never happened, so the credit it
+	// left is countered inside its own 'receipt_change' group (source_ref_id the receipt's own id,
+	// the group the aging reads), and the void journal credits back the receipt's WHOLE amount on
+	// the receipt's routing.
+	if changeCents > 0 {
+		runningAR += changeCents
+		if customerID != "" {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO customer_transactions
+				   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+				 VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'receipt_change', $4::uuid, $5::uuid, $6)`,
+				customerID, changeCents, runningAR, in.PaymentID, branchID, "voided receipt: "+in.Reason); err != nil {
+				return Void{}, fmt.Errorf("void: insert the change's subledger txn: %w", err)
 			}
 		}
 	}

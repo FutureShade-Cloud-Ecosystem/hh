@@ -81,3 +81,9 @@ test("dispatch and yard pick descriptors carry stop gate code, run departure tim
     assert.deepEqual(props.load_position, { k: "integer" }, `${schemaName}.load_position`);
   }
 });
+
+test("BillingApplyPaymentAnswer carries on_account_cents as a required integer", (t) => {
+  const desc = SCHEMA_DESCRIPTORS.BillingApplyPaymentAnswer;
+  assert.deepEqual(desc.props.on_account_cents, { k: "integer" });
+  assert.ok(desc.req.includes("on_account_cents"));
+});

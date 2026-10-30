@@ -198,3 +198,76 @@ func TestFinanceResetGuardReadsWholeWords(t *testing.T) {
 		}
 	}
 }
+
+// TestFinanceResetGuardReadsStatements is W3-RESET-GUARD2-r1 item 1 (S5's
+// probe table on PR 699): the guard joins each statement up to its semicolon,
+// collapses whitespace, upper cases it, tracks dollar quoting ($$ and $tag$),
+// refuses transaction control in every form and psql meta commands that leave
+// or read elsewhere, and accepts harmless pg_dump 16 lines.
+func TestFinanceResetGuardReadsStatements(t *testing.T) {
+	cases := []struct {
+		name        string
+		dump        string
+		wantRefused bool
+	}{
+		{name: "COMMIT", dump: "COMMIT;", wantRefused: true},
+		{name: "lower commit", dump: "commit;", wantRefused: true},
+		{name: "ROLLBACK", dump: "ROLLBACK;", wantRefused: true},
+		{name: "END TRANSACTION", dump: "END TRANSACTION;", wantRefused: true},
+		{name: "psql c with arg", dump: `\c finworld`, wantRefused: true},
+		{name: "psql connect with arg", dump: `\connect finworld`, wantRefused: true},
+		{name: "SET TRANSACTION", dump: "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;", wantRefused: true},
+		{name: "COMMIT TRANSACTION", dump: "COMMIT TRANSACTION;", wantRefused: true},
+		{name: "COMMIT WORK", dump: "COMMIT WORK;", wantRefused: true},
+		{name: "COMMIT AND CHAIN", dump: "COMMIT AND CHAIN;", wantRefused: true},
+		{name: "commit with space before semicolon", dump: "commit ;", wantRefused: true},
+		{name: "ROLLBACK TRANSACTION", dump: "ROLLBACK TRANSACTION;", wantRefused: true},
+		{name: "ROLLBACK WORK", dump: "ROLLBACK WORK;", wantRefused: true},
+		{name: "ROLLBACK AND CHAIN", dump: "ROLLBACK AND CHAIN;", wantRefused: true},
+		{name: "ABORT", dump: "ABORT;", wantRefused: true},
+		{name: "top level END", dump: "END;", wantRefused: true},
+		{name: "END WORK", dump: "END WORK;", wantRefused: true},
+		{name: "PREPARE TRANSACTION", dump: "PREPARE TRANSACTION 'x';", wantRefused: true},
+		{name: "bare psql c", dump: `\c`, wantRefused: true},
+		{name: "bare psql connect", dump: `\connect`, wantRefused: true},
+		{name: "psql i", dump: `\i other.sql`, wantRefused: true},
+		{name: "psql ir", dump: `\ir other.sql`, wantRefused: true},
+		{name: "psql include", dump: `\include other.sql`, wantRefused: true},
+		{name: "psql o", dump: `\o /tmp/out.sql`, wantRefused: true},
+		{name: "psql bang", dump: `\! id`, wantRefused: true},
+		{name: "SET tab TRANSACTION", dump: "SET\tTRANSACTION READ ONLY;", wantRefused: true},
+		{name: "multiline SET TRANSACTION", dump: "SET\n  TRANSACTION\n  READ ONLY;", wantRefused: true},
+		{name: "SET SESSION CHARACTERISTICS", dump: "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY;", wantRefused: true},
+		{name: "top level BEGIN", dump: "BEGIN;", wantRefused: true},
+		{name: "BEGIN TRANSACTION", dump: "BEGIN TRANSACTION;", wantRefused: true},
+		{name: "START TRANSACTION", dump: "START TRANSACTION;", wantRefused: true},
+		{name: "multiline START TRANSACTION", dump: "START\n\tTRANSACTION ISOLATION LEVEL REPEATABLE READ;", wantRefused: true},
+		{name: "SET transaction_timeout", dump: "SET transaction_timeout = 0;", wantRefused: false},
+		{name: "SET statement_timeout", dump: "SET statement_timeout = 0;", wantRefused: false},
+		{name: "SET idle_in_transaction_session_timeout", dump: "SET idle_in_transaction_session_timeout = 0;", wantRefused: false},
+		{name: "psql restrict", dump: `\restrict d8f9a0b1c2`, wantRefused: false},
+		{name: "psql unrestrict", dump: `\unrestrict d8f9a0b1c2`, wantRefused: false},
+		{name: "set_config", dump: "SELECT pg_catalog.set_config('search_path', '', false);", wantRefused: false},
+		{
+			name:        "dollar quoted plpgsql with BEGIN, END IF, END LOOP and END",
+			dump:        "CREATE FUNCTION public.f() RETURNS void LANGUAGE plpgsql AS $$\nBEGIN\n  IF true THEN\n    PERFORM 1;\n  END IF;\n  LOOP\n    EXIT;\n  END LOOP;\nEND;\n$$;",
+			wantRefused: false,
+		},
+		{
+			name:        "tagged dollar quoted plpgsql with BEGIN, END IF, END LOOP and END",
+			dump:        "CREATE FUNCTION ai.claims() RETURNS jsonb AS $body$\nBEGIN\n  IF true THEN\n    RETURN '{}'::jsonb;\n  END IF;\n  LOOP\n    EXIT;\n  END LOOP;\n  RETURN '{}'::jsonb;\nEND;\n$body$ LANGUAGE plpgsql;",
+			wantRefused: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := financeResetTransactionSafe([]byte(tc.dump))
+			if tc.wantRefused && err == nil {
+				t.Fatalf("the statement %q was accepted inside the reset's transaction", tc.dump)
+			}
+			if !tc.wantRefused && err != nil {
+				t.Fatalf("the harmless statement %q was refused: %v", tc.dump, err)
+			}
+		})
+	}
+}

@@ -13,6 +13,7 @@ import {
   staffBilling,
   staffBranches,
   staffGl,
+  staffPurchasing,
   staffTill,
   type ApiClient,
   type BillingAddCustomerNoteInput,
@@ -48,6 +49,8 @@ import {
   type TillInvoicePayments,
   type TillNSFResult,
   type TillPaymentHistory,
+  type PurchasingBillDetail,
+  type PurchasingPayBillRequest,
 } from "@hardscapehouse/api-client";
 
 import { OfficeApi } from "./office-api.js";
@@ -104,6 +107,26 @@ export class ArApi {
       query: opts,
       operationId: "purchasingGetAPAging",
     });
+  }
+
+  /**
+   * One payment against a vendor bill: the core's POST /api/v1/purchasing/bills/{id}/payments.
+   *
+   * The key rides the Idempotency-Key header, one key per press, so a double press pays once and
+   * a retry after a lost answer is judged against the first press. The amount is the server's to
+   * accept or refuse (the open balance caps it); the desk only says what it typed.
+   */
+  payBill(
+    id: string,
+    input: { amountCents: number; paidAt: string; note: string },
+    key: string,
+  ): Promise<Result<PurchasingBillDetail>> {
+    return staffPurchasing.purchasingPayBill(
+      this.#client,
+      id,
+      { amount_cents: input.amountCents, paid_at: input.paidAt, note: input.note },
+      { idempotencyKey: key },
+    );
   }
 
   /** Every invoice of an account, the unpaid ones first and the paid ones after: the core's read with no chip. */

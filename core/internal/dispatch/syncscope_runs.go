@@ -293,6 +293,51 @@ func runWriteFields(fields map[string]any) error {
 	return nil
 }
 
+// runCreateShape is the body-only half of the pushed create's checks: the
+// writable field set, the branch uuid, the scheduling date, the crew uuid
+// shapes and the payload id shape. It reads nothing and honours no fence
+// (the org branch read, the crew read and the driver arm are Create's own
+// reads), so the bound key gate can run it before the hidden refusal
+// (UX-116): an invalid body then meets these refusals under a spent key and
+// a free one. The refusals are exactly the ones Create answers.
+func runCreateShape(fields map[string]any) (branchID, date, truckID, driverID, id string, err error) {
+	if err := runCreateFields(fields); err != nil {
+		return "", "", "", "", "", err
+	}
+	branchID, _ = fields["branch_id"].(string)
+	if !looksLikeUUID(branchID) {
+		return "", "", "", "", "", fmt.Errorf("dispatch: branch_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	date = strings.TrimSpace(fmt.Sprint(fields["scheduled_date"]))
+	if date == "" || !validDate(date) {
+		return "", "", "", "", "", fmt.Errorf("dispatch: scheduled_date must be YYYY-MM-DD: %w", sync.ErrOpRefused)
+	}
+	truckID, _ = fields["truck_id"].(string)
+	if truckID != "" && !looksLikeUUID(truckID) {
+		return "", "", "", "", "", fmt.Errorf("dispatch: truck_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	driverID, _ = fields["driver_id"].(string)
+	if driverID != "" && !looksLikeUUID(driverID) {
+		return "", "", "", "", "", fmt.Errorf("dispatch: driver_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	id, err = syncCreateID(fields)
+	if err != nil {
+		return "", "", "", "", "", err
+	}
+	return branchID, date, truckID, driverID, id, nil
+}
+
+// ValidateCreate answers the pushed create's body shape without the org
+// read, the crew read, the driver arm or a write: the engine's bound key
+// gate calls it before the hidden refusal (UX-116). The refusals are
+// exactly Create's.
+func (s *RunsSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	_, _, _, _, _, err := runCreateShape(fields)
+	return err
+}
+
+var _ sync.CreateBodyValidator = (*RunsSyncStore)(nil)
+
 // branchInOrg answers whether a branch location sits in the caller's
 // org, the create fence for every row birthed through sync (the filter
 // is the org authority, the branch row ties it to a yard). The
@@ -325,27 +370,12 @@ func (s *RunsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key stri
 	if _, _, ok := runScopePredicate(f, d); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
-	if err := runCreateFields(fields); err != nil {
+	branchID, date, truckID, driverID, id, err := runCreateShape(fields)
+	if err != nil {
 		return sync.RowState{}, err
-	}
-	branchID, _ := fields["branch_id"].(string)
-	if !looksLikeUUID(branchID) {
-		return sync.RowState{}, fmt.Errorf("dispatch: branch_id must be a uuid: %w", sync.ErrOpRefused)
 	}
 	if !branchInOrg(ctx, s.pool, branchID, f.OrgID) {
 		return sync.RowState{}, fmt.Errorf("dispatch: the branch is not in this organisation: %w", sync.ErrOpRefused)
-	}
-	date := strings.TrimSpace(fmt.Sprint(fields["scheduled_date"]))
-	if date == "" || !validDate(date) {
-		return sync.RowState{}, fmt.Errorf("dispatch: scheduled_date must be YYYY-MM-DD: %w", sync.ErrOpRefused)
-	}
-	truckID, _ := fields["truck_id"].(string)
-	driverID, _ := fields["driver_id"].(string)
-	if truckID != "" && !looksLikeUUID(truckID) {
-		return sync.RowState{}, fmt.Errorf("dispatch: truck_id must be a uuid: %w", sync.ErrOpRefused)
-	}
-	if driverID != "" && !looksLikeUUID(driverID) {
-		return sync.RowState{}, fmt.Errorf("dispatch: driver_id must be a uuid: %w", sync.ErrOpRefused)
 	}
 	// A held driver's writes land on their own runs alone: a run for a
 	// colleague's driver record, or for none, would be a row the driver
@@ -357,10 +387,6 @@ func (s *RunsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key stri
 		return sync.RowState{}, err
 	}
 	notes, _ := fields["notes"].(string)
-	id, err := syncCreateID(fields)
-	if err != nil {
-		return sync.RowState{}, err
-	}
 	actor := syncActor(ctx, s.link, f.Actor)
 
 	tx, err := s.pool.Begin(ctx)

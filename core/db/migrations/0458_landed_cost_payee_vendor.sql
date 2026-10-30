@@ -1,4 +1,4 @@
--- 0454: W2-1d item 3, a landed cost names its payee.
+-- 0458: W2-1d item 3, a landed cost names its payee.
 --
 -- A landed cost is a charge the dealer owes a freight carrier or a customs
 -- broker, but the header carried no payee: the AP aging could only label the
@@ -15,6 +15,6 @@ ALTER TABLE landed_costs
   ADD COLUMN IF NOT EXISTS payee_vendor_id UUID REFERENCES vendors(id) ON DELETE RESTRICT;
 
 COMMENT ON COLUMN landed_costs.payee_vendor_id IS
-  'the freight carrier or customs broker this charge is owed to; NULL on rows written before 0454, whose label falls back to the PO reference';
+  'the freight carrier or customs broker this charge is owed to; NULL on rows written before 0458, whose label falls back to the PO reference';
 
 CREATE INDEX IF NOT EXISTS idx_landed_costs_payee ON landed_costs(payee_vendor_id);

@@ -284,7 +284,7 @@ func (r *Repository) OpenPayableRows(ctx context.Context, branchIDs []string, gl
 // classifyLandedPayable names the charge and its payee. A landed cost that
 // names its carrier or broker labels the payable with that vendor's name, the
 // way a real dealer's books do; the PO reference is the fallback for rows
-// written before 0454 only.
+// written before 0458 only.
 func classifyLandedPayable(payeeName, poRef string, freightCad, dutyCad, handlingCad int64) (string, string) {
 	switch {
 	case dutyCad > 0 && freightCad == 0 && handlingCad == 0:
