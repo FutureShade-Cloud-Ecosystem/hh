@@ -101,36 +101,40 @@ before(async () => {
   });
 });
 
-after(async () => {
-  child?.stdin.end();
-  // The wait has a bound of its own. A stub that ignores its standard input
-  // end would leave this hook waiting for the stub's own timer, with the
-  // listener still up, so the wait ends and names the stub that is still
-  // holding its port.
+// Stops a stub through its own stop, and reports when it did not stop. The
+// wait has a bound of its own: a stub that ignores its standard input end
+// would hold this hook waiting, with its listener still up, so the wait ends
+// and names the stub that is still holding its port.
+async function stopStub(proc, exited, timeoutMs = STOP_TIMEOUT_MS) {
+  proc.stdin.end();
   let timer;
   try {
     await Promise.race([
-      closed,
+      exited,
       new Promise((_, reject) => {
         timer = setTimeout(() => {
           reject(
             new Error(
-              `the stub did not close within ${STOP_TIMEOUT_MS} ms of its standard input ending, so it is still holding its port`,
+              `the stub did not close within ${timeoutMs} ms of its standard input ending, so it is still holding its port`,
             ),
           );
-        }, STOP_TIMEOUT_MS);
+        }, timeoutMs);
       }),
     ]);
   } catch (error) {
     // Let the stub go: this process must not stay open for a stub that
     // will not stop, or the job is held open for it.
-    child?.unref();
-    child?.stdout?.destroy();
-    child?.stderr?.destroy();
+    proc.unref();
+    proc.stdout?.destroy();
+    proc.stderr?.destroy();
     throw error;
   } finally {
     clearTimeout(timer);
   }
+}
+
+after(async () => {
+  if (child !== undefined) await stopStub(child, closed);
 });
 
 // The host's own addresses that are not the loopback: the ones the LAN
@@ -211,4 +215,30 @@ test("the outside probe says so when the host has no outside address", () => {
     null,
     "a host that holds outside addresses needs no note",
   );
+});
+
+// A scratch stub that binds the loopback, says so, ignores its standard input
+// and ends itself after a while (so a failing run cannot leave it for good).
+const SCRATCH_STUB = [
+  'const s = require("node:net").createServer(() => {});',
+  's.listen(0, "127.0.0.1", () => console.log("scratch listening on " + s.address().port));',
+  "process.stdin.resume();",
+  "setTimeout(() => process.exit(0), 12000);",
+].join("\n");
+
+test("a stub that ignores its standard input is still ended by the leg's own cleanup", async () => {
+  const scratch = spawn(process.execPath, ["-e", SCRATCH_STUB], { stdio: ["pipe", "pipe", "pipe"] });
+  const exited = new Promise((resolve) => scratch.once("close", resolve));
+  await new Promise((resolve, reject) => {
+    scratch.once("error", reject);
+    scratch.stdout.on("data", (chunk) => {
+      if (/scratch listening on \d+/.test(String(chunk))) resolve();
+    });
+  });
+  await assert.rejects(stopStub(scratch, exited, 500), /did not close within 500 ms/);
+  const ended = await Promise.race([
+    exited.then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 3000)),
+  ]);
+  assert.equal(ended, true, "the leg must end the stub it spawned, so no listener of the leg survives a failing run");
 });

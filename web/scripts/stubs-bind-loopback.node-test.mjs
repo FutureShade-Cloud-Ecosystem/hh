@@ -431,7 +431,7 @@ function constantOf(source, name) {
 
 // The listeners a file holds that do not name the loopback, each with the
 // line it sits on and the reason it is named.
-function listenersIn(text) {
+function listenersIn(text, _name) {
   const source = stripComments(text);
   const out = [];
   for (const call of listenCalls(source)) {
@@ -652,6 +652,41 @@ test("every test listener under web names a loopback host", () => {
   assert.deepEqual(stale, [], `the allow list must hold only the listeners that still need it:\n${stale.join("\n")}`);
 });
 
+// The offenders one source file holds among its vite commands, each with the
+// line it sits on and the reason it is named.
+function viteOffendersIn(text, rel, properties = new Map()) {
+  const offenders = [];
+  const source = stripComments(text);
+  const entries = commandsIn(source, properties);
+  const holdsVite = entries.some((entry) => entry.kind === "command" && /\bvite\b/.test(entry.command));
+  const startsServer = startsServers(source);
+  for (const entry of entries) {
+    if (entry.kind === "type") continue;
+    if (entry.kind === "unreadable") {
+      // A shape the gate cannot read is a hole when the gate cannot show
+      // that the command is not a vite command: the value names vite, or
+      // the file runs vite, or the file starts a server at all. Then the
+      // gate names the file rather than passing the shape in silence.
+      if (!/vite/i.test(entry.value) && !holdsVite && !startsServer) continue;
+      offenders.push({
+        line: lineOf(text, entry.at),
+        why: `it names a command this gate cannot read (${entry.reason}), so the gate cannot prove it carries --host 127.0.0.1`,
+      });
+      continue;
+    }
+    if (!/\bvite\b/.test(entry.command)) continue;
+    if (/--host\s+127\.0\.0\.1(\s|$)/.test(entry.command)) continue;
+    offenders.push({ line: lineOf(text, entry.at), why: entry.command });
+  }
+  return offenders.map((offender) => ({ ...offender, rel }));
+}
+
+// The offenders one package.json holds among its scripts. The gate read none
+// before this function existed.
+function packageScriptOffendersIn() {
+  return [];
+}
+
 test("every vite command under web names the loopback host", () => {
   const offenders = [];
   const texts = new Map();
@@ -659,26 +694,11 @@ test("every vite command under web names the loopback host", () => {
   const properties = propertyCommands(texts);
   for (const [file, text] of texts) {
     const rel = repoPath(file);
-    const source = stripComments(text);
-    const entries = commandsIn(source, properties);
-    const holdsVite = entries.some((entry) => entry.kind === "command" && /\bvite\b/.test(entry.command));
-    const startsServer = startsServers(source);
-    for (const entry of entries) {
-      if (entry.kind === "type") continue;
-      if (entry.kind === "unreadable") {
-        // A shape the gate cannot read is a hole when the gate cannot show
-        // that the command is not a vite command: the value names vite, or
-        // the file runs vite, or the file starts a server at all. Then the
-        // gate names the file rather than passing the shape in silence.
-        if (!/vite/i.test(entry.value) && !holdsVite && !startsServer) continue;
-        offenders.push(
-          `${rel}:${lineOf(text, entry.at)} it names a command this gate cannot read (${entry.reason}), so the gate cannot prove it carries --host 127.0.0.1`,
-        );
-        continue;
-      }
-      if (!/\bvite\b/.test(entry.command)) continue;
-      if (/--host\s+127\.0\.0\.1(\s|$)/.test(entry.command)) continue;
-      offenders.push(`${rel}:${lineOf(text, entry.at)} ${entry.command}`);
+    // The gate's own file holds the wildcard shapes it is tested with as
+    // data, so it is the one file the vite leg does not read.
+    if (file === fileURLToPath(import.meta.url)) continue;
+    for (const offender of viteOffendersIn(text, rel, properties)) {
+      offenders.push(`${rel}:${offender.line} ${offender.why}`);
     }
   }
   assert.deepEqual(
@@ -736,3 +756,115 @@ test("the gate names the host a listener bound", () => {
     "the gate must name the host the listener bound, not undefined",
   );
 });
+
+// The parser legs: every shape the reread of 420 probed, fed to the gate's own
+// scanner. A "caught" shape is a wildcard bind the gate has to name; a "named"
+// shape is one the gate cannot prove and has to say so; a "pass" shape binds
+// the loopback and has to pass.
+const UNPROVABLE = /the gate cannot prove/;
+
+const LISTEN_SHAPES = [
+  ["L1 listen(port) no host", "server.listen(4959);", "caught"],
+  ["L2 listen({port}) options object", "server.listen({ port: 4959 });", "caught"],
+  ["L3 listen(port, 0.0.0.0)", 'server.listen(4959, "0.0.0.0");', "caught"],
+  ["L4 createServer().listen across lines", 'createServer(handler)\n  .listen(4959,\n    "0.0.0.0");', "caught"],
+  ["L5 .listen then newline then paren", 'server.listen\n  (4959, "0.0.0.0");', "caught"],
+  ["L6 .listen.apply", 'server.listen.apply(server, [4959, "0.0.0.0"]);', "named"],
+  ["L7 listen through a bound variable", 'const l = server.listen;\nl.call(server, 4959, "0.0.0.0");', "named"],
+  ["L8 listen inside a template expression", 'const s = `${server.listen(4959, "0.0.0.0")}`;', "caught"],
+  ["L9 host from process.env", "server.listen(4959, process.env.HOST);", "caught"],
+  ["L10 host from process.env via a const", "const HOST = process.env.HOST;\nserver.listen(4959, HOST);", "caught"],
+  ["L11 a comment that holds .listen(", '// server.listen(4959, "0.0.0.0")\nconst x = 1;', "pass"],
+  ["L12 a real listener after a comment", '// note\nserver.listen(4959, "0.0.0.0");', "caught"],
+  ["L13 regex holding a quote, then a wildcard listen", 'const f = (s) => /"/.test(s);\nserver.listen(4959, "0.0.0.0");', "caught"],
+  ["L14 regex after a closing paren, then a wildcard listen", 'if (ok) /"/.test(s);\nserver.listen(4959, "0.0.0.0");', "caught"],
+  ["L15 regex with a paren in a listen callback", 'server.listen(4959, "0.0.0.0", () => /(x/.test(a));', "caught"],
+  ["L15b regex with a paren in the listen options", "server.listen({ port: 4959, host: \"0.0.0.0\", tag: /(x/ });", "caught"],
+  ["R1 regex after =>", 'const f = () => /"/;\nserver.listen(4959, "0.0.0.0");', "caught"],
+  ["R2 regex after )", 'if (a) /\'/.test(b);\nserver.listen(4959, "0.0.0.0");', "caught"],
+  ["R3 regex after ]", 'const r = [/"/][0];\nserver.listen(4959, "0.0.0.0");', "caught"],
+  ["H1 let reassigned to a wildcard", 'let HOST = "127.0.0.1";\nHOST = "0.0.0.0";\nserver.listen(4959, HOST);', "caught"],
+  ["H1b var reassigned to a wildcard", 'var HOST = "127.0.0.1";\nHOST = "0.0.0.0";\nserver.listen(4959, HOST);', "caught"],
+  ["H2 const in another file", "server.listen(4959, HOST);", "caught"],
+  ["H4 host in a template literal", "server.listen(4959, `0.0.0.0`);", "caught"],
+  ["A1 .listen.call", 'server.listen.call(server, 4959, "0.0.0.0");', "named"],
+  ["A2 destructured listen", 'const { listen } = server;\nlisten.call(server, 4959);', "named"],
+  ["A3 bracket notation", 'server["listen"](4959, "0.0.0.0");', "named"],
+  ["A3b .listen.bind", 'const l = server.listen.bind(server);\nl(4959);', "named"],
+  ["P1 loopback literal", 'server.listen(0, "127.0.0.1");', "pass"],
+  ["P2 localhost", "server.listen(0, 'localhost', () => {});", "pass"],
+  ["P3 ::1", 'server.listen(0, "::1");', "pass"],
+  ["P4 options object with the loopback", 'server.listen({ port: 0, host: "127.0.0.1" });', "pass"],
+  ["P5 const loopback by name", 'const HOST = "127.0.0.1";\nserver.listen(0, HOST);', "pass"],
+  ["P6 let never reassigned", 'let HOST = "127.0.0.1";\nserver.listen(0, HOST);', "pass"],
+  ["P7 a string that holds .listen(", 'const s = "server.listen(4959)";', "pass"],
+  ["P8 a regex that holds .listen(", "const r = /server.listen\\(4959\\)/;", "pass"],
+];
+
+for (const [name, source, expect] of LISTEN_SHAPES) {
+  test(`listener shape ${name} is ${expect}`, () => {
+    const offenders = listenersIn(source, "probe.mjs");
+    if (expect === "pass") {
+      assert.deepEqual(offenders, [], "a loopback shape must pass");
+      return;
+    }
+    assert.ok(offenders.length >= 1, "a wildcard or unprovable shape must be named");
+    if (expect === "named") {
+      assert.match(String(offenders[0].why ?? ""), UNPROVABLE, "an unprovable shape must say the gate cannot prove it");
+    }
+  });
+}
+
+const VITE_SHAPES = [
+  ["V1 bare vite command", 'export default { webServer: { command: "npx vite --port 3000" } };', "caught"],
+  ["V2 vite preview", 'export default { webServer: { command: "npx vite preview --port 3000" } };', "caught"],
+  ["V3 vite in a template literal", "export default { webServer: { command: `npx vite --port ${port}` } };", "caught"],
+  ["V4 vite in a variable", 'const cmd = "npx vite --port 3000";\nexport default { webServer: { command: cmd } };', "caught"],
+  ["V5 vite in an array", 'export default { webServer: { command: ["npx", "vite", "--port", "3000"] } };', "caught"],
+  ["V6 vite under a quoted key", 'export default { webServer: { "command": "npx vite --port 3000" } };', "caught"],
+  ["V7 vite built by concatenation", 'const c = "npx " + "vite --port 3000";\nrun(c);', "caught"],
+  ["V8 concatenation with a name, in a webServer file", 'export default { webServer: { command: "npx " + base } };', "named"],
+  ["V9 command from a call, in a webServer file", "export default { webServer: { command: build() } };", "named"],
+  ["V11 vite handed to spawn", 'spawn("npx", ["vite", "--port", "3000"]);', "caught"],
+  ["V12 vite with a wildcard host", 'export default { webServer: { command: "npx vite --host 0.0.0.0" } };', "caught"],
+  ["VP1 vite with the loopback host", 'export default { webServer: { command: "npx vite --host 127.0.0.1 --port 3000" } };', "pass"],
+  ["VP2 import of vite", 'import { defineConfig } from "vite";\nexport default defineConfig({});', "pass"],
+  ["VP3 a command that is not vite", 'export default { webServer: { command: "node stub.mjs" } };', "pass"],
+  ["VP4 a comment that holds vite", '// npx vite --port 3000\nexport default {};', "pass"],
+];
+
+for (const [name, source, expect] of VITE_SHAPES) {
+  test(`vite shape ${name} is ${expect}`, () => {
+    const offenders = viteOffendersIn(source, "web/apps/probe-app/playwright.config.ts");
+    if (expect === "pass") {
+      assert.deepEqual(offenders, [], "a loopback shape must pass");
+      return;
+    }
+    assert.ok(offenders.length >= 1, "a vite command without the loopback host must be named");
+    if (expect === "named") {
+      assert.match(String(offenders[0].why ?? ""), UNPROVABLE, "an unreadable command must say the gate cannot prove it");
+    }
+  });
+}
+
+const PACKAGE_SHAPES = [
+  ["V10 vite --host 0.0.0.0 in a script", '{ "scripts": { "dev": "vite --host 0.0.0.0" } }', "caught"],
+  ["V10b vite --host with no value", '{ "scripts": { "dev": "vite --host" } }', "caught"],
+  ["V10c vite --host=0.0.0.0", '{ "scripts": { "dev": "vite --host=0.0.0.0 --port 5173" } }', "caught"],
+  ["V10d vite preview --host 0.0.0.0", '{ "scripts": { "preview": "vite preview --host 0.0.0.0" } }', "caught"],
+  ["VP5 plain vite binds localhost", '{ "scripts": { "dev": "vite", "build": "vite build" } }', "pass"],
+  ["VP6 vite --host 127.0.0.1", '{ "scripts": { "dev": "vite --host 127.0.0.1" } }', "pass"],
+  ["VP7 vite --host localhost", '{ "scripts": { "dev": "vite --host localhost" } }', "pass"],
+  ["VP8 no scripts", '{ "name": "x" }', "pass"],
+];
+
+for (const [name, source, expect] of PACKAGE_SHAPES) {
+  test(`package script shape ${name} is ${expect}`, () => {
+    const offenders = packageScriptOffendersIn(source, "web/apps/probe-app/package.json");
+    if (expect === "pass") {
+      assert.deepEqual(offenders, [], "a loopback shape must pass");
+      return;
+    }
+    assert.ok(offenders.length >= 1, "a vite script with a wildcard host must be named");
+  });
+}
