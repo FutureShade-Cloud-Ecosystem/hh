@@ -1965,7 +1965,7 @@ const server = createServer((req, res) => {
 });
 server.listen(port, "127.0.0.1", () => {
   // The stub names the address it bound, so a harness that reads the bound
-  // address (test/stub-binds-loopback.test.mjs) reads the truth and not a
+  // address (test/stub-binds-loopback.node-test.mjs) reads the truth and not a
   // guess from the port it asked for. The address is bracketed, because a
   // wildcard IPv6 bind names "::" and a colon in it would read as the port.
   const bound = server.address();

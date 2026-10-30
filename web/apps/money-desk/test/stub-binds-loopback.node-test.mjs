@@ -9,6 +9,12 @@
 // LAN as well as on the loopback, so this leg also proves the port does not
 // answer on this host's own outside address.
 //
+// It runs under Node only, in the app's own npm test list, and its name keeps
+// it out of the repository's root bun test glob (as the offline suites'
+// .node-test.mjs files are): its cleanup legs wait out a stub's own stop with
+// a bound longer than bun's default per-test timeout, so under bun they fail
+// by the runner's clock, not by the stub.
+//
 // The stop is the stub's own: its standard input ends (ROLE_STUB_STDIN_EXIT),
 // never a signal.
 import { test, before, after } from "node:test";
