@@ -565,6 +565,10 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 			continue
 		}
 		bucket := bucketForDueDate(asOfDay, c.DueDate)
+		docOpen := openCents
+		if strings.EqualFold(strings.TrimSpace(c.Currency), "USD") {
+			docOpen = billDocOpen(c.TotalCents, c.DocTotalCents, c.PaidDocCents, appliedByBill[c.BillID], openCents)
+		}
 		item := APAgingItem{
 			ID:            c.BillID,
 			Kind:          APItemKindBill,
@@ -583,7 +587,7 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 			OpenCents:     openCents,
 			Currency:      c.Currency,
 			DocTotalCents: c.DocTotalCents,
-			DocOpenCents:  c.DocTotalCents - c.PaidDocCents,
+			DocOpenCents:  docOpen,
 			Bucket:        bucket,
 		}
 

@@ -846,7 +846,7 @@ func (r *Repository) GetBill(ctx context.Context, id string) (BillDetail, error)
 		return BillDetail{}, fmt.Errorf("purchasing: instalments: %w", err)
 	}
 	defer rows.Close()
-	var paidDoc int64
+	var paidDoc, clearedCad int64
 	for rows.Next() {
 		var in Instalment
 		var docAmount int64
@@ -855,11 +855,26 @@ func (r *Repository) GetBill(ctx context.Context, id string) (BillDetail, error)
 		}
 		if in.Status == "PAID" {
 			paidDoc += docAmount
+			clearedCad += in.AmountCents
 		}
 		detail.Instalments = append(detail.Instalments, in)
 	}
-	detail.DocOpenCents = detail.DocTotalCents - paidDoc
-	return detail, rows.Err()
+	if err := rows.Err(); err != nil {
+		return BillDetail{}, err
+	}
+	// The open amount in the bill's own currency, net of the vendor credits applied to it, the same
+	// figure PayBill takes to settle the bill (billDocOpen).
+	credited, err := r.CreditedBillCentsTx(ctx, nil, id)
+	if err != nil {
+		return BillDetail{}, err
+	}
+	openCad := detail.TotalCents - clearedCad - credited
+	if strings.EqualFold(strings.TrimSpace(detail.Currency), "USD") {
+		detail.DocOpenCents = billDocOpen(detail.TotalCents, detail.DocTotalCents, paidDoc, credited, openCad)
+	} else {
+		detail.DocOpenCents = openCad
+	}
+	return detail, nil
 }
 
 // BillLines returns a bill's lines joined to the PO line they claim to bill, so the match numbers a caller
