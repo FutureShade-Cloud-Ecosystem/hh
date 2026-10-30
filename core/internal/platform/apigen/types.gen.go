@@ -1947,6 +1947,56 @@ type CustomerSMSConsentUpdate struct {
 	PhoneE164 string `json:"phone_e164"`
 }
 
+type CustomerJob struct {
+	JobId                      string          `json:"job_id"`
+	CustomerId                 string          `json:"customer_id"`
+	BranchId                   string          `json:"branch_id"`
+	JobNo                      string          `json:"job_no"`
+	Name                       string          `json:"name"`
+	ShipToAddress              *map[string]any `json:"ship_to_address,omitempty"`
+	PoReference                *string         `json:"po_reference,omitempty"`
+	ContactName                *string         `json:"contact_name,omitempty"`
+	ContactEmail               *string         `json:"contact_email,omitempty"`
+	ContactPhone               *string         `json:"contact_phone,omitempty"`
+	CreditLimitCents           *int64          `json:"credit_limit_cents,omitempty"`
+	TermsDays                  *int32          `json:"terms_days,omitempty"`
+	EffectiveTermsDays         *int32          `json:"effective_terms_days,omitempty"`
+	Status                     string          `json:"status"`
+	SubstantialPerformanceDate *string         `json:"substantial_performance_date,omitempty"`
+	LastSupplyDate             *string         `json:"last_supply_date,omitempty"`
+	CreatedBy                  *string         `json:"created_by,omitempty"`
+	CreatedAt                  *time.Time      `json:"created_at,omitempty"`
+	UpdatedAt                  *time.Time      `json:"updated_at,omitempty"`
+}
+
+type CustomerJobCreate struct {
+	JobNo                      string          `json:"job_no"`
+	Name                       string          `json:"name"`
+	BranchId                   *string         `json:"branch_id,omitempty"`
+	ShipToAddress              *map[string]any `json:"ship_to_address,omitempty"`
+	PoReference                *string         `json:"po_reference,omitempty"`
+	ContactName                *string         `json:"contact_name,omitempty"`
+	ContactEmail               *string         `json:"contact_email,omitempty"`
+	ContactPhone               *string         `json:"contact_phone,omitempty"`
+	CreditLimitCents           *int64          `json:"credit_limit_cents,omitempty"`
+	TermsDays                  *int32          `json:"terms_days,omitempty"`
+	SubstantialPerformanceDate *string         `json:"substantial_performance_date,omitempty"`
+	LastSupplyDate             *string         `json:"last_supply_date,omitempty"`
+}
+
+type CustomerJobEdit struct {
+	Name                       *string         `json:"name,omitempty"`
+	ShipToAddress              *map[string]any `json:"ship_to_address,omitempty"`
+	PoReference                *string         `json:"po_reference,omitempty"`
+	ContactName                *string         `json:"contact_name,omitempty"`
+	ContactEmail               *string         `json:"contact_email,omitempty"`
+	ContactPhone               *string         `json:"contact_phone,omitempty"`
+	CreditLimitCents           *int64          `json:"credit_limit_cents,omitempty"`
+	TermsDays                  *int32          `json:"terms_days,omitempty"`
+	SubstantialPerformanceDate *string         `json:"substantial_performance_date,omitempty"`
+	LastSupplyDate             *string         `json:"last_supply_date,omitempty"`
+}
+
 type PrintingJob struct {
 	Id            string     `json:"id"`
 	DocType       string     `json:"doc_type"`

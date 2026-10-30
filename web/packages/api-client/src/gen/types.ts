@@ -1699,6 +1699,53 @@ export type CustomerSMSConsentUpdate = {
   consent: boolean;
   phone_e164: string;
 };
+export type CustomerJob = {
+  job_id: string;
+  customer_id: string;
+  branch_id: string;
+  job_no: string;
+  name: string;
+  ship_to_address?: { [key: string]: unknown };
+  po_reference?: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  credit_limit_cents?: number;
+  terms_days?: number;
+  effective_terms_days?: number;
+  status: "OPEN" | "CLOSED";
+  substantial_performance_date?: string;
+  last_supply_date?: string;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+export type CustomerJobCreate = {
+  job_no: string;
+  name: string;
+  branch_id?: string;
+  ship_to_address?: { [key: string]: unknown };
+  po_reference?: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  credit_limit_cents?: number | null;
+  terms_days?: number | null;
+  substantial_performance_date?: string;
+  last_supply_date?: string;
+};
+export type CustomerJobEdit = {
+  name?: string;
+  ship_to_address?: { [key: string]: unknown };
+  po_reference?: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  credit_limit_cents?: number | null;
+  terms_days?: number | null;
+  substantial_performance_date?: string | null;
+  last_supply_date?: string | null;
+};
 export type PrintingJob = {
   id: string;
   doc_type: "RECEIPT" | "LABEL_ZPL" | "DELIVERY_DOC";
