@@ -25,6 +25,16 @@ import {
   varianceRefusal,
 } from "../src/bills/bills-logic.ts";
 import { refusalWords } from "../src/po/po-logic.ts";
+import { renderBills } from "../src/bills/bills-views.ts";
+
+function flat(v) {
+  if (v == null || v === false) return "";
+  if (Array.isArray(v)) return v.map(flat).join("");
+  if (typeof v === "object" && v.strings) {
+    return Array.from(v.strings).map((s, i) => s + (i < v.values.length ? flat(v.values[i]) : "")).join("");
+  }
+  return typeof v === "symbol" ? "" : String(v);
+}
 
 const PO = {
   id: "c1",
@@ -230,4 +240,38 @@ test("a bill line with no PO line carries its goods or services mark when chosen
   assert.deepEqual(unmarked.body.lines, [
     { description: "Site callout", qty_billed_base: 1, unit_cost_cents: 9500 },
   ]);
+
+  const entryHtml = flat(
+    renderBills({
+      phase: "ready",
+      view: "enter",
+      bills: [],
+      statusFilter: "",
+      matchFilter: "",
+      billable: [],
+      branchNames: new Map(),
+      entryPo: null,
+      entryReading: false,
+      entryCurrency: "CAD",
+      entryExtraSupplyKind: "",
+      detail: null,
+      lineUoms: new Map(),
+      confirm: null,
+      tolerance: null,
+      policy: null,
+      ruleVisibility: "MANAGER_UP",
+      ruleFallback: "CONFIRM",
+      canWrite: true,
+      canSetRules: false,
+      busy: false,
+      error: "",
+      errorAt: "bill",
+      notice: "",
+      today: "2026-10-29",
+    }),
+  );
+  assert.match(entryHtml, /data-action=bill-extra-supply-kind data-choice= aria-pressed="true">Not marked<\/button>/);
+  assert.match(entryHtml, /data-action=bill-extra-supply-kind data-choice=GOODS aria-pressed="false">Goods<\/button>/);
+  assert.match(entryHtml, /data-action=bill-extra-supply-kind data-choice=SERVICES aria-pressed="false">Services<\/button>/);
+  assert.ok(entryHtml.includes("Not marked counts as services on the T5018 report until someone marks it."));
 });

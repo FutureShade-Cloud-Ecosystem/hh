@@ -37,6 +37,7 @@ export const purchStyles = css`
   .alert { margin-top: var(--hh-s-12); }
   input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--hh-state-stop); }
   .forms > .full-span { min-width: 280px; flex: 2 1 360px; grid-column: 1 / -1; }
+  [data-extra-line] { align-items: start; }
   .inline-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--hh-s-8); align-items: end; }
   .code-line { grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) auto; }
   .badge-row { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; }

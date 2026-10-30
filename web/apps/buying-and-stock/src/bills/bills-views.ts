@@ -234,12 +234,12 @@ function entry(model: BillsModel): TemplateResult {
             </div>
           `}
       <h3 class="sub">Line with no purchase order line</h3>
-      <p class="dim">A line not on the purchase order (such as subcontractor work or site labour). Mark whether it is goods or services for T5018. Not marked is the default and counts as services on T5018 until marked.</p>
+      <p class="dim">A line not on the purchase order (such as subcontractor work or site labour). Mark whether it is goods or services for T5018.</p>
       <div class="forms" data-extra-line>
         <label>Line description<input type="text" autocomplete="off" data-field="extra-desc" data-extra-desc /></label>
         <label>Quantity billed<input type="text" inputmode="decimal" autocomplete="off" data-field="extra-qty" data-extra-qty /></label>
         <label>Unit price${usd ? " (USD)" : ""}<input type="text" inputmode="decimal" autocomplete="off" data-field="extra-cost" data-extra-cost /></label>
-        ${segs("Goods or services", "bill-extra-supply-kind", [{ id: "", word: "Not marked" }, { id: "GOODS", word: "Goods" }, { id: "SERVICES", word: "Services" }], model.entryExtraSupplyKind)}
+        ${segs("Goods or services", "bill-extra-supply-kind", [{ id: "", word: "Not marked" }, { id: "GOODS", word: "Goods" }, { id: "SERVICES", word: "Services" }], model.entryExtraSupplyKind, "Not marked counts as services on the T5018 report until someone marks it.")}
       </div>
       ${noteAt(model, "bill")}
       <div class="actions end">

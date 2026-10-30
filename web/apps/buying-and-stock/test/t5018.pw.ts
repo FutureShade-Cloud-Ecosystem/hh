@@ -93,14 +93,16 @@ for (const size of SIZES) {
       await page.locator("[data-extra-desc]").fill("Subcontractor grading");
       await page.locator("[data-extra-qty]").fill("1");
       await page.locator("[data-extra-cost]").fill("480.00");
-      await expect(page.locator("[data-bill-entry]")).toContainText(
-        "Not marked is the default and counts as services on T5018 until marked.",
-      );
       const group = page.getByRole("group", { name: "Goods or services" });
       await expect(group.getByRole("button", { name: "Not marked" })).toHaveAttribute("aria-pressed", "true");
+      await expect(group.getByRole("button", { name: "Goods" })).toHaveAttribute("aria-pressed", "false");
+      await expect(group.getByRole("button", { name: "Services" })).toHaveAttribute("aria-pressed", "false");
+      await expect(group.locator("[data-extra-supply-hint]")).toHaveText(
+        "Not marked counts as services on the T5018 report until someone marks it.",
+      );
+      await shoot(page, "bill-entry-no-po", theme, size.width);
       await group.getByRole("button", { name: "Services" }).click();
       await expect(group.getByRole("button", { name: "Services" })).toHaveAttribute("aria-pressed", "true");
-      await shoot(page, "bill-entry-no-po", theme, size.width);
       await page.getByRole("button", { name: "Enter the bill" }).click();
       await expect(page.locator("[data-notice]")).toContainText("Entered bill INV-9052 as a draft.");
     });
