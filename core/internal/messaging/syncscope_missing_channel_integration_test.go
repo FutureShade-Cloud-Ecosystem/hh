@@ -17,11 +17,10 @@
 // not (mode: ALL): the good operation must land, and the bad one alone must be
 // refused with the seam's plain words.
 //
-// THE FENCE FINDING: the last leg pins what the prefs write is fenced by
-// today, because the existence oracle question turns on it. The sync prefs
-// write is not membership fenced: it writes the caller's own pref row for any
-// channel that exists, whether or not the caller is seated in it. UX-115
-// reports that gap and does not close it.
+// THE MEMBERSHIP FENCE (UX-122): a prefs write on a real channel the caller is
+// not a member of refuses with the same bare sync.ErrRowNotFound a missing
+// channel answers, on both create and update, silencing and not, while a
+// seated member's write still lands.
 package messaging
 
 import (
@@ -285,29 +284,22 @@ func TestSyncPush_PrefsWriteOnAMissingChannelAnswersTheSeamPlainWords(t *testing
 	}
 }
 
-// TestSyncPush_PrefsWriteIsNotMembershipFenced: the fence finding the
-// existence oracle question turns on.
+// TestSyncPush_PrefsWriteIsNotMembershipFenced: flipped into a refusal leg in
+// UX-122.
 //
-// The REST door requires membership for a prefs write (the service's
-// SetNotifyPrefs asserts the membership first). This door does not: the sync
-// prefs write reads the channel by id and writes the caller's own pref row
-// for it, whether or not the caller is seated in that channel. So the module
-// has no "you may not see that channel" answer here at all, and the answer
-// for a real channel the caller cannot see is the applied one, not the
-// not-found one.
-//
-// The leg pins today's fence state so the gap is visible in the suite and a
-// future fence lands as a deliberate change. UX-115 reports the gap and does
-// not close it: the brief forbids widening the fence in this item.
+// A staff caller who is not a member of a real channel pushes a prefs write
+// there, both silencing (muted: true) and not (mode: MENTIONS), on both create
+// and update. Every path must be rejected with sync: row not found, the same
+// words a missing channel answers, and nothing may land on the non-member's
+// row.
 func TestSyncPush_PrefsWriteIsNotMembershipFenced(t *testing.T) {
 	f := newSyncFeedFixture(t)
 	ctx := context.Background()
-	// Casey is seated in Kingston's yard, never in Trenton's.
 	if err := f.repo.SyncMembership(ctx, uCaseyDoyle); err != nil {
-		t.Fatalf("sync casey: %v", err)
+		t.Fatalf("sync kingston caller: %v", err)
 	}
 	if ok, _ := f.repo.IsMember(ctx, chYardTrenton, uCaseyDoyle); ok {
-		t.Fatalf("the fixture is wrong: casey is seated in trenton's yard")
+		t.Fatalf("the fixture is wrong: kingston caller is seated in trenton's yard")
 	}
 	prefs, ok := sync.Lookup("notify_prefs")
 	if !ok {
@@ -317,11 +309,267 @@ func TestSyncPush_PrefsWriteIsNotMembershipFenced(t *testing.T) {
 		_, _ = f.pool.Exec(context.Background(),
 			`DELETE FROM msg_notification_prefs WHERE user_id = $1 AND channel_id = $2`, uCaseyDoyle, chYardTrenton)
 	})
-	res := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "create",
+
+	// Create, silencing (muted: true).
+	silencing := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": chYardTrenton, "muted": true})
+	t.Logf("ux122 non-member create silencing: %s", ux115Answer(silencing))
+	if silencing.Status != "rejected" || silencing.Seq != nil || silencing.Conflict != nil {
+		t.Errorf("non-member silencing create answered %s, want rejected", ux115Answer(silencing))
+	}
+	if got := ux115ErrWords(silencing); got != sync.ErrRowNotFound.Error() {
+		t.Errorf("non-member silencing create error = %q, want %q", got, sync.ErrRowNotFound.Error())
+	}
+
+	// Create, non-silencing (mode: MENTIONS).
+	nonSilencing := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "create",
 		map[string]any{"channel_id": chYardTrenton, "mode": ModeMentions})
-	t.Logf("ux115 a write for a channel the caller is not seated in: %s", ux115Answer(res))
-	if res.Status != "applied" {
-		t.Errorf("the write for a channel the caller is not seated in answered %s, want applied: the prefs write is not membership fenced",
-			ux115Answer(res))
+	t.Logf("ux122 non-member create non-silencing: %s", ux115Answer(nonSilencing))
+	if nonSilencing.Status != "rejected" || nonSilencing.Seq != nil || nonSilencing.Conflict != nil {
+		t.Errorf("non-member non-silencing create answered %s, want rejected", ux115Answer(nonSilencing))
+	}
+	if got := ux115ErrWords(nonSilencing); got != sync.ErrRowNotFound.Error() {
+		t.Errorf("non-member non-silencing create error = %q, want %q", got, sync.ErrRowNotFound.Error())
+	}
+
+	var count int
+	if err := f.pool.QueryRow(ctx,
+		`SELECT count(*) FROM msg_notification_prefs WHERE user_id = $1 AND channel_id = $2`,
+		uCaseyDoyle, chYardTrenton).Scan(&count); err != nil {
+		t.Fatalf("count non-member prefs rows: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("non-member create wrote %d rows in msg_notification_prefs, want 0", count)
+	}
+
+	// Update (Write path): even if a stale prefs row exists for the caller on a
+	// channel they are not a member of, both silencing and non-silencing updates
+	// must be refused with sync: row not found.
+	_, _ = f.pool.Exec(ctx,
+		`DELETE FROM msg_notification_prefs WHERE user_id = $1 AND channel_id = $2`, uCaseyDoyle, chYardTrenton)
+	seededID, _, err := f.repo.syncPrefsWrite(ctx, DefaultNotificationPrefs(chYardTrenton, uCaseyDoyle), uuid.NewString())
+	if err != nil {
+		t.Fatalf("seed stale prefs row for update check: %v", err)
+	}
+	updSilencing := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "update",
+		map[string]any{"id": seededID, "muted": true})
+	t.Logf("ux122 non-member update silencing: %s", ux115Answer(updSilencing))
+	if updSilencing.Status != "rejected" || updSilencing.Seq != nil || updSilencing.Conflict != nil {
+		t.Errorf("non-member silencing update answered %s, want rejected", ux115Answer(updSilencing))
+	}
+	if got := ux115ErrWords(updSilencing); got != sync.ErrRowNotFound.Error() {
+		t.Errorf("non-member silencing update error = %q, want %q", got, sync.ErrRowNotFound.Error())
+	}
+
+	updNonSilencing := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "update",
+		map[string]any{"id": seededID, "mode": ModeMentions})
+	t.Logf("ux122 non-member update non-silencing: %s", ux115Answer(updNonSilencing))
+	if updNonSilencing.Status != "rejected" || updNonSilencing.Seq != nil || updNonSilencing.Conflict != nil {
+		t.Errorf("non-member non-silencing update answered %s, want rejected", ux115Answer(updNonSilencing))
+	}
+	if got := ux115ErrWords(updNonSilencing); got != sync.ErrRowNotFound.Error() {
+		t.Errorf("non-member non-silencing update error = %q, want %q", got, sync.ErrRowNotFound.Error())
+	}
+}
+
+// TestSyncPush_PrefsWriteNonMemberAndMissingChannelParity: a non-member's
+// write on a real channel and anyone's write on a missing channel answer
+// byte-identical results (status, seq and error words), on both silencing and
+// non-silencing patches and on both create and update.
+func TestSyncPush_PrefsWriteNonMemberAndMissingChannelParity(t *testing.T) {
+	f := newSyncFeedFixture(t)
+	ctx := context.Background()
+	if err := f.repo.SyncMembership(ctx, uSamRivera); err != nil {
+		t.Fatalf("sync trenton caller: %v", err)
+	}
+	if err := f.repo.SyncMembership(ctx, uCaseyDoyle); err != nil {
+		t.Fatalf("sync kingston caller: %v", err)
+	}
+	if ok, _ := f.repo.IsMember(ctx, chYardTrenton, uCaseyDoyle); ok {
+		t.Fatalf("the fixture is wrong: kingston caller is seated in trenton's yard")
+	}
+	prefs, ok := sync.Lookup("notify_prefs")
+	if !ok {
+		t.Fatal("notify_prefs missing from the registry")
+	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(),
+			`DELETE FROM msg_notification_prefs WHERE user_id = $1 AND channel_id = $2`, uCaseyDoyle, chYardTrenton)
+	})
+
+	missing := ux115MissingChannel(t, f)
+
+	// Non-silencing create: non-member on real channel vs missing channel (both callers).
+	nonMemberMode := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": chYardTrenton, "mode": ModeAll})
+	missingCaseyMode := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": missing, "mode": ModeAll})
+	missingSamMode := push(t, f.engine, prefs, samFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": missing, "mode": ModeAll})
+
+	// Silencing create: non-member on real channel vs missing channel (both callers).
+	nonMemberMute := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": chYardTrenton, "muted": true})
+	missingCaseyMute := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": missing, "muted": true})
+	missingSamMute := push(t, f.engine, prefs, samFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": missing, "muted": true})
+
+	// Update (Write): non-member on real channel vs missing pref row.
+	_, _ = f.pool.Exec(ctx,
+		`DELETE FROM msg_notification_prefs WHERE user_id = $1 AND channel_id = $2`, uCaseyDoyle, chYardTrenton)
+	seededID, _, err := f.repo.syncPrefsWrite(ctx, DefaultNotificationPrefs(chYardTrenton, uCaseyDoyle), uuid.NewString())
+	if err != nil {
+		t.Fatalf("seed stale prefs row for parity check: %v", err)
+	}
+	nonMemberUpdate := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "update",
+		map[string]any{"id": seededID, "mode": ModeMentions})
+	missingUpdate := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "update",
+		map[string]any{"id": uuid.NewString(), "channel_id": missing, "mode": ModeMentions})
+
+	wantBytes := ux115Answer(missingSamMode)
+	t.Logf("ux122 parity reference (missing channel): %s", wantBytes)
+	if wantBytes != `{"status":"rejected","seq":null,"error":"sync: row not found"}` {
+		t.Fatalf("unexpected reference answer: %s", wantBytes)
+	}
+
+	cases := []struct {
+		label string
+		res   apigen.SyncPushResult
+	}{
+		{"non-member real channel create (mode: ALL)", nonMemberMode},
+		{"kingston caller missing channel create (mode: ALL)", missingCaseyMode},
+		{"trenton caller missing channel create (mode: ALL)", missingSamMode},
+		{"non-member real channel create (muted: true)", nonMemberMute},
+		{"kingston caller missing channel create (muted: true)", missingCaseyMute},
+		{"trenton caller missing channel create (muted: true)", missingSamMute},
+		{"non-member real channel update", nonMemberUpdate},
+		{"missing channel update", missingUpdate},
+	}
+	for _, tc := range cases {
+		gotBytes := ux115Answer(tc.res)
+		t.Logf("ux122 parity [%s]: %s", tc.label, gotBytes)
+		if gotBytes != wantBytes {
+			t.Errorf("%s answered %s, want byte-identical %s", tc.label, gotBytes, wantBytes)
+		}
+		if tc.res.Conflict != nil {
+			t.Errorf("%s carried a conflict envelope: %+v", tc.label, tc.res.Conflict)
+		}
+	}
+}
+
+// TestSyncPush_PrefsWriteByMemberApplies: a seated member's prefs write on a
+// real channel still applies on both create (silencing and non-silencing) and
+// update.
+func TestSyncPush_PrefsWriteByMemberApplies(t *testing.T) {
+	f := newSyncFeedFixture(t)
+	ctx := context.Background()
+	if err := f.repo.SyncMembership(ctx, uSamRivera); err != nil {
+		t.Fatalf("sync trenton caller: %v", err)
+	}
+	if ok, _ := f.repo.IsMember(ctx, chYardTrenton, uSamRivera); !ok {
+		t.Fatalf("the fixture is wrong: trenton caller is not seated in trenton's yard")
+	}
+	prefs, ok := sync.Lookup("notify_prefs")
+	if !ok {
+		t.Fatal("notify_prefs missing from the registry")
+	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(),
+			`DELETE FROM msg_notification_prefs WHERE user_id = $1 AND channel_id = $2`, uSamRivera, chYardTrenton)
+	})
+
+	// Member create (non-silencing).
+	created := push(t, f.engine, prefs, samFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": chYardTrenton, "mode": ModeMentions})
+	t.Logf("ux122 member create (mode: MENTIONS): %s", ux115Answer(created))
+	if created.Status != "applied" || created.Seq == nil {
+		t.Fatalf("member create answered %s, want applied", ux115Answer(created))
+	}
+	rowID, _ := appliedRow(t, f.engine, prefs, samFilter(), *created.Seq)
+
+	// Member create (silencing).
+	muted := push(t, f.engine, prefs, samFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": chYardTrenton, "muted": true})
+	t.Logf("ux122 member create (muted: true): %s", ux115Answer(muted))
+	if muted.Status != "applied" || muted.Seq == nil {
+		t.Fatalf("member silencing create answered %s, want applied", ux115Answer(muted))
+	}
+
+	// Member update (Write path).
+	updated := push(t, f.engine, prefs, samFilter(), uuid.NewString(), "update",
+		map[string]any{"id": rowID, "mode": ModeAll, "desktop_enabled": false})
+	t.Logf("ux122 member update (mode: ALL, desktop_enabled: false): %s", ux115Answer(updated))
+	if updated.Status != "applied" || updated.Seq == nil {
+		t.Fatalf("member update answered %s, want applied", ux115Answer(updated))
+	}
+	var gotMode string
+	var gotDesktop bool
+	if err := f.pool.QueryRow(ctx,
+		`SELECT mode, desktop_enabled FROM msg_notification_prefs WHERE id = $1::uuid`, rowID).
+		Scan(&gotMode, &gotDesktop); err != nil {
+		t.Fatalf("read member pref row: %v", err)
+	}
+	if gotMode != ModeAll || gotDesktop {
+		t.Errorf("member update stored mode=%q desktop_enabled=%v, want mode=%q desktop_enabled=false",
+			gotMode, gotDesktop, ModeAll)
+	}
+}
+
+// TestSyncPrefsReads_ServeOnlyCallersOwnRows: Pull, FindApplied and Load serve
+// only the caller's own rows; a non-member cannot read another user's prefs
+// row through any of the three read seams.
+func TestSyncPrefsReads_ServeOnlyCallersOwnRows(t *testing.T) {
+	f := newSyncFeedFixture(t)
+	ctx := context.Background()
+	if err := f.repo.SyncMembership(ctx, uSamRivera); err != nil {
+		t.Fatalf("sync trenton caller: %v", err)
+	}
+	if err := f.repo.SyncMembership(ctx, uCaseyDoyle); err != nil {
+		t.Fatalf("sync kingston caller: %v", err)
+	}
+	prefs, ok := sync.Lookup("notify_prefs")
+	if !ok {
+		t.Fatal("notify_prefs missing from the registry")
+	}
+	link := func(_ context.Context, sub string) (string, bool) {
+		uid, ok := syncSubOf[sub]
+		return uid, ok
+	}
+	store := NewNotifyPrefsSyncStore(f.repo, link)
+
+	key := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(),
+			`DELETE FROM msg_notification_prefs WHERE user_id = $1 AND channel_id = $2`, uSamRivera, chYardTrenton)
+	})
+	res := push(t, f.engine, prefs, samFilter(), key, "create",
+		map[string]any{"channel_id": chYardTrenton, "mode": ModeMentions})
+	if res.Status != "applied" || res.Seq == nil {
+		t.Fatalf("member prefs create answered %s, want applied", ux115Answer(res))
+	}
+	prefID, _ := appliedRow(t, f.engine, prefs, samFilter(), *res.Seq)
+
+	// The owner reads the row through Pull, FindApplied and Load.
+	if ids := pullIDs(t, f.engine, "notify_prefs", samFilter()); !ids[prefID] {
+		t.Fatalf("owner Pull missed own pref row %s: %v", prefID, ids)
+	}
+	if rs, found, err := store.FindApplied(ctx, samFilter(), key); err != nil || !found || rs.ID != prefID {
+		t.Fatalf("owner FindApplied = (%+v, %v, %v), want found %s", rs, found, err, prefID)
+	}
+	if rs, found, err := store.Load(ctx, samFilter(), prefID); err != nil || !found || rs.ID != prefID {
+		t.Fatalf("owner Load = (%+v, %v, %v), want found %s", rs, found, err, prefID)
+	}
+
+	// Another caller (not a member of chYardTrenton) sees nothing through
+	// Pull, FindApplied or Load.
+	if ids := pullIDs(t, f.engine, "notify_prefs", caseyFilter()); len(ids) != 0 {
+		t.Errorf("non-member Pull carried another user's prefs rows: %v", ids)
+	}
+	if rs, found, err := store.FindApplied(ctx, caseyFilter(), key); err != nil || found || rs.ID != "" || rs.Seq != 0 {
+		t.Errorf("non-member FindApplied = (%+v, %v, %v), want not found", rs, found, err)
+	}
+	if rs, found, err := store.Load(ctx, caseyFilter(), prefID); err != nil || found || rs.ID != "" || rs.Seq != 0 || rs.Data != nil {
+		t.Errorf("non-member Load = (%+v, %v, %v), want not found", rs, found, err)
 	}
 }
