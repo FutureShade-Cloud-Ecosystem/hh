@@ -706,6 +706,9 @@ func (r *Repository) InsertPhoto(ctx context.Context, stopID, branchID, contentT
 		return "", err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// FOR NO KEY UPDATE, not FOR UPDATE, is load bearing: the pod scope's create takes the pod counter
+	// first and then its foreign key's FOR KEY SHARE on this stop row, which NO KEY UPDATE does not block.
+	// With FOR UPDATE the two meet head on and PostgreSQL kills one with 40P01 (proved by the 417 read).
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM delivery_stops WHERE id = $1::uuid FOR NO KEY UPDATE`, stopID); err != nil {
 		return "", err
 	}
