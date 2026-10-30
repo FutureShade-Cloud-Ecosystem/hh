@@ -543,11 +543,19 @@ test("the T5018 report and its CSV answer in the contract's shape and match the 
   const coreCols = [...colBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
   assert.ok(coreCols.includes("box_22_cents") && coreCols.includes("services_subtotal_cents") && coreCols.includes("under_threshold") && coreCols.includes("threshold_note") && coreCols.includes("unmarked_lines_note"));
 
+  assert.ok(t5018Go.includes("out[idx].PaidCents += paidCents"), "the core must accumulate every payment into PaidCents");
+  assert.ok(t5018Go.includes("report.TotalCents += row.PaidCents"), "the core must sum PaidCents into TotalCents");
+  assert.ok(!t5018Go.includes("row.PaidCents = row.Box22Cents"), "the core must not overwrite PaidCents with Box22Cents");
+
   const res = await call("GET", "/api/v1/purchasing/t5018?year=2026");
   assert.equal(res.status, 200);
   holds("PurchasingT5018Report", res.json);
   assert.ok(t5018Go.includes(`"${res.json.rule_note}"`), "the report's rule_note must come from the core's source");
   assert.equal(res.json.items.length, 3);
+  const mixed = res.json.items.find((r) => r.paid_cents !== r.box_22_cents);
+  assert.ok(mixed !== undefined, "the stub's mixed subcontractor row shows Paid in <year> and Box 22 apart");
+  assert.equal(mixed.paid_cents - mixed.box_22_cents, 20_950, "Paid and Box 22 on the mixed bill differ by the goods share");
+  assert.equal(res.json.total_cents - res.json.box_22_total_cents, 20_950);
   for (const row of res.json.items) {
     if (row.under_threshold) {
       assert.ok(t5018Go.includes(`"${row.threshold_note}"`), "the threshold_note must come from the core's source");

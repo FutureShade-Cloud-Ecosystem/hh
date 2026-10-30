@@ -66,7 +66,8 @@ type T5018Row struct {
 	BusinessNumber string `json:"business_number"`
 	// BusinessNumberMissing is the mark that the number is not on file.
 	BusinessNumberMissing bool `json:"business_number_missing"`
-	// PaidCents is the vendor's Box 22 services share of payments in the year, tax included.
+	// PaidCents is the total paid to the vendor during the year through PayBill, tax included,
+	// goods and services alike.
 	PaidCents int64 `json:"paid_cents"`
 	// Box22Cents is the payment's services share of the amount paid in the year, tax included.
 	Box22Cents int64 `json:"box_22_cents"`
@@ -138,7 +139,7 @@ func (s *Service) T5018ReportForCaller(ctx context.Context, orgID, rawYear, bran
 	}
 	for _, row := range rows {
 		report.Items = append(report.Items, row)
-		report.TotalCents += row.Box22Cents
+		report.TotalCents += row.PaidCents
 		report.Box22TotalCents += row.Box22Cents
 	}
 	return report, nil
@@ -187,7 +188,6 @@ func t5018UnmarkedLinesNote(n int) string {
 // finalizeT5018Row stamps the derived marks and notes on a vendor's T5018 row.
 func finalizeT5018Row(row T5018Row) T5018Row {
 	row.BusinessNumberMissing = strings.TrimSpace(row.BusinessNumber) == ""
-	row.PaidCents = row.Box22Cents
 	row.UnderThreshold = row.ServicesSubtotalCents < T5018ThresholdCents
 	if row.UnderThreshold {
 		row.ThresholdNote = T5018UnderThresholdNote
@@ -328,6 +328,7 @@ func (r *Repository) T5018Report(ctx context.Context, orgID string, start, end t
 			continue
 		}
 		box22, svcBeforeTax := t5018PaymentShare(paidCents, subtotalCents, totalCents, servicesSubtotalCents)
+		out[idx].PaidCents += paidCents
 		out[idx].Box22Cents += box22
 		out[idx].ServicesSubtotalCents += svcBeforeTax
 		if !seenBill[billID] {

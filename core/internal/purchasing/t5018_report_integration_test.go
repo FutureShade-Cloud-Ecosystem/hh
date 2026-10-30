@@ -347,20 +347,21 @@ func TestIntegration_T5018Report_CRAServicesShareThresholdTaxAndUnmarkedLines(t 
 		t.Fatalf("rule_note = %q, want %q", report.RuleNote, T5018ConstructionIncomeNote)
 	}
 
-	// Leg 1 assertions: goods-only bill excluded.
+	// Leg 1 assertions: goods-only bill excluded from Box 22, while PaidCents carries the payment.
 	rGoods, ok := t5018Row(report, vGoods)
 	if !ok {
 		t.Fatal("goods-only vendor missing from report")
 	}
-	if rGoods.Box22Cents != 0 || rGoods.PaidCents != 0 || rGoods.ServicesSubtotalCents != 0 {
-		t.Fatalf("goods-only vendor = %+v, want 0 Box22Cents, 0 PaidCents, 0 ServicesSubtotalCents", rGoods)
+	if rGoods.PaidCents != 90400 || rGoods.Box22Cents != 0 || rGoods.ServicesSubtotalCents != 0 {
+		t.Fatalf("goods-only vendor = %+v, want PaidCents=90400, Box22Cents=0, ServicesSubtotalCents=0", rGoods)
 	}
 	if !rGoods.UnderThreshold || rGoods.ThresholdNote != T5018UnderThresholdNote {
 		t.Fatalf("goods-only vendor threshold = %v / %q, want true / %q",
 			rGoods.UnderThreshold, rGoods.ThresholdNote, T5018UnderThresholdNote)
 	}
 
-	// Leg 2 assertions: mixed bill counts its services part.
+	// Leg 2 assertions: mixed bill counts its services part in Box 22, PaidCents carries the full
+	// payment (113000), and they differ by the goods share (45200).
 	rMixed, ok := t5018Row(report, vMixed)
 	if !ok {
 		t.Fatal("mixed vendor missing from report")
@@ -368,8 +369,10 @@ func TestIntegration_T5018Report_CRAServicesShareThresholdTaxAndUnmarkedLines(t 
 	if rMixed.ServicesSubtotalCents != 60000 {
 		t.Fatalf("mixed vendor services_subtotal_cents = %d, want 60000", rMixed.ServicesSubtotalCents)
 	}
-	if rMixed.Box22Cents != 67800 || rMixed.PaidCents != 67800 {
-		t.Fatalf("mixed vendor box_22_cents = %d (paid_cents = %d), want 67800", rMixed.Box22Cents, rMixed.PaidCents)
+	goodsShare := t5018ProRataCents(113000, 40000, 100000)
+	if rMixed.PaidCents != 113000 || rMixed.Box22Cents != 67800 || rMixed.PaidCents-rMixed.Box22Cents != goodsShare {
+		t.Fatalf("mixed vendor paid_cents = %d, box_22_cents = %d, diff = %d, want 113000, 67800, goodsShare = %d",
+			rMixed.PaidCents, rMixed.Box22Cents, rMixed.PaidCents-rMixed.Box22Cents, goodsShare)
 	}
 	if rMixed.UnderThreshold || rMixed.ThresholdNote != "" {
 		t.Fatalf("mixed vendor threshold = %v / %q, want false / empty", rMixed.UnderThreshold, rMixed.ThresholdNote)
@@ -405,5 +408,9 @@ func TestIntegration_T5018Report_CRAServicesShareThresholdTaxAndUnmarkedLines(t 
 	if rUnmarked.UnmarkedLineCount != 1 || rUnmarked.UnmarkedLinesNote != wantUnmarkedNote {
 		t.Fatalf("unmarked-line vendor count = %d note = %q, want 1 and %q",
 			rUnmarked.UnmarkedLineCount, rUnmarked.UnmarkedLinesNote, wantUnmarkedNote)
+	}
+	if report.TotalCents-report.Box22TotalCents != 90400+goodsShare {
+		t.Fatalf("report total_cents (%d) - box_22_total_cents (%d) = %d, want goods share sum %d",
+			report.TotalCents, report.Box22TotalCents, report.TotalCents-report.Box22TotalCents, 90400+goodsShare)
 	}
 }

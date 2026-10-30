@@ -147,8 +147,20 @@ func TestT5018ProRataAndPaymentShare_HalfToEvenAndCRARules(t *testing.T) {
 	}
 
 	// Leg 2: mixed bill ($600 services + $400 goods = $1,000 subtotal, + $130 HST = $1,130 paid).
+	// PaidCents is the full payment (113000), Box22Cents is the services share (67800), and they
+	// differ by the goods share (45200).
 	if b22, svc := t5018PaymentShare(113000, 100000, 113000, 60000); b22 != 67800 || svc != 60000 {
 		t.Fatalf("mixed share = (box22=%d, svc=%d), want (67800, 60000)", b22, svc)
+	} else {
+		mixedRow := finalizeT5018Row(T5018Row{
+			VendorID: "v-mixed", VendorNo: "VM-0009", Name: "Mixed Bill",
+			PaidCents: 113000, Box22Cents: b22, ServicesSubtotalCents: svc,
+		})
+		goodsShare := t5018ProRataCents(113000, 40000, 100000)
+		if mixedRow.PaidCents != 113000 || mixedRow.Box22Cents != 67800 || mixedRow.PaidCents-mixedRow.Box22Cents != goodsShare {
+			t.Fatalf("mixed row paid=%d box22=%d diff=%d, want paid=113000 box22=67800 goodsShare=%d",
+				mixedRow.PaidCents, mixedRow.Box22Cents, mixedRow.PaidCents-mixedRow.Box22Cents, goodsShare)
+		}
 	}
 
 	// Legs 3 & 4: $480.00 services + 13% HST ($62.40) = $542.40 paid -> Box 22 = 54240, pre-tax = 48000 (< 50000).
