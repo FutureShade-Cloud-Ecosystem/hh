@@ -67,3 +67,17 @@ test("the bundle exemptions are narrow: a money word outside them still fails", 
   assert.equal(exemptBundleHit({ file: "assets/index-abc.js", kind: "word", word: "price", count: 1, window: "the price is on the ticket" }), false);
   assert.equal(exemptBundleHit({ file: "assets/index-abc.js", kind: "word", word: "price", count: 1, window: "price_matrix:`server_wins`" }), true);
 });
+
+test("the payload exemption is narrow: the caller's own cost_hidden flag is not money", () => {
+  // The settings substrate's own layout flag: the user asked for the cost
+  // column to be hidden. It hides money rather than carrying any, and the
+  // contract requires it on every surface config answer.
+  assert.deepEqual(scanPayload("config", JSON.stringify({ workspace: { cost_hidden: true } })), []);
+  assert.deepEqual(scanPayload("config", JSON.stringify({ workspace: { cost_hidden: false } })), []);
+  // The guard holds the shape narrow: the flag reads as money outside the
+  // workspace view, and a flag that carries a figure is money.
+  assert.ok(scanPayload("config", JSON.stringify({ cost_hidden: true })).length > 0, "a cost_hidden outside the workspace view still counts");
+  assert.ok(scanPayload("config", JSON.stringify({ stop: { cost_hidden: true } })).length > 0, "a cost_hidden on a stop still counts");
+  assert.ok(scanPayload("config", JSON.stringify({ workspace: { cost_hidden: "$12.50" } })).some((h) => h.kind === "figure"), "a cost_hidden carrying a figure still counts");
+  assert.ok(scanPayload("config", JSON.stringify({ workspace: { cost: 5 } })).length > 0, "a cost field still counts");
+});
