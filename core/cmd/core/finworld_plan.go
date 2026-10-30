@@ -133,6 +133,39 @@ var finworldHouseholdWords = []string{
 	"MacLeod", "Maddox", "Manning", "Marlowe", "Marshall", "Mason", "Matthews", "Maxwell", "McAllister", "McBride",
 	"McCallum", "McCarthy", "McCormick", "McDonald", "McFarlane", "McGill", "McGregor", "McIntosh", "McKay", "McKenzie",
 	"McLean", "McLeod", "McMillan", "McNeil", "Mercer", "Merritt", "Middleton", "Miller", "Mitchell", "Monroe",
+	"Montgomery", "Morgan", "Morris", "Morrison", "Morton", "Mowat", "Murdoch", "Murphy", "Murray", "Nelson",
+	"Newcombe", "Newman", "Newton", "Nicholson", "Nolan", "Norman", "Northey", "Norwood", "Oakley", "Ogden",
+	"Oliver", "Orchard", "Osborne", "Oswald", "Owen", "Palmer", "Parkin", "Parr", "Parsons", "Patterson",
+	"Pearce", "Pearson", "Pemberton", "Peters", "Phillips", "Pickering", "Platt", "Pollard", "Porter", "Powell",
+	"Pratt", "Preston", "Price", "Pringle", "Purcell", "Radcliffe", "Ramsay", "Randall", "Redfern", "Reeves",
+	"Renwick", "Reynolds", "Rhodes", "Ridley", "Ross", "Rowe", "Rutherford", "Sanderson", "Saunders", "Sawyer",
+	"Selkirk", "Sharpe", "Shelton", "Simmons", "Sinclair", "Slater", "Snider", "Somers", "Spencer", "Stanton",
+	"Steele", "Sterling", "Stewart", "Stone", "Strachan", "Sutton", "Swan", "Tait", "Talbot", "Taverner",
+	"Thorne", "Thornton", "Tillson", "Tolhurst", "Tremblay", "Tuck", "Tupper", "Underhill", "Vance", "Vaughan",
+	"Wade", "Walden", "Walker", "Wallace", "Walsh", "Ward", "Warner", "Waterman", "Watts", "Weatherup",
+	"Wells", "Wentworth", "Weston", "Wheeler", "Whitfield", "Wicks", "Wilkes", "Willoughby", "Wilson", "Winfield",
+	"Winterbourne", "Wolfe", "Woodhurst", "Wright", "Wyatt", "Yarker", "Yonge",
+}
+
+// finworldVendorSeedNames are the catalogue's goods suppliers, named exactly as
+// the embedded catalogue seed names them: the invented dealer's established
+// suppliers, whose rows the seed plants before the world runs. The world's
+// carriers and brokers join them as vendors in item 3, with names of the
+// plan's own.
+var finworldVendorSeedNames = []struct{ VendorNo, Name string }{
+	{"V-OAKS", "Oaks / Brampton Brick"},
+	{"V-PERMACON", "Permacon / Old Castle"},
+	{"V-TECHO", "Techo Bloc"},
+	{"V-BESTWAY", "Best Way Stone"},
+	{"V-UNILOCK", "Unilock"},
+	{"V-BROWNS", "Brown's Concrete"},
+	{"V-SOLENO", "Soleno"},
+	{"V-GATOR", "Alliance Gator"},
+	{"V-INLITE", "In-Lite"},
+	{"V-SIKA", "Sika"},
+	{"V-RYMAR", "Rymar Grass"},
+	{"V-BANAS", "Banas Stone"},
+	{"V-PORCEA", "Porcea"},
 }
 
 type finworldCatalogueSpec struct {
@@ -189,6 +222,36 @@ var finworldCatalogueSpecs = []finworldCatalogueSpec{
 	{"a7000000-0000-4000-9000-000000000030", "DBS-PM-BORANJA", "Permacon Boranja Slab", "SLABSTEP", "PC", "SF", "V-PERMACON", 2200, 1804, 1100, 65, 800, 360, 260, 130, 300, 150},
 }
 
+// finworldCarrierNames are the freight carriers the world's landed costs name
+// as payees, built from the word lists: a business name a person would give a
+// haulier, with no counter. The vendor numbers are ids, not names.
+var finworldCarrierVendors = []FinWorldVendor{
+	{VendorNo: "V-HAULAGE", Name: "Cairnbrook Freight Lines Ltd.", Kind: "CARRIER", PaymentTermsDays: finworldVendorTermsDays},
+	{VendorNo: "V-CARTAGE", Name: "Limestone Ridge Cartage Inc.", Kind: "CARRIER", PaymentTermsDays: finworldVendorTermsDays},
+	{VendorNo: "V-ROADWAY", Name: "Harbour Point Transport Co.", Kind: "CARRIER", PaymentTermsDays: finworldVendorTermsDays},
+}
+
+// finworldBrokerVendors are the customs brokers the world's duty charges name
+// as payees, built from the word lists the same way.
+var finworldBrokerVendors = []FinWorldVendor{
+	{VendorNo: "V-CUSTOMS", Name: "Granite Valley Customs Brokerage Ltd.", Kind: "BROKER", PaymentTermsDays: finworldVendorTermsDays},
+	{VendorNo: "V-BORDER", Name: "Bayshore Border Services Inc.", Kind: "BROKER", PaymentTermsDays: finworldVendorTermsDays},
+}
+
+// finworldIntendedLatePayableCount is how many of the world's landed cost
+// payables stay open past their terms on purpose: a handful, each named in the
+// plan's intended late list with the bookkeeper's reason a Controller would
+// read on the aging.
+const finworldIntendedLatePayableCount = 3
+
+// finworldIntendedLatePayableReasons are those reasons, in the order the first
+// landed costs of the year take them.
+var finworldIntendedLatePayableReasons = []string{
+	"The carrier is disputing the fuel surcharge on this delivery",
+	"Held pending the carrier's credit for the damaged pallet",
+	"The broker is re-billing under a corrected customs entry",
+}
+
 // finworldHSTOn mirrors tax.hstOn in core/internal/tax/model.go:355 (half-up integer rounding).
 func finworldHSTOn(subtotalCents int64, rateBps int) int64 {
 	if subtotalCents <= 0 || rateBps <= 0 {
@@ -207,6 +270,29 @@ func finworldVerifyCatalogueAgainstSeedSQL() error {
 		needle := "'" + spec.SKU + "'"
 		if !strings.Contains(text, needle) {
 			return fmt.Errorf("finworld: SKU %s not found in embedded dibbits_seed.sql", spec.SKU)
+		}
+	}
+	return nil
+}
+
+// finworldVerifyVendorNamesAgainstSeedSQL holds the plan's vendor display
+// names to the embedded catalogue seed's own rows: every catalogue supplier's
+// (vendor_no, name) pair must appear in the seed's vendors INSERT verbatim, so
+// the plan's names and the database's names cannot drift apart.
+func finworldVerifyVendorNamesAgainstSeedSQL(vendorNameByNo map[string]string) error {
+	raw, err := seedFS.ReadFile("dibbits_seed.sql")
+	if err != nil {
+		return fmt.Errorf("finworld: read embedded dibbits_seed.sql: %w", err)
+	}
+	text := string(raw)
+	for _, spec := range finworldCatalogueSpecs {
+		name, ok := vendorNameByNo[spec.VendorNo]
+		if !ok {
+			return fmt.Errorf("finworld: catalogue vendor %s carries no display name", spec.VendorNo)
+		}
+		needle := fmt.Sprintf("('%s','%s',", spec.VendorNo, strings.ReplaceAll(name, "'", "''"))
+		if !strings.Contains(text, needle) {
+			return fmt.Errorf("finworld: vendor row ('%s','%s') not found in embedded dibbits_seed.sql", spec.VendorNo, name)
 		}
 	}
 	return nil
@@ -666,15 +752,35 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 	}
 
 	// 3. Build 70 invented contractors (first 15 are top Pareto contractors).
+	// Every name is a unique word-list pair plus trade and legal form: a name
+	// a person would give a business, with no counter and no id shape. The
+	// pair draws exactly as the world always drew it; where a draw collides
+	// with a name already given, the second word steps forward through the
+	// list until the pair is free, so the world's own random stream is
+	// untouched and every sales figure in the plan stays exactly where it was.
 	topParetoLimits := []int64{7500000, 12000000, 20000000}
 	stdContractorLimits := []int64{3000000, 4000000, 5000000, 7500000}
 	contractorTerms := []int{30, 30, 30, 45, 60}
 	contactRoles := []string{"Accounts Desk", "Purchasing Desk", "Estimating Desk", "Operations Desk"}
 
 	plan.Contractors = make([]FinWorldCustomer, 70)
+	usedContractorNames := map[string]bool{}
 	for i := 0; i < 70; i++ {
-		w1 := finworldCustomerFirstWords[(i+rng.IntN(len(finworldCustomerFirstWords)))%len(finworldCustomerFirstWords)]
-		w2 := finworldCustomerSecondWords[(i/2+rng.IntN(len(finworldCustomerSecondWords)))%len(finworldCustomerSecondWords)]
+		w1Idx := (i + rng.IntN(len(finworldCustomerFirstWords))) % len(finworldCustomerFirstWords)
+		w2Idx := (i/2 + rng.IntN(len(finworldCustomerSecondWords))) % len(finworldCustomerSecondWords)
+		var w1, w2 string
+		for {
+			w1 = finworldCustomerFirstWords[w1Idx]
+			w2 = finworldCustomerSecondWords[w2Idx]
+			if !usedContractorNames[w1+" "+w2] {
+				usedContractorNames[w1+" "+w2] = true
+				break
+			}
+			w2Idx = (w2Idx + 1) % len(finworldCustomerSecondWords)
+			if w2Idx == 0 {
+				w1Idx = (w1Idx + 1) % len(finworldCustomerFirstWords)
+			}
+		}
 		trade := finworldContractorTradeWords[(i+rng.IntN(len(finworldContractorTradeWords)))%len(finworldContractorTradeWords)]
 		suffix := finworldContractorSuffixes[i%len(finworldContractorSuffixes)]
 		town := finworldAllowedTowns[(i+rng.IntN(len(finworldAllowedTowns)))%len(finworldAllowedTowns)]
@@ -696,7 +802,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 			AccountNo:         fmt.Sprintf("FW-C%03d", i+1),
 			CustomerType:      "CONTRACTOR",
 			IsTopPareto:       isTop,
-			Name:              fmt.Sprintf("%s %s %s %s %d", w1, w2, trade, suffix, i+1),
+			Name:              fmt.Sprintf("%s %s %s %s", w1, w2, trade, suffix),
 			ContactName:       contactRoles[i%len(contactRoles)],
 			Email:             fmt.Sprintf("contractor-%03d-s%d@example.invalid", i+1, seed),
 			Phone:             fmt.Sprintf("613-555-%04d", 1001+i),
@@ -711,10 +817,15 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 		}
 	}
 
-	// 4. Build 180 invented homeowners ("The <Word> Household").
+	// 4. Build 180 invented homeowners ("The <Word> Household"). The word
+	// list carries more surnames than the world needs, so every household
+	// draws its own and the names stay unique with no counter.
+	if len(finworldHouseholdWords) < 180 {
+		return nil, fmt.Errorf("finworld: the household word list carries %d surnames, the world's 180 households need more", len(finworldHouseholdWords))
+	}
 	plan.Homeowners = make([]FinWorldCustomer, 180)
 	for i := 0; i < 180; i++ {
-		word := finworldHouseholdWords[i%len(finworldHouseholdWords)]
+		word := finworldHouseholdWords[i]
 		town := finworldAllowedTowns[(i+rng.IntN(len(finworldAllowedTowns)))%len(finworldAllowedTowns)]
 		street := finworldStreetNames[(i+rng.IntN(len(finworldStreetNames)))%len(finworldStreetNames)]
 		homeBranch := FinWorldBranchCodeTRT
@@ -783,6 +894,44 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 			}
 		}
 		return len(plan.Products) - 1
+	}
+
+	// 5b. Build the vendors. The catalogue's goods suppliers are the invented
+	// dealer's established vendors, named exactly as the embedded catalogue
+	// seed names them, and the plan verifies every pair against that seed at
+	// construction. The landed costs' freight carriers and customs brokers
+	// join them as vendors with names of the plan's own, because a landed cost
+	// names its payee and the aging labels the payable with that vendor's
+	// name. No vendor is ever named with its vendor number or a counter.
+	vendorNameByNo := map[string]string{}
+	for _, vn := range finworldVendorSeedNames {
+		vendorNameByNo[vn.VendorNo] = vn.Name
+	}
+	if err := finworldVerifyVendorNamesAgainstSeedSQL(vendorNameByNo); err != nil {
+		return nil, err
+	}
+	seenVendor := map[string]bool{}
+	plan.Vendors = []FinWorldVendor{}
+	appendVendor := func(v FinWorldVendor) {
+		if seenVendor[v.VendorNo] {
+			return
+		}
+		seenVendor[v.VendorNo] = true
+		plan.Vendors = append(plan.Vendors, v)
+	}
+	for _, spec := range finworldCatalogueSpecs {
+		appendVendor(FinWorldVendor{
+			VendorNo:         spec.VendorNo,
+			Name:             vendorNameByNo[spec.VendorNo],
+			Kind:             "SUPPLIER",
+			PaymentTermsDays: finworldVendorTermsDays,
+		})
+	}
+	for _, v := range finworldCarrierVendors {
+		appendVendor(v)
+	}
+	for _, v := range finworldBrokerVendors {
+		appendVendor(v)
 	}
 
 	// 6. Build the 12 months and their non-Sunday trading days in America/Toronto.
@@ -919,12 +1068,43 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 	// The purchase receipts a landed cost can attach to, in the order they were received.
 	var landedCostReceipts []*finworldLandedCostReceipt
 	landedCostSeq := 0
+	// The payee rotations: each applied landed cost names the next carrier or
+	// broker in turn, so the books spread the freight and duty across the
+	// small set of hauliers and brokers a real dealer keeps.
+	carrierSeq := 0
+	brokerSeq := 0
+	// The applied landed cost counter and the slots a later void reverses: the
+	// world's intended late payables are the first few applied landed costs
+	// whose payables survive the year un-voided.
+	appliedLandedCostSeq := 0
+	voidedAppliedSlots := map[int]bool{}
+	for _, slot := range landedCostSlots {
+		if slot.VoidOfSlot >= 0 {
+			voidedAppliedSlots[slot.VoidOfSlot] = true
+		}
+	}
+	// The settlements the plan owes on a later trading day, keyed by that
+	// day's index: the plan emits each one on the day the cheque clears.
+	pendingLandedCostSettlements := map[int][]*FinWorldLandedCostSettleEvent{}
 
 	// Helper to format an America/Toronto RFC3339 timestamp on dateStr at hour:min:sec.
 	formatOccurredAt := func(dateStr string, hour, minute, second int) string {
 		parsed, _ := time.ParseInLocation("2006-01-02", dateStr, loc)
 		ts := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), hour, minute, second, 0, loc)
 		return ts.Format(time.RFC3339)
+	}
+
+	// finworldTradingDayAtOrAfter answers the plan's first trading day on or
+	// after the given day, or -1 when the plan is already over.
+	finworldTradingDayAtOrAfter := func(day string) int {
+		for mIdx := range plan.Months {
+			for dIdx := range plan.Months[mIdx].TradingDays {
+				if plan.Months[mIdx].TradingDays[dIdx].Date >= day {
+					return plan.Months[mIdx].TradingDays[dIdx].TradingDayIndex
+				}
+			}
+		}
+		return -1
 	}
 
 	// pickLandedCostReceipt chooses the purchase receipt a landed cost attaches to: the same
@@ -1061,11 +1241,13 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 		var monthVendorBills []*FinWorldVendorBillEvent
 		var monthDeferredBills []*FinWorldVendorBillEvent
 		var monthNSFBounces []*FinWorldNSFBounceEvent
+		var monthLandedCostSettlements []*FinWorldLandedCostSettleEvent
 
 		for dIdx := 0; dIdx < numDays; dIdx++ {
 			td := &m.TradingDays[dIdx]
 			daySeq := 0
 			globalDay := td.TradingDayIndex
+			landedCostTodaySettles := 0
 
 			appendEvent := func(branchCode string, kind FinWorldEventKind, hour, min, sec int) *FinWorldEvent {
 				globalSeq++
@@ -1099,6 +1281,17 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				}
 				pendingDeferredPayments = nil
 			}
+
+			// The landed cost payables the plan settles today, on the payee
+			// vendor's terms: the cheque clears the same day the statement
+			// carries it and the payable leaves the aging.
+			for _, st := range pendingLandedCostSettlements[globalDay] {
+				stEv := appendEvent(st.BranchCode, FinWorldEventLandedCostSettle, 11, (landedCostTodaySettles)%45, 0)
+				stEv.LandedCostSettle = st
+				landedCostTodaySettles++
+				monthLandedCostSettlements = append(monthLandedCostSettlements, st)
+			}
+			delete(pendingLandedCostSettlements, globalDay)
 
 			// 7a. Morning: open 2 tills per branch.
 			sessionKeyByBranchTill := make(map[string][2]string)
@@ -2165,6 +2358,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 						PurchaseOrderKey:    orig.PurchaseOrderKey,
 						BranchCode:          orig.BranchCode,
 						VendorNo:            orig.VendorNo,
+						PayeeVendorNo:       orig.PayeeVendorNo,
 						Currency:            orig.Currency,
 						FXRateBps:           orig.FXRateBps,
 						ChargeKind:          orig.ChargeKind,
@@ -2224,7 +2418,56 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				chargeCadCents := (chargeCents*finworldLandedCostFXRateBps + 5000) / 10000
 
 				landedCostSeq++
+				var payee FinWorldVendor
+				if slot.ChargeKind == "DUTY" {
+					payee = finworldBrokerVendors[brokerSeq%len(finworldBrokerVendors)]
+					brokerSeq++
+				} else {
+					payee = finworldCarrierVendors[carrierSeq%len(finworldCarrierVendors)]
+					carrierSeq++
+				}
 				lcKey := fmt.Sprintf("lc-s%d-%04d", seed, landedCostSeq)
+				// The payable is paid on the payee's terms: the cheque clears
+				// on the first trading day at or after the due date. The
+				// year's first few payables that survive the year un-voided
+				// stay open on purpose, each named in the plan's intended
+				// late list with the bookkeeper's reason.
+				settleOn := ""
+				if !voidedAppliedSlots[slotIdx] {
+					appliedLandedCostSeq++
+					if appliedLandedCostSeq <= finworldIntendedLatePayableCount {
+						plan.IntendedLatePayables = append(plan.IntendedLatePayables, FinWorldIntendedLatePayable{
+							LandedCostKey: lcKey,
+							Reason:        finworldIntendedLatePayableReasons[(appliedLandedCostSeq-1)%len(finworldIntendedLatePayableReasons)],
+						})
+					} else {
+						appliedDay, _ := time.ParseInLocation("2006-01-02", td.Date, loc)
+						dueDay := appliedDay.AddDate(0, 0, payee.PaymentTermsDays)
+						if settleIdx := finworldTradingDayAtOrAfter(dueDay.Format("2006-01-02")); settleIdx >= 0 {
+							settleOn = plan.Months[0].TradingDays[0].Date
+							for mIdx2 := range plan.Months {
+								found := false
+								for dIdx2 := range plan.Months[mIdx2].TradingDays {
+									if plan.Months[mIdx2].TradingDays[dIdx2].TradingDayIndex == settleIdx {
+										settleOn = plan.Months[mIdx2].TradingDays[dIdx2].Date
+										found = true
+										break
+									}
+								}
+								if found {
+									break
+								}
+							}
+							pendingLandedCostSettlements[settleIdx] = append(pendingLandedCostSettlements[settleIdx], &FinWorldLandedCostSettleEvent{
+								LandedCostKey:   lcKey,
+								PayeeVendorNo:   payee.VendorNo,
+								BranchCode:      slot.BranchCode,
+								PayableCadCents: 0, // stamped below once the charge is known
+								SettledDate:     settleOn,
+							})
+						}
+					}
+				}
 				ev := appendEvent(slot.BranchCode, FinWorldEventLandedCost, 16, minute, 0)
 				ev.LandedCost = &FinWorldLandedCostEvent{
 					LandedCostKey:      lcKey,
@@ -2232,6 +2475,7 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					PurchaseOrderKey:   rcpt.PurchaseOrderKey,
 					BranchCode:         slot.BranchCode,
 					VendorNo:           rcpt.VendorNo,
+					PayeeVendorNo:      payee.VendorNo,
 					Currency:           "CAD",
 					FXRateBps:          finworldLandedCostFXRateBps,
 					ChargeKind:         slot.ChargeKind,
@@ -2248,6 +2492,16 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 					Status:             "POSTED",
 				}
 				landedCostBySlot[slotIdx] = ev.LandedCost
+				ev.LandedCost.SettledOnDate = settleOn
+				if settleIdx := finworldTradingDayAtOrAfter(ev.LandedCost.SettledOnDate); settleIdx >= 0 && ev.LandedCost.SettledOnDate != "" {
+					for _, st := range pendingLandedCostSettlements[settleIdx] {
+						if st.LandedCostKey == lcKey {
+							// The whole payable: the freight, the duty and the
+							// handling, what the settle journal relieves 2100 by.
+							st.PayableCadCents = ev.LandedCost.FreightCents + ev.LandedCost.DutyCents + ev.LandedCost.HandlingCents
+						}
+					}
+				}
 
 				bs := m.Summary.ByBranch[slot.BranchCode]
 				bs.LandedCosts++
@@ -2491,6 +2745,12 @@ func FinWorldPlan(seed uint64, anchor YearMonth, dealerName string) (*FinWorldPl
 				priorOutstandingBills = append(monthVendorBills[billSplit:], monthDeferredBills...)
 				if mIdx+1 < len(plan.Months) {
 					pendingDeferredPayments = append(pendingDeferredPayments, monthDeferredBills...)
+				}
+
+				// Every landed cost settlement cheque cleared on the statement,
+				// each matched to its own settlement journal.
+				for _, st := range monthLandedCostSettlements {
+					addStmtLine(td.Date, "LANDED_COST_PAYMENT", st.LandedCostKey, "LCPAY-"+st.LandedCostKey, "Carrier or broker cheque", -st.PayableCadCents)
 				}
 
 				// Monthly bank service fee.
