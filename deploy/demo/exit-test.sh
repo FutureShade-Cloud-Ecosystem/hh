@@ -233,7 +233,15 @@ else
 		-p "127.0.0.1:$PG_PORT:5432" \
 		-e POSTGRES_PASSWORD=hardscape postgres:16-alpine >/dev/null
 fi
-until docker exec "$PG_NAME" pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
+# READINESS OVER TCP, NOT OVER THE SOCKET. The image's entrypoint starts a
+# TEMPORARY server before it may answer anything (listen_addresses='' , the
+# unix socket only) to run its init scripts, and pg_isready over the socket
+# answers THAT server: the wait below would come back while the temporary
+# server is still up, and the first psql after it would land in the window
+# where the temporary server is stopping ("FATAL: the database system is
+# shutting down"). The real server listens on TCP, so readiness over TCP is
+# the real server's answer, and the wait is a wait and not a sleep.
+until docker exec "$PG_NAME" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do sleep 1; done
 pass "the throwaway Postgres answers"
 
 # The script's own containers, by exact name: another lane's or a

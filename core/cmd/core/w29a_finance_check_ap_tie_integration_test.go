@@ -38,7 +38,7 @@ func TestIntegration_W29A_FinanceCheckAPTieNamesTheManualEntry(t *testing.T) {
 
 	glRepo := gl.NewRepository(pool).WithZone(newDealerZone(pool))
 	glSvc := gl.NewService(glRepo)
-	seams := TieSeams{Querier: pool, GLStore: glRepo, AP: financeCheckAPAging(pool)}
+	seams := TieSeams{Querier: pool, GLStore: glRepo, GLClock: glSvc, AP: financeCheckAPAging(pool)}
 	month := func() TieMonth {
 		return TieMonth{Year: nowLocal.Year(), Month: int(nowLocal.Month()), MonthEnd: time.Now().Add(time.Minute)}
 	}

@@ -571,6 +571,80 @@ var writable = map[string]bool{
 	"id": true, "mime": true, "checksum": true, "size_bytes": true, "links": true,
 }
 
+// attachmentCreateShape is the body-only half of the pushed create's
+// checks: the writable field set, the kind vocabulary, the file address
+// legs and their bounds, the size and tenant shape, the link set and the
+// payload id shape. It reads nothing and honours no fence (the driver arm
+// the links resolve through is Create's own read), so the bound key gate
+// can run it before the hidden refusal (UX-116): an invalid body then
+// meets these refusals under a spent key and a free one. The refusals are
+// exactly the ones Create answers.
+func attachmentCreateShape(fields map[string]any) (kind, fileID, bucket, mime, checksum string, sizeBytes, tenantID any, links []Link, id string, err error) {
+	for k := range fields {
+		if !writableCreate[k] {
+			return "", "", "", "", "", nil, nil, nil, "", fmt.Errorf("attachments: field %q is not writable through sync: %w", k, sync.ErrOpRefused)
+		}
+	}
+	kind, _ = fields["kind"].(string)
+	if !validKind(kind) {
+		return "", "", "", "", "", nil, nil, nil, "", fmt.Errorf("attachments: unknown kind: %w", sync.ErrOpRefused)
+	}
+	fileID, _ = fields["appwrite_file_id"].(string)
+	if fileID == "" {
+		return "", "", "", "", "", nil, nil, nil, "", fmt.Errorf("attachments: appwrite_file_id is required: %w", sync.ErrOpRefused)
+	}
+	if len(fileID) > 200 {
+		return "", "", "", "", "", nil, nil, nil, "", fmt.Errorf("attachments: appwrite_file_id is too long (max 200): %w", sync.ErrOpRefused)
+	}
+	bucket, _ = fields["bucket"].(string)
+	if bucket == "" {
+		return "", "", "", "", "", nil, nil, nil, "", fmt.Errorf("attachments: bucket is required: %w", sync.ErrOpRefused)
+	}
+	if len(bucket) > 200 {
+		return "", "", "", "", "", nil, nil, nil, "", fmt.Errorf("attachments: bucket is too long (max 200): %w", sync.ErrOpRefused)
+	}
+	// mime is optional in the contract's AttachmentCreate and NOT NULL in
+	// the table: an unstated mime lands as the empty string, the explicit
+	// placeholder for an unknown value, never a guessed one.
+	mime, _ = fields["mime"].(string)
+	if len(mime) > 200 {
+		return "", "", "", "", "", nil, nil, nil, "", fmt.Errorf("attachments: mime is too long (max 200): %w", sync.ErrOpRefused)
+	}
+	checksum, _ = fields["checksum"].(string)
+	if len(checksum) > 200 {
+		return "", "", "", "", "", nil, nil, nil, "", fmt.Errorf("attachments: checksum is too long (max 200): %w", sync.ErrOpRefused)
+	}
+	sizeBytes, err = sizeLeg(fields, "size_bytes")
+	if err != nil {
+		return "", "", "", "", "", nil, nil, nil, "", err
+	}
+	if raw, ok := fields["tenant_id"].(string); ok && raw != "" {
+		if !looksLikeUUID(raw) {
+			return "", "", "", "", "", nil, nil, nil, "", fmt.Errorf("attachments: tenant_id must be a uuid: %w", sync.ErrOpRefused)
+		}
+		tenantID = raw
+	}
+	links, err = linksOf(fields["links"])
+	if err != nil {
+		return "", "", "", "", "", nil, nil, nil, "", fmt.Errorf("%v: %w", err, sync.ErrOpRefused)
+	}
+	id, hasID := fields["id"].(string)
+	if hasID && !looksLikeUUID(id) {
+		return "", "", "", "", "", nil, nil, nil, "", fmt.Errorf("attachments: payload id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	return kind, fileID, bucket, mime, checksum, sizeBytes, tenantID, links, id, nil
+}
+
+// ValidateCreate answers the pushed create's body shape without the driver
+// arm, the collision read or a write: the engine's bound key gate calls it
+// before the hidden refusal (UX-116). The refusals are exactly Create's.
+func (s *SyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	_, _, _, _, _, _, _, _, _, err := attachmentCreateShape(fields)
+	return err
+}
+
+var _ sync.CreateBodyValidator = (*SyncStore)(nil)
+
 // Create registers one attachment from a pushed create: the org stamps
 // from the filter, the file's Appwrite address validates as D10's own
 // required legs, the links land beside the row, and the row draws a
@@ -579,67 +653,14 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	if _, _, ok := scopePredicate(f); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
-	for k := range fields {
-		if !writableCreate[k] {
-			return sync.RowState{}, fmt.Errorf("attachments: field %q is not writable through sync: %w", k, sync.ErrOpRefused)
-		}
-	}
-	kind, _ := fields["kind"].(string)
-	if !validKind(kind) {
-		return sync.RowState{}, fmt.Errorf("attachments: unknown kind: %w", sync.ErrOpRefused)
-	}
-	fileID, _ := fields["appwrite_file_id"].(string)
-	if fileID == "" {
-		return sync.RowState{}, fmt.Errorf("attachments: appwrite_file_id is required: %w", sync.ErrOpRefused)
-	}
-	if len(fileID) > 200 {
-		return sync.RowState{}, fmt.Errorf("attachments: appwrite_file_id is too long (max 200): %w", sync.ErrOpRefused)
-	}
-	bucket, _ := fields["bucket"].(string)
-	if bucket == "" {
-		return sync.RowState{}, fmt.Errorf("attachments: bucket is required: %w", sync.ErrOpRefused)
-	}
-	if len(bucket) > 200 {
-		return sync.RowState{}, fmt.Errorf("attachments: bucket is too long (max 200): %w", sync.ErrOpRefused)
-	}
-	// mime is optional in the contract's AttachmentCreate and NOT NULL in
-	// the table: an unstated mime lands as the empty string, the explicit
-	// placeholder for an unknown value, never a guessed one.
-	mime, _ := fields["mime"].(string)
-	if len(mime) > 200 {
-		return sync.RowState{}, fmt.Errorf("attachments: mime is too long (max 200): %w", sync.ErrOpRefused)
-	}
-	checksum, _ := fields["checksum"].(string)
-	if len(checksum) > 200 {
-		return sync.RowState{}, fmt.Errorf("attachments: checksum is too long (max 200): %w", sync.ErrOpRefused)
-	}
-	var sizeBytes any
-	if raw, ok := fields["size_bytes"]; ok && raw != nil {
-		n, ok := raw.(float64)
-		if !ok || n < 0 || n != float64(int64(n)) {
-			return sync.RowState{}, fmt.Errorf("attachments: size_bytes must be a non-negative integer: %w", sync.ErrOpRefused)
-		}
-		sizeBytes = int64(n)
-	}
-	var tenantID any
-	if raw, ok := fields["tenant_id"].(string); ok && raw != "" {
-		if !looksLikeUUID(raw) {
-			return sync.RowState{}, fmt.Errorf("attachments: tenant_id must be a uuid: %w", sync.ErrOpRefused)
-		}
-		tenantID = raw
-	}
-	links, err := linksOf(fields["links"])
+	kind, fileID, bucket, mime, checksum, sizeBytes, tenantID, links, id, err := attachmentCreateShape(fields)
 	if err != nil {
-		return sync.RowState{}, fmt.Errorf("%v: %w", err, sync.ErrOpRefused)
+		return sync.RowState{}, err
 	}
 	// A driver caller registers attachments against their own stops
 	// alone: the drive-run app's photos. A declared stop link off their
 	// own runs, or a create that reaches no stop of theirs at all, is
 	// refused whole.
-	id, hasID := fields["id"].(string)
-	if hasID && !looksLikeUUID(id) {
-		return sync.RowState{}, fmt.Errorf("attachments: payload id must be a uuid: %w", sync.ErrOpRefused)
-	}
 	// The arm is resolved here, on the pool, before the transaction
 	// opens: the declared stops, plus the stops a taken payload id's
 	// standing row reaches (the conflict arm below reads that row under

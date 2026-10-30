@@ -1561,6 +1561,33 @@ func (r *Repository) AccountBalance(ctx context.Context, code string, year, mont
 	return netDebit, normal, nil
 }
 
+// RevenueBalance sums the net posted credit balance on REVENUE accounts for (year, month, branchID),
+// excluding year-end CLOSING journals so line 101 of the GST/HST return worksheet still reads the
+// period's revenue after the fiscal year has been closed.
+func (r *Repository) RevenueBalance(ctx context.Context, year, month int, branchID string) (int64, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	var netCredit int64
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(COALESCE(l.credit_cents, 0) - COALESCE(l.debit_cents, 0)), 0)::bigint
+		   FROM gl_journals j
+		   JOIN gl_journal_lines l ON l.journal_id = j.id
+		   JOIN gl_accounts a      ON a.id = l.account_id
+		   JOIN fiscal_periods fp  ON fp.id = j.period_id
+		  WHERE j.status = 'POSTED'
+		    AND j.source <> 'CLOSING'
+		    AND a.account_type = 'REVENUE'
+		    AND fp.year = $1
+		    AND ($2 <= 0 OR fp.month = $2)
+		    AND ($3 = '' OR COALESCE(l.branch_id, j.branch_id) = $3::uuid)`,
+		year, month, branchID).Scan(&netCredit)
+	if err != nil {
+		return 0, fmt.Errorf("gl: revenue balance: %w", err)
+	}
+	return netCredit, nil
+}
+
 // AccountBalanceAsOf sums the POSTED net-debit of an account inception-to-date across EVERY fiscal year,
 // bounded by posted_at <= asOf. Unlike AccountBalance it drops the fiscal_year/month restriction, so an AR
 // balance carried across a year boundary is included on the GL side of the tie-out (the year-boundary fix).
@@ -2059,16 +2086,23 @@ func (r *Repository) InsertExportBatch(ctx context.Context, year, month int, for
 	return id, nil
 }
 
-func (r *Repository) ExportRows(ctx context.Context, year, month int, branchID string) ([]ExportRow, error) {
+// ExportRows reads one period's posted lines for the export: the fiscal year, the pick's months
+// (an empty slice is the whole year), and the branch scope ("" = consolidated).
+func (r *Repository) ExportRows(ctx context.Context, year int, months []int, branchID string) ([]ExportRow, error) {
 	if r.pool == nil {
 		return nil, errNoDB
+	}
+	if months == nil {
+		months = []int{}
 	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT entry_no, COALESCE(to_char(posted_at,'YYYY-MM-DD'),''), account_code::text, account_name,
 		        COALESCE(debit_cents,0), COALESCE(credit_cents,0), COALESCE(memo,'')
 		 FROM v_gl_detail
-		 WHERE period_year = $1 AND ($2 <= 0 OR period_month = $2) AND ($3 = '' OR branch_id = $3::uuid)
-		 ORDER BY entry_no, account_code`, year, month, branchID)
+		 WHERE period_year = $1
+		   AND (cardinality($2::int[]) = 0 OR period_month = ANY($2::int[]))
+		   AND ($3 = '' OR branch_id = $3::uuid)
+		 ORDER BY entry_no, account_code`, year, months, branchID)
 	if err != nil {
 		return nil, fmt.Errorf("gl: export rows: %w", err)
 	}
@@ -2082,6 +2116,107 @@ func (r *Repository) ExportRows(ctx context.Context, year, month int, branchID s
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// UnmappedMovementAccounts answers, in code order, every account with a posted line in the period
+// that carries no mapping row for the target: the export refuses and names these, in words.
+func (r *Repository) UnmappedMovementAccounts(ctx context.Context, year int, months []int, branchID, target string) ([]UnmappedAccount, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if months == nil {
+		months = []int{}
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT DISTINCT d.account_code, d.account_name
+		   FROM v_gl_detail d
+		  WHERE d.period_year = $1
+		    AND (cardinality($2::int[]) = 0 OR d.period_month = ANY($2::int[]))
+		    AND ($3 = '' OR d.branch_id = $3::uuid)
+		    AND NOT EXISTS (SELECT 1 FROM gl_account_mapping m WHERE m.target = $4 AND m.account_code = d.account_code)
+		  ORDER BY d.account_code`, year, months, branchID, target)
+	if err != nil {
+		return nil, fmt.Errorf("gl: unmapped movement accounts: %w", err)
+	}
+	defer rows.Close()
+	var out []UnmappedAccount
+	for rows.Next() {
+		var u UnmappedAccount
+		if err := rows.Scan(&u.AccountCode, &u.AccountName); err != nil {
+			return nil, fmt.Errorf("gl: scan unmapped account: %w", err)
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// - the accounting package export's account mapping (W3 AX-1) -
+
+func (r *Repository) ListAccountMapping(ctx context.Context, target string) ([]AccountMapping, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT m.target, m.account_code::text, COALESCE(a.name, ''), m.package_account
+		   FROM gl_account_mapping m
+		   LEFT JOIN gl_accounts a ON a.code = m.account_code
+		  WHERE ($1 = '' OR m.target = $1)
+		  ORDER BY m.target, m.account_code`, target)
+	if err != nil {
+		return nil, fmt.Errorf("gl: list account mapping: %w", err)
+	}
+	defer rows.Close()
+	var out []AccountMapping
+	for rows.Next() {
+		var m AccountMapping
+		if err := rows.Scan(&m.Target, &m.AccountCode, &m.AccountName, &m.PackageAccount); err != nil {
+			return nil, fmt.Errorf("gl: scan account mapping: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// SetAccountMapping upserts one account's row for one target, then runs the record callback on the
+// SAME transaction with the row as written, so the audit row commits or rolls back with the mapping.
+// A re-set moves the one row the (target, account_code) unique carries, never a second one.
+func (r *Repository) SetAccountMapping(ctx context.Context, target, accountCode, packageAccount, actorID string, record func(context.Context, pgx.Tx, AccountMapping) error) (AccountMapping, error) {
+	if r.pool == nil {
+		return AccountMapping{}, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return AccountMapping{}, fmt.Errorf("gl: begin the mapping set: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var m AccountMapping
+	err = tx.QueryRow(ctx,
+		`WITH up AS (
+		   INSERT INTO gl_account_mapping (target, account_code, package_account, set_by)
+		   VALUES ($1, $2, $3, NULLIF($4, '')::uuid)
+		   ON CONFLICT (target, account_code)
+		   DO UPDATE SET package_account = EXCLUDED.package_account,
+		                 set_by          = EXCLUDED.set_by,
+		                 updated_at      = now()
+		   RETURNING id, target, account_code, package_account
+		 )
+		 SELECT up.id::text, up.target, up.account_code::text, COALESCE(a.name, ''), up.package_account
+		   FROM up
+		   LEFT JOIN gl_accounts a ON a.code = up.account_code`,
+		target, accountCode, packageAccount, actorID).
+		Scan(&m.ID, &m.Target, &m.AccountCode, &m.AccountName, &m.PackageAccount)
+	if err != nil {
+		return AccountMapping{}, fmt.Errorf("gl: set account mapping: %w", err)
+	}
+	if record != nil {
+		if err := record(ctx, tx, m); err != nil {
+			return AccountMapping{}, fmt.Errorf("gl: record the mapping set: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AccountMapping{}, fmt.Errorf("gl: commit the mapping set: %w", err)
+	}
+	return m, nil
 }
 
 // - DIB-360/361: approval configuration (0106 gl_approver_assignments + gl_policy write) -

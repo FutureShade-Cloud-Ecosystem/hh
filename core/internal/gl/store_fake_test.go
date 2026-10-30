@@ -55,8 +55,9 @@ type fakeStore struct {
 	plBranchRows  []PLBranchRow
 	headOffice    string
 	seq           int
-	markers       map[int]bool // the year end markers the fake holds (FW1-09g)
-	periodYear    int          // the year the fake's one period sits in (FW1-09h: the reopen reads the year)
+	markers       map[int]bool      // the year end markers the fake holds (FW1-09g)
+	periodYear    int               // the year the fake's one period sits in (FW1-09h: the reopen reads the year)
+	unmapped      []UnmappedAccount // the movement accounts UnmappedMovementAccounts answers (the export's refusal)
 }
 
 func newFakeStore() *fakeStore {
@@ -409,6 +410,10 @@ func (f *fakeStore) AccountBalance(_ context.Context, _ string, _, _ int, _ stri
 	return 0, NormalDebit, nil
 }
 
+func (f *fakeStore) RevenueBalance(_ context.Context, _, _ int, _ string) (int64, error) {
+	return 0, nil
+}
+
 func (f *fakeStore) AccountBalanceThrough(_ context.Context, _ string, _, _ int, _ string) (int64, string, error) {
 	return 0, NormalDebit, nil
 }
@@ -471,8 +476,29 @@ func (f *fakeStore) InsertExportBatch(_ context.Context, _, _ int, _, _ string, 
 	f.seq++
 	return fmt.Sprintf("batch-%d", f.seq), nil
 }
-func (f *fakeStore) ExportRows(_ context.Context, _, _ int, _ string) ([]ExportRow, error) {
+func (f *fakeStore) ExportRows(_ context.Context, _ int, _ []int, _ string) ([]ExportRow, error) {
 	return nil, nil
+}
+
+// UnmappedMovementAccounts answers the rows a test plants on the fake, so the export's mapping
+// refusal is provable with no database.
+func (f *fakeStore) UnmappedMovementAccounts(_ context.Context, _ int, _ []int, _, _ string) ([]UnmappedAccount, error) {
+	return f.unmapped, nil
+}
+
+// - the accounting package export's account mapping (W3 AX-1) -
+
+func (f *fakeStore) ListAccountMapping(_ context.Context, _ string) ([]AccountMapping, error) {
+	return nil, nil
+}
+func (f *fakeStore) SetAccountMapping(_ context.Context, target, accountCode, packageAccount, _ string, record func(context.Context, pgx.Tx, AccountMapping) error) (AccountMapping, error) {
+	m := AccountMapping{ID: "mapping-fake", Target: target, AccountCode: accountCode, PackageAccount: packageAccount}
+	if record != nil {
+		if err := record(context.Background(), nil, m); err != nil {
+			return AccountMapping{}, err
+		}
+	}
+	return m, nil
 }
 
 // lastInserted returns the most recently inserted draft (nil if none).

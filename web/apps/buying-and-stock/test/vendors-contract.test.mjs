@@ -118,8 +118,36 @@ test("the echoed reference finds an order however the vendor wrote it", async ()
   refused(await stub.call("GET", "/api/v1/purchasing/vendor-ref?ref=nothing"), 404, "not found");
 });
 
-test("the wall refuses the writes of a role that is not a manager, and the reads stay open", async () => {
+test("the T5018 mark is the Financial Controller's, and the wall says so", async () => {
   await stub.reset();
+  const v = await alcli();
+  // A role that is not the controller is refused with the shared Forbidden body, before any
+  // handler runs: the route's census row names money-desk at admin, and the controller is the
+  // matrix's only admin seat there.
+  await stub.post("/_stub/role", { role: "payables-receivables" });
+  const refusedMark = await stub.call("PUT", `${V}/${v.id}/t5018`, { is_subcontractor: true });
+  assert.equal(refusedMark.status, 403);
+  assert.deepEqual(refusedMark.json, { error: "Forbidden" });
+  await stub.post("/_stub/role", { role: "financial-controller" });
+  const marked = await stub.call("PUT", `${V}/${v.id}/t5018`, { is_subcontractor: true, business_number: "123456789" });
+  assert.equal(marked.status, 200);
+  holds("PurchasingVendorMaster", marked.json);
+  assert.equal(marked.json.is_t5018_subcontractor, true);
+  assert.equal(marked.json.business_number, "123456789");
+  // The list carries the mark and the number, so the screen reads them from one place.
+  const listed = (await stub.call("GET", V)).json.items.find((x) => x.id === v.id);
+  assert.equal(listed.is_t5018_subcontractor, true);
+  assert.equal(listed.business_number, "123456789");
+  // The mark must be said, and the number must be one.
+  refused(await stub.call("PUT", `${V}/${v.id}/t5018`, {}), 400, "is_subcontractor is required on the T5018 record");
+  refused(await stub.call("PUT", `${V}/${v.id}/t5018`, { is_subcontractor: true, business_number: "12345" }), 400, "the business number must be nine digits, with RC0001 after them for a program account");
+  // Clearing the mark keeps the number.
+  const cleared = await stub.call("PUT", `${V}/${v.id}/t5018`, { is_subcontractor: false });
+  assert.equal(cleared.json.is_t5018_subcontractor, false);
+  assert.equal(cleared.json.business_number, "123456789");
+});
+
+test("the wall refuses the writes of a role that is not a manager, and the reads stay open", async () => {  await stub.reset();
   await stub.post("/_stub/role", { role: "payables-receivables" });
   const v = await alcli();
   for (const [method, path, body] of [
