@@ -166,28 +166,62 @@ func TestFinanceResetRefusesDefaultPrivilegesForAnAssistRole(t *testing.T) {
 	dump := `ALTER DEFAULT PRIVILEGES FOR ROLE assist_view_owner_finworld GRANT SELECT ON TABLES TO PUBLIC;
 GRANT SELECT ON TABLE public.customers TO assist_view_owner_finworld;
 `
-	err := financeResetDefaultPrivilegesPossible([]byte(dump))
+	err := financeResetDefaultPrivilegesPossible([]byte(dump), "finworld")
 	if err == nil {
 		t.Fatalf("a dump granting default privileges for an assist role was accepted")
 	}
-	for _, want := range []string{"assist_view_owner_finworld", "default privileges", "refuses"} {
+	for _, want := range []string{"ASSIST_VIEW_OWNER_FINWORLD", "default privileges", "refuses"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("the refusal does not name %q: %v", want, err)
 		}
 	}
 
 	// The shapes a real world carries are not refused: the world's own owner
-	// revokes (the fold is lossless for them), the migrating role's own
-	// defaults with a grant to an assist role, and a quoted role name that is
-	// no assist role.
+	// revokes (the fold is lossless for them) and the migrating role's own
+	// defaults with a grant to an assist role.
 	ok := `ALTER DEFAULT PRIVILEGES FOR ROLE assist_view_owner_finworld REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE assist_claims_owner_finworld REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE finbuild_migrate REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE finbuild_migrate GRANT ALL ON FUNCTIONS TO app_function_users_finworld;
-ALTER DEFAULT PRIVILEGES FOR ROLE "some other role" GRANT SELECT ON TABLES TO PUBLIC;
 `
-	if err := financeResetDefaultPrivilegesPossible([]byte(ok)); err != nil {
+	if err := financeResetDefaultPrivilegesPossible([]byte(ok), "finworld"); err != nil {
 		t.Fatalf("a dump the world's own shape was refused: %v", err)
+	}
+}
+
+// TestFinanceResetDefaultPrivilegesAllowExactlyTheWorldsOwn is the PR706 S5
+// read's P3 (row 0.14): the refusal read lines and the first role in a list
+// only, so a harmful default privilege passed when it was declared FOR the
+// migrating role, with no FOR ROLE, in a role list, in another schema or
+// across two lines, and every one of those shapes lands on the box's
+// restoring role, whose every future object the grant would then reach. The
+// refusal reads whole statements and allows exactly the world's own shapes,
+// for any role: the revoke of function execute from PUBLIC, and the grant of
+// all functions to the build's own function users role. Everything else is
+// refused, whatever role it names.
+func TestFinanceResetDefaultPrivilegesAllowExactlyTheWorldsOwn(t *testing.T) {
+	worldsOwn := `ALTER DEFAULT PRIVILEGES FOR ROLE assist_claims_owner_finworld REVOKE ALL ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE assist_view_owner_finworld REVOKE ALL ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE ALL ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres GRANT ALL ON FUNCTIONS TO app_function_users_finworld;
+`
+	if err := financeResetDefaultPrivilegesPossible([]byte(worldsOwn), "finworld"); err != nil {
+		t.Fatalf("the world's own four default privileges statements were refused: %v", err)
+	}
+	for _, statement := range []string{
+		"ALTER DEFAULT PRIVILEGES FOR ROLE assist_view_owner_finworld GRANT SELECT ON TABLES TO PUBLIC;",
+		"ALTER DEFAULT PRIVILEGES FOR ROLE postgres GRANT SELECT ON TABLES TO assist_reader_finworld;",
+		"ALTER DEFAULT PRIVILEGES FOR ROLE postgres GRANT ALL ON TABLES TO PUBLIC;",
+		"ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO assist_reader_finworld;",
+		"ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO PUBLIC;",
+		"ALTER DEFAULT PRIVILEGES FOR ROLE postgres, assist_view_owner_finworld GRANT SELECT ON TABLES TO PUBLIC;",
+		"ALTER DEFAULT PRIVILEGES\nFOR ROLE assist_view_owner_finworld GRANT SELECT ON TABLES TO PUBLIC;",
+		`ALTER DEFAULT PRIVILEGES FOR ROLE "some other role" GRANT SELECT ON TABLES TO PUBLIC;`,
+		"ALTER DEFAULT PRIVILEGES FOR ROLE postgres GRANT ALL ON FUNCTIONS TO app_function_users_otherworld;",
+	} {
+		if err := financeResetDefaultPrivilegesPossible([]byte(statement), "finworld"); err == nil {
+			t.Fatalf("the default privileges statement was accepted: %q", statement)
+		}
 	}
 }
 

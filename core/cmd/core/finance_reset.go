@@ -284,9 +284,9 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 		return err
 	}
 	// The mapping folds every default privileges statement onto the restoring
-	// role, so a dump that declares them FOR an assist role is refused first, in
-	// words, before anything is dropped.
-	if err := financeResetDefaultPrivilegesPossible(dump); err != nil {
+	// role, so a dump whose default privileges go beyond the world's own is
+	// refused first, in words, before anything is dropped.
+	if err := financeResetDefaultPrivilegesPossible(dump, buildSuffix); err != nil {
 		return err
 	}
 	mapped, err := financeResetMapRoles(dump, buildSuffix, boxSuffix, restoringRole)
@@ -548,14 +548,18 @@ var financeResetTransactionControlHeads = []string{
 //
 // Each top level statement is joined up to its semicolon, its whitespace
 // (tabs and newlines included) is collapsed to single spaces, and it is upper
-// cased before matching. Dollar quoting ($$ and $tag$) is tracked across
-// lines so a function body's BEGIN, END IF;, END LOOP; and END; are never
-// read as top level statements. A head matches as whole words only:
+// cased before matching. Dollar quoting ($$ and $tag$, opened only when the $
+// does not continue an identifier, so a$b$c stays one identifier), single
+// quoted literals, double quoted identifiers and SQL comments are tracked so
+// semicolons and BEGIN/END inside a function body, a string literal, a quoted
+// identifier or a SQL standard body (BEGIN ATOMIC up to its matching END) are
+// never read as top level statements. A head matches as whole words only:
 // "SET transaction_timeout = 0;", which a newer pg_dump writes, is a session
 // setting and runs inside a transaction, and it is not SET TRANSACTION. Top
-// level transaction control in every form and psql meta commands that leave
-// or read elsewhere (\c, \connect, \i, \ir, \include, \o, \!) are refused,
-// while \restrict and \unrestrict stay allowed.
+// level transaction control in every form is refused, and so is every psql
+// meta command except pg_dump's own \restrict and \unrestrict: a list of
+// refusals would always trail psql's command set (\gexec sends what the last
+// query returned), so nothing else is allowed through.
 func financeResetTransactionSafe(dump []byte) error {
 	statements, err := financeResetStatements(dump)
 	if err != nil {
@@ -591,22 +595,71 @@ func financeResetIsTopLevelEnd(upper string) bool {
 
 // financeResetStatements splits the dump's non-data lines into normalised top
 // level SQL statements and checks every top level psql meta command along the
-// way. Dollar quoting ($$ and $tag$), single quoted literals and SQL comments
-// are tracked so semicolons and BEGIN/END inside a function body or string
-// literal are never read as top level statements.
+// way. Dollar quoting ($$ and $tag$, opened only when the $ does not continue
+// an identifier), single quoted literals, double quoted identifiers and SQL
+// comments are tracked so semicolons and BEGIN/END inside a function body, a
+// string literal or a quoted identifier are never read as top level
+// statements, and a SQL standard function body (BEGIN ATOMIC up to its
+// matching END, which pg_dump writes without dollar quotes) is tracked like a
+// dollar quoted body.
 func financeResetStatements(dump []byte) ([]string, error) {
 	src := strings.Join(financeResetNonDataLines(dump), "\n")
 	var statements []string
 	var buf strings.Builder
+	var word []byte
 	dollarTag := ""
+	prevWord := ""
 	inSingleQuote := false
+	inDoubleQuote := false
 	inBlockComment := false
+	// beginAtomic counts the SQL standard bodies the statement being read has
+	// opened (BEGIN ATOMIC ... END): while it is positive the body's own
+	// semicolons do not end the statement, and the END that closes the body
+	// is the word END that stands first in one of the body's inner
+	// statements, never the END of a CASE or a word inside a string, which
+	// never stands first.
+	beginAtomic := 0
+	atBodyStart := false
+	// head holds the first words of the statement being read: psql opens a SQL
+	// standard body only after CREATE [OR REPLACE] FUNCTION or PROCEDURE, so a
+	// BEGIN ATOMIC anywhere else is plain words and its semicolons still end
+	// the statement (S15 on PR 726).
+	var head []string
 
 	flush := func() {
 		if norm := financeResetNormaliseStatement(buf.String()); norm != "" {
 			statements = append(statements, norm)
 		}
 		buf.Reset()
+		head = head[:0]
+	}
+
+	// endWord settles the word that ends at the boundary byte the loop is
+	// about to read: BEGIN ATOMIC opens a SQL standard body, and the END that
+	// stands first in an inner body statement closes one.
+	endWord := func() {
+		if len(word) == 0 {
+			return
+		}
+		w := string(word)
+		word = word[:0]
+		if beginAtomic == 0 && len(head) < 4 {
+			head = append(head, w)
+		}
+		if prevWord == "BEGIN" && w == "ATOMIC" && (beginAtomic > 0 || financeResetRoutineHead(head)) {
+			beginAtomic++
+			atBodyStart = true
+			prevWord = w
+			return
+		}
+		if beginAtomic > 0 && atBodyStart && w == "END" {
+			beginAtomic--
+			atBodyStart = true
+			prevWord = w
+			return
+		}
+		atBodyStart = false
+		prevWord = w
 	}
 
 	for i := 0; i < len(src); {
@@ -633,6 +686,19 @@ func financeResetStatements(dump []byte) ([]string, error) {
 			i++
 			continue
 		}
+		if inDoubleQuote {
+			buf.WriteByte(src[i])
+			if src[i] == '"' {
+				if i+1 < len(src) && src[i+1] == '"' {
+					buf.WriteByte(src[i+1])
+					i += 2
+					continue
+				}
+				inDoubleQuote = false
+			}
+			i++
+			continue
+		}
 		if dollarTag != "" {
 			if strings.HasPrefix(src[i:], dollarTag) {
 				buf.WriteString(dollarTag)
@@ -645,24 +711,38 @@ func financeResetStatements(dump []byte) ([]string, error) {
 			continue
 		}
 		if i+1 < len(src) && src[i] == '-' && src[i+1] == '-' {
+			endWord()
 			for i < len(src) && src[i] != '\n' {
 				i++
 			}
 			continue
 		}
 		if i+1 < len(src) && src[i] == '/' && src[i+1] == '*' {
+			endWord()
 			inBlockComment = true
 			i += 2
 			continue
 		}
 		if src[i] == '\'' {
+			endWord()
+			atBodyStart = false
 			inSingleQuote = true
 			buf.WriteByte(src[i])
 			i++
 			continue
 		}
+		if src[i] == '"' {
+			endWord()
+			atBodyStart = false
+			inDoubleQuote = true
+			buf.WriteByte(src[i])
+			i++
+			continue
+		}
 		if src[i] == '$' {
-			if tag := financeResetDollarTag(src[i:]); tag != "" {
+			if tag := financeResetDollarTag(src[i:]); tag != "" && (i == 0 || !financeResetWordByte(src[i-1])) {
+				endWord()
+				atBodyStart = false
 				dollarTag = tag
 				buf.WriteString(tag)
 				i += len(tag)
@@ -670,6 +750,9 @@ func financeResetStatements(dump []byte) ([]string, error) {
 			}
 		}
 		if src[i] == '\\' {
+			endWord()
+			prevWord = ""
+			atBodyStart = false
 			flush()
 			end := i
 			for end < len(src) && src[end] != '\n' {
@@ -682,15 +765,46 @@ func financeResetStatements(dump []byte) ([]string, error) {
 			continue
 		}
 		if src[i] == ';' {
+			endWord()
+			if beginAtomic > 0 {
+				atBodyStart = true
+				buf.WriteByte(src[i])
+				i++
+				continue
+			}
 			flush()
 			i++
 			continue
+		}
+		if financeResetWordByte(src[i]) {
+			if src[i] >= 'a' && src[i] <= 'z' {
+				word = append(word, src[i]-'a'+'A')
+			} else {
+				word = append(word, src[i])
+			}
+		} else {
+			endWord()
+			if beginAtomic > 0 && !financeResetSpaceByte(src[i]) {
+				atBodyStart = false
+			}
 		}
 		buf.WriteByte(src[i])
 		i++
 	}
 	flush()
 	return statements, nil
+}
+
+// financeResetWordByte answers whether b is one of the characters of a bare
+// SQL word. They are the identifier continuation characters too, so a $
+// inside a bare identifier (a$b$c) never opens a dollar quote.
+func financeResetWordByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' || b == '$' || b >= 0x80
+}
+
+// financeResetSpaceByte answers whether b is whitespace between words.
+func financeResetSpaceByte(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
 }
 
 // financeResetNormaliseStatement collapses all whitespace (spaces, tabs and
@@ -732,26 +846,22 @@ func financeResetDollarTagCont(b byte) bool {
 	return financeResetDollarTagStart(b) || (b >= '0' && b <= '9')
 }
 
-// financeResetMetaCommandSafe checks a top level psql meta command. Commands
-// that leave the connection, read another file, redirect output or shell out
-// (\c, \connect, \i, \ir, \include, \o, \!) are refused; pg_dump's \restrict
-// and \unrestrict are allowed.
+// financeResetMetaCommandSafe checks a top level psql meta command. Only the
+// meta commands pg_dump writes, \restrict and \unrestrict, are allowed: a
+// list of refusals always trails psql's command set (\gexec sends what the
+// last query returned, so a crafted dump could commit the drop mid script),
+// so every other backslash command is refused. The \. that ends a COPY block
+// never reaches here: the COPY blocks are skipped whole.
 func financeResetMetaCommandSafe(line string) error {
 	fields := strings.Fields(strings.TrimSpace(line))
 	if len(fields) == 0 {
 		return nil
 	}
-	cmd := strings.ToUpper(strings.TrimSuffix(fields[0], ";"))
-	if strings.HasPrefix(cmd, `\!`) {
-		return fmt.Errorf("finance-reset: the world's dump carries a psql meta command (%s): the reset refuses before it drops anything", fields[0])
+	switch strings.ToUpper(strings.TrimSuffix(fields[0], ";")) {
+	case `\RESTRICT`, `\UNRESTRICT`:
+		return nil
 	}
-	switch cmd {
-	case `\C`, `\CONNECT`:
-		return fmt.Errorf("finance-reset: the world's dump carries a psql connection switch: the reset refuses before it drops anything")
-	case `\I`, `\IR`, `\INCLUDE`, `\INCLUDE_RELATIVE`, `\O`, `\OUT`:
-		return fmt.Errorf("finance-reset: the world's dump carries a psql meta command (%s): the reset refuses before it drops anything", fields[0])
-	}
-	return nil
+	return fmt.Errorf("finance-reset: the world's dump carries a psql meta command (%s): the reset refuses before it drops anything", fields[0])
 }
 
 // financeResetHeadMatches answers whether an upper cased statement opens with
@@ -1000,4 +1110,16 @@ func firstLine(text, dsn string) string {
 		line = line[:300]
 	}
 	return line
+}
+
+// financeResetRoutineHead answers whether a statement's first words create a
+// function or a procedure, the only statements psql reads a SQL standard body
+// (BEGIN ATOMIC ... END) in: CREATE FUNCTION, CREATE PROCEDURE, and both with
+// OR REPLACE.
+func financeResetRoutineHead(head []string) bool {
+	if len(head) >= 2 && head[0] == "CREATE" && (head[1] == "FUNCTION" || head[1] == "PROCEDURE") {
+		return true
+	}
+	return len(head) >= 4 && head[0] == "CREATE" && head[1] == "OR" && head[2] == "REPLACE" &&
+		(head[3] == "FUNCTION" || head[3] == "PROCEDURE")
 }

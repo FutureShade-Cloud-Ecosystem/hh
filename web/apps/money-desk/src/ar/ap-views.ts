@@ -7,10 +7,11 @@
 // Every figure is the server's, formatted. The board never adds a bucket up and never takes a
 // figure of its own: the route's row totals and the route's book totals are what show.
 import { html, nothing, type TemplateResult } from "lit";
-import { PAYABLES_BANDS, canPayBills, isLandedCostRow, landedCostWords, formatBillMoney, isForeignBill, payEarlierLandedWords, payLandedWords, payTargetWords, rowItems, rowKey, type PayablesBoardModel, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
+import { PAYABLES_BANDS, canPayBills, formatBillMoney, isForeignBill, isLandedCostRow, landedCostWords, payEarlierLandedWords, payLandedWords, payTargetWords, rowItems, rowKey, type PayablesBoardModel, type PayablesView, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
 import { bucketWord, daysLateWord, daysPastDue, dayWords, pastDueMarkWord, relativeDay, statusTone, statusWord, type Mark } from "./ar-logic.js";
 import { formatMoney } from "./ar-money.js";
 import { markPill } from "./ar-views.js";
+import { businessNumberIsMissing, businessNumberWords, t5018EmptyKind, t5018Rows, type T5018Model } from "./t5018-logic.js";
 
 /** One band of the board's five. */
 type Band = (typeof PAYABLES_BANDS)[number];
@@ -312,5 +313,116 @@ export function renderPayables(board: PayablesBoardModel): TemplateResult {
             </section>
           `
         : html`${payablesAging(page)}`}
+  `;
+}
+
+// ---- the T5018 view ----------------------------------------------------------------------------
+
+/**
+ * The Payables area's own view nav: the open AP board and the T5018 year report. The area stands
+ * beside the receivables desk in the Money Desk's area switch, so this nav is the way from one of
+ * the area's own views to the other.
+ */
+export function payablesViewNav(view: PayablesView): TemplateResult {
+  const tab = (id: PayablesView, word: string): TemplateResult =>
+    html`<button type="button" class="tab" data-action="payables-view" data-view="${id}" aria-current="${view === id ? "true" : "false"}">${word}</button>`;
+  return html`
+    <nav class="tabs" aria-label="Payables views">
+      ${tab("aging", "Open AP")} ${tab("t5018", "T5018")}
+    </nav>
+  `;
+}
+
+/**
+ * The T5018 view: the year's payments to the vendors the Financial Controller has marked as
+ * subcontractors, which is what a CRA Form T5018 is filled from.
+ *
+ * The year is the DEALER'S year, so the picker is a year and not a date, and the figures are the
+ * route's: the rows, the paid amounts and the total are what the server sent.
+ */
+function t5018Panel(model: T5018Model): TemplateResult {
+  const report = model.report;
+  const rows = report === null ? [] : t5018Rows(report);
+  const emptyKind = report === null ? null : t5018EmptyKind(report);
+  return html`
+    <section class="panel" aria-label="T5018 subcontractor payments">
+      <div class="panel-head">
+        <h3>T5018 subcontractor payments</h3>
+        <div class="tools">
+          <label>Year<input type="number" min="1970" max="9999" step="1" data-field="t5018-year" aria-label="The year to report on" /></label>
+          <button type="button" class="btn btn-secondary" data-action="t5018-csv" ?disabled=${model.downloading || emptyKind !== null}>
+            ${model.downloading ? "Preparing the file" : "Download CSV"}
+          </button>
+        </div>
+      </div>
+      ${model.state === "loading"
+        ? html`<p class="dim" role="status">Loading the year.</p><div class="ghost"></div><div class="ghost"></div>`
+        : model.state === "error" || report === null
+          ? html`
+              <p class="alert alert-error" role="alert" data-error>${model.error}</p>
+              <div class="actions"><button type="button" class="btn btn-secondary" data-action="t5018-reload">Try again</button></div>
+            `
+          : emptyKind === "none-marked"
+            ? html`
+                <div class="empty" data-t5018-empty="none-marked">
+                  <strong>No vendor is marked yet.</strong>
+                  <span class="dim">A vendor is marked as a subcontractor on its own record in Buying and Stock.</span>
+                </div>
+              `
+            : html`
+                ${emptyKind === "none-paid"
+                  ? html`<div class="empty" data-t5018-empty="none-paid">
+                      <strong>Nothing was paid to marked vendors in ${report.year}.</strong>
+                      <span class="dim">The marked vendors are listed below with their CRA business numbers.</span>
+                    </div>`
+                  : nothing}
+                <div class="scroll">
+                  <table class="stack t5018" data-t5018-table>
+                    <thead>
+                      <tr><th>Vendor</th><th>CRA business number</th><th class="num">Paid in ${report.year}</th></tr>
+                    </thead>
+                    <tbody>
+                      ${rows.map(
+                        (row) => html`
+                          <tr data-t5018-row data-vendor-id="${row.vendor_id}">
+                            <td>
+                              <span class="who">${row.name}</span>
+                              <span class="dim small">${row.vendor_no}</span>
+                            </td>
+                            <td data-t5018-number data-label="CRA business number">${businessNumberIsMissing(row)
+                              ? html`<span class="pill pill-watch" data-t5018-missing>${businessNumberWords(row)}</span>`
+                              : businessNumberWords(row)}</td>
+                            <td class="num" data-t5018-paid>${formatMoney(row.paid_cents)}</td>
+                          </tr>
+                        `,
+                      )}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colspan="2"><b>Paid to subcontractors in ${report.year}</b></td>
+                        <td class="num"><b data-t5018-total>${formatMoney(report.total_cents)}</b></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              `}
+      ${model.notice === "" ? nothing : html`<p class="dim small foot" data-t5018-notice>${model.notice}</p>`}
+    </section>
+  `;
+}
+
+/**
+ * The T5018 view: the panel above, under the area's own head. The year the report answers is the
+ * route's, so the screen shows the route's year and never a year of its own.
+ */
+export function renderT5018(model: T5018Model): TemplateResult {
+  return html`
+    <div class="head">
+      <div>
+        <h1>T5018</h1>
+        <p class="dim">What the dealer paid its subcontractors in a calendar year, for the CRA's Form T5018. Only the vendors the Financial Controller has marked are on it.</p>
+      </div>
+    </div>
+    ${t5018Panel(model)}
   `;
 }

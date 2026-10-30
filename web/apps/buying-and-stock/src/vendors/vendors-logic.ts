@@ -7,6 +7,7 @@
 // original app's purchasing console (repository hardscapeos_dibbits, commit
 // f8f4973db317b92296ae8ec7e62a3f54f5dc82ab: the purchasing console and api screens); the words are HH's.
 import type {
+  PurchasingSetVendorT5018Request,
   PurchasingUpdateVendorRequest,
   PurchasingVendor,
   PurchasingVendorContactWrite,
@@ -14,6 +15,37 @@ import type {
   PurchasingVendorSKUWrite,
 } from "@hardscapehouse/api-client";
 import { parseQty } from "../purch/purch-money.js";
+
+/**
+ * The seat that may mark a vendor a subcontractor: the Financial Controller, and the platform
+ * roles that ride above every wall.
+ *
+ * The core's wall stays the authority: the route names money-desk at admin, and the Financial
+ * Controller is the decided matrix's only admin seat on money-desk. This only keeps a seat that
+ * would be refused from being offered the control.
+ */
+const T5018_SEATS = new Set(["financial_controller", "super_admin"]);
+
+export function canSetT5018(roleCode: string): boolean {
+  return T5018_SEATS.has(roleCode);
+}
+
+/**
+ * The T5018 record, as the core accepts it: the mark itself and the contractor's CRA business
+ * number. The mark is always said (the core refuses a body that does not); the number is said
+ * only when it changed, and an empty one clears it.
+ */
+export interface T5018Text {
+  readonly isSubcontractor: boolean;
+  readonly businessNumber: string;
+}
+
+export function t5018Body(form: T5018Text, current: { is_t5018_subcontractor: boolean; business_number: string }): Check<PurchasingSetVendorT5018Request> {
+  const number = form.businessNumber.replace(/\s+/g, "");
+  const body: PurchasingSetVendorT5018Request = { is_subcontractor: form.isSubcontractor };
+  if (number !== current.business_number) body.business_number = number;
+  return { ok: true, body };
+}
 
 /** The vendor list, which the core answers as {"items":null} when there is none. */
 export function vendorRows(page: Partial<Omit<PurchasingVendorPage, "items">> & { items?: PurchasingVendor[] | null }): PurchasingVendor[] {

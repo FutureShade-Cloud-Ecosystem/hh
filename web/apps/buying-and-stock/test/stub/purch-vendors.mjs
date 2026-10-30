@@ -14,7 +14,7 @@ export function makeVendors(kit) {
 
   function reset() {
     nextNo = 100;
-    vendors = kit.VENDORS.map((v) => ({ id: uuid("a", v.n), vendor_no: v.no, name: v.name, payment_terms_days: v.terms, order_email: "", is_active: true }));
+    vendors = kit.VENDORS.map((v) => ({ id: uuid("a", v.n), vendor_no: v.no, name: v.name, payment_terms_days: v.terms, order_email: "", is_active: true, is_t5018_subcontractor: false, business_number: "" }));
     contacts = new Map();
     codes = new Map();
     // The vendor's own codes the purchase order shows, as the earlier stub seeded them.
@@ -32,7 +32,7 @@ export function makeVendors(kit) {
     }
   }
 
-  const listView = (v) => ({ id: v.id, vendor_no: v.vendor_no, name: v.name, payment_terms_days: v.payment_terms_days, is_active: v.is_active });
+  const listView = (v) => ({ id: v.id, vendor_no: v.vendor_no, name: v.name, payment_terms_days: v.payment_terms_days, is_active: v.is_active, is_t5018_subcontractor: v.is_t5018_subcontractor, business_number: v.business_number });
   const wall = (res) => {
     json(res, { error: "Forbidden" }, 403);
     return true;
@@ -83,14 +83,26 @@ export function makeVendors(kit) {
       const terms = validTerms(body.payment_terms_days, 30);
       if (terms.words) return say(res, 400, terms.words);
       nextNo += 1;
-      const v = { id: uuid("a", nextNo), vendor_no: `V-${String(nextNo).padStart(4, "0")}`, name: name.value, payment_terms_days: terms.value, order_email: email.value, is_active: true };
+      const v = { id: uuid("a", nextNo), vendor_no: `V-${String(nextNo).padStart(4, "0")}`, name: name.value, payment_terms_days: terms.value, order_email: email.value, is_active: true, is_t5018_subcontractor: false, business_number: "" };
       vendors.push(v);
       codes.set(v.id, []);
       json(res, v, 201);
       return true;
     }
-    const one = rest.match(/^vendors\/([^/]+)$/);
-    if (one && method === "PUT") {
+    // The T5018 record: the Financial Controller's subcontractor mark and the contractor's CRA
+// business number (W3-T51). Its own door: the route's census row names money-desk at admin, and
+// the Financial Controller is the matrix's only admin seat on money-desk, so the wall here is the
+// controller and the super admin (which rides above every wall). Every other seat is refused with
+// the shared Forbidden body before any handler runs.
+const T5018_SEATS = new Set(["financial-controller", "super-admin"]);
+function validBusinessNumber(raw) {
+  const n = String(raw ?? "").replace(/\s+/g, "");
+  if (n === "") return { value: "" };
+  if (!/^\d{9}(RC0001)?$/.test(n)) return { words: "the business number must be nine digits, with RC0001 after them for a program account" };
+  return { value: n };
+}
+
+const one = rest.match(/^vendors\/([^/]+)$/);    if (one && method === "PUT") {
       if (!canWrite) return wall(res);
       const body = await readBody(req);
       if (body === null) return say(res, 400, "invalid_json");
@@ -121,8 +133,23 @@ export function makeVendors(kit) {
       json(res, v);
       return true;
     }
-    const contact = rest.match(/^vendors\/([^/]+)\/contact$/);
-    if (contact) {
+    const t5018 = rest.match(/^vendors\/([^/]+)\/t5018$/);
+    if (t5018 && method === "PUT") {
+      if (!T5018_SEATS.has(role)) return wall(res);
+      const body = await readBody(req);
+      if (body === null) return say(res, 400, "invalid_json");
+      if (!isUuid(t5018[1])) return say(res, 400, "vendor id must be a uuid");
+      if (body.is_subcontractor === undefined || body.is_subcontractor === null) return say(res, 400, "is_subcontractor is required on the T5018 record");
+      const number = body.business_number === undefined || body.business_number === null ? undefined : validBusinessNumber(body.business_number);
+      if (number !== undefined && number.words) return say(res, 400, number.words);
+      const v = vendors.find((x) => x.id === t5018[1]);
+      if (v === undefined) return say(res, 404, "not found");
+      v.is_t5018_subcontractor = Boolean(body.is_subcontractor);
+      if (number !== undefined) v.business_number = number.value;
+      json(res, v);
+      return true;
+    }
+    const contact = rest.match(/^vendors\/([^/]+)\/contact$/);    if (contact) {
       const id = contact[1];
       if (method === "GET") {
         const c = contacts.get(id);

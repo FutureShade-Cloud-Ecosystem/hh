@@ -272,6 +272,7 @@ const receivablesStyles = css`
     table.stack, table.stack tbody { display: block; }
     table.stack tr { display: grid; gap: var(--hh-s-4) var(--hh-s-12); padding: var(--hh-s-12) 0; border-bottom: 1px solid var(--hh-line); }
     table.stack tbody td { display: block; padding: 0; border: 0; }
+    table.t5018 tbody td[data-label]::before { content: attr(data-label); display: block; color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
     table.stack tr[aria-current="true"] { background: var(--hh-row-alt); }
     table.stack tr[aria-current="true"] td { background: none; }
     table.stack tfoot { display: table; width: 100%; }
@@ -288,6 +289,10 @@ const receivablesStyles = css`
     table.inv tbody td:nth-child(7) { grid-area: pick; }
     table.inv tbody td:nth-child(8) { grid-area: applied; text-align: start; }
     table.inv tbody td.applied-cell:empty { display: none; }
+    /* The invoice cards keep their column names once the table's head is gone (W3 0.24): the due
+       day, the balance figure and an applied amount each name themselves over their figure, the
+       card list's own pattern (the Payables bands read the same way), so nothing arrives bare. */
+    table.inv tbody td[data-card-label]::before { display: block; color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; content: attr(data-card-label); }
     /* The invoice row's credit form is one cell that must span the whole row grid: in the inv column
        it read 24 px narrower than the rows above it. Its own single track replaces the row's three
        column areas, and its 8 px of side padding keeps the input's 4 px focus ring whole inside
