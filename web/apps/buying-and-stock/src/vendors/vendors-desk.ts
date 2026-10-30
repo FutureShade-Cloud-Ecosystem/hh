@@ -13,7 +13,7 @@ import type { AreaDesk, DeskHost } from "../purch/area.js";
 import { refusalWords } from "../po/po-logic.js";
 import { answerLost } from "../purch/purch-logic.js";
 import { VendorsApi } from "./vendors-api.js";
-import { contactBody, mappingBody, refWords, vendorBody, vendorRows } from "./vendors-logic.js";
+import { canSetT5018, contactBody, mappingBody, refWords, t5018Body, vendorBody, vendorRows } from "./vendors-logic.js";
 import { renderVendors, type Removal, type VendorTab } from "./vendors-views.js";
 
 type Failure = Extract<Result<unknown>, { ok: false }>;
@@ -30,6 +30,10 @@ export class VendorsDesk implements AreaDesk {
   #tab: VendorTab = "details";
   #savedEmail: string | null = null;
   #clearEmail = false;
+  // The T5018 record (W3-T51): the Controller's subcontractor mark on this vendor and the
+  // contractor's CRA business number. Its own door and its own save, so a buyer's edit of the
+  // vendor's name never touches the mark.
+  #t5018Mark = false;
   #contact: PurchasingVendorContactResult | null = null;
   #codes: readonly PurchasingVendorSKU[] | null = null;
   #products: readonly Product[] = [];
@@ -131,6 +135,13 @@ export class VendorsDesk implements AreaDesk {
         this.#clearEmail = !this.#clearEmail;
         this.#host.repaint();
         return true;
+      case "toggle-t5018":
+        this.#t5018Mark = !this.#t5018Mark;
+        this.#host.repaint();
+        return true;
+      case "save-t5018":
+        void this.#saveT5018();
+        return true;
       case "save-vendor":
         void this.#saveVendor();
         return true;
@@ -228,6 +239,7 @@ export class VendorsDesk implements AreaDesk {
     this.#tab = "details";
     this.#savedEmail = null;
     this.#clearEmail = false;
+    this.#t5018Mark = vendor === null || vendor === "new" ? false : vendor.is_t5018_subcontractor;
     this.#contact = null;
     this.#codes = null;
     this.#editingCode = null;
@@ -287,8 +299,44 @@ export class VendorsDesk implements AreaDesk {
     this.#host.repaint();
   }
 
-  async #toggleActive(): Promise<void> {
+  /**
+   * The T5018 record: the Controller's subcontractor mark and the contractor's CRA business
+   * number. Its own door and its own save, so a buyer's edit of the vendor's name never touches
+   * the mark, and the screen shows what the core answered.
+   */
+  async #saveT5018(): Promise<void> {
     const vendor = this.#selected;
+    if (vendor === null || vendor === "new" || this.#busy) return;
+    if (!canSetT5018(this.#host.role())) return;
+    const checked = t5018Body(
+      { isSubcontractor: this.#t5018Mark, businessNumber: this.#host.field("v-bn") },
+      { is_t5018_subcontractor: vendor.is_t5018_subcontractor, business_number: vendor.business_number },
+    );
+    if (!checked.ok) {
+      this.#error = checked.words;
+      this.#host.repaint();
+      return;
+    }
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const done = await this.#api.setT5018(vendor.id, checked.body);
+    if (done.ok) {
+      await this.#reloadVendors();
+      const listed = this.#vendors.find((v) => v.id === done.value.id) ?? null;
+      this.#selected = listed;
+      this.#t5018Mark = done.value.is_t5018_subcontractor;
+      this.#seedDetails = "";
+      this.#version += 1;
+      this.#notice = done.value.is_t5018_subcontractor
+        ? `${done.value.name} is marked as a subcontractor: it is on the T5018 report.`
+        : `${done.value.name} is no longer marked as a subcontractor.`;
+    } else await this.#failWrite(done);
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
+  async #toggleActive(): Promise<void> {    const vendor = this.#selected;
     if (vendor === null || vendor === "new" || this.#busy) return;
     this.#busy = true;
     this.#clearMessages();
@@ -422,6 +470,7 @@ export class VendorsDesk implements AreaDesk {
         set("v-name", vendor === "new" ? "" : vendor.name);
         set("v-terms", vendor === "new" ? "" : String(vendor.payment_terms_days));
         set("v-email", "");
+        set("v-bn", vendor === "new" ? "" : vendor.business_number);
         this.#seedDetails = key;
       }
     }
@@ -456,6 +505,8 @@ export class VendorsDesk implements AreaDesk {
       tab: this.#tab,
       savedEmail: this.#savedEmail,
       clearEmail: this.#clearEmail,
+      canSetT5018: canSetT5018(this.#host.role()),
+      t5018Mark: this.#t5018Mark,
       contact: this.#contact,
       codes: this.#codes,
       products: this.#products,

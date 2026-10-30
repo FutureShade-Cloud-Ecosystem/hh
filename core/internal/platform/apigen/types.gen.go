@@ -7793,11 +7793,13 @@ type LandedCostStatus string
 type LandedCostBasis string
 
 type PurchasingVendor struct {
-	Id               string `json:"id"`
-	VendorNo         string `json:"vendor_no"`
-	Name             string `json:"name"`
-	PaymentTermsDays int32  `json:"payment_terms_days"`
-	IsActive         bool   `json:"is_active"`
+	Id                   string `json:"id"`
+	VendorNo             string `json:"vendor_no"`
+	Name                 string `json:"name"`
+	PaymentTermsDays     int32  `json:"payment_terms_days"`
+	IsActive             bool   `json:"is_active"`
+	IsT5018Subcontractor bool   `json:"is_t5018_subcontractor"`
+	BusinessNumber       string `json:"business_number"`
 }
 
 type PurchasingCreateVendorRequest struct {
@@ -7813,13 +7815,20 @@ type PurchasingUpdateVendorRequest struct {
 	IsActive         *bool   `json:"is_active,omitempty"`
 }
 
+type PurchasingSetVendorT5018Request struct {
+	IsSubcontractor bool    `json:"is_subcontractor"`
+	BusinessNumber  *string `json:"business_number,omitempty"`
+}
+
 type PurchasingVendorMaster struct {
-	Id               string `json:"id"`
-	VendorNo         string `json:"vendor_no"`
-	Name             string `json:"name"`
-	PaymentTermsDays int32  `json:"payment_terms_days"`
-	OrderEmail       string `json:"order_email"`
-	IsActive         bool   `json:"is_active"`
+	Id                   string `json:"id"`
+	VendorNo             string `json:"vendor_no"`
+	Name                 string `json:"name"`
+	PaymentTermsDays     int32  `json:"payment_terms_days"`
+	OrderEmail           string `json:"order_email"`
+	IsActive             bool   `json:"is_active"`
+	IsT5018Subcontractor bool   `json:"is_t5018_subcontractor"`
+	BusinessNumber       string `json:"business_number"`
 }
 
 type PurchasingPO struct {
@@ -8426,6 +8435,21 @@ type PurchasingPaymentRunLineAmount struct {
 type PurchasingUpdatePaymentRunRequest struct {
 	Remove *[]string                         `json:"remove,omitempty"`
 	Lower  *[]PurchasingPaymentRunLineAmount `json:"lower,omitempty"`
+}
+
+type PurchasingT5018Report struct {
+	Year       int32                `json:"year"`
+	TotalCents int64                `json:"total_cents"`
+	Items      []PurchasingT5018Row `json:"items"`
+}
+
+type PurchasingT5018Row struct {
+	VendorId              string `json:"vendor_id"`
+	VendorNo              string `json:"vendor_no"`
+	Name                  string `json:"name"`
+	BusinessNumber        string `json:"business_number"`
+	BusinessNumberMissing bool   `json:"business_number_missing"`
+	PaidCents             int64  `json:"paid_cents"`
 }
 
 type LandedCost struct {

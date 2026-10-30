@@ -1798,7 +1798,8 @@ func (a w4cStockReceiver) ReceiveDocumentTx(ctx context.Context, tx pgx.Tx, rece
 // package owns that table.
 type w4cVendorDirectory struct{ pool *pgxpool.Pool }
 
-const w4cVendorCols = `id::text, vendor_no::text, name, payment_terms_days, is_active`
+const w4cVendorCols = `id::text, vendor_no::text, name, payment_terms_days, is_active,
+	is_t5018_subcontractor, COALESCE(business_number, '')`
 
 func (a w4cVendorDirectory) ListVendors(ctx context.Context) ([]purchasing.Vendor, error) {
 	if a.pool == nil {
@@ -1812,7 +1813,8 @@ func (a w4cVendorDirectory) ListVendors(ctx context.Context) ([]purchasing.Vendo
 	var out []purchasing.Vendor
 	for rows.Next() {
 		var v purchasing.Vendor
-		if err := rows.Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive); err != nil {
+		if err := rows.Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive,
+			&v.IsT5018Subcontractor, &v.BusinessNumber); err != nil {
 			return nil, fmt.Errorf("vendor directory: scan: %w", err)
 		}
 		out = append(out, v)
@@ -1826,7 +1828,8 @@ func (a w4cVendorDirectory) Vendor(ctx context.Context, vendorID string) (purcha
 	}
 	var v purchasing.Vendor
 	err := a.pool.QueryRow(ctx, `SELECT `+w4cVendorCols+` FROM vendors WHERE id = $1`, vendorID).
-		Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive)
+		Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive,
+			&v.IsT5018Subcontractor, &v.BusinessNumber)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return purchasing.Vendor{}, purchasing.ErrUnknownVendor
 	}

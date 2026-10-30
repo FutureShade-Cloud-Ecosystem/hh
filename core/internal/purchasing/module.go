@@ -392,6 +392,11 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// already sit at: RequireManager, a vendor record being a commitment the business stands behind.
 	r.Handle("POST /api/v1/purchasing/vendors", g.RequireManager(h.staff(h.createVendor)))
 	r.Handle("PUT /api/v1/purchasing/vendors/{vendorID}", g.RequireManager(h.staff(h.setVendor)))
+	// The T5018 mark. The tier gate is RequireManager, as every vendor write is, and the WALL is
+	// the role gate's: this route's census row names money-desk at admin, and the Financial
+	// Controller is the decided matrix's only admin seat on money-desk, so every other role in the
+	// catalogue is refused before the handler runs (rolegate_t5018_test.go).
+	r.Handle("PUT /api/v1/purchasing/vendors/{vendorID}/t5018", g.RequireManager(h.staff(h.setVendorT5018)))
 
 	r.Handle("GET /api/v1/purchasing/pos", g.RequireStaff(h.staff(h.listPOs)))
 	r.Handle("POST /api/v1/purchasing/pos", g.RequireManager(h.staff(h.createPO)))
@@ -426,6 +431,11 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// the post beside it, and the replay key rides the Idempotency-Key header.
 	r.Handle("POST /api/v1/purchasing/bills/{id}/payments", g.RequireManager(h.staff(h.payBill)))
 	r.Handle("GET /api/v1/purchasing/ap-aging", g.RequireManager(h.staff(h.apAging)))
+	// The T5018 report and its CSV: the same door as the payables board beside it, because the
+	// report IS a payables read (the year's payments to the flagged subcontractors), and the same
+	// report must not be a wider door in its file form than in its screen form.
+	r.Handle("GET /api/v1/purchasing/t5018", g.RequireManager(h.staff(h.t5018Report)))
+	r.Handle("GET /api/v1/purchasing/t5018.csv", g.RequireManager(h.staff(h.t5018ReportCSV)))
 
 	// W3 item 0.8. The supplier credit note's doors sit at the AR credit memo
 	// doors' gate: a credit is a management act, so every one of them is
