@@ -1856,6 +1856,14 @@ test('the template leg: the same conjunction on both sides is tied', () => {
     {
       name: 'the same conjunction with a negated conjunct through a classMap',
       scratch: '<button class=${classMap({ waiting: !ready && busy })} ?disabled=${!ready && busy}>Wait</button>',
+    },    {
+      // The round 3 read's sibling shape: a disjunction with a negated arm.
+      name: 'the same disjunction with a negated arm',
+      scratch: '<button class="w ${!busy || z ? "waiting" : ""}" ?disabled=${!busy || z}>Wait</button>',
+    },
+    {
+      name: 'the negation of a disjunction with a negated arm',
+      scratch: '<button class=${classMap({ waiting: !(!busy || z) })} ?disabled=${!(!busy || z)}>Wait</button>',
     },
   ];
   for (const probe of probes) {
