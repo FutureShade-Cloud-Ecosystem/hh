@@ -748,6 +748,9 @@ function parseCondition(text) {
  *
  *  The cases, in the order they are asked:
  *
+ *    - a condition implies itself: the same parsed tree on both sides is
+ *      tied first, whatever its shape (round 7: a disjunction with a negated
+ *      arm was not tied to itself by the cases below).
  *    - `!x` implies `!y` exactly when `y` implies `x`. That is the
  *      contrapositive, and it is the one way round that holds: `!busy`
  *      does NOT imply `!(busy || z)` (z may be true), and `!(busy || z)`
@@ -769,7 +772,17 @@ function parseCondition(text) {
  *
  *  Read together, the relation is sound in both directions: a class that
  *  is on while the control is NOT disabled is not a disabled state. */
+/** True when two parsed conditions are the same tree: the same kinds, the
+ *  same atom text and the same parts in the same order. */
+function sameCondition(a, b) {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'atom') return a.text === b.text;
+  if (a.kind === 'not') return sameCondition(a.of, b.of);
+  return a.of.length === b.of.length && a.of.every((x, i) => sameCondition(x, b.of[i]));
+}
+
 function implies(a, b) {
+  if (sameCondition(a, b)) return true;
   if (a.kind === 'not') return b.kind === 'not' && implies(b.of, a.of);
   if (a.kind === 'atom' && b.kind === 'atom') return a.text === b.text;
   if (a.kind === 'atom' && b.kind === 'or') return b.of.some((y) => implies(a, y));
