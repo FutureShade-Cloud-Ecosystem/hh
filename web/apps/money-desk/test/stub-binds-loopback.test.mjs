@@ -29,10 +29,32 @@ const START_TIMEOUT_MS = 30000;
 // How long a single probe waits for an answer.
 const PROBE_TIMEOUT_MS = 1500;
 
+// How long the cleanup waits for the stub to close after its standard input
+// ends. The wait has a bound of its own: a stub that ignores its standard
+// input end would hold this leg open and keep its port for the rest of the
+// machine's day, so the wait ends and says so instead of hanging.
+const STOP_TIMEOUT_MS = 5000;
+
 let child;
 let closed;
 let bound;
 let stderr = "";
+
+// Whether a host is the loopback. The IPv4 loopback and the IPv6 loopback
+// are the same machine, so both answer.
+function isLoopbackHost(host) {
+  return host === "127.0.0.1" || host === "::1";
+}
+
+// What the outside probe can prove on a host with the given outside
+// addresses, and null when it can run. A host with no outside address has
+// nothing for the probe to try, so the probe proves nothing there and has to
+// say so rather than pass as if it had proved the port is unreachable off
+// the loopback.
+function outsideProbeNote(addresses) {
+  if (addresses.length > 0) return null;
+  return "this host has no outside IPv4 address, so the outside probe could not run: the bound host above is the only proof that the stub reached no other interface";
+}
 
 before(async () => {
   // The same command the Playwright webServer runs, in the same directory,
@@ -81,7 +103,34 @@ before(async () => {
 
 after(async () => {
   child?.stdin.end();
-  await closed;
+  // The wait has a bound of its own. A stub that ignores its standard input
+  // end would leave this hook waiting for the stub's own timer, with the
+  // listener still up, so the wait ends and names the stub that is still
+  // holding its port.
+  let timer;
+  try {
+    await Promise.race([
+      closed,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `the stub did not close within ${STOP_TIMEOUT_MS} ms of its standard input ending, so it is still holding its port`,
+            ),
+          );
+        }, STOP_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    // Let the stub go: this process must not stay open for a stub that
+    // will not stop, or the job is held open for it.
+    child?.unref();
+    child?.stdout?.destroy();
+    child?.stderr?.destroy();
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 });
 
 // The host's own addresses that are not the loopback: the ones the LAN
@@ -117,24 +166,49 @@ function answers(host, port) {
   });
 }
 
-test("the stub binds the loopback and no other interface", async () => {
-  assert.equal(bound.host, "127.0.0.1", `the stub bound [${bound.host}]:${bound.port}`);
+test("the stub binds the loopback and no other interface", async (t) => {
+  assert.ok(isLoopbackHost(bound.host), `the stub bound [${bound.host}]:${bound.port}`);
   assert.ok(bound.port > 0, `the stub bound no port: [${bound.host}]:${bound.port}`);
   // The loopback answer has to work, or "it does not answer off the
   // loopback" would hold for a dead server and prove nothing.
   assert.equal(
-    await answers("127.0.0.1", bound.port),
+    await answers(bound.host, bound.port),
     true,
-    `the stub does not answer on 127.0.0.1 at ${bound.port}`,
+    `the stub does not answer on ${bound.host} at ${bound.port}`,
   );
   // The outside addresses are probed together: one answer at a time would
   // spend the probe timeout on each of them in turn.
   const outside = outsideAddresses();
+  const note = outsideProbeNote(outside);
+  if (note !== null) {
+    t.diagnostic(note);
+    return;
+  }
   const reached = await Promise.all(outside.map((address) => answers(address, bound.port)));
   const answered = outside.filter((address, index) => reached[index]);
   assert.deepEqual(
     answered,
     [],
     `the stub answered off the loopback on: ${answered.join(", ")}`,
+  );
+});
+
+test("the host check accepts the IPv6 loopback", () => {
+  assert.equal(isLoopbackHost("127.0.0.1"), true, "the IPv4 loopback is the loopback");
+  assert.equal(isLoopbackHost("::1"), true, "the IPv6 loopback is the loopback");
+  assert.equal(isLoopbackHost("0.0.0.0"), false, "the wildcard address is not the loopback");
+  assert.equal(isLoopbackHost("::"), false, "the wildcard IPv6 address is not the loopback");
+});
+
+test("the outside probe says so when the host has no outside address", () => {
+  assert.match(
+    String(outsideProbeNote([]) ?? ""),
+    /no outside IPv4 address/,
+    "the probe must say it could not run when the host holds no outside address",
+  );
+  assert.equal(
+    outsideProbeNote(["192.168.1.10"]),
+    null,
+    "a host that holds outside addresses needs no note",
   );
 });
