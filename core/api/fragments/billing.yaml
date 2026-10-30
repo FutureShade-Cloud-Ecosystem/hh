@@ -351,7 +351,9 @@ paths:
         idempotency key (a retry posts once). One payment applies to one
         branch's invoices: a list spanning two branches is refused in words,
         because the payment, its subledger rows and its journal all carry one
-        branch. An amount over the selected invoices' payable, an invoice of
+        branch. An amount over the selected invoices' payable is applied oldest
+        first up to each invoice's payable and the remainder stays on the
+        customer's account as a credit (`on_account_cents`). An invoice of
         another account, an invoice outside the caller's branch reach and a not
         open invoice are all refused in words
         with nothing applied. preview true answers the same split without
@@ -394,10 +396,9 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422":
           description: >-
-            The payment is refused in words with nothing applied: an amount over
-            the selected invoices' payable, an invoice that is not open, an empty
-            or oversized list, the same invoice named twice, a customer id or
-            invoice id that is not a uuid, a list spanning
+            The payment is refused in words with nothing applied: an invoice that
+            is not open, an empty or oversized list, the same invoice named twice,
+            a customer id or invoice id that is not a uuid, a list spanning
             more than one branch
           content:
             application/json:
@@ -467,6 +468,87 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BillingCreditApplicationReversed"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ar/write-offs:
+    post:
+      operationId: billingWriteOffInvoice
+      tags: [staff-billing]
+      summary: Write off an invoice's remaining balance under the branch's small balance limit
+      description: >-
+        Manager only, reason required. The limit is a branch setting on the
+        credit policy with the org default of 2500 cents; a balance over it is
+        refused for a manager and allowed only for the controller role. The
+        write off posts DR bad debt expense and CR accounts receivable and is
+        reversible once.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingWriteOffInput"
+      responses:
+        "200":
+          description: Replayed write off result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOff"
+        "201":
+          description: Invoice written off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOff"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ar/write-offs/reverse:
+    post:
+      operationId: billingReverseWriteOff
+      tags: [staff-billing]
+      summary: Reverse a write off, restoring the invoice balance and the books
+      description: >-
+        Manager only, reason required, once: a write off already reversed is
+        refused. The reversal restores the invoice's balance and status, nets
+        the subledger rows to zero, and posts DR accounts receivable and CR bad
+        debt expense.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingWriteOffReversalInput"
+      responses:
+        "200":
+          description: Replayed reversal result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOffReversed"
+        "201":
+          description: Write off reversed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingWriteOffReversed"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -2857,6 +2939,58 @@ components:
           enum: [CLOSES, PART]
         balance_after_cents: { type: integer, format: int64 }
 
+    BillingWriteOffInput:
+      type: object
+      required:
+        - invoice_id
+        - reason
+        - idempotency_key
+      properties:
+        invoice_id: { type: string, format: uuid }
+        reason: { type: string }
+        idempotency_key: { type: string }
+    BillingWriteOff:
+      type: object
+      required:
+        - write_off_id
+        - invoice_id
+        - invoice_no
+        - amount_cents
+        - limit_cents
+        - replayed
+      properties:
+        write_off_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        limit_cents: { type: integer, format: int64 }
+        replayed: { type: boolean }
+    BillingWriteOffReversalInput:
+      type: object
+      required:
+        - invoice_id
+        - write_off_id
+        - reason
+      properties:
+        invoice_id: { type: string, format: uuid }
+        write_off_id: { type: string, format: uuid }
+        reason: { type: string }
+    BillingWriteOffReversed:
+      type: object
+      required:
+        - write_off_id
+        - invoice_id
+        - invoice_no
+        - restored_cents
+        - invoice_balance_after_cents
+        - replayed
+      properties:
+        write_off_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        restored_cents: { type: integer, format: int64 }
+        invoice_balance_after_cents: { type: integer, format: int64 }
+        replayed: { type: boolean }
     BillingCreditApplication:
       type: object
       required:
@@ -3224,7 +3358,7 @@ components:
     BillingApplyPaymentAnswer:
       type: object
       description: The payment (absent on a preview) and the server's split per invoice, oldest first
-      required: [preview, amount_cents, applied_cents, unapplied_cents, lines, replayed]
+      required: [preview, amount_cents, applied_cents, unapplied_cents, on_account_cents, lines, replayed]
       properties:
         preview: { type: boolean }
         payment_id: { type: string, format: uuid }
@@ -3232,6 +3366,10 @@ components:
         amount_cents: { type: integer, format: int64 }
         applied_cents: { type: integer, format: int64 }
         unapplied_cents: { type: integer, format: int64 }
+        on_account_cents:
+          type: integer
+          format: int64
+          description: The remainder that stayed on the customer's account as a credit (0 when the invoices took it all)
         lines:
           type: array
           items:

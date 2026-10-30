@@ -1194,10 +1194,10 @@ async function handle(req, res) {
   // core/internal/payments received_apply.go), its checks in the core's order and its sentences word for word:
   // the service's key check, then the replay judgement (never on a preview) BEFORE the request's own checks,
   // then the locks in id order (a missing or another account's invoice is a 404, one not open is refused), then
-  // one branch per payment, then the ceiling. An unreadable body is a 400, a spent key's conflict is a 409, and
+  // one branch per payment. An unreadable body is a 400, a spent key's conflict is a 409, and
   // every other refusal is a 422 but the 404. The split is the server's: oldest
   // first by issue date, due date, invoice number and id whatever order the list came in, one line per named
-  // invoice, unapplied always zero. A preview takes the same walk and writes nothing, and never reads the key.
+  // invoice, and any excess stays on the account as on_account_cents. A preview takes the same walk and writes nothing, and never reads the key.
   if (method === "POST" && path === "/api/v1/ar/payments/apply") {
     const body = await readBody(req);
     if (body === null) return refuse(res, 400, "the request body must be JSON");
@@ -1279,15 +1279,13 @@ async function handle(req, res) {
       picked.push(inv);
     }
     if (new Set(picked.map((inv) => branchOf(inv.acct))).size > 1) return refuse(res, 422, "one payment applies to one branch's invoices; record a payment per branch");
-    const capacity = picked.reduce((t, inv) => t + payableOf(inv), 0);
-    if (body.amount_cents > capacity) return refuse(res, 422, `the selected invoices can take at most ${capacity} cents right now; refresh and retry`);
     let left = body.amount_cents;
     const lines = oldestFirst(picked).map((inv) => {
       const take = Math.min(left, payableOf(inv));
       left -= take;
       return lineFor(inv, take);
     });
-    const answer = { preview, amount_cents: body.amount_cents, applied_cents: body.amount_cents - left, unapplied_cents: left, lines, replayed: false };
+    const answer = { preview, amount_cents: body.amount_cents, applied_cents: body.amount_cents - left, unapplied_cents: left, on_account_cents: left, lines, replayed: false };
     if (preview) return send(res, 200, answer);
     // The parked writer answers late, after every refusal walk has run: the park is a writer
     // mid flight (holding the payments counter in the core's terms), never a change in the
