@@ -67,6 +67,25 @@
 //          control is NOT disabled means something else and is not a
 //          disabled state.
 //
+//      ROUND 5 ADDITIONS. The round 4 gate was read again, and the read found
+//      three shapes it still could not see:
+//
+//        - THE IMPLICATION, twice over. A conjunction was not related to a
+//          conjunction, so the SAME condition on both sides was not tied,
+//          and the two negations were read the wrong way round, so a class
+//          that was on while the control was enabled was read as a disabled
+//          state. The relation is sound in both directions now: `!x` implies
+//          `!y` exactly when `y` implies `x`, and a condition implies a
+//          conjunction when it implies every conjunct of it.
+//        - THE IMAGE LAYER. A disabled control could paint an image and
+//          pass: an image layer carries no colour for the colour leg to
+//          read, and `border-image` and `list-style-image` were never read
+//          at all. An image layer is named now, in every property that can
+//          carry one, and a brand-free `none` is still fine.
+//        - THE CONTRACTOR ALIAS. The brand family is carried under another
+//          name in the contractor layer (`--cbrand`, `--cbrand-on`), and the
+//          brand refusal did not read it.
+//
 //      THE HONEST LIMITS, said plainly. The template leg can only tie a class
 //      to a disabled binding when both are written in a shape it can read: a
 //      class with no condition (a static class, or a variable that holds a
@@ -74,10 +93,11 @@
 //      written as an object literal, a variable is resolved only inside its
 //      own file, and a condition the scan cannot compare textually (a call, a
 //      member expression) is not tied. The brand leg reads the accent, the
-//      brand and the stone-amber families; a brand token outside those
-//      families is not refused by it. The derived set is per app, not per
-//      file, so a class named in one file of an app is held in every file of
-//      that app. The design system's README carries the same statement.
+//      brand, the contractor alias of the brand and the stone-amber
+//      families; a brand token outside those families is not refused by it.
+//      The derived set is per app, not per file, so a class named in one
+//      file of an app is held in every file of that app. The design system's
+//      README carries the same statement.
 //
 //   2. THE PAINT LEG: a real browser, a real page, the design system's own
 //      sheet. A disabled primary button, a disabled secondary button and a
@@ -462,10 +482,22 @@ const TRANSPARENT_MIX = /color-mix\(|rgba\(|hsla\(|hsl\(|rgb\(|transparent/i;
 // The house brand colours. A disabled control, and every piece of one, wears
 // the grey tokens: a brand fill, a brand ink or a brand edge in a disabled
 // state is the defect the rule names. The accent family counts (the accent
-// itself, its ink, its text), the brand family counts, and the till's own
-// stone amber counts, because it is the same gold under another name.
+// itself, its ink, its text), the brand family counts, the contractor alias
+// of the brand family counts (`--cbrand`, `--cbrand-on`, which the token file
+// carries as `var(--brand)` and `var(--brand-on)`), and the till's own stone
+// amber counts, because it is the same gold under another name.
 const BRAND_COLOUR =
-  /var\(--(?:hh-accent(?:-hover|-ink|-text)?|brand(?:-[a-z-]+)?|hos-stone-amber(?:-text)?)\b/;
+  /var\(--(?:hh-accent(?:-hover|-ink|-text)?|brand(?:-[a-z-]+)?|cbrand(?:-[a-z-]+)?|hos-stone-amber(?:-text)?)\b/;
+
+// The image layers a disabled control may not wear: a url(), an image() (and
+// an image-set()), and any gradient. An image layer carries no colour, so
+// the colour leg could not see it: in
+// `background: url(/img/x.png), var(--hh-disabled-fill)` the only colour
+// term was the grey token and the value passed. A disabled control's fill
+// is flat grey and its edge is the flat grey line, so an image layer is
+// named in every property that can carry one.
+const IMAGE_LAYER =
+  /url\(|image(?:-set)?\(|(?:repeating-)?(?:linear|radial|conic)-gradient\(/i;
 
 // The marker a rule carries when its selector names no disabled state but
 // the rule styles one (.result.off, .card.starting, .gl-choice-held): a
@@ -706,12 +738,34 @@ function parseCondition(text) {
 }
 
 /** True when a implies b: whenever a holds, b holds. The relation the
- *  template leg needs. */
+ *  template leg needs.
+ *
+ *  The cases, in the order they are asked:
+ *
+ *    - `!x` implies `!y` exactly when `y` implies `x`. That is the
+ *      contrapositive, and it is the one way round that holds: `!busy`
+ *      does NOT imply `!(busy || z)` (z may be true), and `!(busy || z)`
+ *      DOES imply `!busy`.
+ *    - a condition never implies a negation, unless it is a negation
+ *      itself: the `not` case above has already answered that.
+ *    - two atoms are the same condition when their text is the same.
+ *    - an atom implies a disjunction when it implies one of its arms.
+ *    - a condition implies a conjunction when it implies EVERY conjunct.
+ *      This is the case the round 4 gate was missing, and it is asked
+ *      BEFORE the conjunction case below, because a conjunction on the
+ *      left must be able to meet a conjunction on the right.
+ *    - a conjunction implies a condition when one of its conjuncts does.
+ *    - a disjunction implies a condition when EVERY one of its arms
+ *      does.
+ *
+ *  Read together, the relation is sound in both directions: a class that
+ *  is on while the control is NOT disabled is not a disabled state. */
 function implies(a, b) {
-  if (a.kind === 'not') return b.kind === 'not' && implies(a.of, b.of);
+  if (a.kind === 'not') return b.kind === 'not' && implies(b.of, a.of);
   if (b.kind === 'not') return false;
   if (a.kind === 'atom' && b.kind === 'atom') return a.text === b.text;
   if (a.kind === 'atom' && b.kind === 'or') return b.of.some((y) => implies(a, y));
+  if (b.kind === 'and') return b.of.every((y) => implies(a, y));
   if (a.kind === 'and') return a.of.some((x) => implies(x, b));
   if (a.kind === 'or') return a.of.every((x) => implies(x, b));
   return false;
@@ -1104,14 +1158,25 @@ function ruleOffenders(rel, rule, selector, decls, isPiece) {
       // The fill is the flat grey token and nothing else. The value is read
       // as its terms, so a value that carries the token BESIDE another
       // colour is named, and a gradient built out of the token is named too:
-      // the fill of a disabled control is flat.
-      if (!termsAreTokens(colourTerms(value), [DISABLED_FILL]) || TRANSPARENT_MIX.test(value)) {
+      // the fill of a disabled control is flat. An image layer is named as
+      // well: it carries no colour for the colour leg to read, so it rode
+      // past the token until the round 5 fix.
+      if (!termsAreTokens(colourTerms(value), [DISABLED_FILL]) ||
+          TRANSPARENT_MIX.test(value) ||
+          IMAGE_LAYER.test(value)) {
         offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
       }
     } else if (prop === 'background-image') {
       // A disabled control's fill is the flat grey token; a gradient or any
       // other image is a fill of its own.
       if (value.trim() !== 'none') {
+        offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
+      }
+    } else if (prop === 'border-image' || prop === 'list-style-image') {
+      // The two properties the round 4 gate never read. A disabled control
+      // wears no image: its edge is the flat grey line and its fill is the
+      // flat grey token. A brand-free `none` is no image, and it is fine.
+      if (value.trim() !== 'none' || IMAGE_LAYER.test(value)) {
         offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
       }
     } else if (prop === 'color') {

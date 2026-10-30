@@ -137,27 +137,34 @@ reads a green gate as more than it is:
 
 - **The value leg.** A value is parsed into its terms, not searched. The fill,
   the ink and the edge must BE the grey token; no other colour may ride beside
-  them, and a brand colour is refused in EVERY declaration of a disabled rule,
-  whatever the property, so a brand edge in a shorthand, a brand glyph in an
-  svg's `fill`, a brand accent and a brand shadow are all named. LIMIT: the
-  brand refusal reads the accent family, the brand family and the till's stone
-  amber. A brand token outside those families (the quote blue family, a
-  numbered brand token) is not refused by that leg.
+  them, and no image layer rides beside them either, so a disabled control
+  cannot paint an image. A brand colour is refused in EVERY declaration of a
+  disabled rule, whatever the property, so a brand edge in a shorthand, a
+  brand glyph in an svg's `fill`, a brand accent and a brand shadow are all
+  named. LIMIT: the brand refusal reads the accent family, the brand family,
+  the contractor alias of the brand family (`--cbrand`, `--cbrand-on`) and the
+  till's stone amber. A brand token outside those families (the quote blue
+  family, a numbered brand token) is not refused by that leg.
 - **The template leg.** A class that a template proves is a disabled state is
   held to the swap whether or not it carries the `hh-disabled-state` marker.
   The scan reads a class set from a variable, a `classMap`, a `disabled=`
   property binding, a compound (`a || b`, `a && b`) and a negated (`!x`)
   condition, and an unquoted `aria-disabled` or `aria-busy`; it reads a
   condition as an implication, so a class that is on while the control is NOT
-  disabled is not a disabled state. LIMITS: a class with no condition at all
-  (a static class, or a variable that holds a plain string) is never tied; a
-  `classMap` is read only when it is written as an object literal; a variable
-  is resolved only inside its own file; a condition the scan cannot compare
-  textually (a call, a member expression) is not tied; the derived set is per
-  app, not per file, so a class named in one file of an app is held in every
-  file of that app; and the scan reads source, not the cascade, so a rule that
-  paints a disabled control without naming a disabled state at all is out of
-  its reach.
+  disabled is not a disabled state. The relation is sound in both directions:
+  `!x` implies `!y` exactly when `y` implies `x`, and a condition implies a
+  conjunction exactly when it implies every conjunct of it. LIMITS: a class
+  with no condition at all (a static class, or a variable that holds a plain
+  string) is never tied; a `classMap` is read only when it is written as an
+  object literal; a variable is resolved only inside its own file; an
+  expression that runs past the end of its line is cut at the line unless the
+  next line opens a continuation (`?`, `:`, `&&`, `||`, `+` or `=` at the start
+  of it), so a ternary whose question mark closes the first line is not read;
+  a condition the scan cannot compare textually (a call, a member expression)
+  is not tied; the derived set is per app, not per file, so a class named in
+  one file of an app is held in every file of that app; and the scan reads
+  source, not the cascade, so a rule that paints a disabled control without
+  naming a disabled state at all is out of its reach.
 - **The marker and the pins.** A bare-word state class (`.result.off`,
   `.card.starting`, `.gl-choice-held`) is held by the `hh-disabled-state`
   marker inside the rule it marks, and the three known marked rules are pinned
