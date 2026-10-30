@@ -646,6 +646,12 @@ func (s *Service) GLBalanceCents(ctx context.Context, accountCode string, year, 
 	return s.glBalanceCents(ctx, accountCode, year, month, branchID)
 }
 
+// GLRevenueCents returns the net posted revenue on REVENUE accounts for (year, month, branchID),
+// excluding year-end CLOSING entries (line 101 of the GST/HST return worksheet).
+func (s *Service) GLRevenueCents(ctx context.Context, year, month int, branchID string) (int64, error) {
+	return s.store.RevenueBalance(ctx, year, month, branchID)
+}
+
 // GLClosingBalanceCents returns the cumulative closing balance of an account at the end of (year, month)
 // across all fiscal years, read through AccountBalanceAsOf (FW1-04). Bank reconciliation uses this closing
 // balance at month end rather than the single month's movement from GLBalanceCents.

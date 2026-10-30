@@ -10974,6 +10974,61 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/tax/worksheet:
+    get:
+      operationId: taxGetWorksheet
+      tags:
+        - staff-tax
+      summary: Read the CRA GST/HST return worksheet for a filing period
+      description: Read-only CRA GST/HST return worksheet (lines 101 through 115) for a filing period and branch scope, derived from the tax engine's document seams and the GL seam. The filing period span follows the dealer's filing_frequency setting on tax_config (QUARTERLY by default, or MONTHLY or YEARLY).
+      x-addition: "HST-1: the read-only CRA GST/HST return worksheet over the tax engine's document seams and the GL seam; no ERP source route"
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: true
+          description: The filing year
+          schema:
+            type: integer
+            format: int32
+        - name: quarter
+          in: query
+          required: false
+          description: The filing quarter (1..4) when filing_frequency is QUARTERLY
+          schema:
+            type: integer
+            format: int32
+        - name: month
+          in: query
+          required: false
+          description: The filing month (1..12) when filing_frequency is MONTHLY, or a month inside the quarter
+          schema:
+            type: integer
+            format: int32
+        - name: branch_id
+          in: query
+          required: false
+          description: Limit the worksheet to one branch
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The CRA GST/HST return worksheet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxWorksheet"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/inventory/on-hand:
     get:
       operationId: inventoryOnHand
@@ -41156,6 +41211,13 @@ components:
           enum:
             - INVOICE_TOTAL
             - PER_LINE
+        filing_frequency:
+          type: string
+          enum:
+            - QUARTERLY
+            - MONTHLY
+            - YEARLY
+          description: The dealer's GST/HST return filing period setting (QUARTERLY by default)
         avalara_enabled:
           type: boolean
           description: Dormant stub; kept for a later wave
@@ -41352,6 +41414,141 @@ components:
           description: The GL movement minus the documents' net (collected less returns less input tax); zero means tied out
         tied_out:
           type: boolean
+    TaxWorksheetLine:
+      type: object
+      description: One CRA GST/HST return line on the worksheet
+      required:
+        - line_no
+        - label
+        - amount_cents
+        - entered_by_hand
+      properties:
+        line_no:
+          type: string
+        label:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        entered_by_hand:
+          type: boolean
+        note:
+          type: string
+    TaxWorksheet:
+      type: object
+      description: Read-only CRA GST/HST return worksheet (lines 101 through 115) for a filing period and branch scope, derived from the tax engine's document seams and the GL seam.
+      required:
+        - year
+        - filing_frequency
+        - from_date
+        - to_date
+        - line_101_sales_cents
+        - line_103_collected_cents
+        - line_104_adjustments_cents
+        - line_105_total_hst_cents
+        - line_106_itcs_cents
+        - line_107_itc_adjustments_cents
+        - line_108_total_itcs_cents
+        - line_109_net_tax_cents
+        - line_110_instalments_cents
+        - line_111_rebates_cents
+        - line_112_total_other_credits_cents
+        - line_113_balance_cents
+        - line_114_refund_claimed_cents
+        - line_115_amount_owing_cents
+        - invoice_hst_cents
+        - return_tax_cents
+        - gl_payable_cents
+        - variance_cents
+        - tied_out
+        - manual_entry_note
+        - lines
+      properties:
+        year:
+          type: integer
+          format: int32
+        filing_frequency:
+          type: string
+          enum:
+            - QUARTERLY
+            - MONTHLY
+            - YEARLY
+        quarter:
+          type: integer
+          format: int32
+        month:
+          type: integer
+          format: int32
+        from_date:
+          type: string
+          format: date
+        to_date:
+          type: string
+          format: date
+        branch_id:
+          type: string
+        line_101_sales_cents:
+          type: integer
+          format: int64
+        line_103_collected_cents:
+          type: integer
+          format: int64
+        line_104_adjustments_cents:
+          type: integer
+          format: int64
+        line_105_total_hst_cents:
+          type: integer
+          format: int64
+        line_106_itcs_cents:
+          type: integer
+          format: int64
+        line_107_itc_adjustments_cents:
+          type: integer
+          format: int64
+        line_108_total_itcs_cents:
+          type: integer
+          format: int64
+        line_109_net_tax_cents:
+          type: integer
+          format: int64
+        line_110_instalments_cents:
+          type: integer
+          format: int64
+        line_111_rebates_cents:
+          type: integer
+          format: int64
+        line_112_total_other_credits_cents:
+          type: integer
+          format: int64
+        line_113_balance_cents:
+          type: integer
+          format: int64
+        line_114_refund_claimed_cents:
+          type: integer
+          format: int64
+        line_115_amount_owing_cents:
+          type: integer
+          format: int64
+        invoice_hst_cents:
+          type: integer
+          format: int64
+        return_tax_cents:
+          type: integer
+          format: int64
+        gl_payable_cents:
+          type: integer
+          format: int64
+        variance_cents:
+          type: integer
+          format: int64
+        tied_out:
+          type: boolean
+        manual_entry_note:
+          type: string
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxWorksheetLine"
     InventoryStockMove:
       type: object
       description: One immutable ledger line; corrections are compensating moves
