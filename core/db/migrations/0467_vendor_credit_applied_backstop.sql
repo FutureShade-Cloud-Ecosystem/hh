@@ -1,4 +1,4 @@
--- 0468: the applied total backstop on a vendor credit (wave 3 item 0.12).
+-- 0467: the applied total backstop on a vendor credit (wave 3 item 0.12).
 --
 -- THE GUARD THE DATABASE OWNS. The credit's open guard already reads the applied sum in its own
 -- statement after the credit's row lock (S6 on 704's P1-1 fix), and that closed the race. This

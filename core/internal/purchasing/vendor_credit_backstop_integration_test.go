@@ -3,7 +3,7 @@
 // vendor_credit_backstop_integration_test.go, wave 3 item 0.12 (S6 on 704's follow ups): the
 // applied total backstop on a vendor credit, and the bill side cap's own leg.
 //
-//  1. the credit's applied_cents column (0468) is moved by every application under the row lock,
+//  1. the credit's applied_cents column (0467) is moved by every application under the row lock,
 //     equals the applications' sum, and its CHECK is the database's own guard: a write that would
 //     pass the credit's total is refused by the database itself;
 //  2. a credit LARGER than the bill's open, applied above the bill's open, reaches the bill side

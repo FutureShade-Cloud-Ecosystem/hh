@@ -485,7 +485,7 @@ func (s *Service) ApplyVendorCredit(ctx context.Context, creditID string, in App
 		glVendorCreditApplyKeyPrefix+key, caller.UserID, appliedAt); err != nil {
 		return VendorCreditDetail{}, err
 	}
-	// The database's own guard rides the same lock: applied_cents (0468) moves by this
+	// The database's own guard rides the same lock: applied_cents (0467) moves by this
 	// application on the credit's row, and its CHECK refuses an applied total above the credit's
 	// total even if a path ever skipped the guards above (S6 on 704's P1-1, defence in depth).
 	// The refusal names the credit, words a clerk can act on.
@@ -790,7 +790,7 @@ func (r *Repository) AppliedCreditCentsTx(ctx context.Context, tx pgx.Tx, credit
 // AddVendorCreditAppliedTx moves the credit's applied_cents column by cents inside tx, under the
 // row lock ApplyVendorCredit already holds. The column is the writer's tally, not a second copy
 // the reads trust (the open guard still sums the application rows in its own statement); its
-// CHECK, applied_cents <= total_cents (0468), is the database's own backstop. A path that somehow
+// CHECK, applied_cents <= total_cents (0467), is the database's own backstop. A path that somehow
 // passed the open guard cannot commit an over application: this update fails the CHECK and the
 // whole transaction rolls back, application row and all.
 func (r *Repository) AddVendorCreditAppliedTx(ctx context.Context, tx pgx.Tx, creditID, creditNo string, cents int64) error {
