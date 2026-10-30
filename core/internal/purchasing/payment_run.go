@@ -557,7 +557,7 @@ type runBillCandidate struct {
 
 // OpenBillsDueOn reads the open posted bills of one branch due on or before the house day (a bill
 // with no due date falls back to its bill date, the aging's own rule), optionally one vendor,
-// each at its open amount.
+// each at its open amount (total, less paid instalments, less applied posted vendor credits).
 func (r *Repository) OpenBillsDueOn(ctx context.Context, branchID, dueOn, vendorID string) ([]runBillCandidate, error) {
 	if r.pool == nil {
 		return nil, errNoDB
@@ -568,6 +568,10 @@ func (r *Repository) OpenBillsDueOn(ctx context.Context, branchID, dueOn, vendor
 		       b.total_cents - COALESCE((SELECT SUM(i.amount_cents)
 		           FROM purchasing_bill_instalments i
 		          WHERE i.bill_id = b.id AND i.status = 'PAID'), 0)
+		       - COALESCE((SELECT SUM(a.amount_cents)
+		           FROM purchasing_vendor_credit_applications a
+		           JOIN purchasing_vendor_credits c ON c.id = a.credit_id
+		          WHERE a.bill_id = b.id AND c.status = 'POSTED'), 0)
 		  FROM purchasing_bills b
 		  JOIN vendors v ON v.id = b.vendor_id
 		 WHERE b.status = 'POSTED'
@@ -768,49 +772,44 @@ func (r *Repository) UpdateRunLineAmountTx(ctx context.Context, tx pgx.Tx, runID
 	return nil
 }
 
-// BillOpenCentsTx answers the bill's open amount (total less paid instalments) inside tx.
+// BillOpenCentsTx answers the bill's open amount (total, less paid instalments, less applied
+// posted vendor credits) inside tx, read through PaidBillCentsTx and CreditedBillCentsTx the same
+// way PayBill reads it.
 func (r *Repository) BillOpenCentsTx(ctx context.Context, tx pgx.Tx, billID string) (int64, error) {
-	if r.pool == nil {
-		return 0, errNoDB
-	}
-	var open int64
-	err := r.q(tx).QueryRow(ctx, `
-		SELECT b.total_cents - COALESCE((SELECT SUM(i.amount_cents)
-		           FROM purchasing_bill_instalments i
-		          WHERE i.bill_id = b.id AND i.status = 'PAID'), 0)
-		  FROM purchasing_bills b WHERE b.id = $1::uuid`, billID,
-	).Scan(&open)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, errNotFound
-	}
-	if err != nil {
-		return 0, fmt.Errorf("purchasing: bill open cents: %w", err)
-	}
-	return open, nil
+	_, open, err := r.billStatusAndOpenTx(ctx, tx, billID)
+	return open, err
 }
 
-// BillPayState answers the bill's status and open amount in one read, the fresh look the pay's
-// skip-or-clamp decision is made from.
+// BillPayState answers the bill's status and open amount, the fresh look the pay's
+// skip-or-clamp decision is made from, sharing BillOpenCentsTx's rule.
 func (r *Repository) BillPayState(ctx context.Context, billID string) (string, int64, error) {
+	return r.billStatusAndOpenTx(ctx, nil, billID)
+}
+
+func (r *Repository) billStatusAndOpenTx(ctx context.Context, tx pgx.Tx, billID string) (string, int64, error) {
 	if r.pool == nil {
 		return "", 0, errNoDB
 	}
 	var status string
-	var open int64
-	err := r.pool.QueryRow(ctx, `
-		SELECT b.status,
-		       b.total_cents - COALESCE((SELECT SUM(i.amount_cents)
-		           FROM purchasing_bill_instalments i
-		          WHERE i.bill_id = b.id AND i.status = 'PAID'), 0)
-		  FROM purchasing_bills b WHERE b.id = $1::uuid`, billID,
-	).Scan(&status, &open)
+	var total int64
+	err := r.q(tx).QueryRow(ctx,
+		`SELECT b.status, b.total_cents FROM purchasing_bills b WHERE b.id = $1::uuid`, billID,
+	).Scan(&status, &total)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", 0, errNotFound
 	}
 	if err != nil {
-		return "", 0, fmt.Errorf("purchasing: bill pay state: %w", err)
+		return "", 0, fmt.Errorf("purchasing: bill open cents: %w", err)
 	}
-	return status, open, nil
+	paid, err := r.PaidBillCentsTx(ctx, tx, billID)
+	if err != nil {
+		return "", 0, err
+	}
+	credited, err := r.CreditedBillCentsTx(ctx, tx, billID)
+	if err != nil {
+		return "", 0, err
+	}
+	return status, total - paid - credited, nil
 }
 
 // SetPaymentRunLineOutcome records one line's pay outcome beside its selection.

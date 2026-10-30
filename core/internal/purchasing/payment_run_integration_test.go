@@ -18,7 +18,9 @@ package purchasing
 //  6. an interrupted pay (the bill's payment landed, the run's record of it did not) leaves the run
 //     recording what its own key already moved, never the bill's open amount;
 //  7. a review naming another branch's bill is refused as not found, with no figures;
-//  8. a pay date the books would refuse is refused at propose and at update, in words.
+//  8. a pay date the books would refuse is refused at propose and at update, in words;
+//  9. a bill with an applied vendor credit is proposed at total less paid less credited, a review
+//     above that is refused in words, and the pay step pays it alongside a second uncredited bill.
 
 import (
 	"context"
@@ -914,4 +916,121 @@ func TestIntegration_W3_PaymentRun_PayDate_RefusedAtProposeAndUpdate(t *testing.
 	if !strings.Contains(err.Error(), "pay date") {
 		t.Fatalf("W3 payment runs red: the refusal did not name the pay date: %v", err)
 	}
+}
+
+// TestIntegration_W3_PaymentRun_BillWithVendorCreditApplied is S2's P2 on car 8 (PR 702 merged
+// with PR 704): a 50000 bill with a 12000 posted vendor credit applied has 38000 open. The run
+// proposes the bill at 38000 (total less paid less credited), the review refuses selecting more
+// than 38000 in words, and the pay step pays both it and a second bill with no credit so the run
+// completes and the aging ties to GL 2100.
+func TestIntegration_W3_PaymentRun_BillWithVendorCreditApplied(t *testing.T) {
+	h := newHarness(t)
+	zone, err := time.LoadLocation("America/Toronto")
+	if err != nil {
+		t.Fatalf("load dealer zone: %v", err)
+	}
+	todayStr := time.Now().In(zone).Format("2006-01-02")
+
+	// Bill A (50000) will receive a 12000 vendor credit application, leaving 38000 open.
+	// Bill B (20000) has no credit applied, leaving 20000 open.
+	billA := postBillForVendor(t, h, h.vendor, "prun-vc-a", 50000, todayStr, todayStr)
+	billB := postBillForVendor(t, h, h.vendor, "prun-vc-b", 20000, todayStr, todayStr)
+
+	creditDraft, err := h.svc.CreateVendorCredit(h.ctx, CreateVendorCreditRequest{
+		VendorID:   h.vendor,
+		BranchID:   branchTRT,
+		CreditNo:   creditNo("prun-vc"),
+		CreditDate: todayStr,
+		Lines: []VendorCreditLineParams{
+			{Description: "returned stock prun-vc", AmountCents: 12000},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create vendor credit: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = h.pool.Exec(bg, `DELETE FROM purchasing_vendor_credit_applications WHERE credit_id = $1`, creditDraft.ID)
+		_, _ = h.pool.Exec(bg, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE source_ref_id = $1 AND source = 'PO_RECEIPT' AND memo LIKE 'Vendor credit%')`, creditDraft.ID)
+		_, _ = h.pool.Exec(bg, `DELETE FROM gl_journals WHERE source_ref_id = $1 AND source = 'PO_RECEIPT' AND memo LIKE 'Vendor credit%'`, creditDraft.ID)
+		_, _ = h.pool.Exec(bg, `DELETE FROM purchasing_vendor_credits WHERE id = $1`, creditDraft.ID)
+	})
+	credit, err := h.svc.PostVendorCredit(h.ctx, creditDraft.ID)
+	if err != nil {
+		t.Fatalf("post vendor credit: %v", err)
+	}
+	if _, err := h.svc.ApplyVendorCredit(h.ctx, credit.ID, ApplyVendorCreditRequest{
+		BillID:         billA.ID,
+		AmountCents:    12000,
+		IdempotencyKey: "w3-prun-vc-apply-" + billA.ID,
+	}); err != nil {
+		t.Fatalf("apply vendor credit: %v", err)
+	}
+
+	// 1. Propose: Bill A is proposed at 38000 (50000 less 12000 credited), Bill B at 20000.
+	run, err := h.svc.ProposePaymentRun(h.ctx, ProposePaymentRunRequest{
+		BranchID: branchTRT, DueOn: todayStr, PayDate: todayStr,
+	})
+	if err != nil {
+		t.Fatalf("W3 payment runs red: ProposePaymentRun: %v", err)
+	}
+	cleanupRun(t, h.pool, run.ID)
+	if len(run.Lines) != 2 {
+		t.Fatalf("W3 payment runs red: proposed run has %d lines (%+v), want 2 (bills A and B)", len(run.Lines), run.Lines)
+	}
+	for _, ln := range run.Lines {
+		switch ln.BillID {
+		case billA.ID:
+			if ln.AmountCents != 38000 {
+				t.Fatalf("W3 payment runs red: credited bill A proposed at %d, want 38000 (50000 total less 12000 credit)", ln.AmountCents)
+			}
+		case billB.ID:
+			if ln.AmountCents != 20000 {
+				t.Fatalf("W3 payment runs red: uncredited bill B proposed at %d, want 20000", ln.AmountCents)
+			}
+		default:
+			t.Fatalf("W3 payment runs red: unexpected bill %s on proposed run", ln.BillID)
+		}
+	}
+	if run.TotalCents != 58000 {
+		t.Fatalf("W3 payment runs red: proposed run total_cents = %d, want 58000", run.TotalCents)
+	}
+
+	// 2. Review: selecting more than 38000 on bill A is refused in words.
+	_, err = h.svc.UpdatePaymentRun(h.ctx, run.ID, UpdatePaymentRunRequest{
+		Lower: []PaymentRunLineAmount{{BillID: billA.ID, AmountCents: 45000}},
+	})
+	if err == nil {
+		t.Fatalf("W3 payment runs red: review accepted 45000 on credited bill A with 38000 open")
+	}
+	if !strings.Contains(err.Error(), "38000") {
+		t.Fatalf("W3 payment runs red: review refusal did not name open balance 38000: %v", err)
+	}
+
+	// 3. Pay: the run pays 38000 on bill A and 20000 on bill B, and completes.
+	paid, err := h.svc.PayPaymentRun(h.ctx, run.ID)
+	if err != nil {
+		t.Fatalf("W3 payment runs red: PayPaymentRun: %v", err)
+	}
+	if paid.Status != RunPaid {
+		t.Fatalf("W3 payment runs red: paid run status = %q, want PAID", paid.Status)
+	}
+	if paid.PaidCents != 58000 {
+		t.Fatalf("W3 payment runs red: paid run paid_cents = %d, want 58000 (38000 + 20000)", paid.PaidCents)
+	}
+	for _, ln := range paid.Lines {
+		switch ln.BillID {
+		case billA.ID:
+			if ln.Status != RunLinePaid || ln.PaidCents != 38000 {
+				t.Fatalf("W3 payment runs red: bill A line = %+v, want PAID at 38000", ln)
+			}
+		case billB.ID:
+			if ln.Status != RunLinePaid || ln.PaidCents != 20000 {
+				t.Fatalf("W3 payment runs red: bill B line = %+v, want PAID at 20000", ln)
+			}
+		}
+	}
+
+	// Both bills are now settled in full, and the AP aging ties to GL 2100 at 0.
+	assertAP2100Tie(t, h, "after paying run over credited and uncredited bills", time.Now().UTC(), 0)
 }
