@@ -159,8 +159,10 @@ reads a green gate as more than it is:
   conjunction exactly when it implies every conjunct of it, and a
   conjunction implies a condition when one of its conjuncts does, so the same
   conjunction ties to itself even when a conjunct is negated. The same
-  condition on both sides always ties, whatever its shape, because a condition
-  implies itself is the first rule asked. LIMITS: the
+  condition written the same way on both sides always ties, whatever its
+  shape, because a condition implies itself is the first rule asked. LIMITS:
+  the same condition written another way (its arms in another order, or by De
+  Morgan) may not tie when an arm is negated; the
   relation does not distribute (`(a || b) && c` is not tied to
   `a || (b && c)`); a class
   with no condition at all (a static class, or a variable that holds a plain
