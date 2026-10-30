@@ -32,19 +32,15 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	// 698: the base's 681, main's routes (FW1-01's glOpenYear, FW1-12a's two
-	// credit memo doors, FW1-04's bankrecRecordCutover and bankrecCutoverPreview,
-	// FW1-07's controllerExceptions, paymentsVoidPayment), FW1-12b's two
-	// credit application doors (billingApplyCredit and
-	// billingReverseCreditApplication), W2-6b's three counter reason code
-	// routes (tillListReasonCodes, tillCreateReasonCode and tillEditReasonCode),
-	// W2-9a's purchasingGetAPAging, W2-9a round 2's purchasingPayBill and
-	// W3-T51's three T5018 routes (purchasingSetVendorT5018,
-	// purchasingT5018Report and purchasingT5018ReportCSV). Both
-	// sides' routes are kept; the count is what merge.mjs reports on the
-	// assembled document.
-	if staff != 698 {
-		t.Fatalf("census staff operations: %d, want the document's 698 (main's routes plus purchasingGetAPAging, purchasingPayBill and W3-T51's three T5018 routes)", staff)
+	// 721: the base's 695 staff operations, the wave 3 train's own doors (the two write off doors,
+	// taxGetWorksheet, the four vendor credit doors, the five payment run doors, landedCostSettle,
+	// JA-1's five job doors and W3-CC1's five credit change request and approval doors:
+	// billingListCreditChanges, billingRequestCreditChange, billingGetCreditChange,
+	// billingApproveCreditChange and billingRejectCreditChange), and W3-T51's three T5018 routes
+	// (purchasingSetVendorT5018, purchasingT5018Report and purchasingT5018ReportCSV). Both sides'
+	// routes are kept; the count is what merge.mjs reports on the assembled document.
+	if staff != 721 {
+		t.Fatalf("census staff operations: %d, want the document's 721", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }

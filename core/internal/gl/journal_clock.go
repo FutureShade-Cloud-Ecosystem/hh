@@ -51,6 +51,15 @@ func (s *Service) JournalSourceRefByKey(ctx context.Context, key string) (string
 	return s.repo.JournalSourceRefByKey(ctx, key)
 }
 
+// JournalAmountByKey returns the amount the POSTED journal filed under an idempotency key
+// moved, found false when no POSTED journal carries it. A journal is balanced, so the sum of
+// its debit lines is what it moved: this is the other half of JournalSourceRefByKey's
+// question, which document the key paid and how much, serving both PayBill's replay amount
+// judgement and a payment run's read of what its own key already paid.
+func (s *Service) JournalAmountByKey(ctx context.Context, key string) (int64, bool, error) {
+	return s.repo.JournalAmountByKey(ctx, key)
+}
+
 func (r *Repository) JournalEffectiveInstants(ctx context.Context, journalIDs []string) (map[string]time.Time, error) {
 	if r.pool == nil {
 		return nil, errNoDB
@@ -150,4 +159,28 @@ func (r *Repository) JournalSourceRefByKey(ctx context.Context, key string) (str
 		return "", false, fmt.Errorf("gl: journal source ref by key: %w", err)
 	}
 	return ref, true, nil
+}
+
+// JournalAmountByKey is JournalAmountByKey's repository read: the debit total of the POSTED
+// journal filed under the key. The journal's own lines are the amount, so a credit line's null
+// debit drops out of the sum and the balanced journal's debits are what it moved.
+func (r *Repository) JournalAmountByKey(ctx context.Context, key string) (int64, bool, error) {
+	if r.pool == nil {
+		return 0, false, errNoDB
+	}
+	var amount int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE((SELECT SUM(l.debit_cents)
+		                   FROM gl_journal_lines l
+		                  WHERE l.journal_id = j.id), 0)
+		  FROM gl_journals j
+		 WHERE j.status = 'POSTED' AND j.idempotency_key = $1`, key,
+	).Scan(&amount)
+	if err == pgx.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("gl: journal amount by key: %w", err)
+	}
+	return amount, true, nil
 }

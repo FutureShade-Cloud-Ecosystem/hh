@@ -7,11 +7,16 @@
 // that renders nothing, or a route that answers nothing, fails the leg instead of passing it.
 //
 // The last leg is the contract's own: the board is walked on a response whose keys are the
-// contract's, and it fails on any key the board reads that the contract does not name.
-import { test, expect, openDesk, dayFromToday, pickerDay, receivablesHandoff } from "./helpers.js";
+// contract's, and it fails on any key the board reads that the contract does not name. The walk
+// is a runtime walk: the desk and the board's own views are driven on a Proxy over the contract's
+// fixture, and every property they read is recorded, so a key with no underscore in it (row.payee)
+// is caught as readily as one with.
+import { test, expect, openDesk, dayFromToday, dayWords, receivablesHandoff } from "./helpers.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { AP_AGING_FIXTURE, AP_AGING_KEYS } from "./ap-aging-contract.js";
+import { ArDesk, type DeskHost, type DeskWho } from "../src/ar/ar-desk.js";
+import type { ArApi } from "../src/ar/ar-api.js";
 import type { Page } from "@playwright/test";
 
 /** The cents a figure reads: "$13,482.50" is 1348250. */
@@ -33,6 +38,107 @@ async function openBoard(page: Page): Promise<void> {
 function boardSource(): string {
   const here = fileURLToPath(new URL(".", import.meta.url));
   return ["ap-logic.ts", "ap-views.ts"].map((file) => readFileSync(`${here}../src/ar/${file}`, "utf8")).join("\n");
+}
+
+/** The desk's own source, the controller that reads the route's answer. */
+function deskSource(): string {
+  const here = fileURLToPath(new URL(".", import.meta.url));
+  return readFileSync(`${here}../src/ar/ar-desk.ts`, "utf8");
+}
+
+/**
+ * One method's body, brace matched from its signature. The desk's open AP read is looked at on
+ * its own: the rest of the desk belongs to other routes, whose keys this leg must not catch.
+ */
+function methodBody(source: string, signature: string): string {
+  const start = source.indexOf(signature);
+  if (start < 0) return "";
+  const open = source.indexOf("{", start);
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, index);
+    }
+  }
+  return "";
+}
+
+/**
+ * JavaScript's own members: the ones a value carries whatever the contract says. They are not
+ * the contract's keys, so the walk does not hold them against it.
+ */
+const OBJECT_MEMBERS = new Set([
+  "constructor",
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "toLocaleString",
+  "toString",
+  "valueOf",
+  "__proto__",
+]);
+
+/**
+ * A deep Proxy over the fixture. Every property the board reads is recorded, whatever the key's
+ * shape: a key with no underscore in it (row.payee) is recorded as readily as one with, so a
+ * board that read a key the contract does not name cannot pass the leg. An array's own members
+ * are the array's shape, not the contract's, so only a plain object's reads are held against it.
+ */
+function tracked<T>(value: T, reads: Set<string>): T {
+  if (value === null || typeof value !== "object") return value;
+  return new Proxy(value as object, {
+    get(target, prop, receiver) {
+      if (typeof prop === "string" && !Array.isArray(target) && !OBJECT_MEMBERS.has(prop)) reads.add(prop);
+      const raw = Reflect.get(target, prop, receiver);
+      if (raw !== null && typeof raw === "object") return tracked(raw, reads);
+      return raw;
+    },
+  }) as T;
+}
+
+/** A control the desk can press, without a browser: the press is the desk's own code. */
+function control(action: string, attrs: Record<string, string>): Element {
+  return {
+    getAttribute: (name: string) => (name === "data-action" ? action : attrs[name] ?? null),
+  } as unknown as Element;
+}
+
+/**
+ * The desk, held to nothing: the host does nothing and the route answers the contract's own
+ * fixture, so the desk's reads are the desk's own and nothing else.
+ */
+function deskOn(reads: Set<string>): ArDesk {
+  const page = tracked(AP_AGING_FIXTURE, reads);
+  const api = {
+    apAging: async () => ({ ok: true, value: page }),
+    office: () => ({}),
+  } as unknown as ArApi;
+  const host: DeskHost = {
+    repaint: () => {},
+    reveal: () => {},
+    field: () => "",
+    setField: () => {},
+    download: () => {},
+    mountDocument: () => {},
+  };
+  const who: DeskWho = { userId: "contract-leg", roleCode: "financial_controller", userName: "Contract leg" };
+  return new ArDesk(api, host, who);
+}
+
+/**
+ * The walk: the desk reads the open AP and draws the board, then a payee's open items are opened
+ * and drawn too. Every property read on the way is recorded.
+ */
+async function walkTheBoard(reads: Set<string>): Promise<void> {
+  const desk = deskOn(reads);
+  desk.openPayables();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  desk.renderPayablesArea();
+  // A payee's open items: the vendor row's own bills, read and drawn.
+  desk.press(control("payables-open", { "data-payee-id": AP_AGING_FIXTURE.items[0].vendor_id ?? "" }));
+  desk.renderPayablesArea();
 }
 
 test("the Payables area is in the Money Desk's top level switch, beside Receivables", async ({ page, request }) => {
@@ -68,7 +174,7 @@ test("the board opens on the open AP: the five bands, the payee rows and the day
   await expect(page.locator("[data-payee-row]").first()).toContainText("Meadowlark Landscape Lighting (demo)");
   await expect(page.locator("[data-field='payables-asof']")).toHaveValue(dayFromToday(0));
   // The footnote date reads the way the as of control reads it, never as the ISO digits.
-  await expect(page.locator("[data-payables-foot]")).toContainText("As of " + pickerDay(dayFromToday(0)));
+  await expect(page.locator("[data-payables-foot]")).toContainText("As of " + dayWords(dayFromToday(0)));
 });
 
 test("the bucket totals sum to the total, on every payee row and on the whole book", async ({ page, request }) => {
@@ -205,7 +311,7 @@ test("the board says so when nothing is open as of that day", async ({ page, req
   await request.post("/_stub/scenario", { data: { name: "empty" } });
   await openBoard(page);
   await expect(page.locator("[data-payables-empty]")).toContainText("No open AP as of this day.");
-  await expect(page.locator("[data-payables-empty]")).toContainText(pickerDay(dayFromToday(0)));
+  await expect(page.locator("[data-payables-empty]")).toContainText(dayWords(dayFromToday(0)));
   await expect(page.locator("[data-payee-row]")).toHaveCount(0);
   await expect(page.locator("[data-payables-total]")).toHaveCount(0);
   // The footnote under an empty board says nothing worth saying, so it is not there.
@@ -219,7 +325,7 @@ test("the as of control reads the books as of the day the operator picks", async
   const field = page.locator("[data-field='payables-asof']");
   await field.fill(dayFromToday(-200));
   await expect(page.locator("[data-payables-empty]")).toContainText("No open AP as of this day.");
-  await expect(page.locator("[data-payables-empty]")).toContainText(pickerDay(dayFromToday(-200)));
+  await expect(page.locator("[data-payables-empty]")).toContainText(dayWords(dayFromToday(-200)));
   await expect(page.locator("[data-payables-foot]")).toHaveCount(0);
 });
 
@@ -241,6 +347,97 @@ test("the blank check: every board state says what it is, and none of them rende
   await page.locator("[data-field='payables-asof']").fill(dayFromToday(0));
   await expect(page.locator("[data-payables-empty]")).toContainText("No open AP as of this day.");
   expect((await page.locator("main").innerText()).trim()).not.toBe("");
+});
+
+test("every road out of the payables board closes the payee whose open items were open", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openBoard(page);
+  // A payee's open items are open.
+  await page.locator("[data-payee-row]", { hasText: "Saltmarsh Fasteners (demo)" }).getByRole("button").click();
+  await expect(page.locator("[data-payables-lines]")).toBeVisible();
+
+  // The assistant panel names a customer: the desk opens that record on the receivables desk's
+  // own route, which leaves the payables board. The panel is in the desk's own shadow root.
+  await page.evaluate(() => {
+    const app = document.querySelector("money-desk-app");
+    const panel = app?.shadowRoot?.querySelector("hh-tanyai-panel");
+    panel?.dispatchEvent(new CustomEvent("hh-tanyai-open-ref", { detail: { ref: { kind: "customer", id: "e0000000-0000-4000-8000-000000000004" } } }));
+  });
+  await expect(page.getByRole("heading", { name: "Summit Patio Co (demo)" })).toBeVisible();
+
+  // And back to the board: the payee's open items were closed on the way out, so the board is
+  // what shows, not the payee that was open.
+  await page.locator("nav[aria-label='Money Desk areas']").getByRole("button", { name: "Payables", exact: true }).click();
+  await expect(page.locator("[data-payables-aging]")).toBeVisible();
+  await expect(page.locator("[data-payables-lines]")).toHaveCount(0);
+});
+
+/**
+ * The desk's own pick of the day the books are read as of, driven through the app's own change
+ * event. The board takes its as-of control off the screen while a read is in flight, so a person
+ * cannot make a second pick while the first is on the way; this drives the desk's own change path
+ * so that the two picks overlap, the way the desk has to be ready for.
+ */
+async function pickAsOf(page: Page, day: string): Promise<void> {
+  await page.evaluate((value) => {
+    const app = document.querySelector("money-desk-app");
+    if (app === null || app.shadowRoot === null) return;
+    const field = document.createElement("input");
+    field.setAttribute("data-field", "payables-asof");
+    field.value = value;
+    const event = new Event("change", { bubbles: true });
+    Object.defineProperty(event, "target", { value: field });
+    app.shadowRoot.dispatchEvent(event);
+  }, day);
+}
+
+test("a slow answer for an earlier day never replaces the newer pick", async ({ page, request }) => {
+  const earlier = dayFromToday(-45);
+  const later = dayFromToday(-5);
+  // The answer for the earlier day is held back; every other answer is let through at once.
+  const held: { route: import("@playwright/test").Route; body: string }[] = [];
+  await page.route("**/api/v1/purchasing/ap-aging*", async (route) => {
+    const asOf = new URL(route.request().url()).searchParams.get("as_of") ?? "";
+    const answer = await request.get(`/api/v1/purchasing/ap-aging${asOf === "" ? "" : `?as_of=${asOf}`}`, { headers: { authorization: "Bearer contract-leg" } });
+    const body = await answer.text();
+    if (asOf === earlier) {
+      held.push({ route, body });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body });
+  });
+
+  await openDesk(page, request);
+  await openBoard(page);
+  // Two picks, the first one's answer still on the way.
+  await pickAsOf(page, earlier);
+  await pickAsOf(page, later);
+  // The newer pick is what the board shows.
+  await expect(page.locator("[data-payables-foot]")).toContainText(`As of ${dayWords(later)}`);
+
+  // Now the slow answer for the earlier day lands. It answers for a day the operator has already
+  // moved on from, so the board does not move back to it.
+  expect(held.length).toBe(1);
+  await held[0]!.route.fulfill({ status: 200, contentType: "application/json", body: held[0]!.body });
+  await page.waitForLoadState("networkidle");
+  await expect(page.locator("[data-payables-foot]")).toContainText(`As of ${dayWords(later)}`);
+  await expect(page.locator("[data-payables-foot]")).not.toContainText(dayWords(earlier));
+  await expect(page.locator("[data-field='payables-asof']")).toHaveValue(later);
+});
+
+test("the day the books are read as of reads in the desk's one words, never as digits", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openBoard(page);
+  const foot = page.locator("[data-payables-foot]");
+  await expect(foot).toContainText(`As of ${dayWords(dayFromToday(0))}`);
+  // The old shape is gone: the board does not write a day as M/D/YYYY, the way the rest of the
+  // desk does not either.
+  await expect(foot).not.toContainText(/\d{1,2}\/\d{1,2}\/\d{4}/);
+  // And the empty state says the same day the same way.
+  await request.post("/_stub/scenario", { data: { name: "empty" } });
+  await page.locator("[data-field='payables-asof']").fill(dayFromToday(-200));
+  await expect(page.locator("[data-payables-empty]")).toContainText(dayWords(dayFromToday(-200)));
+  await expect(page.locator("[data-payables-empty]")).not.toContainText(/\d{1,2}\/\d{1,2}\/\d{4}/);
 });
 
 test("the contract's own leg: the route answers the contract's keys, and the board reads no key the contract does not name", async ({ page, request }) => {
@@ -281,12 +478,36 @@ test("the contract's own leg: the route answers the contract's keys, and the boa
   await expect(page.locator("[data-line-row]")).toContainText("PO-1042");
   await expect(page.locator("[data-line-row]")).toContainText("Freight");
 
-  // And the board's own reads name nothing the contract does not: every wire key it touches is
-  // a key the schemas name, and the band it reads is the contract's 61 to 90 band.
+  // And the board's own reads name nothing the contract does not: the desk and the board's views
+  // are walked on a Proxy over the contract's fixture, and every property they read is a key the
+  // schemas name. A key with no underscore in it is caught as readily as one with, so a board
+  // that read row.payee would fail here instead of failing in the browser.
   const reads = new Set<string>();
-  const source = boardSource();
-  for (const match of source.matchAll(/\.([a-z][a-z0-9]*_[a-z0-9_]+)/g)) reads.add(match[1]);
-  for (const match of source.matchAll(/field: "([a-z0-9_]+)"/g)) reads.add(match[1]);
+  await walkTheBoard(reads);
   expect([...reads].filter((key) => !AP_AGING_KEYS.has(key)).sort()).toEqual([]);
+  // The walk really read the shape: the band it reads is the contract's 61 to 90 band.
   expect(reads.has("days_60_to_90_cents")).toBe(true);
+
+  // The board's own source, read for the keys it names: the two files that draw the route's
+  // shape. The desk's own reads are caught by the walk above, but the source of the two files
+  // that draw it is read too, so a key named in a path the walk did not take is still held.
+  const sourceReads = new Set<string>();
+  const source = boardSource();
+  for (const match of source.matchAll(/\.([a-z][a-z0-9]*_[a-z0-9_]+)/g)) sourceReads.add(match[1]);
+  for (const match of source.matchAll(/field: "([a-z0-9_]+)"/g)) sourceReads.add(match[1]);
+  expect([...sourceReads].filter((key) => !AP_AGING_KEYS.has(key)).sort()).toEqual([]);
+  expect(sourceReads.has("days_60_to_90_cents")).toBe(true);
+
+  // And the desk's source is read for the same reason, over the open AP read alone: the page
+  // the route answered is read either straight off the answer or off the field it is kept in,
+  // and every key read off it is a key the contract names. The rest of the desk belongs to other
+  // routes, whose keys this leg must not catch.
+  const deskReads = new Set<string>();
+  const desk = deskSource();
+  const apRead = methodBody(desk, "async #loadPayables(");
+  for (const match of apRead.matchAll(/\.value\.([a-z][a-z0-9_]+)/g)) deskReads.add(match[1]);
+  for (const match of desk.matchAll(/#payablesPage\.([a-z][a-z0-9_]+)/g)) deskReads.add(match[1]);
+  expect([...deskReads].filter((key) => !AP_AGING_KEYS.has(key)).sort()).toEqual([]);
+  // The read is really found: the desk reads the day it is read as of.
+  expect(deskReads.has("as_of")).toBe(true);
 });

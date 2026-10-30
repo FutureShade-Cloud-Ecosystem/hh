@@ -49,6 +49,8 @@ import {
   type TillInvoicePayments,
   type TillNSFResult,
   type TillPaymentHistory,
+  type PurchasingBillDetail,
+  type PurchasingPayBillRequest,
 } from "@hardscapehouse/api-client";
 
 import { OfficeApi } from "./office-api.js";
@@ -122,6 +124,27 @@ export class ArApi {
    */
   t5018Csv(opts: { year?: number; branch_id?: string } = {}): Promise<Result<string>> {
     return staffPurchasing.purchasingT5018ReportCSV(this.#client, opts);
+  }
+
+  /**
+   * One payment against a vendor bill: the core's POST /api/v1/purchasing/bills/{id}/payments.
+   *
+   * The key rides the Idempotency-Key header, one key per press, so a double press pays once and
+   * a retry after a lost answer is judged against the first press. The amount is the server's to
+   * accept or refuse (the open balance caps it); the desk only says what it typed. A bill that is not
+   * CAD takes the amount in its own currency and the rate it was paid at (fx_rate).
+   */
+  payBill(
+    id: string,
+    input: { amountCents: number; paidAt: string; note: string; fxRate?: number },
+    key: string,
+  ): Promise<Result<PurchasingBillDetail>> {
+    return staffPurchasing.purchasingPayBill(
+      this.#client,
+      id,
+      { amount_cents: input.amountCents, paid_at: input.paidAt, note: input.note, ...(input.fxRate === undefined ? {} : { fx_rate: input.fxRate }) },
+      { idempotencyKey: key },
+    );
   }
 
   /** Every invoice of an account, the unpaid ones first and the paid ones after: the core's read with no chip. */

@@ -106,7 +106,7 @@ export async function quotePublicViewQuote(
   });
 }
 
-// The document lets this call carry an Idempotency-Key: call.idempotencyKey, a UUID chosen
+// The document lets this call carry an Idempotency-Key: call.idempotencyKey, a key chosen
 // once per acceptance and resent unchanged on every retry of it (never a new key per try), so a retry after a
 // timeout answers the first outcome instead of recording a second one.
 export async function quotePublicAcceptQuote(

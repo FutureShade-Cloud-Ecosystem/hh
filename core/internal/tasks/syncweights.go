@@ -303,6 +303,39 @@ func weightWritableCreate(fields map[string]any) error {
 	return nil
 }
 
+// weightCreateShape is the body-only half of the pushed create's checks:
+// the writable field set, the order uuid, the line number the request
+// names and the payload id shape. It reads nothing and honours no fence
+// (the order's existence and the caller's reach are Create's own reads), so
+// the bound key gate can run it before the hidden refusal (UX-116): an
+// invalid body then meets these refusals under a spent key and a free one.
+// The refusals are exactly the ones Create answers.
+func weightCreateShape(fields map[string]any) error {
+	if err := weightWritableCreate(fields); err != nil {
+		return err
+	}
+	orderID, _ := fields["order_id"].(string)
+	if !looksLikeUUID(orderID) {
+		return fmt.Errorf("tasks: order_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	if lineNo, ok := numericLeg(fields["order_line_no"]); !ok || lineNo <= 0 {
+		return fmt.Errorf("tasks: order_line_no must be positive, a weight request names ONE line: %w", sync.ErrOpRefused)
+	}
+	if id, hasID := fields["id"].(string); hasID && !looksLikeUUID(id) {
+		return fmt.Errorf("tasks: payload id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	return nil
+}
+
+// ValidateCreate answers the pushed create's body shape without the order
+// read, the reach fence or a write: the engine's bound key gate calls it
+// before the hidden refusal (UX-116). The refusals are exactly Create's.
+func (s *WeightSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	return weightCreateShape(fields)
+}
+
+var _ sync.CreateBodyValidator = (*WeightSyncStore)(nil)
+
 // weightWritable is the field set a pushed update may declare: the weight
 // legs (which close the task through the module's own one-tap rule), a
 // status move through the legality matrix, and the photo stamp.
@@ -331,17 +364,11 @@ func (s *WeightSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key st
 	if _, _, ok := weightScopePredicate(f); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
-	if err := weightWritableCreate(fields); err != nil {
+	if err := weightCreateShape(fields); err != nil {
 		return sync.RowState{}, err
 	}
 	orderID, _ := fields["order_id"].(string)
-	if !looksLikeUUID(orderID) {
-		return sync.RowState{}, fmt.Errorf("tasks: order_id must be a uuid: %w", sync.ErrOpRefused)
-	}
-	lineNo, ok := numericLeg(fields["order_line_no"])
-	if !ok || lineNo <= 0 {
-		return sync.RowState{}, fmt.Errorf("tasks: order_line_no must be positive, a weight request names ONE line: %w", sync.ErrOpRefused)
-	}
+	lineNo, _ := numericLeg(fields["order_line_no"])
 	if s.orders == nil {
 		return sync.RowState{}, fmt.Errorf("tasks: order reader not configured: %w", sync.ErrOpRefused)
 	}
@@ -367,10 +394,9 @@ func (s *WeightSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key st
 	// sync, so the field is not in the writable create set either.
 	priority := PriorityHigh
 	uom, _ := fields["weight_uom"].(string)
-	id, hasID := fields["id"].(string)
-	if hasID && !looksLikeUUID(id) {
-		return sync.RowState{}, fmt.Errorf("tasks: payload id must be a uuid: %w", sync.ErrOpRefused)
-	}
+	// The payload id shape is weightCreateShape's check, run before the
+	// order read there; here the shape stands proven.
+	id, _ := fields["id"].(string)
 	actor := s.actorERP(ctx, f)
 
 	tx, err := s.pool.Begin(ctx)

@@ -90,7 +90,14 @@ export function monthOfDate(coreDate: string): string {
   return `${matched[1]}-${matched[2]}`;
 }
 
-/** The world's Accounts Receivable (1100) balance at that month end, in cents ($700.00: the seed's two demo counterparty invoices). */
+/**
+ * The world's month end 1100 balance at that month end, in cents ($700.00: the seed's two demo counterparty invoices).
+ *
+ * THE BASE: ONE MONTH'S MOVEMENT ON THE TRIAL BALANCE. This is what account 1100 moved BY in the month the seed's
+ * AR movement landed in, read on the trial balance for that month (a month's movement, debits less credits). It is
+ * NOT the all-years tie: AR_1100_GL_CENTS below is that one, and the two are equal on this seed by construction.
+ * W2-1b's switch moves them separately, so this line names its own base and never copies one into the other.
+ */
 export const MONTH_END_1100_CENTS = 70_000;
 
 /** A month the world has signed off (YYYY-MM), or the empty string while the seed signs off no month at all. */
@@ -146,6 +153,11 @@ export const AR_TOTAL_CENTS = 1_087_000;
  * 0221); the seeded INV-2026-0002 carries the opening-balance marker and has no journal. The
  * tie-out reads every year to date, so this does not move with the clock. W2-1b's world ties by
  * construction and switches this line.
+ *
+ * THE BASE: THE ALL-YEARS TIE. This is what account 1100 holds over every year to date, the figure the tie-out
+ * reads against the aging. It is NOT a month's movement: MONTH_END_1100_CENTS above is that one, and the two are
+ * equal on this seed by construction. W2-1b's switch moves them separately, so this line names its own base and
+ * never copies one into the other.
  */
 export const AR_1100_GL_CENTS = 70_000;
 
@@ -195,12 +207,44 @@ export const AR_PAYMENT_INVOICE_NO = "INV-2026-0002";
 /** The received payment's amount in cents: the invoice's whole balance. */
 export const AR_PAYMENT_CENTS = 1_017_000;
 
-/** The world's named staff: the financial controller who reads the book, and the platform id the box grants. */
-export const AR_FINANCIAL_CONTROLLER = {
-  platformUserId: "fin-console-user-a",
-  email: "jordan.blake@dibbits.example",
-  name: "Jordan Blake",
-  roleName: "Financial Controller",
-  tier: 1,
-  scope: "GLOBAL",
-} as const;
+// ---- W2-4 (d): the bank reconciliation figures ----------------------------------------------
+//
+// (d) was written against W2-1b's world (the anchor month, the month before it signed off). Today's finance seed
+// signs off no month (SIGNED_OFF_BANK_MONTH above is ""), so the join round moves (d)'s legs onto the seed's branch
+// with the anchor switch, as (c)'s ledger legs do: while the world names no month the specs assert what today's
+// seed truly holds, and when the world names its month the world's own assertions run.
+//
+// NO MONTH LITERAL (FROM-PRINCIPAL 389). The open month is not written down here any more. It is the world's
+// OPEN_MONTH_ANCHOR when the world carries one, and the box's own month read at run time when it does not (the
+// derivation lives in ./box-read, and (c)'s ledger spec reads it from the same place).
+
+/**
+ * The world's bank accounts: how many the core lists, and the bank account among them.
+ *
+ * Today's seed: migration 0033 plants nine accounts, the one bank account (RBC Operating, GL 1000) and eight
+ * tracking-only Corporate Visa cards (GL 2110 to 2117). The core lists them all, ordered by their GL code, so the
+ * bank account is the only BANK one and the desk picks it. W2-1b's world switches these two lines.
+ */
+export const BANKREC_ACCOUNT_COUNT = 9;
+
+/** The world's bank account: the one the desk reconciles, by the name the core gives it. */
+export const BANKREC_BANK_ACCOUNT_NAME = "RBC Operating";
+
+/**
+ * The world's reconciliations: how many the core holds for the bank account.
+ *
+ * Today's seed holds none: the finance seed opens no month and signs none off, so no month is reconciled, no month
+ * is signed off and no month reads zero difference. W2-1b's world signs a month off and switches this line.
+ */
+export const BANKREC_RECONCILIATION_COUNT = 0;
+
+/**
+ * The world's statement lines: how many the core holds for the bank account.
+ *
+ * Today's seed holds none: the finance seed imports no statement, so there is no line to match, no match history
+ * and nothing unmatched on any account. W2-1b's world switches this line.
+ */
+export const BANKREC_STATEMENT_LINE_COUNT = 0;
+
+/** The world's tie: a signed off month's reconciliation is complete at zero difference, in cents. */
+export const SIGNED_OFF_VARIANCE_CENTS = 0;

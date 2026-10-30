@@ -237,7 +237,7 @@ func runFinWorldTies(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlan
 	// finance-check runs): purchasing's own aging, posted vendor bills less PayBill's payments plus the
 	// landed cost payables, against GL 2100. GRNI (2150) clears to zero at every month end.
 	{
-		apSeams := TieSeams{Querier: pool, GLStore: glRepo, AP: financeCheckAPAging(pool)}
+		apSeams := TieSeams{Querier: pool, GLStore: glRepo, GLClock: glSvc, AP: financeCheckAPAging(pool)}
 		allPass := true
 		var lastDetail string
 		for _, tm := range activeTieMonths {

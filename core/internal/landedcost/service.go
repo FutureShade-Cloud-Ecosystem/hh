@@ -61,6 +61,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	lc := LandedCost{
 		POID:               in.POID,
 		PORef:              in.PORef,
+		PayeeVendorID:      strings.TrimSpace(in.PayeeVendorID),
 		BranchID:           in.BranchID,
 		Currency:           currency,
 		FXRate:             fx,
@@ -429,6 +430,9 @@ func (s *Service) Void(ctx context.Context, id string) error {
 	default:
 		return clientErr(409, "landedcost: cannot void a %s landed cost", lc.Status)
 	}
+	if lc.SettledCadCents > 0 {
+		return clientErr(409, "landedcost: this landed cost is settled; record the carrier's credit instead")
+	}
 	allocs, err := s.repo.Allocations(ctx, id)
 	if err != nil {
 		return err
@@ -477,6 +481,14 @@ func (s *Service) Void(ctx context.Context, id string) error {
 		}
 		if locked.Status == StatusVoided {
 			return nil // a prior void already reversed + posted + committed, do not re-capitalize or re-post
+		}
+		switch locked.Status {
+		case StatusPosted, StatusAllocated, StatusRetroAdjusted:
+		default:
+			return clientErr(409, "landedcost: cannot void a %s landed cost", locked.Status)
+		}
+		if locked.SettledCadCents > 0 {
+			return clientErr(409, "landedcost: this landed cost is settled; record the carrier's credit instead")
 		}
 		var reversedTotal int64
 		for _, a := range allocs {
@@ -544,6 +556,98 @@ func (s *Service) Void(ctx context.Context, id string) error {
 		}
 		return s.repo.SetStatusTx(ctx, tx, id, StatusVoided, journalRef)
 	})
+}
+
+// Settle pays a posted landed cost's payable in full: it stamps the header
+// with the CAD amount and the instant it was paid, and posts the DR 2100 /
+// CR 1000 settlement journal inside the same transaction (idempotent on its
+// landedcost.settle key), so the AP aging reads the payment from the
+// settlement journal's effective instant the same rule it reads a bill's
+// payment by, and the payable leaves GL 2100 the day the cheque clears. A
+// re-press is a no-op: an already settled payable pays once.
+func (s *Service) Settle(ctx context.Context, id string, in SettleInput) error {
+	lc, err := s.guardBranch(ctx, id)
+	if err != nil {
+		return err
+	}
+	switch lc.Status {
+	case StatusPosted, StatusRetroAdjusted:
+	default:
+		return clientErr(409, "landedcost: cannot settle a %s landed cost", lc.Status)
+	}
+	total := lc.totalCadCents()
+	if total <= 0 {
+		return clientErr(409, "landedcost: landed cost carries no payable to settle")
+	}
+	at := s.clock()
+	if in.PaidAt != nil && !in.PaidAt.IsZero() {
+		at = in.PaidAt.UTC()
+		appliedAt, err := s.appliedInstant(ctx, lc)
+		if err != nil {
+			return err
+		}
+		if at.Truncate(time.Microsecond).Before(appliedAt.Truncate(time.Microsecond)) {
+			return clientErr(http.StatusBadRequest, "landedcost: paid_at cannot precede the landed cost's apply")
+		}
+	}
+	if lc.SettledCadCents > 0 {
+		return nil // already settled, the re-press pays nothing twice
+	}
+	return s.repo.WithinTx(ctx, func(tx pgx.Tx) error {
+		locked, err := s.repo.LockForUpdateTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		switch locked.Status {
+		case StatusPosted, StatusRetroAdjusted:
+		default:
+			return clientErr(409, "landedcost: cannot settle a %s landed cost", locked.Status)
+		}
+		if locked.SettledCadCents > 0 {
+			return nil // a concurrent settle won the row, pay once
+		}
+		if err := s.repo.SettleTx(ctx, tx, id, total, at); err != nil {
+			return err
+		}
+		_, err = s.postJournalTx(ctx, tx, glJournal{
+			key:    "landedcost.settle:" + id,
+			source: glSourcePayment,
+			refID:  id,
+			memo:   "Landed cost paid",
+			branch: lc.BranchID,
+			at:     at,
+			lines: []glLine{
+				{acct: acctFreightPayable, debit: total, memo: "pay freight and duty payable"},
+				{acct: glAccountCash, credit: total, memo: "carrier or broker cheque"},
+			},
+		})
+		return err
+	})
+}
+
+// appliedInstant returns the instant a POSTED or RETRO_ADJUSTED landed cost's
+// payable took effect: its posting journal's effective instant when the GL
+// journal clock is wired, or the row's own apply stamp (updated_at for POSTED,
+// created_at for RETRO_ADJUSTED) when the clock is unwired.
+func (s *Service) appliedInstant(ctx context.Context, lc LandedCost) (time.Time, error) {
+	if s.journalClock != nil {
+		if lc.GLJournalID != "" {
+			instants, err := s.journalClock.JournalEffectiveInstants(ctx, []string{lc.GLJournalID})
+			if err != nil {
+				return time.Time{}, err
+			}
+			if eff, ok := instants[lc.GLJournalID]; ok && !eff.IsZero() {
+				return eff, nil
+			}
+		}
+		if eff, found, err := s.journalClock.JournalEffectiveInstantByKey(ctx, "landedcost.apply:"+lc.ID); err == nil && found && !eff.IsZero() {
+			return eff, nil
+		}
+	}
+	if lc.Status == StatusPosted && !lc.UpdatedAt.IsZero() {
+		return lc.UpdatedAt, nil
+	}
+	return lc.CreatedAt, nil
 }
 
 // - seam helpers -

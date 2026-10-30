@@ -522,6 +522,32 @@ export type BillingCreditApplicationLine = {
   outcome: "CLOSES" | "PART";
   balance_after_cents: number;
 };
+export type BillingWriteOffInput = {
+  invoice_id: string;
+  reason: string;
+  idempotency_key: string;
+};
+export type BillingWriteOff = {
+  write_off_id: string;
+  invoice_id: string;
+  invoice_no: string;
+  amount_cents: number;
+  limit_cents: number;
+  replayed: boolean;
+};
+export type BillingWriteOffReversalInput = {
+  invoice_id: string;
+  write_off_id: string;
+  reason: string;
+};
+export type BillingWriteOffReversed = {
+  write_off_id: string;
+  invoice_id: string;
+  invoice_no: string;
+  restored_cents: number;
+  invoice_balance_after_cents: number;
+  replayed: boolean;
+};
 export type BillingCreditApplication = {
   application_id: string;
   credit_kind: "MEMO" | "ACCOUNT";
@@ -669,6 +695,7 @@ export type BillingApplyPaymentAnswer = {
   amount_cents: number;
   applied_cents: number;
   unapplied_cents: number;
+  on_account_cents: number;
   lines: BillingApplyPaymentLine[];
   replayed: boolean;
 };
@@ -1236,6 +1263,56 @@ export type BillingStatementPreviewAging = {
   open_cents: number;
   overdue_cents: number;
 };
+export type BillingCreditChangeInput = {
+  customer_id: string;
+  new_limit_cents?: number;
+  place_hold?: boolean;
+  hold_kind?: "NSF" | "AR_AGING" | "CREDIT_LIMIT" | "COD" | "MANUAL";
+  reason: string;
+};
+export type BillingCreditChangeDecideInput = {
+  note?: string;
+  reason?: string;
+};
+export type BillingCreditChangeRequest = {
+  id: string;
+  customer_id: string;
+  branch_id?: string;
+  change_kind: "LIMIT_CHANGE" | "HOLD";
+  previous_limit_cents: number;
+  new_limit_cents?: number;
+  delta_cents: number;
+  hold_kind?: "NSF" | "AR_AGING" | "CREDIT_LIMIT" | "COD" | "MANUAL";
+  hold_id?: string;
+  reason: string;
+  status: "PENDING" | "APPROVED" | "APPLIED" | "REJECTED";
+  required_approvals: number;
+  first_threshold_cents: number;
+  second_threshold_cents: number;
+  requested_by: string;
+  requested_by_role?: string;
+  requested_at: string;
+  first_approved_by?: string;
+  first_approved_by_role?: string;
+  first_approved_at?: string;
+  first_approval_note?: string;
+  second_approved_by?: string;
+  second_approved_by_role?: string;
+  second_approved_at?: string;
+  second_approval_note?: string;
+  rejected_by?: string;
+  rejected_by_role?: string;
+  rejected_at?: string;
+  rejection_reason?: string;
+  applied_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+export type BillingCreditChangePage = {
+  items: BillingCreditChangeRequest[];
+  next_cursor?: string | null;
+  limit?: number;
+};
 export type AssistArgSpec = {
   name: string;
   label: string;
@@ -1671,6 +1748,53 @@ export type CustomerSMSConsent = {
 export type CustomerSMSConsentUpdate = {
   consent: boolean;
   phone_e164: string;
+};
+export type CustomerJob = {
+  job_id: string;
+  customer_id: string;
+  branch_id: string;
+  job_no: string;
+  name: string;
+  ship_to_address?: { [key: string]: unknown };
+  po_reference?: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  credit_limit_cents?: number;
+  terms_days?: number;
+  effective_terms_days?: number;
+  status: "OPEN" | "CLOSED";
+  substantial_performance_date?: string;
+  last_supply_date?: string;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+export type CustomerJobCreate = {
+  job_no: string;
+  name: string;
+  branch_id?: string;
+  ship_to_address?: { [key: string]: unknown };
+  po_reference?: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  credit_limit_cents?: number | null;
+  terms_days?: number | null;
+  substantial_performance_date?: string;
+  last_supply_date?: string;
+};
+export type CustomerJobEdit = {
+  name?: string;
+  ship_to_address?: { [key: string]: unknown };
+  po_reference?: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  credit_limit_cents?: number | null;
+  terms_days?: number | null;
+  substantial_performance_date?: string | null;
+  last_supply_date?: string | null;
 };
 export type PrintingJob = {
   id: string;
@@ -3181,6 +3305,7 @@ export type TaxConfig = {
   branch_id?: string;
   hst_registration_no: string;
   round_mode: "INVOICE_TOTAL" | "PER_LINE";
+  filing_frequency?: "QUARTERLY" | "MONTHLY" | "YEARLY";
   avalara_enabled: boolean;
   postal_routing_enabled: boolean;
   notes?: string;
@@ -3240,6 +3365,43 @@ export type TaxReconReport = {
   gl_ontario_cents: number;
   variance_cents: number;
   tied_out: boolean;
+};
+export type TaxWorksheetLine = {
+  line_no: string;
+  label: string;
+  amount_cents: number;
+  entered_by_hand: boolean;
+  note?: string;
+};
+export type TaxWorksheet = {
+  year: number;
+  filing_frequency: "QUARTERLY" | "MONTHLY" | "YEARLY";
+  quarter?: number;
+  month?: number;
+  from_date: string;
+  to_date: string;
+  branch_id?: string;
+  line_101_sales_cents: number;
+  line_103_collected_cents: number;
+  line_104_adjustments_cents: number;
+  line_105_total_hst_cents: number;
+  line_106_itcs_cents: number;
+  line_107_itc_adjustments_cents: number;
+  line_108_total_itcs_cents: number;
+  line_109_net_tax_cents: number;
+  line_110_instalments_cents: number;
+  line_111_rebates_cents: number;
+  line_112_total_other_credits_cents: number;
+  line_113_balance_cents: number;
+  line_114_refund_claimed_cents: number;
+  line_115_amount_owing_cents: number;
+  invoice_hst_cents: number;
+  return_tax_cents: number;
+  gl_payable_cents: number;
+  variance_cents: number;
+  tied_out: boolean;
+  manual_entry_note: string;
+  lines: TaxWorksheetLine[];
 };
 export type InventoryStockMove = {
   id: string;
@@ -6735,6 +6897,7 @@ export type PurchasingBill = {
   subtotal_cents: number;
   tax_cents: number;
   total_cents: number;
+  doc_total_cents: number;
   currency: PurchasingCurrency;
   fx_rate: number;
   gl_journal_id?: string;
@@ -6768,7 +6931,64 @@ export type PurchasingInstalment = {
   status: "SCHEDULED" | "PAID" | "CANCELLED";
   note: string;
 };
-export type PurchasingBillDetail = PurchasingBill & { lines: PurchasingBillLine[]; instalments: PurchasingInstalment[] };
+export type PurchasingBillDetail = PurchasingBill & { doc_open_cents: number; lines: PurchasingBillLine[]; instalments: PurchasingInstalment[] };
+export type PurchasingVendorCreditStatus = "DRAFT" | "POSTED";
+export type PurchasingVendorCredit = {
+  id: string;
+  credit_no: string;
+  vendor_id: string;
+  vendor_name: string;
+  branch_id: string;
+  bill_id?: string;
+  bill_no?: string;
+  po_id?: string;
+  po_no?: string;
+  status: PurchasingVendorCreditStatus;
+  credit_date: string;
+  total_cents: number;
+  applied_cents: number;
+  open_cents: number;
+  gl_journal_id?: string;
+  posted_at?: string | null;
+  created_at: string;
+};
+export type PurchasingVendorCreditLine = {
+  line_no: number;
+  account_code: string;
+  description: string;
+  amount_cents: number;
+};
+export type PurchasingVendorCreditApplication = {
+  id: string;
+  bill_id: string;
+  bill_no: string;
+  amount_cents: number;
+  applied_at: string;
+};
+export type PurchasingVendorCreditDetail = PurchasingVendorCredit & { lines: PurchasingVendorCreditLine[]; applications: PurchasingVendorCreditApplication[] };
+export type PurchasingVendorCreditPage = {
+  items: PurchasingVendorCredit[];
+  next_cursor?: string | null;
+  limit?: number;
+};
+export type PurchasingCreateVendorCreditRequest = {
+  vendor_id: string;
+  branch_id: string;
+  credit_no: string;
+  bill_id?: string;
+  po_id?: string;
+  credit_date?: string;
+  lines: PurchasingVendorCreditLineRequest[];
+};
+export type PurchasingVendorCreditLineRequest = {
+  account_code?: string;
+  description?: string;
+  amount_cents: number;
+};
+export type PurchasingApplyVendorCreditRequest = {
+  bill_id: string;
+  amount_cents: number;
+};
 export type PurchasingTolerance = {
   branch_id?: string;
   qty_tolerance_pct: number;
@@ -6896,6 +7116,7 @@ export type PurchasingPostBillRequest = {
 };
 export type PurchasingPayBillRequest = {
   amount_cents: number;
+  fx_rate?: number;
   paid_at?: string;
   note?: string;
 };
@@ -6978,6 +7199,9 @@ export type PurchasingAPAgingItem = {
   total_cents: number;
   paid_cents: number;
   open_cents: number;
+  currency: PurchasingCurrency;
+  doc_total_cents: number;
+  doc_open_cents: number;
   freight_cad_cents?: number;
   duty_cad_cents?: number;
   handling_cad_cents?: number;
@@ -7018,6 +7242,66 @@ export type PurchasingAPAgingPage = {
   items: PurchasingAPAgingRow[];
   next_cursor: string | null;
 };
+export type PurchasingPaymentRunStatus = "DRAFT" | "PAID";
+export type PurchasingPaymentRunLineStatus = "SELECTED" | "PAID" | "SKIPPED";
+export type PurchasingPaymentRunLine = {
+  id: string;
+  seq: number;
+  bill_id: string;
+  bill_no?: string;
+  vendor_id?: string;
+  vendor_name?: string;
+  due_date?: string;
+  amount_cents: number;
+  status: PurchasingPaymentRunLineStatus;
+  paid_cents: number;
+  skip_reason?: string;
+};
+export type PurchasingPaymentRun = {
+  id: string;
+  branch_id: string;
+  status: PurchasingPaymentRunStatus;
+  due_on: string;
+  vendor_id?: string;
+  pay_date: string;
+  total_cents: number;
+  paid_cents: number;
+  paid_at?: string | null;
+  created_at: string;
+  lines: PurchasingPaymentRunLine[];
+  left_out?: string[];
+};
+export type PurchasingPaymentRunSummary = {
+  id: string;
+  branch_id: string;
+  status: PurchasingPaymentRunStatus;
+  due_on: string;
+  vendor_id?: string;
+  pay_date: string;
+  line_count: number;
+  total_cents: number;
+  paid_cents: number;
+  created_at: string;
+};
+export type PurchasingPaymentRunPage = {
+  items: PurchasingPaymentRunSummary[];
+  next_cursor?: string | null;
+  limit?: number;
+};
+export type PurchasingProposePaymentRunRequest = {
+  branch_id: string;
+  due_on: string;
+  vendor_id?: string;
+  pay_date?: string;
+};
+export type PurchasingPaymentRunLineAmount = {
+  bill_id: string;
+  amount_cents: number;
+};
+export type PurchasingUpdatePaymentRunRequest = {
+  remove?: string[];
+  lower?: PurchasingPaymentRunLineAmount[];
+};
 export type PurchasingT5018Report = {
   year: number;
   total_cents: number;
@@ -7035,6 +7319,7 @@ export type LandedCost = {
   id: string;
   po_id: string;
   po_ref: string;
+  payee_vendor_id?: string;
   branch_id: string;
   currency: PurchasingCurrency;
   fx_rate: number;
@@ -7054,6 +7339,7 @@ export type LandedCost = {
 export type LandedCostCreateRequest = {
   po_id?: string;
   po_ref?: string;
+  payee_vendor_id?: string;
   branch_id: string;
   currency?: PurchasingCurrency;
   fx_rate?: number;
