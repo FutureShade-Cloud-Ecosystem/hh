@@ -7,6 +7,16 @@
 const round = (f) => Math.round(f);
 const EPSILON = 1e-6;
 const toCad = (cents, fx) => round(cents * (fx > 0 ? fx : 1));
+// The bill's total in its own currency, the way the core derives it (FX-1): the CAD total over the
+// bill's rate at six decimals, half to even. A CAD bill's is its CAD total.
+const halfEven = (num, den) => {
+  const q = Math.floor(num / den);
+  const r = num - q * den;
+  if (r * 2 < den) return q;
+  if (r * 2 > den) return q + 1;
+  return q % 2 === 0 ? q : q + 1;
+};
+const docCents = (cad, fx) => (fx > 0 && fx !== 1 ? halfEven(cad * 1_000_000, Math.round(fx * 1_000_000)) : cad);
 
 // The core's EvaluateLine (match.go), line for line.
 function evaluate(input, tol) {
@@ -184,6 +194,7 @@ export function makeBills(kit) {
     subtotal_cents: b.subtotal,
     tax_cents: b.tax,
     total_cents: b.total,
+    doc_total_cents: docCents(b.total, b.fx),
     currency: b.currency,
     fx_rate: b.fx,
     ...(b.journal === "" ? {} : { gl_journal_id: b.journal }),
@@ -213,7 +224,8 @@ export function makeBills(kit) {
     };
   };
 
-  const detailView = (b) => ({ ...billView(b), lines: b.lines.map((l) => lineView(b, l)), instalments: b.instalments });
+  // The stub records no payment on a bill, so what it still owes in its own currency is its whole total.
+  const detailView = (b) => ({ ...billView(b), doc_open_cents: docCents(b.total, b.fx), lines: b.lines.map((l) => lineView(b, l)), instalments: b.instalments });
 
   function tolView(branch) {
     const own = branch === "" ? undefined : branchTolerance.get(branch);

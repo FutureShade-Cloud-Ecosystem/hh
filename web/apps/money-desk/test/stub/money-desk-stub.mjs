@@ -1115,7 +1115,7 @@ async function handle(req, res) {
   if (method === "GET" && path === "/_stub/finstmt-calls") return send(res, 200, { calls: finstmtWorld.calls(), exports: finstmtWorld.exports(), year: finstmtWorld.fiscalYear });
   if (method === "POST" && path === "/_stub/scenario") {
     const body = await readBody(req);
-    reset(["empty", "wide", "pro", "unwired"].includes(body?.name) ? body.name : "full");
+    reset(["empty", "wide", "pro", "unwired", "usd"].includes(body?.name) ? body.name : "full");
     return send(res, 200, { ok: true });
   }
   if (method === "POST" && path === "/_stub/park-apply") {
