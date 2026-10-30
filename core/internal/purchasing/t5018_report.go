@@ -178,12 +178,12 @@ func t5018ProRataCents(amountCents, partCents, wholeCents int64) int64 {
 // t5018PaymentShare computes one payment's Box 22 services share (tax included) and its pre-tax
 // services subtotal share (for the $500 threshold) from the bill's lines. A goods-only bill
 // (billServicesSubtotalCents == 0) contributes nothing to either.
-func t5018PaymentShare(paidCents, billSubtotalCents, billTotalCents, billServicesSubtotalCents int64) (box22Cents, servicesSubtotalCents int64) {
-	if paidCents <= 0 || billSubtotalCents <= 0 || billTotalCents <= 0 || billServicesSubtotalCents <= 0 {
+func t5018PaymentShare(paidCents, apCents, billSubtotalCents, billTotalCents, billServicesSubtotalCents int64) (box22Cents, servicesSubtotalCents int64) {
+	if paidCents <= 0 || apCents <= 0 || billSubtotalCents <= 0 || billTotalCents <= 0 || billServicesSubtotalCents <= 0 {
 		return 0, 0
 	}
 	box22Cents = t5018ProRataCents(paidCents, billServicesSubtotalCents, billSubtotalCents)
-	servicesSubtotalCents = t5018ProRataCents(paidCents, billServicesSubtotalCents, billTotalCents)
+	servicesSubtotalCents = t5018ProRataCents(apCents, billServicesSubtotalCents, billTotalCents)
 	return box22Cents, servicesSubtotalCents
 }
 
@@ -285,8 +285,8 @@ func t5018YearWindow(year int, zone houseday.Zone) (time.Time, time.Time, error)
 // marked it a subcontractor, not because a payment happened to exist; a vendor with no payments is
 // a line with a zero on it, and dropping the line would hide a contractor the dealer still owes.
 //
-// The payments are the PAID instalments, the ones PayBill wrote, and the branch fence sits in the
-// subquery beside the year, so a branch the caller cannot see contributes nothing.
+// The payments are the PAID instalments, the ones PayBill wrote, each at the cash that left the bank, and the branch
+// fence sits in the payments query beside the year, so a branch the caller cannot see contributes nothing.
 func (r *Repository) T5018Report(ctx context.Context, orgID string, start, end time.Time, reach BranchReach) ([]T5018Row, error) {
 	if r == nil || r.pool == nil {
 		return nil, errNoDB
@@ -330,6 +330,9 @@ func (r *Repository) T5018Report(ctx context.Context, orgID string, start, end t
 		SELECT b.vendor_id::text,
 		       b.id::text,
 		       i.amount_cents,
+		       b.currency::text,
+		       COALESCE(i.doc_amount_cents, 0),
+		       round(COALESCE(i.fx_rate, 1) * 1000000)::bigint,
 		       b.subtotal_cents,
 		       b.total_cents,
 		       COALESCE(lines.services_subtotal_cents, 0),
@@ -361,17 +364,25 @@ func (r *Repository) T5018Report(ctx context.Context, orgID string, start, end t
 
 	seenBill := make(map[string]bool)
 	for prows.Next() {
-		var vendorID, billID string
-		var paidCents, subtotalCents, totalCents, servicesSubtotalCents int64
+		var vendorID, billID, currency string
+		var apCents, docCents, rateMicros, subtotalCents, totalCents, servicesSubtotalCents int64
 		var unmarkedCount int
-		if err := prows.Scan(&vendorID, &billID, &paidCents, &subtotalCents, &totalCents, &servicesSubtotalCents, &unmarkedCount); err != nil {
+		if err := prows.Scan(&vendorID, &billID, &apCents, &currency, &docCents, &rateMicros, &subtotalCents, &totalCents, &servicesSubtotalCents, &unmarkedCount); err != nil {
 			return nil, fmt.Errorf("purchasing: the T5018 report payments: %w", err)
 		}
 		idx, ok := byVendor[vendorID]
 		if !ok {
 			continue
 		}
-		box22, svcBeforeTax := t5018PaymentShare(paidCents, subtotalCents, totalCents, servicesSubtotalCents)
+		// The cash that left the bank: a foreign bill's instalment holds the CAD it cleared at the
+		// BILL's rate in amount_cents, but the bank paid the payment's own amount at the payment's own
+		// rate, through the same half to even rounding PayBill credits 1000 with. A CAD instalment's
+		// amount is its cash already.
+		paidCents := apCents
+		if currency != "CAD" {
+			paidCents = proRataHalfToEven(docCents, rateMicros, 1_000_000)
+		}
+		box22, svcBeforeTax := t5018PaymentShare(paidCents, apCents, subtotalCents, totalCents, servicesSubtotalCents)
 		out[idx].PaidCents += paidCents
 		out[idx].Box22Cents += box22
 		out[idx].ServicesSubtotalCents += svcBeforeTax

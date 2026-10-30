@@ -610,8 +610,8 @@ func TestIntegration_T5018Report_ForeignPaymentIsTheCashThatLeftTheBank(t *testi
 	if err != nil {
 		t.Fatalf("encode the report: %v", err)
 	}
-	if !strings.Contains(string(body), fmt.Sprintf(",%d\n", row.PaidCents)) {
-		t.Fatalf("the CSV does not carry the vendor's %d cents:\n%s", row.PaidCents, body)
+	if !strings.Contains(string(body), fmt.Sprintf(",%d,%d,", row.PaidCents, row.Box22Cents)) {
+		t.Fatalf("the CSV does not carry the vendor's %d paid and %d box 22 cents:\n%s", row.PaidCents, row.Box22Cents, body)
 	}
 }
 

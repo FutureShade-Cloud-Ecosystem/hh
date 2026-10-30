@@ -143,14 +143,14 @@ func TestT5018ProRataAndPaymentShare_HalfToEvenAndCRARules(t *testing.T) {
 	}
 
 	// Leg 1: goods-only bill contributes nothing.
-	if b22, svc := t5018PaymentShare(90400, 80000, 90400, 0); b22 != 0 || svc != 0 {
+	if b22, svc := t5018PaymentShare(90400, 90400, 80000, 90400, 0); b22 != 0 || svc != 0 {
 		t.Fatalf("goods-only share = (%d, %d), want (0, 0)", b22, svc)
 	}
 
 	// Leg 2: mixed bill ($600 services + $400 goods = $1,000 subtotal, + $130 HST = $1,130 paid).
 	// PaidCents is the full payment (113000), Box22Cents is the services share (67800), and they
 	// differ by the goods share (45200).
-	if b22, svc := t5018PaymentShare(113000, 100000, 113000, 60000); b22 != 67800 || svc != 60000 {
+	if b22, svc := t5018PaymentShare(113000, 113000, 100000, 113000, 60000); b22 != 67800 || svc != 60000 {
 		t.Fatalf("mixed share = (box22=%d, svc=%d), want (67800, 60000)", b22, svc)
 	} else {
 		mixedRow := finalizeT5018Row(T5018Row{
@@ -169,7 +169,7 @@ func TestT5018ProRataAndPaymentShare_HalfToEvenAndCRARules(t *testing.T) {
 	}
 
 	// Legs 3 & 4: $480.00 services + 13% HST ($62.40) = $542.40 paid -> Box 22 = 54240, pre-tax = 48000 (< 50000).
-	b22, svc := t5018PaymentShare(54240, 48000, 54240, 48000)
+	b22, svc := t5018PaymentShare(54240, 54240, 48000, 54240, 48000)
 	if b22 != 54240 || svc != 48000 {
 		t.Fatalf("$480 + HST share = (box22=%d, svc=%d), want (54240, 48000)", b22, svc)
 	}
