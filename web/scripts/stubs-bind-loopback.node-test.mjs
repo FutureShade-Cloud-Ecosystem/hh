@@ -8,17 +8,19 @@
 // never leaves the host.
 //
 // The gate reads two things and fails naming each offender:
-//   1. every .listen( call in every web/apps/*/test file: the host it names
-//      must be the loopback;
-//   2. every Playwright webServer command that starts vite: the command must
-//      carry --host 127.0.0.1.
+//   1. every .listen( call in every web/apps/*/test file, whatever extension
+//      it carries: the host it names must be the loopback;
+//   2. every command anywhere under web/ that starts vite: the command must
+//      carry --host 127.0.0.1. That command lives in a Playwright config or
+//      in a harness factory that writes one, and it can live in a package's
+//      own config, not only in an app's, so the gate reads the whole tree.
 //
 // The allow list holds one entry, for one reason, and an entry that stops
 // being needed fails the gate too, so it cannot rot into a wide hole.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, extname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,6 +28,24 @@ const repoRoot = join(webRoot, "..");
 
 // The hosts a test listener may name. "localhost" resolves to the loopback.
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost"]);
+
+// The extensions a source file can carry. A stub or a config can be written
+// in any of them, and a gate that read only one would miss a listener in the
+// others: web/apps/front-door/test/free-ports.ts already holds .listen calls.
+const SOURCE_EXTENSIONS = new Set([".mjs", ".ts", ".js", ".cjs"]);
+
+// The directories the tree installs or builds. They hold no source of ours,
+// and reading them would only be slow.
+const GENERATED = new Set([
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  "playwright-report",
+  "test-results",
+  ".git",
+  ".vite",
+]);
 
 // The allow list: one entry, and the reason it exists.
 //
@@ -47,6 +67,7 @@ function repoPath(file) {
 
 function filesUnder(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (GENERATED.has(entry.name)) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) filesUnder(full, out);
     else out.push(full);
@@ -64,34 +85,24 @@ function appTestFiles() {
     const testDir = join(appsDir, app, "test");
     if (!existsSync(testDir)) continue;
     for (const file of filesUnder(testDir)) {
-      if (file.endsWith(".mjs")) out.push(file);
+      if (SOURCE_EXTENSIONS.has(extname(file))) out.push(file);
     }
   }
   return out;
 }
 
-// Every Playwright configuration of every web app: the app's own config and
-// the extra configs its test directory holds.
-function appConfigFiles() {
-  const out = [];
-  const appsDir = join(webRoot, "apps");
-  if (!existsSync(appsDir)) return out;
-  for (const app of readdirSync(appsDir)) {
-    const appDir = join(appsDir, app);
-    const own = join(appDir, "playwright.config.ts");
-    if (existsSync(own)) out.push(own);
-    const testDir = join(appDir, "test");
-    if (!existsSync(testDir)) continue;
-    for (const file of filesUnder(testDir)) {
-      if (file.endsWith(".config.ts")) out.push(file);
-    }
-  }
-  return out;
+// Every source file under web/: the vite command lives in a Playwright
+// configuration, but it can live in a harness factory that writes one (the
+// pos kit's console harness does), and it can live in a package's own
+// configuration, not only in an app's. The gate reads the whole tree, so a
+// package's webServer is held too.
+function webSourceFiles() {
+  return filesUnder(webRoot).filter((file) => SOURCE_EXTENSIONS.has(extname(file)));
 }
 
-// The scanner: one pass over a file's text, skipping comments and strings so
-// a word in a comment is never read as a call. Comments are blanked rather
-// than cut, so every offset stays true to the file.
+// The end of the string that starts at start, and the offset just past it. A
+// string holds a quote, a backslash escape, or (for a template) an expression
+// that can hold strings of its own.
 function skipString(text, start) {
   const quote = text[start];
   let i = start + 1;
@@ -147,8 +158,14 @@ function skipTemplateExpression(text, start) {
   return i;
 }
 
+// The scanner: one pass over a file's text, blanking comments so a word in a
+// comment is never read as a call, and marking the string regions so a
+// ".listen(" that lives inside a string is never read as a call either.
+// Comments are blanked rather than cut, so every offset stays true to the
+// file.
 function stripComments(text) {
   let out = "";
+  const inString = new Uint8Array(text.length);
   let i = 0;
   while (i < text.length) {
     const ch = text[i];
@@ -169,13 +186,14 @@ function stripComments(text) {
     if (ch === '"' || ch === "'" || ch === "`") {
       const end = skipString(text, i);
       out += text.slice(i, end);
+      for (let k = i; k < end; k += 1) inString[k] = 1;
       i = end;
       continue;
     }
     out += ch;
     i += 1;
   }
-  return out;
+  return { text: out, inString };
 }
 
 // The index of the parenthesis that closes the one at open.
@@ -227,17 +245,18 @@ function splitArgs(text) {
   return parts;
 }
 
-// Every .listen( call in a file, with the text of its arguments.
+// Every .listen( call in a file, with the text of its arguments. A call that
+// lives inside a string is not a call, so it is skipped.
 function listenCalls(text) {
   const calls = [];
   const source = stripComments(text);
   let i = 0;
-  while (i < source.length) {
-    if (source.startsWith(".listen(", i)) {
+  while (i < source.text.length) {
+    if (source.text.startsWith(".listen(", i) && source.inString[i] === 0) {
       const open = i + ".listen".length;
-      const close = matchParen(source, open);
+      const close = matchParen(source.text, open);
       if (close !== -1) {
-        calls.push({ at: i, args: source.slice(open + 1, close) });
+        calls.push({ at: i, args: source.text.slice(open + 1, close) });
         i = close + 1;
         continue;
       }
@@ -276,7 +295,7 @@ function lineOf(text, index) {
 
 // Every command string a configuration holds.
 function commandsOf(text) {
-  const source = stripComments(text);
+  const source = stripComments(text).text;
   const out = [];
   const pattern = /command:\s*(`[^`]*`|"[^"\n]*"|'[^'\n]*')/g;
   let found = pattern.exec(source);
@@ -318,9 +337,9 @@ test("every test listener in the web apps names a loopback host", () => {
   assert.deepEqual(stale, [], `the allow list must hold only the listeners that still need it:\n${stale.join("\n")}`);
 });
 
-test("every Playwright webServer command that starts vite names the loopback host", () => {
+test("every vite command under web names the loopback host", () => {
   const offenders = [];
-  for (const file of appConfigFiles()) {
+  for (const file of webSourceFiles()) {
     const rel = repoPath(file);
     const text = readFileSync(file, "utf8");
     for (const entry of commandsOf(text)) {

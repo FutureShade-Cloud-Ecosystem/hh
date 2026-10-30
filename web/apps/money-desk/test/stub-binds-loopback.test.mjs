@@ -21,9 +21,18 @@ import { fileURLToPath } from "node:url";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+// How long the stub gets to name the address it bound. A stub that starts
+// and says nothing must fail this leg, not hang it: a leg that hangs holds
+// the CI job open instead of reporting what went wrong.
+const START_TIMEOUT_MS = 30000;
+
+// How long a single probe waits for an answer.
+const PROBE_TIMEOUT_MS = 1500;
+
 let child;
 let closed;
 let bound;
+let stderr = "";
 
 before(async () => {
   // The same command the Playwright webServer runs, in the same directory,
@@ -32,17 +41,40 @@ before(async () => {
   child = spawn(process.execPath, [join("test", "stub", "money-desk-stub.mjs")], {
     cwd: appDir,
     env: { ...process.env, ROLE_STUB_PORT: "0", ROLE_STUB_STDIN_EXIT: "1" },
-    stdio: ["pipe", "pipe", "ignore"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
   closed = new Promise((resolve) => child.once("close", resolve));
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
   let said = "";
   bound = await new Promise((resolve, reject) => {
-    child.once("error", (err) => reject(err));
-    child.once("close", (code) => reject(new Error(`the stub exited with ${code} before it named its address`)));
+    const timer = setTimeout(() => {
+      reject(
+        new Error(
+          `the stub named no bound address in ${START_TIMEOUT_MS} ms; it said: ${said || "(nothing)"}; it wrote to stderr: ${stderr || "(nothing)"}`,
+        ),
+      );
+    }, START_TIMEOUT_MS);
+    child.once("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      reject(
+        new Error(
+          `the stub exited with ${code} before it named its address; it wrote to stderr: ${stderr || "(nothing)"}`,
+        ),
+      );
+    });
     child.stdout.on("data", (chunk) => {
       said += chunk;
       const found = /money-desk-stub listening on \[([^\]]+)\]:(\d+)/.exec(said);
-      if (found !== null) resolve({ host: found[1], port: Number(found[2]) });
+      if (found !== null) {
+        clearTimeout(timer);
+        resolve({ host: found[1], port: Number(found[2]) });
+      }
     });
   });
 });
@@ -70,7 +102,7 @@ function outsideAddresses() {
 function answers(host, port) {
   return new Promise((resolve) => {
     const socket = connect({ host, port });
-    socket.setTimeout(1500, () => {
+    socket.setTimeout(PROBE_TIMEOUT_MS, () => {
       socket.destroy();
       resolve(false);
     });
@@ -88,11 +120,21 @@ function answers(host, port) {
 test("the stub binds the loopback and no other interface", async () => {
   assert.equal(bound.host, "127.0.0.1", `the stub bound [${bound.host}]:${bound.port}`);
   assert.ok(bound.port > 0, `the stub bound no port: [${bound.host}]:${bound.port}`);
-  for (const address of outsideAddresses()) {
-    assert.equal(
-      await answers(address, bound.port),
-      false,
-      `the stub answered on ${address}, which is off the loopback`,
-    );
-  }
+  // The loopback answer has to work, or "it does not answer off the
+  // loopback" would hold for a dead server and prove nothing.
+  assert.equal(
+    await answers("127.0.0.1", bound.port),
+    true,
+    `the stub does not answer on 127.0.0.1 at ${bound.port}`,
+  );
+  // The outside addresses are probed together: one answer at a time would
+  // spend the probe timeout on each of them in turn.
+  const outside = outsideAddresses();
+  const reached = await Promise.all(outside.map((address) => answers(address, bound.port)));
+  const answered = outside.filter((address, index) => reached[index]);
+  assert.deepEqual(
+    answered,
+    [],
+    `the stub answered off the loopback on: ${answered.join(", ")}`,
+  );
 });
