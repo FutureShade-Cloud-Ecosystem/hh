@@ -107,6 +107,10 @@ const BANNED_ENGINE_TERMS: readonly RegExp[] = [
   /\bcustomer_override\b/i,
   /\bPOS_SALE\b/i,
   /\bItem id\b/i,
+  /\bwhole or absent\b/i,
+  /\bSplit \(20 to 80\)/i,
+  /\bWorkspace split \(20 to 80\)/i,
+  /\blevel beneath the dealer\b/i,
 ];
 
 async function signIn(page: Page): Promise<void> {
@@ -391,8 +395,10 @@ async function measureEngineWords(page: Page, view: string): Promise<string[]> {
           hits.push(`${name} | engine term "${m[0]}"`);
         }
       }
-      // Raw SCREAMING_ENUM (two or more upper-case words joined by an underscore) in visible text (UX-118 r2).
+      // Raw SCREAMING_ENUM in visible text: multi-word underscore enums anywhere,
+      // plus single-word all-caps enums on badges, pills and cells (UX-118 r2, UX-120).
       const screamingRx = /\b[A-Z]{2,}(?:_[A-Z0-9]{2,})+\b/;
+      const singleScreamingRx = /(?<![A-Z0-9-])\b(?!MSRP\b)[A-Z]{4,}\b(?![A-Z0-9-])/;
       const leaves = Array.from(work.querySelectorAll("*")).filter((el) => el.children.length === 0);
       for (const leaf of leaves) {
         if (leaf.tagName.toLowerCase() === "option") continue;
@@ -406,11 +412,25 @@ async function measureEngineWords(page: Page, view: string): Promise<string[]> {
         const m = leafText.match(screamingRx);
         if (m !== null) {
           hits.push(`${name} | raw SCREAMING_ENUM "${m[0]}"`);
+        } else if (
+          leaf.closest(".chip, .badge-outline, .badge-status") !== null ||
+          (leaf.closest("td") !== null && /^[A-Z]{4,}$/.test(leafText))
+        ) {
+          const sm = leafText.match(singleScreamingRx);
+          if (sm !== null) {
+            hits.push(`${name} | raw SCREAMING_ENUM "${sm[0]}"`);
+          }
+        }
+        if (leaf.matches(".field-label") && /^Kind$/i.test(leafText)) {
+          hits.push(`${name} | engine term "Kind"`);
+        }
+        if (leaf.classList.contains("chip") && /^create$/i.test(leafText)) {
+          hits.push(`${name} | engine term "create"`);
         }
       }
-      // Bare four-digit basis-point figure with no unit beside a percent field (UX-118 r2).
+      // Bare 3-to-5-digit basis-point figure with no unit beside a percent field (UX-118 r2, UX-120).
       const pctLabelRx = /\b(margin|floor|target|markup|discount|rebate\s+rate|restocking\s+fee)\b/i;
-      const bareBpsRx = /(?<![-\d.$])\b\d{4}\b(?!\s*%|[-\d.])/;
+      const bareBpsRx = /(?<![-\d.$])\b\d{3,5}\b(?!\s*%|[-\d.])/;
       for (const row of Array.from(work.querySelectorAll("tbody tr"))) {
         for (const cell of Array.from(row.querySelectorAll("td[data-label]"))) {
           const label = cell.getAttribute("data-label") ?? "";
@@ -639,3 +659,89 @@ for (const size of SIZES) {
     });
   }
 }
+
+// -- UX-120 legs (points 3, 5 and 6) ----------------------------------------------------------------
+
+test("UX-120 point 3: the pricing audit bypass reason chip sits inside the row it explains", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await openSurface(page, "pricing", '[data-test="pr-tab-select"], .pr-tabs');
+  await openPricingView(page, "Pricing audit", '[data-test="pr-audit-count"]');
+
+  const bypassRow = page.locator('tr[data-audit="0e110000-0000-4000-9000-0000000000a2"]');
+  await expect(bypassRow).toHaveCount(1);
+  await expect(bypassRow).toBeVisible();
+
+  // The reason chip must live inside the bypass row itself, never in a detached second tr below the border.
+  await expect(page.locator("tr[data-audit-reason]")).toHaveCount(0);
+  const reasonChip = bypassRow.locator('[data-audit-reason="0e110000-0000-4000-9000-0000000000a2"]');
+  await expect(reasonChip).toHaveCount(1);
+  await expect(reasonChip).toBeVisible();
+  await expect(reasonChip).toHaveText("Approved override");
+
+  const rowBox = await bypassRow.boundingBox();
+  const chipBox = await reasonChip.boundingBox();
+  expect(rowBox).not.toBeNull();
+  expect(chipBox).not.toBeNull();
+  expect(chipBox!.y).toBeGreaterThanOrEqual(rowBox!.y - 1);
+  expect(chipBox!.y + chipBox!.height).toBeLessThanOrEqual(rowBox!.y + rowBox!.height + 1);
+});
+
+test("UX-120 point 5: Rebates and Pricing audit share one date style, with a date alone where there is no time", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await openSurface(page, "pricing", '[data-test="pr-tab-select"], .pr-tabs');
+
+  await openPricingView(page, "Rebates", '[data-test="pr-ledger-total"]');
+  const rebateFrom = page.locator('tr[data-rebate] td[data-label="From"]').first();
+  const ledgerAccrued = page.locator('tr[data-accrual] td[data-label="Accrued"]').first();
+  await expect(rebateFrom).toBeVisible();
+  await expect(ledgerAccrued).toBeVisible();
+
+  const fromText = (await rebateFrom.innerText()).trim();
+  const accruedText = (await ledgerAccrued.innerText()).trim();
+
+  await openPricingView(page, "Pricing audit", '[data-test="pr-audit-count"]');
+  const auditWhen = page.locator('tr[data-audit] td[data-label="When"]').first();
+  await expect(auditWhen).toBeVisible();
+  const whenText = (await auditWhen.innerText()).trim();
+
+  // None of the three cells may print a raw ISO YYYY-MM-DD date.
+  expect(fromText, "Rebate From prints raw ISO date").not.toMatch(/^\d{4}-\d{2}-\d{2}/);
+  expect(accruedText, "Accrual ledger Accrued prints raw ISO date").not.toMatch(/^\d{4}-\d{2}-\d{2}/);
+  expect(whenText, "Pricing audit When prints raw ISO date").not.toMatch(/^\d{4}-\d{2}-\d{2}/);
+
+  // A date with no time prints as a short month and day alone ("Jan 1"); a timestamp includes time and zone.
+  expect(fromText).toMatch(/^[A-Z][a-z]{2} \d{1,2}$/);
+  expect(accruedText).toMatch(/^[A-Z][a-z]{2} \d{1,2}(?:, \d{2}:\d{2} [A-Z]{2,5})?$/);
+  expect(whenText).toMatch(/^[A-Z][a-z]{2} \d{1,2}, \d{2}:\d{2} [A-Z]{2,5}$/);
+});
+
+test("UX-120 point 6: Staff, Quantity breaks and Rebates use one sentence-case word set for states and badges", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+
+  await openSurface(page, "staff", '[data-test="staff-count"]');
+  const staffBadges = page.locator("tr[data-user] .badge-status, tr[data-user] .badge-outline");
+  const staffBadgeCount = await staffBadges.count();
+  expect(staffBadgeCount).toBeGreaterThanOrEqual(5);
+  const staffTexts = (await staffBadges.allInnerTexts()).map((t) => t.trim());
+  for (const text of staffTexts) {
+    expect(text, `staff badge "${text}" is not sentence case`).toMatch(/^[A-Z][a-z]+(?:\s+[a-z]+)*$/);
+  }
+
+  await openSurface(page, "pricing", '[data-test="pr-tab-select"], .pr-tabs');
+  await openPricingView(page, "Quantity breaks", '[data-test="pr-breaks-count"]');
+  const breakStateChips = page.locator('tr[data-break] td[data-label="State"] .chip');
+  expect(await breakStateChips.count()).toBeGreaterThanOrEqual(1);
+  for (const text of (await breakStateChips.allInnerTexts()).map((t) => t.trim())) {
+    expect(text, `quantity break state chip "${text}" is not sentence case`).toMatch(/^[A-Z][a-z]+$/);
+  }
+
+  await openPricingView(page, "Rebates", '[data-test="pr-ledger-total"]');
+  const rebateStateChips = page.locator('tr[data-rebate] td[data-label="State"] .chip');
+  expect(await rebateStateChips.count()).toBeGreaterThanOrEqual(1);
+  for (const text of (await rebateStateChips.allInnerTexts()).map((t) => t.trim())) {
+    expect(text, `rebate state chip "${text}" is not sentence case`).toMatch(/^[A-Z][a-z]+$/);
+  }
+});
