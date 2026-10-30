@@ -35,6 +35,8 @@ export const purchStyles = css`
   .panel > p.dim + .forms, .panel > .forms { margin-top: var(--hh-s-8); }
   .panel.inner { background: var(--hh-row-alt); margin-top: var(--hh-s-16); }
   .alert { margin-top: var(--hh-s-12); }
+  [data-t5018] .forms { grid-template-columns: minmax(0, 1fr); }
+  label .alert { margin: var(--hh-s-8) 0 var(--hh-s-4); font-weight: 400; }
   input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--hh-state-stop); }
   .forms > .full-span { min-width: 280px; flex: 2 1 360px; grid-column: 1 / -1; }
   [data-extra-line] { align-items: start; }

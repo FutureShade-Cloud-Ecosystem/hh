@@ -128,6 +128,7 @@ function t5018Panel(model: VendorsModel, vendor: PurchasingVendor): TemplateResu
       <div class="forms">
         <label>CRA business number
           <input type="text" inputmode="numeric" autocomplete="off" data-field="v-bn" data-v-bn aria-invalid="${bnInvalid ? "true" : "false"}" />
+          ${bnInvalid ? errorNote(model.error) : nothing}
           <span class="dim">Nine digits, with RC0001 after them for a program account. Leave blank if the contractor has not given one.</span>
         </label>
       </div>
@@ -142,6 +143,7 @@ function t5018Panel(model: VendorsModel, vendor: PurchasingVendor): TemplateResu
 
 function detailsForm(model: VendorsModel, vendor: PurchasingVendor | "new"): TemplateResult {
   const isNew = vendor === "new";
+  const bnInvalid = !isNew && model.canSetT5018 && model.error.includes("business number");
   return html`
     <div class="forms">
       <label>Vendor name
@@ -164,7 +166,7 @@ function detailsForm(model: VendorsModel, vendor: PurchasingVendor | "new"): Tem
       ${isNew ? nothing : checkBox("Clear the email on file", "toggle-clear-email", model.clearEmail)}
     </div>
     ${isNew ? nothing : t5018Panel(model, vendor)}
-    ${errorNote(model.error)}
+    ${bnInvalid ? nothing : errorNote(model.error)}
     <div class="actions end">
       ${isNew ? html`<button type="button" class="btn btn-secondary" data-action="close-vendor" ?disabled=${model.busy}>Cancel</button>` : nothing}
       ${isNew

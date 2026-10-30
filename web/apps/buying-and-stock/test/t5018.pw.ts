@@ -51,8 +51,14 @@ for (const size of SIZES) {
       await block.getByRole("checkbox").check();
       await block.locator("[data-v-bn]").fill("12345");
       await block.getByRole("button", { name: "Save the T5018 record" }).click();
-      await expect(page.locator("[data-error]")).toContainText("nine digits");
+      await expect(block.locator("label [data-error]")).toContainText("nine digits");
+      await expect(page.locator("[data-error]")).toHaveCount(1);
       await expect(block.locator("[data-v-bn]")).toHaveAttribute("aria-invalid", "true");
+      const bnBox = await block.locator("[data-v-bn]").boundingBox();
+      const errBox = await block.locator("label [data-error]").boundingBox();
+      const saveBox = await block.getByRole("button", { name: "Save the T5018 record" }).boundingBox();
+      expect(errBox?.y ?? 0).toBeGreaterThan(bnBox?.y ?? 0);
+      expect(saveBox?.y ?? 0).toBeGreaterThan((errBox?.y ?? 0) + (errBox?.height ?? 0));
       const errorMarginTop = await page.locator("[data-error]").evaluate((el) => parseFloat(getComputedStyle(el).marginTop));
       expect(errorMarginTop).toBeGreaterThanOrEqual(8);
       await shoot(page, "mark-error", theme, size.width);
