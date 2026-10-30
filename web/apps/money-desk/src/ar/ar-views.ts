@@ -850,12 +850,12 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
                 <tr data-invoice-row class="${paidRow ? "dimrow" : ""}" aria-current="${account.selectedInvoiceId === r.id ? "true" : "false"}">
                   <td><button type="button" class="link-row" data-action="open-invoice" data-invoice-id="${r.id}"><span class="who">${r.invoice_no}</span></button><span class="dim small">${r.order_no ?? ""}</span><button type="button" class="link small" data-action="credit-start" data-invoice-id="${r.id}">Credit</button></td>
                   <td class="nowrap">${relativeDay(r.issue_date, model.asOf)}</td>
-                  <td class="nowrap ${(r.days_overdue ?? 0) > 0 && !paidRow ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
+                  <td class="nowrap ${(r.days_overdue ?? 0) > 0 && !paidRow ? "late" : ""}" data-card-label="Due">${relativeDay(r.due_date, model.asOf)}</td>
                   <td><span class="marks">${rowMarks(r).map(markPill)}</span></td>
                   <td class="num">${formatMoney(r.total_cents)}</td>
-                  <td class="num"><b>${formatMoney(r.balance_cents)}</b></td>
+                  <td class="num" data-card-label="Balance due"><b>${formatMoney(r.balance_cents)}</b></td>
                   <td class="num">${paidRow ? nothing : html`<button type="button" class="pick" role="checkbox" aria-checked="${picked ? "true" : "false"}" aria-label="Pay ${r.invoice_no}" data-action="pick" data-invoice-id="${r.id}"></button>`}</td>
-                  <td class="num applied-cell" data-applied-cell>${paidRow || applied === undefined ? "" : formatMoney(applied)}</td>
+                  <td class="num applied-cell" data-applied-cell data-card-label="Applied">${paidRow || applied === undefined ? "" : formatMoney(applied)}</td>
                 </tr>
                 ${model.credit !== null && model.credit.invoiceId === r.id
                   ? html`<tr class="credit-form-row"><td colspan="8">${creditForm(model, account)}</td></tr>`
@@ -869,7 +869,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
         </table>
       </div>
       <div class="foot-row">
-        <p class="dim small">Pick the invoices the payment is for and type the amount: the server splits it, oldest first. A paid invoice stays for context and takes nothing.</p>
+        <p class="dim small">Pick the invoices the payment is for and type the amount: the payment is split across the picked invoices, oldest first. A paid invoice stays for context and takes nothing.</p>
         ${firstId === "" ? nothing : html`<button type="button" class="link" data-action="open-invoice" data-invoice-id="${account.selectedInvoiceId ?? firstId}">Invoice history ›</button>`}
       </div>
     </section>
@@ -898,7 +898,8 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
         <label>Amount<input type="text" inputmode="decimal" class="amount" data-field="receive-amount" autocomplete="off" placeholder="$0.00" />${account.amountText.trim() !== "" && parseAmountToCents(account.amountText) === null ? html`<span class="hint" role="alert" data-amount-hint>Enter dollars and cents, such as $100.00.</span>` : nothing}</label>
         <label>Received at, from the account<span class="ro" data-ro="received-at"></span></label>
       </div>
-      <p class="label gap">Payment method${pol !== null && pol.ach_first ? html` <span class="dim small" data-policy-ach-first>EFT first</span>` : html` <span class="dim small" data-policy-ach-first>Card first</span>`}</p>
+      <p class="label gap">Payment method</p>
+      <p class="dim small" data-policy-ach-first>${pol !== null && pol.ach_first ? "EFT is the usual choice" : "Card is the usual choice"}</p>
       ${segmented("Payment method", tenderIds.map((id) => ({ id, word: tenderWords[id] })), forcedEft ? "EFT" : account.method, "method")}
       ${pol !== null && pol.surcharge_rate_bps > 0 && account.method === "CARD" && surchargeCents > 0
         ? html`<p class="alert alert-warn" role="status" data-card-surcharge>Card surcharge: ${formatMoney(surchargeCents)} at ${(pol.surcharge_rate_bps / 100).toFixed(2)}% (${pol.surcharge_rate_bps} bps).</p>`
@@ -915,7 +916,7 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
       ${account.previewError === "" ? nothing : html`<p class="alert alert-error" role="alert" data-preview-error>${account.previewError}</p>`}
       <ul class="alloc" data-allocation>
         ${answer === null
-          ? html`<li class="dim"><span>Type an amount and pick the invoices; the server shows the split.</span></li>`
+          ? html`<li class="dim"><span>Type an amount and pick the invoices; the split shows here.</span></li>`
           : html`
               ${answer.lines.filter((l) => l.outcome !== "NONE").map((l) => html`<li><span>${l.invoice_no} · ${lineWords(l)}</span><span>${formatMoney(l.applied_cents)}</span></li>`)}
               <li class="dim"><span>Unapplied</span><span>${formatMoney(answer.unapplied_cents)}</span></li>
@@ -930,7 +931,7 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
       ${onHold
         ? html`<p class="callout" data-hold-stays><b>The hold stays.</b> Lifting it is the controller's.${stays.length > 0 ? ` The ${stays.map((l) => `${formatMoney(l.stays_open_cents)} left on ${l.invoice_no}`).join(" and the ")} keeps the account where it is.` : ""}</p>`
         : nothing}
-      <p class="dim small">One payment is one record: the server splits it across the picked invoices in one step. What shows afterwards is the server's balance.</p>
+      <p class="dim small">One payment is one record: the payment is split across the picked invoices in one step, oldest first. What shows afterwards is the customer's balance.</p>
     </section>
   `;
 }
