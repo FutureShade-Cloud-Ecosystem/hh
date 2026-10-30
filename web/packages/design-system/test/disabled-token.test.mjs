@@ -1741,6 +1741,140 @@ test('the template leg: a class that is on while the control is enabled is not a
   }
 });
 
+// ── ROUND 5: the shapes the M3 read of the round 4 gate found ─────────────────
+//
+// The round 4 gate closed the three holes the round 3 review named. The M3
+// read of that gate found three shapes it still could not see, and four
+// claims in the README, the header comment and the coder report that the
+// code did not honour. Every probe below is a shape the round 4 gate
+// PASSED, so against the round 4 gate each of these tests fails; against the
+// fixed gate each one names the shape.
+//
+//   P2-1  the implication leg: a conjunction was not related to a
+//         conjunction, so the SAME condition on both sides was not tied.
+//   P2-2  the implication leg: the two negations were read the wrong way
+//         round, so a class that is on while the control is enabled was
+//         read as a disabled state.
+//   P2-3  the value leg: an image layer carries no colour for the colour
+//         leg to read, so a disabled control could paint an image and pass.
+//   P3-1  the brand refusal: the contractor alias of the brand family
+//         (`--cbrand`, `--cbrand-on`) was not one of the families it reads.
+
+test('the template leg: the same conjunction on both sides is tied', () => {
+  // The reader's first shape. The class `waiting` is on exactly when the
+  // control is disabled, so it IS a disabled state. The round 4 gate derived
+  // nothing: a conjunction was not related to a conjunction.
+  const probes = [
+    {
+      name: 'the same conjunction on both sides',
+      scratch: '<button class="w ${busy && z ? "waiting" : ""}" ?disabled=${busy && z}>Wait</button>',
+    },
+    {
+      name: 'the same conjunction through a classMap',
+      scratch: '<button class=${classMap({ waiting: busy && z })} ?disabled=${busy && z}>Wait</button>',
+    },
+  ];
+  for (const probe of probes) {
+    const derived = derivedStateClasses(probe.scratch);
+    assert.ok(
+      derived.has('waiting'),
+      `${probe.name}: the template scan must find the state class, it found ${[...derived].join(', ') || 'nothing'}`,
+    );
+  }
+});
+
+test('the template leg: the two negations are read the right way round', () => {
+  // The reader's second shape. `!x` implies `!y` exactly when `y` implies
+  // `x`, and the round 4 gate asked the other question, so it reported the
+  // relation when the relation did not hold and refused it when it did.
+  //
+  // The class `waiting` is on whenever `busy` is false. The control is
+  // disabled only when `busy` is false AND `z` is false. So the class is on
+  // while the control can be enabled, and it must NOT be read as a disabled
+  // state.
+  const mustNotDerive = [
+    {
+      name: 'a class that is on while the control can be enabled',
+      scratch: '<button class="w ${busy ? "" : "waiting"}" ?disabled=${!(busy || z)}>Wait</button>',
+    },
+    {
+      name: 'the same through a classMap',
+      scratch: '<button class=${classMap({ waiting: !busy })} ?disabled=${!(busy || z)}>Wait</button>',
+    },
+  ];
+  for (const probe of mustNotDerive) {
+    const derived = derivedStateClasses(probe.scratch);
+    assert.deepEqual([...derived], [], `${probe.name}: this class is not a disabled state`);
+  }
+  // The other way round, the relation DOES hold and the class IS a disabled
+  // state: the class is on when neither `a` nor `b` holds, and the control
+  // is disabled when `a` does not hold.
+  const mustDerive = [
+    {
+      name: 'a wider negation on the class and a narrower one on the control',
+      scratch: '<button class="w ${a || b ? "" : "waiting"}" ?disabled=${!a}>Wait</button>',
+    },
+    {
+      name: 'the same through a classMap',
+      scratch: '<button class=${classMap({ waiting: !(a || b) })} ?disabled=${!a}>Wait</button>',
+    },
+  ];
+  for (const probe of mustDerive) {
+    const derived = derivedStateClasses(probe.scratch);
+    assert.ok(
+      derived.has('waiting'),
+      `${probe.name}: the template scan must find the state class, it found ${[...derived].join(', ') || 'nothing'}`,
+    );
+  }
+});
+
+test('the value leg: an image layer in a disabled rule is named', () => {
+  // The reader's third shape. The fill of a disabled control is the flat
+  // grey token, but an image layer carries no colour for the colour leg to
+  // read, so `background: url(/img/x.png), var(--hh-disabled-fill)` passed:
+  // the only colour term was the grey token. The same held for a
+  // `border-image` and a `list-style-image`, which were never read at all.
+  const probes = [
+    { prop: 'background', value: 'url(/img/x.png), var(--hh-disabled-fill)' },
+    { prop: 'background', value: 'var(--hh-disabled-fill), url(/img/x.png)' },
+    { prop: 'border-image', value: 'url(/img/x.png)' },
+    { prop: 'list-style-image', value: 'url(/img/x.png)' },
+  ];
+  for (const probe of probes) {
+    const scratch = `.thing:disabled { ${SWAP} ${probe.prop}: ${probe.value}; }`;
+    const found = scanSource('scratch-image-layer.css', scratch);
+    assert.ok(
+      found.some((line) => line.includes(`${probe.prop}: ${probe.value}`)),
+      `the image layer in ${probe.prop} must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+    );
+  }
+  // The control: a brand-free `none` is no image, and it is fine.
+  for (const prop of ['background-image', 'border-image', 'list-style-image']) {
+    const scratch = `.thing:disabled { ${SWAP} ${prop}: none; }`;
+    const found = scanSource('scratch-image-none.css', scratch);
+    assert.deepEqual(found, [], `${prop}: none is no image and must not be named`);
+  }
+});
+
+test('the brand refusal reads the contractor alias of the brand family', () => {
+  // The reader's fourth shape. The contractor layer carries the brand family
+  // under another name: `--cbrand` and `--cbrand-on` (`src/tokens.css`). The
+  // brand refusal read the family whose name starts with `brand`, so a brand
+  // glyph in the contractor alias was not refused.
+  const probes = [
+    { prop: 'fill', value: 'var(--cbrand-on)' },
+    { prop: 'stroke', value: 'var(--cbrand)' },
+  ];
+  for (const probe of probes) {
+    const scratch = `.thing:disabled { ${SWAP} ${probe.prop}: ${probe.value}; }`;
+    const found = scanSource('scratch-brand-alias.css', scratch);
+    assert.ok(
+      found.some((line) => line.includes(`${probe.prop}: ${probe.value}`)),
+      `the contractor brand alias ${probe.value} must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+    );
+  }
+});
+
 // ── the paint leg ───────────────────────────────────────────────────────────────
 
 const underBun = typeof globalThis.Bun !== 'undefined';
