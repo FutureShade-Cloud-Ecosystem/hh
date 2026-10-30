@@ -115,7 +115,9 @@ export function exemptBundleHit(hit) {
  */
 export function exemptPayloadKey(path, key, value) {
   if (key !== "cost_hidden") return false;
-  if (!path.endsWith(".workspace")) return false;
+  // Exactly the surface config answer's own top-level workspace view ("$" is the scan's root), never an
+  // object that is merely named workspace deeper in a payload.
+  if (path !== "$.workspace") return false;
   return typeof value === "boolean";
 }
 
