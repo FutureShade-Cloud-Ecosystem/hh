@@ -55208,6 +55208,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - doc_total_cents
         - currency
         - fx_rate
         - created_at
@@ -55248,6 +55249,10 @@ components:
         total_cents:
           type: integer
           format: int64
+        doc_total_cents:
+          type: integer
+          format: int64
+          description: The bill total in its own currency (the currency field), the unit a payment's amount_cents is in
         currency:
           $ref: "#/components/schemas/PurchasingCurrency"
         fx_rate:
@@ -55362,7 +55367,12 @@ components:
           required:
             - lines
             - instalments
+            - doc_open_cents
           properties:
+            doc_open_cents:
+              type: integer
+              format: int64
+              description: What is still owed in the bill's own currency; paying exactly this settles the bill
             lines:
               type: array
               items:
@@ -55957,7 +55967,10 @@ components:
         amount_cents:
           type: integer
           format: int64
-          description: The payment amount in cents; the open balance caps it
+          description: The payment amount in cents, in the bill's own currency (USD cents on a USD bill, CAD cents on a CAD bill); the open document currency amount (doc_open_cents) caps it
+        fx_rate:
+          type: number
+          description: The payment rate (CAD per 1 USD) for a USD bill; omitted on a CAD bill
         paid_at:
           type: string
           format: date-time
@@ -56153,6 +56166,9 @@ components:
         - total_cents
         - paid_cents
         - open_cents
+        - currency
+        - doc_total_cents
+        - doc_open_cents
         - bucket
       properties:
         id:
@@ -56201,6 +56217,16 @@ components:
         open_cents:
           type: integer
           format: int64
+        currency:
+          $ref: "#/components/schemas/PurchasingCurrency"
+        doc_total_cents:
+          type: integer
+          format: int64
+          description: The item's total in its own currency (CAD on a landed cost payable)
+        doc_open_cents:
+          type: integer
+          format: int64
+          description: The open amount in its own currency; the amount a payment's amount_cents takes to settle a bill
         freight_cad_cents:
           type: integer
           format: int64
@@ -56451,6 +56477,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PurchasingPaymentRunLine"
+        left_out:
+          type: array
+          items:
+            type: string
+          description: "Only the proposal's own answer carries it: one sentence for each open bill the run left out because it is not billed in CAD, naming the bill and its currency. A payment run takes CAD bills only; such a bill is paid from its own bill with the day's rate."
     PurchasingPaymentRunSummary:
       type: object
       description: One run of the list, the run without its lines

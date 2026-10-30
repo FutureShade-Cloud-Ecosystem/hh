@@ -6889,6 +6889,7 @@ export type PurchasingBill = {
   subtotal_cents: number;
   tax_cents: number;
   total_cents: number;
+  doc_total_cents: number;
   currency: PurchasingCurrency;
   fx_rate: number;
   gl_journal_id?: string;
@@ -6922,7 +6923,7 @@ export type PurchasingInstalment = {
   status: "SCHEDULED" | "PAID" | "CANCELLED";
   note: string;
 };
-export type PurchasingBillDetail = PurchasingBill & { lines: PurchasingBillLine[]; instalments: PurchasingInstalment[] };
+export type PurchasingBillDetail = PurchasingBill & { doc_open_cents: number; lines: PurchasingBillLine[]; instalments: PurchasingInstalment[] };
 export type PurchasingVendorCreditStatus = "DRAFT" | "POSTED";
 export type PurchasingVendorCredit = {
   id: string;
@@ -7107,6 +7108,7 @@ export type PurchasingPostBillRequest = {
 };
 export type PurchasingPayBillRequest = {
   amount_cents: number;
+  fx_rate?: number;
   paid_at?: string;
   note?: string;
 };
@@ -7189,6 +7191,9 @@ export type PurchasingAPAgingItem = {
   total_cents: number;
   paid_cents: number;
   open_cents: number;
+  currency: PurchasingCurrency;
+  doc_total_cents: number;
+  doc_open_cents: number;
   freight_cad_cents?: number;
   duty_cad_cents?: number;
   handling_cad_cents?: number;
@@ -7256,6 +7261,7 @@ export type PurchasingPaymentRun = {
   paid_at?: string | null;
   created_at: string;
   lines: PurchasingPaymentRunLine[];
+  left_out?: string[];
 };
 export type PurchasingPaymentRunSummary = {
   id: string;

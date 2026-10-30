@@ -42,7 +42,7 @@ import {
 import type { WorkspaceTab } from "./ar-workspace.js";
 import { formatWorkspaceMoney } from "./ar-workspace.js";
 import { renderPayables } from "./ap-views.js";
-import { payAmountWords, payOverOpenWords, type PayablesBoardModel, type PayBillForm, type PurchasingAPAgingItem, type PurchasingAPAgingPage } from "./ap-logic.js";
+import { billOpenInOwnCurrency, isForeignBill, parseRate, payAmountWords, payOverOpenWords, payRateWords, type PayablesBoardModel, type PayBillForm, type PurchasingAPAgingItem, type PurchasingAPAgingPage } from "./ap-logic.js";
 import { houseDay, houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 export interface DeskHost {
@@ -333,8 +333,9 @@ export class ArDesk {
         this.#pay = {
           billId: item.id,
           billNo: item.ref_no,
-          openCents: item.open_cents,
-          amountText: centsToField(held === null ? item.open_cents : held.cents),
+          openCents: billOpenInOwnCurrency(item),
+          currency: item.currency ?? "CAD",
+          amountText: centsToField(held === null ? billOpenInOwnCurrency(item) : held.cents),
           paidOn: houseDay(),
           note: "",
           key: held === null ? newKey() : held.key,
@@ -855,9 +856,21 @@ export class ArDesk {
     // whatever it says: the core answers the earlier press if it landed, and judges this one if it
     // did not.
     if (heldKey === undefined && cents > form.openCents) {
-      this.#pay = { ...form, error: payOverOpenWords(form.openCents) };
+      this.#pay = { ...form, error: payOverOpenWords(form.openCents, form.currency) };
       this.#host.repaint();
       return;
+    }
+    // A bill that is not CAD is paid at the rate the person typed; the desk converts nothing, it
+    // only refuses a rate it cannot read before anything is sent, and the core judges the rest.
+    let fxRate: number | undefined;
+    if (isForeignBill(form.currency)) {
+      const rate = parseRate(this.#host.field("pay-rate"));
+      if (rate === null) {
+        this.#pay = { ...form, error: payRateWords(form.currency) };
+        this.#host.repaint();
+        return;
+      }
+      fxRate = rate;
     }
     const paidOn = this.#host.field("pay-date");
     const day = paidOn === "" ? houseDay() : paidOn;
@@ -866,7 +879,7 @@ export class ArDesk {
     this.#host.repaint();
     const key = heldKey ?? form.key;
     if (heldKey === undefined) this.#payBillKeys.set(form.billId, heldPaymentValue(key, cents));
-    const got = await this.#api.payBill(form.billId, { amountCents: cents, paidAt: dayInstant(day, houseZone()), note }, key);
+    const got = await this.#api.payBill(form.billId, { amountCents: cents, paidAt: dayInstant(day, houseZone()), note, fxRate }, key);
     this.#payBusy = false;
     if (!got.ok) {
       const outcome = paymentOutcome(got.error, got.status, heldKey !== undefined);
@@ -888,13 +901,13 @@ export class ArDesk {
         // The books show the earlier payment landed when the bill's open amount fell by at least its
         // amount, or the bill left the open list: the key ends and the form closes, so the next Pay on
         // that bill is a new payment with a new key.
-        if (open === null || form.openCents - open.open_cents >= cents) {
+        if (open === null || form.openCents - billOpenInOwnCurrency(open) >= cents) {
           this.#payBillKeys.delete(form.billId);
           // The form says so and waits for the person's own Close (S6 on 701, P2-3): the last words
           // on screen invited a second press, so a silent close would let a fresh Pay send the same
           // money again under a new key. A form already closed leaves the word for the next one.
           if (current !== null && current.billId === form.billId) {
-            this.#pay = { ...current, openCents: open === null ? 0 : open.open_cents, error: "", landedCents: cents };
+            this.#pay = { ...current, openCents: open === null ? 0 : billOpenInOwnCurrency(open), error: "", landedCents: cents };
           } else {
             this.#payLanded.set(form.billId, cents);
           }
@@ -902,7 +915,7 @@ export class ArDesk {
           return;
         }
         if (current !== null) {
-          this.#pay = { ...current, openCents: open.open_cents };
+          this.#pay = { ...current, openCents: billOpenInOwnCurrency(open) };
           this.#host.repaint();
         }
         return;
