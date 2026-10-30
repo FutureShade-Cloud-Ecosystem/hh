@@ -144,8 +144,8 @@ reads a green gate as more than it is:
   shadow are all named. LIMITS: the brand refusal reads the accent family,
   the brand family, the contractor alias of the brand family (`--cbrand`,
   `--cbrand-on`) and the till's stone amber, and a brand token outside those
-  families (the quote blue family, a numbered brand token) is not refused by
-  that leg; the image refusal reads the fill, the background image, the border
+  families (the quote blue family, or a brand token written without its
+  hyphen, such as `--brand2`) is not refused by that leg; the image refusal reads the fill, the background image, the border
   image and the list style image, and an image in another property (a
   `mask-image`, a `border-image-source` longhand) is not refused by that leg.
 - **The template leg.** A class that a template proves is a disabled state is
@@ -156,7 +156,11 @@ reads a green gate as more than it is:
   condition as an implication, so a class that is on while the control is NOT
   disabled is not a disabled state. The relation is sound in both directions:
   `!x` implies `!y` exactly when `y` implies `x`, and a condition implies a
-  conjunction exactly when it implies every conjunct of it. LIMITS: a class
+  conjunction exactly when it implies every conjunct of it, and a
+  conjunction implies a condition when one of its conjuncts does, so the same
+  conjunction ties to itself even when a conjunct is negated. LIMITS: the
+  relation does not distribute (`(a || b) && c` is not tied to
+  `a || (b && c)`); a class
   with no condition at all (a static class, or a variable that holds a plain
   string) is never tied; a `classMap` is read only when it is written as an
   object literal; a variable is resolved only inside its own file; an

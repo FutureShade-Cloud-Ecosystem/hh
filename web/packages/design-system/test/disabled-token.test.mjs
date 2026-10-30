@@ -75,8 +75,11 @@
 //          and the two negations were read the wrong way round, so a class
 //          that was on while the control was enabled was read as a disabled
 //          state. The relation is sound in both directions now: `!x` implies
-//          `!y` exactly when `y` implies `x`, and a condition implies a
-//          conjunction when it implies every conjunct of it.
+//          `!y` exactly when `y` implies `x`, a condition implies a
+//          conjunction when it implies every conjunct of it, and a
+//          conjunction implies a condition when one of its conjuncts does
+//          (round 6: no separate guard refuses a negation on the right, so a
+//          conjunction with a negated conjunct ties to itself).
 //        - THE IMAGE LAYER. A disabled control could paint an image and
 //          pass: an image layer carries no colour for the colour leg to
 //          read, and `border-image` and `list-style-image` were never read
@@ -750,7 +753,10 @@ function parseCondition(text) {
  *      does NOT imply `!(busy || z)` (z may be true), and `!(busy || z)`
  *      DOES imply `!busy`.
  *    - a condition never implies a negation, unless it is a negation
- *      itself: the `not` case above has already answered that.
+ *      itself, or a conjunction or disjunction built from such parts: no case
+      below answers true for a negation on the right except those two, so
+      no separate guard is asked (a guard asked here once hid the second,
+      and a conjunction with a negated conjunct was not tied to itself).
  *    - two atoms are the same condition when their text is the same.
  *    - an atom implies a disjunction when it implies one of its arms.
  *    - a condition implies a conjunction when it implies EVERY conjunct.
@@ -765,7 +771,6 @@ function parseCondition(text) {
  *  is on while the control is NOT disabled is not a disabled state. */
 function implies(a, b) {
   if (a.kind === 'not') return b.kind === 'not' && implies(b.of, a.of);
-  if (b.kind === 'not') return false;
   if (a.kind === 'atom' && b.kind === 'atom') return a.text === b.text;
   if (a.kind === 'atom' && b.kind === 'or') return b.of.some((y) => implies(a, y));
   if (b.kind === 'and') return b.of.every((y) => implies(a, y));
