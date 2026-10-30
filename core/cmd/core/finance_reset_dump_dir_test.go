@@ -199,6 +199,134 @@ func TestFinanceResetGuardReadsWholeWords(t *testing.T) {
 	}
 }
 
+// TestFinanceResetGuardRefusesEveryBackslashCommandButItsOwn is the PR705 S5
+// read's P3 1 (row 0.14): a list of refused meta commands always trails
+// psql's command set, and \gexec slipped through it (psql sends what the last
+// query returned, so a crafted dump could commit the drop mid script). Only
+// the meta commands pg_dump writes are allowed, \restrict and \unrestrict,
+// and every other backslash command is refused.
+func TestFinanceResetGuardRefusesEveryBackslashCommandButItsOwn(t *testing.T) {
+	for _, dump := range []string{
+		`\gexec`,
+		`SELECT 'COMMIT' \gexec`,
+		"SELECT 'COMMIT'\n\\gexec",
+		`\set ON_ERROR_STOP off`,
+		`\echo hello`,
+		`\q`,
+		`\copy (SELECT 1) TO '/tmp/x'`,
+		`\watch`,
+		`\w /tmp/x`,
+		`\r`,
+		`\i other.sql`,
+		`\c finworld`,
+		`\o /tmp/out.sql`,
+		`\! id`,
+	} {
+		if err := financeResetTransactionSafe([]byte(dump)); err == nil {
+			t.Fatalf("the psql meta command in %q was accepted inside the reset's transaction", dump)
+		}
+	}
+	for _, dump := range []string{
+		`\restrict rzlddXOj9GUSKmapznnuzZoa4vqP27POHlqSzFUk72DVm8ezyNuJiYlSsKI1nyA`,
+		`\unrestrict rzlddXOj9GUSKmapznnuzZoa4vqP27POHlqSzFUk72DVm8ezyNuJiYlSsKI1nyA`,
+	} {
+		if err := financeResetTransactionSafe([]byte(dump)); err != nil {
+			t.Fatalf("the pg_dump meta command %q was refused: %v", dump, err)
+		}
+	}
+}
+
+// TestFinanceResetGuardDollarInsideAnIdentifierIsNotADollarQuote is the
+// PR705 S5 read's P3 2 (row 0.14): a $ inside a bare identifier (a$b$c is a
+// legal unquoted identifier, and pg_dump writes it bare) opened a phantom
+// dollar quote that never closed, so every statement after it went
+// unchecked. A dollar quote opens only when the $ does not continue an
+// identifier.
+func TestFinanceResetGuardDollarInsideAnIdentifierIsNotADollarQuote(t *testing.T) {
+	for _, safe := range []string{
+		"CREATE TABLE public.a$b$c (id integer);\n",
+		"CREATE TABLE public.a$$b (id integer);\n",
+		"SELECT 1 WHERE public.t.col$b = $1;\n",
+	} {
+		if err := financeResetTransactionSafe([]byte(safe)); err != nil {
+			t.Fatalf("a $ inside a bare identifier was refused: %v", err)
+		}
+	}
+	for _, dangerous := range []string{
+		"CREATE TABLE public.a$b$c (id integer);\nCOMMIT;\n",
+		"CREATE TABLE public.a$$b (id integer);\nCOMMIT;\n",
+	} {
+		if err := financeResetTransactionSafe([]byte(dangerous)); err == nil {
+			t.Fatalf("a COMMIT after an identifier holding $ was swallowed by a phantom dollar quote: %q", dangerous)
+		}
+	}
+	// A dollar quote after a space still opens, its body is still a body, and
+	// a COMMIT after the function is still refused.
+	body := "CREATE FUNCTION public.f() RETURNS void AS $x$\nCOMMIT;\n$x$ LANGUAGE plpgsql;\nCOMMIT;\n"
+	if err := financeResetTransactionSafe([]byte(body)); err == nil {
+		t.Fatalf("a COMMIT after a real dollar quoted body was accepted")
+	}
+}
+
+// TestFinanceResetGuardTracksDoubleQuotedIdentifiers is the PR705 S5 read's
+// P3 3 (row 0.14): a quote inside a double quoted identifier (CREATE TABLE
+// "a'b" ...) is part of the identifier, but the guard read it as the opening
+// of a string literal, and the "literal" swallowed the next COMMIT. A
+// semicolon inside a quoted identifier ("a;b") split statements too. Double
+// quoted identifiers are tracked like literals, with doubled quotes as
+// escapes.
+func TestFinanceResetGuardTracksDoubleQuotedIdentifiers(t *testing.T) {
+	for _, safe := range []string{
+		"CREATE TABLE public.\"a'b\" (id integer);\n",
+		"CREATE TABLE public.\"a;b\" (id integer);\n",
+		"CREATE TABLE public.\"a\"\"b\" (id integer);\n",
+		"COMMENT ON TABLE public.\"a'b;c\" IS 'it''s fine';\n",
+	} {
+		if err := financeResetTransactionSafe([]byte(safe)); err != nil {
+			t.Fatalf("the double quoted identifier was refused: %v", err)
+		}
+	}
+	for _, dangerous := range []string{
+		"CREATE TABLE public.\"a'b\" (id integer);\nCOMMIT;\nSELECT 'x';\n",
+		"CREATE TABLE public.\"a;b\" (id integer);\nCOMMIT;\n",
+		"CREATE TABLE public.\"a\"\"b\" (id integer);\nCOMMIT;\n",
+	} {
+		if err := financeResetTransactionSafe([]byte(dangerous)); err == nil {
+			t.Fatalf("a COMMIT after the double quoted identifier was accepted: %q", dangerous)
+		}
+	}
+}
+
+// TestFinanceResetGuardAllowsSQLStandardFunctionBodies is the PR705 S5 read's
+// P3 4 (row 0.14): pg_dump 14 and later writes a SQL standard function body
+// without dollar quotes (BEGIN ATOMIC ... END;), and the guard read the
+// body's inner semicolons as statement ends and its END as the SQL command
+// that commits. The body is tracked up to its matching END, and a statement
+// after the function is still read as a statement.
+func TestFinanceResetGuardAllowsSQLStandardFunctionBodies(t *testing.T) {
+	for _, safe := range []string{
+		"CREATE FUNCTION public.h() RETURNS integer\n    LANGUAGE sql\nBEGIN ATOMIC\n    SELECT 1;\n    SELECT 2;\nEND;\n",
+		"CREATE FUNCTION public.h() RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT CASE WHEN true THEN 1 ELSE 2 END FROM public.t; END;\n",
+		"CREATE PROCEDURE public.p() LANGUAGE sql BEGIN ATOMIC SELECT 'COMMIT; and END; here'; END;\n",
+	} {
+		if err := financeResetTransactionSafe([]byte(safe)); err != nil {
+			t.Fatalf("the SQL standard function body was refused: %v", err)
+		}
+	}
+	for _, dangerous := range []string{
+		"CREATE FUNCTION public.h() RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT 1; END;\nCOMMIT;\n",
+		"CREATE FUNCTION public.h() RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT 1; END;\n\\c other\n",
+		// S15 on PR 726: psql reads BEGIN ATOMIC as a body only after CREATE FUNCTION or PROCEDURE.
+		// Anywhere else its semicolons end statements, so the COMMIT here is a statement of its own.
+		"SELECT 'x' AS begin_atomic_bait, 1 FROM (SELECT 1) AS s WHERE true; SELECT BEGIN ATOMIC;\nCOMMIT;\nEND;\n",
+		"SELECT 1 AS BEGIN, 2 AS ATOMIC;\nCOMMIT;\nEND;\n",
+	} {
+		if err := financeResetTransactionSafe([]byte(dangerous)); err == nil {
+			t.Fatalf("a statement after the SQL standard function body was accepted: %q", dangerous)
+		}
+	}
+}
+
 // TestFinanceResetGuardReadsStatements is W3-RESET-GUARD2-r1 item 1 (S5's
 // probe table on PR 699): the guard joins each statement up to its semicolon,
 // collapses whitespace, upper cases it, tracks dollar quoting ($$ and $tag$),
