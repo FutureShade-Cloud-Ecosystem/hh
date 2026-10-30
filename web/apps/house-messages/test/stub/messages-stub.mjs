@@ -1033,6 +1033,6 @@ const server = createServer((req, res) => {
     fail(res, 500, `stub error: ${String(err)}`);
   });
 });
-server.listen(port, () => {
+server.listen(port, "127.0.0.1", () => {
   console.log(`messages-stub listening on ${port}`);
 });

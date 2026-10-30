@@ -1918,8 +1918,13 @@ async function handle(req, res) {
 const server = createServer((req, res) => {
   handle(req, res).catch(() => refuse(res, 500, "internal error"));
 });
-server.listen(port, () => {
-  console.log(`money-desk-stub listening on ${port}`);
+server.listen(port, "127.0.0.1", () => {
+  // The stub names the address it bound, so a harness that reads the bound
+  // address (test/stub-binds-loopback.test.mjs) reads the truth and not a
+  // guess from the port it asked for. The address is bracketed, because a
+  // wildcard IPv6 bind names "::" and a colon in it would read as the port.
+  const bound = server.address();
+  console.log(`money-desk-stub listening on [${bound.address}]:${bound.port}`);
 });
 
 // --- Change 8 S3 + S4 + S3M stub helpers -------------------------------------------------------

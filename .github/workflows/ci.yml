@@ -266,6 +266,12 @@ jobs:
       - name: Shard assignment test
         working-directory: web
         run: node --test scripts/ci-web-shards.node-test.mjs
+      - name: Stubs bind the loopback only
+        # Every test listener in the web apps names 127.0.0.1 as its host, and
+        # every vite command carries --host 127.0.0.1. A stub that binds every
+        # interface answers on the LAN and holds its port after the run.
+        working-directory: web
+        run: node --test scripts/stubs-bind-loopback.node-test.mjs
       - name: Web packages (typecheck and Node 22 suite), shard ${{ matrix.shard }} of 6
         working-directory: web
         run: node scripts/ci-web-shards.mjs run ${{ matrix.shard }} 6
