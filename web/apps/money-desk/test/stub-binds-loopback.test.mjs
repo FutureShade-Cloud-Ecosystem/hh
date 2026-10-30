@@ -226,16 +226,21 @@ const SCRATCH_STUB = [
   "setTimeout(() => process.exit(0), 12000);",
 ].join("\n");
 
-test("a stub that ignores its standard input is still ended by the leg's own cleanup", async () => {
-  const scratch = spawn(process.execPath, ["-e", SCRATCH_STUB], { stdio: ["pipe", "pipe", "pipe"] });
-  const exited = new Promise((resolve) => scratch.once("close", resolve));
-  const port = await new Promise((resolve, reject) => {
+// The port a scratch process names on its standard output.
+function scratchPort(scratch) {
+  return new Promise((resolve, reject) => {
     scratch.once("error", reject);
     scratch.stdout.on("data", (chunk) => {
       const found = /scratch listening on (\d+)/.exec(String(chunk));
       if (found !== null) resolve(Number(found[1]));
     });
   });
+}
+
+test("a stub that ignores its standard input is still ended by the leg's own cleanup", async () => {
+  const scratch = spawn(process.execPath, ["-e", SCRATCH_STUB], { stdio: ["pipe", "pipe", "pipe"] });
+  const exited = new Promise((resolve) => scratch.once("close", resolve));
+  const port = await scratchPort(scratch);
   await assert.rejects(stopStub(scratch, exited, 500), /did not close within 500 ms of its standard input ending/);
   assert.notEqual(scratch.exitCode === null && scratch.signalCode === null, true, "the leg must end the stub it spawned");
   assert.equal(
@@ -243,4 +248,52 @@ test("a stub that ignores its standard input is still ended by the leg's own cle
     false,
     `the scratch stub's port ${port} must be gone, so no listener of the leg survives a failing run`,
   );
+});
+
+// Settles with the value of the promise, or with "hung" when it has not
+// settled within the bound, so a leg that would wait for ever fails instead.
+async function within(promise, ms) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise.then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      ),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve("hung"), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+test("a scratch that cannot run is a failure and not a wait", async () => {
+  const broken = spawn(process.execPath, ["-e", "const s = ;;"], { stdio: ["pipe", "pipe", "pipe"] });
+  const settled = await within(scratchPort(broken), 3000);
+  assert.notEqual(settled, "hung", "test 4's scratch must reject when the process exits without naming a port");
+  assert.ok(settled.error instanceof Error, "the wait must reject");
+});
+
+// A scratch stub that traps SIGTERM and ignores its standard input. It names
+// no port and listens nowhere, and ends itself after a while.
+const TRAPPING_STUB = [
+  'process.on("SIGTERM", () => {});',
+  "process.stdin.resume();",
+  'console.log("scratch listening on 1");',
+  "setTimeout(() => process.exit(0), 8000);",
+].join("\n");
+
+test("a stub that traps SIGTERM fails the cleanup naming it, and the wait is bounded", async () => {
+  const scratch = spawn(process.execPath, ["-e", TRAPPING_STUB], { stdio: ["pipe", "pipe", "pipe"] });
+  const exited = new Promise((resolve) => scratch.once("close", resolve));
+  await scratchPort(scratch);
+  const started = Date.now();
+  const settled = await within(stopStub(scratch, exited, 300, 300), 4000);
+  assert.notEqual(settled, "hung", "the cleanup must not wait on a child that ignores the kill");
+  assert.match(String(settled.error?.message ?? ""), /still running/);
+  assert.match(String(settled.error?.message ?? ""), new RegExp(String(scratch.pid)));
+  assert.ok(Date.now() - started < 4000, "the cleanup ended inside its bound");
+  await exited;
 });

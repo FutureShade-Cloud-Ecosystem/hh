@@ -43,7 +43,8 @@
 // being needed fails the gate too, so it cannot rot into a wide hole.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, extname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -105,13 +106,41 @@ function filesUnder(dir, out = []) {
 
 // Every source file under web/: a stub, a Playwright configuration or a
 // harness factory can be written in any of them, in an app or in a package.
+function webSourceFilesUnder(root) {
+  return filesUnder(root).filter((file) => SOURCE_EXTENSIONS.has(extname(file)));
+}
+
 function webSourceFiles() {
-  return filesUnder(webRoot).filter((file) => SOURCE_EXTENSIONS.has(extname(file)));
+  return webSourceFilesUnder(webRoot);
 }
 
 // Every package.json under web/, outside the generated directories.
+function packageFilesUnder(root) {
+  return filesUnder(root).filter((file) => file.endsWith(`${sep}package.json`));
+}
+
 function packageFiles() {
-  return filesUnder(webRoot).filter((file) => file.endsWith(`${sep}package.json`));
+  return packageFilesUnder(webRoot);
+}
+
+// The parse diagnostics of one file, each with its line and message.
+function parseProblemsIn(text, name) {
+  return [];
+}
+
+// The listeners one file holds that the gate names, after the allow list.
+function listenerOffendersIn(rel, text, file = rel) {
+  const allowed = ALLOWED.get(rel);
+  const offenders = [];
+  let used = false;
+  for (const offender of listenersIn(text, file)) {
+    if (allowed !== undefined) {
+      used = true;
+      continue;
+    }
+    offenders.push(offender);
+  }
+  return { offenders, used };
 }
 
 function parse(text, name) {
@@ -601,14 +630,9 @@ test("every test listener under web names a loopback host", () => {
   for (const file of webSourceFiles()) {
     const rel = repoPath(file);
     const text = readFileSync(file, "utf8");
-    const allowed = ALLOWED.get(rel);
-    for (const offender of listenersIn(text, file)) {
-      if (allowed !== undefined) {
-        used.add(rel);
-        continue;
-      }
-      offenders.push(`${rel}:${offender.line} ${offender.why}`);
-    }
+    const result = listenerOffendersIn(rel, text, file);
+    if (result.used) used.add(rel);
+    for (const offender of result.offenders) offenders.push(`${rel}:${offender.line} ${offender.why}`);
   }
   for (const [rel, reason] of ALLOWED) {
     if (!used.has(rel)) stale.push(`${rel} is on the allow list but names a loopback host now, so the entry is stale (${reason})`);
@@ -787,5 +811,128 @@ for (const [name, source, expect] of PACKAGE_SHAPES) {
       return;
     }
     assert.ok(offenders.length >= 1, "a vite script with a wildcard host must be named");
+  });
+}
+
+// Fix round 3 legs (420, the third read).
+
+// A scratch tree under /tmp/s-420-fix3-*, removed by its exact path. It holds
+// files only, never a server.
+function withScratchTree(files, body) {
+  const root = mkdtempSync(join(tmpdir(), "s-420-fix3-"));
+  try {
+    for (const [name, text] of Object.entries(files)) {
+      const full = join(root, name);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, text);
+    }
+    return body(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const WILDCARD = 'server.listen(4000, "0.0.0.0");\n';
+
+test("P2-1 the gate reads .mts, .cts and .jsx, and not the declaration files", () => {
+  withScratchTree(
+    {
+      "a/s.mts": WILDCARD,
+      "a/s.cts": WILDCARD,
+      "a/s.jsx": WILDCARD,
+      "a/s.mjs": WILDCARD,
+      "a/types.d.ts": "export {};\n",
+      "a/types.d.mts": "export {};\n",
+      "a/types.d.cts": "export {};\n",
+    },
+    (root) => {
+      const read = webSourceFilesUnder(root).map((file) => relative(root, file)).sort();
+      assert.deepEqual(read, ["a/s.cts", "a/s.jsx", "a/s.mjs", "a/s.mts"]);
+    },
+  );
+});
+
+test("P2-3 a test directory named build, dist or coverage is read; output at a package's top level is not", () => {
+  withScratchTree(
+    {
+      "apps/x/package.json": "{}",
+      "apps/x/test/build/s.mjs": WILDCARD,
+      "apps/x/test/dist/s.mjs": WILDCARD,
+      "apps/x/test/coverage/s.mjs": WILDCARD,
+      "apps/x/dist/out.mjs": WILDCARD,
+      "apps/x/build/out.mjs": WILDCARD,
+      "apps/x/coverage/out.mjs": WILDCARD,
+      "apps/x/node_modules/dep/index.mjs": WILDCARD,
+      "apps/x/test/node_modules/dep/index.mjs": WILDCARD,
+      "apps/x/.git/hook.mjs": WILDCARD,
+    },
+    (root) => {
+      const read = webSourceFilesUnder(root).map((file) => relative(root, file)).sort();
+      assert.deepEqual(read, ["apps/x/test/build/s.mjs", "apps/x/test/coverage/s.mjs", "apps/x/test/dist/s.mjs"]);
+    },
+  );
+});
+
+test("P3-2 every host key of an options object is judged", () => {
+  assert.equal(listenersIn('server.listen({ host: "127.0.0.1", port: 4000, host: "0.0.0.0" });').length, 1, "a later wildcard host key");
+  assert.equal(listenersIn('server.listen({ host: "0.0.0.0", port: 4000, host: "127.0.0.1" });').length, 1, "an earlier wildcard host key");
+  assert.equal(listenersIn('server.listen({ host: "127.0.0.1", port: 4000, host: "localhost" });').length, 0, "two loopback host keys pass");
+});
+
+test("P3-3 a file with parse diagnostics is named with its first diagnostic", () => {
+  const problems = parseProblemsIn("const a = `oops;\nserver.listen(4000, \"0.0.0.0\");\n", "probe.mjs");
+  assert.ok(problems.length >= 1, "an unterminated template is a parse diagnostic");
+  assert.equal(typeof problems[0].line, "number");
+  assert.match(String(problems[0].message ?? ""), /\S/);
+  assert.deepEqual(parseProblemsIn('server.listen(0, "127.0.0.1");\n', "probe.mjs"), [], "a clean file has none");
+});
+
+const CONSOLE_DOUBLE = "web/apps/money-desk/test/acceptance-real/console-double.mjs";
+const DOUBLE_CALL = 'server.listen(port, "0.0.0.0", () => {\n  ready();\n});\n';
+
+test("P3-5 the console double's allow entry covers its one 0.0.0.0 call and no other listener", () => {
+  const only = listenerOffendersIn(CONSOLE_DOUBLE, DOUBLE_CALL);
+  assert.deepEqual(only.offenders, [], "the one call passes");
+  assert.equal(only.used, true, "the entry is used");
+  const more = listenerOffendersIn(
+    CONSOLE_DOUBLE,
+    `${DOUBLE_CALL}server2.listen(5000);\nnew Foo().listen({ port: 6000 });\nserver3.listen(7000, "0.0.0.0");\n`,
+  );
+  assert.equal(more.offenders.length, 3, "every other listener in the file is judged");
+  const twice = listenerOffendersIn(CONSOLE_DOUBLE, `${DOUBLE_CALL}${DOUBLE_CALL}`);
+  assert.equal(twice.offenders.length, 1, "the same call a second time is judged");
+  const loopback = listenerOffendersIn(CONSOLE_DOUBLE, 'server.listen(port, "127.0.0.1");\n');
+  assert.equal(loopback.used, false, "a loopback call leaves the entry stale");
+});
+
+const asCommand = (command) => `export default { webServer: { command: ${JSON.stringify(command)} } };`;
+const asScripts = (command) => JSON.stringify({ scripts: { dev: command } });
+
+const WORD_SHAPES = [
+  ["W1 vite@5", "npx vite@5 --port 3000", "caught"],
+  ["W1b vite@latest", "npx vite@latest --port 3000", "caught"],
+  ["W2 single quoted in sh -c", "sh -c 'vite --port 3000'", "caught"],
+  ["W3 double quoted in bash -c", 'bash -c "vite --port 3000"', "caught"],
+  ["W5 vite followed by a semicolon", "vite; echo done", "caught"],
+  ["W5b vite then &&", "vite&&echo done", "caught"],
+  ["W5c vite piped", "vite --port 3000 | cat", "caught"],
+  ["W6 two hosts, the second a wildcard", "npx vite --host 127.0.0.1 --host 0.0.0.0", "caught"],
+  ["W6b two hosts, the first a wildcard", "npx vite --host 0.0.0.0 --host 127.0.0.1", "caught"],
+  ["W7 quoted wildcard host", "sh -c 'vite --host 0.0.0.0'", "caught"],
+  ["W8 host= quoted wildcard", 'vite --host="0.0.0.0"', "caught"],
+  ["WP1 quoted loopback", "sh -c 'vite --host 127.0.0.1 --port 3000'", "pass"],
+  ["WP2 versioned loopback", "npx vite@5 --host 127.0.0.1", "pass"],
+  ["WP3 loopback twice", "vite --host 127.0.0.1 --host localhost", "pass"],
+  ["WP4 build in quotes", "sh -c 'vite build'", "pass-package"],
+];
+
+for (const [name, command, expect] of WORD_SHAPES) {
+  test(`command word shape ${name} is ${expect}`, () => {
+    const found = viteOffendersIn(asCommand(command), "web/apps/probe-app/playwright.config.ts");
+    if (expect === "caught") assert.ok(found.length >= 1, "a vite command without the loopback host must be named");
+    else if (expect === "pass") assert.deepEqual(found, []);
+    const scripts = packageScriptOffendersIn(asScripts(command), "web/apps/probe-app/package.json");
+    if (expect === "caught" && /0\.0\.0\.0|--host/.test(command)) assert.ok(scripts.length >= 1, "a vite script with a wildcard host must be named");
+    if (expect === "pass" || expect === "pass-package") assert.deepEqual(scripts, []);
   });
 }
