@@ -97,12 +97,13 @@ func walkDoors() []customerDoor {
 		{route: "GET /api/v1/customers/{id}/sms-consent", class: doorWall, path: "/api/v1/customers/%C%/sms-consent"},
 		{route: "PUT /api/v1/customers/{id}/sms-consent", class: doorWall, path: "/api/v1/customers/%C%/sms-consent", body: `{"consent":false}`},
 		// JA-1's job accounts: every door reads the customer through GetAccount first, so a customer outside the
-		// caller's reach is not found on all five (the 715 fix round, P2-1).
-		{route: "GET /api/v1/customers/{id}/jobs", class: doorWall, path: "/api/v1/customers/%C%/jobs"},
-		{route: "POST /api/v1/customers/{id}/jobs", class: doorWall, path: "/api/v1/customers/%C%/jobs", body: `{"job_no":"WALK-1","name":"Walk job"}`},
-		{route: "GET /api/v1/customers/{id}/jobs/{jobId}", class: doorWall, path: "/api/v1/customers/%C%/jobs/" + walkUUID2},
-		{route: "PUT /api/v1/customers/{id}/jobs/{jobId}", class: doorWall, path: "/api/v1/customers/%C%/jobs/" + walkUUID2, body: `{"name":"Walk job"}`},
-		{route: "POST /api/v1/customers/{id}/jobs/{jobId}/close", class: doorWall, path: "/api/v1/customers/%C%/jobs/" + walkUUID2 + "/close"},
+		// caller's reach is not found on all five (the 715 fix round, P2-1), in the customer read's own words, as
+		// GET /api/v1/customers/{id} answers.
+		{route: "GET /api/v1/customers/{id}/jobs", class: doorWall, path: "/api/v1/customers/%C%/jobs", words: `{"error":"not found"}`},
+		{route: "POST /api/v1/customers/{id}/jobs", class: doorWall, path: "/api/v1/customers/%C%/jobs", body: `{"job_no":"WALK-1","name":"Walk job"}`, words: `{"error":"not found"}`},
+		{route: "GET /api/v1/customers/{id}/jobs/{jobId}", class: doorWall, path: "/api/v1/customers/%C%/jobs/" + walkUUID2, words: `{"error":"not found"}`},
+		{route: "PUT /api/v1/customers/{id}/jobs/{jobId}", class: doorWall, path: "/api/v1/customers/%C%/jobs/" + walkUUID2, body: `{"name":"Walk job"}`, words: `{"error":"not found"}`},
+		{route: "POST /api/v1/customers/{id}/jobs/{jobId}/close", class: doorWall, path: "/api/v1/customers/%C%/jobs/" + walkUUID2 + "/close", words: `{"error":"not found"}`},
 		{route: "POST /api/v1/lien/jobs", class: doorWall, path: "/api/v1/lien/jobs", body: `{"job_no":"WALK-1","customer_id":"%C%","branch_id":"` + A + `","description":"walk"}`},
 		{route: "POST /api/v1/messaging/inbound/customer", class: doorWall, path: "/api/v1/messaging/inbound/customer", body: `{"customer_id":"%C%","body":"walk"}`},
 		{route: "DELETE /api/v1/messaging/rep-assignments", class: doorExempt, reason: "requireAdmin is a global scope role, which reaches every account"},
