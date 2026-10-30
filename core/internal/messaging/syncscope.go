@@ -570,6 +570,9 @@ func (s *notifyPrefsSyncStore) write(ctx context.Context, f sync.ScopeFilter, ke
 	if silencingPatch(patch) {
 		tier, err := s.repo.ChannelTier(ctx, channelID)
 		if err != nil {
+			if isRepoNotFound(err) {
+				return sync.RowState{}, sync.ErrRowNotFound
+			}
 			return sync.RowState{}, err
 		}
 		if unmutableTier(tier) {
@@ -586,6 +589,9 @@ func (s *notifyPrefsSyncStore) write(ctx context.Context, f sync.ScopeFilter, ke
 	}
 	id, seq, err := s.repo.syncPrefsWrite(ctx, merged, key)
 	if err != nil {
+		if isRepoNotFound(err) {
+			return sync.RowState{}, sync.ErrRowNotFound
+		}
 		return sync.RowState{}, err
 	}
 	return sync.RowState{ID: id, Seq: seq}, nil

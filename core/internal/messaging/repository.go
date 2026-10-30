@@ -3046,7 +3046,8 @@ func (r *Repository) syncPrefsExists(ctx context.Context, prefID string) (bool, 
 // syncPrefsWrite upserts the caller's prefs for one channel with the client
 // key stamped and a fresh seq on both arms (a pref row has no create act
 // distinct from its write; the adapter runs the module's own merge and
-// escalation rules first).
+// escalation rules first). A channel that does not exist answers errNotFound
+// rather than tripping the foreign key (UX-115).
 func (r *Repository) syncPrefsWrite(ctx context.Context, p NotificationPrefs, key string) (string, int64, error) {
 	p = applyMode(p, ModeOf(p))
 	var id string
@@ -3055,8 +3056,10 @@ func (r *Repository) syncPrefsWrite(ctx context.Context, p NotificationPrefs, ke
 		INSERT INTO msg_notification_prefs
 		  (channel_id, user_id, desktop_enabled, escalation_override, muted, mode,
 		   updated_at, idempotency_key, seq)
-		VALUES ($1, $2, $3, $4, $5, $6, now(), $7::uuid,
-		        nextval(pg_get_serial_sequence('msg_notification_prefs', 'seq')))
+		SELECT ch.id, $2, $3, $4, $5, $6, now(), $7::uuid,
+		       nextval(pg_get_serial_sequence('msg_notification_prefs', 'seq'))
+		FROM msg_channels ch
+		WHERE ch.id = $1
 		ON CONFLICT (channel_id, user_id) DO UPDATE
 		  SET desktop_enabled = EXCLUDED.desktop_enabled,
 		      escalation_override = EXCLUDED.escalation_override,
@@ -3068,6 +3071,9 @@ func (r *Repository) syncPrefsWrite(ctx context.Context, p NotificationPrefs, ke
 		RETURNING id::text, seq`,
 		p.ChannelID, p.UserID, p.DesktopEnabled, p.EscalationOverride, p.Muted, p.Mode, key).
 		Scan(&id, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, errNotFound
+	}
 	if err != nil {
 		return "", 0, fmt.Errorf("sync prefs write: %w", err)
 	}
