@@ -53,16 +53,18 @@ test("every generated operation's signature returns Promise<Result<...>>", (t) =
     emitted.length + variants.length,
     "one scanned function per emitted manifest route and per declared body variant",
   );
-  // 796 scanned / 795 emitted / 796 in the manifest: main's 786 / 785 / 786 (FW1-04's bankrec
+  // 800 scanned / 799 emitted / 800 in the manifest: main's 786 / 785 / 786 (FW1-04's bankrec
   // cutover pair, FW1-07's inventory controller exceptions read, paymentsVoidPayment, and the
   // routes before them), this lane's billingApplyCredit and billingReverseCreditApplication,
   // W2-6b's three counter reason code routes (the list read, the add and the edit), W2-9a's
   // purchasingGetAPAging and purchasingPayBill, and W3 item 0.10's billingWriteOffInvoice and
-  // billingReverseWriteOff, and HST-1's taxGetWorksheet: 796 / 795 / 796.
-  assert.equal(operations, 796, "the document's operation count minus the excluded stream, plus the declared body variant");
-  assert.equal(emitted.length, 795, "the document's operation count minus the excluded stream");
+  // billingReverseWriteOff, HST-1's taxGetWorksheet, and W3 item 0.8's four vendor credit doors
+  // (purchasingCreateVendorCredit, purchasingListVendorCredits, purchasingPostVendorCredit and
+  // purchasingApplyVendorCredit): 800 / 799 / 800.
+  assert.equal(operations, 800, "the document's operation count minus the excluded stream, plus the declared body variant");
+  assert.equal(emitted.length, 799, "the document's operation count minus the excluded stream");
   assert.deepEqual(variants, ["feedbackCreateMultipart"], "the only multi content type body is feedbackCreate's multipart form");
-  assert.equal(ROUTES.length, 796, "the manifest census keeps the full route table");
+  assert.equal(ROUTES.length, 800, "the manifest census keeps the full route table");
 });
 
 test("each declared body variant resolves to a live generated function beside its operation", (t) => {

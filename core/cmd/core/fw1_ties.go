@@ -274,15 +274,15 @@ func TieAPAgingToGL2100(ctx context.Context, seams TieSeams, m TieMonth) (TieRes
 		if err != nil {
 			return TieResult{}, err
 		}
-		detail = fmt.Sprintf("AP aging total %s does not tie to GL 2100 %s as of the month's end: the aging is %s %s; 2100 entries no bill, payment or landed cost made: %s",
+		detail = fmt.Sprintf("AP aging total %s does not tie to GL 2100 %s as of the month's end: the aging is %s %s; 2100 entries no bill, payment, vendor credit or landed cost made: %s",
 			fw1Dollars(page.TotalCents), fw1Dollars(glCredit), shorter(page.TotalCents, glCredit), byDollars(variance), others)
 	}
 	return TieResult{Name: TieNameAPAging, Pass: variance == 0, Applicable: true, VarianceCents: variance, Detail: detail}, nil
 }
 
 // tieAPOtherJournals names the posted journals on 2100, as of the month's end by
-// the GL's own effective instant, that no vendor bill, PayBill payment or landed
-// cost document posted: the entries the Controller reconciles against the aging.
+// the GL's own effective instant, that no vendor bill, PayBill payment, vendor credit or
+// landed cost document posted: the entries the Controller reconciles against the aging.
 // It names at most ten.
 //
 // The as-of cut is the GL module's own rule, read through the seam
@@ -305,6 +305,7 @@ func tieAPOtherJournals(ctx context.Context, seams TieSeams, m TieMonth) (string
 		   AND j.posted_at <= $1
 		   AND j.idempotency_key NOT LIKE 'purchasing.bill:%'
 		   AND j.idempotency_key NOT LIKE 'purchasing.bill.payment:%'
+		   AND j.idempotency_key NOT LIKE 'purchasing.vendor_credit:%'
 		   AND j.idempotency_key NOT LIKE 'landedcost.%'
 		 GROUP BY j.id, j.entry_no, j.source, j.memo, j.posted_at
 		 ORDER BY j.posted_at, j.id`, m.MonthEnd)

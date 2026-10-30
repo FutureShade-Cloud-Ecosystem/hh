@@ -20,8 +20,9 @@ const (
 	APRowKindVendor     = "VENDOR"
 	APRowKindLandedCost = "LANDED_COST"
 
-	APItemKindBill       = "BILL"
-	APItemKindLandedCost = "LANDED_COST"
+	APItemKindBill         = "BILL"
+	APItemKindLandedCost   = "LANDED_COST"
+	APItemKindVendorCredit = "VENDOR_CREDIT"
 
 	glSourcePayment = "PAYMENT"
 	glAccountCash   = "1000"
@@ -255,9 +256,16 @@ func (s *Service) PayBill(ctx context.Context, billID string, in PayBillRequest)
 	if err != nil {
 		return BillDetail{}, err
 	}
-	if paidSoFar+in.AmountCents > bill.TotalCents {
+	// The vendor's credits applied to this bill have consumed part of its open
+	// already (a netting inside AP, no payment): paying on top of that would
+	// overpay the supplier for goods a credit note already settled.
+	credited, err := s.repo.CreditedBillCentsTx(ctx, tx, bill.ID)
+	if err != nil {
+		return BillDetail{}, err
+	}
+	if paidSoFar+credited+in.AmountCents > bill.TotalCents {
 		return BillDetail{}, conflict("purchasing: payment of %d cents exceeds open balance %d cents on bill %s",
-			in.AmountCents, bill.TotalCents-paidSoFar, bill.BillNo)
+			in.AmountCents, bill.TotalCents-paidSoFar-credited, bill.BillNo)
 	}
 
 	dueDate := strings.TrimSpace(bill.DueDate)
@@ -354,8 +362,12 @@ func (r *Repository) RecordBillPaymentTx(ctx context.Context, tx pgx.Tx, billID,
 // landed-cost payables, so a 2100 credit that is neither (a MANUAL or ADJUSTMENT
 // accrual, another module's posting) shows as a tie difference against GL 2100's
 // net credit balance at the same instant, never as an aging row (FROM-PRINCIPAL
-// 122, 124, 125). A document counts from its posting journal's effective instant,
-// the GL's own late filing rule, and still ages by its document date.
+// 122, 124, 125). A posted vendor credit (wave 3 item 0.8) is a bill-side
+// document and belongs to the aging: its unapplied open shows as a NEGATIVE item
+// on its vendor's row, and its applications reduce the bill opens they consumed,
+// so the aging still ties to 2100 to the cent. A document counts from its posting
+// journal's effective instant, the GL's own late filing rule, and still ages by
+// its document date.
 func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach) (APAgingPage, error) {
 	zone, err := houseday.Resolve(ctx, s.zone)
 	if err != nil {
@@ -389,9 +401,21 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 		return APAgingPage{}, err
 	}
 
+	// The vendor credits: which count as of the instant, and how much of each has
+	// been applied onto bills as of the same instant. The applications of a credit
+	// that does not yet count reduce nothing (neither side of the tie sees it yet).
+	creditCandidates, err := s.repo.OpenVendorCreditsAsOf(ctx, reach)
+	if err != nil {
+		return APAgingPage{}, err
+	}
+	countedCredits, appliedByBill, err := s.applyCreditClock(ctx, creditCandidates, effectiveAsOf, loc)
+	if err != nil {
+		return APAgingPage{}, err
+	}
+
 	vendorIndex := make(map[string]int)
 	for _, c := range candidates {
-		openCents := c.TotalCents - c.PaidCents
+		openCents := c.TotalCents - c.PaidCents - appliedByBill[c.BillID]
 		if openCents <= 0 {
 			continue
 		}
@@ -437,6 +461,51 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 		}
 		row.OpenItems = append(row.OpenItems, item)
 		addBucketCents(row, &page, bucket, openCents)
+	}
+
+	// The unapplied open of each counted credit: a negative item on its vendor's
+	// row, bucketed by the credit's own date. The applications already moved onto
+	// bills live in those bills' reduced opens, so the credit item carries only
+	// what is still held on account; a fully applied credit shows no item at all.
+	for _, cc := range countedCredits {
+		open := cc.candidate.TotalCents - cc.appliedAsOf
+		if open <= 0 {
+			continue
+		}
+		bucket := bucketForDueDate(asOfDay, cc.candidate.CreditDate)
+		item := APAgingItem{
+			ID:           cc.candidate.CreditID,
+			Kind:         APItemKindVendorCredit,
+			IsLandedCost: false,
+			RefNo:        cc.candidate.CreditNo,
+			BranchID:     cc.candidate.BranchID,
+			VendorID:     cc.candidate.VendorID,
+			VendorName:   cc.candidate.VendorName,
+			BillDate:     cc.candidate.CreditDate,
+			DueDate:      cc.candidate.CreditDate,
+			TotalCents:   -cc.candidate.TotalCents,
+			PaidCents:    -cc.appliedAsOf,
+			OpenCents:    cc.appliedAsOf - cc.candidate.TotalCents,
+			Bucket:       bucket,
+		}
+		idx, exists := vendorIndex[cc.candidate.VendorID]
+		if !exists {
+			idx = len(page.Items)
+			vendorIndex[cc.candidate.VendorID] = idx
+			page.Items = append(page.Items, APAgingRow{
+				RowKind:      APRowKindVendor,
+				IsLandedCost: false,
+				VendorID:     cc.candidate.VendorID,
+				VendorNo:     cc.candidate.VendorNo,
+				VendorName:   cc.candidate.VendorName,
+				BranchID:     cc.candidate.BranchID,
+				OpenItems:    []APAgingItem{},
+			})
+		}
+		row := &page.Items[idx]
+		// A credit is not owed, so it never moves the row's earliest due date.
+		row.OpenItems = append(row.OpenItems, item)
+		addBucketCents(row, &page, bucket, item.OpenCents)
 	}
 
 	if s.landedPayables != nil {
@@ -706,6 +775,71 @@ func (s *Service) applyJournalClock(ctx context.Context, candidates []apBillCand
 		out = append(out, c)
 	}
 	return out, nil
+}
+
+// countedCredit is a vendor credit the aging counts as of the instant, with the
+// part of it already applied onto bills as of the same instant.
+type countedCredit struct {
+	candidate   apCreditCandidate
+	appliedAsOf int64
+}
+
+// applyCreditClock narrows the credit candidates to what counts as of the instant
+// under the bills' own rule: the credit counts from its posting journal's effective
+// instant (the GL's late filing rule), and from its own date when the clock is
+// unwired. Each application counts at its applied_at, and only the applications of
+// a counted credit reduce bill opens, so neither side of the tie sees a credit the
+// other does not. The second answer is the bill open's credit side, keyed by bill.
+func (s *Service) applyCreditClock(ctx context.Context, candidates []apCreditCandidate, asOf time.Time, loc *time.Location) ([]countedCredit, map[string]int64, error) {
+	day := asOf.In(loc).Format("2006-01-02")
+	appliedByBill := make(map[string]int64)
+	count := func(c apCreditCandidate) countedCredit {
+		cc := countedCredit{candidate: c}
+		for i, at := range c.AppliedAts {
+			if !at.After(asOf) {
+				cc.appliedAsOf += c.AppliedAmounts[i]
+				appliedByBill[c.AppliedBills[i]] += c.AppliedAmounts[i]
+			}
+		}
+		return cc
+	}
+
+	if s.journalClock == nil {
+		out := make([]countedCredit, 0, len(candidates))
+		for _, c := range candidates {
+			if c.CreditDate > day {
+				continue
+			}
+			out = append(out, count(c))
+		}
+		return out, appliedByBill, nil
+	}
+
+	journalIDs := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		if c.GLJournalID != "" {
+			journalIDs = append(journalIDs, c.GLJournalID)
+		}
+	}
+	creditEff, err := s.journalClock.JournalEffectiveInstants(ctx, journalIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make([]countedCredit, 0, len(candidates))
+	for _, c := range candidates {
+		if c.GLJournalID != "" {
+			eff, ok := creditEff[c.GLJournalID]
+			if !ok || eff.After(asOf) {
+				continue
+			}
+		} else if c.CreditDate > day {
+			// no posting journal on the row (the GL was unwired at post time): the
+			// document's own date decides, the legacy rule
+			continue
+		}
+		out = append(out, count(c))
+	}
+	return out, appliedByBill, nil
 }
 
 func apAsOfEffectiveInstant(asOf time.Time, loc *time.Location) time.Time {
