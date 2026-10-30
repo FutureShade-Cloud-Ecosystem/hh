@@ -188,6 +188,7 @@ func financeCheckSeams(ctx context.Context, pool *pgxpool.Pool, querier tieQueri
 	return TieSeams{
 		Querier:  querier,
 		GL:       glSvc,
+		GLClock:  glSvc,
 		GLStore:  glRepo,
 		Billing:  billingRepo,
 		Tax:      taxSvc,

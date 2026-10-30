@@ -37,6 +37,12 @@ type GLJournalClock interface {
 	// filed under an idempotency key, found false when no journal carries it. This
 	// is PayBill's replay judgement: the payment key lives on the journal.
 	JournalSourceRefByKey(ctx context.Context, key string) (string, bool, error)
+	// JournalAmountByKey answers the amount the POSTED journal filed under an
+	// idempotency key moved, found false when no journal carries it. It is the
+	// other half of the same question: which document the key paid, and how much
+	// it paid, serving both PayBill's replay amount judgement and a payment run's
+	// read of what its own key already paid.
+	JournalAmountByKey(ctx context.Context, key string) (int64, bool, error)
 }
 
 // WithGLJournalClock binds the GL journal clock seam.

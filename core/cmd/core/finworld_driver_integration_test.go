@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,31 +19,221 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const (
+	finworldDefaultContainerName = "s4-fin2-fwlegs-pg"
+	finworldDefaultPGPort        = "57723"
+)
+
+// finworldDynamicClockShiftSrc mirrors deploy/finance/world/run.sh: hhClockShift is a function
+// evaluated on every time.Now call rather than a package-init var, so mid-process updates to
+// HH_CLOCK_SHIFT_SECONDS (such as finworldExecutePeriodClose and finworldExecuteYearClose advancing
+// into the next month/year before calling the close route) move the Go clock immediately.
+const finworldDynamicClockShiftSrc = `package time
+
+import "syscall"
+
+// hhClockShift returns whole seconds added to the wall clock (never the monotonic clock) of every
+// time.Now, read from HH_CLOCK_SHIFT_SECONDS; zero when unset or unreadable.
+func hhClockShift() int64 {
+	v, ok := syscall.Getenv("HH_CLOCK_SHIFT_SECONDS")
+	if !ok {
+		return 0
+	}
+	var n int64
+	neg := false
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if i == 0 && (c == '-' || c == '+') {
+			neg = c == '-'
+			continue
+		}
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int64(c-'0')
+	}
+	if neg {
+		n = -n
+	}
+	return n
+}
+`
+
+type finworldTestRig struct {
+	workDir string
+	dsn     string
+	ftFile  string
+	overlay string
+	binPath string
+}
+
+var (
+	finworldRigsMu sync.Mutex
+	finworldRigs   = map[testing.TB]*finworldTestRig{}
+)
+
+// finworldRigFor ensures the calling test has a pinned libfaketime Postgres container and an
+// evening-guard Go toolchain overlay, matching deploy/finance/world/run.sh. When Docker is absent
+// or unreachable, the test skips in words and never passes silently.
+func finworldRigFor(t *testing.T) *finworldTestRig {
+	t.Helper()
+	finworldRigsMu.Lock()
+	if rig, ok := finworldRigs[t]; ok {
+		finworldRigsMu.Unlock()
+		return rig
+	}
+	finworldRigsMu.Unlock()
+
+	envDSN := strings.TrimSpace(os.Getenv("FINWORLD_PG_DSN"))
+	envFT := strings.TrimSpace(os.Getenv("FINWORLD_FAKETIME_FILE"))
+	envOverlay := strings.TrimSpace(os.Getenv("FINWORLD_OVERLAY_JSON"))
+	if envDSN != "" && envFT != "" && envOverlay != "" {
+		rig := &finworldTestRig{
+			dsn:     envDSN,
+			ftFile:  envFT,
+			overlay: envOverlay,
+		}
+		finworldRigsMu.Lock()
+		finworldRigs[t] = rig
+		finworldRigsMu.Unlock()
+		t.Cleanup(func() {
+			finworldRigsMu.Lock()
+			delete(finworldRigs, t)
+			finworldRigsMu.Unlock()
+		})
+		return rig
+	}
+
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skipf("finworld driver leg skipped: docker binary is absent from PATH (%v)", err)
+	}
+	if out, err := exec.Command("docker", "info").CombinedOutput(); err != nil {
+		t.Skipf("finworld driver leg skipped: docker daemon is not reachable (%v: %s)", err, strings.TrimSpace(string(out)))
+	}
+
+	workDir := t.TempDir()
+	egDir := filepath.Join(workDir, "eg")
+	ftDir := filepath.Join(egDir, "faketime")
+	ftFile := filepath.Join(ftDir, "clock")
+	if err := os.MkdirAll(ftDir, 0o755); err != nil {
+		t.Fatalf("create faketime dir: %v", err)
+	}
+	if err := os.WriteFile(ftFile, []byte("+0\n"), 0o644); err != nil {
+		t.Fatalf("init faketime clock file: %v", err)
+	}
+
+	prepareScript := filepath.Clean("../../../scripts/evening-guard/prepare.sh")
+	if _, err := os.Stat(prepareScript); err != nil {
+		prepareScript = filepath.Clean("scripts/evening-guard/prepare.sh")
+	}
+	if out, err := exec.Command("bash", prepareScript, egDir).CombinedOutput(); err != nil {
+		t.Fatalf("prepare evening-guard toolchain (%s): %v\n%s", prepareScript, err, string(out))
+	}
+	if out, err := exec.Command("chmod", "-R", "u+w", filepath.Join(egDir, "toolchain")).CombinedOutput(); err != nil {
+		t.Fatalf("chmod evening-guard toolchain writable: %v\n%s", err, string(out))
+	}
+
+	timeGoPath := filepath.Join(egDir, "time.go")
+	timeGoRaw, err := os.ReadFile(timeGoPath)
+	if err != nil {
+		t.Fatalf("read prepared time.go: %v", err)
+	}
+	patchedTimeGo := strings.Replace(string(timeGoRaw), "sec += hhClockShift\n", "sec += hhClockShift()\n", 1)
+	if patchedTimeGo == string(timeGoRaw) {
+		t.Fatalf("prepared time.go did not contain expected 'sec += hhClockShift' anchor")
+	}
+	if err := os.WriteFile(timeGoPath, []byte(patchedTimeGo), 0o644); err != nil {
+		t.Fatalf("write patched time.go: %v", err)
+	}
+	clockShiftPath := filepath.Join(egDir, "hh_clockshift.go")
+	if err := os.WriteFile(clockShiftPath, []byte(finworldDynamicClockShiftSrc), 0o644); err != nil {
+		t.Fatalf("write dynamic hh_clockshift.go: %v", err)
+	}
+	toolchainTimeDir := filepath.Join(egDir, "toolchain", "src", "time")
+	if err := os.WriteFile(filepath.Join(toolchainTimeDir, "time.go"), []byte(patchedTimeGo), 0o644); err != nil {
+		t.Fatalf("copy time.go into toolchain: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(toolchainTimeDir, "hh_clockshift.go"), []byte(finworldDynamicClockShiftSrc), 0o644); err != nil {
+		t.Fatalf("copy hh_clockshift.go into toolchain: %v", err)
+	}
+
+	containerName := strings.TrimSpace(os.Getenv("FINWORLD_PG_CONTAINER"))
+	if containerName == "" {
+		containerName = finworldDefaultContainerName
+	}
+	pgPort := strings.TrimSpace(os.Getenv("FINWORLD_PG_PORT"))
+	if pgPort == "" {
+		pgPort = finworldDefaultPGPort
+	}
+
+	_ = exec.Command("docker", "rm", "-f", "-v", containerName).Run()
+	t.Cleanup(func() {
+		finworldRigsMu.Lock()
+		delete(finworldRigs, t)
+		finworldRigsMu.Unlock()
+		_ = exec.Command("docker", "rm", "-f", "-v", containerName).Run()
+	})
+
+	runArgs := []string{
+		"run", "-d",
+		"--name", containerName,
+		"-p", fmt.Sprintf("127.0.0.1:%s:5432", pgPort),
+		"-e", "POSTGRES_PASSWORD=postgres",
+		"-e", "POSTGRES_DB=finworld",
+		"-v", ftDir + ":/etc/faketime",
+		"postgres:16-alpine",
+		"sh", "-c",
+		"apk add --no-cache libfaketime >/dev/null && LD_PRELOAD=/usr/lib/faketime/libfaketime.so.1 FAKETIME_TIMESTAMP_FILE=/etc/faketime/clock FAKETIME_NO_CACHE=1 exec docker-entrypoint.sh postgres -c fsync=off -c synchronous_commit=off -c full_page_writes=off",
+	}
+	if out, err := exec.Command("docker", runArgs...).CombinedOutput(); err != nil {
+		t.Fatalf("start libfaketime postgres container %s on 127.0.0.1:%s: %v\n%s", containerName, pgPort, err, string(out))
+	}
+
+	dsn := fmt.Sprintf("postgres://postgres:postgres@127.0.0.1:%s/finworld?sslmode=disable", pgPort)
+	ready := false
+	for i := 0; i < 60; i++ {
+		if err := exec.Command("docker", "exec", containerName, "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "finworld").Run(); err == nil {
+			if probePool, err := db.Connect(context.Background(), dsn); err == nil {
+				var one int
+				qerr := probePool.QueryRow(context.Background(), "SELECT 1").Scan(&one)
+				probePool.Close()
+				if qerr == nil && one == 1 {
+					ready = true
+					break
+				}
+			}
+		}
+		time.Sleep(time.Second)
+	}
+	if !ready {
+		t.Fatalf("libfaketime postgres container %s on 127.0.0.1:%s did not become ready within 60s", containerName, pgPort)
+	}
+
+	rig := &finworldTestRig{
+		workDir: workDir,
+		dsn:     dsn,
+		ftFile:  ftFile,
+		overlay: filepath.Join(egDir, "overlay.json"),
+	}
+	finworldRigsMu.Lock()
+	finworldRigs[t] = rig
+	finworldRigsMu.Unlock()
+	return rig
+}
+
 func finworldTestDSN(t *testing.T) string {
 	t.Helper()
-	if v := strings.TrimSpace(os.Getenv("FINWORLD_PG_DSN")); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL")); v != "" {
-		return v
-	}
-	return "postgres://postgres:postgres@127.0.0.1:57728/finworld?sslmode=disable"
+	return finworldRigFor(t).dsn
 }
 
 func finworldTestFaketimeFile(t *testing.T) string {
 	t.Helper()
-	if v := strings.TrimSpace(os.Getenv("FINWORLD_FAKETIME_FILE")); v != "" {
-		return v
-	}
-	return "/home/colton/Desktop/FBHQ/hh-wt/s4-fin2-w21b-driver-eg/faketime/clock"
+	return finworldRigFor(t).ftFile
 }
 
 func finworldTestOverlay(t *testing.T) string {
 	t.Helper()
-	if v := strings.TrimSpace(os.Getenv("FINWORLD_OVERLAY_JSON")); v != "" {
-		return v
-	}
-	return "/home/colton/Desktop/FBHQ/hh-wt/s4-fin2-w21b-driver-eg/overlay.json"
+	return finworldRigFor(t).overlay
 }
 
 func finworldSetDayClock(t *testing.T, ftFile string, target time.Time) int64 {
@@ -61,23 +252,28 @@ func finworldSetDayClock(t *testing.T, ftFile string, target time.Time) int64 {
 
 func finworldBuildBinary(t *testing.T) string {
 	t.Helper()
-	binPath := filepath.Join(t.TempDir(), "core-finworld")
-	overlay := finworldTestOverlay(t)
+	rig := finworldRigFor(t)
+	if rig.binPath != "" {
+		return rig.binPath
+	}
+	outDir := rig.workDir
+	if outDir == "" {
+		outDir = t.TempDir()
+	}
+	binPath := filepath.Join(outDir, "core-finworld")
+	overlay := rig.overlay
 	goroot := filepath.Join(filepath.Dir(overlay), "toolchain")
 	goBin := filepath.Join(goroot, "bin", "go")
 	if _, err := os.Stat(goBin); err != nil {
 		goBin = "go"
 	}
-	gocache := os.Getenv("GOCACHE")
-	if gocache == "" {
-		gocache = "/home/colton/Desktop/FBHQ/hh-wt/s4-fin2-w21b-driver-gocache"
-	}
 	cmd := exec.Command(goBin, "build", "-overlay", overlay, "-tags", "finworld", "-o", binPath, ".")
-	cmd.Env = append(os.Environ(), "GOCACHE="+gocache, "GOROOT="+goroot)
+	cmd.Env = append(os.Environ(), "GOROOT="+goroot, "GOTOOLCHAIN=local")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("build core-finworld binary: %v\n%s", err, string(out))
 	}
+	rig.binPath = binPath
 	return binPath
 }
 

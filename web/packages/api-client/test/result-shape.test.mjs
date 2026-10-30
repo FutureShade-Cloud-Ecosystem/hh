@@ -53,16 +53,19 @@ test("every generated operation's signature returns Promise<Result<...>>", (t) =
     emitted.length + variants.length,
     "one scanned function per emitted manifest route and per declared body variant",
   );
-  // 798 scanned / 797 emitted / 798 in the manifest: main's 786 / 785 / 786 (FW1-04's bankrec
+  // 811 scanned / 810 emitted / 811 in the manifest: main's 786 / 785 / 786 (FW1-04's bankrec
   // cutover pair, FW1-07's inventory controller exceptions read, paymentsVoidPayment, and the
-  // routes before them), this lane's billingApplyCredit and billingReverseCreditApplication, and
-  // W2-6b's three counter reason code routes (the list read, the add and the edit), and W2-9a's
-  // purchasingGetAPAging and purchasingPayBill, and wave 3 JA-1's five job account routes (the
-  // list read, the create, the one job read, the edit and the close): 798 / 797 / 798.
-  assert.equal(operations, 798, "the document's operation count minus the excluded stream, plus the declared body variant");
-  assert.equal(emitted.length, 797, "the document's operation count minus the excluded stream");
+  // routes before them), this lane's billingApplyCredit and billingReverseCreditApplication,
+  // W2-6b's three counter reason code routes (the list read, the add and the edit), W2-9a's
+  // purchasingGetAPAging and purchasingPayBill, W3 item 0.10's billingWriteOffInvoice and
+  // billingReverseWriteOff, HST-1's taxGetWorksheet, W3 item 0.8's four vendor credit doors
+  // (purchasingCreateVendorCredit, purchasingListVendorCredits, purchasingPostVendorCredit and
+  // purchasingApplyVendorCredit), and W3's five payment run doors (the propose, the list read,
+  // the document read, the review and the pay), W2-1d's landedCostSettle, and JA-1's five job doors (customerListJobs, customerCreateJob, customerGetJob, customerEditJob and customerCloseJob): 811 / 810 / 811.
+  assert.equal(operations, 811, "the document's operation count minus the excluded stream, plus the declared body variant");
+  assert.equal(emitted.length, 810, "the document's operation count minus the excluded stream");
   assert.deepEqual(variants, ["feedbackCreateMultipart"], "the only multi content type body is feedbackCreate's multipart form");
-  assert.equal(ROUTES.length, 798, "the manifest census keeps the full route table");
+  assert.equal(ROUTES.length, 811, "the manifest census keeps the full route table");
 });
 
 test("each declared body variant resolves to a live generated function beside its operation", (t) => {

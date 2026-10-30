@@ -531,6 +531,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithUserLinker(link).RegisterRoutes(r, g)
 	billing.NewCreditApplyHandler(billing.NewCreditApplyService(billingRepo).WithAudit(auditSvc), log).
 		WithUserLinker(link).RegisterRoutes(r, g)
+	billing.NewWriteOffHandler(billing.NewWriteOffService(billingRepo).WithAudit(auditSvc), log).
+		WithUserLinker(link).RegisterRoutes(r, g)
 
 	// The dispatch gate seam (W3-C closes at the union): Swarm B's billing
 	// predicate through dispatch's consumer-declared gate.

@@ -20,10 +20,16 @@ import type { APIRequestContext, Page } from "@playwright/test";
 import { test, expect, controllerHandoff, resetStub, openTab } from "./gl-helpers.js";
 
 const PLANTED = 130;
+const FIRST_PLANTED_ENTRY = 101;
+const PAGE = 100;
 const blank = process.env.JOURNAL_REACH_BLANK ?? "";
 
-/** Plants the older books (or empties them, for the blank core), signs in, and stands on the register. */
-async function openRegister(page: Page, request: APIRequestContext): Promise<void> {
+/** Plants the older books (or empties them, for the blank core), signs in, and stands on the register.
+ *  Answers the oldest label the first page holds, derived from the world: the register lists the demo
+ *  year's rows (the seeded journals and any another desk plants, such as a lodgement's own) ahead of the
+ *  older year's, so the first hundred reach down to the planted entry that many rows short of the newest. */
+async function openRegister(page: Page, request: APIRequestContext): Promise<string> {
+  let edge = "JE-0000";
   await resetStub(request);
   if (blank === "core") {
     const emptied = await request.post("/api/v1/gl/journals/_stub/planter", {
@@ -37,6 +43,9 @@ async function openRegister(page: Page, request: APIRequestContext): Promise<voi
       headers: { Authorization: "Bearer the-planter-is-a-stub-control" },
     });
     if (!planted.ok()) throw new Error("the stub refused the older journals");
+    const total = ((await planted.json()) as { journals: number }).journals;
+    const newestPlanted = FIRST_PLANTED_ENTRY + PLANTED - 1;
+    edge = `JE-${String(newestPlanted - (PAGE - (total - PLANTED)) + 1).padStart(4, "0")}`;
   }
   await page.addInitScript(controllerHandoff);
   if (blank === "screen") {
@@ -48,14 +57,17 @@ async function openRegister(page: Page, request: APIRequestContext): Promise<voi
   await expect(page.locator("[data-approval-id]")).toHaveCount(5);
   await openTab(page, "journals");
   await expect(page.getByRole("table", { name: "Journal register" })).toBeVisible();
+  return edge;
 }
+const before = (label: string) => `JE-${String(Number(label.slice(3)) - 1).padStart(4, "0")}`;
 
 test("show more reaches a journal older than the first hundred and opens it", async ({ page, request }) => {
-  await openRegister(page, request);
+  const edge = await openRegister(page, request);
   const register = page.getByRole("table", { name: "Journal register" });
-  // The first page is the newest hundred: it stops at JE-0137, and JE-0136 waits on the next page.
-  await expect(register.getByRole("button", { name: "JE-0137" })).toBeVisible();
-  await expect(register.getByRole("button", { name: "JE-0136" })).toHaveCount(0);
+  // The first page is the newest hundred: it stops at the edge the world gives (JE-0138 with the lodgement's
+  // own journal beside the six seeded ones), and the entry just before it waits on the next page.
+  await expect(register.getByRole("button", { name: edge })).toBeVisible();
+  await expect(register.getByRole("button", { name: before(edge) })).toHaveCount(0);
   await expect(register.getByRole("button", { name: "JE-0101" })).toHaveCount(0);
   const more = page.locator("[data-show-more]");
   await expect(more).toBeVisible();
@@ -71,9 +83,9 @@ test("show more reaches a journal older than the first hundred and opens it", as
 });
 
 test("a posted date range reaches an older journal, and changing it starts from the first page again", async ({ page, request }) => {
-  await openRegister(page, request);
+  const edge = await openRegister(page, request);
   const register = page.getByRole("table", { name: "Journal register" });
-  await expect(register.getByRole("button", { name: "JE-0137" })).toBeVisible();
+  await expect(register.getByRole("button", { name: edge })).toBeVisible();
   const from = page.locator('[data-field="journal-from"]');
   const to = page.locator('[data-field="journal-to"]');
   await from.fill("2025-06-01");
@@ -84,7 +96,7 @@ test("a posted date range reaches an older journal, and changing it starts from 
   await expect(register.locator("tbody tr")).toHaveCount(11);
   await expect(register.getByRole("button", { name: "JE-0106" })).toBeVisible();
   await expect(register.getByRole("button", { name: "JE-0119" })).toHaveCount(0);
-  await expect(register.getByRole("button", { name: "JE-0137" })).toHaveCount(0);
+  await expect(register.getByRole("button", { name: edge })).toHaveCount(0);
   await expect(register.getByRole("button", { name: "JE-0006" })).toHaveCount(0);
   await expect(page.locator("[data-show-more]")).toHaveCount(0);
   // The reach: an older June journal the first hundred never held, opened.
@@ -113,16 +125,16 @@ test("each register row shows when it posted, and a draft shows Not posted", asy
 });
 
 test("the status filters keep working on the loaded window", async ({ page, request }) => {
-  await openRegister(page, request);
+  const edge = await openRegister(page, request);
   const register = page.getByRole("table", { name: "Journal register" });
-  await expect(register.getByRole("button", { name: "JE-0137" })).toBeVisible();
+  await expect(register.getByRole("button", { name: edge })).toBeVisible();
   // On the first hundred the pending ones are the demo year's two seeded drafts.
   await page.getByRole("button", { name: /^Pending/ }).click();
   await expect(register.locator("tbody tr")).toHaveCount(2);
   await expect(register.getByRole("button", { name: "JE-0005" })).toBeVisible();
   await expect(register.getByRole("button", { name: "JE-0006" })).toBeVisible();
   await page.getByRole("button", { name: "All", exact: true }).click();
-  await expect(register.getByRole("button", { name: "JE-0137" })).toBeVisible();
+  await expect(register.getByRole("button", { name: edge })).toBeVisible();
   await page.locator("[data-show-more]").click();
   await expect(register.getByRole("button", { name: "JE-0101" })).toBeVisible();
   // The whole loaded window: still the two seeded drafts, the older year adds none.
@@ -133,9 +145,9 @@ test("the status filters keep working on the loaded window", async ({ page, requ
 });
 
 test("a refused range read keeps the shown range, and the same dates can be tried again", async ({ page, request }) => {
-  await openRegister(page, request);
+  const edge = await openRegister(page, request);
   const register = page.getByRole("table", { name: "Journal register" });
-  await expect(register.getByRole("button", { name: "JE-0137" })).toBeVisible();
+  await expect(register.getByRole("button", { name: edge })).toBeVisible();
   // The first June read is refused, as a lost or failing core would answer it.
   let refused = false;
   await page.route("**/api/v1/gl/journals?**date_from=2025-06-01**", (route) => {
@@ -148,7 +160,7 @@ test("a refused range read keeps the shown range, and the same dates can be trie
   await page.getByRole("button", { name: "Apply dates" }).click();
   await expect.poll(() => refused).toBe(true);
   // The old window stays, and nothing on screen claims it is June's.
-  await expect(register.getByRole("button", { name: "JE-0137" })).toBeVisible();
+  await expect(register.getByRole("button", { name: edge })).toBeVisible();
   await expect(page.locator("[data-range-words]")).toHaveCount(0);
   // The same dates, pressed again, are read again and land.
   await page.getByRole("button", { name: "Apply dates" }).click();

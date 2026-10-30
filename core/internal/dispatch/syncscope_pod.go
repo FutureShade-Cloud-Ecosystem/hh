@@ -347,6 +347,42 @@ func decodePhotoBytes(contentType, encoded string) ([]byte, error) {
 	return data, nil
 }
 
+// podCreateShape is the body-only half of the pushed create's checks, both
+// forms: the typed name attestation and the photo. It reads nothing and
+// honours no fence (the stop read and the authority read are Create's own),
+// so the bound key gate can run it before the hidden refusal (UX-116): an
+// invalid body then meets these refusals under a spent key and a free one.
+// The refusals are exactly the ones Create answers.
+func podCreateShape(fields map[string]any) error {
+	if isAttestation(fields) {
+		return attestationCreateShape(fields)
+	}
+	if err := podCreateFields(fields); err != nil {
+		return err
+	}
+	stopID, _ := fields["stop_id"].(string)
+	if !looksLikeUUID(stopID) {
+		return fmt.Errorf("dispatch: stop_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	contentType, _ := fields["content_type"].(string)
+	encoded, _ := fields["image_bytes_b64"].(string)
+	if _, err := decodePhotoBytes(contentType, encoded); err != nil {
+		return err
+	}
+	_, err := syncCreateID(fields)
+	return err
+}
+
+// ValidateCreate answers the pushed create's body shape, both forms,
+// without the stop read, the authority read or a write: the engine's bound
+// key gate calls it before the hidden refusal (UX-116). The refusals are
+// exactly Create's.
+func (s *PODSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	return podCreateShape(fields)
+}
+
+var _ sync.CreateBodyValidator = (*PODSyncStore)(nil)
+
 // Create inserts one POD record from a pushed create: the stop must
 // sit in the caller's org and be a stop with something to photograph
 // (EN_ROUTE, DELIVERED or FAILED, AddPhoto's own rule; a photo before
@@ -363,16 +399,13 @@ func (s *PODSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key strin
 	if _, _, ok := podScopePredicate(f, d); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
+	if err := podCreateShape(fields); err != nil {
+		return sync.RowState{}, err
+	}
 	if isAttestation(fields) {
 		return s.createAttestation(ctx, f, d, key, fields)
 	}
-	if err := podCreateFields(fields); err != nil {
-		return sync.RowState{}, err
-	}
 	stopID, _ := fields["stop_id"].(string)
-	if !looksLikeUUID(stopID) {
-		return sync.RowState{}, fmt.Errorf("dispatch: stop_id must be a uuid: %w", sync.ErrOpRefused)
-	}
 	var branchID, stopStatus string
 	readArm, readArg := d.leg(stopDriverCol, 3)
 	err = s.pool.QueryRow(ctx,
@@ -397,10 +430,9 @@ func (s *PODSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key strin
 		return sync.RowState{}, err
 	}
 	caption, _ := fields["caption"].(string)
-	id, err := syncCreateID(fields)
-	if err != nil {
-		return sync.RowState{}, err
-	}
+	// The payload id shape is podCreateShape's check, run at the door there;
+	// here the shape stands proven.
+	id, _ := fields["id"].(string)
 	actor := syncActor(ctx, s.link, f.Actor)
 
 	tx, err := s.pool.Begin(ctx)
