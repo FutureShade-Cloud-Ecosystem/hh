@@ -684,19 +684,49 @@ func (r *Repository) MarkHandoff(ctx context.Context, stopID string, at time.Tim
 // against octet_length, a declared size that disagrees with the bytes is refused by the database
 // rather than trusted, which is the same posture the feedback uploader takes with Plane's presigned
 // policy.
+//
+// THE STOP'S OWN SEQ RIDES THE PICTURE. The stop's projection carries photo_count, computed from
+// the photos table, and a device pulls "seq IS NOT NULL AND seq > cursor": a row whose CONTENT
+// changed is seen again only when its seq moved. The picture draws the pod scope's seq beside
+// itself, but the COUNT that moved lives on the stop row, so the stop draws the stops stream's seq
+// too: the same rule the desk's reschedule rides (MoveStopDate), the update below leaves the row
+// changed and the schema's own draw (0422's sync_seq_draw) stamps the stops stream. Without it no
+// pull ever carries the count, and the driver's screen keeps saying no picture was sent.
+//
+// THE PICTURE AND THE COUNT COMMIT TOGETHER. A picture whose stop's seq never moved is a count no
+// device ever learns, and nothing else would move that stop's seq afterwards. The lock order is the
+// house one: the row first, the counters second (the rows come before the counter).
 func (r *Repository) InsertPhoto(ctx context.Context, stopID, branchID, contentType, caption, by string, data []byte) (string, error) {
 	pool, err := r.db()
 	if err != nil {
 		return "", err
 	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM delivery_stops WHERE id = $1::uuid FOR NO KEY UPDATE`, stopID); err != nil {
+		return "", err
+	}
 	var id string
 	// The pod scope's seq stamps beside the row, so a photo the desk
 	// uploads is visible to a device's pull the moment it lands.
-	err = pool.QueryRow(ctx, fmt.Sprintf(syncSeqCTE, podSyncScope)+`
+	err = tx.QueryRow(ctx, fmt.Sprintf(syncSeqCTE, podSyncScope)+`
 INSERT INTO delivery_pod_photos (stop_id, branch_id, content_type, byte_size, image_bytes, caption, captured_by, seq)
 SELECT $1, $2, $3, $4, $5, $6, NULLIF($7,'')::uuid, (SELECT next_value FROM seq) RETURNING id::text`,
 		stopID, branchID, contentType, len(data), data, caption, by).Scan(&id)
-	return id, err
+	if err != nil {
+		return "", err
+	}
+	// The stop's own seq moves with the picture: the count that moved lives on the stop.
+	if _, err := tx.Exec(ctx, `UPDATE delivery_stops SET updated_at = now() WHERE id = $1::uuid`, stopID); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 // ListPhotoMeta returns a stop's photo metadata WITHOUT the bytes.
