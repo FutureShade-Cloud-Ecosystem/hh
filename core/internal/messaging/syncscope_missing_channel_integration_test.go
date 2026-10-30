@@ -908,4 +908,3 @@ func TestSyncPush_PrefsWriteNonMemberSilencingEscalationChannelAnswersRowNotFoun
 			ux115Answer(nonMemberMuted), wantNotFound)
 	}
 }
-

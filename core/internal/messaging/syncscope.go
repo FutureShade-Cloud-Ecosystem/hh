@@ -532,6 +532,9 @@ func prefsPatchShape(fields map[string]any) (string, error) {
 	if channelID == "" {
 		return "", syncRefused(fmt.Errorf("channel_id is required"))
 	}
+	if len(channelID) != 36 || uuid.Validate(channelID) != nil {
+		return "", syncRefused(fmt.Errorf("channel_id is not a valid id"))
+	}
 	if mode, ok := fields["mode"].(string); ok {
 		if _, ok := normalizeMode(mode); !ok {
 			return "", syncRefused(fmt.Errorf("mode must be one of ALL, MENTIONS, MUTED"))
@@ -633,18 +636,15 @@ func (s *notifyPrefsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id
 	if !found {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
-	if ch, ok := fields["channel_id"].(string); !ok || ch == "" {
-		fields["channel_id"] = row.ChannelID
-	} else if ch != row.ChannelID {
-		member, err := s.repo.IsMember(ctx, row.ChannelID, uid)
-		if err != nil {
-			return sync.RowState{}, err
-		}
-		if !member || !admitsRoom(ctx, s.fence, uid, row.ChannelID) {
-			return sync.RowState{}, sync.ErrRowNotFound
-		}
+	if ch, ok := fields["channel_id"].(string); ok && ch != "" && ch != row.ChannelID {
+		return sync.RowState{}, syncRefused(fmt.Errorf("a preference belongs to its channel; it cannot be moved"))
 	}
-	return s.write(ctx, f, key, fields)
+	patch := make(map[string]any, len(fields)+1)
+	for k, v := range fields {
+		patch[k] = v
+	}
+	patch["channel_id"] = row.ChannelID
+	return s.write(ctx, f, key, patch)
 }
 
 func (s *notifyPrefsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key string) (sync.RowState, error) {
