@@ -8247,6 +8247,76 @@ type PurchasingAPAgingPage struct {
 	NextCursor      *string                `json:"next_cursor"`
 }
 
+// PurchasingPaymentRunStatus is the document's enum: "DRAFT", "PAID".
+type PurchasingPaymentRunStatus string
+
+// PurchasingPaymentRunLineStatus is the document's enum: "SELECTED", "PAID", "SKIPPED".
+type PurchasingPaymentRunLineStatus string
+
+type PurchasingPaymentRunLine struct {
+	Id          string                         `json:"id"`
+	Seq         int32                          `json:"seq"`
+	BillId      string                         `json:"bill_id"`
+	BillNo      *string                        `json:"bill_no,omitempty"`
+	VendorId    *string                        `json:"vendor_id,omitempty"`
+	VendorName  *string                        `json:"vendor_name,omitempty"`
+	DueDate     *string                        `json:"due_date,omitempty"`
+	AmountCents int64                          `json:"amount_cents"`
+	Status      PurchasingPaymentRunLineStatus `json:"status"`
+	PaidCents   int64                          `json:"paid_cents"`
+	SkipReason  *string                        `json:"skip_reason,omitempty"`
+}
+
+type PurchasingPaymentRun struct {
+	Id         string                     `json:"id"`
+	BranchId   string                     `json:"branch_id"`
+	Status     PurchasingPaymentRunStatus `json:"status"`
+	DueOn      string                     `json:"due_on"`
+	VendorId   *string                    `json:"vendor_id,omitempty"`
+	PayDate    string                     `json:"pay_date"`
+	TotalCents int64                      `json:"total_cents"`
+	PaidCents  int64                      `json:"paid_cents"`
+	PaidAt     *time.Time                 `json:"paid_at,omitempty"`
+	CreatedAt  time.Time                  `json:"created_at"`
+	Lines      []PurchasingPaymentRunLine `json:"lines"`
+}
+
+type PurchasingPaymentRunSummary struct {
+	Id         string                     `json:"id"`
+	BranchId   string                     `json:"branch_id"`
+	Status     PurchasingPaymentRunStatus `json:"status"`
+	DueOn      string                     `json:"due_on"`
+	VendorId   *string                    `json:"vendor_id,omitempty"`
+	PayDate    string                     `json:"pay_date"`
+	LineCount  int32                      `json:"line_count"`
+	TotalCents int64                      `json:"total_cents"`
+	PaidCents  int64                      `json:"paid_cents"`
+	CreatedAt  time.Time                  `json:"created_at"`
+}
+
+type PurchasingPaymentRunPage struct {
+	Items      []PurchasingPaymentRunSummary `json:"items"`
+	NextCursor *string                       `json:"next_cursor,omitempty"`
+	Limit      *int32                        `json:"limit,omitempty"`
+}
+
+type PurchasingProposePaymentRunRequest struct {
+	BranchId string  `json:"branch_id"`
+	DueOn    string  `json:"due_on"`
+	VendorId *string `json:"vendor_id,omitempty"`
+	PayDate  *string `json:"pay_date,omitempty"`
+}
+
+type PurchasingPaymentRunLineAmount struct {
+	BillId      string `json:"bill_id"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+type PurchasingUpdatePaymentRunRequest struct {
+	Remove *[]string                         `json:"remove,omitempty"`
+	Lower  *[]PurchasingPaymentRunLineAmount `json:"lower,omitempty"`
+}
+
 type LandedCost struct {
 	Id                 string             `json:"id"`
 	PoId               string             `json:"po_id"`

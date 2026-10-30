@@ -32,20 +32,22 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	// 702: the base's 681, main's routes (FW1-01's glOpenYear, FW1-12a's two
+	// 707: the base's 681, main's routes (FW1-01's glOpenYear, FW1-12a's two
 	// credit memo doors, FW1-04's bankrecRecordCutover and bankrecCutoverPreview,
 	// FW1-07's controllerExceptions, paymentsVoidPayment), FW1-12b's two
 	// credit application doors (billingApplyCredit and
 	// billingReverseCreditApplication), W2-6b's three counter reason code
 	// routes (tillListReasonCodes, tillCreateReasonCode and tillEditReasonCode),
-	// W2-9a's purchasingGetAPAging and W2-9a round 2's purchasingPayBill, and
+	// W2-9a's purchasingGetAPAging and W2-9a round 2's purchasingPayBill,
 	// W3 item 0.10's two write off doors (billingWriteOffInvoice and
-	// billingReverseWriteOff), HST-1's taxGetWorksheet, and W3 item 0.8's four vendor credit doors
+	// billingReverseWriteOff), HST-1's taxGetWorksheet, W3 item 0.8's four vendor credit doors
 	// (purchasingCreateVendorCredit, purchasingListVendorCredits, purchasingPostVendorCredit and
-	// purchasingApplyVendorCredit). Both sides' routes are kept; the count is what
+	// purchasingApplyVendorCredit), and W3's five payment run doors (purchasingProposePaymentRun,
+	// purchasingListPaymentRuns, purchasingGetPaymentRun, purchasingUpdatePaymentRun and
+	// purchasingPayPaymentRun). Both sides' routes are kept; the count is what
 	// merge.mjs reports on the assembled document.
-	if staff != 702 {
-		t.Fatalf("census staff operations: %d, want the document's 702 (main's routes, the two write off doors, taxGetWorksheet and the four vendor credit doors)", staff)
+	if staff != 707 {
+		t.Fatalf("census staff operations: %d, want the document's 707 (main's routes, the two write off doors, taxGetWorksheet, the four vendor credit doors and the five payment run doors)", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }
