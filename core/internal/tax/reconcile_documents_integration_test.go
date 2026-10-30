@@ -97,6 +97,10 @@ func (a fw11GLBal) GLBalanceCents(ctx context.Context, code string, year, month 
 	return a.svc.GLBalanceCents(ctx, code, year, month, branchID)
 }
 
+func (a fw11GLBal) GLRevenueCents(ctx context.Context, year, month int, branchID string) (int64, error) {
+	return a.svc.GLRevenueCents(ctx, year, month, branchID)
+}
+
 // The red leg: an ordinary month with a counter sale's invoice and one posted vendor bill shows a false
 // variance today, because the collected side reads relief snapshots (none here) and the GL side nets the
 // bill's input tax credit against the sale's collected tax.

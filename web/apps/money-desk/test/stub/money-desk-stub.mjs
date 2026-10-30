@@ -24,8 +24,10 @@ const glWorld = createGlWorld();
 // The statements slice's world (periods, the five statements, aging, saved packs), answered by its own module.
 const finstmtWorld = createFinstmtWorld();
 // The bank reconciliation slice's world (accounts, statement lines, matches, rules, months), answered by its own
-// module; its starting point preview reads the ledger's posted journals from the ledger world, one ledger.
-const bankrecWorld = createBankrecWorld({ ledgerPosted: glWorld.postedJournals });
+// module; its starting point preview reads the ledger's posted journals from the ledger world, one ledger, and a
+// match posts its clearing journal into that same ledger. A lodgement that carries its own journal (the till
+// posted at lodgement) plants that journal in the ledger world at fresh and at every reset.
+const bankrecWorld = createBankrecWorld({ ledgerPosted: glWorld.postedJournals, postLedger: glWorld.postExternalJournal, plantLedger: glWorld.plantPostedJournal });
 // The tax administration slice's world (rates, profiles, config, evidence, recompute, recon), answered by its own module.
 const taxWorld = createTaxWorld();
 // The liens and compliance slice's world (jobs, the holdback ledger, documents, the calendar, the roster), answered by its own module.
@@ -1121,11 +1123,6 @@ async function handle(req, res) {
     parkedApplyMs = Math.max(0, Number(body?.ms ?? 0));
     return send(res, 200, { ok: true, parkedApplyMs });
   }
-  if (method === "POST" && path === "/_stub/post-to-bank") {
-    const body = await readBody(req);
-    const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
-    return send(res, answer.status, answer.body);
-  }
   if (method === "POST" && path === "/_stub/outstanding-items") {
     const body = await readBody(req);
     const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
@@ -1242,10 +1239,10 @@ async function handle(req, res) {
   // core/internal/payments received_apply.go), its checks in the core's order and its sentences word for word:
   // the service's key check, then the replay judgement (never on a preview) BEFORE the request's own checks,
   // then the locks in id order (a missing or another account's invoice is a 404, one not open is refused), then
-  // one branch per payment, then the ceiling. An unreadable body is a 400, a spent key's conflict is a 409, and
+  // one branch per payment. An unreadable body is a 400, a spent key's conflict is a 409, and
   // every other refusal is a 422 but the 404. The split is the server's: oldest
   // first by issue date, due date, invoice number and id whatever order the list came in, one line per named
-  // invoice, unapplied always zero. A preview takes the same walk and writes nothing, and never reads the key.
+  // invoice, and any excess stays on the account as on_account_cents. A preview takes the same walk and writes nothing, and never reads the key.
   if (method === "POST" && path === "/api/v1/ar/payments/apply") {
     const body = await readBody(req);
     if (body === null) return refuse(res, 400, "the request body must be JSON");
@@ -1327,15 +1324,13 @@ async function handle(req, res) {
       picked.push(inv);
     }
     if (new Set(picked.map((inv) => branchOf(inv.acct))).size > 1) return refuse(res, 422, "one payment applies to one branch's invoices; record a payment per branch");
-    const capacity = picked.reduce((t, inv) => t + payableOf(inv), 0);
-    if (body.amount_cents > capacity) return refuse(res, 422, `the selected invoices can take at most ${capacity} cents right now; refresh and retry`);
     let left = body.amount_cents;
     const lines = oldestFirst(picked).map((inv) => {
       const take = Math.min(left, payableOf(inv));
       left -= take;
       return lineFor(inv, take);
     });
-    const answer = { preview, amount_cents: body.amount_cents, applied_cents: body.amount_cents - left, unapplied_cents: left, lines, replayed: false };
+    const answer = { preview, amount_cents: body.amount_cents, applied_cents: body.amount_cents - left, unapplied_cents: left, on_account_cents: left, lines, replayed: false };
     if (preview) return send(res, 200, answer);
     // The parked writer answers late, after every refusal walk has run: the park is a writer
     // mid flight (holding the payments counter in the core's terms), never a change in the

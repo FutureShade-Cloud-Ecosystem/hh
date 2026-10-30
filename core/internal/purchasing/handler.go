@@ -331,6 +331,61 @@ func (h *Handler) apAging(w http.ResponseWriter, r *http.Request, caller guards.
 	httpx.WriteJSON(w, http.StatusOK, page)
 }
 
+// - vendor credits (wave 3 item 0.8) -
+
+func (h *Handler) createVendorCredit(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in CreateVendorCreditRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	credit, err := h.svc.CreateVendorCredit(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, credit)
+}
+
+func (h *Handler) postVendorCredit(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	// An empty body is a legitimate "post it as it is", only a MALFORMED body is a 400.
+	if r.ContentLength > 0 && !decodeJSON(w, r, &struct{}{}) {
+		return
+	}
+	credit, err := h.svc.PostVendorCredit(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, credit)
+}
+
+// applyVendorCredit nets a posted credit against a bill. The replay key rides
+// the Idempotency-Key header the way a bill payment's does: one key per press,
+// judged server side, a re-press answering the first application.
+func (h *Handler) applyVendorCredit(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in ApplyVendorCreditRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	in.IdempotencyKey = r.Header.Get("Idempotency-Key")
+	credit, err := h.svc.ApplyVendorCredit(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, credit)
+}
+
+func (h *Handler) listVendorCredits(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	q := r.URL.Query()
+	page, err := h.svc.ListVendorCredits(r.Context(), q.Get("branch_id"), q.Get("vendor_id"), q.Get("status"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, page)
+}
+
 func (h *Handler) getTolerance(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	t, err := h.svc.GetTolerance(r.Context(), r.URL.Query().Get("branch_id"))
 	if err != nil {

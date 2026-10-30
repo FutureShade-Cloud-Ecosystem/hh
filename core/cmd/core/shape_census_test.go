@@ -78,12 +78,14 @@ import (
 // It moved to 106 when four bank reconciliation lists (accounts, matches,
 // rules, reconciliations) stopped being page shapes: the contract now declares
 // the bare array the core writes. It moved to 102 when four tax lists stopped
-// being page shapes. The pin is
+// being page shapes, and to 106 when W3 item 0.8's vendor credit list became a
+// page shape (the live half drives it and it answers items and next_cursor
+// truthfully). The pin is
 // the census's knowing (the same discipline as the 611 staff operation pin
 // in census_test.go): a page shape added or removed must move this number
 // consciously, with the live half's report (the new operation is driven,
 // or the dropped one is named) as the evidence.
-const shapeCensusWantPages = 105
+const shapeCensusWantPages = 106
 
 // shapeCensusAllowlist names (per the brief) the page shape operations
 // whose served answer already breaks the page shape, each with the reason

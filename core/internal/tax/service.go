@@ -459,13 +459,19 @@ func (s *Service) GetConfig(ctx context.Context, branchID string) (Config, error
 	return s.repo.GetConfig(ctx, branchID)
 }
 
-// UpdateConfig upserts the tax config (HST registration number, round mode, dormant toggles).
+// UpdateConfig upserts the tax config (HST registration number, round mode, filing frequency, dormant toggles).
 func (s *Service) UpdateConfig(ctx context.Context, c Config) (Config, error) {
 	if c.RoundMode == "" {
 		c.RoundMode = "INVOICE_TOTAL"
 	}
 	if c.RoundMode != "INVOICE_TOTAL" && c.RoundMode != "PER_LINE" {
 		return Config{}, httpx.BadRequestf("round_mode must be INVOICE_TOTAL or PER_LINE")
+	}
+	if c.FilingFrequency != "" &&
+		c.FilingFrequency != string(FilingQuarterly) &&
+		c.FilingFrequency != string(FilingMonthly) &&
+		c.FilingFrequency != string(FilingYearly) {
+		return Config{}, httpx.BadRequestf("filing_frequency must be QUARTERLY, MONTHLY or YEARLY")
 	}
 	// Avalara + postal routing are DORMANT stubs at W6, refuse to enable them (D-A19-5).
 	if c.AvalaraEnabled || c.PostalRoutingEnabled {
@@ -612,6 +618,204 @@ func (s *Service) reconcile(ctx context.Context, year, month int, branchID strin
 	rep.VarianceCents = rep.GLPayableCents - (rep.CollectedCents - rep.ReturnTaxCents - rep.InputTaxCreditsCents)
 	rep.TiedOut = rep.VarianceCents == 0
 	return rep, nil
+}
+
+const worksheetManualEntryNote = "Lines 101, 103, 105, 106, 108, 109, 112, 113, 114 and 115 are derived from the books. Lines 104 (GST/HST adjustments), 107 (ITC adjustments), 110 (instalments), 111 (rebates), 205 (GST/HST due on the purchase of real property or other taxable supplies) and 405 (other GST/HST to be self-assessed) are not tracked in the books and are entered by hand on the CRA return."
+
+func daysInMonth(year, month int) int {
+	switch month {
+	case 4, 6, 9, 11:
+		return 30
+	case 2:
+		if (year%4 == 0 && year%100 != 0) || year%400 == 0 {
+			return 29
+		}
+		return 28
+	default:
+		return 31
+	}
+}
+
+// worksheet builds the read-only CRA GST/HST return worksheet (GST34 / RC7200) for a filing period
+// and branch scope through the tax engine's document seams and the GL seam (HST-1).
+func (s *Service) worksheet(ctx context.Context, in WorksheetPeriod) (Worksheet, error) {
+	if in.Year < 2000 || in.Year > 2100 {
+		return Worksheet{}, httpx.BadRequestf("year must be 2000..2100")
+	}
+	if s.salesHST == nil {
+		return Worksheet{}, fmt.Errorf("tax: the sales document HST seam is not wired; the worksheet cannot be computed")
+	}
+	if s.returnHST == nil {
+		return Worksheet{}, fmt.Errorf("tax: the POS return HST seam is not wired; the worksheet cannot be computed")
+	}
+	if s.billITCs == nil {
+		return Worksheet{}, fmt.Errorf("tax: the vendor bill input tax seam is not wired; the worksheet cannot be computed")
+	}
+
+	cfg, err := s.GetConfig(ctx, in.BranchID)
+	if err != nil {
+		return Worksheet{}, err
+	}
+	freq := cfg.FilingFrequency
+	if freq == "" {
+		freq = string(FilingQuarterly)
+	}
+
+	var startMonth, endMonth, qOut, mOut int
+	switch freq {
+	case string(FilingQuarterly):
+		q := in.Quarter
+		if q == 0 && in.Month >= 1 && in.Month <= 12 {
+			q = (in.Month-1)/3 + 1
+		}
+		if q < 1 || q > 4 {
+			return Worksheet{}, httpx.BadRequestf("quarter must be 1..4 for QUARTERLY filing")
+		}
+		startMonth = (q-1)*3 + 1
+		endMonth = startMonth + 2
+		qOut = q
+	case string(FilingMonthly):
+		m := in.Month
+		if m < 1 || m > 12 {
+			return Worksheet{}, httpx.BadRequestf("month must be 1..12 for MONTHLY filing")
+		}
+		startMonth = m
+		endMonth = m
+		mOut = m
+	case string(FilingYearly):
+		startMonth = 1
+		endMonth = 12
+	default:
+		return Worksheet{}, httpx.BadRequestf("unsupported filing_frequency %q", freq)
+	}
+
+	fromDate := fmt.Sprintf("%04d-%02d-01", in.Year, startMonth)
+	toDate := fmt.Sprintf("%04d-%02d-%02d", in.Year, endMonth, daysInMonth(in.Year, endMonth))
+
+	var (
+		line101    int64
+		invoiceHST int64
+		returnTax  int64
+		line106    int64
+		gl2200     int64
+	)
+	for m := startMonth; m <= endMonth; m++ {
+		sales, _, _, err := s.salesHST.DocumentSalesHSTCents(ctx, in.Year, m, in.BranchID)
+		if err != nil {
+			return Worksheet{}, err
+		}
+		invoiceHST += sales
+
+		ret, err := s.returnHST.ReturnHSTCents(ctx, in.Year, m, in.BranchID)
+		if err != nil {
+			return Worksheet{}, err
+		}
+		returnTax += ret
+
+		itcs, err := s.billITCs.VendorBillITCCents(ctx, in.Year, m, in.BranchID)
+		if err != nil {
+			return Worksheet{}, err
+		}
+		line106 += itcs
+
+		switch {
+		case s.glRevenue != nil:
+			rev, err := s.glRevenue.GLRevenueCents(ctx, in.Year, m, in.BranchID)
+			if err != nil {
+				return Worksheet{}, err
+			}
+			line101 += rev
+		case s.glBalance != nil:
+			if rr, ok := s.glBalance.(GLRevenueReader); ok {
+				rev, err := rr.GLRevenueCents(ctx, in.Year, m, in.BranchID)
+				if err != nil {
+					return Worksheet{}, err
+				}
+				line101 += rev
+			} else {
+				rev, err := s.glBalance.GLBalanceCents(ctx, "4000", in.Year, m, in.BranchID)
+				if err != nil {
+					return Worksheet{}, err
+				}
+				line101 += rev
+			}
+		}
+
+		if s.glBalance != nil {
+			v, err := s.glBalance.GLBalanceCents(ctx, acctHSTPayable, in.Year, m, in.BranchID)
+			if err != nil {
+				return Worksheet{}, err
+			}
+			gl2200 += v
+		}
+	}
+
+	line103 := invoiceHST - returnTax
+	line104 := int64(0)
+	line105 := line103 + line104
+	line107 := int64(0)
+	line108 := line106 + line107
+	line109 := line105 - line108
+	line110 := int64(0)
+	line111 := int64(0)
+	line112 := line110 + line111
+	line113 := line109 - line112
+
+	var line114, line115 int64
+	if line113 < 0 {
+		line114 = -line113
+	} else if line113 > 0 {
+		line115 = line113
+	}
+
+	variance := gl2200 - (line105 - line108)
+	lines := []WorksheetLine{
+		{LineNo: "101", Label: "Sales and other revenue", AmountCents: line101, EnteredByHand: false, Note: "Posted net revenue on REVENUE accounts for the filing period, excluding year-end closing entries."},
+		{LineNo: "103", Label: "GST/HST collected or collectible", AmountCents: line103, EnteredByHand: false, Note: "Finalized customer invoices less credit memos and POS returns in the filing period."},
+		{LineNo: "104", Label: "Adjustments to GST/HST", AmountCents: line104, EnteredByHand: true, Note: "Entered by hand on the CRA return when a manual GST/HST adjustment applies."},
+		{LineNo: "105", Label: "Total GST/HST and adjustments", AmountCents: line105, EnteredByHand: false, Note: "Line 103 plus line 104."},
+		{LineNo: "106", Label: "Input tax credits (ITCs)", AmountCents: line106, EnteredByHand: false, Note: "GST/HST paid or payable on posted vendor bills in the filing period."},
+		{LineNo: "107", Label: "ITC adjustments and other adjustments", AmountCents: line107, EnteredByHand: true, Note: "Entered by hand on the CRA return when a manual ITC adjustment applies."},
+		{LineNo: "108", Label: "Total ITCs and adjustments", AmountCents: line108, EnteredByHand: false, Note: "Line 106 plus line 107."},
+		{LineNo: "109", Label: "Net tax", AmountCents: line109, EnteredByHand: false, Note: "Line 105 less line 108."},
+		{LineNo: "110", Label: "Instalments and other annual filer payments", AmountCents: line110, EnteredByHand: true, Note: "Entered by hand on the CRA return when instalments were remitted for the period."},
+		{LineNo: "111", Label: "Rebates", AmountCents: line111, EnteredByHand: true, Note: "Entered by hand on the CRA return when a GST/HST rebate is claimed on the return."},
+		{LineNo: "112", Label: "Total other credits", AmountCents: line112, EnteredByHand: false, Note: "Line 110 plus line 111."},
+		{LineNo: "113", Label: "Balance", AmountCents: line113, EnteredByHand: false, Note: "Line 109 less line 112."},
+		{LineNo: "114", Label: "Refund claimed", AmountCents: line114, EnteredByHand: false, Note: "Refund when line 113 is negative."},
+		{LineNo: "115", Label: "Amount owing", AmountCents: line115, EnteredByHand: false, Note: "Balance due when line 113 is positive."},
+	}
+
+	return Worksheet{
+		Year:                          in.Year,
+		FilingFrequency:               freq,
+		Quarter:                       qOut,
+		Month:                         mOut,
+		FromDate:                      fromDate,
+		ToDate:                        toDate,
+		BranchID:                      in.BranchID,
+		Line101SalesCents:             line101,
+		Line103CollectedCents:         line103,
+		Line104AdjustmentsCents:       line104,
+		Line105TotalHSTCents:          line105,
+		Line106ITCsCents:              line106,
+		Line107ITCAdjustmentsCents:    line107,
+		Line108TotalITCsCents:         line108,
+		Line109NetTaxCents:            line109,
+		Line110InstalmentsCents:       line110,
+		Line111RebatesCents:           line111,
+		Line112TotalOtherCreditsCents: line112,
+		Line113BalanceCents:           line113,
+		Line114RefundClaimedCents:     line114,
+		Line115AmountOwingCents:       line115,
+		InvoiceHSTCents:               invoiceHST,
+		ReturnTaxCents:                returnTax,
+		GLPayableCents:                gl2200,
+		VarianceCents:                 variance,
+		TiedOut:                       variance == 0,
+		ManualEntryNote:               worksheetManualEntryNote,
+		Lines:                         lines,
+	}, nil
 }
 
 // -- audit helper --------------------------------------------------------------

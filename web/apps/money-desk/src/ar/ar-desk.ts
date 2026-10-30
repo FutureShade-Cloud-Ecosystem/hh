@@ -1151,6 +1151,7 @@ export class ArDesk {
     this.#payPins.delete(account.customerId);
     const r = result.value;
     const done = r.lines.filter((l) => l.outcome !== "NONE").map((l) => `${formatMoney(l.applied_cents)} on ${l.invoice_no}, balance now ${formatMoney(l.balance_after_cents)}`);
+    if (r.on_account_cents > 0) done.push(`${formatMoney(r.on_account_cents)} more than these invoices could take stays on the customer's account as a credit`);
     this.#notice = `Payment ${r.payment_no ?? "recorded"} ${r.replayed ? "was already applied" : "applied"}: ${done.join("; ")}.`;
     // The notice carries the only words saying the money is recorded, so a phone brings it into view as
     // the error branches do (after the unknown outcome's exit this is the screen's one honest sentence).

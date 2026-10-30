@@ -542,8 +542,13 @@ test("the trial balance takes a month and a year, and a month shows that period'
   const august = (await call(IDS.controller, "GET", "/api/v1/gl/trial-balance?year=2026&month=8")).json;
   holds("GlTrialBalanceResult", august);
   assert.equal(august.month, 8);
-  const september = (await call(IDS.controller, "GET", "/api/v1/gl/trial-balance?year=2026&month=9")).json;
-  assert.equal(september.rows.length, 0);
+  // The month probed for emptiness must be one no journal lands in: the till's lodgement journal is planted in
+  // the bank rec month (the host's prior month), so the probe reads December, or November when the bank rec
+  // month is December itself.
+  const bankRecMonth = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).getMonth() + 1;
+  const probeMonth = bankRecMonth === 12 ? 11 : 12;
+  const empty = (await call(IDS.controller, "GET", `/api/v1/gl/trial-balance?year=2026&month=${probeMonth}`)).json;
+  assert.equal(empty.rows.length, 0);
   refused(await call(IDS.controller, "GET", "/api/v1/gl/trial-balance?branch_id=nope"), 400, "invalid branch_id");
 });
 
