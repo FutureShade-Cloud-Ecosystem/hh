@@ -114,6 +114,40 @@ before the restore and every failure inside it leaves the box as it was.
 | a restore failure part way | Everything it had. The drop, the recreate and the restore are one transaction, so a failure part way through the restore rolls the drop back with it: the box is never empty and never half restored, and it records no world. |
 | a failure after the commit (the migration rerun) | The new world, committed, and no recorded world and no audit row yet. The box holds the world's tables and rows, and the migrations that follow the restore have not all run. The box records no world, so the boot refuses and the box is not serving: rerun the reset. A rerun is safe, and the next boot's own reset is one: the `-once` check finds no matching recorded digest, so it redoes the whole reset, which restores the same world again and records it. |
 
+## The database's lock table
+
+The box's Postgres runs with `max_locks_per_transaction` of **512 or more**.
+
+- **Why.** The world reset restores the whole world in ONE transaction: the
+  three schemas are dropped, the world is recreated and the rows are copied
+  inside that one transaction. A transaction that creates and alters thousands
+  of objects holds thousands of locks, and the server's lock table is a fixed
+  number of slots: `max_locks_per_transaction x (max_connections +
+  max_prepared_transactions)`. One restore of the real world measured 15,053
+  locks, against a default server's 6,400 slots (64 x 100). The default
+  therefore succeeds only by borrowing the server's spare shared memory: it
+  works on an idle server at boot, and it fails with "out of shared memory"
+  on a busy one, which is what a shared server is. A box that resets on a
+  quiet night and fails on a busy one is a box that cannot be trusted to
+  restore a world.
+- **What the setting buys.** With 512 locks per transaction and the default
+  100 connections the table holds 51,200 slots, over three times what one
+  restore of the real world needs.
+- **What the reset does about it.** Before it drops anything, the reset asks
+  the server what its lock table can hold and estimates what its one
+  transaction needs: the objects the box's three schemas hold now (read from
+  the catalog) plus the dump's own object statements (the CREATE and ALTER
+  heads outside the world's data). A server whose table cannot hold twice
+  that estimate is refused in words, naming the estimate, the capacity and
+  the setting to raise, and the box keeps every table and every row it had.
+  The counts line carries the estimate and the capacity every time, refused
+  or not.
+- **How to set it.** It is a server start setting, so it belongs where the
+  box's Postgres is started: `-c max_locks_per_transaction=512`. The CI
+  integration job does the same thing to its own service (`ALTER SYSTEM SET
+  max_locks_per_transaction = 512`, then a restart of the service
+  container), so CI matches the box.
+
 ## The database role's rights
 
 `DATABASE_URL` names the box's own Postgres and the role the box connects as.
