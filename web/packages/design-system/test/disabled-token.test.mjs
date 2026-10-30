@@ -1841,6 +1841,17 @@ test('the template leg: the same conjunction on both sides is tied', () => {
       name: 'the same conjunction through a classMap',
       scratch: '<button class=${classMap({ waiting: busy && z })} ?disabled=${busy && z}>Wait</button>',
     },
+    {
+      // The round 2 read's shape: a conjunct that is a negation. The guard
+      // that refuses a negation on the right ran before the conjunction
+      // cases, so the conjunction never met its own negated conjunct.
+      name: 'the same conjunction with a negated conjunct',
+      scratch: '<button class="w ${busy && !ready ? "waiting" : ""}" ?disabled=${busy && !ready}>Wait</button>',
+    },
+    {
+      name: 'the same conjunction with a negated conjunct through a classMap',
+      scratch: '<button class=${classMap({ waiting: !ready && busy })} ?disabled=${!ready && busy}>Wait</button>',
+    },
   ];
   for (const probe of probes) {
     const derived = derivedStateClasses(probe.scratch);
