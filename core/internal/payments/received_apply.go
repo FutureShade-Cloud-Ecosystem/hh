@@ -33,9 +33,11 @@ package payments
 // exactly ONE implementation of applying money to an invoice. settleReceipt re-locks and re-totals
 // the same rows under the same transaction, a no-op read of rows this transaction already holds.
 //
-// Refusals leave nothing applied: every judgement (the account, the branch reach, the open status,
-// the ceiling) runs inside the transaction BEFORE the payment row exists, so a refused request
-// burns neither its idempotency key nor a cent.
+// Refusals leave nothing applied: every judgement (the account, the branch reach, the open status)
+// runs inside the transaction BEFORE the payment row exists, so a refused request burns neither its
+// idempotency key nor a cent. Money the named invoices cannot take is not refused: it stays with the
+// dealer as an on account credit for the customer and branch, one 'receipt_change' row keyed to the
+// payment (W3 item 0.10), so nothing a customer handed over can be lost by a short ceiling.
 
 import (
 	"context"
@@ -118,6 +120,7 @@ type ApplyAnswer struct {
 	AmountCents    int64       `json:"amount_cents"`
 	AppliedCents   int64       `json:"applied_cents"`
 	UnappliedCents int64       `json:"unapplied_cents"`
+	OnAccountCents int64       `json:"on_account_cents"`
 	Lines          []ApplyLine `json:"lines"`
 	Replayed       bool        `json:"replayed"`
 }
@@ -186,9 +189,9 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	// The counter has now serialised this writer against every payments writer, so a twin of this
 	// payment (the same key) that committed while this request waited on the counter is already
 	// visible here. Re-read the key on the transaction BEFORE the invoice judgements: a duplicate
-	// of a payment that closed its invoices must answer the first result, not trip the not open or
-	// ceiling refusal on the balances the twin already moved (the same in-transaction re-check the
-	// till's return makes after its sale lock, and QD-5's rule at counter_receipt.go).
+	// of a payment that closed its invoices must answer the first result, not apply a second time
+	// on the balances the twin already moved (the same in-transaction re-check the till's return
+	// makes after its sale lock, and QD-5's rule at counter_receipt.go).
 	if _, _, _, ok, err := receiptByKeyOn(ctx, tx, in.IdempotencyKey); err != nil {
 		return ApplyAnswer{}, err
 	} else if ok {
@@ -213,9 +216,15 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 		return ApplyAnswer{}, err
 	}
 	lines, capacity := allocateOldestFirst(rows, in.AmountCents)
-	if in.AmountCents > capacity {
-		return ApplyAnswer{}, httpx.BadRequestf(
-			"the selected invoices can take at most %d cents right now; refresh and retry", capacity)
+	// W3 item 0.10: an amount larger than the named invoices can take is no longer refused. The
+	// invoices take what they can (oldest first), and the rest stays with the dealer as an on
+	// account credit for the customer and branch: the change rides the settle below, one negative
+	// 'receipt_change' row keyed to the payment, so the aging shows it and the credit application
+	// door applies it later. Nothing is lost and nothing is invented: the payment row carries the
+	// whole money that arrived.
+	change := in.AmountCents - capacity
+	if change < 0 {
+		change = 0
 	}
 
 	// The allocations handed to the shipped settle are ordered by invoice id, ascending, so the
@@ -244,9 +253,9 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	named := append([]string(nil), in.InvoiceIDs...)
 	sort.Strings(named)
 	p, claimed, err := settleReceipt(ctx, tx, ReceiptRequest{
-		CustomerID: in.CustomerID, Method: in.Method, Reference: in.Reference,
+		CustomerID: in.CustomerID, BranchID: rows[0].BranchID, Method: in.Method, Reference: in.Reference,
 		IdempotencyKey: in.IdempotencyKey, ReceivedBy: in.ReceivedBy,
-		Allocations: allocs, NamedInvoices: named,
+		Allocations: allocs, NamedInvoices: named, ChangeCents: change,
 	})
 	if err != nil {
 		return ApplyAnswer{}, err
@@ -264,10 +273,11 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	if err := tx.Commit(ctx); err != nil {
 		return ApplyAnswer{}, fmt.Errorf("apply: commit: %w", err)
 	}
+	unapplied := in.AmountCents - sumApplied(lines)
 	return ApplyAnswer{
 		PaymentID: p.ID, PaymentNo: p.PaymentNo, AmountCents: in.AmountCents,
-		AppliedCents: sumApplied(lines), UnappliedCents: in.AmountCents - sumApplied(lines),
-		Lines: lines,
+		AppliedCents: sumApplied(lines), UnappliedCents: unapplied,
+		OnAccountCents: change, Lines: lines,
 	}, nil
 }
 
@@ -280,7 +290,7 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 // computed against are consistent with each other, and the account and the branch reach are judged
 // in it exactly as the apply's locking statement judges them. The apply re-judges everything under
 // the locks it takes: on an unchanged body it answers this split, and when the balances moved in
-// between its own words say so (the ceiling refusal names the figure the moved balances leave).
+// between, the split it answers is the moved balances' own, with the change they leave on account.
 func (r *Repository) previewApply(ctx context.Context, in ApplyRequest) (ApplyAnswer, error) {
 	rows, err := r.readApplyInvoices(ctx, in)
 	if err != nil {
@@ -289,14 +299,14 @@ func (r *Repository) previewApply(ctx context.Context, in ApplyRequest) (ApplyAn
 	if err := oneBranchPerPayment(rows); err != nil {
 		return ApplyAnswer{}, err
 	}
-	lines, capacity := allocateOldestFirst(rows, in.AmountCents)
-	if in.AmountCents > capacity {
-		return ApplyAnswer{}, httpx.BadRequestf(
-			"the selected invoices can take at most %d cents right now; refresh and retry", capacity)
-	}
+	// No ceiling refusal (W3 item 0.10): the preview answers the same split the apply will, with
+	// whatever the named invoices cannot take left as the unapplied change the apply leaves on
+	// account.
+	lines, _ := allocateOldestFirst(rows, in.AmountCents)
+	unapplied := in.AmountCents - sumApplied(lines)
 	return ApplyAnswer{
 		Preview: true, AmountCents: in.AmountCents, AppliedCents: sumApplied(lines),
-		UnappliedCents: in.AmountCents - sumApplied(lines), Lines: lines,
+		UnappliedCents: unapplied, OnAccountCents: unapplied, Lines: lines,
 	}, nil
 }
 

@@ -180,6 +180,18 @@ const receivablesStyles = css`
   .credit-form .callout, .credit-form .note { margin: 0; }
   .credit-form .btn { min-height: var(--hh-h-input); }
   .credit-form .actions { margin-top: 0; }
+  /* The Pay form on a vendor bill: which bill it is paying, the amount, the day and the note, then
+     the press. It opens in the row it belongs to, so it is a grid of its own: the sentence on top,
+     then the three fields and the buttons. The buttons are as tall as the fields they sit beside,
+     so the row has no step in it. */
+  .pay-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--hh-s-12); align-items: end; }
+  .pay-form [data-pay-target], .pay-form [data-pay-error] { grid-column: 1 / -1; margin: 0; }
+  .pay-form .callout, .pay-form .note { margin: 0; }
+  .pay-form .btn { min-height: var(--hh-h-input); }
+  .pay-form .actions { margin-top: 0; }
+  /* The Pay control rides the open amount it moves: the money and the press that moves it, one
+     above the other, so the row reads as one thing. */
+  td.num .row-actions { justify-content: flex-end; margin-top: var(--hh-s-8); }
   .alloc { list-style: none; margin: var(--hh-s-8) 0; padding: 0; }
   .alloc li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--hh-s-8); padding: var(--hh-s-8) 0; border-bottom: 1px solid var(--hh-line); font-variant-numeric: tabular-nums; }
   .applied { font-size: 15px; display: flex; justify-content: space-between; margin: var(--hh-s-8) 0 var(--hh-s-12); padding-top: var(--hh-s-8); border-top: 2px solid var(--hh-text); font-size: 16px; font-variant-numeric: tabular-nums; }
@@ -319,6 +331,13 @@ const receivablesStyles = css`
     table.paylines tbody td:nth-child(2)::before, table.paylines tbody td:nth-child(3)::before { display: block; color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
     table.paylines tbody td:nth-child(2)::before { content: "Due"; }
     table.paylines tbody td:nth-child(3)::before { content: "Status"; }
+    /* The Pay form opens under the row it belongs to and takes the whole width on a phone: it is a
+       form of its own, not another column of the list. */
+    table.paylines tr.pay-form-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "form"; }
+    table.paylines tr.pay-form-row > td { grid-area: form; padding: var(--hh-s-8) 0 var(--hh-s-16); }
+    .pay-form { grid-template-columns: minmax(0, 1fr); }
+    .pay-form .actions { justify-content: stretch; }
+    .pay-form .actions .btn { flex: 1; }
     /* The open total's rule is one line above the row, not two segments with a gap between them,
        and the label sits flush with the rows above it. */
     table.paylines tfoot tr { border-top: 1px solid var(--hh-text); }

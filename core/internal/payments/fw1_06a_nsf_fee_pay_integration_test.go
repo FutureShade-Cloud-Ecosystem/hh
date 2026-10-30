@@ -4,7 +4,6 @@ package payments
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -67,9 +66,12 @@ func TestIntegration_FW1_06a_NSFFeeCanBePaid(t *testing.T) {
 		t.Fatalf("seed NSF fee txn: %v", err)
 	}
 
-	// P2-2: an amount exceeding the named lines must be refused when the open NSF fee is not named.
-	t.Run("unnamed_nsf_fee_overpayment_refused", func(t *testing.T) {
-		_, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+	// P2-2: an amount exceeding the named lines never touches the unnamed NSF fee. The overage is
+	// the account's on account credit (W3 item 0.10): the invoice closes on its 50000, the fee
+	// stays open at its 4500, and the 4500 overpayment rests as one receipt_change row, so the fee
+	// can still be paid by naming it.
+	t.Run("unnamed_nsf_fee_overpayment_never_pays_the_fee", func(t *testing.T) {
+		ans, err := w.repo.ApplyReceived(ctx, ApplyRequest{
 			CustomerID:     w.customerID,
 			InvoiceIDs:     []string{invID},
 			AmountCents:    54500,
@@ -77,11 +79,31 @@ func TestIntegration_FW1_06a_NSFFeeCanBePaid(t *testing.T) {
 			Reference:      "REPL-CHQ-UNNAMED",
 			IdempotencyKey: w.tag + "-apply-unnamed-fee",
 		})
-		if err == nil {
-			t.Fatalf("ApplyReceived with 54500 against only named invoice %s (50000) succeeded; want ceiling refusal when NSF fee is not named", invID)
+		if err != nil {
+			t.Fatalf("ApplyReceived with 54500 against only named invoice %s (50000): %v", invID, err)
 		}
-		if !strings.Contains(err.Error(), "can take at most 50000 cents") {
-			t.Fatalf("ApplyReceived error = %v, want ceiling refusal naming 50000 cents", err)
+		if ans.AppliedCents != 50000 || ans.UnappliedCents != 4500 {
+			t.Fatalf("AppliedCents = %d UnappliedCents = %d, want 50000 and 4500 on account", ans.AppliedCents, ans.UnappliedCents)
+		}
+		var feeNet int64
+		if err := w.pool.QueryRow(ctx,
+			`SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
+			  WHERE customer_id = $1::uuid AND source_type = 'payment_nsf' AND source_ref_id = $2::uuid`,
+			w.customerID, nsfID).Scan(&feeNet); err != nil {
+			t.Fatalf("read NSF fee net: %v", err)
+		}
+		if feeNet != 4500 {
+			t.Fatalf("NSF fee net balance = %d, want 4500: an unnamed fee is never paid", feeNet)
+		}
+		var changeSum int64
+		if err := w.pool.QueryRow(ctx,
+			`SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
+			  WHERE customer_id = $1::uuid AND source_type = 'receipt_change'`,
+			w.customerID).Scan(&changeSum); err != nil {
+			t.Fatalf("read the change row: %v", err)
+		}
+		if changeSum != -4500 {
+			t.Fatalf("the overpayment rests on the account as -4500, got %d", changeSum)
 		}
 	})
 

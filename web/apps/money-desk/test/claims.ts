@@ -97,6 +97,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: RECEIVABLES, test: "on a phone the unknown outcome message is in view and focused when it appears" },
   ],
   "apply-refused": [
+    { file: RECEIVABLES, test: "a payment larger than the picked invoices leaves the remainder on the customer's account as a credit" },
     { file: RECEIVABLES, test: "a worded 4xx says the payment was not recorded in the route's own words, and the next press is a new payment with a new key" },
     { file: RECEIVABLES, test: "a payment that cannot be posted is stopped in words, and the server's refusal shows beside the split" },
     { file: RECEIVABLES, test: "a pick of more than 100 invoices is refused in the browser with the route's words: no body is sent and the held key is kept" },
