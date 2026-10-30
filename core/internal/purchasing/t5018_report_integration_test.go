@@ -414,3 +414,126 @@ func TestIntegration_T5018Report_CRAServicesShareThresholdTaxAndUnmarkedLines(t 
 			report.TotalCents, report.Box22TotalCents, report.TotalCents-report.Box22TotalCents, 90400+goodsShare)
 	}
 }
+
+// TestIntegration_T5018Report_OneBillPaidInTwoInstalmentsAcrossHouseYears proves that when one
+// mixed bill ($600.00 services + $400.00 goods = $1,000.00 subtotal + $130.00 HST = $1,130.00) is
+// paid in two instalments across two house years (40% = $452.00 at 22:00 on December 31 in the
+// house zone, and 60% = $678.00 in January of the next house year), each year's T5018 report
+// carries that year's payment and that payment's services share, never the whole bill's share.
+func TestIntegration_T5018Report_OneBillPaidInTwoInstalmentsAcrossHouseYears(t *testing.T) {
+	rig := newAPAgingRig(t)
+	h := rig.harness
+	org := h.orgID(t)
+	year1 := time.Now().In(rig.zone).Year() - 1
+	year2 := year1 + 1
+
+	// Instalment 1 lands at 22:00 on December 31 of year1 in the house zone (already year2 in UTC).
+	paidYear1 := time.Date(year1, time.December, 31, 22, 0, 0, 0, rig.zone)
+	if paidYear1.UTC().Year() == year1 {
+		t.Fatalf("the payment at %s is not the UTC year boundary the rule is about", paidYear1)
+	}
+	// Instalment 2 lands in January of year2 in the house zone.
+	paidYear2 := time.Date(year2, time.January, 15, 14, 0, 0, 0, rig.zone)
+
+	vendorID := t5018Vendor(t, h, org, "T5018 Split Instalments Across Years (demo)", "555666777")
+	prod := h.newProduct(t, "split-years")
+	po, err := h.svc.CreatePO(h.ctx, CreatePORequest{
+		VendorID: vendorID, BranchID: branchTRT, ExpectedAt: fmt.Sprintf("%d-12-01", year1),
+		Lines: []AddLineParams{{ProductID: prod, QtyOrderedBase: 1, UOM: "EA", UnitCostCents: 10000}},
+	})
+	if err != nil {
+		t.Fatalf("create PO: %v", err)
+	}
+	h.cleanupPO(t, po.ID)
+	placed, err := h.svc.Transition(h.ctx, po.ID, StatusOrdered)
+	if err != nil {
+		t.Fatalf("order PO: %v", err)
+	}
+	if _, err := h.svc.Receive(h.ctx, placed.ID, ReceiveRequest{
+		Lines: []ReceiveLineParams{{POLineID: placed.Lines[0].ID, QtyBase: 1}},
+	}); err != nil {
+		t.Fatalf("receive PO: %v", err)
+	}
+
+	billDay := paidYear1.Format("2006-01-02")
+	bill, err := h.svc.CreateBill(h.ctx, CreateBillRequest{
+		BillNo:   fmt.Sprintf("T5018-SPLIT-%d-%d", year1, year2),
+		POID:     placed.ID,
+		BillDate: billDay,
+		DueDate:  billDay,
+		TaxCents: 13000,
+		Lines: []BillLineParams{
+			{POLineID: placed.Lines[0].ID, QtyBilledBase: 1, UnitCostCents: 40000},
+			{Description: "paver installation across years", QtyBilledBase: 1, UnitCostCents: 60000, SupplyKind: SupplyKindServices},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create split bill: %v", err)
+	}
+	posted, err := h.svc.PostBill(h.ctx, bill.ID, PostBillRequest{AcceptVariance: true, Note: "t5018 split instalments test"})
+	if err != nil {
+		t.Fatalf("post split bill: %v", err)
+	}
+
+	key1 := fmt.Sprintf("t5018-split-pay-%d", year1)
+	key2 := fmt.Sprintf("t5018-split-pay-%d", year2)
+	t.Cleanup(func() {
+		bg := context.Background()
+		for _, k := range []string{key1, key2} {
+			_, _ = h.pool.Exec(bg, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE idempotency_key = $1)`, "purchasing.bill.payment:"+k)
+			_, _ = h.pool.Exec(bg, `DELETE FROM gl_journals WHERE idempotency_key = $1`, "purchasing.bill.payment:"+k)
+		}
+	})
+
+	// Pay 40% (45200 cents) in year1 and 60% (67800 cents) in year2 on the same 113000-cent bill.
+	if _, err := h.svc.PayBill(h.ctx, posted.ID, PayBillRequest{
+		AmountCents:    45200,
+		PaidAt:         paidYear1,
+		Note:           "instalment 1 in year 1",
+		IdempotencyKey: key1,
+	}); err != nil {
+		t.Fatalf("pay instalment 1: %v", err)
+	}
+	if _, err := h.svc.PayBill(h.ctx, posted.ID, PayBillRequest{
+		AmountCents:    67800,
+		PaidAt:         paidYear2,
+		Note:           "instalment 2 in year 2",
+		IdempotencyKey: key2,
+	}); err != nil {
+		t.Fatalf("pay instalment 2: %v", err)
+	}
+
+	rep1, err := h.svc.T5018ReportForCaller(h.ctx, org, fmt.Sprintf("%d", year1), "")
+	if err != nil {
+		t.Fatalf("T5018 report year1: %v", err)
+	}
+	r1, ok := t5018Row(rep1, vendorID)
+	if !ok {
+		t.Fatal("vendor missing from year1 report")
+	}
+	// In year1: PaidCents = 45200, Box22Cents = 60% of 45200 = 27120, ServicesSubtotalCents = 24000 (< 50000 -> UnderThreshold).
+	// If the share were taken over the whole bill (113000), Box22Cents would be 67800 and ServicesSubtotalCents 60000.
+	if r1.PaidCents != 45200 || r1.Box22Cents != 27120 || r1.ServicesSubtotalCents != 24000 || !r1.UnderThreshold {
+		t.Fatalf("year1 row = {PaidCents:%d Box22Cents:%d ServicesSubtotalCents:%d UnderThreshold:%v}, want {45200 27120 24000 true}",
+			r1.PaidCents, r1.Box22Cents, r1.ServicesSubtotalCents, r1.UnderThreshold)
+	}
+
+	rep2, err := h.svc.T5018ReportForCaller(h.ctx, org, fmt.Sprintf("%d", year2), "")
+	if err != nil {
+		t.Fatalf("T5018 report year2: %v", err)
+	}
+	r2, ok := t5018Row(rep2, vendorID)
+	if !ok {
+		t.Fatal("vendor missing from year2 report")
+	}
+	// In year2: PaidCents = 67800, Box22Cents = 60% of 67800 = 40680, ServicesSubtotalCents = 36000 (< 50000 -> UnderThreshold).
+	if r2.PaidCents != 67800 || r2.Box22Cents != 40680 || r2.ServicesSubtotalCents != 36000 || !r2.UnderThreshold {
+		t.Fatalf("year2 row = {PaidCents:%d Box22Cents:%d ServicesSubtotalCents:%d UnderThreshold:%v}, want {67800 40680 36000 true}",
+			r2.PaidCents, r2.Box22Cents, r2.ServicesSubtotalCents, r2.UnderThreshold)
+	}
+	// Across both house years, the two instalments' shares sum to the whole bill's Box 22 (67800) and services subtotal (60000).
+	if r1.Box22Cents+r2.Box22Cents != 67800 || r1.ServicesSubtotalCents+r2.ServicesSubtotalCents != 60000 {
+		t.Fatalf("sum across years = Box22 %d, ServicesSubtotal %d, want 67800 and 60000",
+			r1.Box22Cents+r2.Box22Cents, r1.ServicesSubtotalCents+r2.ServicesSubtotalCents)
+	}
+}
