@@ -80,4 +80,9 @@ test("the payload exemption is narrow: the caller's own cost_hidden flag is not 
   assert.ok(scanPayload("config", JSON.stringify({ stop: { cost_hidden: true } })).length > 0, "a cost_hidden on a stop still counts");
   assert.ok(scanPayload("config", JSON.stringify({ workspace: { cost_hidden: "$12.50" } })).some((h) => h.kind === "figure"), "a cost_hidden carrying a figure still counts");
   assert.ok(scanPayload("config", JSON.stringify({ workspace: { cost: 5 } })).length > 0, "a cost field still counts");
+  // The workspace view is the surface config answer's own top-level member (SettingsWorkspaceView), so an
+  // object that is merely named workspace somewhere deeper is not it, and its flag still counts.
+  assert.ok(scanPayload("config", JSON.stringify({ stop: { workspace: { cost_hidden: true } } })).length > 0, "a workspace nested under a stop still counts");
+  assert.ok(scanPayload("config", JSON.stringify({ a: { b: { workspace: { cost_hidden: true } } } })).length > 0, "a workspace two levels deep still counts");
+  assert.ok(scanPayload("config", JSON.stringify({ rows: [{ workspace: { cost_hidden: true } }] })).length > 0, "a workspace inside an array still counts");
 });
