@@ -55,6 +55,7 @@ import {
 
 import { OfficeApi } from "./office-api.js";
 import type { PurchasingAPAgingPage } from "./ap-logic.js";
+import type { PurchasingT5018Report } from "./t5018-logic.js";
 
 export type PaymentMethod = "CASH" | "CARD" | "CHEQUE" | "EFT";
 
@@ -107,6 +108,22 @@ export class ArApi {
       query: opts,
       operationId: "purchasingGetAPAging",
     });
+  }
+
+  /**
+   * The year's T5018 report: the core's GET /api/v1/purchasing/t5018. The year is the dealer's
+   * own, so the view asks for one and the route answers with the year it read.
+   */
+  t5018(opts: { year?: number; branch_id?: string } = {}): Promise<Result<PurchasingT5018Report>> {
+    return staffPurchasing.purchasingT5018Report(this.#client, opts);
+  }
+
+  /**
+   * The same report as the file a bookkeeper hands the contractor's book: the core's own CSV
+   * answer, fetched as text, so the file says what the screen says.
+   */
+  t5018Csv(opts: { year?: number; branch_id?: string } = {}): Promise<Result<string>> {
+    return staffPurchasing.purchasingT5018ReportCSV(this.#client, opts);
   }
 
   /**
