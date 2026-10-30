@@ -571,24 +571,41 @@ func TestIntegration_Bill_SupplyKindAndMigrationBackfill(t *testing.T) {
 		t.Fatalf("line 4 (no PO, nothing chosen) supply_kind = %q, want empty (unmarked)", bill.Lines[3].SupplyKind)
 	}
 
-	// Prove the 0467 migration backfill directly: set both the PO matched line and the unmarked
-	// no-PO line to NULL, run 0467_bill_line_supply_kind.sql, and read the column back.
-	if _, err := h.pool.Exec(h.ctx,
-		`UPDATE purchasing_bill_lines SET supply_kind = NULL WHERE id IN ($1, $2)`,
-		bill.Lines[0].ID, bill.Lines[3].ID,
-	); err != nil {
-		t.Fatalf("reset supply_kind to NULL before backfill: %v", err)
+	// Prove the 0467 migration backfill inside a rolled-back transaction over a temp table named
+	// purchasing_bill_lines (in pg_temp, shadowing public.purchasing_bill_lines), so the shared
+	// database table is never locked or rewritten.
+	tx, err := h.pool.Begin(h.ctx)
+	if err != nil {
+		t.Fatalf("begin backfill tx: %v", err)
 	}
+	defer func() { _ = tx.Rollback(h.ctx) }()
+
+	if _, err := tx.Exec(h.ctx, `
+		CREATE TEMP TABLE purchasing_bill_lines (
+			id UUID PRIMARY KEY,
+			po_line_id UUID NULL
+		) ON COMMIT DROP`); err != nil {
+		t.Fatalf("create temp purchasing_bill_lines: %v", err)
+	}
+	if _, err := tx.Exec(h.ctx, `
+		INSERT INTO purchasing_bill_lines (id, po_line_id) VALUES
+			($1::uuid, $2::uuid),
+			($3::uuid, NULL)`,
+		bill.Lines[0].ID, lineID, bill.Lines[3].ID,
+	); err != nil {
+		t.Fatalf("seed temp purchasing_bill_lines: %v", err)
+	}
+
 	migSQL, err := os.ReadFile("../../db/migrations/0467_bill_line_supply_kind.sql")
 	if err != nil {
 		t.Fatalf("read 0467 migration: %v", err)
 	}
-	if _, err := h.pool.Exec(h.ctx, string(migSQL)); err != nil {
-		t.Fatalf("apply 0467 migration: %v", err)
+	if _, err := tx.Exec(h.ctx, string(migSQL)); err != nil {
+		t.Fatalf("apply 0467 migration on temp table: %v", err)
 	}
 
 	var poKind *string
-	if err := h.pool.QueryRow(h.ctx,
+	if err := tx.QueryRow(h.ctx,
 		`SELECT supply_kind FROM purchasing_bill_lines WHERE id = $1`, bill.Lines[0].ID,
 	).Scan(&poKind); err != nil {
 		t.Fatalf("read backfilled PO line: %v", err)
@@ -598,12 +615,30 @@ func TestIntegration_Bill_SupplyKindAndMigrationBackfill(t *testing.T) {
 	}
 
 	var noPOKind *string
-	if err := h.pool.QueryRow(h.ctx,
+	if err := tx.QueryRow(h.ctx,
 		`SELECT supply_kind FROM purchasing_bill_lines WHERE id = $1`, bill.Lines[3].ID,
 	).Scan(&noPOKind); err != nil {
 		t.Fatalf("read backfilled no-PO line: %v", err)
 	}
 	if noPOKind != nil {
 		t.Fatalf("after 0467 backfill, no-PO line supply_kind = %q, want NULL", *noPOKind)
+	}
+
+	// Verify the shared public.purchasing_bill_lines table took no DDL lock from the backfill check.
+	var sharedDDL int
+	if err := tx.QueryRow(h.ctx, `
+		SELECT count(*)
+		  FROM pg_locks l
+		  JOIN pg_class c ON c.oid = l.relation
+		  JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public'
+		   AND c.relname = 'purchasing_bill_lines'
+		   AND l.pid = pg_backend_pid()
+		   AND l.mode = 'AccessExclusiveLock'`,
+	).Scan(&sharedDDL); err != nil {
+		t.Fatalf("check locks on public.purchasing_bill_lines: %v", err)
+	}
+	if sharedDDL != 0 {
+		t.Fatalf("backfill leg took %d AccessExclusiveLock on public.purchasing_bill_lines, want 0", sharedDDL)
 	}
 }
