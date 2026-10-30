@@ -42,6 +42,8 @@ export const IDS = {
 // The stub's chart, code to [name, type]. Normal balance follows the type, as the core's seed has it.
 const CHART = {
   "1000": ["Cash", "ASSET"],
+  "1010": ["Card Settlement Clearing", "ASSET"],
+  "1020": ["Undeposited Funds - Cash In Transit", "ASSET"],
   "1100": ["Accounts Receivable", "ASSET"],
   "1200": ["Inventory", "ASSET"],
   "1300": ["Prepaid Expenses", "ASSET"],
@@ -51,6 +53,7 @@ const CHART = {
   "5000": ["Cost of Goods Sold", "EXPENSE"],
   "3900": ["Retained Earnings", "EQUITY"],
   "5200": ["Inventory Adjustments", "EXPENSE"],
+  "6300": ["Bank Fees", "EXPENSE"],
 };
 const RETAINED_EARNINGS = "3900";
 // The approval threshold the stub's policy row carries: the org default of the core's seed.
@@ -420,9 +423,20 @@ export function createGlWorld() {
   };
   const periodOfNow = () => world.periods.find((p) => p.month === 9);
 
-  /** The core's repository.InsertJournal checks, in its order: period, then each line's account. */
-  function insertJournal(draft) {
-    const period = periodOfNow();
+  /** The fiscal period a journal's document date falls in: the core's posting lands a journal in the month it is
+   *  dated, and marks it late posted when that month is not its period's month. */
+  const periodOfDate = (iso) => {
+    if (typeof iso !== "string" || iso.length < 7) return periodOfNow();
+    const year = Number(iso.slice(0, 4));
+    const month = Number(iso.slice(5, 7));
+    if (year !== FY || !Number.isFinite(month)) return periodOfNow();
+    return world.periods.find((p) => p.month === month) ?? periodOfNow();
+  };
+
+  /** The core's repository.InsertJournal checks, in its order: period, then each line's account. A caller that
+   *  has already resolved the period (the external posting's late landing) hands it in as landPeriod. */
+  function insertJournal(draft, landPeriod) {
+    const period = landPeriod ?? periodOfDate(draft.posted_at);
     if (period === undefined) return say(422, "gl: no fiscal period for 2026-09");
     if (period.status === "CLOSED") return say(409, "gl: fiscal period is CLOSED");
     for (const line of draft.lines) {
@@ -443,7 +457,8 @@ export function createGlWorld() {
       memo: draft.memo,
       status: draft.status,
       derived_status: draft.status,
-      ...(draft.status === "POSTED" ? { posted_at: new Date(NOW).toISOString() } : {}),
+      ...(draft.status === "POSTED" ? { posted_at: draft.posted_at ?? new Date(NOW).toISOString() } : {}),
+      ...(draft.idempotency_key ? { idempotency_key: draft.idempotency_key } : {}),
       ...(draft.branch_id ? { branch_id: draft.branch_id } : {}),
       ...(draft.reverses_journal_id ? { reverses_journal_id: draft.reverses_journal_id } : {}),
       created_by: draft.created_by,
@@ -452,8 +467,8 @@ export function createGlWorld() {
         line_no: i + 1,
         account_code: l.account_code,
         account_name: world.accounts.find((a) => a.code === l.account_code).name,
-        debit_cents: l.debit_cents,
-        credit_cents: l.credit_cents,
+        debit_cents: l.debit_cents || 0,
+        credit_cents: l.credit_cents || 0,
         ...(l.memo ? { memo: l.memo } : {}),
       })),
     };
@@ -1110,5 +1125,91 @@ export function createGlWorld() {
   // The bank reconciliation stub's starting point preview reads the same posted journals the register serves
   // (round 3): a read only accessor, so the two worlds answer one ledger.
   const postedJournals = () => world.journals.filter((j) => j.derived_status === "POSTED");
-  return { handle, reset, postedJournals };
+
+  /** Another module's journal, posted the way the core's GL takes an ExternalJournal (core/internal/gl): the
+   *  journal is dated by its document date, it lands in the period that date falls in, and it posts in one step.
+   *  The bank reconciliation module posts its clearing journals this way, so the ledger they move is this one.
+   *  A document date whose own period is closed never refuses a SYSTEM posting (ruling 82.2, the core's
+   *  repository.InsertJournalTx): it lands in the earliest open period at or after the date's, keeps the
+   *  document date on posted_at, and reads late posted. A MANUAL journal into a closed month is still refused:
+   *  the ledger's own route below keeps insertJournal's refusal. */
+  function postExternalJournal(draft) {
+    const lines = Array.isArray(draft.lines) ? draft.lines : [];
+    if (lines.length < 2) return say(400, "gl: a journal needs at least two lines");
+    for (const l of lines) {
+      if ((l.debit_cents > 0) === (l.credit_cents > 0)) return say(400, "gl: each line must have exactly one of debit_cents / credit_cents > 0");
+      if (!l.account_code) return say(400, "gl: each line needs an account_code");
+    }
+    const debit = lines.reduce((n, l) => n + (l.debit_cents || 0), 0);
+    const credit = lines.reduce((n, l) => n + (l.credit_cents || 0), 0);
+    if (debit !== credit) return say(422, "gl: journal is unbalanced (Σdebit ≠ Σcredit)");
+    const dateText = String(draft.document_date ?? "");
+    const datePeriod = periodOfDate(dateText);
+    const land = datePeriod.status === "CLOSED" ? (openPeriodAtOrAfter(Number(dateText.slice(0, 4)), Number(dateText.slice(5, 7))) ?? datePeriod) : datePeriod;
+    const made = insertJournal(
+      {
+        source: draft.source ?? "ADJUSTMENT",
+        source_ref_id: draft.source_ref_id,
+        memo: draft.memo ?? "",
+        status: "POSTED",
+        branch_id: draft.branch_id ?? "",
+        created_by: draft.created_by ?? "",
+        idempotency_key: draft.idempotency_key,
+        posted_at: draft.document_date,
+        lines,
+      },
+      land,
+    );
+    if (made.journal === undefined) return made;
+    return { status: 201, body: read(made.journal) };
+  }
+
+  /** The earliest OPEN period at or after a date's (year, month), the core's earliestOpenPeriodTx
+   *  (ruling 82.2): never a stray earlier open month, one a controller left open behind a closed month. */
+  const openPeriodAtOrAfter = (year, month) =>
+    world.periods
+      .filter((p) => p.status === "OPEN" && (p.year > year || (p.year === year && p.month >= month)))
+      .sort((a, b) => a.year - b.year || a.month - b.month)[0];
+
+  /** The till's own lodgement journal, planted the way the till posts it at lodgement (FROM-PRINCIPAL 117 and
+   *  120): DR 1000 / CR 1020, POSTED in one step, dated on the lodgement's own day. It is seeded world, not a
+   *  posting made during a test: it takes its id and its entry number outside the register's counter, so the
+   *  seeded entry sequence, and every JE label a test names, stand unchanged. A document date whose own period
+   *  is closed lands in the earliest open period at or after it, the core's late posted rule for a SYSTEM
+   *  journal, and reads late posted. */
+  function plantPostedJournal(draft) {
+    if (world.journals.some((j) => j.idempotency_key === draft.idempotency_key)) return { status: 200, body: {} };
+    const dateText = String(draft.document_date ?? "");
+    const datePeriod = periodOfDate(dateText);
+    const year = Number(dateText.slice(0, 4));
+    const month = Number(dateText.slice(5, 7));
+    const land = datePeriod.status === "CLOSED" ? (openPeriodAtOrAfter(year, month) ?? datePeriod) : datePeriod;
+    const j = {
+      id: "7a1e0000-0000-4000-9000-000000000005",
+      fiscal_year: FY,
+      entry_no: 0,
+      period_id: land?.id,
+      source: draft.source ?? "ADJUSTMENT",
+      memo: draft.memo ?? "",
+      status: "POSTED",
+      derived_status: "POSTED",
+      posted_at: draft.document_date,
+      idempotency_key: draft.idempotency_key,
+      branch_id: draft.branch_id ?? "",
+      created_by: draft.created_by ?? "",
+      created_at: new Date(NOW).toISOString(),
+      lines: (draft.lines ?? []).map((l, i) => ({
+        line_no: i + 1,
+        account_code: l.account_code,
+        account_name: CHART[l.account_code]?.[0] ?? l.account_code,
+        debit_cents: l.debit_cents || 0,
+        credit_cents: l.credit_cents || 0,
+        ...(l.memo ? { memo: l.memo } : {}),
+      })),
+    };
+    world.journals.push(j);
+    return { status: 201, body: read(j) };
+  }
+
+  return { handle, reset, postedJournals, postExternalJournal, plantPostedJournal };
 }

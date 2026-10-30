@@ -289,6 +289,38 @@ func (s *PickupsSyncStore) tenantIDs(ctx context.Context, f sync.ScopeFilter) ([
 // requested for, and the row id the client may generate (D30).
 var pickupsCreateWritable = map[string]bool{"id": true, "order_id": true}
 
+// pickupsCreateShape is the body-only half of the pushed create's checks:
+// the writable field set, the order uuid and the payload id shape. It reads
+// nothing and honours no fence (the tenant's order set and the order brief
+// are Create's own reads), so the bound key gate can run it before the
+// hidden refusal (UX-116): an invalid body then meets these refusals under
+// a spent key and a free one. The refusals are exactly the ones Create
+// answers.
+func pickupsCreateShape(fields map[string]any) error {
+	for k := range fields {
+		if !pickupsCreateWritable[k] {
+			return fmt.Errorf("dispatch: field %q is not writable through sync: %w", k, sync.ErrOpRefused)
+		}
+	}
+	orderID, _ := fields["order_id"].(string)
+	if !looksLikeUUID(orderID) {
+		return fmt.Errorf("dispatch: order_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	if id, hasID := fields["id"].(string); hasID && !looksLikeUUID(id) {
+		return fmt.Errorf("dispatch: payload id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	return nil
+}
+
+// ValidateCreate answers the pushed create's body shape without the order
+// read or a write: the engine's bound key gate calls it before the hidden
+// refusal (UX-116). The refusals are exactly Create's.
+func (s *PickupsSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
+	return pickupsCreateShape(fields)
+}
+
+var _ sync.CreateBodyValidator = (*PickupsSyncStore)(nil)
+
 // pickupsWritable is the update set: the confirm legs. Only a confirm
 // is expressible: a status leg must name CONFIRMED, the typed name is
 // the collector's own words, and the affirmative is a separate required
@@ -309,15 +341,10 @@ func (s *PickupsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key s
 	if !idsOK {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
-	for k := range fields {
-		if !pickupsCreateWritable[k] {
-			return sync.RowState{}, fmt.Errorf("dispatch: field %q is not writable through sync: %w", k, sync.ErrOpRefused)
-		}
+	if err := pickupsCreateShape(fields); err != nil {
+		return sync.RowState{}, err
 	}
 	orderID, _ := fields["order_id"].(string)
-	if !looksLikeUUID(orderID) {
-		return sync.RowState{}, fmt.Errorf("dispatch: order_id must be a uuid: %w", sync.ErrOpRefused)
-	}
 	brief, ok, err := s.orders.TenantBrief(ctx, f.TenantID, orderID)
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("dispatch: pickup order read: %w", err)
@@ -334,10 +361,9 @@ func (s *PickupsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key s
 	case "CANCELLED", "CLOSED":
 		return sync.RowState{}, fmt.Errorf("dispatch: the order is %s: %w", brief.Status, sync.ErrOpRefused)
 	}
-	id, hasID := fields["id"].(string)
-	if hasID && !looksLikeUUID(id) {
-		return sync.RowState{}, fmt.Errorf("dispatch: payload id must be a uuid: %w", sync.ErrOpRefused)
-	}
+	// The payload id shape is pickupsCreateShape's check, run before the
+	// order brief there; here the shape stands proven.
+	id, _ := fields["id"].(string)
 	_, tokenHash, err := newPickupToken()
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("dispatch: pickup token mint: %w", err)

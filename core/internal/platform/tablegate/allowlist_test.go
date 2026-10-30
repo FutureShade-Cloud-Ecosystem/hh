@@ -140,6 +140,18 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "billing",
+		file:   "core/internal/billing/write_off.go",
+		tables: []string{},
+		writes: []string{"events_outbox", "scope_sequences"},
+		// W3 item 0.10: the write off and its reversal settle the invoice
+		// through creditFeedSeqCTE and emit their GL events beside the
+		// settlement, the deposit cancel's discipline; its own invoices and
+		// customer_transactions rows are billing's, and ar_credit_policy's
+		// limit is read inside the act's own transaction.
+		reason: "the write off door's balance moves draw the invoices feed seq through the 0213 allocator and its GL events ride the outbox (the deposit cancel's discipline); its own invoices, customer_transactions and ar_credit_policy rows are billing's",
+	},
+	{
+		module: "billing",
 		file:   "core/internal/billing/credit_memo_repost.go",
 		tables: []string{"gl_journals"},
 		// DIB-429: the sweep finds credit-memo journals whose inline post
@@ -375,6 +387,15 @@ var allowlist = []allowlistEntry{
 		// (the views the finstmt migration built over the GL's own tables);
 		// users names approvers on the assignment list.
 		reason: "tie-out and balance reads go through the 0034 views over the GL's own tables (stated in the file header) and approver lists join users for display names",
+	},
+	{
+		module: "landedcost",
+		file:   "core/internal/landedcost/ap_payable.go",
+		tables: []string{"vendors"},
+		// the statement's own comment: the AP aging must label the payable
+		// with the payee's name, so the open payable rows LEFT JOIN the
+		// vendors table the create route's payee_vendor_id names; read only.
+		reason: "the open payable read joins vendors for the payee vendor's display name (0458 payee_vendor_id), the label the AP aging shows; a row that names no payee degrades to its PO reference",
 	},
 	{
 		module: "identity",

@@ -605,6 +605,7 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 	}
 	ans.Lines = lines
 	ans.UnappliedCents = ans.AmountCents - ans.AppliedCents
+	ans.OnAccountCents = ans.UnappliedCents
 	return ans, nil
 }
 
@@ -877,7 +878,7 @@ RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, s
 		p.GatewayRef = *pGatewayRef
 	}
 
-	if err := applyAllocations(ctx, tx, &p, customerID, method, gatewayRef, branchID, allocs, ""); err != nil {
+	if err := applyAllocations(ctx, tx, &p, customerID, method, gatewayRef, branchID, allocs, "", 0); err != nil {
 		return Payment{}, err
 	}
 
@@ -1165,10 +1166,11 @@ func lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Al
 }
 
 // applyAllocations writes the N allocations, moves the N invoice balances, writes the N subledger
-// rows and emits payment.received on the transactional outbox, everything that happens AFTER the
-// header row exists. allocatedBy stamps the 0043 attribution column: a staff id for a counter-taken
-// payment, "" for a portal (customer-initiated) one, which is exactly what that column means.
-func applyAllocations(ctx context.Context, tx pgx.Tx, p *Payment, customerID, method, gatewayRef, branchID string, allocs []Allocation, allocatedBy string) error {
+// rows, leaves the unapplied change on the account when there is one (W3 item 0.10) and emits
+// payment.received on the transactional outbox, everything that happens AFTER the header row exists.
+// allocatedBy stamps the 0043 attribution column: a staff id for a counter-taken payment, "" for a
+// portal (customer-initiated) one, which is exactly what that column means.
+func applyAllocations(ctx context.Context, tx pgx.Tx, p *Payment, customerID, method, gatewayRef, branchID string, allocs []Allocation, allocatedBy string, changeCents int64) error {
 	// Running account AR balance for the subledger balance_after, captured under the locks
 	// above (so it reflects pre-settlement state, then decremented per allocation).
 	var runningAR int64
@@ -1250,6 +1252,25 @@ UPDATE invoices
 		}
 
 		p.Allocations = append(p.Allocations, a)
+	}
+
+	// The unapplied change (W3 item 0.10): a receipt larger than the invoices it is applied to
+	// leaves the rest as an on account credit for that customer and branch. One negative
+	// ADJUSTMENT row in the 'receipt_change' family, keyed to the payment (the group the aging
+	// groups and the credit application door later takes), branch stamped beside the payment. The
+	// payment row's amount already carries the whole receipt, so the receipt journal credited 1100
+	// with all of it and this row is the account's side of the same money: the aging shows the
+	// credit as a negative item on the customer's row and the 1100 tie holds by construction.
+	if changeCents > 0 {
+		runningAR -= changeCents
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO customer_transactions
+				(customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+			 VALUES ($1, 'ADJUSTMENT', $2, $3, 'receipt_change', $4, $5, $6)`,
+			customerID, -changeCents, runningAR, p.ID, branchID,
+			"overpaid receipt left on account ("+p.PaymentNo+")"); err != nil {
+			return fmt.Errorf("pay: insert the unapplied change row: %w", err)
+		}
 	}
 
 	// Transactional outbox: emit payment.received in the SAME tx as the settle write so the GL posting

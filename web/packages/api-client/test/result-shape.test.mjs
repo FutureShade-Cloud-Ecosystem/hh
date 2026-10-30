@@ -53,12 +53,15 @@ test("every generated operation's signature returns Promise<Result<...>>", (t) =
     emitted.length + variants.length,
     "one scanned function per emitted manifest route and per declared body variant",
   );
-  // 798 scanned / 797 emitted / 798 in the manifest: 793 / 792 / 793 plus W3-CC1's five credit
-  // change request and approval routes: 798 / 797 / 798.
-  assert.equal(operations, 798, "the document's operation count minus the excluded stream, plus the declared body variant");
-  assert.equal(emitted.length, 797, "the document's operation count minus the excluded stream");
+  // 816 scanned / 815 emitted / 816 in the manifest: JA-1's 811 / 810 / 811 (main's routes, the
+  // write off, vendor credit and payment run doors, taxGetWorksheet, landedCostSettle and the five
+  // job doors) plus W3-CC1's five credit change request and approval routes
+  // (billingListCreditChanges, billingRequestCreditChange, billingGetCreditChange,
+  // billingApproveCreditChange, billingRejectCreditChange): 816 / 815 / 816.
+  assert.equal(operations, 816, "the document's operation count minus the excluded stream, plus the declared body variant");
+  assert.equal(emitted.length, 815, "the document's operation count minus the excluded stream");
   assert.deepEqual(variants, ["feedbackCreateMultipart"], "the only multi content type body is feedbackCreate's multipart form");
-  assert.equal(ROUTES.length, 798, "the manifest census keeps the full route table");
+  assert.equal(ROUTES.length, 816, "the manifest census keeps the full route table");
 });
 
 test("each declared body variant resolves to a live generated function beside its operation", (t) => {

@@ -32,12 +32,14 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	// 700: 695 plus W3-CC1's five credit change request and approval doors
-	// (billingListCreditChanges, billingRequestCreditChange,
-	// billingGetCreditChange, billingApproveCreditChange,
-	// billingRejectCreditChange).
-	if staff != 700 {
-		t.Fatalf("census staff operations: %d, want the document's 700", staff)
+	// 718: the 713 of the base, main's routes, the two write off doors, taxGetWorksheet, the four
+	// vendor credit doors, the five payment run doors, landedCostSettle and JA-1's five job doors,
+	// plus W3-CC1's five credit change request and approval doors (billingListCreditChanges,
+	// billingRequestCreditChange, billingGetCreditChange, billingApproveCreditChange and
+	// billingRejectCreditChange). Both sides' routes are kept; the count is what merge.mjs reports
+	// on the assembled document.
+	if staff != 718 {
+		t.Fatalf("census staff operations: %d, want the document's 718", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }

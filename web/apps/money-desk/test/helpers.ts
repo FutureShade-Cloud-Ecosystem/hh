@@ -58,13 +58,15 @@ export function dayFromToday(days: number): string {
 }
 
 /**
- * A day as the as of control shows it: the picker's own format, M/D/YYYY. The control's value is
- * the ISO day, but what a person reads beside it is this, so a footnote date is expected in it.
+ * A day in the desk's one vocabulary: "Oct 28, 2026". Every date a person reads in the desk wears
+ * these words, so a footnote date is expected in them.
  */
-export function pickerDay(day: string): string {
+export function dayWords(day: string): string {
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
-  if (m === null) return day;
-  return `${Number(m[2])}/${Number(m[3])}/${m[1]}`;
+  const month = m === null ? undefined : months[Number(m[2]) - 1];
+  if (m === null || month === undefined) return day;
+  return `${month} ${Number(m[3])}, ${m[1]}`;
 }
 
 export const test = base;

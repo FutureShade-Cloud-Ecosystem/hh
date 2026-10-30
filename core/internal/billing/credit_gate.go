@@ -106,6 +106,10 @@ type CreditPolicy struct {
 	// (Controller or General Manager).
 	IncreaseFirstThresholdCents  int64 `json:"increase_first_threshold_cents"`
 	IncreaseSecondThresholdCents int64 `json:"increase_second_threshold_cents"`
+	// WriteOffLimitCents is the branch's small balance write off limit (0454): the largest balance a
+	// manager may write off at this branch, the org default (2500, $25.00) when the branch carries
+	// no row of its own. Only the controller passes it.
+	WriteOffLimitCents int64 `json:"write_off_limit_cents"`
 }
 
 // CreditHold is the AR view of a credit_holds row.

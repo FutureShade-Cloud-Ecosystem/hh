@@ -226,11 +226,22 @@ type EvidenceFilter struct {
 	Limit     int
 }
 
+// FilingFrequency names the dealer's GST/HST return filing period setting on tax_config (HST-1):
+// QUARTERLY by default, or MONTHLY or YEARLY when configured.
+type FilingFrequency string
+
+const (
+	FilingQuarterly FilingFrequency = "QUARTERLY"
+	FilingMonthly   FilingFrequency = "MONTHLY"
+	FilingYearly    FilingFrequency = "YEARLY"
+)
+
 // Config is the engine-wide tax config (tax_config); the org-default row has an empty BranchID.
 type Config struct {
 	BranchID             string `json:"branch_id,omitempty"`
 	HSTRegistrationNo    string `json:"hst_registration_no"`
-	RoundMode            string `json:"round_mode"` // INVOICE_TOTAL | PER_LINE
+	RoundMode            string `json:"round_mode"`                 // INVOICE_TOTAL | PER_LINE
+	FilingFrequency      string `json:"filing_frequency,omitempty"` // QUARTERLY | MONTHLY | YEARLY
 	AvalaraEnabled       bool   `json:"avalara_enabled"`
 	PostalRoutingEnabled bool   `json:"postal_routing_enabled"`
 	Notes                string `json:"notes,omitempty"`
@@ -286,6 +297,58 @@ type ReconReport struct {
 	GLOntarioCents         int64 `json:"gl_ontario_cents"` // 2202 balance
 	VarianceCents          int64 `json:"variance_cents"`   // GL 2200 movement − (collected − returns − input tax)
 	TiedOut                bool  `json:"tied_out"`
+}
+
+// WorksheetPeriod names the filing window a GST/HST return worksheet reads (HST-1). The dealer's
+// filing_frequency on tax_config governs the span: QUARTERLY (three months, Quarter 1..4),
+// MONTHLY (one month, Month 1..12) or YEARLY (twelve months, Jan 1 through Dec 31 of Year).
+type WorksheetPeriod struct {
+	Year     int    `json:"year"`
+	Quarter  int    `json:"quarter,omitempty"`
+	Month    int    `json:"month,omitempty"`
+	BranchID string `json:"branch_id,omitempty"`
+}
+
+// WorksheetLine is one CRA GST/HST return line on the worksheet.
+type WorksheetLine struct {
+	LineNo        string `json:"line_no"`
+	Label         string `json:"label"`
+	AmountCents   int64  `json:"amount_cents"`
+	EnteredByHand bool   `json:"entered_by_hand"`
+	Note          string `json:"note,omitempty"`
+}
+
+// Worksheet is the read-only CRA GST/HST return worksheet (GST34 / RC7200) for a filing period
+// and branch scope, derived from the tax engine's document seams and the GL seam.
+type Worksheet struct {
+	Year                          int             `json:"year"`
+	FilingFrequency               string          `json:"filing_frequency"`
+	Quarter                       int             `json:"quarter,omitempty"`
+	Month                         int             `json:"month,omitempty"`
+	FromDate                      string          `json:"from_date"`
+	ToDate                        string          `json:"to_date"`
+	BranchID                      string          `json:"branch_id,omitempty"`
+	Line101SalesCents             int64           `json:"line_101_sales_cents"`
+	Line103CollectedCents         int64           `json:"line_103_collected_cents"`
+	Line104AdjustmentsCents       int64           `json:"line_104_adjustments_cents"`
+	Line105TotalHSTCents          int64           `json:"line_105_total_hst_cents"`
+	Line106ITCsCents              int64           `json:"line_106_itcs_cents"`
+	Line107ITCAdjustmentsCents    int64           `json:"line_107_itc_adjustments_cents"`
+	Line108TotalITCsCents         int64           `json:"line_108_total_itcs_cents"`
+	Line109NetTaxCents            int64           `json:"line_109_net_tax_cents"`
+	Line110InstalmentsCents       int64           `json:"line_110_instalments_cents"`
+	Line111RebatesCents           int64           `json:"line_111_rebates_cents"`
+	Line112TotalOtherCreditsCents int64           `json:"line_112_total_other_credits_cents"`
+	Line113BalanceCents           int64           `json:"line_113_balance_cents"`
+	Line114RefundClaimedCents     int64           `json:"line_114_refund_claimed_cents"`
+	Line115AmountOwingCents       int64           `json:"line_115_amount_owing_cents"`
+	InvoiceHSTCents               int64           `json:"invoice_hst_cents"`
+	ReturnTaxCents                int64           `json:"return_tax_cents"`
+	GLPayableCents                int64           `json:"gl_payable_cents"`
+	VarianceCents                 int64           `json:"variance_cents"`
+	TiedOut                       bool            `json:"tied_out"`
+	ManualEntryNote               string          `json:"manual_entry_note"`
+	Lines                         []WorksheetLine `json:"lines"`
 }
 
 // -- evidence-relief eligibility (the tcrd_expiry gate) -----------------------------------------------------
@@ -345,6 +408,14 @@ type BillITCReader interface {
 // directly.
 type ReturnHSTReader interface {
 	ReturnHSTCents(ctx context.Context, year, month int, branchID string) (int64, error)
+}
+
+// GLRevenueReader reads the net posted revenue on REVENUE accounts for a fiscal period (line 101 of
+// the GST/HST return worksheet). Satisfied by the main.go GL adapter over *gl.Service; when not
+// separately injected, WorksheetReport checks whether GLBalanceReader also implements GLRevenueReader
+// and otherwise falls back to account 4000 via GLBalanceReader.
+type GLRevenueReader interface {
+	GLRevenueCents(ctx context.Context, year, month int, branchID string) (int64, error)
 }
 
 // -- pure helpers --------------------------------------------------------------
