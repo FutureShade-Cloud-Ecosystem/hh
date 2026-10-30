@@ -234,9 +234,11 @@ test("a lost answer, then Cancel and Pay again, pays once", async ({ page, reque
   await page.locator("[data-action='payables-pay-send']").click();
 
   // The books are read again and show the payment landed: the bill has that much less open. Once
-  // the books show the earlier payment, its key ends and the form closes on its own (S6 on 701,
-  // P2-2), so the money has moved exactly once and a later Pay on that bill is a new payment.
+  // the books show the earlier payment, its key ends and the form says it is on the bill until the
+  // person closes it (S6 on 701, P2-2 and P2-3), so the money has moved exactly once.
   await expect(page.locator("[data-payee-lines-total]")).toContainText("$775.00");
+  await expect(page.locator("[data-pay-landed]")).toBeVisible();
+  await page.locator("[data-action='payables-pay-cancel']").click();
   await expect(page.locator("[data-pay-form]")).toHaveCount(0);
   const after = centsOf(await page.locator("[data-payee-lines-total]").innerText());
   expect(before - after).toBe(10_000);
@@ -300,7 +302,7 @@ test("the desk refuses an amount above the open amount, and asks the server noth
   expect(asked).toBe(0);
 });
 
-test("a lost answer on a payment that landed closes the form once the books show it", async ({ page, request }) => {
+test("a lost answer on a payment that landed says so once the books show it, and closes on Close", async ({ page, request }) => {
   await openDesk(page, request, "controller");
   await openBoard(page);
   await openPayee(page, "Saltmarsh Fasteners (demo)");
@@ -316,8 +318,10 @@ test("a lost answer on a payment that landed closes the form once the books show
   await page.locator("[data-action='payables-pay-send']").click();
 
   // The books are read again and show the $460.00 landed: the bill has $100.00 open. The key ends
-  // and the form closes on its own (S6 on 701, P2-2), so no retry is needed and none can pay twice.
+  // and the form says the payment is on the bill, with nothing to send (S6 on 701, P2-2 and P2-3).
   await expect(page.locator("[data-line-row]", { hasText: "B-4107" })).toContainText("$100.00");
+  await expect(page.locator("[data-pay-landed]")).toBeVisible();
+  await page.locator("[data-action='payables-pay-cancel']").click();
   await expect(page.locator("[data-pay-form]")).toHaveCount(0);
   expect(centsOf(await page.locator("[data-payee-lines-total]").innerText())).toBe(before - 46_000);
 });

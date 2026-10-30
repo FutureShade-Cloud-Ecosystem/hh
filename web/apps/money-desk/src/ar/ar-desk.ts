@@ -96,6 +96,8 @@ export class ArDesk {
   // carries. The key is minted when the form opens and sent again on every retry, so a double
   // press pays once and a retry after a lost answer is judged against the first press.
   #pay: PayBillForm | null = null;
+  /** Bills whose earlier payment the books showed landed after its form had closed: the next form says so. */
+  readonly #payLanded = new Map<string, number>();
   #payBusy = false;
   /** The form's fields are filled once, when it opens: after that the person types in them. */
   #payFillPending = false;
@@ -337,7 +339,9 @@ export class ArDesk {
           note: "",
           key: held === null ? newKey() : held.key,
           error: held === null ? "" : heldPaymentWords(held.cents),
+          earlierLandedCents: this.#payLanded.get(item.id) ?? null,
         };
+        this.#payLanded.delete(item.id);
         this.#payFillPending = true;
         this.#clearMessages();
         this.#host.repaint();
@@ -350,6 +354,7 @@ export class ArDesk {
         this.#host.repaint();
         return true;
       case "payables-pay-send":
+        if (this.#pay !== null && this.#pay.landedCents != null) return true;
         void this.#sendPayment();
         return true;
       case "card":
@@ -885,7 +890,14 @@ export class ArDesk {
         // that bill is a new payment with a new key.
         if (open === null || form.openCents - open.open_cents >= cents) {
           this.#payBillKeys.delete(form.billId);
-          if (current !== null && current.billId === form.billId) this.#pay = null;
+          // The form says so and waits for the person's own Close (S6 on 701, P2-3): the last words
+          // on screen invited a second press, so a silent close would let a fresh Pay send the same
+          // money again under a new key. A form already closed leaves the word for the next one.
+          if (current !== null && current.billId === form.billId) {
+            this.#pay = { ...current, openCents: open === null ? 0 : open.open_cents, error: "", landedCents: cents };
+          } else {
+            this.#payLanded.set(form.billId, cents);
+          }
           this.#host.repaint();
           return;
         }

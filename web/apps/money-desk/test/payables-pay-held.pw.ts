@@ -63,8 +63,10 @@ test("a payment that landed but lost its answer ends its key, so a later differe
   });
   await page.locator("[data-field='pay-amount']").fill("100.00");
   await page.locator("[data-action='payables-pay-send']").click();
-  // The books show the $100.00 landed, so the key ends and the form closes on its own.
+  // The books show the $100.00 landed, so the key ends and the form says so until the person closes it.
   await expect(page.locator("[data-payee-lines-total]")).toContainText("$775.00");
+  await expect(page.locator("[data-pay-landed]")).toBeVisible();
+  await page.locator("[data-action='payables-pay-cancel']").click();
   await expect(page.locator("[data-pay-form]")).toHaveCount(0);
   // A second, different payment of $50.00 is a new payment, and it is written.
   await openPayForm(page, "B-4107");
@@ -142,4 +144,34 @@ test("the Pay control is at least 44 px high on a phone", async ({ page, request
   await openPayee(page, "Saltmarsh Fasteners (demo)");
   const box = await page.locator("[data-line-row]", { hasText: "B-4107" }).getByRole("button", { name: "Pay" }).boundingBox();
   expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+});
+
+// S6 on 701, P2-3: the payment landed but its answer was lost, and the form's words had just
+// invited a second press. When the books show the payment, the form says it is on the bill, offers
+// nothing to send, and waits for the person's own Close: the money moves once.
+test("a lost answer on a payment that landed says it is on the bill and sends nothing more", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+  const before = centsOf(await page.locator("[data-payee-lines-total]").innerText());
+  await openPayForm(page, "B-4107");
+  let drop = true;
+  await page.route("**/api/v1/purchasing/bills/*/payments", async (route) => {
+    if (drop) {
+      drop = false;
+      await route.fetch();
+      await route.abort("connectionreset");
+      return;
+    }
+    await route.continue();
+  });
+  await page.locator("[data-field='pay-amount']").fill("100.00");
+  await page.locator("[data-action='payables-pay-send']").click();
+  await expect(page.locator("[data-pay-landed]")).toContainText("The earlier payment of $100.00 is on the bill. Nothing more to send.");
+  await expect(page.locator("[data-action='payables-pay-send']")).toHaveCount(0);
+  await expect(page.locator("[data-action='payables-pay-cancel']")).toHaveText("Close");
+  await page.locator("[data-action='payables-pay-cancel']").click();
+  await expect(page.locator("[data-pay-form]")).toHaveCount(0);
+  const after = centsOf(await page.locator("[data-payee-lines-total]").innerText());
+  expect(before - after).toBe(10_000);
 });

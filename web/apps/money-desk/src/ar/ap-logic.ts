@@ -109,6 +109,24 @@ export interface PayBillForm {
   readonly key: string;
   /** What the server said, in words, when it refused. */
   readonly error: string;
+  /**
+   * The cents of an earlier payment the books now show landed on this bill after its answer was
+   * lost, or null. While it is set the form sends nothing: it says the payment is on the bill and
+   * waits for the person's own Close, so a press the screen had just invited never pays twice.
+   */
+  readonly landedCents?: number | null;
+  /** An earlier payment on this bill the books showed landed after the form was closed, or null. */
+  readonly earlierLandedCents?: number | null;
+}
+
+/** What the form says once the books show the earlier payment landed (S6 on 701, P2-3). */
+export function payLandedWords(cents: number): string {
+  return `The earlier payment of ${formatMoney(cents)} is on the bill. Nothing more to send.`;
+}
+
+/** What a fresh form says when an earlier payment on the bill landed after its form was closed. */
+export function payEarlierLandedWords(cents: number): string {
+  return `An earlier payment of ${formatMoney(cents)} on this bill is recorded. Record another only if it is a new payment.`;
 }
 
 /**

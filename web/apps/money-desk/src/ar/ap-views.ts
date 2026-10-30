@@ -7,7 +7,7 @@
 // Every figure is the server's, formatted. The board never adds a bucket up and never takes a
 // figure of its own: the route's row totals and the route's book totals are what show.
 import { html, nothing, type TemplateResult } from "lit";
-import { PAYABLES_BANDS, canPayBills, isLandedCostRow, landedCostWords, payTargetWords, rowItems, rowKey, type PayablesBoardModel, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
+import { PAYABLES_BANDS, canPayBills, isLandedCostRow, landedCostWords, payEarlierLandedWords, payLandedWords, payTargetWords, rowItems, rowKey, type PayablesBoardModel, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
 import { bucketWord, daysLateWord, daysPastDue, dayWords, pastDueMarkWord, relativeDay, statusTone, statusWord, type Mark } from "./ar-logic.js";
 import { formatMoney } from "./ar-money.js";
 import { markPill } from "./ar-views.js";
@@ -203,7 +203,15 @@ function payForm(model: PayablesBoardModel, payee: string): TemplateResult {
   const form = model.pay;
   if (form === null) return html``;
   return html`
+    ${form.landedCents != null ? html`
     <form class="pay-form" data-pay-form aria-label="Pay a vendor bill">
+      <p class="callout" role="status" data-pay-landed>${payLandedWords(form.landedCents)}</p>
+      <div class="actions">
+        <button type="button" class="btn btn-secondary" data-action="payables-pay-cancel">Close</button>
+      </div>
+    </form>` : html`
+    <form class="pay-form" data-pay-form aria-label="Pay a vendor bill">
+      ${form.earlierLandedCents != null ? html`<p class="callout" role="status" data-pay-earlier>${payEarlierLandedWords(form.earlierLandedCents)}</p>` : nothing}
       <p class="callout" data-pay-target>${payTargetWords(form.billNo, payee, form.openCents)}</p>
       <label>
         <span>Amount to pay <span class="dim small">(up to ${formatMoney(form.openCents)})</span></span>
@@ -222,7 +230,7 @@ function payForm(model: PayablesBoardModel, payee: string): TemplateResult {
         <button type="button" class="btn btn-primary" data-action="payables-pay-send" ?disabled=${model.busy}>Record the payment</button>
         <button type="button" class="btn btn-secondary" data-action="payables-pay-cancel">Cancel</button>
       </div>
-    </form>
+    </form>`}
   `;
 }
 
