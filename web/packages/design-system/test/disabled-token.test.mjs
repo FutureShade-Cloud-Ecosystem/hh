@@ -1075,6 +1075,170 @@ test('the design system states the disabled rule once, as the grey token swap', 
   assert.doesNotMatch(rule[0], /opacity/, 'the swap must not fade');
 });
 
+// ── the round 4 legs ────────────────────────────────────────────────────────────
+//
+// The three holes the round 3 review named, with the probe row that proves
+// each one. Every probe below is a shape the round 3 gate PASSED, so against
+// the round 3 gate each of these tests fails; against the fixed gate each one
+// names the shape.
+//
+//   P2-A  the value leg: the fill, the ink and the edge were checked with
+//         `includes`, so a value that carries the grey token BESIDE a brand
+//         colour passed.
+//   P2-B  the paint leg: the shorthands and the paint properties were never
+//         read, so a brand edge, a brand glyph or a brand shadow passed.
+//   P2-C  the template leg: the scan read one syntax, so a class set from a
+//         variable, a classMap, a `disabled=` binding, a compound or a
+//         negated condition, and an unquoted aria-disabled all passed.
+
+/** A disabled rule with one declaration swapped for the probe's. */
+const probeRule = (from, to) => `
+  .thing:disabled {
+    ${SWAP.replace(from, to)}
+  }
+`;
+
+test('the value leg: a brand colour beside the grey token is named', () => {
+  // The reader's three value probes. A value is not a search string: the
+  // grey token must BE the fill, the ink or the edge, and no brand colour
+  // may ride beside it.
+  const probes = [
+    {
+      from: `background: ${DISABLED_FILL};`,
+      to: 'background: var(--hh-accent), var(--hh-disabled-fill);',
+    },
+    {
+      from: `border-color: ${DISABLED_LINE};`,
+      to: 'border-color: var(--hh-accent) var(--hh-disabled-line);',
+    },
+    {
+      from: `color: ${DISABLED_INK};`,
+      to: 'color: var(--hh-accent, var(--hh-disabled-ink));',
+    },
+  ];
+  for (const probe of probes) {
+    const found = scanSource('scratch-value-leg.css', probeRule(probe.from, probe.to));
+    assert.ok(
+      found.some((line) => line.includes(probe.to)),
+      `the value ${probe.to} must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+    );
+  }
+});
+
+test('the paint leg: a brand colour is named in every paint property of a disabled rule', () => {
+  // The reader's paint probes. The property does not matter: whatever a
+  // disabled rule declares, a brand colour in its value is the defect.
+  const probes = [
+    { prop: 'border-bottom', value: '3px solid var(--hh-accent)' },
+    { prop: 'border', value: '2px solid var(--hh-accent) var(--hh-disabled-line)' },
+    { prop: 'outline', value: '2px solid var(--hh-accent)' },
+    { prop: 'text-shadow', value: '0 0 4px var(--hh-accent)' },
+    { prop: 'fill', value: 'var(--hh-accent)' },
+    { prop: 'stroke', value: 'var(--hh-accent)' },
+    { prop: 'accent-color', value: 'var(--hh-accent)' },
+    { prop: 'backdrop-filter', value: 'blur(4px) drop-shadow(0 0 2px var(--hh-accent))' },
+  ];
+  for (const probe of probes) {
+    const scratch = `
+      .thing:disabled { ${SWAP} ${probe.prop}: ${probe.value}; }
+    `;
+    const found = scanSource('scratch-paint-leg.css', scratch);
+    assert.ok(
+      found.some((line) => line.includes(`${probe.prop}: ${probe.value}`)),
+      `the brand ${probe.prop} must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+    );
+  }
+});
+
+test('the template leg: the scan reaches the shapes that hold a disabled state', () => {
+  // The reader's six template probes. Each one is a class that IS a disabled
+  // state, written in a shape the round 3 scan could not tie to the disabled
+  // binding.
+  const probes = [
+    {
+      name: 'a class set from a variable',
+      scratch: [
+        'const c = busy ? "waiting" : "";',
+        'const view = html`<button class="w ${c}" ?disabled=${busy}>Wait</button>`;',
+      ].join('\n'),
+    },
+    {
+      name: 'a classMap',
+      scratch: 'const view = html`<button class=${classMap({ waiting: busy })} ?disabled=${busy}>Wait</button>`;',
+    },
+    {
+      name: 'a disabled property binding',
+      scratch: 'const view = html`<button class="w ${busy ? "waiting" : ""}" disabled=${busy}>Wait</button>`;',
+    },
+    {
+      name: 'a compound condition',
+      scratch: 'const view = html`<button class="w ${busy ? "waiting" : ""}" ?disabled=${busy || x}>Wait</button>`;',
+    },
+    {
+      name: 'an unquoted aria-disabled',
+      scratch:
+        'const view = html`<button class="w ${busy ? "waiting" : ""}" aria-disabled=${busy ? "true" : "false"}>Wait</button>`;',
+    },
+    {
+      name: 'a negated condition',
+      scratch: 'const view = html`<button class="w ${ok ? "" : "waiting"}" ?disabled=${!ok}>Wait</button>`;',
+    },
+  ];
+  for (const probe of probes) {
+    const derived = derivedStateClasses(probe.scratch);
+    assert.ok(
+      derived.has('waiting'),
+      `${probe.name}: the template scan must find the state class, it found ${[...derived].join(', ') || 'nothing'}`,
+    );
+  }
+});
+
+test('the template leg: a class the scan reaches is held to the disabled swap', () => {
+  // The leg end to end: the class the markup proves is a disabled state, and
+  // the rule that paints it.
+  const scratch = [
+    'const c = busy ? "waiting" : "";',
+    'const view = html`<button class="w ${c}" ?disabled=${busy}>Wait</button>`;',
+    'const styles = css`',
+    '  .waiting { opacity: 0.4; background: var(--hh-accent); }',
+    '`;',
+  ].join('\n');
+  const derived = derivedStateClasses(scratch);
+  const found = scanSource('scratch-template-leg.ts', scratch, derived);
+  assert.ok(
+    found.some((line) => line.includes('opacity: 0.4')),
+    `the fade must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+  );
+  assert.ok(
+    found.some((line) => line.includes('--hh-accent')),
+    `the brand fill must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+  );
+});
+
+test('the template leg: a class that is on while the control is enabled is not a disabled state', () => {
+  // The other half of the reader's probe: the class rides on a condition that
+  // does not reach the disabled binding, so it means something else and must
+  // not be read as a disabled state.
+  const probes = [
+    {
+      name: 'another condition',
+      scratch: 'const view = html`<button class="w ${variant ? "waiting" : ""}" ?disabled=${busy}>Wait</button>`;',
+    },
+    {
+      name: 'the negation of the disabled condition',
+      scratch: 'const view = html`<button class="w ${busy ? "waiting" : ""}" ?disabled=${!busy}>Wait</button>`;',
+    },
+    {
+      name: 'a condition the disabled binding only sometimes reaches',
+      scratch: 'const view = html`<button class="w ${busy ? "waiting" : ""}" ?disabled=${busy && x}>Wait</button>`;',
+    },
+  ];
+  for (const probe of probes) {
+    const derived = derivedStateClasses(probe.scratch);
+    assert.deepEqual([...derived], [], `${probe.name}: this class is not a disabled state`);
+  }
+});
+
 // ── the paint leg ───────────────────────────────────────────────────────────────
 
 const underBun = typeof globalThis.Bun !== 'undefined';
