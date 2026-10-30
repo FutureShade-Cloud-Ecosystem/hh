@@ -1444,6 +1444,60 @@ type BillingStatementPreviewAging struct {
 	OverdueCents    int64 `json:"overdue_cents"`
 }
 
+type BillingCreditChangeInput struct {
+	CustomerId    string  `json:"customer_id"`
+	NewLimitCents *int64  `json:"new_limit_cents,omitempty"`
+	PlaceHold     *bool   `json:"place_hold,omitempty"`
+	HoldKind      *string `json:"hold_kind,omitempty"`
+	Reason        string  `json:"reason"`
+}
+
+type BillingCreditChangeDecideInput struct {
+	Note   *string `json:"note,omitempty"`
+	Reason *string `json:"reason,omitempty"`
+}
+
+type BillingCreditChangeRequest struct {
+	Id                   string     `json:"id"`
+	CustomerId           string     `json:"customer_id"`
+	BranchId             *string    `json:"branch_id,omitempty"`
+	ChangeKind           string     `json:"change_kind"`
+	PreviousLimitCents   int64      `json:"previous_limit_cents"`
+	NewLimitCents        *int64     `json:"new_limit_cents,omitempty"`
+	DeltaCents           int64      `json:"delta_cents"`
+	HoldKind             *string    `json:"hold_kind,omitempty"`
+	HoldId               *string    `json:"hold_id,omitempty"`
+	Reason               string     `json:"reason"`
+	Status               string     `json:"status"`
+	RequiredApprovals    int32      `json:"required_approvals"`
+	FirstThresholdCents  int64      `json:"first_threshold_cents"`
+	SecondThresholdCents int64      `json:"second_threshold_cents"`
+	RequestedBy          string     `json:"requested_by"`
+	RequestedByRole      *string    `json:"requested_by_role,omitempty"`
+	RequestedAt          time.Time  `json:"requested_at"`
+	FirstApprovedBy      *string    `json:"first_approved_by,omitempty"`
+	FirstApprovedByRole  *string    `json:"first_approved_by_role,omitempty"`
+	FirstApprovedAt      *time.Time `json:"first_approved_at,omitempty"`
+	FirstApprovalNote    *string    `json:"first_approval_note,omitempty"`
+	SecondApprovedBy     *string    `json:"second_approved_by,omitempty"`
+	SecondApprovedByRole *string    `json:"second_approved_by_role,omitempty"`
+	SecondApprovedAt     *time.Time `json:"second_approved_at,omitempty"`
+	SecondApprovalNote   *string    `json:"second_approval_note,omitempty"`
+	RejectedBy           *string    `json:"rejected_by,omitempty"`
+	RejectedByRole       *string    `json:"rejected_by_role,omitempty"`
+	RejectedAt           *time.Time `json:"rejected_at,omitempty"`
+	RejectionReason      *string    `json:"rejection_reason,omitempty"`
+	AppliedAt            *time.Time `json:"applied_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+type BillingCreditChangePage struct {
+	Items      []BillingCreditChangeRequest `json:"items"`
+	NextCursor *string                      `json:"next_cursor,omitempty"`
+	Limit      *int32                       `json:"limit,omitempty"`
+}
+
 type AssistArgSpec struct {
 	Name     string `json:"name"`
 	Label    string `json:"label"`

@@ -75,6 +75,8 @@ func walkDoors() []customerDoor {
 		{route: "PUT /api/v1/ar/customers/{customerID}/payment-policy", class: doorWall, path: "/api/v1/ar/customers/%C%/payment-policy", body: `{"ach_first":true,"surcharge_rate_bps":100,"min_ach_cents":1}`},
 		{route: "GET /api/v1/ar/customers/{customerID}/statement", class: doorWall, path: "/api/v1/ar/customers/%C%/statement"},
 		{route: "POST /api/v1/ar/holds", class: doorWall, path: "/api/v1/ar/holds", body: `{"customer_id":"%C%","reason":"walk"}`},
+		{route: "GET /api/v1/ar/credit-changes", class: doorWall, path: "/api/v1/ar/credit-changes?customer_id=%C%"},
+		{route: "POST /api/v1/ar/credit-changes", class: doorWall, path: "/api/v1/ar/credit-changes", body: `{"customer_id":"%C%","new_limit_cents":10000,"reason":"walk"}`},
 		{route: "POST /api/v1/ar/credit-memos", class: doorWall, path: "/api/v1/ar/credit-memos", body: `{"customer_id":"%C%","branch_id":"` + A + `","amount_cents":100,"reason":"walk"}`},
 		{route: "POST /api/v1/ar/credit-memos/quote", class: doorWall, path: "/api/v1/ar/credit-memos/quote", body: `{"customer_id":"%C%","branch_id":"` + A + `","amount_cents":100}`},
 		{route: "POST /api/v1/ar/credits/apply", class: doorAgree, path: "/api/v1/ar/credits/apply", body: `{"customer_id":"%C%","credit_kind":"MEMO","credit_id":"` + walkUUID1 + `","invoice_id":"` + walkUUID2 + `","amount_cents":100,"reason":"walk","idempotency_key":"walk-%C%"}`, reason: "the credit and the invoice are both the account's own and both inside the caller's branch reach, so an account out of reach names no invoice the caller may touch: the answer is alike (not found), not the wall's 404"},

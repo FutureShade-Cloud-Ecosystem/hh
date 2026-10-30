@@ -314,6 +314,7 @@ var migrationTopics = map[string]string{
 	"0451_till_counter_reason_codes":       "till",
 	"0457_purchasing_payment_runs":         "purchasing",
 	"0460_customer_jobs":                   "customer",
+	"0461_credit_change_requests":          "billing",
 }
 
 // multiTopicSplits states the per-object attribution inside the five
@@ -420,6 +421,7 @@ var ownedObjects = map[string]string{
 	"customer_sms_prefs":                    "messagingprovider", // 0109_customer_sms_prefs
 	"customer_transactions":                 "billing",           // 0009_invoices_ar
 	"customers":                             "customer",          // 0006_customers
+	"credit_change_requests":                "billing",           // 0461_credit_change_requests
 	"customer_jobs":                         "customer",          // 0460_customer_jobs
 	"dashboard_gallery_entries":             "dashboard",         // 0208_widget_gallery
 	"dashboard_needs_sources":               "dashboard",         // 0201_dashboard_widgets

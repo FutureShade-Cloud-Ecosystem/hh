@@ -1263,6 +1263,56 @@ export type BillingStatementPreviewAging = {
   open_cents: number;
   overdue_cents: number;
 };
+export type BillingCreditChangeInput = {
+  customer_id: string;
+  new_limit_cents?: number;
+  place_hold?: boolean;
+  hold_kind?: "NSF" | "AR_AGING" | "CREDIT_LIMIT" | "COD" | "MANUAL";
+  reason: string;
+};
+export type BillingCreditChangeDecideInput = {
+  note?: string;
+  reason?: string;
+};
+export type BillingCreditChangeRequest = {
+  id: string;
+  customer_id: string;
+  branch_id?: string;
+  change_kind: "LIMIT_CHANGE" | "HOLD";
+  previous_limit_cents: number;
+  new_limit_cents?: number;
+  delta_cents: number;
+  hold_kind?: "NSF" | "AR_AGING" | "CREDIT_LIMIT" | "COD" | "MANUAL";
+  hold_id?: string;
+  reason: string;
+  status: "PENDING" | "APPROVED" | "APPLIED" | "REJECTED";
+  required_approvals: number;
+  first_threshold_cents: number;
+  second_threshold_cents: number;
+  requested_by: string;
+  requested_by_role?: string;
+  requested_at: string;
+  first_approved_by?: string;
+  first_approved_by_role?: string;
+  first_approved_at?: string;
+  first_approval_note?: string;
+  second_approved_by?: string;
+  second_approved_by_role?: string;
+  second_approved_at?: string;
+  second_approval_note?: string;
+  rejected_by?: string;
+  rejected_by_role?: string;
+  rejected_at?: string;
+  rejection_reason?: string;
+  applied_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+export type BillingCreditChangePage = {
+  items: BillingCreditChangeRequest[];
+  next_cursor?: string | null;
+  limit?: number;
+};
 export type AssistArgSpec = {
   name: string;
   label: string;

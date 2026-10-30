@@ -531,6 +531,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithUserLinker(link).RegisterRoutes(r, g)
 	billing.NewCreditApplyHandler(billing.NewCreditApplyService(billingRepo).WithAudit(auditSvc), log).
 		WithUserLinker(link).RegisterRoutes(r, g)
+	billing.NewCreditChangeHandler(
+		billing.NewCreditChangeService(billingRepo, billing.NewCustomerCreditStore(customerSvc)).WithAudit(auditSvc),
+		log,
+	).WithUserLinker(link).RegisterRoutes(r, g)
 	billing.NewWriteOffHandler(billing.NewWriteOffService(billingRepo).WithAudit(auditSvc), log).
 		WithUserLinker(link).RegisterRoutes(r, g)
 
