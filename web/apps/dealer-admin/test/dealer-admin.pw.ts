@@ -661,7 +661,7 @@ test("the rules tab: the list, an edit saved clean, and a retire asked twice", a
   await expect(retire).toHaveText("Retire: tap again");
   await retire.click();
   await expect(page.locator("[data-test=pr-rules-notice]")).toContainText("Retired.");
-  await expect(page.locator('tr[data-rule="9a110000-0000-4000-9000-0000000000a1"]')).toContainText("retired");
+  await expect(page.locator('tr[data-rule="9a110000-0000-4000-9000-0000000000a1"]')).toContainText("Retired");
 });
 
 test("the customer prices tab: one account's overrides, an add, and a delete asked twice", async ({ page }) => {
@@ -731,7 +731,7 @@ test("the quantity breaks tab: the schedule, a tier saved through the floor, a r
   await expect(retire).toHaveText("Retire: tap again");
   await retire.click();
   await expect(page.locator("[data-test=pr-breaks-notice]")).toContainText("Retired.");
-  await expect(page.locator('tr[data-break="7a110000-0000-4000-9000-0000000000a1"]')).toContainText("retired");
+  await expect(page.locator('tr[data-break="7a110000-0000-4000-9000-0000000000a1"]')).toContainText("Retired");
 });
 
 test("the promotions and clearance tab: both panels, a promo saved, the badge only mark", async ({ page }) => {
@@ -934,7 +934,7 @@ test("the pricing audit and change log tabs: the log, the bypass named, the chan
   await expect(page.locator("[data-test=pr-audit-count]")).toHaveText("2 entries");
   const bypassRow = page.locator('tr[data-audit="0e110000-0000-4000-9000-0000000000a2"]');
   await expect(bypassRow).toContainText("Bypassed");
-  await expect(page.locator('tr[data-audit-reason="0e110000-0000-4000-9000-0000000000a2"]')).toContainText("Approved override");
+  await expect(bypassRow.locator('[data-audit-reason="0e110000-0000-4000-9000-0000000000a2"]')).toContainText("Approved override");
   const floorRow = page.locator('tr[data-audit="0e110000-0000-4000-9000-0000000000a1"]');
   await expect(floorRow).toContainText("20.00% to 10.00%");
 

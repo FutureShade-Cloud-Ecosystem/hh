@@ -661,15 +661,38 @@ for (const size of SIZES) {
 }
 
 // -- UX-120 legs (points 3, 5 and 6) ----------------------------------------------------------------
+//
+// Principal item 386 blank check: set UX120_BLANK_MODE to "screen" or "core"
+// to verify that each of the three legs below fails on an empty screen and on
+// an empty core, each on its own.
+const UX120_BLANK_MODE = "" as "" | "screen" | "core";
+
+async function ux120SignIn(page: Page, coreScenario: "empty-pricing" | "empty-staff"): Promise<void> {
+  await page.request.post("/_stub/reset");
+  if (UX120_BLANK_MODE === "core") {
+    await page.request.post("/_stub/scenario", { data: { name: coreScenario } });
+  }
+  await page.goto("/");
+  await page.locator("[data-flow]").first().click();
+  await expect(page.locator("[data-test=staff-count], [data-test=staff-empty]").first()).toBeVisible({ timeout: 30_000 });
+  await page.waitForLoadState("networkidle");
+}
+
+test.afterEach(async ({ page }) => {
+  if (UX120_BLANK_MODE !== "") {
+    await page.request.post("/_stub/reset");
+  }
+});
 
 test("UX-120 point 3: the pricing audit bypass reason chip sits inside the row it explains", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await signIn(page);
+  await ux120SignIn(page, "empty-pricing");
   await openSurface(page, "pricing", '[data-test="pr-tab-select"], .pr-tabs');
-  await openPricingView(page, "Pricing audit", '[data-test="pr-audit-count"]');
+  await openPricingView(page, "Pricing audit", '[data-test="pr-audit-count"], [data-test="pr-audit-empty"]');
+  if (UX120_BLANK_MODE === "screen") await page.setContent("");
 
   const bypassRow = page.locator('tr[data-audit="0e110000-0000-4000-9000-0000000000a2"]');
-  await expect(bypassRow).toHaveCount(1);
+  await expect(bypassRow).toHaveCount(1, { timeout: 5_000 });
   await expect(bypassRow).toBeVisible();
 
   // The reason chip must live inside the bypass row itself, never in a detached second tr below the border.
@@ -689,21 +712,22 @@ test("UX-120 point 3: the pricing audit bypass reason chip sits inside the row i
 
 test("UX-120 point 5: Rebates and Pricing audit share one date style, with a date alone where there is no time", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await signIn(page);
+  await ux120SignIn(page, "empty-pricing");
   await openSurface(page, "pricing", '[data-test="pr-tab-select"], .pr-tabs');
 
-  await openPricingView(page, "Rebates", '[data-test="pr-ledger-total"]');
+  await openPricingView(page, "Rebates", '[data-test="pr-ledger-total"], [data-test="pr-rebates-empty"]');
+  if (UX120_BLANK_MODE === "screen") await page.setContent("");
   const rebateFrom = page.locator('tr[data-rebate] td[data-label="From"]').first();
   const ledgerAccrued = page.locator('tr[data-accrual] td[data-label="Accrued"]').first();
-  await expect(rebateFrom).toBeVisible();
-  await expect(ledgerAccrued).toBeVisible();
+  await expect(rebateFrom).toBeVisible({ timeout: 5_000 });
+  await expect(ledgerAccrued).toBeVisible({ timeout: 5_000 });
 
   const fromText = (await rebateFrom.innerText()).trim();
   const accruedText = (await ledgerAccrued.innerText()).trim();
 
-  await openPricingView(page, "Pricing audit", '[data-test="pr-audit-count"]');
+  await openPricingView(page, "Pricing audit", '[data-test="pr-audit-count"], [data-test="pr-audit-empty"]');
   const auditWhen = page.locator('tr[data-audit] td[data-label="When"]').first();
-  await expect(auditWhen).toBeVisible();
+  await expect(auditWhen).toBeVisible({ timeout: 5_000 });
   const whenText = (await auditWhen.innerText()).trim();
 
   // None of the three cells may print a raw ISO YYYY-MM-DD date.
@@ -719,9 +743,10 @@ test("UX-120 point 5: Rebates and Pricing audit share one date style, with a dat
 
 test("UX-120 point 6: Staff, Quantity breaks and Rebates use one sentence-case word set for states and badges", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await signIn(page);
+  await ux120SignIn(page, "empty-staff");
 
-  await openSurface(page, "staff", '[data-test="staff-count"]');
+  await openSurface(page, "staff", '[data-test="staff-count"], [data-test="staff-empty"]');
+  if (UX120_BLANK_MODE === "screen") await page.setContent("");
   const staffBadges = page.locator("tr[data-user] .badge-status, tr[data-user] .badge-outline");
   const staffBadgeCount = await staffBadges.count();
   expect(staffBadgeCount).toBeGreaterThanOrEqual(5);
@@ -731,14 +756,14 @@ test("UX-120 point 6: Staff, Quantity breaks and Rebates use one sentence-case w
   }
 
   await openSurface(page, "pricing", '[data-test="pr-tab-select"], .pr-tabs');
-  await openPricingView(page, "Quantity breaks", '[data-test="pr-breaks-count"]');
+  await openPricingView(page, "Quantity breaks", '[data-test="pr-breaks-count"], [data-test="pr-breaks-empty"]');
   const breakStateChips = page.locator('tr[data-break] td[data-label="State"] .chip');
   expect(await breakStateChips.count()).toBeGreaterThanOrEqual(1);
   for (const text of (await breakStateChips.allInnerTexts()).map((t) => t.trim())) {
     expect(text, `quantity break state chip "${text}" is not sentence case`).toMatch(/^[A-Z][a-z]+$/);
   }
 
-  await openPricingView(page, "Rebates", '[data-test="pr-ledger-total"]');
+  await openPricingView(page, "Rebates", '[data-test="pr-ledger-total"], [data-test="pr-rebates-empty"]');
   const rebateStateChips = page.locator('tr[data-rebate] td[data-label="State"] .chip');
   expect(await rebateStateChips.count()).toBeGreaterThanOrEqual(1);
   for (const text of (await rebateStateChips.allInnerTexts()).map((t) => t.trim())) {

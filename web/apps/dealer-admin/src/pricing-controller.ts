@@ -3497,6 +3497,10 @@ export class PricingController {
       const b = await this.#door.batches("");
       if (b.ok) this.#setBatches({ rows: b.value, phase: "ready" });
     }
+    if (this.model.promos.clearance.phase === "idle" && typeof this.#door.clearance === "function") {
+      const c = await this.#door.clearance();
+      if (c.ok) this.#setClearance({ rows: c.value, phase: "ready" });
+    }
     this.#setChangeLog({ ...emptyChangeLog(), filters: this.model.changeLog.filters });
     const f = this.model.changeLog.filters;
     const result = await this.#door.changeLog({ product_id: f.productId.trim(), batch_id: f.batchId.trim() });

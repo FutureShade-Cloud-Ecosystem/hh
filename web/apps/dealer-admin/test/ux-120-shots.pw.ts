@@ -1,10 +1,10 @@
 // UX-120 before/after screenshot capture for Dealer Admin.
-// Set HH_UX120_SHOT_DIR to an output directory to run this file.
+// Set DA_SHOT_DIR to an output directory to run this file.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
-const OUT_DIR = process.env.HH_UX120_SHOT_DIR ?? "";
+const OUT_DIR = process.env.DA_SHOT_DIR ?? "";
 const RUN = OUT_DIR !== "";
 
 async function signIn(page: Page): Promise<void> {
@@ -55,7 +55,7 @@ async function snap(page: Page, name: string): Promise<void> {
 }
 
 test.describe("UX-120 screenshots", () => {
-  test.skip(!RUN, "set HH_UX120_SHOT_DIR to capture UX-120 screenshots");
+  test.skip(!RUN, "set DA_SHOT_DIR to capture UX-120 screenshots");
 
   for (const theme of ["light", "charcoal"] as const) {
     for (const vp of [
@@ -100,7 +100,7 @@ test.describe("UX-120 screenshots", () => {
         // 5. Rebates (programs and accrual ledger)
         await openPricingView(page, "rebates", "Rebates", '[data-test="pr-rebate-count"]');
         await snap(page, `pricing__rebates__${suffix}`);
-        await page.locator('[data-test="pr-ledger-total"]').scrollIntoViewIfNeeded();
+        await page.locator("tr[data-accrual]").first().scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
         await snap(page, `pricing__rebates-ledger__${suffix}`);
 

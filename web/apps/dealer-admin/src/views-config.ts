@@ -301,6 +301,17 @@ function renderEditor(editor: ConfigEditor): TemplateResult {
 
 // -- the dealer's curation draft ------------------------------------------------------------------------
 
+const ITEM_KIND_WORDS: Readonly<Record<string, string>> = {
+  panel: "Panel",
+  column: "Column",
+  chip: "Filter chip",
+  action: "Action button",
+};
+
+function itemKindWord(kind: string): string {
+  return ITEM_KIND_WORDS[kind] ?? kind;
+}
+
 function renderDealerDraft(editor: ConfigEditor): TemplateResult {
   const setFault = editor.draft.length === 0 ? "" : itemSetError(editor.draft);
   const rowFault = editor.draft.map((it) => itemRowError(it)).find((f) => f !== "") ?? "";
@@ -319,7 +330,7 @@ function renderDealerDraft(editor: ConfigEditor): TemplateResult {
             <table class="cardrow-table" data-test="config-draft-rows">
               <thead>
                 <tr>
-                  <th scope="col">Kind</th>
+                  <th scope="col">Part</th>
                   <th scope="col">Item</th>
                   <th scope="col">Order</th>
                   <th scope="col">Shown</th>
@@ -336,9 +347,9 @@ function renderDealerDraft(editor: ConfigEditor): TemplateResult {
     ${setFault === "" ? nothing : html`<p class="error-line" data-test="config-set-fault">${setFault}</p>`}
     <div class="editor-actions">
       <label class="field">
-        <span class="field-label">Kind</span>
-        <select class="select" data-action="config-add-kind" data-field="config-add-kind" aria-label="Kind of the row to add">
-          ${ITEM_KINDS.map((k) => html`<option>${k}</option>`)}
+        <span class="field-label">Part of the screen</span>
+        <select class="select" data-action="config-add-kind" data-field="config-add-kind" aria-label="Part of the screen to add">
+          ${ITEM_KINDS.map((k) => html`<option data-option-id=${k}>${itemKindWord(k)}</option>`)}
         </select>
       </label>
       <label class="field">
@@ -361,7 +372,7 @@ function renderDealerDraft(editor: ConfigEditor): TemplateResult {
       </button>
     </div>
     <div class="editor-actions">
-      <span class="field-label">Reset one kind to the level beneath the dealer:</span>
+      <span class="field-label">Reset to the dealer's default layout:</span>
       ${ITEM_KINDS.map(
         (k) => html`
           <button type="button" class="btn btn-secondary btn-small" data-action="config-reset-kind" data-kind=${k} ?disabled=${editor.busy}>
@@ -377,7 +388,7 @@ function renderDealerDraft(editor: ConfigEditor): TemplateResult {
 function draftRow(it: ConfigItem, index: number, scope: "config" | "my"): TemplateResult {
   return html`
     <tr data-index=${index}>
-      <td data-label="Kind"><span class="chip">${it.kind}</span></td>
+      <td data-label="Part"><span class="chip">${itemKindWord(it.kind)}</span></td>
       <td data-label="Item"><code class="mono">${it.id}</code></td>
       <td data-label="Order">${it.position}</td>
       <td data-label="Shown">
@@ -413,7 +424,7 @@ function renderMyDraft(editor: ConfigEditor): TemplateResult {
   return html`
     <div class="card-head">
       <h3 class="section-title">Your own view of this surface</h3>
-      <span class="count">whole or absent: your set replaces the dealer's, for you</span>
+      <span class="count">Replaces the dealer's layout for you alone</span>
     </div>
     ${editor.myDraft.length === 0
       ? html`<p class="notice-line" data-test="config-my-empty">You follow the dealer's curation.</p>`
@@ -422,7 +433,7 @@ function renderMyDraft(editor: ConfigEditor): TemplateResult {
             <table class="cardrow-table" data-test="config-my-rows">
               <thead>
                 <tr>
-                  <th scope="col">Kind</th>
+                  <th scope="col">Part</th>
                   <th scope="col">Item</th>
                   <th scope="col">Order</th>
                   <th scope="col">Shown</th>
@@ -438,9 +449,9 @@ function renderMyDraft(editor: ConfigEditor): TemplateResult {
     ${setFault === "" ? nothing : html`<p class="error-line" data-test="config-my-set-fault">${setFault}</p>`}
     <div class="editor-actions">
       <label class="field">
-        <span class="field-label">Kind</span>
-        <select class="select" data-action="config-my-add-kind" data-field="config-my-add-kind" aria-label="Kind of your own row to add">
-          ${ITEM_KINDS.map((k) => html`<option>${k}</option>`)}
+        <span class="field-label">Part of the screen</span>
+        <select class="select" data-action="config-my-add-kind" data-field="config-my-add-kind" aria-label="Part of the screen for your own row">
+          ${ITEM_KINDS.map((k) => html`<option data-option-id=${k}>${itemKindWord(k)}</option>`)}
         </select>
       </label>
       <label class="field">
@@ -474,8 +485,8 @@ function renderWorkspace(editor: ConfigEditor): TemplateResult {
     </div>
     <div class="editor-actions">
       <label class="field">
-        <span class="field-label">Split (20 to 80)</span>
-        <input class="text-field" type="number" min="20" max="80" data-field="configws-split" aria-label="Workspace split" />
+        <span class="field-label">Left panel width (20% to 80%)</span>
+        <input class="text-field" type="number" min="20" max="80" data-field="configws-split" aria-label="Left panel width" />
       </label>
       <label class="field">
         <span class="field-label">Arrangement</span>

@@ -1960,7 +1960,7 @@ async function handle(req, res) {
       {
         id: "0e110000-0000-4000-9000-0000000000a2",
         entity_type: "customer_override",
-        entity_id: "8a110000-0000-4000-9000-0000000000a1",
+        entity_id: "ca7a0000-0000-4000-9000-0000000000a2",
         action: "BYPASS",
         field_name: "",
         old_value: "",
