@@ -7,7 +7,7 @@
 // Every figure is the server's, formatted. The board never adds a bucket up and never takes a
 // figure of its own: the route's row totals and the route's book totals are what show.
 import { html, nothing, type TemplateResult } from "lit";
-import { PAYABLES_BANDS, canPayBills, isLandedCostRow, landedCostWords, payEarlierLandedWords, payLandedWords, payTargetWords, rowItems, rowKey, type PayablesBoardModel, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
+import { PAYABLES_BANDS, canPayBills, isLandedCostRow, landedCostWords, formatBillMoney, isForeignBill, payEarlierLandedWords, payLandedWords, payTargetWords, rowItems, rowKey, type PayablesBoardModel, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
 import { bucketWord, daysLateWord, daysPastDue, dayWords, pastDueMarkWord, relativeDay, statusTone, statusWord, type Mark } from "./ar-logic.js";
 import { formatMoney } from "./ar-money.js";
 import { markPill } from "./ar-views.js";
@@ -212,11 +212,15 @@ function payForm(model: PayablesBoardModel, payee: string): TemplateResult {
     </form>` : html`
     <form class="pay-form" data-pay-form aria-label="Pay a vendor bill">
       ${form.earlierLandedCents != null ? html`<p class="callout" role="status" data-pay-earlier>${payEarlierLandedWords(form.earlierLandedCents)}</p>` : nothing}
-      <p class="callout" data-pay-target>${payTargetWords(form.billNo, payee, form.openCents)}</p>
+      <p class="callout" data-pay-target>${payTargetWords(form.billNo, payee, form.openCents, form.currency)}</p>
       <label>
-        <span>Amount to pay <span class="dim small">(up to ${formatMoney(form.openCents)})</span></span>
+        <span>Amount to pay${isForeignBill(form.currency) ? html` in ${form.currency.toUpperCase()}` : nothing} <span class="dim small">(up to ${formatBillMoney(form.openCents, form.currency)})</span></span>
         <input type="text" class="amount" inputmode="decimal" data-field="pay-amount" placeholder="Such as 250.00" autocomplete="off" />
       </label>
+      ${isForeignBill(form.currency) ? html`<label>
+        <span>Rate paid at <span class="dim small">(CAD for one ${form.currency.toUpperCase()})</span></span>
+        <input type="text" inputmode="decimal" data-field="pay-rate" placeholder="Such as 1.3500" autocomplete="off" />
+      </label>` : nothing}
       <label>
         <span>Day it was paid</span>
         <input type="date" data-field="pay-date" />

@@ -71,6 +71,9 @@ type PaymentRun struct {
 	PaidAt     *time.Time       `json:"paid_at,omitempty"`
 	CreatedAt  time.Time        `json:"created_at"`
 	Lines      []PaymentRunLine `json:"lines"`
+	// LeftOut names, in words, each open bill the proposal did not select because it is not billed
+	// in CAD. Only the proposal's own answer carries it; a run read later does not.
+	LeftOut []string `json:"left_out,omitempty"`
 }
 
 // PaymentRunSummary is one row of the list: the run without its lines.
@@ -152,14 +155,28 @@ func (s *Service) ProposePaymentRun(ctx context.Context, in ProposePaymentRunReq
 		return PaymentRun{}, err
 	}
 
-	candidates, err := s.repo.OpenBillsDueOn(ctx, branchID, dueOn, strings.TrimSpace(in.VendorID))
+	all, err := s.repo.OpenBillsDueOn(ctx, branchID, dueOn, strings.TrimSpace(in.VendorID))
 	if err != nil {
 		return PaymentRun{}, err
+	}
+	// A payment run takes CAD bills only: a bill in another currency is paid from its own bill with
+	// the day's rate, so the run leaves it out and says so in words.
+	candidates := make([]runBillCandidate, 0, len(all))
+	leftOut := []string{}
+	for _, c := range all {
+		if isCADCurrency(c.Currency) {
+			candidates = append(candidates, c)
+		} else {
+			leftOut = append(leftOut, notCADWords(c.BillNo, c.Currency))
+		}
 	}
 	if len(candidates) == 0 {
 		reach := fmt.Sprintf(" due on or before %s", dueOn)
 		if v := strings.TrimSpace(in.VendorID); v != "" {
 			reach += " for vendor " + v
+		}
+		if len(leftOut) > 0 {
+			return PaymentRun{}, unprocessable("purchasing: no open CAD bills in branch %s%s, there is no run to propose (%s)", branchID, reach, strings.Join(leftOut, "; "))
 		}
 		return PaymentRun{}, unprocessable("purchasing: no open bills in branch %s%s, there is no run to propose", branchID, reach)
 	}
@@ -190,7 +207,26 @@ func (s *Service) ProposePaymentRun(ctx context.Context, in ProposePaymentRunReq
 	s.record(ctx, "purchasing.payment_run.proposed", runID, map[string]any{
 		"branch_id": branchID, "due_on": dueOn, "bills": len(candidates), "total_cents": sumCandidates(candidates),
 	})
-	return s.GetPaymentRun(ctx, runID)
+	run, err := s.GetPaymentRun(ctx, runID)
+	if err != nil {
+		return PaymentRun{}, err
+	}
+	if len(leftOut) > 0 {
+		run.LeftOut = leftOut
+	}
+	return run, nil
+}
+
+// isCADCurrency reads a bill's currency code; an empty one is the books' own CAD.
+func isCADCurrency(code string) bool {
+	c := strings.TrimSpace(code)
+	return c == "" || strings.EqualFold(c, "CAD")
+}
+
+// notCADWords is the sentence for a bill a payment run does not take, on the proposal and on a line
+// skipped at the pay.
+func notCADWords(billNo, currency string) string {
+	return fmt.Sprintf("%s is billed in %s: pay it from its bill with the day's rate", billNo, strings.ToUpper(strings.TrimSpace(currency)))
 }
 
 func sumCandidates(cs []runBillCandidate) int64 {
@@ -439,6 +475,15 @@ func (s *Service) payRunLine(ctx context.Context, runID string, ln PaymentRunLin
 	if state != BillPosted {
 		return RunLineSkipped, 0, fmt.Sprintf("bill is %s, only POSTED bills can be paid", state), nil
 	}
+	// A bill that is not CAD reached the run by an earlier proposal or an edited currency: it is
+	// paid from its own bill with a rate, so this line is skipped and the rest of the run pays.
+	billNo, currency, err := s.repo.BillNoAndCurrency(ctx, ln.BillID)
+	if err != nil {
+		return "", 0, "", err
+	}
+	if !isCADCurrency(currency) {
+		return RunLineSkipped, 0, notCADWords(billNo, currency), nil
+	}
 	if open <= 0 {
 		return RunLineSkipped, 0, "bill was paid in full elsewhere", nil
 	}
@@ -553,6 +598,24 @@ type runBillCandidate struct {
 	VendorName string
 	DueDate    string
 	OpenCents  int64
+	Currency   string
+}
+
+// BillNoAndCurrency answers a bill's number and document currency, the pay's look at what a run
+// line may take.
+func (r *Repository) BillNoAndCurrency(ctx context.Context, billID string) (string, string, error) {
+	if r.pool == nil {
+		return "", "", errNoDB
+	}
+	var no, currency string
+	err := r.pool.QueryRow(ctx, `SELECT b.bill_no::text, b.currency::text FROM purchasing_bills b WHERE b.id = $1::uuid`, billID).Scan(&no, &currency)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", errNotFound
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("purchasing: bill currency: %w", err)
+	}
+	return no, currency, nil
 }
 
 // OpenBillsDueOn reads the open posted bills of one branch due on or before the house day (a bill
@@ -571,7 +634,8 @@ func (r *Repository) OpenBillsDueOn(ctx context.Context, branchID, dueOn, vendor
 		       - COALESCE((SELECT SUM(a.amount_cents)
 		           FROM purchasing_vendor_credit_applications a
 		           JOIN purchasing_vendor_credits c ON c.id = a.credit_id
-		          WHERE a.bill_id = b.id AND c.status = 'POSTED'), 0)
+		          WHERE a.bill_id = b.id AND c.status = 'POSTED'), 0),
+		       b.currency::text
 		  FROM purchasing_bills b
 		  JOIN vendors v ON v.id = b.vendor_id
 		 WHERE b.status = 'POSTED'
@@ -588,7 +652,7 @@ func (r *Repository) OpenBillsDueOn(ctx context.Context, branchID, dueOn, vendor
 	out := []runBillCandidate{}
 	for rows.Next() {
 		var c runBillCandidate
-		if err := rows.Scan(&c.BillID, &c.BillNo, &c.VendorID, &c.VendorName, &c.DueDate, &c.OpenCents); err != nil {
+		if err := rows.Scan(&c.BillID, &c.BillNo, &c.VendorID, &c.VendorName, &c.DueDate, &c.OpenCents, &c.Currency); err != nil {
 			return nil, fmt.Errorf("purchasing: scan open bill due on: %w", err)
 		}
 		if c.OpenCents > 0 {

@@ -1263,6 +1263,56 @@ export type BillingStatementPreviewAging = {
   open_cents: number;
   overdue_cents: number;
 };
+export type BillingCreditChangeInput = {
+  customer_id: string;
+  new_limit_cents?: number;
+  place_hold?: boolean;
+  hold_kind?: "NSF" | "AR_AGING" | "CREDIT_LIMIT" | "COD" | "MANUAL";
+  reason: string;
+};
+export type BillingCreditChangeDecideInput = {
+  note?: string;
+  reason?: string;
+};
+export type BillingCreditChangeRequest = {
+  id: string;
+  customer_id: string;
+  branch_id?: string;
+  change_kind: "LIMIT_CHANGE" | "HOLD";
+  previous_limit_cents: number;
+  new_limit_cents?: number;
+  delta_cents: number;
+  hold_kind?: "NSF" | "AR_AGING" | "CREDIT_LIMIT" | "COD" | "MANUAL";
+  hold_id?: string;
+  reason: string;
+  status: "PENDING" | "APPROVED" | "APPLIED" | "REJECTED";
+  required_approvals: number;
+  first_threshold_cents: number;
+  second_threshold_cents: number;
+  requested_by: string;
+  requested_by_role?: string;
+  requested_at: string;
+  first_approved_by?: string;
+  first_approved_by_role?: string;
+  first_approved_at?: string;
+  first_approval_note?: string;
+  second_approved_by?: string;
+  second_approved_by_role?: string;
+  second_approved_at?: string;
+  second_approval_note?: string;
+  rejected_by?: string;
+  rejected_by_role?: string;
+  rejected_at?: string;
+  rejection_reason?: string;
+  applied_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+export type BillingCreditChangePage = {
+  items: BillingCreditChangeRequest[];
+  next_cursor?: string | null;
+  limit?: number;
+};
 export type AssistArgSpec = {
   name: string;
   label: string;
@@ -1698,6 +1748,53 @@ export type CustomerSMSConsent = {
 export type CustomerSMSConsentUpdate = {
   consent: boolean;
   phone_e164: string;
+};
+export type CustomerJob = {
+  job_id: string;
+  customer_id: string;
+  branch_id: string;
+  job_no: string;
+  name: string;
+  ship_to_address?: { [key: string]: unknown };
+  po_reference?: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  credit_limit_cents?: number;
+  terms_days?: number;
+  effective_terms_days?: number;
+  status: "OPEN" | "CLOSED";
+  substantial_performance_date?: string;
+  last_supply_date?: string;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+export type CustomerJobCreate = {
+  job_no: string;
+  name: string;
+  branch_id?: string;
+  ship_to_address?: { [key: string]: unknown };
+  po_reference?: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  credit_limit_cents?: number | null;
+  terms_days?: number | null;
+  substantial_performance_date?: string;
+  last_supply_date?: string;
+};
+export type CustomerJobEdit = {
+  name?: string;
+  ship_to_address?: { [key: string]: unknown };
+  po_reference?: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  credit_limit_cents?: number | null;
+  terms_days?: number | null;
+  substantial_performance_date?: string | null;
+  last_supply_date?: string | null;
 };
 export type PrintingJob = {
   id: string;
@@ -6792,6 +6889,7 @@ export type PurchasingBill = {
   subtotal_cents: number;
   tax_cents: number;
   total_cents: number;
+  doc_total_cents: number;
   currency: PurchasingCurrency;
   fx_rate: number;
   gl_journal_id?: string;
@@ -6825,7 +6923,7 @@ export type PurchasingInstalment = {
   status: "SCHEDULED" | "PAID" | "CANCELLED";
   note: string;
 };
-export type PurchasingBillDetail = PurchasingBill & { lines: PurchasingBillLine[]; instalments: PurchasingInstalment[] };
+export type PurchasingBillDetail = PurchasingBill & { doc_open_cents: number; lines: PurchasingBillLine[]; instalments: PurchasingInstalment[] };
 export type PurchasingVendorCreditStatus = "DRAFT" | "POSTED";
 export type PurchasingVendorCredit = {
   id: string;
@@ -7010,6 +7108,7 @@ export type PurchasingPostBillRequest = {
 };
 export type PurchasingPayBillRequest = {
   amount_cents: number;
+  fx_rate?: number;
   paid_at?: string;
   note?: string;
 };
@@ -7092,6 +7191,9 @@ export type PurchasingAPAgingItem = {
   total_cents: number;
   paid_cents: number;
   open_cents: number;
+  currency: PurchasingCurrency;
+  doc_total_cents: number;
+  doc_open_cents: number;
   freight_cad_cents?: number;
   duty_cad_cents?: number;
   handling_cad_cents?: number;
@@ -7159,6 +7261,7 @@ export type PurchasingPaymentRun = {
   paid_at?: string | null;
   created_at: string;
   lines: PurchasingPaymentRunLine[];
+  left_out?: string[];
 };
 export type PurchasingPaymentRunSummary = {
   id: string;

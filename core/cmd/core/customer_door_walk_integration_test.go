@@ -75,6 +75,8 @@ func walkDoors() []customerDoor {
 		{route: "PUT /api/v1/ar/customers/{customerID}/payment-policy", class: doorWall, path: "/api/v1/ar/customers/%C%/payment-policy", body: `{"ach_first":true,"surcharge_rate_bps":100,"min_ach_cents":1}`},
 		{route: "GET /api/v1/ar/customers/{customerID}/statement", class: doorWall, path: "/api/v1/ar/customers/%C%/statement"},
 		{route: "POST /api/v1/ar/holds", class: doorWall, path: "/api/v1/ar/holds", body: `{"customer_id":"%C%","reason":"walk"}`},
+		{route: "GET /api/v1/ar/credit-changes", class: doorWall, path: "/api/v1/ar/credit-changes?customer_id=%C%"},
+		{route: "POST /api/v1/ar/credit-changes", class: doorWall, path: "/api/v1/ar/credit-changes", body: `{"customer_id":"%C%","new_limit_cents":10000,"reason":"walk"}`},
 		{route: "POST /api/v1/ar/credit-memos", class: doorWall, path: "/api/v1/ar/credit-memos", body: `{"customer_id":"%C%","branch_id":"` + A + `","amount_cents":100,"reason":"walk"}`},
 		{route: "POST /api/v1/ar/credit-memos/quote", class: doorWall, path: "/api/v1/ar/credit-memos/quote", body: `{"customer_id":"%C%","branch_id":"` + A + `","amount_cents":100}`},
 		{route: "POST /api/v1/ar/credits/apply", class: doorAgree, path: "/api/v1/ar/credits/apply", body: `{"customer_id":"%C%","credit_kind":"MEMO","credit_id":"` + walkUUID1 + `","invoice_id":"` + walkUUID2 + `","amount_cents":100,"reason":"walk","idempotency_key":"walk-%C%"}`, reason: "the credit and the invoice are both the account's own and both inside the caller's branch reach, so an account out of reach names no invoice the caller may touch: the answer is alike (not found), not the wall's 404"},
@@ -96,6 +98,14 @@ func walkDoors() []customerDoor {
 		{route: "PUT /api/v1/customers/{id}/billing-address", class: doorWall, path: "/api/v1/customers/%C%/billing-address", body: `{"postal":"K8V 5P7","province":"ON"}`},
 		{route: "GET /api/v1/customers/{id}/sms-consent", class: doorWall, path: "/api/v1/customers/%C%/sms-consent"},
 		{route: "PUT /api/v1/customers/{id}/sms-consent", class: doorWall, path: "/api/v1/customers/%C%/sms-consent", body: `{"consent":false}`},
+		// JA-1's job accounts: every door reads the customer through GetAccount first, so a customer outside the
+		// caller's reach is not found on all five (the 715 fix round, P2-1), in the customer read's own words, as
+		// GET /api/v1/customers/{id} answers.
+		{route: "GET /api/v1/customers/{id}/jobs", class: doorWall, path: "/api/v1/customers/%C%/jobs", words: `{"error":"not found"}`},
+		{route: "POST /api/v1/customers/{id}/jobs", class: doorWall, path: "/api/v1/customers/%C%/jobs", body: `{"job_no":"WALK-1","name":"Walk job"}`, words: `{"error":"not found"}`},
+		{route: "GET /api/v1/customers/{id}/jobs/{jobId}", class: doorWall, path: "/api/v1/customers/%C%/jobs/" + walkUUID2, words: `{"error":"not found"}`},
+		{route: "PUT /api/v1/customers/{id}/jobs/{jobId}", class: doorWall, path: "/api/v1/customers/%C%/jobs/" + walkUUID2, body: `{"name":"Walk job"}`, words: `{"error":"not found"}`},
+		{route: "POST /api/v1/customers/{id}/jobs/{jobId}/close", class: doorWall, path: "/api/v1/customers/%C%/jobs/" + walkUUID2 + "/close", words: `{"error":"not found"}`},
 		{route: "POST /api/v1/lien/jobs", class: doorWall, path: "/api/v1/lien/jobs", body: `{"job_no":"WALK-1","customer_id":"%C%","branch_id":"` + A + `","description":"walk"}`},
 		{route: "POST /api/v1/messaging/inbound/customer", class: doorWall, path: "/api/v1/messaging/inbound/customer", body: `{"customer_id":"%C%","body":"walk"}`},
 		{route: "DELETE /api/v1/messaging/rep-assignments", class: doorExempt, reason: "requireAdmin is a global scope role, which reaches every account"},

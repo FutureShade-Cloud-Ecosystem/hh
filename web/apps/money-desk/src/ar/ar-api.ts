@@ -114,17 +114,18 @@ export class ArApi {
    *
    * The key rides the Idempotency-Key header, one key per press, so a double press pays once and
    * a retry after a lost answer is judged against the first press. The amount is the server's to
-   * accept or refuse (the open balance caps it); the desk only says what it typed.
+   * accept or refuse (the open balance caps it); the desk only says what it typed. A bill that is not
+   * CAD takes the amount in its own currency and the rate it was paid at (fx_rate).
    */
   payBill(
     id: string,
-    input: { amountCents: number; paidAt: string; note: string },
+    input: { amountCents: number; paidAt: string; note: string; fxRate?: number },
     key: string,
   ): Promise<Result<PurchasingBillDetail>> {
     return staffPurchasing.purchasingPayBill(
       this.#client,
       id,
-      { amount_cents: input.amountCents, paid_at: input.paidAt, note: input.note },
+      { amount_cents: input.amountCents, paid_at: input.paidAt, note: input.note, ...(input.fxRate === undefined ? {} : { fx_rate: input.fxRate }) },
       { idempotencyKey: key },
     );
   }

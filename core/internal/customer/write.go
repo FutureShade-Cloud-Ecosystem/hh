@@ -114,3 +114,25 @@ func (s *Service) UpdateBillingAddress(ctx context.Context, customerID string, a
 	}
 	return s.writer.UpdateBillingAddress(ctx, customerID, norm)
 }
+
+// CreditLimitWriter updates a customer's credit limit in cents. Satisfied by *Repository.
+type CreditLimitWriter interface {
+	UpdateCreditLimit(ctx context.Context, customerID string, newLimitCents int64) (previousCents int64, err error)
+}
+
+// UpdateCreditLimit updates a customer's credit_limit_cents and returns the prior limit in cents.
+func (s *Service) UpdateCreditLimit(ctx context.Context, customerID string, newLimitCents int64) (int64, error) {
+	if customerID == "" {
+		return 0, httpx.BadRequestf("customer id is required")
+	}
+	if newLimitCents < 0 {
+		return 0, httpx.BadRequestf("credit limit cannot be negative")
+	}
+	if cw, ok := s.writer.(CreditLimitWriter); ok && cw != nil {
+		return cw.UpdateCreditLimit(ctx, customerID, newLimitCents)
+	}
+	if cw, ok := s.store.(CreditLimitWriter); ok && cw != nil {
+		return cw.UpdateCreditLimit(ctx, customerID, newLimitCents)
+	}
+	return 0, httpx.BadRequestf("customer credit limit write path not configured")
+}
