@@ -45,6 +45,40 @@
 //      never wears brand colour. That is the form the selection marks take,
 //      so the gold dot inside a locked option is named here too.
 //
+//      ROUND 4 ADDITIONS. The round 3 review found three holes in the legs
+//      above, and each hole was a shape the gate could not see:
+//
+//        - THE VALUE LEG: the fill, the ink and the edge were read with
+//          `includes`, so a value that carried the grey token BESIDE a brand
+//          colour passed. The value is now parsed into its terms, the grey
+//          token must BE the fill, the ink or the edge, and no other colour
+//          may ride beside it.
+//        - THE PAINT LEG: the shorthands and the paint properties were never
+//          read, so a brand edge in a `border-bottom`, a brand glyph in an
+//          svg's `fill`, a brand shadow in a `text-shadow` and a brand
+//          accent in an `accent-color` all passed. The property does not
+//          matter now: a brand colour in ANY declaration of a disabled rule
+//          is named.
+//        - THE TEMPLATE LEG: the scan read one syntax, so a class set from a
+//          variable, a classMap, a `disabled=` property binding, a compound
+//          or a negated condition, and an unquoted aria-disabled were all
+//          invisible. The scan reads each of those shapes now, and it reads
+//          a condition as an implication: a class that is on while the
+//          control is NOT disabled means something else and is not a
+//          disabled state.
+//
+//      THE HONEST LIMITS, said plainly. The template leg can only tie a class
+//      to a disabled binding when both are written in a shape it can read: a
+//      class with no condition (a static class, or a variable that holds a
+//      plain string) is never tied, a classMap is read only when it is
+//      written as an object literal, a variable is resolved only inside its
+//      own file, and a condition the scan cannot compare textually (a call, a
+//      member expression) is not tied. The brand leg reads the accent, the
+//      brand and the stone-amber families; a brand token outside those
+//      families is not refused by it. The derived set is per app, not per
+//      file, so a class named in one file of an app is held in every file of
+//      that app. The design system's README carries the same statement.
+//
 //   2. THE PAINT LEG: a real browser, a real page, the design system's own
 //      sheet. A disabled primary button, a disabled secondary button and a
 //      disabled field each compute background-color equal to
@@ -305,6 +339,110 @@ function declarations(body) {
   return out;
 }
 
+// ── the value leg ──────────────────────────────────────────────────────────────
+//
+// A value is not a string to be searched: it is a list of terms, and only
+// some of the terms can carry a colour. The round 3 gate read a value with
+// `includes`, so a value that carried the grey token BESIDE a brand colour
+// passed, and a value that carried the grey token inside a gradient passed
+// too. The value leg reads the terms, and the grey token must BE the fill,
+// the ink or the edge.
+
+/** The terms of a value: split at the whitespace and the commas that sit at
+ *  the top level, with every function kept whole. */
+function valueTerms(value) {
+  const out = [];
+  let current = '';
+  let depth = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i];
+    if (ch === '(' || ch === '[') {
+      depth += 1;
+      current += ch;
+      continue;
+    }
+    if (ch === ')' || ch === ']') {
+      depth -= 1;
+      current += ch;
+      continue;
+    }
+    if (depth === 0 && (ch === ' ' || ch === '\t' || ch === '\n' || ch === ',')) {
+      if (current !== '') out.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current !== '') out.push(current);
+  return out;
+}
+
+// The functions that paint: a colour function, a gradient, an image. A term
+// that is one of them carries a colour even when its arguments name none.
+const PAINT_FUNCTION =
+  /^(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix|light-dark|device-cmyk|(?:repeating-)?(?:linear|radial|conic)-gradient|image(?:-set)?|cross-fade|element|paint)\(/i;
+
+// The colour keywords a rule can paint with by name. A term that is one of
+// these is a colour term, so `border: 1px solid red` is read as an edge that
+// paints red, not as an edge that names no colour at all.
+const COLOUR_KEYWORD = new Set([
+  'transparent', 'currentcolor',
+  'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque', 'black',
+  'blanchedalmond', 'blue', 'blueviolet', 'brown', 'burlywood', 'cadetblue', 'chartreuse',
+  'chocolate', 'coral', 'cornflowerblue', 'cornsilk', 'crimson', 'cyan', 'darkblue',
+  'darkcyan', 'darkgoldenrod', 'darkgray', 'darkgreen', 'darkgrey', 'darkkhaki',
+  'darkmagenta', 'darkolivegreen', 'darkorange', 'darkorchid', 'darkred', 'darksalmon',
+  'darkseagreen', 'darkslateblue', 'darkslategray', 'darkslategrey', 'darkturquoise',
+  'darkviolet', 'deeppink', 'deepskyblue', 'dimgray', 'dimgrey', 'dodgerblue', 'firebrick',
+  'floralwhite', 'forestgreen', 'fuchsia', 'gainsboro', 'ghostwhite', 'gold', 'goldenrod',
+  'gray', 'green', 'greenyellow', 'grey', 'honeydew', 'hotpink', 'indianred', 'indigo',
+  'ivory', 'khaki', 'lavender', 'lavenderblush', 'lawngreen', 'lemonchiffon', 'lightblue',
+  'lightcoral', 'lightcyan', 'lightgoldenrodyellow', 'lightgray', 'lightgreen', 'lightgrey',
+  'lightpink', 'lightsalmon', 'lightseagreen', 'lightskyblue', 'lightslategray',
+  'lightslategrey', 'lightsteelblue', 'lightyellow', 'lime', 'limegreen', 'linen', 'magenta',
+  'maroon', 'mediumaquamarine', 'mediumblue', 'mediumorchid', 'mediumpurple',
+  'mediumseagreen', 'mediumslateblue', 'mediumspringgreen', 'mediumturquoise',
+  'mediumvioletred', 'midnightblue', 'mintcream', 'mistyrose', 'moccasin', 'navajowhite',
+  'navy', 'oldlace', 'olive', 'olivedrab', 'orange', 'orangered', 'orchid', 'palegoldenrod',
+  'palegreen', 'paleturquoise', 'palevioletred', 'papayawhip', 'peachpuff', 'peru', 'pink',
+  'plum', 'powderblue', 'purple', 'rebeccapurple', 'red', 'rosybrown', 'royalblue',
+  'saddlebrown', 'salmon', 'sandybrown', 'seagreen', 'seashell', 'sienna', 'silver',
+  'skyblue', 'slateblue', 'slategray', 'slategrey', 'snow', 'springgreen', 'steelblue', 'tan',
+  'teal', 'thistle', 'tomato', 'turquoise', 'violet', 'wheat', 'white', 'whitesmoke',
+  'yellow', 'yellowgreen',
+]);
+
+/** True when a term can carry a colour. */
+function isColourTerm(term) {
+  const text = term.trim();
+  if (text === '') return false;
+  const lower = text.toLowerCase();
+  if (lower.startsWith('var(')) return true;
+  if (text.startsWith('#')) return true;
+  if (PAINT_FUNCTION.test(lower)) return true;
+  if (COLOUR_KEYWORD.has(lower)) return true;
+  return false;
+}
+
+/** The colour terms of a value: the terms that carry a colour, as written. */
+function colourTerms(value) {
+  return valueTerms(value).filter((term) => isColourTerm(term));
+}
+
+/** True when a term is exactly the token. An !important rides beside the
+ *  value as a term of its own, so it never lands here. */
+function isToken(term, token) {
+  return term.trim().toLowerCase() === token.toLowerCase();
+}
+
+/** True when every colour term of a value is exactly one of the tokens, and
+ *  there is at least one of them. A value that names no colour at all fails:
+ *  a disabled control states its fill, its ink and its edge. */
+function termsAreTokens(terms, tokens) {
+  if (terms.length === 0) return false;
+  return terms.every((term) => tokens.some((token) => isToken(term, token)));
+}
+
 const DISABLED_FILL = 'var(--hh-disabled-fill)';
 const DISABLED_INK = 'var(--hh-disabled-ink)';
 const DISABLED_LINE = 'var(--hh-disabled-line)';
@@ -410,10 +548,11 @@ function markupTags(src) {
   return out;
 }
 
-/** The value of every class attribute of a tag. */
+/** The value of every class attribute of a tag. An attribute that only ends
+ *  in "class" (a data-class) is not a class attribute. */
 function classAttributeValues(tag) {
   const out = [];
-  const re = /class\s*=\s*/g;
+  const re = /(?<![\w-])class\s*=\s*/g;
   let m;
   while ((m = re.exec(tag)) !== null) {
     let i = m.index + m[0].length;
@@ -432,7 +571,10 @@ function classAttributeValues(tag) {
       re.lastIndex = j + 1;
     } else if (tag[i] === '$' && tag[i + 1] === '{') {
       const end = interpolationEnd(tag, i);
-      out.push(tag.slice(i + 2, end - 1));
+      // the whole interpolation, braces and all: a class attribute that is
+      // one interpolation (a classMap, a variable) is read as an
+      // interpolation, not as a bare word
+      out.push(tag.slice(i, end));
       re.lastIndex = end;
     } else {
       const sp = tag.slice(i).search(/\s/);
@@ -470,24 +612,249 @@ function ternaryArms(expr) {
   return null;
 }
 
+// ── the conditions ─────────────────────────────────────────────────────────────
+//
+// The round 3 template leg compared two condition strings for equality: the
+// class's condition and the disabled binding's condition had to be the same
+// text. That is the shape one syntax produced, and nothing else. The scan
+// now reads a condition as a small tree (an atom, a negation, a conjunction,
+// a disjunction) and asks the one question that matters: when the class is
+// on, is the control disabled? A class that is on while the control is
+// enabled means something else (a variant, a scope tab, a flash) and must not
+// be read as a disabled state.
+
+/** Splits an expression at the top level on an operator, keeping the
+ *  parentheses, the brackets, the braces and the strings whole. */
+function splitTopLevel(text, operator) {
+  const out = [];
+  let current = '';
+  let depth = 0;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const q = ch;
+      current += ch;
+      i += 1;
+      while (i < text.length) {
+        current += text[i];
+        if (text[i] === '\\') {
+          current += text[i + 1] ?? '';
+          i += 2;
+          continue;
+        }
+        if (text[i] === q) {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') depth -= 1;
+    if (depth === 0 && text.startsWith(operator, i)) {
+      out.push(current);
+      current = '';
+      i += operator.length;
+      continue;
+    }
+    current += ch;
+    i += 1;
+  }
+  out.push(current);
+  return out;
+}
+
+/** True when the first parenthesis of the text is closed by its last one, so
+ *  the pair wraps the whole text and can be taken off. */
+function wrapsWhole(text) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) return i === text.length - 1;
+    }
+  }
+  return false;
+}
+
+/** The text with its outermost parentheses removed, when they wrap the whole
+ *  text. */
+function stripOuterParens(text) {
+  let out = text;
+  while (out.startsWith('(') && out.endsWith(')') && wrapsWhole(out)) {
+    out = out.slice(1, -1).trim();
+  }
+  return out;
+}
+
+/** A condition, parsed into the four shapes the scan can reason about. */
+function parseCondition(text) {
+  const s = String(text).replace(/\s+/g, ' ').trim();
+  if (s === '') return { kind: 'atom', text: '' };
+  const bare = stripOuterParens(s);
+  if (bare !== s) return parseCondition(bare);
+  const ors = splitTopLevel(s, '||');
+  if (ors.length > 1) return { kind: 'or', of: ors.map(parseCondition) };
+  const ands = splitTopLevel(s, '&&');
+  if (ands.length > 1) return { kind: 'and', of: ands.map(parseCondition) };
+  if (s.startsWith('!') && s[1] !== '=') return { kind: 'not', of: parseCondition(s.slice(1)) };
+  return { kind: 'atom', text: s };
+}
+
+/** True when a implies b: whenever a holds, b holds. The relation the
+ *  template leg needs. */
+function implies(a, b) {
+  if (a.kind === 'not') return b.kind === 'not' && implies(a.of, b.of);
+  if (b.kind === 'not') return false;
+  if (a.kind === 'atom' && b.kind === 'atom') return a.text === b.text;
+  if (a.kind === 'atom' && b.kind === 'or') return b.of.some((y) => implies(a, y));
+  if (a.kind === 'and') return a.of.some((x) => implies(x, b));
+  if (a.kind === 'or') return a.of.every((x) => implies(x, b));
+  return false;
+}
+
+/** The condition under which a boolean expression is true. A ternary that
+ *  names "true" in one arm and "false" in the other yields its condition, or
+ *  its negation when the true arm is the else arm. */
+function booleanCondition(expr) {
+  const arms = ternaryArms(expr);
+  if (!arms) return parseCondition(expr);
+  const thenTrue = armIsTrue(arms.then);
+  const elseTrue = armIsTrue(arms.else);
+  if (thenTrue && !elseTrue) return parseCondition(arms.cond);
+  if (!thenTrue && elseTrue) return { kind: 'not', of: parseCondition(arms.cond) };
+  return parseCondition(expr);
+}
+
+/** True when a ternary arm says the value is true. */
+function armIsTrue(arm) {
+  const text = arm.trim().toLowerCase();
+  if (text === 'true') return true;
+  if (text === 'false') return false;
+  const literals = stringLiterals(arm).join(' ').trim().toLowerCase();
+  if (literals.includes('true') && !literals.includes('false')) return true;
+  return false;
+}
+
+/** The local bindings of a source: the name and the expression it holds. A
+ *  class set from a variable is found this way: the variable holds the
+ *  ternary, and the ternary holds the class. */
+function localBindings(src) {
+  const out = new Map();
+  const re = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const expr = expressionAfter(src, m.index + m[0].length);
+    if (expr !== '') out.set(m[1], expr);
+  }
+  return out;
+}
+
+/** The expression that starts at an index: up to the end of the statement, or
+ *  up to the end of the line when the line ends the statement. */
+function expressionAfter(src, i) {
+  let out = '';
+  let depth = 0;
+  let j = i;
+  while (j < src.length) {
+    const ch = src[j];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const q = ch;
+      out += ch;
+      j += 1;
+      while (j < src.length) {
+        out += src[j];
+        if (src[j] === '\\') {
+          out += src[j + 1] ?? '';
+          j += 2;
+          continue;
+        }
+        if (src[j] === q) {
+          j += 1;
+          break;
+        }
+        j += 1;
+      }
+      continue;
+    }
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') depth -= 1;
+    if (depth === 0 && ch === ';') break;
+    if (depth === 0 && ch === '\n') {
+      // the expression continues when the next line opens a continuation
+      const next = /^\s*(?:\?|:|&&|\|\||\+|=)/.exec(src.slice(j + 1));
+      if (next === null) break;
+      out += ch;
+      j += 1;
+      continue;
+    }
+    out += ch;
+    j += 1;
+  }
+  return out.trim();
+}
+
+/** The class tokens a ternary arm names. */
+function classTokensIn(arm) {
+  const out = [];
+  for (const tok of stringLiterals(arm).join(' ').split(/\s+/)) {
+    if (tok !== '') out.push(tok);
+  }
+  return out;
+}
+
+/** The entries of a classMap call in an expression: the class each key names
+ *  and the condition it rides on. A classMap is only read when it is written
+ *  as an object literal; that limit is stated in the header and the README. */
+function classMapEntries(expr) {
+  const out = [];
+  const at = expr.indexOf('classMap(');
+  if (at === -1) return out;
+  let i = at + 'classMap('.length;
+  while (i < expr.length && /\s/.test(expr[i])) i += 1;
+  if (expr[i] !== '{') return out;
+  let depth = 0;
+  let end = expr.length;
+  for (let j = i; j < expr.length; j += 1) {
+    if (expr[j] === '{') depth += 1;
+    else if (expr[j] === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        end = j;
+        break;
+      }
+    }
+  }
+  const body = expr.slice(i + 1, end);
+  for (const entry of splitTopLevel(body, ',')) {
+    const parts = splitTopLevel(entry, ':');
+    if (parts.length < 2) continue;
+    const key = parts[0].trim().replace(/^["']|["']$/g, '');
+    const value = parts.slice(1).join(':').trim();
+    for (const tok of key.split(/\s+/)) {
+      if (tok !== '') out.push({ tok, cond: value });
+    }
+  }
+  return out;
+}
+
 /** The class tokens a class attribute value toggles, with the condition that
- *  carries them and the arm of the ternary they sit in. */
-function conditionalClassTokens(value) {
+ *  carries them. The shapes: a ternary in an interpolation, a classMap call,
+ *  and a variable that holds either of the two. A class with no condition at
+ *  all (a static class, or a variable holding a plain string) carries no
+ *  condition and is never tied to a disabled binding. */
+function classConditions(value, bindings, depth = 0) {
   const out = [];
   let i = 0;
   while (i < value.length) {
     if (value[i] === '$' && value[i + 1] === '{') {
       const end = interpolationEnd(value, i);
       const expr = value.slice(i + 2, end - 1);
-      const arms = ternaryArms(expr);
-      if (arms) {
-        for (const tok of stringLiterals(arms.then).join(' ').split(/\s+/)) {
-          if (tok !== '') out.push({ tok, cond: arms.cond, arm: 'then' });
-        }
-        for (const tok of stringLiterals(arms.else).join(' ').split(/\s+/)) {
-          if (tok !== '') out.push({ tok, cond: arms.cond, arm: 'else' });
-        }
-      }
+      out.push(...expressionClassConditions(expr, bindings, depth));
       i = end;
       continue;
     }
@@ -496,41 +863,105 @@ function conditionalClassTokens(value) {
   return out;
 }
 
-/** The disabled bindings of a tag: { cond, arm }, where the arm is the arm of
- *  the ternary that carries the disabled value. */
-function disabledBindings(tag) {
+/** The class conditions one expression carries. */
+function expressionClassConditions(expr, bindings, depth) {
   const out = [];
-  const q = /\?disabled\s*=\s*\$\{/g;
-  let m;
-  while ((m = q.exec(tag)) !== null) {
-    const end = interpolationEnd(tag, m.index + m[0].length - 2);
-    out.push({ cond: tag.slice(m.index + m[0].length, end - 1).trim(), arm: 'then' });
+  for (const { tok, cond } of classMapEntries(expr)) {
+    out.push({ tok, cond: booleanCondition(cond) });
   }
-  const a = /aria-disabled\s*=\s*"\$\{/g;
-  while ((m = a.exec(tag)) !== null) {
-    const end = interpolationEnd(tag, m.index + m[0].length - 2);
-    const expr = tag.slice(m.index + m[0].length, end - 1);
-    const arms = ternaryArms(expr);
-    if (!arms) continue;
-    if (stringLiterals(arms.then).join(' ').includes('true')) out.push({ cond: arms.cond, arm: 'then' });
-    if (stringLiterals(arms.else).join(' ').includes('true')) out.push({ cond: arms.cond, arm: 'else' });
+  if (out.length > 0) return out;
+  const arms = ternaryArms(expr);
+  if (arms) {
+    // The class is on when the condition holds, and on when it does not
+    // when it sits in the else arm.
+    for (const tok of classTokensIn(arms.then)) out.push({ tok, cond: parseCondition(arms.cond) });
+    for (const tok of classTokensIn(arms.else)) {
+      out.push({ tok, cond: { kind: 'not', of: parseCondition(arms.cond) } });
+    }
+    return out;
+  }
+  if (depth < 3) {
+    const name = expr.trim();
+    if (/^[A-Za-z_$][\w$]*$/.test(name)) {
+      const held = bindings.get(name);
+      if (held !== undefined) out.push(...expressionClassConditions(held, bindings, depth + 1));
+    }
   }
   return out;
 }
 
+/** The expressions an attribute binding carries. A quoted value holds its
+ *  interpolations; an unquoted value is one interpolation. A static value
+ *  carries none: a static "true" disables the element always, and a class
+ *  that cannot be tied to a condition is not read as a disabled state. */
+function attributeExpressions(tag, name) {
+  const out = [];
+  const re = new RegExp('(?<![\\w-])\\??' + name + '\\s*=\\s*', 'g');
+  let m;
+  while ((m = re.exec(tag)) !== null) {
+    let i = m.index + m[0].length;
+    if (tag[i] === '"' || tag[i] === "'") {
+      const q = tag[i];
+      let j = i + 1;
+      while (j < tag.length) {
+        if (tag[j] === '$' && tag[j + 1] === '{') {
+          const end = interpolationEnd(tag, j);
+          out.push(tag.slice(j + 2, end - 1));
+          j = end;
+          continue;
+        }
+        if (tag[j] === q) break;
+        j += 1;
+      }
+      re.lastIndex = j + 1;
+      continue;
+    }
+    if (tag[i] === '$' && tag[i + 1] === '{') {
+      const end = interpolationEnd(tag, i);
+      out.push(tag.slice(i + 2, end - 1));
+      re.lastIndex = end;
+      continue;
+    }
+    const sp = tag.slice(i).search(/[\s>]/);
+    re.lastIndex = i + (sp === -1 ? 0 : sp);
+  }
+  return out;
+}
+
+/** The conditions under which a tag is disabled. A boolean attribute binding
+ *  (?disabled or disabled) disables the element when its expression holds;
+ *  an aria-disabled or aria-busy binding disables it when it renders "true".
+ *  The round 3 scan read the ?disabled form and the quoted aria-disabled
+ *  form only, and it read them as a condition string to be compared for
+ *  equality. */
+function disabledBindings(tag) {
+  const out = [];
+  for (const expr of attributeExpressions(tag, 'disabled')) out.push(booleanCondition(expr));
+  for (const expr of attributeExpressions(tag, 'aria-disabled')) out.push(booleanCondition(expr));
+  for (const expr of attributeExpressions(tag, 'aria-busy')) out.push(booleanCondition(expr));
+  return out;
+}
+
 /** The state classes a source proves are disabled states: the class tokens a
- *  template toggles on an element under the same condition that disables that
- *  element, in the same arm. */
+ *  template toggles on an element, where the class is on only while that
+ *  element is disabled. */
 function derivedStateClasses(raw) {
   const out = new Set();
   const src = blankComments(raw);
+  // A file that never says "disabled" cannot carry a disabled binding, and
+  // the tree is large: this pre-filter keeps the scan inside its budget.
+  if (!/disabled|aria-busy/i.test(src)) return out;
+  const bindings = localBindings(src);
   for (const tag of markupTags(src)) {
     const binds = disabledBindings(tag);
     if (binds.length === 0) continue;
     for (const value of classAttributeValues(tag)) {
-      for (const { tok, cond, arm } of conditionalClassTokens(value)) {
+      for (const { tok, cond } of classConditions(value, bindings)) {
         for (const bind of binds) {
-          if (bind.cond === cond && bind.arm === arm) out.add(tok);
+          if (implies(cond, bind)) {
+            out.add(tok);
+            break;
+          }
         }
       }
     }
@@ -562,16 +993,36 @@ function stripDisabledFromCompound(comp) {
     .replace(/\.is-disabled(?![-\w])/g, '');
 }
 
-/** The edge colours a disabled rule may paint: every side of the border, the
- *  outline, the decoration and the column rule. Round 3 reads each one
- *  separately, because `border-color` being grey says nothing about
- *  `border-top-color`. */
-const EDGE_COLOURS = new Set([
+/** The edge a disabled rule may paint: the border and every side of it, the
+ *  outline, the decoration and the column rule. Round 3 read each colour
+ *  longhand separately, because `border-color` being grey says nothing about
+ *  `border-top-color`, but it read none of the shorthands, so
+ *  `border-bottom: 3px solid var(--hh-accent)` said what `border-color` would
+ *  have said, in a property the gate never read. */
+const EDGE_PROPS = new Set([
+  'border',
+  'border-top',
+  'border-right',
+  'border-bottom',
+  'border-left',
+  'border-block',
+  'border-block-start',
+  'border-block-end',
+  'border-inline',
+  'border-inline-start',
+  'border-inline-end',
   'border-color',
   'border-top-color',
   'border-right-color',
   'border-bottom-color',
   'border-left-color',
+  'border-block-color',
+  'border-block-start-color',
+  'border-block-end-color',
+  'border-inline-color',
+  'border-inline-start-color',
+  'border-inline-end-color',
+  'outline',
   'outline-color',
   'text-decoration-color',
   'column-rule-color',
@@ -622,7 +1073,23 @@ function ruleOffenders(rel, rule, selector, decls, isPiece) {
   if (!isPiece && !decls.some(([prop]) => prop === 'color')) {
     offenders.push(`${rel}:${rule.line} ${selector} -> no ink of its own`);
   }
+  // A piece of a disabled control is painted with the ink as well as the
+  // line: a mark inside a locked control is a ring of the disabled ink,
+  // and a ring of the disabled line. The control itself wears the line.
+  const edgeTokens = isPiece
+    ? [DISABLED_LINE, CONTROL_LINE, DISABLED_INK]
+    : [DISABLED_LINE, CONTROL_LINE];
   for (const [prop, value] of decls) {
+    // The brand refusal, and it comes first because it holds for every
+    // property: a disabled control, and every piece of one, wears the grey
+    // tokens, and a brand colour in ANY declaration of the rule is the
+    // defect the rule names. The round 3 gate read a fixed list of
+    // properties, so a brand edge in a shorthand, a brand glyph in an svg
+    // and a brand shadow in a text-shadow all passed.
+    if (BRAND_COLOUR.test(value)) {
+      offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value} (a brand colour in a disabled rule)`);
+      continue;
+    }
     if (prop === 'opacity') {
       // The declared opacity is exactly 1 (or 100%). A value below 1 is a
       // fade, and a value the lint cannot read (var(--x), 50%) is a fade
@@ -634,7 +1101,11 @@ function ruleOffenders(rel, rule, selector, decls, isPiece) {
     } else if (prop === 'filter') {
       offenders.push(`${rel}:${rule.line} ${selector} -> filter: ${value}`);
     } else if (prop === 'background' || prop === 'background-color') {
-      if (!value.includes(DISABLED_FILL) || TRANSPARENT_MIX.test(value)) {
+      // The fill is the flat grey token and nothing else. The value is read
+      // as its terms, so a value that carries the token BESIDE another
+      // colour is named, and a gradient built out of the token is named too:
+      // the fill of a disabled control is flat.
+      if (!termsAreTokens(colourTerms(value), [DISABLED_FILL]) || TRANSPARENT_MIX.test(value)) {
         offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
       }
     } else if (prop === 'background-image') {
@@ -644,23 +1115,17 @@ function ruleOffenders(rel, rule, selector, decls, isPiece) {
         offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
       }
     } else if (prop === 'color') {
-      if (!value.includes(DISABLED_INK) || TRANSPARENT_MIX.test(value)) {
+      if (!termsAreTokens(colourTerms(value), [DISABLED_INK]) || TRANSPARENT_MIX.test(value)) {
         offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
       }
-    } else if (prop === 'border' || EDGE_COLOURS.has(prop)) {
-      // A piece of a disabled control is painted with the ink as well as the
-      // line: a mark inside a locked control is a ring of the disabled ink,
-      // and a ring of the disabled line. The control itself wears the line.
-      const allowed = isPiece
-        ? [DISABLED_LINE, CONTROL_LINE, DISABLED_INK]
-        : [DISABLED_LINE, CONTROL_LINE];
-      if (!allowed.some((token) => value.includes(token)) || TRANSPARENT_MIX.test(value)) {
+    } else if (EDGE_PROPS.has(prop)) {
+      if (!termsAreTokens(colourTerms(value), edgeTokens) || TRANSPARENT_MIX.test(value)) {
         offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
       }
     } else if (prop === 'box-shadow') {
-      // A shadow is an edge too: no brand colour in it, and no translucent
-      // mix. The disabled line inside a border is the mark the rule admits.
-      if (BRAND_COLOUR.test(value) || TRANSPARENT_MIX.test(value)) {
+      // A shadow is an edge too: no translucent mix in it. A brand colour in
+      // it was named above, with every other property.
+      if (TRANSPARENT_MIX.test(value)) {
         offenders.push(`${rel}:${rule.line} ${selector} -> ${prop}: ${value}`);
       }
     }
@@ -813,6 +1278,35 @@ test('the known marked rules still exist, in their own file, with their marker',
       `${pin.rel} must still hold ${pin.selector} with the ${STATE_MARKER} marker: the marker is what holds a\n` +
         `bare-word state class, and a rule that loses it goes back to a brand fill unseen.`,
     );
+  }
+});
+
+// ── the template reach, pinned ──────────────────────────────────────────────────
+//
+// The template leg is the one leg that finds a state class nobody marked, and
+// the round 4 widening is what gives it reach: a class set from a variable and
+// an unquoted aria-busy binding are two shapes the round 3 scan could not
+// tie to each other, and the front-door's starting card is written in both.
+// The reach is pinned here, because a scan that quietly stops reaching is a
+// gate that looks like it is working.
+
+test('the template leg still reaches the state classes the tree proves', () => {
+  const derived = treeDerivedStateClasses();
+  const reached = {
+    'apps/front-door': ['starting'],
+    'apps/money-desk': ['held'],
+  };
+  for (const [app, expected] of Object.entries(reached)) {
+    const set = derived.get(app) ?? new Set();
+    for (const token of expected) {
+      assert.ok(
+        set.has(token),
+        `the template scan must still reach ${token} in ${app}: it found ${[...set].sort().join(', ') || 'nothing'}.\n` +
+          `A class the markup proves is a disabled state is held to the swap whether or not it carries the marker,\n` +
+          `and the shapes that prove it (a class from a variable, a classMap, a disabled property binding, a\n` +
+          `compound or a negated condition, an unquoted aria-disabled) are the shapes the round 4 scan reads.`,
+      );
+    }
   }
 });
 
@@ -1105,22 +1599,26 @@ test('the value leg: a brand colour beside the grey token is named', () => {
   const probes = [
     {
       from: `background: ${DISABLED_FILL};`,
-      to: 'background: var(--hh-accent), var(--hh-disabled-fill);',
+      prop: 'background',
+      value: 'var(--hh-accent), var(--hh-disabled-fill)',
     },
     {
       from: `border-color: ${DISABLED_LINE};`,
-      to: 'border-color: var(--hh-accent) var(--hh-disabled-line);',
+      prop: 'border-color',
+      value: 'var(--hh-accent) var(--hh-disabled-line)',
     },
     {
       from: `color: ${DISABLED_INK};`,
-      to: 'color: var(--hh-accent, var(--hh-disabled-ink));',
+      prop: 'color',
+      value: 'var(--hh-accent, var(--hh-disabled-ink))',
     },
   ];
   for (const probe of probes) {
-    const found = scanSource('scratch-value-leg.css', probeRule(probe.from, probe.to));
+    const to = `${probe.prop}: ${probe.value};`;
+    const found = scanSource('scratch-value-leg.css', probeRule(probe.from, to));
     assert.ok(
-      found.some((line) => line.includes(probe.to)),
-      `the value ${probe.to} must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
+      found.some((line) => line.includes(`${probe.prop}: ${probe.value}`)),
+      `the value ${probe.value} must be named, the scan saw only: ${found.join(' | ') || 'nothing'}`,
     );
   }
 });
@@ -1154,34 +1652,40 @@ test('the template leg: the scan reaches the shapes that hold a disabled state',
   // The reader's six template probes. Each one is a class that IS a disabled
   // state, written in a shape the round 3 scan could not tie to the disabled
   // binding.
+  //
+  // The fixtures are the markup, with no template tag on them: this package's
+  // own position gate reads the binding positions of every html and svg
+  // template it finds, and a fixture here is a string the lint reads, not a
+  // template this package renders. Two of the shapes below (a classMap, a
+  // disabled property binding) are shapes this package's own position gate
+  // refuses, which is exactly why a lint over the whole tree must reach them.
   const probes = [
     {
       name: 'a class set from a variable',
       scratch: [
         'const c = busy ? "waiting" : "";',
-        'const view = html`<button class="w ${c}" ?disabled=${busy}>Wait</button>`;',
+        '<button class="w ${c}" ?disabled=${busy}>Wait</button>',
       ].join('\n'),
     },
     {
       name: 'a classMap',
-      scratch: 'const view = html`<button class=${classMap({ waiting: busy })} ?disabled=${busy}>Wait</button>`;',
+      scratch: '<button class=${classMap({ waiting: busy })} ?disabled=${busy}>Wait</button>',
     },
     {
       name: 'a disabled property binding',
-      scratch: 'const view = html`<button class="w ${busy ? "waiting" : ""}" disabled=${busy}>Wait</button>`;',
+      scratch: '<button class="w ${busy ? "waiting" : ""}" disabled=${busy}>Wait</button>',
     },
     {
       name: 'a compound condition',
-      scratch: 'const view = html`<button class="w ${busy ? "waiting" : ""}" ?disabled=${busy || x}>Wait</button>`;',
+      scratch: '<button class="w ${busy ? "waiting" : ""}" ?disabled=${busy || x}>Wait</button>',
     },
     {
       name: 'an unquoted aria-disabled',
-      scratch:
-        'const view = html`<button class="w ${busy ? "waiting" : ""}" aria-disabled=${busy ? "true" : "false"}>Wait</button>`;',
+      scratch: '<button class="w ${busy ? "waiting" : ""}" aria-disabled=${busy ? "true" : "false"}>Wait</button>',
     },
     {
       name: 'a negated condition',
-      scratch: 'const view = html`<button class="w ${ok ? "" : "waiting"}" ?disabled=${!ok}>Wait</button>`;',
+      scratch: '<button class="w ${ok ? "" : "waiting"}" ?disabled=${!ok}>Wait</button>',
     },
   ];
   for (const probe of probes) {
@@ -1198,10 +1702,8 @@ test('the template leg: a class the scan reaches is held to the disabled swap', 
   // the rule that paints it.
   const scratch = [
     'const c = busy ? "waiting" : "";',
-    'const view = html`<button class="w ${c}" ?disabled=${busy}>Wait</button>`;',
-    'const styles = css`',
-    '  .waiting { opacity: 0.4; background: var(--hh-accent); }',
-    '`;',
+    '<button class="w ${c}" ?disabled=${busy}>Wait</button>',
+    '.waiting { opacity: 0.4; background: var(--hh-accent); }',
   ].join('\n');
   const derived = derivedStateClasses(scratch);
   const found = scanSource('scratch-template-leg.ts', scratch, derived);
@@ -1222,15 +1724,15 @@ test('the template leg: a class that is on while the control is enabled is not a
   const probes = [
     {
       name: 'another condition',
-      scratch: 'const view = html`<button class="w ${variant ? "waiting" : ""}" ?disabled=${busy}>Wait</button>`;',
+      scratch: '<button class="w ${variant ? "waiting" : ""}" ?disabled=${busy}>Wait</button>',
     },
     {
       name: 'the negation of the disabled condition',
-      scratch: 'const view = html`<button class="w ${busy ? "waiting" : ""}" ?disabled=${!busy}>Wait</button>`;',
+      scratch: '<button class="w ${busy ? "waiting" : ""}" ?disabled=${!busy}>Wait</button>',
     },
     {
       name: 'a condition the disabled binding only sometimes reaches',
-      scratch: 'const view = html`<button class="w ${busy ? "waiting" : ""}" ?disabled=${busy && x}>Wait</button>`;',
+      scratch: '<button class="w ${busy ? "waiting" : ""}" ?disabled=${busy && x}>Wait</button>',
     },
   ];
   for (const probe of probes) {

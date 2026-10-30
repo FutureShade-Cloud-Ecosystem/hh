@@ -123,6 +123,52 @@ you, in this package and in any package that adopts its rules.
   the raw-markup gate above, and a headless-browser leg (see below) that
   registers the real custom elements and asserts each kit in each state in a
   live page.
+
+## The disabled gate, and what it cannot see
+
+`test/disabled-token.test.mjs` holds the house's disabled rule across the
+whole web tree: a disabled control DROPS ITS FILL AND GOES GREY through the
+`--hh-disabled-*` token swap, it never fades, and it never keeps a brand
+colour. The gate reads every shipped style under `web/apps` and
+`web/packages`, and every template those apps render.
+
+The gate's legs, and the limits each leg carries, stated plainly so nobody
+reads a green gate as more than it is:
+
+- **The value leg.** A value is parsed into its terms, not searched. The fill,
+  the ink and the edge must BE the grey token; no other colour may ride beside
+  them, and a brand colour is refused in EVERY declaration of a disabled rule,
+  whatever the property, so a brand edge in a shorthand, a brand glyph in an
+  svg's `fill`, a brand accent and a brand shadow are all named. LIMIT: the
+  brand refusal reads the accent family, the brand family and the till's stone
+  amber. A brand token outside those families (the quote blue family, a
+  numbered brand token) is not refused by that leg.
+- **The template leg.** A class that a template proves is a disabled state is
+  held to the swap whether or not it carries the `hh-disabled-state` marker.
+  The scan reads a class set from a variable, a `classMap`, a `disabled=`
+  property binding, a compound (`a || b`, `a && b`) and a negated (`!x`)
+  condition, and an unquoted `aria-disabled` or `aria-busy`; it reads a
+  condition as an implication, so a class that is on while the control is NOT
+  disabled is not a disabled state. LIMITS: a class with no condition at all
+  (a static class, or a variable that holds a plain string) is never tied; a
+  `classMap` is read only when it is written as an object literal; a variable
+  is resolved only inside its own file; a condition the scan cannot compare
+  textually (a call, a member expression) is not tied; the derived set is per
+  app, not per file, so a class named in one file of an app is held in every
+  file of that app; and the scan reads source, not the cascade, so a rule that
+  paints a disabled control without naming a disabled state at all is out of
+  its reach.
+- **The marker and the pins.** A bare-word state class (`.result.off`,
+  `.card.starting`, `.gl-choice-held`) is held by the `hh-disabled-state`
+  marker inside the rule it marks, and the three known marked rules are pinned
+  to their own file, so a deleted marker fails the gate.
+- **The paint leg.** A real browser, the design system's own sheet: a
+  disabled primary, a disabled secondary and a disabled field each compute
+  background-color equal to `--hh-disabled-fill`, color equal to
+  `--hh-disabled-ink` and opacity 1, in both halves. It cannot see a rule
+  written through a PARENT selector, for the reason the person-view gate
+  states below.
+
 - `src/icons/README.md`: the icon package seam. Documentation only; it records
   the registry format (DIB-ICONS-1) this package adopts when the ERP lane
   lands, and how the two icon inventories stay in step. No code imports the
