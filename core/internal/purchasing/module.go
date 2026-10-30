@@ -224,6 +224,10 @@ type Service struct {
 	warrantyCredit WarrantyCreditReader
 	landedPayables LandedCostPayableReader
 	journalClock   GLJournalClock
+	// postingWindow reads the GL's posting horizon: whether a payment dated on a house day
+	// would post at all. A payment run asks it before it takes a pay date, so a date the
+	// books would refuse is refused at the desk and not only at the pay.
+	postingWindow GLPostingWindow
 
 	// now is the injected clock. The document stamps a printed-at time, and a document that read
 	// the wall clock directly could not be rendered identically twice in a test.
@@ -431,6 +435,18 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/purchasing/vendor-credits", g.RequireManager(h.staff(h.listVendorCredits)))
 	r.Handle("POST /api/v1/purchasing/vendor-credits/{id}/post", g.RequireManager(h.staff(h.postVendorCredit)))
 	r.Handle("POST /api/v1/purchasing/vendor-credits/{id}/applications", g.RequireManager(h.staff(h.applyVendorCredit)))
+
+	// W3 payment runs. The run is the AP clerk's propose, review and pay over a branch's open
+	// bills, and every one of its doors moves money or decides what money moves: RequireManager
+	// throughout, including the two reads, the list being a worklist of cheques about to go out and
+	// the document carrying every amount on it. The pay itself goes bill by bill through the
+	// bill payments door beside this block, one key per bill, so the run writes no journal of its
+	// own and the books keep the one payment path they already had.
+	r.Handle("POST /api/v1/purchasing/payment-runs", g.RequireManager(h.staff(h.proposePaymentRun)))
+	r.Handle("GET /api/v1/purchasing/payment-runs", g.RequireManager(h.staff(h.listPaymentRuns)))
+	r.Handle("GET /api/v1/purchasing/payment-runs/{id}", g.RequireManager(h.staff(h.getPaymentRun)))
+	r.Handle("PUT /api/v1/purchasing/payment-runs/{id}", g.RequireManager(h.staff(h.updatePaymentRun)))
+	r.Handle("POST /api/v1/purchasing/payment-runs/{id}/pay", g.RequireManager(h.staff(h.payPaymentRun)))
 
 	r.Handle("GET /api/v1/purchasing/tolerance", g.RequireStaff(h.staff(h.getTolerance)))
 	r.Handle("PUT /api/v1/purchasing/tolerance", g.RequireAdmin(h.staff(h.setTolerance)))

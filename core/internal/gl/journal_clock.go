@@ -51,11 +51,11 @@ func (s *Service) JournalSourceRefByKey(ctx context.Context, key string) (string
 	return s.repo.JournalSourceRefByKey(ctx, key)
 }
 
-// JournalAmountByKey returns the posted cents of the POSTED journal filed under an
-// idempotency key, found false when no POSTED journal carries it. The amount is the
-// journal's debit legs' sum: a balanced journal's amount. This is the replay
-// judgement's amount side, so a key's first payment answers only a press of the
-// same amount.
+// JournalAmountByKey returns the amount the POSTED journal filed under an idempotency key
+// moved, found false when no POSTED journal carries it. A journal is balanced, so the sum of
+// its debit lines is what it moved: this is the other half of JournalSourceRefByKey's
+// question, which document the key paid and how much, serving both PayBill's replay amount
+// judgement and a payment run's read of what its own key already paid.
 func (s *Service) JournalAmountByKey(ctx context.Context, key string) (int64, bool, error) {
 	return s.repo.JournalAmountByKey(ctx, key)
 }
@@ -161,27 +161,26 @@ func (r *Repository) JournalSourceRefByKey(ctx context.Context, key string) (str
 	return ref, true, nil
 }
 
+// JournalAmountByKey is JournalAmountByKey's repository read: the debit total of the POSTED
+// journal filed under the key. The journal's own lines are the amount, so a credit line's null
+// debit drops out of the sum and the balanced journal's debits are what it moved.
 func (r *Repository) JournalAmountByKey(ctx context.Context, key string) (int64, bool, error) {
 	if r.pool == nil {
 		return 0, false, errNoDB
 	}
-	var found bool
 	var amount int64
 	err := r.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM gl_journals j
-			 WHERE j.status = 'POSTED' AND j.idempotency_key = $1
-		),
-		COALESCE((
-			SELECT SUM(l.debit_cents)
-			  FROM gl_journal_lines l
-			  JOIN gl_journals j ON j.id = l.journal_id
-			 WHERE j.status = 'POSTED' AND j.idempotency_key = $1
-		), 0)`,
-		key,
-	).Scan(&found, &amount)
+		SELECT COALESCE((SELECT SUM(l.debit_cents)
+		                   FROM gl_journal_lines l
+		                  WHERE l.journal_id = j.id), 0)
+		  FROM gl_journals j
+		 WHERE j.status = 'POSTED' AND j.idempotency_key = $1`, key,
+	).Scan(&amount)
+	if err == pgx.ErrNoRows {
+		return 0, false, nil
+	}
 	if err != nil {
 		return 0, false, fmt.Errorf("gl: journal amount by key: %w", err)
 	}
-	return amount, found, nil
+	return amount, true, nil
 }

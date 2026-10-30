@@ -142,6 +142,7 @@ var demoSeqNotScoped = map[string]string{
 	"msg_channels":                  "its seq is a serial the messaging repository advances",
 	"msg_messages":                  "its seq is a serial the messaging repository advances",
 	"purchasing_receipts":           "its seq is the receipt number within one purchase order",
+	"purchasing_payment_run_lines":  "its seq is the line order within one payment run (migration 0457)",
 	"stock_moves":                   "an append-only ledger (trigger trg_stock_moves_no_update refuses any update) that no sync pull reads",
 	"tasks":                         "stamped into the pick_tasks and weights feeds by repairDemoTaskSync",
 }
