@@ -1,4 +1,4 @@
--- 0455: payment runs, the propose, review, pay document over open vendor bills.
+-- 0457: payment runs, the propose, review, pay document over open vendor bills.
 --
 -- A payment run is the AP clerk's paying morning: pick the posted bills due by a house day (one
 -- branch, optionally one vendor), take some off or lower an amount while the run is still a
