@@ -112,6 +112,7 @@ func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: po
 type Service struct {
 	repo      taxStore
 	glBalance GLBalanceReader
+	glRevenue GLRevenueReader
 	salesHST  SalesHSTReader  // the collected side of the HST reconcile (billing's documents)
 	returnHST ReturnHSTReader // the returns line of the HST reconcile (pos's committed returns)
 	billITCs  BillITCReader   // the input tax credits side (purchasing's posted bills)
@@ -129,6 +130,9 @@ func NewService(repo *Repository) *Service {
 
 // WithGLBalances injects the GL balance seam (the HST→GL reconciliation tie-out).
 func (s *Service) WithGLBalances(r GLBalanceReader) *Service { s.glBalance = r; return s }
+
+// WithGLRevenue injects the GL revenue seam (line 101 of the GST/HST return worksheet).
+func (s *Service) WithGLRevenue(r GLRevenueReader) *Service { s.glRevenue = r; return s }
 
 // WithSalesHSTs injects the collected-side seam: the tax on the period's sales documents (billing).
 func (s *Service) WithSalesHSTs(r SalesHSTReader) *Service { s.salesHST = r; return s }
@@ -183,6 +187,11 @@ func (s *Service) ReconcileReport(ctx context.Context, year, month int, branchID
 	return s.reconcile(ctx, year, month, branchID)
 }
 
+// WorksheetReport returns the read-only CRA GST/HST return worksheet for a filing period and branch scope.
+func (s *Service) WorksheetReport(ctx context.Context, in WorksheetPeriod) (Worksheet, error) {
+	return s.worksheet(ctx, in)
+}
+
 // compile-time assertion: *Service satisfies the tax Provider surface.
 var _ Provider = (*Service)(nil)
 
@@ -216,6 +225,7 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/tax/config", g.RequireAdmin(h.staff(h.updateConfig)))
 	r.Handle("POST /api/v1/tax/recompute", g.RequireAdmin(h.staff(h.recompute)))
 	r.Handle("GET /api/v1/tax/recon", g.RequireManager(h.staff(h.recon)))
+	r.Handle("GET /api/v1/tax/worksheet", g.RequireManager(h.staff(h.worksheet)))
 
 	// Evidence (MASKED-only serialization) + A-21 evidence audit (VIEW/CHANGE/DOWNLOAD) + the tcrd relief gate.
 	// Capture is staff (a cashier attaches evidence at the counter); reads/downloads are manager-gated.

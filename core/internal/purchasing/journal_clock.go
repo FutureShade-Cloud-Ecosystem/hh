@@ -40,8 +40,8 @@ type GLJournalClock interface {
 	// JournalAmountByKey answers the amount the POSTED journal filed under an
 	// idempotency key moved, found false when no journal carries it. It is the
 	// other half of the same question: which document the key paid, and how much
-	// it paid. A caller that paid under a key reads back what its own key already
-	// did through it.
+	// it paid, serving both PayBill's replay amount judgement and a payment run's
+	// read of what its own key already paid.
 	JournalAmountByKey(ctx context.Context, key string) (int64, bool, error)
 }
 

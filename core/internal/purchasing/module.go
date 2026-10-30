@@ -427,6 +427,15 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/purchasing/bills/{id}/payments", g.RequireManager(h.staff(h.payBill)))
 	r.Handle("GET /api/v1/purchasing/ap-aging", g.RequireManager(h.staff(h.apAging)))
 
+	// W3 item 0.8. The supplier credit note's doors sit at the AR credit memo
+	// doors' gate: a credit is a management act, so every one of them is
+	// RequireManager behind the branch fence, and the apply replay key rides the
+	// Idempotency-Key header like a bill payment's.
+	r.Handle("POST /api/v1/purchasing/vendor-credits", g.RequireManager(h.staff(h.createVendorCredit)))
+	r.Handle("GET /api/v1/purchasing/vendor-credits", g.RequireManager(h.staff(h.listVendorCredits)))
+	r.Handle("POST /api/v1/purchasing/vendor-credits/{id}/post", g.RequireManager(h.staff(h.postVendorCredit)))
+	r.Handle("POST /api/v1/purchasing/vendor-credits/{id}/applications", g.RequireManager(h.staff(h.applyVendorCredit)))
+
 	// W3 payment runs. The run is the AP clerk's propose, review and pay over a branch's open
 	// bills, and every one of its doors moves money or decides what money moves: RequireManager
 	// throughout, including the two reads, the list being a worklist of cheques about to go out and

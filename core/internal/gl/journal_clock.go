@@ -54,8 +54,8 @@ func (s *Service) JournalSourceRefByKey(ctx context.Context, key string) (string
 // JournalAmountByKey returns the amount the POSTED journal filed under an idempotency key
 // moved, found false when no POSTED journal carries it. A journal is balanced, so the sum of
 // its debit lines is what it moved: this is the other half of JournalSourceRefByKey's
-// question, which document the key paid and how much, and it is how a caller that paid under
-// a key reads back what its own key already did.
+// question, which document the key paid and how much, serving both PayBill's replay amount
+// judgement and a payment run's read of what its own key already paid.
 func (s *Service) JournalAmountByKey(ctx context.Context, key string) (int64, bool, error) {
 	return s.repo.JournalAmountByKey(ctx, key)
 }
