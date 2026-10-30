@@ -198,6 +198,13 @@ export function payAmountWords(): string {
 }
 
 /**
+ * The Payables area's own views: the open AP board, and the T5018 year report (W3-T51). The area
+ * stands beside the receivables desk in the Money Desk's area switch, so its own nav is the way
+ * from one of its views to the other.
+ */
+export type PayablesView = "aging" | "t5018";
+
+/**
  * The bands, in the desk's one vocabulary, with the contract's field on each. The word is the
  * screen's, the field is the route's, and the key is the core's own key for the band. The two
  * oldest bands carry the desk's aging signal: the signal is the class the Receivables aging tile

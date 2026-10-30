@@ -945,7 +945,7 @@ async function handle(req, res) {
     const body = await readBody(req);
     // The inventory and counts areas' seat: procurement (manage), yard (work) or payables (read).
     if (body?.as !== undefined) roleMode = ["procurement", "yard", "payables"].includes(body.as) ? body.as : "procurement";
-    role = ["procurement-manager", "payables-receivables", "super-admin"].includes(body?.role) ? body.role : role;
+    role = ["procurement-manager", "payables-receivables", "financial-controller", "super-admin"].includes(body?.role) ? body.role : role;
     return json(res, { ok: true, role, as: roleMode });
   }
   if (method === "POST" && path === "/_stub/wall") {

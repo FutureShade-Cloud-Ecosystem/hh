@@ -1071,8 +1071,10 @@ func (r *Repository) InsertVendorMaster(ctx context.Context, orgID, name string,
 	err := r.pool.QueryRow(ctx, vendorSeqCTE+`
 		INSERT INTO vendors (vendor_no, name, payment_terms_days, remit_address, is_active, org_id, seq)
 		VALUES (next_vendor_no(), $1, $2, $3::jsonb, TRUE, $4::uuid, (SELECT next_value FROM vseq))
-		RETURNING id::text, vendor_no::text, name, payment_terms_days, COALESCE(remit_address->>'email',''), is_active`,
-		name, terms, remit, orgID).Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.OrderEmail, &v.IsActive)
+		RETURNING id::text, vendor_no::text, name, payment_terms_days, COALESCE(remit_address->>'email',''), is_active,
+		          is_t5018_subcontractor, COALESCE(business_number, '')`,
+		name, terms, remit, orgID).Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.OrderEmail, &v.IsActive,
+		&v.IsT5018Subcontractor, &v.BusinessNumber)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		// The minted number is already a row (planted by a hand or a load): the sequence has moved
@@ -1127,8 +1129,10 @@ func (r *Repository) UpdateVendorMaster(ctx context.Context, orgID, vendorID str
 			org_id = COALESCE(org_id, $7::uuid),
 			updated_at = now()
 		WHERE id = $1::uuid AND (org_id IS NULL OR org_id = $7::uuid)
-		RETURNING id::text, vendor_no::text, name, payment_terms_days, COALESCE(remit_address->>'email',''), is_active`,
-		vendorID, name, terms, isActive, setEmail, address, orgID).Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.OrderEmail, &v.IsActive)
+		RETURNING id::text, vendor_no::text, name, payment_terms_days, COALESCE(remit_address->>'email',''), is_active,
+		          is_t5018_subcontractor, COALESCE(business_number, '')`,
+		vendorID, name, terms, isActive, setEmail, address, orgID).Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.OrderEmail, &v.IsActive,
+		&v.IsT5018Subcontractor, &v.BusinessNumber)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return VendorMaster{}, ErrUnknownVendor
 	}
