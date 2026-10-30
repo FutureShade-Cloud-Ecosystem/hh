@@ -15,9 +15,11 @@ test("a shortage resolves end to end and the count drops", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Shortages · open" })).toBeVisible();
 
   // The view lists what the yard flagged, with the resolver words beside it. Both seeded
-  // shortages are here, on the one Point Loma pick, in the queue's own order.
-  await expect(page.locator(".shortage[data-shortage]")).toContainText("Only 8 yards left in the bin");
-  await expect(page.locator(".shortage[data-shortage]")).toContainText("Pile is down to fines");
+  // shortages are here, on the one Point Loma pick, in the queue's own order. Each card is
+  // named by its own words: a locator over every shortage card would be a strict mode
+  // violation the moment the world holds two of them, which is what it holds.
+  await expect(page.locator(".shortage[data-shortage]", { hasText: "Only 8 yards left in the bin" })).toHaveCount(1);
+  await expect(page.locator(".shortage[data-shortage]", { hasText: "Pile is down to fines" })).toHaveCount(1);
   await expect(page.locator("[data-test='resolver-words']")).toHaveText(
     "Shortages are resolved by the yard team and the yard manager.",
   );
