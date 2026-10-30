@@ -74,13 +74,16 @@ for (const size of SIZES) {
       await expect(page.locator("[data-t5018-box22-total]")).toHaveText("$6,045.40");
       await expect(page.locator("[data-t5018-threshold]")).toHaveText("under the $500 threshold, no slip");
       await expect(page.locator("[data-t5018-unmarked]")).toHaveText(
-        "1 bill lines are not marked goods or services; they are counted as services until marked",
+        "1 bill line is not marked goods or services; it is counted as services until marked",
       );
+      await expect(page.locator("[data-t5018-services-only]")).toHaveText("Box 22 counts services only");
       if (size.width < 600) {
         const label = await page.locator("[data-t5018-number]").first().evaluate((cell) => getComputedStyle(cell, "::before").content);
         expect(label).toContain("CRA business number");
         const box22Label = await page.locator("[data-t5018-box22]").first().evaluate((cell) => getComputedStyle(cell, "::before").content);
         expect(box22Label).toContain("Box 22");
+        const box22Align = await page.locator("[data-t5018-box22]").first().evaluate((cell) => getComputedStyle(cell).textAlign);
+        expect(["end", "right"]).toContain(box22Align);
       } else {
         await expect(page.locator("[data-t5018-table] thead")).toContainText("CRA business number");
         await expect(page.locator("[data-t5018-table] thead")).toContainText("Box 22");
@@ -123,6 +126,7 @@ for (const size of SIZES) {
       await expect(empty).toHaveAttribute("data-t5018-empty", "none-paid");
       await expect(empty).toContainText("Nothing was paid to marked vendors in 2026");
       await expect(empty).not.toContainText("No vendor is marked");
+      await expect(page.locator("[data-t5018-threshold]")).toHaveText("nothing paid this year");
       await expect(page.getByRole("button", { name: "Download CSV" })).toBeDisabled();
       await shoot(page, "report-unpaid", theme, size.width);
     });

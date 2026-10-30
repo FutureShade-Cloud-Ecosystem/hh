@@ -18,6 +18,7 @@ import {
   t5018EmptyKind,
   t5018Rows,
   t5018RuleNote,
+  t5018ServicesOnlyWords,
   t5018ThresholdWords,
   t5018UnmarkedWords,
   type T5018Model,
@@ -338,6 +339,9 @@ function t5018Panel(model: T5018Model): TemplateResult {
                               ${t5018UnmarkedWords(row) === ""
                                 ? nothing
                                 : html`<span class="dim small" data-t5018-unmarked>${t5018UnmarkedWords(row)}</span>`}
+                              ${t5018ServicesOnlyWords(row) === ""
+                                ? nothing
+                                : html`<span class="dim small" data-t5018-services-only>${t5018ServicesOnlyWords(row)}</span>`}
                             </td>
                             <td data-t5018-number data-label="CRA business number">${businessNumberIsMissing(row)
                               ? html`<span class="pill pill-watch" data-t5018-missing>${businessNumberWords(row)}</span>`

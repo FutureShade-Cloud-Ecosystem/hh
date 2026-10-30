@@ -119,6 +119,7 @@ function t5018Panel(model: VendorsModel, vendor: PurchasingVendor): TemplateResu
   if (!model.canSetT5018) {
     return html`<p class="foot dim" data-t5018-note>The subcontractor mark for the CRA's Form T5018 is the Financial Controller's to set.</p>`;
   }
+  const bnInvalid = model.error.includes("business number");
   return html`
     <div data-t5018>
       <h3 class="sub">T5018 subcontractor</h3>
@@ -126,7 +127,7 @@ function t5018Panel(model: VendorsModel, vendor: PurchasingVendor): TemplateResu
       ${checkBox("This vendor is a subcontractor (T5018)", "toggle-t5018", model.t5018Mark)}
       <div class="forms">
         <label>CRA business number
-          <input type="text" inputmode="numeric" autocomplete="off" data-field="v-bn" data-v-bn />
+          <input type="text" inputmode="numeric" autocomplete="off" data-field="v-bn" data-v-bn aria-invalid="${bnInvalid ? "true" : "false"}" />
           <span class="dim">Nine digits, with RC0001 after them for a program account. Leave blank if the contractor has not given one.</span>
         </label>
       </div>

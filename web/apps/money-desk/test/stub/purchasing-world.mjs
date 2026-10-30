@@ -96,6 +96,7 @@ const SUBCONTRACTORS = [
 const T5018_RULE_NOTE = "T5018 applies only where construction is more than half the dealer's business income.";
 const T5018_THRESHOLD_CENTS = 50_000;
 const T5018_UNDER_THRESHOLD_NOTE = "under the $500 threshold, no slip";
+const T5018_NOTHING_PAID_NOTE = "nothing paid this year";
 
 /** The core's t5018ProRataCents (half to even in integer cents). */
 function t5018ProRataCents(amountCents, partCents, wholeCents) {
@@ -126,6 +127,9 @@ function t5018PaymentShare(paidCents, billSubtotalCents, billTotalCents, billSer
 /** The core's t5018UnmarkedLinesNote. */
 function t5018UnmarkedLinesNote(n) {
   if (n <= 0) return "";
+  if (n === 1) {
+    return "1 bill line is not marked goods or services; it is counted as services until marked";
+  }
   return `${n} bill lines are not marked goods or services; they are counted as services until marked`;
 }
 
@@ -284,7 +288,7 @@ export function createPurchasingWorld({ dayOffset }) {
         box_22_cents: box22Cents,
         services_subtotal_cents: servicesSubtotalCents,
         under_threshold: underThreshold,
-        threshold_note: underThreshold ? T5018_UNDER_THRESHOLD_NOTE : "",
+        threshold_note: paidCents === 0 && box22Cents === 0 ? T5018_NOTHING_PAID_NOTE : underThreshold ? T5018_UNDER_THRESHOLD_NOTE : "",
         unmarked_line_count: unmarkedLineCount,
         unmarked_lines_note: t5018UnmarkedLinesNote(unmarkedLineCount),
       });

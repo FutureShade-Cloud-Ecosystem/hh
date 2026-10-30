@@ -170,14 +170,25 @@ func TestT5018ProRataAndPaymentShare_HalfToEvenAndCRARules(t *testing.T) {
 	}
 	row := finalizeT5018Row(T5018Row{
 		VendorID: "v-under", VendorNo: "VM-0010", Name: "Under Threshold",
-		BusinessNumber: "123456789", Box22Cents: b22, ServicesSubtotalCents: svc,
+		BusinessNumber: "123456789", PaidCents: 54240, Box22Cents: b22, ServicesSubtotalCents: svc,
 		UnmarkedLineCount: 1,
 	})
 	if !row.UnderThreshold || row.ThresholdNote != T5018UnderThresholdNote {
 		t.Fatalf("under-threshold row = %+v, want UnderThreshold=true and note %q", row, T5018UnderThresholdNote)
 	}
-	wantUnmarked := "1 bill lines are not marked goods or services; they are counted as services until marked"
+	wantUnmarked := "1 bill line is not marked goods or services; it is counted as services until marked"
 	if row.UnmarkedLinesNote != wantUnmarked {
 		t.Fatalf("unmarked_lines_note = %q, want %q", row.UnmarkedLinesNote, wantUnmarked)
+	}
+	wantPlural := "2 bill lines are not marked goods or services; they are counted as services until marked"
+	if got := t5018UnmarkedLinesNote(2); got != wantPlural {
+		t.Fatalf("t5018UnmarkedLinesNote(2) = %q, want %q", got, wantPlural)
+	}
+	unpaidRow := finalizeT5018Row(T5018Row{
+		VendorID: "v-zero", VendorNo: "VM-0011", Name: "Unpaid Sub",
+		BusinessNumber: "123456789", PaidCents: 0, Box22Cents: 0, ServicesSubtotalCents: 0,
+	})
+	if unpaidRow.ThresholdNote != "nothing paid this year" {
+		t.Fatalf("unpaid row threshold_note = %q, want %q", unpaidRow.ThresholdNote, "nothing paid this year")
 	}
 }

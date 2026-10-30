@@ -10,6 +10,7 @@ import {
   t5018Filename,
   t5018Rows,
   t5018RuleNote,
+  t5018ServicesOnlyWords,
   t5018ThresholdWords,
   t5018UnmarkedWords,
   t5018VendorsWord,
@@ -98,6 +99,9 @@ test("the T5018 screen shows Box 22, the under-threshold mark, the unmarked word
   assert.equal(t5018Box22Cents(report.items[0]), 104050);
   assert.equal(t5018UnmarkedWords(report.items[0]), "2 bill lines are not marked goods or services; they are counted as services until marked");
   assert.equal(t5018ThresholdWords(report.items[1]), "under the $500 threshold, no slip");
+  assert.equal(t5018ThresholdWords({ ...ROW, paid_cents: 0, box_22_cents: 0, services_subtotal_cents: 0, under_threshold: true, threshold_note: "under the $500 threshold, no slip" }), "nothing paid this year");
+  assert.equal(t5018ServicesOnlyWords(report.items[0]), "Box 22 counts services only");
+  assert.equal(t5018ServicesOnlyWords(report.items[1]), "");
 
   const html = flat(
     renderT5018({
@@ -111,6 +115,7 @@ test("the T5018 screen shows Box 22, the under-threshold mark, the unmarked word
   );
   assert.ok(html.includes("T5018 applies only where construction is more than half the dealer's business income."));
   assert.ok(html.includes("Box 22"));
+  assert.ok(html.includes("Box 22 counts services only"));
   assert.ok(html.includes("$1,040.50"));
   assert.ok(html.includes("$1,582.90"));
   assert.ok(html.includes("under the $500 threshold, no slip"));

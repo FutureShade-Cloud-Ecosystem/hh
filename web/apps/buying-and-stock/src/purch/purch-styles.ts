@@ -34,6 +34,9 @@ export const purchStyles = css`
   .link-inline { white-space: nowrap; }
   .panel > p.dim + .forms, .panel > .forms { margin-top: var(--hh-s-8); }
   .panel.inner { background: var(--hh-row-alt); margin-top: var(--hh-s-16); }
+  .alert { margin-top: var(--hh-s-12); }
+  input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--hh-state-stop); }
+  .forms > .full-span { min-width: 280px; flex: 2 1 360px; grid-column: 1 / -1; }
   .inline-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--hh-s-8); align-items: end; }
   .code-line { grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) auto; }
   .badge-row { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; }

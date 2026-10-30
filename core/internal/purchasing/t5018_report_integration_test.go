@@ -404,7 +404,7 @@ func TestIntegration_T5018Report_CRAServicesShareThresholdTaxAndUnmarkedLines(t 
 		t.Fatalf("unmarked-line vendor services = %d, box_22 = %d, want 70000 and 79100",
 			rUnmarked.ServicesSubtotalCents, rUnmarked.Box22Cents)
 	}
-	wantUnmarkedNote := "1 bill lines are not marked goods or services; they are counted as services until marked"
+	wantUnmarkedNote := "1 bill line is not marked goods or services; it is counted as services until marked"
 	if rUnmarked.UnmarkedLineCount != 1 || rUnmarked.UnmarkedLinesNote != wantUnmarkedNote {
 		t.Fatalf("unmarked-line vendor count = %d note = %q, want 1 and %q",
 			rUnmarked.UnmarkedLineCount, rUnmarked.UnmarkedLinesNote, wantUnmarkedNote)

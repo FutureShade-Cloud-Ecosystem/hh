@@ -196,7 +196,7 @@ function entry(model: BillsModel): TemplateResult {
       </div>
       <p class="dim">The vendor's invoice, against one order. It is matched line by line when it is entered, and nothing is owed until it is posted.</p>
       <div class="forms">
-        <label>Purchase order
+        <label class="full-span">Purchase order
           <select data-field="bill-po" data-bill-po>
             <option>Pick an order</option>
             ${model.billable.map((o) => html`<option>${orderOptionText(o)}</option>`)}
@@ -234,7 +234,7 @@ function entry(model: BillsModel): TemplateResult {
             </div>
           `}
       <h3 class="sub">Line with no purchase order line</h3>
-      <p class="dim">A line not on the purchase order (such as subcontractor work or site labour). Mark whether it is goods or services for T5018.</p>
+      <p class="dim">A line not on the purchase order (such as subcontractor work or site labour). Mark whether it is goods or services for T5018. Not marked is the default and counts as services on T5018 until marked.</p>
       <div class="forms" data-extra-line>
         <label>Line description<input type="text" autocomplete="off" data-field="extra-desc" data-extra-desc /></label>
         <label>Quantity billed<input type="text" inputmode="decimal" autocomplete="off" data-field="extra-qty" data-extra-qty /></label>

@@ -96,8 +96,9 @@ export function t5018Box22Cents(row: PurchasingT5018Row): number {
   return row.box_22_cents;
 }
 
-/** The server's under-threshold words when a subcontractor's pre-tax services are under $500. */
+/** The server's under-threshold or nothing-paid words when a subcontractor's pre-tax services are under $500. */
 export function t5018ThresholdWords(row: PurchasingT5018Row): string {
+  if (row.paid_cents === 0 && row.box_22_cents === 0) return "nothing paid this year";
   if (!row.under_threshold) return "";
   return row.threshold_note !== undefined && row.threshold_note !== "" ? row.threshold_note : "under the $500 threshold, no slip";
 }
@@ -106,4 +107,10 @@ export function t5018ThresholdWords(row: PurchasingT5018Row): string {
 export function t5018UnmarkedWords(row: PurchasingT5018Row): string {
   if (row.unmarked_line_count <= 0) return "";
   return row.unmarked_lines_note ?? "";
+}
+
+/** Short note when a row's Box 22 differs from its total paid because Box 22 counts services only. */
+export function t5018ServicesOnlyWords(row: PurchasingT5018Row): string {
+  if (row.paid_cents === row.box_22_cents) return "";
+  return "Box 22 counts services only";
 }

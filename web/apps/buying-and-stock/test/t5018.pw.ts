@@ -52,6 +52,9 @@ for (const size of SIZES) {
       await block.locator("[data-v-bn]").fill("12345");
       await block.getByRole("button", { name: "Save the T5018 record" }).click();
       await expect(page.locator("[data-error]")).toContainText("nine digits");
+      await expect(block.locator("[data-v-bn]")).toHaveAttribute("aria-invalid", "true");
+      const errorMarginTop = await page.locator("[data-error]").evaluate((el) => parseFloat(getComputedStyle(el).marginTop));
+      expect(errorMarginTop).toBeGreaterThanOrEqual(8);
       await shoot(page, "mark-error", theme, size.width);
 
       await block.locator("[data-v-bn]").fill("123456789");
@@ -67,6 +70,8 @@ for (const size of SIZES) {
       await openAreaAs(page, request, AP, "Vendors");
       if (theme === "charcoal") await charcoal(page);
       await openVendor(page);
+      await expect(page.locator("hh-shell-header button.account")).toContainText("Payables and Receivables");
+      await expect(page.locator("hh-shell-header button.account")).not.toContainText("payables_receivables");
       await expect(page.locator("[data-t5018-note]")).toContainText("Financial Controller's to set");
       await expect(page.locator("[data-t5018]")).toHaveCount(0);
       await shoot(page, "mark-other", theme, size.width);
@@ -77,12 +82,20 @@ for (const size of SIZES) {
       await page.setViewportSize(size);
       await openAreaAs(page, request, AP, "Vendor bills");
       if (theme === "charcoal") await charcoal(page);
+      await expect(page.locator("hh-shell-header button.account")).toContainText("Payables and Receivables");
       await page.getByRole("button", { name: "Enter a bill" }).click();
       await page.locator("[data-bill-po]").selectOption({ label: "PO-PLM-67 · Unilock (demo)" });
+      if (size.width >= 1280) {
+        const poBox = await page.locator("[data-bill-po]").boundingBox();
+        expect(poBox?.width ?? 0).toBeGreaterThanOrEqual(350);
+      }
       await page.locator("[data-bill-no-field]").fill("INV-9052");
       await page.locator("[data-extra-desc]").fill("Subcontractor grading");
       await page.locator("[data-extra-qty]").fill("1");
       await page.locator("[data-extra-cost]").fill("480.00");
+      await expect(page.locator("[data-bill-entry]")).toContainText(
+        "Not marked is the default and counts as services on T5018 until marked.",
+      );
       const group = page.getByRole("group", { name: "Goods or services" });
       await expect(group.getByRole("button", { name: "Not marked" })).toHaveAttribute("aria-pressed", "true");
       await group.getByRole("button", { name: "Services" }).click();

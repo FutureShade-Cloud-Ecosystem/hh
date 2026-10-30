@@ -30,8 +30,16 @@ export function procurementHandoff(): void {
 export function roleHandoff(seat: string | { roleCode: string; userId: string; roleLabel?: string }): void {
   const roleCode = typeof seat === "string" ? seat : seat.roleCode;
   const userId = typeof seat === "string" ? "de110000-0000-4000-9000-000000000009" : seat.userId;
-  // A seat may carry the words its role wears on screen; without them the label is the raw code.
-  const roleLabel = typeof seat === "string" ? roleCode : (seat.roleLabel ?? roleCode);
+  const labels: Record<string, string> = {
+    payables_receivables: "Payables and Receivables",
+    financial_controller: "Financial Controller",
+    procurement_manager: "Procurement manager",
+    yard_manager: "Yard manager",
+    inside_sales: "Inside sales",
+    super_admin: "Super Admin",
+  };
+  // A seat may carry the words its role wears on screen; without them the known label or code is used.
+  const roleLabel = typeof seat === "string" ? (labels[roleCode] ?? roleCode) : (seat.roleLabel ?? labels[roleCode] ?? roleCode);
   const part = (value: unknown): string =>
     btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const exp = Math.floor(Date.now() / 1000) + 7 * 86_400;
@@ -41,7 +49,7 @@ export function roleHandoff(seat: string | { roleCode: string; userId: string; r
     tokenExpiresAtMs: Date.now() + 7 * 86_400_000,
     flow: roleCode,
     roleLabel,
-    user: { userId, email: `${roleCode}@hh-demo.invalid`, name: typeof seat === "string" ? `${roleCode} (demo)` : `${roleLabel} (demo)` },
+    user: { userId, email: `${roleCode}@hh-demo.invalid`, name: `${roleLabel} (demo)` },
     roleCode,
     roleName: roleLabel,
     tier: 2,

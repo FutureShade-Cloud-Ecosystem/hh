@@ -52,6 +52,9 @@ const T5018ThresholdCents int64 = 50000
 // year is under $500.00.
 const T5018UnderThresholdNote = "under the $500 threshold, no slip"
 
+// T5018NothingPaidNote marks a subcontractor vendor who was paid nothing during the year.
+const T5018NothingPaidNote = "nothing paid this year"
+
 // T5018ConstructionIncomeNote states the CRA filing condition for Form T5018: the return applies
 // only where construction is more than half the dealer's business income.
 const T5018ConstructionIncomeNote = "T5018 applies only where construction is more than half the dealer's business income."
@@ -182,6 +185,9 @@ func t5018UnmarkedLinesNote(n int) string {
 	if n <= 0 {
 		return ""
 	}
+	if n == 1 {
+		return "1 bill line is not marked goods or services; it is counted as services until marked"
+	}
 	return fmt.Sprintf("%d bill lines are not marked goods or services; they are counted as services until marked", n)
 }
 
@@ -189,7 +195,9 @@ func t5018UnmarkedLinesNote(n int) string {
 func finalizeT5018Row(row T5018Row) T5018Row {
 	row.BusinessNumberMissing = strings.TrimSpace(row.BusinessNumber) == ""
 	row.UnderThreshold = row.ServicesSubtotalCents < T5018ThresholdCents
-	if row.UnderThreshold {
+	if row.PaidCents == 0 && row.Box22Cents == 0 {
+		row.ThresholdNote = T5018NothingPaidNote
+	} else if row.UnderThreshold {
 		row.ThresholdNote = T5018UnderThresholdNote
 	} else {
 		row.ThresholdNote = ""
