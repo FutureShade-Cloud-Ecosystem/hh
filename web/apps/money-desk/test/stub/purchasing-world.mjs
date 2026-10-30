@@ -43,6 +43,11 @@ const DOCUMENTS = [
   { n: 10, payee: 6, doc: "LC-2207", kind: "LANDED_COST", landed: "DUTY", po: "PO-1108", issued: -105, due: -75, total: 112_000 },
 ];
 
+// The USD bill the "usd" scenario adds: USD 1,000.00 entered at 1.35, so CAD 1,350.00 in the books.
+// It is its own scenario because the board's totals in the other legs are written against the
+// world above, which holds only CAD bills.
+const USD_DOCUMENT = { n: 11, payee: 3, doc: "B-3150", kind: "VENDOR_BILL", issued: -20, due: 10, total: 135_000, currency: "USD", rate: 1.35, docTotal: 100_000 };
+
 /** The band each of the core's bucket keys holds its money in. */
 const BUCKET_FIELD = {
   CURRENT: "current_cents",
@@ -94,6 +99,15 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
   function paidBy(doc, asOf) {
     let paid = doc.paid === undefined || dayOffset(doc.paid_on) > asOf ? 0 : doc.paid;
     for (const payment of payments.get(doc.n) ?? []) {
+      if (payment.on <= asOf) paid += payment.cad;
+    }
+    return paid;
+  }
+
+  /** What has been paid against a document in its own currency on the day the books are read as of. */
+  function paidDocBy(doc, asOf) {
+    let paid = 0;
+    for (const payment of payments.get(doc.n) ?? []) {
       if (payment.on <= asOf) paid += payment.amount;
     }
     return paid;
@@ -109,7 +123,7 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
    */
   function paidTotal(doc) {
     let paid = doc.paid ?? 0;
-    for (const payment of payments.get(doc.n) ?? []) paid += payment.amount;
+    for (const payment of payments.get(doc.n) ?? []) paid += payment.cad;
     return paid;
   }
 
@@ -147,6 +161,7 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
         const paid = paidBy(doc, asOf);
         const open = doc.total - paid;
         if (open <= 0) continue;
+        const docOpen = doc.currency === undefined ? open : doc.docTotal - paidDocBy(doc, asOf);
         const landed = doc.kind === "LANDED_COST";
         // A landed cost falls due the day it is incurred: the core reads its bucket from the day
         // it was created, not from a due date it does not have.
@@ -163,6 +178,9 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
           total_cents: doc.total,
           paid_cents: paid,
           open_cents: open,
+          currency: doc.currency ?? "CAD",
+          doc_total_cents: doc.docTotal ?? doc.total,
+          doc_open_cents: docOpen,
           bucket,
         };
         if (!landed) item.bill_no = doc.doc;
@@ -217,11 +235,25 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
     if (doc === undefined) return { status: 404, error: "purchasing: bill not found" };
     // The core's cap: the sum of the bill's PAID instalments, every one of them, so a payment
     // dated ahead of today still takes the room it needs.
-    const open = doc.total - paidTotal(doc);
-    if (amount > open) return { status: 409, error: `purchasing: payment of ${amount} cents exceeds open balance ${open} cents on bill ${doc.doc}` };
+    // A USD bill is paid in USD at a rate the press names, the way the core's PayBill takes it: the
+    // amount and the cap are in the bill's own currency, and the last payment clears the bill's
+    // exact remaining CAD.
+    const usd = doc.currency === "USD";
+    let cad = amount;
+    let open = doc.total - paidTotal(doc);
+    if (usd) {
+      const rate = Number(body.fx_rate);
+      if (!Number.isFinite(rate) || rate <= 0) return { status: 400, error: "purchasing: fx_rate is required and must be positive when paying a USD bill" };
+      const paidDoc = (payments.get(doc.n) ?? []).reduce((sum, payment) => sum + payment.amount, 0);
+      open = doc.docTotal - paidDoc;
+      if (amount > open) return { status: 409, error: `purchasing: payment of ${amount} cents exceeds open balance ${open} cents on bill ${doc.doc}` };
+      cad = amount === open ? doc.total - paidTotal(doc) : Math.round((doc.total * amount) / doc.docTotal);
+    } else if (amount > open) {
+      return { status: 409, error: `purchasing: payment of ${amount} cents exceeds open balance ${open} cents on bill ${doc.doc}` };
+    }
     // The payment lands on the day it carries: the instant's own day in the house zone.
     const on = body.paid_at === undefined || body.paid_at === "" ? dayOffset(0) : houseDay(new Date(body.paid_at));
-    payments.set(doc.n, [...(payments.get(doc.n) ?? []), { amount, on, note: body.note ?? "" }]);
+    payments.set(doc.n, [...(payments.get(doc.n) ?? []), { amount, cad, on, note: body.note ?? "", rate: usd ? Number(body.fx_rate) : 1 }]);
     keys.set(key, { id, amount });
     return { status: 200, body: billDetail(id) };
   }
@@ -234,7 +266,7 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
       id: `${billId(doc.n)}-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
       seq: index + 1,
       due_date: dayOffset(doc.due),
-      amount_cents: payment.amount,
+      amount_cents: payment.cad,
       status: "PAID",
       note: payment.note,
     }));
@@ -253,8 +285,10 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
       subtotal_cents: doc.total,
       tax_cents: 0,
       total_cents: doc.total,
-      currency: "CAD",
-      fx_rate: 1,
+      currency: doc.currency ?? "CAD",
+      fx_rate: doc.rate ?? 1,
+      doc_total_cents: doc.docTotal ?? doc.total,
+      doc_open_cents: (doc.docTotal ?? doc.total) - (payments.get(doc.n) ?? []).reduce((sum, payment) => sum + payment.amount, 0) - (doc.currency === undefined ? doc.paid ?? 0 : 0),
       created_at: `${dayOffset(doc.issued)}T12:00:00Z`,
       lines: [],
       instalments,
@@ -263,7 +297,7 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
 
   /** Puts the world back to the start; the empty scenario holds no documents at all. */
   function reset(kind = "full") {
-    documents = kind === "empty" ? [] : DOCUMENTS;
+    documents = kind === "empty" ? [] : kind === "usd" ? [...DOCUMENTS, USD_DOCUMENT] : DOCUMENTS;
     payments.clear();
     keys.clear();
   }

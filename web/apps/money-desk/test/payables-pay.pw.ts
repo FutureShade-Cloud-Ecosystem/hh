@@ -448,3 +448,68 @@ test("the Pay control keeps the desk's compact size on a wide screen and meets t
   expect(Math.round(wide!.height)).toBeLessThan(44);
   expect(Math.round(phone!.height)).toBeGreaterThanOrEqual(44);
 });
+
+// A bill in another currency. The "usd" scenario adds B-3150 to Meadowlark Landscape Lighting:
+// USD 1,000.00 entered at 1.35, so CAD 1,350.00 on the books. Its Pay takes the amount in USD and
+// the rate it was paid at, the way the core's PayBill reads them; the CAD open amount stays the
+// figure the board and the row show.
+const MEADOWLARK = "Meadowlark Landscape Lighting (demo)";
+
+async function openUsdBill(page: Page, request: Parameters<typeof openDesk>[1]): Promise<void> {
+  await openDesk(page, request, "controller");
+  const set = await request.post("/_stub/scenario", { data: { name: "usd" } });
+  expect(set.ok()).toBe(true);
+  await openBoard(page);
+  await openPayee(page, MEADOWLARK);
+  await expect(page.locator("[data-line-row]", { hasText: "B-3150" })).toContainText("$1,350.00");
+  await openPayForm(page, "B-3150");
+}
+
+test("a USD bill's Pay shows the open amount in USD, and pays it in full at a different rate", async ({ page, request }) => {
+  await openUsdBill(page, request);
+  await expect(page.locator("[data-pay-target]")).toContainText("The open amount is $1,000.00 USD");
+  await expect(page.locator("[data-field='pay-amount']")).toHaveValue("1000.00");
+  await expect(page.locator("[data-field='pay-rate']")).toBeVisible();
+
+  await page.locator("[data-field='pay-rate']").fill("1.40");
+  await page.locator("[data-action='payables-pay-send']").click();
+
+  // The whole USD amount cleared the bill, so it leaves the payee's open items.
+  await expect(page.locator("[data-pay-form]")).toHaveCount(0);
+  await expect(page.locator("[data-line-row]", { hasText: "B-3150" })).toHaveCount(0);
+  await expect(page.locator("[data-line-row]", { hasText: "B-3102" })).toBeVisible();
+});
+
+test("a part payment on a USD bill lowers the USD open amount the next Pay offers", async ({ page, request }) => {
+  await openUsdBill(page, request);
+  await page.locator("[data-field='pay-amount']").fill("400.00");
+  await page.locator("[data-field='pay-rate']").fill("1.35");
+  await page.locator("[data-action='payables-pay-send']").click();
+
+  await expect(page.locator("[data-pay-form]")).toHaveCount(0);
+  // USD 400.00 at the bill's own rate clears CAD 540.00 of the 1,350.00.
+  await expect(page.locator("[data-line-row]", { hasText: "B-3150" })).toContainText("$810.00");
+  await openPayForm(page, "B-3150");
+  await expect(page.locator("[data-pay-target]")).toContainText("The open amount is $600.00 USD");
+  await expect(page.locator("[data-field='pay-amount']")).toHaveValue("600.00");
+});
+
+test("a USD bill's Pay with no rate is refused in words, and the server is not asked", async ({ page, request }) => {
+  await openUsdBill(page, request);
+  let asked = 0;
+  page.on("request", (req) => {
+    if (req.url().includes("/api/v1/purchasing/bills/") && req.url().endsWith("/payments")) asked += 1;
+  });
+  await page.locator("[data-action='payables-pay-send']").click();
+  await expect(page.locator("[data-pay-error]")).toContainText("Enter the rate the payment was made at");
+  expect(asked).toBe(0);
+  await expect(page.locator("[data-line-row]", { hasText: "B-3150" })).toContainText("$1,350.00");
+});
+
+test("a CAD bill's Pay form has no rate box", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openBoard(page);
+  await openPayee(page, "Saltmarsh Fasteners (demo)");
+  await openPayForm(page, "B-4107");
+  await expect(page.locator("[data-field='pay-rate']")).toHaveCount(0);
+});

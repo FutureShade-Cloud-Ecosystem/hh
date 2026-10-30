@@ -71,6 +71,20 @@ func (h *Handler) retro(w http.ResponseWriter, r *http.Request, caller guards.St
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": StatusRetroAdjusted})
 }
 
+func (h *Handler) settle(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in SettleInput
+	if r.ContentLength != 0 {
+		if !decodeJSON(w, r, &in) {
+			return
+		}
+	}
+	if err := h.svc.Settle(r.Context(), r.PathValue("id"), in); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": StatusPosted})
+}
+
 func (h *Handler) void(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	if err := h.svc.Void(r.Context(), r.PathValue("id")); err != nil {
 		h.writeErr(w, r, err)
