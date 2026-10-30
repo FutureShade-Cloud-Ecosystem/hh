@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PurchasingAPAgingPage, PurchasingAddLineRequest, PurchasingApplyVendorCreditRequest, PurchasingApplyWarrantyCreditRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingCreateVendorCreditRequest, PurchasingCreateVendorRequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPayBillRequest, PurchasingPolicy, PurchasingPostBillRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingTolerance, PurchasingTransitionRequest, PurchasingUpdateLineRequest, PurchasingUpdateVendorRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorCreditDetail, PurchasingVendorCreditPage, PurchasingVendorCreditStatus, PurchasingVendorMaster, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
+import type { PurchasingAPAgingPage, PurchasingAddLineRequest, PurchasingApplyVendorCreditRequest, PurchasingApplyWarrantyCreditRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingCreateVendorCreditRequest, PurchasingCreateVendorRequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPayBillRequest, PurchasingPaymentRun, PurchasingPaymentRunPage, PurchasingPaymentRunStatus, PurchasingPolicy, PurchasingPostBillRequest, PurchasingProposePaymentRunRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingTolerance, PurchasingTransitionRequest, PurchasingUpdateLineRequest, PurchasingUpdatePaymentRunRequest, PurchasingUpdateVendorRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorCreditDetail, PurchasingVendorCreditPage, PurchasingVendorCreditStatus, PurchasingVendorMaster, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions, type ApiKeyedCallOptions } from "../http.js";
 
@@ -117,6 +117,83 @@ export async function purchasingListIncoming(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "purchasingListIncoming",
+  });
+}
+
+export async function purchasingProposePaymentRun(
+  client: ApiClient,
+  body: PurchasingProposePaymentRunRequest,
+  call?: ApiCallOptions
+): Promise<Result<PurchasingPaymentRun>> {
+  return client.request<PurchasingPaymentRun>({
+    method: "POST",
+    path: "/api/v1/purchasing/payment-runs",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingProposePaymentRun",
+  });
+}
+
+export async function purchasingListPaymentRuns(
+  client: ApiClient,
+  opts?: { cursor?: string; limit?: number; branch_id?: string; status?: PurchasingPaymentRunStatus },
+  call?: ApiCallOptions
+): Promise<Result<PurchasingPaymentRunPage>> {
+  return client.request<PurchasingPaymentRunPage>({
+    method: "GET",
+    path: "/api/v1/purchasing/payment-runs",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingListPaymentRuns",
+  });
+}
+
+export async function purchasingGetPaymentRun(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<PurchasingPaymentRun>> {
+  return client.request<PurchasingPaymentRun>({
+    method: "GET",
+    path: "/api/v1/purchasing/payment-runs/{id}",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingGetPaymentRun",
+  });
+}
+
+export async function purchasingUpdatePaymentRun(
+  client: ApiClient,
+  id: string | number,
+  body: PurchasingUpdatePaymentRunRequest,
+  call?: ApiCallOptions
+): Promise<Result<PurchasingPaymentRun>> {
+  return client.request<PurchasingPaymentRun>({
+    method: "PUT",
+    path: "/api/v1/purchasing/payment-runs/{id}",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingUpdatePaymentRun",
+  });
+}
+
+export async function purchasingPayPaymentRun(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<PurchasingPaymentRun>> {
+  return client.request<PurchasingPaymentRun>({
+    method: "POST",
+    path: "/api/v1/purchasing/payment-runs/{id}/pay",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingPayPaymentRun",
   });
 }
 

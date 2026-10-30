@@ -312,6 +312,7 @@ var migrationTopics = map[string]string{
 	"0435_payment_payouts":                 "payments",
 	"0447_credit_application_keys":         "billing",
 	"0451_till_counter_reason_codes":       "till",
+	"0457_purchasing_payment_runs":         "purchasing",
 }
 
 // multiTopicSplits states the per-object attribution inside the five
@@ -572,6 +573,8 @@ var ownedObjects = map[string]string{
 	"purchasing_bill_lines":                 "purchasing",        // 0121_purchasing_ap_bills
 	"purchasing_bills":                      "purchasing",        // 0121_purchasing_ap_bills
 	"purchasing_match_tolerance":            "purchasing",        // 0121_purchasing_ap_bills
+	"purchasing_payment_run_lines":          "purchasing",        // 0457_purchasing_payment_runs
+	"purchasing_payment_runs":               "purchasing",        // 0457_purchasing_payment_runs
 	"purchasing_po_lines":                   "purchasing",        // 0120_purchasing_core
 	"purchasing_po_sends":                   "purchasing",        // 0197_purchasing_vendor_order
 	"purchasing_policy":                     "purchasing",        // 0197_purchasing_vendor_order

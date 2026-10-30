@@ -22,7 +22,7 @@ import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
 
-const coreSource = ["billing", "payments", "till", join("platform", "authz"), join("platform", "httpx")]
+const coreSource = ["billing", "payments", "purchasing", "till", join("platform", "authz"), join("platform", "httpx")]
   .flatMap((dir) =>
     readdirSync(join(coreInternal, dir))
       .filter((f) => f.endsWith(".go") && !f.endsWith("_test.go"))
@@ -65,8 +65,8 @@ after(() => {
   child?.kill();
 });
 
-async function call(method, path, body) {
-  const headers = { Authorization: "Bearer stub-token", "X-Org": "hh-demo" };
+async function call(method, path, body, extraHeaders = {}) {
+  const headers = { Authorization: "Bearer stub-token", "X-Org": "hh-demo", ...extraHeaders };
   let payload;
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -82,6 +82,20 @@ async function call(method, path, body) {
   }
   return { status: res.status, json };
 }
+
+// A token the stub reads as a named role, minted the way the front door's handoff mints it: the
+// token's sub carries the user's id and the user's record carries the role the gates judge.
+function tokenFor(sub) {
+  const part = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const payload = { iss: "hh-demo-stub", sub, aud: "staff", exp: Math.floor(Date.now() / 1000) + 3600 };
+  return `${part({ alg: "ES256", typ: "JWT" })}.${part(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
+}
+
+// The Financial Controller: the money desk at manage may pay a vendor bill.
+const CONTROLLER_TOKEN = tokenFor("de110000-0000-4000-9000-000000000008");
+// The Payables and Receivables clerk: at work on the money desk, so a manage level route there
+// turns the role away.
+const CLERK_TOKEN = tokenFor("de110000-0000-4000-9000-000000000007");
 
 const reset = () => fetch(`${base}/_stub/reset`, { method: "POST" });
 
@@ -551,4 +565,55 @@ test("a body that is not JSON is the core's 400 on every route that reads one", 
     assert.ok(JSON.stringify(json).includes("the request body must be JSON"), path);
   }
   assert.ok(coreSource.includes("the request body must be JSON"));
+});
+
+// The open AP the Payables board reads, and the payment that lowers it: the core's purchasing
+// routes. The stub answers them in the contract's shapes, and every refusal is the core's own
+// sentence.
+const PAY_BILL = "/api/v1/purchasing/bills/b0000000-0000-4000-8000-000000000006/payments";
+const PAY_BILL_OTHER = "/api/v1/purchasing/bills/b0000000-0000-4000-8000-000000000007/payments";
+
+test("the open AP and the bill payment answer in the contract's shapes, and the refusals are the core's own sentences", async () => {
+  await reset();
+  const aging = await call("GET", "/api/v1/purchasing/ap-aging");
+  assert.equal(aging.status, 200);
+  holds("PurchasingAPAgingPage", aging.json);
+
+  // The payment: the key rides the Idempotency-Key header, one key per press.
+  const body = { amount_cents: 10_000, paid_at: `${today()}T12:00:00Z`, note: "cheque 41" };
+  const paid = await call("POST", PAY_BILL, body, { Authorization: `Bearer ${CONTROLLER_TOKEN}`, "Idempotency-Key": "contract-leg-key" });
+  assert.equal(paid.status, 200);
+  holds("PurchasingBillDetail", paid.json);
+  // The books moved by what was paid, and by nothing else.
+  const after = await call("GET", "/api/v1/purchasing/ap-aging");
+  assert.equal(after.json.total_cents, aging.json.total_cents - 10_000);
+
+  // The same key again, the way a retry after a lost answer sends it: the first payment is
+  // answered and nothing is written.
+  const replay = await call("POST", PAY_BILL, body, { Authorization: `Bearer ${CONTROLLER_TOKEN}`, "Idempotency-Key": "contract-leg-key" });
+  assert.equal(replay.status, 200);
+  holds("PurchasingBillDetail", replay.json);
+  const again = await call("GET", "/api/v1/purchasing/ap-aging");
+  assert.equal(again.json.total_cents, after.json.total_cents);
+
+  // A press with no key at all is refused in the core's words.
+  refused(await call("POST", PAY_BILL, body, { Authorization: `Bearer ${CONTROLLER_TOKEN}` }), 400, "idempotency_key is required on a bill payment");
+  // An amount of nothing is refused in the core's words.
+  refused(await call("POST", PAY_BILL, { ...body, amount_cents: 0 }, { Authorization: `Bearer ${CONTROLLER_TOKEN}`, "Idempotency-Key": "nothing-key" }), 400, "payment amount_cents must be positive");
+  // A key spent on another bill is a conflict.
+  refused(await call("POST", PAY_BILL_OTHER, body, { Authorization: `Bearer ${CONTROLLER_TOKEN}`, "Idempotency-Key": "contract-leg-key" }), 409, "idempotency key already used for another bill's payment");
+  // An amount above the open balance is refused in the core's words.
+  refused(await call("POST", PAY_BILL, { ...body, amount_cents: 99_999_999 }, { Authorization: `Bearer ${CONTROLLER_TOKEN}`, "Idempotency-Key": "over-key" }), 409, "exceeds open balance");
+  // The core judges a payment against the sum of the bill's PAID instalments, every one of them,
+  // whatever day the instalment carries: a payment dated ahead of today takes the room it needs
+  // now, even though the board, read as of today, still shows the bill open until that day.
+  const dated = await call("POST", PAY_BILL_OTHER, { ...body, amount_cents: 20_000, paid_at: `${later(1)}T12:00:00Z` }, { Authorization: `Bearer ${CONTROLLER_TOKEN}`, "Idempotency-Key": "dated-key" });
+  assert.equal(dated.status, 200);
+  const datedOver = await call("POST", PAY_BILL_OTHER, { ...body, amount_cents: 20_000, paid_at: `${later(1)}T12:00:00Z` }, { Authorization: `Bearer ${CONTROLLER_TOKEN}`, "Idempotency-Key": "dated-second-key" });
+  assert.equal(datedOver.status, 409);
+  assert.equal(datedOver.json.error, "purchasing: payment of 20000 cents exceeds open balance 11500 cents on bill B-4108");
+  // The role gate is the core's own: the route is a manage level route on the money desk and the
+  // Payables and Receivables role is at work on that surface.
+  const clerk = await call("POST", PAY_BILL, body, { Authorization: `Bearer ${CLERK_TOKEN}`, "Idempotency-Key": "clerk-key" });
+  assert.equal(clerk.status, 403);
 });

@@ -7132,6 +7132,65 @@ export type PurchasingAPAgingPage = {
   items: PurchasingAPAgingRow[];
   next_cursor: string | null;
 };
+export type PurchasingPaymentRunStatus = "DRAFT" | "PAID";
+export type PurchasingPaymentRunLineStatus = "SELECTED" | "PAID" | "SKIPPED";
+export type PurchasingPaymentRunLine = {
+  id: string;
+  seq: number;
+  bill_id: string;
+  bill_no?: string;
+  vendor_id?: string;
+  vendor_name?: string;
+  due_date?: string;
+  amount_cents: number;
+  status: PurchasingPaymentRunLineStatus;
+  paid_cents: number;
+  skip_reason?: string;
+};
+export type PurchasingPaymentRun = {
+  id: string;
+  branch_id: string;
+  status: PurchasingPaymentRunStatus;
+  due_on: string;
+  vendor_id?: string;
+  pay_date: string;
+  total_cents: number;
+  paid_cents: number;
+  paid_at?: string | null;
+  created_at: string;
+  lines: PurchasingPaymentRunLine[];
+};
+export type PurchasingPaymentRunSummary = {
+  id: string;
+  branch_id: string;
+  status: PurchasingPaymentRunStatus;
+  due_on: string;
+  vendor_id?: string;
+  pay_date: string;
+  line_count: number;
+  total_cents: number;
+  paid_cents: number;
+  created_at: string;
+};
+export type PurchasingPaymentRunPage = {
+  items: PurchasingPaymentRunSummary[];
+  next_cursor?: string | null;
+  limit?: number;
+};
+export type PurchasingProposePaymentRunRequest = {
+  branch_id: string;
+  due_on: string;
+  vendor_id?: string;
+  pay_date?: string;
+};
+export type PurchasingPaymentRunLineAmount = {
+  bill_id: string;
+  amount_cents: number;
+};
+export type PurchasingUpdatePaymentRunRequest = {
+  remove?: string[];
+  lower?: PurchasingPaymentRunLineAmount[];
+};
 export type LandedCost = {
   id: string;
   po_id: string;
