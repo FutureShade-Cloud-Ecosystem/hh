@@ -12,14 +12,43 @@ import { describeHits, scanPayload } from "../_lib/fence.mjs";
 
 export const BASE = process.env.DRIVE_IMAGE_URL ?? "http://127.0.0.1:5801";
 
-/** The dealer's day in the house zone, the way the app and the core name it. */
-export function houseDay(at: Date = new Date()): string {
+// The zone the Ontario dealer is read in when the core serves none, the
+// fallback the app itself uses (the drive-run app's house zone module).
+const DEFAULT_HOUSE_ZONE = "America/Toronto";
+
+/** The dealer's day in the given zone. */
+export function dayIn(zone: string, at: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Toronto",
+    timeZone: zone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   }).format(at);
+}
+
+/**
+ * The zone the core serves for this dealer, read the way the app reads it: the
+ * surface config carries business_zone (the contract's own field), and the
+ * app names the dealer's day in it. A suite that compiled a zone in names the
+ * wrong day three hours a day (the dealer's zone is ahead of or behind the
+ * Ontario one), and the demo dealer is not the Ontario one.
+ */
+export async function servedZone(page: Page): Promise<string> {
+  const answer = await staff(page, "GET", "/api/v1/surfaces/drive-run/config");
+  expect(answer.status, "the surface config answers the Driver").toBe(200);
+  const zone = (answer.body as { business_zone?: unknown } | null)?.business_zone;
+  return typeof zone === "string" && zone !== "" ? zone : DEFAULT_HOUSE_ZONE;
+}
+
+/** The dealer's day, in the zone the core serves for this dealer. */
+export async function servedDay(page: Page, at: Date = new Date()): Promise<string> {
+  return dayIn(await servedZone(page), at);
+}
+
+/** The dealer's day in the Ontario zone, the way the app and the core name it
+ * when the core serves no zone of its own. */
+export function houseDay(at: Date = new Date()): string {
+  return dayIn(DEFAULT_HOUSE_ZONE, at);
 }
 
 // ---- the demo mint, paced to a human ----
@@ -108,9 +137,10 @@ export async function staff(
   return { status: answer.status(), body };
 }
 
-/** The driver's own runs on the dealer's day, as the core answers them. */
+/** The driver's own runs on the dealer's day, as the core answers them. The day
+ * is the dealer's own day, in the zone the core serves for the dealer. */
 export async function myRuns(page: Page): Promise<any[]> {
-  const answer = await staff(page, "GET", `/api/v1/dispatch/my-runs?date=${houseDay()}`);
+  const answer = await staff(page, "GET", `/api/v1/dispatch/my-runs?date=${await servedDay(page)}`);
   expect(answer.status, "my-runs answers the Driver").toBe(200);
   return answer.body.items as any[];
 }
