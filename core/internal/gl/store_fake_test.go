@@ -410,6 +410,10 @@ func (f *fakeStore) AccountBalance(_ context.Context, _ string, _, _ int, _ stri
 	return 0, NormalDebit, nil
 }
 
+func (f *fakeStore) RevenueBalance(_ context.Context, _, _ int, _ string) (int64, error) {
+	return 0, nil
+}
+
 func (f *fakeStore) AccountBalanceThrough(_ context.Context, _ string, _, _ int, _ string) (int64, string, error) {
 	return 0, NormalDebit, nil
 }

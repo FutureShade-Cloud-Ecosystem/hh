@@ -257,20 +257,22 @@ func TestAC8_ValidatePostingRules(t *testing.T) {
 
 func healthyRules() []RuleRef {
 	set := map[string][]string{
-		"invoice.finalized":      {"ar", "revenue", "tax"},
-		"payment.received":       {"cash", "ar", "card_clearing"},
-		"tax.relief.assessed":    {"hst_full", "fn_relief"},
-		"payment.bounced":        {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
-		"payment.reversed":       {"ar", "refund_payable"},
-		"payment.reapplied":      {"ar", "refund_payable"},
-		"payment.paid_out":       {"refund_payable", "drawer", "bank", "card_clearing", "write_off"},
-		"till.session.completed": {"over_short", "undeposited"},
-		"order.fulfilled":        {"cogs", "inventory"},
-		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
-		"order.returned":         {"inventory", "cogs"},
-		"deposit.released":       {"customer_deposit", "revenue"},
-		"deposit.cancelled":      {"customer_deposit", "ar", "other_income"},
-		"pos.return.written_off": {"expense", "cogs"},
+		"invoice.finalized":             {"ar", "revenue", "tax"},
+		"payment.received":              {"cash", "ar", "card_clearing"},
+		"tax.relief.assessed":           {"hst_full", "fn_relief"},
+		"payment.bounced":               {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
+		"payment.reversed":              {"ar", "refund_payable"},
+		"payment.reapplied":             {"ar", "refund_payable"},
+		"payment.paid_out":              {"refund_payable", "drawer", "bank", "card_clearing", "write_off"},
+		"till.session.completed":        {"over_short", "undeposited"},
+		"order.fulfilled":               {"cogs", "inventory"},
+		"pos.return.committed":          {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
+		"order.returned":                {"inventory", "cogs"},
+		"deposit.released":              {"customer_deposit", "revenue"},
+		"deposit.cancelled":             {"customer_deposit", "ar", "other_income"},
+		"pos.return.written_off":        {"expense", "cogs"},
+		"ar.invoice.write_off":          {"write_off_expense", "ar"},
+		"ar.invoice.write_off_reversed": {"write_off_expense", "ar"},
 	}
 	var out []RuleRef
 	for et, roles := range set {

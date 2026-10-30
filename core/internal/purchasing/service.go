@@ -983,6 +983,7 @@ func (s *Service) CreateBill(ctx context.Context, in CreateBillRequest) (BillDet
 	}
 	var rows []evaluated
 	var subtotal int64
+	var docSubtotal int64
 	for i, bl := range in.Lines {
 		if bl.QtyBilledBase <= 0 {
 			return BillDetail{}, badReq("purchasing: bill line %d quantity must be greater than zero", i+1)
@@ -994,6 +995,7 @@ func (s *Service) CreateBill(ctx context.Context, in CreateBillRequest) (BillDet
 		billUnitCad := toCAD(bl.UnitCostCents, billFX)
 		lineTotal := round(bl.QtyBilledBase * float64(billUnitCad))
 		subtotal += lineTotal
+		docSubtotal += round(bl.QtyBilledBase * float64(bl.UnitCostCents))
 
 		mi := MatchInput{QtyBilledBase: bl.QtyBilledBase, BillUnitCostCents: billUnitCad}
 		if bl.POLineID != "" {
@@ -1033,6 +1035,7 @@ func (s *Service) CreateBill(ctx context.Context, in CreateBillRequest) (BillDet
 	// Tax is on the vendor's invoice in the vendor's currency, so it converts with everything else.
 	taxCad := toCAD(in.TaxCents, billFX)
 	total := subtotal + taxCad
+	docTotal := docSubtotal + in.TaxCents
 
 	if err := checkInstalments(in.Instalments, total); err != nil {
 		return BillDetail{}, err
@@ -1041,7 +1044,7 @@ func (s *Service) CreateBill(ctx context.Context, in CreateBillRequest) (BillDet
 	billID, err := s.repo.InsertBill(ctx, tx, insertBillParams{
 		BillNo: strings.TrimSpace(in.BillNo), VendorID: po.VendorID, BranchID: po.BranchID, POID: in.POID,
 		BillDate: strings.TrimSpace(in.BillDate), DueDate: strings.TrimSpace(in.DueDate),
-		Subtotal: subtotal, Tax: taxCad, Total: total,
+		Subtotal: subtotal, Tax: taxCad, Total: total, DocTotal: docTotal,
 		Match: headerState, CreatedBy: caller.UserID,
 		Currency: billCur, FXRate: billFX, HouseDay: zone.Today(nil),
 	})

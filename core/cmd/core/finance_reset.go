@@ -29,10 +29,22 @@
 // schema is dropped, so a refusal anywhere before the restore leaves the
 // database exactly as it was.
 //
+// The restore runs in ONE transaction, and that one transaction holds
+// thousands of locks: one restore of the real world measured 15,053 of them,
+// against a server's nominal lock table of 6,400 slots (64 locks per
+// transaction x 100 connections). So the reset asks the server what its lock
+// table can hold BEFORE it drops anything: it estimates what the one
+// transaction needs (the objects the box's three schemas hold now, read from
+// the catalog, plus the dump's own object statements) and refuses a server
+// whose table cannot hold twice that estimate, in words, naming the
+// estimate, the capacity and the setting to raise. A box that is refused
+// there keeps every table and every row it had.
+//
 // The reset prints counts only: how many bytes the decoded dump carried, how
 // many schemas it dropped, how many migrations it applied, how many tables
-// came back and how many audit rows it wrote. It writes no world value
-// anywhere.
+// came back, how many audit rows it wrote, and the lock table's own numbers:
+// the locks the one transaction is estimated to need and the slots the server
+// holds. It writes no world value anywhere.
 //
 // After the restore succeeds, the reset records the restored world's sha256
 // inside the box, in the same transaction as its audit row, through the
@@ -138,6 +150,16 @@ dump is never held on the shared memory tmpfs, whose size the platform
 sizes, not the box. A refusal before the restore leaves the database as it
 was.
 
+The restore runs in ONE transaction, and that one transaction holds thousands
+of locks. Before it drops anything the reset asks the server what its lock
+table can hold (max_locks_per_transaction x (max_connections +
+max_prepared_transactions)) and estimates what the transaction needs (the
+objects the box's three schemas hold now, plus the dump's own object
+statements). A server whose table cannot hold twice that estimate is refused
+in words, naming the estimate, the capacity and the setting to raise, and the
+box keeps every table and every row it had. The counts line carries the
+estimate and the capacity every time, refused or not.
+
 The dump does not have to carry the box's people. The live box's users are
 applied again at its next boot from HH_FINANCE_USERS, so the reset does not
 need to keep identity rows.
@@ -236,6 +258,20 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	if !strings.EqualFold(got, expected) {
 		return fmt.Errorf("finance-reset: the dump's sha256 is not the one %s names: nothing was dropped", envFinanceWorldSHA)
 	}
+	// The lock pre-flight: the restore runs in ONE transaction, and that one
+	// transaction holds thousands of locks. The server's lock table is a
+	// fixed number of slots, so a server whose table cannot hold twice what
+	// the transaction needs is told BEFORE anything is dropped, in words,
+	// naming the estimate, the capacity and the setting to raise. A box
+	// that is refused here keeps every table and every row it had.
+	locks, err := financeResetLocksOf(ctx, pool, dump)
+	if err != nil {
+		return err
+	}
+	if !locks.Fits() {
+		fmt.Fprintln(stdout, financeResetCountsLine(len(dump), 0, 0, 0, 0, locks))
+		return locks.Refusal()
+	}
 	// The dump is mapped onto the box's own roles before it is written: the
 	// world's dump carries the build database's assist role names and the
 	// build's migrating role, and the box's database has its own.
@@ -245,6 +281,12 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	}
 	buildSuffix, err := financeResetBuildSuffix(dump)
 	if err != nil {
+		return err
+	}
+	// The mapping folds every default privileges statement onto the restoring
+	// role, so a dump that declares them FOR an assist role is refused first, in
+	// words, before anything is dropped.
+	if err := financeResetDefaultPrivilegesPossible(dump); err != nil {
 		return err
 	}
 	mapped, err := financeResetMapRoles(dump, buildSuffix, boxSuffix, restoringRole)
@@ -315,9 +357,19 @@ func financeResetRole(args []string, stdout, stderr io.Writer, getenv func(strin
 	if err := financeResetAudit(ctx, pool2, orgSlug, strings.ToLower(expected)); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "dump_bytes=%d schemas_dropped=%d migrations_applied=%d tables_restored=%d audit_rows=1\n",
-		len(dump), len(schemas), applied, tables)
+	fmt.Fprintln(stdout, financeResetCountsLine(len(dump), len(schemas), applied, tables, 1, locks))
 	return nil
+}
+
+// financeResetCountsLine answers the one line the reset prints: the counts of
+// what it did, and the lock table's own numbers.
+//
+// The lock numbers are on the line every time, refused or not: a reset that
+// ran and a reset that refused both carry the estimate and the capacity, so
+// the operator reads the same line either way.
+func financeResetCountsLine(dumpBytes, schemas, migrations, tables, audits int, locks financeResetLocks) string {
+	return fmt.Sprintf("dump_bytes=%d schemas_dropped=%d migrations_applied=%d tables_restored=%d audit_rows=%d locks_estimated=%d lock_capacity=%d",
+		dumpBytes, schemas, migrations, tables, audits, locks.Estimate, locks.Capacity)
 }
 
 // financeResetConfirm checks the -confirm against this box's org and answers
@@ -470,6 +522,19 @@ var financeResetUnsafeInTransaction = []string{
 	"CREATE TABLESPACE",
 	"DROP TABLESPACE",
 	"SET TRANSACTION",
+	"SET SESSION CHARACTERISTICS",
+}
+
+// financeResetTransactionControlHeads are the statement heads that open, end
+// or prepare a transaction at top level. Inside the reset's single
+// transaction any of them would end or split the restore.
+var financeResetTransactionControlHeads = []string{
+	"BEGIN",
+	"START TRANSACTION",
+	"COMMIT",
+	"ROLLBACK",
+	"ABORT",
+	"PREPARE TRANSACTION",
 }
 
 // financeResetTransactionSafe answers whether every statement the dump
@@ -481,33 +546,217 @@ var financeResetUnsafeInTransaction = []string{
 // SYSTEM, no tablespace work and no transaction control: the BEGIN and END
 // lines in it are the bodies of its plpgsql functions.
 //
-// A head matches as whole words only: "SET transaction_timeout = 0;", which a
-// newer pg_dump writes, is a session setting and runs inside a transaction,
-// and it is not SET TRANSACTION. Top level transaction control (a COMMIT or
-// ROLLBACK statement on its own line) and a psql \connect would end or leave
-// the one transaction, so they are refused too. BEGIN and END lines are not
-// heads: they are the bodies of the dump's plpgsql functions.
+// Each top level statement is joined up to its semicolon, its whitespace
+// (tabs and newlines included) is collapsed to single spaces, and it is upper
+// cased before matching. Dollar quoting ($$ and $tag$) is tracked across
+// lines so a function body's BEGIN, END IF;, END LOOP; and END; are never
+// read as top level statements. A head matches as whole words only:
+// "SET transaction_timeout = 0;", which a newer pg_dump writes, is a session
+// setting and runs inside a transaction, and it is not SET TRANSACTION. Top
+// level transaction control in every form and psql meta commands that leave
+// or read elsewhere (\c, \connect, \i, \ir, \include, \o, \!) are refused,
+// while \restrict and \unrestrict stay allowed.
 func financeResetTransactionSafe(dump []byte) error {
-	for _, line := range financeResetNonDataLines(dump) {
-		upper := strings.ToUpper(strings.TrimSpace(line))
+	statements, err := financeResetStatements(dump)
+	if err != nil {
+		return err
+	}
+	for _, upper := range statements {
 		for _, head := range financeResetUnsafeInTransaction {
 			if financeResetHeadMatches(upper, head) {
 				return fmt.Errorf("finance-reset: the world's dump carries a statement that may not run inside the reset's transaction (%s): the reset refuses before it drops anything", head)
 			}
 		}
-		switch {
-		case upper == "COMMIT;" || upper == "ROLLBACK;" || upper == "END TRANSACTION;":
+		for _, head := range financeResetTransactionControlHeads {
+			if financeResetHeadMatches(upper, head) {
+				return fmt.Errorf("finance-reset: the world's dump carries transaction control (%s): the reset refuses before it drops anything", upper)
+			}
+		}
+		if financeResetIsTopLevelEnd(upper) {
 			return fmt.Errorf("finance-reset: the world's dump carries transaction control (%s): the reset refuses before it drops anything", upper)
-		case strings.HasPrefix(upper, `\CONNECT`) || strings.HasPrefix(upper, `\C `):
-			return fmt.Errorf("finance-reset: the world's dump carries a psql connection switch: the reset refuses before it drops anything")
 		}
 	}
 	return nil
 }
 
-// financeResetHeadMatches answers whether an upper cased line opens with the
-// head as whole words: the head is followed by the line's end, a space or a
-// semicolon, never by more of a longer word.
+// financeResetIsTopLevelEnd answers whether a normalised top level statement
+// is the SQL END command that commits a transaction (END, END WORK, END
+// TRANSACTION, END AND CHAIN).
+func financeResetIsTopLevelEnd(upper string) bool {
+	return upper == "END" ||
+		financeResetHeadMatches(upper, "END WORK") ||
+		financeResetHeadMatches(upper, "END TRANSACTION") ||
+		financeResetHeadMatches(upper, "END AND")
+}
+
+// financeResetStatements splits the dump's non-data lines into normalised top
+// level SQL statements and checks every top level psql meta command along the
+// way. Dollar quoting ($$ and $tag$), single quoted literals and SQL comments
+// are tracked so semicolons and BEGIN/END inside a function body or string
+// literal are never read as top level statements.
+func financeResetStatements(dump []byte) ([]string, error) {
+	src := strings.Join(financeResetNonDataLines(dump), "\n")
+	var statements []string
+	var buf strings.Builder
+	dollarTag := ""
+	inSingleQuote := false
+	inBlockComment := false
+
+	flush := func() {
+		if norm := financeResetNormaliseStatement(buf.String()); norm != "" {
+			statements = append(statements, norm)
+		}
+		buf.Reset()
+	}
+
+	for i := 0; i < len(src); {
+		if inBlockComment {
+			if i+1 < len(src) && src[i] == '*' && src[i+1] == '/' {
+				inBlockComment = false
+				buf.WriteByte(' ')
+				i += 2
+				continue
+			}
+			i++
+			continue
+		}
+		if inSingleQuote {
+			buf.WriteByte(src[i])
+			if src[i] == '\'' {
+				if i+1 < len(src) && src[i+1] == '\'' {
+					buf.WriteByte(src[i+1])
+					i += 2
+					continue
+				}
+				inSingleQuote = false
+			}
+			i++
+			continue
+		}
+		if dollarTag != "" {
+			if strings.HasPrefix(src[i:], dollarTag) {
+				buf.WriteString(dollarTag)
+				i += len(dollarTag)
+				dollarTag = ""
+				continue
+			}
+			buf.WriteByte(src[i])
+			i++
+			continue
+		}
+		if i+1 < len(src) && src[i] == '-' && src[i+1] == '-' {
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if i+1 < len(src) && src[i] == '/' && src[i+1] == '*' {
+			inBlockComment = true
+			i += 2
+			continue
+		}
+		if src[i] == '\'' {
+			inSingleQuote = true
+			buf.WriteByte(src[i])
+			i++
+			continue
+		}
+		if src[i] == '$' {
+			if tag := financeResetDollarTag(src[i:]); tag != "" {
+				dollarTag = tag
+				buf.WriteString(tag)
+				i += len(tag)
+				continue
+			}
+		}
+		if src[i] == '\\' {
+			flush()
+			end := i
+			for end < len(src) && src[end] != '\n' {
+				end++
+			}
+			if err := financeResetMetaCommandSafe(src[i:end]); err != nil {
+				return nil, err
+			}
+			i = end
+			continue
+		}
+		if src[i] == ';' {
+			flush()
+			i++
+			continue
+		}
+		buf.WriteByte(src[i])
+		i++
+	}
+	flush()
+	return statements, nil
+}
+
+// financeResetNormaliseStatement collapses all whitespace (spaces, tabs and
+// newlines) to single spaces, strips any trailing semicolon and upper cases
+// the statement.
+func financeResetNormaliseStatement(statement string) string {
+	trimmed := strings.TrimSuffix(strings.TrimSpace(statement), ";")
+	return strings.ToUpper(strings.Join(strings.Fields(trimmed), " "))
+}
+
+// financeResetDollarTag answers the opening dollar quote delimiter ($$ or
+// $tag$) at the front of s, or the empty string when s does not open a dollar
+// quote. Positional parameters ($1) do not open dollar quotes.
+func financeResetDollarTag(s string) string {
+	if len(s) < 2 || s[0] != '$' {
+		return ""
+	}
+	if s[1] == '$' {
+		return "$$"
+	}
+	if !financeResetDollarTagStart(s[1]) {
+		return ""
+	}
+	j := 2
+	for j < len(s) && financeResetDollarTagCont(s[j]) {
+		j++
+	}
+	if j < len(s) && s[j] == '$' {
+		return s[:j+1]
+	}
+	return ""
+}
+
+func financeResetDollarTagStart(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_' || b >= 0x80
+}
+
+func financeResetDollarTagCont(b byte) bool {
+	return financeResetDollarTagStart(b) || (b >= '0' && b <= '9')
+}
+
+// financeResetMetaCommandSafe checks a top level psql meta command. Commands
+// that leave the connection, read another file, redirect output or shell out
+// (\c, \connect, \i, \ir, \include, \o, \!) are refused; pg_dump's \restrict
+// and \unrestrict are allowed.
+func financeResetMetaCommandSafe(line string) error {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) == 0 {
+		return nil
+	}
+	cmd := strings.ToUpper(strings.TrimSuffix(fields[0], ";"))
+	if strings.HasPrefix(cmd, `\!`) {
+		return fmt.Errorf("finance-reset: the world's dump carries a psql meta command (%s): the reset refuses before it drops anything", fields[0])
+	}
+	switch cmd {
+	case `\C`, `\CONNECT`:
+		return fmt.Errorf("finance-reset: the world's dump carries a psql connection switch: the reset refuses before it drops anything")
+	case `\I`, `\IR`, `\INCLUDE`, `\INCLUDE_RELATIVE`, `\O`, `\OUT`:
+		return fmt.Errorf("finance-reset: the world's dump carries a psql meta command (%s): the reset refuses before it drops anything", fields[0])
+	}
+	return nil
+}
+
+// financeResetHeadMatches answers whether an upper cased statement opens with
+// the head as whole words: the head is followed by the statement's end, a
+// space, a tab or a semicolon, never by more of a longer word.
 func financeResetHeadMatches(upper, head string) bool {
 	if !strings.HasPrefix(upper, head) {
 		return false

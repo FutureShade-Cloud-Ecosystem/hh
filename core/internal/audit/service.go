@@ -666,6 +666,12 @@ var allowedExtraKeys = map[string]bool{
 	"export_target":   true,
 	"hh_account_code": true,
 	"package_account": true,
+	// Credit change requests (billing/credit_change.go): staff user ids (uuids) recording who asked
+	// and who approved or rejected alongside before and after.
+	"requested_by":       true,
+	"first_approved_by":  true,
+	"second_approved_by": true,
+	"rejected_by":        true,
 }
 
 // redactCleartext returns the value with cleartext-looking identifiers stripped. A value is treated as

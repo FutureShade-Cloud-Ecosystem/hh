@@ -253,6 +253,48 @@ func financeResetMapRolePositions(line, buildSuffix, boxSuffix, restoringRole st
 	return line
 }
 
+// financeResetWorldsOwnAssistDefaultPrivileges is the one default privileges
+// shape an assist role holds in a dump this tree's migrations build: the view
+// and claims owners' revoke of function execute from PUBLIC (migration 0418
+// makes it under SET LOCAL ROLE, and pg_dump writes it FOR ROLE the owner). The
+// mapping folds it onto the restoring role, and the fold is lossless: the
+// restoring role's own defaults carry the same revoke.
+var financeResetWorldsOwnAssistDefaultPrivileges = regexp.MustCompile(`(?i)^REVOKE ALL ON FUNCTIONS FROM PUBLIC;?$`)
+
+// financeResetDefaultPrivilegesPossible refuses a dump that grants default
+// privileges to an assist role beyond the world's own shape (the PR694 S5
+// read's P3 3). The mapping folds every default privileges statement onto the
+// box's restoring role, the only role whose defaults the box's own role can
+// always change: for the world's own two statements the fold is lossless, and
+// for anything else an assist role holds (a grant, another object kind) the
+// fold would mute the assist role's own defaults, and a dump that carries one
+// is not a world this tree's migrations build. The reset refuses in words,
+// before it drops anything.
+//
+// The world's own shape has to be exempted rather than refused: migration
+// 0418's SET LOCAL ROLE defaults are in every real dump, so a flat refusal
+// refuses the tree's own world (the PR694 role mapping integration test's
+// fresh dump carries the shape).
+func financeResetDefaultPrivilegesPossible(dump []byte) error {
+	for _, line := range financeResetStatementLines(dump) {
+		m := financeResetDefaultPrivilegesShape.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		role := strings.Trim(m[2], `"`)
+		if !financeResetAssistRoleNameShape.MatchString(role) {
+			continue
+		}
+		rest := strings.TrimSpace(line[len(m[1])+len(m[2]):])
+		if financeResetWorldsOwnAssistDefaultPrivileges.MatchString(rest) {
+			continue
+		}
+		return fmt.Errorf("finance-reset: the world's dump grants default privileges to the assist role %s (%s): the restore folds default privileges onto the box's restoring role, so the assist role's own defaults would be lost, and the reset refuses before it drops anything",
+			role, strings.TrimSpace(line))
+	}
+	return nil
+}
+
 // financeResetOwnerRoles answers the roles the world's dump gives its objects
 // to: the assist roles only. The box's own role can always own what it
 // restores, so the ones that need a check are the assist roles: a role may

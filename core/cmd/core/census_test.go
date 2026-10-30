@@ -32,19 +32,16 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	// 695: the base's 681, main's routes (FW1-01's glOpenYear, FW1-12a's two
-	// credit memo doors, FW1-04's bankrecRecordCutover and bankrecCutoverPreview,
-	// FW1-07's controllerExceptions, paymentsVoidPayment), FW1-12b's two
-	// credit application doors (billingApplyCredit and
-	// billingReverseCreditApplication), W2-6b's three counter reason code
-	// routes (tillListReasonCodes, tillCreateReasonCode and tillEditReasonCode),
-	// W2-9a's purchasingGetAPAging and W2-9a round 2's purchasingPayBill. Both
-	// sides' routes are kept; the count is what merge.mjs reports on the
-	// assembled document.
-	// W3 AX-1 adds the accounting package export's mapping doors
-	// (glListAccountMapping and glSetAccountMapping) to the same document.
-	if staff != 697 {
-		t.Fatalf("census staff operations: %d, want the document's 697 (main's routes plus purchasingGetAPAging, purchasingPayBill and the two export mapping doors)", staff)
+	// 723: the base's 695 staff operations, the wave 3 train's own doors (the two write off doors,
+	// taxGetWorksheet, the four vendor credit doors, the five payment run doors, landedCostSettle,
+	// JA-1's five job doors and W3-CC1's five credit change request and approval doors:
+	// billingListCreditChanges, billingRequestCreditChange, billingGetCreditChange,
+	// billingApproveCreditChange and billingRejectCreditChange), and W3-T51's three T5018 routes
+	// (purchasingSetVendorT5018, purchasingT5018Report and purchasingT5018ReportCSV), and W3-AX1's two account
+	// mapping doors (glListAccountMapping and glSetAccountMapping). Both sides'
+	// routes are kept; the count is what merge.mjs reports on the assembled document.
+	if staff != 723 {
+		t.Fatalf("census staff operations: %d, want the document's 723", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }

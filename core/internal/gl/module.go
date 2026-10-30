@@ -646,6 +646,12 @@ func (s *Service) GLBalanceCents(ctx context.Context, accountCode string, year, 
 	return s.glBalanceCents(ctx, accountCode, year, month, branchID)
 }
 
+// GLRevenueCents returns the net posted revenue on REVENUE accounts for (year, month, branchID),
+// excluding year-end CLOSING entries (line 101 of the GST/HST return worksheet).
+func (s *Service) GLRevenueCents(ctx context.Context, year, month int, branchID string) (int64, error) {
+	return s.store.RevenueBalance(ctx, year, month, branchID)
+}
+
 // GLClosingBalanceCents returns the cumulative closing balance of an account at the end of (year, month)
 // across all fiscal years, read through AccountBalanceAsOf (FW1-04). Bank reconciliation uses this closing
 // balance at month end rather than the single month's movement from GLBalanceCents.
@@ -708,7 +714,8 @@ func (s *Service) RegisterPostingHandlers(d *notify.Dispatcher) {
 // PostedTopics is the frozen set of outbox topics the GL posting consumer owns (the W5 eight + the two
 // W7 POS-return topics + the deposit release and the deposit cancel, 0374/0375 + the damaged goods write off, 0378
 // + the payment reversal, 0426 + the re-application of a reversal's held money, 0431 + the true void of a
-// mis-keyed receipt, FW1-06b + the till paid in and paid out movements, FW1-13).
+// mis-keyed receipt, FW1-06b + the till paid in and paid out movements, FW1-13 + the AR write off and
+// its reversal (W3 item 0.10).
 var PostedTopics = []string{
 	"ar.invoice.finalized",
 	"payment.received",
@@ -728,6 +735,8 @@ var PostedTopics = []string{
 	"deposit.released",
 	"deposit.cancelled",
 	"pos.return.written_off",
+	"ar.invoice.write_off",
+	"ar.invoice.write_off_reversed",
 }
 
 // postEvent is the single outbox handler for all eight posted topics. It resolves the mapped posting rules,

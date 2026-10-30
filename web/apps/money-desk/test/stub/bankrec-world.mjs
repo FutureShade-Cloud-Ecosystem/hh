@@ -13,7 +13,8 @@
 //
 // The world is invented and small: an operating account and two cards of the demo dealer, seven statement lines
 // in the month before today (dates are cut from the host's own day, so no calendar literal is written), three
-// received card payments, an open cash lodgement, and the three seeded rules.
+// received card payments, an open cash lodgement that carries its own journal (and an older lodgement that
+// carries none), and the three seeded rules.
 
 export const IDS = {
   controller: "de110000-0000-4000-9000-000000000008",
@@ -27,6 +28,7 @@ export const IDS = {
   paymentBatch: "b9000000-0000-4000-8000-000000000003",
   paymentWire: "b9000000-0000-4000-8000-000000000004",
   lodgement1: "b8000000-0000-4000-8000-000000000001",
+  lodgement2: "b8000000-0000-4000-8000-000000000002",
   ruleGateway: "b4000000-0000-4000-8000-000000000001",
   ruleLodgement: "b4000000-0000-4000-8000-000000000002",
   ruleBatch: "b4000000-0000-4000-8000-000000000003",
@@ -45,11 +47,11 @@ export function statementMonth() {
   return { year: before.getFullYear(), month: before.getMonth() + 1 };
 }
 
-// The ledger side of the operating account before any match: its opening balance, plus the cheque deposit and the
-// bank fee that were already booked by journals. The statement closing balance is the opening balance plus every
-// line of the month; once every line is matched the ledger reaches it and the variance is zero.
-export const OPENING_CENTS = 1_850_000;
-const BOOKED_BEFORE_MATCHING = 64_025 - 4_500;
+// The ledger side is the GL module's, and this stub reads it where the ledger is: the posted journals' lines on
+// the account's own GL code, the same read the cut over preview makes (its entries and their book balance). The
+// stub keeps no ledger of its own: no balance to move, no clearing arithmetic, no control that posts to the
+// account. The month that really signs off at zero difference belongs to the real core, and its spec reads it
+// there (test/acceptance-real/bankrec.pw.ts).
 
 function fresh() {
   const { year, month } = statementMonth();
@@ -87,7 +89,15 @@ function fresh() {
       { id: IDS.paymentBatch, payment_no: "PAY-000103", method: "CARD", gateway_ref: "", amount_cents: 117_500, received: day(11), status: "RECEIVED" },
       { id: IDS.paymentWire, payment_no: "PAY-000104", method: "EFT", gateway_ref: "", amount_cents: 30_000, received: day(24), status: "RECEIVED" },
     ],
-    lodgements: [{ id: IDS.lodgement1, reference: "LODGE-310", amount_cents: 245_050 }],
+    lodgements: [
+      // The cash lodgement the statement carries (LODGE-310): the till posted DR 1000 / CR 1020 AT LODGEMENT
+      // (FROM-PRINCIPAL 117 and 120), so carries_journal is true and its own journal is planted in the ledger
+      // on its own day; its match only confirms the line. LODGE-311 is from before that rule: it carries no
+      // journal, so its match still posts the clearing one (the core's legacy branch). No statement line
+      // carries its reference, so the auto run never pairs it; the hand match covers it.
+      { id: IDS.lodgement1, reference: "LODGE-310", amount_cents: 245_050, carries_journal: true, day: 5 },
+      { id: IDS.lodgement2, reference: "LODGE-311", amount_cents: 64_025, carries_journal: false },
+    ],
     matches: [],
     rules: [
       { id: IDS.ruleGateway, code: "gateway-ref-exact", name: "Card settlement, gateway reference exact", priority: 10, version: 1, status: "APPROVED", spec: { kind: "gateway_ref_exact", target: "PAYMENT", tolerance_cents: 0 } },
@@ -97,8 +107,6 @@ function fresh() {
     recons: [],
     depositsInTransit: [],
     outstandingCheques: [],
-    // The ledger side (account 1000): moved by the clearing journals a match posts and the reversal an undo posts.
-    glCents: OPENING_CENTS + BOOKED_BEFORE_MATCHING,
     nextMatch: 1,
     nextRule: 4,
     nextRecon: 1,
@@ -128,11 +136,35 @@ const withinDays = (a, b, days) => Math.abs(dayOf(a) - dayOf(b)) <= days * 86_40
 
 const clientError = (status, message) => ({ status, body: { error: message } });
 
-export function createBankrecWorld({ ledgerPosted = null } = {}) {
+export function createBankrecWorld({ ledgerPosted = null, postLedger = null, plantLedger = null } = {}) {
   let world = fresh();
   const reset = () => {
     world = fresh();
+    plantLodgementJournals();
   };
+
+  /** A lodgement that carries its own journal (the till posted DR 1000 / CR 1020 AT LODGEMENT, FROM-PRINCIPAL
+   *  117 and 120) has that journal planted in the ledger on its own day, before any match: the deposit is
+   *  booked once, at lodgement, so the match only confirms the line and the undo reverses nothing (the core's
+   *  buildLodgementProposal and reversalJournal). A lodgement from before the rule carries no journal, so
+   *  nothing is planted for it and its match posts the clearing one. */
+  function plantLodgementJournals() {
+    if (typeof plantLedger !== "function") return;
+    const { year, month } = statementMonth();
+    for (const l of world.lodgements) {
+      if (l.carries_journal === false || l.day === undefined) continue;
+      plantLedger({
+        memo: "Till lodgement",
+        idempotency_key: `till.lodgement:${l.reference}`,
+        document_date: `${year}-${pad(month)}-${pad(l.day)}T12:00:00.000Z`,
+        lines: [
+          { account_code: "1000", debit_cents: l.amount_cents, credit_cents: 0, memo: "till lodgement banked" },
+          { account_code: "1020", debit_cents: 0, credit_cents: l.amount_cents, memo: "undeposited funds to bank" },
+        ],
+      });
+    }
+  }
+  plantLodgementJournals();
 
   const callerOf = (req) => {
     const token = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
@@ -209,10 +241,117 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
   const stamp = () => new Date(Date.now() + world.tick++).toISOString();
   const liveMatch = (lineId) => world.matches.find((m) => m.statement_line_id === lineId && !m.unmatched_at);
 
-  /** The clearing journal a match posts moves the ledger by the deposit; an undo of a posting match moves it back. */
-  const postClearing = (cents) => {
-    world.glCents += cents;
-    return uuid("b6", world.tick++);
+  /** The core's accounts a clearing journal names (core/internal/bankrec/matcher.go): the bank account, the card
+   *  processor's clearing account, the undeposited funds account, and the account a card settlement's fee splits
+   *  out to. */
+  const ACCT_BANK = "1000";
+  const ACCT_CARD_CLEARING = "1010";
+  const ACCT_UNDEPOSITED = "1020";
+  const ACCT_CARD_FEE = "6300";
+
+  /** The core's statement document date: 12:00 UTC on the line's calendar day, so the journal lands on that day in
+   *  every time zone (core/internal/bankrec/matcher.go, statementDocDate). */
+  const statementDocDate = (txnDate) => `${String(txnDate).slice(0, 10)}T12:00:00.000Z`;
+
+  /** The clearing account a deposit of this tender clears through (the core's clearingAccountForMethod): a card
+   *  settlement clears 1010, cash, a cheque and an EFT clear 1020. Every other tender answers false. */
+  const clearingAccountForMethod = (method) => {
+    if (method === "CARD") return ACCT_CARD_CLEARING;
+    if (method === "CASH" || method === "CHEQUE" || method === "EFT") return ACCT_UNDEPOSITED;
+    return "";
+  };
+
+  /** The clearing journal a match posts, the core's rule (core/internal/bankrec/matcher.go): a card settlement is
+   *  DR 1000 by the net paid in, DR the fee account by the fee, CR 1010 by the gross claimed; a lodgement that
+   *  carries no journal of its own is DR 1000 and CR 1020, while a lodgement that carries its own (the till
+   *  posted at lodgement, FROM-PRINCIPAL 117 and 120) posts nothing, by rule or by hand, the match only
+   *  confirming the line. A target that posts no journal of its own (a journal, a group) has no clearing journal. */
+  function clearingJournalFor(line, target) {
+    if (target.type === "LODGEMENT") {
+      if (target.lodgement !== undefined && target.lodgement.carries_journal !== false) return null;
+      return {
+        memo: `bankrec ${target.manual === true ? "manual lodgement deposit" : "lodgement deposit"} ${line.reference}`,
+        lines: [
+          { account_code: ACCT_BANK, debit_cents: line.amount_cents, memo: "bank deposit (lodgement)" },
+          { account_code: ACCT_UNDEPOSITED, credit_cents: line.amount_cents, memo: "clear undeposited funds" },
+        ],
+      };
+    }
+    if (target.type !== "PAYMENT") return null;
+    const payment = target.payment;
+    if (payment === undefined) return null;
+    if (target.manual === true) {
+      const clearing = clearingAccountForMethod(payment.method);
+      if (clearing === "") return null;
+      const undeposited = clearing === ACCT_UNDEPOSITED;
+      return {
+        memo: `bankrec manual deposit ${line.reference}`,
+        lines: [
+          { account_code: ACCT_BANK, debit_cents: line.amount_cents, memo: undeposited ? "bank deposit (cash or cheque)" : "bank deposit (card settlement)" },
+          { account_code: clearing, credit_cents: line.amount_cents, memo: undeposited ? "clear undeposited funds" : "clear card settlement" },
+        ],
+      };
+    }
+    // The automatic path is a card settlement: the net paid in reaches 1000, the fee has its own account, and the
+    // gross claimed clears 1010.
+    const fee = payment.amount_cents - line.amount_cents;
+    const feeAccount = target.rule?.spec?.fee_account_code ?? ACCT_CARD_FEE;
+    const lines = [{ account_code: ACCT_BANK, debit_cents: line.amount_cents, memo: "bank deposit (card settlement)" }];
+    if (fee > 0) lines.push({ account_code: feeAccount, debit_cents: fee, memo: "card processing fee" });
+    lines.push({ account_code: ACCT_CARD_CLEARING, credit_cents: payment.amount_cents, memo: "clear card settlement" });
+    return { memo: `bankrec card settlement ${line.reference}`, lines };
+  }
+
+  /** Posts a clearing journal into the ledger, the way the core's service posts its ExternalJournal. The ledger is
+   *  the GL module's world, so this stub keeps no balance of its own to move. */
+  function postClearing(line, match, journal) {
+    if (typeof postLedger !== "function") return { error: "the ledger cannot take a journal" };
+    const made = postLedger({
+      source: "ADJUSTMENT",
+      source_ref_id: line.id,
+      idempotency_key: `bankrec:match:${match.id}`,
+      memo: journal.memo,
+      document_date: statementDocDate(line.txn_date),
+      created_by: match.matched_by,
+      lines: journal.lines,
+    });
+    if (made?.status !== 201) return { error: made?.body?.error ?? "the ledger refused the journal" };
+    return { id: made.body.id };
+  }
+
+  /** The offsetting journal an undo posts: it mirrors the original clearing journal's legs, swapped, so the ledger
+   *  returns to where it was (the core's reversalJournal). A match that posted no journal has nothing to reverse. */
+  function reversalFor(match) {
+    if (match.journal_id === "") return null;
+    const original = (typeof ledgerPosted === "function" ? ledgerPosted() : []).find((j) => j.id === match.journal_id);
+    if (original === undefined) return null;
+    return {
+      document_date: original.posted_at,
+      lines: original.lines.map((l) => ({ account_code: l.account_code, debit_cents: l.credit_cents, credit_cents: l.debit_cents, memo: "reversal" })),
+    };
+  }
+
+  /** The ledger's balance for an account's GL code, as of a day: the posted journals' lines on that account,
+   *  read from the ledger's own world. The same read the cut over preview makes. */
+  const ledgerBalanceCents = (glAccountCode, asOf) => {
+    const rows = (typeof ledgerPosted === "function" ? ledgerPosted() : [])
+      .flatMap((j) =>
+        j.lines
+          .filter((l) => l.account_code === glAccountCode)
+          .map((l) => ({ journal: j, net: l.debit_cents - l.credit_cents })),
+      )
+      .filter((e) => e.net !== 0 && (e.journal.posted_at ?? "").slice(0, 10) <= asOf);
+    return rows.reduce((s, e) => s + e.net, 0);
+  };
+
+  /** The month end, the day the ledger's closing balance is read on. */
+  const monthEndDay = (year, month) => new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+
+  /** The ledger's balance for an account, as the core reads it: the closing balance of the month, and a card's
+   *  own sign (the core: core/internal/bankrec/service.go:798-820). */
+  const ledgerFor = (account, year, month) => {
+    const balance = ledgerBalanceCents(account.gl_account_code, monthEndDay(year, month));
+    return account.account_type === "CREDIT_CARD" ? -balance : balance;
   };
 
   // The CSV the built-in parser reads: the rbc-default and visa-default mapping, a header row required.
@@ -390,7 +529,9 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
       .filter((l) => l.bank_account_id === input.bank_account_id && l.status === "UNMATCHED" && l.amount_cents > 0 && dayOf(l.txn_date) >= window.from && dayOf(l.txn_date) < window.to)
       .sort((a, b) => (a.txn_date < b.txn_date ? -1 : a.txn_date > b.txn_date ? 1 : a.created_at - b.created_at));
     const rules = world.rules.filter((r) => r.status === "APPROVED").sort((a, b) => a.priority - b.priority);
-    let payments = world.payments.filter((p) => p.status === "RECEIVED");
+    // The core's candidates are card payments only (till/recon_seam.go: method = 'CARD' AND status = 'RECEIVED');
+    // a received cash, cheque or EFT payment waits for the hand.
+    let payments = world.payments.filter((p) => p.status === "RECEIVED" && p.method === "CARD");
     let lodgements = [...world.lodgements];
     const made = [];
     let unmatched = 0;
@@ -441,11 +582,23 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
         target_ref_id: found.ref,
         method: "AUTO",
         rule_id: found.rule.id,
-        journal_id: postClearing(line.amount_cents),
+        journal_id: "",
         amount_cents: line.amount_cents,
         matched_by: caller.id,
         matched_at: stamp(),
       };
+      // The match posts its clearing journal into the ledger, the core's rule for this pairing.
+      const journal = clearingJournalFor(line, found);
+      if (journal !== null) {
+        const posted = postClearing(line, match, journal);
+        if (posted.error !== undefined) {
+          // The core refuses the match and writes nothing when the ledger will not take the journal.
+          line.status = "UNMATCHED";
+          if (found.payment) found.payment.status = "RECEIVED";
+          return clientError(422, posted.error);
+        }
+        match.journal_id = posted.id;
+      }
       world.matches.push(match);
       made.push(matchView(match));
       payments = payments.filter((p) => p.id !== found.payment?.id);
@@ -506,11 +659,35 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
       target_ref_id: input.target_ref_id ?? "",
       method: "MANUAL",
       rule_id: "",
-      journal_id: posts ? postClearing(line.amount_cents) : "",
+      journal_id: "",
       amount_cents: amount,
       matched_by: caller.id,
       matched_at: stamp(),
     };
+    // A payment or lodgement match posts its clearing journal into the ledger, the core's rule for the pairing.
+    // A lodgement that carries its own journal (the till posted at lodgement, FROM-PRINCIPAL 117 and 120) is
+    // only confirmed, by hand as by rule: no new journal (the core's manualJournal).
+    if (posts) {
+      const payment = input.target_type === "PAYMENT" ? world.payments.find((p) => p.id === input.target_ref_id) : undefined;
+      const lodgement = input.target_type === "LODGEMENT" ? world.lodgements.find((l) => l.id === input.target_ref_id) : undefined;
+      const carrying = lodgement !== undefined && lodgement.carries_journal !== false;
+      const journal = carrying ? null : clearingJournalFor(line, { type: input.target_type, payment, lodgement, manual: true });
+      if (journal === null && !carrying) {
+        // The core refuses a hand match of a tender it cannot clear, and writes nothing.
+        line.status = "UNMATCHED";
+        if (payment !== undefined) payment.status = "RECEIVED";
+        return clientError(422, "that tender cannot be cleared by a hand match");
+      }
+      if (journal !== null) {
+        const posted = postClearing(line, match, journal);
+        if (posted.error !== undefined) {
+          line.status = "UNMATCHED";
+          if (payment !== undefined) payment.status = "RECEIVED";
+          return clientError(422, posted.error);
+        }
+        match.journal_id = posted.id;
+      }
+    }
     world.matches.push(match);
     return { status: 201, body: matchView(match) };
   }
@@ -533,6 +710,21 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
     if (match.target_type === "PAYMENT" && world.payments.some((p) => p.id === match.target_ref_id && p.reversed && p.method !== "CARD")) {
       return clientError(409, "this deposit cannot be unmatched: the payment was reversed, and a reversed cheque or cash payment cannot be matched again");
     }
+    // A payment or lodgement match posted a clearing journal; the undo posts the reversal, the legs swapped, so
+    // the ledger returns to where it was. The ledger is the GL module's, and this stub keeps none.
+    const reversal = reversalFor(match);
+    if (reversal !== null) {
+      if (typeof postLedger !== "function") return clientError(422, "the ledger cannot take a journal");
+      const made = postLedger({
+        source: "ADJUSTMENT",
+        idempotency_key: `bankrec:unmatch:${match.id}`,
+        memo: "bankrec unmatch reversal",
+        document_date: reversal.document_date,
+        created_by: caller.id,
+        lines: reversal.lines,
+      });
+      if (made?.status !== 201) return clientError(422, made?.body?.error ?? "the ledger refused the reversal");
+    }
     match.unmatched_at = stamp();
     const line = world.lines.find((l) => l.id === match.statement_line_id);
     if (line !== undefined && line.status === "MATCHED") line.status = "UNMATCHED";
@@ -540,8 +732,8 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
       const payment = world.payments.find((p) => p.id === match.target_ref_id && p.status === "DEPOSITED");
       if (payment !== undefined) payment.status = "RECEIVED";
     }
-    // A payment or lodgement match posted a clearing journal; the undo posts the reversal.
-    if ((match.target_type === "PAYMENT" || match.target_type === "LODGEMENT") && match.amount_cents > 0) world.glCents -= match.amount_cents;
+    // A payment or lodgement match posted a clearing journal; the undo posts the reversal. The ledger the
+    // journal moves is the GL module's, and this stub keeps none.
     return { status: 200, body: { status: "unmatched" } };
   }
 
@@ -582,8 +774,8 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
     const account = world.accounts.find((a) => a.id === input.bank_account_id);
     if (account === undefined) return clientError(404, "not found");
     const netNow = monthNet(account.id, input.year, input.month);
-    // Only the operating account has a ledger balance in this world; the cards are tracking only.
-    const gl = account.gl_account_code === "1000" ? world.glCents : 0;
+    // The ledger side: read from the ledger's own world, at the month's end.
+    const gl = ledgerFor(account, input.year, input.month);
     const ditCents = account.gl_account_code === "1000" ? world.depositsInTransit.reduce((s, x) => s + x.amount_cents, 0) : 0;
     const ocCents = account.gl_account_code === "1000" ? world.outstandingCheques.reduce((s, x) => s + x.amount_cents, 0) : 0;
     const existing = world.recons.find((r) => r.bank_account_id === account.id && r.year === input.year && r.month === input.month);
@@ -706,7 +898,7 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
     }
     // SF-2s + FW1-04: the core recomputes the ledger, outstanding items, and a derived statement balance from the lines at completion.
     const stmt = rec.statement_balance_derived ? monthNet(rec.bank_account_id, rec.year, rec.month) : rec.statement_balance_cents;
-    const ledger = account !== undefined && account.gl_account_code === "1000" ? world.glCents : 0;
+    const ledger = account !== undefined ? ledgerFor(account, rec.year, rec.month) : 0;
     const ditCents = account !== undefined && account.gl_account_code === "1000" ? world.depositsInTransit.reduce((s, x) => s + x.amount_cents, 0) : 0;
     const ocCents = account !== undefined && account.gl_account_code === "1000" ? world.outstandingCheques.reduce((s, x) => s + x.amount_cents, 0) : 0;
     const adjBank = stmt + ditCents - ocCents;
@@ -735,11 +927,6 @@ export function createBankrecWorld({ ledgerPosted = null } = {}) {
       return { status: 200, body: { ok: true } };
     }
     // A control the contract test uses to reverse a payment the way the payments module would (reversed_at set).
-    // A control the contract test uses to post to the operating account's ledger after a month was opened (SF-2s).
-    if (method === "POST" && path === "/_stub/post-to-bank") {
-      world.glCents += JSON.parse(bodyText || "{}").cents ?? 0;
-      return { status: 200, body: { ok: true } };
-    }
     if (method === "POST" && path === "/_stub/outstanding-items") {
       const input = JSON.parse(bodyText || "{}");
       world.depositsInTransit = Array.isArray(input.deposits_in_transit) ? input.deposits_in_transit : [];

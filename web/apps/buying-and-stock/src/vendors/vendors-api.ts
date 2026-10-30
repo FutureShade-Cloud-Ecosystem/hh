@@ -8,6 +8,7 @@ import {
   type ProductPage,
   type PurchasingCreateVendorRequest,
   type PurchasingPO,
+  type PurchasingSetVendorT5018Request,
   type PurchasingUpdateVendorRequest,
   type PurchasingVendorContactResult,
   type PurchasingVendorContactWrite,
@@ -36,6 +37,14 @@ export class VendorsApi {
 
   update(id: string, body: PurchasingUpdateVendorRequest): Promise<Result<PurchasingVendorMaster>> {
     return staffPurchasing.purchasingUpdateVendor(this.#client, id, body);
+  }
+
+  /**
+   * The vendor's T5018 record: the Financial Controller's subcontractor mark and the contractor's
+   * CRA business number. Its own door, walled to that seat by the core.
+   */
+  setT5018(id: string, body: PurchasingSetVendorT5018Request): Promise<Result<PurchasingVendorMaster>> {
+    return staffPurchasing.purchasingSetVendorT5018(this.#client, id, body);
   }
 
   contact(id: string): Promise<Result<PurchasingVendorContactResult>> {

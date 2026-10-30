@@ -7,10 +7,11 @@
 // Every figure is the server's, formatted. The board never adds a bucket up and never takes a
 // figure of its own: the route's row totals and the route's book totals are what show.
 import { html, nothing, type TemplateResult } from "lit";
-import { PAYABLES_BANDS, isLandedCostRow, landedCostWords, rowItems, rowKey, type PayablesBoardModel, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
-import { asOfDay, bucketWord, daysLateWord, daysPastDue, pastDueMarkWord, relativeDay, statusTone, statusWord, type Mark } from "./ar-logic.js";
+import { PAYABLES_BANDS, canPayBills, formatBillMoney, isForeignBill, isLandedCostRow, landedCostWords, payEarlierLandedWords, payLandedWords, payTargetWords, rowItems, rowKey, type PayablesBoardModel, type PayablesView, type PurchasingAPAgingItem, type PurchasingAPAgingPage, type PurchasingAPAgingRow } from "./ap-logic.js";
+import { bucketWord, daysLateWord, daysPastDue, dayWords, pastDueMarkWord, relativeDay, statusTone, statusWord, type Mark } from "./ar-logic.js";
 import { formatMoney } from "./ar-money.js";
 import { markPill } from "./ar-views.js";
+import { businessNumberIsMissing, businessNumberWords, t5018EmptyKind, t5018Rows, type T5018Model } from "./t5018-logic.js";
 
 /** One band of the board's five. */
 type Band = (typeof PAYABLES_BANDS)[number];
@@ -112,7 +113,7 @@ function payablesAging(page: PurchasingAPAgingPage): TemplateResult {
         ? html`
             <div class="empty" data-payables-empty>
               <strong>No open AP as of this day.</strong>
-              <span class="dim">Nothing is owed to a vendor, a carrier or a broker on ${asOfDay(page.as_of)}.</span>
+              <span class="dim">Nothing is owed to a vendor, a carrier or a broker on ${dayWords(page.as_of)}.</span>
             </div>
           `
         : html`
@@ -140,18 +141,30 @@ function payablesAging(page: PurchasingAPAgingPage): TemplateResult {
           `}
       ${rows.length === 0
         ? nothing
-        : html`<p class="dim small foot" data-payables-foot>As of ${asOfDay(page.as_of)} · ${payeesOwe(rows.length)}.</p>`}
+        : html`<p class="dim small foot" data-payables-foot>As of ${dayWords(page.as_of)} · ${payeesOwe(rows.length)}.</p>`}
     </section>
   `;
 }
 
 // ---- a payee's open items ----------------------------------------------------------------------
 
-/** One open document: a bill, or a landed cost line to a carrier or a broker. */
-function payeeLineRow(item: PurchasingAPAgingItem, asOf: string, onCarrier: boolean): TemplateResult {
+/**
+ * One open document: a bill, or a landed cost line to a carrier or a broker.
+ *
+ * A vendor bill carries the Pay control, and only a manager's: paying a vendor bill is a manage
+ * level route on the money desk, so the Payables and Receivables role is turned away by it. The
+ * server re-refuses; the control is simply not on the row for a role the route would refuse. A
+ * landed cost line carries no Pay control in this round: it is owed to the carrier or the broker,
+ * not to a supplier, and the route pays a vendor bill.
+ *
+ * The row being paid wears the desk's own selected row style, so the person paying a bill can see
+ * which row the open form belongs to.
+ */
+function payeeLineRow(item: PurchasingAPAgingItem, asOf: string, onCarrier: boolean, canPay: boolean, paying: boolean): TemplateResult {
   const late = daysPastDue(item.due_date, asOf);
+  const payable = canPay && item.kind === "VENDOR_BILL";
   return html`
-    <tr data-line-row data-doc-kind="${item.kind}">
+    <tr data-line-row data-doc-kind="${item.kind}" aria-current="${paying ? "true" : "false"}">
       <td>
         <span class="who">${item.ref_no}</span>
         <span class="dim small">${documentKindWord(item, onCarrier)}</span>
@@ -170,13 +183,65 @@ function payeeLineRow(item: PurchasingAPAgingItem, asOf: string, onCarrier: bool
       <td>
         <span class="marks">${markPill(statusMark(item, late))}</span>
       </td>
-      <td class="num">${formatMoney(item.open_cents)}</td>
+      <td class="num">
+        ${formatMoney(item.open_cents)}
+        ${payable
+          ? html`<span class="row-actions"><button type="button" class="btn btn-secondary small-btn" data-action="payables-pay" data-bill-id="${item.id}">Pay</button></span>`
+          : nothing}
+      </td>
     </tr>
   `;
 }
 
-function payablesPayee(page: PurchasingAPAgingPage, row: PurchasingAPAgingRow): TemplateResult {
+/**
+ * The Pay form on one open bill. It says which bill it is paying, to whom, and what is open on it,
+ * before the press: the person paying a vendor reads the amount they are about to move.
+ *
+ * The amount starts at the open amount and never goes above it: the form caps what it sends at
+ * what the bill has open, so a press cannot ask for more than the bill carries.
+ */
+function payForm(model: PayablesBoardModel, payee: string): TemplateResult {
+  const form = model.pay;
+  if (form === null) return html``;
+  return html`
+    ${form.landedCents != null ? html`
+    <form class="pay-form" data-pay-form aria-label="Pay a vendor bill">
+      <p class="callout" role="status" data-pay-landed>${payLandedWords(form.landedCents)}</p>
+      <div class="actions">
+        <button type="button" class="btn btn-secondary" data-action="payables-pay-cancel">Close</button>
+      </div>
+    </form>` : html`
+    <form class="pay-form" data-pay-form aria-label="Pay a vendor bill">
+      ${form.earlierLandedCents != null ? html`<p class="callout" role="status" data-pay-earlier>${payEarlierLandedWords(form.earlierLandedCents)}</p>` : nothing}
+      <p class="callout" data-pay-target>${payTargetWords(form.billNo, payee, form.openCents, form.currency)}</p>
+      <label>
+        <span>Amount to pay${isForeignBill(form.currency) ? html` in ${form.currency.toUpperCase()}` : nothing} <span class="dim small">(up to ${formatBillMoney(form.openCents, form.currency)})</span></span>
+        <input type="text" class="amount" inputmode="decimal" data-field="pay-amount" placeholder="Such as 250.00" autocomplete="off" />
+      </label>
+      ${isForeignBill(form.currency) ? html`<label>
+        <span>Rate paid at <span class="dim small">(CAD for one ${form.currency.toUpperCase()})</span></span>
+        <input type="text" inputmode="decimal" data-field="pay-rate" placeholder="Such as 1.3500" autocomplete="off" />
+      </label>` : nothing}
+      <label>
+        <span>Day it was paid</span>
+        <input type="date" data-field="pay-date" />
+      </label>
+      <label>
+        <span>Note (optional)</span>
+        <input type="text" data-field="pay-note" placeholder="Such as the cheque number" autocomplete="off" />
+      </label>
+      ${form.error === "" ? nothing : html`<p class="alert alert-error" role="alert" data-pay-error>${form.error}</p>`}
+      <div class="actions">
+        <button type="button" class="btn btn-primary" data-action="payables-pay-send" ?disabled=${model.busy}>Record the payment</button>
+        <button type="button" class="btn btn-secondary" data-action="payables-pay-cancel">Cancel</button>
+      </div>
+    </form>`}
+  `;
+}
+
+function payablesPayee(page: PurchasingAPAgingPage, row: PurchasingAPAgingRow, model: PayablesBoardModel): TemplateResult {
   const carrier = isLandedCostRow(row);
+  const canPay = canPayBills(model.roleCode);
   return html`
     <button type="button" class="link back" data-action="payables-back">‹ Payables</button>
     <div class="head">
@@ -196,17 +261,24 @@ function payablesPayee(page: PurchasingAPAgingPage, row: PurchasingAPAgingRow): 
             <tr><th>Document</th><th>Due</th><th>Status</th><th class="num">Open amount</th></tr>
           </thead>
           <tbody>
-            ${rowItems(row).map((item) => payeeLineRow(item, page.as_of, carrier))}
+            ${rowItems(row).map((item) => html`
+              ${payeeLineRow(item, page.as_of, carrier, canPay, model.pay !== null && model.pay.billId === item.id)}
+              ${model.pay !== null && model.pay.billId === item.id
+                ? html`<tr class="pay-form-row"><td colspan="4">${payForm(model, row.vendor_name)}</td></tr>`
+                : nothing}
+            `)}
           </tbody>
           <tfoot>
             <tr>
-              <td colspan="3"><b>Open total</b> <span class="dim small">as of ${asOfDay(page.as_of)}</span></td>
+              <td colspan="3"><b>Open total</b> <span class="dim small">as of ${dayWords(page.as_of)}</span></td>
               <td class="num"><b data-payee-lines-total>${formatMoney(row.total_cents)}</b></td>
             </tr>
           </tfoot>
         </table>
       </div>
-      <p class="dim small foot">Landed costs are owed to the carrier or broker, not to the supplier.</p>
+      ${carrier
+        ? html`<p class="dim small foot">Landed costs are owed to the carrier or broker, not to the supplier.</p>`
+        : nothing}
     </section>
   `;
 }
@@ -222,7 +294,7 @@ export function renderPayables(board: PayablesBoardModel): TemplateResult {
   const page = board.page;
   if (board.openRowKey !== null && page !== null) {
     const row = page.items.find((item) => rowKey(item) === board.openRowKey);
-    if (row !== undefined) return html`${payablesPayee(page, row)}`;
+    if (row !== undefined) return html`${payablesPayee(page, row, board)}`;
   }
   return html`
     <div class="head">
@@ -241,5 +313,116 @@ export function renderPayables(board: PayablesBoardModel): TemplateResult {
             </section>
           `
         : html`${payablesAging(page)}`}
+  `;
+}
+
+// ---- the T5018 view ----------------------------------------------------------------------------
+
+/**
+ * The Payables area's own view nav: the open AP board and the T5018 year report. The area stands
+ * beside the receivables desk in the Money Desk's area switch, so this nav is the way from one of
+ * the area's own views to the other.
+ */
+export function payablesViewNav(view: PayablesView): TemplateResult {
+  const tab = (id: PayablesView, word: string): TemplateResult =>
+    html`<button type="button" class="tab" data-action="payables-view" data-view="${id}" aria-current="${view === id ? "true" : "false"}">${word}</button>`;
+  return html`
+    <nav class="tabs" aria-label="Payables views">
+      ${tab("aging", "Open AP")} ${tab("t5018", "T5018")}
+    </nav>
+  `;
+}
+
+/**
+ * The T5018 view: the year's payments to the vendors the Financial Controller has marked as
+ * subcontractors, which is what a CRA Form T5018 is filled from.
+ *
+ * The year is the DEALER'S year, so the picker is a year and not a date, and the figures are the
+ * route's: the rows, the paid amounts and the total are what the server sent.
+ */
+function t5018Panel(model: T5018Model): TemplateResult {
+  const report = model.report;
+  const rows = report === null ? [] : t5018Rows(report);
+  const emptyKind = report === null ? null : t5018EmptyKind(report);
+  return html`
+    <section class="panel" aria-label="T5018 subcontractor payments">
+      <div class="panel-head">
+        <h3>T5018 subcontractor payments</h3>
+        <div class="tools">
+          <label>Year<input type="number" min="1970" max="9999" step="1" data-field="t5018-year" aria-label="The year to report on" /></label>
+          <button type="button" class="btn btn-secondary" data-action="t5018-csv" ?disabled=${model.downloading || emptyKind !== null}>
+            ${model.downloading ? "Preparing the file" : "Download CSV"}
+          </button>
+        </div>
+      </div>
+      ${model.state === "loading"
+        ? html`<p class="dim" role="status">Loading the year.</p><div class="ghost"></div><div class="ghost"></div>`
+        : model.state === "error" || report === null
+          ? html`
+              <p class="alert alert-error" role="alert" data-error>${model.error}</p>
+              <div class="actions"><button type="button" class="btn btn-secondary" data-action="t5018-reload">Try again</button></div>
+            `
+          : emptyKind === "none-marked"
+            ? html`
+                <div class="empty" data-t5018-empty="none-marked">
+                  <strong>No vendor is marked yet.</strong>
+                  <span class="dim">A vendor is marked as a subcontractor on its own record in Buying and Stock.</span>
+                </div>
+              `
+            : html`
+                ${emptyKind === "none-paid"
+                  ? html`<div class="empty" data-t5018-empty="none-paid">
+                      <strong>Nothing was paid to marked vendors in ${report.year}.</strong>
+                      <span class="dim">The marked vendors are listed below with their CRA business numbers.</span>
+                    </div>`
+                  : nothing}
+                <div class="scroll">
+                  <table class="stack t5018" data-t5018-table>
+                    <thead>
+                      <tr><th>Vendor</th><th>CRA business number</th><th class="num">Paid in ${report.year}</th></tr>
+                    </thead>
+                    <tbody>
+                      ${rows.map(
+                        (row) => html`
+                          <tr data-t5018-row data-vendor-id="${row.vendor_id}">
+                            <td>
+                              <span class="who">${row.name}</span>
+                              <span class="dim small">${row.vendor_no}</span>
+                            </td>
+                            <td data-t5018-number data-label="CRA business number">${businessNumberIsMissing(row)
+                              ? html`<span class="pill pill-watch" data-t5018-missing>${businessNumberWords(row)}</span>`
+                              : businessNumberWords(row)}</td>
+                            <td class="num" data-t5018-paid>${formatMoney(row.paid_cents)}</td>
+                          </tr>
+                        `,
+                      )}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colspan="2"><b>Paid to subcontractors in ${report.year}</b></td>
+                        <td class="num"><b data-t5018-total>${formatMoney(report.total_cents)}</b></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              `}
+      ${model.notice === "" ? nothing : html`<p class="dim small foot" data-t5018-notice>${model.notice}</p>`}
+    </section>
+  `;
+}
+
+/**
+ * The T5018 view: the panel above, under the area's own head. The year the report answers is the
+ * route's, so the screen shows the route's year and never a year of its own.
+ */
+export function renderT5018(model: T5018Model): TemplateResult {
+  return html`
+    <div class="head">
+      <div>
+        <h1>T5018</h1>
+        <p class="dim">What the dealer paid its subcontractors in a calendar year, for the CRA's Form T5018. Only the vendors the Financial Controller has marked are on it.</p>
+      </div>
+    </div>
+    ${t5018Panel(model)}
   `;
 }

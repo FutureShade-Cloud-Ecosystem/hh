@@ -301,8 +301,15 @@ test("the year end close is a review naming the year, retained earnings and the 
 test("the trial balance takes a month, shows that month alone, and the export downloads the rows on screen", async ({ page, request }) => {
   await openApprovals(page, request);
   await openTab(page, "trial");
-  await page.getByRole("button", { name: "Sep", exact: true }).click();
-  await expect(page.locator("[data-trial]")).toContainText("September 2026");
+  // The month probed for emptiness must be one no journal lands in: the till's lodgement journal is planted in
+  // the bank rec month (the host's prior month), so the probe reads December, or November when the bank rec
+  // month is December itself.
+  const bankRecMonth = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).getMonth() + 1;
+  const probeMonth = bankRecMonth === 12 ? 11 : 12;
+  const probeShort = new Date(Date.UTC(2026, probeMonth - 1, 1)).toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  const probeLong = new Date(Date.UTC(2026, probeMonth - 1, 1)).toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+  await page.getByRole("button", { name: probeShort, exact: true }).click();
+  await expect(page.locator("[data-trial]")).toContainText(`${probeLong} 2026`);
   await expect(page.locator("[data-trial]")).toContainText("No posted journals yet.");
   await page.getByRole("button", { name: "Aug", exact: true }).click();
   await expect(page.locator("[data-trial]")).toContainText("August 2026");

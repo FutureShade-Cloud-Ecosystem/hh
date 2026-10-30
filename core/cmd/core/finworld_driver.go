@@ -522,8 +522,54 @@ func finworldMain(args []string, stdout, stderr io.Writer, getenv func(string) s
 		}
 		return nil
 
+	case "census":
+		// The world's books census (W2-1d item 1): builds the plan alone, no
+		// database, and fails on engine data where a dealer's books carry
+		// names, bookkeeper memos, or an unmeant late payable. The source scan
+		// walks the product code from the core tree above the working
+		// directory, so run this leg from inside a checkout.
+		fs := flag.NewFlagSet("finworld census", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		seed := fs.Uint64("seed", 1, "FinWorldPlan seed")
+		dealer := fs.String("dealer", finworldDefaultDealer(getenv), "dealer name")
+		anchor := fs.String("anchor", finworldDefaultAnchor, "plan anchor year month (YYYY-MM)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		anchorYM, err := finworldParseAnchor(*anchor)
+		if err != nil {
+			return err
+		}
+		plan, err := FinWorldPlan(*seed, *anchorYM, *dealer)
+		if err != nil {
+			return fmt.Errorf("FinWorldPlan: %w", err)
+		}
+		cwd, _ := os.Getwd()
+		res, err := finworldCensusPlan(plan, finworldFindCoreRoot(cwd))
+		if err != nil {
+			return fmt.Errorf("finworld census: %w", err)
+		}
+		for _, f := range res.Names {
+			fmt.Fprintf(stdout, "NAME %s\n", f)
+		}
+		for _, f := range res.Memos {
+			fmt.Fprintf(stdout, "MEMO %s\n", f)
+		}
+		for _, f := range res.LatePayables {
+			fmt.Fprintf(stdout, "LATE %s\n", f)
+		}
+		for _, f := range res.SourceMemos {
+			fmt.Fprintf(stdout, "SOURCE %s\n", f)
+		}
+		fmt.Fprintf(stdout, "finworld census: %d name(s), %d memo(s), %d late payable(s), %d source memo(s)\n",
+			len(res.Names), len(res.Memos), len(res.LatePayables), len(res.SourceMemos))
+		if !res.Clean() {
+			return fmt.Errorf("finworld census: the world's books do not read like a real dealer's")
+		}
+		return nil
+
 	default:
-		return fmt.Errorf("unknown finworld subcommand %q (want day, check or days)", sub)
+		return fmt.Errorf("unknown finworld subcommand %q (want day, check, days or census)", sub)
 	}
 }
 
@@ -623,6 +669,23 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 		}
 	}
 
+	// The vendors the plan names (the catalogue's suppliers, and from W2-1d
+	// item 3 the landed costs' carriers and brokers), inserted under the
+	// plan's own display name and terms. A vendor the seed already plants
+	// keeps its row; a carrier or broker gets its named row here.
+	vendorNameByNo := make(map[string]FinWorldVendor, len(plan.Vendors))
+	for _, v := range plan.Vendors {
+		vendorNameByNo[v.VendorNo] = v
+	}
+	for _, v := range plan.Vendors {
+		if _, err := h.pool.Exec(ctx, `
+			INSERT INTO vendors (vendor_no, name, payment_terms_days, is_edi)
+			VALUES ($1::citext, $2::text, $3, false)
+			ON CONFLICT (vendor_no) DO NOTHING`, v.VendorNo, v.Name, v.PaymentTermsDays); err != nil {
+			return fmt.Errorf("ensure vendor %s: %w", v.VendorNo, err)
+		}
+	}
+
 	// Align all 30 products, UOMs, and list prices with FinWorldPlan
 	for _, p := range plan.Products {
 		catCode := p.CategoryCode
@@ -668,11 +731,8 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 			prodID, p.ListPriceCents, p.SellUOM); err != nil {
 			return fmt.Errorf("upsert list price %s: %w", p.SKU, err)
 		}
-		if _, err := h.pool.Exec(ctx, `
-			INSERT INTO vendors (vendor_no, name, payment_terms_days, is_edi)
-			VALUES ($1::citext, $1::text, 30, false)
-			ON CONFLICT (vendor_no) DO NOTHING`, p.VendorNo); err != nil {
-			return fmt.Errorf("ensure vendor %s: %w", p.VendorNo, err)
+		if _, ok := vendorNameByNo[p.VendorNo]; !ok {
+			return fmt.Errorf("ensure vendor %s: the plan names no vendor for this product", p.VendorNo)
 		}
 	}
 
@@ -782,7 +842,7 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 	if _, err := h.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
 		Source:         "MANUAL",
 		IdempotencyKey: "finworld:opening-stock:TRT",
-		Memo:           "FinWorld opening inventory balance TRT",
+		Memo:           "Opening inventory balance, Trenton yard",
 		BranchID:       finworldBranchTRT,
 		DocumentDate:   cutoverDate,
 		Lines: []gl.ExternalLine{
@@ -795,7 +855,7 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 	if _, err := h.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
 		Source:         "MANUAL",
 		IdempotencyKey: "finworld:opening-stock:KGN",
-		Memo:           "FinWorld opening inventory balance KGN",
+		Memo:           "Opening inventory balance, Kingston yard",
 		BranchID:       finworldBranchKGN,
 		DocumentDate:   cutoverDate,
 		Lines: []gl.ExternalLine{
@@ -811,7 +871,7 @@ func finworldSetupDay0(ctx context.Context, h *finworldHarness, plan *FinWorldPl
 	if _, err := h.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
 		Source:         "MANUAL",
 		IdempotencyKey: "finworld:opening-bank:TRT",
-		Memo:           "FinWorld opening operating bank balance",
+		Memo:           "Opening operating bank balance",
 		BranchID:       finworldBranchTRT,
 		DocumentDate:   cutoverDate,
 		Lines: []gl.ExternalLine{
@@ -1015,8 +1075,17 @@ func finworldRunDay(ctx context.Context, pool *pgxpool.Pool, plan *FinWorldPlanT
 
 		case FinWorldEventLandedCost:
 			lcEv := ev.LandedCost
-			if err := finworldExecuteLandedCost(ctx, h, lcEv); err != nil {
+			if err := finworldExecuteLandedCost(ctx, h, lcEv, vendorByNo); err != nil {
 				return fmt.Errorf("%s (%s): %w", ev.EventKey, lcEv.LandedCostKey, err)
+			}
+			if err := h.drain(ctx); err != nil {
+				return fmt.Errorf("%s drain: %w", ev.EventKey, err)
+			}
+
+		case FinWorldEventLandedCostSettle:
+			st := ev.LandedCostSettle
+			if err := finworldExecuteLandedCostSettle(ctx, h, st, docTime); err != nil {
+				return fmt.Errorf("%s (%s): %w", ev.EventKey, st.LandedCostKey, err)
 			}
 			if err := h.drain(ctx); err != nil {
 				return fmt.Errorf("%s drain: %w", ev.EventKey, err)
@@ -1497,7 +1566,7 @@ func finworldExecuteVendorBill(
 	}
 	if _, err := h.call("post bill "+vb.VendorBillKey, http.MethodPost, "/api/v1/purchasing/bills/"+billRes.ID+"/post", map[string]any{
 		"accept_variance": true,
-		"note":            vb.VendorBillKey,
+		"note":            "Supplier invoice received",
 	}); err != nil {
 		return err
 	}
@@ -1529,7 +1598,7 @@ func finworldPostSupplierCheque(ctx context.Context, h *finworldHarness, branchI
 	if _, err := h.ops.purchasingSvc.PayBill(sctx, billID, purchasing.PayBillRequest{
 		AmountCents:    totalCents,
 		PaidAt:         docTime,
-		Note:           "Supplier cheque " + billKey + " (" + invoiceNo + ")",
+		Note:           "Supplier cheque " + invoiceNo,
 		IdempotencyKey: "finworld:vpay:" + invoiceNo,
 	}); err != nil {
 		return fmt.Errorf("pay vendor bill %s: %w", billKey, err)
@@ -1553,7 +1622,7 @@ func finworldExecuteVendorPayment(ctx context.Context, h *finworldHarness, vp *F
 // names. Every route is RequireManager, and the driver posts them with the branch_manager token it
 // already links for approvals. The world key rides po_ref at create so a later void (a fresh
 // process, a later simulated day) resolves the applied document.
-func finworldExecuteLandedCost(ctx context.Context, h *finworldHarness, lc *FinWorldLandedCostEvent) error {
+func finworldExecuteLandedCost(ctx context.Context, h *finworldHarness, lc *FinWorldLandedCostEvent, vendorByNo map[string]string) error {
 	branchID, err := finworldBranchID(lc.BranchCode)
 	if err != nil {
 		return err
@@ -1577,9 +1646,14 @@ func finworldExecuteLandedCost(ctx context.Context, h *finworldHarness, lc *FinW
 		 WHERE p.notes = $1`, lc.PurchaseReceiptKey).Scan(&poID); err != nil {
 		return fmt.Errorf("lookup receiving document for receipt %s: %w", lc.PurchaseReceiptKey, err)
 	}
+	payeeVendorID := vendorByNo[lc.PayeeVendorNo]
+	if payeeVendorID == "" {
+		return fmt.Errorf("landed cost %s names unknown payee vendor %s", lc.LandedCostKey, lc.PayeeVendorNo)
+	}
 	out, err := h.callWithToken(h.managerToken, "create landed cost "+lc.LandedCostKey, http.MethodPost, "/api/v1/landed-costs", map[string]any{
 		"po_id":                poID,
 		"po_ref":               lc.LandedCostKey,
+		"payee_vendor_id":      payeeVendorID,
 		"branch_id":            branchID,
 		"currency":             lc.Currency,
 		"fx_rate":              float64(lc.FXRateBps) / 10000,
@@ -1600,6 +1674,23 @@ func finworldExecuteLandedCost(ctx context.Context, h *finworldHarness, lc *FinW
 	}
 	_, err = h.callWithToken(h.managerToken, "apply landed cost "+lc.LandedCostKey, http.MethodPost, "/api/v1/landed-costs/"+created.ID+"/apply", nil)
 	return err
+}
+
+// finworldExecuteLandedCostSettle pays a landed cost's payable on the payee
+// vendor's terms through the landed cost's own settle route: the DR 2100 /
+// CR 1000 journal posts at the cheque's own date, keyed landedcost.settle, so
+// the AP aging reads the payment the same rule it reads a bill's payment by.
+func finworldExecuteLandedCostSettle(ctx context.Context, h *finworldHarness, st *FinWorldLandedCostSettleEvent, docTime time.Time) error {
+	var lcID string
+	if err := h.pool.QueryRow(ctx, `SELECT id::text FROM landed_costs WHERE po_ref = $1`, st.LandedCostKey).Scan(&lcID); err != nil {
+		return fmt.Errorf("lookup landed cost %s for settlement: %w", st.LandedCostKey, err)
+	}
+	if _, err := h.callWithToken(h.managerToken, "settle landed cost "+st.LandedCostKey, http.MethodPost, "/api/v1/landed-costs/"+lcID+"/settle", map[string]any{
+		"paid_at": docTime.Format(time.RFC3339),
+	}); err != nil {
+		return err
+	}
+	return h.drain(ctx)
 }
 
 func finworldExecuteStockTransfer(
@@ -1688,7 +1779,7 @@ func finworldExecuteReturn(
 		"idempotency_key": finworldUUID("ret:" + ret.ReturnKey),
 		"order_id":        orderID,
 		"refund_method":   ret.RefundMethod,
-		"reason":          "Customer return " + ret.ReturnKey,
+		"reason":          "Customer return",
 		"restock":         true,
 		"lines":           retLines,
 	}
@@ -1816,7 +1907,7 @@ func finworldExecuteNSFBounce(
 		return fmt.Errorf("lookup payment for NSF %s (receipt %s): %w", nsf.BounceKey, nsf.OriginalReceiptKey, err)
 	}
 	if _, err := h.call("nsf "+nsf.BounceKey, http.MethodPost, "/api/v1/ar/payments/"+paymentID+"/nsf", map[string]any{
-		"reason": "NSF returned cheque " + nsf.BounceKey,
+		"reason": "Cheque returned NSF",
 	}); err != nil {
 		return err
 	}
@@ -1827,12 +1918,12 @@ func finworldExecuteNSFBounce(
 		if _, err := h.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
 			Source:         "MANUAL",
 			IdempotencyKey: "finworld:nsf-bank-fee:" + nsf.BounceKey,
-			Memo:           "Bank returned-item charge " + nsf.BounceKey,
+			Memo:           "Bank returned-item charge",
 			BranchID:       branchID,
 			DocumentDate:   docTime,
 			Lines: []gl.ExternalLine{
-				{AccountCode: "6300", DebitCents: nsf.NSFFeeCents, Memo: "Bank NSF charge " + nsf.BounceKey},
-				{AccountCode: "1000", CreditCents: nsf.NSFFeeCents, Memo: "Bank NSF charge " + nsf.BounceKey},
+				{AccountCode: "6300", DebitCents: nsf.NSFFeeCents, Memo: "Bank NSF charge"},
+				{AccountCode: "1000", CreditCents: nsf.NSFFeeCents, Memo: "Bank NSF charge"},
 			},
 		}); err != nil {
 			return fmt.Errorf("post NSF bank charge %s: %w", nsf.BounceKey, err)
@@ -1919,7 +2010,7 @@ func finworldExecuteTillCount(
 	_, err = h.call("count till "+tc.SessionKey, http.MethodPost, "/api/v1/till/sessions/"+sessID+"/count", map[string]any{
 		"tenders":             tenders,
 		"closing_float_cents": zrep.Cash.OpeningFloatCents,
-		"variance_notes":      "finworld end-of-day count",
+		"variance_notes":      "End-of-day count",
 	})
 	return err
 }
@@ -2229,6 +2320,19 @@ func finworldResolveBankMatchTarget(ctx context.Context, pool *pgxpool.Pool, ref
 		}
 		return "JOURNAL", jid, nil
 
+	case strings.HasPrefix(ref, "LCPAY-"):
+		lcKey := strings.TrimPrefix(ref, "LCPAY-")
+		var jid string
+		if err := pool.QueryRow(ctx, `
+			SELECT j.id::text
+			  FROM gl_journals j
+			  JOIN landed_costs lc ON lc.id = j.source_ref_id
+			 WHERE j.source = 'PAYMENT'
+			   AND lc.po_ref = $1`, lcKey).Scan(&jid); err != nil {
+			return "", "", fmt.Errorf("lookup landed cost settlement journal %s: %w", ref, err)
+		}
+		return "JOURNAL", jid, nil
+
 	case strings.HasPrefix(ref, "FEE-"):
 		var jid string
 		if err := pool.QueryRow(ctx, `SELECT id::text FROM gl_journals WHERE idempotency_key = $1`, "finworld:bank-fee:"+ref).Scan(&jid); err != nil {
@@ -2322,7 +2426,7 @@ func finworldExecutePeriodClose(
 	}()
 
 	_, err := h.call("close period "+pc.YearMonth.String(), http.MethodPost, "/api/v1/gl/periods/"+periodID+"/close", map[string]any{
-		"reason": "FinWorld month-end close " + pc.YearMonth.String(),
+		"reason": "Month-end close " + pc.YearMonth.String(),
 	})
 	return err
 }
@@ -2353,7 +2457,7 @@ func finworldExecuteYearClose(
 
 	if _, err := h.call("close year "+yc.YearCloseKey, http.MethodPost, "/api/v1/gl/periods/close-year", map[string]any{
 		"year":   yc.FiscalYear,
-		"reason": "FinWorld fiscal year-end close",
+		"reason": "Fiscal year-end close",
 	}); err != nil {
 		return err
 	}
