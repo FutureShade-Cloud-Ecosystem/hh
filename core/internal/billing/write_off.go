@@ -34,10 +34,11 @@ package billing
 // key, the credit applications' posture, so neither act's stamp ever clobbers the other's), keyed
 // by the request's idempotency key: the same key with the same body answers the first result and
 // writes nothing. The record is also what a reversal reads to restore both sides, so the act's full
-// state lives nowhere else. A residual is stated once: a spent key fired at ANOTHER invoice is a
-// second act here, not a replay, because the key's record lives on the first invoice's metadata
-// (the credit door's org scoped key table, 0447, is the machinery for a door whose acts are many
-// per invoice; this door has at most one live act per invoice and the invoice state is the guard).
+// state lives nowhere else. A spent key fired at ANOTHER invoice of the same org and branch is refused
+// in words, naming the invoice the key already wrote off (W3 item 0.15): the lookup reads the same
+// envelope on the other invoices rather than a key table (the credit door's org scoped key table,
+// 0447, is the machinery for a door whose acts are many per invoice; this door has at most one live
+// act per invoice and the invoice state is the guard).
 //
 // -- THE REVERSAL ----------------------------------------------------------------------------------
 // A write off is reversible ONCE, with a reason: the invoice's balance comes back whole, the status
@@ -408,6 +409,24 @@ SELECT invoice_no::text, balance_cents, holdback_cents, branch_id::text, status,
 		}
 		return WriteOffResult{}, WriteOffConflictError{
 			Msg: "that idempotency key already wrote off an invoice differently; use a new key"}
+	}
+
+	// A key already spent on ANOTHER invoice (W3 item 0.15, S5 on 707's P3) is refused in words, before
+	// the open gate: a key names one act. The lookup is the same envelope read on every other invoice
+	// of the org and this invoice's branch (write off volume is small), so the invoice it names is one
+	// the caller's branch fence already reaches.
+	var spentNo string
+	err = tx.QueryRow(ctx, `
+SELECT invoice_no::text FROM invoices
+ WHERE id <> $1::uuid AND doc_type = 'INVOICE' AND branch_id = $2::uuid
+   AND COALESCE(org_id::text, '') = $3 AND metadata->'write_offs' ? $4
+ LIMIT 1`, in.InvoiceID, invBranch, invOrg, in.IdempotencyKey).Scan(&spentNo)
+	switch {
+	case err == nil:
+		return WriteOffResult{}, WriteOffConflictError{Msg: fmt.Sprintf(
+			"that idempotency key already wrote off invoice %s; a key names one write off, use a new key for invoice %s", spentNo, invNo)}
+	case !errors.Is(err, pgx.ErrNoRows):
+		return WriteOffResult{}, fmt.Errorf("write off: look for the key on other invoices: %w", err)
 	}
 
 	if invStatus != "FINALIZED" && invStatus != "PARTIALLY_PAID" {

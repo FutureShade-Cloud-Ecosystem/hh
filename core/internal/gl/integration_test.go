@@ -392,7 +392,7 @@ func TestIntegration_AC9_GPParityExport(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed export journal: %v", err)
 	}
-	res, err := svc.Export(ctx, 2094, 5, "")
+	res, err := svc.Export(ctx, ExportQuery{Year: 2094, Month: 5})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
