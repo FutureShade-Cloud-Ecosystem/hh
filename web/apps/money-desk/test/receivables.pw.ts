@@ -796,6 +796,59 @@ test("on a phone the unknown outcome message is in view and focused when it appe
   expect(focused).toBe("");
 });
 
+// W3 0.24, the Sonnet words on 707's payment panel: the helper text owns its sentences in the
+// bookkeeper's words (no engine word), the Payment method label stands clear of its hint, and on a
+// phone the invoice cards keep their column names. Red first: the helpers said "the server splits
+// it, oldest first" and "What shows afterwards is the server's balance", the label read "Payment
+// method EFT first" with the hint inside it, and the 390 cards showed a bare day and a bare figure.
+test("the payment panel's words are the bookkeeper's own: no engine word in the helpers, the label clear of its hint, and the 390 invoice cards keep their column names", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  const receive = page.locator("[data-receive]");
+  const invoicesHelper = page.locator("section[aria-label='Open invoices'] .foot-row p");
+
+  // The helpers around the split: the desk's own words, and the engine's word nowhere a person reads.
+  await expect(invoicesHelper).toContainText("the payment is split across the picked invoices, oldest first");
+  await expect(receive.locator("p.dim.small").last()).toContainText("What shows afterwards is the customer's balance.");
+  await expect(receive).not.toContainText("server");
+  await expect(page.locator("section[aria-label='Open invoices']")).not.toContainText("server");
+
+  // The allocation's own empty state (Clear puts it back) reads the same way.
+  await page.getByRole("button", { name: "Clear" }).first().click();
+  await expect(receive.locator("[data-allocation]")).toContainText("Type an amount and pick the invoices");
+  await expect(receive.locator("[data-allocation]")).not.toContainText("server");
+
+  // The label says only what it labels; the tender policy is helper text of its own beside it.
+  const methodLabel = receive.locator("p.label").filter({ hasText: "Payment method" });
+  const policyHint = receive.locator("[data-policy-ach-first]");
+  await expect(methodLabel).toHaveText("Payment method");
+  await expect(policyHint).toBeVisible();
+  // No policy row has been read for this account, so the panel's own tender order leads with Card
+  // and the hint names it, the branch the desk's own walk (and the review's shot) shows.
+  await expect(policyHint).toHaveText("Card is the usual choice");
+  const hintRidesInTheLabel = await policyHint.evaluate((el) => el.closest("p.label") !== null);
+  expect(hintRidesInTheLabel, "the tender hint rides inside the label").toBe(false);
+
+  // On a phone the table's head is gone, so each card names its own columns: the due day and the
+  // balance figure never arrive bare. The label is the cell's own ::before, the card list's pattern.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const cards = page.locator("table.inv [data-invoice-row]");
+  const cardCount = await cards.count();
+  expect(cardCount).toBeGreaterThan(0);
+  for (let index = 0; index < cardCount; index += 1) {
+    const labels = await cards.nth(index).evaluate((row) => {
+      const labelOf = (cell: Element | null): string => {
+        if (cell === null) return "(no cell)";
+        const before = getComputedStyle(cell, "::before");
+        return before.display === "none" || before.content === "normal" || before.content === "none" ? "(no label)" : before.content.replace(/^"|"$/g, "");
+      };
+      return { due: labelOf(row.querySelector("td[data-card-label='Due']")), balance: labelOf(row.querySelector("td[data-card-label='Balance due']")) };
+    });
+    expect.soft(labels.due, `card ${index}: the due day has no name`).toBe("Due");
+    expect.soft(labels.balance, `card ${index}: the balance figure has no name`).toBe("Balance due");
+  }
+});
+
 test("a payment larger than the picked invoices leaves the remainder on the customer's account as a credit", async ({ page, request }) => {
   await openDesk(page, request);
   await openAccount(page, "Granite Edge Landscaping (demo)");
