@@ -548,7 +548,7 @@ func brokenSQLState(err error) (string, bool) {
 		return "", false
 	}
 	switch pgErr.Code {
-	case "42725":
+	case "42725", "42702":
 		return pgErr.Code, true
 	}
 	return "", false
