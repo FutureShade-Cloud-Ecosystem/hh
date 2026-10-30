@@ -1991,6 +1991,6 @@ async function handle(req, res) {
 const server = createServer((req, res) => {
   handle(req, res).catch(() => refuse(res, 500, "internal error"));
 });
-server.listen(port, () => {
+server.listen(port, "127.0.0.1", () => {
   console.log(`buying-stock-stub listening on ${port}`);
 });
