@@ -714,7 +714,8 @@ func (s *Service) RegisterPostingHandlers(d *notify.Dispatcher) {
 // PostedTopics is the frozen set of outbox topics the GL posting consumer owns (the W5 eight + the two
 // W7 POS-return topics + the deposit release and the deposit cancel, 0374/0375 + the damaged goods write off, 0378
 // + the payment reversal, 0426 + the re-application of a reversal's held money, 0431 + the true void of a
-// mis-keyed receipt, FW1-06b + the till paid in and paid out movements, FW1-13).
+// mis-keyed receipt, FW1-06b + the till paid in and paid out movements, FW1-13 + the AR write off and
+// its reversal (W3 item 0.10).
 var PostedTopics = []string{
 	"ar.invoice.finalized",
 	"payment.received",
@@ -734,6 +735,8 @@ var PostedTopics = []string{
 	"deposit.released",
 	"deposit.cancelled",
 	"pos.return.written_off",
+	"ar.invoice.write_off",
+	"ar.invoice.write_off_reversed",
 }
 
 // postEvent is the single outbox handler for all eight posted topics. It resolves the mapped posting rules,
@@ -824,4 +827,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// Policy + export
 	r.Handle("GET /api/v1/gl/policy", g.RequireManager(h.staff(h.policy)))
 	r.Handle("POST /api/v1/gl/export", g.RequireAdmin(h.staff(h.export)))
+	// The accounting package export's account mapping (W3 AX-1): the list is a manager read (the
+	// desk must see what the books export under), the set is narrowed to the Financial Controller
+	// inside the service, the reopen's own pattern beside its route gate.
+	r.Handle("GET /api/v1/gl/export-mapping", g.RequireManager(h.staff(h.listAccountMapping)))
+	r.Handle("PUT /api/v1/gl/export-mapping", g.RequireManager(h.staff(h.setAccountMapping)))
 }

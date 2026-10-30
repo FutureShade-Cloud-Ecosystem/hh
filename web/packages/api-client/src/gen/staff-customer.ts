@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { CustomerAccount, CustomerBillingAddress, CustomerCreate, CustomerSMSConsent, CustomerSMSConsentUpdate, CustomerSearchResult } from "./types.js";
+import type { CustomerAccount, CustomerBillingAddress, CustomerCreate, CustomerJob, CustomerJobCreate, CustomerJobEdit, CustomerSMSConsent, CustomerSMSConsentUpdate, CustomerSearchResult } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -66,6 +66,88 @@ export async function customerUpdateBillingAddress(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "customerUpdateBillingAddress",
+  });
+}
+
+export async function customerListJobs(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<CustomerJob[]>> {
+  return client.request<CustomerJob[]>({
+    method: "GET",
+    path: "/api/v1/customers/{id}/jobs",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "customerListJobs",
+  });
+}
+
+export async function customerCreateJob(
+  client: ApiClient,
+  id: string | number,
+  body: CustomerJobCreate,
+  call?: ApiCallOptions
+): Promise<Result<CustomerJob>> {
+  return client.request<CustomerJob>({
+    method: "POST",
+    path: "/api/v1/customers/{id}/jobs",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "customerCreateJob",
+  });
+}
+
+export async function customerGetJob(
+  client: ApiClient,
+  id: string | number,
+  jobId: string | number,
+  call?: ApiCallOptions
+): Promise<Result<CustomerJob>> {
+  return client.request<CustomerJob>({
+    method: "GET",
+    path: "/api/v1/customers/{id}/jobs/{jobId}",
+    pathParams: { id, jobId },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "customerGetJob",
+  });
+}
+
+export async function customerEditJob(
+  client: ApiClient,
+  id: string | number,
+  jobId: string | number,
+  body: CustomerJobEdit,
+  call?: ApiCallOptions
+): Promise<Result<CustomerJob>> {
+  return client.request<CustomerJob>({
+    method: "PUT",
+    path: "/api/v1/customers/{id}/jobs/{jobId}",
+    pathParams: { id, jobId },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "customerEditJob",
+  });
+}
+
+export async function customerCloseJob(
+  client: ApiClient,
+  id: string | number,
+  jobId: string | number,
+  call?: ApiCallOptions
+): Promise<Result<CustomerJob>> {
+  return client.request<CustomerJob>({
+    method: "POST",
+    path: "/api/v1/customers/{id}/jobs/{jobId}/close",
+    pathParams: { id, jobId },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "customerCloseJob",
   });
 }
 

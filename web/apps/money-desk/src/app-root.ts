@@ -447,10 +447,7 @@ export class MoneyDeskApp extends HHElement {
     if (action === "area") {
       const area = control?.getAttribute("data-area");
       if (AREAS.some((id) => id === area) && this.#areas().includes(area as Area)) {
-        // Leaving the payables board closes the payee whose open items were open.
-        if (area !== "payables") this.#ar.closePayables();
-        this.#area = area as Area;
-        this.#openArea();
+        this.#goArea(area as Area);
         this.requestUpdate();
       }
       return;
@@ -655,8 +652,7 @@ export class MoneyDeskApp extends HHElement {
     if (ref.kind !== "customer" || !this.#holdsReceivables()) return;
     this.#tanyai()?.hide();
     if (this.#area !== "receivables") {
-      this.#area = "receivables";
-      this.#openArea();
+      this.#goArea("receivables");
     }
     const open = document.createElement("button");
     open.setAttribute("data-action", "open-account");
@@ -714,7 +710,17 @@ export class MoneyDeskApp extends HHElement {
     this.#compliance = this.#newComplianceDesk();
     this.#glLoaded = false;
     const held = this.#areas();
-    this.#area = this.#isController() ? "ledger" : held.includes("receivables") ? "receivables" : (held[0] ?? "receivables");
+    this.#goArea(this.#isController() ? "ledger" : held.includes("receivables") ? "receivables" : (held[0] ?? "receivables"));
+  }
+
+  /**
+   * The way into an area. Every road into an area goes through here, so leaving the payables board
+   * closes the payee whose open items were open, whichever road the operator took: the area switch
+   * above, the assistant panel's own record, or the sign in that lands the desk.
+   */
+  #goArea(area: Area): void {
+    if (area !== "payables") this.#ar.closePayables();
+    this.#area = area;
     this.#openArea();
   }
 

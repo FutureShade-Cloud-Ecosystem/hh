@@ -99,6 +99,21 @@ export async function landedCostRetro(
   });
 }
 
+export async function landedCostSettle(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<LandedCostStatusResult>> {
+  return client.request<LandedCostStatusResult>({
+    method: "POST",
+    path: "/api/v1/landed-costs/{id}/settle",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "landedCostSettle",
+  });
+}
+
 export async function landedCostVoid(
   client: ApiClient,
   id: string | number,

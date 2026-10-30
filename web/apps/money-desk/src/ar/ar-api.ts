@@ -13,6 +13,7 @@ import {
   staffBilling,
   staffBranches,
   staffGl,
+  staffPurchasing,
   staffTill,
   type ApiClient,
   type BillingAddCustomerNoteInput,
@@ -48,10 +49,13 @@ import {
   type TillInvoicePayments,
   type TillNSFResult,
   type TillPaymentHistory,
+  type PurchasingBillDetail,
+  type PurchasingPayBillRequest,
 } from "@hardscapehouse/api-client";
 
 import { OfficeApi } from "./office-api.js";
 import type { PurchasingAPAgingPage } from "./ap-logic.js";
+import type { PurchasingT5018Report } from "./t5018-logic.js";
 
 export type PaymentMethod = "CASH" | "CARD" | "CHEQUE" | "EFT";
 
@@ -104,6 +108,43 @@ export class ArApi {
       query: opts,
       operationId: "purchasingGetAPAging",
     });
+  }
+
+  /**
+   * The year's T5018 report: the core's GET /api/v1/purchasing/t5018. The year is the dealer's
+   * own, so the view asks for one and the route answers with the year it read.
+   */
+  t5018(opts: { year?: number; branch_id?: string } = {}): Promise<Result<PurchasingT5018Report>> {
+    return staffPurchasing.purchasingT5018Report(this.#client, opts);
+  }
+
+  /**
+   * The same report as the file a bookkeeper hands the contractor's book: the core's own CSV
+   * answer, fetched as text, so the file says what the screen says.
+   */
+  t5018Csv(opts: { year?: number; branch_id?: string } = {}): Promise<Result<string>> {
+    return staffPurchasing.purchasingT5018ReportCSV(this.#client, opts);
+  }
+
+  /**
+   * One payment against a vendor bill: the core's POST /api/v1/purchasing/bills/{id}/payments.
+   *
+   * The key rides the Idempotency-Key header, one key per press, so a double press pays once and
+   * a retry after a lost answer is judged against the first press. The amount is the server's to
+   * accept or refuse (the open balance caps it); the desk only says what it typed. A bill that is not
+   * CAD takes the amount in its own currency and the rate it was paid at (fx_rate).
+   */
+  payBill(
+    id: string,
+    input: { amountCents: number; paidAt: string; note: string; fxRate?: number },
+    key: string,
+  ): Promise<Result<PurchasingBillDetail>> {
+    return staffPurchasing.purchasingPayBill(
+      this.#client,
+      id,
+      { amount_cents: input.amountCents, paid_at: input.paidAt, note: input.note, ...(input.fxRate === undefined ? {} : { fx_rate: input.fxRate }) },
+      { idempotencyKey: key },
+    );
   }
 
   /** Every invoice of an account, the unpaid ones first and the paid ones after: the core's read with no chip. */

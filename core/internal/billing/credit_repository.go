@@ -22,20 +22,23 @@ import (
 // the org default (branch_id IS NULL). A missing org row is a migration failure, not a runtime state,
 // so it errors rather than defaulting to something permissive in silence.
 func (r *Repository) CreditPolicy(ctx context.Context, branchID string) (CreditPolicy, error) {
-	if r.pool == nil {
+	q := r.creditChangeQuerier(ctx)
+	if q == nil {
 		return CreditPolicy{}, errNoDB
 	}
 	var p CreditPolicy
 	var bid *string
-	err := r.pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT COALESCE(branch_id::text,''), aging_bucket_days, aging_threshold_cents, aging_hold_enabled,
-		        limit_hold_enabled, limit_tolerance_cents, cod_enforced, auto_hold_enabled
+		        limit_hold_enabled, limit_tolerance_cents, cod_enforced, auto_hold_enabled, write_off_limit_cents,
+		        increase_first_threshold_cents, increase_second_threshold_cents
 		   FROM ar_credit_policy
 		  WHERE branch_id = NULLIF($1, '')::uuid OR branch_id IS NULL
 		  ORDER BY branch_id NULLS LAST
 		  LIMIT 1`, branchID).
 		Scan(&bid, &p.AgingBucketDays, &p.AgingThresholdCents, &p.AgingHoldEnabled,
-			&p.LimitHoldEnabled, &p.LimitToleranceCents, &p.CODEnforced, &p.AutoHoldEnabled)
+			&p.LimitHoldEnabled, &p.LimitToleranceCents, &p.CODEnforced, &p.AutoHoldEnabled, &p.WriteOffLimitCents,
+			&p.IncreaseFirstThresholdCents, &p.IncreaseSecondThresholdCents)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CreditPolicy{}, errors.New("billing: no ar_credit_policy row, migration 0104 seeds the org default")
@@ -70,6 +73,35 @@ func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, en
 		branchID, enabled)
 	if err != nil {
 		return fmt.Errorf("billing: set auto_hold_enabled: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		if branchID == "" {
+			return errors.New("billing: no ar_credit_policy org default row, migration 0104 seeds it")
+		}
+		return errors.New("billing: this branch has no credit policy row of its own, it inherits the org default, so change the org setting")
+	}
+	return nil
+}
+
+// SetCreditChangeThresholds updates the dealer-configurable increase approval thresholds
+// on ar_credit_policy (0461). Like SetAutoHoldEnabled, branchID "" targets the org default
+// row (branch_id IS NULL), or an existing branch policy row when branchID is non-empty.
+func (r *Repository) SetCreditChangeThresholds(ctx context.Context, branchID string, firstThresholdCents, secondThresholdCents int64) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	if firstThresholdCents < 0 || secondThresholdCents < firstThresholdCents {
+		return errors.New("billing: invalid credit change thresholds")
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE ar_credit_policy
+		    SET increase_first_threshold_cents = $2,
+		        increase_second_threshold_cents = $3,
+		        updated_at = now()
+		  WHERE ($1 = '' AND branch_id IS NULL) OR branch_id = NULLIF($1, '')::uuid`,
+		branchID, firstThresholdCents, secondThresholdCents)
+	if err != nil {
+		return fmt.Errorf("billing: set credit change thresholds: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		if branchID == "" {
@@ -248,7 +280,8 @@ func (r *Repository) CustomerExists(ctx context.Context, customerID string) (boo
 // the database (ux_credit_holds_one_active), not by a read-then-write we would have to get right
 // under concurrency. The WHERE NOT EXISTS is the fast path; the unique index is the guarantee.
 func (r *Repository) PlaceHold(ctx context.Context, customerID, kind, reason, placedBy string) (string, bool, error) {
-	if r.pool == nil {
+	q := r.creditChangeQuerier(ctx)
+	if q == nil {
 		return "", false, errNoDB
 	}
 	var actor *string
@@ -256,7 +289,7 @@ func (r *Repository) PlaceHold(ctx context.Context, customerID, kind, reason, pl
 		actor = &placedBy
 	}
 	var id string
-	err := r.pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`INSERT INTO credit_holds (customer_id, status, hold_kind, auto_placed, reason, placed_by)
 		 SELECT $1::uuid, 'ACTIVE', $2, $4, $3, $5::uuid
 		  WHERE NOT EXISTS (SELECT 1 FROM credit_holds WHERE customer_id = $1::uuid AND status = 'ACTIVE')
@@ -287,10 +320,11 @@ func scanHold(row pgx.Row) (CreditHold, error) {
 
 // ActiveHold returns the customer's ACTIVE hold, if any.
 func (r *Repository) ActiveHold(ctx context.Context, customerID string) (CreditHold, bool, error) {
-	if r.pool == nil {
+	q := r.creditChangeQuerier(ctx)
+	if q == nil {
 		return CreditHold{}, false, errNoDB
 	}
-	h, err := scanHold(r.pool.QueryRow(ctx,
+	h, err := scanHold(q.QueryRow(ctx,
 		`SELECT `+holdColumns+` FROM credit_holds h
 		   LEFT JOIN customers c ON c.id = h.customer_id
 		  WHERE h.customer_id = $1::uuid AND h.status = 'ACTIVE'`, customerID))

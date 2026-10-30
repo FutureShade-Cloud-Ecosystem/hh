@@ -709,3 +709,241 @@ func TestFinWorldPlan_ReferentialAndTemporalOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestFinWorldPlan_NamesAreUniqueRealSoundingNames (W2-1d item 2): every
+// customer and vendor name is a real-sounding business or household name built
+// from the word lists, unique among its kind, with no counter and no digit.
+func TestFinWorldPlan_NamesAreUniqueRealSoundingNames(t *testing.T) {
+	anchor := YearMonth{Year: 2026, Month: 9}
+	plan, err := FinWorldPlan(1, anchor, finworldTestDealerName)
+	if err != nil {
+		t.Fatalf("FinWorldPlan(1, %s) failed: %v", anchor, err)
+	}
+
+	allowedFirstWords := make(map[string]bool, len(finworldCustomerFirstWords))
+	for _, w := range finworldCustomerFirstWords {
+		allowedFirstWords[w] = true
+	}
+	allowedSecondWords := make(map[string]bool, len(finworldCustomerSecondWords))
+	for _, w := range finworldCustomerSecondWords {
+		allowedSecondWords[w] = true
+	}
+
+	contractorNames := make(map[string]bool, len(plan.Contractors))
+	for _, c := range plan.Contractors {
+		if contractorNames[c.Name] {
+			t.Errorf("contractor name %q is given twice; names must be unique with no counter", c.Name)
+		}
+		contractorNames[c.Name] = true
+		if strings.ContainsAny(c.Name, "0123456789") {
+			t.Errorf("contractor name %q carries a digit; a business name never carries a counter", c.Name)
+		}
+		parts := strings.Fields(c.Name)
+		if len(parts) < 4 || !allowedFirstWords[parts[0]] || !allowedSecondWords[parts[1]] {
+			t.Errorf("contractor name %q is not built from the invented word lists", c.Name)
+		}
+	}
+
+	householdNames := make(map[string]bool, len(plan.Homeowners))
+	for _, h := range plan.Homeowners {
+		if householdNames[h.Name] {
+			t.Errorf("homeowner name %q is given twice; the word list must carry more surnames than the world needs", h.Name)
+		}
+		householdNames[h.Name] = true
+		if strings.ContainsAny(h.Name, "0123456789") {
+			t.Errorf("homeowner name %q carries a digit", h.Name)
+		}
+	}
+
+	vendorNames := make(map[string]bool, len(plan.Vendors))
+	vendorNos := make(map[string]bool, len(plan.Vendors))
+	for _, v := range plan.Vendors {
+		if vendorNames[v.Name] {
+			t.Errorf("vendor name %q is given twice", v.Name)
+		}
+		vendorNames[v.Name] = true
+		if vendorNos[v.VendorNo] {
+			t.Errorf("vendor number %s appears twice in the plan's vendors", v.VendorNo)
+		}
+		vendorNos[v.VendorNo] = true
+		if v.Name == "" || v.Name == v.VendorNo {
+			t.Errorf("vendor %s carries no display name of its own", v.VendorNo)
+		}
+		if strings.ContainsAny(v.Name, "0123456789") {
+			t.Errorf("vendor name %q carries a digit", v.Name)
+		}
+	}
+}
+
+// TestFinWorldPlan_LandedCostsNameTheirPayees (W2-1d item 3): a freight
+// charge names a carrier and a duty charge names a broker, every carrier and
+// broker is a vendor with a real name, and a void mirrors the payee of the
+// landed cost it reverses.
+func TestFinWorldPlan_LandedCostsNameTheirPayees(t *testing.T) {
+	anchor := YearMonth{Year: 2026, Month: 9}
+	plan, err := FinWorldPlan(1, anchor, finworldTestDealerName)
+	if err != nil {
+		t.Fatalf("FinWorldPlan(1, %s) failed: %v", anchor, err)
+	}
+
+	kindByNo := map[string]string{}
+	for _, v := range plan.Vendors {
+		kindByNo[v.VendorNo] = v.Kind
+		if v.Kind != "SUPPLIER" && v.Kind != "CARRIER" && v.Kind != "BROKER" {
+			t.Errorf("vendor %s carries kind %q", v.VendorNo, v.Kind)
+		}
+	}
+	carriers, brokers := 0, 0
+	for _, v := range plan.Vendors {
+		switch v.Kind {
+		case "CARRIER":
+			carriers++
+		case "BROKER":
+			brokers++
+		}
+	}
+	if carriers == 0 || brokers == 0 {
+		t.Fatalf("the plan carries %d carriers and %d brokers, the landed costs need both", carriers, brokers)
+	}
+
+	byKey := map[string]*FinWorldLandedCostEvent{}
+	for mIdx := range plan.Months {
+		for dIdx := range plan.Months[mIdx].TradingDays {
+			for _, ev := range plan.Months[mIdx].TradingDays[dIdx].Events {
+				lc := ev.LandedCost
+				if lc == nil {
+					continue
+				}
+				byKey[lc.LandedCostKey] = lc
+				if lc.PayeeVendorNo == "" {
+					t.Errorf("landed cost %s (%s) names no payee vendor", lc.LandedCostKey, lc.ChargeKind)
+					continue
+				}
+				want := "CARRIER"
+				if lc.ChargeKind == "DUTY" {
+					want = "BROKER"
+				}
+				if got := kindByNo[lc.PayeeVendorNo]; got != want {
+					t.Errorf("landed cost %s (%s) names payee %s of kind %q, want a %s", lc.LandedCostKey, lc.ChargeKind, lc.PayeeVendorNo, got, want)
+				}
+			}
+		}
+	}
+	if len(byKey) == 0 {
+		t.Fatal("the plan carries no landed cost events")
+	}
+
+	// A void carries the payee of the landed cost it reverses.
+	for _, lc := range byKey {
+		if lc.Status != "VOIDED" {
+			continue
+		}
+		orig, ok := byKey[lc.VoidOfLandedCostKey]
+		if !ok {
+			t.Fatalf("void %s names missing original %s", lc.LandedCostKey, lc.VoidOfLandedCostKey)
+		}
+		if lc.PayeeVendorNo != orig.PayeeVendorNo {
+			t.Errorf("void %s names payee %s, its original names %s", lc.LandedCostKey, lc.PayeeVendorNo, orig.PayeeVendorNo)
+		}
+	}
+}
+
+// TestFinWorldPlan_PayablesPaidOnTheirTerms (W2-1d item 4): every un-voided
+// landed cost payable settles on the payee vendor's terms, on a trading day,
+// for the charge it carries; a handful stay open on purpose, each named with
+// its reason; and the settlement events sit on the day they name.
+func TestFinWorldPlan_PayablesPaidOnTheirTerms(t *testing.T) {
+	anchor := YearMonth{Year: 2026, Month: 9}
+	plan, err := FinWorldPlan(1, anchor, finworldTestDealerName)
+	if err != nil {
+		t.Fatalf("FinWorldPlan(1, %s) failed: %v", anchor, err)
+	}
+
+	termsByNo := map[string]int{}
+	for _, v := range plan.Vendors {
+		termsByNo[v.VendorNo] = v.PaymentTermsDays
+	}
+	voidedKeys := map[string]bool{}
+	settleEvents := map[string]*FinWorldLandedCostSettleEvent{}
+	for mIdx := range plan.Months {
+		for dIdx := range plan.Months[mIdx].TradingDays {
+			td := &plan.Months[mIdx].TradingDays[dIdx]
+			for _, ev := range td.Events {
+				if lc := ev.LandedCost; lc != nil && lc.Status == "VOIDED" && lc.VoidOfLandedCostKey != "" {
+					voidedKeys[lc.VoidOfLandedCostKey] = true
+				}
+				if st := ev.LandedCostSettle; st != nil {
+					if settleEvents[st.LandedCostKey] != nil {
+						t.Errorf("landed cost %s settles twice", st.LandedCostKey)
+					}
+					settleEvents[st.LandedCostKey] = st
+					if st.SettledDate != td.Date {
+						t.Errorf("settlement for %s sits on %s but names %s", st.LandedCostKey, td.Date, st.SettledDate)
+					}
+					if st.PayableCadCents <= 0 {
+						t.Errorf("settlement for %s carries %d cents, want the payable it pays", st.LandedCostKey, st.PayableCadCents)
+					}
+				}
+			}
+		}
+	}
+
+	applied := 0
+	for mIdx := range plan.Months {
+		for dIdx := range plan.Months[mIdx].TradingDays {
+			for _, ev := range plan.Months[mIdx].TradingDays[dIdx].Events {
+				lc := ev.LandedCost
+				if lc == nil || lc.Status != "POSTED" || voidedKeys[lc.LandedCostKey] {
+					continue
+				}
+				applied++
+				appliedDay, err := time.ParseInLocation("2006-01-02", lc.AppliedDate, time.UTC)
+				if err != nil {
+					t.Fatalf("landed cost %s applied date %q: %v", lc.LandedCostKey, lc.AppliedDate, err)
+				}
+				dueDay := appliedDay.AddDate(0, 0, termsByNo[lc.PayeeVendorNo])
+				st := settleEvents[lc.LandedCostKey]
+				if st == nil {
+					// Open on purpose, or the cheque clears past the plan's end.
+					if lc.SettledOnDate != "" {
+						t.Errorf("landed cost %s names settle day %s but carries no settlement event", lc.LandedCostKey, lc.SettledOnDate)
+					}
+					continue
+				}
+				if lc.SettledOnDate != st.SettledDate {
+					t.Errorf("landed cost %s names settle day %s, its event names %s", lc.LandedCostKey, lc.SettledOnDate, st.SettledDate)
+				}
+				if want := lc.FreightCents + lc.DutyCents + lc.HandlingCents; st.PayableCadCents != want {
+					t.Errorf("settlement for %s pays %d cents, the payable is %d", st.LandedCostKey, st.PayableCadCents, want)
+				}
+				settleDay, err := time.ParseInLocation("2006-01-02", st.SettledDate, time.UTC)
+				if err != nil {
+					t.Fatalf("settlement %s settle date %q: %v", st.LandedCostKey, st.SettledDate, err)
+				}
+				if settleDay.Before(dueDay) {
+					t.Errorf("settlement for %s clears %s, ahead of the terms' due date %s", st.LandedCostKey, st.SettledDate, dueDay.Format("2006-01-02"))
+				}
+			}
+		}
+	}
+
+	intended := map[string]string{}
+	for _, ip := range plan.IntendedLatePayables {
+		if strings.TrimSpace(ip.Reason) == "" {
+			t.Errorf("intended late payable %s names no reason", ip.LandedCostKey)
+		}
+		intended[ip.LandedCostKey] = ip.Reason
+	}
+	if len(intended) == 0 || len(intended) > 8 {
+		t.Errorf("the plan marks %d payables as intended late; a handful, named, is the rule", len(intended))
+	}
+	for key := range intended {
+		if settleEvents[key] != nil {
+			t.Errorf("intended late payable %s also carries a settlement; it must stay open", key)
+		}
+		if voidedKeys[key] {
+			t.Errorf("intended late payable %s was voided later; a reversed payable is not a late one", key)
+		}
+	}
+	t.Logf("applied=%d settled=%d intendedLate=%d", applied, len(settleEvents), len(intended))
+}
