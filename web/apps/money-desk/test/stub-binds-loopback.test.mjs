@@ -32,7 +32,8 @@ const PROBE_TIMEOUT_MS = 1500;
 // How long the cleanup waits for the stub to close after its standard input
 // ends. The wait has a bound of its own: a stub that ignores its standard
 // input end would hold this leg open and keep its port for the rest of the
-// machine's day, so the wait ends and says so instead of hanging.
+// machine's day, so the wait ends, the leg ends its own child and says so
+// instead of hanging.
 const STOP_TIMEOUT_MS = 5000;
 
 let child;
@@ -101,36 +102,35 @@ before(async () => {
   });
 });
 
-// Stops a stub through its own stop, and reports when it did not stop. The
-// wait has a bound of its own: a stub that ignores its standard input end
-// would hold this hook waiting, with its listener still up, so the wait ends
-// and names the stub that is still holding its port.
+// Stops a stub through its own stop, and when that does not stop it within
+// the bound, ends the child this leg spawned. The wait has a bound of its
+// own: a stub that ignores its standard input end would hold this hook
+// waiting with its listener up. The leg then ends its OWN child at runtime
+// (child.kill() on the process it spawned) and waits for its exit, so no
+// listener of the leg survives a failing run, and it reports the stub that
+// would not stop.
 async function stopStub(proc, exited, timeoutMs = STOP_TIMEOUT_MS) {
   proc.stdin.end();
   let timer;
+  let stopped = false;
   try {
-    await Promise.race([
-      exited,
-      new Promise((_, reject) => {
-        timer = setTimeout(() => {
-          reject(
-            new Error(
-              `the stub did not close within ${timeoutMs} ms of its standard input ending, so it is still holding its port`,
-            ),
-          );
-        }, timeoutMs);
+    stopped = await Promise.race([
+      exited.then(() => true),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
       }),
     ]);
-  } catch (error) {
-    // Let the stub go: this process must not stay open for a stub that
-    // will not stop, or the job is held open for it.
-    proc.unref();
-    proc.stdout?.destroy();
-    proc.stderr?.destroy();
-    throw error;
   } finally {
     clearTimeout(timer);
   }
+  if (stopped) return;
+  proc.kill();
+  await exited;
+  proc.stdout?.destroy();
+  proc.stderr?.destroy();
+  throw new Error(
+    `the stub did not close within ${timeoutMs} ms of its standard input ending, so the leg ended the child it spawned`,
+  );
 }
 
 after(async () => {
@@ -229,16 +229,18 @@ const SCRATCH_STUB = [
 test("a stub that ignores its standard input is still ended by the leg's own cleanup", async () => {
   const scratch = spawn(process.execPath, ["-e", SCRATCH_STUB], { stdio: ["pipe", "pipe", "pipe"] });
   const exited = new Promise((resolve) => scratch.once("close", resolve));
-  await new Promise((resolve, reject) => {
+  const port = await new Promise((resolve, reject) => {
     scratch.once("error", reject);
     scratch.stdout.on("data", (chunk) => {
-      if (/scratch listening on \d+/.test(String(chunk))) resolve();
+      const found = /scratch listening on (\d+)/.exec(String(chunk));
+      if (found !== null) resolve(Number(found[1]));
     });
   });
-  await assert.rejects(stopStub(scratch, exited, 500), /did not close within 500 ms/);
-  const ended = await Promise.race([
-    exited.then(() => true),
-    new Promise((resolve) => setTimeout(() => resolve(false), 3000)),
-  ]);
-  assert.equal(ended, true, "the leg must end the stub it spawned, so no listener of the leg survives a failing run");
+  await assert.rejects(stopStub(scratch, exited, 500), /did not close within 500 ms of its standard input ending/);
+  assert.notEqual(scratch.exitCode === null && scratch.signalCode === null, true, "the leg must end the stub it spawned");
+  assert.equal(
+    await answers("127.0.0.1", port),
+    false,
+    `the scratch stub's port ${port} must be gone, so no listener of the leg survives a failing run`,
+  );
 });

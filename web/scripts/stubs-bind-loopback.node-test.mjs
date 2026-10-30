@@ -7,7 +7,10 @@
 // here is that every listener names 127.0.0.1 (or localhost, or ::1), so the
 // answer never leaves the host.
 //
-// The gate reads two things and fails naming each offender:
+// The gate reads every source file through the TypeScript compiler's parser,
+// not a hand tokenizer: a regular expression, a template expression or a
+// call that spans lines is a node in the tree and cannot hide a call. It
+// reads three things and fails naming each offender:
 //   1. every listen call in every source file under web/, whatever extension
 //      it carries: the host it names must be the loopback. The reach is the
 //      whole tree and not only an app's own test directory, because the pro
@@ -25,6 +28,17 @@
 //      quoted: the gate reads every one of those shapes, and a shape it
 //      cannot read is named as unreadable rather than passed in silence.
 //
+//   3. every package.json under web/: a script that runs vite with a --host
+//      other than the loopback fails. A plain "vite" with no --host binds
+//      "localhost" (vite's resolveHostname sets host = "localhost" when the
+//      option is undefined or false, node_modules/vite/dist/node/chunks/node.js
+//      line 2581 at vite 8.3.1), so it passes.
+//
+// The gate fails closed: a listen property that is not a direct call
+// (.listen.apply, .listen.call, .listen.bind, ["listen"], a destructured
+// listen, const l = server.listen), a host the gate cannot read, and a vite
+// command it cannot read are each named as a shape the gate cannot prove.
+//
 // The allow list holds one entry, for one reason, and an entry that stops
 // being needed fails the gate too, so it cannot rot into a wide hole.
 import { test } from "node:test";
@@ -32,6 +46,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = join(webRoot, "..");
@@ -43,7 +58,7 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 // The extensions a source file can carry. A stub or a config can be written
 // in any of them, and a gate that read only one would miss a listener in the
 // others: web/apps/front-door/test/free-ports.ts already holds .listen calls.
-const SOURCE_EXTENSIONS = new Set([".mjs", ".ts", ".js", ".cjs"]);
+const SOURCE_EXTENSIONS = new Set([".mjs", ".ts", ".tsx", ".js", ".cjs"]);
 
 // The directories the tree installs or builds. They hold no source of ours,
 // and reading them would only be slow.
@@ -72,22 +87,7 @@ const ALLOWED = new Map([
   ],
 ]);
 
-// The type keywords a TypeScript annotation can use. A command key in a
-// type position names no command, so it is not read as one.
-const TYPE_KEYWORDS = new Set([
-  "string",
-  "number",
-  "boolean",
-  "bigint",
-  "symbol",
-  "object",
-  "unknown",
-  "any",
-  "never",
-  "void",
-  "undefined",
-  "null",
-]);
+const CANNOT_PROVE = "the gate cannot prove";
 
 function repoPath(file) {
   return relative(repoRoot, file).split(sep).join("/");
@@ -103,537 +103,506 @@ function filesUnder(dir, out = []) {
   return out;
 }
 
-// Every source file under web/: the vite command lives in a Playwright
-// configuration, but it can live in a harness factory that writes one (the
-// pos kit's console harness does), and it can live in a package's own
-// configuration, not only in an app's. The gate reads the whole tree, so a
-// package's webServer is held too.
+// Every source file under web/: a stub, a Playwright configuration or a
+// harness factory can be written in any of them, in an app or in a package.
 function webSourceFiles() {
   return filesUnder(webRoot).filter((file) => SOURCE_EXTENSIONS.has(extname(file)));
 }
 
-// The files the listener leg reads. The gate holds every listener in the
-// tree and not only the ones under an app's own test directory: a wildcard
-// bind in a package's stub or in a package's own test must be named too.
-function listenerFiles() {
-  return webSourceFiles();
+// Every package.json under web/, outside the generated directories.
+function packageFiles() {
+  return filesUnder(webRoot).filter((file) => file.endsWith(`${sep}package.json`));
 }
 
-// The end of a string that starts at start, and the offset just past it. A
-// string holds a quote, a backslash escape, or (for a template) an expression
-// that can hold strings of its own.
-function skipString(text, start) {
-  const quote = text[start];
-  let i = start + 1;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === "\\") {
-      i += 2;
-      continue;
-    }
-    if (quote === "`" && ch === "$" && text[i + 1] === "{") {
-      i = skipTemplateExpression(text, i + 2);
-      continue;
-    }
-    if (ch === quote) return i + 1;
-    i += 1;
+function parse(text, name) {
+  const kind = name.endsWith(".tsx")
+    ? ts.ScriptKind.TSX
+    : name.endsWith(".ts")
+      ? ts.ScriptKind.TS
+      : ts.ScriptKind.JSX;
+  return ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true, kind);
+}
+
+function walk(node, visit) {
+  visit(node);
+  ts.forEachChild(node, (child) => walk(child, visit));
+}
+
+function lineAt(sf, node) {
+  return sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+}
+
+// The parentheses, `as` casts and `!` that wrap an expression do not change
+// what it is.
+function bare(node) {
+  let current = node;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isTypeAssertionExpression(current)
+  ) {
+    current = current.expression;
   }
-  return text.length;
+  return current;
 }
 
-// The end of a regular expression that starts at start, and the offset just
-// past it. A character class can hold a slash, and a backslash escapes.
-function skipRegex(text, start) {
-  let i = start + 1;
-  let inClass = false;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === "\\") {
-      i += 2;
-      continue;
-    }
-    if (ch === "[") {
-      inClass = true;
-      i += 1;
-      continue;
-    }
-    if (ch === "]") {
-      inClass = false;
-      i += 1;
-      continue;
-    }
-    if (ch === "/" && !inClass) {
-      i += 1;
-      while (i < text.length && /[A-Za-z]/.test(text[i])) i += 1;
-      return i;
-    }
-    if (ch === "\n") return i;
-    i += 1;
-  }
-  return text.length;
-}
-
-// Whether a slash starts a regular expression and not a division. The token
-// before it decides: after an operator, an opening bracket or a comma a
-// slash starts a regular expression, and after a name, a number or a closing
-// bracket it divides.
-function startsRegex(text, index) {
-  let i = index - 1;
-  while (i >= 0 && /\s/.test(text[i])) i -= 1;
-  if (i < 0) return true;
-  const ch = text[i];
-  if ("(,=:[!&|?{};+-*%~^".includes(ch)) return true;
-  const word = /([A-Za-z_$][A-Za-z0-9_$]*)$/.exec(text.slice(0, i + 1));
-  if (word !== null) {
-    return ["return", "typeof", "case", "in", "of", "do", "else", "yield", "await", "new", "delete", "void"].includes(
-      word[1],
-    );
-  }
-  return false;
-}
-
-// The offset just past the token that starts at start: a string, a template
-// or a regular expression. A regular expression can hold a quote, so a
-// scanner that only knows strings loses its place in a file that holds one.
-function skipToken(text, start) {
-  const ch = text[start];
-  if (ch === '"' || ch === "'" || ch === "`") return skipString(text, start);
-  if (ch === "/" && startsRegex(text, start)) return skipRegex(text, start);
-  return start + 1;
-}
-
-// The inside of a template's ${ }: it can hold strings and nested templates,
-// so it is walked by the same rules.
-function skipTemplateExpression(text, start) {
-  let i = start;
-  let depth = 1;
-  while (i < text.length && depth > 0) {
-    const ch = text[i];
-    if (ch === "{") {
-      depth += 1;
-      i += 1;
-      continue;
-    }
-    if (ch === "}") {
-      depth -= 1;
-      i += 1;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === "`") {
-      i = skipToken(text, i);
-      continue;
-    }
-    if (ch === "/" && text[i + 1] === "/") {
-      const nl = text.indexOf("\n", i);
-      i = nl === -1 ? text.length : nl;
-      continue;
-    }
-    if (ch === "/" && text[i + 1] === "*") {
-      const end = text.indexOf("*/", i + 2);
-      i = end === -1 ? text.length : end + 2;
-      continue;
-    }
-    i += 1;
-  }
-  return i;
-}
-
-// The scanner: one pass over a file's text, blanking comments so a word in a
-// comment is never read as a call, and marking the string regions so a
-// ".listen(" that lives inside a string is never read as a call either.
-// Comments are blanked rather than cut, so every offset stays true to the
-// file.
-function stripComments(text) {
-  let out = "";
-  const inString = new Uint8Array(text.length);
-  let i = 0;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === "/" && text[i + 1] === "/") {
-      const nl = text.indexOf("\n", i);
-      const end = nl === -1 ? text.length : nl;
-      out += " ".repeat(end - i);
-      i = end;
-      continue;
-    }
-    if (ch === "/" && text[i + 1] === "*") {
-      const end = text.indexOf("*/", i + 2);
-      const stop = end === -1 ? text.length : end + 2;
-      out += text.slice(i, stop).replace(/[^\n]/g, " ");
-      i = stop;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === "`") {
-      const end = skipString(text, i);
-      out += text.slice(i, end);
-      for (let k = i; k < end; k += 1) inString[k] = 1;
-      i = end;
-      continue;
-    }
-    if (ch === "/" && startsRegex(out, out.length)) {
-      // A regular expression is not code the gate reads, and it can hold a
-      // quote: a scanner that treats that quote as a string loses its place
-      // in the file and reads nothing after it.
-      const end = skipRegex(text, i);
-      out += text.slice(i, end);
-      for (let k = i; k < end; k += 1) inString[k] = 1;
-      i = end;
-      continue;
-    }
-    out += ch;
-    i += 1;
-  }
-  return { text: out, inString };
-}
-
-// The index of the parenthesis that closes the one at open.
-function matchParen(text, open) {
-  let i = open + 1;
-  let depth = 1;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === '"' || ch === "'" || ch === "`") {
-      i = skipToken(text, i);
-      continue;
-    }
-    if (ch === "(") depth += 1;
-    else if (ch === ")") {
-      depth -= 1;
-      if (depth === 0) return i;
-    }
-    i += 1;
-  }
-  return -1;
-}
-
-// The arguments of a call, split at the commas that sit outside every nest.
-function splitArgs(text) {
-  const parts = [];
-  let current = "";
-  let depth = 0;
-  let i = 0;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === '"' || ch === "'" || ch === "`") {
-      const end = skipString(text, i);
-      current += text.slice(i, end);
-      i = end;
-      continue;
-    }
-    if (ch === "/" && startsRegex(text, i)) {
-      const end = skipRegex(text, i);
-      current += text.slice(i, end);
-      i = end;
-      continue;
-    }
-    if (ch === "(" || ch === "[" || ch === "{") depth += 1;
-    else if (ch === ")" || ch === "]" || ch === "}") depth -= 1;
-    if (ch === "," && depth === 0) {
-      parts.push(current.trim());
-      current = "";
-      i += 1;
-      continue;
-    }
-    current += ch;
-    i += 1;
-  }
-  if (current.trim() !== "") parts.push(current.trim());
-  return parts;
-}
-
-// Every listen call in a file, with the text of its arguments. A call that
-// lives inside a string is not a call, so it is skipped. The paren does not
-// have to sit next to the method name: a space or a newline between them is
-// still a call, and the gate reads it as one.
-function listenCalls(source) {
-  const calls = [];
-  let i = 0;
-  while (i < source.text.length) {
-    if (source.text.startsWith(".listen", i) && source.inString[i] === 0) {
-      const after = i + ".listen".length;
-      const next = source.text[after];
-      const named = next !== undefined && /[A-Za-z0-9_$]/.test(next);
-      if (!named) {
-        let open = after;
-        while (open < source.text.length && /\s/.test(source.text[open])) open += 1;
-        if (source.text[open] === "(") {
-          const close = matchParen(source.text, open);
-          if (close !== -1) {
-            calls.push({ at: i, args: source.text.slice(open + 1, close) });
-            i = close + 1;
-            continue;
-          }
-        }
+// The names a file declares, and the assignments made to them. A name is
+// read as a literal only when the file declares it exactly once, with a
+// literal, and never assigns to it again (P3-g): a let or var that is
+// reassigned anywhere is unreadable, and so is a name that two scopes
+// declare.
+function bindingsOf(sf) {
+  const declared = new Map();
+  const assigned = new Set();
+  function declare(nameNode, init, isConst) {
+    if (ts.isIdentifier(nameNode)) {
+      const list = declared.get(nameNode.text) ?? [];
+      list.push({ init, isConst });
+      declared.set(nameNode.text, list);
+    } else {
+      for (const element of nameNode.elements) {
+        if (ts.isBindingElement(element)) declare(element.name, undefined, false);
       }
     }
-    i += 1;
   }
-  return calls;
+  function markAssigned(target) {
+    const node = bare(target);
+    if (ts.isIdentifier(node)) assigned.add(node.text);
+    else if (ts.isObjectLiteralExpression(node)) {
+      for (const property of node.properties) {
+        if (ts.isShorthandPropertyAssignment(property)) assigned.add(property.name.text);
+        else if (ts.isPropertyAssignment(property)) markAssigned(property.initializer);
+        else if (ts.isSpreadAssignment(property)) markAssigned(property.expression);
+      }
+    } else if (ts.isArrayLiteralExpression(node)) {
+      for (const element of node.elements) markAssigned(element);
+    }
+  }
+  walk(sf, (node) => {
+    if (ts.isVariableDeclaration(node)) {
+      const isConst = (ts.getCombinedNodeFlags(node) & ts.NodeFlags.Const) !== 0;
+      declare(node.name, node.initializer, isConst);
+    } else if (ts.isParameter(node)) {
+      declare(node.name, undefined, false);
+    } else if (ts.isFunctionDeclaration(node) && node.name) {
+      declare(node.name, undefined, false);
+    } else if (ts.isClassDeclaration(node) && node.name) {
+      declare(node.name, undefined, false);
+    } else if (ts.isImportSpecifier(node) || ts.isImportClause(node) || ts.isNamespaceImport(node)) {
+      if (node.name) declare(node.name, undefined, false);
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      markAssigned(node.left);
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      markAssigned(node.operand);
+    } else if ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) {
+      markAssigned(node.initializer);
+    }
+  });
+  return { declared, assigned };
 }
 
-// The host a call names, and why it names none when it names none. The
-// options form (listen({ port, host })) carries the host in the object. A
-// host held in a name is read through the resolver, which finds the
-// constant the file declares.
-function hostOf(args, resolve) {
-  if (args.length === 0) return { host: null, why: "it names no arguments at all" };
-  if (args[0].startsWith("{")) {
-    const found = /\bhost\s*:\s*(?:"([^"]*)"|'([^']*)')/.exec(args[0]);
-    if (found === null) return { host: null, why: "its options object names no host" };
-    return hostWhy(found[1] ?? found[2]);
+// The text of a string the expression builds from literals alone, and null
+// when it builds from anything else. A template with an expression in it
+// reads as its text with the expression marked; a concatenation reads as
+// the parts joined; a name reads as the constant it is. `holes` says whether
+// an unreadable part was marked.
+function foldString(node, bindings, seen = new Set()) {
+  const expr = bare(node);
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return { text: expr.text, hole: false };
+  if (ts.isTemplateExpression(expr)) {
+    let text = expr.head.text;
+    let hole = false;
+    for (const span of expr.templateSpans) {
+      const inner = foldString(span.expression, bindings, seen);
+      if (inner === null) {
+        text += "${}";
+        hole = true;
+      } else {
+        text += inner.text;
+        hole = hole || inner.hole;
+      }
+      text += span.literal.text;
+    }
+    return { text, hole };
   }
-  if (args.length < 2) return { host: null, why: "it names a port and no host" };
-  const second = args[1];
-  if (second.startsWith("(") || second.startsWith("async") || second.includes("=>")) {
-    return { host: null, why: "it names a port and a callback, and no host" };
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = foldString(expr.left, bindings, seen);
+    const right = foldString(expr.right, bindings, seen);
+    if (left === null && right === null) return null;
+    return {
+      text: `${left === null ? "${}" : left.text}${right === null ? "${}" : right.text}`,
+      hole: left === null || right === null || left.hole || right.hole,
+    };
   }
-  const literal = /^"([^"]*)"$/.exec(second) ?? /^'([^']*)'$/.exec(second);
-  if (literal !== null) return hostWhy(literal[1]);
-  const name = /^[A-Za-z_$][A-Za-z0-9_$]*$/.exec(second);
-  if (name !== null) {
-    const value = resolve(name[0]);
-    if (value !== null) return hostWhy(value, `, held in ${name[0]}`);
-    return { host: null, why: `its host is ${name[0]}, and the file does not declare it as a literal` };
+  if (ts.isArrayLiteralExpression(expr)) {
+    const words = [];
+    let hole = false;
+    for (const element of expr.elements) {
+      const word = foldString(element, bindings, seen);
+      if (word === null) {
+        words.push("${}");
+        hole = true;
+      } else {
+        words.push(word.text);
+        hole = hole || word.hole;
+      }
+    }
+    return { text: words.join(" "), hole };
   }
-  return { host: null, why: `its host is ${second}, and not a loopback literal` };
+  if (ts.isIdentifier(expr)) {
+    const value = constantOf(expr.text, bindings, seen);
+    return value === null ? null : { text: value, hole: false };
+  }
+  return null;
 }
 
-// The host a call names, named in the message, so a reader of a red log
-// learns what the listener bound without opening the file.
+// The literal a name holds, when the file declares it once, as a const or as
+// a let or var nothing assigns to again, with a literal; otherwise null.
+function constantOf(name, bindings, seen = new Set()) {
+  if (seen.has(name)) return null;
+  const list = bindings.declared.get(name);
+  if (list === undefined || list.length !== 1) return null;
+  const [only] = list;
+  if (only.init === undefined) return null;
+  if (!only.isConst && bindings.assigned.has(name)) return null;
+  if (only.isConst && bindings.assigned.has(name)) return null;
+  const folded = foldString(only.init, bindings, new Set([...seen, name]));
+  return folded === null || folded.hole ? null : folded.text;
+}
+
 function hostWhy(host, held = "") {
   if (LOOPBACK_HOSTS.has(host)) return { host, why: `its host is ${host}${held}` };
   return { host, why: `its host is ${host}${held}, and not a loopback host` };
 }
 
-function lineOf(text, index) {
-  let line = 1;
-  for (let i = 0; i < index && i < text.length; i += 1) {
-    if (text[i] === "\n") line += 1;
-  }
-  return line;
+function unprovable(detail) {
+  return { host: null, why: `${detail}, so ${CANNOT_PROVE} it binds the loopback` };
 }
 
-// The value of a constant the file holds, when the file holds one as a
-// literal. A host held in a constant that is provably the loopback has to be
-// read as that constant, or a file that declares the loopback and calls it
-// by name would be named an offender.
-function constantOf(source, name) {
-  const pattern = new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*(?::[^=]*)?=\\s*`, "g");
-  const found = pattern.exec(source.text);
-  if (found === null) return null;
-  const expression = readExpression(source.text, found.index + found[0].length);
-  const literal = literalText(expression);
-  if (literal !== null) return literal;
-  const words = arrayWords(expression);
-  if (words !== null) return words.join(" ");
-  return null;
+// The host a literal-or-name expression holds.
+function hostFrom(expr, bindings, sf) {
+  const node = bare(expr);
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return hostWhy(node.text);
+  if (ts.isIdentifier(node)) {
+    const value = constantOf(node.text, bindings);
+    if (value !== null) return hostWhy(value, `, held in ${node.text}`);
+    return unprovable(`its host is ${node.text}, and the file does not hold it as a literal that nothing reassigns`);
+  }
+  return { host: null, why: `its host is ${node.getText(sf)}, and not a loopback literal` };
+}
+
+// The host a listen call names, and why it names none when it names none.
+function hostOf(call, bindings, sf) {
+  const args = call.arguments;
+  if (args.length === 0) return { host: null, why: "it names no arguments at all" };
+  if (args.some((arg) => ts.isSpreadElement(arg))) return unprovable("it spreads its arguments");
+  const first = bare(args[0]);
+  if (ts.isObjectLiteralExpression(first)) {
+    if (first.properties.some((property) => ts.isSpreadAssignment(property))) {
+      return unprovable("its options object spreads another object");
+    }
+    for (const property of first.properties) {
+      const key = property.name !== undefined && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) ? property.name.text : null;
+      if (key !== "host") continue;
+      if (ts.isShorthandPropertyAssignment(property)) return hostFrom(property.name, bindings, sf);
+      if (ts.isPropertyAssignment(property)) return hostFrom(property.initializer, bindings, sf);
+      return unprovable("its host is not a property the gate reads");
+    }
+    return { host: null, why: "its options object names no host" };
+  }
+  if (args.length < 2) return { host: null, why: "it names a port and no host" };
+  const second = bare(args[1]);
+  if (ts.isArrowFunction(second) || ts.isFunctionExpression(second)) {
+    return { host: null, why: "it names a port and a callback, and no host" };
+  }
+  return hostFrom(second, bindings, sf);
+}
+
+function isListenName(node) {
+  return ts.isIdentifier(node) && node.text === "listen";
 }
 
 // The listeners a file holds that do not name the loopback, each with the
 // line it sits on and the reason it is named.
-function listenersIn(text, _name) {
-  const source = stripComments(text);
+function listenersIn(text, name = "probe.mjs") {
+  const sf = parse(text, name);
+  const bindings = bindingsOf(sf);
   const out = [];
-  for (const call of listenCalls(source)) {
-    const { host, why } = hostOf(splitArgs(call.args), (name) => constantOf(source, name));
-    if (host !== null && LOOPBACK_HOSTS.has(host)) continue;
-    out.push({ line: lineOf(text, call.at), host, why });
-  }
+  walk(sf, (node) => {
+    // x.listen(...): a direct call is read.
+    if (ts.isCallExpression(node)) {
+      const callee = bare(node.expression);
+      if (ts.isPropertyAccessExpression(callee) && isListenName(callee.name)) {
+        const { host, why } = hostOf(node, bindings, sf);
+        if (host === null || !LOOPBACK_HOSTS.has(host)) out.push({ line: lineAt(sf, callee.name), host, why });
+        return;
+      }
+    }
+    // x.listen anywhere else: a reference the gate cannot follow.
+    if (ts.isPropertyAccessExpression(node) && isListenName(node.name)) {
+      const parent = node.parent;
+      const direct = ts.isCallExpression(parent) && bare(parent.expression) === node;
+      if (!direct) {
+        out.push({ line: lineAt(sf, node.name), host: null, why: `it reaches listen other than by calling it (${node.getText(sf)}), so ${CANNOT_PROVE} what host it binds` });
+      }
+      return;
+    }
+    // x["listen"]: the same property by another spelling.
+    if (ts.isElementAccessExpression(node)) {
+      const arg = bare(node.argumentExpression);
+      if ((ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) && arg.text === "listen") {
+        out.push({ line: lineAt(sf, node), host: null, why: `it reaches listen by a bracket (${node.getText(sf)}), so ${CANNOT_PROVE} what host it binds` });
+      }
+      return;
+    }
+    // const { listen } = server, and ({ listen } = server).
+    if (ts.isBindingElement(node)) {
+      const key = node.propertyName ?? node.name;
+      const literalKey = ts.isIdentifier(key) || ts.isStringLiteral(key) ? key.text : null;
+      if (literalKey === "listen") {
+        out.push({ line: lineAt(sf, node), host: null, why: `it destructures listen out of an object, so ${CANNOT_PROVE} what host it binds` });
+      }
+      return;
+    }
+    if (ts.isShorthandPropertyAssignment(node) && node.name.text === "listen" && isAssignmentTarget(node)) {
+      out.push({ line: lineAt(sf, node), host: null, why: `it destructures listen out of an object, so ${CANNOT_PROVE} what host it binds` });
+    }
+  });
   return out;
 }
 
-// The expression that follows a key or an equals sign, up to the comma or
-// the brace that ends the object it sits in.
-function readExpression(text, start) {
-  let i = start;
-  let depth = 0;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === '"' || ch === "'" || ch === "`") {
-      i = skipToken(text, i);
+// Whether an object literal sits on the left of an assignment, which makes
+// it a destructuring pattern and not a value.
+function isAssignmentTarget(property) {
+  let node = property.parent;
+  while (node !== undefined) {
+    const parent = node.parent;
+    if (parent === undefined) return false;
+    if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken && parent.left === node) {
+      return true;
+    }
+    if (ts.isPropertyAssignment(parent) || ts.isArrayLiteralExpression(parent) || ts.isParenthesizedExpression(parent)) {
+      node = parent;
       continue;
     }
-    if (ch === "(" || ch === "[" || ch === "{") {
-      depth += 1;
-      i += 1;
-      continue;
-    }
-    if (ch === ")" || ch === "]" || ch === "}") {
-      if (depth === 0) break;
-      depth -= 1;
-      i += 1;
-      continue;
-    }
-    if (ch === "," && depth === 0) break;
-    if (ch === ";" && depth === 0) break;
-    i += 1;
+    return false;
   }
-  return text.slice(start, i).trim();
+  return false;
 }
 
-// The text of a string or a template, and null when the expression is not
-// one.
-function literalText(expression) {
-  const double = /^"([^"]*)"$/.exec(expression);
-  if (double !== null) return double[1];
-  const single = /^'([^']*)'$/.exec(expression);
-  if (single !== null) return single[1];
-  const template = /^`([^`]*)`$/.exec(expression);
-  if (template !== null) return template[1];
+// Whether a word of a command is the vite binary: vite, or a path that ends
+// in /vite, or its script.
+function isViteWord(word) {
+  return /(^|[\\/])vite(\.js|\.mjs)?$/.test(word);
+}
+
+function hostOfWords(words) {
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i];
+    if (word === "--host") {
+      const value = words[i + 1];
+      return value === undefined || value.startsWith("-") ? "" : value;
+    }
+    if (word.startsWith("--host=")) return word.slice("--host=".length);
+  }
   return null;
 }
 
-// The words of an array literal, and null when one of them is not a
-// literal. Playwright's webServer command takes an array of words as well
-// as one string, so the gate reads both.
-function arrayWords(expression) {
-  if (!expression.startsWith("[") || !expression.endsWith("]")) return null;
-  const words = [];
-  for (const part of splitArgs(expression.slice(1, -1))) {
-    const literal = literalText(part);
-    if (literal === null) return null;
-    words.push(literal);
+function loopbackWord(host) {
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+// Whether a string, or the words of an array, starts vite, and the host it
+// names. A command is a shell line, so it is split on whitespace.
+const RUNNERS = new Set(["npx", "npm", "pnpm", "yarn", "bunx", "exec", "run", "dlx", "sh", "bash"]);
+
+function holeFollowsRunner(text) {
+  const words = text.split(/\s+/).filter((word) => word !== "" && !word.startsWith("-"));
+  return words.some((word, i) => word === "${}" && i > 0 && RUNNERS.has(words[i - 1]));
+}
+
+// Whether a vite command serves. vite build and vite optimize bind nothing;
+// bare vite, dev, serve, preview and anything the gate does not know do.
+function bindsAnInterface(words) {
+  const at = words.findIndex(isViteWord);
+  const sub = words.slice(at + 1).find((word) => !word.startsWith("-"));
+  return sub !== "build" && sub !== "optimize";
+}
+
+function viteCommandOf(text) {
+  const words = text.split(/\s+/).filter((word) => word !== "");
+  return words.some(isViteWord) ? words : null;
+}
+
+// Whether a string literal is the module specifier of an import, an export
+// or a dynamic import: the name "vite" there is the package and no command.
+function isModuleSpecifier(node) {
+  const parent = node.parent;
+  if (ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) return parent.moduleSpecifier === node;
+  if (ts.isExternalModuleReference(parent)) return true;
+  if (ts.isLiteralTypeNode(parent) && ts.isImportTypeNode(parent.parent)) return true;
+  if (ts.isCallExpression(parent)) {
+    const callee = parent.expression;
+    return callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require");
   }
-  return words;
+  return false;
 }
 
-// Whether an expression names a type and not a value. A command key in a
-// type position names no command, so it is not read as one.
-function isTypeExpression(expression) {
-  return TYPE_KEYWORDS.has(expression);
-}
+// The offenders one source file holds among its vite commands, each with the
+// line it sits on and the reason it is named. Every string, template and
+// array that starts vite is read; a command key whose value the gate cannot
+// read, in a file that starts vite or a server, is named.
+function viteOffendersIn(text, rel, properties = new Set(), name = rel) {
+  const sf = parse(text, name);
+  const bindings = bindingsOf(sf);
+  const offenders = [];
+  const consumed = new Set();
+  let holdsVite = false;
+  let startsServer = false;
+  const commands = [];
 
-// The command texts the tree holds under a named property. A command held
-// in an object's command property (a harness that takes its stub command
-// from its caller) is read from the tree's own object of that shape, so the
-// gate can prove what that harness runs.
-function propertyCommands(texts) {
-  const map = new Map();
-  const pattern = /\b([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*\{[^{}]*?\bcommand\s*:\s*("[^"]*"|'[^']*'|`[^`]*`)/g;
-  for (const text of texts.values()) {
-    pattern.lastIndex = 0;
-    let found = pattern.exec(text);
-    while (found !== null) {
-      const literal = literalText(found[2]);
-      if (literal !== null) {
-        if (!map.has(found[1])) map.set(found[1], new Set());
-        map.get(found[1]).add(literal);
-      }
-      found = pattern.exec(text);
+  function judge(node, words) {
+    if (!bindsAnInterface(words)) return;
+    const host = hostOfWords(words);
+    if (host !== null && loopbackWord(host)) return;
+    offenders.push({ line: lineAt(sf, node), why: words.join(" ") });
+  }
+
+  walk(sf, (node) => {
+    if (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) {
+      const key = ts.isPropertyAssignment(node) ? node.name : node.name;
+      const keyText = ts.isIdentifier(key) || ts.isStringLiteral(key) ? key.text : null;
+      if (keyText === "webServer") startsServer = true;
+      if (keyText === "command") commands.push(node);
     }
+  });
+
+  // Every maximal expression that builds a string: the outermost
+  // concatenation, template or array, so a vite word split across parts is
+  // read as the command it makes.
+  function visit(node) {
+    const expr = node;
+    const isBuilder =
+      ts.isStringLiteral(expr) ||
+      ts.isNoSubstitutionTemplateLiteral(expr) ||
+      ts.isTemplateExpression(expr) ||
+      (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.PlusToken) ||
+      ts.isArrayLiteralExpression(expr);
+    if (isBuilder) {
+      if ((ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) && isModuleSpecifier(expr)) return;
+      const folded = foldStringShallow(expr);
+      if (folded !== null) {
+        const words = viteCommandOf(folded.text);
+        if (words !== null) {
+          holdsVite = true;
+          judge(expr, words);
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  // Names are not followed here: a name that holds a vite string holds it as
+  // a literal the walk reaches where it is declared.
+  function foldStringShallow(expr) {
+    return foldString(expr, { declared: new Map(), assigned: new Set() });
+  }
+  visit(sf);
+
+  for (const node of commands) {
+    const value = ts.isPropertyAssignment(node) ? node.initializer : node.name;
+    const folded = foldString(value, bindings);
+    if (folded !== null && !folded.hole) continue;
+    // A command with a hole in it is read as far as it goes: one that holds
+    // vite was judged where it is written, and one that runs a script by
+    // node names the script and not a tool the hole could turn into vite.
+    // A hole where a runner (npx, npm, pnpm, yarn) takes its tool is the
+    // shape that could be vite, so it is named.
+    if (folded !== null && !holeFollowsRunner(folded.text) && !/^\$\{\}/.test(folded.text)) continue;
+    const expr = bare(value);
+    if (ts.isPropertyAccessExpression(expr) && memberCommand(expr, properties)) continue;
+    if (ts.isTypeNode(value)) continue;
+    if (!holdsVite && !startsServer && !/vite/i.test(value.getText(sf))) continue;
+    offenders.push({
+      line: lineAt(sf, node),
+      why: `it names a command this gate cannot read (${value.getText(sf)}), so ${CANNOT_PROVE} it carries --host 127.0.0.1`,
+    });
+  }
+  return offenders.map((offender) => ({ ...offender, rel }));
+}
+
+// The names the tree gives an object that carries a literal command, so a
+// harness that takes its stub command from its caller (options.appStub.command)
+// reads as the tree's own object of that name. The literal itself is read
+// where it is written.
+function propertyCommands(texts) {
+  const map = new Set();
+  for (const [file, text] of texts) {
+    walk(parse(text, file), (node) => {
+      if (!ts.isPropertyAssignment(node)) return;
+      const value = bare(node.initializer);
+      if (!ts.isObjectLiteralExpression(value)) return;
+      const key = ts.isIdentifier(node.name) || ts.isStringLiteral(node.name) ? node.name.text : null;
+      if (key === null) return;
+      const holdsCommand = value.properties.some(
+        (property) =>
+          ts.isPropertyAssignment(property) &&
+          ts.isIdentifier(property.name) &&
+          property.name.text === "command" &&
+          foldString(property.initializer, { declared: new Map(), assigned: new Set() }) !== null,
+      );
+      if (holdsCommand) map.add(key);
+    });
   }
   return map;
 }
 
-// The command a member expression names, when the tree holds it.
-function memberCommand(expression, properties) {
-  const parts = expression.split(".").map((part) => part.trim());
-  if (parts.length < 2) return null;
-  const found = properties.get(parts[parts.length - 2]);
-  if (found === undefined) return null;
-  return [...found].join(" ");
+// Whether a member expression reads a command from an object the tree holds
+// with a literal command in it.
+function memberCommand(expr, properties) {
+  const owner = bare(expr.expression);
+  return ts.isPropertyAccessExpression(owner) && properties.has(owner.name.text);
 }
 
-// The command a key names, read in every shape the tree writes one in.
-function commandValue(source, expression, properties) {
-  if (expression === "") {
-    return { kind: "unreadable", value: expression, reason: "the key names no value" };
+// The offenders one package.json holds among its scripts: a script that runs
+// vite with a --host other than the loopback.
+function packageScriptOffendersIn(text, rel = "package.json") {
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return [{ rel, line: 1, why: `it is not JSON, so ${CANNOT_PROVE} what its scripts run` }];
   }
-  if (isTypeExpression(expression)) return { kind: "type", value: expression };
-  const literal = literalText(expression);
-  if (literal !== null) return { kind: "command", command: literal, value: expression };
-  const words = arrayWords(expression);
-  if (words !== null) return { kind: "command", command: words.join(" "), value: expression };
-  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(expression)) {
-    const constant = constantOf(source, expression);
-    if (constant !== null) return { kind: "command", command: constant, value: expression };
-    return { kind: "unreadable", value: expression, reason: "the file does not declare it as a literal" };
+  const offenders = [];
+  for (const [script, command] of Object.entries(json.scripts ?? {})) {
+    if (typeof command !== "string") continue;
+    const words = command.split(/\s+/).filter((word) => word !== "");
+    if (!words.some(isViteWord)) continue;
+    const host = hostOfWords(words);
+    if (host === null || loopbackWord(host)) continue;
+    offenders.push({ rel, line: 1, why: `script ${script}: ${command}` });
   }
-  if (/^[A-Za-z_$][A-Za-z0-9_$]*(\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*)+$/.test(expression)) {
-    const member = memberCommand(expression, properties);
-    if (member !== null) return { kind: "command", command: member, value: expression };
-    return { kind: "unreadable", value: expression, reason: "the tree does not hold the command it names" };
-  }
-  return { kind: "unreadable", value: expression, reason: "it is not a shape this gate reads" };
-}
-
-// Every command key in a file, with the offset its value starts at. The
-// scan walks the text itself, so a key that lives inside a string is not a
-// key: the words "command:" inside a string are text, not a configuration.
-function commandKeys(source) {
-  const out = [];
-  let i = 0;
-  while (i < source.text.length) {
-    const ch = source.text[i];
-    if (ch === '"' || ch === "'" || ch === "`") {
-      const end = skipString(source.text, i);
-      if (ch !== "`" && source.text.slice(i + 1, end - 1) === "command") {
-        let after = end;
-        while (after < source.text.length && /\s/.test(source.text[after])) after += 1;
-        if (source.text[after] === ":") {
-          out.push({ at: i, valueStart: after + 1 });
-          i = after + 1;
-          continue;
-        }
-      }
-      i = end;
-      continue;
-    }
-    if (ch === '/' && startsRegex(source.text, i)) {
-      i = skipRegex(source.text, i);
-      continue;
-    }
-    if (source.text.startsWith("command", i)) {
-      const next = source.text[i + 7];
-      if (next === undefined || !/[\w$]/.test(next)) {
-        let after = i + 7;
-        while (after < source.text.length && /\s/.test(source.text[after])) after += 1;
-        if (source.text[after] === ":") {
-          out.push({ at: i, valueStart: after + 1 });
-          i = after + 1;
-          continue;
-        }
-      }
-    }
-    i += 1;
-  }
-  return out;
-}
-
-// Every command a file holds, read from a source the caller already holds.
-function commandsIn(source, properties = new Map()) {
-  const out = [];
-  for (const key of commandKeys(source)) {
-    const expression = readExpression(source.text, key.valueStart);
-    out.push({ at: key.at, ...commandValue(source, expression, properties) });
-  }
-  return out;
-}
-
-// Every command a file holds. The key can be quoted, and the value can be a
-// string, a template, an array of words, or a name the file declares. A
-// shape the gate cannot read is returned as unreadable rather than skipped,
-// so a command the gate cannot see cannot pass it in silence.
-function commandsOf(text, properties = new Map()) {
-  return commandsIn(stripComments(text), properties);
-}
-
-// Whether a file starts a server. A file that starts a server has to say
-// what it starts, so a command shape the gate cannot read in such a file is
-// a hole the gate names rather than passes.
-function startsServers(source) {
-  return /\bwebServer\s*:/.test(source.text);
+  return offenders;
 }
 
 test("every test listener under web names a loopback host", () => {
   const offenders = [];
   const stale = [];
   const used = new Set();
-  for (const file of listenerFiles()) {
+  for (const file of webSourceFiles()) {
     const rel = repoPath(file);
     const text = readFileSync(file, "utf8");
     const allowed = ALLOWED.get(rel);
-    for (const offender of listenersIn(text)) {
+    for (const offender of listenersIn(text, file)) {
       if (allowed !== undefined) {
         used.add(rel);
         continue;
@@ -652,52 +621,23 @@ test("every test listener under web names a loopback host", () => {
   assert.deepEqual(stale, [], `the allow list must hold only the listeners that still need it:\n${stale.join("\n")}`);
 });
 
-// The offenders one source file holds among its vite commands, each with the
-// line it sits on and the reason it is named.
-function viteOffendersIn(text, rel, properties = new Map()) {
-  const offenders = [];
-  const source = stripComments(text);
-  const entries = commandsIn(source, properties);
-  const holdsVite = entries.some((entry) => entry.kind === "command" && /\bvite\b/.test(entry.command));
-  const startsServer = startsServers(source);
-  for (const entry of entries) {
-    if (entry.kind === "type") continue;
-    if (entry.kind === "unreadable") {
-      // A shape the gate cannot read is a hole when the gate cannot show
-      // that the command is not a vite command: the value names vite, or
-      // the file runs vite, or the file starts a server at all. Then the
-      // gate names the file rather than passing the shape in silence.
-      if (!/vite/i.test(entry.value) && !holdsVite && !startsServer) continue;
-      offenders.push({
-        line: lineOf(text, entry.at),
-        why: `it names a command this gate cannot read (${entry.reason}), so the gate cannot prove it carries --host 127.0.0.1`,
-      });
-      continue;
-    }
-    if (!/\bvite\b/.test(entry.command)) continue;
-    if (/--host\s+127\.0\.0\.1(\s|$)/.test(entry.command)) continue;
-    offenders.push({ line: lineOf(text, entry.at), why: entry.command });
-  }
-  return offenders.map((offender) => ({ ...offender, rel }));
-}
-
-// The offenders one package.json holds among its scripts. The gate read none
-// before this function existed.
-function packageScriptOffendersIn() {
-  return [];
-}
-
 test("every vite command under web names the loopback host", () => {
   const offenders = [];
-  const texts = new Map();
-  for (const file of webSourceFiles()) texts.set(file, readFileSync(file, "utf8"));
-  const properties = propertyCommands(texts);
-  for (const [file, text] of texts) {
+  const sources = new Map();
+  for (const file of webSourceFiles()) sources.set(file, readFileSync(file, "utf8"));
+  const properties = propertyCommands(sources);
+  for (const file of packageFiles()) {
     const rel = repoPath(file);
+    for (const offender of packageScriptOffendersIn(readFileSync(file, "utf8"), rel)) {
+      offenders.push(`${rel}:${offender.line} ${offender.why}`);
+    }
+  }
+  for (const [file, text] of sources) {
     // The gate's own file holds the wildcard shapes it is tested with as
     // data, so it is the one file the vite leg does not read.
     if (file === fileURLToPath(import.meta.url)) continue;
-    for (const offender of viteOffendersIn(text, rel, properties)) {
+    const rel = repoPath(file);
+    for (const offender of viteOffendersIn(text, rel, properties, file)) {
       offenders.push(`${rel}:${offender.line} ${offender.why}`);
     }
   }
@@ -708,53 +648,34 @@ test("every vite command under web names the loopback host", () => {
   );
 });
 
+test("the gate reads every extension a source file carries", () => {
+  const read = webSourceFiles().map((file) => extname(file));
+  for (const extension of [".mjs", ".ts"]) assert.ok(read.includes(extension), `the gate must read ${extension} files`);
+});
+
 test("the gate catches a listener that sits outside an app's own test directory", () => {
-  // The shape the read proved: a stub in a package that binds every
-  // interface. The gate has to read the file at all, and it has to name the
-  // listener it holds.
   const source = 'const server = createServer();\nserver.listen(4959, "0.0.0.0", () => {});\n';
-  const offenders = listenersIn(source);
-  assert.equal(offenders.length, 1, "the gate must name a listener that binds every interface");
-  const read = typeof listenerFiles === "function" ? listenerFiles() : [];
+  assert.equal(listenersIn(source).length, 1, "the gate must name a listener that binds every interface");
   assert.ok(
-    read.some((file) => file.includes("/packages/")),
+    webSourceFiles().some((file) => file.includes("/packages/")),
     "the gate must read the sources outside an app's own test directory",
   );
 });
 
 test("the gate catches a listener whose call is not spelled .listen(", () => {
-  // The shape the read proved: a newline between the method name and the
-  // paren. It binds every interface at runtime, so the gate has to read it.
-  const source = 'server.listen\n  (4959, () => console.log("up"));\n';
-  const offenders = listenersIn(source);
+  const offenders = listenersIn('server.listen\n  (4959, () => console.log("up"));\n');
   assert.equal(offenders.length, 1, "the gate must name a listener whose paren is not next to the method name");
   assert.match(String(offenders[0].why ?? ""), /no host/, "the gate must say the call names no host");
 });
 
-test("the gate reads a vite command held in a variable, an array and a quoted key", () => {
-  const source = [
-    "const viteCommand = `npx vite --port 3000 --strictPort`;",
-    "const held = { command: viteCommand };",
-    'const quoted = { "command": "npx vite --port 3001 --strictPort" };',
-    'const words = { command: ["npx", "vite", "--port", "3002"] };',
-  ].join("\n");
-  const found = commandsOf(source).filter((entry) => /\bvite\b/.test(entry.command ?? ""));
-  assert.equal(
-    found.length,
-    3,
-    "the gate must read a vite command held in a variable, in an array and under a quoted key",
-  );
+test("the gate names the host a listener bound", () => {
+  const offenders = listenersIn('server.listen(4959, "0.0.0.0", () => {});\n');
+  assert.equal(offenders.length, 1, "the gate must name a listener that binds every interface");
+  assert.match(String(offenders[0].why ?? ""), /0\.0\.0\.0/, "the gate must name the host the listener bound, not undefined");
 });
 
-test("the gate names the host a listener bound", () => {
-  const source = 'server.listen(4959, "0.0.0.0", () => {});\n';
-  const offenders = listenersIn(source);
-  assert.equal(offenders.length, 1, "the gate must name a listener that binds every interface");
-  assert.match(
-    String(offenders[0].why ?? ""),
-    /0\.0\.0\.0/,
-    "the gate must name the host the listener bound, not undefined",
-  );
+test("a listener held on the allow list that the tree no longer needs fails the gate", () => {
+  assert.equal(listenersIn('server.listen(0, "127.0.0.1");').length, 0, "a loopback listener needs no allow list entry");
 });
 
 // The parser legs: every shape the reread of 420 probed, fed to the gate's own
