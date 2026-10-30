@@ -7,7 +7,7 @@
 // local day with at least two stops, day keyed so every day holds one. A world
 // without them fails these legs loudly: a run that skipped would pass
 // vacuously.
-import { expect, houseDay, myRuns, staff, test, shot, arriveFromFrontDoor } from "./helpers.js";
+import { expect, servedDay, myRuns, staff, test, shot, arriveFromFrontDoor } from "./helpers.js";
 
 test("L-card: the front door lists the Driver, with its role code and label", async ({ page }) => {
   const flows = await page.request.get("/api/v1/demo/flows");
@@ -21,7 +21,7 @@ test("L-card: the front door lists the Driver, with its role code and label", as
 
 test("L-card: the card lands on its run, the driver's own, on the dealer's day", async ({ page }, testInfo) => {
   const runs = await myRuns(page);
-  expect(runs.length, `a run is dispatched to the seeded driver on ${houseDay()}`).toBeGreaterThanOrEqual(1);
+  expect(runs.length, `a run is dispatched to the seeded driver on ${await servedDay(page)}`).toBeGreaterThanOrEqual(1);
   const run = runs[0];
   expect(run.status).toBe("DISPATCHED");
   expect(run.stops.length, "the run carries at least two stops: one to deliver, one to hand back").toBeGreaterThanOrEqual(2);
