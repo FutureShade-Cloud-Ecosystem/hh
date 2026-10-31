@@ -130,6 +130,12 @@ $rt2_net$;
 -- no reader rebuilds a past holdback by hand and RT-3's release reaches every one of them by writing
 -- its row. An invoice with no ledger row withheld nothing and answers zero.
 --
+-- NOTE FOR RT-3: the release must write one RELEASE row per invoice (never one job level row with no
+-- invoice_id, which this function cannot see) and lower invoices.holdback_cents in the same call on the
+-- same transaction, through a writer or repository that carries the seam (billing.ErrNoHoldbackSeam is
+-- the refusal a bare one answers). The today branch of every reader reads the column and the past branch
+-- reads this function, so a release that moves only one of them splits the two.
+--
 -- invoice_holdback_withheld(invoice) is the holdback the invoice was first written with: its first
 -- positive RETENTION row, whatever later lowered it or restored it (a write off's reversal is a later
 -- positive row and is not a second withholding). NULL when the ledger never held the invoice.
