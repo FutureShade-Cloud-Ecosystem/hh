@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -331,4 +332,68 @@ func TestIntegration_CreditMemoJob_AReversalCarriesTheInvoicesJob(t *testing.T) 
 			t.Fatalf("a newly named closed job: got %v, want the closed words", err)
 		}
 	})
+}
+
+// TestIntegration_CreditMemoJob_TheKeyBelongsToTheJobToo (the review of PR 747, P3): the derived
+// idempotency key takes the job into account, so the same amount and reason credited to two jobs of
+// one customer on one house day are two credits, not the second replayed as the first; and a key a
+// caller supplies, reused with a different job, is refused as a conflict rather than replayed.
+//
+// WHY the job is part of the key and of the body check: a credit on job A and a credit on job B are
+// different credits (JA-3 and JA-4 read them by job), exactly as a different amount or invoice is.
+// The EFFECTIVE job is used (the inherited one on a reversal), so a reversal asked with no job and
+// the same reversal asked naming the invoice's job are one credit, as they should be.
+func TestIntegration_CreditMemoJob_TheKeyBelongsToTheJobToo(t *testing.T) {
+	pool := intPool(t)
+	e := memoJobPlant(t, pool)
+	svc, ctx := memoJobSvc(t, pool, e)
+	repo := customer.NewRepository(pool)
+	second, err := repo.InsertJob(context.Background(), customer.JobWrite{
+		CustomerID: e.customer, BranchID: trentonBranch, JobNo: "J-MJ-KEY2",
+		Fields: customer.JobFields{Name: "Side path"},
+	})
+	if err != nil {
+		t.Fatalf("plant the second open job: %v", err)
+	}
+	ask := func(jobID, key string) (CreditMemoRouteResult, error) {
+		return svc.Issue(ctx, CreditMemoRouteRequest{
+			CustomerID: e.customer, BranchID: trentonBranch, AmountCents: 5_000,
+			Reason: "Same amount, same reason", JobID: jobID, IdempotencyKey: key,
+		}, cmTrentonOnlyCaller())
+	}
+
+	// No key: the derived key. Two jobs, one house day: two credits.
+	a, err := ask(e.open, "")
+	if err != nil {
+		t.Fatalf("credit job A: %v", err)
+	}
+	b, err := ask(second.JobID, "")
+	if err != nil {
+		t.Fatalf("credit job B: %v", err)
+	}
+	if a.CreditMemoID == b.CreditMemoID {
+		t.Fatalf("the second job's credit was answered with the first job's credit %q (a replay)", a.CreditMemoID)
+	}
+	if got := memoJobOf(t, pool, b.CreditMemoID); got != second.JobID {
+		t.Fatalf("the second credit is on job %q, want %q", got, second.JobID)
+	}
+	// The same job again is still the one credit (the double click the key exists for).
+	again, err := ask(e.open, "")
+	if err != nil {
+		t.Fatalf("ask job A again: %v", err)
+	}
+	if again.CreditMemoID != a.CreditMemoID {
+		t.Fatalf("the same credit twice raised two documents: %q and %q", a.CreditMemoID, again.CreditMemoID)
+	}
+
+	// A supplied key, reused with a different job: a conflict, not a replay.
+	key := "mjk-" + ns(t)
+	if _, err := ask(e.open, key); err != nil {
+		t.Fatalf("first use of the key: %v", err)
+	}
+	_, err = ask(second.JobID, key)
+	var conflict *creditMemoKeyConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("the key reused with a different job answered %v, want the key conflict", err)
+	}
 }

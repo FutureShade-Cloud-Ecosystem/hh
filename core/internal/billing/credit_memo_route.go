@@ -559,7 +559,7 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 		ReversesInvoiceID: strings.TrimSpace(req.InvoiceID),
 		AmountCents:       req.AmountCents,
 		Memo:              reason,
-		IdempotencyKey:    s.creditMemoKey(ctx, req, reason),
+		IdempotencyKey:    s.creditMemoKey(ctx, req, reason, f.jobID),
 		SourceKind:        SourceOrder,
 		JobID:             f.jobID,
 	}
@@ -580,6 +580,7 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 		if existing.CustomerID != customerID ||
 			existing.BranchID != branchID ||
 			existing.ReversesInvoiceID != in.ReversesInvoiceID ||
+			existing.jobID != in.JobID ||
 			(req.AmountCents != 0 && -existing.SubtotalCents != req.AmountCents) {
 			return CreditMemoRouteResult{}, &creditMemoKeyConflict{msg: "this idempotency key already named a different credit; a key belongs to the credit that first used it"}
 		}
@@ -734,10 +735,10 @@ func (w *InvoiceWriter) creditMemoByKey(ctx context.Context, key, orgID string) 
 	err := w.pool.QueryRow(ctx, `
 		SELECT id::text, invoice_no::text, customer_id::text, branch_id::text, status,
 		       subtotal_cents, tax_cents, total_cents, balance_cents,
-		       COALESCE(reverses_invoice_id::text,'')
+		       COALESCE(reverses_invoice_id::text,''), COALESCE(job_id::text,'')
 		  FROM invoices WHERE idempotency_key = $1 AND doc_type = 'CREDIT_MEMO' AND org_id = $2::uuid`, key, orgID).
 		Scan(&doc.InvoiceID, &doc.InvoiceNo, &doc.CustomerID, &doc.BranchID, &doc.Status,
-			&doc.SubtotalCents, &doc.TaxCents, &doc.TotalCents, &doc.BalanceCents, &reverses)
+			&doc.SubtotalCents, &doc.TaxCents, &doc.TotalCents, &doc.BalanceCents, &reverses, &doc.jobID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return InvoiceDoc{}, false, nil
@@ -780,14 +781,14 @@ func CreditMemoJournalLines(j CreditMemoJournal, accounts map[string]string) ([]
 // for twice in one day, is one credit. A different amount, a different invoice or a different reason
 // is a different credit, and gets its own key. The caller may always supply its own key, which is
 // what a form that holds one across a retry does.
-func (s *CreditMemoService) creditMemoKey(ctx context.Context, req CreditMemoRouteRequest, reason string) string {
+func (s *CreditMemoService) creditMemoKey(ctx context.Context, req CreditMemoRouteRequest, reason, jobID string) string {
 	if k := strings.TrimSpace(req.IdempotencyKey); k != "" {
 		return k
 	}
 	day := s.houseDay(ctx)
 	seed := strings.Join([]string{
 		day, req.BranchID, req.CustomerID, strings.TrimSpace(req.InvoiceID),
-		fmt.Sprintf("%d", req.AmountCents), reason,
+		fmt.Sprintf("%d", req.AmountCents), reason, jobID,
 	}, "|")
 	sum := sha256.Sum256([]byte(seed))
 	return "credit-memo:" + hex.EncodeToString(sum[:])

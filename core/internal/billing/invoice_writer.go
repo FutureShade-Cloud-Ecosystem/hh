@@ -290,6 +290,9 @@ type InvoiceDoc struct {
 	// -- credit-memo only (see credit_memo.go) --
 	// ReversesInvoiceID is the document this memo reverses, when there is one.
 	ReversesInvoiceID string `json:"reverses_invoice_id,omitempty"`
+	// jobID is the job the stored memo carries, read back by the idempotency lookup so a key reused with
+	// a different job is a conflict, not a replay (JA-2). Not on the wire.
+	jobID string
 	// GLJournalID is the reversing entry, when the poster seam is bound and accepted it.
 	GLJournalID string `json:"gl_journal_id,omitempty"`
 	// GLJournalError is set when the memo exists but its journal did not post. Surfaced rather than
