@@ -85,3 +85,28 @@ func TestRT3Fix2_TheWorkspaceHeaderDoesNotCountAReleasedHoldbackOverdueOnRelease
 	eq(t, "open", h.OpenCents, int64(10_000))
 	eq(t, "overdue", h.OverdueCents, int64(0))
 }
+
+// P3-2: the saved and sent statement says "(holdback released <day>)", as the preview does, and its running
+// balance is unchanged by the words.
+func TestRT3Fix2_TheSentStatementSaysTheHoldbackWasReleased(t *testing.T) {
+	l := rt2Setup(t, "f2j")
+	doc := l.releasedToday("f2j-key")
+	lines, err := billing.NewRepository(l.pool).StatementLines(context.Background(), l.cust, time.Now(), billing.AllBranches)
+	if err != nil {
+		t.Fatalf("statement lines: %v", err)
+	}
+	day := rt3Today().Format("2006-01-02")
+	found := false
+	for i, ln := range lines {
+		if ln.Description == doc.InvoiceNo+" (holdback released "+day+")" {
+			found = true
+			eq(t, "the words move no money", ln.ChargeCents+ln.CreditCents, int64(0))
+			if i > 0 {
+				eq(t, "the running balance is unchanged by the words", ln.BalanceRun, lines[i-1].BalanceRun)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("the statement a run saves must carry the holdback released line, got %+v", lines)
+	}
+}
