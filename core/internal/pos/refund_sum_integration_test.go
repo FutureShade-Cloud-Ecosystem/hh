@@ -350,6 +350,7 @@ func smallPool(t *testing.T, maxConns int32) *pgxpool.Pool {
 		t.Fatalf("small pool not reachable: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	registerLegSweep(t, pool)
 	return pool
 }
 
