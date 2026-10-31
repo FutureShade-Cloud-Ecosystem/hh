@@ -11,7 +11,16 @@ const TURN = new Date(Date.UTC(2026, 9, 31, 16, 0, 0));
 test("the zone named decides the month: one instant is September's month before on UTC and October's in Tokyo", () => {
   assert.deepEqual(monthsBefore(1, "UTC", TURN), { year: 2026, month: 9 });
   assert.deepEqual(monthsBefore(1, "Asia/Tokyo", TURN), { year: 2026, month: 10 });
-  assert.equal(STUB_ZONE, "UTC", "the contract tests pin their stub to UTC");
+  assert.equal(STUB_ZONE, "America/Toronto", "the contract tests pin their stub to the house zone the sign off gate reads");
+});
+
+test("in the hours after UTC midnight on the 1st, the house zone's month before is a month the gate has finished", () => {
+  // 02:00 UTC on November 1 is still October 31 in Toronto: October has not reached its month end there, so a
+  // statement month of October would be refused by the sign off gate; the house zone names September.
+  const early = new Date(Date.UTC(2026, 10, 1, 2, 0, 0));
+  assert.equal(early.toLocaleDateString("en-CA", { timeZone: "America/Toronto" }), "2026-10-31");
+  assert.deepEqual(monthsBefore(1, "UTC", early), { year: 2026, month: 10 });
+  assert.deepEqual(monthsBefore(1, STUB_ZONE, early), { year: 2026, month: 9 });
 });
 
 test("whole months back from the month itself: the 31st after a 30 day month, March after February, and January", () => {
