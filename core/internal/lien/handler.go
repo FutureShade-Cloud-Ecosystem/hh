@@ -262,6 +262,38 @@ func (h *Handler) preserveLien(w http.ResponseWriter, r *http.Request, caller gu
 	httpx.WriteJSON(w, http.StatusOK, job)
 }
 
+// preservationDatesBody is the body of a dates change: a field absent is left alone, null clears it.
+type preservationDatesBody struct {
+	CSPPublishedOn      customer.OptionalValue[string] `json:"csp_published_on"`
+	SubstantialPerfDate customer.OptionalValue[string] `json:"substantial_perf_date"`
+	LastSupplyDate      customer.OptionalValue[string] `json:"last_supply_date"`
+}
+
+func dateChange(o customer.OptionalValue[string]) DateChange {
+	if !o.Set() {
+		return DateChange{}
+	}
+	if o.Value == nil {
+		return DateChange{Present: true}
+	}
+	return DateChange{Present: true, Value: *o.Value}
+}
+
+func (h *Handler) setPreservationDates(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var b preservationDatesBody
+	if !h.decode(w, r, &b) {
+		return
+	}
+	job, err := h.svc.SetPreservationDates(r.Context(), r.PathValue("id"), PreservationDates{
+		CSPPublishedOn: dateChange(b.CSPPublishedOn), SubstantialPerfDate: dateChange(b.SubstantialPerfDate), LastSupplyDate: dateChange(b.LastSupplyDate),
+	})
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, job)
+}
+
 func (h *Handler) dischargeLien(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var b preservedLienBody
 	if !h.decode(w, r, &b) {

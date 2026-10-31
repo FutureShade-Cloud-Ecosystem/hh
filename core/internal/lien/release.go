@@ -34,6 +34,7 @@ import (
 const (
 	actLienPreserved  = "HOLDBACK_LIEN_PRESERVED"
 	actLienDischarged = "HOLDBACK_LIEN_DISCHARGED"
+	actLienDatesSet   = "HOLDBACK_LIEN_DATES_SET"
 )
 
 // Basis names the date a preservation period counts from.
@@ -335,6 +336,84 @@ func (s *Service) DischargeLien(ctx context.Context, lienJobID, dischargedOn, no
 		return s.record(ctx, audit.SensitiveAccess{
 			Action: actLienDischarged, EntityType: "lien.job", EntityID: job.ID, ActorID: c.UserID, BranchID: job.BranchID,
 			Reason: note, Extra: map[string]any{"discharged_on": day, "preserved_on": job.LienPreservedOn},
+		})
+	}); err != nil {
+		return Job{}, err
+	}
+	return s.store.GetJob(ctx, job.ID)
+}
+
+// PreservationDates are the dates that start a lien job's preservation period. A nil field is left as it is;
+// a field present with Clear set removes the date; a field with a value sets it.
+type PreservationDates struct {
+	CSPPublishedOn      DateChange
+	SubstantialPerfDate DateChange
+	LastSupplyDate      DateChange
+}
+
+// DateChange is one date's change: untouched (the zero value), cleared, or set to a YYYY-MM-DD day.
+type DateChange struct {
+	Present bool
+	Value   string // empty with Present set means clear
+}
+
+// SetPreservationDates sets or corrects the dates a lien job's preservation period counts from: the
+// publication of the certificate of substantial performance (known only after the job is opened), the date
+// of substantial performance and the last supply. A manager inside the job's branch reach; the change and
+// its audit record (the dates before and after) are one transaction.
+func (s *Service) SetPreservationDates(ctx context.Context, lienJobID string, in PreservationDates) (Job, error) {
+	c, job, err := s.preservedLienCaller(ctx, lienJobID)
+	if err != nil {
+		return Job{}, err
+	}
+	if !in.CSPPublishedOn.Present && !in.SubstantialPerfDate.Present && !in.LastSupplyDate.Present {
+		return Job{}, unprocessable("lien: name at least one of csp_published_on, substantial_perf_date and last_supply_date (a date, YYYY-MM-DD, or null to clear it)")
+	}
+	type col struct {
+		name, column string
+		change       DateChange
+		before       string
+	}
+	cols := []col{
+		{"csp_published_on", "csp_published_on", in.CSPPublishedOn, job.CSPPublishedOn},
+		{"substantial_perf_date", "substantial_perf_date", in.SubstantialPerfDate, job.SubstantialPerfDate},
+		{"last_supply_date", "last_supply_date", in.LastSupplyDate, job.LastSupplyDate},
+	}
+	extra := map[string]any{}
+	for i := range cols {
+		if !cols[i].change.Present {
+			continue
+		}
+		v := strings.TrimSpace(cols[i].change.Value)
+		if v != "" {
+			day, err := lienDay(cols[i].name, v)
+			if err != nil {
+				return Job{}, err
+			}
+			v = day
+		}
+		cols[i].change.Value = v
+		extra[cols[i].name+"_before"] = cols[i].before
+		extra[cols[i].name+"_after"] = v
+	}
+	if err := s.rules().InTx(ctx, func(ctx context.Context) error {
+		q, err := s.repo.q(ctx)
+		if err != nil {
+			return err
+		}
+		for _, cl := range cols {
+			if !cl.change.Present {
+				continue
+			}
+			// The column names are this function's own constants, never a request's.
+			if _, err := q.Exec(ctx, `UPDATE lien_jobs SET `+cl.column+` = $2::date, updated_at = now() WHERE id = $1::uuid`,
+				job.ID, nullDate(cl.change.Value)); err != nil {
+				return fmt.Errorf("lien: set %s: %w", cl.name, err)
+			}
+		}
+		return s.record(ctx, audit.SensitiveAccess{
+			Action: actLienDatesSet, EntityType: "lien.job", EntityID: job.ID, ActorID: c.UserID, BranchID: job.BranchID,
+			Reason: "preservation dates set", Extra: extra,
 		})
 	}); err != nil {
 		return Job{}, err
