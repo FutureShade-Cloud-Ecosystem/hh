@@ -95,6 +95,13 @@ export const screenStyles = css`
   .card-frame { width: 100%; height: 272px; border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); background: var(--hh-field); }
   .receipt { display: flex; flex-direction: column; gap: var(--hh-s-8); align-items: flex-start; padding-top: var(--hh-s-8); }
   .receipt .btn { align-self: stretch; margin-top: var(--hh-s-8); }
+  .sum { margin: var(--hh-s-8) 0; width: 100%; display: flex; flex-direction: column; gap: var(--hh-s-4); font-size: 0.9375rem; }
+  .sum div { display: flex; justify-content: space-between; gap: var(--hh-s-8); }
+  .sum dt { color: var(--hh-text-dim); }
+  .sum dd { margin: 0; }
+  .sum-save dd { color: var(--hh-success); }
+  .sum-pay { border-top: 1px solid var(--hh-line); padding-top: var(--hh-s-4); font-weight: 600; }
+  .sum-pay dt { color: var(--hh-text); }
   .receipt-head { font-weight: 600; color: var(--hh-success); }
 
   /* Payment methods */

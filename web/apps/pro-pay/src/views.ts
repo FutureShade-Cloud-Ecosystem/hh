@@ -18,6 +18,9 @@ export interface Sheet {
   phase: Phase;
   ids: string[];
   expectedCents: number;
+  /** The invoice amount the selection is worth before any early payment saving, and the saving, for the sheet and receipt lines. */
+  faceCents: number;
+  savingCents: number;
   /** "" none yet, a stored method id, or "new" (a card added at checkout, paid with its token). */
   choice: string;
   /** The one time token from the hosted frame; null until the frame hands one up. */
@@ -191,6 +194,17 @@ function methodChoice(m: TenantPaymentMethod, sheet: Sheet, locked: boolean): Te
   </button>`;
 }
 
+/** The arithmetic in a customer's words: the invoice amount, the early payment saving, and what you pay. Only when there is a saving. */
+function arithmetic(sheet: Sheet): TemplateResult | typeof nothing {
+  if (sheet.savingCents <= 0) return nothing;
+  const paid = sheet.phase === "paid" && sheet.receipt !== null ? sheet.receipt.amount_cents : sheet.expectedCents;
+  return html`<dl class="sum" data-testid="pay-arithmetic">
+    <div><dt>Invoice amount</dt><dd class="mono">${money(sheet.faceCents)}</dd></div>
+    <div class="sum-save"><dt>Early payment saving</dt><dd class="mono">-${money(sheet.savingCents)}</dd></div>
+    <div class="sum-pay"><dt>${sheet.phase === "paid" ? "You paid" : "You pay"}</dt><dd class="mono">${money(paid)}</dd></div>
+  </dl>`;
+}
+
 function sheetBody(state: ViewState, sheet: Sheet): TemplateResult {
   const locked = sheet.phase !== "choose";
   const newOn = sheet.choice === "new";
@@ -202,6 +216,7 @@ function sheetBody(state: ViewState, sheet: Sheet): TemplateResult {
     return html`<div class="receipt" data-testid="receipt" role="status">
       <p class="receipt-head">Payment received</p>
       <p class="big mono" data-testid="receipt-amount">${money(r.amount_cents)}</p>
+      ${arithmetic(sheet)}
       <p class="quiet"><span class="mono" data-testid="receipt-no">${r.payment_no}</span> · ${tender(r.method)} · ${houseMoment(r.received_at)}</p>
       ${sheet.differs ? html`<p class="notice-line" data-testid="receipt-differs">The dealer's books settled ${money(r.amount_cents)}, not the ${money(sheet.expectedCents)} shown before paying. The receipt above is the figure that counts.</p>` : nothing}
       <button type="button" class="btn btn-primary" data-action="done" data-testid="receipt-done">Done</button>
@@ -209,6 +224,7 @@ function sheetBody(state: ViewState, sheet: Sheet): TemplateResult {
   }
   return html`
     <h2 class="sheet-title" data-testid="sheet-title">Pay ${count} ${plural(count, "invoice", "invoices")} · <span class="mono">${money(sheet.expectedCents)}</span></h2>
+    ${arithmetic(sheet)}
     <p class="sandbox" data-testid="sandbox-note">${SANDBOX_NOTE}</p>
     <div class="opts" role="radiogroup" aria-label="Pay with" data-testid="methods">
       ${sheet.methods.map((m) => methodChoice(m, sheet, locked))}

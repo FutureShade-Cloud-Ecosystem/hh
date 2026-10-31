@@ -31,7 +31,7 @@ import "@hardscapehouse/pro-kit/src/state-view.js";
 import type { SurfaceSelect } from "@hardscapehouse/pro-kit/src/frame.js";
 import type { SignInMethodChoice, SignInSubmit } from "@hardscapehouse/pro-kit/src/signin.js";
 import type { HHProSignIn } from "@hardscapehouse/pro-kit/src/signin.js";
-import { PaySender, isPayable, payoffCents, readHostedToken, type PayBody, type PayOutcome } from "./pay-core.js";
+import { PaySender, discountOffer, isPayable, payableCents, payoffCents, readHostedToken, type PayBody, type PayOutcome } from "./pay-core.js";
 import { hostedFieldAddress } from "./hosted-field.js";
 import { invoiceDetailScreen, invoicesScreen, methodsScreen, sheetView, statementsScreen, type Load, type Sheet, type ViewState } from "./views.js";
 import { screenStyles } from "./styles.js";
@@ -458,13 +458,19 @@ export class ProPayApp extends HHElement {
     return this.#invoices.filter((i) => ids.includes(i.id)).reduce((sum, i) => sum + payoffCents(i), 0);
   }
 
+  /** The sheet's arithmetic lines: what the invoices are worth, and the early payment saving on them. */
+  #arithOf(ids: readonly string[]): { faceCents: number; savingCents: number } {
+    const rows = this.#invoices.filter((i) => ids.includes(i.id));
+    return { faceCents: rows.reduce((sum, i) => sum + payableCents(i), 0), savingCents: rows.reduce((sum, i) => sum + (discountOffer(i)?.cents ?? 0), 0) };
+  }
+
   async #openSheet(ids: string[]): Promise<void> {
     if (!this.#session.can("pay_invoices") || ids.length === 0) return;
     if (this.#sender.waiting !== null) {
       await this.#reopenWaiting();
       return;
     }
-    this.#sheet = { phase: "choose", ids, expectedCents: this.#sumOf(ids), choice: "", nonce: null, methods: [], methodsNote: "", words: "", receipt: null, differs: false, frameAvailable: hostedFieldAddress() !== null };
+    this.#sheet = { phase: "choose", ids, expectedCents: this.#sumOf(ids), ...this.#arithOf(ids), choice: "", nonce: null, methods: [], methodsNote: "", words: "", receipt: null, differs: false, frameAvailable: hostedFieldAddress() !== null };
     this.requestUpdate();
     const answer = await tenantPayments.tenantListPaymentMethods(this.#client);
     if (!answer.ok && failure(answer) === "lapsed") {
@@ -490,6 +496,8 @@ export class ProPayApp extends HHElement {
       phase: "unknown",
       ids: [...waiting.invoiceIds],
       expectedCents: waiting.expectedCents,
+      faceCents: 0,
+      savingCents: 0,
       choice: waiting.methodId ?? "new",
       nonce: waiting.nonce ?? null,
       methods,
@@ -554,6 +562,9 @@ export class ProPayApp extends HHElement {
     switch (outcome.kind) {
       case "paid":
         this.#sheet = { ...sheet, phase: "paid", receipt: outcome.payment, differs: outcome.differs, words: "" };
+        // The paid invoices are no longer open or picked: the list behind the receipt reads the books again now, not at Done.
+        this.#selected = new Set();
+        void this.#loadSurface();
         break;
       case "unknown":
         this.#sheet = { ...sheet, phase: "unknown", words: outcome.words };
@@ -588,7 +599,7 @@ export class ProPayApp extends HHElement {
       this.#sheet = null;
       this.#selected = new Set();
     } else {
-      this.#sheet = { ...sheet, ids: still, expectedCents: this.#sumOf(still) };
+      this.#sheet = { ...sheet, ids: still, expectedCents: this.#sumOf(still), ...this.#arithOf(still) };
     }
     this.requestUpdate();
   }
@@ -598,6 +609,8 @@ export class ProPayApp extends HHElement {
       phase: outcome.kind === "paid" ? "paid" : "unknown",
       ids: [...body.invoiceIds],
       expectedCents: this.#sumOf(body.invoiceIds),
+      faceCents: 0,
+      savingCents: 0,
       choice: body.methodId ?? "new",
       nonce: body.nonce ?? null,
       methods: this.#methods,
