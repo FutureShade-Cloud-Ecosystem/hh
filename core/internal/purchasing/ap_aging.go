@@ -546,6 +546,16 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 		return APAgingPage{}, err
 	}
 
+	// The bills that count as of the instant are the applications' rule too: an application
+	// moves cents from a credit onto a bill, and it may count only when that bill counts, or
+	// the credit's open would drop while the bill's side still shows nothing (a late filed
+	// bill between its filing and its month's end, S6 on 704's P3-2). countedBills is exactly
+	// the set the bill side kept.
+	countedBills := make(map[string]bool, len(candidates))
+	for _, c := range candidates {
+		countedBills[c.BillID] = true
+	}
+
 	// The vendor credits: which count as of the instant, and how much of each has
 	// been applied onto bills as of the same instant. The applications of a credit
 	// that does not yet count reduce nothing (neither side of the tie sees it yet).
@@ -553,7 +563,7 @@ func (s *Service) APAging(ctx context.Context, asOf time.Time, reach BranchReach
 	if err != nil {
 		return APAgingPage{}, err
 	}
-	countedCredits, appliedByBill, err := s.applyCreditClock(ctx, creditCandidates, effectiveAsOf, loc)
+	countedCredits, appliedByBill, err := s.applyCreditClock(ctx, creditCandidates, effectiveAsOf, loc, countedBills)
 	if err != nil {
 		return APAgingPage{}, err
 	}
@@ -951,19 +961,26 @@ type countedCredit struct {
 // applyCreditClock narrows the credit candidates to what counts as of the instant
 // under the bills' own rule: the credit counts from its posting journal's effective
 // instant (the GL's late filing rule), and from its own date when the clock is
-// unwired. Each application counts at its applied_at, and only the applications of
-// a counted credit reduce bill opens, so neither side of the tie sees a credit the
-// other does not. The second answer is the bill open's credit side, keyed by bill.
-func (s *Service) applyCreditClock(ctx context.Context, candidates []apCreditCandidate, asOf time.Time, loc *time.Location) ([]countedCredit, map[string]int64, error) {
+// unwired. Each application counts at its applied_at AND only when the bill it
+// landed on counts as of the same instant (the bill set handed in as countedBills,
+// exactly what the bill side kept), so neither side of the tie sees a move the
+// other does not: an application onto a bill that does not count yet (filed late
+// into an open month) nets nothing until the bill counts with it. The second answer
+// is the bill open's credit side, keyed by bill.
+func (s *Service) applyCreditClock(ctx context.Context, candidates []apCreditCandidate, asOf time.Time, loc *time.Location, countedBills map[string]bool) ([]countedCredit, map[string]int64, error) {
 	day := asOf.In(loc).Format("2006-01-02")
 	appliedByBill := make(map[string]int64)
 	count := func(c apCreditCandidate) countedCredit {
 		cc := countedCredit{candidate: c}
 		for i, at := range c.AppliedAts {
-			if !at.After(asOf) {
-				cc.appliedAsOf += c.AppliedAmounts[i]
-				appliedByBill[c.AppliedBills[i]] += c.AppliedAmounts[i]
+			if at.After(asOf) {
+				continue
 			}
+			if !countedBills[c.AppliedBills[i]] {
+				continue
+			}
+			cc.appliedAsOf += c.AppliedAmounts[i]
+			appliedByBill[c.AppliedBills[i]] += c.AppliedAmounts[i]
 		}
 		return cc
 	}

@@ -29,7 +29,11 @@ import {
   type TaxReconReport,
   type TaxReliefEligibility,
   type TaxStatusCardProfile,
+  type TaxWorksheet,
+  type TaxWorksheetLine,
 } from "@hardscapehouse/api-client";
+
+export type { TaxWorksheet, TaxWorksheetLine };
 
 export interface RateInput {
   readonly jurisdiction: string;
@@ -180,5 +184,20 @@ export class TaxApi {
 
   reconcile(year: number, month: number): Promise<Result<TaxReconReport>> {
     return staffTax.taxReconcile(this.#client, month === 0 ? { year } : { year, month });
+  }
+
+  async worksheet(opts: { year: number; quarter?: number; month?: number; branchId?: string }): Promise<Result<TaxWorksheet>> {
+    const answer = await staffTax.taxGetWorksheet(this.#client, {
+      year: opts.year,
+      ...(opts.quarter && opts.quarter > 0 ? { quarter: opts.quarter } : {}),
+      ...(opts.month && opts.month > 0 ? { month: opts.month } : {}),
+      ...(opts.branchId && opts.branchId !== "" ? { branch_id: opts.branchId } : {}),
+    });
+    if (!answer.ok) return answer;
+    const w = answer.value;
+    if (w !== null && typeof w === "object" && !Array.isArray(w) && Array.isArray(w.lines)) {
+      return { ok: true, value: w };
+    }
+    return { ok: false, error: "The GST/HST return worksheet was not readable." };
   }
 }

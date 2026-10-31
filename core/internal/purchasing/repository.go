@@ -50,6 +50,12 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// isCheckViolation answers a CHECK constraint refusal (23514), the database's own guard speaking.
+func isCheckViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23514"
+}
+
 func nullStr(s string) any {
 	if s == "" {
 		return nil

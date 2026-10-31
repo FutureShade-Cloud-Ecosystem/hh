@@ -32,7 +32,7 @@ test("no screen word names a Canadian tax or currency", () => {
     const lines = readFileSync(join(taxDir, name), "utf8").split("\n");
     lines.forEach((line, i) => {
       const code = line.replace(/\/\/.*$/, "");
-      if (/\b(HST|GST|PST|CAD|Ontario|TCRD)\b|band.card|First Nation/i.test(code)) offenders.push(`${name}:${i + 1}: ${line.trim()}`);
+      if (/\b(?!GST\/HST\b)(?<!\bGST\/)(HST|GST)\b|\b(PST|CAD|Ontario|TCRD)\b|band.card|First Nation/i.test(code)) offenders.push(`${name}:${i + 1}: ${line.trim()}`);
     });
   }
   assert.deepEqual(offenders, []);

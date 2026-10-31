@@ -133,6 +133,7 @@ const server = createServer((req, res) => {
   json(req, res, 404, { message: "not found", type: "general_route_not_found" });
 });
 
+// It runs inside the box's container, which box.sh publishes on 127.0.0.1 only, so it binds 0.0.0.0 there; the gate (web/scripts/stubs-bind-loopback.node-test.mjs) holds this one file as its single entry.
 server.listen(port, "0.0.0.0", () => {
   process.stdout.write(`console-double: listening on 0.0.0.0:${port}\n`);
 });
