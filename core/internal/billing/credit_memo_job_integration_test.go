@@ -434,3 +434,60 @@ func TestIntegration_CreditMemoJob_AJobelessRetryReplays(t *testing.T) {
 		t.Fatalf("a jobless retry raised two credits: %q and %q", first.CreditMemoID, again.CreditMemoID)
 	}
 }
+
+// TestIntegration_CreditMemoJob_ARacingLoserOnOneKeyGetsItsBodyChecked (the delta read of PR 747,
+// P3-2): two requests race on one caller key with different jobs. One wins; the other is a key
+// conflict, never the winner's memo handed back as its own.
+func TestIntegration_CreditMemoJob_ARacingLoserOnOneKeyGetsItsBodyChecked(t *testing.T) {
+	pool := intPool(t)
+	e := memoJobPlant(t, pool)
+	svc, ctx := memoJobSvc(t, pool, e)
+	repo := customer.NewRepository(pool)
+	second, err := repo.InsertJob(context.Background(), customer.JobWrite{
+		CustomerID: e.customer, BranchID: trentonBranch, JobNo: "J-MJ-RACE2",
+		Fields: customer.JobFields{Name: "Race path"},
+	})
+	if err != nil {
+		t.Fatalf("plant the second open job: %v", err)
+	}
+	for round := 0; round < 8; round++ {
+		key := "mjr-" + ns(t) + "-" + string(rune('a'+round))
+		jobs := []string{e.open, second.JobID}
+		type out struct {
+			res CreditMemoRouteResult
+			err error
+		}
+		outs := make([]out, 2)
+		start := make(chan struct{})
+		done := make(chan int, 2)
+		for i := range jobs {
+			go func(i int) {
+				<-start
+				r, err := svc.Issue(ctx, CreditMemoRouteRequest{
+					CustomerID: e.customer, BranchID: trentonBranch, AmountCents: 5_000,
+					Reason: "Race", JobID: jobs[i], IdempotencyKey: key,
+				}, cmTrentonOnlyCaller())
+				outs[i] = out{r, err}
+				done <- i
+			}(i)
+		}
+		close(start)
+		<-done
+		<-done
+		wins, conflicts := 0, 0
+		for _, o := range outs {
+			var c *creditMemoKeyConflict
+			switch {
+			case o.err == nil:
+				wins++
+			case errors.As(o.err, &c):
+				conflicts++
+			default:
+				t.Fatalf("round %d: unexpected error %v", round, o.err)
+			}
+		}
+		if wins != 1 || conflicts != 1 {
+			t.Fatalf("round %d: %d answered and %d conflicted, want one winner and one 409 (the loser was handed the winner's memo)", round, wins, conflicts)
+		}
+	}
+}
