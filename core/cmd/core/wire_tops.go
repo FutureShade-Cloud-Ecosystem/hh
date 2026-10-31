@@ -150,6 +150,9 @@ type topsSpine struct {
 	cardRail      *payment.Service
 	cardCharger   cardChargerAdapter
 	cardRefunder  posCardRefunderAdapter
+	// lateDiscountApprovals is the register's late discount approval wall (TM-2), held so the
+	// composition root can bind it to the role gate built after this wiring returns.
+	lateDiscountApprovals *billing.LateDiscountApprovals
 	// posHandler is held so the composition root can register the payment grant read, which needs
 	// the role gate built after the module wiring (pos/grant.go).
 	posHandler *pos.Handler
@@ -254,7 +257,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// first construction, DIB-416; the second service the W3-B block built
 	// stays in wireOperations, the duplication the A1 ruling carries
 	// verbatim).
-	portalPaySvc := payments.NewService(payments.NewRepository(pool), ops.unionGateway).WithCurrency(newDealerCurrency(pool))
+	// The repository carries the early payment discount's terms read and the dealer's zone
+	// (TM-2): a card settle inside the invoice's own window discounts exactly as the money desk's
+	// walk does.
+	portalPaySvc := payments.NewService(billing.NewPaymentsRepository(pool, newDealerZone(pool)), ops.unionGateway).WithCurrency(newDealerCurrency(pool))
 
 	// Procurement Planning board: pricing + customers + the catalog seam.
 	procurementSvc := procurement.NewService(procurement.NewRepository(pool)).
@@ -460,7 +466,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// receivables register mounts from here (billing's register handler,
 	// registered under the Finance unit's gates exactly as the pin did).
 	finstmtSvc := finstmt.NewService(finstmt.NewRepository(pool)).WithAudit(auditSvc)
-	finstmtHandler := finstmt.NewHandler(finstmtSvc, log).WithZone(newDealerZone(pool)).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).WithCustomerReach(billing.NewCustomerModuleReach(customerSvc)).WithRegisterTaxLabel(newTaxWords(pool))
+	// The register's late discount approval wall (TM-2): a holder bound to the role gate after
+	// this wiring returns (bindLateDiscountApprovals, the LatePaymentTrail discipline).
+	lateDiscountApprovals := &billing.LateDiscountApprovals{}
+	finstmtHandler := finstmt.NewHandler(finstmtSvc, log).WithZone(newDealerZone(pool)).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).WithCustomerReach(billing.NewCustomerModuleReach(customerSvc)).WithRegisterTaxLabel(newTaxWords(pool)).WithRegisterLateDiscountApprovals(lateDiscountApprovals)
 	if !finstmtHandler.CustomerReachWired() {
 		panic("finstmt: customer reach not wired - the workspace, the statement preview, the payment policy, hold and paylink routes would serve any named account")
 	}
@@ -902,24 +911,25 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	}
 
 	return &topsSpine{
-		portalSvc:     portalSvc,
-		bistrackSvc:   bistrackSvc,
-		billingRepo:   billingRepo,
-		notifier:      notifier,
-		sms:           belt,
-		arSweep:       arSweep,
-		creditSvc:     w3bCreditSvc,
-		statementSvc:  w3bStatementSvc,
-		invoiceWriter: w6cInvoiceWriter,
-		landingSvc:    arLandingSvc,
-		cardRail:      paySvc,
-		cardCharger:   cardCharger,
-		cardRefunder:  cardRefunder,
-		posHandler:    posHandler,
-		posSvc:        posSvc,
-		assistSvc:     assistSvc,
-		taxSvc:        taxSvc,
-		reportingSvc:  reportingSvc,
+		lateDiscountApprovals: lateDiscountApprovals,
+		portalSvc:             portalSvc,
+		bistrackSvc:           bistrackSvc,
+		billingRepo:           billingRepo,
+		notifier:              notifier,
+		sms:                   belt,
+		arSweep:               arSweep,
+		creditSvc:             w3bCreditSvc,
+		statementSvc:          w3bStatementSvc,
+		invoiceWriter:         w6cInvoiceWriter,
+		landingSvc:            arLandingSvc,
+		cardRail:              paySvc,
+		cardCharger:           cardCharger,
+		cardRefunder:          cardRefunder,
+		posHandler:            posHandler,
+		posSvc:                posSvc,
+		assistSvc:             assistSvc,
+		taxSvc:                taxSvc,
+		reportingSvc:          reportingSvc,
 	}
 }
 

@@ -1144,6 +1144,7 @@ function detail(inv) {
       tax_cents: 0,
       total_cents: inv.total_cents,
       applied_cents: inv.total_cents - inv.balance_cents,
+      discount_cents: 0,
       holdback_cents: inv.holdback_cents,
       balance_cents: inv.balance_cents,
       payable_cents: Math.max(inv.balance_cents - inv.holdback_cents, 0),
@@ -1494,6 +1495,10 @@ async function handle(req, res) {
         outcome: take > 0 && after <= 0 ? "CLOSES" : take > 0 ? "PART" : "NONE",
         balance_after_cents: after,
         stays_open_cents: Math.max(after - inv.holdback_cents, 0),
+        // TM-2: the desk's stub invoices carry no discount terms (no stored terms code or discount date), so
+        // the core's discount rule answers zero here; a late_discount_reason on such an invoice asks for a
+        // discount that does not exist and is not refused, as the core's judgeLateDiscount does.
+        discount_cents: 0,
       };
     };
     // The replay judgement runs BEFORE the body validation (FP 186 and 187), and its refusals are

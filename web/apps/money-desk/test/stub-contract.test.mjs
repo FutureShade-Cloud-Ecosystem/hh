@@ -533,6 +533,20 @@ test("apply route: the split subtracts the retained holdback and answers any exc
   assert.equal(spent.json.lines[0].stays_open_cents, 0);
 });
 
+test("apply route: every line carries discount_cents, and a late discount ask on an invoice with no discount terms takes nothing", async () => {
+  await reset();
+  const mine = await graniteInvoices();
+  const body = { customer_id: mine[0].customer_id, method: "CHEQUE", amount_cents: 10000, reference: "d", invoice_ids: [mine[0].id], idempotency_key: "d-1", preview: false, late_discount_reason: "customer phoned" };
+  const posted = await call("POST", APPLY, body);
+  assert.equal(posted.status, 200);
+  holds("BillingApplyPaymentAnswer", posted.json);
+  assert.equal(posted.json.lines[0].discount_cents, 0);
+  assert.equal(posted.json.lines[0].applied_cents, 10000);
+  const again = await call("POST", APPLY, body);
+  assert.equal(again.json.replayed, true);
+  assert.equal(again.json.lines[0].discount_cents, 0);
+});
+
 test("apply route: refusals are the core's words and leave nothing applied", async () => {
   await reset();
   const mine = await graniteInvoices();

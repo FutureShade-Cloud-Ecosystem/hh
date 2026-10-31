@@ -187,6 +187,9 @@ func renderInvoiceHTMLWithTax(d InvoiceDetail, branchName, taxWord string) strin
 	if d.Totals.AppliedCents != 0 {
 		b.WriteString(`<tr><td>Deposit &amp; payments</td><td class="n">−` + money(d.Totals.AppliedCents) + `</td></tr>`)
 	}
+	if d.Totals.DiscountCents != 0 {
+		b.WriteString(`<tr><td>Early payment discount</td><td class="n">−` + money(d.Totals.DiscountCents) + `</td></tr>`)
+	}
 	if d.Totals.HoldbackCents != 0 {
 		b.WriteString(`<tr><td>Holdback retained</td><td class="n">` + money(d.Totals.HoldbackCents) + `</td></tr>`)
 	}

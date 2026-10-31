@@ -164,6 +164,9 @@ type Handler struct {
 	// registerSender is the DIB-510 receivables register's delivery port (dib510_register_mount.go).
 	// Optional and nil by default, see WithRegisterSender for why unbound is the honest shipped state.
 	registerSender RegisterSender
+	// registerLateDiscount is the register's late discount approval wall (TM-2), a holder the
+	// composition root binds to the role gate after this handler is built. Nil refuses every ask.
+	registerLateDiscount *billing.LateDiscountApprovals
 	// paymentTrail says whether a caller holds the payment trail reads (ruling 87); the register's
 	// invoice detail shows the payment entries of its timeline to those callers alone.
 	paymentTrail billing.PaymentTrailReader

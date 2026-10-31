@@ -181,6 +181,9 @@ type ApplyReceivedCommand struct {
 	// the caller's branches otherwise. The seam answers an invoice outside it as not found.
 	BranchIDs  []string
 	ReceivedBy string
+	// DiscountApproval is the late discount ask, stamped by the route from the caller's own facts
+	// (who, the words, and whether the caller passed the approval wall). Nil asks nothing.
+	DiscountApproval *payments.DiscountApproval
 }
 
 // ReceiptWrite is the register's request to the money seam.
@@ -398,6 +401,16 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 	if err != nil {
 		return InvoiceDetail{}, err
 	}
+	// The early payment discount (TM-2) is read beside the applied figure when the store can say
+	// it (the repository does); a store that cannot leaves it zero.
+	var discount int64
+	if dr, ok := s.store.(interface {
+		DiscountCents(ctx context.Context, invoiceID string) (int64, error)
+	}); ok {
+		if discount, err = dr.DiscountCents(ctx, invoiceID); err != nil {
+			return InvoiceDetail{}, err
+		}
+	}
 	// Re-application writes no allocation, so the payments module's own read adds the slices of a reversed payment's
 	// held money applied to this invoice: the Applied figure and the timeline both carry them (SF-2r).
 	var slices []ReappliedSlice
@@ -493,7 +506,7 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 	}
 	d.Totals = Totals{
 		SubtotalCents: h.SubtotalCents, TaxCents: h.TaxCents, TotalCents: h.TotalCents,
-		AppliedCents: applied, HoldbackCents: h.HoldbackCents, BalanceCents: h.BalanceCents,
+		AppliedCents: applied, DiscountCents: discount, HoldbackCents: h.HoldbackCents, BalanceCents: h.BalanceCents,
 		PayableCents: payable,
 	}
 
@@ -580,15 +593,16 @@ func (s *RegisterService) ApplyReceivedPayment(ctx context.Context, in ApplyPaym
 	// would tell the desk the payment was not recorded.
 	caller, _ := s.callerFrom(ctx)
 	res, err := s.money.ApplyReceived(ctx, ApplyReceivedCommand{
-		CustomerID:     in.CustomerID,
-		Method:         strings.ToUpper(strings.TrimSpace(in.Method)),
-		Reference:      in.Reference,
-		IdempotencyKey: in.IdempotencyKey,
-		InvoiceIDs:     in.InvoiceIDs,
-		AmountCents:    in.AmountCents,
-		Preview:        in.Preview,
-		BranchIDs:      s.reach(ctx).IDs,
-		ReceivedBy:     caller.UserID,
+		CustomerID:       in.CustomerID,
+		Method:           strings.ToUpper(strings.TrimSpace(in.Method)),
+		Reference:        in.Reference,
+		IdempotencyKey:   in.IdempotencyKey,
+		InvoiceIDs:       in.InvoiceIDs,
+		AmountCents:      in.AmountCents,
+		Preview:          in.Preview,
+		BranchIDs:        s.reach(ctx).IDs,
+		ReceivedBy:       caller.UserID,
+		DiscountApproval: in.DiscountApproval,
 	})
 	if err != nil {
 		return payments.ApplyAnswer{}, err

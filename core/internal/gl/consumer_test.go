@@ -287,6 +287,7 @@ func healthyRules() []RuleRef {
 	set := map[string][]string{
 		"invoice.finalized":             {"ar", "revenue", "tax"},
 		"payment.received":              {"cash", "ar", "card_clearing"},
+		"payment.discount.taken":        {"discount_allowed", "ar"},
 		"tax.relief.assessed":           {"hst_full", "fn_relief"},
 		"payment.bounced":               {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
 		"payment.reversed":              {"ar", "refund_payable"},

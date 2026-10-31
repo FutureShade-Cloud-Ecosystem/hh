@@ -58,6 +58,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildInvoiceFinalized(ctx, e.Payload)
 	case "payment.received":
 		draft, post, err = s.buildPaymentReceived(ctx, e.Payload)
+	case "payment.discount.taken":
+		draft, post, err = s.buildPaymentDiscountTaken(ctx, e.Payload)
 	case "tax.relief.assessed":
 		draft, post, err = s.buildTaxRelief(ctx, e.Payload)
 	case "payment.bounced":
@@ -312,6 +314,69 @@ func (s *Service) buildPaymentReceived(ctx context.Context, payload []byte) (jou
 	}, true, nil
 }
 
+// paymentDiscountTakenPayload is what payments/discount.go emits beside a discounted application,
+// in the application's own transaction: which payment, which invoice, the branch the journals ride
+// and the discount's cents. The amount rides the payload because the invoice's balance has already
+// moved by the money and the discount together when the consumer runs.
+type paymentDiscountTakenPayload struct {
+	PaymentID     string    `json:"payment_id"`
+	CustomerID    string    `json:"customer_id"`
+	InvoiceID     string    `json:"invoice_id"`
+	BranchID      string    `json:"branch_id"`
+	DiscountCents int64     `json:"discount_cents"`
+	OccurredAt    time.Time `json:"occurred_at"`
+}
+
+// buildPaymentDiscountTaken posts the early payment discount one application took (TM-2): DR the
+// discounts allowed account the rule names / CR 1100, balanced at the discount's cents, dated by
+// the receipt's own instant (FW1-01b), idempotent per payment AND invoice so one cheque discounted
+// across several invoices posts one journal each and a redelivered outbox row posts nothing.
+func (s *Service) buildPaymentDiscountTaken(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p paymentDiscountTakenPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.discount.taken payload: %w", err)
+	}
+	if p.PaymentID == "" || p.InvoiceID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.discount.taken missing payment_id or invoice_id")
+	}
+	if p.DiscountCents <= 0 {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.discount.taken has no amount")
+	}
+	branchID := p.BranchID
+	if branchID == "" && s.payments != nil {
+		if f, err := s.payments.PaymentForGL(ctx, p.PaymentID); err == nil {
+			branchID = f.BranchID
+		}
+	}
+	et := "payment.discount.taken"
+	rules, err := s.store.PostingAccounts(ctx, et, branchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	discountCode, err := pick(rules, et, "discount_allowed")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	arCode, err := pick(rules, et, "ar")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourcePayment,
+		SourceRefID:    p.PaymentID,
+		IdempotencyKey: "payment.discount.taken:" + p.PaymentID + ":" + p.InvoiceID,
+		Memo:           "Early payment discount",
+		BranchID:       branchID,
+		// FW1-01b: the receipt's own instant, the moment the discount was taken, never the day
+		// the consumer ran.
+		OccurredAt: p.OccurredAt,
+		Lines: []draftLine{
+			dr(discountCode, p.DiscountCents, "discounts allowed"),
+			cr(arCode, p.DiscountCents, "AR settled by the discount"),
+		},
+	}, true, nil
+}
+
 type taxReliefPayload struct {
 	OrderID  string `json:"order_id"`
 	BranchID string `json:"branch_id"`
@@ -410,6 +475,9 @@ type paymentBouncedPayload struct {
 	FeeCents    int64  `json:"fee_cents"`
 	FeeTaxable  bool   `json:"fee_taxable"` // true = the gross NSF fee splits into 4200 income + 2200 HST
 	Cleared     bool   `json:"cleared"`     // true = had settled to bank 1000; false = still undeposited/clearing
+	// DiscountCents is the early payment discount the bounced receipt's applications took (TM-2),
+	// given back with the money: DR AR / CR discounts allowed beside the cash reversal.
+	DiscountCents int64 `json:"discount_cents"`
 	// OccurredAt is the bounce's own instant (the NSF record's created_at), carried by
 	// the till that recorded the bounce (FW1-01b). Zero means the emitter carried none,
 	// and the journal falls back to the clock.
@@ -432,6 +500,33 @@ func (s *Service) nsfBackoutRateBps(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("gl: the dealer's standard rate for the NSF fee backout: %w", err)
 	}
 	return int64(bps), nil
+}
+
+// discountGiveBackLines is the one spelling of an undone application's discount in the ledger
+// (TM-2): DR AR / CR discounts allowed for the cents, on the discount's own routing, the mirror
+// image of buildPaymentDiscountTaken. The reversal, the void and the NSF bounce all call it, so a
+// door cannot give the money back and keep the discount. Zero cents adds no lines.
+func (s *Service) discountGiveBackLines(ctx context.Context, branch string, cents int64, word string) ([]draftLine, error) {
+	if cents <= 0 {
+		return nil, nil
+	}
+	const et = "payment.discount.taken"
+	rules, err := s.store.PostingAccounts(ctx, et, branch)
+	if err != nil {
+		return nil, err
+	}
+	discountCode, err := pick(rules, et, "discount_allowed")
+	if err != nil {
+		return nil, err
+	}
+	arCode, err := pick(rules, et, "ar")
+	if err != nil {
+		return nil, err
+	}
+	return []draftLine{
+		dr(arCode, cents, "AR reinstated ("+word+")"),
+		cr(discountCode, cents, "discounts allowed, reversed ("+word+")"),
+	}, nil
 }
 
 func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (journalDraft, bool, error) {
@@ -524,6 +619,11 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 			lines = append(lines, cr(feeCode, p.FeeCents, "NSF fee income"))
 		}
 	}
+	discountLines, err := s.discountGiveBackLines(ctx, branch, p.DiscountCents, "early payment discount reversed (NSF)")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	lines = append(lines, discountLines...)
 	return journalDraft{
 		Source:         SourceAdjustment,
 		SourceRefID:    p.PaymentID,
@@ -545,6 +645,10 @@ type paymentReversedPayload struct {
 	AmountCents       int64  `json:"amount_cents"`
 	Method            string `json:"method"`
 	BranchID          string `json:"branch_id"`
+	// DiscountCents is the early payment discount the reversal gives back with the money (TM-2):
+	// the reversing journal adds DR AR / CR discounts allowed for it, the discount's own posting
+	// in mirror image, so both accounts stand where they stood before the receipt.
+	DiscountCents int64 `json:"discount_cents"`
 	// OccurredAt is the reversal's own instant, carried by the payments module that
 	// wrote the reversing row (FW1-01b). Zero means the emitter carried none, and the
 	// journal falls back to the clock.
@@ -606,6 +710,18 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 	if err != nil {
 		return journalDraft{}, false, err
 	}
+	lines := []draftLine{
+		dr(arCode, amount, "AR reinstated (payment reversed)"),
+		cr(refundCode, amount, "held for the customer (payment reversed)"),
+	}
+	// The discount the receipt's applications took comes back to AR and out of the discount
+	// account, on the receipt's own discount routing (TM-2): the invoice's balance rose by the
+	// money and the discount together, and this journal moves 1100 by both.
+	discountLines, err := s.discountGiveBackLines(ctx, branch, p.DiscountCents, "early payment discount reversed")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	lines = append(lines, discountLines...)
 	return journalDraft{
 		Source:         SourcePayment,
 		SourceRefID:    p.PaymentID,
@@ -614,10 +730,7 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 		BranchID:       branch,
 		// FW1-01b: the reversal's own instant, not the processing day.
 		OccurredAt: p.OccurredAt,
-		Lines: []draftLine{
-			dr(arCode, amount, "AR reinstated (payment reversed)"),
-			cr(refundCode, amount, "held for the customer (payment reversed)"),
-		},
+		Lines:      lines,
 	}, true, nil
 }
 
@@ -625,10 +738,11 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 // receipt's id and the facts read under its row lock, so the journal's branch, method and amount
 // are the receipt's own and never a re-read of the now VOID row.
 type paymentVoidedPayload struct {
-	PaymentID   string `json:"payment_id"`
-	AmountCents int64  `json:"amount_cents"`
-	Method      string `json:"method"`
-	BranchID    string `json:"branch_id"`
+	PaymentID     string `json:"payment_id"`
+	AmountCents   int64  `json:"amount_cents"`
+	Method        string `json:"method"`
+	BranchID      string `json:"branch_id"`
+	DiscountCents int64  `json:"discount_cents"` // the early payment discount the void gives back (TM-2)
 }
 
 // buildPaymentVoided books the undo of a mis-keyed desk receipt (FW1-06b): Dr AR / Cr the account
@@ -682,6 +796,18 @@ func (s *Service) buildPaymentVoided(ctx context.Context, payload []byte) (journ
 	if err != nil {
 		return journalDraft{}, false, err
 	}
+	lines := []draftLine{
+		dr(arCode, amount, "AR reinstated (receipt voided)"),
+		cr(creditCode, amount, "receipt voided (mis-keyed)"),
+	}
+	// The discount the receipt's applications took is undone with them (TM-2): the void says the
+	// receipt never happened, and the discount journal it produced is reversed on the receipt's
+	// own discount routing, exactly as the receipt's legs are reversed on the receipt's own.
+	discountLines, err := s.discountGiveBackLines(ctx, branch, p.DiscountCents, "early payment discount voided")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	lines = append(lines, discountLines...)
 	return journalDraft{
 		Source:         SourcePayment,
 		SourceRefID:    p.PaymentID,
@@ -689,10 +815,7 @@ func (s *Service) buildPaymentVoided(ctx context.Context, payload []byte) (journ
 		Memo:           "Receipt voided " + method,
 		BranchID:       branch,
 		OccurredAt:     s.clock(),
-		Lines: []draftLine{
-			dr(arCode, amount, "AR reinstated (receipt voided)"),
-			cr(creditCode, amount, "receipt voided (mis-keyed)"),
-		},
+		Lines:          lines,
 	}, true, nil
 }
 
@@ -1705,6 +1828,7 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 	required := map[string][]string{
 		"invoice.finalized":             {"ar", "revenue", "tax"},
 		"payment.received":              {"cash", "ar", "card_clearing"},
+		"payment.discount.taken":        {"discount_allowed", "ar"},
 		"tax.relief.assessed":           {"hst_full", "fn_relief"},
 		"payment.bounced":               {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
 		"payment.reversed":              {"ar", "refund_payable"},

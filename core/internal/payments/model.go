@@ -85,4 +85,8 @@ type Allocation struct {
 	CreatedAt       time.Time `json:"created_at"`
 	Status          string    `json:"-"`
 	IsNSFFee        bool      `json:"-"`
+	// DiscountCents is the early payment discount this application took beside the money (TM-2):
+	// zero on every allocation an unbound repository settles, the invoice's own terms percent
+	// otherwise. The balance move is the money and the discount together.
+	DiscountCents int64 `json:"discount_cents,omitempty"`
 }
