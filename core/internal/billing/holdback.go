@@ -42,6 +42,7 @@ type Withholder interface {
 	HoldbackRuleForJob(ctx context.Context, customerJobID string) (lien.HoldbackRule, error)
 	BookRetention(ctx context.Context, b lien.RetentionBooking) (bool, error)
 	BookCreditReversal(ctx context.Context, r lien.CreditReversal) (bool, error)
+	BookHoldbackMove(ctx context.Context, m lien.HoldbackMove) (bool, error)
 }
 
 // WithHoldback binds the holdback seam. Unbound, no invoice withholds (the writer as it was before RT-2).

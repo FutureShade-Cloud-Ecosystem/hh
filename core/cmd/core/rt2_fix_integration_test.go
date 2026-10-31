@@ -177,3 +177,42 @@ func TestRT2Fix_ADatedAgingReadsTheHoldbackAsItStoodThatDay(t *testing.T) {
 	}
 	eq(t, "AR at last month's end: the invoice's net, before the credit", after-before, int64(90_000))
 }
+
+// writeOffRepo is the billing repository as cmd/core wires it for the write off door.
+func (l *rt2Leg) writeOffRepo() *billing.Repository { return holdBillingRepo(l.pool) }
+
+// P1-2: a write off of an invoice with holdback credits 1150 for the holdback part and 1100 for the rest,
+// takes the ledger's retention out, and the reversal puts every cent back.
+func TestRT2Fix_AWriteOffSplitsTheHoldbackAndItsReversalRestoresIt(t *testing.T) {
+	l := rt2Setup(t, "wo")
+	l.newJob(true)
+	doc := l.invoice(100_000, 13_000) // 113,000 with 10,000 held
+	ctx := context.Background()
+	res, err := l.writeOffRepo().WriteOffInvoice(ctx, billing.WriteOffInput{
+		InvoiceID: doc.InvoiceID, Reason: "rt2 fix", IdempotencyKey: "rt2fix-wo", OrgID: rt2FixOrg, IsController: true,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("write off: %v", err)
+	}
+	l.drain()
+	j := l.legs(doc.InvoiceID)
+	// The invoice's own journal debited 1100 103,000 and 1150 10,000; the write off credits the same.
+	eq(t, "1100 credit (the net, written off)", j["1100"][1], int64(103_000))
+	eq(t, "1150 credit (the holdback part, written off)", j["1150"][1], int64(10_000))
+	eq(t, "the expense debit", j["5400"][0], int64(113_000))
+	eq(t, "the ledger after the write off", l.ledgerNet(), int64(0))
+	eq(t, "the invoice's holdback after the write off", l.holdbackOf(doc.InvoiceID), int64(0))
+	eq(t, "the aging after the write off", l.agingTotal()-l.agingBase, int64(0))
+	l.ties("after the write off")
+
+	if _, err := l.writeOffRepo().ReverseWriteOff(ctx, billing.ReverseWriteOffInput{
+		InvoiceID: doc.InvoiceID, WriteOffID: res.WriteOffID, Reason: "rt2 fix undo", OrgID: rt2FixOrg,
+	}, time.Now()); err != nil {
+		t.Fatalf("reverse the write off: %v", err)
+	}
+	l.drain()
+	eq(t, "the ledger after the reversal", l.ledgerNet(), int64(10_000))
+	eq(t, "the invoice's holdback after the reversal", l.holdbackOf(doc.InvoiceID), int64(10_000))
+	eq(t, "the aging after the reversal", l.agingTotal()-l.agingBase, int64(103_000))
+	l.ties("after the write off is reversed")
+}

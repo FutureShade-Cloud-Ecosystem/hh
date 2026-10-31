@@ -69,6 +69,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/lien"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
@@ -162,6 +164,9 @@ type writeOffRecord struct {
 	Reason       string `json:"reason"`
 	WrittenOffBy string `json:"written_off_by,omitempty"`
 	WrittenOffAt string `json:"written_off_at"`
+	// HoldbackCents is the part of the written off balance that was the invoice's holdback (1150, not
+	// 1100); the reversal puts it back. Zero for an invoice that withheld nothing.
+	HoldbackCents int64 `json:"holdback_cents,omitempty"`
 	// RequestHash is the request's own hash (writeOffKeyHash): a retry under the same key is
 	// answered from the record when the hash matches and refused when it does not.
 	RequestHash string `json:"request_hash"`
@@ -457,12 +462,16 @@ SELECT write_off_limit_cents
 		return WriteOffResult{}, &WriteOffOverLimitError{LimitCents: limit}
 	}
 
-	// The balance leaves: the invoice settles at zero, the settle's own status flip.
+	// The balance leaves: the invoice settles at zero, the settle's own status flip. The holdback part of
+	// it (the invoice debited 1150 for that part, 1100 for the rest) leaves the invoice's holdback too, so
+	// nothing withheld is left behind on a settled invoice (RT-2).
 	writeOffID := uuid.NewString()
+	holdbackPart := min(max(invHoldback, 0), invBalance)
 	if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
 UPDATE invoices
-   SET balance_cents = 0, status = 'PAID', updated_at = now(), seq = (SELECT next_value FROM iseq)
- WHERE id = $1::uuid`, in.InvoiceID); err != nil {
+   SET balance_cents = 0, status = 'PAID', holdback_cents = holdback_cents - $2::bigint,
+       updated_at = now(), seq = (SELECT next_value FROM iseq)
+ WHERE id = $1::uuid`, in.InvoiceID, holdbackPart); err != nil {
 		return WriteOffResult{}, fmt.Errorf("write off: settle the invoice: %w", err)
 	}
 
@@ -486,7 +495,7 @@ VALUES ($1::uuid, 'WRITE_OFF', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
 	records[in.IdempotencyKey] = writeOffRecord{
 		WriteOffID: writeOffID, AmountCents: invBalance, Reason: in.Reason,
 		WrittenOffBy: in.ActorID, WrittenOffAt: now.UTC().Format(time.RFC3339),
-		RequestHash: requestHash, PriorStatus: invStatus,
+		RequestHash: requestHash, PriorStatus: invStatus, HoldbackCents: holdbackPart,
 	}
 	if err := stampWriteOffs(ctx, tx, in.InvoiceID, records); err != nil {
 		return WriteOffResult{}, err
@@ -496,8 +505,12 @@ VALUES ($1::uuid, 'WRITE_OFF', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
 	// CR 1100, posted by the consumer on the act's own key and the act's own instant.
 	if err := emitOutbox(ctx, tx, InvoiceWrittenOffTopic, map[string]any{
 		"invoice_id": in.InvoiceID, "write_off_id": writeOffID,
-		"amount_cents": invBalance, "reason": in.Reason, "occurred_at": now,
+		"amount_cents": invBalance, "holdback_cents": holdbackPart, "reason": in.Reason, "occurred_at": now,
 	}); err != nil {
+		return WriteOffResult{}, err
+	}
+	// The holdback part leaves the retention ledger on this same transaction, as a credit memo's does.
+	if err := r.moveHoldback(ctx, tx, in.InvoiceID, invBranch, "write off "+writeOffID, -holdbackPart); err != nil {
 		return WriteOffResult{}, err
 	}
 
@@ -584,8 +597,9 @@ SELECT invoice_no::text, balance_cents, branch_id::text, status, COALESCE(org_id
 	}
 	if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
 UPDATE invoices
-   SET balance_cents = $2::bigint, status = $3::text, updated_at = now(), seq = (SELECT next_value FROM iseq)
- WHERE id = $1::uuid`, in.InvoiceID, record.AmountCents, priorStatus); err != nil {
+   SET balance_cents = $2::bigint, status = $3::text, holdback_cents = holdback_cents + $4::bigint,
+       updated_at = now(), seq = (SELECT next_value FROM iseq)
+ WHERE id = $1::uuid`, in.InvoiceID, record.AmountCents, priorStatus, record.HoldbackCents); err != nil {
 		return WriteOffReversal{}, fmt.Errorf("write off reverse: restore the invoice: %w", err)
 	}
 
@@ -615,8 +629,11 @@ VALUES ($1::uuid, 'WRITE_OFF', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, $7)`,
 	// The reversing journal, on the same transaction: DR 1100 / CR the expense, on the act's key.
 	if err := emitOutbox(ctx, tx, InvoiceWriteOffReversedTopic, map[string]any{
 		"invoice_id": in.InvoiceID, "write_off_id": in.WriteOffID,
-		"amount_cents": record.AmountCents, "reason": in.Reason, "occurred_at": now,
+		"amount_cents": record.AmountCents, "holdback_cents": record.HoldbackCents, "reason": in.Reason, "occurred_at": now,
 	}); err != nil {
+		return WriteOffReversal{}, err
+	}
+	if err := r.moveHoldback(ctx, tx, in.InvoiceID, invBranch, "write off reversed "+record.WriteOffID, record.HoldbackCents); err != nil {
 		return WriteOffReversal{}, err
 	}
 
@@ -683,4 +700,18 @@ type WriteOffView struct {
 	ReversalReason string `json:"reversal_reason,omitempty"`
 	ReversedBy     string `json:"reversed_by,omitempty"`
 	ReversedAt     string `json:"reversed_at,omitempty"`
+}
+
+// moveHoldback books a write off's (or its reversal's) holdback part on the retention ledger, on the
+// act's own transaction. Zero, or no seam bound, moves nothing.
+func (r *Repository) moveHoldback(ctx context.Context, tx pgx.Tx, invoiceID, branchID, reason string, cents int64) error {
+	if cents == 0 || r.holdback == nil {
+		return nil
+	}
+	if _, err := r.holdback.BookHoldbackMove(customer.WithCallerTx(ctx, tx), lien.HoldbackMove{
+		InvoiceID: invoiceID, BranchID: branchID, Reason: reason, AmountCents: cents,
+	}); err != nil {
+		return fmt.Errorf("write off: move the holdback ledger: %w", err)
+	}
+	return nil
 }

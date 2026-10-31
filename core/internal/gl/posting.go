@@ -1863,11 +1863,36 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 // settlement: which invoice, which act, how much, and the act's own instant
 // (FW1-01b: the journal dates by the act, never by the consume).
 type arInvoiceWriteOffPayload struct {
-	InvoiceID   string    `json:"invoice_id"`
-	WriteOffID  string    `json:"write_off_id"`
-	AmountCents int64     `json:"amount_cents"`
-	Reason      string    `json:"reason"`
-	OccurredAt  time.Time `json:"occurred_at"`
+	InvoiceID   string `json:"invoice_id"`
+	WriteOffID  string `json:"write_off_id"`
+	AmountCents int64  `json:"amount_cents"`
+	// HoldbackCents is the part of AmountCents that was the invoice's holdback (RT-2): it leaves 1150,
+	// the rest leaves 1100. Zero for an invoice that withheld nothing.
+	HoldbackCents int64     `json:"holdback_cents"`
+	Reason        string    `json:"reason"`
+	OccurredAt    time.Time `json:"occurred_at"`
+}
+
+// writeOffArLegs are the receivable legs of a write off: 1100 for the net the customer owed and 1150 for
+// the holdback part, the two accounts the invoice debited. The holdback account is the invoice's own
+// rule (invoice.finalized/holdback), so a write off needs no rule of its own.
+func (s *Service) writeOffArLegs(ctx context.Context, p arInvoiceWriteOffPayload, branchID, arCode string) (net int64, hbCode string, err error) {
+	if p.HoldbackCents < 0 || p.HoldbackCents > p.AmountCents {
+		return 0, "", fmt.Errorf("gl: the write off of %s names a holdback part of %d outside its %d cents", p.InvoiceID, p.HoldbackCents, p.AmountCents)
+	}
+	if p.HoldbackCents == 0 {
+		return p.AmountCents, "", nil
+	}
+	rules, err := s.store.PostingAccounts(ctx, "invoice.finalized", branchID)
+	if err != nil {
+		return 0, "", err
+	}
+	hbCode, err = pick(rules, "invoice.finalized", "holdback")
+	if err != nil {
+		return 0, "", err
+	}
+	_ = arCode
+	return p.AmountCents - p.HoldbackCents, hbCode, nil
 }
 
 // buildArInvoiceWriteOff posts the write off of an invoice's remaining
@@ -1913,6 +1938,17 @@ func (s *Service) buildArInvoiceWriteOff(ctx context.Context, payload []byte) (j
 	if err != nil {
 		return journalDraft{}, false, err
 	}
+	net, hbCode, err := s.writeOffArLegs(ctx, p, a.BranchID, arCode)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	lines := []draftLine{dr(expenseCode, p.AmountCents, "bad debt written off")}
+	if net > 0 {
+		lines = append(lines, cr(arCode, net, "AR written off"))
+	}
+	if p.HoldbackCents > 0 {
+		lines = append(lines, cr(hbCode, p.HoldbackCents, "holdback written off"))
+	}
 	return journalDraft{
 		Source:         SourceInvoice,
 		SourceRefID:    p.InvoiceID,
@@ -1920,10 +1956,7 @@ func (s *Service) buildArInvoiceWriteOff(ctx context.Context, payload []byte) (j
 		Memo:           "Write off " + a.InvoiceNo + ": " + p.Reason,
 		BranchID:       a.BranchID,
 		OccurredAt:     p.OccurredAt,
-		Lines: []draftLine{
-			dr(expenseCode, p.AmountCents, "bad debt written off"),
-			cr(arCode, p.AmountCents, "AR written off"),
-		},
+		Lines:          lines,
 	}, true, nil
 }
 
@@ -1962,6 +1995,18 @@ func (s *Service) buildArInvoiceWriteOffReversed(ctx context.Context, payload []
 	if err != nil {
 		return journalDraft{}, false, err
 	}
+	net, hbCode, err := s.writeOffArLegs(ctx, p, a.BranchID, arCode)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	var lines []draftLine
+	if net > 0 {
+		lines = append(lines, dr(arCode, net, "AR restored (write off reversed)"))
+	}
+	if p.HoldbackCents > 0 {
+		lines = append(lines, dr(hbCode, p.HoldbackCents, "holdback restored (write off reversed)"))
+	}
+	lines = append(lines, cr(expenseCode, p.AmountCents, "bad debt written off, undone"))
 	return journalDraft{
 		Source:         SourceInvoice,
 		SourceRefID:    p.InvoiceID,
@@ -1969,9 +2014,6 @@ func (s *Service) buildArInvoiceWriteOffReversed(ctx context.Context, payload []
 		Memo:           "Write off reversed " + a.InvoiceNo + ": " + p.Reason,
 		BranchID:       a.BranchID,
 		OccurredAt:     p.OccurredAt,
-		Lines: []draftLine{
-			dr(arCode, p.AmountCents, "AR restored (write off reversed)"),
-			cr(expenseCode, p.AmountCents, "bad debt written off, undone"),
-		},
+		Lines:          lines,
 	}, true, nil
 }

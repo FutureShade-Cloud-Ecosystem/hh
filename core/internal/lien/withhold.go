@@ -67,6 +67,39 @@ type CreditReversal struct {
 	AmountCents int64 // positive: what comes off the retention
 }
 
+// HoldbackMove is a signed change to an invoice's retention that is not a credit memo: a write off
+// takes the holdback part out (negative) and its reversal puts it back (positive).
+type HoldbackMove struct {
+	InvoiceID   string
+	BranchID    string
+	Reason      string // the move's own key: one row per reason
+	AmountCents int64  // signed, never zero
+}
+
+// BookHoldbackMove books one signed RETENTION row on the lien job whose ledger holds the invoice's
+// retention, once per reason. It answers false when the invoice was never ledgered or the move was
+// already booked.
+func (s *Service) BookHoldbackMove(ctx context.Context, m HoldbackMove) (bool, error) {
+	if m.AmountCents == 0 {
+		return false, nil
+	}
+	if strings.TrimSpace(m.Reason) == "" {
+		return false, fmt.Errorf("lien: a holdback move names its reason")
+	}
+	jobID, ok, err := s.repo.JobHoldingInvoice(ctx, m.InvoiceID)
+	if err != nil || !ok {
+		return false, err
+	}
+	n, err := s.repo.InsertReversalOnce(ctx, HoldbackEntry{
+		JobID: jobID, InvoiceID: m.InvoiceID, BranchID: m.BranchID, EntryType: "RETENTION",
+		AmountCents: m.AmountCents, Reason: m.Reason,
+	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // BookCreditReversal takes a credit memo's holdback part off the retention of the invoice it
 // reverses: a negative RETENTION row on the same lien job. The billing writer calls it on the memo's own
 // transaction, so the memo, its holdback part and this row commit together. It answers false when the

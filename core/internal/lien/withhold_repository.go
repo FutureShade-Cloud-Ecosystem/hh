@@ -71,8 +71,8 @@ func (r *Repository) InsertRetentionOnce(ctx context.Context, e HoldbackEntry) (
 	return tag.RowsAffected(), nil
 }
 
-// InsertReversalOnce books one credit memo's negative RETENTION unless that memo already has its row
-// (the memo's number is in the reason, one memo per number).
+// InsertReversalOnce books one signed RETENTION move unless the invoice already has a move with that
+// reason (a credit memo's number or a write off's id is in the reason, one move per reason).
 func (r *Repository) InsertReversalOnce(ctx context.Context, e HoldbackEntry) (int64, error) {
 	q, err := r.q(ctx)
 	if err != nil {
@@ -83,7 +83,7 @@ func (r *Repository) InsertReversalOnce(ctx context.Context, e HoldbackEntry) (i
 		SELECT $1::uuid, $2::uuid, $3::uuid, 'RETENTION', $4, $5
 		 WHERE NOT EXISTS (SELECT 1 FROM holdback_ledger
 		                    WHERE invoice_id = $2::uuid AND entry_type = 'RETENTION'
-		                      AND amount_cents < 0 AND reason = $5)`,
+		                      AND reason = $5)`,
 		e.JobID, e.InvoiceID, e.BranchID, e.AmountCents, e.Reason)
 	if err != nil {
 		return 0, fmt.Errorf("lien: book the credit reversal on invoice %s: %w", e.InvoiceID, err)

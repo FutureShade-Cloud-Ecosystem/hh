@@ -23,7 +23,17 @@ func (r *Repository) InvoiceForGL(ctx context.Context, invoiceID string) (gl.Inv
 	}
 	var a gl.InvoiceAmounts
 	err := r.pool.QueryRow(ctx,
-		`SELECT subtotal_cents, tax_cents, total_cents, holdback_cents,
+		// holdback_cents is what the invoice STILL withholds: a credit memo and a write off lower it. The
+		// invoice's journal is the invoice as it was written, so the parts they took are added back (a
+		// journal consumed after a credit would otherwise debit 1150 too little).
+		`SELECT subtotal_cents, tax_cents, total_cents,
+		        holdback_cents
+		        + COALESCE((SELECT -SUM(m.holdback_cents) FROM invoices m
+		                     WHERE m.reverses_invoice_id = invoices.id AND m.doc_type = 'CREDIT_MEMO'
+		                       AND m.status NOT IN ('DRAFT','VOID')), 0)
+		        + COALESCE((SELECT SUM(COALESCE((w.value->>'holdback_cents')::bigint, 0))
+		                      FROM jsonb_each(COALESCE(invoices.metadata->'write_offs', '{}'::jsonb)) w
+		                     WHERE w.value->'reversal' IS NULL), 0),
 		        branch_id::text, customer_id::text, invoice_no::text,
 		        COALESCE(finalized_at, created_at), source_kind
 		 FROM invoices WHERE id = $1`, invoiceID,
