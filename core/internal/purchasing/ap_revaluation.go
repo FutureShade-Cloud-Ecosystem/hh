@@ -662,3 +662,23 @@ func (s *Service) ReverseAPRevaluation(ctx context.Context, branchID, month stri
 		ReversalJournalID: reversalID,
 	}, nil
 }
+
+// ListAPRevaluations reads one branch's revaluation runs, newest month first. The branch fence
+// runs first, so a branch outside the caller's reach is refused.
+func (s *Service) ListAPRevaluations(ctx context.Context, branchID string) ([]APRevaluationRunRecord, error) {
+	_, branch, err := s.branchFence(ctx, branchID)
+	if err != nil {
+		return nil, err
+	}
+	if branch == "" {
+		return nil, badReq("purchasing: branch_id is required, revaluation runs are one branch's books")
+	}
+	runs, err := s.repo.ListRevaluationRuns(ctx, branch)
+	if err != nil {
+		return nil, err
+	}
+	if runs == nil {
+		runs = []APRevaluationRunRecord{}
+	}
+	return runs, nil
+}

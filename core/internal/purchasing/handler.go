@@ -9,7 +9,9 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"net/http"
 	"strconv"
+	"strings"
 
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -381,6 +383,81 @@ func (h *Handler) apAging(w http.ResponseWriter, r *http.Request, caller guards.
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, page)
+}
+
+// - AP revaluation (wave 3 FX-2b) -
+
+// controllerRoles are the roles that enter a month end rate: the General Manager, the Financial
+// Controller and the platform admin. The route gate is the leadership tier (requireAdmin); HR sits
+// in that tier too but is not a Controller, so the handler narrows it.
+var controllerRoles = []string{"GENERAL_MANAGER", "FINANCIAL_CONTROLLER", identity.RoleSuperAdmin}
+
+func holdsControllerRole(caller guards.StaffCaller) bool {
+	for _, role := range controllerRoles {
+		if strings.EqualFold(caller.RoleID, role) {
+			return true
+		}
+	}
+	return false
+}
+
+// requireController is the Controller narrowing of the leadership tier gate.
+func (h *Handler) requireController(w http.ResponseWriter, caller guards.StaffCaller) bool {
+	if holdsControllerRole(caller) {
+		return true
+	}
+	httpx.Error(w, http.StatusForbidden, "purchasing: the month end revaluation is the Controller's; this role may not press or read it")
+	return false
+}
+
+// runAPRevaluation is POST /api/v1/purchasing/ap-revaluations: the Controller presses a house
+// month's run with its rate.
+func (h *Handler) runAPRevaluation(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !h.requireController(w, caller) {
+		return
+	}
+	var in RevalueAPRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	run, err := h.svc.RevalueAP(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, run)
+}
+
+// reverseAPRevaluation is POST /api/v1/purchasing/ap-revaluations/{month}/reversal.
+func (h *Handler) reverseAPRevaluation(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !h.requireController(w, caller) {
+		return
+	}
+	var in struct {
+		BranchID string `json:"branch_id"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	rev, err := h.svc.ReverseAPRevaluation(r.Context(), in.BranchID, r.PathValue("month"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, rev)
+}
+
+// listAPRevaluations is GET /api/v1/purchasing/ap-revaluations?branch_id=.
+func (h *Handler) listAPRevaluations(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if !h.requireController(w, caller) {
+		return
+	}
+	items, err := h.svc.ListAPRevaluations(r.Context(), r.URL.Query().Get("branch_id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil})
 }
 
 // - vendor credits (wave 3 item 0.8) -

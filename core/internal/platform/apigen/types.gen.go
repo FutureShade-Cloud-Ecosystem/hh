@@ -8394,6 +8394,61 @@ type PurchasingAPAgingPage struct {
 	NextCursor      *string                `json:"next_cursor"`
 }
 
+type PurchasingRunAPRevaluationRequest struct {
+	BranchId string  `json:"branch_id"`
+	Month    string  `json:"month"`
+	FxRate   float64 `json:"fx_rate"`
+}
+
+type PurchasingReverseAPRevaluationRequest struct {
+	BranchId string `json:"branch_id"`
+}
+
+type PurchasingAPRevaluationRun struct {
+	BranchId         string  `json:"branch_id"`
+	Month            string  `json:"month"`
+	MonthEnd         string  `json:"month_end"`
+	FxRate           float64 `json:"fx_rate"`
+	Bills            int32   `json:"bills"`
+	DocOpenCents     int64   `json:"doc_open_cents"`
+	CarriedCadCents  int64   `json:"carried_cad_cents"`
+	RevaluedCadCents int64   `json:"revalued_cad_cents"`
+	DifferenceCents  int64   `json:"difference_cents"`
+	Posted           bool    `json:"posted"`
+	JournalId        *string `json:"journal_id,omitempty"`
+}
+
+type PurchasingAPRevaluationReversal struct {
+	BranchId          string `json:"branch_id"`
+	Month             string `json:"month"`
+	NextHouseDay      string `json:"next_house_day"`
+	DifferenceCents   int64  `json:"difference_cents"`
+	JournalId         string `json:"journal_id"`
+	ReversalJournalId string `json:"reversal_journal_id"`
+}
+
+type PurchasingAPRevaluationRunRecord struct {
+	BranchId          string     `json:"branch_id"`
+	Month             string     `json:"month"`
+	FxRate            float64    `json:"fx_rate"`
+	Bills             int32      `json:"bills"`
+	DocOpenCents      int64      `json:"doc_open_cents"`
+	CarriedCadCents   int64      `json:"carried_cad_cents"`
+	RevaluedCadCents  int64      `json:"revalued_cad_cents"`
+	DifferenceCents   int64      `json:"difference_cents"`
+	JournalId         *string    `json:"journal_id,omitempty"`
+	CreatedBy         string     `json:"created_by"`
+	CreatedAt         time.Time  `json:"created_at"`
+	ReversalJournalId *string    `json:"reversal_journal_id,omitempty"`
+	ReversedBy        *string    `json:"reversed_by,omitempty"`
+	ReversedAt        *time.Time `json:"reversed_at,omitempty"`
+}
+
+type PurchasingAPRevaluationRunList struct {
+	Items      []PurchasingAPRevaluationRunRecord `json:"items"`
+	NextCursor *string                            `json:"next_cursor"`
+}
+
 // PurchasingPaymentRunStatus is the document's enum: "DRAFT", "PAID".
 type PurchasingPaymentRunStatus string
 
