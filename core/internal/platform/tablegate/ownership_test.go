@@ -314,6 +314,7 @@ var migrationTopics = map[string]string{
 	"0451_till_counter_reason_codes":       "till",
 	"0457_purchasing_payment_runs":         "purchasing",
 	"0460_customer_jobs":                   "customer",
+	"0466_payment_terms":                   "customer",
 	"0461_credit_change_requests":          "billing",
 }
 
@@ -423,6 +424,7 @@ var ownedObjects = map[string]string{
 	"customers":                             "customer",          // 0006_customers
 	"credit_change_requests":                "billing",           // 0461_credit_change_requests
 	"customer_jobs":                         "customer",          // 0460_customer_jobs
+	"payment_terms":                         "customer",          // 0466_payment_terms
 	"dashboard_gallery_entries":             "dashboard",         // 0208_widget_gallery
 	"dashboard_needs_sources":               "dashboard",         // 0201_dashboard_widgets
 	"dashboard_profile_home":                "dashboard",         // 0141_dashboard_profile_home

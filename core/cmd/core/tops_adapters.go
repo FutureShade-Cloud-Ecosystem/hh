@@ -377,9 +377,14 @@ func newDealerZone(pool *pgxpool.Pool) dealerZoneAdapter {
 
 // newInvoiceWriter builds an invoice writer over the pool filing its documents in the dealer's own
 // business day zone. Every composition that raises a billing document builds its writer here.
+//
+// The writer's terms seam is bound to the customer module's terms master, so every document is
+// dated by the terms its customer is sold on: the net days, and the discount window of a term
+// that carries one.
 func newInvoiceWriter(pool *pgxpool.Pool) *billing.InvoiceWriter {
-	return billing.NewInvoiceWriter(pool).WithZone(newDealerZone(pool))
-
+	return billing.NewInvoiceWriter(pool).
+		WithZone(newDealerZone(pool)).
+		WithTerms(customer.NewService(customer.NewRepository(pool)))
 }
 
 // dealerCountryAdapter binds the customer module's CountrySource to the same dealer configuration:

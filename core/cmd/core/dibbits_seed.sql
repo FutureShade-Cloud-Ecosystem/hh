@@ -186,15 +186,22 @@ SELECT v.id,
 ON CONFLICT (vendor_id, name) DO NOTHING;
 
 -- ───────────────────────── customers (8 across the type enum) + contacts ─────────────────────────
-INSERT INTO customers (id, account_no, name, customer_type, home_branch_id, payment_terms_days, credit_limit_cents, billing_address) VALUES
- ('c7000000-0000-4000-9000-000000000001','CUST-1001','Quinte Hardscapes Inc.','CONTRACTOR','5d1b3f6e-0000-4000-9000-000000000001',30,5000000,'{"city":"Trenton","province":"ON","country":"CA"}'),
- ('c7000000-0000-4000-9000-000000000002','CUST-1002','Bay of Quinte Landscaping','CONTRACTOR','5d1b3f6e-0000-4000-9000-000000000001',30,7500000,'{"city":"Belleville","province":"ON","country":"CA"}'),
- ('c7000000-0000-4000-9000-000000000003','CUST-1003','Limestone City Interlock','CONTRACTOR','5d1b3f6e-0000-4000-9000-000000000002',30,4000000,'{"city":"Kingston","province":"ON","country":"CA"}'),
- ('c7000000-0000-4000-9000-000000000004','CUST-1004','Cataraqui Custom Yards','CONTRACTOR','5d1b3f6e-0000-4000-9000-000000000002',30,3000000,'{"city":"Kingston","province":"ON","country":"CA"}'),
- ('c7000000-0000-4000-9000-000000000005','CUST-1005','Frontenac Home Builders','BUILDER','5d1b3f6e-0000-4000-9000-000000000002',45,12000000,'{"city":"Kingston","province":"ON","country":"CA"}'),
- ('c7000000-0000-4000-9000-000000000006','CUST-1006','Walk-In Retail (Trenton)','RETAIL','5d1b3f6e-0000-4000-9000-000000000001',0,0,'{"city":"Trenton","province":"ON","country":"CA"}'),
- ('c7000000-0000-4000-9000-000000000007','CUST-1007','Homeowner, J. Tremblay','RETAIL','5d1b3f6e-0000-4000-9000-000000000001',0,0,'{"city":"Brighton","province":"ON","country":"CA"}'),
- ('c7000000-0000-4000-9000-000000000008','CUST-1008','City of Quinte West','GOVERNMENT','5d1b3f6e-0000-4000-9000-000000000001',60,20000000,'{"city":"Trenton","province":"ON","country":"CA"}')
+INSERT INTO payment_terms (code, name, net_days) VALUES
+ ('RECEIPT','Due on Receipt',0),
+ ('NET30','Net 30',30),
+ ('NET45','Net 45',45),
+ ('CUSTOM-NET-60','Net 60',60)
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO customers (id, account_no, name, customer_type, home_branch_id, payment_terms_days, terms_code, credit_limit_cents, billing_address) VALUES
+ ('c7000000-0000-4000-9000-000000000001','CUST-1001','Quinte Hardscapes Inc.','CONTRACTOR','5d1b3f6e-0000-4000-9000-000000000001',30,'NET30',5000000,'{"city":"Trenton","province":"ON","country":"CA"}'),
+ ('c7000000-0000-4000-9000-000000000002','CUST-1002','Bay of Quinte Landscaping','CONTRACTOR','5d1b3f6e-0000-4000-9000-000000000001',30,'NET30',7500000,'{"city":"Belleville","province":"ON","country":"CA"}'),
+ ('c7000000-0000-4000-9000-000000000003','CUST-1003','Limestone City Interlock','CONTRACTOR','5d1b3f6e-0000-4000-9000-000000000002',30,'NET30',4000000,'{"city":"Kingston","province":"ON","country":"CA"}'),
+ ('c7000000-0000-4000-9000-000000000004','CUST-1004','Cataraqui Custom Yards','CONTRACTOR','5d1b3f6e-0000-4000-9000-000000000002',30,'NET30',3000000,'{"city":"Kingston","province":"ON","country":"CA"}'),
+ ('c7000000-0000-4000-9000-000000000005','CUST-1005','Frontenac Home Builders','BUILDER','5d1b3f6e-0000-4000-9000-000000000002',45,'NET45',12000000,'{"city":"Kingston","province":"ON","country":"CA"}'),
+ ('c7000000-0000-4000-9000-000000000006','CUST-1006','Walk-In Retail (Trenton)','RETAIL','5d1b3f6e-0000-4000-9000-000000000001',0,'RECEIPT',0,'{"city":"Trenton","province":"ON","country":"CA"}'),
+ ('c7000000-0000-4000-9000-000000000007','CUST-1007','Homeowner, J. Tremblay','RETAIL','5d1b3f6e-0000-4000-9000-000000000001',0,'RECEIPT',0,'{"city":"Brighton","province":"ON","country":"CA"}'),
+ ('c7000000-0000-4000-9000-000000000008','CUST-1008','City of Quinte West','GOVERNMENT','5d1b3f6e-0000-4000-9000-000000000001',60,'CUSTOM-NET-60',20000000,'{"city":"Trenton","province":"ON","country":"CA"}')
 ON CONFLICT (account_no) DO NOTHING;
 
 INSERT INTO customer_contacts (customer_id, name, email, phone, role, is_primary) VALUES
