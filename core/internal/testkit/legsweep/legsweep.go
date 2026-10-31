@@ -1,9 +1,8 @@
-//go:build integration
+package legsweep
 
-package pos
-
-// cleanup_sweep_integration_test.go, plan row 0.39: every integration leg in this package
-// leaves the shared database as it found it.
+// Package legsweep, plan rows 0.39 and 0.43: every integration leg of a package that calls
+// Register leaves the shared database as it found it. pos, printing and the counter till fixture
+// share it; each package's tests stay in its own package and call Register(t, pool).
 //
 // Why: CI runs every package on one database in order. The pos legs plant customers, orders,
 // invoices, payments, journals and more, and their own cleanups either deleted the customer
@@ -11,7 +10,7 @@ package pos
 // deleted the rest at all. The rows left behind (18 zero day CONTRACTOR customers among them)
 // changed what later packages' legs picked first (printing, quoteassist).
 //
-// How: intPool(t) calls registerLegSweep, which records, for every table in a user schema that
+// How: intPool(t) calls Register, which records, for every table in a user schema that
 // has a primary key, the key of each row and a hash of the whole row (md5 of row_to_json). At
 // cleanup it deletes each row whose key was not there, children before parents (the foreign key
 // graph, read from the catalog), in one transaction. The sweep is registered before a leg's own
@@ -44,7 +43,7 @@ package pos
 //     count fails, naming it. They are never deleted from.
 //   - Only the sweep's own connection pool's database is covered, and only when legs run one at
 //     a time (go test -p 1, no t.Parallel): the sweep deletes EVERY row added since its snapshot,
-//     including a concurrent leg's live rows. registerLegSweep fails a leg that starts while
+//     including a concurrent leg's live rows. Register fails a leg that starts while
 //     another leg's sweep is live.
 //   - Data is compared as text and hashed, so a collision is possible in principle and the fast
 //     path (below) compares a count and a sum of hashes per table; neither is a cryptographic
@@ -121,14 +120,30 @@ type sweepSnap struct {
 }
 
 var (
-	sweepPlanOnce sync.Once
-	sweepPlanVal  *sweepPlan
-	sweepPlanErr  error
-
 	sweepMu   sync.Mutex
-	sweepLive = map[string]int{} // test name -> live sweeps, the tripwire for overlapping legs
-	sweepKept *sweepSnap         // the last full snapshot read, reused while the fingerprint matches
+	sweepLive = map[string]int{}      // test name -> live sweeps, the tripwire for overlapping legs
+	sweepDBs  = map[string]*sweepDB{} // connection string -> that database's plan and kept snapshot
 )
+
+// sweepDB is what the sweep keeps for one database: its catalog plan (read once) and the last
+// full snapshot read (reused while the fingerprint matches). A package that dials two databases
+// (the seeded module gate and the core scratch database) gets a plan and a snapshot of each.
+type sweepDB struct {
+	once sync.Once
+	plan *sweepPlan
+	err  error
+	kept *sweepSnap
+}
+
+func sweepDBOf(pool *pgxpool.Pool) *sweepDB {
+	key := pool.Config().ConnString()
+	sweepMu.Lock()
+	defer sweepMu.Unlock()
+	if sweepDBs[key] == nil {
+		sweepDBs[key] = &sweepDB{}
+	}
+	return sweepDBs[key]
+}
 
 // sweepOrder orders the keyed tables children first. parentsOf maps a table to the tables its
 // foreign keys point at. A foreign key cycle emits only the tables that are on a cycle, so a
@@ -216,8 +231,8 @@ func sweepOrder(names []string, parentsOf map[string]map[string]bool) []string {
 
 // sweepCatalog reads the tables in every user schema and splits them into the keyed tables
 // (ordered children first) and the count only tables.
-func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
-	sweepPlanOnce.Do(func() {
+func sweepCatalog(ctx context.Context, pool *pgxpool.Pool, db *sweepDB) (*sweepPlan, error) {
+	db.once.Do(func() {
 		const rel = `format('%I.%I', n.nspname, c.relname)`
 		const userSchema = `n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'`
 		keys := map[string][]string{}
@@ -231,21 +246,21 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
 			 WHERE c.relkind = 'r' AND NOT (n.nspname = 'public' AND c.relname = 'schema_migrations')
 			 ORDER BY 1, k.ord`)
 		if err != nil {
-			sweepPlanErr = fmt.Errorf("read primary keys: %w", err)
+			db.err = fmt.Errorf("read primary keys: %w", err)
 			return
 		}
 		for rows.Next() {
 			var tbl, col string
 			if err := rows.Scan(&tbl, &col); err != nil {
 				rows.Close()
-				sweepPlanErr = fmt.Errorf("scan primary keys: %w", err)
+				db.err = fmt.Errorf("scan primary keys: %w", err)
 				return
 			}
 			keys[tbl] = append(keys[tbl], col)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			sweepPlanErr = fmt.Errorf("primary keys: %w", err)
+			db.err = fmt.Errorf("primary keys: %w", err)
 			return
 		}
 
@@ -261,21 +276,21 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
 			        (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary))
 			 ORDER BY 1`)
 		if err != nil {
-			sweepPlanErr = fmt.Errorf("read tables without a key: %w", err)
+			db.err = fmt.Errorf("read tables without a key: %w", err)
 			return
 		}
 		for crows.Next() {
 			var tbl string
 			if err := crows.Scan(&tbl); err != nil {
 				crows.Close()
-				sweepPlanErr = fmt.Errorf("scan tables without a key: %w", err)
+				db.err = fmt.Errorf("scan tables without a key: %w", err)
 				return
 			}
 			plan.countOnly = append(plan.countOnly, tbl)
 		}
 		crows.Close()
 		if err := crows.Err(); err != nil {
-			sweepPlanErr = fmt.Errorf("tables without a key: %w", err)
+			db.err = fmt.Errorf("tables without a key: %w", err)
 			return
 		}
 
@@ -290,14 +305,14 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
 			  JOIN pg_namespace pn ON pn.oid = pc.relnamespace
 			 WHERE f.contype = 'f'`)
 		if err != nil {
-			sweepPlanErr = fmt.Errorf("read foreign keys: %w", err)
+			db.err = fmt.Errorf("read foreign keys: %w", err)
 			return
 		}
 		for frows.Next() {
 			var child, parent string
 			if err := frows.Scan(&child, &parent); err != nil {
 				frows.Close()
-				sweepPlanErr = fmt.Errorf("scan foreign keys: %w", err)
+				db.err = fmt.Errorf("scan foreign keys: %w", err)
 				return
 			}
 			if child == parent {
@@ -310,7 +325,7 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
 		}
 		frows.Close()
 		if err := frows.Err(); err != nil {
-			sweepPlanErr = fmt.Errorf("foreign keys: %w", err)
+			db.err = fmt.Errorf("foreign keys: %w", err)
 			return
 		}
 
@@ -322,7 +337,7 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
 				 WHERE a.attrelid = $1::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = ''
 				 ORDER BY a.attnum`, n)
 			if err != nil {
-				sweepPlanErr = fmt.Errorf("read columns of %s: %w", n, err)
+				db.err = fmt.Errorf("read columns of %s: %w", n, err)
 				return
 			}
 			isKey := map[string]bool{}
@@ -333,7 +348,7 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
 				var c string
 				if err := cr.Scan(&c); err != nil {
 					cr.Close()
-					sweepPlanErr = fmt.Errorf("scan columns of %s: %w", n, err)
+					db.err = fmt.Errorf("scan columns of %s: %w", n, err)
 					return
 				}
 				if !isKey[c] {
@@ -342,11 +357,11 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
 			}
 			cr.Close()
 			if err := cr.Err(); err != nil {
-				sweepPlanErr = fmt.Errorf("columns of %s: %w", n, err)
+				db.err = fmt.Errorf("columns of %s: %w", n, err)
 				return
 			}
 			if _, ok := keys[n]; !ok {
-				sweepPlanErr = fmt.Errorf("restorable table %s has no primary key or does not exist", n)
+				db.err = fmt.Errorf("restorable table %s has no primary key or does not exist", n)
 				return
 			}
 		}
@@ -364,9 +379,9 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
 			plan.tables = append(plan.tables, sweepTable{
 				name: n, keyCols: cols, keyExpr: "ROW(" + strings.Join(cols, ", ") + ")::text", setCols: setCols[n]})
 		}
-		sweepPlanVal = plan
+		db.plan = plan
 	})
-	return sweepPlanVal, sweepPlanErr
+	return db.plan, db.err
 }
 
 // sweepFingerprint reads every swept table's count and hash sum, and every count only table's
@@ -495,11 +510,11 @@ func sweepRelease(t *testing.T) {
 	}
 }
 
-// registerLegSweep records the database's rows now and deletes every row a leg added when the
+// Register records the database's rows now and deletes every row a leg added when the
 // leg ends. It fails the leg, naming the table, when a delete is refused, and names the table
 // and key of any row that existed at the start and was changed or deleted. See the file header
 // for the exact guarantee.
-func registerLegSweep(t *testing.T, pool *pgxpool.Pool) {
+func Register(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
 	sweepClaim(t)
@@ -510,7 +525,8 @@ func registerLegSweep(t *testing.T, pool *pgxpool.Pool) {
 			sweepRelease(t)
 		}
 	}
-	plan, err := sweepCatalog(ctx, pool)
+	db := sweepDBOf(pool)
+	plan, err := sweepCatalog(ctx, pool, db)
 	if err != nil {
 		release()
 		t.Fatalf("leg sweep: read the catalog: %v", err)
@@ -521,7 +537,7 @@ func registerLegSweep(t *testing.T, pool *pgxpool.Pool) {
 		t.Fatalf("leg sweep: fingerprint: %v", err)
 	}
 	sweepMu.Lock()
-	before := sweepKept
+	before := db.kept
 	sweepMu.Unlock()
 	if before == nil || len(sweepFPDiff(before.fp, startFP)) > 0 {
 		before, err = sweepSnapshot(ctx, pool, plan, nil)
@@ -531,7 +547,7 @@ func registerLegSweep(t *testing.T, pool *pgxpool.Pool) {
 		}
 		before.fp = startFP
 		sweepMu.Lock()
-		sweepKept = before
+		db.kept = before
 		sweepMu.Unlock()
 	}
 	t.Cleanup(func() {

@@ -13,6 +13,7 @@ package pos
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"os"
 	"testing"
 
@@ -38,7 +39,7 @@ func redactionPool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("integration database not reachable: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	registerLegSweep(t, pool)
+	legsweep.Register(t, pool)
 	return pool
 }
 
