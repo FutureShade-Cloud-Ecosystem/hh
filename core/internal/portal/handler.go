@@ -369,6 +369,12 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusNotImplemented, "not implemented")
 	case errors.Is(err, payments.ErrDeclined):
 		httpx.Error(w, http.StatusPaymentRequired, "payment declined")
+	case errors.Is(err, payments.ErrAmountChanged):
+		// The amount the customer was shown is not the amount quoted now. Nothing was claimed and no
+		// money moved; the client re-reads the list and asks the customer again.
+		httpx.ErrorWith(w, http.StatusConflict,
+			"The amount to pay has changed since you opened this. Please check the new amount and confirm again.",
+			map[string]any{"code": payments.CodeQuoteChanged})
 	case errors.Is(err, payments.ErrChargePending):
 		// A transient gateway RETRY verdict: nothing was persisted and the caller may safely
 		// retry the same request. 409 (distinct from the 402 hard decline above).

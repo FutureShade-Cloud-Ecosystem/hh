@@ -9860,6 +9860,9 @@ type TenantInvoice struct {
 	HoldbackCents int64     `json:"holdback_cents"`
 	TotalCents    int64     `json:"total_cents"`
 	BalanceCents  int64     `json:"balance_cents"`
+	PayoffCents   *int64    `json:"payoff_cents,omitempty"`
+	DiscountCents *int64    `json:"discount_cents,omitempty"`
+	DiscountBy    *string   `json:"discount_by,omitempty"`
 }
 
 type TenantInvoiceLine struct {
@@ -10123,6 +10126,12 @@ type TenantPayRequest struct {
 	PaymentMethodId *string  `json:"payment_method_id,omitempty"`
 	Nonce           *string  `json:"nonce,omitempty"`
 	IdempotencyKey  *string  `json:"idempotency_key,omitempty"`
+	ExpectedCents   int64    `json:"expected_cents"`
+}
+
+type TenantPayConflict struct {
+	Error string  `json:"error"`
+	Code  *string `json:"code,omitempty"`
 }
 
 // TenantProjectStatus is the document's enum: "PLANNING", "QUOTING", "ORDERED", "FULFILLED", "CANCELLED".

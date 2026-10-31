@@ -31,7 +31,7 @@ import "@hardscapehouse/pro-kit/src/state-view.js";
 import type { SurfaceSelect } from "@hardscapehouse/pro-kit/src/frame.js";
 import type { SignInMethodChoice, SignInSubmit } from "@hardscapehouse/pro-kit/src/signin.js";
 import type { HHProSignIn } from "@hardscapehouse/pro-kit/src/signin.js";
-import { PaySender, isPayable, payableCents, readHostedToken, type PayBody, type PayOutcome } from "./pay-core.js";
+import { PaySender, discountOffer, isPayable, payableCents, payoffCents, readHostedToken, type PayBody, type PayOutcome } from "./pay-core.js";
 import { hostedFieldAddress } from "./hosted-field.js";
 import { invoiceDetailScreen, invoicesScreen, methodsScreen, sheetView, statementsScreen, type Load, type Sheet, type ViewState } from "./views.js";
 import { screenStyles } from "./styles.js";
@@ -455,7 +455,13 @@ export class ProPayApp extends HHElement {
 
   /** The advisory sum of the core's own payable cents. The core derives the amount it charges; the receipt shows it. */
   #sumOf(ids: readonly string[]): number {
-    return this.#invoices.filter((i) => ids.includes(i.id)).reduce((sum, i) => sum + payableCents(i), 0);
+    return this.#invoices.filter((i) => ids.includes(i.id)).reduce((sum, i) => sum + payoffCents(i), 0);
+  }
+
+  /** The sheet's arithmetic lines: what the invoices are worth, and the early payment saving on them. */
+  #arithOf(ids: readonly string[]): { faceCents: number; savingCents: number } {
+    const rows = this.#invoices.filter((i) => ids.includes(i.id));
+    return { faceCents: rows.reduce((sum, i) => sum + payableCents(i), 0), savingCents: rows.reduce((sum, i) => sum + (discountOffer(i)?.cents ?? 0), 0) };
   }
 
   async #openSheet(ids: string[]): Promise<void> {
@@ -464,7 +470,7 @@ export class ProPayApp extends HHElement {
       await this.#reopenWaiting();
       return;
     }
-    this.#sheet = { phase: "choose", ids, expectedCents: this.#sumOf(ids), choice: "", nonce: null, methods: [], methodsNote: "", words: "", receipt: null, differs: false, frameAvailable: hostedFieldAddress() !== null };
+    this.#sheet = { phase: "choose", ids, expectedCents: this.#sumOf(ids), ...this.#arithOf(ids), choice: "", nonce: null, methods: [], methodsNote: "", words: "", receipt: null, differs: false, frameAvailable: hostedFieldAddress() !== null };
     this.requestUpdate();
     const answer = await tenantPayments.tenantListPaymentMethods(this.#client);
     if (!answer.ok && failure(answer) === "lapsed") {
@@ -490,6 +496,8 @@ export class ProPayApp extends HHElement {
       phase: "unknown",
       ids: [...waiting.invoiceIds],
       expectedCents: waiting.expectedCents,
+      faceCents: 0,
+      savingCents: 0,
       choice: waiting.methodId ?? "new",
       nonce: waiting.nonce ?? null,
       methods,
@@ -554,9 +562,17 @@ export class ProPayApp extends HHElement {
     switch (outcome.kind) {
       case "paid":
         this.#sheet = { ...sheet, phase: "paid", receipt: outcome.payment, differs: outcome.differs, words: "" };
+        // The paid invoices are no longer open or picked: the list behind the receipt reads the books again now, not at Done.
+        this.#selected = new Set();
+        void this.#loadSurface();
         break;
       case "unknown":
         this.#sheet = { ...sheet, phase: "unknown", words: outcome.words };
+        break;
+      case "changed":
+        // The core refused before claiming anything: no money moved. Read the books again and show the new amount for a second tap.
+        this.#sheet = { ...sheet, phase: "choose", words: outcome.words };
+        void this.#requote(sheet.ids);
         break;
       case "declined":
         // No money moved. A card token is spent by a decline, so the person adds a card again.
@@ -573,11 +589,28 @@ export class ProPayApp extends HHElement {
     this.requestUpdate();
   }
 
+  /** After a changed amount: re-read the list and put the new payoff on the sheet, or close it when nothing is payable now. */
+  async #requote(ids: readonly string[]): Promise<void> {
+    await this.#loadSurface();
+    const sheet = this.#sheet;
+    if (sheet === null || sheet.phase !== "choose") return;
+    const still = ids.filter((id) => this.#invoices.some((i) => i.id === id && isPayable(i)));
+    if (still.length === 0) {
+      this.#sheet = null;
+      this.#selected = new Set();
+    } else {
+      this.#sheet = { ...sheet, ids: still, expectedCents: this.#sumOf(still), ...this.#arithOf(still) };
+    }
+    this.requestUpdate();
+  }
+
   #sheetFor(body: PayBody, outcome: PayOutcome): Sheet {
     return {
       phase: outcome.kind === "paid" ? "paid" : "unknown",
       ids: [...body.invoiceIds],
       expectedCents: this.#sumOf(body.invoiceIds),
+      faceCents: 0,
+      savingCents: 0,
       choice: body.methodId ?? "new",
       nonce: body.nonce ?? null,
       methods: this.#methods,

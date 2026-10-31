@@ -354,6 +354,21 @@ function refusalFrom(status: number, text: string): string {
   return text === "" ? `HTTP ${status}` : text;
 }
 
+// A refusal body may carry a machine code beside its words ({error, code}); a client matches on the code,
+// never on the prose. Absent when the body is not JSON or carries no string code.
+function codeFrom(text: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const code = (parsed as Record<string, unknown>)["code"];
+      if (typeof code === "string" && code !== "") return code;
+    }
+  } catch {
+    // not JSON: no code
+  }
+  return undefined;
+}
+
 export class ApiClient {
   readonly baseUrl: string;
   private readonly fetchLike: FetchLike;
@@ -524,7 +539,7 @@ export class ApiClient {
         } catch (error) {
           return aborted() ?? err(`${id}: transport error reading the response: ${asMessage(error)}`);
         }
-        return err(refusalFrom(response.status, text), response.status);
+        return err(refusalFrom(response.status, text), response.status, codeFrom(text));
       }
       if (req.bytesResponse) {
         try {

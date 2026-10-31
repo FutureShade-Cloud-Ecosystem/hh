@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { ApiClient } from "@hardscapehouse/api-client";
 import {
   payableCents,
+  payoffCents,
+  discountOffer,
   isPayable,
   daysPastDue,
   agingBucket,
@@ -102,6 +104,21 @@ test("a pay answer is read as paid, declined, refused or unknown, and a timeout 
   for (const status of [400, 401, 403, 404]) assert.equal(classifyPayment({ ok: false, error: "no", status }).kind, "refused", String(status));
   for (const status of [409, 500, 502, 503]) assert.equal(classifyPayment({ ok: false, error: "x", status }).kind, "unknown", String(status));
   assert.equal(classifyPayment({ ok: false, error: "the request timed out" }).kind, "unknown");
+});
+
+test("a 409 that says the amount changed is its own outcome with words for a customer; any other 409 stays unknown", () => {
+  const out = classifyPayment({ ok: false, error: "any words at all", status: 409, code: "quote_changed" });
+  assert.equal(out.kind, "changed");
+  assert.match(out.words, /No money moved/);
+  // The prose alone is not the signal: a 409 whose words match but carries no code is unknown.
+  assert.equal(classifyPayment({ ok: false, error: "The amount to pay has changed since you opened this.", status: 409 }).kind, "unknown");
+  assert.equal(classifyPayment({ ok: false, error: "payment is pending, please retry", status: 409 }).kind, "unknown");
+});
+
+test("the wire body carries the amount the button showed", async () => {
+  const t = transport([reply(500, { error: "x" })]);
+  await new PaySender(t.client, { canPay: () => true }).pay(body(), 98000);
+  assert.equal(t.calls[0].body.expected_cents, 98000);
 });
 
 test("a 400 or 404 on a pay never says no money moved: the core can answer 400 after an approved charge", () => {
@@ -278,10 +295,10 @@ test("the body on the wire carries ids and one funding source and nothing else a
   const t = transport([reply(201, PAYMENT), reply(201, PAYMENT)]);
   const sender = new PaySender(t.client, { canPay: () => true });
   await sender.pay({ invoiceIds: [B, A], nonce: "tok-1" }, 100);
-  assert.deepEqual(Object.keys(t.calls[0].body).sort(), ["idempotency_key", "invoice_ids", "nonce"]);
+  assert.deepEqual(Object.keys(t.calls[0].body).sort(), ["expected_cents", "idempotency_key", "invoice_ids", "nonce"]);
   assert.deepEqual(t.calls[0].body.invoice_ids, [A, B], "the selection is sent sorted, as the core hashes it");
   await sender.pay(body({ invoiceIds: [A] }), 100);
-  assert.deepEqual(Object.keys(t.calls[1].body).sort(), ["idempotency_key", "invoice_ids", "payment_method_id"]);
+  assert.deepEqual(Object.keys(t.calls[1].body).sort(), ["expected_cents", "idempotency_key", "invoice_ids", "payment_method_id"]);
 });
 
 test("a hosted frame's token is accepted by shape, and anything that looks like card digits is refused", () => {
@@ -295,4 +312,19 @@ test("a hosted frame's token is accepted by shape, and anything that looks like 
   assert.equal(readHostedToken({ type: "hh-hosted-token", token: "4242-4242-4242-4242" }), null);
   assert.equal(readHostedToken("4242424242424242"), null);
   assert.equal(readHostedToken(null), null);
+});
+
+// ---- the payoff the portal quotes (TM-2b) ------------------------------------------------------------------------
+
+test("the payoff is the core's quote when it sends one, and the payable otherwise", () => {
+  assert.equal(payoffCents({ balance_cents: 100000, holdback_cents: 0, payoff_cents: 98000 }), 98000);
+  assert.equal(payoffCents({ balance_cents: 100000, holdback_cents: 0 }), 100000);
+  assert.equal(payoffCents({ balance_cents: 1000, holdback_cents: 200 }), 800);
+});
+
+test("a discount offer needs both the amount and its last day, and is otherwise none", () => {
+  assert.deepEqual(discountOffer({ discount_cents: 2000, discount_by: "2026-03-10" }), { cents: 2000, by: "2026-03-10" });
+  assert.equal(discountOffer({}), null);
+  assert.equal(discountOffer({ discount_cents: 2000 }), null);
+  assert.equal(discountOffer({ discount_cents: 0, discount_by: "2026-03-10" }), null);
 });

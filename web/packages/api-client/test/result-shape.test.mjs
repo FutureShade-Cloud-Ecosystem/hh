@@ -123,6 +123,14 @@ test("a 4xx resolves the Error envelope's message with the status, and never thr
   }
 });
 
+test("a refusal body that carries a machine code puts it on the Result, and one without leaves it off", async (t) => {
+  const withCode = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: () => Promise.resolve(respond({ status: 409, body: { error: "words", code: "quote_changed" } })) });
+  const coded = await api.tenantAuth.tenantGetMe(withCode);
+  assert.deepEqual(coded, { ok: false, error: "words", status: 409, code: "quote_changed" });
+  const plain = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: () => Promise.resolve(respond({ status: 409, body: { error: "words" } })) });
+  assert.deepEqual(await api.tenantAuth.tenantGetMe(plain), { ok: false, error: "words", status: 409 });
+});
+
 test("a 5xx with an empty body resolves HTTP 500 with the status and never throws", async (t) => {
   const fetchLike = () => Promise.resolve(respond({ status: 500 }));
   const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: fetchLike });

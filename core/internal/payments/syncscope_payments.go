@@ -243,19 +243,41 @@ func (s *PaymentsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id str
 
 // paymentCreateFields is the field set a pushed create may declare:
 // the invoices the payment settles and the stored method that funds
-// it, plus the row id when the client generated one. Nothing else:
+// it, the amount the payer was shown (expected_cents, required, the
+// same rule the portal route holds), plus the row id when the client
+// generated one. Nothing else:
 // the amount is derived server-side, and a tokenization nonce is a
 // one-time ONLINE artifact an offline outbox cannot carry (a replayed
 // nonce is not a funding source).
 func paymentCreateFields(fields map[string]any) error {
 	for k := range fields {
 		switch k {
-		case "id", "invoice_ids", "payment_method_id":
+		case "id", "invoice_ids", "payment_method_id", "expected_cents":
 		default:
 			return fmt.Errorf("payments: field %q is not writable through sync: %w", k, sync.ErrOpRefused)
 		}
 	}
 	return nil
+}
+
+// paymentExpectedCents reads the shown amount a pushed payload carries: a whole number of cents. Anything
+// else (a string, a fraction, a missing field) reads as zero, which the required rule then refuses.
+func paymentExpectedCents(v any) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		if n == float64(int64(n)) {
+			return int64(n), true
+		}
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case json.Number:
+		if i, err := n.Int64(); err == nil {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 // Create runs the payer's pay request through the module's own
@@ -272,6 +294,10 @@ func (s *PaymentsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key 
 	}
 	if err := paymentCreateFields(fields); err != nil {
 		return sync.RowState{}, err
+	}
+	expected, _ := paymentExpectedCents(fields["expected_cents"])
+	if err := RequireShownAmount(expected); err != nil {
+		return sync.RowState{}, fmt.Errorf("payments: %w: %w", sync.ErrOpRefused, err)
 	}
 	rawIDs, _ := fields["invoice_ids"].([]any)
 	if len(rawIDs) == 0 {
@@ -302,6 +328,7 @@ func (s *PaymentsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key 
 	p, err := s.svc.PaySynced(ctx, f.TenantID, PayRequest{
 		InvoiceIDs:      invoiceIDs,
 		PaymentMethodID: methodID,
+		ExpectedCents:   expected,
 	}, rowID, key)
 	if err != nil {
 		switch {

@@ -704,6 +704,7 @@ func TestGapPaymentsLegs(t *testing.T) {
 		gapOp("create", uuid.NewString(), map[string]any{
 			"id":                payID,
 			"invoice_ids":       []any{gapInvoicePayID},
+			"expected_cents":    float64(11300),
 			"payment_method_id": testkit.PayMethodAlphaID,
 		}, nil),
 	})
@@ -758,6 +759,7 @@ func TestGapPaymentsLegs(t *testing.T) {
 		gapOp("create", "40000000-0000-4000-8000-000000000001", map[string]any{
 			"id":                payID,
 			"invoice_ids":       []any{gapInvoicePayID},
+			"expected_cents":    float64(11300),
 			"payment_method_id": testkit.PayMethodAlphaID,
 		}, nil),
 	})
@@ -769,6 +771,7 @@ func TestGapPaymentsLegs(t *testing.T) {
 	res = gapPush(t, f.engine, info, alpha, []apigen.SyncPushOperation{
 		gapOp("create", uuid.NewString(), map[string]any{
 			"invoice_ids":       []any{gapInvoicePayID},
+			"expected_cents":    float64(11300),
 			"payment_method_id": testkit.PayMethodAlphaID,
 		}, nil),
 	})
@@ -796,6 +799,7 @@ func TestGapPaymentsLegs(t *testing.T) {
 	res = gapPush(t, f.engine, info, alpha, []apigen.SyncPushOperation{
 		gapOp("create", uuid.NewString(), map[string]any{
 			"invoice_ids":       []any{gapInvoiceDeclineID},
+			"expected_cents":    float64(13),
 			"payment_method_id": testkit.PayMethodAlphaID,
 		}, nil),
 	})
@@ -821,6 +825,7 @@ func TestGapPaymentsLegs(t *testing.T) {
 	res = gapPush(t, f.engine, info, beta, []apigen.SyncPushOperation{
 		gapOp("create", uuid.NewString(), map[string]any{
 			"invoice_ids":       []any{gapInvoicePayID},
+			"expected_cents":    float64(11300),
 			"payment_method_id": testkit.PayMethodBetaID,
 		}, nil),
 	})
@@ -833,6 +838,7 @@ func TestGapPaymentsLegs(t *testing.T) {
 	res = gapPush(t, f.engine, info, staff, []apigen.SyncPushOperation{
 		gapOp("create", uuid.NewString(), map[string]any{
 			"invoice_ids":       []any{gapInvoicePayID},
+			"expected_cents":    float64(11300),
 			"payment_method_id": testkit.PayMethodAlphaID,
 		}, nil),
 	})
@@ -938,6 +944,7 @@ func TestGapWalkthroughs(t *testing.T) {
 	res = gapPush(t, f.engine, pay, alpha, []apigen.SyncPushOperation{
 		gapOp("create", uuid.NewString(), map[string]any{
 			"invoice_ids":       []any{invID},
+			"expected_cents":    float64(11300),
 			"payment_method_id": testkit.PayMethodAlphaID,
 		}, nil),
 	})

@@ -69,14 +69,23 @@ func newPayRig(t *testing.T, gw PaymentGateway) *payRig {
 	}
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, customerID)
-		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, customerID)
-		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE payment_id IN
-			(SELECT id FROM payments WHERE customer_id = $1::uuid)`, customerID)
-		_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, customerID)
-		_, _ = pool.Exec(c, `DELETE FROM portal_payment_methods WHERE customer_id = $1::uuid`, customerID)
-		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, customerID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, customerID)
+		// In dependency order, each delete loud: the intents the pay flow claimed hold the customer, so
+		// they go first (a silent miss here left a customer and its intent behind on every run).
+		for _, q := range []struct{ table, sql string }{
+			{"payment_intents", `DELETE FROM payment_intents WHERE customer_id = $1::uuid`},
+			{"events_outbox", `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`},
+			{"customer_transactions", `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`},
+			{"payment_allocations", `DELETE FROM payment_allocations WHERE payment_id IN
+				(SELECT id FROM payments WHERE customer_id = $1::uuid)`},
+			{"payments", `DELETE FROM payments WHERE customer_id = $1::uuid`},
+			{"portal_payment_methods", `DELETE FROM portal_payment_methods WHERE customer_id = $1::uuid`},
+			{"invoices", `DELETE FROM invoices WHERE customer_id = $1::uuid`},
+			{"customers", `DELETE FROM customers WHERE id = $1::uuid`},
+		} {
+			if _, err := pool.Exec(c, q.sql, customerID); err != nil {
+				t.Errorf("cleanup %s: %v", q.table, err)
+			}
+		}
 	})
 
 	seedInv := func(tag string, cents int64) string {
