@@ -222,6 +222,12 @@ func roundHalfEvenDiv(num, den int64) int64 {
 //     past due is current enough, one at 31 days is charged.
 //   - the customer carries no ACTIVE waiver (a waiver row whose cleared_at IS NULL).
 //
+// POLICY, kept in this one place: the balance is the INVOICES arm of the aging alone. A standalone
+// credit (an unapplied CREDIT_MEMO, ADJUSTMENT or WRITE_OFF row not tagged to an invoice, the aging's
+// other arm) does NOT reduce the charged balance, so a customer with a past due invoice and an equal
+// unapplied credit is still charged. That is as built and is a question for Colton; changing the
+// rule means netting that arm in the overdue CTE below, and nowhere else.
+//
 // Parameters: $1 the branch, $2 the month's last house day, $3 the month's last instant.
 const financeChargeCandidatesSQL = `
 	WITH overdue AS (
