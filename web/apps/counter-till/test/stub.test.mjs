@@ -181,3 +181,28 @@ test("the standing read answers a withheld caller withheld, and the hold the sam
   assert.equal(held.body.on_hold, true);
   assert.equal(held.body.past_due_cents, undefined);
 });
+
+test("the sale door fences a named job with the core's own words", async () => {
+  // The job accounts are the demo world's own (demo-stub.mjs derives them from
+  // the customer id): the customer's open job carries the sale, another
+  // customer's job, a closed job and a job that is not there are refused with
+  // the customer module's sentences (core/internal/customer/job_document.go).
+  const maple = "c-maple-ridge";
+  const fenwick = "c-fenwick";
+  const ring = (customerId, jobId) => post("/api/v1/pos/sales", saleBody({ customer_id: customerId, job_id: jobId }), bearer);
+
+  const carries = await ring(maple, `job-${maple}-drive`);
+  assert.equal(carries.status, 201, `the customer's own open job carries the sale: ${JSON.stringify(carries.body)}`);
+
+  const other = await ring(maple, `job-${fenwick}-drive`);
+  assert.equal(other.status, 400);
+  assert.equal(other.body.error, "that job is another customer's job");
+
+  const closed = await ring(maple, `job-${maple}-done`);
+  assert.equal(closed.status, 400);
+  assert.equal(closed.body.error, "the job is closed, so it takes no new document");
+
+  const unknown = await ring(maple, "job-that-is-no-job");
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.body.error, "not found");
+});

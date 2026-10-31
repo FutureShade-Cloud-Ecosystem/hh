@@ -1012,6 +1012,25 @@ function customerFor(customerId) {
   return CUSTOMERS.find((c) => c.id === customerId) ?? null;
 }
 
+// Wave 3 JA-2: the demo world's job accounts, one site of work under each
+// account customer, derived from the customer id so the stub and its tests
+// agree without a second channel. The sale door fences a named job exactly as
+// the core's own fence does, with the customer module's own sentences.
+const jobForCustomer = (customerId) => `job-${customerId}-drive`;
+const closedJobForCustomer = (customerId) => `job-${customerId}-done`;
+
+function fenceJob(customerId, jobId) {
+  const known = CUSTOMERS.some(
+    (c) => jobId === jobForCustomer(c.id) || jobId === closedJobForCustomer(c.id),
+  );
+  if (!known) return { status: 404, error: "not found" };
+  if (jobId === jobForCustomer(customerId)) return null;
+  if (jobId === closedJobForCustomer(customerId) || jobId.endsWith("-done")) {
+    return { status: 400, error: "the job is closed, so it takes no new document" };
+  }
+  return { status: 400, error: "that job is another customer's job" };
+}
+
 // Item 9.1's menu, the core's own rule (payment_options.go): a credit customer is terms above
 // zero AND a credit line and not on hold; everything else (Cash On Demand, walk in, no credit,
 // a held credit account) is offered the deposit with the balance due later. The row 1214 ruling
@@ -2897,6 +2916,16 @@ const server = createServer(async (request, response) => {
       if (customer === null) {
         respondJson(response, 404, { error: "no such customer account" });
         return;
+      }
+      // Wave 3 JA-2: the job the sale is opened on, fenced in the core's own
+      // words before the ring prices anything.
+      const jobId = typeof parsed.job_id === "string" ? parsed.job_id.trim() : "";
+      if (jobId !== "") {
+        const refused = fenceJob(customer.id, jobId);
+        if (refused !== null) {
+          respondJson(response, refused.status, { error: refused.error });
+          return;
+        }
       }
       const tender = parsed.tender;
       if (tender === "ACCOUNT" && customer.id === "") {

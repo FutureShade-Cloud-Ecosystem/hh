@@ -442,6 +442,26 @@ function reset(kind = "full") {
 
 const acct = (n) => ACCOUNTS.find((a) => a.n === n);
 const custId = (n) => uuid("e", n);
+
+// Wave 3 JA-2: the office world's job accounts, one site of work under each AR
+// customer, derived from the customer id. The credit memo door fences a named
+// job exactly as the core's own fence does (the contract test holds these
+// sentences to the core's source).
+const jobForCustomer = (customerId) => `job-${customerId}-drive`;
+const closedJobForCustomer = (customerId) => `job-${customerId}-done`;
+const CUSTOMER_IDS = [1, 2, 3, 4, 5, 6].map(custId);
+
+function fenceJob(customerId, jobId) {
+  const known = CUSTOMER_IDS.some(
+    (id) => jobId === jobForCustomer(id) || jobId === closedJobForCustomer(id),
+  );
+  if (!known) return { status: 404, words: "not found" };
+  if (jobId === jobForCustomer(customerId)) return null;
+  if (jobId === closedJobForCustomer(customerId) || jobId.endsWith("-done")) {
+    return { status: 400, words: "the job is closed, so it takes no new document" };
+  }
+  return { status: 400, words: "that job is another customer's job" };
+}
 const acctOfCust = (id) => ACCOUNTS.find((a) => custId(a.n) === id);
 const invById = (id) => world.invoices.find((i) => i.id === id);
 
@@ -1773,6 +1793,13 @@ async function handle(req, res) {
     if (key === "") return refuse(res, 400, "a credit needs an idempotency key");
     const named = typeof body.gl_account === "string" ? body.gl_account.trim() : "";
     if (named !== "" && named !== "4000") return refuse(res, 400, `the posting rules for this branch credit account 4000, not ${named}`);
+    // Wave 3 JA-2: the job the credit is opened on, fenced with the customer
+    // module's own sentences before anything moves.
+    const jobId = typeof body.job_id === "string" ? body.job_id.trim() : "";
+    if (jobId !== "") {
+      const refused = fenceJob(customerId, jobId);
+      if (refused !== null) return refuse(res, refused.status, refused.words);
+    }
     const invoiceId = typeof body.invoice_id === "string" ? body.invoice_id.trim() : "";
     const invoice = invoiceId === "" ? undefined : invById(invoiceId);
     if (invoiceId !== "") {
