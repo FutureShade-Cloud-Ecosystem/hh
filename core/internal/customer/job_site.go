@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/localization"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -40,5 +41,10 @@ func (s *Service) JobByID(ctx context.Context, jobID string) (Job, error) {
 // SiteProvince is the province code (upper case) the job's ship to address names, "" when it names none.
 func (j Job) SiteProvince() string {
 	p, _ := j.ShipToAddress["province"].(string)
+	// A name or a common form ("Ontario", "ont.") maps to its code, so the rule lookup finds the
+	// rule. Anything else stays upper cased and is refused in words by the rule, never guessed.
+	if code, ok := localization.ProvinceCode(p); ok {
+		return code
+	}
 	return strings.ToUpper(strings.TrimSpace(p))
 }

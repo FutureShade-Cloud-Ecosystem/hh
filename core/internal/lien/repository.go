@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -153,6 +154,11 @@ func scanJob(row pgx.Row) (Job, error) {
 func (r *Repository) GetJob(ctx context.Context, id string) (Job, error) {
 	if r.pool == nil {
 		return Job{}, errNoDB
+	}
+	// A malformed id is no job: 404 in words, not a 500 from Postgres. This is the shared lookup, so
+	// every lien job route that reads by id answers the same.
+	if _, err := uuid.Parse(id); err != nil {
+		return Job{}, errJobNotFound
 	}
 	j, err := scanJob(r.pool.QueryRow(ctx, `SELECT `+jobCols+` FROM lien_jobs WHERE id = $1`, id))
 	if err != nil {
