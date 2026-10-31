@@ -429,18 +429,29 @@ func (w *InvoiceWriter) RunFinanceCharges(ctx context.Context, in FinanceChargeR
 		})
 	}
 
+	// The run's audit row lands on the run's own transaction when the recorder offers one, so a
+	// failed record rolls the charges back (the act and its trail commit together). A recorder
+	// without a transaction seam records best effort after the commit, as before.
+	runAct := audit.SensitiveAccess{
+		Action: ActFinanceChargeRun, EntityType: "branch", EntityID: branchID,
+		ActorID: in.ActorID, BranchID: branchID, Purpose: "FINANCE_CHARGE_RUN",
+		Extra: map[string]any{
+			"month": monthWords, "charged": res.Charged,
+			"charged_cents": res.ChargedCents, "already_charged": res.AlreadyCharged,
+		},
+	}
+	var recordedInTx bool
+	if rx, ok := w.audit.(creditChangeAuditTxRecorder); ok {
+		if err := rx.RecordTx(ctx, tx, runAct); err != nil {
+			return FinanceChargeRunResult{}, fmt.Errorf("billing: record the finance charge run: %w", err)
+		}
+		recordedInTx = true
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return FinanceChargeRunResult{}, fmt.Errorf("billing: commit the finance charge run: %w", err)
 	}
-	if w.audit != nil {
-		_ = w.audit.Record(ctx, audit.SensitiveAccess{
-			Action: ActFinanceChargeRun, EntityType: "branch", EntityID: branchID,
-			ActorID: in.ActorID, BranchID: branchID, Purpose: "FINANCE_CHARGE_RUN",
-			Extra: map[string]any{
-				"month": monthWords, "charged": res.Charged,
-				"charged_cents": res.ChargedCents, "already_charged": res.AlreadyCharged,
-			},
-		})
+	if w.audit != nil && !recordedInTx {
+		_ = w.audit.Record(ctx, runAct)
 	}
 	return res, nil
 }
@@ -494,7 +505,8 @@ func NewFinanceChargeWaiverService(repo *Repository) *FinanceChargeWaiverService
 	return &FinanceChargeWaiverService{repo: repo, now: time.Now}
 }
 
-// WithAudit attaches the audit recorder (best effort: an audit failure never blocks the books).
+// WithAudit attaches the audit recorder. A recorder with a RecordTx seam records inside the waiver's
+// transaction (a failed record leaves the waiver unchanged); one without records best effort after.
 func (s *FinanceChargeWaiverService) WithAudit(r audit.Recorder) *FinanceChargeWaiverService {
 	if r != nil {
 		s.audit = r
@@ -516,15 +528,44 @@ func (s *FinanceChargeWaiverService) SetWaiver(ctx context.Context, in FinanceCh
 	if !in.IsController {
 		return FinanceChargeWaiverView{}, &FinanceChargeWaiverRoleError{}
 	}
-	view, err := s.repo.SetFinanceChargeWaiver(ctx, in, s.now())
+	return s.inAuditedTx(ctx, audit.SensitiveAccess{
+		Action: ActFinanceChargeWaive, EntityType: "customer", EntityID: in.CustomerID,
+		ActorID: in.ActorID, Purpose: "FINANCE_CHARGE_WAIVE", Reason: in.Reason,
+	}, func(q financeChargeWaiverDB) (FinanceChargeWaiverView, error) {
+		return s.repo.setFinanceChargeWaiverOn(ctx, q, in, s.now())
+	})
+}
+
+// inAuditedTx runs one waiver write and its audit record as one act. When the recorder offers a
+// transaction seam the write and the record share one transaction, so a failed record leaves the
+// waiver as it was (the earlier waiver's history lives only in the audit rows, a second set
+// overwrites the row). A recorder without the seam records best effort after the write.
+func (s *FinanceChargeWaiverService) inAuditedTx(ctx context.Context, act audit.SensitiveAccess, write func(q financeChargeWaiverDB) (FinanceChargeWaiverView, error)) (FinanceChargeWaiverView, error) {
+	rx, ok := s.audit.(creditChangeAuditTxRecorder)
+	if !ok || s.audit == nil || s.repo.pool == nil {
+		view, err := write(s.repo.pool)
+		if err != nil {
+			return FinanceChargeWaiverView{}, err
+		}
+		if s.audit != nil {
+			_ = s.audit.Record(ctx, act)
+		}
+		return view, nil
+	}
+	tx, err := s.repo.pool.Begin(ctx)
+	if err != nil {
+		return FinanceChargeWaiverView{}, fmt.Errorf("billing: begin the finance charge waiver: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	view, err := write(tx)
 	if err != nil {
 		return FinanceChargeWaiverView{}, err
 	}
-	if s.audit != nil {
-		_ = s.audit.Record(ctx, audit.SensitiveAccess{
-			Action: ActFinanceChargeWaive, EntityType: "customer", EntityID: in.CustomerID,
-			ActorID: in.ActorID, Purpose: "FINANCE_CHARGE_WAIVE", Reason: in.Reason,
-		})
+	if err := rx.RecordTx(ctx, tx, act); err != nil {
+		return FinanceChargeWaiverView{}, fmt.Errorf("billing: record the finance charge waiver: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return FinanceChargeWaiverView{}, fmt.Errorf("billing: commit the finance charge waiver: %w", err)
 	}
 	return view, nil
 }
@@ -536,17 +577,12 @@ func (s *FinanceChargeWaiverService) ClearWaiver(ctx context.Context, in Finance
 	if !in.IsController {
 		return FinanceChargeWaiverView{}, &FinanceChargeWaiverRoleError{}
 	}
-	view, err := s.repo.ClearFinanceChargeWaiver(ctx, in, s.now())
-	if err != nil {
-		return FinanceChargeWaiverView{}, err
-	}
-	if s.audit != nil {
-		_ = s.audit.Record(ctx, audit.SensitiveAccess{
-			Action: ActFinanceChargeWaiveCleared, EntityType: "customer", EntityID: in.CustomerID,
-			ActorID: in.ActorID, Purpose: "FINANCE_CHARGE_WAIVE_CLEAR", Reason: in.Reason,
-		})
-	}
-	return view, nil
+	return s.inAuditedTx(ctx, audit.SensitiveAccess{
+		Action: ActFinanceChargeWaiveCleared, EntityType: "customer", EntityID: in.CustomerID,
+		ActorID: in.ActorID, Purpose: "FINANCE_CHARGE_WAIVE_CLEAR", Reason: in.Reason,
+	}, func(q financeChargeWaiverDB) (FinanceChargeWaiverView, error) {
+		return s.repo.clearFinanceChargeWaiverOn(ctx, q, in, s.now())
+	})
 }
 
 // Waiver reads a customer's waiver: the view and whether an active waiver holds. A customer with no
@@ -562,6 +598,15 @@ func (r *Repository) SetFinanceChargeWaiver(ctx context.Context, in FinanceCharg
 	if r.pool == nil {
 		return FinanceChargeWaiverView{}, errNoDB
 	}
+	return r.setFinanceChargeWaiverOn(ctx, r.pool, in, now)
+}
+
+// financeChargeWaiverDB is the one statement reach a waiver write needs, the pool or a transaction.
+type financeChargeWaiverDB interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func (r *Repository) setFinanceChargeWaiverOn(ctx context.Context, q financeChargeWaiverDB, in FinanceChargeWaiverInput, now time.Time) (FinanceChargeWaiverView, error) {
 	in.Reason = strings.TrimSpace(in.Reason)
 	if in.Reason == "" {
 		return FinanceChargeWaiverView{}, ErrFinanceChargeWaiverReasonRequired
@@ -575,7 +620,7 @@ func (r *Repository) SetFinanceChargeWaiver(ctx context.Context, in FinanceCharg
 	if id := strings.TrimSpace(in.ActorID); id != "" {
 		waivedBy = &id
 	}
-	err := r.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		INSERT INTO finance_charge_waivers (customer_id, reason, waived_by, waived_at)
 		VALUES ($1::uuid, $2, $3::uuid, $4)
 		ON CONFLICT (customer_id) DO UPDATE
@@ -598,6 +643,10 @@ func (r *Repository) ClearFinanceChargeWaiver(ctx context.Context, in FinanceCha
 	if r.pool == nil {
 		return FinanceChargeWaiverView{}, errNoDB
 	}
+	return r.clearFinanceChargeWaiverOn(ctx, r.pool, in, now)
+}
+
+func (r *Repository) clearFinanceChargeWaiverOn(ctx context.Context, q financeChargeWaiverDB, in FinanceChargeWaiverInput, now time.Time) (FinanceChargeWaiverView, error) {
 	if strings.TrimSpace(in.Reason) == "" {
 		return FinanceChargeWaiverView{}, ErrFinanceChargeWaiverReasonRequired
 	}
@@ -610,7 +659,7 @@ func (r *Repository) ClearFinanceChargeWaiver(ctx context.Context, in FinanceCha
 	if id := strings.TrimSpace(in.ActorID); id != "" {
 		clearedBy = &id
 	}
-	err := r.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		UPDATE finance_charge_waivers
 		   SET cleared_by = $2::uuid, cleared_at = $3
 		 WHERE customer_id = $1::uuid AND cleared_at IS NULL
