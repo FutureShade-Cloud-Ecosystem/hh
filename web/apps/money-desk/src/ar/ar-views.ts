@@ -19,6 +19,7 @@ import type {
   BillingAccountPaymentPolicy,
   BillingAgingRow,
   BillingARLanding,
+  BillingCreditChangeRequest,
   BillingCreditHold,
   BillingCustomerWorkspace,
   BillingInvoiceDetail,
@@ -32,13 +33,13 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, canVoidReceipt, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditTargetWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, offeredChips, onAccountWords, relativeDay, reopenedInvoiceNos, rowMarks, type Mark, type RegisterChip, pastDueLine } from "./ar-logic.js";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, canDecideCreditChanges, canVoidReceipt, canWorkCreditChanges, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditAskWords, creditBlockedWords, creditDay, creditDecisionWords, creditPendingWords, creditTargetWords, creditWho, dayWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, offeredChips, onAccountWords, relativeDay, reopenedInvoiceNos, rowMarks, type CreditChangeWords, type Mark, type RegisterChip, pastDueLine } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderInvoiceCredits, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel, renderVoid } from "./office-views.js";
 import { renderSettingsPanels } from "./office-settings-views.js";
 
-export type Tab = "receivables" | "statements" | "holds" | "reminders" | "settings";
+export type Tab = "receivables" | "statements" | "holds" | "creditchanges" | "reminders" | "settings";
 // C8 register filter chips. The legacy strings ("open", "overdue", "promised", "disputed", "paid")
 // stay valid for backward compatibility with every stored URL and every automation that already
 // names them.
@@ -82,6 +83,15 @@ export interface CreditQuote {
   readonly message: string;
 }
 
+/**
+ * A read of credit change rows (CC-2): the state of the read and the rows the core answered.
+ * A failed read is said in words, never shown as an empty history.
+ */
+export interface CreditChangesRead {
+  readonly state: "loading" | "ready" | "failed";
+  readonly items: readonly BillingCreditChangeRequest[];
+}
+
 export interface AccountModel {
   readonly customerId: string;
   readonly name: string;
@@ -92,7 +102,9 @@ export interface AccountModel {
   /** Whether the account's invoices have arrived: a failed read is said in words, never shown as an empty table. */
   readonly invoicesState: "loading" | "ready" | "failed";
   readonly showAll: boolean;
-  readonly sub: "invoices" | "statement" | "contacts";
+  readonly sub: "invoices" | "statement" | "contacts" | "credit";
+  /** The credit limit's changes on this account: the history read, or null before the tab has been opened. */
+  readonly credit: CreditChangesRead | null;
   readonly right: RightMode;
   readonly selectedInvoiceId: string | null;
   readonly detail: BillingInvoiceDetail | null;
@@ -120,6 +132,7 @@ export interface DeskModel {
   readonly asOf: string;
   readonly nowMs: number;
   readonly roleCode: string;
+  readonly userId: string;
   readonly takenBy: string;
   readonly canLift: boolean;
   readonly landing: BillingARLanding | null;
@@ -141,6 +154,11 @@ export interface DeskModel {
   readonly account: AccountModel | null;
   /** The credit memo form, when it is open; null when it is not. */
   readonly credit: CreditForm | null;
+  // The credit change requests waiting for a decision in the caller's reach (CC-2), read when the
+  // Credit changes tab opens; null before the first read. The row whose reject reason form is open
+  // is named by creditRejectFor, or null when no form is open.
+  readonly creditChanges: CreditChangesRead | null;
+  readonly creditRejectFor: string | null;
   readonly office: OfficeModel;
   readonly busy: boolean;
   readonly error: string;
@@ -206,9 +224,12 @@ function segmented(label: string, items: readonly { id: string; word: string }[]
 
 export function tabsBar(model: DeskModel): TemplateResult {
   const tab = (id: Tab, word: string): TemplateResult => html`<button type="button" class="tab" data-action="tab" data-tab="${id}" aria-current="${model.tab === id ? "true" : "false"}">${word}</button>`;
+  // The credit change tab is a route admitted control (CC-2): a role the routes turn away sees no
+  // way in, the way it sees no lift controls on the holds tab.
+  const creditChanges = canWorkCreditChanges(model.roleCode) ? tab("creditchanges", "Credit changes") : nothing;
   return html`
     <nav class="tabs" aria-label="Money Desk views">
-      ${tab("receivables", "Receivables")} ${tab("statements", "Statements")} ${tab("holds", "Credit holds")} ${tab("reminders", "Reminders")} ${tab("settings", "Settings")}
+      ${tab("receivables", "Receivables")} ${tab("statements", "Statements")} ${tab("holds", "Credit holds")} ${creditChanges} ${tab("reminders", "Reminders")} ${tab("settings", "Settings")}
     </nav>
   `;
 }
@@ -752,6 +773,193 @@ export function renderHolds(model: DeskModel): TemplateResult {
   `;
 }
 
+// ---- the credit limit's changes (CC-2) ---------------------------------------------------------
+
+/**
+ * One account's credit limit: the figures the server holds, the ask a manager can raise, the
+ * request that waits in words, and the history in a bookkeeper's words.
+ *
+ * The form asks for the two things the core requires, the new limit and the reason, and says what
+ * the core will do with them before the press: a decrease takes effect at once, an increase waits
+ * for the approvals its tier needs. The tier itself is the core's to judge and the answer says
+ * which it did; no figure on this screen is worked out here.
+ */
+function creditLimitPanel(model: DeskModel, account: AccountModel): TemplateResult {
+  const aging = model.aging.find((a) => a.customer_id === account.customerId);
+  const read = account.credit;
+  const pending = (read?.items ?? []).filter((r) => r.status === "PENDING");
+  return html`
+    <section class="panel" aria-label="Credit limit" data-credit-limit>
+      <div class="panel-head"><h2>Credit limit</h2></div>
+      <dl class="facts">
+        <dt>Credit limit</dt><dd class="credit-figure" data-credit-limit-figure>${formatMoney(aging?.credit_limit_cents)}</dd>
+        ${aging === undefined ? nothing : html`<dt>Open balance</dt><dd>${formatMoney(aging.total_cents)}</dd>`}
+      </dl>
+      ${canWorkCreditChanges(model.roleCode)
+        ? html`
+            <form class="credit-limit-form" aria-label="Ask for a new credit limit">
+              <p class="callout" data-credit-limit-words>An increase waits for approval before the limit moves; a decrease or the same limit takes effect at once. Every ask and every decision is on the record.</p>
+              <label>
+                <span>New limit</span>
+                <input type="text" inputmode="decimal" class="amount" data-field="credit-limit-amount" placeholder="Such as 55,000.00" autocomplete="off" />
+              </label>
+              <label>
+                <span>Why the change is asked for (required)</span>
+                <input type="text" data-field="credit-limit-reason" placeholder="Such as the winter work needs more room" autocomplete="off" />
+              </label>
+              <div class="actions">
+                <button type="button" class="btn btn-primary" data-action="credit-limit-send" ?disabled=${model.busy}>Request the change</button>
+              </div>
+            </form>
+          `
+        : nothing}
+      ${pending.map(
+        (row) => html`
+          <p class="callout" data-credit-pending>
+            <b>${creditPendingWords(row, model.userId).replace(/\.$/, "")}:</b> ${creditAskWords(row)}, asked by ${creditWho(row.requested_by, row.requested_by_role, model.userId)} on ${creditDay(row.requested_at)}: ${row.reason}
+          </p>
+        `,
+      )}
+    </section>
+    ${creditHistoryPanel(model, account)}
+  `;
+}
+
+/** The history of this account's credit changes: who asked, who decided, before and after. */
+function creditHistoryPanel(model: DeskModel, account: AccountModel): TemplateResult {
+  const read = account.credit;
+  let body: TemplateResult;
+  if (read === null || read.state === "loading") {
+    body = html`<p class="dim" role="status" data-credit-history-loading>Loading the credit changes.</p>`;
+  } else if (read.state === "failed") {
+    body = html`
+      <p class="alert alert-error" role="alert" data-credit-history-failed>We could not load this account's credit changes. Try again.</p>
+      <div class="actions"><button type="button" class="btn btn-secondary" data-action="retry-credit-changes">Try again</button></div>
+    `;
+  } else if (read.items.length === 0) {
+    body = html`<div class="empty"><strong>No credit change has been asked for on this account.</strong></div>`;
+  } else {
+    body = html`
+      <div class="scroll">
+        <table class="stack credhist">
+          <thead><tr><th>Asked by</th><th>Why</th><th class="num">Before</th><th class="num">After</th><th>The decision</th></tr></thead>
+          <tbody>
+            ${read.items.map(
+              (row) => html`
+                <tr data-creditchange-row>
+                  <td><span class="who">${creditWho(row.requested_by, row.requested_by_role, model.userId)}</span><span class="dim small">${creditDay(row.requested_at)}</span></td>
+                  <td>${row.reason}</td>
+                  <td class="num" data-card-label="Before">${formatMoney(row.previous_limit_cents)}</td>
+                  <td class="num" data-card-label="After">${formatMoney(row.new_limit_cents ?? row.previous_limit_cents)}</td>
+                  <td data-card-label="Decision">
+                    <span class="marks">
+                      ${row.status === "PENDING" ? html`<span class="pill pill-watch">waiting</span>` : row.status === "REJECTED" ? html`<span class="pill pill-stop">rejected</span>` : html`<span class="pill pill-good">in place</span>`}
+                    </span>
+                    ${creditDecisionWords(row, model.userId)}
+                  </td>
+                </tr>
+              `,
+            )}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+  return html`
+    <section class="panel" aria-label="Credit change history" data-credit-history>
+      <div class="panel-head"><h3>The history</h3></div>
+      ${body}
+      <p class="dim small foot">Newest first. Before and after are the limits on record with each ask.</p>
+    </section>
+  `;
+}
+
+/**
+ * The approver's view (CC-2): the credit changes waiting for a decision in the caller's reach.
+ * The list is the server's, so the reach is the server's too; the controls are the deciding
+ * roles' alone, and every refusal reads in the server's own words.
+ */
+export function renderCreditChanges(model: DeskModel): TemplateResult {
+  const read = model.creditChanges;
+  const canDecide = canDecideCreditChanges(model.roleCode);
+  let body: TemplateResult;
+  if (read === null || read.state === "loading") {
+    body = html`<p class="dim" role="status" data-creditchanges-loading>Loading the credit changes.</p>`;
+  } else if (read.state === "failed") {
+    body = html`
+      <p class="alert alert-error" role="alert" data-creditchanges-failed>We could not load the credit changes. Try again.</p>
+      <div class="actions"><button type="button" class="btn btn-secondary" data-action="retry-credit-changes">Try again</button></div>
+    `;
+  } else if (read.items.length === 0) {
+    body = html`<div class="empty"><strong>No credit change is waiting.</strong><span class="dim">A raise above the amount that needs two approvals, or a second approval, lands here.</span></div>`;
+  } else {
+    body = html`
+      <div class="scroll">
+        <table class="stack credwait">
+          <thead><tr><th>Account</th><th>Why</th><th class="num">From</th><th class="num">To</th><th>Approvals</th><th><span class="visually-hidden">Act</span></th></tr></thead>
+          <tbody>
+            ${read.items.map((row) => {
+              const aging = model.aging.find((a) => a.customer_id === row.customer_id);
+              const rejecting = model.creditRejectFor === row.id;
+              return html`
+                <tr data-creditchange-row data-credit-id="${row.id}" aria-current="${rejecting ? "true" : "false"}">
+                  <td>
+                    <button type="button" class="link-row" data-action="open-account" data-customer-id="${row.customer_id}" data-right="receive" data-sub="credit"><span class="who">${aging?.customer_name ?? "Account"}</span></button>
+                    <span class="dim small">${aging?.account_no ?? ""}</span>
+                  </td>
+                  <td>${row.reason}</td>
+                  <td class="num" data-card-label="From">${formatMoney(row.previous_limit_cents)}</td>
+                  <td class="num" data-card-label="To">${formatMoney(row.new_limit_cents ?? row.previous_limit_cents)}</td>
+                  <td data-card-label="Approvals">${creditPendingWords(row, model.userId)}</td>
+                  <td class="act">
+                    ${canDecide
+                      ? (() => {
+                          const blocked = creditBlockedWords(row, model.userId);
+                          const why = blocked.approve !== "" ? blocked.approve : blocked.reject;
+                          return html`
+                            <div class="holdbtns">
+                              <button type="button" class="btn btn-primary small-btn ${blocked.approve === "" ? "" : "held"}" data-action="credit-approve" data-credit-id="${row.id}" aria-disabled="${blocked.approve === "" ? "false" : "true"}" ?disabled=${model.busy || blocked.approve !== ""}>Approve</button>
+                              <button type="button" class="btn btn-secondary small-btn ${blocked.reject === "" ? "" : "held"}" data-action="credit-reject" data-credit-id="${row.id}" aria-disabled="${blocked.reject === "" ? "false" : "true"}" ?disabled=${model.busy || blocked.reject !== ""}>Reject...</button>
+                            </div>
+                            ${why === "" ? nothing : html`<span class="dim small" data-credit-why>${why}</span>`}
+                          `;
+                        })()
+                      : html`<span class="dim small">A branch manager, the Financial Controller or the General Manager decides.</span>`}
+                  </td>
+                </tr>
+                ${rejecting && canDecide
+                  ? html`
+                      <tr class="credit-reject-row"><td colspan="6">
+                        <form class="credit-reject-form">
+                          <label>Why it is rejected (required)<input type="text" data-field="credit-reject-reason" placeholder="Such as the balance is past due" autocomplete="off" /></label>
+                          <div class="actions">
+                            <button type="button" class="btn btn-danger" data-action="credit-reject-send" data-credit-id="${row.id}" ?disabled=${model.busy}>Reject the change</button>
+                            <button type="button" class="btn btn-secondary" data-action="credit-reject-cancel">Cancel</button>
+                          </div>
+                        </form>
+                      </td></tr>
+                    `
+                  : nothing}
+              `;
+            })}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+  return html`
+    <div class="head">
+      <div><h1>Credit changes</h1><p class="dim">A raise to a customer's credit limit waits for approval before it moves; a decrease takes effect at once. Every ask and every decision is on the record.</p></div>
+    </div>
+    ${tabsBar(model)} ${messages(model)}
+    <section class="panel" aria-label="Credit changes waiting" data-creditchanges>
+      <div class="panel-head"><h3>Waiting for a decision</h3><span class="dim small">Branches you cover</span></div>
+      ${body}
+      <p class="dim small foot">The approver can never be the person who asked, and the same person never approves twice. A raise above the amount that needs two approvals records the first approval, and the limit moves only on the second.</p>
+    </section>
+  `;
+}
+
 // ---- an account --------------------------------------------------------------------------------
 
 /**
@@ -850,12 +1058,12 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
                 <tr data-invoice-row class="${paidRow ? "dimrow" : ""}" aria-current="${account.selectedInvoiceId === r.id ? "true" : "false"}">
                   <td><button type="button" class="link-row" data-action="open-invoice" data-invoice-id="${r.id}"><span class="who">${r.invoice_no}</span></button><span class="dim small">${r.order_no ?? ""}</span><button type="button" class="link small" data-action="credit-start" data-invoice-id="${r.id}">Credit</button></td>
                   <td class="nowrap">${relativeDay(r.issue_date, model.asOf)}</td>
-                  <td class="nowrap ${(r.days_overdue ?? 0) > 0 && !paidRow ? "late" : ""}">${relativeDay(r.due_date, model.asOf)}</td>
+                  <td class="nowrap ${(r.days_overdue ?? 0) > 0 && !paidRow ? "late" : ""}" data-card-label="Due">${relativeDay(r.due_date, model.asOf)}</td>
                   <td><span class="marks">${rowMarks(r).map(markPill)}</span></td>
                   <td class="num">${formatMoney(r.total_cents)}</td>
-                  <td class="num"><b>${formatMoney(r.balance_cents)}</b></td>
+                  <td class="num" data-card-label="Balance due"><b>${formatMoney(r.balance_cents)}</b></td>
                   <td class="num">${paidRow ? nothing : html`<button type="button" class="pick" role="checkbox" aria-checked="${picked ? "true" : "false"}" aria-label="Pay ${r.invoice_no}" data-action="pick" data-invoice-id="${r.id}"></button>`}</td>
-                  <td class="num applied-cell" data-applied-cell>${paidRow || applied === undefined ? "" : formatMoney(applied)}</td>
+                  <td class="num applied-cell" data-applied-cell data-card-label="Applied">${paidRow || applied === undefined ? "" : formatMoney(applied)}</td>
                 </tr>
                 ${model.credit !== null && model.credit.invoiceId === r.id
                   ? html`<tr class="credit-form-row"><td colspan="8">${creditForm(model, account)}</td></tr>`
@@ -869,7 +1077,7 @@ function invoiceTable(model: DeskModel, account: AccountModel): TemplateResult {
         </table>
       </div>
       <div class="foot-row">
-        <p class="dim small">Pick the invoices the payment is for and type the amount: the server splits it, oldest first. A paid invoice stays for context and takes nothing.</p>
+        <p class="dim small">Pick the invoices the payment is for and type the amount: the payment is split across the picked invoices, oldest first. A paid invoice stays for context and takes nothing.</p>
         ${firstId === "" ? nothing : html`<button type="button" class="link" data-action="open-invoice" data-invoice-id="${account.selectedInvoiceId ?? firstId}">Invoice history ›</button>`}
       </div>
     </section>
@@ -898,7 +1106,8 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
         <label>Amount<input type="text" inputmode="decimal" class="amount" data-field="receive-amount" autocomplete="off" placeholder="$0.00" />${account.amountText.trim() !== "" && parseAmountToCents(account.amountText) === null ? html`<span class="hint" role="alert" data-amount-hint>Enter dollars and cents, such as $100.00.</span>` : nothing}</label>
         <label>Received at, from the account<span class="ro" data-ro="received-at"></span></label>
       </div>
-      <p class="label gap">Payment method${pol !== null && pol.ach_first ? html` <span class="dim small" data-policy-ach-first>EFT first</span>` : html` <span class="dim small" data-policy-ach-first>Card first</span>`}</p>
+      <p class="label gap">Payment method</p>
+      <p class="dim small" data-policy-ach-first>${pol !== null && pol.ach_first ? "EFT is the usual choice" : "Card is the usual choice"}</p>
       ${segmented("Payment method", tenderIds.map((id) => ({ id, word: tenderWords[id] })), forcedEft ? "EFT" : account.method, "method")}
       ${pol !== null && pol.surcharge_rate_bps > 0 && account.method === "CARD" && surchargeCents > 0
         ? html`<p class="alert alert-warn" role="status" data-card-surcharge>Card surcharge: ${formatMoney(surchargeCents)} at ${(pol.surcharge_rate_bps / 100).toFixed(2)}% (${pol.surcharge_rate_bps} bps).</p>`
@@ -915,7 +1124,7 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
       ${account.previewError === "" ? nothing : html`<p class="alert alert-error" role="alert" data-preview-error>${account.previewError}</p>`}
       <ul class="alloc" data-allocation>
         ${answer === null
-          ? html`<li class="dim"><span>Type an amount and pick the invoices; the server shows the split.</span></li>`
+          ? html`<li class="dim"><span>Type an amount and pick the invoices; the split shows here.</span></li>`
           : html`
               ${answer.lines.filter((l) => l.outcome !== "NONE").map((l) => html`<li><span>${l.invoice_no} · ${lineWords(l)}</span><span>${formatMoney(l.applied_cents)}</span></li>`)}
               <li class="dim"><span>Unapplied</span><span>${formatMoney(answer.unapplied_cents)}</span></li>
@@ -930,7 +1139,7 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
       ${onHold
         ? html`<p class="callout" data-hold-stays><b>The hold stays.</b> Lifting it is the controller's.${stays.length > 0 ? ` The ${stays.map((l) => `${formatMoney(l.stays_open_cents)} left on ${l.invoice_no}`).join(" and the ")} keeps the account where it is.` : ""}</p>`
         : nothing}
-      <p class="dim small">One payment is one record: the server splits it across the picked invoices in one step. What shows afterwards is the server's balance.</p>
+      <p class="dim small">One payment is one record: the payment is split across the picked invoices in one step, oldest first. What shows afterwards is the customer's balance.</p>
     </section>
   `;
 }
@@ -1079,6 +1288,7 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
     <nav class="tabs" aria-label="Account views">
       <button type="button" class="tab" data-action="sub" data-choice="invoices" aria-current="${account.sub === "invoices" ? "true" : "false"}">Open invoices</button>
       <button type="button" class="tab" data-action="sub" data-choice="statement" aria-current="${account.sub === "statement" ? "true" : "false"}">Statement</button>
+      ${canWorkCreditChanges(model.roleCode) ? html`<button type="button" class="tab" data-action="sub" data-choice="credit" aria-current="${account.sub === "credit" ? "true" : "false"}">Credit limit</button>` : nothing}
       <span class="tab tab-later" aria-disabled="true">Activity ${later()}</span>
       <button type="button" class="tab" data-action="sub" data-choice="contacts" aria-current="${account.sub === "contacts" ? "true" : "false"}">Contacts</button>
     </nav>
@@ -1088,7 +1298,9 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
       ? statementDoc(model, account)
       : account.sub === "contacts"
         ? renderContacts(model.office, account)
-        : html`
+        : account.sub === "credit"
+          ? creditLimitPanel(model, account)
+          : html`
           <div class="cols">
             <div class="col-main">${invoiceTable(model, account)}</div>
             <div class="col-side">${account.right === "invoice" ? invoicePanel(model, account) : account.right === "promise" ? promisePanel(model, account) : receivePanel(model, account)}</div>

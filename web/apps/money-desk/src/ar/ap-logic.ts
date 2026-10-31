@@ -32,6 +32,10 @@ export type PurchasingAPAgingItem = {
   readonly total_cents: number;
   readonly paid_cents: number;
   readonly open_cents: number;
+  /** The document currency, and the total and open amount in it: for a CAD bill they equal the CAD figures. */
+  readonly currency?: string;
+  readonly doc_total_cents?: number;
+  readonly doc_open_cents?: number;
   /** The band the obligation sits in, in the core's key for the purchasing route. */
   readonly bucket: string;
 };
@@ -97,8 +101,10 @@ export interface PayBillForm {
   readonly billId: string;
   /** The bill's own number, so the form says which bill it is paying. */
   readonly billNo: string;
-  /** What the bill has open: the cap on the amount. */
+  /** What the bill has open, in the bill's own currency: the cap on the amount. */
   readonly openCents: number;
+  /** The bill's currency. A bill that is not CAD is paid in it, at the rate the person types. */
+  readonly currency: string;
   /** The amount as the person typed it, read back as money when the field is left. */
   readonly amountText: string;
   /** The day the payment was made: the house day by default. */
@@ -142,20 +148,61 @@ export function canPayBills(roleCode: string): boolean {
   return roleCode === "financial_controller" || roleCode === "general_manager";
 }
 
+/** True for a bill in a currency other than CAD: its Pay takes the amount in that currency and a rate. */
+export function isForeignBill(currency: string | undefined): boolean {
+  return currency !== undefined && currency !== "" && currency.toUpperCase() !== "CAD";
+}
+
+/**
+ * What the bill has open in its own currency: the core's doc_open_cents for a bill that is not CAD,
+ * the CAD open amount otherwise. This is the figure the Pay route caps the amount at.
+ */
+export function billOpenInOwnCurrency(item: Pick<PurchasingAPAgingItem, "open_cents" | "currency" | "doc_open_cents">): number {
+  return isForeignBill(item.currency) && typeof item.doc_open_cents === "number" ? item.doc_open_cents : item.open_cents;
+}
+
+/** An amount in the bill's own currency: a CAD amount reads as before, another reads with its code. */
+export function formatBillMoney(cents: number, currency: string): string {
+  return isForeignBill(currency) ? `${formatMoney(cents)} ${currency.toUpperCase()}` : formatMoney(cents);
+}
+
 /** What the form says about the bill it is paying: which bill, to whom, and what is open on it. */
-export function payTargetWords(billNo: string, payee: string, openCents: number): string {
-  return `Paying ${billNo} to ${payee}. The open amount is ${formatMoney(openCents)}.`;
+export function payTargetWords(billNo: string, payee: string, openCents: number, currency = "CAD"): string {
+  return `Paying ${billNo} to ${payee}. The open amount is ${formatBillMoney(openCents, currency)}.`;
 }
 
 /** The words when the amount asked for is more than the bill has open. */
-export function payOverOpenWords(openCents: number): string {
-  return `The amount cannot be more than the open amount, ${formatMoney(openCents)}.`;
+export function payOverOpenWords(openCents: number, currency = "CAD"): string {
+  return `The amount cannot be more than the open amount, ${formatBillMoney(openCents, currency)}.`;
+}
+
+/** The words when a bill in another currency is paid without a usable rate. */
+export function payRateWords(currency: string): string {
+  return `Enter the rate the payment was made at, as dollars of CAD for one ${currency.toUpperCase()}, such as 1.3500.`;
+}
+
+/**
+ * What was typed in the rate box: a positive decimal with at most six decimals, as the number the
+ * route takes, or null. Nothing is computed from it here; the core converts and judges it.
+ */
+export function parseRate(text: string): number | null {
+  const t = text.trim();
+  if (!/^\d{1,6}(\.\d{1,6})?$/.test(t)) return null;
+  const n = Number(t);
+  return n > 0 ? n : null;
 }
 
 /** The words when the amount box holds nothing the desk can read as money. */
 export function payAmountWords(): string {
   return "The amount must be a number of dollars, such as 250.00.";
 }
+
+/**
+ * The Payables area's own views: the open AP board, and the T5018 year report (W3-T51). The area
+ * stands beside the receivables desk in the Money Desk's area switch, so its own nav is the way
+ * from one of its views to the other.
+ */
+export type PayablesView = "aging" | "t5018";
 
 /**
  * The bands, in the desk's one vocabulary, with the contract's field on each. The word is the

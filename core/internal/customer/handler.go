@@ -51,6 +51,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// writes. It is a legal record about a person, not a preference toggle, and the guard is the
 	// cheapest available statement of that.
 	r.Handle("PUT /api/v1/customers/{id}/sms-consent", g.RequireManager(h.staff(h.setSMSConsent)))
+	// Wave 3 JA-1: the job accounts under a customer. The reads are staff reads and the writes
+	// manager writes, the customer record's own authz, and every one of them is branch fenced.
+	h.registerJobRoutes(r, g)
 }
 
 // get backs the one-account read. GET /api/v1/customers/{id}. An account the caller's branches do not
@@ -183,6 +186,12 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusBadRequest, bad.Error())
 	case errors.Is(err, ErrDuplicateAccountNo):
 		httpx.Error(w, http.StatusConflict, "account number already in use")
+	case errors.Is(err, ErrDuplicateJobNo):
+		httpx.Error(w, http.StatusConflict, "job number already in use for this customer")
+	case errors.Is(err, ErrJobAlreadyClosed):
+		httpx.Error(w, http.StatusConflict, "the job is already closed")
+	case errors.Is(err, ErrJobClosed):
+		httpx.Error(w, http.StatusConflict, "the job is closed")
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "not found")
 	case errors.Is(err, ErrForbidden):

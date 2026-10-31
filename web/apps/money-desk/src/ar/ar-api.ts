@@ -24,6 +24,8 @@ import {
   type BillingARLanding,
   type BillingARWorklistResponse,
   type BillingCreateHoldRequest,
+  type BillingCreditChangePage,
+  type BillingCreditChangeRequest,
   type BillingCreditHold,
   type BillingCreditMemoInput,
   type BillingCreditMemoQuote,
@@ -55,6 +57,7 @@ import {
 
 import { OfficeApi } from "./office-api.js";
 import type { PurchasingAPAgingPage } from "./ap-logic.js";
+import type { PurchasingT5018Report } from "./t5018-logic.js";
 
 export type PaymentMethod = "CASH" | "CARD" | "CHEQUE" | "EFT";
 
@@ -110,21 +113,38 @@ export class ArApi {
   }
 
   /**
+   * The year's T5018 report: the core's GET /api/v1/purchasing/t5018. The year is the dealer's
+   * own, so the view asks for one and the route answers with the year it read.
+   */
+  t5018(opts: { year?: number; branch_id?: string } = {}): Promise<Result<PurchasingT5018Report>> {
+    return staffPurchasing.purchasingT5018Report(this.#client, opts);
+  }
+
+  /**
+   * The same report as the file a bookkeeper hands the contractor's book: the core's own CSV
+   * answer, fetched as text, so the file says what the screen says.
+   */
+  t5018Csv(opts: { year?: number; branch_id?: string } = {}): Promise<Result<string>> {
+    return staffPurchasing.purchasingT5018ReportCSV(this.#client, opts);
+  }
+
+  /**
    * One payment against a vendor bill: the core's POST /api/v1/purchasing/bills/{id}/payments.
    *
    * The key rides the Idempotency-Key header, one key per press, so a double press pays once and
    * a retry after a lost answer is judged against the first press. The amount is the server's to
-   * accept or refuse (the open balance caps it); the desk only says what it typed.
+   * accept or refuse (the open balance caps it); the desk only says what it typed. A bill that is not
+   * CAD takes the amount in its own currency and the rate it was paid at (fx_rate).
    */
   payBill(
     id: string,
-    input: { amountCents: number; paidAt: string; note: string },
+    input: { amountCents: number; paidAt: string; note: string; fxRate?: number },
     key: string,
   ): Promise<Result<PurchasingBillDetail>> {
     return staffPurchasing.purchasingPayBill(
       this.#client,
       id,
-      { amount_cents: input.amountCents, paid_at: input.paidAt, note: input.note },
+      { amount_cents: input.amountCents, paid_at: input.paidAt, note: input.note, ...(input.fxRate === undefined ? {} : { fx_rate: input.fxRate }) },
       { idempotencyKey: key },
     );
   }
@@ -269,6 +289,53 @@ export class ArApi {
   // rides through the same Result channel every other call rides through.
   createHold(input: BillingCreateHoldRequest): Promise<Result<BillingCreditHold>> {
     return staffBilling.billingCreateHold(this.#client, input);
+  }
+
+  // ---- the credit limit's changes (CC-2) -----------------------------------------------------------------
+
+  /**
+   * One account's credit change history, newest first: the asks, the decisions, before and after.
+   * The core's list answers only the branches the caller reaches.
+   */
+  creditChanges(customerId: string): Promise<Result<BillingCreditChangePage>> {
+    return staffBilling.billingListCreditChanges(this.#client, { customer_id: customerId, limit: 50 });
+  }
+
+  /**
+   * Every credit change waiting for a decision in the caller's reach, newest first.
+   */
+  pendingCreditChanges(): Promise<Result<BillingCreditChangePage>> {
+    return staffBilling.billingListCreditChanges(this.#client, { status: "PENDING", limit: 50 });
+  }
+
+  /**
+   * Ask for a new credit limit for one account. The core decides everything that is money: a
+   * decrease or the same limit takes effect at once, an increase waits for the approvals its tier
+   * needs, and the answer says which it did.
+   */
+  requestCreditChange(input: { customerId: string; newLimitCents: number; reason: string }): Promise<Result<BillingCreditChangeRequest>> {
+    return staffBilling.billingRequestCreditChange(this.#client, {
+      customer_id: input.customerId,
+      new_limit_cents: input.newLimitCents,
+      reason: input.reason,
+    });
+  }
+
+  /**
+   * Approve a waiting credit change. The core judges the request under one lock, rechecks the tier
+   * on the limit the account has now, applies the limit when the approvals are met, and answers
+   * with the row as it stands; a rising tier records the first of two approvals and moves nothing.
+   */
+  approveCreditChange(id: string): Promise<Result<BillingCreditChangeRequest>> {
+    return staffBilling.billingApproveCreditChange(this.#client, id, {});
+  }
+
+  /**
+   * Reject a waiting credit change. The core requires the reason, carries it on the row, and the
+   * asked limit never takes effect.
+   */
+  rejectCreditChange(id: string, reason: string): Promise<Result<BillingCreditChangeRequest>> {
+    return staffBilling.billingRejectCreditChange(this.#client, id, { reason });
   }
 
   // Generate a deterministic dealer paylink (Change 8 S3). Staff-gated: the row

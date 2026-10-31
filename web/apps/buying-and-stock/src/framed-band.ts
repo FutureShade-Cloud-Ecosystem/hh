@@ -6,6 +6,25 @@
 
 export const FRAMED_BAND_APP = "Buying and Stock";
 
+const ROLE_LABELS: Record<string, string> = {
+  payables_receivables: "Payables and Receivables",
+  financial_controller: "Financial Controller",
+  procurement_manager: "Procurement manager",
+  yard_manager: "Yard manager",
+  inside_sales: "Inside sales",
+  super_admin: "Super Admin",
+};
+
+/** Maps a raw role key (with or without the demo suffix) to the role's human label. */
+export function framedBandRoleLabel(raw: string): string {
+  const trimmed = raw.trim();
+  const demo = /\s*\(demo\)\s*$/i.test(trimmed);
+  const base = trimmed.replace(/\s*\(demo\)\s*$/i, "").trim();
+  const mapped = ROLE_LABELS[base];
+  if (mapped === undefined) return trimmed;
+  return demo ? `${mapped} (demo)` : mapped;
+}
+
 /** The surface label for one area id: purchase orders are the board's front door. */
 export function framedBandSurface(areaId: string): string {
   if (areaId === "incoming") return "Incoming";

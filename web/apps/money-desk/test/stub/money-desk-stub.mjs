@@ -45,6 +45,13 @@ const BRANCH = "b0000000-0000-4000-8000-000000000001";
 // memo's rail reads this number, the way the route does, and the stub's own credit route parks
 // against it: a credit at or over it waits for a second pair of eyes and moves no money.
 const GL_APPROVAL_THRESHOLD_CENTS = 500_000;
+// The credit change world's own thresholds: the core's defaults (credit_change.go,
+// DefaultCreditIncreaseFirstThresholdCents 0 and DefaultCreditIncreaseSecondThresholdCents
+// $25,000.00), the ones a dealer's policy row carries until the dealer sets its own. An increase
+// over the first line waits; over the second line it waits for two approvals.
+const CREDIT_FIRST_THRESHOLD_CENTS = 0;
+const CREDIT_SECOND_THRESHOLD_CENTS = 2_500_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // The core's closed table, in its order: the till's pair, the Yard manager, the Yard Team and the
 // Driver, Payables and Receivables, the Procurement manager, then the Money Desk's controller. The
 // table is listed whole so the way in's filter and the cross app card legs mean something against it. The
@@ -60,6 +67,9 @@ const FLOWS = [
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
+  // The coming roles cycle's branch manager (the core's closed table carries the row): the credit
+  // change routes' first approver set needs one, and no earlier row stands for it.
+  { flow: "branch-manager", role_code: "branch_manager", label: "Branch Manager" },
 ];
 
 const BRANCHES = [
@@ -114,6 +124,30 @@ const USERS = {
     tier: 1,
     scope: "GLOBAL",
   },
+  // The platform administrator: the second approver the controller's first approval can be completed
+  // by on this desk (the General Manager holds no receivables area here). Not a flow of the way in
+  // (the stub's flow table is the core's whole table); the token names the id.
+  "super-admin": {
+    user_id: "de110000-0000-4000-9000-000000000009",
+    email: "platform.admin@hh-demo.invalid",
+    display_name: "Platform administrator (demo)",
+    role_code: "super_admin",
+    role_name: "Platform administrator",
+    tier: 1,
+    scope: "GLOBAL",
+  },
+  // The branch manager (the core's flows table row, platform user id and address from there): a
+  // tier two, branch scoped caller, the credit change routes' first approver that is not the
+  // controller. The grant is the demo's default branch.
+  "branch-manager": {
+    user_id: "de5b2000-0000-4000-9000-000000000003",
+    email: "branch.manager@hh-demo.invalid",
+    display_name: "Branch manager (demo)",
+    role_code: "branch_manager",
+    role_name: "Branch Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
 };
 
 // The controller's id rides the token's sub; the walled moves read it from there.
@@ -154,6 +188,22 @@ function managesMoneyDesk(req) {
   if (caller === null) return false;
   if (caller.tier < 1 || caller.tier > 2) return false;
   return MONEY_DESK_MANAGERS.has(caller.role_code);
+}
+
+// The credit change routes' own gate (guards.RequireManager over identity's tiers): a tier one or
+// tier two role passes and everything else draws the RBAC 403's shared body. The service's finer
+// refusals (a role that may not decide, a self approval) are the core's own sentences further down.
+function isManagerCaller(req) {
+  const caller = callerOf(req);
+  return caller !== null && caller.tier >= 1 && caller.tier <= 2;
+}
+
+// The branches a caller reaches: a global role reaches every branch; the demo's branch manager
+// holds the default branch's grant, the way the core's staff rows would carry it.
+function branchReachOf(caller) {
+  if (caller === null) return [];
+  if (caller.scope === "GLOBAL") return BRANCHES.map((b) => b.id);
+  return [BRANCHES[0].id];
 }
 
 // A token with the shape the app reads an expiry from: three parts, the
@@ -305,6 +355,10 @@ function reset(kind = "full") {
     payments: [],
     credits: [{ acct: 4, amount_cents: 12_500 }],
     holds: [],
+    // The credit limit's world (CC-2): the live limit per account, and the requests. Both are
+    // seeded after the invoices and holds below.
+    credit_limits: new Map(),
+    credit_changes: [],
     credit_memos: [],
     account_credits: [],
     credit_applications: [],
@@ -438,11 +492,134 @@ function reset(kind = "full") {
     { id: uuid("a", 702), run_id: uuid("a", 703), acct: 1, mode: "INTERIM", as_of: dayOffset(-2), closing: 728_140, delivery: "QUEUED", created_at: dayOffset(-2) },
     { id: uuid("a", 704), run_id: uuid("a", 705), acct: 2, mode: "MASS", as_of: dayOffset(-30), closing: 345_500, delivery: "SENT", created_at: dayOffset(-30) },
   );
+
+  // The credit limit's live figures (CC-2): each account's limit as the core's customer rows hold
+  // it, moved only through the credit change routes the way the core moves them. The requests
+  // themselves are seeded the way the core's rows read: one waiting for a single approval, one over
+  // the second line with the first of two approvals recorded, and two decided rows for the history.
+  for (const a of ACCOUNTS) world.credit_limits.set(a.n, a.limit);
+  const stamp = (days) => `${dayOffset(days)}T12:00:00Z`;
+  world.credit_changes.push(
+    {
+      id: uuid("5", 1),
+      customer_id: custId(2),
+      branch_id: branchOf(2),
+      change_kind: "LIMIT_CHANGE",
+      previous_limit_cents: 3_000_000,
+      new_limit_cents: 3_200_000,
+      delta_cents: 200_000,
+      reason: "The winter work needs more room on the account",
+      status: "PENDING",
+      required_approvals: 1,
+      first_threshold_cents: CREDIT_FIRST_THRESHOLD_CENTS,
+      second_threshold_cents: CREDIT_SECOND_THRESHOLD_CENTS,
+      requested_by: USERS["branch-manager"].user_id,
+      requested_by_role: "BRANCH_MANAGER",
+      requested_at: stamp(-3),
+      created_at: stamp(-3),
+      updated_at: stamp(-3),
+    },
+    {
+      id: uuid("5", 2),
+      customer_id: custId(1),
+      branch_id: branchOf(1),
+      change_kind: "LIMIT_CHANGE",
+      previous_limit_cents: 5_000_000,
+      new_limit_cents: 8_500_000,
+      delta_cents: 3_500_000,
+      reason: "Two large municipal jobs start in the spring",
+      status: "PENDING",
+      required_approvals: 2,
+      first_threshold_cents: CREDIT_FIRST_THRESHOLD_CENTS,
+      second_threshold_cents: CREDIT_SECOND_THRESHOLD_CENTS,
+      requested_by: USERS["payables-receivables"].user_id,
+      requested_by_role: "PAYABLES_RECEIVABLES",
+      requested_at: stamp(-6),
+      first_approved_by: USERS["financial-controller"].user_id,
+      first_approved_by_role: "FINANCIAL_CONTROLLER",
+      first_approved_at: stamp(-2),
+      created_at: stamp(-6),
+      updated_at: stamp(-2),
+    },
+    {
+      id: uuid("5", 3),
+      customer_id: custId(1),
+      branch_id: branchOf(1),
+      change_kind: "LIMIT_CHANGE",
+      previous_limit_cents: 6_000_000,
+      new_limit_cents: 5_000_000,
+      delta_cents: -1_000_000,
+      reason: "The account is over its arrears promise",
+      status: "APPLIED",
+      required_approvals: 0,
+      first_threshold_cents: CREDIT_FIRST_THRESHOLD_CENTS,
+      second_threshold_cents: CREDIT_SECOND_THRESHOLD_CENTS,
+      requested_by: USERS["financial-controller"].user_id,
+      requested_by_role: "FINANCIAL_CONTROLLER",
+      requested_at: stamp(-9),
+      applied_at: stamp(-9),
+      created_at: stamp(-9),
+      updated_at: stamp(-9),
+    },
+    {
+      id: uuid("5", 4),
+      customer_id: custId(3),
+      branch_id: branchOf(3),
+      change_kind: "LIMIT_CHANGE",
+      previous_limit_cents: 2_500_000,
+      new_limit_cents: 3_500_000,
+      delta_cents: 1_000_000,
+      reason: "Asked for at the counter",
+      status: "REJECTED",
+      required_approvals: 1,
+      first_threshold_cents: CREDIT_FIRST_THRESHOLD_CENTS,
+      second_threshold_cents: CREDIT_SECOND_THRESHOLD_CENTS,
+      requested_by: USERS["branch-manager"].user_id,
+      requested_by_role: "BRANCH_MANAGER",
+      requested_at: stamp(-12),
+      rejected_by: USERS["financial-controller"].user_id,
+      rejected_by_role: "FINANCIAL_CONTROLLER",
+      rejected_at: stamp(-11),
+      rejection_reason: "The balance is past due; ask again once the arrears clear",
+      created_at: stamp(-12),
+      updated_at: stamp(-11),
+    },
+  );
 }
 
 const acct = (n) => ACCOUNTS.find((a) => a.n === n);
 const custId = (n) => uuid("e", n);
 const acctOfCust = (id) => ACCOUNTS.find((a) => custId(a.n) === id);
+
+// A credit change row on the wire: Go's omitempty drops the empty strings, so the stub does too.
+function creditChangeRow(row) {
+  const out = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (value === undefined || value === "") continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+// One request by id, within the caller's branch reach; the core words both misses the same.
+function findCreditChange(id, caller) {
+  const row = UUID.test(id) ? world.credit_changes.find((r) => r.id === id.toLowerCase()) : undefined;
+  if (row === undefined || !branchReachOf(caller).includes(row.branch_id)) return "credit change request not found";
+  return row;
+}
+
+// The apply step: a limit change writes the account's live limit and records the limit it replaced.
+function applyCreditChange(row, now) {
+  if (row.change_kind === "LIMIT_CHANGE" && row.new_limit_cents !== undefined) {
+    const account = acctOfCust(row.customer_id);
+    const prev = world.credit_limits.get(account.n) ?? account.limit;
+    row.previous_limit_cents = prev;
+    row.delta_cents = row.new_limit_cents - prev;
+    world.credit_limits.set(account.n, row.new_limit_cents);
+  }
+  row.status = "APPLIED";
+  row.applied_at = now;
+}
 const invById = (id) => world.invoices.find((i) => i.id === id);
 
 // workspaceFor builds the full workspace payload for one customer. The 5-bucket aging
@@ -489,7 +666,9 @@ function workspaceFor(customerId) {
   const lastPay = payments.length > 0 ? payments[0] : null;
   const openCents = open.reduce((s, r) => s + r.balance_cents, 0);
   const overdueCents = open.reduce((s, r) => s + (r.days_overdue > 0 ? r.balance_cents : 0), 0);
-  const utilization = a.limit > 0 ? Math.round((openCents * 10000) / a.limit) : 0;
+  // The live limit, the same figure the aging quotes (the credit change world moves it).
+  const limitCents = world.credit_limits.get(a.n) ?? a.limit;
+  const utilization = limitCents > 0 ? Math.round((openCents * 10000) / limitCents) : 0;
   const tagged = world.ap_contacts.get(customerId);
   const header = {
     customer_id: customerId,
@@ -498,9 +677,9 @@ function workspaceFor(customerId) {
     status: accountStatus(a.n),
     account_position_withheld: false,
     terms_days: a.terms,
-    credit_limit_cents: a.limit,
+    credit_limit_cents: limitCents,
     open_cents: openCents,
-    available_credit_cents: a.limit - openCents,
+    available_credit_cents: limitCents - openCents,
     overdue_cents: overdueCents,
     utilization_bps: utilization,
     primary_ap_contact_name: tagged ? tagged.name : "",
@@ -704,7 +883,7 @@ function position(n) {
   const open = world.invoices.filter((i) => i.acct === n);
   const open_balance_cents = open.reduce((s, i) => s + i.balance_cents, 0);
   const overdue_cents = open.filter((i) => i.late > 0).reduce((s, i) => s + i.balance_cents, 0);
-  const credit_limit_cents = acct(n).limit;
+  const credit_limit_cents = world.credit_limits.get(n) ?? acct(n).limit;
   return { open_balance_cents, credit_limit_cents, available_credit_cents: credit_limit_cents - open_balance_cents, overdue_cents };
 }
 
@@ -840,7 +1019,9 @@ function agingRows() {
       account_no: a.no,
       branch_id: branchOf(a.n),
       payment_terms_days: a.terms,
-      credit_limit_cents: a.limit,
+      // The limit the credit change world holds: an applied change moves it, the way the core's
+      // customer rows move, so every read after a decision quotes the server's figure.
+      credit_limit_cents: world.credit_limits.get(a.n) ?? a.limit,
       ...row,
       total_cents: total,
       past_bucket_cents: total - row.current_cents,
@@ -1115,7 +1296,7 @@ async function handle(req, res) {
   if (method === "GET" && path === "/_stub/finstmt-calls") return send(res, 200, { calls: finstmtWorld.calls(), exports: finstmtWorld.exports(), year: finstmtWorld.fiscalYear });
   if (method === "POST" && path === "/_stub/scenario") {
     const body = await readBody(req);
-    reset(["empty", "wide", "pro", "unwired"].includes(body?.name) ? body.name : "full");
+    reset(["empty", "wide", "pro", "unwired", "usd"].includes(body?.name) ? body.name : "full");
     return send(res, 200, { ok: true });
   }
   if (method === "POST" && path === "/_stub/park-apply") {
@@ -1209,6 +1390,20 @@ async function handle(req, res) {
     const asOf = q.get("as_of") ?? dayOffset(0);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return refuse(res, 400, "as_of must be YYYY-MM-DD");
     return send(res, 200, purchasingWorld.apAging(asOf));
+  }
+  // The year's T5018 report and its file (the core's GET /api/v1/purchasing/t5018 and
+  // /api/v1/purchasing/t5018.csv, W3-T51). The year is the dealer's own: absent year means the
+  // current house year, and a year that is not a year is refused in the core's words.
+  if (method === "GET" && (path === "/api/v1/purchasing/t5018" || path === "/api/v1/purchasing/t5018.csv")) {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const raw = q.get("year");
+    if (raw !== null && !/^\d{4}$/.test(raw)) return refuse(res, 400, "the T5018 year must be a year, as four digits");
+    const year = raw === null ? Number(dayOffset(0).slice(0, 4)) : Number(raw);
+    if (path.endsWith(".csv")) {
+      res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="t5018-${year}.csv"` });
+      return res.end(purchasingWorld.t5018Csv(year));
+    }
+    return send(res, 200, purchasingWorld.t5018Report(year));
   }
   // One payment against a vendor bill (the core's POST /api/v1/purchasing/bills/{id}/payments).
   // The key rides the Idempotency-Key header, one key per press: a key already spent on this bill
@@ -1582,6 +1777,170 @@ async function handle(req, res) {
     };
     world.holds.push(hold);
     return send(res, 201, hold);
+  }
+
+  // The credit change routes (core/internal/billing/credit_change.go and credit_change_handler.go):
+  // the doors the credit limit's screens ride. The gate is the route's own (RequireManager over
+  // identity's tiers, the shared Forbidden body); every refusal below is the core's sentence word
+  // for word, the checks run in the core's order, and every answer carries the core's fields with
+  // its omits (creditChangeRow strips the empties the way Go's omitempty does).
+  if (method === "POST" && path === "/api/v1/ar/credit-changes") {
+    if (!isManagerCaller(req)) return send(res, 403, { error: "Forbidden" });
+    const body = await readBody(req);
+    if (body === null) return refuse(res, 400, "invalid JSON body");
+    const caller = callerOf(req);
+    const customerId = typeof body.customer_id === "string" ? body.customer_id.trim().toLowerCase() : "";
+    const account = ACCOUNTS.find((a) => custId(a.n) === customerId);
+    if (customerId === "" || account === undefined || !branchReachOf(caller).includes(branchOf(account.n))) return refuse(res, 404, "customer not found");
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    if (reason === "") return refuse(res, 400, "credit change: a reason is required");
+    const hasHold = body.place_hold === true || (typeof body.hold_kind === "string" && body.hold_kind.trim() !== "");
+    const hasLimit = body.new_limit_cents !== undefined && body.new_limit_cents !== null;
+    const currentLimit = world.credit_limits.get(account.n) ?? account.limit;
+    let changeKind = "LIMIT_CHANGE";
+    let newLimitCents;
+    let deltaCents = 0;
+    let holdKind = "";
+    if (hasHold && !hasLimit) {
+      changeKind = "HOLD";
+      holdKind = (typeof body.hold_kind === "string" ? body.hold_kind : "").trim() || "MANUAL";
+      if (["NSF", "AR_AGING", "CREDIT_LIMIT", "COD"].includes(holdKind)) {
+        return refuse(res, 400, `credit change: specify either a non-negative new_limit_cents or a hold, not both: system hold kind ${holdKind} is placed by the credit engine and cannot be placed by hand, use MANUAL`);
+      }
+      if (holdKind !== "MANUAL") return refuse(res, 400, "credit change: specify either a non-negative new_limit_cents or a hold, not both");
+    } else if (!hasHold && hasLimit && Number.isInteger(body.new_limit_cents) && body.new_limit_cents >= 0) {
+      newLimitCents = body.new_limit_cents;
+      deltaCents = newLimitCents - currentLimit;
+    } else {
+      return refuse(res, 400, "credit change: specify either a non-negative new_limit_cents or a hold, not both");
+    }
+    let requiredApprovals = 0;
+    let status = "APPLIED";
+    if (changeKind === "LIMIT_CHANGE" && deltaCents > CREDIT_FIRST_THRESHOLD_CENTS) {
+      status = "PENDING";
+      requiredApprovals = deltaCents <= CREDIT_SECOND_THRESHOLD_CENTS ? 1 : 2;
+    }
+    const now = NOW_ISO();
+    const row = {
+      id: uuid("5", 1000 + world.credit_changes.length),
+      customer_id: custId(account.n),
+      branch_id: branchOf(account.n),
+      change_kind: changeKind,
+      previous_limit_cents: currentLimit,
+      new_limit_cents: newLimitCents,
+      delta_cents: deltaCents,
+      hold_kind: holdKind,
+      reason,
+      status,
+      required_approvals: requiredApprovals,
+      first_threshold_cents: CREDIT_FIRST_THRESHOLD_CENTS,
+      second_threshold_cents: CREDIT_SECOND_THRESHOLD_CENTS,
+      requested_by: caller.user_id,
+      requested_by_role: caller.role_code.toUpperCase(),
+      requested_at: now,
+      created_at: now,
+      updated_at: now,
+    };
+    if (requiredApprovals === 0) applyCreditChange(row, now);
+    world.credit_changes.unshift(row);
+    return send(res, 201, creditChangeRow(row));
+  }
+
+  if (method === "GET" && path === "/api/v1/ar/credit-changes") {
+    if (!isManagerCaller(req)) return send(res, 403, { error: "Forbidden" });
+    const caller = callerOf(req);
+    const reach = branchReachOf(caller);
+    const customerId = (q.get("customer_id") ?? "").trim().toLowerCase();
+    const branchId = (q.get("branch_id") ?? "").trim().toLowerCase();
+    const status = (q.get("status") ?? "").trim().toUpperCase();
+    if (customerId !== "") {
+      const account = ACCOUNTS.find((a) => custId(a.n) === customerId);
+      if (account === undefined || !reach.includes(branchOf(account.n))) return refuse(res, 404, "customer not found");
+    }
+    // A branch the caller cannot reach answers an empty page, the way the service's early return does.
+    if (branchId !== "" && !reach.includes(branchId)) return send(res, 200, { items: [], next_cursor: null, limit: 50 });
+    const asked = Number(q.get("limit") ?? "50");
+    const limit = !Number.isInteger(asked) || asked <= 0 || asked > 200 ? 50 : asked;
+    const items = world.credit_changes
+      .filter((r) => customerId === "" || r.customer_id === customerId)
+      .filter((r) => branchId === "" || r.branch_id === branchId)
+      .filter((r) => status === "" || r.status === status)
+      .filter((r) => reach.includes(r.branch_id))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id))
+      .slice(0, limit)
+      .map(creditChangeRow);
+    return send(res, 200, { items, next_cursor: null, limit });
+  }
+
+  m = path.match(/^\/api\/v1\/ar\/credit-changes\/([^/]+)\/approve$/);
+  if (m && method === "POST") {
+    if (!isManagerCaller(req)) return send(res, 403, { error: "Forbidden" });
+    const body = await readBody(req);
+    if (body === null) return refuse(res, 400, "invalid JSON body");
+    const caller = callerOf(req);
+    const found = findCreditChange(m[1], caller);
+    if (typeof found === "string") return refuse(res, 404, found);
+    const row = found;
+    if (row.status !== "PENDING") return refuse(res, 409, `credit change: request is not pending: credit change request has already been ${row.status.toLowerCase()}`);
+    if (row.requested_by === caller.user_id) return refuse(res, 403, "credit change: requester cannot approve their own request");
+    if (row.first_approved_by !== undefined && row.first_approved_by === caller.user_id) return refuse(res, 403, "credit change: the same person cannot approve twice");
+    // The tier is judged on the limit the account has NOW, never the limit at request (the fix the
+    // credit change round landed): the delta is recomputed and the approvals required only ever rise.
+    if (row.change_kind === "LIMIT_CHANGE" && row.new_limit_cents !== undefined) {
+      const account = ACCOUNTS.find((a) => custId(a.n) === row.customer_id);
+      const current = world.credit_limits.get(account.n) ?? account.limit;
+      row.previous_limit_cents = current;
+      row.delta_cents = row.new_limit_cents - current;
+      if (row.delta_cents > row.second_threshold_cents && row.required_approvals < 2) row.required_approvals = 2;
+      else if (row.delta_cents > row.first_threshold_cents && row.required_approvals < 1) row.required_approvals = 1;
+    }
+    const role = caller.role_code.toUpperCase();
+    const canFirst = ["BRANCH_MANAGER", "FINANCIAL_CONTROLLER", "GENERAL_MANAGER", "SUPER_ADMIN"].includes(role);
+    const canSecond = ["FINANCIAL_CONTROLLER", "GENERAL_MANAGER", "SUPER_ADMIN"].includes(role);
+    const note = typeof body.note === "string" ? body.note.trim() : "";
+    const now = NOW_ISO();
+    if (row.first_approved_by === undefined) {
+      if (!canFirst) return refuse(res, 403, "credit change: caller role is not permitted to approve this request");
+      row.first_approved_by = caller.user_id;
+      row.first_approved_by_role = role;
+      row.first_approved_at = now;
+      if (note !== "") row.first_approval_note = note;
+      if (row.required_approvals <= 1) applyCreditChange(row, now);
+    } else {
+      if (!canSecond) return refuse(res, 403, "credit change: caller role is not permitted to approve this request");
+      row.second_approved_by = caller.user_id;
+      row.second_approved_by_role = role;
+      row.second_approved_at = now;
+      if (note !== "") row.second_approval_note = note;
+      applyCreditChange(row, now);
+    }
+    row.updated_at = now;
+    return send(res, 200, creditChangeRow(row));
+  }
+
+  m = path.match(/^\/api\/v1\/ar\/credit-changes\/([^/]+)\/reject$/);
+  if (m && method === "POST") {
+    if (!isManagerCaller(req)) return send(res, 403, { error: "Forbidden" });
+    const body = await readBody(req);
+    if (body === null) return refuse(res, 400, "invalid JSON body");
+    const caller = callerOf(req);
+    const found = findCreditChange(m[1], caller);
+    if (typeof found === "string") return refuse(res, 404, found);
+    const row = found;
+    if (row.status !== "PENDING") return refuse(res, 409, `credit change: request is not pending: credit change request has already been ${row.status.toLowerCase()}`);
+    const role = caller.role_code.toUpperCase();
+    if (!["BRANCH_MANAGER", "FINANCIAL_CONTROLLER", "GENERAL_MANAGER", "SUPER_ADMIN"].includes(role)) return refuse(res, 403, "credit change: caller role is not permitted to approve this request");
+    if (row.requested_by === caller.user_id) return refuse(res, 403, "credit change: requester cannot approve their own request");
+    const reason = (typeof body.reason === "string" ? body.reason : "").trim() || (typeof body.note === "string" ? body.note : "").trim();
+    if (reason === "") return refuse(res, 400, "credit change: a reason is required");
+    const now = NOW_ISO();
+    row.status = "REJECTED";
+    row.rejected_by = caller.user_id;
+    row.rejected_by_role = role;
+    row.rejected_at = now;
+    row.rejection_reason = reason;
+    row.updated_at = now;
+    return send(res, 200, creditChangeRow(row));
   }
 
   // C8 S3: send a paylink (the receivables reminder). Staff-gated; the stub gates it
@@ -1963,8 +2322,13 @@ async function handle(req, res) {
 const server = createServer((req, res) => {
   handle(req, res).catch(() => refuse(res, 500, "internal error"));
 });
-server.listen(port, () => {
-  console.log(`money-desk-stub listening on ${port}`);
+server.listen(port, "127.0.0.1", () => {
+  // The stub names the address it bound, so a harness that reads the bound
+  // address (test/stub-binds-loopback.node-test.mjs) reads the truth and not a
+  // guess from the port it asked for. The address is bracketed, because a
+  // wildcard IPv6 bind names "::" and a colon in it would read as the port.
+  const bound = server.address();
+  console.log(`money-desk-stub listening on [${bound.address}]:${bound.port}`);
 });
 
 // --- Change 8 S3 + S4 + S3M stub helpers -------------------------------------------------------

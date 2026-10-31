@@ -28,15 +28,14 @@ test("two fresh generations are byte-identical and match the committed tree", ()
   try {
     const out1 = generate(one);
     const out2 = generate(two);
-    // 799 operations: main's 785 (FW1-04's bankrecRecordCutover and bankrecCutoverPreview,
-    // FW1-07's inventory controller exceptions read, paymentsVoidPayment, and the routes before
-    // them) plus this lane's billingApplyCredit and billingReverseCreditApplication, plus W2-6b's
-    // three counter reason code routes (the list read, the add and the edit), plus W2-9a's
-    // purchasingGetAPAging and purchasingPayBill, plus W3 item 0.10's billingWriteOffInvoice and
-    // billingReverseWriteOff, plus HST-1's taxGetWorksheet, plus W3 item 0.8's four vendor credit doors
-    // (purchasingCreateVendorCredit, purchasingListVendorCredits, purchasingPostVendorCredit and
-    // purchasingApplyVendorCredit): 799.
-    if (!out1.includes("799 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
+    // 822 operations: JA-1's 810 (main's routes, the write off, vendor credit and payment run
+    // doors, taxGetWorksheet, landedCostSettle and the five job doors) plus W3-CC1's five credit
+    // change request and approval routes (billingListCreditChanges, billingRequestCreditChange,
+    // billingGetCreditChange, billingApproveCreditChange, billingRejectCreditChange), plus
+    // W3-T51's three T5018 routes (purchasingSetVendorT5018, purchasingT5018Report and
+    // purchasingT5018ReportCSV), plus AX-1's glListAccountMapping and glSetAccountMapping, plus RW-1's
+    // reportingListDatasets and reportingReadDataset: 822.
+    if (!out1.includes("822 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
     const a = snapshot(one);
     const b = snapshot(two);
     const c = snapshot(committed);

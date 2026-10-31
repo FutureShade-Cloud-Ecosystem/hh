@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -445,8 +446,15 @@ func (s *acksSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key 
 // module's own merge and escalation rules -
 
 type notifyPrefsSyncStore struct {
-	repo *Repository
-	link syncLinker
+	repo  *Repository
+	link  syncLinker
+	fence roomFence
+}
+
+// WithRoomFence binds the money room fence to the notify_prefs feed.
+func (s *notifyPrefsSyncStore) WithRoomFence(f roomFence) *notifyPrefsSyncStore {
+	s.fence = f
+	return s
 }
 
 // NewNotifyPrefsSyncStore builds the notify_prefs Store
@@ -514,6 +522,12 @@ func (s *notifyPrefsSyncStore) BoundEntityExists(ctx context.Context, f sync.Sco
 	return s.repo.syncPrefsExists(ctx, id)
 }
 
+// validChannelID is the canonical-form id check the engine's own
+// looksLikeUUID matches: 36 characters, hyphenated, either letter case.
+func validChannelID(id string) bool {
+	return len(id) == 36 && uuid.Validate(id) == nil
+}
+
 // prefsPatchShape is the body-only half of the prefs write's checks: the
 // channel the patch tunes and the mode vocabulary. It reads nothing and
 // honours no fence (the current row read and the tier read are the write's
@@ -524,6 +538,9 @@ func prefsPatchShape(fields map[string]any) (string, error) {
 	channelID, _ := fields["channel_id"].(string)
 	if channelID == "" {
 		return "", syncRefused(fmt.Errorf("channel_id is required"))
+	}
+	if !validChannelID(channelID) {
+		return "", syncRefused(fmt.Errorf("channel_id is not a valid id"))
 	}
 	if mode, ok := fields["mode"].(string); ok {
 		if _, ok := normalizeMode(mode); !ok {
@@ -557,6 +574,17 @@ func (s *notifyPrefsSyncStore) write(ctx context.Context, f sync.ScopeFilter, ke
 	if err != nil {
 		return sync.RowState{}, err
 	}
+	// Assert membership before the tier read, the current-row read or the
+	// write, matching the order Service.SetNotifyPrefs uses on the REST door
+	// (UX-122). A non-member meets the same bare sync.ErrRowNotFound a missing
+	// channel answers, so the push cannot tell the two apart.
+	member, err := s.repo.IsMember(ctx, channelID, uid)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if !member || !admitsRoom(ctx, s.fence, uid, channelID) {
+		return sync.RowState{}, sync.ErrRowNotFound
+	}
 	patch := PrefsPatch{
 		DesktopEnabled:     boolField(fields, "desktop_enabled"),
 		EscalationOverride: boolField(fields, "escalation_override"),
@@ -570,6 +598,9 @@ func (s *notifyPrefsSyncStore) write(ctx context.Context, f sync.ScopeFilter, ke
 	if silencingPatch(patch) {
 		tier, err := s.repo.ChannelTier(ctx, channelID)
 		if err != nil {
+			if isRepoNotFound(err) {
+				return sync.RowState{}, sync.ErrRowNotFound
+			}
 			return sync.RowState{}, err
 		}
 		if unmutableTier(tier) {
@@ -586,6 +617,9 @@ func (s *notifyPrefsSyncStore) write(ctx context.Context, f sync.ScopeFilter, ke
 	}
 	id, seq, err := s.repo.syncPrefsWrite(ctx, merged, key)
 	if err != nil {
+		if isRepoNotFound(err) {
+			return sync.RowState{}, sync.ErrRowNotFound
+		}
 		return sync.RowState{}, err
 	}
 	return sync.RowState{ID: id, Seq: seq}, nil
@@ -609,10 +643,25 @@ func (s *notifyPrefsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id
 	if !found {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
-	if _, ok := fields["channel_id"].(string); !ok {
-		fields["channel_id"] = row.ChannelID
+	// A payload channel_id is shape-checked first, so a malformed one reads as
+	// malformed (as on create), then compared as an id: both sides are
+	// canonical-form after the check, so EqualFold is the id comparison and a
+	// restatement in capitals names the same channel. The write below always
+	// carries the row's own spelling.
+	if ch, ok := fields["channel_id"].(string); ok && ch != "" {
+		if !validChannelID(ch) {
+			return sync.RowState{}, syncRefused(fmt.Errorf("channel_id is not a valid id"))
+		}
+		if !strings.EqualFold(ch, row.ChannelID) {
+			return sync.RowState{}, syncRefused(fmt.Errorf("a preference belongs to its channel; it cannot be moved"))
+		}
 	}
-	return s.write(ctx, f, key, fields)
+	patch := make(map[string]any, len(fields)+1)
+	for k, v := range fields {
+		patch[k] = v
+	}
+	patch["channel_id"] = row.ChannelID
+	return s.write(ctx, f, key, patch)
 }
 
 func (s *notifyPrefsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key string) (sync.RowState, error) {

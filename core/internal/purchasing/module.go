@@ -224,6 +224,14 @@ type Service struct {
 	warrantyCredit WarrantyCreditReader
 	landedPayables LandedCostPayableReader
 	journalClock   GLJournalClock
+	// journalReader reads a posted journal the module itself filed, by its idempotency key
+	// (the AP revaluation's run and its reversal). Nil degrades the run's replay judgement
+	// and refuses the reversal in words.
+	journalReader GLJournalReader
+	// postingWindow reads the GL's posting horizon: whether a payment dated on a house day
+	// would post at all. A payment run asks it before it takes a pay date, so a date the
+	// books would refuse is refused at the desk and not only at the pay.
+	postingWindow GLPostingWindow
 
 	// now is the injected clock. The document stamps a printed-at time, and a document that read
 	// the wall clock directly could not be rendered identically twice in a test.
@@ -388,6 +396,11 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// already sit at: RequireManager, a vendor record being a commitment the business stands behind.
 	r.Handle("POST /api/v1/purchasing/vendors", g.RequireManager(h.staff(h.createVendor)))
 	r.Handle("PUT /api/v1/purchasing/vendors/{vendorID}", g.RequireManager(h.staff(h.setVendor)))
+	// The T5018 mark. The tier gate is RequireManager, as every vendor write is, and the WALL is
+	// the role gate's: this route's census row names money-desk at admin, and the Financial
+	// Controller is the decided matrix's only admin seat on money-desk, so every other role in the
+	// catalogue is refused before the handler runs (rolegate_t5018_test.go).
+	r.Handle("PUT /api/v1/purchasing/vendors/{vendorID}/t5018", g.RequireManager(h.staff(h.setVendorT5018)))
 
 	r.Handle("GET /api/v1/purchasing/pos", g.RequireStaff(h.staff(h.listPOs)))
 	r.Handle("POST /api/v1/purchasing/pos", g.RequireManager(h.staff(h.createPO)))
@@ -422,6 +435,11 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// the post beside it, and the replay key rides the Idempotency-Key header.
 	r.Handle("POST /api/v1/purchasing/bills/{id}/payments", g.RequireManager(h.staff(h.payBill)))
 	r.Handle("GET /api/v1/purchasing/ap-aging", g.RequireManager(h.staff(h.apAging)))
+	// The T5018 report and its CSV: the same door as the payables board beside it, because the
+	// report IS a payables read (the year's payments to the flagged subcontractors), and the same
+	// report must not be a wider door in its file form than in its screen form.
+	r.Handle("GET /api/v1/purchasing/t5018", g.RequireManager(h.staff(h.t5018Report)))
+	r.Handle("GET /api/v1/purchasing/t5018.csv", g.RequireManager(h.staff(h.t5018ReportCSV)))
 
 	// W3 item 0.8. The supplier credit note's doors sit at the AR credit memo
 	// doors' gate: a credit is a management act, so every one of them is
@@ -431,6 +449,18 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/purchasing/vendor-credits", g.RequireManager(h.staff(h.listVendorCredits)))
 	r.Handle("POST /api/v1/purchasing/vendor-credits/{id}/post", g.RequireManager(h.staff(h.postVendorCredit)))
 	r.Handle("POST /api/v1/purchasing/vendor-credits/{id}/applications", g.RequireManager(h.staff(h.applyVendorCredit)))
+
+	// W3 payment runs. The run is the AP clerk's propose, review and pay over a branch's open
+	// bills, and every one of its doors moves money or decides what money moves: RequireManager
+	// throughout, including the two reads, the list being a worklist of cheques about to go out and
+	// the document carrying every amount on it. The pay itself goes bill by bill through the
+	// bill payments door beside this block, one key per bill, so the run writes no journal of its
+	// own and the books keep the one payment path they already had.
+	r.Handle("POST /api/v1/purchasing/payment-runs", g.RequireManager(h.staff(h.proposePaymentRun)))
+	r.Handle("GET /api/v1/purchasing/payment-runs", g.RequireManager(h.staff(h.listPaymentRuns)))
+	r.Handle("GET /api/v1/purchasing/payment-runs/{id}", g.RequireManager(h.staff(h.getPaymentRun)))
+	r.Handle("PUT /api/v1/purchasing/payment-runs/{id}", g.RequireManager(h.staff(h.updatePaymentRun)))
+	r.Handle("POST /api/v1/purchasing/payment-runs/{id}/pay", g.RequireManager(h.staff(h.payPaymentRun)))
 
 	r.Handle("GET /api/v1/purchasing/tolerance", g.RequireStaff(h.staff(h.getTolerance)))
 	r.Handle("PUT /api/v1/purchasing/tolerance", g.RequireAdmin(h.staff(h.setTolerance)))

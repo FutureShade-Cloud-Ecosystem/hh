@@ -757,32 +757,124 @@ type ExportResult struct {
 
 const parityBanner = "PARITY DRAFT, GP-format parity export; extract artifacts absent, pending cutover confirmation (Q-006). Not a filing."
 
-func (s *Service) Export(ctx context.Context, year, month int, branchID string) (ExportResult, error) {
+// ExportQuery is what the export door is asked for (W3 AX-1): the period pick, a month, a quarter
+// or a year, counted on the dealer's house days (the fiscal periods the ledger already files by
+// the house zone, never wall-clock instants), optionally one target package, and the branch scope.
+// Target "" is the GP-parity draft the door has always answered; a target is the accounting
+// package export, and it demands a full mapping of every account with movement in the period.
+type ExportQuery struct {
+	Year     int
+	Month    int    // 1 to 12; 0 with no quarter is the whole year
+	Quarter  int    // 1 to 4; 0 = not narrowed to a quarter
+	Target   string // "" = the GP-parity draft
+	BranchID string
+}
+
+// periodMonths resolves the pick to the fiscal months it reads. A quarter is its three consecutive
+// months starting in January; a month is itself; a whole year is empty, meaning every month.
+func periodMonths(month, quarter int) []int {
+	switch {
+	case quarter >= 1 && quarter <= 4:
+		return []int{quarter*3 - 2, quarter*3 - 1, quarter * 3}
+	case month >= 1 && month <= 12:
+		return []int{month}
+	}
+	return nil
+}
+
+func (s *Service) Export(ctx context.Context, q ExportQuery) (ExportResult, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return ExportResult{}, err
 	}
-	if year <= 0 {
+	if q.Year <= 0 {
 		return ExportResult{}, badReq("gl: export requires a fiscal_year")
 	}
-	rows, err := s.store.ExportRows(ctx, year, month, branchID)
+	if q.Month < 0 || q.Month > 12 {
+		return ExportResult{}, badReq("gl: export month must be 1 to 12, or 0 for the whole year")
+	}
+	if q.Quarter < 0 || q.Quarter > 4 {
+		return ExportResult{}, badReq("gl: export quarter must be 1 to 4")
+	}
+	if q.Month > 0 && q.Quarter > 0 {
+		return ExportResult{}, badReq("gl: pick a month or a quarter, not both")
+	}
+	if q.Target != "" {
+		if err := checkExportTarget(q.Target); err != nil {
+			return ExportResult{}, err
+		}
+	}
+	months := periodMonths(q.Month, q.Quarter)
+	rows, err := s.store.ExportRows(ctx, q.Year, months, q.BranchID)
 	if err != nil {
 		return ExportResult{}, err
 	}
-	content := renderGPParity(year, month, rows)
-	batchID, err := s.store.InsertExportBatch(ctx, year, month, "GP_PARITY", caller.UserID, len(rows))
+	format := "GP_PARITY"
+	var content string
+	if q.Target == "" {
+		content = renderGPParity(q, rows)
+	} else {
+		// The mapping precondition: every account with movement in the period must be mapped for
+		// the target, and one refusal names every account missing, in words. An export that
+		// silently dropped an unmapped account would hand another package's books a hole nobody
+		// can spot from the outside.
+		unmapped, err := s.store.UnmappedMovementAccounts(ctx, q.Year, months, q.BranchID, q.Target)
+		if err != nil {
+			return ExportResult{}, err
+		}
+		if len(unmapped) > 0 {
+			word := "accounts have"
+			if len(unmapped) == 1 {
+				word = "account has"
+			}
+			return ExportResult{}, badReq("gl: the %s export refuses the period: %d %s movement and no mapping for the target: %s; set the mapping before exporting",
+				exportTargetWords(q.Target), len(unmapped), word, unmappedWords(unmapped))
+		}
+		mapped, err := s.store.ListAccountMapping(ctx, q.Target)
+		if err != nil {
+			return ExportResult{}, err
+		}
+		packageAccount := make(map[string]string, len(mapped))
+		for _, m := range mapped {
+			packageAccount[m.AccountCode] = m.PackageAccount
+		}
+		switch q.Target {
+		case TargetQuickBooksOnline:
+			// AX-2: QBO's own journal entry import format, one journal entry per GL journal, its
+			// two sides asserted per entry and in total.
+			content, err = renderQBOJournals(rows, packageAccount)
+			if err != nil {
+				return ExportResult{}, err
+			}
+		default:
+			content, err = renderTargetExport(q, rows, packageAccount)
+			if err != nil {
+				return ExportResult{}, err
+			}
+		}
+		format = q.Target
+	}
+	// The batch's month word: the month pick records itself; a quarter or a year pick records 0,
+	// the honest word for a batch wider than one month.
+	batchMonth := q.Month
+	if q.Quarter > 0 {
+		batchMonth = 0
+	}
+	batchID, err := s.store.InsertExportBatch(ctx, q.Year, batchMonth, format, caller.UserID, len(rows))
 	if err != nil {
 		return ExportResult{}, err
 	}
-	return ExportResult{BatchID: batchID, Format: "GP_PARITY", RowCount: len(rows), IsDraft: true, Content: content}, nil
+	return ExportResult{BatchID: batchID, Format: format, RowCount: len(rows), IsDraft: true, Content: content}, nil
 }
 
 // renderGPParity produces the deterministic GP-parity text: a PARITY DRAFT banner line, then a CSV with a
 // header and one row per posted line. Money is rendered as signed dollars (GP convention) from integer cents.
-func renderGPParity(year, month int, rows []ExportRow) string {
+// The banner names the pick it rendered, the quarter included (S7's P3-2 on 719): a quarter's file says
+// its quarter, never a month 0 that names no month.
+func renderGPParity(q ExportQuery, rows []ExportRow) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n", parityBanner)
-	fmt.Fprintf(&b, "# fiscal_year=%d month=%d rows=%d\n", year, month, len(rows))
+	fmt.Fprintf(&b, "# fiscal_year=%d month=%d quarter=%d rows=%d\n", q.Year, q.Month, q.Quarter, len(rows))
 	b.WriteString("entry_no,posted_at,account_code,account_name,debit,credit,memo\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "%d,%s,%s,%s,%s,%s,%s\n",
@@ -790,6 +882,34 @@ func renderGPParity(year, month int, rows []ExportRow) string {
 			dollars(r.DebitCents), dollars(r.CreditCents), csvEscape(r.Memo))
 	}
 	return b.String()
+}
+
+// renderTargetExport renders the accounting package export for a target without its own import
+// format yet (Sage 50 is AX-3): the period's rows under the package's account codes, the HH code
+// and name beside each for provenance, and a totals line whose two sides are the file's own
+// balance assertion. The pair is ASSERTED, not just printed (S7's P3-4 on 719): an unequal pair
+// refuses the file in words before any row is written, so a partial read or a bad loader cannot
+// ship a draft whose own banner lies. QuickBooks Online has its own body, renderQBOJournals
+// (AX-2); this one keeps the row set and the totals the same for the target that replaces it next.
+func renderTargetExport(q ExportQuery, rows []ExportRow, packageAccount map[string]string) (string, error) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# ACCOUNTING PACKAGE EXPORT, %s; mapped draft, not a filing.\n", exportTargetWords(q.Target))
+	fmt.Fprintf(&b, "# fiscal_year=%d month=%d quarter=%d rows=%d\n", q.Year, q.Month, q.Quarter, len(rows))
+	b.WriteString("entry_no,posted_at,package_account,hh_account_code,hh_account_name,debit,credit,memo\n")
+	var totalDebit, totalCredit int64
+	for _, r := range rows {
+		fmt.Fprintf(&b, "%d,%s,%s,%s,%s,%s,%s,%s\n",
+			r.EntryNo, r.PostedAt, csvEscape(packageAccount[r.AccountCode]), r.AccountCode, csvEscape(r.AccountName),
+			dollars(r.DebitCents), dollars(r.CreditCents), csvEscape(r.Memo))
+		totalDebit += r.DebitCents
+		totalCredit += r.CreditCents
+	}
+	if totalDebit != totalCredit {
+		return "", badReq("gl: the %s export refuses the period: the file's debits (%s) do not equal its credits (%s); no row was written",
+			exportTargetWords(q.Target), dollarsExact(totalDebit), dollarsExact(totalCredit))
+	}
+	fmt.Fprintf(&b, "# total_debit=%s,total_credit=%s\n", dollars(totalDebit), dollars(totalCredit))
+	return b.String(), nil
 }
 
 func dollars(cents int64) string {
@@ -807,8 +927,17 @@ func dollars(cents int64) string {
 	return s
 }
 
+// csvEscape makes one text cell safe for a CSV reader and for the spreadsheet a bookkeeper opens
+// the file in. A cell led by =, +, -, @, a tab or a carriage return is a formula to Excel and
+// Sheets, so it gets a leading single quote (the OWASP rule); a cell holding a comma, a quote, a
+// newline or a carriage return is quoted, with its quotes doubled. Money cells never come through
+// here. It serves the GP parity body (account name, memo), the mapped draft body (package account,
+// account name, memo) and the QBO body (account, description).
 func csvEscape(s string) string {
-	if strings.ContainsAny(s, ",\"\n") {
+	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
+		s = "'" + s
+	}
+	if strings.ContainsAny(s, ",\"\n\r") {
 		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 	}
 	return s

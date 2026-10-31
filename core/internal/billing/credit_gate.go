@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -99,6 +100,13 @@ type CreditPolicy struct {
 	LimitToleranceCents int64  `json:"limit_tolerance_cents"`
 	CODEnforced         bool   `json:"cod_enforced"`
 	AutoHoldEnabled     bool   `json:"auto_hold_enabled"`
+	// IncreaseFirstThresholdCents and IncreaseSecondThresholdCents are the per-dealer credit limit
+	// increase approval thresholds (0461). An increase above IncreaseFirstThresholdCents (default 0)
+	// up to IncreaseSecondThresholdCents (default 2500000, $25,000.00) needs one approver (branch
+	// manager or Controller); an increase above IncreaseSecondThresholdCents needs a second approver
+	// (Controller or General Manager).
+	IncreaseFirstThresholdCents  int64 `json:"increase_first_threshold_cents"`
+	IncreaseSecondThresholdCents int64 `json:"increase_second_threshold_cents"`
 	// WriteOffLimitCents is the branch's small balance write off limit (0454): the largest balance a
 	// manager may write off at this branch, the org default (2500, $25.00) when the branch carries
 	// no row of its own. Only the controller passes it.
@@ -194,6 +202,7 @@ type CreditService struct {
 	store creditStore
 	audit audit.Recorder
 	clock func() time.Time
+	zone  houseday.Source
 	// autoHold is the DIB-483 write seam for the master switch (autohold.go). nil = the switch is
 	// unwired and the admin surface renders the setting read-only, rather than offering a control that
 	// would fail.
@@ -218,8 +227,14 @@ func NewCreditService(store creditStore) *CreditService {
 	if pr, ok := store.(registerPolicyReader); ok {
 		s.position = NewAccountPositionGate(pr)
 	}
+	if repo, ok := store.(*Repository); ok && repo != nil {
+		s.zone = repo.zone
+	}
 	return s
 }
+
+// WithZone binds the dealer's business day zone source for as-of aging reads.
+func (s *CreditService) WithZone(src houseday.Source) *CreditService { s.zone = src; return s }
 
 // WithAccountPosition binds the account position policy reader (UX-97).
 func (s *CreditService) WithAccountPosition(p AccountPositionReader) *CreditService {
@@ -244,6 +259,17 @@ func (s *CreditService) WithClock(now func() time.Time) *CreditService {
 		s.clock = now
 	}
 	return s
+}
+
+// AgingForCaller resolves rawAsOf (YYYY-MM-DD or empty for today) in the dealer's house zone using
+// parseAsOfFor, the same rule the month-end AR aging route runs, and returns the aging inside the
+// caller's branch reach.
+func (s *CreditService) AgingForCaller(ctx context.Context, rawAsOf, branchID string) ([]AgingRow, error) {
+	asOf, err := parseAsOfFor(ctx, s.zone, rawAsOf)
+	if err != nil {
+		return nil, err
+	}
+	return s.Aging(ctx, asOf, branchID)
 }
 
 // Aging returns the AR aging worklist as of a date, for the month-end view, inside the caller's

@@ -266,6 +266,12 @@ jobs:
       - name: Shard assignment test
         working-directory: web
         run: node --test scripts/ci-web-shards.node-test.mjs
+      - name: Stubs bind the loopback only
+        # Every test listener in the web apps names 127.0.0.1 as its host, and
+        # every vite command carries --host 127.0.0.1. A stub that binds every
+        # interface answers on the LAN and holds its port after the run.
+        working-directory: web
+        run: node --test scripts/stubs-bind-loopback.node-test.mjs
       - name: Web packages (typecheck and Node 22 suite), shard ${{ matrix.shard }} of 6
         working-directory: web
         run: node scripts/ci-web-shards.mjs run ${{ matrix.shard }} 6
@@ -546,13 +552,15 @@ jobs:
         # shared server answers "out of shared memory". The finance box runs with
         # max_locks_per_transaction = 512, so the job's service does too: the setting is
         # written with ALTER SYSTEM, the service container restarts to take it, and the
-        # step waits until the server reports it.
+        # step waits until the server reports it. The restart names the container by the
+        # job's own service id, never by its published port: GitHub hands the step the
+        # exact container, so another container publishing the same port (a self-hosted
+        # runner's neighbour) can neither take its place nor be restarted by mistake.
         run: |
           set -euo pipefail
           url="postgres://postgres:postgres@127.0.0.1:5599/postgres?sslmode=disable"
           psql "$url" -v ON_ERROR_STOP=1 -q -c "ALTER SYSTEM SET max_locks_per_transaction = 512"
-          cid="$(docker ps -q --filter publish=5599)"
-          docker restart "$cid" >/dev/null
+          docker restart "${{ job.services.postgres.id }}" >/dev/null
           for _ in $(seq 1 90); do
             if [ "$(psql "$url" -tAc 'SHOW max_locks_per_transaction' 2>/dev/null || true)" = "512" ]; then
               break

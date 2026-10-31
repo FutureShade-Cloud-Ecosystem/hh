@@ -106,16 +106,21 @@ const w25TestHelperKey = "test_helpers|*|*"
 // The round 10 leg's planted const writer probe (S5's P3-5) is one more site: the count is 100.
 // W2-9a's two composition tests (w29a_ap_aging and w29ar2b_late_filed_bill) each clean up their product's
 // stock_moves and product_branch_costs rows: four more sites, so the count is 104. The box check's late
-// filed bill test (w29a_finance_check_late_filed) cleans up the same two tables: 106.
-const w25TestHelperSiteCount = 106
+// filed bill test (w29a_finance_check_late_filed) cleans up the same two tables: 106. W3-RW1's two
+// reporting dataset tests each seed their product's product_branch_costs rows and clean them up: four
+// more sites, so the count is 110. Wave 3 item 0.12's late filed credit application test cleans up its
+// product's value rows too: 112.
+const w25TestHelperSiteCount = 112
 
 // w25OnHandTestHelperKey is the allowance bucket for every on-hand writer found in *_test.go files.
 const w25OnHandTestHelperKey = "test_helpers_on_hand|*|*"
 
 // w25OnHandTestHelperSiteCount is the exact number of on-hand writer sites found in *_test.go files.
 // W2-9a's two composition tests each clean up their product's stock_balances rows: 76. The box check's
-// late filed bill test does too: 77.
-const w25OnHandTestHelperSiteCount = 77
+// late filed bill test does too: 77. W3-RW1's two reporting dataset tests seed their product's
+// stock_balances rows (four inserts across two branches) and clean them up: 83. Wave 3 item 0.12's late filed credit application test does
+// too: 84.
+const w25OnHandTestHelperSiteCount = 84
 
 // w25CensusResult is the census answer: every site found, grouped by key, and every allowance key that
 // no live site matches.

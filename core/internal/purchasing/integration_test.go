@@ -74,7 +74,8 @@ func (a itStock) ReceiveDocumentTx(ctx context.Context, tx pgx.Tx, docID string)
 type itVendors struct{ pool *pgxpool.Pool }
 
 func (a itVendors) ListVendors(ctx context.Context) ([]Vendor, error) {
-	rows, err := a.pool.Query(ctx, `SELECT id::text, vendor_no::text, name, payment_terms_days, is_active FROM vendors ORDER BY name`)
+	rows, err := a.pool.Query(ctx, `SELECT id::text, vendor_no::text, name, payment_terms_days, is_active,
+		is_t5018_subcontractor, COALESCE(business_number, '') FROM vendors ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +83,8 @@ func (a itVendors) ListVendors(ctx context.Context) ([]Vendor, error) {
 	var out []Vendor
 	for rows.Next() {
 		var v Vendor
-		if err := rows.Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive); err != nil {
+		if err := rows.Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive,
+			&v.IsT5018Subcontractor, &v.BusinessNumber); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -92,8 +94,10 @@ func (a itVendors) ListVendors(ctx context.Context) ([]Vendor, error) {
 
 func (a itVendors) Vendor(ctx context.Context, id string) (Vendor, error) {
 	var v Vendor
-	err := a.pool.QueryRow(ctx, `SELECT id::text, vendor_no::text, name, payment_terms_days, is_active FROM vendors WHERE id = $1`, id).
-		Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive)
+	err := a.pool.QueryRow(ctx, `SELECT id::text, vendor_no::text, name, payment_terms_days, is_active,
+		is_t5018_subcontractor, COALESCE(business_number, '') FROM vendors WHERE id = $1`, id).
+		Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive,
+			&v.IsT5018Subcontractor, &v.BusinessNumber)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Vendor{}, ErrUnknownVendor
 	}
@@ -187,6 +191,32 @@ func (a itGLClock) JournalSourceRefByKey(ctx context.Context, key string) (strin
 
 func (a itGLClock) JournalAmountByKey(ctx context.Context, key string) (int64, bool, error) {
 	return a.svc.JournalAmountByKey(ctx, key)
+}
+
+// itGLWindow mirrors itGLClock for the posting horizon: the GL service's own answer to whether
+// a posting dated on an instant would file, the rule the pay date is judged against.
+type itGLWindow struct{ svc *gl.Service }
+
+func (a itGLWindow) PostingDateRefusal(ctx context.Context, at time.Time) (string, error) {
+	return a.svc.PostingDateRefusal(ctx, at)
+}
+
+// itGLJournalReader mirrors the production wiring's posted journal read by idempotency key,
+// so the AP revaluation's replay judgement and reversal read the journal the run filed
+// exactly as w4cGLJournalReader answers it.
+type itGLJournalReader struct{ svc *gl.Service }
+
+func (a itGLJournalReader) JournalByKey(ctx context.Context, key string) (GLPostedJournal, bool, error) {
+	j, found, err := a.svc.JournalByKey(ctx, key)
+	if err != nil || !found {
+		return GLPostedJournal{}, found, err
+	}
+	out := GLPostedJournal{ID: j.ID, SourceRefID: j.SourceRefID, BranchID: j.BranchID, Memo: j.Memo,
+		Lines: make([]GLJournalLeg, len(j.Lines))}
+	for i, l := range j.Lines {
+		out.Lines[i] = GLJournalLeg{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return out, true, nil
 }
 
 func (a itGL) PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error) {
@@ -289,6 +319,8 @@ func newHarness(t *testing.T) *harness {
 		WithGLPoster(itGL{svc: glSvc}).
 		WithRuleResolver(itRules{svc: glSvc}).
 		WithGLJournalClock(itGLClock{svc: glSvc}).
+		WithGLJournalReader(itGLJournalReader{svc: glSvc}).
+		WithGLPostingWindow(itGLWindow{svc: glSvc}).
 		withCaller(func(context.Context) (identity.StaffContext, bool) { return globalCaller(user), true })
 
 	return &harness{pool: pool, svc: svc, inv: invSvc, gl: glSvc, landed: landedSvc, vendor: vendor, user: user, ctx: ctx}

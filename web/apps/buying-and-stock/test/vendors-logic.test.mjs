@@ -4,14 +4,26 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  canSetT5018,
   contactBody,
   filterVendors,
   mappingBody,
+  t5018Body,
   vendorBody,
   vendorRows,
   refWords,
 } from "../src/vendors/vendors-logic.ts";
 import { refusalWords } from "../src/po/po-logic.ts";
+import { renderVendors } from "../src/vendors/vendors-views.ts";
+
+function flat(v) {
+  if (v == null || v === false) return "";
+  if (Array.isArray(v)) return v.map(flat).join("");
+  if (typeof v === "object" && v.strings) {
+    return Array.from(v.strings).map((s, i) => s + (i < v.values.length ? flat(v.values[i]) : "")).join("");
+  }
+  return typeof v === "symbol" ? "" : String(v);
+}
 
 const CURRENT = { name: "Alcli (demo)", payment_terms_days: 30 };
 
@@ -87,4 +99,68 @@ test("a wall refusal names who may change a vendor", () => {
   assert.match(refusalWords("vendor", "Forbidden", 403), /Adding and changing vendors/);
   assert.equal(refusalWords("vendor", "vendor name is required", 400), "Vendor name is required.");
   assert.equal(refusalWords("vendor", "not found", 404), "Not found.");
+});
+
+test("the T5018 mark is offered to the Financial Controller's seat and to no other", () => {
+  assert.equal(canSetT5018("financial_controller"), true, "the controller's seat holds the mark");
+  assert.equal(canSetT5018("super_admin"), true, "the platform role rides above every wall");
+  for (const seat of ["procurement_manager", "payables_receivables", "branch_manager", "general_manager", "yard_manager", ""]) {
+    assert.equal(canSetT5018(seat), false, `${seat} must not be offered the mark`);
+  }
+});
+
+test("the T5018 body always says the mark, and the number only when it changed", () => {
+  const current = { is_t5018_subcontractor: false, business_number: "123456789" };
+  const same = t5018Body({ isSubcontractor: false, businessNumber: "123456789" }, current);
+  assert.equal(same.ok, true);
+  assert.deepEqual(same.body, { is_subcontractor: false }, "an unchanged number is not said");
+  const marked = t5018Body({ isSubcontractor: true, businessNumber: "123456789" }, current);
+  assert.deepEqual(marked.body, { is_subcontractor: true });
+  const cleared = t5018Body({ isSubcontractor: false, businessNumber: "" }, current);
+  assert.deepEqual(cleared.body, { is_subcontractor: false, business_number: "" }, "an emptied number is said, and it clears");
+  const spaces = t5018Body({ isSubcontractor: true, businessNumber: "123 456 789" }, { is_t5018_subcontractor: false, business_number: "" });
+  assert.deepEqual(spaces.body, { is_subcontractor: true, business_number: "123456789" }, "the number is read as the form prints it");
+});
+
+test("an invalid CRA business number message sits directly under the CRA business number field and above its hint", () => {
+  const vendor = {
+    id: "v1",
+    vendor_no: "V-ALC",
+    name: "Alcli (demo)",
+    payment_terms_days: 30,
+    is_active: true,
+    is_t5018_subcontractor: false,
+  };
+  const markup = flat(
+    renderVendors({
+      phase: "ready",
+      vendors: [vendor],
+      query: "",
+      showInactive: false,
+      selected: vendor,
+      tab: "details",
+      savedEmail: null,
+      clearEmail: false,
+      canSetT5018: true,
+      t5018Mark: true,
+      contact: null,
+      codes: null,
+      products: [],
+      editingCode: null,
+      removal: null,
+      removalCode: null,
+      orderLookup: null,
+      lookupError: "",
+      busy: false,
+      error: "The business number must be nine digits, with RC0001 after them for a program account.",
+      notice: "",
+    }),
+  );
+  const bnPos = markup.indexOf("data-v-bn");
+  const errPos = markup.indexOf("data-error");
+  const hintPos = markup.indexOf("Nine digits, with RC0001 after them");
+  const savePos = markup.indexOf("Save the T5018 record");
+  assert.ok(bnPos > 0 && errPos > bnPos, "the invalid number message must sit under the CRA business number input");
+  assert.ok(errPos < hintPos && hintPos < savePos, "the invalid number message must sit above the hint and the T5018 save button");
+  assert.equal([...markup.matchAll(/data-error/g)].length, 1, "the invalid number message is rendered once");
 });

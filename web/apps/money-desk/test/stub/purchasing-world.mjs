@@ -43,6 +43,122 @@ const DOCUMENTS = [
   { n: 10, payee: 6, doc: "LC-2207", kind: "LANDED_COST", landed: "DUTY", po: "PO-1108", issued: -105, due: -75, total: 112_000 },
 ];
 
+// The vendors the Financial Controller has marked as subcontractors (W3-T51, W3-T52), with the CRA
+// business number each one gave (the second gave none, so the report says the number is missing)
+// and the bills paid to them during the year. Each payment's Paid in <year>, Box 22 services share
+// (tax included), pre-tax services subtotal, $500 threshold mark and unmarked bill line note are
+// computed by the core's own pro-rata half-to-even rules (t5018_report.go).
+const SUBCONTRACTORS = [
+  {
+    n: 1,
+    name: "Ironwood Timber Supply (demo)",
+    no: "V-1001",
+    number: "123456789",
+    bills: [
+      {
+        tax_cents: 55_509,
+        paid_cents: 482_500,
+        lines: [{ supply_kind: null, line_total_cents: 426_991 }],
+      },
+    ],
+  },
+  {
+    n: 2,
+    name: "Meadowlark Landscape Lighting (demo)",
+    no: "V-1003",
+    number: "",
+    bills: [
+      {
+        tax_cents: 10_210,
+        paid_cents: 88_750,
+        lines: [
+          { supply_kind: "SERVICES", line_total_cents: 60_000 },
+          { supply_kind: "GOODS", line_total_cents: 18_540 },
+        ],
+      },
+    ],
+  },
+  {
+    n: 4,
+    name: "Saltmarsh Fasteners (demo)",
+    no: "V-1004",
+    number: "987654321",
+    bills: [
+      {
+        tax_cents: 6_240,
+        paid_cents: 54_240,
+        lines: [{ supply_kind: "SERVICES", line_total_cents: 48_000 }],
+      },
+    ],
+  },
+];
+
+export const T5018_RULE_NOTE = "T5018 applies only where construction is more than half the dealer's business income.";
+const T5018_THRESHOLD_CENTS = 50_000;
+export const T5018_UNDER_THRESHOLD_NOTE = "under the $500 slip threshold, no slip.";
+export const T5018_GOODS_SHARE_PREFIX = "Box 22 counts services only;";
+export const T5018_GOODS_SHARE_SUFFIX = "of goods is not counted.";
+export const T5018_NOTHING_PAID_NOTE = "nothing paid this year";
+
+/** Formats integer cents as dollars and cents, matching the core's t5018FormatDollars. */
+function t5018FormatDollars(cents) {
+  const abs = Math.abs(cents);
+  const dollars = Math.trunc(abs / 100).toLocaleString("en-US");
+  const rem = String(abs % 100).padStart(2, "0");
+  return `${cents < 0 ? "-" : ""}$${dollars}.${rem}`;
+}
+
+/** The core's t5018UnderThresholdNote. */
+function t5018UnderThresholdNote(servicesSubtotalCents) {
+  return `Services before tax ${t5018FormatDollars(servicesSubtotalCents)}: ${T5018_UNDER_THRESHOLD_NOTE}`;
+}
+
+/** The core's t5018GoodsShareNote. */
+function t5018GoodsShareNote(goodsShareCents) {
+  return `${T5018_GOODS_SHARE_PREFIX} ${t5018FormatDollars(goodsShareCents)} ${T5018_GOODS_SHARE_SUFFIX}`;
+}
+
+/** The core's t5018ProRataCents (half to even in integer cents). */
+function t5018ProRataCents(amountCents, partCents, wholeCents) {
+  if (amountCents <= 0 || partCents <= 0 || wholeCents <= 0) return 0;
+  if (partCents === wholeCents) return amountCents;
+  const num = BigInt(amountCents) * BigInt(partCents);
+  const whole = BigInt(wholeCents);
+  let q = num / whole;
+  const rem = num % whole;
+  const twiceRem = rem * 2n;
+  if (twiceRem > whole || (twiceRem === whole && q % 2n === 1n)) {
+    q += 1n;
+  }
+  return Number(q);
+}
+
+/** The core's t5018PaymentShare (Box 22 services share with tax, and pre-tax services subtotal share). */
+function t5018PaymentShare(paidCents, billSubtotalCents, billTotalCents, billServicesSubtotalCents) {
+  if (paidCents <= 0 || billSubtotalCents <= 0 || billTotalCents <= 0 || billServicesSubtotalCents <= 0) {
+    return { box22Cents: 0, servicesSubtotalCents: 0 };
+  }
+  return {
+    box22Cents: t5018ProRataCents(paidCents, billServicesSubtotalCents, billSubtotalCents),
+    servicesSubtotalCents: t5018ProRataCents(paidCents, billServicesSubtotalCents, billTotalCents),
+  };
+}
+
+/** The core's t5018UnmarkedLinesNote. */
+function t5018UnmarkedLinesNote(n) {
+  if (n <= 0) return "";
+  if (n === 1) {
+    return "1 bill line is not marked goods or services; it is counted as services until marked";
+  }
+  return `${n} bill lines are not marked goods or services; they are counted as services until marked`;
+}
+
+
+// The USD bill the "usd" scenario adds: USD 1,000.00 entered at 1.35, so CAD 1,350.00 in the books.
+// It is its own scenario because the board's totals in the other legs are written against the
+// world above, which holds only CAD bills.
+const USD_DOCUMENT = { n: 11, payee: 3, doc: "B-3150", kind: "VENDOR_BILL", issued: -20, due: 10, total: 135_000, currency: "USD", rate: 1.35, docTotal: 100_000 };
+
 /** The band each of the core's bucket keys holds its money in. */
 const BUCKET_FIELD = {
   CURRENT: "current_cents",
@@ -94,6 +210,15 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
   function paidBy(doc, asOf) {
     let paid = doc.paid === undefined || dayOffset(doc.paid_on) > asOf ? 0 : doc.paid;
     for (const payment of payments.get(doc.n) ?? []) {
+      if (payment.on <= asOf) paid += payment.cad;
+    }
+    return paid;
+  }
+
+  /** What has been paid against a document in its own currency on the day the books are read as of. */
+  function paidDocBy(doc, asOf) {
+    let paid = 0;
+    for (const payment of payments.get(doc.n) ?? []) {
       if (payment.on <= asOf) paid += payment.amount;
     }
     return paid;
@@ -109,7 +234,7 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
    */
   function paidTotal(doc) {
     let paid = doc.paid ?? 0;
-    for (const payment of payments.get(doc.n) ?? []) paid += payment.amount;
+    for (const payment of payments.get(doc.n) ?? []) paid += payment.cad;
     return paid;
   }
 
@@ -147,6 +272,7 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
         const paid = paidBy(doc, asOf);
         const open = doc.total - paid;
         if (open <= 0) continue;
+        const docOpen = doc.currency === undefined ? open : doc.docTotal - paidDocBy(doc, asOf);
         const landed = doc.kind === "LANDED_COST";
         // A landed cost falls due the day it is incurred: the core reads its bucket from the day
         // it was created, not from a due date it does not have.
@@ -163,6 +289,9 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
           total_cents: doc.total,
           paid_cents: paid,
           open_cents: open,
+          currency: doc.currency ?? "CAD",
+          doc_total_cents: doc.docTotal ?? doc.total,
+          doc_open_cents: docOpen,
           bucket,
         };
         if (!landed) item.bill_no = doc.doc;
@@ -195,6 +324,102 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
     return { as_of: asOf, ...bands, total_cents: total, items, next_cursor: null };
   }
 
+  /** The year's T5018 report: the marked vendors, their business numbers, paid totals and Box 22 shares. */
+  function t5018Report(year) {
+    const items = [];
+    let total = 0;
+    let box22Total = 0;
+    for (const sub of SUBCONTRACTORS) {
+      let paidCents = 0;
+      let box22Cents = 0;
+      let servicesSubtotalCents = 0;
+      let unmarkedLineCount = 0;
+      for (const bill of sub.bills) {
+        const subtotal = bill.lines.reduce((s, l) => s + l.line_total_cents, 0);
+        const totalCents = subtotal + bill.tax_cents;
+        const servicesSubtotal = bill.lines
+          .filter((l) => l.supply_kind === null || l.supply_kind === "SERVICES")
+          .reduce((s, l) => s + l.line_total_cents, 0);
+        const unmarked = bill.lines.filter((l) => l.supply_kind === null).length;
+        const share = t5018PaymentShare(bill.paid_cents, subtotal, totalCents, servicesSubtotal);
+        paidCents += bill.paid_cents;
+        box22Cents += share.box22Cents;
+        servicesSubtotalCents += share.servicesSubtotalCents;
+        unmarkedLineCount += unmarked;
+      }
+      const underThreshold = servicesSubtotalCents < T5018_THRESHOLD_CENTS;
+      let thresholdNote = "";
+      if (paidCents === 0 && box22Cents === 0) {
+        thresholdNote = T5018_NOTHING_PAID_NOTE;
+      } else if (underThreshold) {
+        thresholdNote = t5018UnderThresholdNote(servicesSubtotalCents);
+      } else if (paidCents > box22Cents) {
+        thresholdNote = t5018GoodsShareNote(paidCents - box22Cents);
+      }
+      items.push({
+        vendor_id: payeeId(sub.n),
+        vendor_no: sub.no,
+        name: sub.name,
+        business_number: sub.number,
+        business_number_missing: sub.number === "",
+        paid_cents: paidCents,
+        box_22_cents: box22Cents,
+        services_subtotal_cents: servicesSubtotalCents,
+        under_threshold: underThreshold,
+        threshold_note: thresholdNote,
+        unmarked_line_count: unmarkedLineCount,
+        unmarked_lines_note: t5018UnmarkedLinesNote(unmarkedLineCount),
+      });
+      total += paidCents;
+      box22Total += box22Cents;
+    }
+    return {
+      year,
+      rule_note: T5018_RULE_NOTE,
+      items,
+      total_cents: total,
+      box_22_total_cents: box22Total,
+    };
+  }
+
+  /** The same report as the file a bookkeeper hands the contractor's book: the core's own CSV shape. */
+  function t5018Csv(year) {
+    const report = t5018Report(year);
+    const ruleNote = report.rule_note || T5018_RULE_NOTE;
+    const rows = [
+      [ruleNote],
+      [
+        "vendor_no",
+        "vendor_name",
+        "business_number",
+        "paid_cents",
+        "box_22_cents",
+        "services_subtotal_cents",
+        "under_threshold",
+        "threshold_note",
+        "unmarked_line_count",
+        "unmarked_lines_note",
+      ],
+    ];
+    for (const row of report.items) {
+      rows.push([
+        row.vendor_no,
+        row.name,
+        row.business_number_missing ? "(missing)" : row.business_number,
+        String(row.paid_cents),
+        String(row.box_22_cents),
+        String(row.services_subtotal_cents),
+        row.under_threshold ? "true" : "false",
+        row.threshold_note ?? "",
+        String(row.unmarked_line_count),
+        row.unmarked_lines_note ?? "",
+      ]);
+    }
+    rows.push([]);
+    rows.push(["Total", "", "", String(report.total_cents), String(report.box_22_total_cents), "", "", "", "", ""]);
+    return `${rows.map((row) => row.map(csvCell).join(",")).join("\n")}\n`;
+  }
+
   /**
    * One payment against one bill: the core's POST /api/v1/purchasing/bills/{id}/payments.
    *
@@ -217,11 +442,25 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
     if (doc === undefined) return { status: 404, error: "purchasing: bill not found" };
     // The core's cap: the sum of the bill's PAID instalments, every one of them, so a payment
     // dated ahead of today still takes the room it needs.
-    const open = doc.total - paidTotal(doc);
-    if (amount > open) return { status: 409, error: `purchasing: payment of ${amount} cents exceeds open balance ${open} cents on bill ${doc.doc}` };
+    // A USD bill is paid in USD at a rate the press names, the way the core's PayBill takes it: the
+    // amount and the cap are in the bill's own currency, and the last payment clears the bill's
+    // exact remaining CAD.
+    const usd = doc.currency === "USD";
+    let cad = amount;
+    let open = doc.total - paidTotal(doc);
+    if (usd) {
+      const rate = Number(body.fx_rate);
+      if (!Number.isFinite(rate) || rate <= 0) return { status: 400, error: "purchasing: fx_rate is required and must be positive when paying a USD bill" };
+      const paidDoc = (payments.get(doc.n) ?? []).reduce((sum, payment) => sum + payment.amount, 0);
+      open = doc.docTotal - paidDoc;
+      if (amount > open) return { status: 409, error: `purchasing: payment of ${amount} cents exceeds open balance ${open} cents on bill ${doc.doc}` };
+      cad = amount === open ? doc.total - paidTotal(doc) : Math.round((doc.total * amount) / doc.docTotal);
+    } else if (amount > open) {
+      return { status: 409, error: `purchasing: payment of ${amount} cents exceeds open balance ${open} cents on bill ${doc.doc}` };
+    }
     // The payment lands on the day it carries: the instant's own day in the house zone.
     const on = body.paid_at === undefined || body.paid_at === "" ? dayOffset(0) : houseDay(new Date(body.paid_at));
-    payments.set(doc.n, [...(payments.get(doc.n) ?? []), { amount, on, note: body.note ?? "" }]);
+    payments.set(doc.n, [...(payments.get(doc.n) ?? []), { amount, cad, on, note: body.note ?? "", rate: usd ? Number(body.fx_rate) : 1 }]);
     keys.set(key, { id, amount });
     return { status: 200, body: billDetail(id) };
   }
@@ -234,7 +473,7 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
       id: `${billId(doc.n)}-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
       seq: index + 1,
       due_date: dayOffset(doc.due),
-      amount_cents: payment.amount,
+      amount_cents: payment.cad,
       status: "PAID",
       note: payment.note,
     }));
@@ -253,8 +492,10 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
       subtotal_cents: doc.total,
       tax_cents: 0,
       total_cents: doc.total,
-      currency: "CAD",
-      fx_rate: 1,
+      currency: doc.currency ?? "CAD",
+      fx_rate: doc.rate ?? 1,
+      doc_total_cents: doc.docTotal ?? doc.total,
+      doc_open_cents: (doc.docTotal ?? doc.total) - (payments.get(doc.n) ?? []).reduce((sum, payment) => sum + payment.amount, 0) - (doc.currency === undefined ? doc.paid ?? 0 : 0),
       created_at: `${dayOffset(doc.issued)}T12:00:00Z`,
       lines: [],
       instalments,
@@ -263,10 +504,17 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
 
   /** Puts the world back to the start; the empty scenario holds no documents at all. */
   function reset(kind = "full") {
-    documents = kind === "empty" ? [] : DOCUMENTS;
+    documents = kind === "empty" ? [] : kind === "usd" ? [...DOCUMENTS, USD_DOCUMENT] : DOCUMENTS;
     payments.clear();
     keys.clear();
   }
 
-  return { apAging, payBill, reset };
+  return { apAging, t5018Report, t5018Csv, payBill, reset };
+}
+
+/** A CSV cell, quoted the way a CSV quotes a cell that carries a comma or a quote. */
+function csvCell(value) {
+  const text = String(value);
+  if (!/[",\n]/.test(text)) return text;
+  return `"${text.replace(/"/g, '""')}"`;
 }

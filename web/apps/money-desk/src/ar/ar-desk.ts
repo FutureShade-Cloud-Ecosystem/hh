@@ -14,12 +14,13 @@ import { html, type TemplateResult } from "lit";
 import type { BillingCustomerWorkspace, BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
-import { canLiftHolds, creditCheck, creditWords, dayInstant, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
+import { canDecideCreditChanges, canLiftHolds, canWorkCreditChanges, creditApproveWords, creditCheck, creditRefusalWords, creditRejectWords, creditRequestWords, creditWords, dayInstant, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
 import { centsToField, formatMoney, parseAmountToCents } from "./ar-money.js";
 import { OfficeDesk, type OfficeHost } from "./office-desk.js";
 import { AttemptKeys, reminderRunWords, sweepWords } from "./office-logic.js";
 import {
   renderAccount,
+  renderCreditChanges,
   renderHolds,
   renderHome,
   renderLoadFailed,
@@ -31,6 +32,7 @@ import {
   shownInvoiceIds,
   type AccountModel,
   type BouncedWork,
+  type CreditChangesRead,
   type CreditForm,
   type DeskModel,
   type PayMethod,
@@ -41,9 +43,10 @@ import {
 } from "./ar-views.js";
 import type { WorkspaceTab } from "./ar-workspace.js";
 import { formatWorkspaceMoney } from "./ar-workspace.js";
-import { renderPayables } from "./ap-views.js";
-import { payAmountWords, payOverOpenWords, type PayablesBoardModel, type PayBillForm, type PurchasingAPAgingItem, type PurchasingAPAgingPage } from "./ap-logic.js";
+import { payablesViewNav, renderPayables, renderT5018 } from "./ap-views.js";
+import { billOpenInOwnCurrency, isForeignBill, parseRate, payAmountWords, payOverOpenWords, payRateWords, type PayablesBoardModel, type PayBillForm, type PayablesView, type PurchasingAPAgingItem, type PurchasingAPAgingPage } from "./ap-logic.js";
 import { houseDay, houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { currentYear, t5018Filename, type PurchasingT5018Report, type T5018Model } from "./t5018-logic.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -89,6 +92,16 @@ export class ArDesk {
   #payablesError = "";
   #payablesAsOf = "";
   #payablesOpenKey: string | null = null;
+  // The Payables area carries two views (W3-T51): the open AP board, and the T5018 year report
+  // the CRA's form is filled from. The view is the operator's, and the area's own nav says which.
+  #payablesView: PayablesView = "aging";
+  // The T5018 view's own state: the read, the year it is for, and the file on its way.
+  #t5018State: "loading" | "ready" | "error" = "loading";
+  #t5018Report: PurchasingT5018Report | null = null;
+  #t5018Error = "";
+  #t5018Year = 0;
+  #t5018Downloading = false;
+  #t5018Notice = "";
   // The number of the newest read of the open AP: only that read may answer, so a slow answer for
   // an earlier day never replaces the newer pick.
   #payablesLoads = 0;
@@ -162,6 +175,12 @@ export class ArDesk {
   // The Place-a-hold draft (Change 8 S4). Empty customerId means "no account chosen
   // yet"; the form refuses to submit while either field is empty. Reset on close.
   #placeHoldDraft: { customerId: string; reason: string } = { customerId: "", reason: "" };
+
+  // The credit change requests waiting for a decision in the caller's reach (CC-2), read when the
+  // Credit changes tab opens. Null before the first read; a failed read is said in words.
+  #creditChanges: CreditChangesRead | null = null;
+  // The row whose reject reason form is open, or null when no form is open.
+  #creditRejectFor: string | null = null;
 
   constructor(api: ArApi, host: DeskHost, who: DeskWho) {
     this.#api = api;
@@ -319,6 +338,20 @@ export class ArDesk {
       case "payables-reload":
         void this.#loadPayables();
         return true;
+      case "payables-view":
+        this.#payablesView = attr("data-view") === "t5018" ? "t5018" : "aging";
+        this.#payablesOpenKey = null;
+        this.#host.repaint();
+        if (this.#payablesView === "t5018" && this.#t5018Report === null) {
+          void this.#loadT5018();
+        }
+        return true;
+      case "t5018-reload":
+        void this.#loadT5018();
+        return true;
+      case "t5018-csv":
+        void this.#downloadT5018();
+        return true;
       case "payables-pay": {
         // The Pay form opens on one open bill: the amount it has open, the house day, and the key
         // this press will carry. A bill the board no longer holds opens no form. The key is the
@@ -333,8 +366,9 @@ export class ArDesk {
         this.#pay = {
           billId: item.id,
           billNo: item.ref_no,
-          openCents: item.open_cents,
-          amountText: centsToField(held === null ? item.open_cents : held.cents),
+          openCents: billOpenInOwnCurrency(item),
+          currency: item.currency ?? "CAD",
+          amountText: centsToField(held === null ? billOpenInOwnCurrency(item) : held.cents),
           paidOn: houseDay(),
           note: "",
           key: held === null ? newKey() : held.key,
@@ -390,7 +424,7 @@ export class ArDesk {
         void this.#runStatements(null);
         return true;
       case "open-account":
-        void this.#openAccount(attr("data-customer-id"), attr("data-invoice-id") || null, (attr("data-right") || "receive") as RightMode, attr("data-sub") === "statement" ? "statement" : attr("data-sub") === "contacts" ? "contacts" : "invoices");
+        void this.#openAccount(attr("data-customer-id"), attr("data-invoice-id") || null, (attr("data-right") || "receive") as RightMode, attr("data-sub") === "statement" ? "statement" : attr("data-sub") === "contacts" ? "contacts" : attr("data-sub") === "credit" ? "credit" : "invoices");
         return true;
       case "back":
         this.#account = null;
@@ -400,8 +434,10 @@ export class ArDesk {
         this.#host.repaint();
         return true;
       case "sub":
-        if (this.#account !== null) this.#account = { ...this.#account, sub: choice === "statement" ? "statement" : choice === "contacts" ? "contacts" : "invoices" };
+        if (this.#account !== null) this.#account = { ...this.#account, sub: choice === "statement" ? "statement" : choice === "contacts" ? "contacts" : choice === "credit" ? "credit" : "invoices" };
         if (choice === "contacts" && this.#account !== null) void this.#office.ensureContact(this.#account.customerId);
+        // The credit limit tab reads its own history the way the contacts tab reads its contact.
+        if (choice === "credit" && this.#account !== null) void this.#loadAccountCreditChanges(this.#account.customerId);
         // A credit belongs to the view it was opened in: changing tab closes the form.
         this.#credit = null;
         this.#clearMessages();
@@ -545,6 +581,31 @@ export class ArDesk {
         return true;
       case "place-hold-go":
         void this.#placeHoldGo();
+        return true;
+      // The credit limit's changes (CC-2): the ask on an account's own tab, and the decisions on
+      // the Credit changes tab. Every press sends the core the two fields it requires and then says
+      // what the core answered, in the core's own words when it refused.
+      case "credit-limit-send":
+        void this.#sendCreditLimitRequest();
+        return true;
+      case "retry-credit-changes":
+        if (this.#account !== null && this.#account.sub === "credit") void this.#loadAccountCreditChanges(this.#account.customerId);
+        else void this.#loadCreditChanges();
+        return true;
+      case "credit-approve":
+        void this.#decideCreditChange(attr("data-credit-id"), "approve");
+        return true;
+      case "credit-reject":
+        this.#creditRejectFor = attr("data-credit-id");
+        this.#clearMessages();
+        this.#host.repaint();
+        return true;
+      case "credit-reject-cancel":
+        this.#creditRejectFor = null;
+        this.#host.repaint();
+        return true;
+      case "credit-reject-send":
+        void this.#decideCreditChange(attr("data-credit-id"), "reject");
         return true;
       case "run-sweep":
         void this.#runSweep();
@@ -700,6 +761,16 @@ export class ArDesk {
       void this.#loadPayables();
       return;
     }
+    if (control.getAttribute("data-field") === "t5018-year") {
+      // The year the report is for: the operator picks it and the report reads it again.
+      const raw = (control as HTMLInputElement).value.trim();
+      if (raw === "") return;
+      const year = Number.parseInt(raw, 10);
+      if (!Number.isInteger(year) || year < 1970 || year > 9999) return;
+      this.#t5018Year = year;
+      void this.#loadT5018();
+      return;
+    }
     if (control.getAttribute("data-field") === "place-hold-account") {
       const sel = (control as HTMLSelectElement).selectedOptions[0];
       const customerId = sel?.getAttribute("data-id") ?? (control as HTMLSelectElement).value;
@@ -726,6 +797,12 @@ export class ArDesk {
     // The board's as of control shows the day the books were read as of, so the operator sees
     // which day the figures are and can pick another one.
     if (this.#payablesAsOf !== "") this.#host.setField("payables-asof", this.#payablesAsOf);
+    // The T5018 view's year picker shows the year the report answered for, so the operator sees
+    // which year the figures are and can pick another one. Before the first answer it shows the
+    // dealer's current year, the year the report will answer for.
+    if (this.#payablesView === "t5018") {
+      this.#host.setField("t5018-year", String(this.#t5018Year === 0 ? currentYear() : this.#t5018Year));
+    }
     // The Pay form's fields are filled once, when it opens: the amount it has open and the house
     // day. After that the person types in them, so nothing is written over their typing.
     if (this.#payFillPending && this.#pay !== null) {
@@ -763,12 +840,102 @@ export class ArDesk {
   async #goTab(tab: Tab): Promise<void> {
     this.#tab = tab;
     this.#account = null;
+    this.#creditRejectFor = null;
     this.#clearMessages();
     this.#host.repaint();
     if (tab === "statements") await Promise.all(this.#aging.map((a) => this.#loadStatement(a.customer_id)));
     if (tab === "reminders") await this.#office.openReminders();
     if (tab === "settings") await this.#office.openSettings();
     if (tab === "holds") await this.#office.openHolds();
+    if (tab === "creditchanges" && canWorkCreditChanges(this.#who.roleCode)) await this.#loadCreditChanges();
+  }
+
+  /** The credit changes waiting for a decision in the caller's reach (CC-2). */
+  async #loadCreditChanges(): Promise<void> {
+    this.#creditChanges = { state: "loading", items: [] };
+    this.#host.repaint();
+    const got = await this.#api.pendingCreditChanges();
+    this.#creditChanges = got.ok ? { state: "ready", items: got.value.items ?? [] } : { state: "failed", items: [] };
+    this.#host.repaint();
+  }
+
+  /** One account's credit change history, read when its Credit limit tab opens or is retried. */
+  async #loadAccountCreditChanges(customerId: string): Promise<void> {
+    const account = this.#account;
+    if (account === null || account.customerId !== customerId) return;
+    this.#account = { ...account, credit: { state: "loading", items: [] } };
+    this.#host.repaint();
+    const got = await this.#api.creditChanges(customerId);
+    // The operator may have left the account while the read was in flight.
+    if (this.#account === null || this.#account.customerId !== customerId) return;
+    this.#account = { ...this.#account, credit: got.ok ? { state: "ready", items: got.value.items ?? [] } : { state: "failed", items: [] } };
+    this.#host.repaint();
+  }
+
+  /**
+   * Sends the ask for a new credit limit. The core decides everything that is money: whether the
+   * change applies at once or waits, and how many approvals an increase needs. A refusal reads in
+   * the server's own words; an answer says what the core did with the ask.
+   */
+  async #sendCreditLimitRequest(): Promise<void> {
+    const account = this.#account;
+    if (account === null || this.#busy || !canWorkCreditChanges(this.#who.roleCode)) return;
+    const cents = parseAmountToCents(this.#host.field("credit-limit-amount"));
+    const reason = this.#host.field("credit-limit-reason").trim();
+    if (cents === null) return this.#stop("Enter the new limit as dollars and cents, such as 55,000.00.");
+    if (reason === "") return this.#stop("Enter why the change is asked for; a request without a reason is refused.");
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const result = await this.#api.requestCreditChange({ customerId: account.customerId, newLimitCents: cents, reason });
+    this.#busy = false;
+    if (!result.ok) {
+      this.#notice = "";
+      this.#error = creditRefusalWords(result.error, result.status);
+      this.#reveal = "[data-error]";
+      this.#host.repaint();
+      return;
+    }
+    this.#notice = creditRequestWords(result.value);
+    this.#reveal = "[data-notice]";
+    // The ask is filed: the form is empty again, so a second press cannot send it twice.
+    this.#host.setField("credit-limit-amount", "");
+    this.#host.setField("credit-limit-reason", "");
+    await this.#loadAccountCreditChanges(account.customerId);
+    // The aging's limit figure is the server's now; a decrease has already moved it.
+    await this.#reloadBook();
+    this.#host.repaint();
+  }
+
+  /**
+   * Approves or rejects a waiting credit change. The core judges the request under one lock and
+   * rechecks the tier on the limit the account has now; a rising tier records the first of two
+   * approvals and moves nothing. A refusal reads in the server's own words, its 403s included.
+   */
+  async #decideCreditChange(id: string, kind: "approve" | "reject"): Promise<void> {
+    if (id === "" || this.#busy || !canDecideCreditChanges(this.#who.roleCode)) return;
+    let reason = "";
+    if (kind === "reject") {
+      reason = this.#host.field("credit-reject-reason").trim();
+      if (reason === "") return this.#stop("Enter why it is rejected; a rejection without a reason is refused.");
+    }
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const result = kind === "approve" ? await this.#api.approveCreditChange(id) : await this.#api.rejectCreditChange(id, reason);
+    this.#busy = false;
+    if (!result.ok) {
+      this.#notice = "";
+      this.#error = creditRefusalWords(result.error, result.status);
+      this.#reveal = "[data-error]";
+      this.#host.repaint();
+      return;
+    }
+    this.#notice = kind === "approve" ? creditApproveWords(result.value) : creditRejectWords(result.value);
+    this.#creditRejectFor = null;
+    this.#reveal = "[data-notice]";
+    await Promise.all([this.#loadCreditChanges(), this.#reloadBook()]);
+    this.#host.repaint();
   }
 
   /**
@@ -796,6 +963,49 @@ export class ArDesk {
     this.#payablesPage = got.value;
     this.#payablesAsOf = got.value.as_of;
     this.#payablesError = "";
+    this.#host.repaint();
+  }
+
+  /**
+   * The year's T5018 report, read from the purchasing route. The route answers the year it read,
+   * so the picker settles on the route's year and not on one the screen guessed.
+   */
+  async #loadT5018(): Promise<void> {
+    this.#t5018State = "loading";
+    this.#t5018Error = "";
+    this.#host.repaint();
+    const got = await this.#api.t5018(this.#t5018Year === 0 ? {} : { year: this.#t5018Year });
+    if (!got.ok) {
+      this.#t5018State = "error";
+      this.#t5018Error = refusalWords("the T5018 report", got.error, got.status);
+      this.#host.repaint();
+      return;
+    }
+    this.#t5018State = "ready";
+    this.#t5018Report = got.value;
+    this.#t5018Year = got.value.year;
+    this.#t5018Error = "";
+    this.#host.repaint();
+  }
+
+  /**
+   * The report as the file a bookkeeper hands the contractor's book: the core's own CSV answer,
+   * fetched as text, so the file says what the screen says and the server's file is the file.
+   */
+  async #downloadT5018(): Promise<void> {
+    if (this.#t5018Downloading) return;
+    this.#t5018Downloading = true;
+    this.#t5018Notice = "";
+    this.#host.repaint();
+    const got = await this.#api.t5018Csv(this.#t5018Year === 0 ? {} : { year: this.#t5018Year });
+    this.#t5018Downloading = false;
+    if (!got.ok) {
+      this.#t5018Notice = refusalWords("the T5018 file", got.error, got.status);
+      this.#host.repaint();
+      return;
+    }
+    this.#host.download(got.value, t5018Filename(this.#t5018Year === 0 ? currentYear() : this.#t5018Year));
+    this.#t5018Notice = "The file is the core's own export of this year.";
     this.#host.repaint();
   }
 
@@ -855,9 +1065,21 @@ export class ArDesk {
     // whatever it says: the core answers the earlier press if it landed, and judges this one if it
     // did not.
     if (heldKey === undefined && cents > form.openCents) {
-      this.#pay = { ...form, error: payOverOpenWords(form.openCents) };
+      this.#pay = { ...form, error: payOverOpenWords(form.openCents, form.currency) };
       this.#host.repaint();
       return;
+    }
+    // A bill that is not CAD is paid at the rate the person typed; the desk converts nothing, it
+    // only refuses a rate it cannot read before anything is sent, and the core judges the rest.
+    let fxRate: number | undefined;
+    if (isForeignBill(form.currency)) {
+      const rate = parseRate(this.#host.field("pay-rate"));
+      if (rate === null) {
+        this.#pay = { ...form, error: payRateWords(form.currency) };
+        this.#host.repaint();
+        return;
+      }
+      fxRate = rate;
     }
     const paidOn = this.#host.field("pay-date");
     const day = paidOn === "" ? houseDay() : paidOn;
@@ -866,7 +1088,7 @@ export class ArDesk {
     this.#host.repaint();
     const key = heldKey ?? form.key;
     if (heldKey === undefined) this.#payBillKeys.set(form.billId, heldPaymentValue(key, cents));
-    const got = await this.#api.payBill(form.billId, { amountCents: cents, paidAt: dayInstant(day, houseZone()), note }, key);
+    const got = await this.#api.payBill(form.billId, { amountCents: cents, paidAt: dayInstant(day, houseZone()), note, fxRate }, key);
     this.#payBusy = false;
     if (!got.ok) {
       const outcome = paymentOutcome(got.error, got.status, heldKey !== undefined);
@@ -888,13 +1110,13 @@ export class ArDesk {
         // The books show the earlier payment landed when the bill's open amount fell by at least its
         // amount, or the bill left the open list: the key ends and the form closes, so the next Pay on
         // that bill is a new payment with a new key.
-        if (open === null || form.openCents - open.open_cents >= cents) {
+        if (open === null || form.openCents - billOpenInOwnCurrency(open) >= cents) {
           this.#payBillKeys.delete(form.billId);
           // The form says so and waits for the person's own Close (S6 on 701, P2-3): the last words
           // on screen invited a second press, so a silent close would let a fresh Pay send the same
           // money again under a new key. A form already closed leaves the word for the next one.
           if (current !== null && current.billId === form.billId) {
-            this.#pay = { ...current, openCents: open === null ? 0 : open.open_cents, error: "", landedCents: cents };
+            this.#pay = { ...current, openCents: open === null ? 0 : billOpenInOwnCurrency(open), error: "", landedCents: cents };
           } else {
             this.#payLanded.set(form.billId, cents);
           }
@@ -902,7 +1124,7 @@ export class ArDesk {
           return;
         }
         if (current !== null) {
-          this.#pay = { ...current, openCents: open.open_cents };
+          this.#pay = { ...current, openCents: billOpenInOwnCurrency(open) };
           this.#host.repaint();
         }
         return;
@@ -938,7 +1160,7 @@ export class ArDesk {
 
   // ---- an account -------------------------------------------------------------------------------
 
-  async #openAccount(customerId: string, invoiceId: string | null, right: RightMode, sub: "invoices" | "statement" | "contacts"): Promise<void> {
+  async #openAccount(customerId: string, invoiceId: string | null, right: RightMode, sub: "invoices" | "statement" | "contacts" | "credit"): Promise<void> {
     if (customerId === "") return;
     const row = this.#aging.find((a) => a.customer_id === customerId);
     this.#clearMessages();
@@ -967,6 +1189,7 @@ export class ArDesk {
       picked: [],
       preview: null,
       previewError: "",
+      credit: null,
     };
     this.#host.repaint();
     await this.#loadAccountInvoices(customerId, invoiceId, right);
@@ -974,6 +1197,7 @@ export class ArDesk {
     if (invoiceId !== null && right === "invoice") await this.#selectInvoice(invoiceId);
     await this.#loadStatement(customerId);
     if (sub === "contacts") await this.#office.ensureContact(customerId);
+    if (sub === "credit") await this.#loadAccountCreditChanges(customerId);
   }
 
   /** Reads every invoice of the account (open and paid), prefills the payment from the arriving row, or says the read failed. */
@@ -1720,6 +1944,7 @@ export class ArDesk {
       asOf: this.#landing?.as_of ?? "",
       nowMs: Date.now(),
       roleCode: this.#who.roleCode,
+      userId: this.#who.userId,
       takenBy: this.#who.userName,
       canLift: canLiftHolds(this.#who.roleCode),
       landing: this.#landing,
@@ -1740,6 +1965,8 @@ export class ArDesk {
       liftChoice: this.#liftChoice,
       account: this.#account,
       credit: this.#credit,
+      creditChanges: this.#creditChanges,
+      creditRejectFor: this.#creditRejectFor,
       office: this.#office.model(),
       busy: this.#busy,
       error: this.#error,
@@ -1762,16 +1989,33 @@ export class ArDesk {
     if (model.tab === "reminders") return html`${renderReminders(model)}`;
     if (model.tab === "settings") return html`${renderSettings(model)}`;
     if (model.tab === "holds") return html`${renderHolds(model)}`;
+    if (model.tab === "creditchanges" && canWorkCreditChanges(model.roleCode)) return html`${renderCreditChanges(model)}`;
     return html`${renderHome(model)}`;
   }
 
   /**
-   * The Payables board as the Money Desk's own area (src/ar/ap-views.ts). The board is the open
-   * AP read from the purchasing route; it stands beside the receivables desk in the area switch,
-   * so it is rendered on its own and carries no view nav of that desk's.
+   * The Payables area as the Money Desk's own screen (src/ar/ap-views.ts): the open AP board and
+   * the T5018 year report. The area stands beside the receivables desk in the area switch, so it
+   * is rendered on its own; it carries its own view nav for its two views, which is the way in
+   * from one to the other.
    */
   renderPayablesArea(): TemplateResult {
-    return renderPayables(this.#payablesModel());
+    if (this.#payablesView === "t5018") {
+      return html`${payablesViewNav(this.#payablesView)}${renderT5018(this.#t5018Model())}`;
+    }
+    return html`${payablesViewNav(this.#payablesView)}${renderPayables(this.#payablesModel())}`;
+  }
+
+  /** The T5018 view's own state: the read, the year it is for, and the file on its way. */
+  #t5018Model(): T5018Model {
+    return {
+      state: this.#t5018State,
+      report: this.#t5018Report,
+      error: this.#t5018Error,
+      year: this.#t5018Year === 0 ? currentYear() : this.#t5018Year,
+      downloading: this.#t5018Downloading,
+      notice: this.#t5018Notice,
+    };
   }
 
   /** Reads the board when its area opens, the way every other area reads its own screen. */

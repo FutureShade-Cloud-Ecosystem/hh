@@ -20,7 +20,7 @@ import { applyDocumentTheme, framedBandAccount, framedBandBreadcrumb } from "@ha
 import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import type { ShellHeader } from "@hardscapehouse/shell-chrome/src/shell-header.js";
 import "@hardscapehouse/shell-chrome/src/shell-header.js";
-import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
+import { FRAMED_BAND_APP, framedBandRoleLabel, framedBandSurface } from "./framed-band.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
@@ -299,11 +299,11 @@ export class BuyingAndStockApp extends HHElement {
         user: {
           userId: handoff.session.user.userId,
           email: handoff.session.user.email,
-          name: handoff.session.user.name,
+          name: framedBandRoleLabel(handoff.session.user.name),
         },
       });
       if (adopted) {
-        this.#roleLabel = handoff.session.user.name;
+        this.#roleLabel = framedBandRoleLabel(handoff.session.user.name);
         clearFrontDoorHandoff();
         this.#enterAs(handoff.session.roleCode);
       }

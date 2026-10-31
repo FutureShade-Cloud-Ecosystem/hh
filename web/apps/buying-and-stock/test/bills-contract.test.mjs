@@ -211,3 +211,35 @@ test("the wall refuses bill writes to a role that is not a money seat, and the r
   assert.equal((await stub.call("PUT", `${P}/tolerance`, { qty_tolerance_pct: 1, price_tolerance_pct: 1, price_tolerance_abs_cents: 0 })).status, 403, "the rules are the super admin's alone");
   assert.equal((await stub.call("POST", `${P}/bills/${b.id}/post`, { accept_variance: true, note: "ok" })).status, 200);
 });
+
+test("a bill line carries supply_kind as GOODS or SERVICES, defaults PO-matched lines to GOODS, leaves no-PO lines unmarked unless set, and refuses an unknown value in the core's words", async () => {
+  await stub.reset();
+  await stub.post("/_stub/role", { role: "payables-receivables" });
+  const po = (await stub.call("GET", `${P}/pos`)).json.items.find((p) => p.po_no === "PO-PLM-67");
+  const poDetail = (await stub.call("GET", `${P}/pos/${po.id}`)).json;
+  const created = await stub.call("POST", `${P}/bills`, {
+    bill_no: "INV-SUPPLY-1",
+    po_id: po.id,
+    lines: [
+      { po_line_id: poDetail.lines[0].id, description: "Unilock Wall Cap", qty_billed_base: 1, unit_cost_cents: 24000 },
+      { description: "Subcontractor grading", qty_billed_base: 1, unit_cost_cents: 48000, supply_kind: "SERVICES" },
+      { description: "Site callout", qty_billed_base: 1, unit_cost_cents: 9500 },
+    ],
+  });
+  assert.equal(created.status, 201);
+  holds("PurchasingBillDetail", created.json);
+  assert.equal(created.json.lines[0].supply_kind, "GOODS");
+  assert.equal(created.json.lines[1].supply_kind, "SERVICES");
+  assert.equal(created.json.lines[2].supply_kind, undefined);
+
+  refused(
+    await stub.call("POST", `${P}/bills`, {
+      bill_no: "INV-SUPPLY-BAD",
+      po_id: po.id,
+      lines: [{ description: "Bad supply kind", qty_billed_base: 1, unit_cost_cents: 1000, supply_kind: "RENTAL" }],
+    }),
+    400,
+    'bill line 1 supply_kind must be GOODS or SERVICES, got "RENTAL"',
+    "bill line %d supply_kind must be %s or %s, got %q",
+  );
+});

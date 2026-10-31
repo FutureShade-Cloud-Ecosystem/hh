@@ -49,6 +49,13 @@ const (
 	BillVoid   = "VOID"
 )
 
+// Bill line supply kinds for the CRA T5018 Statement of Contract Payments (migration 0468).
+// An empty string means the line is unmarked (NULL in purchasing_bill_lines.supply_kind).
+const (
+	SupplyKindGoods    = "GOODS"
+	SupplyKindServices = "SERVICES"
+)
+
 // The GL event type + line roles the bill journal resolves through (posting_rules, migration 0122). Never a
 // literal account code, a branch may point its variance somewhere else with one row.
 const (
@@ -74,6 +81,12 @@ type Vendor struct {
 	Name             string `json:"name"`
 	PaymentTermsDays int    `json:"payment_terms_days"`
 	IsActive         bool   `json:"is_active"`
+	// IsT5018Subcontractor is the Financial Controller's mark on the vendor: the flag the year's
+	// T5018 report filters on. False is the default for every vendor that has never been marked.
+	IsT5018Subcontractor bool `json:"is_t5018_subcontractor"`
+	// BusinessNumber is the contractor's CRA business number, the other half of the T5018 form.
+	// Empty is a real answer: the contractor has not given one.
+	BusinessNumber string `json:"business_number"`
 }
 
 // PO is the purchase-order header projection (list + detail).
@@ -234,6 +247,11 @@ type Bill struct {
 	SubtotalCents int64 `json:"subtotal_cents"`
 	TaxCents      int64 `json:"tax_cents"`
 	TotalCents    int64 `json:"total_cents"`
+	// DocTotalCents is the bill total in its own document currency (USD cents on a USD bill, CAD
+	// cents on a CAD bill), used by PayBill to apportion the bill's CAD 2100 liability over USD
+	// payments and clear the exact remainder on the final payment. It is the unit PayBill's
+	// amount_cents is in.
+	DocTotalCents int64 `json:"doc_total_cents"`
 	// Currency/FXRate record what the VENDOR wrote and the rate we read it at. An AP clerk holding
 	// the paper invoice needs both to agree with the screen; without them a converted total looks
 	// like a transcription error.
@@ -263,6 +281,7 @@ type BillLine struct {
 	MatchState         string  `json:"match_state"`
 	QtyVarianceBase    float64 `json:"qty_variance_base"`
 	PriceVarianceCents int64   `json:"price_variance_cents"`
+	SupplyKind         string  `json:"supply_kind,omitempty"`
 }
 
 // Instalment is one scheduled payment against a bill.
@@ -280,6 +299,10 @@ type BillDetail struct {
 	Bill
 	Lines       []BillLine   `json:"lines"`
 	Instalments []Instalment `json:"instalments"`
+	// DocOpenCents is what is still owed in the bill's document currency (the bill's currency
+	// field): doc_total_cents less the document currency paid so far. Paying exactly this
+	// settles the bill.
+	DocOpenCents int64 `json:"doc_open_cents"`
 }
 
 // Tolerance is the resolved three-way-match tolerance for a branch (the branch row, else the org default).
@@ -395,6 +418,7 @@ type BillLineParams struct {
 	Description   string  `json:"description"`
 	QtyBilledBase float64 `json:"qty_billed_base"`
 	UnitCostCents int64   `json:"unit_cost_cents"`
+	SupplyKind    string  `json:"supply_kind,omitempty"`
 }
 
 // InstalmentParams is one scheduled payment. Σ amounts must equal the bill total.

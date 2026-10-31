@@ -86,6 +86,7 @@ test("a body that is not an object is not readable on every read, and no read th
     ["taxListProfiles", (api) => api.profiles(), "The profiles were not readable."],
     ["taxReviewQueue", (api) => api.reviewQueue(), "The profiles waiting for review were not readable."],
     ["taxListEvidence", (api) => api.evidence(""), "The evidence records were not readable."],
+    ["taxGetWorksheet", (api) => api.worksheet({ year: 2026, quarter: 3 }), "The GST/HST return worksheet was not readable."],
   ];
   for (const [operationId, read, error] of reads) {
     for (const body of [null, 7]) {

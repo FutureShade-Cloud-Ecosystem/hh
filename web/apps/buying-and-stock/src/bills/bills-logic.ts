@@ -101,6 +101,13 @@ export function prefillCost(line: Pick<BillableLine, "unit_cost_cents">): string
   return line.unit_cost_cents === undefined ? "" : centsToField(line.unit_cost_cents);
 }
 
+export interface BillExtraLineText {
+  readonly description: string;
+  readonly qty: string;
+  readonly cost: string;
+  readonly supplyKind?: string;
+}
+
 export interface BillText {
   readonly billNo: string;
   readonly billDate: string;
@@ -110,6 +117,8 @@ export interface BillText {
   readonly fx: string;
   /** What was written per order line id; a blank quantity leaves the line off the bill. */
   readonly lines: Readonly<Record<string, { qty: string; cost: string }>>;
+  /** An optional bill line with no purchase order line, offering goods or services for T5018. */
+  readonly extraLine?: BillExtraLineText;
 }
 
 interface OrderForBill {
@@ -148,6 +157,25 @@ export function billBody(form: BillText, po: OrderForBill | null): BillCheck {
     const cost = w.cost.trim() === "" ? null : amountCents(w.cost, "unit price");
     if (cost === null || !cost.ok) return fail(`Write the unit price of ${line.sku} as dollars and cents, two decimals at most.`);
     lines.push({ po_line_id: line.id, description: line.description, qty_billed_base: qty.value, unit_cost_cents: cost.cents });
+  }
+  if (form.extraLine !== undefined) {
+    const desc = form.extraLine.description.trim();
+    const qtyRaw = form.extraLine.qty.trim();
+    const costRaw = form.extraLine.cost.trim();
+    if (desc !== "" || qtyRaw !== "" || costRaw !== "") {
+      if (desc === "") return fail("Write a description for the line with no purchase order line.");
+      const qty = parseQty(qtyRaw);
+      if (!qty.ok) return fail(`Write how many ${desc} were billed, as a number above zero with four decimals at most.`);
+      const cost = costRaw === "" ? null : amountCents(costRaw, "unit price");
+      if (cost === null || !cost.ok) return fail(`Write the unit price of ${desc} as dollars and cents, two decimals at most.`);
+      const supplyKind = form.extraLine.supplyKind === "GOODS" || form.extraLine.supplyKind === "SERVICES" ? form.extraLine.supplyKind : undefined;
+      lines.push({
+        description: desc,
+        qty_billed_base: qty.value,
+        unit_cost_cents: cost.cents,
+        ...(supplyKind === undefined ? {} : { supply_kind: supplyKind }),
+      });
+    }
   }
   if (lines.length === 0) return fail("A bill needs at least one line: write a quantity on at least one.");
   const usd = form.currency === "USD";

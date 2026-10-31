@@ -253,44 +253,82 @@ func financeResetMapRolePositions(line, buildSuffix, boxSuffix, restoringRole st
 	return line
 }
 
-// financeResetWorldsOwnAssistDefaultPrivileges is the one default privileges
-// shape an assist role holds in a dump this tree's migrations build: the view
-// and claims owners' revoke of function execute from PUBLIC (migration 0418
-// makes it under SET LOCAL ROLE, and pg_dump writes it FOR ROLE the owner). The
-// mapping folds it onto the restoring role, and the fold is lossless: the
-// restoring role's own defaults carry the same revoke.
-var financeResetWorldsOwnAssistDefaultPrivileges = regexp.MustCompile(`(?i)^REVOKE ALL ON FUNCTIONS FROM PUBLIC;?$`)
+// financeResetWorldsOwnDefaultPrivilege answers whether a normalised ALTER
+// DEFAULT PRIVILEGES statement is one of the world's own shapes (the PR706 S5
+// read's P3, row 0.14): the FOR ROLE keyword (pg_dump writes no other), one
+// role name, bare or double quoted and never a list, and either the revoke of
+// function execute from PUBLIC or the grant of all functions to the build's
+// own function users role. buildSuffix is the suffix the dump carries on the
+// assist role names. Every other default privileges statement is refused, so
+// this answers false for anything the world's own migrations never write.
+func financeResetWorldsOwnDefaultPrivilege(upper, buildSuffix string) bool {
+	const head = "ALTER DEFAULT PRIVILEGES FOR ROLE "
+	if !strings.HasPrefix(upper, head) {
+		return false
+	}
+	rest := upper[len(head):]
+	var tail string
+	if strings.HasPrefix(rest, `"`) {
+		// A double quoted role name, with a doubled quote inside it.
+		i := 1
+		for i < len(rest) {
+			if rest[i] != '"' {
+				i++
+				continue
+			}
+			if i+1 < len(rest) && rest[i+1] == '"' {
+				i += 2
+				continue
+			}
+			break
+		}
+		if i >= len(rest) {
+			return false
+		}
+		tail = rest[i+1:]
+	} else {
+		// A bare role name carries no space, so the first space ends it. A
+		// role list (FOR ROLE a, b) leaves its comma on the tail, and never
+		// matches the world's own shapes.
+		space := strings.IndexByte(rest, ' ')
+		if space < 0 {
+			return false
+		}
+		tail = rest[space:]
+	}
+	switch tail {
+	case " REVOKE ALL ON FUNCTIONS FROM PUBLIC":
+		return true
+	case " GRANT ALL ON FUNCTIONS TO APP_FUNCTION_USERS_" + strings.ToUpper(buildSuffix):
+		return true
+	}
+	return false
+}
 
-// financeResetDefaultPrivilegesPossible refuses a dump that grants default
-// privileges to an assist role beyond the world's own shape (the PR694 S5
-// read's P3 3). The mapping folds every default privileges statement onto the
-// box's restoring role, the only role whose defaults the box's own role can
-// always change: for the world's own two statements the fold is lossless, and
-// for anything else an assist role holds (a grant, another object kind) the
-// fold would mute the assist role's own defaults, and a dump that carries one
-// is not a world this tree's migrations build. The reset refuses in words,
-// before it drops anything.
-//
-// The world's own shape has to be exempted rather than refused: migration
-// 0418's SET LOCAL ROLE defaults are in every real dump, so a flat refusal
-// refuses the tree's own world (the PR694 role mapping integration test's
-// fresh dump carries the shape).
-func financeResetDefaultPrivilegesPossible(dump []byte) error {
-	for _, line := range financeResetStatementLines(dump) {
-		m := financeResetDefaultPrivilegesShape.FindStringSubmatch(line)
-		if m == nil {
+// financeResetDefaultPrivilegesPossible refuses a dump whose default
+// privileges go beyond the world's own (the PR706 S5 read's P3, row 0.14).
+// The mapping folds every default privileges statement onto the box's
+// restoring role, the only role whose defaults the box's own role can always
+// change: for the world's own shapes the fold is lossless, and for anything
+// else (a grant to an assist reader or to PUBLIC, another object kind,
+// another schema, a role list, or a statement with no FOR ROLE, which lands
+// on the restoring role directly) every object the box's own roles create
+// from then on would carry the grant. The statements are read as whole
+// statements, so a shape split across two lines is read the same as a one
+// line shape, and the reset refuses in words, before it drops anything.
+func financeResetDefaultPrivilegesPossible(dump []byte, buildSuffix string) error {
+	statements, err := financeResetStatements(dump)
+	if err != nil {
+		return err
+	}
+	for _, upper := range statements {
+		if !financeResetHeadMatches(upper, "ALTER DEFAULT PRIVILEGES") {
 			continue
 		}
-		role := strings.Trim(m[2], `"`)
-		if !financeResetAssistRoleNameShape.MatchString(role) {
+		if financeResetWorldsOwnDefaultPrivilege(upper, buildSuffix) {
 			continue
 		}
-		rest := strings.TrimSpace(line[len(m[1])+len(m[2]):])
-		if financeResetWorldsOwnAssistDefaultPrivileges.MatchString(rest) {
-			continue
-		}
-		return fmt.Errorf("finance-reset: the world's dump grants default privileges to the assist role %s (%s): the restore folds default privileges onto the box's restoring role, so the assist role's own defaults would be lost, and the reset refuses before it drops anything",
-			role, strings.TrimSpace(line))
+		return fmt.Errorf("finance-reset: the world's dump carries a default privileges statement the world's own migrations never write (%s): the restore folds default privileges onto the box's restoring role, so the reset refuses before it drops anything", upper)
 	}
 	return nil
 }
