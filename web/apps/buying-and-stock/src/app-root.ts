@@ -27,6 +27,7 @@ import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/s
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bandIdentity } from "./band-identity.js";
 import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { PoApi } from "./po/po-api.js";
@@ -362,8 +363,9 @@ export class BuyingAndStockApp extends HHElement {
     if (this.#framed) applyDocumentTheme(this.#theme);
     const band = this.renderRoot.querySelector<ShellHeader>("hh-shell-header");
     if (band !== null) {
-      band.org = this.#dealerName;
-      band.demo = true;
+      const identity = bandIdentity(servedConsoleConfig(), this.#dealerName);
+      band.org = identity.org;
+      band.demo = identity.demo;
       band.user = framedBandAccount(this.#sessions.current?.user.name ?? "", this.#roleLabel);
       band.breadcrumb = framedBandBreadcrumb(FRAMED_BAND_APP, framedBandSurface(this.#area));
       band.groups = [];

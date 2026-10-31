@@ -19,6 +19,7 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bandIdentity } from "./band-identity.js";
 import { houseDay, houseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 // The offline strip and the conflict cards ride the shell chrome package,
 // wired here through their properties (the injected seams): this app maps the
@@ -421,15 +422,16 @@ export class DriveRunApp extends HHElement {
   // set on the element here, after each render.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
+    const identity = bandIdentity(servedConsoleConfig(), this.#org);
     setFieldFrame(this.renderRoot.querySelector("hh-field-frame"), {
-      org: this.#org,
+      org: identity.org,
       appName: "Drive",
       surface: this.#surfaceWords(),
       roleLabel: this.#roleLabel,
       syncState: this.#syncState as ShellSyncState,
       theme: this.#theme,
       signedIn: this.#sessions.current !== null,
-      demo: true,
+      demo: identity.demo,
       current: "drive",
       bellAction: "open-conflicts",
       bellCount: this.#openCards.length,
