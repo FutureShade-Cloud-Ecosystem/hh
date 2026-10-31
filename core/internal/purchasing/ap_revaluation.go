@@ -235,6 +235,10 @@ func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAP
 		}
 	}
 
+	if err := s.refuseUnreversedEarlierMonth(ctx, branchID, year, month, monthWords); err != nil {
+		return RevalueAPRun{}, err
+	}
+
 	run, legs, err := s.revalueAPCompute(ctx, branchID, monthEnd, loc, monthWords, in.FXRate)
 	if err != nil {
 		return RevalueAPRun{}, err
@@ -259,6 +263,44 @@ func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAP
 		"month": monthWords, "bills": run.Bills, "difference_cents": run.DifferenceCents, "posted": run.Posted,
 	})
 	return run, nil
+}
+
+// apRevalLookback is how many months before the pressed one are searched for a run whose
+// reversal has not posted. The run state lives on its journals and there is no list to read,
+// so each earlier month's key is probed; a year covers every month a dealer leaves behind.
+const apRevalLookback = 12
+
+// refuseUnreversedEarlierMonth refuses a run while the branch has an earlier revalued month
+// whose reversal has not posted. The run measures every bill against its documents, not
+// against 2100, so a run on top of an unreversed one would carry the earlier difference
+// twice. With the journal reader unwired nothing can be judged and the run goes on (its
+// reversal refuses in words in that case).
+func (s *Service) refuseUnreversedEarlierMonth(ctx context.Context, branchID string, year, month int, monthWords string) error {
+	if s.journalReader == nil {
+		return nil
+	}
+	first := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	for i := 1; i <= apRevalLookback; i++ {
+		prev := first.AddDate(0, -i, 0)
+		prevWords := fmt.Sprintf("%04d-%02d", prev.Year(), int(prev.Month()))
+		runKey := apRevalKey(branchID, prevWords)
+		run, found, err := s.journalReader.JournalByKey(ctx, runKey)
+		if err != nil {
+			return err
+		}
+		if !found || run.SourceRefID != branchID {
+			continue
+		}
+		_, reversed, err := s.journalReader.JournalByKey(ctx, runKey+apRevalReverseSuffix)
+		if err != nil {
+			return err
+		}
+		if !reversed {
+			return unprocessable("purchasing: month %s in branch %s was revalued and its reversal has not posted; reverse %s before revaluing %s, or its difference would be carried twice in 2100",
+				prevWords, branchID, prevWords, monthWords)
+		}
+	}
+	return nil
 }
 
 // revalueAPCompute reads the branch's open bills as of the month end instant and answers

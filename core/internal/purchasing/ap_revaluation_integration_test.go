@@ -690,6 +690,51 @@ func TestIntegration_W3FX2_Ties(t *testing.T) {
 	})
 }
 
+// TestIntegration_W3FX2_NextRunWaitsForThePreviousReversal proves a run refuses while the
+// branch's previous revalued month is unreversed: the run measures each bill against its
+// document, not against 2100, so a second run on top of an unreversed first would carry the
+// first's difference twice.
+func TestIntegration_W3FX2_NextRunWaitsForThePreviousReversal(t *testing.T) {
+	rig := fx2Rig(t)
+	rig.ensurePeriod(t, 2026, 11)
+	rig.ensurePeriod(t, 2026, 12)
+	loc := fx2Loc()
+	fx2PostUSDBillInBranch(t, rig, "w3fx2-seq", branchKGN, "2026-10-10", "2026-12-10", 100_000, fx2BillARate, time.Date(2026, 10, 10, 9, 0, 0, 0, loc))
+	t.Cleanup(func() { rig.svc.WithClock(time.Now) })
+	rig.svc.WithClock(func() time.Time { return time.Date(2026, 12, 2, 9, 0, 0, 0, loc) })
+
+	if _, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: branchKGN, Month: "2026-10", FXRate: fx2RunRate}); err != nil {
+		t.Fatalf("October run: %v", err)
+	}
+	novKey := "purchasing.ap.revaluation:" + branchKGN + ":2026-11"
+	_, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: branchKGN, Month: "2026-11", FXRate: fx2RunRate})
+	var ce clientError
+	if err == nil || !errors.As(err, &ce) || ce.status != http.StatusUnprocessableEntity {
+		t.Fatalf("W3-FX2 fix red: November run with October unreversed = %v, want a 422 refusal", err)
+	}
+	if !strings.Contains(err.Error(), "2026-10") || !strings.Contains(err.Error(), "reversal") {
+		t.Fatalf("W3-FX2 fix red: refusal %q does not name month 2026-10 and its reversal", err.Error())
+	}
+	if n := fx2JournalCount(t, rig, novKey); n != 0 {
+		t.Fatalf("W3-FX2 fix red: the refused November run left %d journals", n)
+	}
+	// A re-press of October itself is still answered as a replay.
+	if _, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: branchKGN, Month: "2026-10", FXRate: fx2RunRate}); err != nil {
+		t.Fatalf("W3-FX2 fix red: re-pressing October: %v", err)
+	}
+	if _, err := rig.svc.ReverseAPRevaluation(rig.ctx, branchKGN, "2026-10"); err != nil {
+		t.Fatalf("October reversal: %v", err)
+	}
+	nov, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: branchKGN, Month: "2026-11", FXRate: fx2RunRate})
+	if err != nil || !nov.Posted || nov.DifferenceCents != 5_000 {
+		t.Fatalf("W3-FX2 fix red: November run after October's reversal = %+v, %v, want accepted with difference 5000", nov, err)
+	}
+	// The other branch's books are not held by this branch's unreversed month.
+	if _, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: branchTRT, Month: "2026-11", FXRate: fx2RunRate}); err != nil && strings.Contains(err.Error(), "reversal") {
+		t.Fatalf("W3-FX2 fix red: another branch's run was held by this branch's month: %v", err)
+	}
+}
+
 // TestIntegration_W3FX2_EveningBoundary is the evening guard's leg for the month end and the
 // next day: the dealer's last evening of the month is already the next UTC day, so a month end
 // or a next house day read off the UTC day counts the wrong bills and lets the reversal in
