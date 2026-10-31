@@ -94,6 +94,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildArInvoiceWriteOffReversed(ctx, e.Payload)
 	case "ar.holdback.released":
 		draft, post, err = s.buildArHoldbackReleased(ctx, e.Payload)
+	case "ar.holdback.release_reversed":
+		draft, post, err = s.buildArHoldbackReleaseReversed(ctx, e.Payload)
 	case "pos.sale.committed", "bank.recon.completed":
 		// No direct GL effect: a POS sale's revenue/cash post via its own invoice.finalized / payment.received
 		// events; bankrec posts its clearing journals directly through PostExternal. Ack to avoid double-count.
@@ -1846,6 +1848,7 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 		"ar.invoice.write_off":          {"write_off_expense", "ar"},
 		"ar.invoice.write_off_reversed": {"write_off_expense", "ar"},
 		"ar.holdback.released":          {"ar", "holdback"},
+		"ar.holdback.release_reversed":  {"ar", "holdback"},
 	}
 	for et, roles := range required {
 		for _, role := range roles {
@@ -2077,6 +2080,55 @@ func (s *Service) buildArHoldbackReleased(ctx context.Context, payload []byte) (
 		Lines: []draftLine{
 			dr(arCode, p.AmountCents, "holdback released to the customer's balance"),
 			cr(hbCode, p.AmountCents, "holdback receivable released"),
+		},
+	}, true, nil
+}
+
+// buildArHoldbackReleaseReversed posts the reversal of a release made in error: DR the holdback receivable
+// (1150) / CR AR (1100) for the released amount, the exact mirror of buildArHoldbackReleased, on the release
+// row's own key so a replayed event posts nothing. The payload is the release's (invoice, release row,
+// amount, the act's instant).
+func (s *Service) buildArHoldbackReleaseReversed(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p arHoldbackReleasedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.holdback.release_reversed payload: %w", err)
+	}
+	if p.InvoiceID == "" || p.ReleaseID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.holdback.release_reversed missing invoice_id or release_id")
+	}
+	if p.AmountCents <= 0 {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.holdback.release_reversed has no amount")
+	}
+	if s.invoices == nil {
+		return journalDraft{}, false, fmt.Errorf("gl: invoice reader not configured")
+	}
+	a, err := s.invoices.InvoiceForGL(ctx, p.InvoiceID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	et := "ar.holdback.release_reversed"
+	rules, err := s.store.PostingAccounts(ctx, et, a.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	arCode, err := pick(rules, et, "ar")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	hbCode, err := pick(rules, et, "holdback")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourceInvoice,
+		SourceRefID:    p.InvoiceID,
+		IdempotencyKey: "ar.holdback.release_reversed:" + p.ReleaseID,
+		Memo:           "Holdback release reversed " + a.InvoiceNo,
+		BranchID:       a.BranchID,
+		OccurredAt:     p.OccurredAt,
+		Lines: []draftLine{
+			dr(hbCode, p.AmountCents, "holdback receivable restored"),
+			cr(arCode, p.AmountCents, "released holdback taken back from the customer's balance"),
 		},
 	}, true, nil
 }

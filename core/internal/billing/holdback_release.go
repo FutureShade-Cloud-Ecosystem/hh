@@ -55,7 +55,20 @@ const (
 	RefusedAlreadyReleased = "ALREADY_RELEASED"
 	RefusedNotController   = "NOT_CONTROLLER"
 	RefusedKeyReused       = "KEY_REUSED"
+	// The reversal's refusals.
+	RefusedReleaseNotFound   = "RELEASE_NOT_FOUND"
+	RefusedAlreadyReversed   = "ALREADY_REVERSED"
+	RefusedReversalPaidSince = "PAID_SINCE"
 )
+
+// ActHoldbackReleaseReversed is the audit verb of a release reversed in error.
+const ActHoldbackReleaseReversed = "HOLDBACK_RELEASE_REVERSED"
+
+// HoldbackReleaseReversedTopic is the outbox topic of a reversal's journal (DR 1150 / CR 1100).
+const HoldbackReleaseReversedTopic = "ar.holdback.release_reversed"
+
+var errReversalPaidSince = HoldbackReleaseRefused{Kind: RefusedReversalPaidSince,
+	Msg: "the customer has paid part of the released amount, so the holdback cannot be put back over it; reverse that payment first"}
 
 // ActHoldbackReleased is the audit verb of an invoice level release.
 const ActHoldbackReleased = "HOLDBACK_RELEASED"
@@ -440,4 +453,126 @@ func (r *Repository) replayRelease(ctx context.Context, tx pgx.Tx, in HoldbackRe
 		res.TotalCents += p.AmountCents
 	}
 	return res, nil
+}
+
+// HoldbackReversalInput is a reversal request. IsController is the caller's own role answer.
+type HoldbackReversalInput struct {
+	ReleaseID       string
+	Reason          string
+	ActorID         string
+	IsController    bool
+	CanAccessBranch func(branchID string) bool
+}
+
+// HoldbackReversalResult is what a reversal answers.
+type HoldbackReversalResult struct {
+	ReleaseID     string `json:"release_id"`
+	InvoiceID     string `json:"invoice_id"`
+	InvoiceNo     string `json:"invoice_no"`
+	RestoredCents int64  `json:"restored_cents"`
+	ReversedOn    string `json:"reversed_on"`
+}
+
+// Reverse undoes a release made in error, for a Controller, with a reason: the invoice's column goes up, a
+// positive RETENTION row restores the ledger beside the (kept) RELEASE row, and the GL reverses the pair
+// (DR 1150 / CR 1100). The holdback can then be released again, once. Refused in words when the release is
+// unknown, already reversed, or the customer has paid some of the released amount.
+func (s *HoldbackReleaseService) Reverse(ctx context.Context, in HoldbackReversalInput) (HoldbackReversalResult, error) {
+	if !in.IsController {
+		return HoldbackReversalResult{}, HoldbackReleaseRefused{Kind: RefusedNotController, Msg: "reversing a holdback release is the Controller's action"}
+	}
+	id, err := uuid.Parse(strings.TrimSpace(in.ReleaseID))
+	if err != nil {
+		return HoldbackReversalResult{}, httpx.BadRequestf("release id must be a uuid")
+	}
+	in.ReleaseID = id.String()
+	in.Reason = strings.TrimSpace(in.Reason)
+	if in.Reason == "" {
+		return HoldbackReversalResult{}, httpx.BadRequestf("a reason is required to reverse a release")
+	}
+	if strings.TrimSpace(in.ActorID) != "" {
+		actor, err := uuid.Parse(strings.TrimSpace(in.ActorID))
+		if err != nil {
+			return HoldbackReversalResult{}, httpx.BadRequestf("actor id must be a uuid")
+		}
+		in.ActorID = actor.String()
+	}
+	res, err := s.repo.ReverseHoldbackRelease(ctx, in, s.now())
+	if err != nil {
+		return HoldbackReversalResult{}, err
+	}
+	if s.audit != nil {
+		_ = s.audit.Record(ctx, audit.SensitiveAccess{
+			Action: ActHoldbackReleaseReversed, EntityType: "holdback_release", EntityID: res.ReleaseID,
+			ActorID: in.ActorID, Purpose: "HOLDBACK_RELEASE_REVERSAL", Reason: in.Reason,
+			Extra: map[string]any{"invoice_id": res.InvoiceID, "restored_cents": res.RestoredCents},
+		})
+	}
+	return res, nil
+}
+
+// ReverseHoldbackRelease is the repository write: one transaction under the invoice's job lock, so a reversal
+// and a release of the same job run one after the other.
+func (r *Repository) ReverseHoldbackRelease(ctx context.Context, in HoldbackReversalInput, now time.Time) (HoldbackReversalResult, error) {
+	if r.pool == nil {
+		return HoldbackReversalResult{}, errNoDB
+	}
+	if r.holdback == nil {
+		return HoldbackReversalResult{}, ErrNoHoldbackSeam
+	}
+	z, err := r.zoneFor(ctx)
+	if err != nil {
+		return HoldbackReversalResult{}, err
+	}
+	today := z.Today(func() time.Time { return now })
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return HoldbackReversalResult{}, fmt.Errorf("holdback reversal: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	txCtx := customer.WithCallerTx(ctx, tx)
+
+	notFound := HoldbackReleaseRefused{Kind: RefusedReleaseNotFound, Msg: "no such holdback release"}
+	row, ok, err := r.holdback.ReleaseRowByID(txCtx, in.ReleaseID)
+	if err != nil {
+		return HoldbackReversalResult{}, err
+	}
+	if !ok || (in.CanAccessBranch != nil && !in.CanAccessBranch(row.BranchID)) {
+		return HoldbackReversalResult{}, notFound
+	}
+	var jobID, invNo string
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(job_id::text, ''), invoice_no::text FROM invoices WHERE id = $1::uuid`, row.InvoiceID).Scan(&jobID, &invNo); err != nil {
+		return HoldbackReversalResult{}, fmt.Errorf("holdback reversal: read the invoice: %w", err)
+	}
+	// The job's lock, the release's own: a reversal and a release of one job never interleave.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('holdback_release:' || $1::text, 0))`, jobID); err != nil {
+		return HoldbackReversalResult{}, fmt.Errorf("holdback reversal: lock the job: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, row.InvoiceID); err != nil {
+		return HoldbackReversalResult{}, fmt.Errorf("holdback reversal: lock the invoice: %w", err)
+	}
+	done, err := r.holdback.MarkReleaseReversed(txCtx, row.ID)
+	if err != nil {
+		return HoldbackReversalResult{}, err
+	}
+	if !done {
+		return HoldbackReversalResult{}, HoldbackReleaseRefused{Kind: RefusedAlreadyReversed, Msg: "that release has already been reversed"}
+	}
+	if err := raiseHoldbackAndLedger(txCtx, tx, r.holdback, row.InvoiceID, row.AmountCents, func(ctx context.Context) error {
+		_, err := r.holdback.BookHoldbackMove(ctx, lien.HoldbackMove{
+			InvoiceID: row.InvoiceID, BranchID: row.BranchID, Reason: "holdback release reversal " + row.ID, AmountCents: row.AmountCents,
+		})
+		return err
+	}); err != nil {
+		return HoldbackReversalResult{}, err
+	}
+	if err := emitOutbox(ctx, tx, HoldbackReleaseReversedTopic, map[string]any{
+		"invoice_id": row.InvoiceID, "release_id": row.ID, "amount_cents": row.AmountCents, "occurred_at": now,
+	}); err != nil {
+		return HoldbackReversalResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return HoldbackReversalResult{}, fmt.Errorf("holdback reversal: commit: %w", err)
+	}
+	return HoldbackReversalResult{ReleaseID: row.ID, InvoiceID: row.InvoiceID, InvoiceNo: invNo, RestoredCents: row.AmountCents, ReversedOn: today}, nil
 }

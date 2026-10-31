@@ -118,7 +118,7 @@ func TestRT3Fix_AControllerReversesAReleaseMadeInError(t *testing.T) {
 	l.ties("after the reversal")
 	eq(t, "the reversal is recorded with its reason", l.auditCount("HOLDBACK_RELEASE_REVERSED"), 1)
 	var reason string
-	_ = l.pool.QueryRow(context.Background(), `SELECT COALESCE(reason,'') FROM audit_log WHERE action = 'HOLDBACK_RELEASE_REVERSED' ORDER BY seq DESC LIMIT 1`).Scan(&reason)
+	_ = l.pool.QueryRow(context.Background(), `SELECT COALESCE(changes->>'reason','') FROM audit_log WHERE action = 'HOLDBACK_RELEASE_REVERSED' ORDER BY seq DESC LIMIT 1`).Scan(&reason)
 	if !strings.Contains(reason, "released in error") {
 		t.Errorf("the audit row must carry the reason, got %q", reason)
 	}

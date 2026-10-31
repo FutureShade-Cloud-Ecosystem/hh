@@ -25,6 +25,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+)
+
+// The audit verbs of the preserved lien door.
+const (
+	actLienPreserved  = "HOLDBACK_LIEN_PRESERVED"
+	actLienDischarged = "HOLDBACK_LIEN_DISCHARGED"
 )
 
 // Basis names the date a preservation period counts from.
@@ -216,7 +225,7 @@ func (s *Service) HasReleaseOnJob(ctx context.Context, customerJobID string) (bo
 		return false, err
 	}
 	var n int
-	if err := q.QueryRow(ctx, `SELECT count(*) FROM holdback_ledger WHERE job_id = $1::uuid AND entry_type = 'RELEASE' AND invoice_id IS NOT NULL`, jobID).Scan(&n); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err := q.QueryRow(ctx, `SELECT count(*) FROM holdback_ledger WHERE job_id = $1::uuid AND entry_type = 'RELEASE' AND invoice_id IS NOT NULL AND reversed_at IS NULL`, jobID).Scan(&n); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return false, fmt.Errorf("lien: count the job's releases: %w", err)
 	}
 	return n > 0, nil
@@ -239,4 +248,146 @@ func (s *Service) HasJobLevelRelease(ctx context.Context, customerJobID string) 
 		return false, fmt.Errorf("lien: count the job's job level releases: %w", err)
 	}
 	return n > 0, nil
+}
+
+// lienDay parses a request's house day (YYYY-MM-DD).
+func lienDay(what, v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", unprocessable("lien: %s is required (a date, YYYY-MM-DD)", what)
+	}
+	if _, err := time.Parse("2006-01-02", v); err != nil {
+		return "", unprocessable("lien: %s %q is not a date (YYYY-MM-DD)", what, v)
+	}
+	return v, nil
+}
+
+// RecordLienPreserved records that a lien was preserved against a lien job, on a date, with a note: it
+// blocks the release of the job's holdback until discharged. A manager inside the job's branch reach; the
+// act and its audit record are one transaction. Recording again replaces the date and note and clears a
+// discharge (a new preservation).
+func (s *Service) RecordLienPreserved(ctx context.Context, lienJobID, preservedOn, note string) (Job, error) {
+	c, job, err := s.preservedLienCaller(ctx, lienJobID)
+	if err != nil {
+		return Job{}, err
+	}
+	day, err := lienDay("preserved_on", preservedOn)
+	if err != nil {
+		return Job{}, err
+	}
+	note = strings.TrimSpace(note)
+	if err := s.rules().InTx(ctx, func(ctx context.Context) error {
+		q, err := s.repo.q(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `
+			UPDATE lien_jobs SET lien_preserved_on = $2::date, lien_preserved_note = $3, lien_discharged_on = NULL, updated_at = now()
+			 WHERE id = $1::uuid`, job.ID, day, note); err != nil {
+			return fmt.Errorf("lien: record the preserved lien: %w", err)
+		}
+		return s.record(ctx, audit.SensitiveAccess{
+			Action: actLienPreserved, EntityType: "lien.job", EntityID: job.ID, ActorID: c.UserID, BranchID: job.BranchID,
+			Reason: note, Extra: map[string]any{"preserved_on": day},
+		})
+	}); err != nil {
+		return Job{}, err
+	}
+	return s.store.GetJob(ctx, job.ID)
+}
+
+// DischargeLien records that a preserved lien was discharged (vacated, paid or settled), on a date, with a
+// note: the block on the job's holdback release lifts. A lien never preserved has nothing to discharge.
+func (s *Service) DischargeLien(ctx context.Context, lienJobID, dischargedOn, note string) (Job, error) {
+	c, job, err := s.preservedLienCaller(ctx, lienJobID)
+	if err != nil {
+		return Job{}, err
+	}
+	if job.LienPreservedOn == "" {
+		return Job{}, unprocessable("lien: no lien was preserved on job %s, so there is nothing to discharge", job.JobNo)
+	}
+	day, err := lienDay("discharged_on", dischargedOn)
+	if err != nil {
+		return Job{}, err
+	}
+	if day < job.LienPreservedOn {
+		return Job{}, unprocessable("lien: a lien preserved on %s cannot be discharged on %s, before it", job.LienPreservedOn, day)
+	}
+	note = strings.TrimSpace(note)
+	if err := s.rules().InTx(ctx, func(ctx context.Context) error {
+		q, err := s.repo.q(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `UPDATE lien_jobs SET lien_discharged_on = $2::date, updated_at = now() WHERE id = $1::uuid`, job.ID, day); err != nil {
+			return fmt.Errorf("lien: record the discharge: %w", err)
+		}
+		return s.record(ctx, audit.SensitiveAccess{
+			Action: actLienDischarged, EntityType: "lien.job", EntityID: job.ID, ActorID: c.UserID, BranchID: job.BranchID,
+			Reason: note, Extra: map[string]any{"discharged_on": day, "preserved_on": job.LienPreservedOn},
+		})
+	}); err != nil {
+		return Job{}, err
+	}
+	return s.store.GetJob(ctx, job.ID)
+}
+
+func (s *Service) preservedLienCaller(ctx context.Context, lienJobID string) (c identity.StaffContext, job Job, err error) {
+	c, err = s.managerCaller(ctx)
+	if err != nil {
+		return c, Job{}, err
+	}
+	job, err = s.store.GetJob(ctx, lienJobID)
+	if err != nil {
+		return c, Job{}, err
+	}
+	if !c.CanAccessBranch(job.BranchID) {
+		return c, Job{}, forbidden("lien: that lien job sits at a branch outside your reach")
+	}
+	return c, job, nil
+}
+
+// ReleaseRow is an invoice level RELEASE row as the reversal reads it.
+type ReleaseRow struct {
+	ID          string
+	InvoiceID   string
+	BranchID    string
+	AmountCents int64
+	Reversed    bool
+}
+
+// ReleaseRowByID answers an invoice level RELEASE row, ok false when there is none.
+func (s *Service) ReleaseRowByID(ctx context.Context, releaseID string) (ReleaseRow, bool, error) {
+	q, err := s.repo.q(ctx)
+	if err != nil {
+		return ReleaseRow{}, false, err
+	}
+	var r ReleaseRow
+	err = q.QueryRow(ctx, `
+		SELECT id::text, invoice_id::text, branch_id::text, amount_cents, reversed_at IS NOT NULL
+		  FROM holdback_ledger WHERE id = $1::uuid AND entry_type = 'RELEASE' AND invoice_id IS NOT NULL`, releaseID).
+		Scan(&r.ID, &r.InvoiceID, &r.BranchID, &r.AmountCents, &r.Reversed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReleaseRow{}, false, nil
+	}
+	if err != nil {
+		return ReleaseRow{}, false, fmt.Errorf("lien: read a release row: %w", err)
+	}
+	return r, true, nil
+}
+
+// MarkReleaseReversed marks an invoice level RELEASE row reversed (it no longer counts as the invoice's
+// one release) and answers whether it changed: false when it was already reversed. The row stays as history.
+func (s *Service) MarkReleaseReversed(ctx context.Context, releaseID string) (bool, error) {
+	q, err := s.repo.q(ctx)
+	if err != nil {
+		return false, err
+	}
+	tag, err := q.Exec(ctx, `
+		UPDATE holdback_ledger SET reversed_at = now()
+		 WHERE id = $1::uuid AND entry_type = 'RELEASE' AND invoice_id IS NOT NULL AND reversed_at IS NULL`, releaseID)
+	if err != nil {
+		return false, fmt.Errorf("lien: mark the release reversed: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
 }

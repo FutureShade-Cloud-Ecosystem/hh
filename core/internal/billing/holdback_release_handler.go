@@ -48,6 +48,7 @@ func (h *HoldbackReleaseHandler) staff(next guards.StaffHandler) guards.StaffHan
 func (h *HoldbackReleaseHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/ar/holdback/due-to-release", g.RequireManager(h.staff(h.dueToRelease)))
 	r.Handle("POST /api/v1/ar/holdback/releases", g.RequireManager(h.staff(h.release)))
+	r.Handle("POST /api/v1/ar/holdback/releases/{releaseID}/reversal", g.RequireManager(h.staff(h.reverse)))
 }
 
 func (h *HoldbackReleaseHandler) dueToRelease(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
@@ -118,6 +119,27 @@ func (h *HoldbackReleaseHandler) release(w http.ResponseWriter, r *http.Request,
 	httpx.WriteJSON(w, status, res)
 }
 
+func (h *HoldbackReleaseHandler) reverse(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRegisterBody)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	sc, _ := identity.StaffContextFromContext(r.Context())
+	res, err := h.svc.Reverse(r.Context(), HoldbackReversalInput{
+		ReleaseID: r.PathValue("releaseID"), Reason: req.Reason, ActorID: sc.UserID,
+		CanAccessBranch: sc.CanAccessBranch, IsController: sc.RoleCode == RoleCodeFinancialController,
+	})
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
 func (h *HoldbackReleaseHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var refused HoldbackReleaseRefused
 	var bad httpx.BadRequestError
@@ -125,6 +147,10 @@ func (h *HoldbackReleaseHandler) writeErr(w http.ResponseWriter, r *http.Request
 	case errors.As(err, &refused):
 		if refused.Kind == RefusedNotController {
 			httpx.Error(w, http.StatusForbidden, refused.Msg)
+			return
+		}
+		if refused.Kind == RefusedReleaseNotFound {
+			httpx.Error(w, http.StatusNotFound, refused.Msg)
 			return
 		}
 		httpx.Error(w, http.StatusConflict, refused.Msg)

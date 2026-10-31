@@ -52,9 +52,13 @@ ALTER TABLE holdback_ledger DROP CONSTRAINT holdback_release_has_journal;
 ALTER TABLE holdback_ledger ADD CONSTRAINT holdback_release_has_journal
   CHECK (entry_type <> 'RELEASE' OR gl_journal_id IS NOT NULL OR (journal_via_outbox AND invoice_id IS NOT NULL));
 
--- 3. An invoice is released once. The unique index is the backstop under the service's refusal.
+-- 3. An invoice is released once. The unique index is the backstop under the service's refusal. A release
+--    reversed in error (reversed_at set by the Controller's reversal door) no longer counts, so the holdback
+--    can be released again, correctly. The reversal restores the column and books a positive RETENTION row
+--    beside the RELEASE row; the RELEASE row stays as history.
+ALTER TABLE holdback_ledger ADD COLUMN reversed_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX uq_holdback_release_once_per_invoice
-  ON holdback_ledger(invoice_id) WHERE entry_type = 'RELEASE' AND invoice_id IS NOT NULL;
+  ON holdback_ledger(invoice_id) WHERE entry_type = 'RELEASE' AND invoice_id IS NOT NULL AND reversed_at IS NULL;
 
 -- 4. The release's idempotency key reads by its reason.
 CREATE INDEX idx_holdback_ledger_reason_release
@@ -63,7 +67,9 @@ CREATE INDEX idx_holdback_ledger_reason_release
 -- 5. The release's journal: DR the receivable (1100), CR the holdback receivable (1150).
 INSERT INTO posting_rules (event_type, line_role, account_code) VALUES
     ('ar.holdback.released', 'ar',       '1100'),
-    ('ar.holdback.released', 'holdback', '1150')
+    ('ar.holdback.released', 'holdback', '1150'),
+    ('ar.holdback.release_reversed', 'ar',       '1100'),
+    ('ar.holdback.release_reversed', 'holdback', '1150')
 ON CONFLICT (event_type, line_role) WHERE branch_id IS NULL DO NOTHING;
 
 -- 6. A released part falls due on its release day (RT-3 fix round). A holdback release brings the held part
@@ -77,6 +83,7 @@ LANGUAGE sql STABLE AS $$
   SELECT COALESCE(SUM(l.amount_cents), 0)::bigint
     FROM holdback_ledger l
    WHERE l.invoice_id = p_invoice_id AND l.entry_type = 'RELEASE' AND l.created_at <= p_as_of
+     AND (l.reversed_at IS NULL OR l.reversed_at > p_as_of)
 $$;
 
 CREATE OR REPLACE FUNCTION invoice_released_on(p_invoice_id uuid, p_as_of timestamptz) RETURNS date
@@ -84,4 +91,5 @@ LANGUAGE sql STABLE AS $$
   SELECT MAX(l.released_at)
     FROM holdback_ledger l
    WHERE l.invoice_id = p_invoice_id AND l.entry_type = 'RELEASE' AND l.created_at <= p_as_of
+     AND (l.reversed_at IS NULL OR l.reversed_at > p_as_of)
 $$;

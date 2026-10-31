@@ -241,3 +241,36 @@ func (h *Handler) linkCustomerJob(w http.ResponseWriter, r *http.Request, caller
 	}
 	httpx.WriteJSON(w, http.StatusOK, job)
 }
+
+// preservedLienBody is the body of a preserve or a discharge: the date and the note.
+type preservedLienBody struct {
+	PreservedOn  string `json:"preserved_on"`
+	DischargedOn string `json:"discharged_on"`
+	Note         string `json:"note"`
+}
+
+func (h *Handler) preserveLien(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var b preservedLienBody
+	if !h.decode(w, r, &b) {
+		return
+	}
+	job, err := h.svc.RecordLienPreserved(r.Context(), r.PathValue("id"), b.PreservedOn, b.Note)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, job)
+}
+
+func (h *Handler) dischargeLien(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var b preservedLienBody
+	if !h.decode(w, r, &b) {
+		return
+	}
+	job, err := h.svc.DischargeLien(r.Context(), r.PathValue("id"), b.DischargedOn, b.Note)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, job)
+}
