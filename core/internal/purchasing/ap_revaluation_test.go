@@ -91,7 +91,7 @@ func TestW3FX2_RunRefusesBadInputsInWords(t *testing.T) {
 		{"zero rate", revalTestBranch, "2026-09", 0, http.StatusBadRequest, "must be positive"},
 		{"negative rate", revalTestBranch, "2026-09", -1.4, http.StatusBadRequest, "must be positive"},
 		{"seven decimals", revalTestBranch, "2026-09", 1.4000001, http.StatusBadRequest, "7 decimals"},
-		{"month not begun", revalTestBranch, "2026-11", 1.4, http.StatusUnprocessableEntity, "has not begun"},
+		{"month not begun", revalTestBranch, "2026-11", 1.4, http.StatusUnprocessableEntity, "next house day"},
 	}
 	for _, tc := range cases {
 		_, err := svc.RevalueAP(context.Background(), RevalueAPRequest{BranchID: tc.branch, Month: tc.month, FXRate: tc.rate})
@@ -108,20 +108,38 @@ func TestW3FX2_RunRefusesBadInputsInWords(t *testing.T) {
 	}
 }
 
-// TestW3FX2_MonthBegunOnTheDealerDay proves the begun judgement reads the dealer's house
-// day, not the UTC day: mid evening in Toronto on the first of a month is already the
-// next UTC day, and the month has still begun.
-func TestW3FX2_MonthBegunOnTheDealerDay(t *testing.T) {
-	// 20:00 on October 1 in Toronto is October 2 in UTC.
-	now := time.Date(2026, 10, 2, 0, 5, 0, 0, time.UTC)
-	svc := revalUnitSvc(now)
-	_, err := svc.RevalueAP(context.Background(), RevalueAPRequest{BranchID: revalTestBranch, Month: "2026-10", FXRate: 1.4})
-	if err == nil {
-		t.Fatal("a nil pool service accepted the run; it must refuse on the database before posting")
+// TestW3FX2_RunWaitsForTheMonthToEnd proves the run takes the reversal's guard: a month is
+// revalued only once the house day after its last day has begun, judged on the dealer's
+// zone and not the UTC day. Mid month and the last house evening (already the next UTC day)
+// are refused in words; the house midnight after the month passes the guard and reaches the
+// database, which the nil pool answers with a 503.
+func TestW3FX2_RunWaitsForTheMonthToEnd(t *testing.T) {
+	loc, err := time.LoadLocation("America/Toronto")
+	if err != nil {
+		t.Fatal(err)
 	}
+	for _, tc := range []struct {
+		name string
+		now  time.Time
+	}{
+		{"the 15th", time.Date(2026, 9, 15, 12, 0, 0, 0, loc)},
+		{"23:30 on the last house day", time.Date(2026, 9, 30, 23, 30, 0, 0, loc)},
+	} {
+		svc := revalUnitSvc(tc.now)
+		_, err := svc.RevalueAP(context.Background(), RevalueAPRequest{BranchID: revalTestBranch, Month: "2026-09", FXRate: 1.4})
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != http.StatusUnprocessableEntity {
+			t.Fatalf("%s: error = %v, want a 422 refusal", tc.name, err)
+		}
+		if !strings.Contains(err.Error(), "next house day") || !strings.Contains(err.Error(), "2026-10-01") {
+			t.Fatalf("%s: refusal %q does not name the next house day 2026-10-01", tc.name, err.Error())
+		}
+	}
+	svc := revalUnitSvc(time.Date(2026, 10, 1, 0, 0, 0, 0, loc))
+	_, err = svc.RevalueAP(context.Background(), RevalueAPRequest{BranchID: revalTestBranch, Month: "2026-09", FXRate: 1.4})
 	var ce clientError
 	if !errors.As(err, &ce) || ce.status != http.StatusServiceUnavailable {
-		t.Fatalf("error = %v, want the database refusal (the month judgement passed), status 503", err)
+		t.Fatalf("at the house midnight: error = %v, want the database refusal (the guard passed), status 503", err)
 	}
 }
 

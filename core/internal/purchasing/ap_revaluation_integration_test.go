@@ -674,9 +674,25 @@ func TestIntegration_W3FX2_EveningBoundary(t *testing.T) {
 	fx2PostUSDBillInBranch(t, rig, "w3fx2-eve-in", branchKGN, "2026-09-30", "2026-10-30", 100_000, fx2BillARate, lastEvening)
 	fx2PostUSDBillInBranch(t, rig, "w3fx2-eve-out", branchKGN, "2026-10-01", "2026-10-31", 70_000, fx2BillARate, afterMidnight)
 
+	// The run waits for the month to end, on the dealer's day: a press mid month and at 23:30
+	// on the last house day (already October in UTC) are refused in words and post nothing;
+	// the house midnight after the month accepts.
+	t.Cleanup(func() { rig.svc.WithClock(time.Now) })
+	for _, early := range []time.Time{time.Date(2026, 9, 15, 12, 0, 0, 0, loc), time.Date(2026, 9, 30, 23, 30, 0, 0, loc)} {
+		rig.svc.WithClock(func() time.Time { return early })
+		if _, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: branchKGN, Month: fx2Month, FXRate: fx2RunRate}); err == nil {
+			t.Fatalf("W3-FX2 evening red: a run pressed at %s, before the month's last house day has ended, must be refused", early.Format("2006-01-02 15:04"))
+		} else if !strings.Contains(err.Error(), "next house day") {
+			t.Fatalf("W3-FX2 evening red: refusal %q does not name the next house day", err.Error())
+		}
+		if n := fx2JournalCount(t, rig, "purchasing.ap.revaluation:"+branchKGN+":"+fx2Month); n != 0 {
+			t.Fatalf("W3-FX2 evening red: the refused press at %s left %d journals under the month's key", early.Format("15:04"), n)
+		}
+	}
+	rig.svc.WithClock(func() time.Time { return time.Date(2026, 10, 1, 0, 0, 0, 0, loc) })
 	run, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: branchKGN, Month: fx2Month, FXRate: fx2RunRate})
 	if err != nil {
-		t.Fatalf("RevalueAP: %v", err)
+		t.Fatalf("RevalueAP at the house midnight: %v", err)
 	}
 	// Only the bill posted on the last house evening is open at the house month end:
 	// USD 1,000.00 at 1.40 is 140,000 against the 135,000 it carries.
@@ -685,7 +701,6 @@ func TestIntegration_W3FX2_EveningBoundary(t *testing.T) {
 			run.Bills, run.CarriedCadCents, run.DifferenceCents)
 	}
 
-	t.Cleanup(func() { rig.svc.WithClock(time.Now) })
 	rig.svc.WithClock(func() time.Time { return time.Date(2026, 9, 30, 23, 30, 0, 0, loc) })
 	if _, err := rig.svc.ReverseAPRevaluation(rig.ctx, branchKGN, fx2Month); err == nil {
 		t.Fatal("W3-FX2 evening red: a reversal pressed at 23:30 on the last house day (already October in UTC) must be refused")

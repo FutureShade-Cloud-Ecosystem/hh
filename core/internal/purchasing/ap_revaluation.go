@@ -182,9 +182,14 @@ func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAP
 	}
 	loc := zone.Location()
 	monthStart, monthEnd := apMonthBounds(year, month, loc)
-	if s.clock().In(loc).Before(monthStart) {
-		return RevalueAPRun{}, unprocessable("purchasing: month %s has not begun yet on the dealer's day %s; a month is revalued at its own end",
-			monthWords, zone.Today(s.now))
+	// A month is revalued once it has ended: the same test the reversal takes, the house day
+	// after its last day must have begun. A run pressed earlier would read the books before
+	// the month's later bills, payments and credits were filed, post at a rate that is not
+	// the month end's, and hold the month's key against the real run.
+	nextHouseDay := monthStart.AddDate(0, 1, 0)
+	if s.clock().In(loc).Before(nextHouseDay) {
+		return RevalueAPRun{}, unprocessable("purchasing: month %s ends on %s; its revaluation belongs to the next house day %s, which has not begun (the dealer's day is %s)",
+			monthWords, monthEnd.In(loc).Format("2006-01-02"), nextHouseDay.In(loc).Format("2006-01-02"), zone.Today(s.now))
 	}
 
 	key := apRevalKey(branchID, monthWords)
