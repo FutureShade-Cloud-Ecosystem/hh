@@ -119,3 +119,32 @@ BEGIN
   RESET ROLE;
 END
 $rt2_net$;
+
+-- The retention ledger is the one dated source of an invoice's holdback (RT-2 fix round 2).
+--
+-- invoice_holdback_as_of(invoice, instant) is what the invoice still withheld at that instant: its
+-- RETENTION rows (positive at the withholding, negative for a credit memo's part, a write off's part,
+-- and positive again for a write off's reversal) less its RELEASE rows (RT-3), every row counted from
+-- its own created_at. It is owned by lien, the ledger's module, and it is the one thing the dated
+-- readers call (the aging, the AR balance behind the 1100 tie, the finance charge, the statement), so
+-- no reader rebuilds a past holdback by hand and RT-3's release reaches every one of them by writing
+-- its row. An invoice with no ledger row withheld nothing and answers zero.
+--
+-- invoice_holdback_withheld(invoice) is the holdback the invoice was first written with: its positive
+-- RETENTION rows, whatever later lowered it. NULL when the ledger never held the invoice.
+CREATE OR REPLACE FUNCTION invoice_holdback_as_of(p_invoice_id uuid, p_as_of timestamptz) RETURNS bigint
+LANGUAGE sql STABLE AS $$
+  SELECT GREATEST(COALESCE(SUM(CASE l.entry_type WHEN 'RETENTION' THEN l.amount_cents ELSE -l.amount_cents END), 0), 0)::bigint
+    FROM holdback_ledger l
+   WHERE l.invoice_id = p_invoice_id AND l.created_at <= p_as_of
+$$;
+
+CREATE OR REPLACE FUNCTION invoice_holdback_withheld(p_invoice_id uuid) RETURNS bigint
+LANGUAGE sql STABLE AS $$
+  SELECT SUM(l.amount_cents)::bigint
+    FROM holdback_ledger l
+   WHERE l.invoice_id = p_invoice_id AND l.entry_type = 'RETENTION' AND l.amount_cents > 0
+$$;
+
+-- The reader's index: one invoice's rows by date.
+CREATE INDEX IF NOT EXISTS idx_holdback_ledger_invoice ON holdback_ledger(invoice_id, created_at);

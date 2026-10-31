@@ -42,6 +42,15 @@ func (l *rt2Leg) ageInvoice(invoiceID string, days int) {
 		UPDATE invoices SET issue_date = issue_date - $2::int, due_date = due_date - $2::int,
 		       finalized_at = finalized_at - make_interval(days => $2::int), created_at = created_at - make_interval(days => $2::int)
 		 WHERE id = $1::uuid`, invoiceID, days)
+	// Production books the invoice's retention in the invoice's own transaction, so the ledger rows
+	// carry the invoice's instant; an aged invoice ages its rows with it.
+	mustExec(l.t, context.Background(), l.pool, `
+		UPDATE holdback_ledger SET created_at = created_at - make_interval(days => $2::int)
+		 WHERE invoice_id = $1::uuid`, invoiceID, days)
+	mustExec(l.t, context.Background(), l.pool, `
+		UPDATE customer_transactions SET occurred_at = occurred_at - make_interval(days => $2::int),
+		       created_at = created_at - make_interval(days => $2::int)
+		 WHERE source_type = 'invoice' AND source_ref_id = $1::uuid`, invoiceID, days)
 }
 
 // P1-1: a customer who paid the whole net of a 90 day old holdback invoice is charged nothing.
