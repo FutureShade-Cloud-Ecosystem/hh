@@ -26364,6 +26364,219 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/reporting/saved-reports:
+    get:
+      operationId: reportingListSavedReports
+      tags:
+        - staff-reporting
+      summary: List the caller's own saved reports
+      description: "The caller's saved report definitions, by name. A saved report is private to its owner: another user's reports are never listed."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - manager-home
+        level: read
+      x-addition: W3-RW2 saved reports over the curated data sets; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The caller's saved reports
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingSavedReportList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: reportingCreateSavedReport
+      tags:
+        - staff-reporting
+      summary: Save a report definition
+      description: "Stores a definition over one curated data set: columns from the set's catalog, filters, a group by and a sort. It is checked against the catalog exactly as a direct read is, and refused with 400 in words for any column, filter field, operator, value or grouping outside it. A name is one report per owner. The caller must hold the data set owner surface's role gate."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - manager-home
+        level: work
+        reason: stores the caller's own report definition
+      x-addition: W3-RW2 saved reports over the curated data sets; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportingSavedReportDefinition"
+      responses:
+        "201":
+          description: The stored report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingSavedReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/reporting/saved-reports/{id}:
+    get:
+      operationId: reportingGetSavedReport
+      tags:
+        - staff-reporting
+      summary: Read one of the caller's saved reports
+      description: Another user's report answers 404, never 403, so an id does not say it exists.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - manager-home
+        level: read
+      x-addition: W3-RW2 saved reports over the curated data sets; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The saved report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingSavedReport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: reportingUpdateSavedReport
+      tags:
+        - staff-reporting
+      summary: Replace one of the caller's saved reports
+      description: Replaces the definition, checked against the catalog like a new one. Another user's report answers 404.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - manager-home
+        level: work
+        reason: edits the caller's own report definition
+      x-addition: W3-RW2 saved reports over the curated data sets; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportingSavedReportDefinition"
+      responses:
+        "200":
+          description: The stored report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingSavedReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: reportingDeleteSavedReport
+      tags:
+        - staff-reporting
+      summary: Delete one of the caller's saved reports
+      description: Another user's report answers 404.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - manager-home
+        level: work
+        reason: deletes the caller's own report definition
+      x-addition: W3-RW2 saved reports over the curated data sets; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/reporting/saved-reports/{id}/run:
+    post:
+      operationId: reportingRunSavedReport
+      tags:
+        - staff-reporting
+      summary: Run one of the caller's saved reports
+      description: "Runs the definition through the data set read. The caller's own branch reach and the data set owner surface's role gate are applied now, not as they were when the report was saved: a branch outside the reach is 403. Rows are in the saved sort, with every column breaking a tie, so a rerun on the same data is the same rows. Nothing is persisted."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - manager-home
+        level: read
+        reason: runs a data set read and returns the grid
+      x-addition: W3-RW2 saved reports over the curated data sets; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The executed report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingSavedReportResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/reporting/saved-reports/{id}/export.csv:
+    get:
+      operationId: reportingExportSavedReportCsv
+      tags:
+        - staff-reporting
+      summary: Export one of the caller's saved reports as CSV
+      description: "The run, row for row, as CSV: column labels, one record per row, and a TOTAL record when the run totals. Money is a two decimal string from integer cents. A text cell led by =, +, -, @, a tab or a carriage return is quoted so a spreadsheet does not read it as a formula."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - manager-home
+        level: read
+        reason: exports a data set read
+      x-addition: W3-RW2 saved reports over the curated data sets; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The CSV file
+          content:
+            text/csv:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/reporting/commission/rules:
     get:
       operationId: reportingListCommissionRules
@@ -60159,6 +60372,97 @@ components:
         run_at:
           type: string
           format: date-time
+    ReportingSavedReportSort:
+      type: object
+      required:
+        - column
+      properties:
+        column:
+          type: string
+        desc:
+          type: boolean
+    ReportingSavedReportDefinition:
+      type: object
+      description: A stored read over one curated data set. dataset names the set; columns, filters, group_by and as_of follow the data set read's rules and are checked against the set's catalog; sort names requested columns, each once. name is one report per owner, without regard to case, at most 120 characters.
+      required:
+        - name
+        - dataset
+        - columns
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        dataset:
+          type: string
+          enum:
+            - ar
+            - ap
+            - gl
+            - sales
+            - stock
+        columns:
+          type: array
+          items:
+            type: string
+        filters:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportingDatasetFilter"
+        group_by:
+          type: array
+          items:
+            type: string
+        as_of:
+          type: string
+          format: date
+        sort:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportingSavedReportSort"
+    ReportingSavedReport:
+      allOf:
+        - $ref: "#/components/schemas/ReportingSavedReportDefinition"
+        - type: object
+          required:
+            - id
+            - owner_user_id
+            - created_at
+            - updated_at
+          properties:
+            id:
+              type: string
+              format: uuid
+            owner_user_id:
+              type: string
+              format: uuid
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+    ReportingSavedReportList:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportingSavedReport"
+    ReportingSavedReportResult:
+      allOf:
+        - $ref: "#/components/schemas/ReportingDatasetResult"
+        - type: object
+          required:
+            - report_id
+            - report_name
+          properties:
+            report_id:
+              type: string
+              format: uuid
+            report_name:
+              type: string
     ReportingCommissionRule:
       type: object
       description: "One commission rule: this rep earns this rate, on either REVENUE or MARGIN, optionally only for this category and/or this branch. Rates are integer basis points; money is integer cents."

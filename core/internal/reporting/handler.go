@@ -55,6 +55,15 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// manager's act, like every run, export and print above.
 	r.Handle("GET /api/v1/reporting/datasets", g.RequireStaff(h.staff(h.listDatasets)))
 	r.Handle("POST /api/v1/reporting/datasets/{set}/read", g.RequireManager(h.staff(h.readDataset)))
+	// Saved reports (W3-RW2): owner private definitions over the data sets above. Manager tier like a
+	// data set read; the service keys every single report read by the owner, so a stranger's id is a 404.
+	r.Handle("GET /api/v1/reporting/saved-reports", g.RequireManager(h.staff(h.listSavedReports)))
+	r.Handle("POST /api/v1/reporting/saved-reports", g.RequireManager(h.staff(h.createSavedReport)))
+	r.Handle("GET /api/v1/reporting/saved-reports/{id}", g.RequireManager(h.staff(h.getSavedReport)))
+	r.Handle("PUT /api/v1/reporting/saved-reports/{id}", g.RequireManager(h.staff(h.updateSavedReport)))
+	r.Handle("DELETE /api/v1/reporting/saved-reports/{id}", g.RequireManager(h.staff(h.deleteSavedReport)))
+	r.Handle("POST /api/v1/reporting/saved-reports/{id}/run", g.RequireManager(h.staff(h.runSavedReport)))
+	r.Handle("GET /api/v1/reporting/saved-reports/{id}/export.csv", g.RequireManager(h.staff(h.exportSavedReport)))
 	// Commissions.
 	r.Handle("GET /api/v1/reporting/commission/rules", g.RequireManager(h.staff(h.listRules)))
 	r.Handle("POST /api/v1/reporting/commission/rules", g.RequireAdmin(h.staff(h.createRule)))
@@ -423,6 +432,94 @@ func (h *Handler) readDataset(w http.ResponseWriter, r *http.Request, caller gua
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// -- saved reports -------------------------------------------------------------
+
+func decodeSavedReport(w http.ResponseWriter, r *http.Request) (SavedReportDefinition, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxDatasetReadBody)
+	var def SavedReportDefinition
+	dec := json.NewDecoder(r.Body)
+	dec.UseNumber() // money and counts never ride a float on the way in
+	if err := dec.Decode(&def); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid JSON body: a saved report needs name, dataset and columns, and optionally filters, group_by, as_of and sort")
+		return def, false
+	}
+	return def, true
+}
+
+func (h *Handler) listSavedReports(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	items, err := h.svc.ListSavedReports(r.Context())
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Handler) createSavedReport(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	def, ok := decodeSavedReport(w, r)
+	if !ok {
+		return
+	}
+	out, err := h.svc.CreateSavedReport(r.Context(), def)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, out)
+}
+
+func (h *Handler) getSavedReport(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	out, err := h.svc.GetSavedReport(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) updateSavedReport(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	def, ok := decodeSavedReport(w, r)
+	if !ok {
+		return
+	}
+	out, err := h.svc.UpdateSavedReport(r.Context(), r.PathValue("id"), def)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) deleteSavedReport(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	if err := h.svc.DeleteSavedReport(r.Context(), r.PathValue("id")); err != nil {
+		h.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) runSavedReport(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	out, err := h.svc.RunSavedReport(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) exportSavedReport(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	name, body, err := h.svc.ExportSavedReportCSV(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 // -- error mapping ------------------------------------------------------------

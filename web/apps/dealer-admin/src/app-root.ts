@@ -1417,7 +1417,7 @@ export class DealerAdminApp extends HHElement {
       this.#patchEditor({ busy: false, error: configRefusalWords(result.error, result.status) });
       return;
     }
-    await this.#refreshConfigCell(`Reset. The ${kind}s on this surface answer to the level beneath the dealer again.`);
+    await this.#refreshConfigCell(`Reset. The ${kind}s on this surface follow the dealer's default layout again.`);
   }
 
   async #saveMyItems(): Promise<void> {
@@ -2294,7 +2294,7 @@ export class DealerAdminApp extends HHElement {
     if (this.#surface === "role-config" || this.#surface === "roles") return renderRoleConfig(this.#roleConfig);
     if (this.#surface === "deployment") return renderSettings(this.#settings);
     if (this.#surface === "warranty") return renderWarranty(this.#warranty);
-    if (this.#surface === "pricing") return renderPricing(this.#pricing.model, this.#staff.branches, this.#pickers);
+    if (this.#surface === "pricing") return renderPricing(this.#pricing.model, this.#staff.branches, this.#pickers, this.#staff.rows);
     if (this.#surface === "delivery") return renderDelivery();
     if (this.#surface === "sign-in-methods" || this.#surface === "sign-in") return renderSignInMethods();
     if (this.#surface === "chat-rules") return renderChatRules();

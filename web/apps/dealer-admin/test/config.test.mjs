@@ -32,7 +32,7 @@ test("the grid's rows are the thirteen profiles the core's validProfiles holds: 
       "manager.procurement", "manager.payables", "manager.controller", "manager.general",
     ],
   );
-  assert.match(JOB_SHAPES.find((s) => s.profile === "manager").what, /manager role with no refinement row/);
+  assert.match(JOB_SHAPES.find((s) => s.profile === "manager").what, /^The manager.s own Home\.$/);
 });
 
 test("the grid's columns are the core's ten curated surfaces, each with its own words", () => {

@@ -217,7 +217,7 @@ function renderPolicy(s: PolicySection): TemplateResult {
                 <input class="text-field" type="number" data-field="policy-fee" ?disabled=${s.busy} />
               </label>
               <label class="field">
-                <span class="field-label">Workspace split (20 to 80)</span>
+                <span class="field-label">Left panel width (20% to 80%)</span>
                 <input class="text-field" type="number" data-field="policy-split" ?disabled=${s.busy} />
               </label>
               <label class="field">

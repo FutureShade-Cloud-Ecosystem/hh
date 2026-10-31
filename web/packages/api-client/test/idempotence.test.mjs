@@ -28,14 +28,17 @@ test("two fresh generations are byte-identical and match the committed tree", ()
   try {
     const out1 = generate(one);
     const out2 = generate(two);
-    // 822 operations: JA-1's 810 (main's routes, the write off, vendor credit and payment run
+    // 829 operations: JA-1's 810 (main's routes, the write off, vendor credit and payment run
     // doors, taxGetWorksheet, landedCostSettle and the five job doors) plus W3-CC1's five credit
     // change request and approval routes (billingListCreditChanges, billingRequestCreditChange,
     // billingGetCreditChange, billingApproveCreditChange, billingRejectCreditChange), plus
     // W3-T51's three T5018 routes (purchasingSetVendorT5018, purchasingT5018Report and
     // purchasingT5018ReportCSV), plus AX-1's glListAccountMapping and glSetAccountMapping, plus RW-1's
-    // reportingListDatasets and reportingReadDataset, plus RT-1's five holdback rule routes: 827.
-    if (!out1.includes("827 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
+    // reportingListDatasets and reportingReadDataset, plus RW-2's seven saved report
+    // doors (reportingListSavedReports, reportingCreateSavedReport, reportingGetSavedReport,
+    // reportingUpdateSavedReport, reportingDeleteSavedReport, reportingRunSavedReport and
+    // reportingExportSavedReportCsv), plus RT-1's five holdback rule routes: 834.
+    if (!out1.includes("834 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
     const a = snapshot(one);
     const b = snapshot(two);
     const c = snapshot(committed);

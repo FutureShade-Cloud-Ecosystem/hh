@@ -620,6 +620,7 @@ var ownedObjects = map[string]string{
 	"rep_assignments":                       "messaging",         // 0136_msg_rep_assignments_house_queue
 	"report_runs":                           "reporting",         // 0143_reporting_templates
 	"report_saved_views":                    "reporting",         // 0145_reporting_saved_views
+	"report_saved_reports":                  "reporting",         // 0474_report_saved_reports
 	"report_templates":                      "reporting",         // 0143_reporting_templates
 	"return_request_lines":                  "pos",               // 0045_portal_return_requests
 	"return_requests":                       "pos",               // 0045_portal_return_requests

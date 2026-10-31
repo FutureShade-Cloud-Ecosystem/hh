@@ -12,11 +12,11 @@ test.describe("the assist admin surface", () => {
     await expect(page.locator("[data-test=staff-count]")).toBeVisible();
     await page.locator('.surface-link[data-surface="assist"]').click();
 
-    // The report's month and its rows: five staff, four of them at zero, the
+    // The report's month and its rows: seven staff, six of them at zero, the
     // zero rows rendered as facts and not collapsed away.
     await expect(page.locator("[data-test=assist-month]")).toHaveText("2026-10");
     const rows = page.locator("tr[data-user]");
-    await expect(rows).toHaveCount(5);
+    await expect(rows).toHaveCount(7);
     const zeroRow = page.locator('tr[data-user="da110000-0000-4000-9000-0000000000yt"]');
     await expect(zeroRow).toContainText("No questions yet");
     // The spend row carries the questions first, tokens second. The dealer

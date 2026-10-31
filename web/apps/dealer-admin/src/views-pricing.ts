@@ -72,10 +72,10 @@ import {
   PRICING_VIEWS,
   accrualSourceWord,
   bypassReasonWord,
+  floorDeltaWords,
 } from "./pricing-logic.js";
 import { whenWords } from "./audit-logic.js";
 import {
-  UNKNOWN_ACTOR,
   UNKNOWN_BATCH,
   UNKNOWN_BRANCH,
   UNKNOWN_CATEGORY,
@@ -91,7 +91,7 @@ type PriceFileModel = PricingModel["priceFile"];
 type LowMarginScanRow = LowMarginScanRowApi;
 type LowMarginEntry = PricingModel["lowMargin"]["probe"]["entries"][number];
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
-import type { BranchRow } from "./dealer-api.js";
+import type { BranchRow, StaffMemberRow } from "./dealer-api.js";
 import type { DealerPickers, EntityPickerSpec } from "./pickers.js";
 
 export interface PricingPickers {
@@ -126,6 +126,7 @@ export function renderPricing(
   model: PricingModel,
   branches: readonly BranchRow[] = [],
   pickers: PricingPickers | DealerPickers = FALLBACK_PICKERS,
+  staff: readonly StaffMemberRow[] = [],
 ): TemplateResult {
   if (pickers.rememberProduct !== undefined) {
     for (const r of model.promos.clearance.rows) {
@@ -175,11 +176,16 @@ export function renderPricing(
       </label>
     </div>
 
-    ${renderTab(model, branches, pickers)}
+    ${renderTab(model, branches, pickers, staff)}
   `;
 }
 
-function renderTab(model: PricingModel, branches: readonly BranchRow[], pickers: PricingPickers): TemplateResult {
+function renderTab(
+  model: PricingModel,
+  branches: readonly BranchRow[],
+  pickers: PricingPickers,
+  staff: readonly StaffMemberRow[],
+): TemplateResult {
   // The router line: one case per landed tab. The next group's commit adds
   // its case beside this one; until then the tab says plainly it is not wired.
   if (model.tab === "payment-terms" || model.tab === "terms") return renderPaymentTermsAndDeposits();
@@ -193,8 +199,8 @@ function renderTab(model: PricingModel, branches: readonly BranchRow[], pickers:
   if (model.tab === "batches") return renderBatches(model);
   if (model.tab === "pricefile") return renderPriceFile(model);
   if (model.tab === "lowmargin") return renderLowMargin(model, pickers);
-  if (model.tab === "audit") return renderPricingAudit(model);
-  if (model.tab === "changelog") return renderChangeLog(model, pickers);
+  if (model.tab === "audit") return renderPricingAudit(model, staff);
+  if (model.tab === "changelog") return renderChangeLog(model, pickers, staff);
   const tab = PRICING_VIEWS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? UNKNOWN_VIEW)}</p>`;
 }
@@ -524,8 +530,8 @@ function renderRuleRow(rule: RuleRow, model: PricingModel): TemplateResult {
       <td class="mono dim" data-label="Valid">${validityWords(rule.valid_from, rule.valid_to)}</td>
       <td data-label="State">
         ${rule.is_active
-          ? html`<span class="chip chip-good">active</span>`
-          : html`<span class="chip chip-dim">retired</span>`}
+          ? html`<span class="chip chip-good">Active</span>`
+          : html`<span class="chip chip-dim">Retired</span>`}
       </td>
       <td class="cardrow-act">
         <div class="pr-actions">
@@ -570,7 +576,7 @@ function renderRuleEditor(
     <section class="card" data-test="pr-rule-editor">
       <div class="card-head">
         <h2 class="card-title">${heading}</h2>
-        ${e.id === "" ? html`<span class="chip chip-wait">create</span>` : html`<span class="chip">version ${e.version}</span>`}
+        ${e.id === "" ? nothing : html`<span class="chip">version ${e.version}</span>`}
       </div>
       <div class="form-grid">
         <label class="field">
@@ -796,7 +802,7 @@ function renderOverrideEditor(model: PricingModel): TemplateResult | typeof noth
     <section class="card" data-test="pr-cust-editor">
       <div class="card-head">
         <h2 class="card-title">${heading}</h2>
-        ${e.id === "" ? html`<span class="chip chip-wait">create</span>` : html`<span class="chip">version ${e.version}</span>`}
+        ${e.id === "" ? nothing : html`<span class="chip">version ${e.version}</span>`}
       </div>
       <div class="form-grid">
         <label class="field">
@@ -924,7 +930,7 @@ function renderBreakRowView(row: BreakRow, model: PricingModel): TemplateResult 
             )}
       </td>
       <td data-label="State">
-        ${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}
+        ${row.is_active ? html`<span class="chip chip-good">Active</span>` : html`<span class="chip chip-dim">Retired</span>`}
       </td>
       <td class="cardrow-act">
         <div class="pr-actions">
@@ -960,7 +966,7 @@ function renderBreakEditor(model: PricingModel, pickers: PricingPickers): Templa
     <section class="card" data-test="pr-break-editor">
       <div class="card-head">
         <h2 class="card-title">${heading}</h2>
-        ${e.id === "" ? html`<span class="chip chip-wait">create</span>` : html`<span class="chip">version ${e.version}</span>`}
+        ${e.id === "" ? nothing : html`<span class="chip">version ${e.version}</span>`}
       </div>
       <div class="form-grid">
         <label class="field">
@@ -1144,7 +1150,7 @@ function renderPromoRow(row: PromotionRow, model: PricingModel): TemplateResult 
       <td class="mono dim" data-label="Window">${validityWords(row.starts_at, row.ends_at)}</td>
       <td class="num" data-label="Value" data-test="pr-promo-value">${promoValueWords(row)}</td>
       <td class="num" data-label="Priority">${row.priority}</td>
-      <td data-label="State">${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}</td>
+      <td data-label="State">${row.is_active ? html`<span class="chip chip-good">Active</span>` : html`<span class="chip chip-dim">Retired</span>`}</td>
       <td class="cardrow-act">
         <div class="pr-actions">
           <button
@@ -1182,7 +1188,7 @@ function renderPromoEditor(
     <section class="card" data-test="pr-promo-editor">
       <div class="card-head">
         <h2 class="card-title">${heading}</h2>
-        ${e.id === "" ? html`<span class="chip chip-wait">create</span>` : html`<span class="chip">version ${e.version}</span>`}
+        ${e.id === "" ? nothing : html`<span class="chip">version ${e.version}</span>`}
       </div>
       <div class="form-grid">
         <label class="field">
@@ -1321,7 +1327,7 @@ function renderClearanceRowView(row: ClearanceRow, model: PricingModel): Templat
       <td data-label="Why">${row.reason}</td>
       <td class="num" data-label="Price" data-test="pr-clear-value">${clearanceValueWords(row)}</td>
       <td class="mono dim" data-label="Marked">${validityWords(row.started_at, row.ends_at)}</td>
-      <td data-label="State">${row.is_active ? html`<span class="chip chip-good">marked</span>` : html`<span class="chip chip-dim">ended</span>`}</td>
+      <td data-label="State">${row.is_active ? html`<span class="chip chip-good">Marked</span>` : html`<span class="chip chip-dim">Ended</span>`}</td>
       <td class="cardrow-act">
         <div class="pr-actions">
           <button
@@ -1482,8 +1488,8 @@ function renderRebateRowView(row: RebateRow, model: PricingModel): TemplateResul
       <td data-label="Vendor">${vendorWords(row.vendor_name, row.vendor_id)}</td>
       <td data-label="Covers">${rebateCoversWords(row, model)}</td>
       <td class="num" data-label="Rate" data-test="pr-rebate-rate">${rebateRateWords(row)}</td>
-      <td class="mono dim" data-label="From">${row.starts_at.slice(0, 10)}</td>
-      <td data-label="State">${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}</td>
+      <td class="mono dim" data-label="From">${whenWords(row.starts_at)}</td>
+      <td data-label="State">${row.is_active ? html`<span class="chip chip-good">Active</span>` : html`<span class="chip chip-dim">Retired</span>`}</td>
       <td class="cardrow-act">
         <div class="pr-actions">
           <button
@@ -1518,7 +1524,7 @@ function renderRebateEditor(model: PricingModel, pickers: PricingPickers): Templ
     <section class="card" data-test="pr-rebate-editor">
       <div class="card-head">
         <h2 class="card-title">${heading}</h2>
-        ${e.id === "" ? html`<span class="chip chip-wait">create</span>` : html`<span class="chip">version ${e.version}</span>`}
+        ${e.id === "" ? nothing : html`<span class="chip">version ${e.version}</span>`}
       </div>
       <div class="form-grid">
         <label class="field">
@@ -1639,7 +1645,7 @@ function renderLedger(model: PricingModel): TemplateResult {
                   ${m.rows.map(
                     (row) => html`
                       <tr data-accrual=${row.accrual_cents ?? ""}>
-                        <td class="mono dim" data-label="Accrued">${row.accrued_at.slice(0, 10)}</td>
+                        <td class="mono dim" data-label="Accrued">${whenWords(row.accrued_at)}</td>
                         <td class="mono" data-label="Program">${row.program_code === "" ? "-" : row.program_code}</td>
                         <td class="mono" data-label="SKU">${row.product_sku === "" ? row.product_sku : row.product_sku}</td>
                         <td data-label="Source"><span class="chip">${accrualSourceWord(row.source_type)}</span></td>
@@ -2024,7 +2030,7 @@ function renderBatchRowView(row: Parameters<typeof batchStatusWord>[0] extends s
       <td class="mono" data-label="Batch">${row.batch_no}</td>
       <td data-label="Vendor">${row.vendor_name === "" ? html`<span class="dim">unnamed</span>` : row.vendor_name}</td>
       <td data-label="Status"><span class="chip">${batchStatusWord(row.status)}</span></td>
-      <td class="mono dim" data-label="Effective">${row.effective_date === "" ? "no date" : row.effective_date.slice(0, 10)}</td>
+      <td class="mono dim" data-label="Effective">${row.effective_date === "" ? "no date" : whenWords(row.effective_date)}</td>
       <td class="num" data-label="Lines">${row.line_count}</td>
       <td class="num ${row.outlier_count > 0 ? "" : "dim"}" data-label="Outliers">${row.outlier_count}</td>
       <td class="cardrow-act">
@@ -2091,7 +2097,7 @@ function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
     <section class="card" data-test="pr-batch-open">
       <div class="card-head">
         <h2 class="card-title">${batchNo === "" ? "Batch" : `Batch ${batchNo}`}</h2>
-        ${row?.effective_date ? html`<span class="chip">effective ${row.effective_date.slice(0, 10)}</span>` : nothing}
+        ${row?.effective_date ? html`<span class="chip">effective ${whenWords(row.effective_date)}</span>` : nothing}
         <span class="chip">${batchStatusWord(status)}</span>
         <button type="button" class="btn btn-secondary btn-small" data-action="pr-batch-close">Close</button>
       </div>
@@ -2275,7 +2281,7 @@ export function renderPriceFile(model: PricingModel): TemplateResult {
                               <td class="person">${v.name}</td>
                               <td class="mono dim">${v.vendor_no}</td>
                               <td>${priceFileOriginWords(v.origin)}</td>
-                              <td class="mono dim">${v.last_import_at === "" ? "never" : v.last_import_at.slice(0, 10)}</td>
+                              <td class="mono dim">${v.last_import_at === "" ? "never" : whenWords(v.last_import_at)}</td>
                             </tr>
                           `,
                         )}
@@ -2333,7 +2339,7 @@ function renderPriceFilePreview(m: PriceFileModel): TemplateResult | typeof noth
       <div class="card-head">
         <h2 class="card-title">The diff</h2>
         <span class="chip">${p.format}</span>
-        <span class="chip">mapping: ${p.mapping_source}</span>
+        <span class="chip">mapping: ${p.mapping_source.toLowerCase()}</span>
       </div>
       <p class="notice-line">${priceFileCountsWords(p.counts, p.truncated)}</p>
       ${p.catalog_checked
@@ -2404,7 +2410,7 @@ function renderPriceFileRuns(model: PricingModel): TemplateResult {
                   ${m.runs.map(
                     (run) => html`
                       <tr data-run=${run.id}>
-                        <td class="mono dim" data-label="When">${run.created_at.slice(0, 10)}</td>
+                        <td class="mono dim" data-label="When">${whenWords(run.created_at)}</td>
                         <td class="mono" data-label="File">${run.source_name} (${run.source_format})</td>
                         <td class="mono" data-label="Batch">${run.batch_no === "" ? "-" : run.batch_no}</td>
                         <td class="num" data-label="Rows">${run.counts.rows}</td>
@@ -2497,7 +2503,7 @@ function renderLowMarginRow(row: LowMarginScanRow): TemplateResult {
     <tr data-lm=${row.doc_id}>
       <td data-label="Document">
         <div class="mono">${row.doc_no}</div>
-        <div class="mono dim">${row.doc_at.slice(0, 10)}</div>
+        <div class="mono dim">${whenWords(row.doc_at)}</div>
       </td>
       <td data-label="Line">${lowMarginWords(row)}</td>
       <td class="num" data-label="Price">${moneyWords(row.unit_price_cents)}</td>
@@ -2612,13 +2618,47 @@ function renderLowMarginProbe(model: PricingModel, pickers: PricingPickers): Tem
  * house placeholder word, never as the id's own first block.
  */
 function auditEntityWords(row: PricingAuditRow, model: PricingModel): string {
+  const words = auditEntityNamed(row, model);
+  if (words !== "") return words;
   const entityWord = pricingAuditEntityWord(row.entity_type);
-  if (row.entity_id === "") return entityWord;
-  const name = categoryName(row.entity_id, model.categories);
-  return `${entityWord} / ${name === UNKNOWN_CATEGORY ? UNKNOWN_ENTITY : name}`;
+  // A margin enforcement entity waits on the catalog lookups; hold the cell rather than flash a wrong word.
+  if (row.entity_type === "margin_enforcement" && !model.audit.namesSettled) return entityWord;
+  return `${entityWord} / ${row.entity_type === "margin_enforcement" ? "A product" : UNKNOWN_ENTITY}`;
 }
 
-export function renderPricingAudit(model: PricingModel): TemplateResult {
+function auditEntityNamed(row: PricingAuditRow, model: PricingModel): string {
+  const entityWord = pricingAuditEntityWord(row.entity_type);
+  if (row.entity_id === "") return entityWord;
+  const cat = categoryName(row.entity_id, model.categories);
+  if (cat !== UNKNOWN_CATEGORY) return `${entityWord} / ${cat}`;
+  const override = model.customers.rows.find((o) => o.id === row.entity_id);
+  if (override !== undefined) {
+    const oCat = categoryName(override.category_id, model.categories);
+    if (oCat !== UNKNOWN_CATEGORY) return `${entityWord} / ${oCat}`;
+  }
+  const rule = model.rules.rows.find((r) => r.id === row.entity_id);
+  if (rule !== undefined && rule.detail_text !== "") return `${entityWord} / ${rule.detail_text}`;
+  const brk = model.breaks.rows.find((b) => b.id === row.entity_id);
+  if (brk !== undefined && brk.name !== "") return `${entityWord} / ${brk.name}`;
+  const promo = model.promos.promotions.rows.find((p) => p.id === row.entity_id);
+  if (promo !== undefined && promo.name !== "") return `${entityWord} / ${promo.name}`;
+  const clear = model.promos.clearance.rows.find((c) => c.product_id === row.entity_id);
+  if (clear !== undefined && (clear.name !== "" || clear.sku !== "")) return `${entityWord} / ${clear.name !== "" ? clear.name : clear.sku}`;
+  const rebate = model.rebates.rows.find((r) => r.id === row.entity_id);
+  if (rebate !== undefined && rebate.name !== "") return `${entityWord} / ${rebate.name}`;
+  const product = model.audit.productNames[row.entity_id];
+  if (product !== undefined) return `${entityWord} / ${product}`;
+  return "";
+}
+
+function pricingActorWords(userId: string, staff: readonly StaffMemberRow[]): string {
+  if (userId === "") return "Automatic";
+  const member = staff.find((s) => s.user_id === userId);
+  if (member !== undefined) return member.display_name !== "" ? member.display_name : member.email;
+  return "A staff member";
+}
+
+export function renderPricingAudit(model: PricingModel, staff: readonly StaffMemberRow[] = []): TemplateResult {
   const m = model.audit;
   return html`
     ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-audit-loading">Loading the pricing log…</p>` : nothing}
@@ -2667,7 +2707,7 @@ export function renderPricingAudit(model: PricingModel): TemplateResult {
                         </tr>
                       </thead>
                       <tbody>
-                        ${m.rows.map((row) => renderPricingAuditRow(row, model))}
+                        ${m.rows.map((row) => renderPricingAuditRow(row, model, staff))}
                       </tbody>
                     </table>
                   </div>
@@ -2678,26 +2718,37 @@ export function renderPricingAudit(model: PricingModel): TemplateResult {
   `;
 }
 
-function renderPricingAuditRow(row: PricingAuditRow, model: PricingModel): TemplateResult {
+function renderPricingAuditRow(
+  row: PricingAuditRow,
+  model: PricingModel,
+  staff: readonly StaffMemberRow[],
+): TemplateResult {
   const bypass = row.action === "BYPASS";
-  const delta = deltaWords(
-    row.old_value === "" ? null : row.old_value,
-    row.new_value === "" ? null : row.new_value,
-    row.field_name,
-  );
+  const oldV = row.old_value === "" ? null : row.old_value;
+  const newV = row.new_value === "" ? null : row.new_value;
+  const delta = row.entity_type === "margin_enforcement"
+    ? floorDeltaWords(oldV, newV, (id) => {
+        const member = staff.find((s) => s.user_id === id);
+        return member === undefined ? "" : member.display_name !== "" ? member.display_name : member.email;
+      })
+    : deltaWords(oldV, newV, row.field_name);
   const reasonWord = bypass && row.bypass_reason !== "" ? bypassReasonWord(row.bypass_reason) : "";
   return html`
     <tr data-audit=${row.id}>
       <td class="mono dim" data-label="When">${whenWords(row.created_at)}</td>
       <td data-label="Entity">${auditEntityWords(row, model)}</td>
-      <td data-label="Action"><span class="chip ${bypass ? "chip-danger" : ""}">${auditActionWord(row.action)}</span></td>
+      <td data-label="Action">
+        <span class="cell-chips">
+          <span class="chip ${bypass ? "chip-danger" : ""}">${auditActionWord(row.action)}</span>
+          ${reasonWord !== ""
+            ? html`<span class="chip ${reasonWord === UNKNOWN_REASON ? "chip-neutral" : "chip-danger"}" data-audit-reason=${row.id}>${reasonWord}</span>`
+            : nothing}
+        </span>
+      </td>
       <td class="dim" data-label="Field">${row.field_name === "" ? "-" : pricingAuditFieldWord(row.field_name)}</td>
       <td data-label="Change">${delta === "" ? html`<span class="dim">-</span>` : delta}</td>
-      <td class="dim" data-label="Actor">${row.user_id === "" ? "Automatic" : UNKNOWN_ACTOR}</td>
+      <td class="dim" data-label="Actor">${pricingActorWords(row.user_id, staff)}</td>
     </tr>
-    ${reasonWord !== ""
-      ? html`<tr data-audit-reason=${row.id}><td colspan="6" data-label="Reason"><span class="chip ${reasonWord === UNKNOWN_REASON ? "chip-neutral" : "chip-danger"}">${reasonWord}</span></td></tr>`
-      : nothing}
   `;
 }
 
@@ -2709,9 +2760,26 @@ function changeFieldWord(field: string): string {
   return field;
 }
 
+function knownProductWords(productId: string, model: PricingModel): string {
+  if (productId === "") return "-";
+  const clear = model.promos.clearance.rows.find((r) => r.product_id === productId);
+  if (clear !== undefined && (clear.name !== "" || clear.sku !== "")) return clear.name !== "" ? clear.name : clear.sku;
+  const uom = model.uom.rows.find((r) => r.product_id === productId);
+  if (uom !== undefined && uom.product_sku !== "") return uom.product_sku;
+  return UNKNOWN_PRODUCT;
+}
+
+function knownBatchWords(batchId: string, model: PricingModel): string {
+  if (batchId === "") return "-";
+  const batch = model.batches.rows.find((b) => b.id === batchId);
+  if (batch !== undefined && batch.batch_no !== "") return batch.batch_no;
+  return UNKNOWN_BATCH;
+}
+
 export function renderChangeLog(
   model: PricingModel,
   pickers: PricingPickers = FALLBACK_PICKERS,
+  staff: readonly StaffMemberRow[] = [],
 ): TemplateResult {
   const m = model.changeLog;
   return html`
@@ -2761,7 +2829,7 @@ export function renderChangeLog(
                         </tr>
                       </thead>
                       <tbody>
-                        ${m.rows.map((row) => renderChangeLogRow(row))}
+                        ${m.rows.map((row) => renderChangeLogRow(row, model, staff))}
                       </tbody>
                     </table>
                   </div>
@@ -2772,17 +2840,21 @@ export function renderChangeLog(
   `;
 }
 
-function renderChangeLogRow(row: ChangeLogRow): TemplateResult {
+function renderChangeLogRow(
+  row: ChangeLogRow,
+  model: PricingModel,
+  staff: readonly StaffMemberRow[],
+): TemplateResult {
   return html`
     <tr data-log=${row.id}>
       <td class="mono dim" data-label="When">${whenWords(row.created_at)}</td>
-      <td class="dim" data-label="Product">${row.product_id === "" ? "-" : UNKNOWN_PRODUCT}</td>
+      <td class="dim" data-label="Product">${knownProductWords(row.product_id, model)}</td>
       <td data-label="Field">${changeFieldWord(row.field)}</td>
       <td class="num" data-label="From">${moneyWords(row.before_cents)}</td>
       <td class="num" data-label="To">${moneyWords(row.after_cents)}</td>
-      <td class="mono dim" data-label="Effective">${row.effective_date === "" ? "-" : row.effective_date.slice(0, 10)}</td>
-      <td class="dim" data-label="Batch">${row.batch_id === "" ? "-" : UNKNOWN_BATCH}</td>
-      <td class="dim" data-label="By">${row.changed_by === "" ? "-" : UNKNOWN_ACTOR}</td>
+      <td class="mono dim" data-label="Effective">${row.effective_date === "" ? "-" : whenWords(row.effective_date)}</td>
+      <td class="dim" data-label="Batch">${knownBatchWords(row.batch_id, model)}</td>
+      <td class="dim" data-label="By">${row.changed_by === "" ? "-" : pricingActorWords(row.changed_by, staff)}</td>
     </tr>
   `;
 }
