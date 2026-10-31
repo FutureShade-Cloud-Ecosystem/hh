@@ -337,17 +337,6 @@ func (r *Repository) ReleaseHoldback(ctx context.Context, in HoldbackReleaseInpu
 		return r.replayRelease(ctx, tx, in, prior, today)
 	}
 
-	// A job whose holdback the old job level route already released is refused: its 1150 was credited
-	// and its 2350 debited once, and a release here would credit 1150 a second time.
-	legacy, err := r.holdback.HasJobLevelRelease(txCtx, in.CustomerJobID)
-	if err != nil {
-		return HoldbackReleaseResult{}, err
-	}
-	if legacy {
-		return HoldbackReleaseResult{}, HoldbackReleaseRefused{Kind: RefusedAlreadyReleased,
-			Msg: "the holdback of this job was already released by the old job level release (DR 2350 / CR 1150), so releasing it again would credit the holdback receivable twice; correct that release first"}
-	}
-
 	rows, err := tx.Query(ctx, `
 SELECT id::text, invoice_no::text, branch_id::text, holdback_cents
   FROM invoices
@@ -362,6 +351,7 @@ SELECT id::text, invoice_no::text, branch_id::text, holdback_cents
 		cents          int64
 	}
 	var invs []held
+	var allIDs []string
 	outside := 0
 	for rows.Next() {
 		var h held
@@ -369,6 +359,7 @@ SELECT id::text, invoice_no::text, branch_id::text, holdback_cents
 			rows.Close()
 			return HoldbackReleaseResult{}, fmt.Errorf("holdback release: scan an invoice: %w", err)
 		}
+		allIDs = append(allIDs, h.id)
 		if in.CanAccessBranch != nil && !in.CanAccessBranch(h.branch) {
 			outside++
 			continue
@@ -378,6 +369,17 @@ SELECT id::text, invoice_no::text, branch_id::text, holdback_cents
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return HoldbackReleaseResult{}, err
+	}
+
+	// A job (or a job whose ledger holds one of its invoices) whose holdback the old job level route already released is refused: its 1150 was credited
+	// and its 2350 debited once, and a release here would credit 1150 a second time.
+	legacy, err := r.holdback.HasJobLevelRelease(txCtx, in.CustomerJobID, allIDs)
+	if err != nil {
+		return HoldbackReleaseResult{}, err
+	}
+	if legacy {
+		return HoldbackReleaseResult{}, HoldbackReleaseRefused{Kind: RefusedAlreadyReleased,
+			Msg: "the holdback of this job was already released by the old job level release (DR 2350 / CR 1150), so releasing it again would credit the holdback receivable twice; correct that release first"}
 	}
 
 	// A job is released whole or not at all: a caller who does not reach every branch the job's holdback

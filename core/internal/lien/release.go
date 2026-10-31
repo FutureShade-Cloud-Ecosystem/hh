@@ -231,21 +231,31 @@ func (s *Service) HasReleaseOnJob(ctx context.Context, customerJobID string) (bo
 	return n > 0, nil
 }
 
-// HasJobLevelRelease answers whether the lien job linked to a customer job already has a job level RELEASE
-// row (no invoice): what the old job level route writes. The books of such a job released the holdback once
-// already, so RT-3's release refuses it rather than release the same holdback again.
-func (s *Service) HasJobLevelRelease(ctx context.Context, customerJobID string) (bool, error) {
-	jobID, ok, err := s.repo.LinkedLienJob(ctx, customerJobID)
-	if err != nil || !ok {
-		return false, err
-	}
+// HasJobLevelRelease answers whether the old job level route already released holdback that RT-3 is about to
+// release again: a job level RELEASE row (no invoice) on the lien job linked to the customer job, or on ANY
+// lien job whose ledger holds one of the invoices about to be released. The two can be different jobs (a
+// manager can unlink a lien job and link another), and the release books against the job that holds the
+// invoice, so the guard keys on the ledger and not only on the link.
+func (s *Service) HasJobLevelRelease(ctx context.Context, customerJobID string, invoiceIDs []string) (bool, error) {
 	q, err := s.repo.q(ctx)
 	if err != nil {
 		return false, err
 	}
+	var linked *string
+	if id, ok, err := s.repo.LinkedLienJob(ctx, customerJobID); err != nil {
+		return false, err
+	} else if ok {
+		linked = &id
+	}
 	var n int
-	if err := q.QueryRow(ctx, `SELECT count(*) FROM holdback_ledger WHERE job_id = $1::uuid AND entry_type = 'RELEASE' AND invoice_id IS NULL`, jobID).Scan(&n); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return false, fmt.Errorf("lien: count the job's job level releases: %w", err)
+	if err := q.QueryRow(ctx, `
+		SELECT count(*) FROM holdback_ledger
+		 WHERE entry_type = 'RELEASE' AND invoice_id IS NULL
+		   AND (job_id = $1::uuid
+		        OR job_id IN (SELECT job_id FROM holdback_ledger
+		                       WHERE invoice_id = ANY($2::uuid[]) AND entry_type = 'RETENTION' AND amount_cents > 0))`,
+		linked, invoiceIDs).Scan(&n); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return false, fmt.Errorf("lien: count the job level releases: %w", err)
 	}
 	return n > 0, nil
 }

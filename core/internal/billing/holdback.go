@@ -54,7 +54,7 @@ type Withholder interface {
 	ReleaseRowByID(ctx context.Context, releaseID string) (lien.ReleaseRow, bool, error)
 	MarkReleaseReversed(ctx context.Context, releaseID string) (bool, error)
 	// HasJobLevelRelease: the linked lien job already has a job level RELEASE row (the old route).
-	HasJobLevelRelease(ctx context.Context, customerJobID string) (bool, error)
+	HasJobLevelRelease(ctx context.Context, customerJobID string, invoiceIDs []string) (bool, error)
 }
 
 // WithHoldback binds the holdback seam. Unbound, no invoice withholds (the writer as it was before RT-2).

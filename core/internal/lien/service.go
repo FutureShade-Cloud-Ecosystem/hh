@@ -205,6 +205,14 @@ func (s *Service) releaseHoldback(ctx context.Context, jobID string, appr Releas
 	if err != nil {
 		return ReleaseResult{}, err
 	}
+	// The ledger decides, not the link: a manager can unlink a lien job, and a job whose ledger holds
+	// invoice level retention is released by RT-3 (which moves the invoice's column and the dated ledger
+	// with it), so this job level route would release the same holdback a second time.
+	for _, e := range entries {
+		if e.InvoiceID != "" {
+			return ReleaseResult{}, unprocessable("lien: job %s holds invoice level retention in its ledger, so its holdback is released by the Controller's holdback release (POST /api/v1/ar/holdback/releases) and not by this job level release", job.JobNo)
+		}
+	}
 	outstanding := outstandingCents(entries)
 	if outstanding <= 0 {
 		return ReleaseResult{}, unprocessable("lien: no outstanding retention to release for this job")
