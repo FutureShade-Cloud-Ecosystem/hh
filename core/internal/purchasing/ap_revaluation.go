@@ -8,20 +8,20 @@ package purchasing
 // made after the reversal still posts its realised FX against the bill's own rate,
 // exactly as PayBill always has.
 //
-// THE ACCOUNT. The unrealised leg posts to the FX account the chart already carries, 6310
-// Realised Foreign Exchange Gain or Loss, resolved through the rule seam under the
-// fx_unrealised role (a rule that does not exist yet falls back to 6310). The chart has no
-// unrealised FX account and adding one is a migration (gl_accounts plus a posting rule),
-// which this item carries none of; the line memos name the revaluation ("Unrealised FX
-// <month>") so the account's ledger reads which lines are the temporary month end entry,
-// and the reversal swaps them back out the next house day. The day a chart gains a
-// dedicated unrealised account, a posting rule row moves this leg with no code change.
+// THE ACCOUNT. The unrealised leg posts to its own account, 6315 Unrealised Foreign Exchange
+// Gain or Loss (migration 0476), resolved through the rule seam under the fx_unrealised role so a
+// dealer can point it elsewhere with a rule row and no code change. It never rides 6310, the
+// realised account PayBill posts to. The line memos name the revaluation ("Unrealised FX
+// <month>"), and the reversal swaps them back out the next house day.
 //
-// THE RUN STATE LIVES ON ITS JOURNAL. No table is added. The run's idempotency key
-// (purchasing.ap.revaluation:<branch>:<month>) names the journal on the GL, so a re-press
-// is judged by reading that journal back through the GLJournalReader seam: the same key
-// replays the same run, and a press whose rate would post different legs is a conflict in
-// words, the same judgement PayBill makes under its own key.
+// THE RUN RECORD. Every run is one row of ap_revaluation_runs per branch and house month (the rate,
+// the figures, the journal if any, who and when, and the reversal once it posts). A zero run is
+// recorded with no journal, so a second press at another rate is refused as already run. The
+// guards read the record: a run is refused while any earlier month of the branch is unreversed,
+// and while a later month has a posted run; one advisory lock per branch is held over the run and
+// the reversal, so two adjacent months cannot both post. The run's idempotency key
+// (purchasing.ap.revaluation:<branch>:<month>) still names the journal on the GL, so a re-press of a
+// posted run is judged by reading that journal back through the GLJournalReader seam.
 
 import (
 	"context"
@@ -42,9 +42,12 @@ const (
 	// payment clock reads it by ref, so a revaluation must never wear it).
 	glSourceAdjustment = "ADJUSTMENT"
 	// roleFXUnrealised is the posting rule role the revaluation's FX leg resolves through,
-	// distinct from the realised leg's fx_gain_loss so a dealer (or a later migration) can
-	// point the unrealised entry at its own account without moving the realised one.
+	// distinct from the realised leg's fx_gain_loss so a dealer can point the unrealised entry
+	// at its own account without moving the realised one.
 	roleFXUnrealised = "fx_unrealised"
+	// glAccountFXUnrealised is the chart's own code for the role (migration 0476), the default
+	// when no rule row answers, the way 2100 is roleAP's.
+	glAccountFXUnrealised = "6315"
 	// apRevalKeyPrefix is the GL journal key namespace of the revaluation run, one key per
 	// branch and house month. The reversal rides the same key with apRevalReverseSuffix.
 	apRevalKeyPrefix     = "purchasing.ap.revaluation:"
@@ -200,11 +203,33 @@ func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAP
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// One key is one run: two presses under the same key serialize here, so the second is
-	// judged against the first's journal, never a second journal (the GL's key index is the
-	// belt under this lock).
+	// One lock per branch over the run and the reversal: two runs for adjacent months, or a run
+	// beside a reversal, serialize here, and the second judges the first's committed record. The
+	// key lock beneath it keeps one key one run (the GL's key index is the belt under both).
+	if err := s.repo.LockRevaluationBranchTx(ctx, tx, branchID); err != nil {
+		return RevalueAPRun{}, err
+	}
 	if err := s.repo.LockPaymentKeyTx(ctx, tx, key); err != nil {
 		return RevalueAPRun{}, err
+	}
+
+	rateMicros := int64(math.Round(in.FXRate * 1_000_000))
+	rec, recFound, err := s.repo.RevaluationRunTx(ctx, tx, branchID, monthWords)
+	if err != nil {
+		return RevalueAPRun{}, err
+	}
+	if recFound && rec.JournalID == "" {
+		// A zero run is recorded and complete: the same rate answers it again, another rate is
+		// refused as already run.
+		if int64(math.Round(rec.FXRate*1_000_000)) != rateMicros {
+			return RevalueAPRun{}, conflict("purchasing: month %s in branch %s is already revalued under this key (the run at fx_rate %v found nothing to book); the pressed fx_rate %v would not retrace it; one key is one run",
+				monthWords, branchID, rec.FXRate, in.FXRate)
+		}
+		return RevalueAPRun{
+			BranchID: branchID, Month: monthWords, MonthEnd: monthEnd.In(loc).Format("2006-01-02"), FXRate: in.FXRate,
+			Bills: rec.Bills, DocOpenCents: rec.DocOpenCents, CarriedCadCents: rec.CarriedCadCents,
+			RevaluedCadCents: rec.RevaluedCadCents,
+		}, nil
 	}
 
 	// The replay judgement runs before any refusal that reads the books, so a re-press is
@@ -212,10 +237,16 @@ func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAP
 	// books recomputes the same legs (through the same rule resolution the posting used),
 	// and different legs mean a different rate (or books a late filed document moved under
 	// the closed month), either way not this key's run.
+	if recFound && s.journalReader == nil {
+		return RevalueAPRun{}, conflict("purchasing: month %s in branch %s is already revalued under this key; one key is one run", monthWords, branchID)
+	}
 	if s.journalReader != nil {
 		posted, found, err := s.journalReader.JournalByKey(ctx, key)
 		if err != nil {
 			return RevalueAPRun{}, err
+		}
+		if recFound && !found {
+			return RevalueAPRun{}, conflict("purchasing: month %s in branch %s is already revalued under this key but its journal cannot be read back; one key is one run", monthWords, branchID)
 		}
 		if found {
 			if posted.SourceRefID != branchID {
@@ -235,7 +266,7 @@ func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAP
 		}
 	}
 
-	if err := s.refuseUnreversedEarlierMonth(ctx, branchID, year, month, monthWords); err != nil {
+	if err := s.refuseRunOutOfOrder(ctx, tx, branchID, monthWords); err != nil {
 		return RevalueAPRun{}, err
 	}
 
@@ -250,9 +281,11 @@ func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAP
 		// the CAD carried in 2100. The run is complete and posts no journal (a zero leg is
 		// not a leg the GL can carry).
 		//
-		// Known limitation: with no run record, a zero run leaves no trace, so a second press
-		// at another rate is not refused and the earlier month guard cannot see it. Plan row
-		// FX-2b (migration 0476) gives the run a record and closes this.
+		// The run is still recorded, with no journal, so a second press at another rate is
+		// refused as already run and the guards can see the month.
+		if err := s.repo.InsertRevaluationRunTx(ctx, tx, s.revaluationRecord(ctx, run, in.FXRate, "")); err != nil {
+			return RevalueAPRun{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return RevalueAPRun{}, fmt.Errorf("purchasing: commit revaluation run: %w", err)
 		}
@@ -265,6 +298,9 @@ func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAP
 
 	journalID, err := s.postRevaluationJournalTx(ctx, tx, branchID, monthWords, monthEnd, in.FXRate, legs)
 	if err != nil {
+		return RevalueAPRun{}, err
+	}
+	if err := s.repo.InsertRevaluationRunTx(ctx, tx, s.revaluationRecord(ctx, run, in.FXRate, journalID)); err != nil {
 		return RevalueAPRun{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -280,43 +316,48 @@ func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAP
 	return run, nil
 }
 
-// apRevalLookback is how many months before the pressed one are searched for a run whose
-// reversal has not posted. The run state lives on its journals and there is no list to read,
-// so each earlier month's key is probed; a year covers every month a dealer leaves behind.
-const apRevalLookback = 12
-
-// refuseUnreversedEarlierMonth refuses a run while the branch has an earlier revalued month
-// whose reversal has not posted. The run measures every bill against its documents, not
-// against 2100, so a run on top of an unreversed one would carry the earlier difference
-// twice. With the journal reader unwired nothing can be judged and the run goes on (its
-// reversal refuses in words in that case).
-func (s *Service) refuseUnreversedEarlierMonth(ctx context.Context, branchID string, year, month int, monthWords string) error {
-	if s.journalReader == nil {
-		return nil
+// revaluationRecord builds a run's record from its answer: the figures, the rate, the journal if
+// any, and who pressed it.
+func (s *Service) revaluationRecord(ctx context.Context, run RevalueAPRun, rate float64, journalID string) APRevaluationRunRecord {
+	return APRevaluationRunRecord{
+		BranchID: run.BranchID, Month: run.Month, FXRate: rate, Bills: run.Bills,
+		DocOpenCents: run.DocOpenCents, CarriedCadCents: run.CarriedCadCents,
+		RevaluedCadCents: run.RevaluedCadCents, DifferenceCents: run.DifferenceCents,
+		JournalID: journalID, CreatedBy: s.actorWords(ctx),
 	}
-	for i := 1; i <= apRevalLookback; i++ {
-		// Month arithmetic on the number, not on a calendar instant: a month is a name here.
-		idx := year*12 + (month - 1) - i
-		if idx < 12 {
-			break
-		}
-		prevWords := fmt.Sprintf("%04d-%02d", idx/12, idx%12+1)
-		runKey := apRevalKey(branchID, prevWords)
-		run, found, err := s.journalReader.JournalByKey(ctx, runKey)
-		if err != nil {
-			return err
-		}
-		if !found || run.SourceRefID != branchID {
-			continue
-		}
-		_, reversed, err := s.journalReader.JournalByKey(ctx, runKey+apRevalReverseSuffix)
-		if err != nil {
-			return err
-		}
-		if !reversed {
-			return unprocessable("purchasing: month %s in branch %s was revalued and its reversal has not posted; reverse %s before revaluing %s, or its difference would be carried twice in 2100",
-				prevWords, branchID, prevWords, monthWords)
-		}
+}
+
+// actorWords names who is acting: the caller's user id, else their role, else the system.
+func (s *Service) actorWords(ctx context.Context) string {
+	caller, _ := s.callerFrom(ctx)
+	if caller.UserID != "" {
+		return caller.UserID
+	}
+	if caller.RoleCode != "" {
+		return caller.RoleCode
+	}
+	return "system"
+}
+
+// refuseRunOutOfOrder reads the run record (inside the branch lock) and refuses a run that would
+// carry a difference twice or file behind a later month:
+//
+//   - while any earlier month of the branch has a posted run with no reversal: the run measures
+//     every bill against its documents, not against 2100, so a run on top of an unreversed one
+//     would carry the earlier difference twice;
+//   - while any later month has a posted run: an earlier month is never revalued after a later one.
+func (s *Service) refuseRunOutOfOrder(ctx context.Context, tx pgx.Tx, branchID, monthWords string) error {
+	if prev, held, err := s.repo.UnreversedRevaluationBeforeTx(ctx, tx, branchID, monthWords); err != nil {
+		return err
+	} else if held {
+		return unprocessable("purchasing: month %s in branch %s was revalued and its reversal has not posted; reverse %s before revaluing %s, or its difference would be carried twice in 2100",
+			prev, branchID, prev, monthWords)
+	}
+	if later, held, err := s.repo.PostedRevaluationAfterTx(ctx, tx, branchID, monthWords); err != nil {
+		return err
+	} else if held {
+		return unprocessable("purchasing: month %s in branch %s is already revalued; an earlier month is not revalued after a later one, so %s cannot be run now",
+			later, branchID, monthWords)
 	}
 	return nil
 }
@@ -393,10 +434,10 @@ func (s *Service) revalueAPCompute(ctx context.Context, branchID string, monthEn
 // one debits 2100 and credits the unrealised gain.
 func revaluationLegs(differenceCents int64, monthWords string) []GLJournalLeg {
 	apLeg := GLJournalLeg{AccountCode: glAccountAPCode, CreditCents: differenceCents, Memo: "AP revaluation " + monthWords}
-	fxLeg := GLJournalLeg{AccountCode: glAccountFXGainLoss, DebitCents: differenceCents, Memo: "Unrealised FX " + monthWords}
+	fxLeg := GLJournalLeg{AccountCode: glAccountFXUnrealised, DebitCents: differenceCents, Memo: "Unrealised FX " + monthWords}
 	if differenceCents < 0 {
 		apLeg = GLJournalLeg{AccountCode: glAccountAPCode, DebitCents: -differenceCents, Memo: "AP revaluation " + monthWords}
-		fxLeg = GLJournalLeg{AccountCode: glAccountFXGainLoss, CreditCents: -differenceCents, Memo: "Unrealised FX " + monthWords}
+		fxLeg = GLJournalLeg{AccountCode: glAccountFXUnrealised, CreditCents: -differenceCents, Memo: "Unrealised FX " + monthWords}
 	}
 	return []GLJournalLeg{apLeg, fxLeg}
 }
@@ -537,8 +578,12 @@ func (s *Service) ReverseAPRevaluation(ctx context.Context, branchID, month stri
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// One key is one reversal: two presses under the same key serialize here, and the
-	// second reads the first's journal and answers it.
+	// The branch's one revaluation lock first (a reversal beside a run of another month
+	// serializes with it), then one key is one reversal: two presses under the same key
+	// serialize here, and the second reads the first's journal and answers it.
+	if err := s.repo.LockRevaluationBranchTx(ctx, tx, branch); err != nil {
+		return APRevaluationReversal{}, err
+	}
 	if err := s.repo.LockPaymentKeyTx(ctx, tx, revKey); err != nil {
 		return APRevaluationReversal{}, err
 	}
@@ -597,6 +642,9 @@ func (s *Service) ReverseAPRevaluation(ctx context.Context, branchID, month stri
 	})
 	if err != nil {
 		return APRevaluationReversal{}, fmt.Errorf("purchasing: post AP revaluation reversal journal: %w", err)
+	}
+	if err := s.repo.MarkRevaluationReversedTx(ctx, tx, branch, monthWords, reversalID, s.actorWords(ctx)); err != nil {
+		return APRevaluationReversal{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return APRevaluationReversal{}, fmt.Errorf("purchasing: commit AP revaluation reversal: %w", err)
