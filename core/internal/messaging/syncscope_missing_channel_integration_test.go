@@ -573,3 +573,338 @@ func TestSyncPrefsReads_ServeOnlyCallersOwnRows(t *testing.T) {
 		t.Errorf("non-member Load = (%+v, %v, %v), want not found", rs, found, err)
 	}
 }
+
+// TestSyncPush_PrefsUpdateCannotMoveRowToAnotherChannel: UX-123 edge (a).
+//
+// A caller seated in two channels (chYardTrenton and chOffice) creates a pref
+// row on channel A (chYardTrenton) and then sends an update on that row's id
+// whose payload names channel B (chOffice). Before the fix, the write landed on
+// the caller's row for channel B while the key ledger recorded the client key
+// against row A's id. After the fix, the update is refused as a single
+// operation with "sync: operation refused: a preference belongs to its channel;
+// it cannot be moved", neither row changes, and the refusal is identical
+// whether the other channel is one the caller is seated in, a real channel the
+// caller is not seated in, or a missing channel id.
+func TestSyncPush_PrefsUpdateCannotMoveRowToAnotherChannel(t *testing.T) {
+	f := newSyncFeedFixture(t)
+	ctx := context.Background()
+	if err := f.repo.SyncMembership(ctx, uSamRivera); err != nil {
+		t.Fatalf("sync trenton caller: %v", err)
+	}
+	link := func(_ context.Context, sub string) (string, bool) {
+		uid, ok := syncSubOf[sub]
+		return uid, ok
+	}
+	engine := sync.NewEngine().WithKeyLedger(sync.NewPgKeyLedger(f.pool))
+	if err := engine.RegisterScope("notify_prefs", NewNotifyPrefsSyncStore(NewRepository(f.pool), link)); err != nil {
+		t.Fatalf("register the notify_prefs scope: %v", err)
+	}
+	prefs, ok := sync.Lookup("notify_prefs")
+	if !ok {
+		t.Fatal("notify_prefs missing from the registry")
+	}
+	caller, _ := ux115Filters()
+
+	createKey := uuid.NewString()
+	moveKey := uuid.NewString()
+	unseatedKey := uuid.NewString()
+	missingKey := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(),
+			`DELETE FROM msg_notification_prefs WHERE user_id = $1 AND channel_id IN ($2, $3)`,
+			uSamRivera, chYardTrenton, chOffice)
+		_, _ = f.pool.Exec(context.Background(),
+			`DELETE FROM sync_op_hashes WHERE client_id = ANY($1::uuid[])`,
+			[]string{createKey, moveKey, unseatedKey, missingKey})
+	})
+
+	created := push(t, engine, prefs, caller, createKey, "create",
+		map[string]any{"channel_id": chYardTrenton, "mode": ModeMentions})
+	if created.Status != "applied" || created.Seq == nil {
+		t.Fatalf("create on channel A answered %s, want applied", ux115Answer(created))
+	}
+	rowAID, _ := appliedRow(t, engine, prefs, caller, *created.Seq)
+
+	// Update row A while naming channel B (chOffice, where the caller is also seated).
+	moved := push(t, engine, prefs, caller, moveKey, "update",
+		map[string]any{"id": rowAID, "channel_id": chOffice, "mode": ModeMuted})
+	t.Logf("ux123a update row A naming channel B: %s", ux115Answer(moved))
+
+	var officeCount int
+	var officeRowID, officeKey string
+	_ = f.pool.QueryRow(ctx,
+		`SELECT count(*), COALESCE(max(id::text), ''), COALESCE(max(idempotency_key::text), '')
+		 FROM msg_notification_prefs WHERE user_id = $1 AND channel_id = $2`,
+		uSamRivera, chOffice).Scan(&officeCount, &officeRowID, &officeKey)
+	var ledgerEntityID string
+	_ = f.pool.QueryRow(ctx,
+		`SELECT COALESCE(entity_id, '') FROM sync_op_hashes WHERE client_id = $1::uuid`,
+		moveKey).Scan(&ledgerEntityID)
+	t.Logf("ux123a after update: rowA=%s officeCount=%d officeRowID=%s officeKey=%s ledgerEntityID=%s",
+		rowAID, officeCount, officeRowID, officeKey, ledgerEntityID)
+
+	wantRefusal := "sync: operation refused: a preference belongs to its channel; it cannot be moved"
+	if moved.Status != "rejected" || moved.Seq != nil || moved.Conflict != nil {
+		t.Errorf("update naming another channel answered %s, want rejected", ux115Answer(moved))
+	}
+	if got := ux115ErrWords(moved); got != wantRefusal {
+		t.Errorf("update naming another channel error = %q, want %q", got, wantRefusal)
+	}
+	if officeCount != 0 {
+		t.Errorf("update on row A (%s) wrote %d row(s) on channel B (row=%s idem_key=%s), want 0",
+			rowAID, officeCount, officeRowID, officeKey)
+	}
+	if ledgerEntityID != "" {
+		t.Errorf("rejected update bound key %s in sync_op_hashes to entity_id=%q, want unbound",
+			moveKey, ledgerEntityID)
+	}
+
+	var modeA string
+	if err := f.pool.QueryRow(ctx,
+		`SELECT mode FROM msg_notification_prefs WHERE id = $1::uuid`, rowAID).Scan(&modeA); err != nil {
+		t.Fatalf("read row A after refused update: %v", err)
+	}
+	if modeA != ModeMentions {
+		t.Errorf("row A mode = %q after refused update, want %q", modeA, ModeMentions)
+	}
+
+	// Parity check: naming a real channel the caller is not in (chYardKingston)
+	// and naming a missing channel id produce the exact same refusal as naming
+	// a channel the caller is in, so the refusal leaks nothing about whether
+	// the other channel exists.
+	unseated := push(t, engine, prefs, caller, unseatedKey, "update",
+		map[string]any{"id": rowAID, "channel_id": chYardKingston, "mode": ModeMuted})
+	missing := push(t, engine, prefs, caller, missingKey, "update",
+		map[string]any{"id": rowAID, "channel_id": ux115MissingChannel(t, f), "mode": ModeMuted})
+	t.Logf("ux123a parity: seated=%s unseated=%s missing=%s",
+		ux115Answer(moved), ux115Answer(unseated), ux115Answer(missing))
+	if ux115Answer(unseated) != ux115Answer(moved) {
+		t.Errorf("update naming unseated real channel answered %s, want %s",
+			ux115Answer(unseated), ux115Answer(moved))
+	}
+	if ux115Answer(missing) != ux115Answer(moved) {
+		t.Errorf("update naming missing channel answered %s, want %s",
+			ux115Answer(missing), ux115Answer(moved))
+	}
+}
+
+// TestSyncPush_PrefsUpdateLeavesCallerPayloadMapUntouched: UX-123 edge (b).
+//
+// When a client sends an update without channel_id (or with an empty
+// channel_id), notifyPrefsSyncStore.Write fills the row's channel_id before
+// delegating to write. Before the fix, it mutated the caller's payload map in
+// place. After the fix, Write copies the map first so the caller's payload map
+// is unchanged after the push.
+func TestSyncPush_PrefsUpdateLeavesCallerPayloadMapUntouched(t *testing.T) {
+	f := newSyncFeedFixture(t)
+	ctx := context.Background()
+	if err := f.repo.SyncMembership(ctx, uSamRivera); err != nil {
+		t.Fatalf("sync trenton caller: %v", err)
+	}
+	prefs, ok := sync.Lookup("notify_prefs")
+	if !ok {
+		t.Fatal("notify_prefs missing from the registry")
+	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(),
+			`DELETE FROM msg_notification_prefs WHERE user_id = $1 AND channel_id = $2`,
+			uSamRivera, chYardTrenton)
+	})
+
+	created := push(t, f.engine, prefs, samFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": chYardTrenton, "mode": ModeMentions})
+	if created.Status != "applied" || created.Seq == nil {
+		t.Fatalf("setup create answered %s, want applied", ux115Answer(created))
+	}
+	rowID, _ := appliedRow(t, f.engine, prefs, samFilter(), *created.Seq)
+
+	payload := map[string]any{"id": rowID, "mode": ModeAll}
+	updated := push(t, f.engine, prefs, samFilter(), uuid.NewString(), "update", payload)
+	if updated.Status != "applied" || updated.Seq == nil {
+		t.Fatalf("update without channel_id answered %s, want applied", ux115Answer(updated))
+	}
+	t.Logf("ux123b payload after update (omitted channel_id): %v", payload)
+	if got, has := payload["channel_id"]; has {
+		t.Errorf("update mutated caller payload map in place: payload[\"channel_id\"] = %v, want key absent", got)
+	}
+
+	payloadEmpty := map[string]any{"id": rowID, "channel_id": "", "mode": ModeMentions}
+	updatedEmpty := push(t, f.engine, prefs, samFilter(), uuid.NewString(), "update", payloadEmpty)
+	if updatedEmpty.Status != "applied" || updatedEmpty.Seq == nil {
+		t.Fatalf("update with empty channel_id answered %s, want applied", ux115Answer(updatedEmpty))
+	}
+	t.Logf("ux123b payload after update (empty channel_id): %v", payloadEmpty)
+	if got, _ := payloadEmpty["channel_id"].(string); got != "" {
+		t.Errorf("update mutated caller payload map in place: payloadEmpty[\"channel_id\"] = %q, want \"\"", got)
+	}
+}
+
+// TestSyncPush_PrefsWriteWithMalformedChannelIDRefusesThatOneOperation:
+// UX-123 edge (c).
+//
+// A channel_id that is not a uuid previously reached Repository.IsMember and
+// failed the whole push with a raw Postgres 22P02 error, sinking valid
+// operations in the same batch and answering differently under a spent key vs a
+// free key at the bound-key gate. After the fix, prefsPatchShape refuses a
+// non-uuid channel_id as a single operation with "sync: operation refused:
+// channel_id is not a valid id", the good operation in the batch lands, and
+// ValidateCreate answers the exact same words under a spent key and a free key.
+func TestSyncPush_PrefsWriteWithMalformedChannelIDRefusesThatOneOperation(t *testing.T) {
+	f := newSyncFeedFixture(t)
+	ctx := context.Background()
+	if err := f.repo.SyncMembership(ctx, uSamRivera); err != nil {
+		t.Fatalf("sync trenton caller: %v", err)
+	}
+	if err := f.repo.SyncMembership(ctx, uCaseyDoyle); err != nil {
+		t.Fatalf("sync kingston caller: %v", err)
+	}
+	link := func(_ context.Context, sub string) (string, bool) {
+		uid, ok := syncSubOf[sub]
+		return uid, ok
+	}
+	engine := sync.NewEngine().WithKeyLedger(sync.NewPgKeyLedger(f.pool))
+	if err := engine.RegisterScope("notify_prefs", NewNotifyPrefsSyncStore(NewRepository(f.pool), link)); err != nil {
+		t.Fatalf("register the notify_prefs scope: %v", err)
+	}
+	prefs, ok := sync.Lookup("notify_prefs")
+	if !ok {
+		t.Fatal("notify_prefs missing from the registry")
+	}
+	callerA, callerB := ux115Filters()
+
+	badKey := uuid.NewString()
+	goodKey := uuid.NewString()
+	boundKey := uuid.NewString()
+	freeKey := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(),
+			`DELETE FROM msg_notification_prefs WHERE user_id = $1 AND channel_id IN ($2, $3)`,
+			uSamRivera, chOffice, chYardTrenton)
+		_, _ = f.pool.Exec(context.Background(),
+			`DELETE FROM sync_op_hashes WHERE client_id = ANY($1::uuid[])`,
+			[]string{badKey, goodKey, boundKey, freeKey})
+	})
+
+	ops := []apigen.SyncPushOperation{
+		{ClientId: badKey, Op: "create", Payload: map[string]any{"channel_id": "not-a-uuid", "mode": ModeAll}},
+		{ClientId: goodKey, Op: "create", Payload: map[string]any{"channel_id": chOffice, "mode": ModeMentions}},
+	}
+	resp, err := engine.Push(ctx, prefs, callerA, ops)
+	t.Logf("ux123c batch push: err=%v results=%v", err, resp.Results)
+	if err != nil {
+		t.Fatalf("malformed channel_id failed the whole push: %v", err)
+	}
+	if len(resp.Results) != 2 {
+		t.Fatalf("batch push answered %d results, want 2", len(resp.Results))
+	}
+	wantRefusal := "sync: operation refused: channel_id is not a valid id"
+	if resp.Results[0].Status != "rejected" || ux115ErrWords(resp.Results[0]) != wantRefusal {
+		t.Errorf("malformed channel_id op answered %s, want rejected with %q",
+			ux115Answer(resp.Results[0]), wantRefusal)
+	}
+	if resp.Results[1].Status != "applied" || resp.Results[1].Seq == nil {
+		t.Errorf("good op behind malformed channel_id answered %s, want applied",
+			ux115Answer(resp.Results[1]))
+	}
+
+	// Bound-key gate check (ValidateCreate): caller A binds boundKey on a row
+	// caller B cannot see; caller B then pushes a create with a non-uuid
+	// channel_id under boundKey (spent) and freeKey (free). Both must answer
+	// the same validation refusal.
+	seeded := push(t, engine, prefs, callerA, boundKey, "create",
+		map[string]any{"channel_id": chYardTrenton, "mode": ModeMentions})
+	if seeded.Status != "applied" || seeded.Seq == nil {
+		t.Fatalf("setup boundKey create answered %s, want applied", ux115Answer(seeded))
+	}
+	badBody := map[string]any{"channel_id": "not-a-uuid", "mode": ModeAll}
+	spentRes, spentErr := engine.Push(ctx, prefs, callerB, []apigen.SyncPushOperation{
+		{ClientId: boundKey, Op: "create", Payload: badBody},
+	})
+	freeRes, freeErr := engine.Push(ctx, prefs, callerB, []apigen.SyncPushOperation{
+		{ClientId: freeKey, Op: "create", Payload: badBody},
+	})
+	if spentErr != nil || freeErr != nil {
+		t.Fatalf("bound-key gate pushes failed: spentErr=%v freeErr=%v", spentErr, freeErr)
+	}
+	spent, free := spentRes.Results[0], freeRes.Results[0]
+	t.Logf("ux123c bound-key gate: spent=%s free=%s", ux115Answer(spent), ux115Answer(free))
+	if ux115Answer(spent) != ux115Answer(free) {
+		t.Errorf("spent key and free key differ on malformed channel_id: spent=%s free=%s",
+			ux115Answer(spent), ux115Answer(free))
+	}
+	if ux115ErrWords(spent) != wantRefusal {
+		t.Errorf("malformed channel_id under spent key answered %q, want %q",
+			ux115ErrWords(spent), wantRefusal)
+	}
+}
+
+// TestSyncPush_PrefsWriteNonMemberSilencingEscalationChannelAnswersRowNotFound:
+// pins the UX-122 check order on an ESCALATION channel. A seated member who
+// attempts to silence the ESCALATION room meets "sync: operation refused:
+// escalation channels cannot be muted", while a non-member sending the same
+// silencing patch (mode: MUTED or muted: true) meets bare "sync: row not found",
+// identical to a missing channel, leaking neither the channel's existence nor
+// its tier.
+func TestSyncPush_PrefsWriteNonMemberSilencingEscalationChannelAnswersRowNotFound(t *testing.T) {
+	f := newSyncFeedFixture(t)
+	ctx := context.Background()
+	if err := f.repo.SyncMembership(ctx, uSamRivera); err != nil {
+		t.Fatalf("sync trenton caller: %v", err)
+	}
+	if err := f.repo.SyncMembership(ctx, uCaseyDoyle); err != nil {
+		t.Fatalf("sync kingston caller: %v", err)
+	}
+	escID := escalationChannelID(t, f)
+	if _, err := f.pool.Exec(ctx,
+		`DELETE FROM msg_members WHERE channel_id = $1::uuid AND user_id = $2::uuid`,
+		escID, uCaseyDoyle); err != nil {
+		t.Fatalf("remove kingston caller from escalation room: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(),
+			`DELETE FROM msg_notification_prefs WHERE user_id = $1 AND channel_id = $2`,
+			uCaseyDoyle, escID)
+		_ = f.repo.SyncMembership(context.Background(), uCaseyDoyle)
+	})
+	if ok, _ := f.repo.IsMember(ctx, escID, uCaseyDoyle); ok {
+		t.Fatalf("the fixture is wrong: kingston caller is still seated in escalation room")
+	}
+
+	prefs, ok := sync.Lookup("notify_prefs")
+	if !ok {
+		t.Fatal("notify_prefs missing from the registry")
+	}
+
+	// Control: seated member attempting to mute the escalation room meets the
+	// escalation refusal.
+	memberMute := push(t, f.engine, prefs, samFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": escID, "mode": ModeMuted})
+	t.Logf("ux123 escalation control (seated member): %s", ux115Answer(memberMute))
+	wantEscRefusal := "sync: operation refused: escalation channels cannot be muted"
+	if memberMute.Status != "rejected" || ux115ErrWords(memberMute) != wantEscRefusal {
+		t.Fatalf("seated member escalation mute answered %s, want rejected with %q",
+			ux115Answer(memberMute), wantEscRefusal)
+	}
+
+	// Non-member silencing patches on the escalation room must answer bare
+	// sync: row not found, matching a missing channel.
+	missing := ux115MissingChannel(t, f)
+	wantNotFound := ux115Answer(push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": missing, "mode": ModeMuted}))
+
+	nonMemberMode := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": escID, "mode": ModeMuted})
+	nonMemberMuted := push(t, f.engine, prefs, caseyFilter(), uuid.NewString(), "create",
+		map[string]any{"channel_id": escID, "muted": true})
+	t.Logf("ux123 escalation non-member mode:MUTED=%s muted:true=%s missing=%s",
+		ux115Answer(nonMemberMode), ux115Answer(nonMemberMuted), wantNotFound)
+
+	if ux115Answer(nonMemberMode) != wantNotFound {
+		t.Errorf("non-member mode:MUTED on escalation channel answered %s, want %s",
+			ux115Answer(nonMemberMode), wantNotFound)
+	}
+	if ux115Answer(nonMemberMuted) != wantNotFound {
+		t.Errorf("non-member muted:true on escalation channel answered %s, want %s",
+			ux115Answer(nonMemberMuted), wantNotFound)
+	}
+}
