@@ -409,13 +409,18 @@ SELECT invoice_no::text, doc_type, source_kind, customer_id::text, branch_id::te
 	}
 
 	// What earlier memos already took. Memos hold negative figures; the sums are read positive.
-	var prevSub, prevTax, prevHold int64
+	var prevSub, prevTax, prevHold, takenHold int64
 	if err := q.QueryRow(ctx, `
-SELECT COALESCE(-SUM(subtotal_cents), 0), COALESCE(-SUM(tax_cents), 0), COALESCE(-SUM(holdback_cents), 0)
+SELECT COALESCE(-SUM(subtotal_cents), 0), COALESCE(-SUM(tax_cents), 0), COALESCE(-SUM(holdback_cents), 0),
+       COALESCE(-SUM(holdback_cents) FILTER (WHERE status <> 'DRAFT'), 0)
   FROM invoices WHERE reverses_invoice_id = $1::uuid AND doc_type = 'CREDIT_MEMO' AND status <> 'VOID'`,
-		in.ReversesInvoiceID).Scan(&prevSub, &prevTax, &prevHold); err != nil {
+		in.ReversesInvoiceID).Scan(&prevSub, &prevTax, &prevHold, &takenHold); err != nil {
 		return creditPlan{}, fmt.Errorf("billing: read what is already credited: %w", err)
 	}
+	// The invoice's own holdback_cents is what it still withholds: a finalized memo lowered it by the
+	// part it took. The holdback the invoice was written with is that plus what finalized memos took;
+	// a parked memo holds its part in reserve without having lowered the column.
+	origHold += takenHold
 	remSub, remTax := origSub-prevSub, origTax-prevTax
 	if remSub <= 0 {
 		return creditPlan{}, httpx.BadRequestf("invoice %s has nothing left to credit: it has already been credited in full", p.origNo)
@@ -603,7 +608,11 @@ RETURNING id::text, invoice_no`,
 		if err != nil {
 			return fmt.Errorf("insert credit memo: %w", err)
 		}
-		// The holdback part comes off the retention ledger on this same transaction (RT-2).
+		// The holdback part comes off the invoice's own holdback and the retention ledger on this same
+		// transaction (RT-2).
+		if err := lowerInvoiceHoldback(ctx, tx, in.ReversesInvoiceID, plan.holdback); err != nil {
+			return err
+		}
 		if err := w.bookCreditReversal(ctx, tx, in.ReversesInvoiceID, no, branchID, plan.holdback); err != nil {
 			return err
 		}

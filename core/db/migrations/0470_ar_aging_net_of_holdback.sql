@@ -7,8 +7,10 @@
 -- is reported separately through holdback_cents, as the holdback readers already do.
 --
 -- Only the invoice arm changes (here and in ai.ar_aging below). The view keeps its name and its nine columns in the same order, and a
--- document with no holdback reads exactly as before. A credit memo against a withholding invoice carries
--- a NEGATIVE holdback_cents, so its net is its credit less the holdback part it takes back.
+-- document with no holdback reads exactly as before. A credit memo against a withholding invoice lowers
+-- that invoice's own holdback_cents by the part it takes back, and carries that part as a NEGATIVE
+-- holdback_cents of its own as a record; only a positive holdback is ever netted, so the memo's own line
+-- is its credit and nothing more.
 
 CREATE OR REPLACE VIEW v_ar_aging AS
 WITH dealer AS (
@@ -34,10 +36,10 @@ SELECT
 FROM (
   -- open AR carried on invoices, net of the holdback the customer does not owe yet
   SELECT i.customer_id, 'invoice'::text AS source_type, i.id AS source_ref_id, i.branch_id,
-         i.balance_cents - LEAST(i.holdback_cents, GREATEST(i.balance_cents, 0)) AS amount_cents, i.due_date AS age_date
+         i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0)) AS amount_cents, i.due_date AS age_date
   FROM invoices i
   WHERE i.status IN ('FINALIZED','PARTIALLY_PAID')
-    AND i.balance_cents - LEAST(i.holdback_cents, GREATEST(i.balance_cents, 0)) <> 0
+    AND i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0)) <> 0
   UNION ALL
   -- non-invoice AR movements (kept out of the invoices table): NSF fee, adjustment, credit memo, write-off
   SELECT ct.customer_id, 'customer_txn'::text AS source_type, ct.id AS source_ref_id, ct.branch_id,
@@ -81,11 +83,11 @@ BEGIN
   CREATE OR REPLACE VIEW ai.ar_aging AS
     WITH open_ar AS (
       SELECT i.customer_id,
-             i.balance_cents - LEAST(i.holdback_cents, GREATEST(i.balance_cents, 0)) AS balance_cents,
+             i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0)) AS balance_cents,
              i.due_date
         FROM public.invoices i
        WHERE i.status IN ('FINALIZED', 'PARTIALLY_PAID')
-         AND i.balance_cents - LEAST(i.holdback_cents, GREATEST(i.balance_cents, 0)) <> 0
+         AND i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0)) <> 0
       UNION ALL
       SELECT ct.customer_id,
              SUM(ct.amount_cents) AS balance_cents,

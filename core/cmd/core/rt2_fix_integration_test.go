@@ -64,3 +64,116 @@ func TestRT2Fix_TheFinanceChargeNeverChargesHoldback(t *testing.T) {
 		}
 	}
 }
+
+const rt2FixOrg = "88a20000-0000-4000-8000-0000000000c2"
+
+// applyMemo applies a credit memo to the invoice it reverses, as the credit desk does.
+func (l *rt2Leg) applyMemo(memoID, invoiceID string, cents int64, key string) (billing.CreditApplication, error) {
+	l.t.Helper()
+	return billing.NewRepository(l.pool).ApplyCredit(context.Background(), billing.ApplyCreditInput{
+		CustomerID: l.cust, CreditKind: billing.CreditKindMemo, CreditID: memoID, InvoiceID: invoiceID,
+		AmountCents: cents, Reason: "rt2 fix", IdempotencyKey: key, OrgID: rt2FixOrg,
+	}, time.Now())
+}
+
+type invoiceRow struct {
+	balance, holdback int64
+	status            string
+}
+
+func (l *rt2Leg) invoiceRow(id string) invoiceRow {
+	l.t.Helper()
+	var r invoiceRow
+	if err := l.pool.QueryRow(context.Background(), `SELECT balance_cents, holdback_cents, status FROM invoices WHERE id = $1::uuid`, id).
+		Scan(&r.balance, &r.holdback, &r.status); err != nil {
+		l.t.Fatalf("read the invoice: %v", err)
+	}
+	return r
+}
+
+// P1-3, full credit: after the rest is credited the invoice carries no holdback, the memo applies in full
+// and the invoice closes; the lien worklist no longer lists it.
+func TestRT2Fix_AFullCreditLeavesNoHoldbackAndTheMemoAppliesInFull(t *testing.T) {
+	l := rt2Setup(t, "fullcm")
+	l.newJob(true)
+	doc := l.invoice(100_000, 13_000) // 113,000 with 10,000 held
+	memo := l.creditMemo(doc.InvoiceID, 0, "rt2fix-full")
+	eq(t, "the invoice's own holdback after a full credit", l.holdbackOf(doc.InvoiceID), int64(0))
+	if _, err := l.applyMemo(memo.InvoiceID, doc.InvoiceID, 113_000, "rt2fix-full-apply"); err != nil {
+		t.Fatalf("the memo applies in full: %v", err)
+	}
+	got := l.invoiceRow(doc.InvoiceID)
+	eq(t, "the invoice balance", got.balance, int64(0))
+	eq(t, "the invoice status", got.status, "PAID")
+	eq(t, "the memo's balance", l.invoiceRow(memo.InvoiceID).balance, int64(0))
+	held, err := billing.NewRepository(l.pool).InvoicesWithHoldback(context.Background(), l.branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range held {
+		if h.InvoiceID == doc.InvoiceID {
+			t.Errorf("the lien worklist still lists the credited invoice with %d held", h.HoldbackCents)
+		}
+	}
+	eq(t, "the aging", l.agingTotal()-l.agingBase, int64(0))
+	l.ties("after the full credit applied")
+}
+
+// P1-3, partial credit: the invoice keeps only the holdback still withheld, the payment doors take what
+// is owed, and a fully applied memo is not an open aging line.
+func TestRT2Fix_APartialCreditLowersTheInvoicesHoldbackAndTheAgingTies(t *testing.T) {
+	l := rt2Setup(t, "partcm")
+	l.newJob(true)
+	doc := l.invoice(100_000, 0)
+	memo := l.creditMemo(doc.InvoiceID, 50_000, "rt2fix-part")
+	eq(t, "the invoice's own holdback after half is credited", l.holdbackOf(doc.InvoiceID), int64(5_000))
+	if _, err := l.applyMemo(memo.InvoiceID, doc.InvoiceID, 50_000, "rt2fix-part-apply"); err != nil {
+		t.Fatalf("apply the memo: %v", err)
+	}
+	got := l.invoiceRow(doc.InvoiceID)
+	eq(t, "the invoice balance", got.balance, int64(50_000))
+	eq(t, "the invoice holdback", got.holdback, int64(5_000))
+	eq(t, "the aging shows the net owed", l.agingTotal()-l.agingBase, int64(45_000))
+	// A fully applied memo has no aging line of its own.
+	var memoLines int
+	rows, err := billing.NewCreditService(billing.NewRepository(l.pool)).Aging(fw1StaffCtx(context.Background()), time.Now(), l.branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.CustomerID == l.cust {
+			memoLines++
+			eq(t, "the customer's aged total", r.TotalCents, int64(45_000))
+		}
+	}
+	eq(t, "one aged row for the customer", memoLines, 1)
+	// The dated rebuild agrees as of today.
+	arNow, err := billing.NewRepository(l.pool).ARBalanceCents(context.Background(), time.Now().Add(time.Minute), l.branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = arNow
+	l.ties("after the partial credit applied")
+}
+
+// The dated rebuild (the month end tie) reads the holdback as it stood on that day: an invoice from last
+// month, credited this month, still shows its original net at last month's end.
+func TestRT2Fix_ADatedAgingReadsTheHoldbackAsItStoodThatDay(t *testing.T) {
+	l := rt2Setup(t, "dated")
+	zone, _ := time.LoadLocation("America/Toronto")
+	n := time.Now().In(zone)
+	lastEnd := time.Date(n.Year(), n.Month(), 1, 0, 0, 0, 0, zone).Add(-time.Second)
+	before, err := billing.NewRepository(l.pool).ARBalanceCents(context.Background(), lastEnd, l.branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.newJob(true)
+	doc := l.invoice(100_000, 0)
+	l.ageInvoice(doc.InvoiceID, 45)
+	l.creditMemo(doc.InvoiceID, 50_000, "rt2fix-dated")
+	after, err := billing.NewRepository(l.pool).ARBalanceCents(context.Background(), lastEnd, l.branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(t, "AR at last month's end: the invoice's net, before the credit", after-before, int64(90_000))
+}

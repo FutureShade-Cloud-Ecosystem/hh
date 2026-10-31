@@ -168,7 +168,12 @@ const agingSelect = `
 		       r.raw - LEAST(r.holdback_cents, GREATEST(r.raw, 0)) AS bal,
 		       r.due_date
 		  FROM (
-		SELECT i.customer_id, i.branch_id, i.holdback_cents,
+		SELECT i.customer_id, i.branch_id,
+		       GREATEST(i.holdback_cents, 0)
+		       + CASE WHEN $7::bool THEN 0 ELSE COALESCE((SELECT -SUM(m.holdback_cents) FROM invoices m
+		                   WHERE m.reverses_invoice_id = i.id AND m.doc_type = 'CREDIT_MEMO'
+		                     AND m.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
+		                     AND COALESCE(m.finalized_at, m.created_at) > $6::timestamptz), 0) END AS holdback_cents,
 		       CASE WHEN $7::bool THEN i.balance_cents
 		            ELSE i.total_cents
 		                 + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t

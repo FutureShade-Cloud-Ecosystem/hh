@@ -1180,7 +1180,11 @@ func (w *InvoiceWriter) FinalizeParkedCreditMemoTx(ctx context.Context, tx pgx.T
 	 WHERE id = $1 AND status = 'DRAFT'`, memoID, -total); err != nil {
 		return fmt.Errorf("billing: finalize parked credit memo: %w", err)
 	}
-	// The holdback part of the approved credit comes off the retention ledger on this transaction (RT-2).
+	// The holdback part of the approved credit comes off the invoice's own holdback and the retention
+	// ledger on this transaction (RT-2).
+	if err := lowerInvoiceHoldback(ctx, tx, reverses, memoHold); err != nil {
+		return err
+	}
 	if err := w.bookCreditReversal(ctx, tx, reverses, no, branchID, memoHold); err != nil {
 		return err
 	}

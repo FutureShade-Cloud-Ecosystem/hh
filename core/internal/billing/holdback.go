@@ -131,3 +131,24 @@ func (w *InvoiceWriter) bookCreditReversal(ctx context.Context, tx pgx.Tx, rever
 	}
 	return nil
 }
+
+// lowerInvoiceHoldback takes a finalized credit memo's holdback part off the invoice it reverses, so the
+// invoice's holdback_cents is always what it still withholds and every reader of it (the payment doors,
+// the credit apply, the aging, the lien worklist) is right without knowing about memos. Zero is a no-op.
+// The caller holds the invoice's row lock (the plan read it FOR NO KEY UPDATE).
+func lowerInvoiceHoldback(ctx context.Context, tx pgx.Tx, invoiceID string, part int64) error {
+	if part <= 0 || invoiceID == "" {
+		return nil
+	}
+	tag, err := tx.Exec(ctx, creditFeedSeqCTE+`
+UPDATE invoices
+   SET holdback_cents = holdback_cents - $2::bigint, updated_at = now(), seq = (SELECT next_value FROM iseq)
+ WHERE id = $1::uuid AND holdback_cents >= $2::bigint`, invoiceID, part)
+	if err != nil {
+		return fmt.Errorf("billing: lower the invoice's holdback by the credit's part: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("billing: the invoice %s holds less than the %d cents the credit takes back", invoiceID, part)
+	}
+	return nil
+}

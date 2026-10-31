@@ -69,7 +69,11 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 		   (SELECT COALESCE(SUM(b.bal), 0) FROM (
 		     SELECT r.raw - LEAST(r.hb, GREATEST(r.raw, 0)) AS bal
 		       FROM (
-		     SELECT i.holdback_cents AS hb, CASE WHEN $3::bool THEN i.balance_cents
+		     SELECT GREATEST(i.holdback_cents, 0)
+		       + CASE WHEN $3::bool THEN 0 ELSE COALESCE((SELECT -SUM(m.holdback_cents) FROM invoices m
+		                   WHERE m.reverses_invoice_id = i.id AND m.doc_type = 'CREDIT_MEMO'
+		                     AND m.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
+		                     AND COALESCE(m.finalized_at, m.created_at) > $2::timestamptz), 0) END AS hb, CASE WHEN $3::bool THEN i.balance_cents
 		                 ELSE i.total_cents
 		                      + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
 		                      WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
