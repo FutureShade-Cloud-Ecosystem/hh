@@ -309,7 +309,7 @@ INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, bra
 UPDATE invoices
 			    SET balance_cents = balance_cents + $2 + $3,
 			        status = CASE
-			                   WHEN balance_cents + $2 + $3 >= total_cents - holdback_cents THEN 'FINALIZED'
+			                   WHEN balance_cents + $2 + $3 >= total_cents THEN 'FINALIZED'
 			                   ELSE 'PARTIALLY_PAID'
 			                 END,
 			        updated_at = now(),

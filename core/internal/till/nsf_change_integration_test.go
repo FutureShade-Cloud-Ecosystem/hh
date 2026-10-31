@@ -227,3 +227,63 @@ func runNSFChangeLeg(t *testing.T, creditToOther int64) nsfChangeOut {
 	}
 	return out
 }
+
+// TM-2 fix round 2, P3-1: the bounce reopens by the one FINALIZED rule every undo door shares
+// (>= total_cents). A balance that lands between total less holdback and total reads PARTIALLY_PAID.
+func TestNSFStatusRule_BounceReadsPartiallyPaidBelowTotal(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	branchID, userID := seedBranchUser(t, pool)
+	svc := realSvc(pool)
+	tag := "NSFS-" + time.Now().Format("150405.000000")
+	var customerID, invoiceID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO customers (account_no, name, customer_type, home_branch_id, credit_limit_cents)
+		 VALUES ($1, $2, 'CONTRACTOR', $3::uuid, 1000000) RETURNING id::text`,
+		tag, tag, branchID).Scan(&customerID); err != nil {
+		t.Fatalf("seed customer: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		for _, q := range []string{
+			`DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`,
+			`DELETE FROM credit_holds WHERE customer_id = $1::uuid`,
+			`DELETE FROM payment_nsf WHERE payment_id IN (SELECT id FROM payments WHERE customer_id = $1::uuid)`,
+			`DELETE FROM customer_transactions WHERE customer_id = $1::uuid`,
+			`DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`,
+			`DELETE FROM payments WHERE customer_id = $1::uuid`,
+			`DELETE FROM invoices WHERE customer_id = $1::uuid`,
+			`DELETE FROM customers WHERE id = $1::uuid`,
+		} {
+			if _, err := pool.Exec(c, q, customerID); err != nil {
+				t.Errorf("cleanup failed on %q: %v", q, err)
+			}
+		}
+	})
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                       subtotal_cents, tax_cents, holdback_cents, total_cents, balance_cents, finalized_at, doc_type)
+		 VALUES ($1, $2::uuid, $3::uuid, 'PARTIALLY_PAID', (now() AT TIME ZONE 'America/Toronto')::date - 2,
+		         (now() AT TIME ZONE 'America/Toronto')::date + 28, 100000, 0, 10000, 100000, 95000, now(), 'INVOICE') RETURNING id::text`,
+		tag+"-I", customerID, branchID).Scan(&invoiceID); err != nil {
+		t.Fatalf("seed invoice: %v", err)
+	}
+	ans, err := payments.NewRepository(pool).ApplyReceived(ctx, payments.ApplyRequest{
+		CustomerID: customerID, Method: "CHEQUE", Reference: "CHQ NSFS", IdempotencyKey: tag,
+		InvoiceIDs: []string{invoiceID}, AmountCents: 2000, ReceivedBy: userID,
+	})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, err := svc.MarkNSF(globalCtx(userID), NSFInput{PaymentID: ans.PaymentID, Reason: "cheque returned NSF"}); err != nil {
+		t.Fatalf("MarkNSF: %v", err)
+	}
+	var bal int64
+	var st string
+	if err := pool.QueryRow(ctx, `SELECT balance_cents, status FROM invoices WHERE id = $1::uuid`, invoiceID).Scan(&bal, &st); err != nil {
+		t.Fatalf("read invoice: %v", err)
+	}
+	if bal != 95000 || st != "PARTIALLY_PAID" {
+		t.Errorf("after the bounce the invoice reads %d %s, want 95000 PARTIALLY_PAID", bal, st)
+	}
+}

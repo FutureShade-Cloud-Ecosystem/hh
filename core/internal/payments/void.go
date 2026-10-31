@@ -269,7 +269,7 @@ UPDATE invoices
 			    SET balance_cents = balance_cents + $2 + $3,
 			        status = CASE
 			                   WHEN status = 'VOID' THEN status
-			                   WHEN balance_cents + $2 + $3 >= total_cents - holdback_cents THEN 'FINALIZED'
+			                   WHEN balance_cents + $2 + $3 >= total_cents THEN 'FINALIZED'
 			                   ELSE 'PARTIALLY_PAID'
 			                 END,
 			        updated_at = now(),
