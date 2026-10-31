@@ -999,11 +999,15 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	var status string
 	var reversed bool
 	var nsfAllocJSON []byte
+	// changeCents is the unapplied change this receipt left on account (W3 item 0.10), recorded in
+	// its metadata by the settle; the bounce counters it below, as the void and the reversal do.
+	var changeCents int64
 	err = tx.QueryRow(ctx,
 		`SELECT COALESCE(customer_id::text, ''), branch_id::text, method, status, amount_cents, reversed_at IS NOT NULL,
-		        COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb)
+		        COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb),
+		        COALESCE((metadata->>'change_cents')::bigint, 0)
 		 FROM payments WHERE id = $1 FOR UPDATE`, in.PaymentID,
-	).Scan(&res.CustomerID, &res.BranchID, &res.Method, &status, &res.AmountCents, &reversed, &nsfAllocJSON)
+	).Scan(&res.CustomerID, &res.BranchID, &res.Method, &status, &res.AmountCents, &reversed, &nsfAllocJSON, &changeCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nsfReverseResult{}, errNotFound
 	}
@@ -1223,6 +1227,23 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 				res.CustomerID, feeAmt, arAfter, origNSFID, nullStr(res.BranchID),
 				"NSF reversal: "+in.Reason, in.At); err != nil {
 				return nsfReverseResult{}, fmt.Errorf("till: insert nsf fee reversal txn: %w", err)
+			}
+		}
+		// The change on account the receipt left (TM-2 fix round 2): the GL consumer debits 1100 by the
+		// payment's WHOLE amount, change included, so the change's credit is countered here inside its
+		// own 'receipt_change' group (source_ref_id the receipt), exactly as the void and the reversal
+		// do. Like them it counters the whole recorded change and refuses nothing: if part of it was
+		// already applied to another invoice through the credit door, the group nets to that applied
+		// part, a receivable the customer owes back, and the other invoice stays paid to that extent.
+		if changeCents > 0 {
+			arAfter += changeCents
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO customer_transactions
+				   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
+				 VALUES ($1, 'ADJUSTMENT', $2, $3, 'receipt_change', $4, $5, $6, $7)`,
+				res.CustomerID, changeCents, arAfter, in.PaymentID, nullStr(res.BranchID),
+				"NSF reversal: "+in.Reason, in.At); err != nil {
+				return nsfReverseResult{}, fmt.Errorf("till: insert the change's contra txn: %w", err)
 			}
 		}
 		// Fee ADJUSTMENT row, COUNTED non-invoice AR (the customer now owes the NSF fee).
