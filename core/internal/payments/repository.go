@@ -639,10 +639,26 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 	return ans, nil
 }
 
-// PayableInvoices reads the payable balance of each requested invoice, tenant-scoped, and
-// returns ONE Allocation per invoice with the payable amount EXCLUDING holdback (sec. 4.2 #7).
+// PayableInvoices reads the portal's payable of each requested invoice, tenant-scoped, and returns
+// ONE Allocation per invoice (sec. 4.2 #7). AmountCents is the PAYOFF: the open amount EXCLUDING
+// holdback, less the early payment discount the invoice's own terms allow on the house day
+// (TM-2b). DiscountCents is that discount and DiscountDay its last house day; both are zero
+// outside the window or without discount terms, and then AmountCents is the open amount as it
+// always was. The payoff is the one figure the intent is claimed for, the gateway charges and the
+// settle takes, so the screen, the charge and the books cannot disagree.
 // A missing or cross-tenant id in the request yields ErrNotFound (no partial slice).
 func (r *Repository) PayableInvoices(ctx context.Context, customerID string, invoiceIDs []string) ([]Allocation, error) {
+	return r.payableAt(ctx, customerID, invoiceIDs, r.nowClock)
+}
+
+// PayableInvoicesAt is PayableInvoices judged as of an earlier instant: the portal resumes a
+// settle that was refused after the processor approved by re-quoting as of its intent, so a
+// discount quoted inside the window is not lost to a house midnight that fell in between.
+func (r *Repository) PayableInvoicesAt(ctx context.Context, customerID string, invoiceIDs []string, at time.Time) ([]Allocation, error) {
+	return r.payableAt(ctx, customerID, invoiceIDs, func() time.Time { return at })
+}
+
+func (r *Repository) payableAt(ctx context.Context, customerID string, invoiceIDs []string, clock func() time.Time) ([]Allocation, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
@@ -650,7 +666,7 @@ func (r *Repository) PayableInvoices(ctx context.Context, customerID string, inv
 		return nil, nil
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT id::text, GREATEST(balance_cents - holdback_cents, 0), status
+		`SELECT id::text, balance_cents, holdback_cents, status, discount_date, COALESCE(terms_code, '')
 		 FROM invoices
 		 WHERE customer_id = $1 AND id = ANY($2)`,
 		customerID, invoiceIDs)
@@ -659,20 +675,41 @@ func (r *Repository) PayableInvoices(ctx context.Context, customerID string, inv
 	}
 	defer rows.Close()
 
-	var out []Allocation
+	var facts []applyInvoiceRow
 	for rows.Next() {
-		var a Allocation
-		if err := rows.Scan(&a.InvoiceID, &a.AmountCents, &a.Status); err != nil {
+		var f applyInvoiceRow
+		if err := rows.Scan(&f.InvoiceID, &f.BalanceCents, &f.HoldbackCents, &f.Status, &f.DiscountDate, &f.TermsCode); err != nil {
 			return nil, fmt.Errorf("scan payable invoice: %w", err)
 		}
-		out = append(out, a)
+		facts = append(facts, f)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("payable invoices: %w", err)
 	}
+	rows.Close()
 	// Every requested invoice must resolve to a tenant-owned row, else IDOR-safe not-found.
-	if len(out) != len(invoiceIDs) {
+	if len(facts) != len(invoiceIDs) {
 		return nil, ErrNotFound
+	}
+	for i := range facts {
+		if err := loadDiscountRoom(ctx, r.pool, &facts[i]); err != nil {
+			return nil, err
+		}
+	}
+	dctx, err := r.newDiscountContextAt(ctx, nil, facts, nil, clock)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Allocation, 0, len(facts))
+	for _, f := range facts {
+		payable := max(f.BalanceCents-f.HoldbackCents, 0)
+		a := Allocation{InvoiceID: f.InvoiceID, AmountCents: payable, Status: f.Status}
+		if full := dctx.fullDiscountOn(payable, f); full > 0 {
+			a.AmountCents = payable - full
+			a.DiscountCents = full
+			a.DiscountDay = discountDayOf(f)
+		}
+		out = append(out, a)
 	}
 	return out, nil
 }
@@ -880,12 +917,10 @@ func (r *Repository) PayWithStamps(ctx context.Context, customerID, method, gate
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// THE PORTAL'S RULE (TM-2 fix round 2, P2-1, the lead's choice (b)): the portal settles at face,
-	// with no early payment discount and no change on account. The card was charged the face and
-	// the screen shows the face, so a discount parked as a credit the customer cannot see would be
-	// a confident wrong number. The money desk and the per invoice door keep the one discount rule.
-	// Follow on: plan row TM-2b, the portal charges the discounted payoff and shows the discount.
-	total, branchID, change, err := r.lockAndTotal(ctx, tx, customerID, allocs, nil, false)
+	// The portal settles the payoff it quoted (TM-2b): PayableInvoices named each invoice's amount and
+	// the early payment discount beside it, the card was charged that amount, and the settle takes
+	// exactly that discount and makes no change on account.
+	total, branchID, change, err := r.lockAndTotal(ctx, tx, customerID, allocs, nil, true)
 	if err != nil {
 		return Payment{}, err
 	}
@@ -1142,10 +1177,14 @@ func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) erro
 // NO KEY UPDATE the settle never waits on the return's share at all: no writer deletes invoices or
 // changes their keys, so the share is never something the settle needs to hold back.
 //
-// takeDiscount is the door's rule (TM-2 fix round 2, P2-1): the money desk and the per invoice door
-// pass true; the portal settle (PayWithStamps) passes false and settles at face, with no discount
-// and no change. The portal rule is recorded there, with its follow on (plan row TM-2b).
-func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Allocation, dctx *discountContext, takeDiscount bool) (int64, string, int64, error) {
+// quoted is the door's way of knowing the discount (TM-2b). The money desk and the per invoice door
+// pass false: the settle judges the window itself and clamps what the caller named to the payoff.
+// The portal settle (PayWithStamps) passes true: its allocations were quoted by PayableInvoices
+// (amount and discount, decided on the house day the intent was claimed), so the settle takes
+// exactly that discount, without judging the window a second time, and makes no change. The quote
+// is checked, never trusted: it may not exceed what the invoice's own terms allow in total, and the
+// money and the discount together may not pass what is payable.
+func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Allocation, dctx *discountContext, quoted bool) (int64, string, int64, error) {
 	if _, err := tx.Exec(ctx, lockPaymentsSequenceSQL); err != nil {
 		return 0, "", 0, fmt.Errorf("pay: lock payments sequence: %w", err)
 	}
@@ -1215,7 +1254,10 @@ func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID str
 			branchID = invBranch
 		}
 	}
-	if !takeDiscount {
+	if quoted {
+		if err := r.checkQuotedDiscounts(ctx, tx, allocs, discountRows); err != nil {
+			return 0, "", 0, err
+		}
 		return total, branchID, 0, nil
 	}
 	// The early payment discount (TM-2), derived here for every caller of the one settle: the per
@@ -1255,6 +1297,43 @@ func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID str
 		allocs[i].DiscountCents = dctx.discountOn(payable, allocs[i].AmountCents, row)
 	}
 	return total, branchID, change, nil
+}
+
+// checkQuotedDiscounts holds a portal quote to the invoice's own terms: a discount may be taken
+// only on an invoice that carries discount terms, may not pass the terms' percent of the payable
+// nor the room the running cap leaves, and with the money may not pass the payable.
+func (r *Repository) checkQuotedDiscounts(ctx context.Context, tx pgx.Tx, allocs []Allocation, rows []applyInvoiceRow) error {
+	var any bool
+	for _, a := range allocs {
+		if !a.IsNSFFee && a.DiscountCents != 0 {
+			any = true
+		}
+	}
+	if !any {
+		return nil
+	}
+	dctx, err := r.newDiscountContextTx(ctx, tx, rows, nil)
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]applyInvoiceRow, len(rows))
+	for _, row := range rows {
+		byID[row.InvoiceID] = row
+	}
+	for _, a := range allocs {
+		if a.IsNSFFee || a.DiscountCents == 0 {
+			continue
+		}
+		row := byID[a.InvoiceID]
+		payable := max(row.BalanceCents-row.HoldbackCents, 0)
+		bps := dctx.bps[row.TermsCode]
+		allowed := min(roundHalfEvenCents(payable, int64(bps)), dctx.room(row))
+		if row.DiscountDate == nil || row.TermsCode == "" || bps <= 0 || a.DiscountCents < 0 ||
+			a.DiscountCents > allowed || a.AmountCents+a.DiscountCents > payable {
+			return httpx.BadRequestf("invoice %q balance changed; refresh and retry", a.InvoiceID)
+		}
+	}
+	return nil
 }
 
 // applyAllocations writes the N allocations, moves the N invoice balances, writes the N subledger

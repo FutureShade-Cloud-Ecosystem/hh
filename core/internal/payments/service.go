@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
@@ -284,6 +285,13 @@ type stampedSettler interface {
 // The production store MUST carry the stamped settle.
 var _ stampedSettler = (*Repository)(nil)
 
+// payableAsOf is the optional quote as of an earlier instant; the production store carries it.
+type payableAsOf interface {
+	PayableInvoicesAt(ctx context.Context, customerID string, invoiceIDs []string, at time.Time) ([]Allocation, error)
+}
+
+var _ payableAsOf = (*Repository)(nil)
+
 // pay is the one pay choreography both doors run; the stamps alter
 // only the settled row's sync legs.
 func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, stamps settleStamps) (Payment, error) {
@@ -483,7 +491,15 @@ func (s *Service) resume(ctx context.Context, customerID string, req PayRequest,
 		}
 		method = paymentMethodFor(m.MethodType)
 	}
-	allocs, err := s.store.PayableInvoices(ctx, customerID, req.InvoiceIDs)
+	// Re-quoted as of the intent when the store can (TM-2b): the amount charged is fixed at the
+	// intent, and a house midnight between the claim and this resume must not change the quote.
+	var allocs []Allocation
+	var err error
+	if q, ok := s.store.(payableAsOf); ok && !intent.CreatedAt.IsZero() {
+		allocs, err = q.PayableInvoicesAt(ctx, customerID, req.InvoiceIDs, intent.CreatedAt)
+	} else {
+		allocs, err = s.store.PayableInvoices(ctx, customerID, req.InvoiceIDs)
+	}
 	if err != nil {
 		return Payment{}, afterApprovedCharge(err)
 	}

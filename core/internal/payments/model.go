@@ -89,4 +89,7 @@ type Allocation struct {
 	// zero on every allocation an unbound repository settles, the invoice's own terms percent
 	// otherwise. The balance move is the money and the discount together.
 	DiscountCents int64 `json:"discount_cents,omitempty"`
+	// DiscountDay is the last house day the quoted discount runs (TM-2b), set only by PayableInvoices
+	// when it quotes a discount; empty everywhere else and never read from a client.
+	DiscountDay string `json:"-"`
 }
