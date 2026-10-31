@@ -33,7 +33,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
-import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, canDecideCreditChanges, canVoidReceipt, canWorkCreditChanges, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditAskWords, creditDay, creditDecisionWords, creditPendingWords, creditTargetWords, creditWho, dayWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, offeredChips, onAccountWords, relativeDay, reopenedInvoiceNos, rowMarks, type CreditChangeWords, type Mark, type RegisterChip, pastDueLine } from "./ar-logic.js";
+import { STATEMENT_OVERDUE_NOTE, STATEMENT_STRIP_LABELS, bucketWord, canDecideCreditChanges, canVoidReceipt, canWorkCreditChanges, cardCovers, cardShown, cardTitleFor, creditApprovalWords, creditAskWords, creditBlockedWords, creditDay, creditDecisionWords, creditPendingWords, creditTargetWords, creditWho, dayWords, holdKindWord, holdMarks, isUnpaidInvoice, lineWords, offeredChips, onAccountWords, relativeDay, reopenedInvoiceNos, rowMarks, type CreditChangeWords, type Mark, type RegisterChip, pastDueLine } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderInvoiceCredits, renderReapply, renderRemindersPanels, renderReverse, renderRunPanel, renderVoid } from "./office-views.js";
@@ -913,12 +913,17 @@ export function renderCreditChanges(model: DeskModel): TemplateResult {
                   <td data-card-label="Approvals">${creditPendingWords(row, model.userId)}</td>
                   <td class="act">
                     ${canDecide
-                      ? html`
-                          <div class="holdbtns">
-                            <button type="button" class="btn btn-primary small-btn" data-action="credit-approve" data-credit-id="${row.id}" ?disabled=${model.busy}>Approve</button>
-                            <button type="button" class="btn btn-secondary small-btn" data-action="credit-reject" data-credit-id="${row.id}" ?disabled=${model.busy}>Reject...</button>
-                          </div>
-                        `
+                      ? (() => {
+                          const blocked = creditBlockedWords(row, model.userId);
+                          const why = blocked.approve !== "" ? blocked.approve : blocked.reject;
+                          return html`
+                            <div class="holdbtns">
+                              <button type="button" class="btn btn-primary small-btn ${blocked.approve === "" ? "" : "held"}" data-action="credit-approve" data-credit-id="${row.id}" aria-disabled="${blocked.approve === "" ? "false" : "true"}" ?disabled=${model.busy || blocked.approve !== ""}>Approve</button>
+                              <button type="button" class="btn btn-secondary small-btn ${blocked.reject === "" ? "" : "held"}" data-action="credit-reject" data-credit-id="${row.id}" aria-disabled="${blocked.reject === "" ? "false" : "true"}" ?disabled=${model.busy || blocked.reject !== ""}>Reject...</button>
+                            </div>
+                            ${why === "" ? nothing : html`<span class="dim small" data-credit-why>${why}</span>`}
+                          `;
+                        })()
                       : html`<span class="dim small">A branch manager, the Financial Controller or the General Manager decides.</span>`}
                   </td>
                 </tr>

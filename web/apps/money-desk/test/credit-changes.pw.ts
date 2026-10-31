@@ -62,11 +62,55 @@ test("the approver sees what waits, approves one, and the first of two approvals
   await single.getByRole("button", { name: "Approve" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Approved: the credit limit is now $32,000.00");
   await expect(rows).toHaveCount(1);
-  // The one that already holds the first of two approvals shows it, and the same person is turned away
-  // in the server's own words.
+  // The one that already holds the first of two approvals shows it.
   await expect(rows.first()).toContainText("First of two approvals recorded");
-  await rows.first().getByRole("button", { name: "Approve" }).click();
-  await expect(page.locator("[data-error]")).toContainText("the same person cannot approve twice");
+});
+
+test("Approve is disabled, and says why, on a request this viewer already approved", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await page.getByRole("button", { name: "Credit changes" }).click();
+  const mine = page.locator("[data-creditchanges] [data-creditchange-row]").filter({ hasText: "First of two approvals recorded" });
+  const approve = mine.getByRole("button", { name: "Approve" });
+  await expect(approve).toBeDisabled();
+  await expect(approve).toHaveClass(/held/);
+  await expect(mine.locator("[data-credit-why]")).toContainText("You approved this one; it needs a second person");
+  // Rejecting is still the viewer's to do: the core only turns away a second approval.
+  await expect(mine.getByRole("button", { name: /^Reject/ })).toBeEnabled();
+});
+
+test("a request the viewer asked for can be neither approved nor rejected by them, and says so", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openCreditLimit(page, "Granite Edge Landscaping");
+  await page.locator("[data-field='credit-limit-amount']").fill("55000.00");
+  await page.locator("[data-field='credit-limit-reason']").fill("A new yard contract");
+  await page.getByRole("button", { name: "Request the change" }).click();
+  await expect(page.locator("[data-credit-pending]").first()).toBeVisible();
+  await page.getByRole("button", { name: "‹ Receivables" }).first().click();
+  await page.getByRole("button", { name: "Credit changes" }).click();
+  const own = page.locator("[data-creditchanges] [data-creditchange-row]").filter({ hasText: "A new yard contract" });
+  await expect(own.getByRole("button", { name: "Approve" })).toBeDisabled();
+  await expect(own.getByRole("button", { name: /^Reject/ })).toBeDisabled();
+  await expect(own.locator("[data-credit-why]")).toContainText("You asked for this one");
+});
+
+test("a second approver completes a two approval request and the limit moves", async ({ page, request }) => {
+  await openDesk(page, request, "super-admin");
+  await page.getByRole("button", { name: "Credit changes" }).click();
+  const two = page.locator("[data-creditchanges] [data-creditchange-row]").filter({ hasText: "First of two approvals recorded" });
+  await expect(two.getByRole("button", { name: "Approve" })).toBeEnabled();
+  await two.getByRole("button", { name: "Approve" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Approved: the credit limit is now $85,000.00");
+  await expect(page.locator("[data-creditchanges] [data-creditchange-row]").filter({ hasText: "First of two approvals recorded" })).toHaveCount(0);
+});
+
+test("the server's refusal still reads in its own words when a role it turns away presses Approve", async ({ page, request }) => {
+  // A branch manager may give a first approval, not the second: the screen leaves the control live and the
+  // core is the backstop.
+  await openDesk(page, request, "branch-manager");
+  await page.getByRole("button", { name: "Credit changes" }).click();
+  const two = page.locator("[data-creditchanges] [data-creditchange-row]").filter({ hasText: "First of two approvals recorded" });
+  await two.getByRole("button", { name: "Approve" }).click();
+  await expect(page.locator("[data-error]")).toContainText("caller role is not permitted to approve this request");
 });
 
 test("a rejection asks why and settles the request", async ({ page, request }) => {

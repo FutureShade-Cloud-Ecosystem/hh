@@ -124,6 +124,18 @@ const USERS = {
     tier: 1,
     scope: "GLOBAL",
   },
+  // The platform administrator: the second approver the controller's first approval can be completed
+  // by on this desk (the General Manager holds no receivables area here). Not a flow of the way in
+  // (the stub's flow table is the core's whole table); the token names the id.
+  "super-admin": {
+    user_id: "de110000-0000-4000-9000-000000000009",
+    email: "platform.admin@hh-demo.invalid",
+    display_name: "Platform administrator (demo)",
+    role_code: "super_admin",
+    role_name: "Platform administrator",
+    tier: 1,
+    scope: "GLOBAL",
+  },
   // The branch manager (the core's flows table row, platform user id and address from there): a
   // tier two, branch scoped caller, the credit change routes' first approver that is not the
   // controller. The grant is the demo's default branch.

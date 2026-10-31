@@ -8,6 +8,7 @@ import {
   canWorkCreditChanges,
   creditApproveWords,
   creditAskWords,
+  creditBlockedWords,
   creditDecisionWords,
   creditPendingWords,
   creditRefusalWords,
@@ -87,4 +88,15 @@ test("a refusal keeps the server's sentence, with cents read as dollars", () => 
   assert.match(creditRefusalWords("boom", 500), /Nothing was changed/);
   assert.match(creditRefusalWords("x", undefined), /could not be reached/);
   assert.match(creditRefusalWords("x", 401), /Sign in again/);
+});
+
+test("the person who asked decides nothing, and the first approver cannot give the second approval", () => {
+  const mine = { ...base, requested_by: ME };
+  assert.match(creditBlockedWords(mine, ME).approve, /You asked for this one/);
+  assert.match(creditBlockedWords(mine, ME).reject, /You asked for this one/);
+  const approved = { ...base, required_approvals: 2, first_approved_by: ME };
+  assert.match(creditBlockedWords(approved, ME).approve, /You approved this one; it needs a second person/);
+  assert.equal(creditBlockedWords(approved, ME).reject, "");
+  assert.deepEqual(creditBlockedWords(approved, "u-other"), { approve: "", reject: "" });
+  assert.deepEqual(creditBlockedWords(base, ""), { approve: "", reject: "" });
 });

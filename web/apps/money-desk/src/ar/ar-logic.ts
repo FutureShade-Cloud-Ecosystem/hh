@@ -664,6 +664,23 @@ export function creditPendingWords(row: CreditChangeWords, youId: string): strin
 }
 
 /**
+ * Why the person reading cannot decide a waiting request, in a bookkeeper's words, or "" when
+ * they can. The core turns away the person who asked from approving and from rejecting, and the
+ * person who gave the first approval from giving the second; the screen says so before the press
+ * and the core's refusal stays the backstop.
+ */
+export function creditBlockedWords(row: CreditChangeWords, youId: string): { readonly approve: string; readonly reject: string } {
+  if (youId !== "" && row.requested_by === youId) {
+    const asked = "You asked for this one, so another person decides it.";
+    return { approve: asked, reject: asked };
+  }
+  if (youId !== "" && row.first_approved_by === youId) {
+    return { approve: "You approved this one; it needs a second person.", reject: "" };
+  }
+  return { approve: "", reject: "" };
+}
+
+/**
  * What a request did, told to the person who just asked: a decrease took effect at once, and an
  * increase moved nothing, with the tier's own count from the row the core answered.
  */
