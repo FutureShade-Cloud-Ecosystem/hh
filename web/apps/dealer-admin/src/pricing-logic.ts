@@ -1012,6 +1012,43 @@ export function deltaWords(oldValue: string | null, newValue: string | null, fie
   return "";
 }
 
+/**
+ * The floor check's shorthand values, worded for a dealer (UX-125). The core writes
+ * `rule <cents> at <pct>%`, `net <cents> margin <bps> floor <bps>`, `counter <cents>[ at <bps> bps]`
+ * and `net <cents> off <cents> rung by <staff id>`; cents and bps become dollars and percent for
+ * display only. A value that matches none of these comes back unchanged. `staffName` resolves the
+ * clerk id; an id it cannot resolve is left out.
+ */
+export function floorValueWords(value: string, staffName?: (id: string) => string): string {
+  const v = value.trim();
+  let m = /^rule (\d+) at (\d+(?:\.\d+)?)%$/.exec(v);
+  if (m !== null) return `Rule price ${moneyWords(Number(m[1]))}, ${m[2]}% off`;
+  m = /^net (\d+) margin (-?\d+) floor (-?\d+)$/.exec(v);
+  if (m !== null) return `Net ${moneyWords(Number(m[1]))}, margin ${pctWords(Number(m[2]))}, floor ${pctWords(Number(m[3]))}`;
+  m = /^counter (\d+)(?: at (\d+) bps)?$/.exec(v);
+  if (m !== null) {
+    const base = `Counter price ${moneyWords(Number(m[1]))}`;
+    return m[2] !== undefined ? `${base}, ${pctWords(Number(m[2]))} off` : base;
+  }
+  m = /^net (\d+) off (\d+) rung by (.+)$/.exec(v);
+  if (m !== null) {
+    const base = `Net ${moneyWords(Number(m[1]))}, ${moneyWords(Number(m[2]))} off`;
+    const who = staffName !== undefined ? staffName((m[3] ?? "").trim()) : "";
+    return who !== "" ? `${base}, rung by ${who}` : base;
+  }
+  return value;
+}
+
+/** A margin enforcement row's change: both values worded, joined as deltaWords joins them. */
+export function floorDeltaWords(oldValue: string | null, newValue: string | null, staffName?: (id: string) => string): string {
+  const a = oldValue !== null ? floorValueWords(oldValue, staffName) : null;
+  const b = newValue !== null ? floorValueWords(newValue, staffName) : null;
+  if (a !== null && b !== null) return `${a} to ${b}`;
+  if (a === null && b !== null) return `set to ${b}`;
+  if (a !== null && b === null) return "cleared";
+  return "";
+}
+
 /** An import's answer, told from the server's own counts. */
 export function importResultWords(result: {
   readonly total_lines: number;

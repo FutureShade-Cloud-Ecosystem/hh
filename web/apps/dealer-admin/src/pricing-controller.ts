@@ -455,6 +455,8 @@ export interface PricingAuditModel {
   readonly filters: { readonly entityType: string; readonly action: string };
   /** Product id to its dealer words, for margin enforcement rows that name a product. */
   readonly productNames: Readonly<Record<string, string>>;
+  /** True once the product name lookups for the shown rows have settled (UX-125). */
+  readonly namesSettled: boolean;
   readonly error: string;
 }
 
@@ -671,6 +673,7 @@ function emptyPricingAudit(): PricingAuditModel {
     rows: [],
     filters: { entityType: "", action: "" },
     productNames: {},
+    namesSettled: false,
     error: "",
   };
 }
@@ -3503,19 +3506,26 @@ export class PricingController {
    * not explain, so the entity cell reads as a name.
    */
   async #loadAuditProductNames(rows: readonly PricingAuditRow[]): Promise<void> {
-    if (typeof this.#door.productName !== "function") return;
+    // Category ids must not be asked of the catalog as products: wait for the categories read.
+    if (typeof this.#door.productName !== "function" || this.model.categoriesPhase !== "ready") {
+      this.#setAudit({ namesSettled: true });
+      return;
+    }
+    const door = this.#door;
     const ids = new Set<string>();
     for (const r of rows) {
       if (r.entity_type !== "margin_enforcement" || r.entity_id === "") continue;
       if (this.model.categories.some((c) => c.id === r.entity_id)) continue;
       ids.add(r.entity_id);
     }
+    const asked = [...ids].slice(0, 25);
+    const answers = await Promise.all(asked.map((id) => door.productName!(id)));
     const found: Record<string, string> = {};
-    for (const id of [...ids].slice(0, 25)) {
-      const named = await this.#door.productName(id);
-      if (named.ok && named.value !== "") found[id] = named.value;
-    }
-    if (Object.keys(found).length > 0) this.#setAudit({ productNames: found });
+    answers.forEach((named, i) => {
+      const id = asked[i];
+      if (id !== undefined && named.ok && named.value !== "") found[id] = named.value;
+    });
+    this.#setAudit({ productNames: found, namesSettled: true });
   }
 
   async loadChangeLog(): Promise<void> {

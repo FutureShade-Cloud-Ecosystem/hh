@@ -72,6 +72,7 @@ import {
   PRICING_VIEWS,
   accrualSourceWord,
   bypassReasonWord,
+  floorDeltaWords,
 } from "./pricing-logic.js";
 import { whenWords } from "./audit-logic.js";
 import {
@@ -2620,6 +2621,8 @@ function auditEntityWords(row: PricingAuditRow, model: PricingModel): string {
   const words = auditEntityNamed(row, model);
   if (words !== "") return words;
   const entityWord = pricingAuditEntityWord(row.entity_type);
+  // A margin enforcement entity waits on the catalog lookups; hold the cell rather than flash a wrong word.
+  if (row.entity_type === "margin_enforcement" && !model.audit.namesSettled) return entityWord;
   return `${entityWord} / ${row.entity_type === "margin_enforcement" ? "A product" : UNKNOWN_ENTITY}`;
 }
 
@@ -2721,11 +2724,14 @@ function renderPricingAuditRow(
   staff: readonly StaffMemberRow[],
 ): TemplateResult {
   const bypass = row.action === "BYPASS";
-  const delta = deltaWords(
-    row.old_value === "" ? null : row.old_value,
-    row.new_value === "" ? null : row.new_value,
-    row.field_name,
-  );
+  const oldV = row.old_value === "" ? null : row.old_value;
+  const newV = row.new_value === "" ? null : row.new_value;
+  const delta = row.entity_type === "margin_enforcement"
+    ? floorDeltaWords(oldV, newV, (id) => {
+        const member = staff.find((s) => s.user_id === id);
+        return member === undefined ? "" : member.display_name !== "" ? member.display_name : member.email;
+      })
+    : deltaWords(oldV, newV, row.field_name);
   const reasonWord = bypass && row.bypass_reason !== "" ? bypassReasonWord(row.bypass_reason) : "";
   return html`
     <tr data-audit=${row.id}>
