@@ -1039,12 +1039,17 @@ export function floorValueWords(value: string, staffName?: (id: string) => strin
   return value;
 }
 
-/** A margin enforcement row's change: both values worded, joined as deltaWords joins them. */
+/** A worded value set mid-sentence: the first letter drops to lower case ("Net $6.55" reads "net $6.55"). */
+function midSentence(words: string): string {
+  return words === "" ? words : words.charAt(0).toLowerCase() + words.slice(1);
+}
+
+/** A margin enforcement row's change, told as a before and after: "Was: ... Now: ...". */
 export function floorDeltaWords(oldValue: string | null, newValue: string | null, staffName?: (id: string) => string): string {
-  const a = oldValue !== null ? floorValueWords(oldValue, staffName) : null;
-  const b = newValue !== null ? floorValueWords(newValue, staffName) : null;
-  if (a !== null && b !== null) return `${a} to ${b}`;
-  if (a === null && b !== null) return `set to ${b}`;
+  const a = oldValue !== null ? midSentence(floorValueWords(oldValue, staffName)) : null;
+  const b = newValue !== null ? midSentence(floorValueWords(newValue, staffName)) : null;
+  if (a !== null && b !== null) return `Was: ${a}. Now: ${b}.`;
+  if (a === null && b !== null) return `Now: ${b}.`;
   if (a !== null && b === null) return "cleared";
   return "";
 }
