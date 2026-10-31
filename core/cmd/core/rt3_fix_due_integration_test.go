@@ -168,3 +168,68 @@ func TestRT3Fix_NotYetThirtyDaysPastTheNewDueDateIsNotCharged(t *testing.T) {
 		t.Errorf("25 days past the new due date is not charged: past due %d", base)
 	}
 }
+
+// rt3SetDates sets the linked lien job's three starting dates, each as days back from the house day (nil
+// leaves it empty).
+func (l *rt2Leg) rt3SetDates(pub, perf, supply *int) {
+	l.t.Helper()
+	day := func(n *int) any {
+		if n == nil {
+			return nil
+		}
+		return rt3Today().AddDate(0, 0, -*n).Format("2006-01-02")
+	}
+	mustExec(l.t, context.Background(), l.pool,
+		`UPDATE lien_jobs SET csp_published_on = $2::date, substantial_perf_date = $3::date, last_supply_date = $4::date WHERE id = $1::uuid`,
+		l.lien, day(pub), day(perf), day(supply))
+}
+
+func rt3N(n int) *int { return &n }
+
+// Item 3: the preservation period runs from the LATEST of the dates the job carries that can start it
+// (publication of the certificate, substantial performance, last supply), so a release is never early.
+func TestRT3Fix_ThePeriodRunsFromTheLatestStartingDate(t *testing.T) {
+	l := rt2Setup(t, "fxg")
+	l.newJob(true)
+	doc := l.invoice(100_000, 0)
+
+	// Performed 100 days ago, last supply 90 days ago, but the certificate was published 30 days ago.
+	l.rt3SetDates(rt3N(30), rt3N(100), rt3N(90))
+	_, err := l.rt3Service(time.Now()).Release(context.Background(), l.rt3Input("fxg-1"))
+	if rt3Refusal(err) != billing.RefusedNotDue {
+		t.Fatalf("publication 30 days ago: want a not due refusal, got %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), rt3Today().AddDate(0, 0, -30).Format("2006-01-02")) || !strings.Contains(err.Error(), "publication") {
+		t.Errorf("the refusal must name the publication date it counts from, got %v", err)
+	}
+
+	// A last supply later than the other two counts too.
+	l.rt3SetDates(rt3N(100), rt3N(100), rt3N(20))
+	if _, err := l.rt3Service(time.Now()).Release(context.Background(), l.rt3Input("fxg-2")); rt3Refusal(err) != billing.RefusedNotDue {
+		t.Fatalf("last supply 20 days ago: want a not due refusal, got %v", err)
+	}
+	eq(t, "nothing moved by the refusals", l.holdbackOf(doc.InvoiceID), int64(10_000))
+	eq(t, "no release row", l.rt3Releases(doc.InvoiceID), 0)
+
+	// The latest date is 61 days back: its period ended yesterday, so the holdback is due today.
+	l.rt3SetDates(rt3N(61), rt3N(100), rt3N(90))
+	if _, err := l.rt3Service(rt3Today()).Release(context.Background(), l.rt3Input("fxg-3")); err != nil {
+		t.Fatalf("every date is past its period: %v", err)
+	}
+	eq(t, "released", l.holdbackOf(doc.InvoiceID), int64(0))
+}
+
+// A job with no starting date at all is refused in words, and so is one the dates have not caught up with.
+func TestRT3Fix_ANoStartingDateIsRefused(t *testing.T) {
+	l := rt2Setup(t, "fxh")
+	l.newJob(true)
+	l.invoice(100_000, 0)
+	l.rt3SetDates(nil, nil, nil)
+	_, err := l.rt3Service(time.Now()).Release(context.Background(), l.rt3Input("fxh-1"))
+	if rt3Refusal(err) != billing.RefusedNoDate {
+		t.Fatalf("no starting date: want a no date refusal, got %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "publication") {
+		t.Errorf("the words must name the dates it looks for, got %v", err)
+	}
+}
