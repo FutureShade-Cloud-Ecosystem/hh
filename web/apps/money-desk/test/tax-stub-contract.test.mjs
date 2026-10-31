@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { SCHEMA_DESCRIPTORS } from "../../../packages/api-client/src/testing.ts";
 import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 import { IDS, LEGAL_REASONS, RECON, WORKSHEET, olderMonth, olderQuarter, taxMonth, taxQuarter } from "./stub/tax-world.mjs";
+import { STUB_ZONE } from "./stub/clock-zone.mjs";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
@@ -80,7 +81,7 @@ before(async () => {
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [join(appDir, "test", "stub", "money-desk-stub.mjs")], {
-    env: { ROLE_STUB_PORT: String(port) },
+    env: { ROLE_STUB_PORT: String(port), TZ: STUB_ZONE },
     stdio: "ignore",
   });
   for (let i = 0; i < 100; i += 1) {
@@ -171,10 +172,11 @@ function refused(res, status, fragment) {
   assert.ok(coreSource.includes(fragment), `the core's source does not contain the sentence "${fragment}": the stub invented it`);
 }
 
-const prior = taxMonth();
-const older = olderMonth();
-const priorQ = taxQuarter();
-const olderQ = olderQuarter();
+// The stub runs on STUB_ZONE and these are read in the same zone (clock-zone.mjs).
+const prior = taxMonth(STUB_ZONE);
+const older = olderMonth(STUB_ZONE);
+const priorQ = taxQuarter(STUB_ZONE);
+const olderQ = olderQuarter(STUB_ZONE);
 
 test("the lists answer under a name, as the core writes them, and every row fits the contract", async () => {
   await reset();
